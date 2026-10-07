@@ -20,6 +20,7 @@ const data = (over: Partial<DailyReportData> = {}): DailyReportData => ({
   perSource: [{ sourceType: "meta_live", ...zero, enqueued: 5, emailed: 4 }, { sourceType: "meta_old", ...zero }, { sourceType: "he", ...zero, enqueued: 2, stopped: { opted_out: 1 } }],
   skipped: [{ reason: "no_phone", count: 1, examples: [{ name: "Asha", mobileMasked: "xxxxxx3210", requisition: "REQ-1" }] }],
   waFailuresByCode: [{ code: "132018", count: 2, sample: "(#132018) a <b>" }],
+  blockedByReason: [{ channel: "whatsapp", reason: "whatsapp_not_configured", count: 4 }],
   ...over,
 });
 
@@ -74,6 +75,24 @@ describe("collectDailyReport", () => {
     expect(d.perSource[0]!.enqueued).toBe(0);
     expect(d.waFailuresByCode[0]).toMatchObject({ code: "132018", count: 2 });
     expect(d.date).toBe("2026-10-07");
+  });
+  it("reports blocked and skipped steps by scrubbed reason, per channel", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.includes("qf.wa_error AS reason")) return [[{ reason: "whatsapp_not_configured", n: "7" }, { reason: "bad for a@b.in", n: "1" }]];
+      if (q.includes("qf.email_error AS reason")) return [[{ reason: "no_email", n: "2" }]];
+      if (q.includes("COUNT(*)")) return [[{ n: 0 }]];
+      return [[]];
+    });
+    const d = await collectDailyReport(new Date("2026-10-06T08:30:00+05:30"), now, "live");
+    expect(d.blockedByReason).toEqual([
+      { channel: "email", reason: "no_email", count: 2 },
+      { channel: "whatsapp", reason: "whatsapp_not_configured", count: 7 },
+      { channel: "whatsapp", reason: "bad for [email]", count: 1 },
+    ]);
+    const sql = execute.mock.calls.map(([q]) => String(q)).find((q) => q.includes("qf.wa_error AS reason"))!;
+    expect(sql).toContain("IN ('blocked','skipped')");
+    expect(buildDailyReport(d).text).toContain("whatsapp: whatsapp_not_configured x7");
   });
   it("caps skip examples at 10 per reason while keeping the full count", async () => {
     execute.mockImplementation(async (sql: string) => {

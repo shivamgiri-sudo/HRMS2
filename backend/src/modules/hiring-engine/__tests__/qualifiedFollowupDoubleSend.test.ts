@@ -230,7 +230,7 @@ describe("live mode: sync falls back to the old flow only when the enqueue is no
     await notifyNewQualifiedLeads();
     const live = h.sqls.find((x) => x.includes("SELECT id FROM meta_lead_raw"))!;
     expect(live).toContain("NOT EXISTS (SELECT 1 FROM qualified_followup qf");
-    expect(live).toContain("qf.stopped_reason IS NULL");
+    expect(live).not.toContain("stopped_reason");
     expect(live).toContain("COLLATE utf8mb4_unicode_ci");
     setEnv({ QUAL_FOLLOWUP_MODE: "dry_run" });
     h.sqls.length = 0;

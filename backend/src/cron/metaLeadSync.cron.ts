@@ -229,10 +229,10 @@ export async function runMetaLeadSyncNow(): Promise<MetaSyncNowResult> {
   return runSyncCycle();
 }
 
-// Live: leads already handed to the pipeline (open live row) are not re-selected every sync.
+// Live: leads already handed to the pipeline (a live row, open or stopped) are not re-selected every sync.
 const LIVE_ROW_SKIP = `
         AND NOT EXISTS (SELECT 1 FROM qualified_followup qf
-                         WHERE qf.mode_at_enqueue = 'live' AND qf.stopped_reason IS NULL
+                         WHERE qf.mode_at_enqueue = 'live'
                            AND (qf.meta_lead_id = meta_lead_raw.id COLLATE utf8mb4_unicode_ci
                                 OR (qf.mobile10 = RIGHT(REGEXP_REPLACE(meta_lead_raw.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci
                                     AND qf.requisition_id = meta_lead_raw.requisition_id COLLATE utf8mb4_unicode_ci)))`;

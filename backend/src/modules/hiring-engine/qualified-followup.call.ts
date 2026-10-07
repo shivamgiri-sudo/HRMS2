@@ -30,7 +30,7 @@ export async function runCallStep(s: FollowupSwitches, tag: RowTag, now: Date, l
     `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
       WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
         AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ?
-        AND qf.email_status IS NOT NULL AND qf.email_status <> 'sending' AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
         ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}
       ORDER BY qf.call_due_at LIMIT ${Math.max(1, Math.floor(limit))}`,
     [tag, now, ...paused]);
@@ -63,7 +63,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
 
   let matchId: string | null = null;
   let params: { name: string; role: string; interview_date: string; interview_time: string; branch_address: string } | null = null;
-  const ctx = await loadSendContext(row, { assignSlot: false });
+  const ctx = await loadSendContext(row, { assignSlot: false, now });
   if (useVoice) {
     matchId = ctx.matchId;
     if (!matchId) return toFile(row, "no_match", counts, false);

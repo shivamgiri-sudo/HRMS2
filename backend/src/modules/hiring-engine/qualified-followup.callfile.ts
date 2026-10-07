@@ -106,7 +106,10 @@ const istStamp = (d: Date) => new Date(d.getTime() + IST_MS).toISOString().slice
 
 export async function runCallFileBatch(s: FollowupSwitches, tag: RowTag, now: Date): Promise<CallFileResult> {
   if (tag === "test" && !s.testPhone) return { status: "failed", rows: 0, files: 0, error: "no test phone" };
+  // Same kill switches as the other steps: nothing leaves while sends are paused (dry_run only logs).
+  if (tag !== "dry_run" && s.sendsPaused) return { status: "empty", rows: 0, files: 0 };
   const to = tag === "test" ? s.testEmail : s.callFileTo;
+  const paused = [...s.pausedSources];
   let found: RowDataPacket[];
   try {
     await recoverStaleBatches(now);
@@ -119,7 +122,8 @@ export async function runCallFileBatch(s: FollowupSwitches, tag: RowTag, now: Da
          LEFT JOIN meta_lead_raw mr ON mr.id ${C} = qf.meta_lead_id ${C}
          LEFT JOIN he_match hm ON hm.lead_id ${C} = qf.he_lead_id ${C} AND hm.drive_id ${C} = qf.drive_id ${C}
         WHERE qf.call_state = 'in_file' AND qf.call_file_batch_id IS NULL AND qf.stopped_reason IS NULL AND qf.mode_at_enqueue = ?
-        ORDER BY qf.created_at, qf.id LIMIT ${SELECT_CAP}`, [tag]);
+          ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}
+        ORDER BY qf.created_at, qf.id LIMIT ${SELECT_CAP}`, [tag, ...paused]);
   } catch (err) {
     const msg = String((err as Error)?.message ?? err).slice(0, 255);
     logger.error({ err: msg }, "[qualified-followup] calling file selection failed");
@@ -155,9 +159,11 @@ export async function runCallFileBatch(s: FollowupSwitches, tag: RowTag, now: Da
       await db.execute("UPDATE qualified_followup_call_batch SET status = 'failed', error = 'no rows stamped', row_count = 0 WHERE id = ?", [batchId]);
       return { status: "empty", batchId, rows: 0, files: 0 };
     }
+    const today = istStamp(now).slice(0, 10);
     const rows: CallFileRow[] = owned.map((r) => ({
       mobile10: String(r.mobile10), name: displayFirstName(r.full_name), role: String(r.role_name ?? ""),
-      interviewDate: r.slot_date ? String(r.slot_date).slice(0, 10) : null, interviewTime: r.slot_time ? String(r.slot_time).slice(0, 5) : null,
+      interviewDate: r.slot_date && String(r.slot_date).slice(0, 10) >= today ? String(r.slot_date).slice(0, 10) : null,
+      interviewTime: r.slot_date && String(r.slot_date).slice(0, 10) >= today && r.slot_time ? String(r.slot_time).slice(0, 5) : null,
       branchAddress: r.address ? String(r.address) : null, referenceId: followupRef(String(r.id)),
     }));
     const when = istStamp(now);

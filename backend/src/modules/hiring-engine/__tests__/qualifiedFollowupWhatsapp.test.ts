@@ -18,7 +18,7 @@ const testEnv = { QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true", Q
 const dryEnv = { QUAL_FOLLOWUP_MODE: "dry_run" } as NodeJS.ProcessEnv;
 const now = new Date("2026-10-07T11:00:00+05:30");
 
-interface World { row?: Record<string, unknown>; rows?: number; bmi?: string | null; address?: string | null; claim?: number; leadStatus?: string }
+interface World { row?: Record<string, unknown>; rows?: number; bmi?: string | null; address?: string | null; claim?: number; leadStatus?: string; slotDate?: string }
 function world(w: World = {}) {
   const base = { id: "0f1e2d3c-aaaa-bbbb-cccc-000000000000", source_type: "meta_live", meta_lead_id: "m1", he_lead_id: "lead-1", ats_candidate_id: null, requisition_id: "req-1", drive_id: null,
     mobile10: "9876543210", email: "c@x.com", full_name: "asha rao", branch_name: "Noida", role_name: "Customer Support", qualified_at: "2026-10-07 09:00:00",
@@ -33,7 +33,7 @@ function world(w: World = {}) {
     if (q.includes("FROM he_lead WHERE mobile10")) return [[{ id: "lead-1" }]];
     if (q.includes("FROM branch_master")) return [w.address === null ? [] : [{ address: w.address ?? "Sector 62, Noida", latitude: null, longitude: null }]];
     if (q.includes("FROM job_requisition")) return [[{ bmi_assessment_url: w.bmi === undefined ? "https://bmi.example/x" : w.bmi }]];
-    if (q.includes("FROM meta_lead_raw")) return [[{ interview_date: "2026-10-08", interview_time: "10:30:00" }]];
+    if (q.includes("FROM meta_lead_raw")) return [[{ interview_date: w.slotDate ?? "2026-10-08", interview_time: "10:30:00" }]];
     return [[]];
   });
 }
@@ -199,6 +199,30 @@ describe("runWhatsappStep", () => {
     world({ row: { wa_due_at: "2026-10-07 19:10:00" } });
     await runWhatsappStep(readSwitches(liveEnv), "live", new Date("2026-10-07T19:10:00+05:30"), 100);
     expect(finalUpdate()[1]).toContainEqual(new Date("2026-10-08T09:00:00+05:30"));
+  });
+});
+
+describe("hardening 2", () => {
+  it("a slot already in the past is no slot: re-assigned when live, so the new slot is used", async () => {
+    world({ slotDate: "2026-10-06" });
+    assign.mockResolvedValue({ date: "2026-10-09", time: "11:00:00" });
+    await runWhatsappStep(readSwitches(liveEnv), "live", now, 100);
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(sendTpl.mock.calls[0][0].extra.drive_date).toBe("Fri 9 Oct 2026");
+  });
+  it("a past slot in dry_run counts as missing, never reused", async () => {
+    world({ slotDate: "2026-10-06", address: null });
+    await runWhatsappStep(readSwitches(dryEnv), "dry_run", now, 100);
+    expect(assign).not.toHaveBeenCalled();
+    const [, p] = calls(/UPDATE qualified_followup SET wa_status = 'dry_run'/)[0];
+    expect(String(p[1])).toContain("slot");
+  });
+  it("scrubs e-mail addresses and phone numbers from a failure before storing it", async () => {
+    world();
+    sendTpl.mockResolvedValue({ status: "failed", error: "(#132018) bad for a.b@x.com phone 919876543210" });
+    await runWhatsappStep(readSwitches(liveEnv), "live", now, 100);
+    const [, p] = finalUpdate();
+    expect(String(p[1])).toBe("(#132018) bad for [email] phone [number]");
   });
 });
 

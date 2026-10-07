@@ -14,6 +14,8 @@ import { afterFailure, chooseWaTemplate, nextStepDue, nextWorkingDayIst } from "
 import { withinSendWindow } from "./qualified-followup.schedule.js";
 
 const IST_MS = 5.5 * 3600_000;
+/** Provider text can echo an address or number; neither is stored or logged. */
+const scrub = (m: string) => m.replace(/[^\s@<>"',;:()]+@[^\s@<>"',;()]+/g, "[email]").replace(/\+?\d[\d ]{8,}\d/g, "[number]");
 const env = (k: string, d: string) => (process.env[k]?.trim() ? process.env[k]!.trim() : d);
 
 /** WhatsApp sends of this tag since IST midnight; the worker subtracts it from the daily budget. */
@@ -44,7 +46,7 @@ export async function runWhatsappStep(s: FollowupSwitches, tag: RowTag, now: Dat
     try {
       await processRow(s, tag, now, row, counts);
     } catch (err) {
-      logger.warn({ rowId: row.id, err: (err as Error).message }, "[qualified-followup] whatsapp step failed for row");
+      logger.warn({ rowId: row.id, err: scrub((err as Error).message) }, "[qualified-followup] whatsapp step failed for row");
     }
   }
   return counts;
@@ -64,7 +66,7 @@ function buildExtra(row: FollowupRow, ctx: SendContext, key: "he_walkin_invite" 
 async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: FollowupRow, counts: StepCounts): Promise<void> {
   const isDry = tag === "dry_run";
   const isTest = tag === "test";
-  const ctx = await loadSendContext(row, { assignSlot: !isDry });
+  const ctx = await loadSendContext(row, { assignSlot: !isDry, now });
   // Dry run does not assign a slot; live would when the address and BMI link exist.
   const wouldAssign = isDry && !ctx.slot && row.sourceType !== "he" && Boolean(ctx.branchAddress && ctx.bmiLink);
   const pick = chooseWaTemplate({ sourceType: row.sourceType, hasSlot: Boolean(ctx.slot) || wouldAssign, hasBranchAddress: Boolean(ctx.branchAddress), hasBmiLink: Boolean(ctx.bmiLink) });
@@ -76,7 +78,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
     let error: string | null = null;
     try {
       buildParams(pick.key, "en", { candidate_name: displayFirstName(row.fullName), company: env("HE_COMPANY_NAME", "MAS Callnet"), docs_list: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"), ...extra });
-    } catch (e) { error = (e as Error).message.slice(0, 255); }
+    } catch (e) { error = scrub((e as Error).message).slice(0, 255); }
     const [res] = await db.execute<any>(
       "UPDATE qualified_followup SET wa_status = 'dry_run', wa_error = ?, missing_details = ?, call_due_at = ? WHERE id = ? AND wa_status IS NULL AND wa_sent_at IS NULL", [error, missing, next, row.id]);
     if (Number(res?.affectedRows ?? 0) === 0) return;
@@ -117,18 +119,19 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
     if (r.reason === "quiet_hours" || r.reason === "paused") {
       await db.execute("UPDATE qualified_followup SET wa_status = NULL, step_claimed_at = NULL WHERE id = ? AND wa_status = 'sending'", [row.id]);
       counts.held++; counts.processed--;
-    } else { await final("blocked", String(r.reason).slice(0, 255), false); counts.blocked++; }
+    } else { await final("blocked", scrub(String(r.reason)).slice(0, 255), false); counts.blocked++; }
   } else if (r.status === "failed") {
-    const f = afterFailure(row.waAttempts, r.error, now);
+    const err = scrub(r.error);
+    const f = afterFailure(row.waAttempts, err, now);
     counts.failed++;
     if (f.status === null) {
       await db.execute(
         "UPDATE qualified_followup SET wa_status = NULL, wa_due_at = ?, wa_attempts = ?, wa_error = ?, step_claimed_at = NULL WHERE id = ?",
-        [f.retryAt, f.attempts, r.error.slice(0, 255), row.id]);
+        [f.retryAt, f.attempts, err.slice(0, 255), row.id]);
     } else {
       await db.execute(
         "UPDATE qualified_followup SET wa_status = 'failed', wa_attempts = ?, wa_error = ?, missing_details = ?, call_due_at = ?, step_claimed_at = NULL WHERE id = ?",
-        [f.attempts, r.error.slice(0, 255), missing, next, row.id]);
+        [f.attempts, err.slice(0, 255), missing, next, row.id]);
     }
   } else {
     // dry_run result cannot occur (dryRun is never passed); treat as a release rather than guess.

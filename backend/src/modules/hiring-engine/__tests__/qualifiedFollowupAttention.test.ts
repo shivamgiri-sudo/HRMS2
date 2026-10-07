@@ -28,7 +28,7 @@ function appFor(role: string) {
 
 const waRow = (err: string, i: number) => ({ id: `id-${i}`, full_name: "Asha", mobile10: "9876543210", requisition_id: "req-1", source_type: "meta_live", err, attempts: 1, updated_at: "2026-10-07 10:00:00" });
 
-beforeEach(() => { execute.mockReset(); });
+beforeEach(() => { execute.mockReset(); vi.unstubAllEnvs(); vi.stubEnv("QUAL_FOLLOWUP_MODE", "live"); });
 
 describe("listAttention", () => {
   it("groups WhatsApp failures by Meta code, biggest first, with masked numbers only", async () => {
@@ -48,6 +48,20 @@ describe("listAttention", () => {
     const rows = (await listAttention()).flatMap((g) => g.rows);
     expect(rows.find((r) => r.id === "id-1")?.outcomeUnknown).toBe(true);
     expect(rows.find((r) => r.id === "id-2")?.outcomeUnknown).toBe(false);
+  });
+
+  it("lists a receipt-failed WhatsApp row as not retryable (already_sent) and a stamped call row as already_in_file", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.includes("qf.wa_status = 'failed'")) return [[{ ...waRow("delivery failed", 1), already_sent: 1, batch_id: null }, { ...waRow("(#131026) c", 2), already_sent: 0, batch_id: null }]];
+      if (q.includes("qf.call_error IS NOT NULL")) return [[{ ...waRow("bot_unavailable", 3), already_sent: 0, batch_id: "b1" }]];
+      return [[]];
+    });
+    const rows = (await listAttention()).flatMap((g) => g.rows);
+    const by = (id: string) => rows.find((r) => r.id === id)!;
+    expect([by("id-1").retryable, by("id-1").retryReason]).toEqual([false, "already_sent"]);
+    expect([by("id-2").retryable, by("id-2").retryReason]).toEqual([true, null]);
+    expect([by("id-3").retryable, by("id-3").retryReason]).toEqual([false, "already_in_file"]);
   });
 
   it("uses text before the first colon for email and call causes and keeps open rows only", async () => {
@@ -97,6 +111,15 @@ describe("retryFollowupStep", () => {
     expect(String(upd[0])).toContain("wa_error, '') <> ?");
     expect(upd[1]).toEqual([ID, "outcome unknown (process stopped mid-send)"]);
   });
+  it("whatsapp retry needs wa_sent_at IS NULL; a receipt failure (sent) is refused with already_sent", async () => {
+    execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 0, err: "delivery failed", already_sent: 1 }]]);
+    expect(await retryFollowupStep(ID, "whatsapp")).toBe("already_sent");
+    expect(sqls(/^UPDATE/)).toHaveLength(0);
+    execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1, err: "(#132018) x", already_sent: 0 }]]).mockResolvedValueOnce([{ affectedRows: 1 }]);
+    expect(await retryFollowupStep(ID, "whatsapp")).toBe("ok");
+    expect(String(sqls(/^UPDATE/)[0][0])).toContain("wa_status IN ('failed','test_sent') AND wa_sent_at IS NULL");
+    expect(String(sqls(/^SELECT/)[1][0])).toContain("wa_sent_at IS NULL");
+  });
   it("is idempotent: a lost race (0 rows updated) reports not_retryable", async () => {
     execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1 }]]).mockResolvedValueOnce([{ affectedRows: 0 }]);
     expect(await retryFollowupStep(ID, "call")).toBe("not_retryable");
@@ -110,7 +133,23 @@ describe("markFollowupCalled", () => {
     const [sql, params] = execute.mock.calls[0];
     expect(String(sql)).toContain("call_state IN ('in_file','queued')");
     expect(String(sql)).toContain("COLLATE utf8mb4_unicode_ci");
-    expect(params).toEqual(["9876543210"]);
+    expect(String(sql)).toContain("mode_at_enqueue = ?");
+    expect(params).toEqual(["9876543210", "live"]);
+  });
+  it("does nothing while the mode is off and never touches a mode other than the running one", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "off");
+    expect(await markFollowupCalled("9876543210")).toBe(0);
+    expect(execute).not.toHaveBeenCalled();
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "dry_run");
+    execute.mockResolvedValue([{ affectedRows: 0 }]);
+    await markFollowupCalled("9876543210");
+    expect(execute.mock.calls[0][1]).toEqual(["9876543210", "dry_run"]);
+  });
+  it("an operator naming one row is not mode-scoped", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "off");
+    execute.mockResolvedValue([{ affectedRows: 1 }]);
+    expect(await markFollowupCalled("9876543210", ID)).toBe(1);
+    expect(execute.mock.calls[0][1]).toEqual(["9876543210", ID]);
   });
 });
 

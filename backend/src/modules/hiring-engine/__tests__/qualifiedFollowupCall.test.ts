@@ -82,6 +82,15 @@ describe("runCallStep", () => {
     expect(params).toEqual(["live", now, "meta_old"]);
   });
 
+  it("rows without an email (email_due_at null) are selected even though email_status stays NULL", async () => {
+    world({ row: { email: null, email_due_at: null, email_status: null } });
+    const c = await runCallStep(readSwitches(base), "live", now);
+    const sql = String(execute.mock.calls[0][0]);
+    expect(sql).toContain("(qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending'))");
+    expect(lastUpdate()[0]).toContain("call_state = 'in_file'");
+    expect(c.processed).toBe(1);
+  });
+
   it("bot source with config and a slot: queues with QF reference and Superbot date/time, then call_state queued", async () => {
     world();
     const c = await runCallStep(readSwitches(bot), "live", now);

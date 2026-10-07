@@ -28,9 +28,15 @@ function sourceList(raw: string | undefined): Set<SourceType> {
   return out;
 }
 
+/** Fail safe: any non-empty value except an explicit false/0/no/off asks for test mode ("TRUE", "1", "yes" must never mean full live). */
+export function isTestModeRequested(value: string | undefined | null): boolean {
+  const v = String(value ?? "").trim().toLowerCase();
+  return v !== "" && !["false", "0", "no", "off"].includes(v);
+}
+
 export function readSwitches(env: NodeJS.ProcessEnv = process.env): FollowupSwitches {
   const mode = followupMode(env);
-  const requested = String(env.QUAL_FOLLOWUP_TEST_MODE ?? "") === "true";
+  const requested = isTestModeRequested(env.QUAL_FOLLOWUP_TEST_MODE);
   const testPhone = normaliseMobile10(env.QUAL_FOLLOWUP_TEST_TO_PHONE);
   const emailRaw = String(env.QUAL_FOLLOWUP_TEST_TO_EMAIL ?? "").trim();
   const testEmail = emailRaw.includes("@") ? emailRaw : null;
@@ -57,7 +63,7 @@ export function rowTag(s: FollowupSwitches): RowTag | null {
 }
 
 export function pipelineOwnsSends(env: NodeJS.ProcessEnv = process.env): boolean {
-  return followupMode(env) === "live" && String(env.QUAL_FOLLOWUP_TEST_MODE ?? "") !== "true";
+  return followupMode(env) === "live" && !isTestModeRequested(env.QUAL_FOLLOWUP_TEST_MODE);
 }
 
 export function followupSkipSql(a: { mobileExpr: string; requisitionExpr: string }, env: NodeJS.ProcessEnv = process.env): string {

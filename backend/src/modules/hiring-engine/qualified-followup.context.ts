@@ -99,7 +99,7 @@ export async function ensureHeLead(row: FollowupRow): Promise<string | null> {
   return id;
 }
 
-export async function loadSendContext(row: FollowupRow, o: { assignSlot: boolean }): Promise<SendContext> {
+export async function loadSendContext(row: FollowupRow, o: { assignSlot: boolean; now?: Date }): Promise<SendContext> {
   const heLeadId = row.heLeadId;
   let leadStatus: string | null = null;
   if (heLeadId) {
@@ -133,7 +133,10 @@ export async function loadSendContext(row: FollowupRow, o: { assignSlot: boolean
     }
   } else if (row.metaLeadId) {
     const [r] = await db.execute<RowDataPacket[]>("SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1", [row.metaLeadId]);
-    if (r[0]?.interview_date && r[0]?.interview_time) slot = { date: String(r[0].interview_date).slice(0, 10), time: String(r[0].interview_time).slice(0, 8) };
+    // A slot already in the past (IST) is no slot: it is re-assigned when allowed, else the no-slot template is used.
+    const stored = r[0]?.interview_date && r[0]?.interview_time
+      ? { date: String(r[0].interview_date).slice(0, 10), time: String(r[0].interview_time).slice(0, 8) } : null;
+    if (stored && new Date(`${stored.date}T${stored.time}+05:30`).getTime() >= (o.now ?? new Date()).getTime()) slot = stored;
     else if (o.assignSlot && branchAddress && bmiLink && row.branchName) {
       const s = await assignInterviewSlot(row.metaLeadId, row.branchName);
       slot = { date: s.date, time: s.time };

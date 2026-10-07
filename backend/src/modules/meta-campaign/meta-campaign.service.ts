@@ -685,7 +685,7 @@ export const metaCampaignService = {
       );
       // A campaign handed to the Hiring Engine: the lead joins the engine's pool right away (it does the outreach, see notifyQualifiedLead).
       if (campaign?.id && (await heOwnsCampaign(campaign.id).catch(() => false))) await bridgeOneMetaLead(id);
-      // Qualified-lead follow-up (dry-run unless QUAL_FOLLOWUP_MODE says otherwise): fire-and-forget, fail-open so ingest is unaffected.
+      // Qualified-lead follow-up (a no-op while QUAL_FOLLOWUP_MODE is off, the default): fire-and-forget, fail-open so ingest is unaffected.
       const enqueued = enqueueMetaLeadFollowup(id).catch((e: unknown) =>
         console.warn('[meta] enqueueMetaLeadFollowup failed', e instanceof Error ? e.message : e)
       );

@@ -66,9 +66,27 @@ describe("runStopChecks", () => {
     execute.mockResolvedValueOnce([[]]);
     await runStopChecks("live");
     const sql = String(execute.mock.calls[0][0]);
-    expect(sql).toContain("qf.email_status IS NULL OR qf.email_status = 'sending'");
+    expect(sql).toContain("(qf.email_status IS NULL AND qf.email_due_at IS NOT NULL) OR qf.email_status = 'sending'");
+    expect(sql).toContain("qf.call_state = 'in_file' AND qf.call_file_batch_id IS NULL");
     expect(sql).toContain("qf.wa_status IS NULL OR qf.wa_status = 'sending'");
     expect(sql).toContain("qf.call_state = 'pending'");
+  });
+  it("a row without an email address is not pending email work forever (email_due_at NULL)", async () => {
+    execute.mockResolvedValueOnce([[]]);
+    await runStopChecks("live");
+    const sql = String(execute.mock.calls[0][0]);
+    expect(sql).not.toMatch(/OR qf\.email_status IS NULL/);
+    expect(sql).toContain("(qf.email_status IS NULL AND qf.email_due_at IS NOT NULL)");
+  });
+  it("an unstamped in_file row is re-checked, so a STOP before the calling file stops it", async () => {
+    execute.mockResolvedValueOnce([[facts({ lead_status: "opted_out" })]]);
+    const r = await runStopChecks("live");
+    expect(String(execute.mock.calls[0][0])).toContain("qf.call_state = 'in_file' AND qf.call_file_batch_id IS NULL");
+    expect(r.stopped).toEqual({ opted_out: 1 });
+  });
+  it("a missing requisition stops the row as requisition_closed (he-send treats it as closed)", async () => {
+    execute.mockResolvedValueOnce([[facts({ jr_id: null, approval_status: null })]]);
+    expect((await runStopChecks("live")).stopped).toEqual({ requisition_closed: 1 });
   });
   it("one failing UPDATE does not abort the batch", async () => {
     execute.mockResolvedValueOnce([[facts({ id: "x1", lead_status: "opted_out" }), facts({ id: "x2", lead_status: "opted_out" })]])
@@ -113,5 +131,9 @@ describe("expireStaleClaims", () => {
     expect(params[1]).toBe("live");
     expect(params[2].getTime()).toBe(now.getTime() - 15 * 60_000);
     expect(String(execute.mock.calls[1][0])).toContain("wa_status = 'failed'");
+    // a stale WhatsApp claim must not strand the call step: it gets a due time, the email one does not
+    expect(String(execute.mock.calls[1][0])).toContain("call_due_at = COALESCE(call_due_at, ?)");
+    expect(execute.mock.calls[1][1][1]).toEqual(new Date("2026-10-07T11:00:00+05:30"));
+    expect(String(execute.mock.calls[0][0])).not.toContain("call_due_at");
   });
 });

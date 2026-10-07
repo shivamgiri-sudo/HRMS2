@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readSwitches, rowTag, pipelineOwnsSends, followupSkipSql } from "../qualified-followup.policy.js";
+import { readSwitches, rowTag, pipelineOwnsSends, followupSkipSql, isTestModeRequested } from "../qualified-followup.policy.js";
 import {
   decideStop, chooseWaTemplate, nextStepDue, isTransientError, metaErrorCode, afterFailure,
   normaliseQuality, waDailyBudget, dueSlot, DAILY_REPORT_SLOTS, CALL_FILE_SLOTS, maskMobile, followupRef, nextWorkingDayIst,
@@ -34,6 +34,20 @@ describe("readSwitches", () => {
     expect(readSwitches({ QUAL_FOLLOWUP_WA_DAILY_MAX: "-3" }).waDailyMax).toBe(500);
     expect(readSwitches({ QUAL_FOLLOWUP_WA_DAILY_MAX: "120" }).waDailyMax).toBe(120);
     expect(readSwitches({ HE_SENDS_PAUSED: "true" }).sendsPaused).toBe(true);
+  });
+});
+
+describe("test-mode flag parsing fails safe", () => {
+  it.each(["true", "TRUE", "1", "yes", " true ", "on", "anything"])("%j asks for test mode", (v) => {
+    expect(isTestModeRequested(v)).toBe(true);
+    expect(readSwitches({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v }).testMisconfigured).toBe(true);
+    expect(rowTag(readSwitches({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v }))).toBe("test");
+    expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v })).toBe(false);
+  });
+  it.each(["false", "FALSE", " 0 ", "no", "Off", "", undefined])("%j does not", (v) => {
+    expect(isTestModeRequested(v)).toBe(false);
+    expect(rowTag(readSwitches({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v }))).toBe("live");
+    expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v })).toBe(true);
   });
 });
 

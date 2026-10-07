@@ -27,6 +27,8 @@ export interface DailyReportData {
   }>;
   skipped: Array<{ reason: SkipReason; count: number; examples: Array<{ name: string; mobileMasked: string; requisition: string }> }>;
   waFailuresByCode: Array<{ code: string; count: number; sample: string }>;
+  /** Steps that did not send, by channel and (scrubbed) reason: shows systemic blocks. */
+  blockedByReason: Array<{ channel: "email" | "whatsapp"; reason: string; count: number }>;
 }
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -84,6 +86,15 @@ export async function collectDailyReport(from: Date, to: Date, tag: RowTag): Pro
   const [fails] = await db.execute<RowDataPacket[]>(
     `SELECT qf.wa_error FROM qualified_followup qf WHERE qf.mode_at_enqueue = ? AND qf.wa_status = 'failed' AND ${inWin("qf.updated_at")} ORDER BY qf.updated_at`, [tag, ...win]);
 
+  const blockedByReason: DailyReportData["blockedByReason"] = [];
+  for (const [channel, status, error] of [["email", "email_status", "email_error"], ["whatsapp", "wa_status", "wa_error"]] as const) {
+    const [bl] = await db.execute<RowDataPacket[]>(
+      `SELECT qf.${error} AS reason, COUNT(*) AS n FROM qualified_followup qf
+        WHERE qf.mode_at_enqueue = ? AND qf.${status} IN ('blocked','skipped') AND ${inWin("qf.updated_at")}
+        GROUP BY qf.${error} ORDER BY n DESC LIMIT 20`, [tag, ...win]);
+    for (const b of bl) blockedByReason.push({ channel, reason: scrub(b.reason ?? "unknown").slice(0, 80), count: Number(b.n) });
+  }
+
   const skipped: DailyReportData["skipped"] = [];
   for (const reason of SKIP_REASONS) {
     let where: string;
@@ -119,7 +130,7 @@ export async function collectDailyReport(from: Date, to: Date, tag: RowTag): Pro
     skipped.push({ reason, count, examples });
   }
 
-  return { date: new Date(to.getTime() + IST_MS).toISOString().slice(0, 10), mode: tag, perSource, skipped, waFailuresByCode: groupWaFailures(fails.map((r) => r.wa_error)) };
+  return { date: new Date(to.getTime() + IST_MS).toISOString().slice(0, 10), mode: tag, perSource, skipped, waFailuresByCode: groupWaFailures(fails.map((r) => r.wa_error)), blockedByReason };
 }
 
 const stoppedText = (m: Partial<Record<StopReason, number>>) => Object.entries(m).map(([k, v]) => `${k} ${v}`).join(", ") || "-";
@@ -134,7 +145,9 @@ export function buildDailyReport(d: DailyReportData): { subject: string; html: s
     ? `<ul>${s.examples.map((e) => `<li>${esc(e.name)}, ${esc(e.mobileMasked)}, ${esc(e.requisition)}</li>`).join("")}</ul>` : ""}`).join("");
   const failHtml = d.waFailuresByCode.length
     ? `<ul>${d.waFailuresByCode.map((f) => `<li><b>${esc(f.code)}</b> x${f.count}: ${esc(f.sample)}</li>`).join("")}</ul>` : "<p>None.</p>";
-  const html = `<h3>Qualified follow-up, last 24 hours to ${esc(d.date)} 08:30 IST (${esc(d.mode)})</h3>${table}<h3>Skipped</h3>${skipHtml}<h3>WhatsApp failures by Meta code</h3>${failHtml}`;
+  const blockedHtml = d.blockedByReason.length
+    ? `<ul>${d.blockedByReason.map((b) => `<li>${esc(b.channel)}: <b>${esc(b.reason)}</b> x${b.count}</li>`).join("")}</ul>` : "<p>None.</p>";
+  const html = `<h3>Qualified follow-up, last 24 hours to ${esc(d.date)} 08:30 IST (${esc(d.mode)})</h3>${table}<h3>Skipped</h3>${skipHtml}<h3>WhatsApp failures by Meta code</h3>${failHtml}<h3>Blocked or skipped by reason</h3>${blockedHtml}`;
   const text = [
     `Qualified follow-up, last 24 hours to ${d.date} 08:30 IST (${d.mode})`, "",
     ...d.perSource.map((p) => cells(p).map((c, i) => `${head[i]} ${c}`).join(" | ").replace(/^Source /, "")),
@@ -142,6 +155,8 @@ export function buildDailyReport(d: DailyReportData): { subject: string; html: s
     ...d.skipped.flatMap((s) => [`${s.reason}: ${s.count}`, ...s.examples.map((e) => `  ${e.name}, ${e.mobileMasked}, ${e.requisition}`)]),
     "", "WhatsApp failures by Meta code",
     ...(d.waFailuresByCode.length ? d.waFailuresByCode.map((f) => `${f.code} x${f.count}: ${f.sample}`) : ["None."]),
+    "", "Blocked or skipped by reason",
+    ...(d.blockedByReason.length ? d.blockedByReason.map((b) => `${b.channel}: ${b.reason} x${b.count}`) : ["None."]),
   ].join("\n");
   return { subject, html, text };
 }

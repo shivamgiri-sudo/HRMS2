@@ -3,7 +3,7 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.js";
 import type { RowTag } from "./qualified-followup.policy.js";
-import { decideStop, OUTCOME_UNKNOWN_ERROR, SENDING_STALE_MIN, type StopReason } from "./qualified-followup.rules.js";
+import { decideStop, nextStepDue, OUTCOME_UNKNOWN_ERROR, SENDING_STALE_MIN, type StopReason } from "./qualified-followup.rules.js";
 
 const C = "COLLATE utf8mb4_unicode_ci";
 
@@ -23,7 +23,8 @@ function factsSql(limit: number, paged: boolean): string {
   LEFT JOIN job_requisition jr ON jr.id = qf.requisition_id
   LEFT JOIN ats_candidate ac ON ac.id = qf.ats_candidate_id
  WHERE qf.stopped_reason IS NULL AND qf.mode_at_enqueue = ?
-   AND (qf.email_status IS NULL OR qf.email_status = 'sending' OR qf.wa_status IS NULL OR qf.wa_status = 'sending' OR qf.call_state = 'pending')
+   AND ((qf.email_status IS NULL AND qf.email_due_at IS NOT NULL) OR qf.email_status = 'sending' OR qf.wa_status IS NULL OR qf.wa_status = 'sending' OR qf.call_state = 'pending'
+        OR (qf.call_state = 'in_file' AND qf.call_file_batch_id IS NULL))
    ${paged ? "AND qf.id > ?" : ""}
  ORDER BY qf.id
  LIMIT ${Math.max(1, Math.floor(limit))}`;
@@ -64,7 +65,7 @@ function decideRow(r: RowDataPacket): StopReason | null {
   return decideStop({
     optedOut: r.lead_status === "opted_out" || Number(r.consent_revoked) === 1,
     repliedSinceQualified: Number(r.he_replied) === 1 || Number(r.meta_replied) === 1,
-    requisitionClosed: r.jr_id == null ? null : requisitionClosedReason({
+    requisitionClosed: r.jr_id == null ? "requisition not found" : requisitionClosedReason({
       approvalStatus: r.approval_status ?? null,
       activeStatus: r.active_status ?? null,
       closedAt: r.closed_at ?? null,
@@ -92,10 +93,14 @@ export async function expireStaleClaims(tag: RowTag, now: Date): Promise<number>
   const cutoff = new Date(now.getTime() - SENDING_STALE_MIN * 60_000);
   const err = OUTCOME_UNKNOWN_ERROR;
   let n = 0;
-  for (const [status, error] of [["email_status", "email_error"], ["wa_status", "wa_error"]] as const) {
+  // A failed WhatsApp claim must not strand the call step: give it a due time too (the email step never blocks WhatsApp, its due time is set at enqueue).
+  const next = nextStepDue(now);
+  for (const [status, error, extra, extraParams] of [
+    ["email_status", "email_error", "", []], ["wa_status", "wa_error", ", call_due_at = COALESCE(call_due_at, ?)", [next]],
+  ] as const) {
     const [res] = await db.execute<any>(
-      `UPDATE qualified_followup SET ${status} = 'failed', ${error} = ? WHERE mode_at_enqueue = ? AND ${status} = 'sending' AND COALESCE(step_claimed_at, updated_at) < ?`,
-      [err, tag, cutoff]);
+      `UPDATE qualified_followup SET ${status} = 'failed', ${error} = ?${extra} WHERE mode_at_enqueue = ? AND ${status} = 'sending' AND COALESCE(step_claimed_at, updated_at) < ?`,
+      [err, ...extraParams, tag, cutoff]);
     n += Number(res?.affectedRows ?? 0);
   }
   return n;

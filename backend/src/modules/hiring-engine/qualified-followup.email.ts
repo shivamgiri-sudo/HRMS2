@@ -107,7 +107,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
   try {
     // Test mode must not write he_lead, so it never bridges.
     heLeadId = isTest ? row.heLeadId : await ensureHeLead(row);
-    const ctx = await loadSendContext({ ...row, heLeadId }, { assignSlot: !isTest });
+    const ctx = await loadSendContext({ ...row, heLeadId }, { assignSlot: !isTest, now });
     if (ctx.leadStatus === "opted_out") { await finish(row, "blocked", "opted_out", now, { advanceWa: true, sent: false }); counts.blocked++; return; }
     if (!isTest && !heLeadId) { await finish(row, "blocked", "no_he_lead", now, { advanceWa: true, sent: false }); counts.blocked++; return; }
     if (!isTest && heLeadId) {

@@ -130,6 +130,33 @@ describe("runCallFileBatch", () => {
   });
 });
 
+describe("pause switches and past slots", () => {
+  it("HE_SENDS_PAUSED skips the whole file in live and test, but not dry_run", async () => {
+    world({ rows: [dbRow(1)] });
+    const env = { ...liveEnv, HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv;
+    expect(await runCallFileBatch(readSwitches(env), "live", now)).toMatchObject({ status: "empty" });
+    expect(execute).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(await runCallFileBatch(readSwitches({ ...env, QUAL_FOLLOWUP_MODE: "dry_run" } as NodeJS.ProcessEnv), "dry_run", now)).toMatchObject({ status: "dry_run" });
+  });
+  it("paused sources are filtered out of the selection", async () => {
+    world();
+    await runCallFileBatch(readSwitches({ ...liveEnv, QUAL_FOLLOWUP_PAUSE_SOURCES: "meta_old,he" } as NodeJS.ProcessEnv), "live", now);
+    const [sql, params] = calls(/FROM qualified_followup qf/)[0];
+    expect(String(sql)).toContain("qf.source_type NOT IN (?,?)");
+    expect(params).toEqual(["live", "meta_old", "he"]);
+  });
+  it("a slot dated before today (IST) is blanked, date and time together; today and later are kept", async () => {
+    world({ rows: [{ ...dbRow(1), slot_date: "2026-10-06" }, { ...dbRow(2), slot_date: "2026-10-07" }, { ...dbRow(3), slot_date: "2026-10-09" }] });
+    await runCallFileBatch(readSwitches(liveEnv), "live", now);
+    const csv = String(send.mock.calls[0][0].attachments[0].content).slice(1).split("\r\n");
+    expect(csv[1]).not.toContain("2026");
+    expect(csv[1]).not.toContain("10:30");
+    expect(csv[2]).toContain("2026");
+    expect(csv[3]).toContain("2026");
+  });
+});
+
 describe("hardening", () => {
   it("a delivered file stays stamped when recording 'sent' fails, and the next slot sends nothing", async () => {
     world({ rows: [dbRow(1)] });
