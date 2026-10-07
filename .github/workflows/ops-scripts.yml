@@ -76,6 +76,7 @@ on:
           - bank-manual-approve
           - digilocker-pending-diagnose
           - digilocker-sync-pending
+          - digilocker-bridge-backfill
           - alt-rx-apply
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
@@ -369,6 +370,11 @@ jobs:
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               # employee_codes may carry --days=N to reach older sessions (default 15).
               npx tsx scripts/digilocker-sync-pending.ts $FLAG ${INPUT_EMPLOYEE_CODES}
+              ;;
+            digilocker-bridge-backfill)
+              # Dry-runs unless given --apply. Apply only moves bridge rows with completion evidence forward.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/digilocker-bridge-backfill.ts $FLAG
               ;;
             digilocker-pending-diagnose)
               # Read-only in both modes: SELECTs only, codes and counts.
