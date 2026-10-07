@@ -81,6 +81,10 @@
   "modules/hiring-engine/qualified-followup.call.ts": [
     "qualified_followup"
   ],
+  "modules/hiring-engine/qualified-followup.callfile.ts": [
+    "qualified_followup",
+    "qualified_followup_call_batch"
+  ],
   "modules/hiring-engine/qualified-followup.context.ts": [
     "qualified_followup"
   ],

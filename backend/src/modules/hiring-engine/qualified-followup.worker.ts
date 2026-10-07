@@ -13,6 +13,7 @@ import { expireStaleClaims, runStopChecks, syncWaReceipts } from "./qualified-fo
 import { runEmailStep } from "./qualified-followup.email.js";
 import { pipelineWaSentToday, runWhatsappStep } from "./qualified-followup.whatsapp.js";
 import { runCallStep } from "./qualified-followup.call.js";
+import { runCallFileBatch } from "./qualified-followup.callfile.js";
 import type { FollowupMode } from "./qualified-followup.types.js";
 
 export const LOCK_NAME = "qualified_followup_tick";
@@ -35,9 +36,9 @@ export interface TickDeps {
   getPinbotQuality: () => Promise<PinbotQuality | null>;
 }
 
-// Stubs until the calling-file batch, daily report and Pinbot quality lookup land (Tasks 9, 10, 13).
+// Stubs until the daily report and Pinbot quality lookup land (Tasks 10, 13).
 const defaultDeps: TickDeps = {
-  runCallFileBatch: async () => ({ status: "empty", rows: 0, files: 0 }),
+  runCallFileBatch,
   runDailyReport: async () => false,
   getPinbotQuality: async () => null,
 };
