@@ -79,5 +79,20 @@ const PENDING_DOC_PEOPLE = `SELECT DISTINCT e.id FROM employees e JOIN employee_
       LEFT JOIN employee_joining_esign_kit k ON k.employee_id=e.id
      WHERE ${W} AND COALESCE(b.joining_document_completion_pct,0) < 100 AND LOWER(COALESCE(b.joining_document_status,'')) NOT IN ('completed','signed','all_signed')
        AND NOT EXISTS (SELECT 1 FROM employee_joining_esign_kit ek WHERE ek.employee_id=e.id AND ek.status='signed') GROUP BY kit ORDER BY n DESC`);
+  const cat = (c: string) => `(EXISTS (SELECT 1 FROM candidate_bgv_check k WHERE k.candidate_id=b.candidate_id AND k.check_type='${c}' AND k.status IN ('verified','waived')) OR r.${c}_status = 'passed')`;
+  await q("BGV in_progress with core verified: which categories are NOT clear", `
+    SELECT r.locked locked,
+           NOT ${cat("education")} edu_open, NOT ${cat("address")} addr_open, NOT ${cat("employment")} emp_open, NOT ${cat("criminal")} crim_open, COUNT(*) n
+      FROM ats_onboarding_bridge b JOIN employees e ON e.id=b.employee_id JOIN candidate_bgv_report r ON r.candidate_id=b.candidate_id
+     WHERE ${W} AND r.overall_status='in_progress'
+       AND NOT EXISTS (SELECT 1 FROM candidate_bgv_check c WHERE c.candidate_id=b.candidate_id AND c.check_type IN ('pan','aadhaar','bank','digilocker') AND c.status NOT IN ('verified','waived'))
+     GROUP BY locked, edu_open, addr_open, emp_open, crim_open ORDER BY n DESC`);
+  await q("BGV in_progress: education/address/employment status values on report", `
+    SELECT COALESCE(r.education_status,'-') edu, COALESCE(r.address_status,'-') addr, COUNT(*) n
+      FROM ats_onboarding_bridge b JOIN employees e ON e.id=b.employee_id JOIN candidate_bgv_report r ON r.candidate_id=b.candidate_id
+     WHERE ${W} AND r.overall_status='in_progress' GROUP BY edu, addr ORDER BY n DESC LIMIT 20`);
+  await q("BGV in_progress: candidates whose address check says verified/passed or education passed yet not clear (codes)", `
+    SELECT e.employee_code FROM ats_onboarding_bridge b JOIN employees e ON e.id=b.employee_id JOIN candidate_bgv_report r ON r.candidate_id=b.candidate_id
+     WHERE ${W} AND r.overall_status='in_progress' AND ${cat("education")} AND ${cat("address")} LIMIT 60`);
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
