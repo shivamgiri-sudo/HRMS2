@@ -49,7 +49,7 @@ export function useApprovalCenter() {
     refetchOnWindowFocus: true,
     retry: 1,
     queryFn: async (): Promise<ApprovalCenterData> => {
-      const res = await hrmsApi.get<{ success: boolean; data: ApprovalCenterData }>("/api/approval-center/pending", 60_000);
+      const res = await hrmsApi.get<{ success: boolean; data: ApprovalCenterData }>("/api/approval-center/pending", 150_000);
       return res.data;
     },
   });

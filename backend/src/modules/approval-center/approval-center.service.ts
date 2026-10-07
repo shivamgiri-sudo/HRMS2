@@ -2,8 +2,8 @@ import type { ApprovalAction, ApprovalAdapter, ApprovalItem, LoopbackCtx } from 
 import { LoopbackError } from "./types.js";
 import { ADAPTERS } from "./adapters/index.js";
 
-const ADAPTER_TIMEOUT_MS = 20_000;
-const CACHE_TTL_MS = 30_000;
+const ADAPTER_TIMEOUT_MS = 90_000;
+const CACHE_TTL_MS = 120_000;
 const cache = new Map<string, { exp: number; value: ListResult }>();
 
 export interface ListResult {
@@ -22,19 +22,40 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+async function mapLimit<T, R>(list: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(list.length);
+  let i = 0;
+  const run = async () => {
+    for (let k = i++; k < list.length; k = i++) out[k] = await fn(list[k]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, list.length) }, run));
+  return out;
+}
+
+/** One list build per user at a time: a double-open / refetch storm shares the in-flight build. */
+const building = new Map<string, Promise<ListResult>>();
+
 const PRIORITY_RANK = { high: 0, normal: 1 } as const;
 
 export function invalidateApprovalCache(userId: string) {
   cache.delete(userId);
 }
 
-export async function listPendingApprovals(ctx: LoopbackCtx, opts: { fresh?: boolean } = {}): Promise<ListResult> {
+export function listPendingApprovals(ctx: LoopbackCtx, opts: { fresh?: boolean } = {}): Promise<ListResult> {
+  const existing = building.get(ctx.userId);
+  if (existing) return existing;
+  const p = buildList(ctx, opts).finally(() => building.delete(ctx.userId));
+  building.set(ctx.userId, p);
+  return p;
+}
+
+async function buildList(ctx: LoopbackCtx, opts: { fresh?: boolean }): Promise<ListResult> {
   const hit = cache.get(ctx.userId);
   if (!opts.fresh && hit && hit.exp > Date.now()) return hit.value;
 
   const failed: ListResult["failed"] = [];
-  const settled = await Promise.all(
-    ADAPTERS.map(async (a) => {
+  // Adapters run a few at a time (loopback also caps in-flight calls process-wide) so listing never floods the DB pool.
+  const settled = await mapLimit(ADAPTERS, 4, async (a) => {
       try {
         return await withTimeout(a.list(ctx), ADAPTER_TIMEOUT_MS);
       } catch (e: any) {
@@ -44,8 +65,7 @@ export async function listPendingApprovals(ctx: LoopbackCtx, opts: { fresh?: boo
         }
         return [] as ApprovalItem[];
       }
-    }),
-  );
+  });
 
   const seen = new Set<string>();
   const items: ApprovalItem[] = [];
