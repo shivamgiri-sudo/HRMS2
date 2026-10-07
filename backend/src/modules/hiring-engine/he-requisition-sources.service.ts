@@ -69,7 +69,8 @@ export function computeShares(rows: RawRow[]): SourceRow[] {
 }
 
 // Per qualified_followup row of the requisition: one 0/1 flag per stage, then summed per origin.
-// he_lead / ats_candidate / he_match are reached by their keys through LEFT JOINs (never scanned); he_message is keyed by
+// he_lead / ats_candidate / he_match are reached by their keys through LEFT JOINs (never scanned; the non-HE tables are compared under an
+// explicit utf8mb4_unicode_ci so a table on another collation cannot fail the read); he_message is keyed by
 // (requisition_id, lead_id) or lead_id and he_call by lead_id, both indexed.
 const STAGES_SQL = `
 SELECT f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
@@ -83,7 +84,7 @@ SELECT f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
                   AND hm.channel = 'whatsapp' AND hm.direction = 'out' AND hm.delivery_status <> 'failed') THEN 1 ELSE 0 END AS whatsapped,
            CASE WHEN qf.stopped_reason = 'replied'
                   OR EXISTS (SELECT 1 FROM he_message hi WHERE hi.lead_id = qf.he_lead_id AND hi.direction = 'in' AND hi.created_at > qf.qualified_at)
-                  OR EXISTS (SELECT 1 FROM meta_lead_messages mm WHERE mm.lead_id = qf.meta_lead_id AND mm.direction = 'inbound' AND mm.created_at > qf.qualified_at)
+                  OR EXISTS (SELECT 1 FROM meta_lead_messages mm WHERE mm.lead_id = qf.meta_lead_id COLLATE utf8mb4_unicode_ci AND mm.direction = 'inbound' AND mm.created_at > qf.qualified_at)
                 THEN 1 ELSE 0 END AS replied,
            CASE WHEN qf.call_state = 'called' OR (m.id IS NOT NULL AND EXISTS (SELECT 1 FROM he_call c WHERE c.lead_id = m.lead_id AND c.match_id = m.id)) THEN 1 ELSE 0 END AS called,
            CASE WHEN m.state IN ('confirmed','arrived','selected') THEN 1 ELSE 0 END AS confirmed,
@@ -94,7 +95,7 @@ SELECT f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
       FROM qualified_followup qf
       LEFT JOIN he_match m ON m.lead_id = qf.he_lead_id AND m.requisition_id = qf.requisition_id
       LEFT JOIN he_lead hl ON hl.id = qf.he_lead_id
-      LEFT JOIN ats_candidate ac ON ac.id = COALESCE(qf.ats_candidate_id, hl.ats_candidate_id)
+      LEFT JOIN ats_candidate ac ON ac.id = COALESCE(qf.ats_candidate_id, hl.ats_candidate_id) COLLATE utf8mb4_unicode_ci
      WHERE qf.requisition_id = ?
   ) f
  GROUP BY f.source_type, f.origin_id`;

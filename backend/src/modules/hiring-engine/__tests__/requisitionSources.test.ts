@@ -158,6 +158,13 @@ describe("getRequisitionSources", () => {
     for (const q of all) for (const m of q.matchAll(/JOIN\s+(?:meta_lead_raw|meta_campaign|job_requisition)\b[^()]*?\bON\b([^\n]*)/g)) expect(m[1]).toContain("COLLATE utf8mb4_unicode_ci");
   });
 
+  it("collates the joins to ats_candidate and meta_lead_messages (non-HE tables can carry another collation)", async () => {
+    await getRequisitionSources(RID, ALL);
+    const stages = sqlSeen().find((q) => q.includes("FROM qualified_followup qf"))!;
+    expect(stages).toMatch(/ac\.id = COALESCE\(qf\.ats_candidate_id, hl\.ats_candidate_id\) COLLATE utf8mb4_unicode_ci/);
+    expect(stages).toMatch(/mm\.lead_id = qf\.meta_lead_id COLLATE utf8mb4_unicode_ci/);
+  });
+
   it("serves a second call within 60 seconds from the cache, and re-reads after it expires", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-07T10:00:00Z"));
