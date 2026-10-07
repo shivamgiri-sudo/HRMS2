@@ -60,9 +60,9 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     expect(form).toContain("The selected budget line is no longer available.");
 
     // The create payload carries what replaces the budget line.
-    expect(form).toContain("isUnbudgeted: isUnbudgetedFlow ? true : undefined,");
-    expect(form).toContain("head: isUnbudgetedFlow ? form.head : undefined,");
-    expect(form).toContain("subHead: isUnbudgetedFlow ? form.subHead : undefined,");
+    expect(form).toContain("isUnbudgeted: isUnbudgetedFlow && !branchSplitActive ? true : undefined,");
+    expect(form).toContain("head: isUnbudgetedFlow || branchSplitActive ? form.head : undefined,");
+    expect(form).toContain("subHead: isUnbudgetedFlow || branchSplitActive ? form.subHead : undefined,");
     expect(form).toContain("unbudgetedCostCentreId");
     // isUnbudgetedExpense is grn-type-agnostic now (Imprest moved onto the same costCentreSplits
     // architecture Vendor already used), so it alone covers the vendor case; the Imprest-only
