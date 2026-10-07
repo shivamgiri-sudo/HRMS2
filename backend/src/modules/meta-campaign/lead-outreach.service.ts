@@ -298,7 +298,7 @@ export async function notifyQualifiedLead(
     let stop = false;
     try { stop = await personOptedOut(mobile10); } catch (e) {
       if (pipelineOwnsSends()) {
-        outcome.skipped.push({ channel: 'all', reason: 'Follow-up lookup failed; pipeline owns sends' });
+        outcome.skipped.push({ channel: 'all', reason: 'Opt-out lookup failed; pipeline owns sends' });
         return outcome;
       }
       console.warn('[meta] opt-out lookup failed', e instanceof Error ? e.message : e);

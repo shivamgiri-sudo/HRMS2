@@ -179,7 +179,7 @@ describe("hardening", () => {
   it("neutralises formula-looking text in CSV and XLSX but not the phone", async () => {
     const r = row({ name: "=cmd()", role: "+1", branchAddress: "@x", referenceId: "-2" });
     const line = callFileCsv([r]).split("\r\n")[1];
-    expect(line).toBe("9876543210,'=cmd(),'+1,08/10/2026,10:30 AM,'@x,'-2".replace("08/10/2026,10:30 AM", "08/10/2026,10:30 AM"));
+    expect(line).toBe("9876543210,'=cmd(),'+1,08/10/2026,10:30 AM,'@x,'-2");
     const [, xlsx] = await buildCallFiles([r], { stamp: "s" });
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(xlsx.content);

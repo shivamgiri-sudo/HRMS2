@@ -19,8 +19,8 @@ import { metaCampaignService } from "../modules/meta-campaign/meta-campaign.serv
 import { isMetaConfigured } from "../modules/meta-campaign/meta-api.client.js";
 import { notifyQualifiedLead } from "../modules/meta-campaign/lead-outreach.service.js";
 import { reconcileDeliveryStatuses } from "../modules/meta-campaign/meta-messages.service.js";
-import { enqueueMetaLeadFollowup } from "../modules/hiring-engine/qualified-followup.service.js";
-import { pipelineOwnsSends } from "../modules/hiring-engine/qualified-followup.policy.js";
+import { enqueueMetaLeadFollowup, followupHasLiveRow } from "../modules/hiring-engine/qualified-followup.service.js";
+import { followupSkipSql, pipelineOwnsSends } from "../modules/hiring-engine/qualified-followup.policy.js";
 
 let scheduler: NodeJS.Timeout | undefined;
 let runInFlight = false;
@@ -229,12 +229,20 @@ export async function runMetaLeadSyncNow(): Promise<MetaSyncNowResult> {
   return runSyncCycle();
 }
 
+// Live: leads already handed to the pipeline (open live row) are not re-selected every sync.
+const LIVE_ROW_SKIP = `
+        AND NOT EXISTS (SELECT 1 FROM qualified_followup qf
+                         WHERE qf.mode_at_enqueue = 'live' AND qf.stopped_reason IS NULL
+                           AND (qf.meta_lead_id = meta_lead_raw.id COLLATE utf8mb4_unicode_ci
+                                OR (qf.mobile10 = RIGHT(REGEXP_REPLACE(meta_lead_raw.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci
+                                    AND qf.requisition_id = meta_lead_raw.requisition_id COLLATE utf8mb4_unicode_ci)))`;
+
 export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped: number; failed: number }> {
   const [leads] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM meta_lead_raw
       WHERE screening_result = 'qualified'
         AND notification_sent_at IS NULL
-        AND created_at >= ?
+        AND created_at >= ?${pipelineOwnsSends() ? LIVE_ROW_SKIP : ""}
       ORDER BY created_at ASC
       LIMIT 100`,
     [notifyWindowStart()]
@@ -253,7 +261,9 @@ export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped
       // result (invalid, not_qualified, a throw) falls through to the old flow, whose own guard fails closed on a lookup error.
       if (pipelineOwnsSends()) {
         const enq = await enqueueMetaLeadFollowup(lead.id, "live").catch(() => null);
-        if (enq && (enq.status === "enqueued" || enq.status === "exists")) {
+        // `exists` may be a dry_run/test row the live worker never sends: hand over only when a live row exists (a lookup error falls to the old flow).
+        const handed = enq?.status === "enqueued" || (enq?.status === "exists" && await followupHasLiveRow(lead.id).catch(() => false));
+        if (enq && handed) {
           skipped++;
           console.log(`[meta-sync] Lead ${lead.id} handed to the follow-up pipeline (${enq.status})`);
           continue;

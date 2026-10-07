@@ -75,6 +75,22 @@ describe("collectDailyReport", () => {
     expect(d.waFailuresByCode[0]).toMatchObject({ code: "132018", count: 2 });
     expect(d.date).toBe("2026-10-07");
   });
+  it("caps skip examples at 10 per reason while keeping the full count", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.includes("SELECT COUNT(*) AS n FROM") && q.includes("opted_out")) return [[{ n: 25 }]];
+      if (q.includes("AS name") && q.includes("opted_out")) {
+        const m = q.match(/LIMIT (\d+)/);
+        return [Array.from({ length: Math.min(25, Number(m?.[1] ?? 25)) }, (_, i) => ({ name: `N${i}`, phone: "9876543210", req: "R1" }))];
+      }
+      return [[]];
+    });
+    const d = await collectDailyReport(new Date("2026-10-06T08:30:00+05:30"), now, "live");
+    const s = d.skipped.find((x) => x.reason === "opted_out")!;
+    expect(s.count).toBe(25);
+    expect(s.examples).toHaveLength(10);
+    expect(execute.mock.calls.some(([q]) => String(q).includes("AS name") && /LIMIT 10\b/.test(String(q)))).toBe(true);
+  });
   it("uses explicit collation on string joins", async () => {
     execute.mockResolvedValue([[]]);
     await collectDailyReport(new Date("2026-10-06T08:30:00+05:30"), now, "live");

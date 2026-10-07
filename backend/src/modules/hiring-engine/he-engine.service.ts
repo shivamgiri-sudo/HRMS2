@@ -189,10 +189,10 @@ export async function runFollowUps(o: { dryRun: boolean }): Promise<{ whatsapp: 
 async function whatsappFollowUps(dryRun: boolean, c: Counts, max: number): Promise<void> {
   const reqOptIn = await whatsappRequiresOptIn();
   const gap = cadenceGapMin();
+  const skip = followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" });
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.slot_at, e.created_at AS email_at, (SELECT best_hour_ist FROM he_lead_insight i WHERE i.lead_id = m.lead_id) AS best_hour FROM he_match m
-       JOIN he_lead l ON l.id = m.lead_id
-       JOIN he_message e ON e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = ? AND e.direction = 'out' AND e.delivery_status <> 'failed'
+${skip ? "       JOIN he_lead l ON l.id = m.lead_id\n" : ""}       JOIN he_message e ON e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = ? AND e.direction = 'out' AND e.delivery_status <> 'failed'
       WHERE m.state = 'invited' AND m.slot_at > NOW() AND e.created_at <= DATE_SUB(NOW(), INTERVAL ? MINUTE)
         AND NOT EXISTS (SELECT 1 FROM he_message w WHERE w.lead_id = m.lead_id AND w.direction = 'out' AND w.template_key LIKE 'he_walkin_invite:%' AND w.created_at >= e.created_at)
         AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at >= e.created_at)
@@ -201,7 +201,7 @@ async function whatsappFollowUps(dryRun: boolean, c: Counts, max: number): Promi
           -- owner-approved: people who applied for this role are messaged about it; anyone who revoked or opted out never is
           OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent k2 WHERE k2.lead_id = m.lead_id AND k2.consent_type = 'whatsapp_contact' AND k2.revoked_at IS NOT NULL)
               AND NOT EXISTS (SELECT 1 FROM he_lead lo WHERE lo.id = m.lead_id AND lo.status = 'opted_out'))
-        )${followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" })}
+        )${skip}
       ORDER BY m.slot_at LIMIT ?`, [INVITE_EMAIL_KEY, gap, reqOptIn ? 1 : 0, max]);
   for (const r of rows) {
     if (dryRun) { c.dryRun++; continue; }

@@ -93,13 +93,22 @@ export async function followupSummary(): Promise<Array<{ sourceType: SourceType;
  * the caller decides whether to fail closed (live mode) or open.
  */
 export async function followupEnrolled(metaLeadId: string): Promise<boolean> {
+  return liveRowFor(metaLeadId, true);
+}
+
+/** True when a live-tagged row (open or already stopped) exists for this lead's person and requisition. dry_run/test rows do not count. Errors are rethrown. */
+export async function followupHasLiveRow(metaLeadId: string): Promise<boolean> {
+  return liveRowFor(metaLeadId, false);
+}
+
+async function liveRowFor(metaLeadId: string, openOnly: boolean): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT 1 AS hit
        FROM meta_lead_raw r
        LEFT JOIN meta_campaign c ON c.id = r.campaign_id
       WHERE r.id = ?
         AND EXISTS (SELECT 1 FROM qualified_followup qf
-                     WHERE qf.mode_at_enqueue = 'live' AND qf.stopped_reason IS NULL
+                     WHERE qf.mode_at_enqueue = 'live'${openOnly ? " AND qf.stopped_reason IS NULL" : ""}
                        AND (qf.meta_lead_id = r.id COLLATE utf8mb4_unicode_ci
                             OR (qf.mobile10 = RIGHT(REGEXP_REPLACE(r.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci
                                 AND qf.requisition_id = COALESCE(r.requisition_id, c.requisition_id) COLLATE utf8mb4_unicode_ci)))
