@@ -34,12 +34,18 @@ export async function runHealthAlertOnce(prev: Map<string, number> = alerted, no
     if (fresh.length === 0) return;
     const text = fresh.map((c) => `${c.label}: ${c.detail}`).join("\n");
     const html = `<ul>${fresh.map((c) => `<li><b>${esc(c.label)}</b>: ${esc(c.detail)}</li>`).join("")}</ul>`;
-    await emailService.send({
-      to: process.env.PIPELINE_HEALTH_ALERT_TO || DEFAULT_TO,
-      subject: `[HRMS] Pipeline health: ${fresh.length} critical`,
-      html,
-      text,
-    });
+    try {
+      await emailService.send({
+        to: process.env.PIPELINE_HEALTH_ALERT_TO || DEFAULT_TO,
+        subject: `[HRMS] Pipeline health: ${fresh.length} critical`,
+        html,
+        text,
+      });
+    } catch (err) {
+      // Not delivered: forget these keys so the next run retries instead of waiting 6 hours.
+      for (const c of fresh) prev.delete(c.key);
+      throw err;
+    }
   } catch (err) {
     logger.warn({ err: (err as Error).message }, "[pipeline-health] alert failed");
   }

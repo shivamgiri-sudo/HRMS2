@@ -16,6 +16,9 @@ vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
   return { ...original, requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); } };
 });
 
+const { warnLog } = vi.hoisted(() => ({ warnLog: vi.fn() }));
+vi.mock("../../../logger.js", () => ({ logger: { warn: warnLog, error: vi.fn(), info: vi.fn(), debug: vi.fn() } }));
+
 import { heRouter } from "../he.routes.js";
 import { runHealthAlertOnce, shouldAlert, startPipelineHealthAlerts, stopPipelineHealthAlerts } from "../pipeline-health.cron.js";
 import type { HealthCheck } from "../he-pipeline-health.js";
@@ -60,6 +63,30 @@ describe("alert scheduler", () => {
     expect(arg.subject).toBe("[HRMS] Pipeline health: 1 critical");
     expect(arg.text).toContain("L-a");
     expect(arg.text).toContain("D-a");
+  });
+});
+
+describe("alert retry semantics", () => {
+  beforeEach(() => { send.mockReset(); warnLog.mockReset(); getPipelineHealth.mockReset();
+    getPipelineHealth.mockResolvedValue({ generatedAt: "x", level: "critical", checks: [crit("a")] }); });
+  it("failed send is logged, leaves key unrecorded, and next run retries", async () => {
+    const prev = new Map<string, number>();
+    send.mockRejectedValueOnce(new Error("smtp blip"));
+    await runHealthAlertOnce(prev, 0);
+    expect(warnLog).toHaveBeenCalled();
+    expect(prev.has("a")).toBe(false);
+    send.mockResolvedValue({});
+    await runHealthAlertOnce(prev, 30 * 60 * 1000);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+  it("successful send dedupes for 6h", async () => {
+    const prev = new Map<string, number>();
+    send.mockResolvedValue({});
+    await runHealthAlertOnce(prev, 0);
+    await runHealthAlertOnce(prev, 3 * 60 * 60 * 1000);
+    expect(send).toHaveBeenCalledTimes(1);
+    await runHealthAlertOnce(prev, 6 * 60 * 60 * 1000);
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });
 
