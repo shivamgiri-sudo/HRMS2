@@ -64,3 +64,20 @@ describe("where the person lives decides", () => {
     expect(RESIDENCE_SQL).not.toContain("branch_name");
   });
 });
+
+import { locationVerdict } from "../he-location-match.js";
+describe("location verdict for the old Meta outreach (refuse only a clear 'elsewhere')", () => {
+  const v = (t: string | null, b = "NOIDA-2", c = "Noida", s: string | null = "Uttar Pradesh") => locationVerdict(t, b, c, s);
+  it("Gujarat for a Noida branch is elsewhere", () => expect(v("Gujarat")).toBe("elsewhere"));
+  it("Ahmedabad, Surat, Mumbai for a Noida branch are elsewhere", () => { expect(v("Ahmedabad")).toBe("elsewhere"); expect(v("surat gujarat")).toBe("elsewhere"); expect(v("Andheri, Mumbai")).toBe("elsewhere"); });
+  it("'No Noida location' is elsewhere", () => expect(v("No Noida location")).toBe("elsewhere"));
+  it("Noida area answers are local", () => { expect(v("Sector 62 Noida")).toBe("local"); expect(v("Ghaziabad")).toBe("local"); expect(v("New Delhi")).toBe("local"); });
+  it("a neighbourhood or no answer is never refused", () => { expect(v("Sector 62")).toBe("unknown"); expect(v("Yas Navrangpura,")).toBe("unknown"); expect(v(null)).toBe("unknown"); expect(v("  ")).toBe("unknown"); });
+  it("an Ahmedabad branch does not refuse a Gujarat answer (its own state)", () => {
+    expect(locationVerdict("Gujarat", "AHMEDABAD-JALDARSHAN", "Ahmedabad", "Gujarat")).toBe("unknown");
+    expect(locationVerdict("Ahmedabad Kushinagar", "AHMEDABAD-JALDARSHAN", "Ahmedabad", "Gujarat")).toBe("local");
+    expect(locationVerdict("Surat", "AHMEDABAD-JALDARSHAN", "Ahmedabad", "Gujarat")).toBe("elsewhere"); // a different city, even in the same state
+    expect(locationVerdict("Delhi", "AHMEDABAD-JALDARSHAN", "Ahmedabad", "Gujarat")).toBe("elsewhere");
+  });
+  it("both places named: own area wins", () => expect(v("lives in Gujarat, works near Noida")).toBe("local"));
+});

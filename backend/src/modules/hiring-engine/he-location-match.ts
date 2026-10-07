@@ -63,3 +63,31 @@ export function placedInBranchArea(locationText: string | null | undefined, bran
   const text = String(locationText ?? "").toLowerCase();
   return Boolean(re && text && new RegExp(re, "i").test(text) && !(neg && new RegExp(neg, "i").test(text)));
 }
+
+// Places that are clearly somewhere else. Only used to REFUSE a lead whose own answer names such a place; an answer that names no known place
+// (a neighbourhood, a sector, a landmark) is never refused, so a valid local lead is not lost to an unknown spelling.
+const OTHER_STATES = ["gujarat", "maharashtra", "rajasthan", "punjab", "karnataka", "tamil nadu", "kerala", "west bengal", "bihar", "jharkhand", "odisha", "madhya pradesh", "telangana",
+  "andhra pradesh", "assam", "chhattisgarh", "uttarakhand", "himachal", "goa", "jammu", "kashmir"];
+const OTHER_CITIES = ["surat", "vadodara", "baroda", "rajkot", "bhavnagar", "indore", "bhopal", "nagpur", "nashik", "patna", "ranchi", "bhubaneswar", "chandigarh", "ludhiana", "amritsar", "kanpur", "agra",
+  "varanasi", "coimbatore", "kochi", "cochin", "vizag", "visakhapatnam", "jodhpur", "udaipur", "dehradun", "guwahati", "raipur", "mysore", "mangalore", "madurai", "thiruvananthapuram", "meerut", "gwalior"];
+
+export type LocationVerdict = "local" | "elsewhere" | "unknown";
+
+/**
+ * Where does this answer put the person relative to a branch? local = names the branch's area; elsewhere = says they are not there ("No Noida location")
+ * or names a different known place (Gujarat for a Noida branch); unknown = no usable place (no text, or only a neighbourhood). Only "elsewhere" is a reason to refuse.
+ */
+export function locationVerdict(text: string | null | undefined, branchName: string | null | undefined, branchCity: string | null | undefined, branchState?: string | null): LocationVerdict {
+  const t = String(text ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!t) return "unknown";
+  const own = branchLocationTokens(branchName, branchCity);
+  const neg = negationRegex(own);
+  if (neg && new RegExp(neg, "i").test(t)) return "elsewhere";
+  const ownRe = locationRegex(own);
+  if (ownRe && new RegExp(ownRe, "i").test(t)) return "local";
+  const state = clean(branchState);
+  const ownRegion = new Set([...own, state].filter(Boolean));
+  const places = [...REGIONS.flat(), ...OTHER_STATES, ...OTHER_CITIES].filter((p) => !ownRegion.has(p) && !(state && (p === state || state.includes(p) || p.includes(state))));
+  const re = locationRegex(places);
+  return re && new RegExp(re, "i").test(t) ? "elsewhere" : "unknown";
+}

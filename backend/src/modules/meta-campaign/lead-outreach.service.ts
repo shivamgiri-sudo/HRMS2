@@ -34,6 +34,7 @@ import { triggerVapiCallWithInlineScript, isVapiConfigured } from './vapi-voiceb
 import { sendWhatsAppNotification, isWhatsAppWebConfigured } from './whatsapp-web.provider.js';
 import { sendShortlistMessage, isWassengerConfigured } from './wassenger.provider.js';
 import { saveMessage as saveLeadMessage } from './meta-messages.service.js';
+import { locationVerdict } from '../hiring-engine/he-location-match.js';
 import { metaOutreachBlockedByEngine } from '../hiring-engine/he-campaign-config.service.js';
 import { assignInterviewSlot } from './interview-slot.service.js';
 import type { InterviewSlot } from './interview-slot.service.js';
@@ -181,7 +182,7 @@ ${salary ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius
 
 async function loadLeadContext(
   leadId: string
-): Promise<{ ctx: LeadContext; qualified: boolean; alreadySent: boolean; closedReason: string | null } | null> {
+): Promise<{ ctx: LeadContext; qualified: boolean; alreadySent: boolean; closedReason: string | null; locationText: string; branchState: string | null } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ml.id, ml.parsed_name, ml.parsed_phone, ml.parsed_email,
             ml.screening_result, ml.notification_sent_at,
@@ -189,11 +190,13 @@ async function loadLeadContext(
             jr.salary_min, jr.salary_max,
             jr.approval_status, jr.active_status, jr.closed_at,
             jr.requested_headcount, jr.fulfilled_headcount,
+            ml.parsed_location, ac.current_address, ac.permanent_address, bm.state AS branch_state,
             bm.address AS branch_address, bm.city AS branch_city,
             bm.latitude AS branch_lat, bm.longitude AS branch_lng
        FROM meta_lead_raw ml
        LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
        LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
+       LEFT JOIN ats_candidate ac ON ac.id = ml.ats_candidate_id
       WHERE ml.id = ? LIMIT 1`,
     [leadId]
   );
@@ -217,6 +220,8 @@ async function loadLeadContext(
       salaryMax: row.salary_max !== null ? Number(row.salary_max) : null,
     },
     qualified: row.screening_result === 'qualified',
+    locationText: [row.parsed_location, row.current_address, row.permanent_address].filter(Boolean).join(' '),
+    branchState: (row.branch_state as string | null) ?? null,
     alreadySent: Boolean(row.notification_sent_at),
     closedReason: requisitionClosedReason({
       approvalStatus: (row.approval_status as string | null) ?? null,
@@ -298,6 +303,15 @@ export async function notifyQualifiedLead(
   if (loaded.closedReason) {
     outcome.skipped.push({ channel: 'all', reason: `Outreach refused: ${loaded.closedReason}` });
     return outcome;
+  }
+  // Location: a lead whose own answer says they are elsewhere ("Gujarat" for a Noida branch, "No Noida location") is not invited to walk in. An answer that
+  // names no known place (a neighbourhood) or no answer at all passes: the Meta ad is already geo-targeted. A recruiter's explicit force overrides.
+  if (!options.force && loaded.ctx.branch) {
+    const v = locationVerdict(loaded.locationText, loaded.ctx.branch, loaded.ctx.branchCity, loaded.branchState);
+    if (v === 'elsewhere') {
+      outcome.skipped.push({ channel: 'all', reason: `Outreach refused: the lead's location ("${loaded.locationText.slice(0, 60)}") is outside the ${loaded.ctx.branch} area` });
+      return outcome;
+    }
   }
   // Re-notifying is a real recruiter need, but it must be explicit. Without this guard a webhook
   // redelivery or a page refresh could message the same candidate repeatedly.
