@@ -1320,6 +1320,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2132_approval_email_action.sql", // Registered 2026-10-07. approval_email_action: hashed single-use tokens behind the approve/decline buttons in approval emails.
   "migrations/2133_qualified_followup.sql", // Registered 2026-10-07. qualified_followup (per mobile+requisition email/WhatsApp/call schedule and outcomes) and qualified_followup_call_batch. CREATE TABLE IF NOT EXISTS only, additive.
   "migrations/2134_qualified_followup_attempts.sql", // Registered 2026-10-07. qualified_followup: per-channel attempts/errors, wa_message_id, missing_details, step_claimed_at, test row tag, idx_qfu_callfile. information_schema-guarded, re-runnable.
+  "migrations/2135_requisition_streams.sql", // Registered 2026-10-07. requisition_stream (+ _day, _event, _plan, _match) and qualified_followup.owner. CREATE TABLE IF NOT EXISTS plus an information_schema-guarded ALTER, re-runnable.
 ];
 
 export type MigrationHealth = {
