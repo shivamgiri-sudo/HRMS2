@@ -68,7 +68,7 @@ const isRealDay = (x: unknown): x is string => {
   return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === x; // the round trip rejects 2026-02-30
 };
 /** Fractions to 4 decimals: the response carries rates for display, and a raw float would put long digit runs in the JSON. */
-const tidy = <T>(v: T): T => {
+export const tidy = <T>(v: T): T => {
   if (typeof v === "number") return (Number.isInteger(v) ? v : Math.round(v * 10_000) / 10_000) as T;
   if (Array.isArray(v)) return v.map(tidy) as T;
   if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, tidy(x)])) as T;

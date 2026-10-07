@@ -10,7 +10,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { branchScopeOf, isIsoDate } from "./he-stream.routes.js";
-import { getDriveAnalytics, MAX_AHEAD_DAYS, MAX_SPAN_DAYS } from "./he-drive-analytics.service.js";
+import { getDriveAnalytics, MAX_AHEAD_DAYS, MAX_SPAN_DAYS, tidy } from "./he-drive-analytics.service.js";
 import { getDrivePlan } from "./he-drive-plan.service.js";
 import { followupWorkerStatus } from "./qualified-followup.worker.js";
 import { followupMode } from "./qualified-followup.schedule.js";
@@ -83,7 +83,7 @@ export function registerCommandRoutes(r: Router, roles: { view: readonly string[
       if (d != null && (typeof d !== "string" || !/^\d{1,2}$/.test(d) || Number(d) < 1 || Number(d) > 14)) return bad(res, "Days must be a whole number from 1 to 14");
       const data = await getDrivePlan({ requisitionId: rid, from: one(req.query.from) ?? null, days: d == null ? null : Number(d) }, await branchScopeOf(req as AuthenticatedRequest));
       if (!data) return void res.status(404).json({ success: false, message: "Requisition not found" });
-      res.json({ success: true, data });
+      res.json({ success: true, data: tidy(data) }); // fill and rates as 4-decimal fractions, like the analytics response
     } catch (err) { fail(res, err, "Could not load the plan", "plan"); }
   });
 

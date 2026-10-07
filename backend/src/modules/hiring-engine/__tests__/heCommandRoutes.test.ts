@@ -120,6 +120,12 @@ describe("GET /drive-plan", () => {
     expect((await request(app).get(`/api/he/drive-plan?requisitionId=${RID}`)).status).toBe(404);
     expect((await request(appFor("employee")).get(`/api/he/drive-plan?requisitionId=${RID}`)).status).toBe(403);
   });
+  it("fractions go out at 4 decimals (no long digit runs in the JSON), whole numbers untouched", async () => {
+    vi.mocked(getDrivePlan).mockResolvedValue({ calendar: [{ planned: 12, fill: 24 / 90 }], rates: [{ rate: 2 / 3, invited: 30 }], label: "x" } as never);
+    const r = await request(appFor("ceo")).get(`/api/he/drive-plan?requisitionId=${RID}`);
+    expect(r.body.data).toEqual({ calendar: [{ planned: 12, fill: 0.2667 }], rates: [{ rate: 0.6667, invited: 30 }], label: "x" });
+    noLeak(r.body);
+  });
   it("500 is generic", async () => {
     vi.mocked(getDrivePlan).mockRejectedValue(new Error("SELECT boom 1234567890"));
     const r = await request(appFor("ceo")).get(`/api/he/drive-plan?requisitionId=${RID}`);
