@@ -16,6 +16,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { logger } from "../../logger.js";
 import { STAGE_FLAGS_SQL, STAGE_FROM_SQL, computeShares, readSection, type SourceCounts, type SourceRow } from "./he-requisition-sources.service.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import type { StreamStatus } from "./requisition-stream.service.js";
@@ -29,6 +30,11 @@ const BATCH = 200;
 const COUNT_KEYS: ReadonlyArray<keyof SourceCounts> = ["leads", "qualified", "emailed", "whatsapped", "replied", "confirmed", "called", "arrived", "selected", "joined"];
 const TYPE_ORDER: Record<SourceType, number> = { meta_live: 0, meta_old: 1, he: 2 };
 const POOL_LABEL = "Pool: ATS history";
+const isRealDay = (x: unknown): x is string => {
+  if (typeof x !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(x)) return false;
+  const t = Date.parse(`${x}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === x;
+};
 const ph = (n: number): string => Array(n).fill("?").join(",");
 
 const stagesSql = (n: number): string => `
@@ -76,7 +82,15 @@ export async function getSourcesForRequisitions(ids: string[], w: DayWindow): Pr
   const unique = [...new Set(ids)];
   if (!unique.length) return { byRequisition: [], partial: false, failedSections: [] };
   const failed: string[] = [];
-  const dt = [`${w.from} 00:00:00`, `${addDays(w.to, 1)} 00:00:00`];
+  // Bounds first and inside a try: a malformed date must flag the window, never throw (addDays raises RangeError on an invalid date).
+  let dt: string[];
+  try {
+    if (!isRealDay(w.from) || !isRealDay(w.to)) throw new RangeError("window");
+    dt = [`${w.from} 00:00:00`, `${addDays(w.to, 1)} 00:00:00`];
+  } catch {
+    logger.error({ section: "window", code: "invalid_window" }, "[he-sources] section failed");
+    return { byRequisition: unique.map((requisitionId) => ({ requisitionId, rows: [] })), partial: true, failedSections: ["window"] };
+  }
   const batches: string[][] = [];
   for (let i = 0; i < unique.length; i += BATCH) batches.push(unique.slice(i, i + BATCH));
 
@@ -91,7 +105,7 @@ export async function getSourcesForRequisitions(ids: string[], w: DayWindow): Pr
   const [streams, stages, matchLeads, campaigns] = await Promise.all([
     run("streams", streamsSql, [], true),
     run("stages", stagesSql, dt, true),
-    run("driveLeads", matchLeadsSql, [w.from, w.to], false),
+    run("driveLeads", matchLeadsSql, [w.from, w.to], true),
     run("campaigns", campaignsSql, [], false),
   ]);
   const owner = new Map<string, string>(); // campaign id -> requisition id

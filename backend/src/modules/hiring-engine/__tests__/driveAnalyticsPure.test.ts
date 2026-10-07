@@ -42,6 +42,16 @@ describe("stageCountsByType", () => {
   });
 });
 
+describe("unknown stream type (M6)", () => {
+  it("is ignored by stageCountsByType and dailySeries", () => {
+    const bad = { driveId: "d1", date: "2026-10-01", status: "active", wanted: 5, streamId: "s", streamType: "bogus" as never, lined: 3, invited: 3, confirmed: 2, arrived: 1, noShow: 0, declined: 0 };
+    const out = stageCountsByType([], [bad], []);
+    expect(Object.keys(out)).toEqual(["meta_live", "meta_old", "he"]);
+    expect(out.he.invited).toBe(0);
+    expect(dailySeries([bad], "2026-10-01", "2026-10-01")[0].byType.he.invited).toBe(0);
+  });
+});
+
 describe("conversions", () => {
   it("is all null for zeros", () => {
     const c = conversions(zeroStages());

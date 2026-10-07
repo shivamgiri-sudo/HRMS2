@@ -56,10 +56,29 @@ describe("under_target", () => {
     expect(i.evidence).toEqual([{ label: "Target arrivals", value: "20" }, { label: "Projected arrivals", value: "8" }]);
   });
   it("warn between half and 90 percent", () => expect(ofRule(row(20, 15), "under_target")[0]).toMatchObject({ severity: "warn", effect: { value: 5 } }));
+  it("fires just inside the margin: 17.9 of 20 is warn with effect 2.1 (M7)", () => {
+    expect(ofRule(row(20, 17.9), "under_target")[0]).toMatchObject({ severity: "warn", effect: { value: 2.1, unit: "arrivals_per_day" } });
+  });
+  it("skips a row whose projected is not a finite number (M4)", () => {
+    for (const p of [Number.NaN, Number.POSITIVE_INFINITY, undefined, null, "8"]) expect(ofRule(row(20, p as never), "under_target")).toEqual([]);
+  });
   it("does not fire inside the margin or at target 0", () => {
     expect(ofRule(row(20, 18.5), "under_target")).toEqual([]);
     expect(ofRule(row(20, 18), "under_target")).toEqual([]);
     expect(ofRule(row(0, 0), "under_target")).toEqual([]);
+  });
+});
+
+describe("window days evidence (M3)", () => {
+  it("adds the days of the window to every per-day effect, but not to under_target", () => {
+    const f = mod((x) => {
+      x.windowDays = 28;
+      x.types.he = { current: { ...zeroStages(), invited: 100, confirmed: 20 }, previous: { ...zeroStages(), invited: 100, confirmed: 60 } };
+      x.tomorrow = [{ requisitionId: "r1", code: "R-1", date: "2026-10-15", target: 20, projected: 8, recommended: [] }];
+    });
+    const weak = ofRule(f, "weak_stage")[0];
+    expect(weak.evidence).toContainEqual({ label: "Days in the window", value: "28" });
+    expect(ofRule(f, "under_target")[0].evidence.map((e) => e.label)).not.toContain("Days in the window");
   });
 });
 
@@ -71,7 +90,7 @@ describe("weak_stage", () => {
   it("fires versus the previous period", () => {
     const [i] = ofRule(heFacts(30), "weak_stage");
     expect(i).toMatchObject({ id: "weak_stage:he:all:confirmed_arrived", severity: "warn", sourceType: "he", action: { type: "open_section", section: "he" }, effect: { value: 0.3, unit: "arrivals_per_day" } });
-    expect(i.evidence.map((e) => e.value)).toEqual(["20%", "40%", "20"]);
+    expect(i.evidence.map((e) => e.value)).toEqual(["20%", "40%", "20", "14"]);
   });
   it("needs previous denominator >= min", () => expect(ofRule(heFacts(19), "weak_stage")).toEqual([]));
   it("fires versus the best other source with replies unit", () => {
@@ -257,6 +276,14 @@ describe("loadInsightThresholds", () => {
     expect(r).toEqual({ ...INSIGHT_DEFAULTS, "insight.min_sample": 30, "insight.weekday_lift": 0.2 });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(String(execute.mock.calls[0][0])).toBe("SELECT param_key, value FROM he_model_param WHERE param_key LIKE 'insight.%'");
+  });
+  it("trims, and rejects empty strings and non-decimal formats before Number() (M5)", async () => {
+    execute.mockResolvedValue([[
+      { param_key: "insight.min_sample", value: " 30 " }, { param_key: "insight.weekday_lift", value: "   " }, { param_key: "insight.wa_fail_min", value: "0x10" },
+      { param_key: "insight.distance_gap", value: "1e2" }, { param_key: "insight.language_gap", value: "0.25" }, { param_key: "insight.weak_stage_margin", value: "Infinity" },
+      { param_key: "insight.empty_slot_share", value: "1_0" }, { param_key: "insight.overbook_margin", value: "+0.5" },
+    ]]);
+    expect(await loadInsightThresholds()).toEqual({ ...INSIGHT_DEFAULTS, "insight.min_sample": 30, "insight.language_gap": 0.25 });
   });
   it("defaults when the query rejects (missing table) and on empty rows", async () => {
     execute.mockRejectedValueOnce(Object.assign(new Error("secret driver text"), { code: "ER_NO_SUCH_TABLE" }));

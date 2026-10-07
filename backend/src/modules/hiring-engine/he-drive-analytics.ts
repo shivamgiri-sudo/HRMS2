@@ -34,6 +34,7 @@ export function stageCountsByType(sources: SourceRow[], agg: DriveAggRow[], outc
   }
   for (const r of agg) {
     const t = out[r.streamType ?? "he"];
+    if (!t) continue;
     t.invited += num(r.invited); t.confirmed += num(r.confirmed); t.arrived += num(r.arrived);
     t.noShow += num(r.noShow); t.declined += num(r.declined);
   }
@@ -69,6 +70,7 @@ export function dailySeries(agg: DriveAggRow[], from: string, to: string): Daily
     if (!p) continue;
     if (!seen.has(r.driveId)) { seen.add(r.driveId); p.target += num(r.wanted); }
     const b = p.byType[r.streamType ?? "he"];
+    if (!b) continue;
     b.invited += num(r.invited); b.confirmed += num(r.confirmed); b.arrived += num(r.arrived);
   }
   return dates.map((d) => points.get(d)!);

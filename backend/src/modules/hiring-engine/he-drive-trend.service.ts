@@ -19,6 +19,7 @@ import type { SourceType } from "./qualified-followup.types.js";
 import { loadActiveStreams, loadStreamsOfType, toWindow, type StreamRow } from "./requisition-stream.service.js";
 import { addDays, isSunday, istToday, windowDays } from "./requisition-stream.window.js";
 import type { DriveDayRow } from "./he-campaign-dashboard.service.js";
+import type { TaggedAggRow } from "./he-drive-analytics.js";
 
 export interface DriveTotals { wanted: number; lined: number; invited: number; confirmed: number; arrived: number; noShow: number; declined: number; showRate: number }
 export interface WindowInfo { from: string; to: string; dayIndex: number; days: number }
@@ -81,7 +82,7 @@ const groupsSql = (n: number, streams: boolean): string => `SELECT jr.id AS requ
 
 const noTable = (err: unknown): boolean => (err as { code?: string })?.code === "ER_NO_SUCH_TABLE";
 /** The stream-attributed read; before 2135 is applied the stream-free form (a missing table is not a failed section). */
-async function readAgg(sqlOf: (streams: boolean) => string, params: unknown[]): Promise<RowDataPacket[]> {
+export async function readAgg(sqlOf: (streams: boolean) => string, params: unknown[]): Promise<RowDataPacket[]> {
   try { return (await db.execute<RowDataPacket[]>(sqlOf(true), params))[0]; } catch (err) {
     if (!noTable(err)) throw err;
     return (await db.execute<RowDataPacket[]>(sqlOf(false), params))[0];
@@ -185,6 +186,15 @@ export function buildDriveGroups(input: DriveGroupInput[]): DriveGroup[] {
     }
   }
   return out;
+}
+
+/** Drive state buckets of many requisitions over a window, one statement per 200 ids (same SQL and parsing as the groups read). Throws on failure. */
+export async function readDriveAggRows(ids: string[], from: string, to: string): Promise<TaggedAggRow[]> {
+  const unique = [...new Set(ids)];
+  const batches: string[][] = [];
+  for (let i = 0; i < unique.length; i += 200) batches.push(unique.slice(i, i + 200));
+  const parts = await Promise.all(batches.map((b) => readAgg((st) => groupsSql(b.length, st), [from, to, ...b])));
+  return parts.flat().filter((r) => r.id != null).map((r) => ({ ...parseAgg(r), requisitionId: String(r.requisition_id), branch: String(r.branch_name) }));
 }
 
 // Never the driver message (it can echo SQL and values): only the section and the error code.

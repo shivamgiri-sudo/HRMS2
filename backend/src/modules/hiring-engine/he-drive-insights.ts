@@ -98,6 +98,7 @@ const mk = (m: Make): DriveInsight => {
 function underTarget({ f, t }: Ctx): DriveInsight[] {
   const out: DriveInsight[] = [];
   for (const r of f.tomorrow ?? []) {
+    if (typeof r.projected !== "number" || !Number.isFinite(r.projected)) continue; // unknown projection is not "zero arrivals"
     const target = num(r.target), projected = num(r.projected);
     if (!(target > 0) || !(projected < target * (1 - t["insight.under_target_margin"]))) continue;
     const rec = (r.recommended ?? []).filter((x) => num(x.invites) > 0).map((x) => `${Math.round(num(x.invites))} more invites from ${TYPE_LABEL[x.sourceType] ?? "a source"}`);
@@ -384,6 +385,8 @@ export function evaluateInsights(f: InsightFacts, t: InsightThresholds): DriveIn
   const ctx: Ctx = { f, t, D: Math.max(1, num(f.windowDays)), min, ok: (n) => n > 0 && n >= min };
   const all = [underTarget, weakStage, contactTiming, reminderGap, distance, channelGap, language, overbooking, streamDry, bestSource, weekday].flatMap((r) => r(ctx));
   const seen = new Set<string>();
+  // Every per-day effect divides by D, so the window length is part of its evidence (under_target is not per-day-scaled).
+  for (const i of all) if (i.rule !== "under_target" && i.effect?.unit.endsWith("_per_day")) i.evidence.push({ label: "Days in the window", value: str(ctx.D) });
   return all
     .filter((i) => (seen.has(i.id) ? false : (seen.add(i.id), true)))
     .sort((a, b) => RANK[a.severity] - RANK[b.severity] || (b.effect?.value ?? -1) - (a.effect?.value ?? -1) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))

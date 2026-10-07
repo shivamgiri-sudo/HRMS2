@@ -7,6 +7,8 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { INSIGHT_DEFAULTS, type InsightKey, type InsightThresholds } from "./he-drive-insights.js";
 
+const DECIMAL = /^\d+(\.\d+)?$/;
+
 export async function loadInsightThresholds(): Promise<InsightThresholds> {
   const t: InsightThresholds = { ...INSIGHT_DEFAULTS };
   try {
@@ -14,7 +16,9 @@ export async function loadInsightThresholds(): Promise<InsightThresholds> {
     for (const r of rows ?? []) {
       const key = String(r.param_key);
       if (!Object.prototype.hasOwnProperty.call(INSIGHT_DEFAULTS, key) || r.value === null || r.value === undefined || r.value === "") continue;
-      const v = Number(r.value);
+      const raw = String(r.value).trim();
+      if (!DECIMAL.test(raw)) continue; // Number() would accept "0x10", "1e2", "Infinity" and "" (as 0)
+      const v = Number(raw);
       if (Number.isFinite(v) && v >= 0 && v <= 1000) t[key as InsightKey] = v;
     }
   } catch (err) {

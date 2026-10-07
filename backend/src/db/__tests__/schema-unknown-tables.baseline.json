@@ -35,6 +35,11 @@
   "modules/hiring-engine/he-campaign-config.service.ts": [
     "he_campaign_config"
   ],
+  "modules/hiring-engine/he-drive-analytics.service.ts": [
+    "qualified_followup",
+    "requisition_stream",
+    "requisition_stream_match"
+  ],
   "modules/hiring-engine/he-drive-trend.service.ts": [
     "requisition_stream",
     "requisition_stream_match"

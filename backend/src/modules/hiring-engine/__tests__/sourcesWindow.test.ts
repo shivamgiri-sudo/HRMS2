@@ -117,6 +117,22 @@ describe("getSourcesForRequisitions", () => {
     expect(out.byRequisition[0].rows.length).toBeGreaterThan(0);
   });
 
+  it("treats a missing stream table on the drive-leads statement as empty, not a failure (M2)", async () => {
+    failOn = { section: "driveLeads", code: "ER_NO_SUCH_TABLE" };
+    const out = await getSourcesForRequisitions(["r1"], W);
+    expect(out).toMatchObject({ partial: false, failedSections: [] });
+    expect(out.byRequisition[0].rows.map((r) => r.sourceType)).toEqual(["meta_live"]);
+  });
+
+  it("flags the window section instead of throwing a RangeError on malformed dates (M1)", async () => {
+    for (const bad of [{ from: "garbage", to: "2026-10-14" }, { from: "2026-10-01", to: "2026-13-45" }, { from: "2026-10-01", to: "" }]) {
+      const out = await getSourcesForRequisitions(["r1", "r2"], bad);
+      expect(out).toMatchObject({ partial: true, failedSections: ["window"] });
+      expect(out.byRequisition.map((r) => [r.requisitionId, r.rows])).toEqual([["r1", []], ["r2", []]]);
+    }
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("adds a zero row for a stream and carries its status", async () => {
     const base = execute.getMockImplementation()!;
     execute.mockImplementation(async (sql: string, p: unknown[]) => kindOf(String(sql)) === "streams"
