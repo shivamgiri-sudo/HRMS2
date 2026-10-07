@@ -422,7 +422,7 @@ jobs:
               ;;
             kit-esign-diagnose)
               # Read-only in both modes: SELECTs only.
-              npx tsx scripts/kit-esign-diagnose.ts MAS63661
+              for C in ${INPUT_EMPLOYEE_CODES:-MAS63661}; do npx tsx scripts/kit-esign-diagnose.ts "${C//,/}"; done
               ;;
             running-salary-diagnose)
               # Read-only in both modes: SELECTs and a pure calculation, no writes.
