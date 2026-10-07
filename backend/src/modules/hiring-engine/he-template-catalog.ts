@@ -111,12 +111,12 @@ export const HE_TEMPLATES: TemplateDef[] = [
     },
     "buttons": {
       "hi": [
-        "URL: Main nikal gaya -> https://<domain>/w/{location_token}",
-        "Location share nahi karunga"
+        "Main nikal gaya",
+        "Meri location"
       ],
       "en": [
-        "URL: I'm on my way -> https://<domain>/w/{location_token}",
-        "Skip location"
+        "I'm on my way",
+        "My Location"
       ]
     }
   },

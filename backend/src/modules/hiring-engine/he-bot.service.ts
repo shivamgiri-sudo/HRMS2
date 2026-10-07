@@ -60,3 +60,24 @@ export async function answerCandidateQuestion(leadId: string, text: string, o: {
   await addEvent(leadId, "bot_answered", { channel: "whatsapp", detail: kind });
   return { action: "answered", kind };
 }
+
+/** The T4 buttons ("I'm on my way" / "My Location") are quick replies, so the tap arrives as a reply and gets the sharing page link as the answer. */
+export const isLocationTap = (text: string) => /^\s*(i'?m on my way|my location|main nikal gaya|meri location)\s*[.!]?\s*$/i.test(text);
+export async function sendLocationLink(leadId: string): Promise<BotOutcome> {
+  if (sendsPaused()) return { action: "skipped", reason: "paused" };
+  const [r] = await db.execute<RowDataPacket[]>(
+    `SELECT l.mobile10, l.status, m.token, d.drive_date FROM he_lead l JOIN he_match m ON m.lead_id = l.id LEFT JOIN he_drive d ON d.id = m.drive_id
+      WHERE l.id = ? AND m.state IN ('invited','confirmed') AND m.token IS NOT NULL ORDER BY m.updated_at DESC LIMIT 1`, [leadId]);
+  const x = r[0];
+  if (!x || x.status === "opted_out") return { action: "skipped", reason: "no_active_walkin" };
+  if (!pinbot.isConfigured()) return { action: "skipped", reason: "whatsapp_not_configured" };
+  const base = env("HE_PUBLIC_BASE_URL", env("FRONTEND_URL", "https://mcnhrms.teammas.in")).replace(/\/$/, "");
+  const text = `Thanks. Open this link when you leave and tap "Share my location" so the branch can expect you: ${base}/w/${x.token}\nSharing is optional and stops by itself when you arrive.`;
+  const res = await pinbot.send(String(x.mobile10), "", text);
+  await db.execute(
+    "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, error_message) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    [randomUUID(), leadId, x.mobile10, "out", "whatsapp", "location_link", text.slice(0, 2000), res.success ? res.message_id ?? null : null, res.success ? "sent" : "failed", res.success ? null : String(res.error ?? "").slice(0, 480)]);
+  if (!res.success) return { action: "skipped", reason: "send_failed" };
+  await addEvent(leadId, "location_link_sent", { channel: "whatsapp" });
+  return { action: "answered", kind: "location" } as BotOutcome;
+}

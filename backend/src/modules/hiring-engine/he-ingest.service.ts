@@ -5,7 +5,7 @@
  */
 import { dequeueSuperbotCall } from "./he-superbot.service.js";
 import { refreshLeadHistoryById } from "./he-master.service.js";
-import { answerCandidateQuestion } from "./he-bot.service.js";
+import { answerCandidateQuestion, isLocationTap, sendLocationLink } from "./he-bot.service.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
@@ -128,9 +128,12 @@ export async function recordInboundReply(p: { mobile: string; text: string; prov
   await recomputeInsight(lead.id);
   await refreshLeadHistoryById(lead.id);
   // Questions ("office kahan hai?", "kya laana hai?") get an instant answer from the invitation; the rest go to a human.
-  if (intent === "unknown" && channel === "whatsapp") {
+  if (channel === "whatsapp" && isLocationTap(p.text)) {
+    try { await sendLocationLink(lead.id); } catch (err) { logger.warn({ err: (err as Error).message }, "[he-ingest] location link failed"); }
+  } else if (intent === "unknown" && channel === "whatsapp") {
     try { await answerCandidateQuestion(lead.id, p.text); } catch (err) { logger.warn({ err: (err as Error).message }, "[he-ingest] bot answer failed"); }
   }
+
   return { leadId: lead.id, intent };
 }
 
