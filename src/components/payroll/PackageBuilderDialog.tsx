@@ -405,11 +405,11 @@ export function PackageBuilderDialog({
               <span><strong>Minimum wage alert:</strong> Gross {inr(draft.gross)} is below {resolvedState} minimum wage {inr(minWage)}/month.</span>
             </div>
           )}
-          {similarPkg && (
+          {similarPkg && mode !== 'existing' && (
             <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span>
-                <strong>Similar package exists:</strong> {similarPkg.name ?? `Band ${similarPkg.band_code}`} has CTC {inr(similarPkg.package_amount / 12)}/mo (within ±5%). Consider assigning that instead.
+                <strong>Similar package exists:</strong> {similarPkg.name ?? `Band ${similarPkg.band_code}`} has CTC {inr(Number(similarPkg.ctc ?? similarPkg.package_amount))}/mo (within ±5%). Consider assigning that instead.
               </span>
             </div>
           )}
