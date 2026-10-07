@@ -6,7 +6,7 @@ vi.mock("../../modules/meta-campaign/meta-api.client.js", () => ({ isMetaConfigu
 vi.mock("../../modules/meta-campaign/lead-outreach.service.js", () => ({ notifyQualifiedLead: vi.fn() }));
 vi.mock("../../modules/meta-campaign/meta-messages.service.js", () => ({ reconcileDeliveryStatuses: vi.fn() }));
 
-import { _resetParkedFormsForTest, isFormParked, parkFormOnPermanentError } from "../metaLeadSync.cron.js";
+import { _resetParkedFormsForTest, isFormParked, parkFormOnPermanentError, runMetaLeadSyncNow } from "../metaLeadSync.cron.js";
 
 const NONEXISTING = "fetchFormLeads(988877766655544): (#100) Tried accessing nonexisting field (leads)";
 
@@ -25,5 +25,11 @@ describe("meta-sync parks forms Meta says are not lead forms", () => {
     expect(parkFormOnPermanentError("f1", "(#4) Application request limit reached")).toBe(false);
     expect(parkFormOnPermanentError("f1", "ETIMEDOUT")).toBe(false);
     expect(isFormParked("f1")).toBe(false);
+  });
+});
+
+describe("manual Sync now", () => {
+  it("reports not_configured (no throw, no DB work) when the Meta token is absent", async () => {
+    await expect(runMetaLeadSyncNow()).resolves.toEqual({ status: "not_configured" });
   });
 });

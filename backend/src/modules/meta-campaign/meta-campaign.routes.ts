@@ -37,6 +37,7 @@ import type { ShortlistFilters } from './shortlist-report.service.js';
 import { writeAuditLog } from '../../shared/auditLog.js';
 import { notifyQualifiedLead, buildNotifyPreview, recordVoiceCallback, recordWalkInConfirmation } from './lead-outreach.service.js';
 import { leadVerifyToken, isMetaConfigured } from './meta-api.client.js';
+import { runMetaLeadSyncNow } from '../../cron/metaLeadSync.cron.js';
 import { parseVapiCallback, isVapiConfigured } from './vapi-voicebot.provider.js';
 import type { VapiCallbackPayload } from './vapi-voicebot.provider.js';
 import {
@@ -731,6 +732,30 @@ metaCampaignRouter.post(
     }
     const result = await metaCampaignService.backfillAllLinkedForms();
     return res.json({ success: true, data: result });
+  })
+);
+
+/**
+ * Manual "Sync now": runs the same cycle the 30-minute scheduler runs (pull every linked form, sync
+ * metrics, heal, outreach to newly qualified leads). Shares the scheduler's in-flight guard, so a
+ * click during a scheduled run gets a 409 instead of doubling the work.
+ */
+metaCampaignRouter.post(
+  '/sync-now',
+  requireAuth,
+  requireRole(...CAMPAIGN_WRITE_ROLES),
+  h(async (_req, res) => {
+    const result = await runMetaLeadSyncNow();
+    if (result.status === 'not_configured') {
+      return res.status(503).json({ success: false, message: 'META Graph API token is not configured' });
+    }
+    if (result.status === 'in_flight') {
+      return res.status(409).json({ success: false, message: 'A sync is already running. Try again in a minute.' });
+    }
+    if (result.status === 'error') {
+      return res.status(502).json({ success: false, message: `Sync failed: ${result.message}` });
+    }
+    return res.json({ success: true, data: result.summary });
   })
 );
 

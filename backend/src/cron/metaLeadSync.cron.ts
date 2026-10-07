@@ -1,7 +1,7 @@
 /**
  * Meta Lead Sync — Scheduled Job
  *
- * Every 2 hours:
+ * Every 30 minutes:
  *   1. Pulls new leads from Meta Graph API for all active campaigns (dedup-safe).
  *   2. Triggers WhatsApp + Email outreach for any qualified lead imported in the
  *      last sync window that has not yet been notified.
@@ -22,7 +22,7 @@ import { reconcileDeliveryStatuses } from "../modules/meta-campaign/meta-message
 
 let scheduler: NodeJS.Timeout | undefined;
 let runInFlight = false;
-const INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours (webhook real-time sync is off; this pull is the only intake)
+const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes (webhook real-time sync is off; this pull is the only intake)
 
 // Never notify leads older than this: the Sep-20 backlog (1,906 leads) was handled through a
 // separate channel. Within the floor, a rolling window (not process-start time) means a backend
@@ -78,21 +78,40 @@ async function listUnlinkedPageFormIds(linked: Set<string>): Promise<string[]> {
   return unlinked;
 }
 
-async function runMetaLeadSync(): Promise<void> {
-  if (!isMetaConfigured()) {
-    scheduler = undefined;
-    scheduleNext();
-    return;
-  }
+export interface MetaSyncSummary {
+  startedAt: string;
+  finishedAt: string;
+  imported: number;
+  forms: number;
+  formErrors: number;
+  parkedSkipped: number;
+  outreach: { sent: number; skipped: number; failed: number };
+}
 
-  if (runInFlight) {
-    console.warn("[meta-sync] already in flight, skipping this tick");
-    scheduler = undefined;
-    scheduleNext();
-    return;
-  }
+export type MetaSyncNowResult =
+  | { status: "ok"; summary: MetaSyncSummary }
+  | { status: "not_configured" }
+  | { status: "in_flight" }
+  | { status: "error"; message: string };
+
+let lastSummary: MetaSyncSummary | null = null;
+
+/** Result of the most recent completed run (scheduled or manual) in this process, for the UI. */
+export function getLastMetaSyncSummary(): MetaSyncSummary | null {
+  return lastSummary;
+}
+
+/**
+ * One full sync cycle, shared by the scheduler and the manual "Sync now" button so both do exactly
+ * the same work and honour the same in-flight guard (a manual click during a scheduled run is told
+ * to wait, never doubled up).
+ */
+async function runSyncCycle(): Promise<MetaSyncNowResult> {
+  if (!isMetaConfigured()) return { status: "not_configured" };
+  if (runInFlight) return { status: "in_flight" };
 
   runInFlight = true;
+  const startedAt = new Date().toISOString();
   console.log("[meta-sync] Starting lead sync...");
 
   try {
@@ -175,17 +194,40 @@ async function runMetaLeadSync(): Promise<void> {
 
     // 4. Notify newly qualified leads within the rolling window.
     //    backfillFormLeads sets skipOutreach=true, so we do outreach here.
-    await notifyNewQualifiedLeads();
+    const outreach = await notifyNewQualifiedLeads();
+
+    const summary: MetaSyncSummary = {
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      imported: totalImported,
+      forms: formsToPull.length,
+      formErrors,
+      parkedSkipped,
+      outreach,
+    };
+    lastSummary = summary;
+    return { status: "ok", summary };
   } catch (err: any) {
     console.error("[meta-sync] Sync error:", err?.message ?? err);
+    return { status: "error", message: String(err?.message ?? err) };
   } finally {
     runInFlight = false;
-    scheduler = undefined;
-    scheduleNext();
   }
 }
 
-async function notifyNewQualifiedLeads(): Promise<void> {
+async function runMetaLeadSync(): Promise<void> {
+  const result = await runSyncCycle();
+  if (result.status === "in_flight") console.warn("[meta-sync] already in flight, skipping this tick");
+  scheduler = undefined;
+  scheduleNext();
+}
+
+/** Manual trigger (UI "Sync now"). Does not touch the schedule: the next tick stays where it was. */
+export async function runMetaLeadSyncNow(): Promise<MetaSyncNowResult> {
+  return runSyncCycle();
+}
+
+async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped: number; failed: number }> {
   const [leads] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM meta_lead_raw
       WHERE screening_result = 'qualified'
@@ -196,7 +238,7 @@ async function notifyNewQualifiedLeads(): Promise<void> {
     [notifyWindowStart()]
   );
 
-  if (!(leads as any[]).length) return;
+  if (!(leads as any[]).length) return { sent: 0, skipped: 0, failed: 0 };
 
   console.log(`[meta-sync] Triggering outreach for ${(leads as any[]).length} new qualified lead(s)...`);
   let sent = 0;
@@ -223,6 +265,7 @@ async function notifyNewQualifiedLeads(): Promise<void> {
   }
 
   console.log(`[meta-sync] Outreach complete: ${sent} delivered, ${skipped} nothing sent (see skip reasons above), ${failed} errored`);
+  return { sent, skipped, failed };
 }
 
 function scheduleNext(): void {
@@ -233,7 +276,7 @@ function scheduleNext(): void {
 
 export function startMetaLeadSyncScheduler(): void {
   if (scheduler) return;
-  console.log(`[meta-sync] 2-hour Meta lead sync scheduler starting (notifying leads created >= ${notifyWindowStart().toISOString()}, rolling 48h)`);
+  console.log(`[meta-sync] 30-minute Meta lead sync scheduler starting (notifying leads created >= ${notifyWindowStart().toISOString()}, rolling 48h)`);
   runMetaLeadSync();
 }
 
