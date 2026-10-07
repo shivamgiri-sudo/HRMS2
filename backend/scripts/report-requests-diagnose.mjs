@@ -54,6 +54,9 @@ try {
   await show("employees codes with most duplicates", "SELECT employee_code, COUNT(*) n FROM employees GROUP BY employee_code HAVING n > 1 ORDER BY n DESC LIMIT 5");
   await show("snapshot indexes", "SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_master_snapshot'");
   await show("employees.employee_code collation vs snapshot", "SELECT TABLE_NAME, COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'employee_code' AND TABLE_NAME IN ('employees','employee_master_snapshot')");
+  await show("audit trail of the newest request", "SELECT e.activity_at, e.event_type, e.error_code, LEFT(COALESCE(e.error_detail, e.message),200) msg FROM report_audit_event e WHERE e.report_request_id = (SELECT id FROM report_request ORDER BY requested_at DESC LIMIT 1) ORDER BY e.activity_at DESC, e.id DESC LIMIT 15");
+  await show("generated files of newest request", "SELECT f.original_filename, f.file_size_bytes, f.generated_row_count, f.generated_at FROM report_generated_file f WHERE f.report_request_id = (SELECT id FROM report_request ORDER BY requested_at DESC LIMIT 1)");
+  await show("db processlist (report-ish, long running)", "SELECT id, user, time, state, LEFT(info,160) q FROM information_schema.PROCESSLIST WHERE command <> 'Sleep' AND time > 20 ORDER BY time DESC LIMIT 8");
   await show("smtp env present (names only)", "SELECT 1 AS dummy");
   console.log("SMTP_HOST set:", !!process.env.SMTP_HOST, " SMTP_USER set:", !!process.env.SMTP_USER, " SMTP_FROM set:", !!process.env.SMTP_FROM);
 } finally {
