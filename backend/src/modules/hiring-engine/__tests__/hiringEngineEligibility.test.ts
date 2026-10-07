@@ -63,3 +63,27 @@ describe("clean voluntary leaver", () => {
     expect(isCleanVoluntary({ ...ok, disciplinaryFlag: true })).toBe(false);
   });
 });
+
+describe("owner-adjustable cooling-off", () => {
+  const rej = (days: number, reason?: string) => ({ process: "SBI Card Collections", at: new Date(now.getTime() - days * 86_400_000).toISOString(), reason });
+  it("0 days switches the cooling-off off, so a recent ordinary rejection no longer blocks", () => {
+    expect(evaluateEligibility(f({ rejections: [rej(10)] }), { coolingDays: 0 })).toMatchObject({ eligible: true, blocks: [] });
+  });
+  it("a hard rejection (misconduct, fake documents) still blocks with the cooling-off off", () => {
+    expect(evaluateEligibility(f({ rejections: [rej(10, "misconduct")] }), { coolingDays: 0 }).blocks).toContain("hard_rejected_in_process");
+  });
+  it("every permanent block stays with the cooling-off off", () => {
+    const off = { coolingDays: 0 };
+    expect(evaluateEligibility(f({ status: "opted_out" }), off).blocks).toContain("opted_out");
+    expect(evaluateEligibility(f({ isEmployee: true }), off).blocks).toContain("current_employee");
+    expect(evaluateEligibility(f({ finalStatus: "joined" }), off).blocks).toContain("already_joined");
+    expect(evaluateEligibility(f({ exEmployee: { cleanVoluntary: false } as never }), off).blocks).toContain("ex_employee_not_eligible");
+  });
+  it("a custom length is honoured (30 days: 20 days ago blocks, 40 days ago does not)", () => {
+    expect(evaluateEligibility(f({ rejections: [rej(20)] }), { coolingDays: 30 }).blocks).toContain("rejected_in_process_cooling");
+    expect(evaluateEligibility(f({ rejections: [rej(40)] }), { coolingDays: 30 }).eligible).toBe(true);
+  });
+  it("default stays 90", () => {
+    expect(evaluateEligibility(f({ rejections: [rej(60)] })).blocks).toContain("rejected_in_process_cooling");
+  });
+});

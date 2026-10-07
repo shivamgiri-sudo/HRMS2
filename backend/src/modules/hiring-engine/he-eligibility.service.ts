@@ -6,6 +6,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { evaluateEligibility, type Eligibility, type EligibilityFacts, type PastRejection } from "./he-eligibility.js";
+import { getCoolingOffDays } from "./he-policy.service.js";
 
 const CHUNK = 1000;
 
@@ -117,10 +118,11 @@ export interface GateResult { verdicts: Map<string, Eligibility>; blockedByReaso
 
 export async function applyEligibilityGate(leads: LeadFactsRow[], requisition: { id: string; processName: string | null }): Promise<GateResult> {
   const facts = await loadEligibilityFacts(leads, requisition);
+  const coolingDays = await getCoolingOffDays();
   const verdicts = new Map<string, Eligibility>();
   const blockedByReason: Record<string, number> = {};
   for (const [id, f] of facts) {
-    const v = evaluateEligibility(f);
+    const v = evaluateEligibility(f, { coolingDays });
     verdicts.set(id, v);
     for (const b of v.blocks) blockedByReason[b] = (blockedByReason[b] ?? 0) + 1;
   }

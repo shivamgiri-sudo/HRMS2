@@ -32,6 +32,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendStageSamples } from "./he-samples.service.js";
 import { emailConfigured } from "./he-email.service.js";
 import { previewWhatsAppSamples, startWhatsAppSample, whatsAppSampleStatus } from "./he-whatsapp-sample.service.js";
+import { getCoolingOffDays, setCoolingOffDays } from "./he-policy.service.js";
 
 export const heRouter = Router();
 // Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
@@ -605,6 +606,21 @@ heRouter.post("/templates/whatsapp-sample", requireAuth, requireRole(...WRITE_RO
 });
 heRouter.get("/templates/whatsapp-sample/status", requireAuth, requireRole(...WRITE_ROLES), (req, res) => {
   res.json({ success: true, job: whatsAppSampleStatus(String((req as AuthenticatedRequest).authUser?.id ?? "")) });
+});
+
+/** Owner-adjustable outreach policy (no deploy needed). */
+heRouter.get("/policy", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try { res.json({ success: true, coolingOffDays: await getCoolingOffDays() }); } catch { res.status(500).json({ success: false }); }
+});
+heRouter.put("/policy", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
+  try {
+    const days = await setCoolingOffDays(Number((req.body ?? {}).coolingOffDays));
+    logger.info({ days, by: (req as AuthenticatedRequest).authUser?.id }, "[he] cooling-off policy changed");
+    res.json({ success: true, coolingOffDays: days });
+  } catch (err) {
+    const e = err as Error & { statusCode?: number };
+    res.status(e.statusCode ?? 500).json({ success: false, message: e.statusCode ? e.message : "Could not save" });
+  }
 });
 
 heRouter.get("/requisitions/:id/jd", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {

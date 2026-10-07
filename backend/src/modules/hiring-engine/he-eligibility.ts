@@ -61,7 +61,8 @@ function daysBetween(iso: string | null, now: Date): number | null {
   return Number.isFinite(t) ? Math.floor((now.getTime() - t) / MS_DAY) : null;
 }
 
-export function evaluateEligibility(f: EligibilityFacts): Eligibility {
+export function evaluateEligibility(f: EligibilityFacts, opts: { coolingDays?: number } = {}): Eligibility {
+  const coolingDays = opts.coolingDays ?? REJECT_COOLING_DAYS;
   const blocks: string[] = [];
   const warnings: string[] = [];
 
@@ -83,8 +84,9 @@ export function evaluateEligibility(f: EligibilityFacts): Eligibility {
         blocks.push("hard_rejected_in_process");
         break;
       }
+      if (coolingDays <= 0) continue; // cooling-off switched off by the owner; hard rejections above still block
       const age = daysBetween(r.at, f.now);
-      if (age === null || age < REJECT_COOLING_DAYS) {
+      if (age === null || age < coolingDays) {
         blocks.push("rejected_in_process_cooling");
         break;
       }
