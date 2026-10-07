@@ -66,6 +66,7 @@ export const jobRequisitionAdapter: ApprovalAdapter = {
         priority: urgent || (Number.isFinite(aging) && aging >= 3) ? "high" : "normal",
         viewPath: `/recruitment/job-requisition?approvalId=${encodeURIComponent(String(r.id))}`,
         rejectNeedsReason: true,
+        rejectMinLength: 5,
       });
     }
     return out;

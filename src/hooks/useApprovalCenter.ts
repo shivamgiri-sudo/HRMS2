@@ -23,6 +23,7 @@ export interface ApprovalItem {
   priority?: "high" | "normal";
   viewPath: string;
   rejectNeedsReason: boolean;
+  rejectMinLength?: number;
   approveLabel?: string;
   rejectLabel?: string;
   viewOnly?: boolean;

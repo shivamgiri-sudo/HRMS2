@@ -39,6 +39,7 @@ function mapDispute(r: any, stage: "wfm" | "payroll_head"): ApprovalItem {
     viewPath: `/payroll/salary-disputes?tab=queue&approvalId=${encodeURIComponent(String(r.id))}`,
     // Both review endpoints demand remarks >= 10 chars for approve AND reject.
     rejectNeedsReason: true,
+        rejectMinLength: 10,
     // WFM approve needs a differentialAmount (and optional corrective data) typed by WFM; nothing in the row proposes it,
     // so the popup can only reject at stage 1. Approve = open the page.
     meta: { stage, ...(wfm ? { viewOnly: true, approveViewOnly: true } : {}) },

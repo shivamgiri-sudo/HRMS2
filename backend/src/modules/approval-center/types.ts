@@ -38,6 +38,8 @@ export interface ApprovalItem {
   viewPath: string;
   /** Rejecting requires a written reason. */
   rejectNeedsReason: boolean;
+  /** Minimum length of the decline reason the module enforces (default 3). */
+  rejectMinLength?: number;
   /** Approve button label override, e.g. "Approve & forward". */
   approveLabel?: string;
   rejectLabel?: string;

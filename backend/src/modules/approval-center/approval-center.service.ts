@@ -120,6 +120,10 @@ export async function decideApproval(
   try {
     current = (await adapter.list(ctx)).find((i) => i.uid === uid);
   } catch (e: any) {
+    // The caller has no queue for this kind (403/401): same answer as "not pending for you", not a server fault.
+    if (e instanceof LoopbackError && (e.status === 401 || e.status === 403)) {
+      return { ok: false, status: 409, message: "This request is no longer pending for you (already actioned, or moved to another stage)." };
+    }
     return { ok: false, status: 502, message: `Could not re-check this request: ${e?.message ?? e}` };
   }
   if (!current) {
@@ -133,8 +137,9 @@ export async function decideApproval(
     return { ok: false, status: 400, message: "This action is not available from here — open the request with View." };
   }
   const note = remarks.trim();
-  if (action === "reject" && current.rejectNeedsReason && note.length < 3) {
-    return { ok: false, status: 400, message: "A reason is required to decline this request." };
+  const minReason = current.rejectMinLength ?? 3;
+  if (action === "reject" && current.rejectNeedsReason && note.length < minReason) {
+    return { ok: false, status: 400, message: minReason > 3 ? `A reason of at least ${minReason} characters is required to decline this request.` : "A reason is required to decline this request." };
   }
   try {
     await adapter.decide(ctx, { id: current.id, meta: current.meta }, action, note);
