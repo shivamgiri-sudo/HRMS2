@@ -163,12 +163,12 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
  * the scheduler is off: WhatsApp step, reminders (T3/T4), bot calls, no-shows + recovery (T6), replacement slots after a
  * reschedule (T5) and other-role offers (T7).
  */
-export async function runFollowUps(o: { dryRun: boolean }): Promise<{ whatsapp: Counts; reminders: Counts; calls: Counts; recovery: Counts; replacement: Counts; noShows: number; otherRoles: RerouteSummary | null }> {
+export async function runFollowUps(o: { dryRun: boolean; applicantBasis?: boolean }): Promise<{ whatsapp: Counts; reminders: Counts; calls: Counts; recovery: Counts; replacement: Counts; noShows: number; otherRoles: RerouteSummary | null }> {
   const out = { whatsapp: counts(), reminders: counts(), calls: counts(), recovery: counts(), replacement: counts(), noShows: 0, otherRoles: null as RerouteSummary | null };
   out.noShows = await noShows(o.dryRun, out.recovery); // state hygiene runs even while sends are paused
   if (sendsPaused()) return out;
   await replacementSlots(o.dryRun, out.replacement, 50);
-  await whatsappFollowUps(o.dryRun, out.whatsapp, 200);
+  await whatsappFollowUps(o.dryRun, out.whatsapp, 200, o.applicantBasis === true);
   await reminders(o.dryRun, out.reminders);
   await voiceCalls(o.dryRun, out.calls, 50);
   out.otherRoles = await offerOtherRoles({ dryRun: o.dryRun, max: 50 });
@@ -176,7 +176,7 @@ export async function runFollowUps(o: { dryRun: boolean }): Promise<{ whatsapp: 
 }
 
 /** Step 2: matches whose invite EMAIL went out a cadence gap ago and have no WhatsApp invite yet get the WhatsApp invite now. */
-async function whatsappFollowUps(dryRun: boolean, c: Counts, max: number): Promise<void> {
+async function whatsappFollowUps(dryRun: boolean, c: Counts, max: number, applicantBasis = false): Promise<void> {
   const gap = cadenceGapMin();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.slot_at, e.created_at AS email_at, (SELECT best_hour_ist FROM he_lead_insight i WHERE i.lead_id = m.lead_id) AS best_hour FROM he_match m
@@ -184,14 +184,19 @@ async function whatsappFollowUps(dryRun: boolean, c: Counts, max: number): Promi
       WHERE m.state = 'invited' AND m.slot_at > NOW() AND e.created_at <= DATE_SUB(NOW(), INTERVAL ? MINUTE)
         AND NOT EXISTS (SELECT 1 FROM he_message w WHERE w.lead_id = m.lead_id AND w.direction = 'out' AND w.template_key LIKE 'he_walkin_invite:%' AND w.created_at >= e.created_at)
         AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at >= e.created_at)
-        AND EXISTS (SELECT 1 FROM he_consent k WHERE k.lead_id = m.lead_id AND k.consent_type = 'whatsapp_contact' AND k.revoked_at IS NULL)
-      ORDER BY m.slot_at LIMIT ?`, [INVITE_EMAIL_KEY, gap, max]);
+        AND (
+          EXISTS (SELECT 1 FROM he_consent k WHERE k.lead_id = m.lead_id AND k.consent_type = 'whatsapp_contact' AND k.revoked_at IS NULL)
+          -- owner-approved: people who applied for this role are messaged about it; anyone who revoked or opted out never is
+          OR (? = 1 AND NOT EXISTS (SELECT 1 FROM he_consent k2 WHERE k2.lead_id = m.lead_id AND k2.consent_type = 'whatsapp_contact' AND k2.revoked_at IS NOT NULL)
+              AND NOT EXISTS (SELECT 1 FROM he_lead lo WHERE lo.id = m.lead_id AND lo.status = 'opted_out'))
+        )
+      ORDER BY m.slot_at LIMIT ?`, [INVITE_EMAIL_KEY, gap, applicantBasis ? 1 : 0, max]);
   for (const r of rows) {
     if (dryRun) { c.dryRun++; continue; }
     const step = nextCadenceStep({ now: new Date(), gapMin: gap, canEmail: true, waConsent: true, emailSentAt: new Date(String(r.email_at).replace(" ", "T") + "+05:30"), waSentAt: null, voiceAt: null, repliedAfterFirstTouch: false, quietHours: false, bestHourIst: r.best_hour == null ? null : Number(r.best_hour), slotAt: r.slot_at ? new Date(String(r.slot_at).replace(" ", "T") + "+05:30") : null });
     if (step.reason === "waiting_best_hour") { c.blocked.waiting_best_hour = (c.blocked.waiting_best_hour ?? 0) + 1; continue; }
     if (step.step !== "whatsapp") continue;
-    tally(c, await sendTemplateToLead({ leadId: r.lead_id as string, key: "he_walkin_invite", matchId: r.id as string, minGapMinutes: gap }));
+    tally(c, await sendTemplateToLead({ leadId: r.lead_id as string, key: "he_walkin_invite", matchId: r.id as string, minGapMinutes: gap, applicantBasis }));
   }
 }
 

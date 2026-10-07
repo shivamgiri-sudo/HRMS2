@@ -36,6 +36,11 @@ export interface SendOpts {
   transactional?: boolean;
   /** Cadence follow-ups run an hour after the previous touch, below the 120 min default between unrelated sends. */
   minGapMinutes?: number;
+  /**
+   * Owner-approved basis for people who applied for this role but never ticked WhatsApp: they are messaged about THAT application
+   * without an opt-in. Anyone who opted out or revoked consent is still skipped, always.
+   */
+  applicantBasis?: boolean;
 }
 
 const FIRST_CONTACT = new Set<TemplateKey>(["he_walkin_invite", "he_winback", "he_other_role_offer"]);
@@ -86,7 +91,12 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
       WHERE lead_id = ? AND direction = 'out' AND channel = 'whatsapp' AND created_at >= CURDATE()`, [o.leadId]);
   const [lastAny] = await db.execute<RowDataPacket[]>("SELECT MAX(created_at) AS last_at FROM he_message WHERE lead_id = ? AND direction = 'out'", [o.leadId]);
 
-  const consent = await hasConsent(o.leadId, "whatsapp_contact");
+  let consent = await hasConsent(o.leadId, "whatsapp_contact");
+  let basis: "consent" | "applicant" = "consent";
+  if (!consent && o.applicantBasis) {
+    const [refused] = await db.execute<RowDataPacket[]>("SELECT 1 FROM he_consent WHERE lead_id = ? AND consent_type = 'whatsapp_contact' AND revoked_at IS NOT NULL LIMIT 1", [o.leadId]);
+    if (!refused.length) { consent = true; basis = "applicant"; }
+  }
   const verdict = checkSendAllowed({
     now: new Date(), consent, optedOut: lead.status === "opted_out", paused: sendsPaused() || m?.drive_status === "paused",
     sentToday: o.transactional ? 0 : Number(sent[0].today), lastSentAt: !o.transactional && lastAny[0].last_at ? new Date(String(lastAny[0].last_at).replace(" ", "T") + "+05:30") : null,
@@ -122,13 +132,27 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   let params: string[];
   try { params = buildParams(o.key, lang, ctx); }
   catch (e) { return { status: "blocked", reason: (e as Error).message }; }
-  const body = renderBody(o.key, lang, ctx);
+  const previewBody = renderBody(o.key, lang, ctx);
 
-  if (o.dryRun) return { status: "dry_run", body, lang, params };
+  if (o.dryRun) return { status: "dry_run", body: previewBody, lang, params };
   if (!pinbot.isConfigured()) return { status: "blocked", reason: "whatsapp_not_configured" };
 
   const hasUrlButton = getTemplate(o.key).buttons[lang].some((b) => b.startsWith("URL:"));
-  const res = await pinbot.sendTemplate(String(lead.mobile10), String(tr[0].pinbot_name), params, String(tr[0].language), hasUrlButton ? String(ctx.location_token ?? "") : undefined);
+  let res = await pinbot.sendTemplate(String(lead.mobile10), String(tr[0].pinbot_name), params, String(tr[0].language), hasUrlButton ? String(ctx.location_token ?? "") : undefined);
+  let body = renderBody(o.key, lang, ctx);
+  let fellBack = false;
+  // The invite (T1) can be rejected at Meta while its approved wording differs from ours (#132000 / #132001 / #132018). The approved
+  // "interview appointment pending confirmation" (T9) carries the same role, date, time and branch with the same Yes / Reschedule /
+  // Can't come buttons, so the first WhatsApp touch falls back to it instead of failing for every candidate.
+  if (!res.success && o.key === "he_walkin_invite" && /132000|132001|132018|does not exist|parameters/i.test(String(res.error ?? ""))) {
+    const [fb] = await db.execute<RowDataPacket[]>("SELECT pinbot_name, language FROM he_template WHERE template_key = 'he_missed_call:en' AND approval_state = 'approved' AND pinbot_name IS NOT NULL LIMIT 1");
+    if (fb[0]) {
+      try {
+        const r2 = await pinbot.sendTemplate(String(lead.mobile10), String(fb[0].pinbot_name), buildParams("he_missed_call", "en", ctx), String(fb[0].language));
+        if (r2.success) { res = r2; body = renderBody("he_missed_call", "en", ctx); fellBack = true; }
+      } catch { /* keep the original failure */ }
+    }
+  }
   const [idr] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
   const messageId = idr[0].id as string;
   await db.execute(
@@ -139,7 +163,7 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
     logger.warn({ leadId: o.leadId, key: o.key, error: res.error }, "[he-send] failed");
     return { status: "failed", error: String(res.error ?? "unknown") };
   }
-  await addEvent(o.leadId, `sent_${o.key}`, { channel: "whatsapp", driveId: m?.drive_id, detail: `${lang}` });
+  await addEvent(o.leadId, `sent_${o.key}`, { channel: "whatsapp", driveId: m?.drive_id, detail: `${lang}${basis === "applicant" ? " (applicant basis, no opt-in)" : ""}${fellBack ? " (sent as the appointment-confirmation template)" : ""}` });
   await db.execute("UPDATE he_lead SET last_contact_at = NOW() WHERE id = ?", [o.leadId]);
   const after = LEAD_STATUS_AFTER[o.key];
   if (after && ["new", "contacted", "interested", "declined", "no_show"].includes(String(lead.status))) await setLeadStatus(o.leadId, after);

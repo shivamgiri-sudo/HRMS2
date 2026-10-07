@@ -560,7 +560,7 @@ heRouter.post("/engine/follow-ups", requireAuth, requireRole(...WRITE_ROLES), as
   try {
     const dryRun = (req.body ?? {}).dryRun !== false;
     // T11 branch-HR arrival alert rides along, so the button covers every scheduled step.
-    res.json({ success: true, data: { ...(await runFollowUps({ dryRun })), alerts: await runHrArrivalAlerts({ dryRun }) } }); }
+    res.json({ success: true, data: { ...(await runFollowUps({ dryRun, applicantBasis: (req.body ?? {}).applicantBasis === true })), alerts: await runHrArrivalAlerts({ dryRun }) } }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] follow-ups failed"); res.status(500).json({ message: "Could not run follow-ups" }); }
 });
 
