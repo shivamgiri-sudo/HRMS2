@@ -66,6 +66,29 @@ function buildExtra(row: FollowupRow, ctx: SendContext, key: "he_walkin_invite" 
 async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: FollowupRow, counts: StepCounts): Promise<void> {
   const isDry = tag === "dry_run";
   const isTest = tag === "test";
+  if (!isDry) {
+    // The engine already sent this person a WhatsApp first contact for this requisition (e.g. its follow-up record was lost and a later
+    // form fill enqueued a pipeline row): a second T1/T8 is never sent. A failing read holds the row (fail closed).
+    let engineInvited: boolean;
+    try {
+      const [m] = await db.execute<RowDataPacket[]>(
+        `SELECT 1 AS hit FROM he_message WHERE mobile10 = ? AND requisition_id = ? AND direction = 'out'
+            AND (template_key LIKE 'he_walkin_invite:%' OR template_key LIKE 'he_winback:%') AND delivery_status <> 'failed' LIMIT 1`,
+        [row.mobile10, row.requisitionId]);
+      engineInvited = m.length > 0;
+    } catch (err) {
+      logger.warn({ rowId: row.id, err: scrub((err as Error).message) }, "[qualified-followup] engine-invite check failed; holding the row");
+      counts.held++;
+      return;
+    }
+    if (engineInvited) {
+      const [b] = await db.execute<any>(
+        "UPDATE qualified_followup SET wa_status = 'blocked', wa_error = ?, call_due_at = ? WHERE id = ? AND wa_status IS NULL AND wa_sent_at IS NULL AND stopped_reason IS NULL",
+        ["engine_already_invited", nextStepDue(now), row.id]);
+      if (Number(b?.affectedRows ?? 0) > 0) { counts.processed++; counts.blocked++; } else counts.held++;
+      return;
+    }
+  }
   const ctx = await loadSendContext(row, { assignSlot: tag === "live", now });
   // Dry run does not assign a slot; live would when the address and BMI link exist.
   const wouldAssign = isDry && !ctx.slot && row.sourceType !== "he" && Boolean(ctx.branchAddress && ctx.bmiLink);

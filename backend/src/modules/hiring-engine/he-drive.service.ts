@@ -331,10 +331,19 @@ export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): 
   if (trackFollowups) {
     try {
       const ids = scored.map((x) => x.id);
-      const [on] = await db.execute<RowDataPacket[]>(`SELECT lead_id FROM he_match WHERE drive_id = ? AND lead_id IN (${ids.map(() => "?").join(",")})`, [driveId, ...ids]);
+      // Self-healing: someone already on this drive counts as handled only when their follow-up row exists, so a record lost to a
+      // failed enqueue or a restart mid fire-and-forget is written on the next line-up.
+      const [on] = await db.execute<RowDataPacket[]>(
+        `SELECT m.lead_id FROM he_match m JOIN he_lead l ON l.id = m.lead_id
+          WHERE m.drive_id = ? AND m.lead_id IN (${ids.map(() => "?").join(",")})
+            AND EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = l.mobile10 AND qf.requisition_id = m.requisition_id)`, [driveId, ...ids]);
       const had = new Set(on.map((r) => String(r.lead_id)));
       newLeadIds = ids.filter((id) => !had.has(id));
-    } catch (err) { logger.warn({ driveId, err: String((err as Error).message).replace(/\d{6,}/g, "#") }, "[qualified-followup] line-up pre-check failed"); }
+    } catch (err) {
+      // enqueue and hand-over are idempotent: when unsure, send everyone scored
+      newLeadIds = scored.map((x) => x.id);
+      logger.warn({ driveId, err: String((err as Error).message).replace(/\d{6,}/g, "#") }, "[qualified-followup] line-up pre-check failed");
+    }
   }
   if (write) for (const s of scored) {
     await db.execute(

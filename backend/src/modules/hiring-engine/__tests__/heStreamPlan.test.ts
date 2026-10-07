@@ -2,29 +2,46 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StreamRow } from "../requisition-stream.service.js";
 
 /** D-1 stream pass (he-stream-plan.service), its hook in planNextDay and the engine's stream-aware re-line-up. */
-const h = vi.hoisted(() => ({
-  calls: [] as Array<[string, unknown[]]>,
-  lockCalls: [] as string[],
-  st: {
-    ownedFails: false, owned: [] as string[],
-    req: null as Record<string, unknown> | null,
-    drives: {} as Record<string, { id: string; status: string }>,
-    already: {} as Record<string, number>,
-    origin: true, lockGot: 1 as number | null, releaseFails: false,
-    topDrive: null as Record<string, unknown> | null,
-    fed: [] as string[], planReqs: [] as string[],
-  },
-  streams: [] as StreamRow[],
-  autoClose: vi.fn(async (_d: string, _dry: boolean) => [] as Array<{ streamId: string; requisitionId: string; reason: "window_ended" }>),
-  createDrive: vi.fn(async (i: { requisitionId: string; driveDate: string }) => ({ id: `new-${i.driveDate}`, invites: 30, targetShows: 6, capacity: 30 })),
-  setDriveStatus: vi.fn(async () => undefined),
-  suggestMatches: vi.fn(async () => 2),
-  lineUp: vi.fn(async (_d: string, o: { limit?: number; followupStream?: { streamId: string } | null }) => ({
-    suggested: o.limit ?? 0, blockedByReason: {}, considered: 0, leadIds: Array.from({ length: o.limit ?? 0 }, (_, i) => `${o.followupStream?.streamId}-L${i}`),
-  })),
-  bridge: vi.fn(async () => ({ poolRows: 0, linked: 0 })),
-  destroy: vi.fn(), release: vi.fn(),
-}));
+type Match = { id: string; drive: string };
+type Credit = { stream: string; drive: string };
+const h = vi.hoisted(() => {
+  const o = {
+    calls: [] as Array<[string, unknown[]]>,
+    lockCalls: [] as string[],
+    st: {} as {
+      ownedFails: boolean; owned: string[]; req: Record<string, unknown> | null;
+      drives: Record<string, Record<string, unknown>>; origin: boolean; lockGot: number | null; releaseFails: boolean;
+      topDrive: Record<string, unknown> | null; fed: string[]; planReqs: string[];
+      plannedReqs: string[]; plannedFails: boolean; afterCreate: Record<string, unknown> | null; missingFollowup: string[];
+      // in-memory he_match (one row per lead) and requisition_stream_match (one row per match id)
+      matches: Map<string, Match>; credits: Map<string, Credit>; pools: Record<string, string[]>; counter: number;
+    },
+    streams: [] as StreamRow[],
+    autoClose: vi.fn(async (_d: string, _dry: boolean) => [] as Array<{ streamId: string; requisitionId: string; reason: "window_ended" }>),
+    createDrive: vi.fn(async (i: { requisitionId: string; driveDate: string }) => ({ id: `new-${i.driveDate}`, invites: 30, targetShows: 6, capacity: 30 })),
+    setDriveStatus: vi.fn(async (_id: string, _s: string) => undefined),
+    suggestMatches: vi.fn(async () => 2),
+    lineUp: vi.fn(async (_d: string, _o: { limit?: number; followupStream?: { streamId: string } | null; excludeOnDrive?: boolean }) => ({ suggested: 0, blockedByReason: {}, considered: 0, leadIds: [] as string[] })),
+    bridge: vi.fn(async () => ({ poolRows: 0, linked: 0 })),
+    enqueue: vi.fn(async () => ({ enqueued: 0, exists: 0, handedOver: 0 })),
+    destroy: vi.fn(), release: vi.fn(),
+  };
+  // A line-up writes he_match rows: a lead already matched for this requisition is re-pointed to this drive (unique lead + requisition).
+  o.lineUp.mockImplementation(async (driveId, opts) => {
+    const sid = opts.followupStream?.streamId ?? "?";
+    const onDrive = (l: string) => o.st.matches.get(l)?.drive === driveId;
+    const pool = o.st.pools[sid] ?? Array.from({ length: opts.limit ?? 0 }, () => `${sid}-L${o.st.counter++}`);
+    const picks = pool.filter((l) => !(opts.excludeOnDrive && onDrive(l))).slice(0, opts.limit ?? 0);
+    for (const l of picks) o.st.matches.set(l, { id: o.st.matches.get(l)?.id ?? `m-${l}`, drive: driveId });
+    return { suggested: picks.length, blockedByReason: {}, considered: picks.length, leadIds: picks };
+  });
+  return o;
+});
+const matchById = (id: string) => [...h.st.matches.values()].find((m) => m.id === id);
+/** n people on `drive` credited to `stream` (as an earlier pass would have left them). */
+function seed(stream: string, drive: string, n: number, prefix = `seed-${stream}-${drive}`) {
+  for (let i = 0; i < n; i++) { const l = `${prefix}-${i}`; h.st.matches.set(l, { id: `m-${l}`, drive }); h.st.credits.set(`m-${l}`, { stream, drive }); }
+}
 
 vi.mock("../../../db/mysql.js", () => ({
   db: {
@@ -33,14 +50,33 @@ vi.mock("../../../db/mysql.js", () => ({
       h.calls.push([q, params]);
       const st = h.st;
       if (q.startsWith("SELECT DISTINCT requisition_id FROM requisition_stream")) { if (st.ownedFails) throw Object.assign(new Error("boom"), { code: "ER_LOCK_WAIT_TIMEOUT" }); return [st.owned.map((requisition_id) => ({ requisition_id }))]; }
+      if (q.startsWith("SELECT DISTINCT s.requisition_id FROM requisition_stream_plan")) { if (st.plannedFails) throw new Error("boom"); return [st.plannedReqs.map((requisition_id) => ({ requisition_id }))]; }
       if (q.includes("FROM requisition_stream_plan WHERE drive_id IN")) return [st.fed.map((drive_id) => ({ drive_id }))];
+      if (q.includes("FROM requisition_stream_plan WHERE drive_id = ?")) return [st.fed.includes(String(params[0])) ? [{ hit: 1 }] : []];
       if (q.includes("FROM job_requisition WHERE id = ?")) return [st.req ? [st.req] : []];
       if (q.includes("FROM he_drive WHERE requisition_id = ? AND branch_name = ? AND drive_date = ?")) { const d = st.drives[String(params[2])]; return [d ? [d] : []]; }
       if (q.includes("FROM he_drive WHERE requisition_id = ? AND drive_date = ?")) return [[]];
-      if (q.includes("COUNT(*) AS n FROM requisition_stream_match")) return [[{ n: st.already[String(params[0])] ?? 0 }]];
+      if (q.startsWith("SELECT status, run_label")) return [[st.afterCreate ?? { status: "draft", run_label: "Streams", source_kind: "pool", created_by: null }]];
+      if (q.includes("COUNT(*) AS n FROM requisition_stream_match")) {
+        const [sid, a, b] = params.map(String);
+        const n = [...st.credits.entries()].filter(([mid, c]) => c.stream === sid && (params.length === 3 ? c.drive === a && matchById(mid)?.drive === b : matchById(mid)?.drive === a)).length;
+        return [[{ n }]];
+      }
+      if (q.includes("FROM requisition_stream_match sm JOIN he_match m") && q.includes("qualified_followup")) return [st.missingFollowup.map((lead_id) => ({ lead_id }))];
       if (q.includes("FROM he_drive WHERE id = ? AND source_kind <> 'pool'")) return [st.origin ? [{ source_kind: "campaign", source_ids: ["c-old"], max_lead_age_days: 90 }] : []];
       if (q.includes("FROM he_drive WHERE id = ? LIMIT 1")) return [st.topDrive ? [st.topDrive] : []];
-      if (q.startsWith("INSERT IGNORE INTO requisition_stream_match")) return [{ affectedRows: params.length - 3 }];
+      if (/^INSERT (IGNORE )?INTO requisition_stream_match/.test(q)) {
+        const [sid, drive, onDrive, ...leads] = params.map(String);
+        let n = 0;
+        for (const l of leads) {
+          const m = st.matches.get(l);
+          if (!m || m.drive !== onDrive) continue;
+          const cur = st.credits.get(m.id);
+          if (!cur) { st.credits.set(m.id, { stream: sid, drive }); n++; }
+          else if (q.includes("ON DUPLICATE KEY UPDATE") && cur.drive !== drive) { st.credits.set(m.id, { stream: sid, drive }); n += 2; }
+        }
+        return [{ affectedRows: n }];
+      }
       if (q.startsWith("INSERT") || q.startsWith("UPDATE") || q.startsWith("DELETE")) return [{ affectedRows: 1 }];
       if (q.includes("COUNT(*) AS n FROM he_template")) return [[{ n: 1 }]];
       if (q.includes("SELECT id FROM he_drive WHERE status = 'active' AND auto_send = 1")) return [[{ id: "fed" }, { id: "legacy" }]];
@@ -57,6 +93,7 @@ vi.mock("../../../db/mysql.js", () => ({
     })),
   },
 }));
+vi.mock("../qualified-followup.service.js", async (orig) => ({ ...(await orig<typeof import("../qualified-followup.service.js")>()), enqueueMatchedFollowups: h.enqueue }));
 vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
 vi.mock("../requisition-stream.service.js", async (orig) => ({
   ...(await orig<typeof import("../requisition-stream.service.js")>()),
@@ -93,18 +130,20 @@ const three = () => [
   stream("s2", { sourceType: "meta_old", originId: "d-old", createdAt: "2026-10-07 09:30:00" }),
   stream("s3", { sourceType: "he", originId: "pool", createdAt: "2026-10-07 10:00:00" }),
 ];
-const openReq = { id: "r1", requisition_code: "REQ-1", approval_status: "approved", active_status: 1, requested_headcount: 10, fulfilled_headcount: 2 };
+const openReq = { id: "r1", requisition_code: "REQ-1", branch_name: "Noida", approval_status: "approved", active_status: 1, requested_headcount: 10, fulfilled_headcount: 2 };
 const sqls = () => h.calls.map(([q]) => q);
-const credits = () => sqls().filter((q) => q.startsWith("INSERT IGNORE INTO requisition_stream_match"));
+const credits = () => sqls().filter((q) => q.startsWith("INSERT INTO requisition_stream_match"));
 const writes = () => sqls().filter((q) => /^(INSERT|UPDATE|DELETE)/.test(q));
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-10-07T18:00:00+05:30"));
   h.calls.length = 0; h.lockCalls.length = 0;
-  h.st = { ownedFails: false, owned: [], req: { ...openReq }, drives: {}, already: {}, origin: true, lockGot: 1, releaseFails: false, topDrive: null, fed: [], planReqs: [] };
+  h.st = { ownedFails: false, owned: [], req: { ...openReq }, drives: {}, origin: true, lockGot: 1, releaseFails: false, topDrive: null, fed: [], planReqs: [],
+    plannedReqs: [], plannedFails: false, afterCreate: null, missingFollowup: [], matches: new Map(), credits: new Map(), pools: {}, counter: 0 };
   h.streams = [];
-  for (const f of [h.autoClose, h.createDrive, h.setDriveStatus, h.suggestMatches, h.lineUp, h.bridge, h.destroy, h.release]) f.mockClear();
+  for (const f of [h.autoClose, h.createDrive, h.setDriveStatus, h.suggestMatches, h.lineUp, h.bridge, h.enqueue, h.destroy, h.release]) f.mockClear();
+  vi.unstubAllEnvs();
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -150,7 +189,7 @@ describe("planStreamsForDay", () => {
   it("run again the same day with every cap reached: drive exists, no line-up, no INSERT (Review Focus 2)", async () => {
     h.streams = three();
     h.st.drives["2026-10-08"] = { id: "dx", status: "active" };
-    h.st.already = { s1: 10, s2: 15, s3: 15 };
+    seed("s1", "dx", 10); seed("s2", "dx", 15); seed("s3", "dx", 15);
     const r = await planStreamsForDay({ date: "2026-10-08", dryRun: false });
     expect(h.createDrive).not.toHaveBeenCalled();
     expect(h.lineUp).not.toHaveBeenCalled();
@@ -162,7 +201,7 @@ describe("planStreamsForDay", () => {
   it("an existing drive is reused untouched and only topped up to the cap", async () => {
     h.streams = [stream("s3", { dailyInvites: 5 })];
     h.st.drives["2026-10-08"] = { id: "dx", status: "draft" };
-    h.st.already = { s3: 3 };
+    seed("s3", "dx", 3);
     const r = await planStreamsForDay({ date: "2026-10-08", dryRun: false });
     expect(h.lineUp.mock.calls[0][1]).toMatchObject({ limit: 2 });
     expect(h.setDriveStatus).not.toHaveBeenCalled();
@@ -180,7 +219,6 @@ describe("planStreamsForDay", () => {
     expect(h.createDrive).toHaveBeenCalledTimes(1);
     expect(h.lineUp).toHaveBeenCalledTimes(1);
     h.st.drives["2026-10-08"] = { id: "new-2026-10-08", status: "active" };
-    h.st.already = { s3: 4 };
     h.calls.length = 0;
     const second = await planStreamsForDay({ date: "2026-10-08", requisitionId: "r1", dryRun: false });
     expect(second.plans[0]).toMatchObject({ drive: "exists" });
@@ -273,10 +311,10 @@ describe("planStreamsForDay", () => {
     expect(r).toEqual({ plans: [], closed: [], failed: "db down" });
   });
 
-  it("two streams competing for one candidate: the earlier stream credits first, the later INSERT IGNORE cannot take it", async () => {
+  it("two streams competing for one candidate: the earlier stream credits first, the later one cannot take it", async () => {
     h.streams = [stream("s1", { dailyInvites: 1, createdAt: "2026-10-07 09:00:00" }), stream("s2", { dailyInvites: 1, createdAt: "2026-10-07 09:30:00" })];
     await planStreamsForDay({ date: "2026-10-08", dryRun: false });
-    const c = h.calls.filter(([q]) => q.startsWith("INSERT IGNORE INTO requisition_stream_match"));
+    const c = h.calls.filter(([q]) => q.startsWith("INSERT INTO requisition_stream_match"));
     expect(c.map(([, p]) => p[0])).toEqual(["s1", "s2"]);
     expect(c[0][0]).toContain("SELECT m.id, ?, ? FROM he_match m WHERE m.drive_id = ? AND m.lead_id IN (?)");
   });
@@ -300,7 +338,7 @@ describe("planNextDay with streams", () => {
     h.st.ownedFails = true;
     h.st.planReqs = ["r1"];
     const r = await planNextDay({ date: "2026-10-08" });
-    expect(r.days).toEqual([{ requisitionId: "r1", code: "REQ-1", role: "", branch: "", date: "2026-10-08", invitesWanted: 30, lined: 2, status: "created", driveId: "new-2026-10-08" }]);
+    expect(r.days).toEqual([{ requisitionId: "r1", code: "REQ-1", role: "", branch: "Noida", date: "2026-10-08", invitesWanted: 30, lined: 2, status: "created", driveId: "new-2026-10-08" }]);
     expect(r.streams).toEqual([]);
     expect(r.streamsClosed).toEqual([]);
     expect(h.lineUp).not.toHaveBeenCalled();
@@ -362,7 +400,7 @@ describe("topUpStreamDrive", () => {
     h.st.topDrive = { id: "dx", requisition_id: "r1", drive_date: "2026-10-08", status: "active" };
     h.st.drives["2026-10-08"] = { id: "dx", status: "active" };
     h.streams = [stream("s3", { dailyInvites: 6 })];
-    h.st.already = { s3: 4 };
+    seed("s3", "dx", 4);
     expect(await topUpStreamDrive("dx")).toBe(2);
     expect(h.createDrive).not.toHaveBeenCalled();
   });

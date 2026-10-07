@@ -9,6 +9,7 @@ import { logger } from "../../logger.js";
 import type { EnqueueInput, FollowupMode, FollowupStreamRef, MatchedDriveRef, SourceType } from "./qualified-followup.types.js";
 import { readSwitches, rowTag } from "./qualified-followup.policy.js";
 import { classifySource, dueTimes, followupMode, normaliseMobile10 } from "./qualified-followup.schedule.js";
+import { OUTCOME_UNKNOWN_ERROR } from "./qualified-followup.rules.js";
 
 export type EnqueueStatus = "skipped_off" | "enqueued" | "exists" | "invalid";
 
@@ -143,6 +144,7 @@ export async function enqueueMatchedFollowups(
     const sourceType: SourceType = stream ? stream.sourceType : classifySource({ launchSourceKind: kind });
     const originId = stream ? stream.originId : sourceType === "he" ? "pool" : drive.id;
     const originLabel = stream ? stream.originLabel : sourceType === "he" ? "Pool: ATS history" : drive.runLabel ?? `Re-run ${drive.driveDate}`;
+    const tag = rowTag(readSwitches({ ...process.env, QUAL_FOLLOWUP_MODE: mode }));
     for (let i = 0; i < leadIds.length; i += 500) {
       const chunk = leadIds.slice(i, i + 500);
       const [rows] = await db.execute<RowDataPacket[]>(
@@ -159,9 +161,11 @@ export async function enqueueMatchedFollowups(
           const [u] = await db.execute<ResultSetHeader>(
             `UPDATE qualified_followup SET owner = 'engine', drive_id = COALESCE(drive_id, ?), email_status = COALESCE(email_status, 'engine'),
                     wa_status = COALESCE(wa_status, 'engine'), call_state = IF(call_state = 'pending', 'skipped', call_state)
-              WHERE id = ? AND owner = 'pipeline' AND stopped_reason IS NULL
+              WHERE id = ? AND owner = 'pipeline' AND stopped_reason IS NULL AND mode_at_enqueue = ?
                 AND NOT (COALESCE(wa_template_key, '') = 'he_walkin_invite' AND COALESCE(wa_status, '') IN ('sent','test_sent'))
-                AND COALESCE(wa_status, '') <> 'sending'`, [drive.id, res.id]);
+                AND COALESCE(wa_status, '') <> 'sending' AND wa_sent_at IS NULL
+                -- a claim that expired mid-send may have reached the person: never hand it over
+                AND NOT (COALESCE(wa_status, '') = 'failed' AND COALESCE(wa_error, '') = ?)`, [drive.id, res.id, tag, OUTCOME_UNKNOWN_ERROR]);
           out.handedOver += u.affectedRows;
         }
       }

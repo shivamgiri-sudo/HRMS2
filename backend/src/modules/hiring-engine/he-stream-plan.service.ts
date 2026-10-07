@@ -15,6 +15,8 @@ import { dailyPlanNumbers, type DailyPlan } from "./he-slots.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import { autoCloseStreams, loadActiveStreams, toWindow, type AutoCloseReason, type StreamRow } from "./requisition-stream.service.js";
 import { coversDay, istToday } from "./requisition-stream.window.js";
+import { enqueueMatchedFollowups } from "./qualified-followup.service.js";
+import { followupMode } from "./qualified-followup.schedule.js";
 
 export interface StreamLine { streamId: string; sourceType: SourceType; originLabel: string; cap: number; alreadyLined: number; lined: number; wouldLine?: number; skipped?: string }
 export interface StreamDayPlan {
@@ -43,6 +45,21 @@ export async function readStreamOwned(): Promise<Set<string> | null> {
   } catch (err) {
     logger.warn({ code: codeOf(err) }, "[he-streams] could not read stream-owned requisitions");
     return null;
+  }
+}
+
+/**
+ * Requisitions a stream already planned for `date` (they keep their stream drive even after their streams closed). Empty set when the
+ * table does not exist yet; null on any other read error.
+ */
+export async function readStreamPlanned(date: string): Promise<Set<string> | null> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT DISTINCT s.requisition_id FROM requisition_stream_plan p JOIN requisition_stream s ON s.id = p.stream_id WHERE p.drive_date = ?", [date]);
+    return new Set(rows.map((r) => String(r.requisition_id)));
+  } catch (err) {
+    logger.warn({ code: codeOf(err) }, "[he-streams] could not read planned stream days");
+    return codeOf(err) === "ER_NO_SUCH_TABLE" ? new Set() : null;
   }
 }
 
@@ -93,17 +110,45 @@ async function markPlanned(streamId: string, date: string, driveId: string, line
 
 interface Ctx { date: string; dryRun: boolean; mayCreate: boolean; plan: DailyPlan; invites: number; perSlot: number }
 
-async function lineStream(s: StreamRow, cap: number, driveId: string | null, c: Ctx): Promise<StreamLine> {
-  const line: StreamLine = { streamId: s.id, sourceType: s.sourceType, originLabel: s.originLabel, cap, alreadyLined: 0, lined: 0 };
+interface DriveRef { id: string; requisitionId: string; sourceKind: string; runLabel: string | null }
+
+/** People credited to this stream for this drive (re-counted, never taken from affectedRows). */
+async function creditedCount(streamId: string, driveId: string): Promise<number> {
+  const [n] = await db.execute<RowDataPacket[]>(
+    "SELECT COUNT(*) AS n FROM requisition_stream_match sm JOIN he_match m ON m.id = sm.match_id WHERE sm.stream_id = ? AND sm.drive_id = ? AND m.drive_id = ?", [streamId, driveId, driveId]);
+  return Number(n[0]?.n ?? 0);
+}
+
+/**
+ * Follow-up records lost earlier (a failed enqueue, a restart during the fire-and-forget): people this stream put on the drive who have
+ * no qualified_followup row are enqueued again. Runs before the line-up, so it never races that line-up's own enqueue. Idempotent.
+ */
+async function healFollowups(s: StreamRow, drive: DriveRef, date: string): Promise<void> {
+  if (followupMode() === "off") return;
   try {
-    if (driveId) {
-      const [n] = await db.execute<RowDataPacket[]>(
-        "SELECT COUNT(*) AS n FROM requisition_stream_match sm JOIN he_match m ON m.id = sm.match_id WHERE sm.stream_id = ? AND m.drive_id = ?", [s.id, driveId]);
-      line.alreadyLined = Number(n[0]?.n ?? 0);
-    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT m.lead_id FROM requisition_stream_match sm JOIN he_match m ON m.id = sm.match_id JOIN he_lead l ON l.id = m.lead_id
+        WHERE sm.stream_id = ? AND sm.drive_id = ? AND m.drive_id = ?
+          AND NOT EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = l.mobile10 AND qf.requisition_id = m.requisition_id) LIMIT 500`,
+      [s.id, drive.id, drive.id]);
+    if (!rows.length) return;
+    await enqueueMatchedFollowups({ id: drive.id, requisitionId: drive.requisitionId, sourceKind: drive.sourceKind, runLabel: drive.runLabel, driveDate: date },
+      rows.map((r) => String(r.lead_id)), { streamId: s.id, sourceType: s.sourceType, originId: s.originId, originLabel: s.originLabel });
+  } catch (err) {
+    logger.warn({ streamId: s.id, code: codeOf(err) }, "[he-streams] follow-up heal failed");
+  }
+}
+
+async function lineStream(s: StreamRow, cap: number, drive: DriveRef | null, c: Ctx): Promise<StreamLine> {
+  const line: StreamLine = { streamId: s.id, sourceType: s.sourceType, originLabel: s.originLabel, cap, alreadyLined: 0, lined: 0 };
+  const driveId = drive?.id ?? null;
+  try {
+    if (driveId) line.alreadyLined = await creditedCount(s.id, driveId);
     const want = cap - line.alreadyLined;
     if (c.dryRun) { line.wouldLine = Math.max(0, want); return line; }
-    if (want <= 0 || !driveId) return line;
+    if (!drive || !driveId) return line;
+    await healFollowups(s, drive, c.date);
+    if (want <= 0) return line;
     const audience = await streamAudience(s);
     if (!audience) { line.skipped = "origin launch not found"; return line; }
     if (s.sourceType === "meta_live") {
@@ -115,12 +160,16 @@ async function lineStream(s: StreamRow, cap: number, driveId: string | null, c: 
       followupStream: { streamId: s.id, sourceType: s.sourceType, originId: s.originId, originLabel: s.originLabel },
     });
     if (r.leadIds.length) {
-      // first touch: a match another stream already credited keeps that credit
-      const [ins] = await db.execute<ResultSetHeader>(
-        `INSERT IGNORE INTO requisition_stream_match (match_id, stream_id, drive_id)
-         SELECT m.id, ?, ? FROM he_match m WHERE m.drive_id = ? AND m.lead_id IN (${r.leadIds.map(() => "?").join(",")})`,
+      // Credit per drive. On the SAME drive the first stream keeps the person (first touch for that day); a match re-pointed here from
+      // an earlier drive is credited to the stream that lined it today, so it counts toward that stream's cap.
+      await db.execute<ResultSetHeader>(
+        `INSERT INTO requisition_stream_match (match_id, stream_id, drive_id)
+         SELECT m.id, ?, ? FROM he_match m WHERE m.drive_id = ? AND m.lead_id IN (${r.leadIds.map(() => "?").join(",")})
+         ON DUPLICATE KEY UPDATE
+           stream_id = IF(requisition_stream_match.drive_id <=> VALUES(drive_id), requisition_stream_match.stream_id, VALUES(stream_id)),
+           drive_id = VALUES(drive_id)`,
         [s.id, driveId, driveId, ...r.leadIds]);
-      line.lined = ins.affectedRows;
+      line.lined = Math.max(0, (await creditedCount(s.id, driveId)) - line.alreadyLined);
     }
     await markPlanned(s.id, c.date, driveId, line.alreadyLined + line.lined);
   } catch (err) {
@@ -130,22 +179,28 @@ async function lineStream(s: StreamRow, cap: number, driveId: string | null, c: 
   return line;
 }
 
+/** A draft the stream pass itself created (label "Streams", pool audience, no creator) and stream-fed: safe to activate. */
+const ownStreamsDraft = (d: RowDataPacket): boolean => d.status === "draft" && d.run_label === "Streams" && d.source_kind === "pool" && d.created_by == null;
+
 async function planRequisition(requisitionId: string, streams: StreamRow[], c: Ctx): Promise<StreamDayPlan> {
-  const branch = streams[0].branchName;
-  const base: StreamDayPlan = { requisitionId, code: requisitionId, branch, date: c.date, driveId: null, drive: "skipped", streams: [] };
+  const base: StreamDayPlan = { requisitionId, code: requisitionId, branch: streams[0].branchName, date: c.date, driveId: null, drive: "skipped", streams: [] };
   const [rq] = await db.execute<RowDataPacket[]>(
-    "SELECT id, requisition_code, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
+    "SELECT id, requisition_code, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
   const r = rq[0];
   if (r?.requisition_code) base.code = String(r.requisition_code);
   if (!r || r.approval_status !== "approved" || !r.active_status || Number(r.fulfilled_headcount) >= Number(r.requested_headcount)) return { ...base, reason: "requisition is closed or filled" };
+  // the requisition's CURRENT branch: the same key createDrive writes, so a closed drive is always found (and never reopened)
+  const branch = String(r.branch_name ?? base.branch);
+  base.branch = branch;
   const caps = streamCaps(streams, c.invites);
 
   const work = async (): Promise<StreamDayPlan> => {
-    const [ex] = await db.execute<RowDataPacket[]>("SELECT id, status FROM he_drive WHERE requisition_id = ? AND branch_name = ? AND drive_date = ?", [requisitionId, branch, c.date]);
-    let driveId: string | null = ex[0] ? String(ex[0].id) : null;
+    const [ex] = await db.execute<RowDataPacket[]>(
+      "SELECT id, status, run_label, source_kind, created_by FROM he_drive WHERE requisition_id = ? AND branch_name = ? AND drive_date = ?", [requisitionId, branch, c.date]);
+    let row: RowDataPacket | undefined = ex[0];
     let drive: StreamDayPlan["drive"];
-    if (ex[0]?.status === "closed") return { ...base, driveId, reason: "the drive for this day was closed" };
-    if (driveId) drive = "exists";
+    if (row?.status === "closed") return { ...base, driveId: String(row.id), reason: "the drive for this day was closed" };
+    if (row) drive = "exists";
     else if (c.dryRun) drive = "would_create";
     else if (c.mayCreate === false) return { ...base, reason: "no drive" };
     else {
@@ -154,14 +209,31 @@ async function planRequisition(requisitionId: string, streams: StreamRow[], c: C
         requisitionId, driveDate: c.date, slotStart: c.plan.slotStart, slotEnd: c.plan.slotEnd, slotMinutes: c.plan.slotMinutes, slotCapacity: c.perSlot,
         showRatePct: c.plan.showRatePct, targetShows: Math.max(1, Math.round((sum * c.plan.showRatePct) / 100)), autoSend: true, audience: { kind: "pool", label: "Streams" },
       });
-      driveId = d.id;
-      // Marked stream-fed BEFORE it goes active: the engine never re-lines an unmarked "Streams" drive from the whole pool.
-      for (const s of streams) await markPlanned(s.id, c.date, driveId, 0);
-      await setDriveStatus(driveId, "active");
-      drive = "created";
+      const [after] = await db.execute<RowDataPacket[]>("SELECT status, run_label, source_kind, created_by FROM he_drive WHERE id = ?", [d.id]);
+      row = { ...(after[0] ?? {}), id: d.id } as RowDataPacket;
+      if (row.status === "closed") return { ...base, driveId: d.id, reason: "the drive for this day was closed" };
+      if (!ownStreamsDraft(row)) drive = "exists"; // a drive someone else made or controls meanwhile: reused, never activated here
+      else {
+        try {
+          // Marked stream-fed BEFORE it goes active: the engine never re-lines an unmarked "Streams" drive from the whole pool.
+          for (const s of streams) await markPlanned(s.id, c.date, d.id, 0);
+          await setDriveStatus(d.id, "active");
+        } catch (err) {
+          logger.warn({ requisitionId, code: codeOf(err) }, "[he-streams] drive created but not activated");
+          return { ...base, driveId: d.id, drive: "created", reason: `drive created but not activated: ${reasonOf(err)}` };
+        }
+        drive = "created";
+      }
     }
+    const driveId = row ? String(row.id) : null;
+    const ref: DriveRef | null = row && driveId ? { id: driveId, requisitionId, sourceKind: String(row.source_kind ?? "pool"), runLabel: row.run_label == null ? null : String(row.run_label) } : null;
     const lines: StreamLine[] = [];
-    for (const s of streams) lines.push(await lineStream(s, caps.get(s.id) ?? 1, driveId, c));
+    for (const s of streams) lines.push(await lineStream(s, caps.get(s.id) ?? 1, ref, c));
+    // A Streams draft left behind by a failed activation is activated once it is stream-fed (never a drive HR created).
+    if (!c.dryRun && drive === "exists" && row && driveId && ownStreamsDraft(row)) {
+      const [fed] = await db.execute<RowDataPacket[]>("SELECT 1 AS hit FROM requisition_stream_plan WHERE drive_id = ? LIMIT 1", [driveId]);
+      if (fed.length) await setDriveStatus(driveId, "active");
+    }
     return { ...base, driveId, drive, streams: lines };
   };
 

@@ -14,7 +14,7 @@ vi.mock("../../../db/mysql.js", () => ({
       if (/FROM he_drive WHERE id = \?/.test(sql)) return [[driveRow]];
       if (/FROM job_requisition jr/.test(sql)) return [[{ ...reqRow, night_shift_required: flags.night ? 1 : 0 }]];
       if (/FROM he_lead l LEFT JOIN he_lead_insight/.test(sql)) return [["1", "2"].map((i) => ({ ...lead(i), ...(flags.stale ? { history_refreshed_at: null } : {}), ...(flags.night ? { night_shift_ok: null } : {}) }))];
-      if (/^SELECT lead_id FROM he_match/.test(sql.trim())) { if (onDrive.fail) throw new Error("x"); return [onDrive.ids.map((lead_id) => ({ lead_id }))]; }
+      if (/^SELECT m\.lead_id FROM he_match m/.test(sql.trim())) { if (onDrive.fail) throw new Error("x"); return [onDrive.ids.map((lead_id) => ({ lead_id }))]; }
       return [[]];
     }),
   },
@@ -114,14 +114,14 @@ describe("follow-up enqueue hook", () => {
 
   it("mode unset: no extra SQL and no enqueue call (same calls as with the hook absent)", async () => {
     await lineUpCandidates("d1");
-    expect(calls.some(([q]) => q.startsWith("SELECT lead_id FROM he_match"))).toBe(false);
+    expect(calls.some(([q]) => q.startsWith("SELECT m.lead_id FROM he_match m"))).toBe(false);
     expect(matched).not.toHaveBeenCalled();
   });
 
   it("mode off spelled out behaves like unset", async () => {
     vi.stubEnv("QUAL_FOLLOWUP_MODE", "off");
     await lineUpCandidates("d1");
-    expect(calls.some(([q]) => q.startsWith("SELECT lead_id FROM he_match"))).toBe(false);
+    expect(calls.some(([q]) => q.startsWith("SELECT m.lead_id FROM he_match m"))).toBe(false);
     expect(matched).not.toHaveBeenCalled();
   });
 
@@ -129,11 +129,11 @@ describe("follow-up enqueue hook", () => {
     vi.stubEnv("QUAL_FOLLOWUP_MODE", "dry_run");
     onDrive.ids = ["1"];
     await lineUpCandidates("d1", { followupStream: { streamId: "s1", sourceType: "meta_live", originId: "c9", originLabel: "Oct ads" } });
-    const sel = calls.findIndex(([q]) => q.startsWith("SELECT lead_id FROM he_match"));
+    const sel = calls.findIndex(([q]) => q.startsWith("SELECT m.lead_id FROM he_match m"));
     const ins = calls.findIndex(([q]) => q.startsWith("INSERT INTO he_match"));
     expect(sel).toBeGreaterThan(-1);
     expect(sel).toBeLessThan(ins);
-    expect(calls.filter(([q]) => q.startsWith("SELECT lead_id FROM he_match"))).toHaveLength(1);
+    expect(calls.filter(([q]) => q.startsWith("SELECT m.lead_id FROM he_match m"))).toHaveLength(1);
     expect(matched).toHaveBeenCalledTimes(1);
     expect(matched).toHaveBeenCalledWith({ id: "d1", requisitionId: "r1", sourceKind: "pool", runLabel: null, driveDate: "2026-10-08" }, ["2"],
       { streamId: "s1", sourceType: "meta_live", originId: "c9", originLabel: "Oct ads" });
@@ -143,7 +143,7 @@ describe("follow-up enqueue hook", () => {
     vi.stubEnv("QUAL_FOLLOWUP_MODE", "dry_run");
     await lineUpCandidates("d1", { write: false });
     expect(matched).not.toHaveBeenCalled();
-    expect(calls.some(([q]) => q.startsWith("SELECT lead_id FROM he_match"))).toBe(false);
+    expect(calls.some(([q]) => q.startsWith("SELECT m.lead_id FROM he_match m"))).toBe(false);
   });
 
   it("fail open: a rejecting enqueue or a failing pre-check never throws into the line-up", async () => {
@@ -156,7 +156,20 @@ describe("follow-up enqueue hook", () => {
     warn.mockClear(); matched.mockClear();
     onDrive.fail = true;
     await expect(lineUpCandidates("d1")).resolves.toMatchObject({ suggested: 2 });
-    expect(matched).not.toHaveBeenCalled(); // pre-check failed: nobody is enqueued as new, the line-up itself is untouched
+    // pre-check failed: every scored person goes to the (idempotent) enqueue, the line-up itself is untouched
+    expect(matched).toHaveBeenCalledTimes(1);
+    expect(matched.mock.calls[0][1]).toEqual(["1", "2"]);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("self-healing pre-check: a person counts as already handled only when on the drive AND holding a follow-up row (group 6-7 review I2)", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "dry_run");
+    onDrive.ids = []; // lead 1 is on the drive but its follow-up row was lost: the query returns nobody, so both are enqueued
+    await lineUpCandidates("d1");
+    const [sql, params] = calls.find(([q]) => q.startsWith("SELECT m.lead_id FROM he_match m"))!;
+    expect(sql).toContain("JOIN he_lead l ON l.id = m.lead_id");
+    expect(sql).toContain("EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = l.mobile10 AND qf.requisition_id = m.requisition_id)");
+    expect(params).toEqual(["d1", "1", "2"]);
+    expect(matched.mock.calls[0][1]).toEqual(["1", "2"]);
   });
 });

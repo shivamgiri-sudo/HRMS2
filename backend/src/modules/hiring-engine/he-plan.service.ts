@@ -10,7 +10,7 @@ import { bridgeAllMetaLeads, sweepOwnedCampaigns } from "./he-meta-bridge.servic
 import { getDailyPlan, getPlanMetaOnly, getPlanRequisitions } from "./he-policy.service.js";
 import { dailyPlanNumbers } from "./he-slots.js";
 import { logger } from "../../logger.js";
-import { planStreamsForDay, readStreamOwned, type StreamDayPlan, type StreamPassResult } from "./he-stream-plan.service.js";
+import { planStreamsForDay, readStreamOwned, readStreamPlanned, type StreamDayPlan, type StreamPassResult } from "./he-stream-plan.service.js";
 import { addDays, istToday, isSunday } from "./requisition-stream.window.js";
 
 export interface PlannedDay { requisitionId: string; code: string; role: string; branch: string; date: string; status: "created" | "exists" | "skipped"; reason?: string; invitesWanted: number; lined: number; driveId?: string }
@@ -38,9 +38,11 @@ export async function planNextDay(o: { date?: string; dryRun?: boolean } = {}): 
   const ids = [...planIds, ...[...owned.keys()].filter((x) => !planIds.includes(x))];
   if (!o.dryRun) { await sweepOwnedCampaigns(); if (metaOnly) await bridgeAllMetaLeads(); }
   const days: PlannedDay[] = [];
-  // A requisition with an open or paused stream is planned only by the stream pass below.
+  // A requisition with an open or paused stream, or one a stream already planned for this day, is planned only by the stream pass.
+  // When the planned-day read fails nobody is planned here this run (a whole-audience drive must never be mixed with stream caps).
   const streamOwned = await readStreamOwned();
-  for (const id of streamOwned ? ids.filter((x) => !streamOwned.has(x)) : ids) {
+  const streamPlanned = await readStreamPlanned(date);
+  for (const id of streamPlanned ? ids.filter((x) => !streamOwned?.has(x) && !streamPlanned.has(x)) : []) {
     const [rq] = await db.execute<RowDataPacket[]>(
       `SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1`, [id]);
     const r = rq[0];

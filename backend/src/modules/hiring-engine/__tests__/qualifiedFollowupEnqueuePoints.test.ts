@@ -96,7 +96,24 @@ describe("enqueueMatchedFollowups", () => {
     expect(sql).toContain("COALESCE(wa_template_key, '') = 'he_walkin_invite'"); // a bare NULL = ... would make NOT(...) NULL and never hand over an unsent row
     expect(sql).toContain("IN ('sent','test_sent')");
     expect(sql).toContain("<> 'sending'");
-    expect(p).toEqual(["d1", "qf1"]);
+    expect(p).toEqual(["d1", "qf1", "dry_run", "outcome unknown (process stopped mid-send)"]);
+  });
+  it("hand-over never takes a row whose WhatsApp went out or whose stale claim expired as outcome unknown (group 6-7 review M5)", async () => {
+    wire([leadRow("l1", "9876543210")], { id: "qf1", source_type: "he" });
+    await enqueueMatchedFollowups(drive, ["l1"], null, "dry_run");
+    const [sql] = execute.mock.calls.find(([q]) => String(q).startsWith("UPDATE qualified_followup SET owner"))!;
+    expect(sql).toContain("AND wa_sent_at IS NULL");
+    expect(sql).toContain("AND NOT (COALESCE(wa_status, '') = 'failed' AND COALESCE(wa_error, '') = ?)");
+  });
+  it("hand-over only flips a row of the current tag: a dry_run pass never touches a live row (M6)", async () => {
+    wire([leadRow("l1", "9876543210")], { id: "qf1", source_type: "he" });
+    await enqueueMatchedFollowups(drive, ["l1"], null, "live");
+    const [sql, p] = execute.mock.calls.find(([q]) => String(q).startsWith("UPDATE qualified_followup SET owner"))!;
+    expect(sql).toContain("AND mode_at_enqueue = ?");
+    expect(p[2]).toBe(process.env.QUAL_FOLLOWUP_TEST_MODE === "true" ? "test" : "live");
+    execute.mockClear();
+    await enqueueMatchedFollowups(drive, ["l1"], null, "dry_run");
+    expect(execute.mock.calls.find(([q]) => String(q).startsWith("UPDATE qualified_followup SET owner"))![1][2]).toBe("dry_run");
   });
   it("a hand-over that matches no row (T1 already out, or already engine-owned) counts zero", async () => {
     execute.mockImplementation(async (sql: string) => {

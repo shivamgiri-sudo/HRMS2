@@ -232,6 +232,52 @@ describe("hardening 2", () => {
   });
 });
 
+describe("engine already invited (group 6-7 review)", () => {
+  const withEngineInvite = (r: unknown[] | Error) => {
+    const impl = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, p: unknown) => {
+      if (String(sql).includes("FROM he_message")) { if (r instanceof Error) throw r; return [r]; }
+      return impl(sql, p);
+    });
+  };
+  it("an outbound engine T1/T8 to this person and requisition blocks the row before the claim, with no slot and no send", async () => {
+    world();
+    withEngineInvite([{ hit: 1 }]);
+    const c = await runWhatsappStep(readSwitches(liveEnv), "live", now, 100);
+    expect(sendTpl).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
+    expect(calls(/SET wa_status = 'sending'/)).toHaveLength(0);
+    const [sql, p] = calls(/UPDATE qualified_followup SET wa_status = 'blocked'/)[0];
+    expect(String(sql)).toContain("wa_status IS NULL AND wa_sent_at IS NULL");
+    expect(p[0]).toBe("engine_already_invited");
+    const [q, qp] = calls(/FROM he_message/)[0];
+    expect(String(q)).toContain("direction = 'out'");
+    expect(String(q)).toContain("template_key LIKE 'he_walkin_invite:%' OR template_key LIKE 'he_winback:%'");
+    expect(String(q)).toContain("delivery_status <> 'failed'");
+    expect(qp).toEqual(["9876543210", "req-1"]);
+    expect(c.blocked).toBe(1);
+  });
+  it("no engine invite: sends as before", async () => {
+    world();
+    withEngineInvite([]);
+    await runWhatsappStep(readSwitches(liveEnv), "live", now, 100);
+    expect(sendTpl).toHaveBeenCalledTimes(1);
+  });
+  it("a failing guard read holds the row (fail closed), nothing is sent or claimed", async () => {
+    world();
+    withEngineInvite(new Error("db down"));
+    const c = await runWhatsappStep(readSwitches(liveEnv), "live", now, 100);
+    expect(sendTpl).not.toHaveBeenCalled();
+    expect(calls(/SET wa_status = 'sending'/)).toHaveLength(0);
+    expect(c.held).toBe(1);
+  });
+  it("dry_run does not read he_message", async () => {
+    world();
+    await runWhatsappStep(readSwitches(dryEnv), "dry_run", now, 100);
+    expect(calls(/FROM he_message/)).toHaveLength(0);
+  });
+});
+
 describe("pipelineWaSentToday", () => {
   it("counts sent and test_sent rows since IST midnight", async () => {
     execute.mockResolvedValue([[{ n: 7 }]]);
