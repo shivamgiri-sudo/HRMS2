@@ -22,6 +22,8 @@ export interface ThreadMessage { id: string; channel: "whatsapp" | "email"; dire
 const scopeSql = (scope: BranchScope) => (scope.all ? { sql: "", args: [] as unknown[] } : { sql: "AND jr.branch_name = ?", args: [scope.branchName] as unknown[] });
 const preview = (kind: string | null, channel: string, body: string) => (channel === "email" ? `Email: ${body}` : kind && kind !== "manual_reply" && !/^he_/.test(kind) ? body : body);
 
+// Driven from he_message (hundreds of rows), not he_lead (tens of thousands, most never messaged): starting from the
+// leads ran every per-row subquery for ~38k candidates and took 35 s, so the tab appeared to load forever.
 export async function listInbox(scope: BranchScope, search: string | undefined): Promise<{ total: number; unread: number; data: InboxRow[] }> {
   if (!scope.all && !scope.branchName) return { total: 0, unread: 0, data: [] }; // fail closed
   const sc = scopeSql(scope);
@@ -33,10 +35,10 @@ export async function listInbox(scope: BranchScope, search: string | undefined):
             (SELECT COUNT(*) FROM he_message x WHERE x.lead_id = l.id AND x.channel = 'whatsapp' AND x.direction = 'in'
                 AND x.created_at > COALESCE((SELECT MAX(e.created_at) FROM he_lead_event e WHERE e.lead_id = l.id AND e.event_type = 'inbox_read'), '2000-01-01')) AS unread,
             (SELECT COUNT(*) FROM he_message w WHERE w.lead_id = l.id AND w.channel = 'whatsapp' AND w.direction = 'in' AND w.created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS in_window
-       FROM he_lead l
-       JOIN he_message lm ON lm.id = (SELECT m2.id FROM he_message m2 WHERE m2.lead_id = l.id ORDER BY m2.created_at DESC, m2.id DESC LIMIT 1)
+       FROM he_message lm
+       JOIN he_lead l ON l.id = lm.lead_id
        LEFT JOIN job_requisition jr ON jr.id = (SELECT m3.requisition_id FROM he_message m3 WHERE m3.lead_id = l.id AND m3.requisition_id IS NOT NULL ORDER BY m3.created_at DESC LIMIT 1)
-      WHERE 1 = 1 ${sc.sql} ${q}
+      WHERE lm.id = (SELECT m2.id FROM he_message m2 WHERE m2.lead_id = lm.lead_id ORDER BY m2.created_at DESC, m2.id DESC LIMIT 1) ${sc.sql} ${q}
       ORDER BY lm.created_at DESC LIMIT 300`, [...sc.args, ...qa]);
   const data: InboxRow[] = rows.map((r) => ({
     leadId: String(r.lead_id), name: cleanName(r.full_name) || String(r.full_name ?? "") || `+91 ${String(r.mobile10).slice(0, 2)}xxxxxx${String(r.mobile10).slice(-2)}`,
