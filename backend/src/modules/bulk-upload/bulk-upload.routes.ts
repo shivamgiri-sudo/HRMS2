@@ -535,6 +535,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // per-call counterpart to the APR rows above. See du-cdr-bulk.service.ts.
   "import_du_cdr_korea_batch",
   "import_du_cdr_thailand_batch",
+  // AHM's "Dump" export (survey/order to delivery, one row per outlet/SKU order line).
+  // Two uploaders, one shared table (sql/1875). See ahm-dump-bulk.service.ts.
+  "import_ahm_dump_mp_batch",
+  "import_ahm_dump_mm_batch",
   // Dalmia Cement's four uploaders (dalmia_daildesk / Outbound / dalmia_apr / after_hour). The first, second and
   // fourth already had importers + live tables (sql/1731, 1732, 1734) that were only ever run by script; they are
   // now reachable from Process Performance V2 -> Dalmia -> Uploader. dalmia_apr is new (sql/1781).
@@ -1199,6 +1203,22 @@ async function dispatchImport(
       "../bulk-upload/du-cdr-bulk.service.js"
     );
     const data = await importDuCdrThailandBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_ahm_dump_mp_batch") {
+    const { importAhmDumpMpBatch } = await import(
+      "../bulk-upload/ahm-dump-bulk.service.js"
+    );
+    const data = await importAhmDumpMpBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_ahm_dump_mm_batch") {
+    const { importAhmDumpMmBatch } = await import(
+      "../bulk-upload/ahm-dump-bulk.service.js"
+    );
+    const data = await importAhmDumpMmBatch(id, userId);
     return { success: true, data };
   }
 

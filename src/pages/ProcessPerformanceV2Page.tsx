@@ -26,6 +26,7 @@ import { AltRxMisPanel } from "@/components/process-performance/AltRxMisPanel";
 import { MisEmailScheduleDrawer } from "@/components/process-performance/MisEmailScheduleDrawer";
 import { CloviaDashboard } from "@/components/process-performance/CloviaDashboard";
 import { DuDigitalDashboard } from "@/components/process-performance/DuDigitalDashboard";
+import { AhmDashboard } from "@/components/process-performance/AhmDashboard";
 import { BirlanuDashboard } from "@/components/process-performance/BirlanuDashboard";
 import { AppreciateWealthDashboard } from "@/components/process-performance/AppreciateWealthDashboard";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
@@ -42,6 +43,7 @@ import {
   Heart, Footprints, HeartPulse, Home, Crown, Shirt, FileText, Tag,
   Building2, Globe, Settings, Zap, LayoutGrid, UploadCloud, Sparkles, Download,
   CalendarClock,
+  Truck,
 } from "lucide-react";
 
 /**
@@ -50,7 +52,7 @@ import {
  * company is passed straight through as projectKey with no separate
  * mapping table, same as bellavita/gnc/clovia/neemans already are.
  */
-type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "alt_rx" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom" | "du_thailand" | "du_korea";
+type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "alt_rx" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom" | "du_thailand" | "du_korea" | "ahm";
 type SectionKey = "dashboards" | "uploader" | "mis";
 
 const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
@@ -73,6 +75,7 @@ const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
   { key: "exicom", label: "Exicom" },
   { key: "du_thailand", label: "DU Digital Thailand" },
   { key: "du_korea", label: "DU Digital Korea" },
+  { key: "ahm", label: "AHM" },
 ];
 
 /** Icon + color per company, purely a visual grouping aid on the landing
@@ -97,6 +100,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
   exicom: { icon: Zap, tone: "fuchsia" },
   du_thailand: { icon: PhoneIncoming, tone: "red" },
   du_korea: { icon: PhoneIncoming, tone: "blue" },
+  ahm: { icon: Truck, tone: "orange" },
 };
 
 /**
@@ -109,7 +113,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "du_digital_thailand" | "du_digital_korea" | "alt_rx" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "du_digital_thailand" | "du_digital_korea" | "alt_rx" | "ahm_dashboard" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "chat_performance", label: "Chat Sale Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
@@ -176,6 +180,9 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
   ],
   du_korea: [
     { key: "dashboard", label: "Dashboard", description: "Offered/Answered/SL/AL/Abandon%, AHT, Intraday Call Flow, Language/Queue view, Today/WTD/MTD snapshot — live from uploaded CDR/APR data", kind: "du_digital_korea" },
+  ],
+  ahm: [
+    { key: "dashboard", label: "Dashboard", description: "Order vs Delivery, Disposition, Hourly order-taking, Product Mix, Telesales and Delivery Partner performance — live from the uploaded Dump data", kind: "ahm_dashboard" },
   ],
 };
 
@@ -337,6 +344,12 @@ const DU_KOREA_UPLOADERS = [
   { code: "DU_CDR_KOREA", label: "CDR", description: "Upload DU Digital Korea call detail records", icon: PhoneOutgoing },
   { code: "DU_APR_KOREA", label: "APR", description: "Upload DU Digital Korea agent APR data",      icon: Activity },
 ];
+/** AHM's "Dump" export, one row per outlet/SKU order line -- two uploaders (branch-level
+ * files, same shape), one shared table (sql/1875). See ahm-dump-bulk.service.ts. */
+const AHM_UPLOADERS = [
+  { code: "AHM_DUMP_MP", label: "Dump (MP)", description: "Upload AHM's order/survey-to-delivery export, MP branch", icon: Truck },
+  { code: "AHM_DUMP_MM", label: "Dump (MM)", description: "Upload AHM's order/survey-to-delivery export, MM branch", icon: Truck },
+];
 
 /** Every company that has a real uploader array, keyed for UploaderHub/
  * UploaderWorkspace — Dalmia/DU Bangladesh/Viega/Exicom are deliberately
@@ -357,6 +370,7 @@ const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
   lp_onboarding: LP_ONBOARDING_UPLOADERS,
   du_thailand: DU_THAILAND_UPLOADERS,
   du_korea: DU_KOREA_UPLOADERS,
+  ahm: AHM_UPLOADERS,
 };
 
 function BoxGrid({ children }: { children: React.ReactNode }) {
@@ -810,6 +824,8 @@ export default function ProcessPerformanceV2Page() {
               <DuDigitalDashboard country="THAILAND" />
             ) : selectedDashboard.kind === "du_digital_korea" ? (
               <DuDigitalDashboard country="KOREA" />
+            ) : selectedDashboard.kind === "ahm_dashboard" ? (
+              <AhmDashboard />
             ) : (
               <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">
                 Nothing here yet

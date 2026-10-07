@@ -1057,6 +1057,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1870_gnc_lob_target.sql", // Registered 2026-09-25. Creates mas_hrms.gnc_lob_target (editable, effective-dated monthly revenue targets for GNC Inbound / Chat / Abandon Cart) and seeds the three business-supplied targets from 2026-09. CREATE TABLE IF NOT EXISTS + INSERT IGNORE, purely additive.
   "1871_bb_chat_template_new_table_columns.sql", // Registered 2026-09-26. Updates the single BB_CHAT_MASMIS upload_template_master row so the uploader's required/optional columns and downloadable template match db_masmis.new_bb_chat (Unique ID key + the 23 other sheet columns) instead of the old bb_chat ticket-export headers. UPDATE of one row; no DDL.
   "1874_process_details_page_access.sql", // Registered 2026-09-26. Adds the two page_catalog codes (PP_HOUSING_OWNER_PROCESS_DETAILS / PP_HOUSING_PREMIUM_PROCESS_DETAILS) that gate the Process Details pages. No role grants -- access is by explicit per-user grant only. INSERT IGNORE, purely additive.
+  "1875_ahm_dump_raw.sql", // Registered 2026-10-07. Creates db_masmis.ahm_dump_raw (AHM's new "Dump" uploader, one row per outlet/SKU order line) plus a process_master('AHM') seed and the AHM_DUMP_MP/AHM_DUMP_MM upload_template_master rows. Same pattern as sql/1779/1781: the app db user has no CREATE on db_masmis, so this needs a higher-privileged manual run before either uploader works.
   ];
 
 export type MigrationHealth = {

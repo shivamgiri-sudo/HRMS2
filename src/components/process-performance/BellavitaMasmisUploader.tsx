@@ -76,6 +76,8 @@ const RPC_BY_TYPE: Record<string, string> = {
   NEEMANS_CHAT_MASMIS: "import_neemans_chat_batch",
   DU_CDR_KOREA: "import_du_cdr_korea_batch",
   DU_CDR_THAILAND: "import_du_cdr_thailand_batch",
+  AHM_DUMP_MP: "import_ahm_dump_mp_batch",
+  AHM_DUMP_MM: "import_ahm_dump_mm_batch",
   DALMIA_DD_RAW: "import_dalmia_dd_batch",
   DALMIA_OUTBOUND_RAW: "import_dalmia_outbound_batch",
   DALMIA_AFTER_HOUR: "import_dalmia_after_hour_batch",

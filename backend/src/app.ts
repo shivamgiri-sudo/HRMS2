@@ -248,6 +248,7 @@ import { gncSaleDashboardRouter } from "./modules/process-performance/gnc-sale-d
 import { gncChatDashboardRouter } from "./modules/process-performance/gnc-chat-dashboard.routes.js";
 import { housingPremiumDashboardRouter } from "./modules/process-performance/housing-premium-dashboard.routes.js";
 import { duDigitalDashboardRouter } from "./modules/process-performance/du-digital-dashboard.routes.js";
+import { ahmDashboardRouter } from "./modules/process-performance/ahm-dashboard.routes.js";
 import { lpFeedbackDashboardRouter } from "./modules/process-performance/lp-feedback-dashboard.routes.js";
 import { lpOnboardingDashboardRouter } from "./modules/process-performance/lp-onboarding-dashboard.routes.js";
 import { satyaRetailDashboardRouter } from "./modules/process-performance/satya-retail-dashboard.routes.js";
@@ -819,6 +820,7 @@ app.use("/api/process-performance", gncSaleDashboardRouter);
 app.use("/api/process-performance", gncChatDashboardRouter);
 app.use("/api/process-performance", housingPremiumDashboardRouter);
 app.use("/api/process-performance", duDigitalDashboardRouter);
+app.use("/api/process-performance", ahmDashboardRouter);
 app.use("/api/process-performance", lpFeedbackDashboardRouter);
 app.use("/api/process-performance", lpOnboardingDashboardRouter);
 app.use("/api/process-performance", satyaRetailDashboardRouter);
