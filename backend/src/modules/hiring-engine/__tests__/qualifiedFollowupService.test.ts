@@ -51,7 +51,7 @@ describe("enqueueQualifiedFollowup", () => {
 });
 
 describe("enqueueMetaLeadFollowup", () => {
-  const lead = { id: "m1", screening_result: "qualified", parsed_phone: "9876543210", parsed_name: "A", parsed_email: null, campaign_id: "c1", req_id: "req-1", campaign_name: "Camp", campaign_status: "active" };
+  const lead = { id: "m1", screening_result: "qualified", parsed_phone: "9876543210", parsed_name: "A", parsed_email: null, campaign_id: "c1", req_id: "req-1", campaign_name: "Camp", campaign_status: "active", jr_id: "req-1" };
   it("off: no database call", async () => {
     expect((await enqueueMetaLeadFollowup("m1", "off")).status).toBe("skipped_off");
     expect(execute).not.toHaveBeenCalled();
@@ -63,6 +63,12 @@ describe("enqueueMetaLeadFollowup", () => {
   it("no requisition: invalid", async () => {
     execute.mockResolvedValueOnce([[{ ...lead, req_id: null }]]);
     expect((await enqueueMetaLeadFollowup("m1", "dry_run")).status).toBe("invalid");
+  });
+  it("requisition row missing: invalid, no INSERT", async () => {
+    execute.mockResolvedValueOnce([[{ ...lead, jr_id: null }]]);
+    expect((await enqueueMetaLeadFollowup("m1", "dry_run")).status).toBe("invalid");
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls.some((c) => String(c[0]).includes("INSERT"))).toBe(false);
   });
   it("qualified live lead is enqueued as meta_live with campaign origin", async () => {
     execute.mockResolvedValueOnce([[lead]]).mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([[{ id: "q1", source_type: "meta_live" }]]);

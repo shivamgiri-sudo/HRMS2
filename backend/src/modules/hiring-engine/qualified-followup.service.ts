@@ -51,7 +51,7 @@ export async function enqueueMetaLeadFollowup(metaLeadId: string, mode: Followup
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT r.id, r.screening_result, r.parsed_name, r.parsed_phone, r.parsed_email, r.campaign_id,
-              COALESCE(r.requisition_id, c.requisition_id) AS req_id, c.campaign_name, c.campaign_status, jr.branch_name, jr.designation_name
+              COALESCE(r.requisition_id, c.requisition_id) AS req_id, c.campaign_name, c.campaign_status, jr.id AS jr_id, jr.branch_name, jr.designation_name
          FROM meta_lead_raw r
          LEFT JOIN meta_campaign c ON c.id = r.campaign_id
          LEFT JOIN job_requisition jr ON jr.id = COALESCE(r.requisition_id, c.requisition_id)
@@ -59,7 +59,7 @@ export async function enqueueMetaLeadFollowup(metaLeadId: string, mode: Followup
     const r = rows[0];
     if (!r) return { status: "invalid" };
     if (r.screening_result !== "qualified") return { status: "not_qualified" };
-    if (!r.req_id) return { status: "invalid" };
+    if (!r.req_id || !r.jr_id) return { status: "invalid" };
     const res = await enqueueQualifiedFollowup({
       sourceType: classifySource({ campaignStatus: r.campaign_status }),
       metaLeadId, requisitionId: r.req_id, campaignId: r.campaign_id ?? null,
