@@ -17,8 +17,8 @@ import { D1ChecklistView } from "../command/D1Checklist";
 import StreamActions, { ConfirmBody, RowStreamActionsView, StreamMenu } from "../command/StreamActions";
 import { CreateStreamForm } from "../command/CreateStreamDialog";
 import { calendarCells, planDay, type PlanStreamInput } from "../command/planMath";
-import { defaultFilters } from "../command/driveCommandModel";
-import { STAGES, type DriveAnalytics, type DriveGroup, type DriveInsight, type DrivePlan, type Grid, type SectionId, type SourceType, type StageCounts, type StreamView, type TrendPoint } from "../command/driveCommandTypes";
+import { defaultFilters, type SectionId } from "../command/driveCommandModel";
+import { STAGES, type DriveAnalytics, type DriveGroup, type DriveInsight, type DrivePlan, type Grid, type SourceType, type StageCounts, type StreamView, type TrendPoint } from "../command/driveCommandTypes";
 
 // ---- fixture -------------------------------------------------------------------------------------------------------------------------------
 const R = "0a1b2c3d-0000-4000-8000-000000000001";
