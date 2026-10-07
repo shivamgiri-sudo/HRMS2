@@ -413,7 +413,7 @@ export const employeeService = {
           for (const w of words) { nameConds.push("e.full_name LIKE ?"); nameParams.push(`%${w}%`); }
         }
         filterConds.push(
-          `e.id IN (SELECT m.id FROM (SELECT e.id FROM employees e WHERE ${nameConds.join(" AND ")} LIMIT 2000) AS m)`,
+          `e.id IN (SELECT m.id FROM (SELECT e.id FROM employees e WHERE ${[recordStatusCond, ...nameConds].filter(Boolean).join(" AND ")} LIMIT 2000) AS m)`,
         );
         filterParams.push(...nameParams);
       }
