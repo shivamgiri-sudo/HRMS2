@@ -209,6 +209,8 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number, op
   const base = withJdDocText(toMatchRequisition(req), jd?.text);
   const mreq = {
     ...base, strict: true,
+    // Meta form leads never state a night-shift preference: for a Meta / campaign audience that one unknown does not block them (the invite and call ask).
+    unknownOk: drive.source_kind === "campaign" || drive.source_kind === "meta" ? ["night_shift"] : undefined,
     mandatorySkills: jd?.parsed.mandatorySkills.length ? jd.parsed.mandatorySkills : null,
     preferredSkills: jd?.parsed.preferredSkills.length ? jd.parsed.preferredSkills : null,
     minExperienceYears: base.minExperienceYears ?? jd?.parsed.minExperience ?? null,
@@ -229,7 +231,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number, op
   if (mreq.minEducationRank != null) { pre.push("l.education_rank >= ?"); preArgs.push(mreq.minEducationRank); }
   if (mreq.ageMin != null) { pre.push("l.age >= ?"); preArgs.push(mreq.ageMin); }
   if (mreq.ageMax != null) { pre.push("l.age <= ?"); preArgs.push(mreq.ageMax); }
-  if (mreq.nightShift === true) pre.push("l.night_shift_ok = 1");
+  if (mreq.nightShift === true) pre.push(mreq.unknownOk?.includes("night_shift") ? "(l.night_shift_ok = 1 OR l.night_shift_ok IS NULL)" : "l.night_shift_ok = 1");
   // Walk-ins only work if people can reach the branch: shortlist only those whose records place them in the branch's
   // city/region (lead locality, ATS branch/address, Meta form location or campaign branch, recruiter-call branch), or
   // who applied to this very requisition. Unknown location = left out of a city drive.

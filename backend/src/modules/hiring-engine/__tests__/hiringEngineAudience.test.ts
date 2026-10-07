@@ -31,3 +31,12 @@ describe("drive audience", () => {
     expect(audienceSql(d({ source_kind: "batch", source_ids: "not json" }), {}).sql).toBe("AND 1 = 0");
   });
 });
+
+import { scoreLead } from "../he-matcher.js";
+describe("night shift for sources that cannot state it", () => {
+  const req = { nightShift: true, strict: true } as never;
+  const lead = { nightShiftOk: null } as never;
+  it("strict drops an unknown night-shift preference", () => expect(scoreLead(lead, req).eligible).toBe(false));
+  it("a Meta audience lets the unknown through", () => expect(scoreLead(lead, { ...(req as object), unknownOk: ["night_shift"] } as never).eligible).toBe(true));
+  it("but a stated NO still blocks", () => expect(scoreLead({ nightShiftOk: false } as never, { ...(req as object), unknownOk: ["night_shift"] } as never).eligible).toBe(false));
+});

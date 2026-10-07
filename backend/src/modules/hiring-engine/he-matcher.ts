@@ -57,6 +57,8 @@ export interface MatchRequisition {
   preferredSkills?: string[] | null;
   /** Drive shortlists: every hard JD requirement must be CONFIRMED on the candidate (unknown = not shortlisted). */
   strict?: boolean;
+  /** Facts the source can never supply (a Meta form has no night-shift question): unknown is allowed through for them even when strict. */
+  unknownOk?: string[];
 }
 
 export interface MatchResult {
@@ -199,7 +201,7 @@ export function scoreLead(lead: MatchLead, req: MatchRequisition): MatchResult {
     }
   }
   if (req.strict) {
-    const hard = new Set(["age", "education", "experience", "night_shift", "gender", "languages", "certifications"]);
+    const hard = new Set(["age", "education", "experience", "night_shift", "gender", "languages", "certifications"].filter((f) => !req.unknownOk?.includes(f)));
     const missingFacts = unknown.filter((u) => hard.has(u));
     if (missingFacts.length) { eligible = false; reasons.push(`not confirmed: ${missingFacts.map((u) => u.replace(/_/g, " ")).join(", ")}`); }
   }
