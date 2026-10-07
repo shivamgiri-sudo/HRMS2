@@ -32,6 +32,9 @@
     "he_call_batch",
     "he_call_job"
   ],
+  "modules/hiring-engine/he-campaign-config.service.ts": [
+    "he_campaign_config"
+  ],
   "modules/hiring-engine/he-drive.service.ts": [
     "he_drive",
     "he_match"
@@ -51,6 +54,7 @@
     "he_lead_insight"
   ],
   "modules/hiring-engine/he-intake.service.ts": [
+    "he_consent",
     "he_import_mapping",
     "he_lead_profile"
   ],
@@ -60,6 +64,10 @@
   "modules/hiring-engine/he-lead.service.ts": [
     "he_consent",
     "he_lead"
+  ],
+  "modules/hiring-engine/he-meta-bridge.service.ts": [
+    "he_lead",
+    "he_lead_campaign"
   ],
   "modules/hiring-engine/he-profile.service.ts": [
     "he_lead_profile"
