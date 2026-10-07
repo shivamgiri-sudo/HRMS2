@@ -221,13 +221,13 @@ async function resolveExpenseClassification(
 }
 
 export interface RaiseVoucherInput {
-  sourceType: "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application" | "sales_receipt" | "internal_transfer";
+  sourceType: "vendor_grn" | "imprest_allocation" | "general" | "salary" | "vendor_advance" | "vendor_advance_application" | "sales_receipt" | "internal_transfer";
   bankAccountId: string;
   payableAccountId: string;
   /** Required for 'internal_transfer' — the company_bank_account receiving the funds.
    *  Must differ from bankAccountId (the paying/source account). */
   destinationBankAccountId?: string | null;
-  /** Required when sourceType === 'general' — the free-text description a GRN/imprest name
+  /** Required when sourceType === 'general' (optional for 'salary') — the free-text description a GRN/imprest name
    *  would otherwise supply (e.g. "March statutory PF challan", "Bank charges Q2"). */
   particulars?: string | null;
   /** Party name for sales_receipt — the client/company who paid. Stored in particulars column. */
@@ -367,6 +367,7 @@ export const paymentVoucherService = {
       vendor_advance: "Vendor Advance",
       vendor_advance_application: "Apply Vendor Advance",
       general: "Other / General Payment",
+      salary: "Salary",
     };
     const escape = (value: unknown) => {
       const text = String(value ?? "");
@@ -518,7 +519,7 @@ export const paymentVoucherService = {
 
   async raise(input: RaiseVoucherInput, actorUserId: string, actorRole?: string) {
     const isSalesReceipt = input.sourceType === "sales_receipt";
-    if (!["vendor_grn", "imprest_allocation", "general", "vendor_advance", "vendor_advance_application", "sales_receipt", "internal_transfer"].includes(input.sourceType)) {
+    if (!["vendor_grn", "imprest_allocation", "general", "salary", "vendor_advance", "vendor_advance_application", "sales_receipt", "internal_transfer"].includes(input.sourceType)) {
       throw new PaymentVoucherError("Invalid source type");
     }
     if (input.sourceType === "general" && !input.particulars?.trim()) {
@@ -626,7 +627,7 @@ export const paymentVoucherService = {
         if (!destAccount) throw new PaymentVoucherError("Destination bank account not found", 404);
         if (!(destAccount as any).active_status) throw new PaymentVoucherError("The destination bank account is closed");
       }
-      // 'general' has no linkage to validate — Payable Account (already validated above) is the
+      // 'general' and 'salary' have no linkage to validate — Payable Account (already validated above) is the
       // category, and input.particulars (already required-checked above) is the description.
 
       // sales_receipt has no vendor or imprest link — particulars carries the client/party name.
@@ -1570,7 +1571,7 @@ export const paymentVoucherService = {
           ],
         );
       } else {
-        // 'general' lane — no vendor GRN or imprest manager to update, just the bank debit
+        // 'general' / 'salary' lane — no vendor GRN or imprest manager to update, just the bank debit
         // against whatever Payable Account (Salary Payable / Statutory Dues / Bank Charges /
         // TDS Payable / Other) the voucher was raised under. particulars carries the "what this
         // is for" a GRN number or imprest manager name would otherwise supply.

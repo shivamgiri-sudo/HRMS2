@@ -31,7 +31,7 @@ import { PaymentVoucherDrawer } from "@/components/finance/vendor/PaymentVoucher
 
 
 const emptyRaiseForm = {
-  sourceType: "vendor_grn" as "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application" | "internal_transfer",
+  sourceType: "vendor_grn" as "vendor_grn" | "imprest_allocation" | "general" | "salary" | "vendor_advance" | "vendor_advance_application" | "internal_transfer",
   vendorId: "",
   bankAccountId: "",
   /** Only for sourceType === "internal_transfer" — the company_bank_account receiving the funds. */
@@ -229,7 +229,7 @@ export function PaymentVouchersContent() {
       linkedVendorId: (raiseForm.sourceType === "vendor_advance" || raiseForm.sourceType === "vendor_advance_application") ? raiseForm.vendorId : undefined,
       expenseHeadCode: expenseRequired ? raiseForm.expenseKey.split(EXPENSE_KEY_SEP)[0] || undefined : undefined,
       expenseSubHeadCode: expenseRequired ? raiseForm.expenseKey.split(EXPENSE_KEY_SEP)[1] || undefined : undefined,
-      particulars: raiseForm.sourceType === "general" ? raiseForm.particulars.trim() : undefined,
+      particulars: (raiseForm.sourceType === "general" || raiseForm.sourceType === "salary") ? raiseForm.particulars.trim() || undefined : undefined,
       amount: Number(raiseForm.amount),
       remarks: raiseForm.remarks?.trim() || undefined,
     })).data,
@@ -362,6 +362,7 @@ export function PaymentVouchersContent() {
                           : v.source_type === "imprest_allocation" ? "Imprest Top-up"
                           : v.source_type === "vendor_advance" ? "Vendor Advance"
                           : v.source_type === "vendor_advance_application" ? "Apply Advance"
+                          : v.source_type === "salary" ? "Salary"
                           : "General"}
                       </td>
                       <td className="px-4 py-2.5 text-gray-600">{v.bank_account_name ?? "—"}</td>
@@ -396,6 +397,7 @@ export function PaymentVouchersContent() {
                   <SelectItem value="imprest_allocation">Imprest Float Replenishment</SelectItem>
                   <SelectItem value="vendor_advance">Vendor Advance</SelectItem>
                   <SelectItem value="internal_transfer">Internal Transfer (own accounts)</SelectItem>
+                  <SelectItem value="salary">Salary</SelectItem>
                   <SelectItem value="general">Other / General Payment</SelectItem>
                 </SelectContent>
               </Select>

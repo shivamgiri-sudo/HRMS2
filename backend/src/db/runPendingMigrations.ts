@@ -1312,6 +1312,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2119_revenue_forecast_payroll_head_view_only.sql", // Registered 2026-10-06. Owner ruling: Payroll Head views revenue forecasts, Finance Head alone approves. UPDATE of the 2118 payroll_head grant + page description. Idempotent.
   "migrations/2120_process_pnl_branch_head_view.sql", // Registered 2026-10-07. FINANCE_PROCESS_PNL view grant for branch_head (route/nav/API already admit it; P&L reads audited branch-scoped). Idempotent upsert.
   "migrations/2121_grn_branch_split.sql", // Registered 2026-10-07. grn_request.is_branch_split: marks a Head Office GRN whose cost is split across branches (each branch share on its Back Office cost centre, the branch carried in grn_cost_allocation.branch_id). PREPARE-guarded, additive.
+  "migrations/2122_payment_voucher_salary_source_type.sql", // Registered 2026-10-07. Adds 'salary' to payment_voucher.source_type ENUM (general-lane voucher with its own purpose). Idempotent MODIFY COLUMN.
 ];
 
 export type MigrationHealth = {
