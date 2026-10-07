@@ -48,6 +48,20 @@ export async function loadActionToken(token: string): Promise<ActionTokenRow | n
   return r ? { ...r, expired: Number(r.expired) === 1 } : null;
 }
 
+/** Official addresses that identify this approver: the login email and the employee-record email. */
+async function approverEmails(userId: string): Promise<string[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT au.email AS login_email, e.email AS work_email
+       FROM auth_user au LEFT JOIN employees e ON e.user_id = au.id WHERE au.id = ?`,
+    [userId],
+  );
+  const out = new Set<string>();
+  for (const r of rows as any[]) {
+    for (const v of [r.login_email, r.work_email]) if (v) out.add(String(v).trim().toLowerCase());
+  }
+  return [...out];
+}
+
 async function ctxFor(userId: string) {
   const jwt = await authService.mintScopedAccessToken(userId, 120);
   return jwt ? createLoopback(userId, `Bearer ${jwt}`) : null;
@@ -64,7 +78,7 @@ export async function itemForToken(row: ActionTokenRow): Promise<ApprovalItem | 
 
 export type ActionOutcome =
   | { ok: true; action: "approve" | "reject" }
-  | { ok: false; reason: "invalid" | "used" | "expired" | "gone" | "error"; message: string };
+  | { ok: false; reason: "invalid" | "used" | "expired" | "gone" | "error" | "email"; message: string };
 
 /**
  * Carry out the decision. The token is claimed first (atomic UPDATE) so a double click or a replay can never
@@ -77,11 +91,19 @@ export async function executeActionToken(
   action: "approve" | "reject",
   remarks: string,
   ip: string,
+  email: string,
 ): Promise<ActionOutcome> {
   const row = await loadActionToken(token);
   if (!row) return { ok: false, reason: "invalid", message: "This link is not valid." };
   if (row.used_at) return { ok: false, reason: "used", message: "This link has already been used." };
   if (row.expired) return { ok: false, reason: "expired", message: "This link has expired. Open HRMS to decide." };
+
+  // Identity check: the approver must type their official email id; it has to match their account.
+  // Done before the token is claimed, so a wrong address burns nothing.
+  const typed = email.trim().toLowerCase();
+  if (!typed || !(await approverEmails(row.user_id)).includes(typed)) {
+    return { ok: false, reason: "email", message: "That email id does not match the approver for this request. Enter your official email id." };
+  }
 
   const [claim] = await db.execute<ResultSetHeader>(
     `UPDATE approval_email_action SET used_at = NOW(), used_action = ?, used_ip = ?

@@ -36,11 +36,12 @@ approvalActionPublicRouter.post("/:token", async (req, res) => {
   if (!action) return res.status(400).send(messagePage("er", "Choose an action", "Please choose Approve or Decline.", home()));
   const remarks = typeof req.body?.remarks === "string" ? req.body.remarks.slice(0, 2000) : "";
   try {
-    const out = await executeActionToken(req.params.token, action, remarks, String(req.ip ?? ""));
+    const email = typeof req.body?.email === "string" ? req.body.email.slice(0, 254) : "";
+    const out = await executeActionToken(req.params.token, action, remarks, String(req.ip ?? ""), email);
     if (out.ok) {
       return res.send(messagePage("ok", action === "approve" ? "Approved" : "Declined", action === "approve" ? "Your approval has been recorded." : "The request has been declined.", home()));
     }
-    if (out.reason === "error") {
+    if (out.reason === "error" || out.reason === "email") {
       // Claim was released: show the page again with the reason so the approver can fix it (e.g. add a note) and retry.
       const row = await loadActionToken(req.params.token);
       const item = row ? await itemForToken(row).catch(() => null) : null;

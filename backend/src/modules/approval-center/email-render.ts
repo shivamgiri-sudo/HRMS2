@@ -102,6 +102,8 @@ export function confirmPage(item: ApprovalItem, token: string, preselect: string
       renderFieldsTable(item) +
       (error ? `<div class="m er" style="margin-top:12px">${esc(error)}</div>` : "") +
       `<form method="post" action="/api/public/approval-action/${esc(token)}" style="margin-top:16px">` +
+      `<label for="em" style="font-size:13px;color:#374151;font-weight:600">Confirm your official email id</label>` +
+      `<input id="em" name="email" type="email" required autocomplete="email" placeholder="name@company.com" style="width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:12px;font:14px Arial;margin:6px 0 14px">` +
       `<label for="r" style="font-size:13px;color:#374151">Note${needsReason ? " (required if you decline)" : " (optional)"}</label>` +
       `<textarea id="r" name="remarks" ${preselect === "reject" ? "autofocus" : ""}></textarea>` +
       `<div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">${actions}</div></form>` +
