@@ -19,6 +19,8 @@ import { metaCampaignService } from "../modules/meta-campaign/meta-campaign.serv
 import { isMetaConfigured } from "../modules/meta-campaign/meta-api.client.js";
 import { notifyQualifiedLead } from "../modules/meta-campaign/lead-outreach.service.js";
 import { reconcileDeliveryStatuses } from "../modules/meta-campaign/meta-messages.service.js";
+import { enqueueMetaLeadFollowup } from "../modules/hiring-engine/qualified-followup.service.js";
+import { pipelineOwnsSends } from "../modules/hiring-engine/qualified-followup.policy.js";
 
 let scheduler: NodeJS.Timeout | undefined;
 let runInFlight = false;
@@ -227,7 +229,7 @@ export async function runMetaLeadSyncNow(): Promise<MetaSyncNowResult> {
   return runSyncCycle();
 }
 
-async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped: number; failed: number }> {
+export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped: number; failed: number }> {
   const [leads] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM meta_lead_raw
       WHERE screening_result = 'qualified'
@@ -247,6 +249,16 @@ async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped: numbe
 
   for (const lead of leads as any[]) {
     try {
+      // Live pipeline: enqueue first; an enqueued or already-enrolled lead is handed over and not messaged from here. Any other
+      // result (invalid, not_qualified, a throw) falls through to the old flow, whose own guard fails closed on a lookup error.
+      if (pipelineOwnsSends()) {
+        const enq = await enqueueMetaLeadFollowup(lead.id, "live").catch(() => null);
+        if (enq && (enq.status === "enqueued" || enq.status === "exists")) {
+          skipped++;
+          console.log(`[meta-sync] Lead ${lead.id} handed to the follow-up pipeline (${enq.status})`);
+          continue;
+        }
+      }
       // notifyQualifiedLead reports refusals/skips in its outcome instead of throwing, so count
       // by what actually landed. Counting every non-throw as "sent" hid leads that never got a message.
       const outcome = await notifyQualifiedLead(lead.id);

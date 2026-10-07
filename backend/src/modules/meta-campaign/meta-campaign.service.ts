@@ -36,6 +36,7 @@ import { notifyQualifiedLead } from './lead-outreach.service.js';
 import { heOwnsCampaign } from '../hiring-engine/he-campaign-config.service.js';
 import { bridgeOneMetaLead } from '../hiring-engine/he-meta-bridge.service.js';
 import { enqueueMetaLeadFollowup } from '../hiring-engine/qualified-followup.service.js';
+import { followupMode } from '../hiring-engine/qualified-followup.schedule.js';
 import { buildCanonicalFunnel, canonicalStage, CANONICAL_STAGE_LABEL, CANONICAL_STAGE_ORDER } from '../ats/ats-stage-model.js';
 import type {
   MetaCampaign,
@@ -685,9 +686,11 @@ export const metaCampaignService = {
       // A campaign handed to the Hiring Engine: the lead joins the engine's pool right away (it does the outreach, see notifyQualifiedLead).
       if (campaign?.id && (await heOwnsCampaign(campaign.id).catch(() => false))) await bridgeOneMetaLead(id);
       // Qualified-lead follow-up (dry-run unless QUAL_FOLLOWUP_MODE says otherwise): fire-and-forget, fail-open so ingest is unaffected.
-      void enqueueMetaLeadFollowup(id).catch((e: unknown) =>
+      const enqueued = enqueueMetaLeadFollowup(id).catch((e: unknown) =>
         console.warn('[meta] enqueueMetaLeadFollowup failed', e instanceof Error ? e.message : e)
       );
+      // Not off: wait for the row so notifyQualifiedLead's guard can see it. Off: fire-and-forget as before.
+      if (followupMode() !== 'off') await enqueued; else void enqueued;
       // Outreach is suppressed for backfilled leads or when auto_notify is explicitly disabled.
       // Default: auto_notify = true (fire immediately on qualify).
       const autoNotify = screeningConfig?.auto_notify !== false;

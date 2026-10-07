@@ -39,6 +39,9 @@ import { metaOutreachBlockedByEngine } from '../hiring-engine/he-campaign-config
 import { assignInterviewSlot } from './interview-slot.service.js';
 import type { InterviewSlot } from './interview-slot.service.js';
 import { requisitionClosedReason } from './lead-screener.service.js';
+import { followupEnrolled, personOptedOut } from '../hiring-engine/qualified-followup.service.js';
+import { pipelineOwnsSends } from '../hiring-engine/qualified-followup.policy.js';
+import { normaliseMobile10 } from '../hiring-engine/qualified-followup.schedule.js';
 
 export interface OutreachOutcome {
   leadId: string;
@@ -288,6 +291,35 @@ export async function notifyQualifiedLead(
   if (!loaded.qualified) {
     outcome.skipped.push({ channel: 'all', reason: 'Lead is not qualified; outreach refused' });
     return outcome;
+  }
+  // STOP is honoured in every mode and force does not override it. A lookup error fails open unless the pipeline owns sends (then it fails closed).
+  const mobile10 = normaliseMobile10(loaded.ctx.phone);
+  if (mobile10) {
+    let stop = false;
+    try { stop = await personOptedOut(mobile10); } catch (e) {
+      if (pipelineOwnsSends()) {
+        outcome.skipped.push({ channel: 'all', reason: 'Follow-up lookup failed; pipeline owns sends' });
+        return outcome;
+      }
+      console.warn('[meta] opt-out lookup failed', e instanceof Error ? e.message : e);
+    }
+    if (stop) {
+      outcome.skipped.push({ channel: 'all', reason: 'Candidate opted out (STOP)' });
+      return outcome;
+    }
+  }
+  // Live follow-up pipeline owns the sends for an enrolled lead (live and not test mode only). Fails closed: the sync retries next run
+  // because notification_sent_at stays NULL.
+  if (!options.force && pipelineOwnsSends()) {
+    try {
+      if (await followupEnrolled(leadId)) {
+        outcome.skipped.push({ channel: 'all', reason: 'Handled by the follow-up pipeline' });
+        return outcome;
+      }
+    } catch {
+      outcome.skipped.push({ channel: 'all', reason: 'Follow-up lookup failed; pipeline owns sends' });
+      return outcome;
+    }
   }
   // One owner per lead: a campaign handed to the Hiring Engine, or a person the Hiring Engine already contacted, is not messaged from here
   // (the Hiring Engine does email, WhatsApp, bot call, reminders and no-show follow-up with its own guards). Fails open: a lookup error must not stop outreach.

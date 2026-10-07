@@ -87,3 +87,33 @@ export async function followupSummary(): Promise<Array<{ sourceType: SourceType;
        FROM qualified_followup GROUP BY source_type`);
   return rows.map((x) => ({ sourceType: x.source_type as SourceType, total: Number(x.total), stopped: Number(x.stopped ?? 0), open: Number(x.open_n ?? 0) }));
 }
+
+/**
+ * True when a live, still-open follow-up row exists for this Meta lead, or for the same mobile10 and requisition. Errors are rethrown:
+ * the caller decides whether to fail closed (live mode) or open.
+ */
+export async function followupEnrolled(metaLeadId: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 AS hit
+       FROM meta_lead_raw r
+       LEFT JOIN meta_campaign c ON c.id = r.campaign_id
+      WHERE r.id = ?
+        AND EXISTS (SELECT 1 FROM qualified_followup qf
+                     WHERE qf.mode_at_enqueue = 'live' AND qf.stopped_reason IS NULL
+                       AND (qf.meta_lead_id = r.id COLLATE utf8mb4_unicode_ci
+                            OR (qf.mobile10 = RIGHT(REGEXP_REPLACE(r.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci
+                                AND qf.requisition_id = COALESCE(r.requisition_id, c.requisition_id) COLLATE utf8mb4_unicode_ci)))
+      LIMIT 1`, [metaLeadId]);
+  return rows.length > 0;
+}
+
+/** STOP: the person's Hiring Engine lead is opted out, or their WhatsApp contact consent is revoked with no active grant. */
+export async function personOptedOut(mobile10: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 AS hit FROM he_lead l
+      WHERE l.mobile10 = ? AND (l.status = 'opted_out'
+        OR (EXISTS (SELECT 1 FROM he_consent k WHERE k.lead_id = l.id AND k.consent_type = 'whatsapp_contact' AND k.revoked_at IS NOT NULL)
+            AND NOT EXISTS (SELECT 1 FROM he_consent k2 WHERE k2.lead_id = l.id AND k2.consent_type = 'whatsapp_contact' AND k2.revoked_at IS NULL)))
+      LIMIT 1`, [mobile10]);
+  return rows.length > 0;
+}
