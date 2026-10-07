@@ -66,7 +66,7 @@ function buildExtra(row: FollowupRow, ctx: SendContext, key: "he_walkin_invite" 
 async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: FollowupRow, counts: StepCounts): Promise<void> {
   const isDry = tag === "dry_run";
   const isTest = tag === "test";
-  const ctx = await loadSendContext(row, { assignSlot: !isDry, now });
+  const ctx = await loadSendContext(row, { assignSlot: tag === "live", now });
   // Dry run does not assign a slot; live would when the address and BMI link exist.
   const wouldAssign = isDry && !ctx.slot && row.sourceType !== "he" && Boolean(ctx.branchAddress && ctx.bmiLink);
   const pick = chooseWaTemplate({ sourceType: row.sourceType, hasSlot: Boolean(ctx.slot) || wouldAssign, hasBranchAddress: Boolean(ctx.branchAddress), hasBmiLink: Boolean(ctx.bmiLink) });

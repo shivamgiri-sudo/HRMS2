@@ -106,16 +106,18 @@ describe("runStopChecks", () => {
 });
 
 describe("syncWaReceipts", () => {
-  it("one UPDATE joined to he_message on wa_message_id for failed deliveries", async () => {
-    execute.mockResolvedValueOnce([{ affectedRows: 3 }]);
-    expect(await syncWaReceipts("live")).toBe(3);
-    expect(execute).toHaveBeenCalledTimes(1);
+  it("selects failed deliveries joined to he_message, then fails each row with a scrubbed error", async () => {
+    execute.mockResolvedValueOnce([[{ id: "r1", error_message: "bad for a.b@x.com 919876543210 (#131026)" }, { id: "r2", error_message: null }]])
+      .mockResolvedValue([{ affectedRows: 1 }]);
+    expect(await syncWaReceipts("live")).toBe(2);
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toMatch(/JOIN he_message hm ON hm\.id = qf\.wa_message_id/);
     expect(sql).toContain("hm.delivery_status = 'failed'");
-    expect(sql).toContain("qf.wa_status = 'failed'");
-    expect(params).toEqual(["live"]);
     expect(sql).toContain("'test_sent'");
+    expect(params).toEqual(["live"]);
+    expect(updates()[0][1]).toEqual(["bad for [email] [number] (#131026)", "r1"]);
+    expect(updates()[1][1]).toEqual(["delivery failed", "r2"]);
+    expect(String(updates()[0][0])).toContain("wa_status IN ('sent', 'test_sent')");
   });
 });
 

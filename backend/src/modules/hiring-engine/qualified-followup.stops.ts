@@ -78,13 +78,21 @@ function decideRow(r: RowDataPacket): StopReason | null {
   });
 }
 
+/** Provider text can echo an address or number; neither is stored. */
+const scrubError = (m: string) => m.replace(/[^\s@<>"',;:()]+@[^\s@<>"',;()]+/g, "[email]").replace(/\+?\d[\d ]{8,}\d/g, "[number]");
+
 export async function syncWaReceipts(tag: RowTag): Promise<number> {
-  const [res] = await db.execute<any>(
-    `UPDATE qualified_followup qf JOIN he_message hm ON hm.id = qf.wa_message_id
-        SET qf.wa_status = 'failed', qf.wa_error = COALESCE(LEFT(hm.error_message, 255), 'delivery failed')
-      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IN ('sent', 'test_sent') AND hm.delivery_status = 'failed'`,
-    [tag]);
-  return Number(res?.affectedRows ?? 0);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT qf.id, hm.error_message FROM qualified_followup qf JOIN he_message hm ON hm.id = qf.wa_message_id
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IN ('sent', 'test_sent') AND hm.delivery_status = 'failed' LIMIT 1000`, [tag]);
+  let n = 0;
+  for (const r of rows) {
+    const err = r.error_message ? scrubError(String(r.error_message)).slice(0, 255) : "delivery failed";
+    const [res] = await db.execute<any>(
+      "UPDATE qualified_followup SET wa_status = 'failed', wa_error = ? WHERE id = ? AND wa_status IN ('sent', 'test_sent')", [err, r.id]);
+    n += Number(res?.affectedRows ?? 0);
+  }
+  return n;
 }
 
 // A claim left in 'sending' means the process died between the provider call and the status write; the outcome is unknown,

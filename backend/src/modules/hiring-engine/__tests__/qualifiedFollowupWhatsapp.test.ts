@@ -210,6 +210,12 @@ describe("hardening 2", () => {
     expect(assign).toHaveBeenCalledTimes(1);
     expect(sendTpl.mock.calls[0][0].extra.drive_date).toBe("Fri 9 Oct 2026");
   });
+  it("test mode and dry_run never write a slot (assignInterviewSlot only in live)", async () => {
+    world({ slotDate: "2026-10-06" });
+    await runWhatsappStep(readSwitches(testEnv), "test", now, 100);
+    await runWhatsappStep(readSwitches(dryEnv), "dry_run", now, 100);
+    expect(assign).not.toHaveBeenCalled();
+  });
   it("a past slot in dry_run counts as missing, never reused", async () => {
     world({ slotDate: "2026-10-06", address: null });
     await runWhatsappStep(readSwitches(dryEnv), "dry_run", now, 100);
