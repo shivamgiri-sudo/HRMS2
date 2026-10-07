@@ -78,6 +78,12 @@
   "modules/hiring-engine/he-showup.service.ts": [
     "he_model_param"
   ],
+  "modules/hiring-engine/qualified-followup.context.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/qualified-followup.email.ts": [
+    "qualified_followup"
+  ],
   "modules/hiring-engine/qualified-followup.service.ts": [
     "qualified_followup"
   ],

@@ -1,0 +1,153 @@
+/**
+ * Follow-up pipeline, email step: any time of day, after bridging the lead into the Hiring Engine, deduped against
+ * earlier invite emails. The WhatsApp step follows one gap (inside the send window) after the attempt.
+ */
+import type { RowDataPacket } from "mysql2";
+import { randomUUID } from "node:crypto";
+import { db } from "../../db/mysql.js";
+import { logger } from "../../logger.js";
+import { emailService } from "../communication/email.service.js";
+import { maskEmail, normaliseEmail } from "../../shared/email-domains.js";
+import { buildInviteEmail, INVITE_EMAIL_KEY } from "./he-email.service.js";
+import { displayFirstName } from "./he-name.js";
+import { dateLabel, timeLabel } from "./he-send.service.js";
+import { emptyCounts, ensureHeLead, loadSendContext, ROW_COLUMNS, toFollowupRow, type FollowupRow, type StepCounts } from "./qualified-followup.context.js";
+import type { FollowupSwitches, RowTag } from "./qualified-followup.policy.js";
+import { afterFailure, followupRef, nextStepDue } from "./qualified-followup.rules.js";
+
+const env = (k: string, d: string) => (process.env[k]?.trim() ? process.env[k]!.trim() : d);
+const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/** Same table layout and footer as buildInviteEmail, but no slot block and no answer buttons: the candidate is asked to reply or call to book. */
+export function buildSlotlessInviteEmail(c: { name: string; role: string; company: string; branch: string; address: string | null; contact: string }): { subject: string; html: string; text: string } {
+  const subject = `Walk-in interview: ${c.role}, ${c.company}`;
+  const row = (label: string, value: string) =>
+    `<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">${label}</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a">${value}</td></tr>`;
+  const book = c.contact ? `Please reply to this email or call ${esc(c.contact)} to book a time that suits you.` : "Please reply to this email to book a time that suits you.";
+  const html = `<!doctype html><html><body style="margin:0;padding:0;background:#f1f5f9">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+<tr><td style="background:#1e3a8a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold;letter-spacing:.3px">${esc(c.company)} <span style="font-weight:normal;font-size:13px;color:#c7d2fe">&nbsp;|&nbsp; Careers</span></td></tr>
+<tr><td style="padding:26px 28px 6px">
+<p style="margin:0 0 6px;font-size:16px">Hi ${esc(c.name)},</p>
+<p style="margin:0;font-size:15px;line-height:1.55;color:#334155">Thank you for your interest. Your profile matches our <b>${esc(c.role)}</b> opening and we would like to invite you for a walk-in interview.</p>
+<p style="margin:12px 0 0;font-size:15px;line-height:1.55;color:#334155">${book}</p>
+</td></tr>
+<tr><td style="padding:14px 28px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+${row("Venue", `<b>${esc(c.branch)}</b>${c.address ? `<br/><span style="font-size:14px;color:#334155">${esc(c.address)}</span>` : ""}`)}
+${c.contact ? row("Questions", esc(c.contact)) : ""}
+</table></td></tr>
+<tr><td style="padding:22px 28px 26px;font-size:14px;color:#334155">All the best,<br/><b>${esc(c.company)} Hiring Team</b></td></tr>
+<tr><td style="background:#f8fafc;padding:14px 28px;font-size:11px;color:#94a3b8;line-height:1.5">You are receiving this because you applied for a job with ${esc(c.company)} or shared your profile with us. The interview is free of charge; we never ask for money.</td></tr>
+</table></td></tr></table></body></html>`;
+  const text = [`Hi ${c.name},`, "", `Your profile matches our ${c.role} opening and we would like to invite you for a walk-in interview.`,
+    c.contact ? `Please reply to this email or call ${c.contact} to book a time that suits you.` : "Please reply to this email to book a time that suits you.",
+    `Venue: ${c.branch}${c.address ? `, ${c.address}` : ""}`, "", "All the best,", `${c.company} Hiring Team`].join("\n");
+  return { subject, html, text };
+}
+
+type Outcome = "sent" | "test_sent" | "skipped" | "failed" | "blocked" | "dry_run";
+
+// The WhatsApp step follows one gap after the email attempt; a skip for missing address/config leaves it as enqueued.
+async function finish(row: FollowupRow, status: Outcome, error: string | null, now: Date, o: { advanceWa: boolean; sent: boolean }): Promise<void> {
+  await db.execute(
+    `UPDATE qualified_followup SET email_status = ?, email_error = ?${o.sent ? ", email_sent_at = NOW()" : ""}${o.advanceWa ? ", wa_due_at = ?" : ""}, step_claimed_at = NULL WHERE id = ?`,
+    [status, error, ...(o.advanceWa ? [nextStepDue(now)] : []), row.id]);
+}
+
+export async function runEmailStep(s: FollowupSwitches, tag: RowTag, now: Date, limit = 200): Promise<StepCounts> {
+  const counts = emptyCounts();
+  if (tag === "test" && (s.testMisconfigured || !s.testEmail)) return counts;
+  const paused = [...s.pausedSources];
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}
+      ORDER BY qf.email_due_at LIMIT ${Math.max(1, Math.floor(limit))}`,
+    [tag, now, ...paused]);
+  for (const r of rows) {
+    const row = toFollowupRow(r);
+    try {
+      await processRow(s, tag, now, row, counts);
+    } catch (err) {
+      logger.warn({ rowId: row.id, err: (err as Error).message }, "[qualified-followup] email step failed for row");
+    }
+  }
+  return counts;
+}
+
+async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: FollowupRow, counts: StepCounts): Promise<void> {
+  if (tag === "dry_run") {
+    const [res] = await db.execute<any>(
+      "UPDATE qualified_followup SET email_status = 'dry_run', wa_due_at = ? WHERE id = ? AND email_status IS NULL", [nextStepDue(now), row.id]);
+    if (Number(res?.affectedRows ?? 0) === 0) return;
+    counts.processed++; counts.dryRun++;
+    return;
+  }
+  const to = normaliseEmail(row.email);
+  if (!to || !emailService.isConfigured()) {
+    const [res] = await db.execute<any>(
+      "UPDATE qualified_followup SET email_status = 'skipped', email_error = ? WHERE id = ? AND email_status IS NULL", [to ? "email_not_configured" : "no_email", row.id]);
+    if (Number(res?.affectedRows ?? 0) === 0) return;
+    counts.processed++; counts.blocked++;
+    return;
+  }
+  const [claim] = await db.execute<any>(
+    "UPDATE qualified_followup SET email_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND email_status IS NULL AND stopped_reason IS NULL", [row.id]);
+  if (Number(claim?.affectedRows ?? 0) === 0) { counts.held++; return; }
+  counts.processed++;
+
+  const isTest = tag === "test";
+  // Test mode must not write he_lead, so it never bridges.
+  const heLeadId = isTest ? row.heLeadId : await ensureHeLead(row);
+  const ctx = await loadSendContext({ ...row, heLeadId }, { assignSlot: !isTest });
+  if (ctx.leadStatus === "opted_out") { await finish(row, "blocked", "opted_out", now, { advanceWa: true, sent: false }); counts.blocked++; return; }
+  if (!isTest && heLeadId) {
+    const [dup] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = ? AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1`,
+      [heLeadId, row.requisitionId, INVITE_EMAIL_KEY]);
+    if (dup.length) { await finish(row, "skipped", "already_emailed", now, { advanceWa: true, sent: false }); counts.blocked++; return; }
+  }
+
+  const company = env("HE_COMPANY_NAME", "MAS Callnet");
+  const contact = [env("HE_HR_CONTACT_NAME", ""), env("HE_HR_CONTACT_PHONE", "")].filter(Boolean).join(" ");
+  const name = displayFirstName(row.fullName);
+  const role = row.roleName ?? "the role";
+  const branch = row.branchName ?? "";
+  const base = env("HE_PUBLIC_BASE_URL", env("FRONTEND_URL", "https://mcnhrms.teammas.in")).replace(/\/$/, "");
+  const mail = ctx.slot
+    ? buildInviteEmail({
+        name, role, company, branch, address: ctx.branchAddress ?? "", date: dateLabel(ctx.slot.date), time: timeLabel(`${ctx.slot.date}T${ctx.slot.time}`), maps: ctx.mapsLink,
+        docs: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"), reference: followupRef(row.id), contact,
+        answerUrl: ctx.matchToken ? `${base}/w/${ctx.matchToken}` : null,
+      })
+    : buildSlotlessInviteEmail({ name, role, company, branch, address: ctx.branchAddress, contact });
+
+  const target = isTest ? (s.testEmail as string) : to;
+  try {
+    const r = await emailService.send({ to: target, subject: isTest ? `[TEST] ${mail.subject}` : mail.subject, html: mail.html, text: mail.text });
+    if (isTest) {
+      await finish(row, "test_sent", null, now, { advanceWa: true, sent: true });
+    } else {
+      await db.execute(
+        "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [randomUUID(), heLeadId, row.mobile10, "out", "email", INVITE_EMAIL_KEY, mail.subject.slice(0, 2000), r?.messageId ?? null, "sent", row.requisitionId, row.driveId]);
+      await finish(row, "sent", null, now, { advanceWa: true, sent: true });
+    }
+    counts.sent++;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn({ rowId: row.id, to: maskEmail(target), error: msg.slice(0, 200) }, "[qualified-followup] email send failed");
+    const f = afterFailure(row.emailAttempts, msg, now);
+    counts.failed++;
+    if (f.status === null) {
+      await db.execute(
+        "UPDATE qualified_followup SET email_status = NULL, email_due_at = ?, email_attempts = ?, email_error = ?, step_claimed_at = NULL WHERE id = ?",
+        [f.retryAt, f.attempts, msg.slice(0, 255), row.id]);
+    } else {
+      await db.execute(
+        "UPDATE qualified_followup SET email_status = 'failed', email_attempts = ?, email_error = ?, wa_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+        [f.attempts, msg.slice(0, 255), nextStepDue(now), row.id]);
+    }
+  }
+}
