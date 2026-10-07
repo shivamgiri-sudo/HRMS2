@@ -48,6 +48,8 @@ describe("worker registration parity", () => {
     // Warms the API process's in-memory P&L allocation summary cache (canonical-pnl.service.ts).
     "startPnlSummaryWarmer",
     "startMetaLeadSyncScheduler",
+    // Opt-in (PIPELINE_HEALTH_ALERTS) owner email on critical lead-pipeline checks; in-memory dedupe.
+    "startPipelineHealthAlerts",
     // Scheduled MIS emails (e93e050e1): gated by its own MIS_EMAIL_SCHEDULER_ENABLED,
     // started outside the guards, and toggled by mis-scheduler-enable.yml, which
     // restarts hrms2-backend only. Both pm2 apps read the same backend/.env, so a
