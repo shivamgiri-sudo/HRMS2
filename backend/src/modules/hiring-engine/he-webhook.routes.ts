@@ -22,13 +22,17 @@ import { addEvent } from "./he-lead.service.js";
 
 export const heWebhookRouter = Router();
 
+function tokenMatches(supplied: string, secret: string): boolean {
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(secret);
+  return a.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 async function authorised(req: Request, res: Response): Promise<boolean> {
   const secret = (await webhookToken()).token ?? "";
   if (!secret) { res.status(503).json({ success: false, message: "webhook not configured" }); return false; }
   const supplied = String(req.header("x-he-token") ?? req.query.token ?? "");
-  const a = Buffer.from(supplied);
-  const b = Buffer.from(secret);
-  if (a.length === 0 || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+  if (!tokenMatches(supplied, secret)) {
     res.status(403).json({ success: false, message: "invalid token" });
     return false;
   }
@@ -38,13 +42,21 @@ async function authorised(req: Request, res: Response): Promise<boolean> {
 // Meta-style GET handshake (hub.challenge) so the same URL can be registered with Pinbot/Meta.
 heWebhookRouter.get("/whatsapp", async (req, res) => {
   const secret = (await webhookToken()).token ?? "";
-  if (secret && req.query["hub.verify_token"] === secret) return res.status(200).send(String(req.query["hub.challenge"] ?? ""));
+  const mode = req.query["hub.mode"];
+  const verify = req.query["hub.verify_token"];
+  if (secret && (mode === undefined || mode === "subscribe") && typeof verify === "string" && tokenMatches(verify, secret)) {
+    return res.status(200).type("text/plain").send(String(req.query["hub.challenge"] ?? "").slice(0, 200));
+  }
   return res.status(403).send("forbidden");
 });
 
 heWebhookRouter.post("/whatsapp", async (req, res) => {
   if (!(await authorised(req, res))) return;
   const { inbound, statuses } = parseWhatsAppWebhook(req.body);
+  if (!inbound.length && !statuses.length && req.body && typeof req.body === "object" && Object.keys(req.body).length) {
+    // Key names only, never values: lets us see which shape a provider really sends without logging phone numbers or message text.
+    logger.info({ keys: Object.keys(req.body).slice(0, 20) }, "[he-hook] whatsapp body had no messages or statuses");
+  }
   // Process BEFORE acknowledging: if the process dies after a 200 the provider never retries and the candidate's reply
   // is lost. Every handler is idempotent (UNIQUE provider_message_id), so on any failure we answer 500 and the provider
   // safely redelivers the whole batch.
