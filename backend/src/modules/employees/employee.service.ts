@@ -374,20 +374,46 @@ export const employeeService = {
       // unindexable OR-chain and no consuming page's UI advertises searching by
       // personal email (every one is labelled "search by name or employee code").
       const term = search.trim();
-      const isCodeSearch = /^MAS/i.test(term);
+      const isCodeSearch = /^MAS\d/i.test(term); // "Masood Alam" is a name, not a code
+      // Every word must match (AND). The old single `term*` in BOOLEAN MODE was an OR across the
+      // words, so "Abid ali" matched every "Abid" and every "ali…", and with the pickers' limit=10
+      // the person typed was often not among the 10 rows returned — name search looked broken and
+      // only an employee code reliably found anyone. Operator characters are stripped so a stray
+      // "+", "-" or quote cannot turn the term into a boolean-mode syntax error.
+      const words = term.replace(/[+\-<>()~*"@]/g, " ").split(/\s+/).filter(Boolean);
+      const longWords = words.filter((w) => w.length >= 3);
+      const shortWords = words.filter((w) => w.length < 3);
       if (isCodeSearch) {
         filterConds.push("e.employee_code LIKE ?");
         filterParams.push(`${term.toUpperCase()}%`);
-      } else if (term.length < 3) {
+      } else if (words.length === 0) {
+        // only operator characters typed: nothing searchable
+        filterConds.push("1 = 0");
+      } else if (words.length === 1 && term.length < 3) {
         filterConds.push("(e.first_name LIKE ? OR e.last_name LIKE ? OR e.employee_code LIKE ?)");
         filterParams.push(`${term}%`, `${term}%`, `${term}%`);
-      } else if (await employeeFulltextAvailable()) {
+      } else if (longWords.length > 0 && (await employeeFulltextAvailable())) {
+        // MATCH alone gets the fulltext plan; words under the token floor are LIKE'd on the name.
         filterConds.push("MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)");
-        filterParams.push(`${term}*`);
+        filterParams.push(
+          words.length === 1 ? `${longWords[0]}*` : longWords.map((w) => `+${w}*`).join(" "),
+        );
+        for (const w of shortWords) {
+          filterConds.push("e.full_name LIKE ?");
+          filterParams.push(`%${w}%`);
+        }
       } else {
-        // No FULLTEXT index on this database (see employee-search-index.ts): plain LIKE instead of an error.
-        filterConds.push("(e.full_name LIKE ? OR e.employee_code LIKE ?)");
-        filterParams.push(`%${term}%`, `%${term}%`);
+        // No FULLTEXT index on this database (see employee-search-index.ts), or every word is
+        // under the token floor: plain LIKE per word, all of them required.
+        if (words.length === 1) {
+          filterConds.push("(e.full_name LIKE ? OR e.employee_code LIKE ?)");
+          filterParams.push(`%${words[0]}%`, `%${words[0]}%`);
+        } else {
+          for (const w of words) {
+            filterConds.push("e.full_name LIKE ?");
+            filterParams.push(`%${w}%`);
+          }
+        }
       }
     }
 

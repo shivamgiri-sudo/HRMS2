@@ -66,6 +66,18 @@ describe("employee search — no leading-wildcard LIKE OR'd with MATCH", () => {
     expect(params).toContain("Naresh*");
   });
 
+  it("multi-word name: every word is required, not OR'd", async () => {
+    await employeeService.listEmployees({ page: 1, limit: 50, search: "Abid ali", includeAnalytics: false } as never);
+    const { params } = lastEmployeeSelectCall();
+    expect(params).toContain("+Abid* +ali*");
+  });
+
+  it('a name starting with "Mas" is a name search, not a code search', async () => {
+    await employeeService.listEmployees({ page: 1, limit: 50, search: "Masood Alam", includeAnalytics: false } as never);
+    const { sql } = lastEmployeeSelectCall();
+    expect(sql).toMatch(/MATCH\(/i);
+  });
+
   it("term >= 3 chars: does not bind a leading-wildcard '%term%' anywhere", async () => {
     await employeeService.listEmployees({ page: 1, limit: 50, search: "Naresh", includeAnalytics: false } as never);
     const { params } = lastEmployeeSelectCall();
