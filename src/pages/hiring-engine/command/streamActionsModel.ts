@@ -7,6 +7,7 @@
 import { dayLabel } from "./driveChartModel";
 import { TYPE_LABEL, addDaysIso, isIsoDay, isUuidShape } from "./driveCommandModel";
 import type { ReadinessProblem, SourceType, StreamStatus, StreamView } from "./driveCommandTypes";
+import type { RequisitionOption } from "./commandData";
 import { MAX_CREATE_DAYS, WINDOW_MESSAGES, previewWindowChange, windowEnd, type ClientWindowChange } from "./streamWindowClient";
 
 // ---- paths ---------------------------------------------------------------------------------------------------------------------------------
@@ -152,6 +153,19 @@ export function confirmText(a: MenuAction, s: StreamView, o: ActionInput = {}): 
   }
 }
 
+export interface ConfirmView { stream: StreamView; ready: boolean; text: ConfirmText; errors: string[] }
+/**
+ * What the confirmation shows and checks: worded and validated on the freshly re-read stream when it has arrived (a stale row could
+ * otherwise apply a relative change such as +3 days on top of someone else's change); not ready (no submit) until it has.
+ */
+export function confirmView(a: MenuAction, stale: StreamView, fresh: StreamView | null | undefined, o: ActionInput, today: string): ConfirmView {
+  const s = fresh ?? stale;
+  return { stream: s, ready: !!fresh, text: confirmText(a, s, o), errors: actionErrors(a, s, o, today) };
+}
+
+/** Escape inside a host dialog closes the Extend menu first, never the dialog under it, and never while a write runs. */
+export const dialogEscapeAllowed = (s: { menuOpen: boolean; busy?: boolean }): boolean => !s.menuOpen && !s.busy;
+
 /** The role="status" line after a successful change (the server's stream is the source of the dates). */
 export function successText(a: MenuAction, after: StreamView, changed: boolean, o: ActionInput = {}): string {
   if (!changed) return "Nothing changed";
@@ -249,12 +263,14 @@ export function createErrors(f: CreateForm, today: string, problems: ReadinessPr
   return out;
 }
 
-/** Request body for POST /requisition-streams. Override is sent only when ticked (the server ignores it for non-admins). */
-export function createBody(f: CreateForm): Record<string, unknown> {
+/** Request body for POST /requisition-streams. Override is sent only when ticked AND allowed by the readiness read (the server ignores it for non-admins). */
+export function createBody(f: CreateForm, problems: ReadinessProblem[] = [], neverOverride: string[] = []): Record<string, unknown> {
   const reason = trimmedReason(f.reason);
+  // defence in depth: the override is sent only when the readiness read says every blocking problem may be overridden
+  const override = f.open && f.override && canOverride(problems, neverOverride);
   return {
     requisitionId: f.requisitionId, sourceType: f.sourceType, originId: f.originId, openFrom: f.openFrom, openDays: f.openDays,
-    dailyInvites: f.dailyInvites, open: f.open, ...(f.open && f.override ? { override: true } : {}), ...(reason ? { reason } : {}),
+    dailyInvites: f.dailyInvites, open: f.open, ...(override ? { override: true } : {}), ...(reason ? { reason } : {}),
   };
 }
 
@@ -299,6 +315,14 @@ export function problemRows(problems: ReadinessProblem[]): Array<ReadinessProble
   const list = problemsOf(problems);
   return [...list.filter((p) => p.severity === "blocking"), ...list.filter((p) => p.severity === "warning")]
     .map((p) => ({ ...p, word: p.severity === "blocking" ? "Blocking" : "Warning" }));
+}
+
+/** The insight's requisition as the only (locked) option, labelled from the filter options when it is there, else by its code. */
+export function presetOptions(options: RequisitionOption[], preset: { id: string; code: string } | null | undefined, lock: boolean): { requisitions: RequisitionOption[]; lock: boolean } {
+  if (!preset || !preset.id) return { requisitions: options, lock };
+  const known = options.find((r) => r.id === preset.id);
+  const code = preset.code || known?.code || "";
+  return { requisitions: [{ id: preset.id, label: known?.label || code || "This requisition", branch: known?.branch ?? "", code }], lock: true };
 }
 
 export function createSuccessText(s: Pick<StreamView, "status"> | null | undefined): string {

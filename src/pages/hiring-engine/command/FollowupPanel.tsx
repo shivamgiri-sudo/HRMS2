@@ -15,8 +15,9 @@ import type { AttentionChannel, AttentionGroup, FollowupMode, FollowupStatus, Re
 import { BTN, PRIMARY } from "./StreamActions";
 import {
   ATTENTION_PATH, OFF_SENTENCE, SOURCE_COLUMNS, SUMMARY_PATH, attentionTotal, attentionView, callFileRows, isFollowupOff, markCalledErrorText, markCalledPath,
-  modeText, reportText, retryErrorText, retryPath, scrubText, sourceFunnelRows, sourcesPath, type SummaryRow,
+  markCalledText, modeText, reportText, retryErrorText, retryOkText, retryPath, rowName, scrubText, sourceFunnelRows, sourcesPath, type SummaryRow,
 } from "./followupPanelModel";
+import { createInFlightGuard } from "./inFlight";
 import { FOLLOWUP_STATUS_PATH } from "./driveCommandModel";
 
 export const FOLLOWUP_PANEL_ID = "followup-panel-body";
@@ -33,6 +34,8 @@ export interface PanelData {
   failed: string[];
 }
 export interface RowResult { id: string; ok: boolean; text: string }
+/** Which action is running on which row (its buttons show a busy word; every row's buttons are disabled meanwhile). */
+export interface RowBusy { id: string; kind: "retry" | "mark" }
 
 export interface FollowupPanelViewProps {
   expanded: boolean;
@@ -42,7 +45,7 @@ export interface FollowupPanelViewProps {
   error: string | null;
   data: PanelData | null;
   qualifiedTracked?: boolean | null;
-  busyId?: string | null;
+  busy?: RowBusy | null;
   result?: RowResult | null;
   onReload: () => void;
   onRetry: (id: string, channel: AttentionChannel) => void;
@@ -85,7 +88,7 @@ function Funnel({ data }: { data: PanelData }) {
   );
 }
 
-function Attention({ data, busyId, result, onRetry, onMarkCalled }: Pick<FollowupPanelViewProps, "busyId" | "result" | "onRetry" | "onMarkCalled"> & { data: PanelData }) {
+function Attention({ data, busy, result, onRetry, onMarkCalled }: Pick<FollowupPanelViewProps, "busy" | "result" | "onRetry" | "onMarkCalled"> & { data: PanelData }) {
   if (!data.attention) return <p className="text-sm text-slate-700 dark:text-slate-200">The needs-attention list could not be loaded.</p>;
   const groups = attentionView(data.attention);
   if (groups.length === 0) {
@@ -107,17 +110,17 @@ function Attention({ data, busyId, result, onRetry, onMarkCalled }: Pick<Followu
                   <p className="break-words text-xs text-slate-700 dark:text-slate-200">Error: {r.error}. Attempts: {r.attempts}. Updated {r.updated}.</p>
                   {r.label && <p className="flex items-center gap-1 text-xs font-semibold text-amber-900 dark:text-amber-200"><AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden /> {r.label}</p>}
                   {r.hint && <p className="flex items-center gap-1 text-xs text-slate-800 dark:text-slate-100"><MinusCircle className="h-3.5 w-3.5 shrink-0" aria-hidden /> {r.hint}</p>}
-                  {result?.id === r.id && <p role="status" className={`text-xs font-semibold ${result.ok ? "text-emerald-800 dark:text-emerald-200" : "text-rose-800 dark:text-rose-200"}`}>{result.text}</p>}
+                  {result?.id === r.id && <p className={`text-xs font-semibold ${result.ok ? "text-emerald-800 dark:text-emerald-200" : "text-rose-800 dark:text-rose-200"}`}>{result.text}</p>}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {r.retry && (
-                    <button type="button" className={BTN} disabled={busyId === r.id} onClick={() => onRetry(r.id, g.channel)}>
-                      {busyId === r.id ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden /> : <RotateCcw className="h-4 w-4" aria-hidden />}Retry
+                    <button type="button" className={BTN} disabled={!!busy} onClick={() => onRetry(r.id, g.channel)}>
+                      {busy?.id === r.id && busy.kind === "retry" ? <><Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden />Retrying…</> : <><RotateCcw className="h-4 w-4" aria-hidden />Retry</>}
                     </button>
                   )}
                   {r.markCalled && (
-                    <button type="button" className={BTN} disabled={busyId === r.id} onClick={() => onMarkCalled(r.id)}>
-                      <PhoneCall className="h-4 w-4" aria-hidden />Mark called
+                    <button type="button" className={BTN} disabled={!!busy} onClick={() => onMarkCalled(r.id)}>
+                      {busy?.id === r.id && busy.kind === "mark" ? <><Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden />Marking…</> : <><PhoneCall className="h-4 w-4" aria-hidden />Mark called</>}
                     </button>
                   )}
                 </div>
@@ -196,7 +199,9 @@ export function FollowupPanelView(p: FollowupPanelViewProps) {
                 <h4 id="followup-attention-h" className="text-sm font-bold text-slate-900 dark:text-slate-100">
                   Needs attention{p.data.attention ? ` (${attentionTotal(attentionView(p.data.attention))})` : ""}
                 </h4>
-                <Attention data={p.data} busyId={p.busyId} result={p.result} onRetry={p.onRetry} onMarkCalled={p.onMarkCalled} />
+                {/* Always mounted: a successful retry removes the row from the list, so the result must not live only beside it. */}
+                <p role="status" className={`text-sm font-semibold empty:hidden ${p.result && !p.result.ok ? "text-rose-800 dark:text-rose-200" : "text-emerald-800 dark:text-emerald-200"}`}>{p.result?.text ?? ""}</p>
+                <Attention data={p.data} busy={p.busy} result={p.result} onRetry={p.onRetry} onMarkCalled={p.onMarkCalled} />
               </section>
               <section aria-labelledby="followup-files-h" className="space-y-1">
                 <h4 id="followup-files-h" className="text-sm font-bold text-slate-900 dark:text-slate-100">Calling files</h4>
@@ -241,7 +246,8 @@ export default function FollowupPanel({ requisitionId = null, qualifiedTracked =
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<PanelData | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<RowBusy | null>(null);
+  const guard = useRef(createInFlightGuard());
   const [result, setResult] = useState<RowResult | null>(null);
   const [confirm, setConfirm] = useState<{ id: string; channel: AttentionChannel } | null>(null);
   const seq = useRef(createRequestSequencer());
@@ -268,26 +274,27 @@ export default function FollowupPanel({ requisitionId = null, qualifiedTracked =
 
   const toggle = () => { setExpanded((e) => !e); setStarted(true); };
 
-  const act = async (id: string, path: string, body: unknown, errorText: (e: unknown) => string, okText: string | ((r: unknown) => string)) => {
-    setBusyId(id); setResult(null);
+  const act = (id: string, kind: RowBusy["kind"], path: string, body: unknown, errorText: (e: unknown) => string, okText: (r: unknown) => string) => guard.current.run(async () => {
+    setBusy({ id, kind }); setResult(null);
     try {
       const r = await hrmsApi.post(path, body);
-      setResult({ id, ok: true, text: typeof okText === "string" ? okText : okText(r) });
+      setResult({ id, ok: true, text: okText(r) });
       await load(); // never optimistic: the list is whatever the server says now
     } catch (e: unknown) {
       setResult({ id, ok: false, text: errorText(e) });
     } finally {
-      setBusyId(null);
+      setBusy(null);
     }
-  };
+  });
+  const nameOf = (id: string): string => rowName(data?.attention, id);
 
   return (
     <>
       <FollowupPanelView expanded={expanded} onToggle={toggle} loading={loading} error={error} data={data} qualifiedTracked={qualifiedTracked}
-        busyId={busyId} result={result} onReload={() => void load()}
+        busy={busy} result={result} onReload={() => void load()}
         onRetry={(id, channel) => setConfirm({ id, channel })}
-        onMarkCalled={(id) => void act(id, markCalledPath(id), {}, markCalledErrorText, (r) => ((r as { updated?: unknown } | null)?.updated === 0 ? "Nothing changed: the row is not in a calling file" : "Marked as called"))} />
-      <AlertDialog open={confirm !== null} onOpenChange={(o) => { if (!o && busyId === null) setConfirm(null); }}>
+        onMarkCalled={(id) => void act(id, "mark", markCalledPath(id), {}, markCalledErrorText, (r) => markCalledText(r, nameOf(id)))} />
+      <AlertDialog open={confirm !== null} onOpenChange={(o) => { if (!o && busy === null) setConfirm(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Retry this follow-up step?</AlertDialogTitle>
@@ -299,7 +306,7 @@ export default function FollowupPanel({ requisitionId = null, qualifiedTracked =
             <AlertDialogCancel type="button" className="min-h-11 sm:min-h-9">Cancel</AlertDialogCancel>
             <button type="button" className={PRIMARY} onClick={() => {
               const c = confirm; setConfirm(null);
-              if (c) void act(c.id, retryPath(c.id), { channel: c.channel }, retryErrorText, "Retry queued");
+              if (c) void act(c.id, "retry", retryPath(c.id), { channel: c.channel }, retryErrorText, (r) => retryOkText(r, nameOf(c.id)));
             }}>Retry step</button>
           </AlertDialogFooter>
         </AlertDialogContent>

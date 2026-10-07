@@ -11,9 +11,11 @@ import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  STATUS_WORD, actionErrors, changeBody, changePath, confirmText, errorText, menuItems, needsDate, problemRows, streamLabel, streamStatus,
+  STATUS_WORD, changeBody, changePath, confirmView, errorText, menuItems, needsDate, problemRows, streamLabel, streamPath, streamStatus,
   successText, windowEnded, type ActionInput, type MenuAction,
 } from "./streamActionsModel";
+import { createRequestSequencer } from "./commandData";
+import { createInFlightGuard } from "./inFlight";
 import type { ReadinessProblem, StreamView } from "./driveCommandTypes";
 
 export const BTN = "inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 transition-colors duration-150 hover:bg-slate-100 motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 sm:min-h-8";
@@ -58,11 +60,16 @@ export interface StreamMenuProps {
   /** Static-markup / preview hook: render with the list open. */
   initiallyOpen?: boolean;
   buttonRef?: RefObject<HTMLButtonElement>;
+  /** Told when the list opens or closes (a host dialog keeps Escape for the menu while it is open). */
+  onOpenChange?: (open: boolean) => void;
 }
 
 /** The Extend menu. Only the actions the stream's status allows are listed. */
-export function StreamMenu({ stream, onPick, disabled = false, initiallyOpen = false, buttonRef }: StreamMenuProps) {
+export function StreamMenu({ stream, onPick, disabled = false, initiallyOpen = false, buttonRef, onOpenChange }: StreamMenuProps) {
   const [open, setOpen] = useState(initiallyOpen);
+  const notify = useRef(onOpenChange);
+  notify.current = onOpenChange;
+  useEffect(() => { notify.current?.(open); }, [open]);
   const ownRef = useRef<HTMLButtonElement>(null);
   const btn = buttonRef ?? ownRef;
   const wrap = useRef<HTMLDivElement>(null);
@@ -100,7 +107,7 @@ export function StreamMenu({ stream, onPick, disabled = false, initiallyOpen = f
       </button>
       {open && (
         <ul ref={list} id={menuId} role="menu" aria-label={`Change ${streamLabel(stream)}`} onKeyDown={onKey}
-          className="absolute left-0 z-20 mt-1 w-56 space-y-0.5 rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+          className="absolute right-0 z-20 mt-1 max-h-80 w-56 max-w-xs space-y-0.5 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
           {items.map((i) => (
             <li key={i.action} role="none">
               <button type="button" role="menuitem" tabIndex={-1} className={ITEM} onClick={() => { close(false); onPick(i.action); }}>{i.label}</button>
@@ -144,11 +151,16 @@ export function ConfirmBody({ action, stream, input, today, errors, showErrors, 
   );
 }
 
-export interface StreamActionsProps { stream: StreamView; today: string; onDone: (after: StreamView, text: string) => void }
+export interface StreamActionsProps { stream: StreamView; today: string; onDone: (after: StreamView, text: string) => void; onMenuOpenChange?: (open: boolean) => void }
 
 /** Extend menu + confirmation + the write for one stream. */
-export default function StreamActions({ stream, today, onDone }: StreamActionsProps) {
+export default function StreamActions({ stream, today, onDone, onMenuOpenChange }: StreamActionsProps) {
   const [action, setAction] = useState<MenuAction | null>(null);
+  // The row may be stale (another tab changed the stream): the dialog re-reads it and words and validates the change on that copy.
+  const [fresh, setFresh] = useState<StreamView | null>(null);
+  const guard = useRef(createInFlightGuard());
+  const reads = useRef(createRequestSequencer());
+  useEffect(() => () => reads.current.cancel(), []);
   const [input, setInput] = useState<ActionInput>({});
   const [busy, setBusy] = useState(false);
   const [tried, setTried] = useState(false);
@@ -160,15 +172,24 @@ export default function StreamActions({ stream, today, onDone }: StreamActionsPr
     setInput({ date: "", reason: "", days: 3, ended: a === "reopen" && windowEnded(stream, today) });
     setTried(false);
     setServerError(null);
+    setFresh(null);
     setAction(a);
+    const ticket = reads.current.begin();
+    hrmsApi.get<{ data?: StreamView }>(streamPath(stream.id), undefined, ticket.signal)
+      .then((r) => {
+        if (!ticket.isCurrent()) return;
+        if (!r?.data) { setServerError(errorText(null)); return; }
+        setFresh(r.data);
+        setInput((i) => ({ ...i, ended: a === "reopen" && windowEnded(r.data as StreamView, today) }));
+      })
+      .catch((e: unknown) => { if (ticket.isCurrent()) setServerError(errorText(e, { what: "change" })); });
   };
-  const errors = action ? actionErrors(action, stream, input, today) : [];
-  const text = action ? confirmText(action, stream, input) : null;
+  const view = action ? confirmView(action, stream, fresh, input, today) : null;
 
-  const submit = async () => {
-    if (!action || busy) return;
+  const submit = () => guard.current.run(async () => {
+    if (!action || !view) return;
     setTried(true);
-    if (errors.length) return;
+    if (!view.ready || view.errors.length) return;
     setBusy(true);
     setServerError(null);
     try {
@@ -182,28 +203,29 @@ export default function StreamActions({ stream, today, onDone }: StreamActionsPr
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   return (
     <>
-      <StreamMenu stream={stream} onPick={pick} disabled={busy} buttonRef={trigger} />
-      <AlertDialog open={action !== null} onOpenChange={(o) => { if (!o && !busy) setAction(null); }}>
+      <StreamMenu stream={stream} onPick={pick} disabled={busy} buttonRef={trigger} onOpenChange={onMenuOpenChange} />
+      <AlertDialog open={action !== null} onOpenChange={(o) => { if (!o && !busy) { reads.current.cancel(); setAction(null); } }}>
         <AlertDialogContent
           className="max-h-screen overflow-y-auto"
           onEscapeKeyDown={(e) => { if (busy) e.preventDefault(); }}
           onCloseAutoFocus={(e) => { e.preventDefault(); trigger.current?.focus(); }}
         >
-          {action && text && (
+          {action && view && (
             <form noValidate onSubmit={(e) => { e.preventDefault(); void submit(); }} className="space-y-4" aria-busy={busy}>
               <AlertDialogHeader>
-                <AlertDialogTitle>{text.title}</AlertDialogTitle>
-                <AlertDialogDescription className="text-slate-700 dark:text-slate-200">{text.body}</AlertDialogDescription>
+                <AlertDialogTitle>{view.text.title}</AlertDialogTitle>
+                <AlertDialogDescription className="text-slate-700 dark:text-slate-200">{view.text.body}</AlertDialogDescription>
               </AlertDialogHeader>
-              <ConfirmBody action={action} stream={stream} input={input} today={today} errors={errors} showErrors={tried} serverError={serverError} busy={busy} onInput={setInput} idPrefix={idPrefix} />
+              {!view.ready && !serverError && <p role="status" className="text-xs text-slate-700 dark:text-slate-200">Checking the latest version of this stream…</p>}
+              <ConfirmBody action={action} stream={view.stream} input={input} today={today} errors={view.errors} showErrors={tried} serverError={serverError} busy={busy} onInput={setInput} idPrefix={idPrefix} />
               <AlertDialogFooter>
                 <AlertDialogCancel type="button" disabled={busy} className="min-h-11 sm:min-h-9">Cancel</AlertDialogCancel>
-                <button type="submit" className={PRIMARY} disabled={busy}>
-                  {busy ? <><Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden /> Saving…</> : text.confirm}
+                <button type="submit" className={PRIMARY} disabled={busy || !view.ready}>
+                  {busy ? <><Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden /> Saving…</> : view.text.confirm}
                 </button>
               </AlertDialogFooter>
             </form>

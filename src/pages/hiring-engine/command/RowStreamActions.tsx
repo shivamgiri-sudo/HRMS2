@@ -9,7 +9,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { createRequestSequencer, describeError, unusableMessage } from "./commandData";
 import type { DriveGroup, StreamView } from "./driveCommandTypes";
-import { STATUS_WORD, rowStreams, streamLabel, streamPath, streamStatus, streamsOfRequisitionPath } from "./streamActionsModel";
+import { STATUS_WORD, dialogEscapeAllowed, rowStreams, streamLabel, streamPath, streamStatus, streamsOfRequisitionPath } from "./streamActionsModel";
 import StreamActions, { RowStreamActionsView } from "./StreamActions";
 import CreateStreamDialog from "./CreateStreamDialog";
 
@@ -62,7 +62,7 @@ export default function RowStreamActions({ group, today, reloadDetail, onChanged
   );
 }
 
-function StreamPanel({ streamId, today, onChanged }: { streamId: string; today: string; onChanged?: () => void }) {
+function StreamPanel({ streamId, today, onChanged, onMenuOpenChange }: { streamId: string; today: string; onChanged?: () => void; onMenuOpenChange?: (open: boolean) => void }) {
   const [stream, setStream] = useState<StreamView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -83,7 +83,7 @@ function StreamPanel({ streamId, today, onChanged }: { streamId: string; today: 
           <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{streamLabel(stream)}</span>
           <span className="rounded border border-slate-400 px-1.5 text-xs font-semibold text-slate-800 dark:border-slate-500 dark:text-slate-100">{STATUS_WORD[streamStatus(stream)]}</span>
           <span className="text-xs text-slate-700 dark:text-slate-200">{stream.label}</span>
-          <span className="ml-auto"><StreamActions stream={stream} today={today} onDone={(after, text) => { setStream(after); setNote(text); onChanged?.(); }} /></span>
+          <span className="ml-auto"><StreamActions stream={stream} today={today} onMenuOpenChange={onMenuOpenChange} onDone={(after, text) => { setStream(after); setNote(text); onChanged?.(); }} /></span>
         </div>
       )}
     </div>
@@ -92,14 +92,16 @@ function StreamPanel({ streamId, today, onChanged }: { streamId: string; today: 
 
 /** Opened by an insight's "Extend the stream": loads that stream and offers its Extend menu. */
 export function StreamDialog({ open, onOpenChange, streamId, today, onChanged }: { open: boolean; onOpenChange: (o: boolean) => void; streamId: string | null; today: string; onChanged?: () => void }) {
+  // Radix handles Escape in the capture phase, before the menu sees it: while the Extend menu is open, Escape belongs to the menu.
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+    <Dialog open={open} onOpenChange={(o) => { if (!o) setMenuOpen(false); onOpenChange(o); }}>
+      <DialogContent className="max-w-xl" onEscapeKeyDown={(e) => { if (!dialogEscapeAllowed({ menuOpen })) e.preventDefault(); }}>
         <DialogHeader>
           <DialogTitle>Change the stream</DialogTitle>
           <DialogDescription className="text-slate-700 dark:text-slate-200">Pick a change from the Extend menu; every change asks for confirmation.</DialogDescription>
         </DialogHeader>
-        {open && streamId && <StreamPanel streamId={streamId} today={today} onChanged={onChanged} />}
+        {open && streamId && <StreamPanel streamId={streamId} today={today} onChanged={onChanged} onMenuOpenChange={setMenuOpen} />}
       </DialogContent>
     </Dialog>
   );

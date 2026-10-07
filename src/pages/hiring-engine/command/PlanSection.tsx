@@ -211,7 +211,7 @@ function StreamsTable({ day, streamActions }: { day: PlanDay; streamActions?: (s
         <table className="min-w-full text-sm">
           <caption className="sr-only">Per stream: people lined up, show rate and its basis, expected arrivals, recommended invites and why</caption>
           <thead className="bg-slate-50 dark:bg-slate-800">
-            <tr>{["Stream", "Lined up", "Show rate", "Expected", "Recommended invites", "Why", "Actions"].map((h) => <th key={h} scope="col" className={TH}>{h}</th>)}</tr>
+            <tr>{["Stream", "Lined up", "Show rate", "Expected", "Recommended invites", "Why"].map((h) => <th key={h} scope="col" className={TH}>{h}</th>)}</tr>
           </thead>
           <tbody>
             {rows.map((r) => (
@@ -222,12 +222,25 @@ function StreamsTable({ day, streamActions }: { day: PlanDay; streamActions?: (s
                 <td className={`${TD} tabular-nums`}>{r.expected}</td>
                 <td className={`${TD} font-semibold tabular-nums`}>{r.recommended}</td>
                 <td className={`${TD} min-w-48 break-words text-xs`}>{r.reasoning}</td>
-                <td className={TD}>{streamActions?.(r.streamId) ?? <span className="text-xs text-slate-700 dark:text-slate-200">–</span>}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {/* Actions sit outside the scrolling table so the Extend menu is never clipped by it (overflow-x:auto also clips vertically). */}
+      {streamActions && rows.length > 0 && (
+        <ul aria-label="Stream actions" className="space-y-2">
+          {rows.map((r) => {
+            const node = streamActions(r.streamId);
+            return node ? (
+              <li key={r.streamId} role="group" aria-label={r.label} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
+                <span className="min-w-0 break-words text-sm font-semibold text-slate-900 dark:text-slate-100">{r.label}</span>
+                <span className="ml-auto">{node}</span>
+              </li>
+            ) : null;
+          })}
+        </ul>
+      )}
     </section>
   );
 }
@@ -242,7 +255,7 @@ function useRequisitionStreams(requisitionId: string | null) {
       const r = await hrmsApi.get<{ data?: unknown }>(streamsOfRequisitionPath(requisitionId), undefined, ticket.signal);
       if (ticket.isCurrent()) setStreams(Array.isArray(r?.data) ? (r.data as StreamView[]).filter((s) => s && typeof s.id === "string") : []);
     } catch {
-      if (ticket.isCurrent()) setStreams([]); // the plan still renders; the Actions column shows a dash
+      if (ticket.isCurrent()) setStreams([]); // the plan still renders; no stream actions are listed
     }
   }, [requisitionId]);
   useEffect(() => { void load(); const s = seq.current; return () => s.cancel(); }, [load]);

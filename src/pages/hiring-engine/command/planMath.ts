@@ -48,7 +48,7 @@ export function planDay(o: PlanDayInput): PlanDay {
   let remaining = gap;
   let seatsLeft = Math.max(0, capacity - seatsUsed);
   const streams = order.map((s): PlanStreamLine => {
-    const base = { streamId: s.streamId, sourceType: s.sourceType, label: s.label, cap: s.cap, lined: s.lined, expected: round1(expectedOf(s)), rate: s.rate.rate, basis: s.rate.basis };
+    const base = { streamId: s.streamId, sourceType: s.sourceType, label: s.label, cap: s.cap, lined: s.lined, expected: round1(expectedOf(s)), rate: s.rate.rate, basis: s.rate.basis, covers: s.covers };
     if (!s.covers) return { ...base, recommended: 0, reasoning: "Not open on this day" };
     const need = invitesToClose(remaining, 0, s.rate.rate);
     const rec = Math.min(need, s.poolRemaining ?? need, seatsLeft);

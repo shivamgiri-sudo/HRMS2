@@ -7,7 +7,7 @@ vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => 
 
 import FollowupPanel, { FollowupPanelView, type PanelData } from "../command/FollowupPanel";
 import {
-  OFF_SENTENCE, attentionView, callFileRows, isFollowupOff, maskedMobile, modeText, reportText, retryErrorText, retryHint, scrubText, showRetry, sourceFunnelRows, stateLabel,
+  OFF_SENTENCE, attentionView, callFileRows, markCalledText, retryOkText, rowName, isFollowupOff, maskedMobile, modeText, reportText, retryErrorText, retryHint, scrubText, showRetry, sourceFunnelRows, stateLabel,
 } from "../command/followupPanelModel";
 import type { AttentionGroup, AttentionRow, FollowupStatus, RequisitionSources } from "../command/driveCommandTypes";
 
@@ -77,6 +77,9 @@ describe("scrubText / maskedMobile", () => {
   it.each([
     ["call 9876543210 now", "call # now"], ["12345 stays", "12345 stays"], ["code 131049 failed", "code 131049 failed"], ["id 123456 and 1310499", "id # and #"], ["mail a.b@x.com failed", "mail [email] failed"],
     ["line1\nline2", "line1 line2"], [null, ""], ["a@", "a@"],
+    ["call 98765 43210 now", "call # now"], ["call 98765-43210 now", "call # now"], ["call 987-654-3210", "call #"], ["+91 98765 43210", "+#"],
+    ["(#131049) failed", "(#131049) failed"], ["131049", "131049"], ["code 131049-12 x", "code # x"], ["x131049 y", "x# y"], ["131 049 failed", "# failed"],
+    ["on 2026-10-07 at 10:30", "on 2026-10-07 at 10:30"], ["retry 3 - 5 times", "retry 3 - 5 times"], ["12345 678", "#"],
   ])("%j", (input, out) => expect(scrubText(input)).toBe(out));
   it("truncates long text by code point and keeps markup inert text", () => {
     const t = scrubText(`${"😀".repeat(300)}`);
@@ -194,5 +197,27 @@ describe("FollowupPanelView markup", () => {
     const html = view(data({ attention: GROUPS }), { result: { id: "a1", ok: false, text: "Only an admin can retry" } });
     expect(html).toContain('role="status"');
     expect(html).toContain("Only an admin can retry");
+  });
+  it("a successful retry is announced in the panel-level status line even after the row left the list", () => {
+    const html = view(data({ attention: [] }), { result: { id: "gone", ok: true, text: retryOkText({ success: true }, rowName(GROUPS, "a1")) } });
+    expect(html).toMatch(/<p role="status"[^>]*>Retry queued for /);
+    expect(view(data({ attention: [] }), { result: null })).toMatch(/<p role="status"[^>]*><\/p>/); // mounted, empty
+  });
+  it("the active row's buttons show a busy word and every row's buttons are disabled", () => {
+    const calls: AttentionGroup[] = [{ ...GROUPS[0], channel: "call" }];
+    const html = view(data({ attention: calls }), { busy: { id: "a1", kind: "retry" } });
+    expect(html).toContain("Retrying…");
+    expect(html).not.toContain("Marking…");
+    expect(html.match(/<button type="button" class="[^"]*" disabled=""/g)).toHaveLength(3); // a1 retry + mark, a2 mark
+    const marking = view(data({ attention: calls }), { busy: { id: "a1", kind: "mark" } });
+    expect(marking).toContain("Marking…");
+    expect(marking.match(/Marking…/g)).toHaveLength(1);
+  });
+  it("result texts name the masked row and say when nothing changed", () => {
+    expect(rowName([{ channel: "email", cause: "x", count: 1, rows: [row({ id: "z", name: "Asha" })] }], "z")).toBe("Asha (xxxxxx3210)");
+    expect(rowName([], "z")).toBe("this row");
+    expect(retryOkText({}, "Asha (xxxxxx3210)")).toBe("Retry queued for Asha (xxxxxx3210)");
+    expect(markCalledText({ updated: 0 }, "Asha")).toBe("Nothing changed: the row is not in a calling file");
+    expect(markCalledText({ updated: 1 }, "Asha")).toBe("Marked Asha as called");
   });
 });

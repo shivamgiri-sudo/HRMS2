@@ -27,7 +27,19 @@ export interface StreamPassResult { plans: StreamDayPlan[]; closed: Array<{ stre
 
 const day10 = (v: unknown): string => String(v).slice(0, 10);
 /** Error text for results: trimmed, long digit runs masked (a driver message can echo values). */
-const reasonOf = (err: unknown): string => (err instanceof Error ? err.message : String(err)).replace(/\d{6,}/g, "#").slice(0, 160);
+/**
+ * The per-stream / per-drive reason shown to HR: fixed words only, never the raw error text (a driver message can echo values).
+ * The real error is logged by code only.
+ */
+export function reasonOf(err: unknown, fallback = "could not line up this stream"): string {
+  const e = (err && typeof err === "object" ? err : {}) as { code?: unknown; message?: unknown; sqlState?: unknown };
+  const code = typeof e.code === "string" ? e.code : "";
+  const msg = typeof e.message === "string" ? e.message : "";
+  if (code === "ER_LOCK_WAIT_TIMEOUT" || code === "ER_LOCK_DEADLOCK" || /lock wait|deadlock/i.test(msg)) return "lock wait";
+  if (msg.startsWith("Drive not found")) return "the drive was not found";
+  if (code.startsWith("ER_") || e.sqlState != null) return "a database error occurred";
+  return fallback;
+}
 const codeOf = (err: unknown): string => { const e = err as { code?: string; name?: string }; return e?.code ?? e?.name ?? "error"; };
 
 /** A stream's cap is its daily_invites; streams without one share the plan default equally (rounded up, at least 1). */
@@ -271,12 +283,12 @@ export async function planStreamsForDay(o: { date: string; dryRun: boolean; requ
       try { out.plans.push(await planRequisition(requisitionId, streams, c)); }
       catch (err) {
         logger.warn({ requisitionId, date: o.date, code: codeOf(err) }, "[he-streams] requisition plan failed");
-        out.plans.push({ requisitionId, code: requisitionId, branch: streams[0].branchName, date: o.date, driveId: null, drive: "skipped", reason: reasonOf(err), streams: [] });
+        out.plans.push({ requisitionId, code: requisitionId, branch: streams[0].branchName, date: o.date, driveId: null, drive: "skipped", reason: reasonOf(err, "could not plan this requisition"), streams: [] });
       }
     }
   } catch (err) {
     logger.warn({ date: o.date, code: codeOf(err) }, "[he-streams] stream pass failed");
-    out.failed = reasonOf(err);
+    out.failed = reasonOf(err, "could not plan the day");
   }
   return out;
 }

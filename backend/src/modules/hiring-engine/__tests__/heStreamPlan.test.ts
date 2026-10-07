@@ -300,15 +300,25 @@ describe("planStreamsForDay", () => {
     h.streams = three();
     h.lineUp.mockRejectedValueOnce(new Error("Drive not found for 9876543210"));
     const r = await planStreamsForDay({ date: "2026-10-08", dryRun: false });
-    expect(r.plans[0].streams[0].skipped).toBe("Drive not found for #");
+    expect(r.plans[0].streams[0].skipped).toBe("the drive was not found");
     expect(r.plans[0].streams[2].lined).toBe(15);
+  });
+
+  it("a raw driver error never reaches the result: fixed words only", async () => {
+    h.streams = three();
+    h.lineUp.mockRejectedValueOnce(Object.assign(new Error("Duplicate entry 'Asha 98765 43210' for key 'uq'"), { code: "ER_DUP_ENTRY", sqlState: "23000" }));
+    h.lineUp.mockRejectedValueOnce(new Error("Cannot read properties of undefined (reading 'mobile')"));
+    const r = await planStreamsForDay({ date: "2026-10-08", dryRun: false });
+    expect(r.plans[0].streams[0].skipped).toBe("a database error occurred");
+    expect(r.plans[0].streams[1].skipped ?? r.plans[0].streams[2].skipped).toBe("could not line up this stream");
+    expect(JSON.stringify(r)).not.toMatch(/Duplicate|Asha|mobile|98765/);
   });
 
   it("never throws: a failing stream read comes back as failed", async () => {
     const svc = await import("../requisition-stream.service.js");
     vi.mocked(svc.loadActiveStreams).mockRejectedValueOnce(new Error("db down"));
     const r = await planStreamsForDay({ date: "2026-10-08", dryRun: false });
-    expect(r).toEqual({ plans: [], closed: [], failed: "db down" });
+    expect(r).toEqual({ plans: [], closed: [], failed: "could not plan the day" }); // fixed words; the code is logged
   });
 
   it("two streams competing for one candidate: the earlier stream credits first, the later one cannot take it", async () => {

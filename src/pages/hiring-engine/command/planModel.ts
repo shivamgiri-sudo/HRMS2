@@ -14,8 +14,8 @@ export interface WhatIf { quota?: number; showRate?: number }
 export const QUOTA_MAX = 500;
 export const NOT_OPEN = "Not open on this day"; // the backend's reasoning for a stream that does not cover the day
 
-/** The server marks a stream that does not cover the day only through its reasoning (PlanStreamLine has no covers flag). */
-export const coversDay = (s: Pick<PlanStreamLine, "reasoning">): boolean => s.reasoning !== NOT_OPEN;
+/** The server's covers flag (he-drive-plan.ts planDay). A line without a boolean flag counts as covering. */
+export const coversDay = (s: Partial<Pick<PlanStreamLine, "covers">>): boolean => s.covers !== false;
 
 const finite = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 /** Quota as a whole number 0..500; null when not a number (the edit is ignored). */
@@ -168,23 +168,24 @@ export function checklistGroups(items: ChecklistItem[] | null | undefined): Arra
 }
 
 const sum = (lines: StreamLine[], f: (l: StreamLine) => number | undefined): number => lines.reduce((a, l) => a + (finite(f(l)) ?? 0), 0);
-const isDry = (p: StreamDayPlan): boolean => (p.streams ?? []).some((l) => typeof l.wouldLine === "number") || p.drive === "would_create";
+/** Dry run or real run: the caller's own flag when given (an all-failed dry run has no wouldLine), else read from the answer. */
+const isDry = (p: StreamDayPlan, dryRun?: boolean): boolean => (typeof dryRun === "boolean" ? dryRun : (p.streams ?? []).some((l) => typeof l.wouldLine === "number") || p.drive === "would_create");
 
-/** One line for a Plan now answer (dry run or real run). */
-export function planNowSummary(p: StreamDayPlan | null): string {
+/** One line for a Plan now answer; pass `dryRun` (the request's flag) whenever it is known. */
+export function planNowSummary(p: StreamDayPlan | null, dryRun?: boolean): string {
   if (!p) return "No open stream covers that day";
   const lines = Array.isArray(p.streams) ? p.streams : [];
   if (p.drive === "skipped") return `Skipped: ${p.reason || "no reason given"}`;
   if (p.drive === "would_create") return `Would create the drive for ${p.date} and line up ${sum(lines, (l) => l.wouldLine)} people`;
-  if (p.drive === "exists") return isDry(p) ? `Drive exists; would line up ${sum(lines, (l) => l.wouldLine)} more` : `Drive exists; lined up ${sum(lines, (l) => l.lined)} more`;
+  if (p.drive === "exists") return isDry(p, dryRun) ? `Drive exists; would line up ${sum(lines, (l) => l.wouldLine)} more` : `Drive exists; lined up ${sum(lines, (l) => l.lined)} more`;
   const note = p.reason ? ` (${p.reason})` : "";
   return `Created the drive for ${p.date} and lined up ${sum(lines, (l) => l.lined)} people${note}`;
 }
 
 /** Per-stream result lines, with the skipped reason when a stream was skipped. */
-export function planNowLines(p: StreamDayPlan | null): Array<{ streamId: string; label: string; text: string; skipped: boolean }> {
+export function planNowLines(p: StreamDayPlan | null, dryRun?: boolean): Array<{ streamId: string; label: string; text: string; skipped: boolean }> {
   if (!p) return [];
-  const dry = isDry(p);
+  const dry = isDry(p, dryRun);
   return (Array.isArray(p.streams) ? p.streams : []).map((l) => {
     const label = (l.originLabel || "").trim() || TYPE_LABEL[l.sourceType] || "Stream";
     if (l.skipped) return { streamId: l.streamId, label, text: `Skipped: ${l.skipped}`, skipped: true };

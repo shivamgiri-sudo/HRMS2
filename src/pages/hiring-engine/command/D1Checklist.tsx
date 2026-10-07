@@ -14,6 +14,7 @@ import { isIsoDay } from "./driveCommandModel";
 import type { ChecklistItem, DrivePlan, StreamDayPlan } from "./driveCommandTypes";
 import { CHECK_WORD, checklistGroups, planNowBody, planNowConfirm, planNowErrorText, planNowLines, planNowPath, planNowSummary } from "./planModel";
 import { BTN, PRIMARY } from "./StreamActions";
+import { createInFlightGuard } from "./inFlight";
 
 export const PLAN_PREVIEW_ID = "plan-now-result";
 
@@ -36,7 +37,7 @@ export function D1ChecklistView({ checklist, date, busy, run, onPreview, onPlanN
     <section aria-labelledby="plan-d1-heading" className="space-y-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
       <h4 id="plan-d1-heading" className="text-sm font-bold text-slate-900 dark:text-slate-100">Checklist for {dayLabel(checklist?.date ?? date)} (the day before)</h4>
       {apiPreview && (
-        <p className="text-sm text-slate-800 dark:text-slate-100"><span className="font-semibold">Dry run of tonight&apos;s pass:</span> {planNowSummary(apiPreview)}</p>
+        <p className="text-sm text-slate-800 dark:text-slate-100"><span className="font-semibold">Dry run of tonight&apos;s pass:</span> {planNowSummary(apiPreview, true)}</p>
       )}
       {groups.map((g) => (
         <div key={g.id} className="space-y-1">
@@ -74,10 +75,10 @@ export function D1ChecklistView({ checklist, date, busy, run, onPreview, onPlanN
         {run && !run.error && (
           <>
             <p className="flex items-start gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> {run.dryRun ? "Preview (nothing saved)" : "Planned"}: {planNowSummary(run.result)}
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> {run.dryRun ? "Preview (nothing saved)" : "Planned"}: {planNowSummary(run.result, run.dryRun)}
             </p>
             <ul className="space-y-0.5 pl-6 text-sm text-slate-800 dark:text-slate-100">
-              {planNowLines(run.result).map((l) => (
+              {planNowLines(run.result, run.dryRun).map((l) => (
                 <li key={l.streamId} className="break-words">
                   {l.skipped && <AlertTriangle className="mr-1 inline h-4 w-4 align-text-bottom" aria-hidden />}
                   <span className="font-semibold">{l.label}:</span> {l.text}
@@ -106,7 +107,9 @@ export default function D1Checklist({ plan, requisitionId, autoPreview, onPlanne
   const [confirming, setConfirming] = useState(false);
   const handled = useRef<number | null>(null);
 
-  const call = useCallback(async (dryRun: boolean): Promise<void> => {
+  const guard = useRef(createInFlightGuard());
+  // Plan now lines people up: a second call while one runs would compute the same quota gap before the first credits, so it is ignored.
+  const call = useCallback((dryRun: boolean): Promise<void> => guard.current.run(async () => {
     setBusy(dryRun ? "preview" : "plan");
     try {
       const r = await hrmsApi.post<{ data?: StreamDayPlan | null }>(planNowPath(requisitionId), planNowBody(date, dryRun));
@@ -118,7 +121,7 @@ export default function D1Checklist({ plan, requisitionId, autoPreview, onPlanne
       setBusy(null);
       window.setTimeout(() => document.getElementById(PLAN_PREVIEW_ID)?.focus(), 0);
     }
-  }, [requisitionId, date, onPlanned]);
+  }).then(() => undefined), [requisitionId, date, onPlanned]);
 
   useEffect(() => {
     if (!autoPreview || autoPreview.requisitionId !== requisitionId || handled.current === autoPreview.nonce) return;

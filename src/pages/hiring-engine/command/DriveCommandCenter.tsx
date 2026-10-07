@@ -146,6 +146,12 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
   return { gated: analytics && <DriveTypeSection type={type} groups={analytics.groups ?? []} today={istTodayClient()} title={section === "live" ? "Live Meta drives" : "Old Meta data drives"} actions={actions} />, always: null };
 }
 
+/** The code of a requisition an insight names: from the analytics rows, the scatter, or the filter options; "" when unknown. */
+export function requisitionCodeOf(id: string, analytics: Pick<DriveAnalytics, "groups" | "scatter"> | null | undefined, options: RequisitionOption[]): string {
+  return analytics?.groups?.find((g) => g.requisitionId === id)?.requisition || analytics?.scatter?.find((p) => p.requisitionId === id)?.code
+    || options.find((o) => o.id === id)?.code || "";
+}
+
 export default function DriveCommandCenter() {
   const [state, setState] = useState(() => parseCommandHash(typeof window === "undefined" ? "" : window.location.hash));
   const { section, filters } = state;
@@ -205,6 +211,7 @@ export default function DriveCommandCenter() {
       <StreamDialog open={dialog?.kind === "extend_stream"} onOpenChange={(o) => { if (!o) setDialog(null); }} streamId={dialog?.kind === "extend_stream" ? dialog.streamId : null} today={today} onChanged={reload} />
       <CreateStreamDialog open={dialog?.kind === "create_stream"} onOpenChange={(o) => { if (!o) setDialog(null); }} today={today} requisitions={requisitions}
         requisitionId={dialog?.kind === "create_stream" ? dialog.requisitionId : null} sourceType={dialog?.kind === "create_stream" ? dialog.sourceType : undefined}
+        preset={dialog?.kind === "create_stream" ? { id: dialog.requisitionId, code: requisitionCodeOf(dialog.requisitionId, data, requisitions) } : null}
         onCreated={(_s, text) => { setDialog(null); setPageNote(text); reload(); }} />
     </div>
   );

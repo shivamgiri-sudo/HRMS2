@@ -8,7 +8,7 @@ vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => 
 import { calendarCells, invitesToClose, planDay, streamRate, whatIf, type PlanStreamInput } from "../command/planMath";
 import {
   EMPTY_PLAN_TEXT, PLAN_FORBIDDEN_TEXT, PLAN_GENERIC_TEXT, PLAN_GONE_TEXT, calendarView, checklistGroups, fillLevel, hasEdits, planNowBody, planNowErrorText,
-  planNowLines, planNowSummary, planPickList, planState, recomputeDay, streamRows,
+  coversDay, planNowLines, planNowSummary, planPickList, planState, recomputeDay, streamRows,
 } from "../command/planModel";
 import { PlanSectionView, WhatIfPanel, type PlanSectionViewProps } from "../command/PlanSection";
 import D1Checklist, { D1ChecklistView } from "../command/D1Checklist";
@@ -132,6 +132,24 @@ describe("planNowSummary and lines", () => {
     expect(planNowSummary({ ...real, drive: "created" })).toBe("Created the drive for 2026-10-09 and lined up 8 people");
     expect(planNowSummary(null)).toBe("No open stream covers that day");
   });
+  it("the request's own dryRun flag decides the wording (an all-failed dry run has no wouldLine)", () => {
+    const failedDry = { ...preview, drive: "exists" as const, streams: preview.streams.map((l) => ({ ...l, wouldLine: undefined, skipped: "lock wait" })) };
+    expect(planNowSummary(failedDry)).toBe("Drive exists; lined up 0 more"); // the old guess
+    expect(planNowSummary(failedDry, true)).toBe("Drive exists; would line up 0 more");
+    expect(planNowSummary({ ...preview, drive: "exists" }, false)).toBe("Drive exists; lined up 0 more");
+    const html = renderToStaticMarkup(<D1ChecklistView checklist={{ date: "2026-10-09", preview: null, items: [] }} date="2026-10-09" busy={null} run={{ dryRun: true, result: failedDry, error: null }} onPreview={() => undefined} onPlanNow={() => undefined} />);
+    expect(html).toContain("would line up 0 more");
+    expect(html).not.toContain("lined up 0 more (already");
+  });
+  it("coversDay reads the server's covers flag, not the reasoning text", () => {
+    const base: PlanStreamInput = { streamId: "x", sourceType: "meta_live", label: "X", cap: 10, lined: 2, poolRemaining: null, covers: false,
+      rate: { streamId: "x", sourceType: "meta_live", invited: 0, arrived: 0, rate: 0.4, basis: "plan_default" } };
+    const d = planDay({ date: "2026-10-15", driveId: null, target: 10, capacity: 60, streams: [base] });
+    expect(d.streams[0].covers).toBe(false);
+    expect(coversDay(d.streams[0])).toBe(false);
+    expect(coversDay({ ...d.streams[0], covers: true })).toBe(true); // even with the "Not open" text
+    expect(coversDay(planDay({ date: "2026-10-15", driveId: null, target: 10, capacity: 60, streams: [{ ...base, covers: true }] }).streams[0])).toBe(true);
+  });
   it("per-stream lines carry skipped reasons", () => {
     const p = { ...preview, drive: "exists" as const, streams: [{ ...preview.streams[0], wouldLine: undefined, lined: 3, alreadyLined: 2 }, { ...preview.streams[1], wouldLine: undefined, skipped: "origin launch not found" }] };
     expect(planNowLines(p)).toEqual([
@@ -217,6 +235,10 @@ describe("Plan section markup", () => {
     expect(html).toContain(">Plan now<");
     expect(html).toContain("Preview Plan now (dry run)");
     expect(html).toContain('aria-haspopup="menu"'); // the Extend menu (Task 14) on the stream's row
+    // the menu sits outside the scrolling table (overflow-x:auto would clip it vertically)
+    const rec = html.indexOf('id="plan-rec-heading"');
+    expect(html.indexOf('aria-haspopup="menu"', rec)).toBeGreaterThan(html.indexOf("</table>", rec));
+    expect(html).toContain('aria-label="Stream actions"');
     expect(html).toContain('scope="col"');
     expect(html).toContain('scope="row"');
     expect(html).toContain('id="plan-now-result"');

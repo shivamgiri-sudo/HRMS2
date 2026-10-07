@@ -12,7 +12,7 @@ import type { SourceType } from "./qualified-followup.types.js";
 
 export interface StreamRate { streamId: string; sourceType: SourceType; invited: number; arrived: number; rate: number; basis: "actual" | "plan_default" }
 export interface PlanStreamInput { streamId: string; sourceType: SourceType; label: string; cap: number; lined: number; rate: StreamRate; poolRemaining: number | null; covers: boolean }
-export interface PlanStreamLine { streamId: string; sourceType: SourceType; label: string; cap: number; lined: number; expected: number; rate: number; basis: StreamRate["basis"]; recommended: number; reasoning: string }
+export interface PlanStreamLine { streamId: string; sourceType: SourceType; label: string; cap: number; lined: number; expected: number; rate: number; basis: StreamRate["basis"]; recommended: number; reasoning: string; /** The stream is open on this day (reasoning "Not open on this day" otherwise). */ covers: boolean }
 export interface PlanDay { date: string; driveId: string | null; target: number; capacity: number; seatsUsed: number; expected: number; gap: number; streams: PlanStreamLine[] }
 export interface PlanDayInput { date: string; driveId: string | null; target: number; capacity: number; streams: PlanStreamInput[]; /** Seats held by people no stream owns (they are never assigned to a stream). */ extraSeatsUsed?: number }
 export interface CalendarCell { date: string; streamId: string; planned: number; cap: number; capacity: number; fill: number }
@@ -48,7 +48,7 @@ export function planDay(o: PlanDayInput): PlanDay {
   let remaining = gap;
   let seatsLeft = Math.max(0, capacity - seatsUsed);
   const streams = order.map((s): PlanStreamLine => {
-    const base = { streamId: s.streamId, sourceType: s.sourceType, label: s.label, cap: s.cap, lined: s.lined, expected: round1(expectedOf(s)), rate: s.rate.rate, basis: s.rate.basis };
+    const base = { streamId: s.streamId, sourceType: s.sourceType, label: s.label, cap: s.cap, lined: s.lined, expected: round1(expectedOf(s)), rate: s.rate.rate, basis: s.rate.basis, covers: s.covers };
     if (!s.covers) return { ...base, recommended: 0, reasoning: "Not open on this day" };
     const need = invitesToClose(remaining, 0, s.rate.rate);
     const rec = Math.min(need, s.poolRemaining ?? need, seatsLeft);

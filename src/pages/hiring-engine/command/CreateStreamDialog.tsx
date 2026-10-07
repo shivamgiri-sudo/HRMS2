@@ -14,9 +14,10 @@ import type { RequisitionOption } from "./commandData";
 import type { ReadinessProblem, SourceType, StreamView } from "./driveCommandTypes";
 import {
   CAMPAIGNS_PATH, LAUNCHES_PATH, STREAMS_PATH, canOverride, createBody, createErrors, createSuccessText, defaultCreateForm, errorText, originOptions,
-  parseReadiness, readinessPath, toCreateForm, type CampaignOption, type CreateFormText, type LaunchOption,
+  parseReadiness, presetOptions, readinessPath, toCreateForm, type CampaignOption, type CreateFormText, type LaunchOption,
 } from "./streamActionsModel";
 import { BTN, FIELD, FormErrors, LABEL, PRIMARY, ProblemList } from "./StreamActions";
+import { createInFlightGuard } from "./inFlight";
 
 export type { CreateFormText };
 
@@ -81,7 +82,7 @@ export function CreateStreamForm({ form, requisitions, lockRequisition, today, o
           </select>
         )}
         {!originsLoading && origins.length === 0 && form.sourceType !== "he" && (
-          <p className="text-xs text-slate-700 dark:text-slate-200">{form.requisitionId ? NO_ORIGIN[form.sourceType] : "Pick a requisition first."}</p>
+          <p className="text-xs text-slate-700 dark:text-slate-200">{!form.requisitionId ? "Pick a requisition first." : req && !req.code ? "This requisition's code is not known here, so its sources cannot be listed; open the stream from the requisition's row." : NO_ORIGIN[form.sourceType]}</p>
         )}
         {!originsLoading && origins.length === 0 && form.sourceType === "meta_old" && form.requisitionId && (
           <div className="space-y-1">
@@ -149,13 +150,17 @@ export function CreateStreamForm({ form, requisitions, lockRequisition, today, o
 export interface CreateStreamDialogProps {
   open: boolean; onOpenChange: (open: boolean) => void; requisitions: RequisitionOption[]; requisitionId?: string | null;
   sourceType?: SourceType; lockRequisition?: boolean; today: string; onCreated: (s: StreamView, text: string) => void;
+  /** A requisition named by an insight: used (and locked) even when it is not among the filter's open requisitions. */
+  preset?: { id: string; code: string } | null;
 }
 
 /** State, the three reads (campaigns, launches, readiness) and the write. Mounted only while open, so each opening starts fresh. */
-function CreatePanel({ requisitions, requisitionId, sourceType, lockRequisition = false, today, onCreated, onCancel, onBusy }: Omit<CreateStreamDialogProps, "open" | "onOpenChange"> & { onCancel: () => void; onBusy: (b: boolean) => void }) {
+function CreatePanel({ requisitions: options, requisitionId, sourceType, lockRequisition: lockProp = false, today, onCreated, onCancel, onBusy, preset }: Omit<CreateStreamDialogProps, "open" | "onOpenChange"> & { onCancel: () => void; onBusy: (b: boolean) => void }) {
   const idPrefix = `cs-${useId().replaceAll(":", "")}`;
+  const { requisitions, lock: lockRequisition } = presetOptions(options, preset, lockProp);
+  const guard = useRef(createInFlightGuard());
   const [form, setForm] = useState<CreateFormText>(() => {
-    const d = defaultCreateForm(today, requisitionId ?? "", sourceType ?? "meta_live");
+    const d = defaultCreateForm(today, preset?.id || requisitionId || "", sourceType ?? "meta_live");
     return { ...d, openDays: String(d.openDays), dailyInvites: "" };
   });
   const [campaigns, setCampaigns] = useState<CampaignOption[] | null>(null);
@@ -203,14 +208,13 @@ function CreatePanel({ requisitions, requisitionId, sourceType, lockRequisition 
   const parsed = toCreateForm(form);
   const errors = createErrors(parsed, today, readiness.problems, readiness.neverOverride);
 
-  const submit = async () => {
-    if (busy) return;
+  const submit = () => guard.current.run(async () => {
     setTried(true);
     if (errors.length) return;
     setBusy(true);
     setServerError(null);
     try {
-      const r = await hrmsApi.post<{ data?: StreamView }>(STREAMS_PATH, createBody(parsed));
+      const r = await hrmsApi.post<{ data?: StreamView }>(STREAMS_PATH, createBody(parsed, readiness.problems, readiness.neverOverride));
       if (!r?.data) { setServerError(errorText(null)); return; }
       onCreated(r.data, createSuccessText(r.data));
     } catch (e: unknown) {
@@ -218,7 +222,7 @@ function CreatePanel({ requisitions, requisitionId, sourceType, lockRequisition 
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   return (
     <form noValidate aria-busy={busy} onSubmit={(e) => { e.preventDefault(); void submit(); }}>

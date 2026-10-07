@@ -28,17 +28,34 @@ function scrubEmails(s: string): string {
 }
 /** A WhatsApp error code (13xxxx, six digits) is the cause label of an attention group, not personal data: it is kept. */
 const isMetaCode = (run: string): boolean => run.length === 6 && run.startsWith("13");
+const isAlnum = (c: string | undefined): boolean => !!c && (isDigit(c) || c.toLowerCase() !== c.toUpperCase());
+const isSep = (c: string | undefined): boolean => c === " " || c === "-";
+/** YYYY-MM-DD: a date, not a phone number split by hyphens. */
+const isIsoDateGroup = (g: string): boolean => g.length === 10 && g[4] === "-" && g[7] === "-" && g.split("-").every((p) => p !== "" && p.split("").every(isDigit));
+/**
+ * Digit groups are joined across single spaces / hyphens ("98765 43210", "98765-43210", "987-654-3210") before the 6+ digit rule.
+ * A six-digit 13xxxx code is kept only when it stands alone as a whole token (no separator joins, no letter or digit touching it).
+ */
 function scrubDigitRuns(s: string): string {
-  const keep = (run: string): string => (run.length >= 6 && !isMetaCode(run) ? "#" : run);
   let out = "";
-  let run = "";
-  for (const c of s) {
-    if (isDigit(c)) { run += c; continue; }
-    out += keep(run);
-    run = "";
-    out += c;
+  let i = 0;
+  while (i < s.length) {
+    if (!isDigit(s[i])) { out += s[i]; i += 1; continue; }
+    let j = i;
+    let digits = "";
+    let joined = false;
+    while (j < s.length) {
+      if (isDigit(s[j])) { digits += s[j]; j += 1; }
+      else if (isSep(s[j]) && isDigit(s[j - 1]) && isDigit(s[j + 1])) { joined = true; j += 1; }
+      else break;
+    }
+    const group = s.slice(i, j);
+    const alone = !isAlnum(s[i - 1]) && !isAlnum(s[j]);
+    if (digits.length < 6 || isIsoDateGroup(group)) out += group;
+    else out += !joined && alone && isMetaCode(digits) ? group : "#";
+    i = j;
   }
-  return out + keep(run);
+  return out;
 }
 /** Server text made safe for display: whitespace folded, e-mail addresses and digit runs of 6 or more hidden (except six-digit 13xxxx WhatsApp error codes), cut to 120 characters. */
 export function scrubText(v: unknown): string {
@@ -163,6 +180,18 @@ export function markCalledErrorText(e: unknown): string {
   const status = (e as { status?: unknown } | null)?.status;
   return status === 403 ? "You do not have permission to mark this as called" : "Could not mark as called";
 }
+
+/** "Asha (xxxxxx3210)" for the row with that id in the attention groups; "this row" when it is no longer there. */
+export function rowName(groups: unknown, id: string): string {
+  for (const g of Array.isArray(groups) ? (groups as AttentionGroup[]) : []) {
+    const r = Array.isArray(g?.rows) ? g.rows.find((x) => x && x.id === id) : undefined;
+    if (r) { const n = orDash(r.name); const m = maskedMobile(r.mobileMasked); return n === DASH ? m : `${n} (${m})`; }
+  }
+  return "this row";
+}
+export const retryOkText = (_r: unknown, who: string): string => `Retry queued for ${who}`;
+export const markCalledText = (r: unknown, who: string): string =>
+  ((r as { updated?: unknown } | null)?.updated === 0 ? "Nothing changed: the row is not in a calling file" : `Marked ${who} as called`);
 
 export interface AttentionView {
   key: string; channel: AttentionChannel; channelLabel: string; cause: string; count: number; shown: number;

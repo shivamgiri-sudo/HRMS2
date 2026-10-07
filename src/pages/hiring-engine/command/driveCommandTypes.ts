@@ -117,7 +117,7 @@ export interface DriveAnalytics {
 
 // backend/src/modules/hiring-engine/he-drive-plan.ts
 export interface StreamRate { streamId: string; sourceType: SourceType; invited: number; arrived: number; rate: number; basis: "actual" | "plan_default" }
-export interface PlanStreamLine { streamId: string; sourceType: SourceType; label: string; cap: number; lined: number; expected: number; rate: number; basis: StreamRate["basis"]; recommended: number; reasoning: string }
+export interface PlanStreamLine { streamId: string; sourceType: SourceType; label: string; cap: number; lined: number; expected: number; rate: number; basis: StreamRate["basis"]; recommended: number; reasoning: string; covers: boolean }
 export interface PlanDay { date: string; driveId: string | null; target: number; capacity: number; seatsUsed: number; expected: number; gap: number; streams: PlanStreamLine[] }
 export interface CalendarCell { date: string; streamId: string; planned: number; cap: number; capacity: number; fill: number }
 

@@ -7,7 +7,7 @@ vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => 
 
 import {
   FORBIDDEN_TEXT, GENERIC_TEXT, GONE_CREATE_TEXT, GONE_TEXT, OVERRIDE_HINT, STALE_TEXT, actionErrors, canOverride, changeBody, confirmText, createBody,
-  createErrors, defaultCreateForm, errorText, menuItems, originOptions, parseCount, parseReadiness, previewEnd, problemRows, rowStreams, successText,
+  confirmView, createErrors, defaultCreateForm, dialogEscapeAllowed, errorText, presetOptions, menuItems, originOptions, parseCount, parseReadiness, previewEnd, problemRows, rowStreams, successText,
   type CreateForm, type MenuAction,
 } from "../command/streamActionsModel";
 import { previewWindowChange } from "../command/streamWindowClient";
@@ -15,7 +15,8 @@ import { StreamMenu, ConfirmBody, RowStreamActionsView } from "../command/Stream
 import { CreateStreamForm, type CreateFormText } from "../command/CreateStreamDialog";
 import DriveGroupRow from "../command/DriveGroupRow";
 import DriveTypeSection from "../command/DriveTypeSection";
-import { sectionParts } from "../command/DriveCommandCenter";
+import { requisitionCodeOf, sectionParts } from "../command/DriveCommandCenter";
+import { createInFlightGuard } from "../command/inFlight";
 import { requisitionOptions } from "../command/commandData";
 import type { DriveGroup, ReadinessProblem, StreamStatus, StreamView } from "../command/driveCommandTypes";
 
@@ -168,8 +169,13 @@ describe("create form", () => {
   });
   it("createBody sends override only when opening and ticked", () => {
     expect(createBody({ ...ok, dailyInvites: 40, reason: " r " })).toEqual({ requisitionId: R, sourceType: "meta_live", originId: "c1", openFrom: "2026-10-09", openDays: 7, dailyInvites: 40, open: false, reason: "r" });
-    expect(createBody({ ...ok, open: true, override: true })).toMatchObject({ open: true, override: true });
-    expect(createBody({ ...ok, open: false, override: true })).not.toHaveProperty("override");
+    const never = ["requisition_not_open", "no_headcount"];
+    const overridable: ReadinessProblem[] = [{ code: "no_branch_address", severity: "blocking", message: "m" }];
+    expect(createBody({ ...ok, open: true, override: true }, overridable, never)).toMatchObject({ open: true, override: true });
+    expect(createBody({ ...ok, open: false, override: true }, overridable, never)).not.toHaveProperty("override");
+    // defence in depth: never sent unless the readiness read allows it
+    expect(createBody({ ...ok, open: true, override: true })).not.toHaveProperty("override");
+    expect(createBody({ ...ok, open: true, override: true }, [...overridable, { code: "no_headcount", severity: "blocking", message: "m" }], never)).not.toHaveProperty("override");
   });
   it("parseCount", () => {
     expect(parseCount("")).toBeNull();
@@ -324,5 +330,67 @@ describe("wiring", () => {
   });
   it("requisition options carry the code the origin filter matches on", () => {
     expect(requisitionOptions([{ id: R, requisition_code: "RQ-1", designation_name: "Agent" }, { id: "x" }]).map((o) => o.code)).toEqual(["RQ-1", ""]);
+  });
+});
+
+describe("fix round", () => {
+  it("in-flight guard: a second call while the first is pending is ignored; the guard frees after success and failure", async () => {
+    const g = createInFlightGuard();
+    let release: (v: string) => void = () => undefined;
+    let calls = 0;
+    const first = g.run(() => { calls += 1; return new Promise<string>((r) => { release = r; }); });
+    expect(g.busy).toBe(true);
+    const second = await g.run(async () => { calls += 1; return "again"; });
+    expect(second).toBeUndefined();
+    expect(calls).toBe(1);
+    release("done");
+    expect(await first).toBe("done");
+    expect(g.busy).toBe(false);
+    await expect(g.run(async () => { throw new Error("x"); })).rejects.toThrow("x");
+    expect(g.busy).toBe(false);
+    expect(await g.run(async () => 7)).toBe(7);
+  });
+  it("confirmation words and checks come from the fresh copy; not ready until it arrives", () => {
+    const stale = stream();
+    const fresh = stream({ openDays: 9, version: 3, window: { from: "2026-10-05", to: "2026-10-14", dayIndex: 4, days: 9, state: "running" } });
+    const before = confirmView("extend3", stale, null, {}, TODAY);
+    expect(before.ready).toBe(false);
+    expect(before.text.body).toContain("from Sat 10 Oct to Wed 14 Oct");
+    const after = confirmView("extend3", stale, fresh, {}, TODAY);
+    expect(after.ready).toBe(true);
+    expect(after.stream).toBe(fresh);
+    expect(after.text.body).toContain("from Wed 14 Oct to Sat 17 Oct");
+    // a stream closed meanwhile: the change is refused on the client too
+    expect(confirmView("extend3", stale, stream({ status: "closed" }), {}, TODAY).errors).toEqual(["Reopen the stream first"]);
+  });
+  it("Escape inside StreamDialog belongs to the open menu", () => {
+    expect(dialogEscapeAllowed({ menuOpen: true })).toBe(false);
+    expect(dialogEscapeAllowed({ menuOpen: false })).toBe(true);
+    expect(dialogEscapeAllowed({ menuOpen: false, busy: true })).toBe(false);
+  });
+  it("the open menu is anchored right and scrolls inside itself", () => {
+    const html = renderToStaticMarkup(<StreamMenu stream={stream()} onPick={() => undefined} initiallyOpen />);
+    expect(html).toMatch(/role="menu"[^>]*class="absolute right-0 [^"]*max-h-80[^"]*overflow-y-auto/);
+    expect(html).not.toContain("left-0");
+  });
+  it("an insight's requisition missing from the filter options is used and locked, labelled by its code", () => {
+    const opts = [{ id: "other", label: "RQ-9 - Agent", branch: "Pune", code: "RQ-9" }];
+    expect(presetOptions(opts, { id: R, code: "RQ-1" }, false)).toEqual({ requisitions: [{ id: R, label: "RQ-1", branch: "", code: "RQ-1" }], lock: true });
+    expect(presetOptions([{ id: R, label: "RQ-1 - Agent", branch: "Pune", code: "RQ-1" }], { id: R, code: "" }, false).requisitions[0]).toEqual({ id: R, label: "RQ-1 - Agent", branch: "Pune", code: "RQ-1" });
+    expect(presetOptions(opts, null, false)).toEqual({ requisitions: opts, lock: false });
+    const analytics = { groups: [{ requisitionId: R, requisition: "RQ-1" }], scatter: [] } as unknown as Parameters<typeof requisitionCodeOf>[1];
+    expect(requisitionCodeOf(R, analytics, [])).toBe("RQ-1");
+    expect(requisitionCodeOf(R, null, [{ id: R, label: "x", branch: "", code: "RQ-7" }])).toBe("RQ-7");
+    expect(requisitionCodeOf(R, null, [])).toBe("");
+    const locked = renderToStaticMarkup(<CreateStreamForm requisitions={presetOptions([], { id: R, code: "RQ-1" }, false).requisitions} lockRequisition today={TODAY}
+      form={{ requisitionId: R, sourceType: "meta_live", originId: "", openFrom: "2026-10-09", openDays: "7", dailyInvites: "", open: false, override: false, reason: "" }}
+      origins={[]} originsLoading={false} originsError={null} readiness={{ loading: false, error: null, problems: [], neverOverride: [] }} errors={[]} showErrors={false} serverError={null} busy={false} onChange={() => undefined} idPrefix="p" />);
+    expect(locked).toContain(">RQ-1<");
+    expect(locked).not.toContain("<select");
+    const unknown = renderToStaticMarkup(<CreateStreamForm requisitions={presetOptions([], { id: R, code: "" }, false).requisitions} lockRequisition today={TODAY}
+      form={{ requisitionId: R, sourceType: "meta_live", originId: "", openFrom: "2026-10-09", openDays: "7", dailyInvites: "", open: false, override: false, reason: "" }}
+      origins={[]} originsLoading={false} originsError={null} readiness={{ loading: false, error: null, problems: [], neverOverride: [] }} errors={[]} showErrors={false} serverError={null} busy={false} onChange={() => undefined} idPrefix="p" />);
+    expect(unknown).toContain("code is not known here");
+    expect(unknown).not.toContain("No live campaign is linked");
   });
 });
