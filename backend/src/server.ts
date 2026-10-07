@@ -15,6 +15,7 @@ import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js"
 import { startEmployeeMasterSnapshotScheduler } from "./cron/employee-master-snapshot.cron.js";
 import { startExitAutoAdvanceScheduler, stopExitAutoAdvanceScheduler } from "./cron/exitAutoAdvance.cron.js";
 import { startPipelineHealthAlerts, stopPipelineHealthAlerts } from "./modules/hiring-engine/pipeline-health.cron.js";
+import { startQualifiedFollowupWorker, stopQualifiedFollowupWorker } from "./modules/hiring-engine/qualified-followup.worker.js";
 import { startMetaLeadSyncScheduler, stopMetaLeadSyncScheduler } from "./cron/metaLeadSync.cron.js";
 import { startApprovalDigestScheduler } from "./modules/approval-center/approval-digest.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
@@ -135,6 +136,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     stopExitAutoAdvanceScheduler();
     stopMetaLeadSyncScheduler();
     stopPipelineHealthAlerts();
+    stopQualifiedFollowupWorker();
 
     // Clear all registered timers
     clearAllTimers();
@@ -335,6 +337,7 @@ function startServer() {
         // Idempotent safety net — skips already-imported leads, no-ops if META_MARKETING_ACCESS_TOKEN unset.
         startMetaLeadSyncScheduler();
         startPipelineHealthAlerts();
+        startQualifiedFollowupWorker();
         startBreachSlaCron();
         // Escalates DPDP withdrawal requests that passed their decision deadline.
         startWithdrawalSlaCron();
@@ -483,6 +486,7 @@ function startServer() {
         // even when WORKERS_PROCESS=external. No DB-intensive workers here.
         startMetaLeadSyncScheduler();
         startPipelineHealthAlerts();
+        startQualifiedFollowupWorker();
       }
     } else {
       console.log("[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)");
@@ -493,6 +497,7 @@ function startServer() {
       if (WORKERS_EXTERNAL) {
         startMetaLeadSyncScheduler();
         startPipelineHealthAlerts();
+        startQualifiedFollowupWorker();
       }
     }
     console.log(`MCN HRMS backend running on http://localhost:${env.PORT}`);
