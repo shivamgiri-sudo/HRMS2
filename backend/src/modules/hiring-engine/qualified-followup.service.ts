@@ -7,12 +7,16 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import type { EnqueueInput, FollowupMode, SourceType } from "./qualified-followup.types.js";
+import { readSwitches, rowTag } from "./qualified-followup.policy.js";
 import { dueTimes, followupMode, normaliseMobile10 } from "./qualified-followup.schedule.js";
 
 export type EnqueueStatus = "skipped_off" | "enqueued" | "exists" | "invalid";
 
 export async function enqueueQualifiedFollowup(input: EnqueueInput, mode: FollowupMode = followupMode()): Promise<{ status: EnqueueStatus; id?: string }> {
   if (mode === "off") return { status: "skipped_off" };
+  // Row tag: dry_run, live, or test (live mode with the test flag); an explicit mode still respects the test flag.
+  const tag = rowTag({ ...readSwitches(), mode });
+  if (!tag) return { status: "skipped_off" };
   try {
     const mobile10 = normaliseMobile10(input.phone);
     if (!mobile10 || !input.requisitionId) return { status: "invalid" };
@@ -28,7 +32,7 @@ export async function enqueueQualifiedFollowup(input: EnqueueInput, mode: Follow
        ON DUPLICATE KEY UPDATE id = id`,
       [id, input.sourceType, input.metaLeadId ?? null, input.heLeadId ?? null, input.atsCandidateId ?? null, input.requisitionId, input.campaignId ?? null,
        input.driveId ?? null, input.originId, input.originLabel, mobile10, email, input.fullName ?? null, input.branchName ?? null, input.roleName ?? null,
-       qualifiedAt, emailDueAt, waDueAt, mode]);
+       qualifiedAt, emailDueAt, waDueAt, tag]);
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id, source_type, also_in_sources FROM qualified_followup WHERE mobile10 = ? AND requisition_id = ? LIMIT 1", [mobile10, input.requisitionId]);
     const row = rows[0];

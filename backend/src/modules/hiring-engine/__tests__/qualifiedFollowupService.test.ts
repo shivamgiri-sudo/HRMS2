@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execute = vi.hoisted(() => vi.fn());
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
@@ -57,6 +57,37 @@ describe("enqueueQualifiedFollowup", () => {
   it("never rejects on a database error", async () => {
     execute.mockRejectedValueOnce(new Error("boom"));
     expect((await enqueueQualifiedFollowup(input, "live")).status).toBe("invalid");
+  });
+});
+
+describe("enqueueQualifiedFollowup row tag", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const run = async () => {
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }]).mockImplementationOnce(async () => [[{ id: execute.mock.calls[0][1][0], source_type: "meta_live" }]]);
+    return enqueueQualifiedFollowup(input);
+  };
+  it("live + test flag writes the test tag", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "live"); vi.stubEnv("QUAL_FOLLOWUP_TEST_MODE", "true");
+    expect((await run()).status).toBe("enqueued");
+    const params = execute.mock.calls[0][1]; expect(params[params.length - 1]).toBe("test");
+  });
+  it("live alone writes live", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "live"); vi.stubEnv("QUAL_FOLLOWUP_TEST_MODE", "");
+    await run(); const params = execute.mock.calls[0][1]; expect(params[params.length - 1]).toBe("live");
+  });
+  it("dry_run writes dry_run", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "dry_run");
+    await run(); const params = execute.mock.calls[0][1]; expect(params[params.length - 1]).toBe("dry_run");
+  });
+  it("explicit live mode still respects the test flag", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_TEST_MODE", "true");
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([[{ id: "x", source_type: "meta_live" }]]);
+    await enqueueQualifiedFollowup(input, "live"); const params = execute.mock.calls[0][1]; expect(params[params.length - 1]).toBe("test");
+  });
+  it("mode unset: no database call", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "");
+    expect((await enqueueQualifiedFollowup(input)).status).toBe("skipped_off");
+    expect(execute).not.toHaveBeenCalled();
   });
 });
 

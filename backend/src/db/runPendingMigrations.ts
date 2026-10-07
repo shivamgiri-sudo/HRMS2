@@ -1319,6 +1319,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2122_payment_voucher_salary_source_type.sql", // Registered 2026-10-07. Adds 'salary' to payment_voucher.source_type ENUM (general-lane voucher with its own purpose). Idempotent MODIFY COLUMN.
   "migrations/2132_approval_email_action.sql", // Registered 2026-10-07. approval_email_action: hashed single-use tokens behind the approve/decline buttons in approval emails.
   "migrations/2133_qualified_followup.sql", // Registered 2026-10-07. qualified_followup (per mobile+requisition email/WhatsApp/call schedule and outcomes) and qualified_followup_call_batch. CREATE TABLE IF NOT EXISTS only, additive.
+  "migrations/2134_qualified_followup_attempts.sql", // Registered 2026-10-07. qualified_followup: per-channel attempts/errors, wa_message_id, missing_details, step_claimed_at, test row tag, idx_qfu_callfile. information_schema-guarded, re-runnable.
 ];
 
 export type MigrationHealth = {
