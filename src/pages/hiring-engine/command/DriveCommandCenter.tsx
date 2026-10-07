@@ -12,6 +12,14 @@ import { filtersKey, type RequisitionOption } from "./commandData";
 import { commandHash, parseCommandHash, type Filters, type SectionId } from "./driveCommandModel";
 import type { DriveAnalytics } from "./driveCommandTypes";
 import { useDriveAnalytics, useFilterOptions } from "./useCommandData";
+import KpiStrip from "./charts/KpiStrip";
+import FunnelCompare from "./charts/FunnelCompare";
+import YieldChart from "./charts/YieldChart";
+import ConversionHeatmap from "./charts/ConversionHeatmap";
+import TimingHeatmap from "./charts/TimingHeatmap";
+import ShowRateScatter from "./charts/ShowRateScatter";
+import DropOffWaterfall from "./charts/DropOffWaterfall";
+import CompareTable from "./charts/CompareTable";
 
 const DrivesTab = lazy(() => import("../DrivesTab"));
 
@@ -99,9 +107,29 @@ function Placeholder({ title }: { title: string }) {
   );
 }
 
+/** Summary: KPI strip full width, then the comparison charts two per row on large screens. */
+function SummaryCharts({ analytics }: { analytics: DriveAnalytics }) {
+  return (
+    <div className="space-y-4">
+      <KpiStrip analytics={analytics} />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <FunnelCompare analytics={analytics} />
+        <YieldChart analytics={analytics} />
+        <ShowRateScatter analytics={analytics} />
+        <DropOffWaterfall analytics={analytics} />
+        <div className="min-w-0 lg:col-span-2"><ConversionHeatmap analytics={analytics} /></div>
+        <div className="min-w-0 lg:col-span-2"><TimingHeatmap analytics={analytics} /></div>
+        <div className="min-w-0 lg:col-span-2"><CompareTable analytics={analytics} /></div>
+      </div>
+    </div>
+  );
+}
+
 /** Analytics-dependent panels (gated) and panels that must not wait for analytics (children). */
-export function sectionParts(section: SectionId): { gated: ReactNode; always: ReactNode } {
-  if (section === "summary") return { gated: <><Placeholder title="Summary charts" /><Placeholder title="Insights" /><Placeholder title="Follow-up pipeline" /></>, always: null };
+export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null): { gated: ReactNode; always: ReactNode } {
+  if (section === "summary") {
+    return { gated: <>{analytics && <SummaryCharts analytics={analytics} />}<Placeholder title="Insights" /><Placeholder title="Follow-up pipeline" /></>, always: null };
+  }
   if (section === "plan") return { gated: null, always: <Placeholder title="Plan" /> };
   if (section === "he") {
     return {
@@ -137,7 +165,7 @@ export default function DriveCommandCenter() {
   const { data, error, loading, reload } = useDriveAnalytics(stable);
   const { requisitions, branches } = useFilterOptions();
 
-  const parts = sectionParts(section);
+  const parts = sectionParts(section, data);
   return (
     <div className="space-y-3">
       <PipelineHealthStrip />
