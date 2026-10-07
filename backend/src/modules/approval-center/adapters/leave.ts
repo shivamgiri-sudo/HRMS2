@@ -1,5 +1,5 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
-import { badge, date, f, fields, iso, long, str } from "../format.js";
+import { badge, date, dateText, f, fields, iso, long, str } from "../format.js";
 
 /** Leave: reporting manager / skip-level / branch-head exception tier. `can_review` is computed by the leave module itself. */
 export const leaveAdapter: ApprovalAdapter = {
@@ -20,7 +20,7 @@ export const leaveAdapter: ApprovalAdapter = {
         category: "People",
         id: String(r.id),
         title: `${str(r.employee_name) || "Employee"} — ${str(r.leave_type_name) || "Leave"}`,
-        subtitle: `${str(r.total_days)} day(s) · ${str(r.from_date).slice(0, 10)} to ${str(r.to_date).slice(0, 10)}`,
+        subtitle: `${str(r.total_days)} day(s) · ${dateText(r.from_date)} to ${dateText(r.to_date)}`,
         requester: { name: r.employee_name, code: r.employee_code, branch: r.branch_name },
         stage: escalated ? "Branch-head exception tier" : "Reporting manager review",
         fields: fields(
