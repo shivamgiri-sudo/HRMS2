@@ -122,7 +122,7 @@ on:
           - budget-driver-diagnose
           - payslip-diagnose
           - meta-whatsapp-diagnose
-          - wa-template-diagnose
+          - he-inbox-timing
           - backend-log-grep
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
@@ -542,9 +542,9 @@ jobs:
               # Read-only: greps backend logs for the phrase given in employee_codes.
               npx tsx scripts/backend-log-grep.ts "${INPUT_EMPLOYEE_CODES}"
               ;;
-            wa-template-diagnose)
-              # Read-only in both modes: env presence, GET probes, SELECTs. Sends nothing.
-              npx tsx scripts/wa-template-diagnose.ts
+            he-inbox-timing)
+              # Read-only in both modes: counts and timings of the HE inbox query.
+              npx tsx scripts/he-inbox-timing.ts
               ;;
             meta-whatsapp-diagnose)
               # Read-only in both modes: SELECTs and GET probes only; prints booleans and counts, never secrets.
