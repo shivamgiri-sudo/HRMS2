@@ -123,6 +123,7 @@ on:
           - payslip-diagnose
           - meta-whatsapp-diagnose
           - meta-queued-resend
+          - meta-reinvite-unnotified
           - backend-log-grep
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
@@ -541,6 +542,17 @@ jobs:
             backend-log-grep)
               # Read-only: greps backend logs for the phrase given in employee_codes.
               npx tsx scripts/backend-log-grep.ts "${INPUT_EMPLOYEE_CODES}"
+              ;;
+            meta-reinvite-unnotified)
+              # Dry-runs unless given --apply. Apply SENDS interview invites (Pinbot template + email) to qualified Meta leads never
+              # notified; the dry run lists each lead and why it is skipped. Optional creation-date floor (YYYY-MM-DD) in employee_codes.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              SINCE="$(echo "${INPUT_EMPLOYEE_CODES}" | tr -d '[:space:]')"
+              if [ -n "$SINCE" ]; then
+                npx tsx scripts/meta-reinvite-unnotified.ts $FLAG --since "$SINCE"
+              else
+                npx tsx scripts/meta-reinvite-unnotified.ts $FLAG
+              fi
               ;;
             meta-queued-resend)
               # Dry-runs unless given --apply. Apply re-sends Meta lead WhatsApp messages stuck 'queued' in Wassenger through Pinbot
