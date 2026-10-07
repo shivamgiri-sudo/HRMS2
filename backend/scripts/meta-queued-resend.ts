@@ -91,7 +91,8 @@ interface Row extends RowDataPacket {
     }
     r.live = live;
     liveCounts[String(live)] = (liveCounts[String(live)] ?? 0) + 1;
-    if (live === "queued") rows.push(r);
+    // Wassenger forgets old/unreachable ids (lookup fails): the DB still says queued, i.e. never advanced.
+    if (live === "queued" || (live === "lookup-failed" && r.delivery_status !== "sent")) rows.push(r);
   }
   console.log("CANDIDATES", candidates.length, "dbStatus", JSON.stringify(dbCounts), "wassengerLive", JSON.stringify(liveCounts));
 
