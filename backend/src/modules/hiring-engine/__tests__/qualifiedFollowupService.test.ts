@@ -84,6 +84,12 @@ describe("enqueueQualifiedFollowup row tag", () => {
     execute.mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([[{ id: "x", source_type: "meta_live" }]]);
     await enqueueQualifiedFollowup(input, "live"); const params = execute.mock.calls[0][1]; expect(params[params.length - 1]).toBe("test");
   });
+  it("env mode off + valid test config + explicit live mode tags test", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "off"); vi.stubEnv("QUAL_FOLLOWUP_TEST_MODE", "true");
+    vi.stubEnv("QUAL_FOLLOWUP_TEST_TO_PHONE", "9876543210"); vi.stubEnv("QUAL_FOLLOWUP_TEST_TO_EMAIL", "o@x.in");
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([[{ id: "x", source_type: "meta_live" }]]);
+    await enqueueQualifiedFollowup(input, "live"); const params = execute.mock.calls[0][1]; expect(params[params.length - 1]).toBe("test");
+  });
   it("mode unset: no database call", async () => {
     vi.stubEnv("QUAL_FOLLOWUP_MODE", "");
     expect((await enqueueQualifiedFollowup(input)).status).toBe("skipped_off");

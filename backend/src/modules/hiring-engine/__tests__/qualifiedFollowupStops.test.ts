@@ -47,6 +47,35 @@ describe("runStopChecks", () => {
     execute.mockResolvedValueOnce([[facts({ ats_stage: "Payroll_Validated" }), facts({ id: "r2", mobile10: "123", email: null })]]);
     expect((await runStopChecks("live")).stopped).toEqual({ joined: 1, no_contact_details: 1 });
   });
+  it("joined via he_lead.status; an email with an invalid mobile does NOT stop", async () => {
+    execute.mockResolvedValueOnce([[facts({ lead_status: "joined" }), facts({ id: "r2", mobile10: "123" })]]);
+    expect((await runStopChecks("live")).stopped).toEqual({ joined: 1 });
+    expect(updates()).toHaveLength(1);
+  });
+  it("pages past the limit so later open rows are also checked", async () => {
+    execute
+      .mockResolvedValueOnce([[facts({ id: "a1" }), facts({ id: "a2" })]])
+      .mockResolvedValueOnce([[facts({ id: "a3", lead_status: "opted_out" })]]);
+    const r = await runStopChecks("live", 2);
+    expect(r).toEqual({ checked: 3, stopped: { opted_out: 1 } });
+    expect(execute.mock.calls[1][0]).toContain("qf.id > ?");
+    expect(execute.mock.calls[1][1]).toEqual(["live", "a2"]);
+    expect(updates()[0][1]).toEqual(["opted_out", "a3"]);
+  });
+  it("selection skips finished rows (only rows with pending work)", async () => {
+    execute.mockResolvedValueOnce([[]]);
+    await runStopChecks("live");
+    const sql = String(execute.mock.calls[0][0]);
+    expect(sql).toContain("qf.email_status IS NULL OR qf.email_status = 'sending'");
+    expect(sql).toContain("qf.wa_status IS NULL OR qf.wa_status = 'sending'");
+    expect(sql).toContain("qf.call_state = 'pending'");
+  });
+  it("one failing UPDATE does not abort the batch", async () => {
+    execute.mockResolvedValueOnce([[facts({ id: "x1", lead_status: "opted_out" }), facts({ id: "x2", lead_status: "opted_out" })]])
+      .mockRejectedValueOnce(new Error("deadlock"));
+    expect((await runStopChecks("live")).stopped).toEqual({ opted_out: 1 });
+    expect(updates()).toHaveLength(2);
+  });
   it("the fact query filters on mode_at_enqueue with the given tag and a bounded limit", async () => {
     execute.mockResolvedValueOnce([[]]);
     await runStopChecks("test", 50);
@@ -68,6 +97,7 @@ describe("syncWaReceipts", () => {
     expect(sql).toContain("hm.delivery_status = 'failed'");
     expect(sql).toContain("qf.wa_status = 'failed'");
     expect(params).toEqual(["live"]);
+    expect(sql).toContain("'test_sent'");
   });
 });
 
@@ -78,7 +108,7 @@ describe("expireStaleClaims", () => {
     expect(await expireStaleClaims("live", now)).toBe(3);
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain("= 'sending'");
-    expect(sql).toContain("step_claimed_at < ?");
+    expect(sql).toContain("COALESCE(step_claimed_at, updated_at) < ?");
     expect(params[0]).toBe("outcome unknown (process stopped mid-send)");
     expect(params[1]).toBe("live");
     expect(params[2].getTime()).toBe(now.getTime() - 15 * 60_000);

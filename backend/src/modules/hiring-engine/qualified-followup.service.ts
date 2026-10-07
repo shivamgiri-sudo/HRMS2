@@ -15,7 +15,7 @@ export type EnqueueStatus = "skipped_off" | "enqueued" | "exists" | "invalid";
 export async function enqueueQualifiedFollowup(input: EnqueueInput, mode: FollowupMode = followupMode()): Promise<{ status: EnqueueStatus; id?: string }> {
   if (mode === "off") return { status: "skipped_off" };
   // Row tag: dry_run, live, or test (live mode with the test flag); an explicit mode still respects the test flag.
-  const tag = rowTag({ ...readSwitches(), mode });
+  const tag = rowTag(readSwitches({ ...process.env, QUAL_FOLLOWUP_MODE: mode }));
   if (!tag) return { status: "skipped_off" };
   try {
     const mobile10 = normaliseMobile10(input.phone);
