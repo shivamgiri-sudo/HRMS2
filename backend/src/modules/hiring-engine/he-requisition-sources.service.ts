@@ -52,7 +52,7 @@ export interface RequisitionSources {
   partial: boolean; failedSections: string[];
 }
 
-type RawRow = Omit<SourceRow, "shareOfLeads" | "shareOfJoined" | "leadToJoinRate">;
+export type RawRow = Omit<SourceRow, "shareOfLeads" | "shareOfJoined" | "leadToJoinRate">;
 const COUNT_KEYS: ReadonlyArray<keyof SourceCounts> = ["leads", "qualified", "emailed", "whatsapped", "replied", "confirmed", "called", "arrived", "selected", "joined"];
 const TYPE_ORDER: Record<SourceType, number> = { meta_live: 0, meta_old: 1, he: 2 };
 const POOL_LABEL = "Pool: ATS history";
@@ -72,13 +72,8 @@ export function computeShares(rows: RawRow[]): SourceRow[] {
 // he_lead / ats_candidate / he_match are reached by their keys through LEFT JOINs (never scanned; the non-HE tables are compared under an
 // explicit utf8mb4_unicode_ci so a table on another collation cannot fail the read); he_message is keyed by
 // (requisition_id, lead_id) or lead_id and he_call by lead_id, both indexed.
-const STAGES_SQL = `
-SELECT f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
-       COUNT(*) AS qualified, SUM(f.emailed) AS emailed, SUM(f.whatsapped) AS whatsapped, SUM(f.replied) AS replied, SUM(f.called) AS called,
-       SUM(f.confirmed) AS confirmed, SUM(f.arrived) AS arrived, SUM(f.selected) AS selected, SUM(f.joined) AS joined
-  FROM (
-    SELECT qf.source_type, qf.origin_id, qf.origin_label,
-           CASE WHEN qf.email_status = 'sent' OR EXISTS (SELECT 1 FROM he_message hm WHERE hm.requisition_id = qf.requisition_id AND hm.lead_id = qf.he_lead_id
+/** Per-row stage flags of a qualified_followup row `qf` (select-list text, no leading/trailing newline). Shared with the window read model. */
+export const STAGE_FLAGS_SQL = `CASE WHEN qf.email_status = 'sent' OR EXISTS (SELECT 1 FROM he_message hm WHERE hm.requisition_id = qf.requisition_id AND hm.lead_id = qf.he_lead_id
                   AND hm.channel = 'email' AND hm.direction = 'out' AND hm.delivery_status <> 'failed') THEN 1 ELSE 0 END AS emailed,
            CASE WHEN qf.wa_status = 'sent' OR EXISTS (SELECT 1 FROM he_message hm WHERE hm.requisition_id = qf.requisition_id AND hm.lead_id = qf.he_lead_id
                   AND hm.channel = 'whatsapp' AND hm.direction = 'out' AND hm.delivery_status <> 'failed') THEN 1 ELSE 0 END AS whatsapped,
@@ -91,11 +86,20 @@ SELECT f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
            CASE WHEN m.state IN ('arrived','selected') THEN 1 ELSE 0 END AS arrived,
            CASE WHEN hl.status = 'joined' OR LOWER(ac.current_stage) IN ('joined','payroll_validated') THEN 1 ELSE 0 END AS joined,
            CASE WHEN hl.status = 'joined' OR LOWER(ac.current_stage) IN ('joined','payroll_validated')
-                  OR m.state = 'selected' OR LOWER(ac.current_stage) IN ('selected','offered','offer','offer_approved','onboarded','converted') THEN 1 ELSE 0 END AS selected
-      FROM qualified_followup qf
+                  OR m.state = 'selected' OR LOWER(ac.current_stage) IN ('selected','offered','offer','offer_approved','onboarded','converted') THEN 1 ELSE 0 END AS selected`;
+/** FROM / JOIN part that goes with STAGE_FLAGS_SQL (the caller adds the WHERE). */
+export const STAGE_FROM_SQL = `      FROM qualified_followup qf
       LEFT JOIN he_match m ON m.lead_id = qf.he_lead_id AND m.requisition_id = qf.requisition_id
       LEFT JOIN he_lead hl ON hl.id = qf.he_lead_id
-      LEFT JOIN ats_candidate ac ON ac.id = COALESCE(qf.ats_candidate_id, hl.ats_candidate_id) COLLATE utf8mb4_unicode_ci
+      LEFT JOIN ats_candidate ac ON ac.id = COALESCE(qf.ats_candidate_id, hl.ats_candidate_id) COLLATE utf8mb4_unicode_ci`;
+const STAGES_SQL = `
+SELECT f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
+       COUNT(*) AS qualified, SUM(f.emailed) AS emailed, SUM(f.whatsapped) AS whatsapped, SUM(f.replied) AS replied, SUM(f.called) AS called,
+       SUM(f.confirmed) AS confirmed, SUM(f.arrived) AS arrived, SUM(f.selected) AS selected, SUM(f.joined) AS joined
+  FROM (
+    SELECT qf.source_type, qf.origin_id, qf.origin_label,
+           ${STAGE_FLAGS_SQL}
+${STAGE_FROM_SQL}
      WHERE qf.requisition_id = ?
   ) f
  GROUP BY f.source_type, f.origin_id`;
@@ -127,7 +131,7 @@ const HEADER_SQL = "SELECT requisition_code, branch_name, designation_name FROM 
 interface Cell extends RawRow { _labelRank: number }
 const keyOf = (t: string, o: string): string => `${t}|${o}`;
 
-async function readSection<T>(name: string, failed: string[], fn: () => Promise<T>, fallback: T): Promise<T> {
+export async function readSection<T>(name: string, failed: string[], fn: () => Promise<T>, fallback: T): Promise<T> {
   try { return await fn(); } catch (err) {
     failed.push(name);
     // Never the driver message (it can echo SQL and values): only the section and the error code.
