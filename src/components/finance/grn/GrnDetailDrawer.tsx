@@ -48,7 +48,10 @@ type GrnDocument = {
 };
 
 type GrnWorkspace = {
+  allocations?: any[];
+  readOnlyShare?: boolean;
   grn: {
+    is_branch_split?: number | boolean | null;
     id: string;
     /** NULL until Finance Head approves it — render via grnDisplayNumber(grn). */
     grn_number: string | null;
@@ -144,6 +147,8 @@ export function GrnDetailDrawer({
       return {
         grn: d?.grn ?? d,
         documents: d?.documents ?? [],
+        allocations: d?.allocations ?? [],
+        readOnlyShare: Boolean(d?.readOnlyShare),
       };
     },
     enabled: Boolean(grnId),
@@ -204,6 +209,8 @@ export function GrnDetailDrawer({
   const grn = workspaceQuery.data?.grn;
   const documents = workspaceQuery.data?.documents ?? [];
   const history = historyQuery.data ?? [];
+  const allocations: any[] = workspaceQuery.data?.allocations ?? [];
+  const isBranchSplit = Boolean(grn?.is_branch_split) && allocations.length > 0;
 
   const isRejected = grn?.status === "rejected";
   const isReturned =
@@ -352,6 +359,43 @@ export function GrnDetailDrawer({
                   ))}
               </GrnKvList>
             </div>
+
+            {/* ── Branch split (Head Office bill whose cost lands on branch Back Office cost centres) ── */}
+            {isBranchSplit && (
+              <div className="border-t border-grn-line-soft px-5 py-4">
+                <p className="mb-1 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
+                  Branch split
+                </p>
+                <p className="mb-2 text-xs text-grn-ink-soft">
+                  {workspaceQuery.data?.readOnlyShare
+                    ? "Your branch's share of this Head Office bill (view only)."
+                    : "Cost of this Head Office bill lands on each branch's Back Office cost centre and uses that branch's own budget."}
+                </p>
+                <div className="overflow-x-auto rounded-lg border border-grn-line">
+                  <table className="w-full text-left text-xs">
+                    <caption className="sr-only">Branch shares of this GRN</caption>
+                    <thead className="bg-grn-card text-grn-ink-soft">
+                      <tr>
+                        <th scope="col" className="px-2 py-1.5 font-semibold">Cost centre</th>
+                        <th scope="col" className="px-2 py-1.5 font-semibold">Budget</th>
+                        <th scope="col" className="px-2 py-1.5 text-right font-semibold">Share</th>
+                        <th scope="col" className="px-2 py-1.5 font-semibold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allocations.map((a) => (
+                        <tr key={a.id} className="border-t border-grn-line-soft">
+                          <td className="px-2 py-1.5">{a.cost_centre_name ?? a.cost_centre_id ?? "—"}</td>
+                          <td className="px-2 py-1.5">{a.budget_number ?? "—"}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{money(a.amount_with_tax, 2)}</td>
+                          <td className="px-2 py-1.5">{labelStatus(String(a.lifecycle_status ?? "—"))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* ── Documents ── */}
             <div className="border-t border-grn-line-soft px-5 py-4">

@@ -56,7 +56,7 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     // Every other path still REQUIRES a line, and now says so instead of asserting non-null.
     // isUnbudgetedFlow (added when the same "unbudgeted" path was extended to Imprest GRNs)
     // subsumes the original `isVendor && isUnbudgetedExpense` condition here.
-    expect(form).toContain("if (!firstLine && !isUnbudgetedFlow) {");
+    expect(form).toContain("if (!firstLine && !isUnbudgetedFlow && !branchSplitActive) {");
     expect(form).toContain("The selected budget line is no longer available.");
 
     // The create payload carries what replaces the budget line.
