@@ -39,11 +39,27 @@ export function locationRegex(tokens: string[]): string | null {
 }
 
 /**
+ * Where the person LIVES, per the records (lower-cased SQL expression; needs the aliases l = he_lead, ac = ats_candidate, mr = meta_lead_raw and
+ * lp = he_lead_profile). Deliberately NOT included: the branch they applied to and their campaign's branch (those say where the JOB is, not where
+ * they live: a Noida-campaign lead living in Gujarat must not count as a Noida local), and recruiter branch names.
+ */
+export const RESIDENCE_SQL = `LOWER(CONCAT_WS(' ', l.locality, ac.current_address, ac.address, ac.permanent_address, mr.parsed_location, lp.address, lp.state,
+  (SELECT GROUP_CONCAT(a.candidate_location SEPARATOR ' ') FROM ats_recruiter_hiring_activity a WHERE a.mobile10 = l.mobile10)))`;
+
+/** "No Noida location", "not in Delhi", "outside Noida": the city is named but ruled out. MySQL REGEXP; null when there are no tokens. */
+export function negationRegex(tokens: string[]): string | null {
+  const t = tokens.map((x) => x.replace(/[^a-z ]/g, "").trim()).filter((x) => x.length >= 3);
+  if (!t.length) return null;
+  return `(^|[^a-z])(no|not|nahi|nahin|outside|other than|except|cannot|cant)[ -]+([a-z]+[ -]+){0,2}(${t.map((x) => x.replace(/ /g, "[ -]?")).join("|")})([^a-z]|$)`;
+}
+
+/**
  * Does this person's location evidence place them in the branch's area? Same rule the drive shortlist applies in SQL, for code that
  * ranks requisitions in memory (the "Also fits" column, other-opening offers). No location evidence = no.
  */
 export function placedInBranchArea(locationText: string | null | undefined, branchName: string | null | undefined, branchCity: string | null | undefined): boolean {
-  const re = locationRegex(branchLocationTokens(branchName, branchCity));
+  const tokens = branchLocationTokens(branchName, branchCity);
+  const re = locationRegex(tokens), neg = negationRegex(tokens);
   const text = String(locationText ?? "").toLowerCase();
-  return Boolean(re && text && new RegExp(re, "i").test(text));
+  return Boolean(re && text && new RegExp(re, "i").test(text) && !(neg && new RegExp(neg, "i").test(text)));
 }

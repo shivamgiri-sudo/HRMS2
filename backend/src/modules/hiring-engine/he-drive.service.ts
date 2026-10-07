@@ -10,7 +10,7 @@ import { loadProfiles } from "./he-profile.service.js";
 import { getRequisitionJd } from "./he-jd.service.js";
 import { parseJdText } from "./he-jd-parse.js";
 import { learnedBonus } from "./he-learn.js";
-import { branchLocationTokens, locationRegex , placedInBranchArea} from "./he-location-match.js";
+import { branchLocationTokens, locationRegex, negationRegex, placedInBranchArea, RESIDENCE_SQL } from "./he-location-match.js";
 import { loadMatchParams } from "./he-showup.service.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -238,7 +238,8 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number, op
   // The drive's own audience (a campaign re-run, an upload batch, Meta-only) is applied on EVERY call, including the scheduler's
   // re-line-up, so a launch can never widen back to the whole pool. `opts.metaOnly` (daily plan flag) still works for pool drives.
   const aud = audienceSql(drive, opts);
-  const locRe = locationRegex(branchLocationTokens(req.branch_name, req.bcity ?? null));
+  const locTokens = branchLocationTokens(req.branch_name, req.bcity ?? null);
+  const locRe = locationRegex(locTokens), negRe = negationRegex(locTokens);
   const selectCandidates = async () => (await db.execute<RowDataPacket[]>(
     `SELECT l.id, l.mobile10, l.ats_candidate_id, l.status, l.primary_source, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome,
             l.history_refreshed_at, l.locality, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.lat, l.lng, COALESCE(i.engagement_score, 0) AS eng,
@@ -246,7 +247,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number, op
        FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id
        LEFT JOIN ats_candidate ac ON ac.id = l.ats_candidate_id
        LEFT JOIN meta_lead_raw mr ON mr.id = l.meta_lead_id
-       LEFT JOIN job_requisition jrm ON jrm.id = mr.requisition_id
+       LEFT JOIN he_lead_profile lp ON lp.lead_id = l.id
       WHERE l.status IN ('new','contacted','interested','declined','no_show')
         AND l.is_employee = 0 AND l.final_status <> 'joined'
         ${aud.sql}
@@ -256,13 +257,13 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number, op
                          WHERE m.lead_id = l.id AND m.slot_at >= NOW()
                            AND ((m.state IN ('invited','confirmed') AND (dd.id IS NULL OR dd.status <> 'closed')) OR m.state = 'confirmed'))
         AND NOT EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NOT NULL)
-        ${locRe ? `AND (mr.requisition_id = ?
-             OR LOWER(CONCAT_WS(' ', l.locality, ac.applied_for_branch, ac.current_address, ac.address, ac.permanent_address, mr.parsed_location, jrm.branch_name)) REGEXP ?
-             OR EXISTS (SELECT 1 FROM ats_recruiter_hiring_activity a WHERE a.mobile10 = l.mobile10
-                          AND LOWER(CONCAT_WS(' ', a.branch_name, a.location_name, a.candidate_location)) REGEXP ?))` : ""}
+        -- WHERE THE PERSON LIVES decides (RESIDENCE_SQL: city, addresses, Meta form answer, profile, recruiter-noted location). The branch they applied to
+        -- and their campaign's branch say where the JOB is, so they never count. A named-but-ruled-out city ("No Noida location") does not count either.
+        -- Only when the records hold NO residence text at all is a person of this very requisition trusted (the form's own ad targeting).
+        ${locRe ? `AND ((${RESIDENCE_SQL} REGEXP ? AND NOT ${RESIDENCE_SQL} REGEXP ?) OR (TRIM(${RESIDENCE_SQL}) = '' AND mr.requisition_id = ?))` : ""}
         ${pre.map((c) => `AND ${c}`).join("\n        ")}
       ORDER BY (mr.requisition_id <=> ?) DESC, has_consent DESC, eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000`,
-    [...aud.args, ...(locRe ? [req.id, locRe, locRe] : []), ...preArgs, req.id]))[0];
+    [...aud.args, ...(locRe ? [locRe, negRe ?? "$^", req.id] : []), ...preArgs, req.id]))[0];
   let leads = await selectCandidates();
   // The rollup columns decide who is an employee / already joined. Refresh any prefix whose rollup is missing or a day old
   // before trusting it, so a never-refreshed lead cannot slip through the gate.
@@ -343,9 +344,8 @@ export async function leadLocationTexts(leadIds: string[]): Promise<Map<string, 
   const out = new Map<string, string>();
   if (!leadIds.length) return out;
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT l.id, LOWER(CONCAT_WS(' ', l.locality, ac.applied_for_branch, ac.current_address, ac.address, ac.permanent_address, mr.parsed_location, jrm.branch_name,
-              (SELECT GROUP_CONCAT(CONCAT_WS(' ', a.branch_name, a.location_name, a.candidate_location) SEPARATOR ' ') FROM ats_recruiter_hiring_activity a WHERE a.mobile10 = l.mobile10))) AS loc
-       FROM he_lead l LEFT JOIN ats_candidate ac ON ac.id = l.ats_candidate_id LEFT JOIN meta_lead_raw mr ON mr.id = l.meta_lead_id LEFT JOIN job_requisition jrm ON jrm.id = mr.requisition_id
+    `SELECT l.id, ${RESIDENCE_SQL} AS loc
+       FROM he_lead l LEFT JOIN ats_candidate ac ON ac.id = l.ats_candidate_id LEFT JOIN meta_lead_raw mr ON mr.id = l.meta_lead_id LEFT JOIN he_lead_profile lp ON lp.lead_id = l.id
       WHERE l.id IN (${leadIds.map(() => "?").join(",")})`, leadIds);
   for (const r of rows) out.set(String(r.id), String(r.loc ?? ""));
   return out;
