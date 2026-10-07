@@ -1,4 +1,6 @@
 export type SourceType = "meta_live" | "meta_old" | "he";
+/** The stream a line-up runs for (used by the follow-up hook). */
+export interface FollowupStreamRef { streamId: string; sourceType: SourceType; originId: string; originLabel: string }
 export type FollowupMode = "off" | "dry_run" | "live";
 
 export interface EnqueueInput {

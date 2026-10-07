@@ -18,6 +18,7 @@ import { eduRank } from "../meta-campaign/lead-screener.service.js";
 import { industriesForProcess, rankRequisitions, scoreLead, type MatchRequisition } from "./he-matcher.js";
 import { driveCapacity, inviteTarget, invitesForTarget, nextFreeSlot, nowIst, type SlotConfig } from "./he-slots.js";
 import { addEvent } from "./he-lead.service.js";
+import type { FollowupStreamRef } from "./qualified-followup.types.js";
 
 /** Who a drive is lined up from. pool = everyone eligible; meta = anyone who filled a Meta form; campaign = those Meta campaigns' qualified leads; batch = those upload batches. */
 export interface DriveAudience { kind: "pool" | "meta" | "campaign" | "batch"; ids?: string[]; maxLeadAgeDays?: number | null; label?: string | null; reinvite?: boolean }
@@ -171,9 +172,26 @@ const slotCfg = (d: DriveRow): SlotConfig => ({ date: String(d.drive_date).slice
  * A lead already booked into another live drive is skipped (no double booking); leads that cleared a round
  * for this process before get a bonus. Returns how many matches were written.
  */
-export interface SuggestResult { suggested: number; blockedByReason: Record<string, number>; considered: number; location?: string[] | null }
+export interface SuggestResult { suggested: number; blockedByReason: Record<string, number>; considered: number; location?: string[] | null; leadIds: string[] }
 
-export function audienceSql(d: Pick<DriveRow, "source_kind" | "source_ids" | "max_lead_age_days">, opts: { metaOnly?: boolean }): { sql: string; args: unknown[] } {
+/** The audience a line-up filters on: the drive's own columns, or a stream's. */
+export interface AudienceSpec { source_kind: string; source_ids: unknown; max_lead_age_days: number | null }
+
+/** Every option is off by default and then the line-up is exactly the one the drive's own audience gets (snapshot-tested). */
+export interface LineUpOptions {
+  limit?: number; metaOnly?: boolean;
+  /** Replaces the drive's own audience (a stream's source). */
+  audience?: AudienceSpec;
+  /** Leave out people who already have a match row on this drive (another stream's first touch). */
+  excludeOnDrive?: boolean;
+  /** Do not delete the drive's other `suggested` matches (they belong to other streams). */
+  keepOtherSuggestions?: boolean;
+  /** false = preview: nothing is refreshed, inserted or deleted. */
+  write?: boolean;
+  followupStream?: FollowupStreamRef | null;
+}
+
+export function audienceSql(d: AudienceSpec, opts: { metaOnly?: boolean }): { sql: string; args: unknown[] } {
   let ids: string[] = [];
   try { const raw = d.source_ids; ids = Array.isArray(raw) ? raw.map(String) : raw ? JSON.parse(String(raw)) : []; } catch { ids = []; }
   const age = d.max_lead_age_days && d.max_lead_age_days > 0 ? Math.floor(d.max_lead_age_days) : 0;
@@ -199,6 +217,12 @@ export async function suggestMatches(driveId: string, limit?: number, opts: { me
 
 /** Same as suggestMatches but also reports why people were not shortlisted (joined, employee, rejected in this process...). */
 export async function suggestMatchesDetailed(driveId: string, limit?: number, opts: { metaOnly?: boolean } = {}): Promise<SuggestResult> {
+  return lineUpCandidates(driveId, { limit, metaOnly: opts.metaOnly });
+}
+
+export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): Promise<SuggestResult> {
+  const { limit, write = true } = o;
+  const opts = { metaOnly: o.metaOnly };
   const [dr] = await db.execute<DriveRow[]>("SELECT * FROM he_drive WHERE id = ? LIMIT 1", [driveId]);
   const drive = dr[0];
   if (!drive) throw new Error("Drive not found");
@@ -207,10 +231,11 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number, op
   // JD (uploaded document in BMS format, else the requisition's own text) adds skills and fills gaps in the form fields.
   const jd = await getRequisitionJd(req.id);
   const base = withJdDocText(toMatchRequisition(req), jd?.text);
+  const audience: AudienceSpec = o.audience ?? drive;
   const mreq = {
     ...base, strict: true,
     // Meta form leads never state a night-shift preference: for a Meta / campaign audience that one unknown does not block them (the invite and call ask).
-    unknownOk: drive.source_kind === "campaign" || drive.source_kind === "meta" ? ["night_shift"] : undefined,
+    unknownOk: audience.source_kind === "campaign" || audience.source_kind === "meta" ? ["night_shift"] : undefined,
     mandatorySkills: jd?.parsed.mandatorySkills.length ? jd.parsed.mandatorySkills : null,
     preferredSkills: jd?.parsed.preferredSkills.length ? jd.parsed.preferredSkills : null,
     minExperienceYears: base.minExperienceYears ?? jd?.parsed.minExperience ?? null,
@@ -222,6 +247,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number, op
     ? invitesForTarget({ targetShows: drive.target_shows, showRatePct: drive.show_rate_pct, capacity: Number.MAX_SAFE_INTEGER }) // lined up for the walk-ins wanted, as before; seats are enforced when sending
     : inviteTarget({ openPositions: Math.max(1, req.requested_headcount - req.fulfilled_headcount), showRatePct: drive.show_rate_pct, capacity: driveCapacity(cfg) });
   const want = limit ?? invites;
+
 
   // Hard requirements go into the SQL pre-filter (unknown values still pass, same rule as the scorer), so the 5,000 rows
   // scored are all potentially eligible instead of an arbitrary slice of a pool that can be 100k+ strong.
@@ -237,7 +263,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number, op
   // who applied to this very requisition. Unknown location = left out of a city drive.
   // The drive's own audience (a campaign re-run, an upload batch, Meta-only) is applied on EVERY call, including the scheduler's
   // re-line-up, so a launch can never widen back to the whole pool. `opts.metaOnly` (daily plan flag) still works for pool drives.
-  const aud = audienceSql(drive, opts);
+  const aud = audienceSql(audience, opts);
   const locTokens = branchLocationTokens(req.branch_name, req.bcity ?? null);
   const locRe = locationRegex(locTokens), negRe = negationRegex(locTokens);
   const selectCandidates = async () => (await db.execute<RowDataPacket[]>(
@@ -250,7 +276,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number, op
        LEFT JOIN he_lead_profile lp ON lp.lead_id = l.id
       WHERE l.status IN ('new','contacted','interested','declined','no_show')
         AND l.is_employee = 0 AND l.final_status <> 'joined'
-        ${aud.sql}
+        ${aud.sql}${o.excludeOnDrive ? "\n        AND NOT EXISTS (SELECT 1 FROM he_match mx WHERE mx.lead_id = l.id AND mx.drive_id = ?)" : ""}
         -- Already booked: an invite on a LIVE drive, or a confirmation anywhere. An invite that sits on a closed drive (the drive was
         -- replaced or abandoned) no longer holds anyone, so that person can be lined up again; a confirmed person keeps their date.
         AND NOT EXISTS (SELECT 1 FROM he_match m LEFT JOIN he_drive dd ON dd.id = m.drive_id
@@ -263,13 +289,13 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number, op
         ${locRe ? `AND ((${RESIDENCE_SQL} REGEXP ? AND NOT ${RESIDENCE_SQL} REGEXP ?) OR (TRIM(${RESIDENCE_SQL}) = '' AND mr.requisition_id = ?))` : ""}
         ${pre.map((c) => `AND ${c}`).join("\n        ")}
       ORDER BY (mr.requisition_id <=> ?) DESC, has_consent DESC, eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000`,
-    [...aud.args, ...(locRe ? [locRe, negRe ?? "$^", req.id] : []), ...preArgs, req.id]))[0];
+    [...aud.args, ...(o.excludeOnDrive ? [driveId] : []), ...(locRe ? [locRe, negRe ?? "$^", req.id] : []), ...preArgs, req.id]))[0];
   let leads = await selectCandidates();
   // The rollup columns decide who is an employee / already joined. Refresh any prefix whose rollup is missing or a day old
   // before trusting it, so a never-refreshed lead cannot slip through the gate.
   const staleCut = Date.now() - 86_400_000;
   const stalePrefixes = [...new Set(leads.filter((l) => !l.history_refreshed_at || new Date(l.history_refreshed_at).getTime() < staleCut).map((l) => String(l.mobile10).slice(0, 2)))];
-  if (stalePrefixes.length) {
+  if (write && stalePrefixes.length) {
     for (const prefix of stalePrefixes) await refreshHistoryChunk({ prefix });
     leads = await selectCandidates();
   }
@@ -292,7 +318,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number, op
     // rankScore = fit weighted by how much of the JD we actually know, so a phone-only record does not outrank a proven fit.
     .sort((a, b) => (Number(b.consented) * 1000 - b.priority * 10 + b.res.rankScore + b.eng * 0.2) - (Number(a.consented) * 1000 - a.priority * 10 + a.res.rankScore + a.eng * 0.2))
     .slice(0, want);
-  for (const s of scored) {
+  if (write) for (const s of scored) {
     await db.execute(
       `INSERT INTO he_match (lead_id, requisition_id, drive_id, score, reasons_json, distance_km, state, token)
        VALUES (?,?,?,?,?,?, 'suggested', ?)
@@ -306,11 +332,11 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number, op
       [s.id, drive.requisition_id, driveId, s.res.score, JSON.stringify({ reasons: s.res.reasons, unknown: s.res.unknown, confidence: s.res.confidence, priority: s.priority }), s.res.distanceKm, randomBytes(16).toString("hex")]);
   }
   // Earlier suggestions that no longer qualify (e.g. before the location rule) are dropped; contacted people are kept.
-  if (scored.length) {
+  if (!write || o.keepOtherSuggestions) { /* preview, or other streams' suggestions stay */ } else if (scored.length) {
     const keep = scored.map((x) => x.id);
     await db.execute(`DELETE FROM he_match WHERE drive_id = ? AND state = 'suggested' AND lead_id NOT IN (${keep.map(() => "?").join(",")})`, [driveId, ...keep]);
   } else await db.execute("DELETE FROM he_match WHERE drive_id = ? AND state = 'suggested'", [driveId]);
-  return { suggested: scored.length, blockedByReason: { ...gate.blockedByReason, ...(locRe ? {} : { no_branch_location_known: 0 }) }, considered: leads.length, location: locRe ? branchLocationTokens(req.branch_name, req.bcity ?? null).slice(0, 6) : null };
+  return { suggested: scored.length, blockedByReason: { ...gate.blockedByReason, ...(locRe ? {} : { no_branch_location_known: 0 }) }, considered: leads.length, leadIds: scored.map((x) => x.id), location: locRe ? branchLocationTokens(req.branch_name, req.bcity ?? null).slice(0, 6) : null };
 }
 
 /** Other open requisitions a declined lead fits (feeds the "other role" offer). Same branch ranked first by score. */
