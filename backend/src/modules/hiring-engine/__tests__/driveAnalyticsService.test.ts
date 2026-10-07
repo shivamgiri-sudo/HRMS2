@@ -10,6 +10,9 @@ vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), e
 vi.mock("../requisition-stream.service.js", async (orig) => ({ ...(await orig<typeof import("../requisition-stream.service.js")>()), loadActiveStreams }));
 vi.mock("../he-sources-window.service.js", () => ({ getSourcesForRequisitions: getSources }));
 vi.mock("../qualified-followup.schedule.js", () => ({ followupMode: mode }));
+// insight facts and thresholds have their own tests (driveInsightFacts.test.ts); here they must not add reads
+vi.mock("../he-drive-insight-facts.service.js", () => ({ collectInsightFacts: async () => ({ facts: { today: "2026-10-14", windowDays: 14 }, failedSections: [] }) }));
+vi.mock("../he-insight-params.service.js", async () => ({ loadInsightThresholds: async () => ({ ...(await import("../he-drive-insights.js")).INSIGHT_DEFAULTS }) }));
 
 import { clearDriveAnalyticsCache, getDriveAnalytics, resolveWindow, type DriveAnalytics } from "../he-drive-analytics.service.js";
 import { getDriveTrend } from "../he-drive-trend.service.js";
@@ -228,7 +231,9 @@ describe("getDriveAnalytics", () => {
       impl.discovery = [head("r1")];
       const a = await getDriveAnalytics(Q, ALL, NOW);
       const n = execute.mock.calls.length;
-      expect(await getDriveAnalytics(Q, ALL, NOW)).toBe(a);
+      const again = await getDriveAnalytics(Q, ALL, NOW);
+      expect(again).toEqual(a); // served from the cache as a copy, so a caller cannot edit the cached object
+      expect(again).not.toBe(a);
       expect(execute.mock.calls.length).toBe(n);
       await getDriveAnalytics(Q, PUNE, NOW);
       expect(execute.mock.calls.length).toBeGreaterThan(n);

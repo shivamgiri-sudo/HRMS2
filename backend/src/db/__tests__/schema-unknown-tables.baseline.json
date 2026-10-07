@@ -40,6 +40,10 @@
     "requisition_stream",
     "requisition_stream_match"
   ],
+  "modules/hiring-engine/he-drive-insight-facts.service.ts": [
+    "requisition_stream",
+    "requisition_stream_match"
+  ],
   "modules/hiring-engine/he-drive-plan.service.ts": [
     "requisition_stream",
     "requisition_stream_match",

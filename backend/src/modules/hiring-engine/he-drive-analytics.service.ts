@@ -17,7 +17,9 @@ import {
   SOURCE_TYPES, conversions, dailySeries, scatterPoints, stageCountsByType, timingGrids, waterfall,
   type Conversion, type DailyPoint, type Grid, type MatchOutcome, type ScatterPoint, type StageCounts, type TaggedAggRow, type TimingCell, type TypedStageCounts, type WaterfallStep,
 } from "./he-drive-analytics.js";
-import type { DriveInsight } from "./he-drive-insights.js";
+import { evaluateInsights, type DriveInsight } from "./he-drive-insights.js";
+import { collectInsightFacts } from "./he-drive-insight-facts.service.js";
+import { loadInsightThresholds } from "./he-insight-params.service.js";
 import { buildDriveGroups, readAgg, readDriveAggRows, type DriveGroup, type DriveGroupInput } from "./he-drive-trend.service.js";
 import { getSourcesForRequisitions, type RequisitionSourceRows } from "./he-sources-window.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
@@ -231,19 +233,19 @@ export async function getDriveAnalytics(q: AnalyticsQuery, scope: BranchScope, n
   }
   const key = `${scopeKey(scope)}|${w.from}|${w.to}|${requisitionId ?? "*"}|${branchIn ?? "*"}`;
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
+  if (hit && Date.now() - hit.at < CACHE_MS) return structuredClone(hit.data); // a copy: a caller may extend or edit the result
   if (hit) cache.delete(key);
 
-  const data = tidy(await build(w, requisitionId, branch, now));
+  const data = tidy(await build(w, requisitionId, branch, scope, now));
   if (!data.partial) {
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
-    cache.set(key, { at: Date.now(), data });
+    cache.set(key, { at: Date.now(), data: structuredClone(data) });
   }
   return data;
 }
 
 async function build(
-  w: { from: string; to: string; days: number }, requisitionId: string | null, branch: string | null, now: Date,
+  w: { from: string; to: string; days: number }, requisitionId: string | null, branch: string | null, scope: BranchScope, now: Date,
 ): Promise<DriveAnalytics> {
   const failed: string[] = [];
   const today = istToday(now);
@@ -294,7 +296,6 @@ async function build(
       return { sources: s, rows, outcomes: o.outcomes };
     }, null as { sources: Awaited<ReturnType<typeof getSourcesForRequisitions>>; rows: TaggedAggRow[]; outcomes: MatchOutcome[] } | null),
   ]);
-  const failedSections = [...new Set(failed)];
 
   const flat = (list: RequisitionSourceRows[] | undefined) => (list ?? []).flatMap((r) => r.rows);
   const inWindow = driveRows.filter((r) => inRange(r.date, w.from, w.to));
@@ -340,6 +341,22 @@ async function build(
     sums.set(k, g);
   }
 
+  // insights: thresholds once per call, facts (own sections), then the pure rules; any throw leaves the response without insights
+  let insights: DriveInsight[] = [];
+  if (!none) {
+    insights = await section("insights", failed, async () => {
+      const t = await loadInsightThresholds();
+      const { facts, failedSections: factFailed } = await collectInsightFacts({
+        requisitionIds: ids, from: w.from, to: w.to, today, windowDays: w.days,
+        types: perType((k) => ({ current: types[k].stages, previous: types[k].previous })),
+        agg: inWindow, sources: sources?.byRequisition ?? [], codes: new Map(heads.map((h) => [h.id, h.code])), t, arrivals, streams: active, now,
+      }, scope);
+      for (const f of factFailed) if (!failed.includes(f)) failed.push(f);
+      return evaluateInsights(facts, t);
+    }, [] as DriveInsight[]);
+  }
+  const failedSections = [...new Set(failed)];
+
   return {
     generatedAt: now.toISOString(),
     window: w,
@@ -355,7 +372,7 @@ async function build(
     waterfall: perType((t) => waterfall(cur[t], stops[t], outcomeRead.slotReleased[t])),
     groups,
     cost: { available: false, note: "Cost per source arrives with Plan 5" },
-    insights: [],
+    insights,
     requisitionCount: ids.length,
     truncated,
     partial: failedSections.length > 0,
