@@ -31,7 +31,7 @@ describe("Back Office cost-centre selection (never guessed)", () => {
 
   it("nothing usable, or only client-billed cost centres: refused", () => {
     expect(pickBackOffice([])).toMatchObject({ ok: false, reason: "NONE" });
-    expect(pickBackOffice([row("1", "BSS/BO/X/1", { revenue_flag: 1 }), row("2", "BSS/BO/X/2", { billing_client_name: "Acme" })]))
+    expect(pickBackOffice([row("1", "BSS/BO/X/1", { client_name: "Acme" }), row("2", "BSS/BO/X/2", { billing_client_name: "Acme" })]))
       .toMatchObject({ ok: false, reason: "NONE" });
   });
 
@@ -44,8 +44,24 @@ describe("Back Office cost-centre selection (never guessed)", () => {
     expect(named("1", "Boston Process").byName).toBe(false);
     expect(pickBackOffice([named("1", "Noida BO"), named("2", "Onfido Process")])).toMatchObject({ ok: true, costCentre: { id: "1" } });
     // a client-billed cost centre that merely has BO in its name is not the overhead pool
-    expect(pickBackOffice([named("1", "Noida BO", { revenue_flag: 1 }), named("2", "Noida BO Pool")])).toMatchObject({ ok: true, costCentre: { id: "2" } });
+    expect(pickBackOffice([named("1", "Noida BO", { client_name: "Acme" }), named("2", "Noida BO Pool")])).toMatchObject({ ok: true, costCentre: { id: "2" } });
     expect(pickBackOffice([named("1", "Noida BO"), named("2", "Noida Back Office")])).toMatchObject({ ok: false, reason: "AMBIGUOUS" });
+  });
+
+  it("production shapes: shared pool by MAS-internal / Back Office client, client processes excluded", () => {
+    const prod = (id: string, code: string, extra: Record<string, unknown>) =>
+      classifyBackOffice({ id, cost_centre_code: code, cost_centre_name: code, cc_type: "BACK OFFICE", process_type: "BACK OFFICE", revenue_flag: 1, billing_flag: 1, ...extra });
+    // NOIDA-2: 577 is the shared pool, 576 is the Onfido client
+    expect(pickBackOffice([
+      prod("576", "BSS/BO/NOIDA-2/576", { billing_client_name: "Onfido Limited", client_name: "Onfido LTD", process_type: "background verification" }),
+      prod("577", "BSS/BO/NOIDA-2/577", { billing_client_name: "MAS Internal (Shared Services)", client_name: "Back Office" }),
+    ])).toMatchObject({ ok: true, costCentre: { id: "577" } });
+    // NOIDA: the literal "BO/" Noida-BackOffice, beside client processes
+    expect(pickBackOffice([
+      prod("bo", "BO/", { cost_centre_name: "Noida-BackOffice" }),
+      prod("754", "BSS/BO/Noida/754", { billing_client_name: "GUARDIAN HEALTHCARE SERVICES PRIVATE LIMITED", client_name: "GUARDIAN HEALTHCARE SERVICES PRIVATE LIMITED" }),
+      prod("1032", "BSS/BO/CORP/1032", { billing_client_name: "FINNABLE TECHNOLOGIES PRIVATE LIMITED" }),
+    ])).toMatchObject({ ok: true, costCentre: { id: "bo" } });
   });
 
   it("classification reads every place a Back Office can be declared", () => {

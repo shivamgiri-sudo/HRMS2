@@ -1,4 +1,4 @@
-import { assertGrnReadAccess, getBranchSplitOptions } from "./grn-branch-split.js";
+import { assertGrnReadAccess, getBranchSplitOptions, getBranchSplitPreview } from "./grn-branch-split.js";
 import { existsSync, mkdirSync } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -936,7 +936,13 @@ grnRouter.get(
   requireRole("finance_head", "super_admin"),
   async (_req: AuthenticatedRequest, res) => {
     try {
-      res.json({ success: true, data: await getBranchSplitOptions() });
+      const q = _req.query;
+      const period = String(q.period ?? "");
+      const head = String(q.head ?? "").trim();
+      const data = /^\d{4}-\d{2}$/.test(period) && head
+        ? await getBranchSplitPreview({ period, head, subHead: String(q.subHead ?? "").trim() || null })
+        : await getBranchSplitOptions();
+      res.json({ success: true, data });
     } catch (error: unknown) {
       res.status(errorStatus(error, 500)).json({ error: error instanceof Error ? error.message : "Unable to load branch split options" });
     }

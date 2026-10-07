@@ -68,10 +68,9 @@ import {
   BranchSplitSection,
   branchSharesError,
   branchSharesPayload,
-  newBranchShare,
   type BranchShareDraft,
 } from "@/components/finance/grn/BranchSplitSection";
-import { useBranchSplitOptions } from "@/hooks/useBranchSplitOptions";
+import { useBranchSplitOptions, useBranchSplitPreview } from "@/hooks/useBranchSplitOptions";
 import { useHasRole } from "@/hooks/useUserRole";
 import { GST_RATES } from "@/lib/gst";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -480,7 +479,7 @@ export function BudgetLinkedGrnForm({
   // Head Office bill split across branches (Finance Head only, behind a server flag): shares per
   // branch instead of cost-centre rows; each lands on that branch's Back Office cost centre.
   const [branchSplitOn, setBranchSplitOn] = useState(false);
-  const [branchShares, setBranchShares] = useState<BranchShareDraft[]>([newBranchShare()]);
+  const [branchShares, setBranchShares] = useState<BranchShareDraft[]>([]);
   const [invoiceComponents, setInvoiceComponents] = useState<InvoiceComponentDraft[]>([newInvoiceComponent()]);
   const [files, setFiles] = useState<File[]>([]);
   const [created, setCreated] = useState<CreatedGrn | null>(
@@ -538,6 +537,13 @@ export function BudgetLinkedGrnForm({
   const canOverridePeriod = useHasRole("finance_head", "accounts_head", "super_admin", "branch_admin");
   const isFinanceLead = useHasRole("finance_head", "accounts_head", "super_admin");
   const effectivePeriod = form.accountingPeriod || period;
+  // Each branch's own budget headroom and drivers for this head/sub-head and month — the branch
+  // checks and sharing methods of the split below.
+  const branchPreviewQuery = useBranchSplitPreview(
+    { period: effectivePeriod, head: form.head, subHead: form.subHead },
+    branchSplitActive,
+  );
+  const branchPreview = branchPreviewQuery.data ?? branchSplitOptions;
 
   const { data: branchResponse } = useQuery({
     queryKey: ["grn-budget-branches"],
@@ -1491,7 +1497,7 @@ export function BudgetLinkedGrnForm({
         if (branchSplitActive) {
           // Head Office bill split across branches: Head Office's own budget and cost centres play
           // no part; the server funds each share from that branch's budget and refuses by name.
-          const shareError = branchSharesError(branchShares, branchSplitOptions);
+          const shareError = branchSharesError(branchShares, branchPreview, componentsPreview.rawTotalBase || Number(form.amount));
           if (shareError) next.costCentreSplit = shareError;
         } else if (isUnbudgetedExpense) {
           next.costCentreSplit = `No approved budget exists for "${form.head} → ${form.subHead}". Request a budget top-up first via Branch Budget → Top-ups tab (Branch Head → Finance Head approval required).`;
@@ -1599,7 +1605,7 @@ export function BudgetLinkedGrnForm({
     costCentreSplitTotal,
     branchSplitActive,
     branchShares,
-    branchSplitOptions,
+    branchPreview,
     invoiceComponents,
     componentsPreview,
     vendorCostCentreGroups,
@@ -3283,8 +3289,7 @@ export function BudgetLinkedGrnForm({
                 checked={branchSplitOn}
                 onChange={(e) => {
                   setBranchSplitOn(e.target.checked);
-                  if (e.target.checked && !branchShares.length) setBranchShares([newBranchShare()]);
-                }}
+                                  }}
               />
               Split this bill across branches (each share lands on the branch's Back Office cost centre)
             </label>
@@ -3293,7 +3298,8 @@ export function BudgetLinkedGrnForm({
           {branchSplitActive && branchSplitOptions && (
             <BranchSplitSection
               amount={Number(form.amount)}
-              options={branchSplitOptions}
+              baseAmount={componentsPreview.rawTotalBase || Number(form.amount)}
+              options={branchPreview ?? branchSplitOptions}
               shares={branchShares}
               onChange={setBranchShares}
               error={err("costCentreSplit")}

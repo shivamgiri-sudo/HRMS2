@@ -3,6 +3,8 @@ import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { refuse } from "../process-pnl/finance-error.js";
+import { getHeadSubHeadCoverage } from "../process-pnl/budget-headroom-gate.service.js";
+import { getMonthlyDrivers, type MonthlyDriverRecord } from "../process-pnl/branch-budget-allocation.service.js";
 import { assertFinanceRecordBranch, type FinanceBranchScope } from "./finance-access-scope.js";
 import { isHeadOfficeBranch } from "./grn-head-office-bypass.js";
 
@@ -61,11 +63,22 @@ export interface BackOfficeCandidate {
   byCode: boolean;
   /** Name says "BO" or "Back Office" (how the branches' Back Office cost centres are named). */
   byName: boolean;
-  /** Billed to a client: such a cost centre earns revenue, so it is not the branch's overhead pool. */
+  /** Belongs to an outside client: it earns that client's revenue, so it is not the branch's overhead pool. */
   clientBilled: boolean;
 }
 
 const BO_TYPE_WORDS = new Set(["backoffice", "back office", "back_office", "bo"]);
+
+/**
+ * A name in billing_client_name / client_name that is a real outside client. revenue_flag and
+ * billing_flag are NOT used: on production they are set on nearly every cost centre, the shared
+ * Back Office included. The shared pools carry "MAS Internal (Shared Services)" or "Back Office".
+ */
+const INTERNAL_CLIENT = /^(mas internal|mas callnet|back\s*office|shared)|shared services/i;
+function hasExternalClient(value: unknown): boolean {
+  const name = String(value ?? "").trim();
+  return Boolean(name) && !INTERNAL_CLIENT.test(name);
+}
 
 /** Pure classification of one cost_centre_master row. Exported for tests. */
 export function classifyBackOffice(row: Record<string, unknown>): BackOfficeCandidate {
@@ -78,10 +91,7 @@ export function classifyBackOffice(row: Record<string, unknown>): BackOfficeCand
   const byCode = /\/BO\//i.test(code);
   const name = String(row.cost_centre_name ?? "");
   const byName = /(^|[^a-z])bo([^a-z]|$)/i.test(name) || /back[\s_-]*office/i.test(name);
-  const clientBilled =
-    Number(row.revenue_flag) === 1 ||
-    Number(row.billing_flag) === 1 ||
-    Boolean(String(row.billing_client_name ?? "").trim());
+  const clientBilled = hasExternalClient(row.billing_client_name) || hasExternalClient(row.client_name);
   return {
     id: String(row.id),
     code,
@@ -119,7 +129,7 @@ export function pickBackOffice(candidates: BackOfficeCandidate[]): BackOfficePic
 export async function listBackOfficeCandidates(branchId: string, executor: Executor = db): Promise<BackOfficeCandidate[]> {
   const [rows] = (await executor.execute(
     `SELECT ccm.id, ccm.cost_centre_code, ccm.cost_centre_name, ccm.cc_type, ccm.cost_center_type,
-            ccm.process_type, ccm.revenue_flag, ccm.billing_flag, ccm.billing_client_name
+            ccm.process_type, ccm.billing_client_name, ccm.client_name
        FROM cost_centre_master ccm
       WHERE ccm.branch_id = ? AND ccm.active_status = 1 AND ccm.status = 'active'
         AND ${ownCompanyCostCentreSql("ccm")}
@@ -225,6 +235,23 @@ export async function assertGrnReadAccess(input: {
   }
 }
 
+export interface BranchSplitDrivers {
+  plannedHeadcount: number;
+  revenueRatePerHead: number;
+  seatCount: number;
+  floorAreaSqft: number;
+  deviceCount: number;
+  hiringVolume: number;
+}
+
+export interface BranchSplitPreviewBranch extends BranchSplitBranchOption {
+  /** The branch's own budget for this head/sub-head and month — what its share would draw on. */
+  coverage: { headerActive: boolean; hasAnyLine: boolean; aggregateAvailable: number } | null;
+  /** The branch's drivers summed over its cost centres, so the same sharing methods used for cost
+   *  centres (headcount, seats, revenue…) can weigh branches. weightFor(method, drivers) applies. */
+  drivers: BranchSplitDrivers | null;
+}
+
 export interface BranchSplitBranchOption {
   branchId: string;
   branchName: string;
@@ -268,4 +295,45 @@ export async function getBranchSplitOptions(env: NodeJS.ProcessEnv = process.env
     });
   }
   return { enabled: isBranchSplitEnabled(env), branches };
+}
+
+
+/**
+ * Options plus, for one head/sub-head and month, each receiving branch's own budget headroom and
+ * its summed drivers. This is what lets the form check a branch and split by a sharing method
+ * exactly as the cost-centre split does. Branches that cannot receive a share get no lookups.
+ */
+export async function getBranchSplitPreview(
+  input: { period: string; head: string; subHead: string | null },
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ enabled: boolean; branches: BranchSplitPreviewBranch[] }> {
+  const base = await getBranchSplitOptions(env);
+  const branches: BranchSplitPreviewBranch[] = [];
+  for (const b of base.branches) {
+    if (b.isHeadOffice || b.status === "none") {
+      branches.push({ ...b, coverage: null, drivers: null });
+      continue;
+    }
+    const coverage = await getHeadSubHeadCoverage(b.branchId, input.period, input.head, input.subHead).catch(() => null);
+    const records: MonthlyDriverRecord[] = await getMonthlyDrivers(b.branchId, input.period).catch(() => [] as MonthlyDriverRecord[]);
+    const sum = (pick: (r: MonthlyDriverRecord) => number): number => records.reduce((t: number, r) => t + (Number(pick(r)) || 0), 0);
+    const headcount = sum((r) => r.plannedHeadcount);
+    const revenue = sum((r) => (Number(r.plannedHeadcount) || 0) * (Number(r.revenueRatePerHead) || 0));
+    branches.push({
+      ...b,
+      coverage: coverage
+        ? { headerActive: coverage.headerActive, hasAnyLine: coverage.lines.length > 0, aggregateAvailable: coverage.aggregateAvailable }
+        : null,
+      drivers: {
+        plannedHeadcount: headcount,
+        // headcount × rate must equal the summed revenue, which weightFor("revenue_share") multiplies back
+        revenueRatePerHead: headcount > 0 ? revenue / headcount : 0,
+        seatCount: sum((r) => r.seatCount),
+        floorAreaSqft: sum((r) => r.floorAreaSqft),
+        deviceCount: sum((r) => r.deviceCount),
+        hiringVolume: sum((r) => Number((r as { hiringVolume?: number }).hiringVolume ?? 0)),
+      },
+    });
+  }
+  return { enabled: base.enabled, branches };
 }
