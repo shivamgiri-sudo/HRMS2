@@ -34,8 +34,8 @@ describe("Meta-approved English templates (T1-T11)", () => {
     expect(HE_TEMPLATES.map((t) => t.metaName.en)).toEqual(["t1_he_walkin_invitation", "t2_he_appointment_confirmation", "t3_he_reminder_1d", "t4_he_reminder_2h_location",
       "t5_he_reschedule_offer", "t6_he_no_show_recovery", "t7_he_other_role_offer", "t8_he_winback", "t9_he_missed_call", "t10_he_optout_ack", "t11_he_hr_arrival_alert"]);
   });
-  it("{{n}} order follows the approved body text (T1 {{1}} is the role, not the name)", () => {
-    expect(templateVars("he_walkin_invite", "en")).toEqual(["role", "company", "drive_date", "slot_time", "branch_address", "maps_link", "assessment_link", "docs_list"]);
+  it("{{n}} order follows the approved body text (T1 {{1}} is the candidate name, 9 variables)", () => {
+    expect(templateVars("he_walkin_invite", "en")).toEqual(["candidate_name", "role", "company", "drive_date", "slot_time", "branch_address", "maps_link", "assessment_link", "docs_list"]);
     expect(templateVars("he_walkin_confirmed", "en")).toEqual(["candidate_name", "drive_date", "slot_time", "branch_name", "reference_id", "contact_name", "contact_phone"]);
     expect(templateVars("he_hr_arrival_alert", "en")).toEqual(["contact_name", "expected_count", "branch_name", "confirmed_count", "live_count", "board_link"]);
   });

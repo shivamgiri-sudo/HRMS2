@@ -2,6 +2,7 @@
  * Drive readiness: everything that decides whether outreach can actually go out, in one place, so HR sees why the
  * screen is quiet instead of guessing. Read-only.
  */
+import { superbotConfig } from "./he-secrets.service.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { PinbotWhatsAppProvider } from "../communication/providers/whatsapp/pinbot.provider.js";
@@ -37,7 +38,7 @@ export async function getDriveReadiness(driveId: string) {
     `SELECT msg.channel, COUNT(*) AS n FROM he_message msg
       WHERE msg.drive_id = ? AND msg.direction = 'out' AND msg.delivery_status <> 'failed' GROUP BY msg.channel`, [driveId]);
   const pinbotOk = new PinbotWhatsAppProvider().isConfigured();
-  const vapiOk = Boolean(process.env.VAPI_API_KEY && process.env.VAPI_PHONE_NUMBER_ID);
+  const vapiOk = Boolean(process.env.VAPI_API_KEY && process.env.VAPI_PHONE_NUMBER_ID) || Boolean(await superbotConfig());
   const mode = engineMode(process.env, await engineAutoOn());
   const engineOn = mode === "live", engineLive = mode === "live";
   const h = istHour(new Date());

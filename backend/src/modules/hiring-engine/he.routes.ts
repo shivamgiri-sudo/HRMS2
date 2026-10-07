@@ -1,6 +1,6 @@
 // Hiring Engine API (authenticated) — mounted at /api/he. Org-wide recruitment roles only for now;
 // branch-scoped boards arrive with drives.
-import { Router } from "express";
+import { Router, type Request as ExpressRequest } from "express";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -14,6 +14,8 @@ import { getRequisitionJd, saveRequisitionJd } from "./he-jd.service.js";
 import { getDriveShortlist, SHORTLIST_FILTERS, type ShortlistFilter } from "./he-shortlist.service.js";
 import { getBoard, runHrArrivalAlerts } from "./he-alert.service.js";
 import { placeVoiceCall } from "./he-voice.service.js";
+import { generateWebhookToken, last4, saveSuperbot, superbotConfig, webhookToken } from "./he-secrets.service.js";
+import { testSuperbotConnection } from "./he-superbot.service.js";
 import { cancelBulkBatch, createBulkCallBatch, getBulkBatchJobs, listBulkBatches, previewBulkCalls, runBulkCallJobs, startBulkBatch } from "./he-bulk-call.service.js";
 import { BULK_CALL_MAX_ROWS, sampleCsv } from "./he-bulk-call.js";
 import { listPrepareCampaigns, prepareMissedWalkins, prepareRowsFromCampaigns } from "./he-bulk-call-prepare.service.js";
@@ -707,4 +709,40 @@ heRouter.post("/requisitions/:id/jd", requireAuth, requireRole(...WRITE_ROLES), 
     if (e.statusCode === 400) return res.status(400).json({ message: e.message });
     logger.error({ err: e.message }, "[he] jd save failed"); res.status(500).json({ message: "Could not save the JD" });
   }
+});
+
+/** Provider hookups (admin only). The token is shown here so the admin can paste the URLs into Pinbot and Superbot; the Superbot key only as its last four characters. */
+async function integrationsSnapshot(req: ExpressRequest) {
+  const t = await webhookToken();
+  const sb = await superbotConfig();
+  const base = (process.env.BACKEND_PUBLIC_URL?.trim() || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+  const url = (path: string) => (t.token ? `${base}/api/he-hook/${path}?token=${t.token}` : null);
+  return {
+    webhook: { configured: Boolean(t.token), source: t.source, urls: { pinbot: url("whatsapp"), superbotFeedback: url("superbot"), superbotRejected: url("superbot-rejected") } },
+    superbot: { configured: Boolean(sb), apiKey: last4(sb?.apiKey), superbotId: sb?.superbotId ?? null, campaignId: sb?.campaignId ?? null, baseUrl: sb?.baseUrl ?? "https://api.superbot.one/tel/v2", lang: sb?.lang ?? "en-IN", whitelistIps: ["163.61.132.15", "163.61.133.15"] },
+  };
+}
+heRouter.get("/integrations", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
+  try { res.json({ success: true, ...(await integrationsSnapshot(req)) }); } catch { res.status(500).json({ success: false }); }
+});
+heRouter.post("/integrations/webhook-token", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
+  try {
+    if (process.env.HE_WEBHOOK_TOKEN?.trim()) return res.status(409).json({ success: false, message: "The server sets this token itself (HE_WEBHOOK_TOKEN); change it there." });
+    await generateWebhookToken((req as AuthenticatedRequest).authUser?.id ?? null);
+    logger.info({ by: (req as AuthenticatedRequest).authUser?.id }, "[he] webhook token generated");
+    res.json({ success: true, ...(await integrationsSnapshot(req)) });
+  } catch { res.status(500).json({ success: false, message: "Could not generate" }); }
+});
+heRouter.put("/integrations/superbot", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
+  try {
+    await saveSuperbot((req.body ?? {}) as Record<string, string>, (req as AuthenticatedRequest).authUser?.id ?? null);
+    logger.info({ by: (req as AuthenticatedRequest).authUser?.id }, "[he] superbot settings saved");
+    res.json({ success: true, ...(await integrationsSnapshot(req)) });
+  } catch (err) {
+    const e = err as Error & { statusCode?: number };
+    res.status(e.statusCode ?? 500).json({ success: false, message: e.statusCode ? e.message : "Could not save" });
+  }
+});
+heRouter.post("/integrations/superbot/test", requireAuth, requireRole(...ADMIN_ROLES), async (_req, res) => {
+  try { res.json({ success: true, ...(await testSuperbotConnection()) }); } catch { res.status(500).json({ success: false }); }
 });

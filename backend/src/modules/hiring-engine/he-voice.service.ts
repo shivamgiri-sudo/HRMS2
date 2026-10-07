@@ -13,6 +13,9 @@ import { dateLabel, sendsPaused, timeLabel } from "./he-send.service.js";
 import { buildVoiceSystemPrompt, canPlaceCall, VOICE_FIRST_MESSAGE, VOICE_RESULT_SCHEMA, type VoiceCtx } from "./he-voice.js";
 import { displayFirstName } from "./he-name.js";
 import { whatsappRequiresOptIn } from "./he-policy.service.js";
+import { superbotConfig, webhookToken } from "./he-secrets.service.js";
+import { queueSuperbotCall } from "./he-superbot.service.js";
+import { sbDate, sbTime } from "./he-superbot.js";
 
 const env = (k: string, d = "") => (process.env[k] && process.env[k]!.trim() ? process.env[k]!.trim() : d);
 
@@ -66,6 +69,21 @@ export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = 
   const prompt = buildVoiceSystemPrompt(ctx);
   if (dryRun) return { status: "dry_run", promptPreview: prompt.slice(0, 400) };
 
+  // Superbot is the voice provider when configured; Vapi stays as the fallback. Superbot gets the match id as reference_id so its feedback finds the match.
+  if (await superbotConfig()) {
+    const q = await queueSuperbotCall({ referenceId: matchId, mobile10: String(m.mobile10),
+      params: { name: ctx.candidateName, role: ctx.role, interview_date: sbDate(String(m.drive_date)), interview_time: sbTime(String(m.slot_at).slice(11, 16)), branch_address: ctx.branchAddress } });
+    if (!q.ok) {
+      if (q.reason === "bad_number") await db.execute("UPDATE he_lead SET last_outcome = 'wrong_number' WHERE id = ?", [m.lead_id]);
+      if (q.reason === "auth") return { status: "blocked", reason: "voice_auth_failed" };
+      await addEvent(m.lead_id as string, "call_failed_to_place", { channel: "voice", detail: `${q.reason}: ${q.error}`.slice(0, 300) });
+      return { status: "failed", error: `${q.reason}: ${q.error}` };
+    }
+    // Already waiting in Superbot's queue: not a new attempt.
+    if (q.alreadyQueued) return { status: "blocked", reason: "already_queued" };
+    await addEvent(m.lead_id as string, "call_placed", { channel: "voice", detail: q.requestId || matchId, meta: { attempt: Number(att[0].n) + 1, matchId, provider: "superbot" } });
+    return { status: "placed", callId: q.requestId || matchId };
+  }
   const started = await startVapiCall({ ctx, mobile10: String(m.mobile10), metadata: { matchId, leadId: m.lead_id, attempt: Number(att[0].n) + 1, source: "hiring-engine" } });
   if (!started.ok) {
     if (started.reason !== "voice_not_configured") await addEvent(m.lead_id as string, "call_failed_to_place", { channel: "voice", detail: started.error.slice(0, 300) });
@@ -84,7 +102,7 @@ export type VapiStart = { ok: true; callId: string } | { ok: false; reason: "voi
 export async function startVapiCall(a: { ctx: VoiceCtx; mobile10: string; metadata: Record<string, unknown> }): Promise<VapiStart> {
   const apiKey = env("VAPI_API_KEY");
   const phoneNumberId = env("VAPI_PHONE_NUMBER_ID");
-  const token = env("HE_WEBHOOK_TOKEN");
+  const token = (await webhookToken()).token ?? "";
   const base = env("BACKEND_PUBLIC_URL");
   if (!apiKey || !phoneNumberId || !token || !base) return { ok: false, reason: "voice_not_configured", error: "voice_not_configured" };
 

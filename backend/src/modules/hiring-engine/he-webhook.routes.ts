@@ -1,6 +1,6 @@
 /**
  * Public, secret-gated capture endpoints (called by Pinbot, the email provider and the voice bot, none of
- * which can present a session). Every route REFUSES when HE_WEBHOOK_TOKEN is unset instead of falling open.
+ * which can present a session). Every route REFUSES when no webhook token exists (env HE_WEBHOOK_TOKEN or the one generated on the Hiring Engine Master tab) instead of falling open.
  * Mounted at /api/he-hook, above the authenticated /api routers.
  */
 import crypto from "node:crypto";
@@ -15,11 +15,14 @@ import { mapVapiEndOfCall, type VapiEndOfCall } from "./he-voice.js";
 import { loadToolResult, toolNextSlot, toolReportResult } from "./he-voice.service.js";
 import { completeBulkJob } from "./he-bulk-call.service.js";
 import { ingestCandidates } from "./he-intake.service.js";
+import { webhookToken } from "./he-secrets.service.js";
+import { mapSuperbotFeedback, type SuperbotFeedback } from "./he-superbot.js";
+import { addEvent } from "./he-lead.service.js";
 
 export const heWebhookRouter = Router();
 
-function authorised(req: Request, res: Response): boolean {
-  const secret = process.env.HE_WEBHOOK_TOKEN ?? "";
+async function authorised(req: Request, res: Response): Promise<boolean> {
+  const secret = (await webhookToken()).token ?? "";
   if (!secret) { res.status(503).json({ success: false, message: "webhook not configured" }); return false; }
   const supplied = String(req.header("x-he-token") ?? req.query.token ?? "");
   const a = Buffer.from(supplied);
@@ -32,14 +35,14 @@ function authorised(req: Request, res: Response): boolean {
 }
 
 // Meta-style GET handshake (hub.challenge) so the same URL can be registered with Pinbot/Meta.
-heWebhookRouter.get("/whatsapp", (req, res) => {
-  const secret = process.env.HE_WEBHOOK_TOKEN ?? "";
+heWebhookRouter.get("/whatsapp", async (req, res) => {
+  const secret = (await webhookToken()).token ?? "";
   if (secret && req.query["hub.verify_token"] === secret) return res.status(200).send(String(req.query["hub.challenge"] ?? ""));
   return res.status(403).send("forbidden");
 });
 
 heWebhookRouter.post("/whatsapp", async (req, res) => {
-  if (!authorised(req, res)) return;
+  if (!(await authorised(req, res))) return;
   const { inbound, statuses } = parseWhatsAppWebhook(req.body);
   // Process BEFORE acknowledging: if the process dies after a 200 the provider never retries and the candidate's reply
   // is lost. Every handler is idempotent (UNIQUE provider_message_id), so on any failure we answer 500 and the provider
@@ -56,7 +59,7 @@ heWebhookRouter.post("/whatsapp", async (req, res) => {
 
 const EMAIL_EVENTS = new Set<EmailEvent>(["sent", "delivered", "opened", "clicked", "bounced", "replied", "unsubscribed"]);
 heWebhookRouter.post("/email", async (req, res) => {
-  if (!authorised(req, res)) return;
+  if (!(await authorised(req, res))) return;
   const b = req.body as { messageId?: string; event?: string; detail?: string };
   if (!b?.messageId || !EMAIL_EVENTS.has(b.event as EmailEvent)) return res.status(400).json({ success: false, message: "messageId and a valid event are required" });
   try {
@@ -70,7 +73,7 @@ heWebhookRouter.post("/email", async (req, res) => {
 
 /** Voice bot posts the STRUCTURED result of the call (BRD section 5 fields); never a transcript to parse. */
 heWebhookRouter.post("/voice", async (req, res) => {
-  if (!authorised(req, res)) return;
+  if (!(await authorised(req, res))) return;
   const b = req.body as VoiceCallbackInput;
   if (!b?.result || typeof b.result.answered !== "boolean" || (!b.leadId && !b.mobile)) {
     return res.status(400).json({ success: false, message: "result.answered and leadId or mobile are required" });
@@ -89,7 +92,7 @@ heWebhookRouter.post("/voice", async (req, res) => {
  * Always answers 200 for message types we do not use so the platform does not retry them.
  */
 heWebhookRouter.post("/voice-vapi", async (req, res) => {
-  if (!authorised(req, res)) return;
+  if (!(await authorised(req, res))) return;
   const msg = (req.body?.message ?? req.body) as { type?: string; call?: VapiEndOfCall["call"]; toolCallList?: Array<{ id: string; function?: { name?: string; arguments?: unknown } }> } & VapiEndOfCall;
   try {
     if (msg.type === "tool-calls") {
@@ -132,7 +135,7 @@ heWebhookRouter.post("/voice-vapi", async (req, res) => {
 
 // Job website / portal feed: POST {source?: "website", candidates: [{mobile, name, email, ...}]} with x-he-token.
 heWebhookRouter.post("/candidates", async (req, res) => {
-  if (!authorised(req, res)) return;
+  if (!(await authorised(req, res))) return;
   try {
     const b = req.body as { candidates?: unknown; source?: unknown };
     if (!Array.isArray(b.candidates) || b.candidates.length === 0) return res.status(400).json({ success: false, message: "candidates must be a non-empty array" });
@@ -145,4 +148,47 @@ heWebhookRouter.post("/candidates", async (req, res) => {
     logger.error({ err: e.message }, "[he-hook] candidate feed failed");
     res.status(500).json({ success: false, message: "could not ingest" });
   }
+});
+
+/**
+ * Superbot post-call feedback (reference_id = our match id). Always answers 200 for anything we cannot use so Superbot does not retry forever;
+ * 500 only when our own database failed, which is safe to redeliver (recordVoiceResult dedupes on reference_id:time).
+ */
+heWebhookRouter.post("/superbot", async (req, res) => {
+  if (!(await authorised(req, res))) return;
+  const f = (req.body ?? {}) as SuperbotFeedback;
+  if (!f.reference_id && !f.phone) return res.status(200).json({ success: true, ignored: "no reference" });
+  try {
+    const mapped = mapSuperbotFeedback(f);
+    let leadId: string | undefined;
+    let matchId: string | undefined;
+    if (mapped.referenceId) {
+      const [r] = await db.execute<RowDataPacket[]>("SELECT id, lead_id FROM he_match WHERE id = ? LIMIT 1", [mapped.referenceId]);
+      if (r[0]) { leadId = String(r[0].lead_id); matchId = String(r[0].id); }
+    }
+    const mobile = !leadId && mapped.phone ? mapped.phone.replace(/\D/g, "").slice(-10) : undefined;
+    if (!leadId && !mobile) return res.status(200).json({ success: true, ignored: "lead not found" });
+    const out = await recordVoiceResult({ leadId, mobile, providerCallId: mapped.providerCallId, startedAt: mapped.startedAt, result: mapped.result, summary: mapped.summary, recordingUrl: mapped.recordingUrl });
+    if (!out) return res.status(200).json({ success: true, ignored: "lead not found" });
+    if (mapped.humanFollowUp && out.outcome !== "duplicate") await addEvent(out.leadId, "human_followup_needed", { channel: "voice", detail: mapped.humanFollowUp, meta: { matchId, disposition: f.disposition ?? null } });
+    return res.status(200).json({ success: true, ...out });
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he-hook] superbot feedback failed");
+    return res.status(500).json({ success: false });
+  }
+});
+
+/** Numbers Superbot rejected from a queued batch: mark the lead so we stop chasing a bad number. Always 200. */
+heWebhookRouter.post("/superbot-rejected", async (req, res) => {
+  if (!(await authorised(req, res))) return;
+  try {
+    const b = req.body as { reference_id?: string; phone?: string; reason?: string; numbers?: Array<{ reference_id?: string; phone?: string; reason?: string }> };
+    const list = Array.isArray(b?.numbers) ? b.numbers : [b ?? {}];
+    for (const n of list) {
+      if (!n.reference_id) continue;
+      const [r] = await db.execute<RowDataPacket[]>("SELECT lead_id FROM he_match WHERE id = ? LIMIT 1", [n.reference_id]);
+      if (r[0]) await addEvent(String(r[0].lead_id), "call_failed_to_place", { channel: "voice", detail: `superbot rejected: ${String(n.reason ?? "unknown").slice(0, 200)}` });
+    }
+  } catch (err) { logger.warn({ err: (err as Error).message }, "[he-hook] superbot-rejected failed"); }
+  return res.status(200).json({ success: true });
 });

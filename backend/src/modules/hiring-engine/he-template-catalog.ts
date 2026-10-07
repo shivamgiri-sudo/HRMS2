@@ -42,7 +42,7 @@ export const HE_TEMPLATES: TemplateDef[] = [
     "trigger": "Candidate is invited to a walk-in (after screening/match).",
     "body": {
       "hi": "Namaste {candidate_name} ji, aapki application {role} ke liye {company} mein shortlist hui hai.\n\nWalk-in interview:\nDate: {drive_date}\nTime: {slot_time}\nJagah: {branch_address}\nMap: {maps_link}\n\nAssessment link (interview se pehle bharein): {assessment_link}\nSaath laayein: {docs_list}\n\nKya aap aa payenge? Neeche se jawab dein.",
-      "en": "Your interview for the {role} position at {company} has been scheduled.\n\nDate: {drive_date}\nTime: {slot_time}\nVenue: {branch_address}\n\nLocation: {maps_link}.\nAssessment: {assessment_link}.\nDocuments required: {docs_list}.\n\nPlease confirm your attendance using the options below."
+      "en": "Hello {candidate_name},\n\nYour interview appointment for the {role} position at {company} is scheduled.\n\nDate: {drive_date}\nTime: {slot_time}\nVenue: {branch_address}\n\nLocation: {maps_link}.\nAssessment: {assessment_link}.\nDocuments required: {docs_list}.\n\nPlease confirm your attendance using the options below."
     },
     "buttons": {
       "hi": [
@@ -153,7 +153,7 @@ export const HE_TEMPLATES: TemplateDef[] = [
     "trigger": "Candidate did not arrive.",
     "body": {
       "hi": "Namaste {candidate_name} ji, aaj aap {branch_name} par interview ke liye nahi aa paaye. Sab theek hai na?\n\nAgar aap abhi bhi {role} ke liye interested hain to hum naya slot de sakte hain.",
-      "en": "Your scheduled appointment was not attended today.\n\nCandidate: {candidate_name}\nDate: {drive_date}\nTime: {slot_time}\nBranch: {branch_name}\n\nIf you would like to reschedule the appointment, please select an option below."
+      "en": "Your scheduled appointment was not attended today.\n\nCandidate: {candidate_name}\nBranch: {branch_name}\nRole: {role}\n\nIf you would like to reschedule the appointment, please select an option below."
     },
     "buttons": {
       "hi": [
