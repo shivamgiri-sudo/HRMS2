@@ -32,7 +32,7 @@ const numArg = (name: string, fallback: number) => {
   return i >= 0 && args[i + 1] ? Number(args[i + 1]) : fallback;
 };
 const limit = numArg("--limit", Number.POSITIVE_INFINITY);
-const days = numArg("--days", 7);
+const days = numArg("--days", 30);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const last4 = (p: string | null) => (p ? `***${String(p).replace(/\D/g, "").slice(-4)}` : "none");
 
