@@ -2,11 +2,12 @@
  * Qualified follow-up enqueue. One row per (mobile10, requisition_id); the first source wins and a later different source is appended to
  * also_in_sources. With QUAL_FOLLOWUP_MODE off nothing touches the database. Enqueue functions never throw.
  */
-import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import { randomUUID } from "node:crypto";
+import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import type { EnqueueInput, FollowupMode, SourceType } from "./qualified-followup.types.js";
-import { classifySource, dueTimes, followupMode, normaliseMobile10 } from "./qualified-followup.schedule.js";
+import { dueTimes, followupMode, normaliseMobile10 } from "./qualified-followup.schedule.js";
 
 export type EnqueueStatus = "skipped_off" | "enqueued" | "exists" | "invalid";
 
@@ -18,19 +19,21 @@ export async function enqueueQualifiedFollowup(input: EnqueueInput, mode: Follow
     const qualifiedAt = input.qualifiedAt ?? new Date();
     const email = input.email?.trim() || null;
     const { emailDueAt, waDueAt } = dueTimes({ qualifiedAt, hasEmail: !!email });
-    const [ins] = await db.execute<ResultSetHeader>(
-      `INSERT INTO qualified_followup (source_type, meta_lead_id, he_lead_id, ats_candidate_id, requisition_id, campaign_id, drive_id, origin_id, origin_label,
+    // The id is generated here: with mysql2's default FOUND_ROWS flag affectedRows cannot tell a new row from an existing one.
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO qualified_followup (id, source_type, meta_lead_id, he_lead_id, ats_candidate_id, requisition_id, campaign_id, drive_id, origin_id, origin_label,
          mobile10, email, full_name, branch_name, role_name, qualified_at, email_due_at, wa_due_at, call_due_at, mode_at_enqueue)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
        ON DUPLICATE KEY UPDATE id = id`,
-      [input.sourceType, input.metaLeadId ?? null, input.heLeadId ?? null, input.atsCandidateId ?? null, input.requisitionId, input.campaignId ?? null,
+      [id, input.sourceType, input.metaLeadId ?? null, input.heLeadId ?? null, input.atsCandidateId ?? null, input.requisitionId, input.campaignId ?? null,
        input.driveId ?? null, input.originId, input.originLabel, mobile10, email, input.fullName ?? null, input.branchName ?? null, input.roleName ?? null,
        qualifiedAt, emailDueAt, waDueAt, mode]);
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id, source_type, also_in_sources FROM qualified_followup WHERE mobile10 = ? AND requisition_id = ? LIMIT 1", [mobile10, input.requisitionId]);
     const row = rows[0];
-    if (ins.affectedRows > 0) return { status: "enqueued", id: row?.id as string | undefined };
     if (!row) return { status: "invalid" };
+    if (row.id === id) return { status: "enqueued", id };
     if (row.source_type !== input.sourceType) {
       let also: string[] = [];
       try { const v = typeof row.also_in_sources === "string" ? JSON.parse(row.also_in_sources) : row.also_in_sources; if (Array.isArray(v)) also = v; } catch { /* treat as empty */ }
@@ -61,7 +64,7 @@ export async function enqueueMetaLeadFollowup(metaLeadId: string, mode: Followup
     if (r.screening_result !== "qualified") return { status: "not_qualified" };
     if (!r.req_id || !r.jr_id) return { status: "invalid" };
     const res = await enqueueQualifiedFollowup({
-      sourceType: classifySource({ campaignStatus: r.campaign_status }),
+      sourceType: "meta_live", // the ingest hook is the live path; campaign status must not reclassify it
       metaLeadId, requisitionId: r.req_id, campaignId: r.campaign_id ?? null,
       originId: String(r.campaign_id ?? ""), originLabel: String(r.campaign_name ?? ""),
       phone: r.parsed_phone, email: r.parsed_email, fullName: r.parsed_name,

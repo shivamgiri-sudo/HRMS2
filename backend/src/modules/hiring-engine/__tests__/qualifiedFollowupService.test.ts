@@ -17,10 +17,15 @@ describe("enqueueQualifiedFollowup", () => {
     expect(execute).not.toHaveBeenCalled();
   });
   it("dry_run: one INSERT carrying dry_run, returns enqueued", async () => {
-    execute.mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([[{ id: "q1", source_type: "meta_live" }]]);
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }]).mockImplementationOnce(async () => [[{ id: execute.mock.calls[0][1][0], source_type: "meta_live" }]]);
     const r = await enqueueQualifiedFollowup(input, "dry_run");
-    expect(r).toEqual({ status: "enqueued", id: "q1" });
+    expect(r.status).toBe("enqueued");
+    expect(r.id).toBe(execute.mock.calls[0][1][0]);
     const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain("(id, source_type");
+    expect(params[15]).toBeInstanceOf(Date);
+    expect(params[16]).toBeInstanceOf(Date);
+    expect(sql).toMatch(/\?, NULL, \?\)/);
     expect(sql).toContain("INSERT INTO qualified_followup");
     expect(sql).toContain("call_due_at");
     expect(params).toContain("dry_run");
@@ -31,8 +36,13 @@ describe("enqueueQualifiedFollowup", () => {
     expect((await enqueueQualifiedFollowup({ ...input, requisitionId: "" }, "dry_run")).status).toBe("invalid");
     expect(execute).not.toHaveBeenCalled();
   });
+  it("9-digit and junk phones are invalid through the service", async () => {
+    expect((await enqueueQualifiedFollowup({ ...input, phone: "987654321" }, "dry_run")).status).toBe("invalid");
+    expect((await enqueueQualifiedFollowup({ ...input, phone: "abc-xyz" }, "dry_run")).status).toBe("invalid");
+    expect(execute).not.toHaveBeenCalled();
+  });
   it("collision with a different source appends it to also_in_sources", async () => {
-    execute.mockResolvedValueOnce([{ affectedRows: 0 }]).mockResolvedValueOnce([[{ id: "q1", source_type: "he", also_in_sources: null }]]).mockResolvedValueOnce([{ affectedRows: 1 }]);
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([[{ id: "q1", source_type: "he", also_in_sources: null }]]).mockResolvedValueOnce([{ affectedRows: 1 }]);
     const r = await enqueueQualifiedFollowup(input, "live");
     expect(r).toEqual({ status: "exists", id: "q1" });
     const [sql, params] = execute.mock.calls[2];
@@ -40,7 +50,7 @@ describe("enqueueQualifiedFollowup", () => {
     expect(params[0]).toBe(JSON.stringify(["meta_live"]));
   });
   it("collision with the same source does not update", async () => {
-    execute.mockResolvedValueOnce([{ affectedRows: 0 }]).mockResolvedValueOnce([[{ id: "q1", source_type: "meta_live" }]]);
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([[{ id: "q1", source_type: "meta_live" }]]);
     expect((await enqueueQualifiedFollowup(input, "live")).status).toBe("exists");
     expect(execute).toHaveBeenCalledTimes(2);
   });
@@ -70,11 +80,16 @@ describe("enqueueMetaLeadFollowup", () => {
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls.some((c) => String(c[0]).includes("INSERT"))).toBe(false);
   });
+  it("a paused campaign lead is still meta_live", async () => {
+    execute.mockResolvedValueOnce([[{ ...lead, campaign_status: "paused" }]]).mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([[{ id: "q1", source_type: "meta_live" }]]);
+    await enqueueMetaLeadFollowup("m1", "dry_run");
+    expect(execute.mock.calls[1][1][1]).toBe("meta_live");
+  });
   it("qualified live lead is enqueued as meta_live with campaign origin", async () => {
-    execute.mockResolvedValueOnce([[lead]]).mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([[{ id: "q1", source_type: "meta_live" }]]);
+    execute.mockResolvedValueOnce([[lead]]).mockResolvedValueOnce([{ affectedRows: 1 }]).mockImplementationOnce(async () => [[{ id: execute.mock.calls[1][1][0], source_type: "meta_live" }]]);
     expect((await enqueueMetaLeadFollowup("m1", "dry_run")).status).toBe("enqueued");
     const params = execute.mock.calls[1][1];
-    expect(params[0]).toBe("meta_live");
+    expect(params[1]).toBe("meta_live");
     expect(params).toContain("c1");
     expect(params).toContain("Camp");
   });

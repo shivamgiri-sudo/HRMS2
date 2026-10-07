@@ -39,6 +39,14 @@ describe("healthStripModel", () => {
     expect(v.chips).toEqual([]);
     expect(v.overallLabel).toBeNull();
   });
+  it("normalises an unknown level to warn and tolerates missing checks", () => {
+    const v = buildStripView({ generatedAt: "x", level: "bogus", checks: [{ key: "k", label: "K", level: "weird", detail: "d" }] } as unknown as HealthPayload, null);
+    expect(v.overallLabel).toBe("Needs attention");
+    expect(v.chips[0].levelWord).toBe("Warning");
+    expect(v.chips[0].icon).toBe("alert");
+    const m = buildStripView({ generatedAt: "x", level: "ok" } as unknown as HealthPayload, null);
+    expect(m.chips).toEqual([]);
+  });
   it("toggle opens one, switches, and closes on the same chip", () => {
     expect(toggleExpanded(null, "a")).toBe("a");
     expect(toggleExpanded("a", "b")).toBe("b");

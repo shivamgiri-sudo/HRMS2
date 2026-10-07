@@ -20,13 +20,17 @@ const WORD: Record<HealthLevel, LevelWord> = { ok: "OK", warn: "Warning", critic
 const ICON: Record<HealthLevel, IconKey> = { ok: "check", warn: "alert", critical: "x" };
 const OVERALL: Record<HealthLevel, OverallLabel> = { ok: "All healthy", warn: "Needs attention", critical: "Critical" };
 
+const norm = (l: unknown): HealthLevel => (l === "ok" || l === "warn" || l === "critical" ? l : "warn");
+
 export function buildStripView(payload: HealthPayload | null, expandedKey: string | null): StripView {
   if (!payload) return { overallLabel: null, overallLevel: null, overallIcon: null, chips: [], expandedDetail: null, generatedAt: null };
-  const chips = payload.checks.map((c): ChipView => ({
-    key: c.key, label: c.label, level: c.level, levelWord: WORD[c.level], icon: ICON[c.level], detail: c.detail, expanded: c.key === expandedKey,
-  }));
+  const chips = (payload.checks ?? []).map((c): ChipView => {
+    const level = norm(c.level);
+    return { key: c.key, label: c.label, level, levelWord: WORD[level], icon: ICON[level], detail: c.detail, expanded: c.key === expandedKey };
+  });
+  const overall = norm(payload.level);
   return {
-    overallLabel: OVERALL[payload.level], overallLevel: payload.level, overallIcon: ICON[payload.level], chips,
+    overallLabel: OVERALL[overall], overallLevel: overall, overallIcon: ICON[overall], chips,
     expandedDetail: chips.find((c) => c.expanded)?.detail ?? null, generatedAt: payload.generatedAt,
   };
 }

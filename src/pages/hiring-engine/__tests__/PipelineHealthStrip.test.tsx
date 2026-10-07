@@ -5,8 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => undefined)) } }));
 
-import { PipelineHealthView } from "../PipelineHealthStrip";
-import PipelineHealthStrip from "../PipelineHealthStrip";
+import PipelineHealthStrip, { PipelineHealthView } from "../PipelineHealthStrip";
 import { buildStripView } from "../healthStripModel";
 
 const critical = {
@@ -26,7 +25,7 @@ describe("PipelineHealthStrip", () => {
     const html = renderToStaticMarkup(<PipelineHealthView view={buildStripView(critical, null)} error={null} loading={false} onToggle={noop} onRefresh={noop} />);
     expect(html).toContain("Critical");
     expect(html).toContain("Lead intake");
-    expect(html).toContain("<button");
+    expect(html).toMatch(/Lead intake<\/span><span class="font-semibold">Critical</);
     expect(html).toContain("Refresh pipeline health");
   });
   it("shows the expanded detail below the chips", () => {
@@ -38,5 +37,11 @@ describe("PipelineHealthStrip", () => {
     const html = renderToStaticMarkup(<PipelineHealthView view={buildStripView(null, null)} error="Network down" loading={false} onToggle={noop} onRefresh={noop} />);
     expect(html).toContain("Network down");
     expect(html).toContain("Retry");
+    expect(html).toContain('role="alert"');
+  });
+  it("does not use the disabled attribute on the refresh button", () => {
+    const html = renderToStaticMarkup(<PipelineHealthView view={buildStripView(critical, null)} error={null} loading={true} onToggle={noop} onRefresh={noop} />);
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).not.toMatch(/<button[^>]*\sdisabled/);
   });
 });

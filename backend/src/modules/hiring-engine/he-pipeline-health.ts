@@ -5,15 +5,15 @@ export interface HealthSnapshot {
   metaConfigured: boolean;
   tokenValid: boolean | null;
   lastLeadAt: Date | null;
-  leadsLast24h: number;
-  avgLeadsPerDay14d: number;
+  leadsLast24h: number | null;
+  avgLeadsPerDay14d: number | null;
   lastSyncFinishedAt: Date | null;
   lastSyncImported: number | null;
   formErrorsLastRun: number | null;
   schedulerRunning: boolean;
-  whatsappFailed24h: number;
-  whatsappSent24h: number;
-  followupOverdue: number;
+  whatsappFailed24h: number | null;
+  whatsappSent24h: number | null;
+  followupOverdue: number | null;
 }
 
 export const MIN_AVG_LEADS_FOR_ALERT = 3;
@@ -41,15 +41,21 @@ export function evaluateHealth(s: HealthSnapshot, now: Date = new Date()): Healt
     s.tokenValid === false ? "critical" : s.tokenValid === true ? "ok" : "warn",
     s.tokenValid === false ? "Meta rejected the token" : s.tokenValid === true ? "Meta accepted the token" : "Token check unavailable");
 
-  const avg = s.avgLeadsPerDay14d;
   let leadLevel: HealthLevel = "ok";
-  if (avg >= MIN_AVG_LEADS_FOR_ALERT) {
-    if (s.leadsLast24h === 0) leadLevel = "critical";
-    else if (s.leadsLast24h < LEAD_DROP_WARN_RATIO * avg) leadLevel = "warn";
+  let leadDetail: string;
+  if (s.leadsLast24h === null || s.avgLeadsPerDay14d === null) {
+    leadLevel = "critical";
+    leadDetail = "Could not read lead counts from the database";
+  } else {
+    const avg = s.avgLeadsPerDay14d;
+    if (avg >= MIN_AVG_LEADS_FOR_ALERT) {
+      if (s.leadsLast24h === 0) leadLevel = "critical";
+      else if (s.leadsLast24h < LEAD_DROP_WARN_RATIO * avg) leadLevel = "warn";
+    }
+    leadDetail = `${s.leadsLast24h} leads in last 24 h vs ${avg.toFixed(1)}/day over previous 14 days`
+      + (s.lastLeadAt ? `; last lead ${ageText(now.getTime() - s.lastLeadAt.getTime())} ago` : "; no lead on record");
   }
-  add("lead_intake", "Lead intake", leadLevel,
-    `${s.leadsLast24h} leads in last 24 h vs ${avg.toFixed(1)}/day over previous 14 days`
-    + (s.lastLeadAt ? `; last lead ${ageText(now.getTime() - s.lastLeadAt.getTime())} ago` : "; no lead on record"));
+  add("lead_intake", "Lead intake", leadLevel, leadDetail);
 
   let syncLevel: HealthLevel = "ok";
   let syncDetail: string;
@@ -68,15 +74,20 @@ export function evaluateHealth(s: HealthSnapshot, now: Date = new Date()): Healt
   add("form_errors", "Form errors", fe !== null && fe > 0 ? "warn" : "ok",
     fe === null ? "Unknown since restart" : `${fe} form error(s) in last sync`);
 
-  const total = s.whatsappSent24h + s.whatsappFailed24h;
-  const share = total > 0 ? s.whatsappFailed24h / total : 0;
-  let waLevel: HealthLevel = "ok";
-  if (total >= WA_MIN_VOLUME && share >= WA_CRITICAL_FAIL_SHARE) waLevel = "critical";
-  else if (total > 0 && share >= WA_WARN_FAIL_SHARE) waLevel = "warn";
-  add("whatsapp_failures", "WhatsApp delivery", waLevel,
-    `${s.whatsappFailed24h} failed of ${total} in last 24 h (${Math.round(share * 100)}%)`);
+  if (s.whatsappSent24h === null || s.whatsappFailed24h === null) {
+    add("whatsapp_failures", "Hiring Engine WhatsApp (candidates)", "warn", "Check unavailable");
+  } else {
+    const total = s.whatsappSent24h + s.whatsappFailed24h;
+    const share = total > 0 ? s.whatsappFailed24h / total : 0;
+    let waLevel: HealthLevel = "ok";
+    if (total >= WA_MIN_VOLUME && share >= WA_CRITICAL_FAIL_SHARE) waLevel = "critical";
+    else if (total > 0 && share >= WA_WARN_FAIL_SHARE) waLevel = "warn";
+    add("whatsapp_failures", "Hiring Engine WhatsApp (candidates)", waLevel,
+      `${s.whatsappFailed24h} failed of ${total} in last 24 h (${Math.round(share * 100)}%)`);
+  }
 
-  add("followup_overdue", "Follow-ups overdue", s.followupOverdue > 0 ? "warn" : "ok",
+  if (s.followupOverdue === null) add("followup_overdue", "Follow-ups overdue", "warn", "Check unavailable");
+  else add("followup_overdue", "Follow-ups overdue", s.followupOverdue > 0 ? "warn" : "ok",
     `${s.followupOverdue} follow-up(s) overdue by more than 30 min`);
 
   return checks;

@@ -49,8 +49,8 @@ export function PipelineHealthView({ view, error, loading, onToggle, onRefresh }
             <span className="font-semibold">{c.levelWord}</span>
           </button>
         ))}
-        <button type="button" aria-label="Refresh pipeline health" onClick={onRefresh} disabled={loading}
-          className={`ml-auto inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 sm:h-8 sm:w-8 ${MOTION} ${FOCUS}`}>
+        <button type="button" aria-label="Refresh pipeline health" aria-disabled={loading} onClick={() => { if (!loading) onRefresh(); }}
+          className={`ml-auto inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 aria-disabled:cursor-wait aria-disabled:opacity-60 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 sm:h-8 sm:w-8 ${MOTION} ${FOCUS}`}>
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden />
         </button>
       </div>
@@ -72,7 +72,8 @@ export default function PipelineHealthStrip() {
     setLoading(true);
     try {
       const r = await hrmsApi.get<{ success: boolean; data: HealthPayload }>("/api/he/pipeline-health");
-      setData(r.data); setError(null);
+      if (r?.data && Array.isArray(r.data.checks)) { setData(r.data); setError(null); }
+      else setError("Unexpected response from the server");
     } catch (e: unknown) { setError((e as { message?: string })?.message || "Request failed"); }
     finally { setLoading(false); }
   }, []);

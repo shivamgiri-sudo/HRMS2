@@ -5,7 +5,7 @@ vi.mock("../../../cron/metaLeadSync.cron.js", () => ({ getLastMetaSyncSummary: (
 vi.mock("../../meta-campaign/meta-api.client.js", () => ({ isMetaConfigured: () => { throw new Error("boom"); } }));
 
 import { evaluateHealth, overallLevel, type HealthSnapshot } from "../he-pipeline-health.js";
-import { collectHealthSnapshot } from "../he-pipeline-health.service.js";
+import { collectHealthSnapshot, tokenValidFromProbe } from "../he-pipeline-health.service.js";
 
 const NOW = new Date("2026-10-07T12:00:00Z");
 const ago = (min: number) => new Date(NOW.getTime() - min * 60_000);
@@ -60,6 +60,20 @@ describe("evaluateHealth", () => {
     expect(lvl({ followupOverdue: 1 }, "followup_overdue")).toBe("warn");
     expect(lvl({ followupOverdue: 0 }, "followup_overdue")).toBe("ok");
   });
+  it("null lead counts are critical, never healthy", () => {
+    expect(lvl({ leadsLast24h: null }, "lead_intake")).toBe("critical");
+    expect(lvl({ avgLeadsPerDay14d: null }, "lead_intake")).toBe("critical");
+    const c = evaluateHealth({ ...base, leadsLast24h: null, avgLeadsPerDay14d: null }, NOW).find((x) => x.key === "lead_intake")!;
+    expect(c.detail).toBe("Could not read lead counts from the database");
+  });
+  it("null whatsapp counts warn", () => {
+    expect(lvl({ whatsappSent24h: null, whatsappFailed24h: null }, "whatsapp_failures")).toBe("warn");
+    expect(lvl({ whatsappSent24h: 5, whatsappFailed24h: null }, "whatsapp_failures")).toBe("warn");
+    expect(evaluateHealth({ ...base, whatsappSent24h: null }, NOW).find((x) => x.key === "whatsapp_failures")!.detail).toBe("Check unavailable");
+  });
+  it("null overdue warns", () => {
+    expect(lvl({ followupOverdue: null }, "followup_overdue")).toBe("warn");
+  });
   it("output carries no candidate data keys", () => {
     for (const c of evaluateHealth(base, NOW)) expect(Object.keys(c).sort()).toEqual(["detail", "key", "label", "level"]);
   });
@@ -75,15 +89,26 @@ describe("overallLevel", () => {
 });
 
 describe("collectHealthSnapshot", () => {
-  it("resolves with nulls and zeroes when every probe fails", async () => {
+  it("resolves with nulls (never zeros) when every probe fails", async () => {
     const s = await collectHealthSnapshot();
     expect(s.lastLeadAt).toBeNull();
-    expect(s.leadsLast24h).toBe(0);
-    expect(s.avgLeadsPerDay14d).toBe(0);
+    expect(s.leadsLast24h).toBeNull();
+    expect(s.avgLeadsPerDay14d).toBeNull();
     expect(s.lastSyncFinishedAt).toBeNull();
-    expect(s.whatsappSent24h).toBe(0);
-    expect(s.whatsappFailed24h).toBe(0);
-    expect(s.followupOverdue).toBe(0);
+    expect(s.whatsappSent24h).toBeNull();
+    expect(s.whatsappFailed24h).toBeNull();
+    expect(s.followupOverdue).toBeNull();
     expect(s.tokenValid).toBeNull();
+  });
+});
+
+describe("tokenValidFromProbe", () => {
+  it("maps status and Graph error code", () => {
+    expect(tokenValidFromProbe(200, null)).toBe(true);
+    expect(tokenValidFromProbe(400, 190)).toBe(false);
+    expect(tokenValidFromProbe(400, 4)).toBeNull();
+    expect(tokenValidFromProbe(403, null)).toBeNull();
+    expect(tokenValidFromProbe(500, null)).toBeNull();
+    expect(tokenValidFromProbe(null, null)).toBeNull();
   });
 });
