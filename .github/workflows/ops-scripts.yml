@@ -51,6 +51,7 @@ on:
           - bank-account-encrypt-backfill
           - resend-address-bgv-links
           - roster-requests-verify
+          - report-requests-diagnose
           - payment-voucher-salary-verify
           - sbi-card-verify
           - sbi-card-demo-seed
@@ -281,6 +282,14 @@ jobs:
               # Read-only by default; apply only adds 'salary' to payment_voucher.source_type if missing (idempotent ALTER).
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               node scripts/payment-voucher-salary-verify.mjs $FLAG
+              ;;
+            report-requests-diagnose)
+              # Read-only: SELECTs only, in a READ ONLY session. Emailed-report queue health. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::report-requests-diagnose is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              node scripts/report-requests-diagnose.mjs
               ;;
             roster-requests-verify)
               # Read-only: SELECTs only, in a READ ONLY session. Checks the Roster Requests hub
