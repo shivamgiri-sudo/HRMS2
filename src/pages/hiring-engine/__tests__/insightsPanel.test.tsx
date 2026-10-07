@@ -25,9 +25,13 @@ const render = (insights: DriveInsight[] | undefined, over: { partial?: boolean;
 describe("insightActionTarget", () => {
   const cases: Array<[string, InsightAction, unknown]> = [
     ["open_plan", { type: "open_plan", requisitionId: R, date: "2026-10-15" }, { section: "plan", requisitionId: R, date: "2026-10-15", intent: "open_plan", label: "Open the plan" }],
+    // TODO Task 15: plan_now still lands on the Plan section; flip this expectation when Task 15 gives it its own control.
     ["plan_now", { type: "plan_now", requisitionId: R, date: "2026-10-15" }, { section: "plan", requisitionId: R, date: "2026-10-15", intent: "plan_now", label: "Preview Plan now" }],
-    ["extend_stream", { type: "extend_stream", streamId: "s1", requisitionId: R }, { section: "plan", requisitionId: R, streamId: "s1", intent: "extend", label: "Extend the stream" }],
-    ["create_stream", { type: "create_stream", requisitionId: R, sourceType: "meta_old" }, { section: "plan", requisitionId: R, sourceType: "meta_old", intent: "create_stream", label: "Add an old-data re-run" }],
+    // Task 14: extend and create open their real dialogs for the requisition, no navigation to the Plan placeholder.
+    ["extend_stream", { type: "extend_stream", streamId: "s1", requisitionId: R }, { section: null, dialog: "extend_stream", requisitionId: R, streamId: "s1", intent: "extend", label: "Extend the stream" }],
+    ["create_stream old", { type: "create_stream", requisitionId: R, sourceType: "meta_old" }, { section: null, dialog: "create_stream", requisitionId: R, sourceType: "meta_old", intent: "create_stream", label: "Add an old-data re-run" }],
+    ["create_stream live", { type: "create_stream", requisitionId: R, sourceType: "meta_live" }, { section: null, dialog: "create_stream", requisitionId: R, sourceType: "meta_live", intent: "create_stream", label: "Open a live Meta stream" }],
+    ["create_stream he", { type: "create_stream", requisitionId: R, sourceType: "he" }, { section: null, dialog: "create_stream", requisitionId: R, sourceType: "he", intent: "create_stream", label: "Open a pool stream" }],
     ["open_section live", { type: "open_section", section: "live" }, { section: "live", intent: "open_section", label: "Open Live Meta" }],
     ["open_section old", { type: "open_section", section: "old" }, { section: "old", intent: "open_section", label: "Open Old Meta data" }],
     ["open_section he", { type: "open_section", section: "he" }, { section: "he", intent: "open_section", label: "Open Hiring Engine" }],
@@ -35,6 +39,10 @@ describe("insightActionTarget", () => {
   ];
   it.each(cases)("%s maps to its control", (_n, action, want) => {
     expect(insightActionTarget(action)).toMatchObject(want as object);
+  });
+  it("only extend_stream and create_stream are dialog intents", () => {
+    const dialogs = cases.map(([n, a]) => [n, insightActionTarget(a)?.dialog ?? null]);
+    expect(dialogs.filter(([, d]) => d !== null).map(([n]) => n)).toEqual(["extend_stream", "create_stream old", "create_stream live", "create_stream he"]);
   });
   it("none, unknown types and malformed payloads give no button and never throw", () => {
     for (const a of [{ type: "none" }, { type: "teleport" }, {}, null, undefined, 7, "open_plan", { type: "open_plan" }, { type: "extend_stream", requisitionId: R },

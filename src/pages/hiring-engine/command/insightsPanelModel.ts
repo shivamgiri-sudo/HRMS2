@@ -8,7 +8,10 @@ import { SECTIONS, TYPE_LABEL, commandHash, type Filters, type SectionId } from 
 
 export type ActionIntent = "open_plan" | "plan_now" | "extend" | "create_stream" | "open_section" | "followup";
 export interface ActionTarget {
-  section: SectionId;
+  /** Section to navigate to; null for a dialog intent (the dialog opens over the current section). */
+  section: SectionId | null;
+  /** The real dialog this action opens (Task 14): the stream's Extend menu or the create-stream dialog for the requisition. */
+  dialog?: "extend_stream" | "create_stream";
   requisitionId?: string;
   streamId?: string;
   sourceType?: SourceType;
@@ -19,12 +22,14 @@ export interface ActionTarget {
 }
 
 const SECTION_BY_KEY: Record<string, SectionId> = { live: "live", old: "old", he: "he" };
+const CREATE_LABEL: Record<SourceType, string> = { meta_live: "Open a live Meta stream", meta_old: "Add an old-data re-run", he: "Open a pool stream" };
 const sectionLabel = (s: SectionId): string => SECTIONS.find((x) => x.id === s)?.label ?? s;
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v : undefined);
 
 /**
  * Maps an engine action to the control that serves it. Total: an unknown type, a missing field or a non-object gives null (no button).
- * Extend / Plan now / create stream land on the Plan section until their dialogs exist (Tasks 14-15); the follow-up panel lives on Summary.
+ * Extend and create stream open their real dialogs for the requisition (no navigation). Open plan / Plan now still land on the Plan
+ * section until Task 15 builds it (TODO Task 15: re-point plan_now to its control); the follow-up panel lives on Summary.
  */
 export function insightActionTarget(action: unknown): ActionTarget | null {
   if (!action || typeof action !== "object") return null;
@@ -35,11 +40,11 @@ export function insightActionTarget(action: unknown): ActionTarget | null {
     case "plan_now": return req ? { section: "plan", requisitionId: req, date: str(a.date), intent: "plan_now", label: "Preview Plan now" } : null;
     case "extend_stream": {
       const streamId = str(a.streamId);
-      return req && streamId ? { section: "plan", requisitionId: req, streamId, intent: "extend", label: "Extend the stream" } : null;
+      return req && streamId ? { section: null, dialog: "extend_stream", requisitionId: req, streamId, intent: "extend", label: "Extend the stream" } : null;
     }
     case "create_stream": {
       const t = str(a.sourceType);
-      return req && t && t in TYPE_LABEL ? { section: "plan", requisitionId: req, sourceType: t as SourceType, intent: "create_stream", label: "Add an old-data re-run" } : null;
+      return req && t && t in TYPE_LABEL ? { section: null, dialog: "create_stream", requisitionId: req, sourceType: t as SourceType, intent: "create_stream", label: CREATE_LABEL[t as SourceType] } : null;
     }
     case "open_section": {
       const s = typeof a.section === "string" ? SECTION_BY_KEY[a.section] : undefined;
@@ -164,7 +169,7 @@ export function panelView(analytics: Pick<DriveAnalytics, "insights" | "partial"
   return { ...base, state: incomplete ? "unavailable" : "empty", heading, message: incomplete ? INCOMPLETE_MESSAGE : EMPTY_MESSAGE };
 }
 
-/** The hash an action button navigates to: the target section, with the requisition narrowed when the action names one. */
-export function insightNavHash(target: ActionTarget, filters: Filters): string {
-  return commandHash(target.section, { ...filters, requisitionId: target.requisitionId ?? filters.requisitionId });
+/** The hash an action button navigates to: the target section (or `current` for a dialog intent), with the requisition narrowed when named. */
+export function insightNavHash(target: ActionTarget, filters: Filters, current: SectionId = "summary"): string {
+  return commandHash(target.section ?? current, { ...filters, requisitionId: target.requisitionId ?? filters.requisitionId });
 }

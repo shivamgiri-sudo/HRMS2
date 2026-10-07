@@ -1,7 +1,8 @@
 /**
  * One drive group row: a requisition at a branch for one drive type. The header is a real button (aria-expanded / aria-controls,
  * Enter and Space native). Expanded it loads the day-wise table, two stacked charts and the extension history lazily.
- * `children` is the slot for the stream actions (Extend menu and dialogs, Task 14); this component never writes anything.
+ * `children` is the slot for the stream actions (Extend menu and dialogs); a function child receives the detail reload so a successful
+ * change refreshes the trend and the extension history. This component itself never writes anything.
  */
 import { useId, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, History, Info, PlayCircle, RefreshCw } from "lucide-react";
@@ -71,9 +72,12 @@ export function ExtensionHistory({ events, error, hasStreams }: { events: Stream
   );
 }
 
-function Detail({ group, today, children }: { group: DriveGroup; today: string; children?: ReactNode }) {
+export type RowSlot = ReactNode | ((reloadDetail: () => void) => ReactNode);
+
+function Detail({ group, today, children }: { group: DriveGroup; today: string; children?: RowSlot }) {
   const d = useGroupDetail(group, true);
-  return <DetailView group={group} today={today} trend={d.trend} trendError={d.trendError} loading={d.loading} events={d.events} eventsError={d.eventsError} onRetry={d.reload}>{children}</DetailView>;
+  const slot = typeof children === "function" ? children(d.reload) : children;
+  return <DetailView group={group} today={today} trend={d.trend} trendError={d.trendError} loading={d.loading} events={d.events} eventsError={d.eventsError} onRetry={d.reload}>{slot}</DetailView>;
 }
 
 export interface DetailViewProps {
@@ -108,8 +112,8 @@ export interface DriveGroupRowProps {
   group: DriveGroup; compact?: boolean; today: string;
   /** Test/preview hook: render expanded without loading (the live row expands on click). */
   initiallyOpen?: boolean;
-  /** Slot for the stream actions (Task 14); shown in the expanded body. */
-  children?: ReactNode;
+  /** Slot for the stream actions, shown in the expanded body; a function receives the detail reload. */
+  children?: RowSlot;
 }
 
 export default function DriveGroupRow({ group, compact = false, today, initiallyOpen = false, children }: DriveGroupRowProps) {

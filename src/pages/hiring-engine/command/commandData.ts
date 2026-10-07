@@ -46,7 +46,8 @@ export function unusableMessage(body: unknown): string {
 }
 
 // ---- options -----------------------------------------------------------------------------------------------------------------------------
-export interface RequisitionOption { id: string; label: string; branch: string }
+/** `code` is the requisition code (empty when the row has none); the create-stream dialog matches campaigns and launches on it. */
+export interface RequisitionOption { id: string; label: string; branch: string; code?: string }
 interface OpenRequisitionRow { id?: unknown; requisition_code?: unknown; designation_name?: unknown; branch_name?: unknown }
 
 const text = (v: unknown): string => (typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : "");
@@ -58,9 +59,10 @@ export function requisitionOptions(rows: unknown): RequisitionOption[] {
   for (const r of rows as OpenRequisitionRow[]) {
     const id = text(r?.id);
     if (!id) continue;
-    const code = text(r.requisition_code) || `#${id}`;
+    const rawCode = text(r.requisition_code);
+    const code = rawCode || `#${id}`;
     const role = text(r.designation_name);
-    out.push({ id, label: role ? `${code} - ${role}` : code, branch: text(r.branch_name) });
+    out.push({ id, label: role ? `${code} - ${role}` : code, branch: text(r.branch_name), code: rawCode });
   }
   return out;
 }

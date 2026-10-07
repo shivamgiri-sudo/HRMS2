@@ -21,8 +21,11 @@ import ShowRateScatter from "./charts/ShowRateScatter";
 import DropOffWaterfall from "./charts/DropOffWaterfall";
 import CompareTable from "./charts/CompareTable";
 import InsightsPanel from "./InsightsPanel";
-import DriveTypeSection from "./DriveTypeSection";
+import DriveTypeSection, { type SectionActions } from "./DriveTypeSection";
 import { insightNavHash, type ActionTarget } from "./insightsPanelModel";
+import CreateStreamDialog from "./CreateStreamDialog";
+import { StreamDialog } from "./RowStreamActions";
+import type { SourceType } from "./driveCommandTypes";
 
 const DrivesTab = lazy(() => import("../DrivesTab"));
 
@@ -130,14 +133,14 @@ function SummaryCharts({ analytics, insights }: { analytics: DriveAnalytics; ins
 }
 
 /** Analytics-dependent panels (gated) and panels that must not wait for analytics (children). */
-export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode): { gated: ReactNode; always: ReactNode } {
+export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions): { gated: ReactNode; always: ReactNode } {
   if (section === "summary") {
     return { gated: <>{analytics && <SummaryCharts analytics={analytics} insights={insights} />}<Placeholder title="Follow-up pipeline" /></>, always: null };
   }
   if (section === "plan") return { gated: null, always: <Placeholder title="Plan" /> };
   if (section === "he") {
     return {
-      gated: analytics && <DriveTypeSection type="he" groups={analytics.groups ?? []} today={istTodayClient()} title="Hiring Engine drives" />,
+      gated: analytics && <DriveTypeSection type="he" groups={analytics.groups ?? []} today={istTodayClient()} title="Hiring Engine drives" actions={actions} />,
       always: (
         <section aria-labelledby="all-drives-heading" className="space-y-2">
           <h3 id="all-drives-heading" className="text-base font-bold text-slate-900 dark:text-slate-100">All drives</h3>
@@ -147,7 +150,7 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
     };
   }
   const type = section === "live" ? "meta_live" : "meta_old";
-  return { gated: analytics && <DriveTypeSection type={type} groups={analytics.groups ?? []} today={istTodayClient()} title={section === "live" ? "Live Meta drives" : "Old Meta data drives"} />, always: null };
+  return { gated: analytics && <DriveTypeSection type={type} groups={analytics.groups ?? []} today={istTodayClient()} title={section === "live" ? "Live Meta drives" : "Old Meta data drives"} actions={actions} />, always: null };
 }
 
 export default function DriveCommandCenter() {
@@ -174,22 +177,33 @@ export default function DriveCommandCenter() {
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
   const dismiss = useCallback((id: string) => setDismissed((d) => new Set(d).add(id)), []);
   const restore = useCallback(() => setDismissed(new Set()), []);
-  // Plan now / Extend / create-stream dialogs arrive in Tasks 14-15: until then the action opens the Plan section for the requisition.
+  // Extend and create-stream open their real dialogs over the current section; the rest navigate (Plan now gets its control in Task 15).
+  const [dialog, setDialog] = useState<{ kind: "extend_stream"; streamId: string } | { kind: "create_stream"; requisitionId: string; sourceType: SourceType } | null>(null);
   const act = useCallback((t: ActionTarget) => {
-    const next = insightNavHash(t, filters);
+    if (t.dialog === "extend_stream" && t.streamId) { setDialog({ kind: "extend_stream", streamId: t.streamId }); return; }
+    if (t.dialog === "create_stream" && t.requisitionId && t.sourceType) { setDialog({ kind: "create_stream", requisitionId: t.requisitionId, sourceType: t.sourceType }); return; }
+    const next = insightNavHash(t, filters, section);
     if (window.location.hash !== next) window.location.hash = next;
     setState(parseCommandHash(next));
     window.setTimeout(() => document.getElementById(PANEL_ID)?.focus(), 0);
-  }, [filters]);
+  }, [filters, section]);
 
-  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />);
+  const actions: SectionActions = { requisitions, requisitionId: filters.requisitionId, onChanged: reload };
+  const [pageNote, setPageNote] = useState<string | null>(null);
+  const today = istTodayClient();
+  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions);
   return (
     <div className="space-y-3">
       <PipelineHealthStrip />
+      <p role="status" className="text-sm text-emerald-800 empty:hidden dark:text-emerald-200">{pageNote}</p>
       <DriveCommandView section={section} filters={filters} analytics={data} loading={loading} error={error}
         onSection={(s) => go(s, filters)} onFilters={(f) => go(section, f)} onRetry={reload} requisitions={requisitions} branches={branches} gated={parts.gated}>
         {parts.always}
       </DriveCommandView>
+      <StreamDialog open={dialog?.kind === "extend_stream"} onOpenChange={(o) => { if (!o) setDialog(null); }} streamId={dialog?.kind === "extend_stream" ? dialog.streamId : null} today={today} onChanged={reload} />
+      <CreateStreamDialog open={dialog?.kind === "create_stream"} onOpenChange={(o) => { if (!o) setDialog(null); }} today={today} requisitions={requisitions}
+        requisitionId={dialog?.kind === "create_stream" ? dialog.requisitionId : null} sourceType={dialog?.kind === "create_stream" ? dialog.sourceType : undefined}
+        onCreated={(_s, text) => { setDialog(null); setPageNote(text); reload(); }} />
     </div>
   );
 }
