@@ -10,7 +10,7 @@ import { tabFromHash } from "./hiringEngineTabs";
 
 const loaders = {
   board: () => import("./BoardTab"),
-  drives: () => import("./DrivesTab"),
+  drives: () => import("./command/DriveCommandCenter"),
   leads: () => import("./LeadsTab"),
   master: () => import("./MasterTab"),
   planner: () => import("./PlannerTab"),
