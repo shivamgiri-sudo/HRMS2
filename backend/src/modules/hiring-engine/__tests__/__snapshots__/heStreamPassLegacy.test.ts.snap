@@ -1,0 +1,332 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`planStreamsForDay before calibration (snapshot of today's behaviour) > dry run > collaborators 1`] = `
+{
+  "bridge": [],
+  "createDrive": [],
+  "enqueue": [],
+  "lineUp": [],
+  "setDriveStatus": [],
+}
+`;
+
+exports[`planStreamsForDay before calibration (snapshot of today's behaviour) > dry run > result 1`] = `
+{
+  "closed": [],
+  "plans": [
+    {
+      "branch": "Noida",
+      "code": "REQ-1",
+      "date": "2026-10-15",
+      "drive": "would_create",
+      "driveId": null,
+      "requisitionId": "r1",
+      "streams": [
+        {
+          "alreadyLined": 0,
+          "cap": 400,
+          "lined": 0,
+          "originLabel": "",
+          "sourceType": "he",
+          "streamId": "a",
+          "wouldLine": 400,
+        },
+        {
+          "alreadyLined": 0,
+          "cap": 40,
+          "lined": 0,
+          "originLabel": "Campaign B",
+          "sourceType": "meta_live",
+          "streamId": "b",
+          "wouldLine": 40,
+        },
+      ],
+    },
+  ],
+}
+`;
+
+exports[`planStreamsForDay before calibration (snapshot of today's behaviour) > dry run > sql 1`] = `
+[
+  [
+    "autoCloseStreams",
+    [
+      10,
+      true,
+    ],
+  ],
+  [
+    "loadActiveStreams",
+    {},
+  ],
+  [
+    "SELECT id, requisition_code, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT id, status, run_label, source_kind, created_by FROM he_drive WHERE requisition_id = ? AND branch_name = ? AND drive_date = ?",
+    [
+      "r1",
+      "Noida",
+      "2026-10-15",
+    ],
+  ],
+]
+`;
+
+exports[`planStreamsForDay before calibration (snapshot of today's behaviour) > live: creates the drive and lines up each stream to its cap > collaborators 1`] = `
+{
+  "bridge": [
+    [
+      {
+        "campaignIds": [
+          "c1",
+        ],
+        "onlyUnlinked": true,
+      },
+    ],
+  ],
+  "createDrive": [
+    [
+      {
+        "audience": {
+          "kind": "pool",
+          "label": "Streams",
+        },
+        "autoSend": true,
+        "driveDate": "2026-10-15",
+        "requisitionId": "r1",
+        "showRatePct": 25,
+        "slotCapacity": 27,
+        "slotEnd": "17:30",
+        "slotMinutes": 30,
+        "slotStart": "10:00",
+        "targetShows": 110,
+      },
+    ],
+  ],
+  "enqueue": [],
+  "lineUp": [
+    [
+      "d-r1-2026-10-15",
+      {
+        "audience": {
+          "max_lead_age_days": null,
+          "source_ids": null,
+          "source_kind": "pool",
+        },
+        "excludeOnDrive": true,
+        "followupStream": {
+          "originId": "r1",
+          "originLabel": "",
+          "sourceType": "he",
+          "streamId": "a",
+        },
+        "keepOtherSuggestions": true,
+        "limit": 400,
+      },
+    ],
+    [
+      "d-r1-2026-10-15",
+      {
+        "audience": {
+          "max_lead_age_days": null,
+          "source_ids": [
+            "c1",
+          ],
+          "source_kind": "campaign",
+        },
+        "excludeOnDrive": true,
+        "followupStream": {
+          "originId": "c1",
+          "originLabel": "Campaign B",
+          "sourceType": "meta_live",
+          "streamId": "b",
+        },
+        "keepOtherSuggestions": true,
+        "limit": 40,
+      },
+    ],
+  ],
+  "setDriveStatus": [
+    [
+      "d-r1-2026-10-15",
+      "active",
+    ],
+  ],
+}
+`;
+
+exports[`planStreamsForDay before calibration (snapshot of today's behaviour) > live: creates the drive and lines up each stream to its cap > result 1`] = `
+{
+  "closed": [],
+  "plans": [
+    {
+      "branch": "Noida",
+      "code": "REQ-1",
+      "date": "2026-10-15",
+      "drive": "created",
+      "driveId": "d-r1-2026-10-15",
+      "requisitionId": "r1",
+      "streams": [
+        {
+          "alreadyLined": 0,
+          "cap": 400,
+          "lined": 3,
+          "originLabel": "",
+          "sourceType": "he",
+          "streamId": "a",
+        },
+        {
+          "alreadyLined": 0,
+          "cap": 40,
+          "lined": 3,
+          "originLabel": "Campaign B",
+          "sourceType": "meta_live",
+          "streamId": "b",
+        },
+      ],
+    },
+  ],
+}
+`;
+
+exports[`planStreamsForDay before calibration (snapshot of today's behaviour) > live: creates the drive and lines up each stream to its cap > sql 1`] = `
+[
+  [
+    "autoCloseStreams",
+    [
+      10,
+      false,
+    ],
+  ],
+  [
+    "loadActiveStreams",
+    {},
+  ],
+  [
+    "SELECT id, requisition_code, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "conn: SELECT GET_LOCK(?, 0) AS got",
+    [
+      "he_stream_plan:r1",
+    ],
+  ],
+  [
+    "SELECT id, status, run_label, source_kind, created_by FROM he_drive WHERE requisition_id = ? AND branch_name = ? AND drive_date = ?",
+    [
+      "r1",
+      "Noida",
+      "2026-10-15",
+    ],
+  ],
+  [
+    "SELECT status, run_label, source_kind, created_by FROM he_drive WHERE id = ?",
+    [
+      "d-r1-2026-10-15",
+    ],
+  ],
+  [
+    "INSERT INTO requisition_stream_plan (stream_id, drive_date, drive_id, lined) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE drive_id = VALUES(drive_id), lined = VALUES(lined)",
+    [
+      "a",
+      "2026-10-15",
+      "d-r1-2026-10-15",
+      0,
+    ],
+  ],
+  [
+    "INSERT INTO requisition_stream_plan (stream_id, drive_date, drive_id, lined) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE drive_id = VALUES(drive_id), lined = VALUES(lined)",
+    [
+      "b",
+      "2026-10-15",
+      "d-r1-2026-10-15",
+      0,
+    ],
+  ],
+  [
+    "SELECT COUNT(*) AS n FROM requisition_stream_match sm JOIN he_match m ON m.id = sm.match_id WHERE sm.stream_id = ? AND sm.drive_id = ? AND m.drive_id = ?",
+    [
+      "a",
+      "d-r1-2026-10-15",
+      "d-r1-2026-10-15",
+    ],
+  ],
+  [
+    "INSERT INTO requisition_stream_match (match_id, stream_id, drive_id) SELECT m.id, ?, ? FROM he_match m WHERE m.drive_id = ? AND m.lead_id IN (?,?,?) ON DUPLICATE KEY UPDATE stream_id = IF(requisition_stream_match.drive_id <=> VALUES(drive_id), requisition_stream_match.stream_id, VALUES(stream_id)), drive_id = VALUES(drive_id)",
+    [
+      "a",
+      "d-r1-2026-10-15",
+      "d-r1-2026-10-15",
+      "a-L0",
+      "a-L1",
+      "a-L2",
+    ],
+  ],
+  [
+    "SELECT COUNT(*) AS n FROM requisition_stream_match sm JOIN he_match m ON m.id = sm.match_id WHERE sm.stream_id = ? AND sm.drive_id = ? AND m.drive_id = ?",
+    [
+      "a",
+      "d-r1-2026-10-15",
+      "d-r1-2026-10-15",
+    ],
+  ],
+  [
+    "INSERT INTO requisition_stream_plan (stream_id, drive_date, drive_id, lined) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE drive_id = VALUES(drive_id), lined = VALUES(lined)",
+    [
+      "a",
+      "2026-10-15",
+      "d-r1-2026-10-15",
+      3,
+    ],
+  ],
+  [
+    "SELECT COUNT(*) AS n FROM requisition_stream_match sm JOIN he_match m ON m.id = sm.match_id WHERE sm.stream_id = ? AND sm.drive_id = ? AND m.drive_id = ?",
+    [
+      "b",
+      "d-r1-2026-10-15",
+      "d-r1-2026-10-15",
+    ],
+  ],
+  [
+    "INSERT INTO requisition_stream_match (match_id, stream_id, drive_id) SELECT m.id, ?, ? FROM he_match m WHERE m.drive_id = ? AND m.lead_id IN (?,?,?) ON DUPLICATE KEY UPDATE stream_id = IF(requisition_stream_match.drive_id <=> VALUES(drive_id), requisition_stream_match.stream_id, VALUES(stream_id)), drive_id = VALUES(drive_id)",
+    [
+      "b",
+      "d-r1-2026-10-15",
+      "d-r1-2026-10-15",
+      "b-L0",
+      "b-L1",
+      "b-L2",
+    ],
+  ],
+  [
+    "SELECT COUNT(*) AS n FROM requisition_stream_match sm JOIN he_match m ON m.id = sm.match_id WHERE sm.stream_id = ? AND sm.drive_id = ? AND m.drive_id = ?",
+    [
+      "b",
+      "d-r1-2026-10-15",
+      "d-r1-2026-10-15",
+    ],
+  ],
+  [
+    "INSERT INTO requisition_stream_plan (stream_id, drive_date, drive_id, lined) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE drive_id = VALUES(drive_id), lined = VALUES(lined)",
+    [
+      "b",
+      "2026-10-15",
+      "d-r1-2026-10-15",
+      3,
+    ],
+  ],
+  [
+    "conn: SELECT RELEASE_LOCK(?) AS released",
+    [
+      "he_stream_plan:r1",
+    ],
+  ],
+]
+`;
