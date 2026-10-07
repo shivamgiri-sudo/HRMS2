@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getLastMetaSyncSummary } from "../../cron/metaLeadSync.cron.js";
 import { isMetaConfigured } from "../meta-campaign/meta-api.client.js";
+import { getPinbotQuality } from "./he-pinbot-quality.service.js";
 import { evaluateHealth, overallLevel, type HealthCheck, type HealthLevel, type HealthSnapshot } from "./he-pipeline-health.js";
 
 const SNAPSHOT_TTL_MS = 60_000;
@@ -84,6 +85,15 @@ export async function collectHealthSnapshot(): Promise<HealthSnapshot> {
     return Number(rows?.[0]?.n ?? 0) as number | null;
   }, null as number | null);
 
+  const inbound = await safe(async () => {
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM he_message
+        WHERE direction = 'in' AND channel = 'whatsapp' AND created_at >= NOW() - INTERVAL 24 HOUR`);
+    return Number(rows?.[0]?.n ?? 0) as number | null;
+  }, null as number | null);
+
+  const pinbotQuality = await safe(getPinbotQuality, null);
+
   return {
     metaConfigured,
     tokenValid,
@@ -97,6 +107,8 @@ export async function collectHealthSnapshot(): Promise<HealthSnapshot> {
     whatsappFailed24h: wa.failed,
     whatsappSent24h: wa.sent,
     followupOverdue: overdue,
+    pinbotQuality,
+    inboundWa24h: inbound,
   };
 }
 

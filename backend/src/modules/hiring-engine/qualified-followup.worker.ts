@@ -14,6 +14,7 @@ import { runEmailStep } from "./qualified-followup.email.js";
 import { pipelineWaSentToday, runWhatsappStep } from "./qualified-followup.whatsapp.js";
 import { runCallStep } from "./qualified-followup.call.js";
 import { runCallFileBatch } from "./qualified-followup.callfile.js";
+import { getPinbotQuality } from "./he-pinbot-quality.service.js";
 import { runDailyReport } from "./qualified-followup.report.js";
 import type { FollowupMode } from "./qualified-followup.types.js";
 
@@ -37,11 +38,10 @@ export interface TickDeps {
   getPinbotQuality: () => Promise<PinbotQuality | null>;
 }
 
-// Stub until the Pinbot quality lookup lands (Task 13).
 const defaultDeps: TickDeps = {
   runCallFileBatch,
   runDailyReport,
-  getPinbotQuality: async () => null,
+  getPinbotQuality,
 };
 
 // Slot keys are kept in memory: a restart inside the grace window can repeat one calling file or report.

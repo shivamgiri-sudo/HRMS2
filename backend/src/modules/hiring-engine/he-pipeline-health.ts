@@ -1,4 +1,6 @@
 /** Pure pipeline-health rules. No I/O; `now` is a parameter. Output carries counts, timestamps and labels only. */
+import type { PinbotQuality } from "./qualified-followup.rules.js";
+
 export type HealthLevel = "ok" | "warn" | "critical";
 export interface HealthCheck { key: string; label: string; level: HealthLevel; detail: string }
 export interface HealthSnapshot {
@@ -14,6 +16,9 @@ export interface HealthSnapshot {
   whatsappFailed24h: number | null;
   whatsappSent24h: number | null;
   followupOverdue: number | null;
+  /** Optional: undefined = not collected (no check); null = probe failed (unknown, warns). */
+  pinbotQuality?: PinbotQuality | null;
+  inboundWa24h?: number | null;
 }
 
 export const MIN_AVG_LEADS_FOR_ALERT = 3;
@@ -89,6 +94,25 @@ export function evaluateHealth(s: HealthSnapshot, now: Date = new Date()): Healt
   if (s.followupOverdue === null) add("followup_overdue", "Follow-ups overdue", "warn", "Check unavailable");
   else add("followup_overdue", "Follow-ups overdue", s.followupOverdue > 0 ? "warn" : "ok",
     `${s.followupOverdue} follow-up(s) overdue by more than 30 min`);
+
+  if (s.pinbotQuality !== undefined) {
+    const q = s.pinbotQuality;
+    if (q === "GREEN") add("pinbot_quality", "WhatsApp number quality", "ok", "Quality GREEN");
+    else if (q === "YELLOW") add("pinbot_quality", "WhatsApp number quality", "warn", "Quality YELLOW: follow-up sends halved");
+    else if (q === "RED") add("pinbot_quality", "WhatsApp number quality", "critical", "Quality RED: new follow-up sends paused");
+    else add("pinbot_quality", "WhatsApp number quality", "warn", "Quality unknown: follow-up sends halved");
+  }
+
+  if (s.inboundWa24h !== undefined) {
+    const label = "Inbound WhatsApp (replies and receipts)";
+    const sent = s.whatsappSent24h;
+    if (s.inboundWa24h === null || sent === null) add("whatsapp_inbound", label, "warn", "Check unavailable");
+    else if (s.inboundWa24h === 0 && sent >= WA_MIN_VOLUME) {
+      add("whatsapp_inbound", label, "critical", `No candidate replies reached HRMS in 24 h while ${sent} were sent: check the Pinbot webhook`);
+    } else if (s.inboundWa24h === 0 && sent > 0) {
+      add("whatsapp_inbound", label, "warn", `No candidate replies in 24 h while ${sent} were sent`);
+    } else add("whatsapp_inbound", label, "ok", `${s.inboundWa24h} inbound in last 24 h`);
+  }
 
   return checks;
 }

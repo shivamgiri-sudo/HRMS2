@@ -79,6 +79,31 @@ describe("evaluateHealth", () => {
   });
 });
 
+describe("pinbot quality and inbound checks", () => {
+  const find = (patch: Partial<HealthSnapshot>, key: string) => evaluateHealth({ ...base, ...patch }, NOW).find((c) => c.key === key);
+  it("pinbot_quality maps the rating", () => {
+    expect(find({ pinbotQuality: "GREEN" }, "pinbot_quality")!.level).toBe("ok");
+    expect(find({ pinbotQuality: "YELLOW" }, "pinbot_quality")).toMatchObject({ level: "warn", detail: "Quality YELLOW: follow-up sends halved" });
+    expect(find({ pinbotQuality: "RED" }, "pinbot_quality")).toMatchObject({ level: "critical", detail: "Quality RED: new follow-up sends paused" });
+    expect(find({ pinbotQuality: "UNKNOWN" }, "pinbot_quality")).toMatchObject({ level: "warn", detail: "Quality unknown: follow-up sends halved" });
+    expect(find({ pinbotQuality: null }, "pinbot_quality")).toMatchObject({ level: "warn", detail: "Quality unknown: follow-up sends halved" });
+  });
+  it("no pinbot_quality or whatsapp_inbound check when the fields are absent", () => {
+    expect(find({}, "pinbot_quality")).toBeUndefined();
+    expect(find({}, "whatsapp_inbound")).toBeUndefined();
+  });
+  it("whatsapp_inbound", () => {
+    expect(find({ whatsappSent24h: 20, whatsappFailed24h: 0, inboundWa24h: 0 }, "whatsapp_inbound")).toMatchObject({
+      level: "critical", detail: "No candidate replies reached HRMS in 24 h while 20 were sent: check the Pinbot webhook" });
+    expect(find({ whatsappSent24h: 19, inboundWa24h: 0 }, "whatsapp_inbound")!.level).toBe("warn");
+    expect(find({ whatsappSent24h: 1, inboundWa24h: 0 }, "whatsapp_inbound")!.level).toBe("warn");
+    expect(find({ whatsappSent24h: 0, inboundWa24h: 0 }, "whatsapp_inbound")!.level).toBe("ok");
+    expect(find({ whatsappSent24h: 50, inboundWa24h: 1 }, "whatsapp_inbound")!.level).toBe("ok");
+    expect(find({ inboundWa24h: null }, "whatsapp_inbound")).toMatchObject({ level: "warn", detail: "Check unavailable" });
+    expect(find({ whatsappSent24h: null, inboundWa24h: 0 }, "whatsapp_inbound")!.level).toBe("warn");
+  });
+});
+
 describe("overallLevel", () => {
   it("returns the worst", () => {
     const c = (level: "ok" | "warn" | "critical") => ({ key: "k", label: "l", level, detail: "" });
@@ -98,6 +123,8 @@ describe("collectHealthSnapshot", () => {
     expect(s.whatsappSent24h).toBeNull();
     expect(s.whatsappFailed24h).toBeNull();
     expect(s.followupOverdue).toBeNull();
+    expect(s.inboundWa24h).toBeNull();
+    expect(s.pinbotQuality).toBeNull();
     expect(s.tokenValid).toBeNull();
   });
 });
