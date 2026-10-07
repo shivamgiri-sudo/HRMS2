@@ -147,12 +147,17 @@ export function buildDriveGroups(input: DriveGroupInput[]): DriveGroup[] {
   const out: DriveGroup[] = [];
   for (const g of input) {
     const open = g.streams.filter((s) => s.status === "open");
-    const streamTypes = [...new Set(open.map((s) => s.sourceType))];
-    const types = [...new Set<SourceType>([...(g.rows.length ? (["he"] as SourceType[]) : []), ...streamTypes])].sort((a, b) => TYPE_ORDER[a] - TYPE_ORDER[b]);
     const driveDates = g.rows.map((r) => r.date);
+    // A match credited to a paused or closed stream still counts for that stream's type (spec 9d), so a type present among the credited
+    // rows gets a group too and the per-type totals add up to the drive totals. Its window is that type's non-draft streams' days, else the default.
+    const credited = g.rows.filter((r) => r.streamType && r.lined > 0).map((r) => r.streamType as SourceType);
+    const streamTypes = [...new Set([...open.map((s) => s.sourceType), ...credited])];
+    const types = [...new Set<SourceType>([...(g.rows.length ? (["he"] as SourceType[]) : []), ...streamTypes])].sort((a, b) => TYPE_ORDER[a] - TYPE_ORDER[b]);
     for (const type of types) {
       const mine = open.filter((s) => s.sourceType === type);
-      const dates = mine.length ? streamWindowDates(mine, driveDates) : defaultTrendDates(addDays(g.today, -DEFAULT_BACK), addDays(g.today, DEFAULT_AHEAD), driveDates);
+      const ofType = g.streams.filter((s) => s.sourceType === type && s.status !== "draft");
+      const creditedDates = g.rows.filter((r) => r.streamType === type && r.lined > 0).map((r) => r.date);
+      const dates = ofType.length ? [...new Set([...streamWindowDates(ofType, driveDates), ...creditedDates])].sort(byDate) : defaultTrendDates(addDays(g.today, -DEFAULT_BACK), addDays(g.today, DEFAULT_AHEAD), driveDates);
       const points = zeroFillPoints(dates, g.rows, type);
       out.push({
         requisitionId: g.requisitionId, branch: g.branch, requisition: g.requisition, role: g.role, sourceType: type, types, streamIds: mine.map((s) => s.id),
@@ -218,7 +223,8 @@ export async function getDriveTrend(
 export async function getDriveGroupsDetailed(now: Date = new Date()): Promise<{ groups: DriveGroup[]; failedSections: string[] }> {
   const today = istToday(now);
   const failed: string[] = [];
-  const open = (await section("streams", failed, () => loadActiveStreams(), [] as StreamRow[])).filter((s) => s.status === "open");
+  const active = await section("streams", failed, () => loadActiveStreams(), [] as StreamRow[]);
+  const open = active.filter((s) => s.status === "open");
   const found = await section("drives", failed, async () => (await db.execute<RowDataPacket[]>(DISCOVER_SQL, [addDays(today, -1), addDays(today, DEFAULT_AHEAD)]))[0], [] as RowDataPacket[]);
   const keys = new Map<string, { requisitionId: string; branch: string }>();
   const keyOf = (r: string, b: string): string => `${r}|${b}`;
@@ -227,7 +233,7 @@ export async function getDriveGroupsDetailed(now: Date = new Date()): Promise<{ 
   if (!keys.size) return { groups: [], failedSections: failed };
 
   let from = addDays(today, -DEFAULT_BACK), to = addDays(today, DEFAULT_AHEAD);
-  for (const s of open) { const d = windowDays(toWindow(s)); if (d.length) { if (d[0] < from) from = d[0]; if (d[d.length - 1] > to) to = d[d.length - 1]; } }
+  for (const s of active) { const d = windowDays(toWindow(s)); if (d.length) { if (d[0] < from) from = d[0]; if (d[d.length - 1] > to) to = d[d.length - 1]; } }
   const ids = [...new Set([...keys.values()].map((k) => k.requisitionId))];
   const raw = await section("groups", failed, async () => (await db.execute<RowDataPacket[]>(groupsSql(ids.length), [from, to, ...ids]))[0], null as RowDataPacket[] | null);
   if (!raw) return { groups: [], failedSections: failed };
@@ -246,7 +252,7 @@ export async function getDriveGroupsDetailed(now: Date = new Date()): Promise<{ 
   for (const [k, v] of keys) {
     const head = heads.get(v.requisitionId);
     if (!head) continue;
-    input.push({ requisitionId: v.requisitionId, branch: v.branch, requisition: head.code, role: head.role, today, rows: rowsBy.get(k) ?? [], streams: open.filter((s) => s.requisitionId === v.requisitionId && s.branchName === v.branch) });
+    input.push({ requisitionId: v.requisitionId, branch: v.branch, requisition: head.code, role: head.role, today, rows: rowsBy.get(k) ?? [], streams: active.filter((s) => s.requisitionId === v.requisitionId && s.branchName === v.branch) });
   }
   input.sort((a, b) => a.requisition.localeCompare(b.requisition) || a.branch.localeCompare(b.branch) || a.requisitionId.localeCompare(b.requisitionId));
   return { groups: buildDriveGroups(input), failedSections: failed };

@@ -125,6 +125,21 @@ describe("getRequisitionSources", () => {
     expect(sqlSeen().some((q) => q.includes("FROM meta_lead_raw"))).toBe(false);
   });
 
+  it("two label variants of one origin add up (never overwrite) and the shares stay consistent; the SQL groups by origin only", async () => {
+    const variant = (label: string, n: number) => ({ source_type: "he", origin_id: "pool", origin_label: label, ...zeros, qualified: n, emailed: n, replied: n, joined: n - 1, arrived: 1, confirmed: 2, selected: 1, called: 0, whatsapped: 0 });
+    stages = [variant("Pool: ATS history", 10), variant("HR pool run", 6), { ...stages[0], joined: 3 }];
+    streams = [{ id: "5a5a5a5a-aaaa-bbbb-cccc-0000000abcde", source_type: "he", origin_id: "pool", origin_label: "HR pool run", status: "open" }];
+    const d = (await getRequisitionSources(RID, ALL))!;
+    const he = d.rows.find((r) => r.sourceType === "he" && r.originId === "pool")!;
+    expect(he).toMatchObject({ qualified: 16, emailed: 16, replied: 16, joined: 14 });
+    expect(he.originLabel).toBe("Pool: ATS history"); // the match-lead pass labels the pool origin last (rank 3)
+    expect(d.rows.reduce((a, r) => a + r.shareOfJoined, 0)).toBeCloseTo(1);
+    expect(d.totals.qualified).toBe(36);
+    const stagesSql = sqlSeen().find((q) => /FROM qualified_followup qf/.test(q))!;
+    expect(stagesSql).toMatch(/GROUP BY f\.source_type, f\.origin_id`?\s*$/);
+    expect(stagesSql).not.toMatch(/GROUP BY[^`]*origin_label/);
+  });
+
   it("every share is a finite fraction when nothing exists", async () => {
     stages = []; matchLeads = []; campaigns = []; campaignLeads = [];
     const out = (await getRequisitionSources(RID, ALL))!;

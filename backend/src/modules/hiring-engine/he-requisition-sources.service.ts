@@ -72,7 +72,7 @@ export function computeShares(rows: RawRow[]): SourceRow[] {
 // he_lead / ats_candidate / he_match are reached by their keys through LEFT JOINs (never scanned); he_message is keyed by
 // (requisition_id, lead_id) or lead_id and he_call by lead_id, both indexed.
 const STAGES_SQL = `
-SELECT f.source_type, f.origin_id, f.origin_label,
+SELECT f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
        COUNT(*) AS qualified, SUM(f.emailed) AS emailed, SUM(f.whatsapped) AS whatsapped, SUM(f.replied) AS replied, SUM(f.called) AS called,
        SUM(f.confirmed) AS confirmed, SUM(f.arrived) AS arrived, SUM(f.selected) AS selected, SUM(f.joined) AS joined
   FROM (
@@ -97,7 +97,7 @@ SELECT f.source_type, f.origin_id, f.origin_label,
       LEFT JOIN ats_candidate ac ON ac.id = COALESCE(qf.ats_candidate_id, hl.ats_candidate_id)
      WHERE qf.requisition_id = ?
   ) f
- GROUP BY f.source_type, f.origin_id, f.origin_label`;
+ GROUP BY f.source_type, f.origin_id`;
 
 // People lined up on this requisition's drives, attributed to an origin (credit through he_match.id; the credit's own drive_id is ignored).
 // A meta_live credit is skipped: that source counts its form fills instead.
@@ -159,7 +159,7 @@ async function build(requisitionId: string, head: { code: string; branch: string
   }
   for (const r of stages) {
     const c = cell(String(r.source_type) as SourceType, String(r.origin_id), String(r.origin_label ?? ""), 1);
-    for (const k of COUNT_KEYS) if (k !== "leads") c[k] = Number(r[k] ?? 0);
+    for (const k of COUNT_KEYS) if (k !== "leads") c[k] += Number(r[k] ?? 0); // += : a second row for one origin adds, never overwrites
   }
   for (const r of matchLeads) {
     const t = String(r.source_type) as SourceType;

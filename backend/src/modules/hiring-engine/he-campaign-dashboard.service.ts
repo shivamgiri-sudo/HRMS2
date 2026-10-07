@@ -63,9 +63,14 @@ async function driveDays(): Promise<DriveDayRow[]> {
   }));
 }
 
+/** The grouped rows never take the dashboard down: an unexpected throw becomes an empty list plus a failed section. */
+async function groupedSafe(): Promise<{ groups: DriveGroup[]; failedSections: string[] }> {
+  try { return await getDriveGroupsDetailed(); } catch { return { groups: [], failedSections: ["driveGroups"] }; }
+}
+
 export async function getCampaignDashboard(): Promise<CampaignDashboard> {
   if (cache && Date.now() - cache.at < 60_000) return cache.data;
-  const [funnel, launches, batches, sources, drives, grouped] = await Promise.all([getMetaFunnel(), listLaunches(100), listBatches(100), poolSources(), driveDays(), getDriveGroupsDetailed()]);
+  const [funnel, launches, batches, sources, drives, grouped] = await Promise.all([getMetaFunnel(), listLaunches(100), listBatches(100), poolSources(), driveDays(), groupedSafe()]);
   const live = await Promise.all(funnel.campaigns.filter((c) => c.status === "active" || c.leads > 0).map(async (c) => ({ ...c, owner: (await getCampaignConfig(c.campaignId)).owner })));
   live.sort((a, b) => Number(b.status === "active") - Number(a.status === "active") || b.leads - a.leads);
   const batchLaunches = launches.filter((l) => l.kind === "batch");

@@ -27,6 +27,12 @@ export interface StreamRoles { view: readonly string[]; write: readonly string[]
 
 const ID_RE = /^[0-9a-f-]{36}$/i;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** A real calendar date: the round trip rejects values V8 would roll over (2026-11-31, 2027-02-29). */
+const isIsoDate = (x: unknown): x is string => {
+  if (typeof x !== "string" || !ISO_RE.test(x)) return false;
+  const t = Date.parse(`${x}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === x;
+};
 const SOURCES: readonly string[] = ["meta_live", "meta_old", "he"];
 const ACTIONS: readonly string[] = ["open", "pause", "close", "reopen", "extend", "extend_to", "add_day", "skip_day", "shorten"];
 const PLAN_MAX_AHEAD = 7;
@@ -106,7 +112,7 @@ export function registerStreamRoutes(r: Router, roles: StreamRoles): void {
       if (typeof b.requisitionId !== "string" || !ID_RE.test(b.requisitionId)) return bad(res, "Invalid id");
       if (typeof b.sourceType !== "string" || !SOURCES.includes(b.sourceType)) return bad(res, "Source type must be meta_live, meta_old or he");
       if (typeof b.originId !== "string" || !b.originId || b.originId.length > 64) return bad(res, "originId is required");
-      if (typeof b.openFrom !== "string" || !ISO_RE.test(b.openFrom)) return bad(res, "Pick a valid date");
+      if (!isIsoDate(b.openFrom)) return bad(res, "Pick a valid date");
       if (typeof b.openDays !== "number" || !Number.isInteger(b.openDays) || b.openDays < 1 || b.openDays > 60) return bad(res, "Open days must be a whole number from 1 to 60");
       if (b.dailyInvites != null && (typeof b.dailyInvites !== "number" || !Number.isInteger(b.dailyInvites) || b.dailyInvites < 1 || b.dailyInvites > 500)) return bad(res, "Daily invites must be a whole number from 1 to 500");
       if (b.originLabel != null && (typeof b.originLabel !== "string" || b.originLabel.length > 200)) return bad(res, "Label is too long");
@@ -129,7 +135,7 @@ export function registerStreamRoutes(r: Router, roles: StreamRoles): void {
       const b = bodyOf(req);
       if (typeof b.action !== "string" || !ACTIONS.includes(b.action)) return bad(res, "Unknown action");
       if (b.days != null && (typeof b.days !== "number" || !Number.isInteger(b.days))) return bad(res, "Days must be a whole number");
-      for (const k of ["toDate", "day"] as const) if (b[k] != null && (typeof b[k] !== "string" || !ISO_RE.test(b[k] as string))) return bad(res, "Pick a valid date");
+      for (const k of ["toDate", "day"] as const) if (b[k] != null && !isIsoDate(b[k])) return bad(res, "Pick a valid date");
       if (b.reason != null && (typeof b.reason !== "string" || b.reason.length > 255)) return bad(res, "Reason must be at most 255 characters");
       const actor = await actorOf(req);
       const input: StreamChangeInput = {
@@ -147,9 +153,9 @@ export function registerStreamRoutes(r: Router, roles: StreamRoles): void {
       const id = String(req.params.id);
       if (!ID_RE.test(id)) return bad(res, "Invalid id");
       const st = req.query.sourceType;
-      if (st != null && (typeof st !== "string" || !SOURCES.includes(st))) return bad(res, "Source type must be meta_live, meta_old or he");
+      if (typeof st !== "string" || !SOURCES.includes(st)) return bad(res, "Source type must be meta_live, meta_old or he");
       if (!(await requisitionInScope(id, await branchScopeOf(req as AuthenticatedRequest)))) return void res.status(404).json({ success: false, message: "Requisition not found" });
-      const data = await getRequisitionReadiness(id, (st as SourceType | undefined) ?? null);
+      const data = await getRequisitionReadiness(id, st as SourceType);
       if (!data) return void res.status(404).json({ success: false, message: "Requisition not found" });
       res.json({ success: true, data: { ...data, neverOverride: [...NEVER_OVERRIDE] } });
     } catch (err) { sendError(res, err, "Could not load streams", "readiness"); }
@@ -184,7 +190,7 @@ export function registerStreamRoutes(r: Router, roles: StreamRoles): void {
       const id = String(req.params.id);
       if (!ID_RE.test(id)) return bad(res, "Invalid id");
       const b = bodyOf(req);
-      if (b.date != null && (typeof b.date !== "string" || !ISO_RE.test(b.date) || Number.isNaN(Date.parse(`${b.date}T00:00:00Z`)))) return bad(res, "Pick a day after today, at most 7 days ahead");
+      if (b.date != null && !isIsoDate(b.date)) return bad(res, "Pick a day after today, at most 7 days ahead");
       if (b.dryRun != null && typeof b.dryRun !== "boolean") return bad(res, "dryRun must be true or false");
       const date = (b.date as string | undefined) ?? nextWorkingDay();
       const today = istToday();

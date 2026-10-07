@@ -263,11 +263,20 @@ describe("planNextDay ownership fallbacks (M1)", () => {
     expect(r.days.map((d) => d.requisitionId)).toEqual(["r2"]);
   });
 
-  it("ownership and plan-row reads both failed: every requisition is treated as stream-owned (legacy loop skipped)", async () => {
+  it("ownership and plan-row reads both failed: nothing is planned and each requisition shows one skipped day with a reason", async () => {
     h.st.ownedFails = true; h.st.plannedFails = true;
+    h.st.planReqs = ["r1", "r2"];
+    const r = await planNextDay({ date: "2026-10-08" });
+    expect(r.days.map((d) => [d.requisitionId, d.status, d.reason])).toEqual([["r1", "skipped", "planned-day read failed"], ["r2", "skipped", "planned-day read failed"]]);
+    expect(h.createDrive).not.toHaveBeenCalled();
+  });
+
+  it("only the plan-row read failed: still nothing planned, visible skipped day (stream-owned requisitions are not listed)", async () => {
+    h.st.plannedFails = true;
     h.st.planReqs = ["r1"];
     const r = await planNextDay({ date: "2026-10-08" });
-    expect(r.days).toEqual([]);
+    expect(r.days).toHaveLength(1);
+    expect(r.days[0]).toMatchObject({ requisitionId: "r1", status: "skipped", reason: "planned-day read failed" });
     expect(h.createDrive).not.toHaveBeenCalled();
   });
 

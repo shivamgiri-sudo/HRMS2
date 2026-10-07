@@ -69,16 +69,30 @@ describe("buildDriveGroups", () => {
     expect(g.map((x) => x.sourceType)).toEqual(["he", "meta_live"]);
     expect(g.map((x) => x.types)).toEqual([["he", "meta_live"], ["he", "meta_live"]]);
     expect(g[0].totals.lined).toBe(8);
-    expect(g[1].totals.lined).toBe(2); // 8 Oct lies before the stream window
+    expect(g[1].totals.lined).toBe(4); // the 8 Oct credit lies before the stream window but still shows
     expect(g[1].streamIds).toEqual([SID]);
     // the meta_live group runs over the stream's own days, one row per planned day
-    expect(g[1].days.map((d) => d.date)).toEqual(["2026-10-09", "2026-10-10", "2026-10-12"]);
-    expect(g[1].window).toMatchObject({ from: "2026-10-09", to: "2026-10-12", dayIndex: 1, days: 3 });
+    expect(g[1].days.map((d) => d.date)).toEqual(["2026-10-08", "2026-10-09", "2026-10-10", "2026-10-12"]);
+    expect(g[1].window).toMatchObject({ from: "2026-10-08", to: "2026-10-12", dayIndex: 2, days: 4 });
   });
 
   it("gives one group for a closed stream", () => {
     const g = buildDriveGroups(input([stream({ status: "closed" })], rows));
     expect(g.map((x) => x.sourceType)).toEqual(["he"]);
+  });
+
+  it("keeps matches credited to a closed stream in a group of their type so the per-type totals add up to the drive totals", () => {
+    const split = [
+      agg("2026-10-08", { lined: 3, confirmed: 1, arrived: 1, invited: 2 }), agg("2026-10-08", { streamId: SID, streamType: "meta_live", lined: 2, invited: 2, confirmed: 1, arrived: 1 }),
+      agg("2026-10-09", { lined: 5, invited: 4 }), agg("2026-10-09", { streamId: SID, streamType: "meta_live", lined: 2, invited: 1 }),
+    ];
+    for (const status of ["closed", "paused"] as const) {
+      const g = buildDriveGroups(input([stream({ status })], split));
+      expect(g.map((x) => x.sourceType)).toEqual(["he", "meta_live"]);
+      expect(g[1].streamIds).toEqual([]);
+      const sum = (k: "lined" | "invited" | "arrived") => g.reduce((a, x) => a + x.totals[k], 0);
+      expect([sum("lined"), sum("invited"), sum("arrived")]).toEqual([12, 9, 2]);
+    }
   });
 
   it("makes a meta_live group even when the requisition has no drive yet", () => {
@@ -281,6 +295,23 @@ describe("campaign dashboard: driveGroups beside drives", () => {
     const second = await getCampaignDashboard();
     expect(JSON.stringify(second)).toBe(JSON.stringify(first));
     expect(execute.mock.calls.length).toBe(calls);
+  });
+
+  it("an unexpected throw inside the grouped read keeps drives and reports driveGroups as failed", async () => {
+    const today = istToday();
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.includes("FROM requisition_stream WHERE")) return [[]];
+      if (q.includes("SELECT DISTINCT d.requisition_id")) return [[{ requisition_id: RID, branch_name: "Pune" }]];
+      // parsing a row throws outside every guarded sub-query
+      if (q.includes("FROM job_requisition jr")) return [[{ requisition_id: RID, branch_name: "Pune", requisition_code: "R", designation_name: "A", id: "d1", drive_date: { toString() { throw new Error("bad row"); } } }]];
+      if (q.includes("FROM he_drive d JOIN job_requisition")) return [[{ id: "dr1", drive_date: today, branch_name: "Pune", status: "active", target_shows: 9, requisition_code: "REQ-7", designation_name: "Agent", lined: 1, invited: 0, confirmed: 0, arrived: 0, no_show: 0, declined: 0 }]];
+      return [[]];
+    });
+    const d = await getCampaignDashboard();
+    expect(d.drives).toHaveLength(1);
+    expect(d.driveGroups).toEqual([]);
+    expect(d.failedSections).toEqual(["driveGroups"]);
   });
 
   it("keeps drives working and reports failedSections when the grouped read fails", async () => {

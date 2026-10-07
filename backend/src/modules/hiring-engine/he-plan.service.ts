@@ -42,6 +42,9 @@ export async function planNextDay(o: { date?: string; dryRun?: boolean } = {}): 
   // When the planned-day read fails nobody is planned here this run (a whole-audience drive must never be mixed with stream caps).
   const streamOwned = await readStreamOwned();
   const streamPlanned = await readStreamPlanned(date);
+  if (!streamPlanned) {
+    for (const id of ids.filter((x) => !streamOwned?.has(x))) days.push({ requisitionId: id, code: id, role: "", branch: "", date, status: "skipped", reason: "planned-day read failed", invitesWanted: n.invites, lined: 0 });
+  }
   for (const id of streamPlanned ? ids.filter((x) => !streamOwned?.has(x) && !streamPlanned.has(x)) : []) {
     const [rq] = await db.execute<RowDataPacket[]>(
       `SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1`, [id]);

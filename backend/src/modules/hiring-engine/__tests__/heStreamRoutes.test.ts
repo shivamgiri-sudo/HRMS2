@@ -161,10 +161,26 @@ describe("GET /requisitions/:id/readiness", () => {
     expect(ok.status).toBe(200);
     expect(vi.mocked(getRequisitionReadiness)).toHaveBeenCalledWith(RID, "meta_live");
     expect((await request(appFor("hr")).get(`/api/he/requisitions/${RID}/readiness?sourceType=sms`)).status).toBe(400);
-    expect((await request(appFor("employee")).get(`/api/he/requisitions/${RID}/readiness`)).status).toBe(403);
+    expect((await request(appFor("hr")).get(`/api/he/requisitions/${RID}/readiness`)).status).toBe(400);
+    expect((await request(appFor("employee")).get(`/api/he/requisitions/${RID}/readiness?sourceType=he`)).status).toBe(403);
     hrBranch = "Delhi";
-    expect((await request(appFor("hr")).get(`/api/he/requisitions/${RID}/readiness`)).status).toBe(404);
-    expect((await request(appFor("admin")).get(`/api/he/requisitions/${SID}/readiness`)).status).toBe(404);
+    expect((await request(appFor("hr")).get(`/api/he/requisitions/${RID}/readiness?sourceType=he`)).status).toBe(404);
+    expect((await request(appFor("admin")).get(`/api/he/requisitions/${SID}/readiness?sourceType=he`)).status).toBe(404);
+  });
+});
+
+describe("calendar dates are real dates", () => {
+  const create = (openFrom: string) => request(appFor("hr")).post("/api/he/requisition-streams").send({ requisitionId: RID, sourceType: "he", originId: "pool", openFrom, openDays: 3 });
+  it("rejects 2026-11-31 and 2026-02-29 with 400 on every date input, accepts 2028-02-29", async () => {
+    vi.mocked(tryCreateStream).mockResolvedValue({ ok: true, stream } as never);
+    vi.mocked(tryChangeStream).mockResolvedValue({ ok: true, changed: true, stream } as never);
+    for (const d of ["2026-11-31", "2026-02-29"]) {
+      expect((await create(d)).status).toBe(400);
+      expect((await request(appFor("hr")).post(`/api/he/requisition-streams/${SID}/change`).send({ action: "add_day", day: d })).status).toBe(400);
+      expect((await request(appFor("hr")).post(`/api/he/requisition-streams/${SID}/change`).send({ action: "extend_to", toDate: d })).status).toBe(400);
+      expect((await request(appFor("hr")).post(`/api/he/requisitions/${RID}/plan-now`).send({ date: d })).status).toBe(400);
+    }
+    expect((await create("2028-02-29")).status).toBe(200);
   });
 });
 
