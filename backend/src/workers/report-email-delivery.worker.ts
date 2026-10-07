@@ -9,13 +9,15 @@ import { buildAppLink } from '../shared/appLink.js';
 import { withActionLink } from '../modules/communication/notification.links.js';
 
 const WORKER_NAME = 'report-email-delivery';
-const INTERVAL_MS = 30_000;
+const INTERVAL_MS = Number(process.env.REPORT_DELIVERY_POLL_MS ?? 3_000);
+const MAX_DELIVERIES_PER_TICK = Number(process.env.REPORT_MAX_DELIVERIES_PER_TICK ?? 10);
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB (Gmail hard limit)
 
 // Retry delays in minutes for each attempt number
 const RETRY_DELAYS_MINUTES = [0, 5, 30, 120];
 
 let intervalTimer: NodeJS.Timeout | null = null;
+let tickRunning = false;
 
 function isMissingReportTableError(error: unknown): boolean {
   return typeof error === 'object'
@@ -114,7 +116,7 @@ function buildEmailHtml(params: {
 </html>`;
 }
 
-async function processOneDelivery(): Promise<void> {
+async function processOneDelivery(): Promise<boolean> {
   // Claim one QUEUED delivery row atomically
   const conn = await db.getConnection();
   let deliveryId: string | null = null;
@@ -131,7 +133,7 @@ async function processOneDelivery(): Promise<void> {
     );
     if (!rows.length) {
       await conn.rollback();
-      return;
+      return false;
     }
     const row = rows[0] as { id: string; report_request_id: string };
     deliveryId = row.id;
@@ -181,7 +183,7 @@ async function processOneDelivery(): Promise<void> {
        WHERE id = ?`,
       [deliveryId]
     );
-    return;
+    return true;
   }
 
   const req = reqRows[0] as {
@@ -212,34 +214,34 @@ async function processOneDelivery(): Promise<void> {
        WHERE id = ?`,
       [deliveryId]
     );
-    return;
+    return true;
   }
 
   if (!req.file_id || !req.storage_key) {
     await markDeliveryFailed(deliveryId!, requestId!, 'FILE_NOT_FOUND', 'No generated file found for this request');
-    return;
+    return true;
   }
 
   if (req.deletion_status === 'deleted') {
     await markDeliveryFailed(deliveryId!, requestId!, 'FILE_DELETED', 'The report file has already been deleted');
-    return;
+    return true;
   }
 
   if (req.expires_at && new Date(req.expires_at) < new Date()) {
     await markDeliveryFailed(deliveryId!, requestId!, 'FILE_EXPIRED', 'The report file has expired');
-    return;
+    return true;
   }
 
   const storagePath = resolveStoragePath(req.storage_key);
   if (!fs.existsSync(storagePath)) {
     await markDeliveryFailed(deliveryId!, requestId!, 'FILE_MISSING_ON_DISK', `File not found at storage path`);
-    return;
+    return true;
   }
 
   if (req.file_size_bytes && req.file_size_bytes > MAX_ATTACHMENT_BYTES) {
     await markDeliveryFailed(deliveryId!, requestId!, 'ATTACHMENT_TOO_LARGE',
       `File size ${req.file_size_bytes} bytes exceeds limit ${MAX_ATTACHMENT_BYTES} bytes`);
-    return;
+    return true;
   }
 
   const filters: Record<string, unknown> =
@@ -395,6 +397,8 @@ async function processOneDelivery(): Promise<void> {
       });
     }
   }
+
+  return true;
 }
 
 async function markDeliveryFailed(
@@ -424,12 +428,28 @@ async function markDeliveryFailed(
 }
 
 async function runDeliveryWorker(): Promise<void> {
+  // Ticks never overlap inside this process.
+  if (tickRunning) return;
+  tickRunning = true;
   try {
-    await withWorkerLock(WORKER_NAME, processOneDelivery);
+    await withWorkerLock(WORKER_NAME, async () => {
+      // Drain the queue (bounded) instead of one email per poll.
+      for (let i = 0; i < MAX_DELIVERIES_PER_TICK; i++) {
+        const claimed = await processOneDelivery();
+        if (!claimed) break;
+      }
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[${WORKER_NAME}] Error:`, message);
+  } finally {
+    tickRunning = false;
   }
+}
+
+/** Run a delivery pass now (the generation worker calls this as soon as it queues an email). */
+export function triggerReportEmailDelivery(): void {
+  void runDeliveryWorker();
 }
 
 export async function startReportEmailDeliveryWorker(): Promise<void> {
