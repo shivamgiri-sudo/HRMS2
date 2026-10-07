@@ -108,7 +108,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
 
   const r = await sendTemplateToLead({
     leadId, key: pick.key, matchId: ctx.matchId, requisitionId: row.requisitionId, followupStep: true, extra,
-    redirectTo: isTest ? s.testPhone : null,
+    redirectTo: isTest ? (s.testPhone ?? "") : undefined,
   });
   if (r.status === "sent") {
     await final(isTest ? "test_sent" : "sent", null, true, r.messageId || null);

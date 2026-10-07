@@ -53,6 +53,7 @@ export async function runStopChecks(tag: RowTag, limit = 500): Promise<{ checked
     checked += rows.length;
     if (rows.length < Math.max(1, Math.floor(limit))) break;
     lastId = String(rows[rows.length - 1].id);
+    if (page === MAX_PAGES - 1) logger.warn({ tag, checked, maxPages: MAX_PAGES }, "[qualified-followup] stop checks hit the page cap; remaining rows wait for the next tick");
   }
   if (Object.keys(stopped).length) logger.info({ tag, checked, stopped }, "[qualified-followup] stop checks");
   return { checked, stopped };

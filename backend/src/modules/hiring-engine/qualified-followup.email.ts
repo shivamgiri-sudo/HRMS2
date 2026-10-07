@@ -7,15 +7,17 @@ import { randomUUID } from "node:crypto";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { emailService } from "../communication/email.service.js";
-import { maskEmail, normaliseEmail } from "../../shared/email-domains.js";
+import { normaliseEmail } from "../../shared/email-domains.js";
 import { buildInviteEmail, INVITE_EMAIL_KEY } from "./he-email.service.js";
 import { displayFirstName } from "./he-name.js";
 import { dateLabel, timeLabel } from "./he-send.service.js";
 import { emptyCounts, ensureHeLead, loadSendContext, ROW_COLUMNS, toFollowupRow, type FollowupRow, type StepCounts } from "./qualified-followup.context.js";
-import type { FollowupSwitches, RowTag } from "./qualified-followup.policy.js";
+import { rowTag, type FollowupSwitches, type RowTag } from "./qualified-followup.policy.js";
 import { afterFailure, followupRef, nextStepDue } from "./qualified-followup.rules.js";
 
 const env = (k: string, d: string) => (process.env[k]?.trim() ? process.env[k]!.trim() : d);
+/** SMTP errors echo the recipient; never log or store an address. */
+const scrub = (m: string) => m.replace(/[^\s@<>"',;:()]+@[^\s@<>"',;()]+/g, "[email]");
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /** Same table layout and footer as buildInviteEmail, but no slot block and no answer buttons: the candidate is asked to reply or call to book. */
@@ -57,6 +59,8 @@ async function finish(row: FollowupRow, status: Outcome, error: string | null, n
 
 export async function runEmailStep(s: FollowupSwitches, tag: RowTag, now: Date, limit = 200): Promise<StepCounts> {
   const counts = emptyCounts();
+  if (rowTag(s) !== tag) return counts;
+  if (tag !== "dry_run" && s.sendsPaused) return counts;
   if (tag === "test" && (s.testMisconfigured || !s.testEmail)) return counts;
   const paused = [...s.pausedSources];
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -98,46 +102,50 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
   counts.processed++;
 
   const isTest = tag === "test";
-  // Test mode must not write he_lead, so it never bridges.
-  const heLeadId = isTest ? row.heLeadId : await ensureHeLead(row);
-  const ctx = await loadSendContext({ ...row, heLeadId }, { assignSlot: !isTest });
-  if (ctx.leadStatus === "opted_out") { await finish(row, "blocked", "opted_out", now, { advanceWa: true, sent: false }); counts.blocked++; return; }
-  if (!isTest && heLeadId) {
-    const [dup] = await db.execute<RowDataPacket[]>(
-      `SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = ? AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1`,
-      [heLeadId, row.requisitionId, INVITE_EMAIL_KEY]);
-    if (dup.length) { await finish(row, "skipped", "already_emailed", now, { advanceWa: true, sent: false }); counts.blocked++; return; }
+  let heLeadId: string | null;
+  let mail: { subject: string; html: string; text: string };
+  try {
+    // Test mode must not write he_lead, so it never bridges.
+    heLeadId = isTest ? row.heLeadId : await ensureHeLead(row);
+    const ctx = await loadSendContext({ ...row, heLeadId }, { assignSlot: !isTest });
+    if (ctx.leadStatus === "opted_out") { await finish(row, "blocked", "opted_out", now, { advanceWa: true, sent: false }); counts.blocked++; return; }
+    if (!isTest && !heLeadId) { await finish(row, "blocked", "no_he_lead", now, { advanceWa: true, sent: false }); counts.blocked++; return; }
+    if (!isTest && heLeadId) {
+      const [dup] = await db.execute<RowDataPacket[]>(
+        `SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = ? AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1`,
+        [heLeadId, row.requisitionId, INVITE_EMAIL_KEY]);
+      if (dup.length) { await finish(row, "skipped", "already_emailed", now, { advanceWa: true, sent: false }); counts.blocked++; return; }
+    }
+    const company = env("HE_COMPANY_NAME", "MAS Callnet");
+    const contact = [env("HE_HR_CONTACT_NAME", ""), env("HE_HR_CONTACT_PHONE", "")].filter(Boolean).join(" ");
+    const name = displayFirstName(row.fullName);
+    const role = row.roleName ?? "the role";
+    const branch = row.branchName ?? "";
+    const base = env("HE_PUBLIC_BASE_URL", env("FRONTEND_URL", "https://mcnhrms.teammas.in")).replace(/\/$/, "");
+    mail = ctx.slot
+      ? buildInviteEmail({
+          name, role, company, branch, address: ctx.branchAddress ?? "", date: dateLabel(ctx.slot.date), time: timeLabel(`${ctx.slot.date}T${ctx.slot.time}`), maps: ctx.mapsLink,
+          docs: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"), reference: followupRef(row.id), contact,
+          answerUrl: ctx.matchToken ? `${base}/w/${ctx.matchToken}` : null,
+        })
+      : buildSlotlessInviteEmail({ name, role, company, branch, address: ctx.branchAddress, contact });
+  } catch (err) {
+    // Nothing has been sent yet: release the claim (attempts unchanged) so the next tick retries.
+    logger.warn({ rowId: row.id, err: scrub((err as Error).message) }, "[qualified-followup] email step failed before sending; claim released");
+    await db.execute("UPDATE qualified_followup SET email_status = NULL, step_claimed_at = NULL WHERE id = ? AND email_status = 'sending'", [row.id])
+      .catch((e: unknown) => logger.warn({ rowId: row.id, err: scrub((e as Error).message) }, "[qualified-followup] could not release email claim"));
+    counts.held++;
+    return;
   }
 
-  const company = env("HE_COMPANY_NAME", "MAS Callnet");
-  const contact = [env("HE_HR_CONTACT_NAME", ""), env("HE_HR_CONTACT_PHONE", "")].filter(Boolean).join(" ");
-  const name = displayFirstName(row.fullName);
-  const role = row.roleName ?? "the role";
-  const branch = row.branchName ?? "";
-  const base = env("HE_PUBLIC_BASE_URL", env("FRONTEND_URL", "https://mcnhrms.teammas.in")).replace(/\/$/, "");
-  const mail = ctx.slot
-    ? buildInviteEmail({
-        name, role, company, branch, address: ctx.branchAddress ?? "", date: dateLabel(ctx.slot.date), time: timeLabel(`${ctx.slot.date}T${ctx.slot.time}`), maps: ctx.mapsLink,
-        docs: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"), reference: followupRef(row.id), contact,
-        answerUrl: ctx.matchToken ? `${base}/w/${ctx.matchToken}` : null,
-      })
-    : buildSlotlessInviteEmail({ name, role, company, branch, address: ctx.branchAddress, contact });
-
   const target = isTest ? (s.testEmail as string) : to;
+  let providerId: string | null = null;
   try {
     const r = await emailService.send({ to: target, subject: isTest ? `[TEST] ${mail.subject}` : mail.subject, html: mail.html, text: mail.text });
-    if (isTest) {
-      await finish(row, "test_sent", null, now, { advanceWa: true, sent: true });
-    } else {
-      await db.execute(
-        "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        [randomUUID(), heLeadId, row.mobile10, "out", "email", INVITE_EMAIL_KEY, mail.subject.slice(0, 2000), r?.messageId ?? null, "sent", row.requisitionId, row.driveId]);
-      await finish(row, "sent", null, now, { advanceWa: true, sent: true });
-    }
-    counts.sent++;
+    providerId = r?.messageId ?? null;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.warn({ rowId: row.id, to: maskEmail(target), error: msg.slice(0, 200) }, "[qualified-followup] email send failed");
+    const msg = scrub(err instanceof Error ? err.message : String(err));
+    logger.warn({ rowId: row.id, error: msg.slice(0, 200) }, "[qualified-followup] email send failed");
     const f = afterFailure(row.emailAttempts, msg, now);
     counts.failed++;
     if (f.status === null) {
@@ -149,5 +157,22 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
         "UPDATE qualified_followup SET email_status = 'failed', email_attempts = ?, email_error = ?, wa_due_at = ?, step_claimed_at = NULL WHERE id = ?",
         [f.attempts, msg.slice(0, 255), nextStepDue(now), row.id]);
     }
+    return;
+  }
+
+  // The mail is out: never retry or mark failed from here on. If recording fails the row stays 'sending' and the
+  // stale-claim expiry marks it "outcome unknown".
+  counts.sent++;
+  try {
+    if (!isTest) {
+      await db.execute(
+        "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [randomUUID(), heLeadId, row.mobile10, "out", "email", INVITE_EMAIL_KEY, mail.subject.slice(0, 2000), providerId, "sent", row.requisitionId, row.driveId]);
+    }
+    await finish(row, isTest ? "test_sent" : "sent", null, now, { advanceWa: true, sent: true });
+  } catch (err) {
+    logger.warn({ rowId: row.id, err: scrub((err as Error).message) }, "[qualified-followup] email sent but recording failed");
+    try { await finish(row, isTest ? "test_sent" : "sent", null, now, { advanceWa: true, sent: true }); }
+    catch (e) { logger.warn({ rowId: row.id, err: scrub((e as Error).message) }, "[qualified-followup] email sent; row left in sending for expiry"); }
   }
 }

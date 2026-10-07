@@ -19,7 +19,7 @@ const liveEnv = { QUAL_FOLLOWUP_MODE: "live" } as NodeJS.ProcessEnv;
 const testEnv = { QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true", QUAL_FOLLOWUP_TEST_TO_PHONE: "9876543210", QUAL_FOLLOWUP_TEST_TO_EMAIL: "qa@x.in" } as NodeJS.ProcessEnv;
 const now = new Date("2026-10-07T11:00:00+05:30");
 
-interface World { row?: Record<string, unknown>; slot?: boolean; dup?: boolean; claim?: number; leadStatus?: string }
+interface World { row?: Record<string, unknown>; slot?: boolean; dup?: boolean; claim?: number; leadStatus?: string; insertThrows?: boolean; noLead?: boolean }
 function world(w: World = {}) {
   const row = { id: "0f1e2d3c-aaaa-bbbb-cccc-000000000000", source_type: "meta_live", meta_lead_id: "m1", he_lead_id: null, ats_candidate_id: null, requisition_id: "req-1", drive_id: null,
     mobile10: "9876543210", email: "Cand@Example.com", full_name: "asha rao", branch_name: "Noida", role_name: "Customer Support", qualified_at: "2026-10-07 09:00:00",
@@ -29,7 +29,8 @@ function world(w: World = {}) {
     if (q.includes("FROM qualified_followup qf")) return [[row]];
     if (q.includes("SET email_status = 'sending'")) return [{ affectedRows: w.claim ?? 1 }];
     if (q.startsWith("UPDATE")) return [{ affectedRows: 1 }];
-    if (q.includes("FROM he_lead WHERE mobile10")) return [[{ id: "lead-1" }]];
+    if (q.includes("FROM he_lead WHERE mobile10")) return [w.noLead ? [] : [{ id: "lead-1" }]];
+    if (q.startsWith("INSERT INTO he_message") && w.insertThrows) throw new Error("Lock wait timeout exceeded");
     if (q.includes("SELECT status FROM he_lead")) return [[{ status: w.leadStatus ?? "new" }]];
     if (q.includes("FROM branch_master")) return [[{ address: "Sector 62, Noida", latitude: null, longitude: null }]];
     if (q.includes("FROM job_requisition")) return [[{ bmi_assessment_url: "https://bmi.example/x" }]];
@@ -164,5 +165,84 @@ describe("runEmailStep", () => {
     await runEmailStep(readSwitches(liveEnv), "live", now);
     u = calls(/^\s*UPDATE/); expect(u[0][1][0]).toBe("email_not_configured");
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("a DB error after a successful send never resets or fails the row and never re-sends", async () => {
+    world({ insertThrows: true });
+    const c = await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(send).toHaveBeenCalledTimes(1);
+    const ups = calls(/UPDATE qualified_followup SET email_status/).filter(([sql]) => !String(sql).includes("'sending'"));
+    expect(ups.some(([sql]) => String(sql).includes("email_status = NULL") || String(sql).includes("'failed'"))).toBe(false);
+    expect(ups.at(-1)![1][0]).toBe("sent");
+    expect(c.sent).toBe(1); expect(c.failed).toBe(0);
+  });
+
+  it("a DB error that also breaks the status write leaves the row in sending", async () => {
+    world({ insertThrows: true });
+    const impl = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, p: unknown) => {
+      if (/SET email_status = \?/.test(String(sql))) throw new Error("Lock wait timeout exceeded");
+      return impl(sql, p);
+    });
+    await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(calls(/email_status = NULL|'failed'/).filter(([sql]) => /UPDATE/.test(String(sql)))).toHaveLength(0);
+  });
+
+  it("a transient send failure leaves email_sent_at unset", async () => {
+    world(); send.mockRejectedValue(new Error("connect ETIMEDOUT"));
+    await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(calls(/email_sent_at/)).toHaveLength(0);
+  });
+
+  it("HE_SENDS_PAUSED blocks live and test sends but not dry_run", async () => {
+    world();
+    await runEmailStep(readSwitches({ ...liveEnv, HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv), "live", now);
+    await runEmailStep(readSwitches({ ...testEnv, HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv), "test", now);
+    expect(send).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    const c = await runEmailStep(readSwitches({ QUAL_FOLLOWUP_MODE: "dry_run", HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv), "dry_run", now);
+    expect(c.dryRun).toBe(1);
+  });
+
+  it("is inert when the tag does not match the current mode", async () => {
+    world();
+    await runEmailStep(readSwitches(liveEnv), "dry_run", now);
+    await runEmailStep(readSwitches({} as NodeJS.ProcessEnv), "live", now);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("an exception before the provider call releases the claim and sends nothing", async () => {
+    world(); bridge.mockRejectedValue(new Error("db down"));
+    const c = await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(send).not.toHaveBeenCalled();
+    const rel = calls(/^\s*UPDATE qualified_followup SET email_status = NULL, step_claimed_at = NULL/);
+    expect(rel).toHaveLength(1);
+    expect(String(rel[0][0])).not.toContain("email_attempts");
+    expect(c.held).toBe(1);
+  });
+
+  it("live with no he_lead after bridging is blocked, not sent with a null lead", async () => {
+    world({ noLead: true });
+    const c = await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(send).not.toHaveBeenCalled();
+    expect(calls(/INSERT INTO he_message/)).toHaveLength(0);
+    expect(rowUpdate()[1].slice(0, 2)).toEqual(["blocked", "no_he_lead"]);
+    expect(c.blocked).toBe(1);
+  });
+
+  it("test mode still sends when there is no he_lead", async () => {
+    world({ noLead: true });
+    await runEmailStep(readSwitches(testEnv), "test", now);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("recipient addresses echoed by the SMTP error are stripped before logging and storing", async () => {
+    world(); send.mockRejectedValue(new Error("550 5.1.1 <cand@example.com> mailbox unavailable"));
+    await runEmailStep(readSwitches(liveEnv), "live", now);
+    const { logger } = await import("../../../logger.js");
+    const logged = JSON.stringify((logger.warn as any).mock.calls);
+    expect(logged).not.toContain("cand@example.com");
+    expect(JSON.stringify(rowUpdate()[1])).not.toContain("cand@example.com");
   });
 });

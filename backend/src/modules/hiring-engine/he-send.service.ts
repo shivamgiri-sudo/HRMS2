@@ -162,7 +162,8 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   catch (e) { return { status: "blocked", reason: (e as Error).message }; }
   const previewBody = renderBody(tplKey, lang, ctx);
 
-  const redirected = Boolean(o.redirectTo);
+  // Fail closed: any provided value (even "" or null) means redirected, and must be a valid number.
+  const redirected = o.redirectTo !== undefined;
   if (redirected && !/^\d{10}$/.test(String(o.redirectTo))) return { status: "blocked", reason: "invalid_redirect" };
   const recipient = redirected ? String(o.redirectTo) : String(lead.mobile10);
 

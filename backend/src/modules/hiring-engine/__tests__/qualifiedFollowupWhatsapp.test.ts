@@ -68,7 +68,7 @@ describe("runWhatsappStep", () => {
     const c = await runWhatsappStep(readSwitches(liveEnv), "live", now, 100);
     expect(sendTpl).toHaveBeenCalledTimes(1);
     const o = sendTpl.mock.calls[0][0];
-    expect(o).toMatchObject({ leadId: "lead-1", key: "he_walkin_invite", followupStep: true, requisitionId: "req-1", redirectTo: null });
+    expect(o).toMatchObject({ leadId: "lead-1", key: "he_walkin_invite", followupStep: true, requisitionId: "req-1", redirectTo: undefined });
     expect(o.extra.drive_date).toBe("Thu 8 Oct 2026");
     expect(o.extra.slot_time).toBe("10:30 AM");
     const [sql, p] = finalUpdate();

@@ -109,6 +109,11 @@ describe("redirectTo", () => {
     expect(await send({ followupStep: true, redirectTo: "12345" })).toEqual({ status: "blocked", reason: "invalid_redirect" });
     expect(p).not.toHaveBeenCalled();
   });
+  it("an empty or null redirect fails closed and never reaches the real candidate", async () => {
+    const p = spy();
+    for (const v of ["", null]) expect(await send({ followupStep: true, redirectTo: v })).toEqual({ status: "blocked", reason: "invalid_redirect" });
+    expect(p).not.toHaveBeenCalled();
+  });
 });
 
 describe("branch address sanitising on the wire", () => {
