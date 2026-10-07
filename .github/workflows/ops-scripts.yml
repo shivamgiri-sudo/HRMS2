@@ -122,6 +122,7 @@ on:
           - budget-driver-diagnose
           - payslip-diagnose
           - meta-whatsapp-diagnose
+          - meta-queued-resend
           - backend-log-grep
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
@@ -540,6 +541,12 @@ jobs:
             backend-log-grep)
               # Read-only: greps backend logs for the phrase given in employee_codes.
               npx tsx scripts/backend-log-grep.ts "${INPUT_EMPLOYEE_CODES}"
+              ;;
+            meta-queued-resend)
+              # Dry-runs unless given --apply. Apply re-sends Meta lead WhatsApp messages stuck 'queued' in Wassenger through Pinbot
+              # (free text: only delivers inside the candidate's 24h window; Meta refusals are reported and nothing is sent for them).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/meta-queued-resend.ts $FLAG
               ;;
             meta-whatsapp-diagnose)
               # Read-only in both modes: SELECTs and GET probes only; prints booleans and counts, never secrets.
