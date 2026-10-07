@@ -59,6 +59,8 @@ export interface BackOfficeCandidate {
   byType: boolean;
   /** Code has a /BO/ segment. */
   byCode: boolean;
+  /** Name says "BO" or "Back Office" (how the branches' Back Office cost centres are named). */
+  byName: boolean;
   /** Billed to a client: such a cost centre earns revenue, so it is not the branch's overhead pool. */
   clientBilled: boolean;
 }
@@ -74,6 +76,8 @@ export function classifyBackOffice(row: Record<string, unknown>): BackOfficeCand
     BO_TYPE_WORDS.has(norm(row.cost_center_type)) ||
     norm(row.process_type) === "back_office";
   const byCode = /\/BO\//i.test(code);
+  const name = String(row.cost_centre_name ?? "");
+  const byName = /(^|[^a-z])bo([^a-z]|$)/i.test(name) || /back[\s_-]*office/i.test(name);
   const clientBilled =
     Number(row.revenue_flag) === 1 ||
     Number(row.billing_flag) === 1 ||
@@ -84,6 +88,7 @@ export function classifyBackOffice(row: Record<string, unknown>): BackOfficeCand
     name: row.cost_centre_name ? String(row.cost_centre_name) : null,
     byType,
     byCode,
+    byName,
     clientBilled,
   };
 }
@@ -96,7 +101,7 @@ export type BackOfficePick =
  * Which candidate is the branch's Back Office, or why none can be chosen safely.
  *
  * Tier 1: declared Back Office by type and not billed to a client.
- * Tier 2 (only when tier 1 is empty): a /BO/ code, not billed to a client.
+ * Tier 2 (only when tier 1 is empty): a /BO/ code or a "BO" / "Back Office" name, not billed to a client.
  * Exactly one in the winning tier is the answer. Zero or several is NEVER guessed — a branch can
  * hold several /BO/ codes (a client cost centre such as NOIDA-2/576 beside the BO pool /577), and
  * putting a branch's overhead on the wrong one would misstate two P&Ls. The caller then asks the
@@ -104,7 +109,7 @@ export type BackOfficePick =
  */
 export function pickBackOffice(candidates: BackOfficeCandidate[]): BackOfficePick {
   const tier1 = candidates.filter((c) => c.byType && !c.clientBilled);
-  const tier2 = candidates.filter((c) => c.byCode && !c.clientBilled);
+  const tier2 = candidates.filter((c) => (c.byCode || c.byName) && !c.clientBilled);
   const winners = tier1.length ? tier1 : tier2;
   if (winners.length === 1) return { ok: true, costCentre: winners[0], candidates };
   return { ok: false, reason: winners.length === 0 ? "NONE" : "AMBIGUOUS", candidates };
@@ -125,6 +130,8 @@ export async function listBackOfficeCandidates(branchId: string, executor: Execu
            OR LOWER(TRIM(COALESCE(ccm.cost_center_type, ''))) IN ('backoffice', 'back office', 'back_office', 'bo')
            OR UPPER(TRIM(COALESCE(ccm.process_type, ''))) = 'BACK_OFFICE'
            OR UPPER(ccm.cost_centre_code) LIKE '%/BO/%'
+           OR UPPER(ccm.cost_centre_name) REGEXP '(^|[^A-Z])BO([^A-Z]|$)'
+           OR UPPER(REPLACE(REPLACE(ccm.cost_centre_name, '-', ' '), '_', ' ')) LIKE '%BACK%OFFICE%'
         )
       ORDER BY ccm.cost_centre_code`,
     [branchId],

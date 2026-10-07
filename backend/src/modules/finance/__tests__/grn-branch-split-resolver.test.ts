@@ -35,6 +35,19 @@ describe("Back Office cost-centre selection (never guessed)", () => {
       .toMatchObject({ ok: false, reason: "NONE" });
   });
 
+  it("a cost centre named BO / Back Office is the Back Office when nothing else declares one", () => {
+    const named = (id: string, name: string, extra = {}) => classifyBackOffice({ id, cost_centre_code: `C${id}`, cost_centre_name: name, ...extra });
+    expect(named("1", "Noida BO").byName).toBe(true);
+    expect(named("1", "BO - Noida").byName).toBe(true);
+    expect(named("1", "Back-Office Noida").byName).toBe(true);
+    expect(named("1", "Bombay Operations").byName).toBe(false);
+    expect(named("1", "Boston Process").byName).toBe(false);
+    expect(pickBackOffice([named("1", "Noida BO"), named("2", "Onfido Process")])).toMatchObject({ ok: true, costCentre: { id: "1" } });
+    // a client-billed cost centre that merely has BO in its name is not the overhead pool
+    expect(pickBackOffice([named("1", "Noida BO", { revenue_flag: 1 }), named("2", "Noida BO Pool")])).toMatchObject({ ok: true, costCentre: { id: "2" } });
+    expect(pickBackOffice([named("1", "Noida BO"), named("2", "Noida Back Office")])).toMatchObject({ ok: false, reason: "AMBIGUOUS" });
+  });
+
   it("classification reads every place a Back Office can be declared", () => {
     expect(classifyBackOffice({ id: "1", cost_centre_code: "X", cc_type: "BackOffice" }).byType).toBe(true);
     expect(classifyBackOffice({ id: "1", cost_centre_code: "X", cost_center_type: "Back Office" }).byType).toBe(true);
