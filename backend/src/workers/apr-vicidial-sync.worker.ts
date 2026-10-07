@@ -531,7 +531,11 @@ async function runAprSync(): Promise<void> {
 }
 
 export async function startAprVicidialSyncWorker(): Promise<void> {
-  await runAprSync().catch(err =>
+  // Not awaited: all-workers.ts starts workers one after another, so awaiting this multi-minute startup
+  // sync held every worker listed after it (esign, DigiLocker, the three report workers...) until it
+  // finished, and with a deploy restarting the process every few minutes they never started at all.
+  // On 2026-10-07 the emailed-report queue sat untouched for ~1 hour because of exactly this.
+  void runAprSync().catch(err =>
     console.error(`[${WORKER_NAME}] Startup sync failed:`, err.message)
   );
 
