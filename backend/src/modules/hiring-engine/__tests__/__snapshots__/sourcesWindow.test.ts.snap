@@ -1,0 +1,82 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`getRequisitionSources SQL (pinned) > issues the same statements and parameters as before the window read model 1`] = `
+[
+  [
+    "SELECT requisition_code, branch_name, designation_name FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT id, source_type, origin_id, origin_label, status FROM requisition_stream WHERE requisition_id = ?",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "
+SELECT f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
+       COUNT(*) AS qualified, SUM(f.emailed) AS emailed, SUM(f.whatsapped) AS whatsapped, SUM(f.replied) AS replied, SUM(f.called) AS called,
+       SUM(f.confirmed) AS confirmed, SUM(f.arrived) AS arrived, SUM(f.selected) AS selected, SUM(f.joined) AS joined
+  FROM (
+    SELECT qf.source_type, qf.origin_id, qf.origin_label,
+           CASE WHEN qf.email_status = 'sent' OR EXISTS (SELECT 1 FROM he_message hm WHERE hm.requisition_id = qf.requisition_id AND hm.lead_id = qf.he_lead_id
+                  AND hm.channel = 'email' AND hm.direction = 'out' AND hm.delivery_status <> 'failed') THEN 1 ELSE 0 END AS emailed,
+           CASE WHEN qf.wa_status = 'sent' OR EXISTS (SELECT 1 FROM he_message hm WHERE hm.requisition_id = qf.requisition_id AND hm.lead_id = qf.he_lead_id
+                  AND hm.channel = 'whatsapp' AND hm.direction = 'out' AND hm.delivery_status <> 'failed') THEN 1 ELSE 0 END AS whatsapped,
+           CASE WHEN qf.stopped_reason = 'replied'
+                  OR EXISTS (SELECT 1 FROM he_message hi WHERE hi.lead_id = qf.he_lead_id AND hi.direction = 'in' AND hi.created_at > qf.qualified_at)
+                  OR EXISTS (SELECT 1 FROM meta_lead_messages mm WHERE mm.lead_id = qf.meta_lead_id COLLATE utf8mb4_unicode_ci AND mm.direction = 'inbound' AND mm.created_at > qf.qualified_at)
+                THEN 1 ELSE 0 END AS replied,
+           CASE WHEN qf.call_state = 'called' OR (m.id IS NOT NULL AND EXISTS (SELECT 1 FROM he_call c WHERE c.lead_id = m.lead_id AND c.match_id = m.id)) THEN 1 ELSE 0 END AS called,
+           CASE WHEN m.state IN ('confirmed','arrived','selected') THEN 1 ELSE 0 END AS confirmed,
+           CASE WHEN m.state IN ('arrived','selected') THEN 1 ELSE 0 END AS arrived,
+           CASE WHEN hl.status = 'joined' OR LOWER(ac.current_stage) IN ('joined','payroll_validated') THEN 1 ELSE 0 END AS joined,
+           CASE WHEN hl.status = 'joined' OR LOWER(ac.current_stage) IN ('joined','payroll_validated')
+                  OR m.state = 'selected' OR LOWER(ac.current_stage) IN ('selected','offered','offer','offer_approved','onboarded','converted') THEN 1 ELSE 0 END AS selected
+      FROM qualified_followup qf
+      LEFT JOIN he_match m ON m.lead_id = qf.he_lead_id AND m.requisition_id = qf.requisition_id
+      LEFT JOIN he_lead hl ON hl.id = qf.he_lead_id
+      LEFT JOIN ats_candidate ac ON ac.id = COALESCE(qf.ats_candidate_id, hl.ats_candidate_id) COLLATE utf8mb4_unicode_ci
+     WHERE qf.requisition_id = ?
+  ) f
+ GROUP BY f.source_type, f.origin_id",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "
+SELECT COALESCE(rs.source_type, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, 'meta_old', 'he')) AS source_type,
+       COALESCE(rs.origin_id, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, d.id, 'pool')) AS origin_id,
+       MAX(COALESCE(rs.origin_label, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, d.run_label, 'Pool: ATS history'))) AS origin_label,
+       COUNT(DISTINCT m.lead_id) AS leads
+  FROM he_drive d
+  JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
+  LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id
+  LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id
+ WHERE d.requisition_id = ? AND (rs.source_type IS NULL OR rs.source_type <> 'meta_live')
+ GROUP BY 1, 2",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT id, campaign_name FROM meta_campaign WHERE requisition_id = ?",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT campaign_id, COUNT(DISTINCT RIGHT(REGEXP_REPLACE(parsed_phone, '[^0-9]', ''), 10)) AS leads
+     FROM meta_lead_raw
+    WHERE campaign_id IN (?) AND (requisition_id IS NULL OR requisition_id = ?) AND parsed_phone IS NOT NULL
+    GROUP BY campaign_id",
+    [
+      "c9",
+      "r1",
+    ],
+  ],
+]
+`;
