@@ -1311,6 +1311,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2118_revenue_forecast.sql", // Registered 2026-10-06. revenue_forecast + revenue_forecast_line (Branch Head monthly forecast, Finance Head + Payroll Head approval, close with actuals), finance_budget_cost_centre_closure, FINANCE_REVENUE_FORECAST page + grants. CREATE TABLE IF NOT EXISTS / upserts only.
   "migrations/2119_revenue_forecast_payroll_head_view_only.sql", // Registered 2026-10-06. Owner ruling: Payroll Head views revenue forecasts, Finance Head alone approves. UPDATE of the 2118 payroll_head grant + page description. Idempotent.
   "migrations/2120_process_pnl_branch_head_view.sql", // Registered 2026-10-07. FINANCE_PROCESS_PNL view grant for branch_head (route/nav/API already admit it; P&L reads audited branch-scoped). Idempotent upsert.
+  "migrations/2121_grn_branch_split.sql", // Registered 2026-10-07. grn_request.is_branch_split: marks a Head Office GRN whose cost is split across branches (each branch share on its Back Office cost centre, the branch carried in grn_cost_allocation.branch_id). PREPARE-guarded, additive.
 ];
 
 export type MigrationHealth = {

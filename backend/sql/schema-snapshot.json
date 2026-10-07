@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1238,
-  "columnCount": 17986,
+  "columnCount": 17987,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -10063,7 +10063,8 @@
       "accounts_head_reviewed_at",
       "accounts_head_review_note",
       "reminder_count",
-      "last_reminder_at"
+      "last_reminder_at",
+      "is_branch_split"
     ],
     "grn_validation_override": [
       "id",

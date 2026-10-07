@@ -1,3 +1,4 @@
+import { assertGrnReadAccess, getBranchSplitOptions } from "./grn-branch-split.js";
 import { existsSync, mkdirSync } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -204,6 +205,33 @@ async function authorizeGrnBranch(
       recordBranchId: grn.branch_id,
     });
     req.financeGrn = grn;
+    next();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "GRN not found";
+    res.status(errorStatus(error, 404)).json({ error: message });
+  }
+}
+
+/**
+ * READ-ONLY branch authorization: the GRN's own branch, or a branch that bears a share of a Head
+ * Office GRN (grn-branch-split.ts). When access came through a share only, `req.grnShareBranchIds`
+ * lists the caller's branches so the response can be limited to their shares. Every write route
+ * keeps authorizeGrnBranch: a branch can read the bill that landed on it, only Head Office edits it.
+ */
+async function authorizeGrnBranchRead(
+  req: ScopedGrnRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const user = actor(req);
+    const grn = await grnService.getGrn(req.params.id);
+    const viaShare = await assertGrnReadAccess({
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+      grnId: req.params.id, headerBranchId: grn.branch_id,
+    });
+    req.financeGrn = grn;
+    (req as ScopedGrnRequest & { grnShareBranchIds?: string[] | null }).grnShareBranchIds = viaShare;
     next();
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "GRN not found";
@@ -503,7 +531,7 @@ function grNExpenseMasterRoutes(router: Router) {
     // Branch-guarded, not just role-guarded. The history carries rejection reasons and reviewer
     // commentary — the most candid text in the module — and without this a branch_admin could
     // read another branch's by id. A UUID is not an access control.
-    authorizeGrnBranch,
+    authorizeGrnBranchRead,
     async (req: AuthenticatedRequest, res) => {
       try {
         const data = await listFinanceApprovalEvents("grn", req.params.id);
@@ -898,10 +926,27 @@ grnRouter.get(
   }
 );
 
+/**
+ * Head Office GRN split across branches: whether it is enabled and each branch's Back Office cost
+ * centre (or why none can be chosen). Declared BEFORE "/grns/:id", which would otherwise swallow it.
+ * Finance Head / super admin only: it is the form's picker and the pre-launch audit.
+ */
+grnRouter.get(
+  "/grns/branch-split/options",
+  requireRole("finance_head", "super_admin"),
+  async (_req: AuthenticatedRequest, res) => {
+    try {
+      res.json({ success: true, data: await getBranchSplitOptions() });
+    } catch (error: unknown) {
+      res.status(errorStatus(error, 500)).json({ error: error instanceof Error ? error.message : "Unable to load branch split options" });
+    }
+  }
+);
+
 grnRouter.get(
   "/grns/:id",
   requireRole(...GRN_READ_ROLES),
-  authorizeGrnBranch,
+  authorizeGrnBranchRead,
   async (req: ScopedGrnRequest, res) => {
     res.json({ data: req.financeGrn });
   }
@@ -987,7 +1032,8 @@ grnRouter.post(
       const result = await grnService.createDraft(
         { ...req.body, branchId },
         user.id,
-        user.role
+        user.role,
+        user.roles
       );
       res.status(201).json(result);
     } catch (error: unknown) {
@@ -1208,7 +1254,7 @@ grnRouter.post(
 grnRouter.get(
   "/grns/:id/attachment",
   requireRole(...GRN_READ_ROLES),
-  authorizeGrnBranch,
+  authorizeGrnBranchRead,
   async (req: ScopedGrnRequest, res) => {
     const grn = req.financeGrn;
     const filePath = grn?.attachment_path ?? grn?.attachment_file_path;
