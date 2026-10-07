@@ -27,6 +27,7 @@ import CreateStreamDialog from "./CreateStreamDialog";
 import { StreamDialog } from "./RowStreamActions";
 import type { SourceType } from "./driveCommandTypes";
 import PlanSection from "./PlanSection";
+import FollowupPanel from "./FollowupPanel";
 
 const DrivesTab = lazy(() => import("../DrivesTab"));
 
@@ -105,15 +106,6 @@ export function DriveCommandView({ section, filters, analytics, loading, error, 
   );
 }
 
-function Placeholder({ title }: { title: string }) {
-  return (
-    <section aria-label={title} className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-600 dark:border-slate-600 dark:text-slate-300" style={{ minHeight: 120 }}>
-      <h3 className="font-semibold text-slate-800 dark:text-slate-100">{title}</h3>
-      <p>Loads in a later step</p>
-    </section>
-  );
-}
-
 /** Summary: KPI strip full width, then the comparison charts two per row on large screens. */
 function SummaryCharts({ analytics, insights }: { analytics: DriveAnalytics; insights?: ReactNode }) {
   return (
@@ -134,9 +126,9 @@ function SummaryCharts({ analytics, insights }: { analytics: DriveAnalytics; ins
 }
 
 /** Analytics-dependent panels (gated) and panels that must not wait for analytics (children). */
-export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions, plan?: ReactNode): { gated: ReactNode; always: ReactNode } {
+export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions, plan?: ReactNode, followupOpen = 0): { gated: ReactNode; always: ReactNode } {
   if (section === "summary") {
-    return { gated: <>{analytics && <SummaryCharts analytics={analytics} insights={insights} />}<Placeholder title="Follow-up pipeline" /></>, always: null };
+    return { gated: <>{analytics && <SummaryCharts analytics={analytics} insights={insights} />}<FollowupPanel requisitionId={actions?.requisitionId ?? null} qualifiedTracked={analytics?.qualifiedTracked ?? null} openSignal={followupOpen} /></>, always: null };
   }
   if (section === "plan") return { gated: null, always: plan ?? null }; // the Plan section loads its own data
   if (section === "he") {
@@ -182,8 +174,10 @@ export default function DriveCommandCenter() {
   const [dialog, setDialog] = useState<{ kind: "extend_stream"; streamId: string } | { kind: "create_stream"; requisitionId: string; sourceType: SourceType } | null>(null);
   const [planIntent, setPlanIntent] = useState<{ requisitionId: string; date?: string; nonce: number } | null>(null);
   useEffect(() => { if (section !== "plan") setPlanIntent(null); }, [section]); // a later visit to Plan does not re-run the preview
+  const [followupOpen, setFollowupOpen] = useState(0);
   const act = useCallback((t: ActionTarget) => {
     if (t.dialog === "extend_stream" && t.streamId) { setDialog({ kind: "extend_stream", streamId: t.streamId }); return; }
+    if (t.intent === "followup") setFollowupOpen((n) => n + 1);
     if (t.preview && t.requisitionId) setPlanIntent({ requisitionId: t.requisitionId, date: t.date, nonce: Date.now() });
     if (t.dialog === "create_stream" && t.requisitionId && t.sourceType) { setDialog({ kind: "create_stream", requisitionId: t.requisitionId, sourceType: t.sourceType }); return; }
     const next = insightNavHash(t, filters, section);
@@ -199,7 +193,7 @@ export default function DriveCommandCenter() {
     <PlanSection requisitionId={filters.requisitionId} groups={data?.groups ?? null} groupsLoading={loading} requisitions={requisitions}
       onPick={(id) => go("plan", { ...filters, requisitionId: id })} onChanged={reload} autoPreview={planIntent} />
   ) : null;
-  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions, plan);
+  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions, plan, followupOpen);
   return (
     <div className="space-y-3">
       <PipelineHealthStrip />
