@@ -70,6 +70,19 @@ describe("lineUpCandidates options", () => {
     expect((await lineUpCandidates("d1")).suggested).toBe(0);
   });
 
+  it("excludeOnDrive alone implies keepOtherSuggestions: a stream line-up never deletes other streams' suggestions", async () => {
+    await lineUpCandidates("d1", { audience, excludeOnDrive: true, limit: 1 });
+    expect(calls.filter(([q]) => q.startsWith("INSERT INTO he_match"))).toHaveLength(1);
+    expect(calls.some(([q]) => q.startsWith("DELETE"))).toBe(false);
+  });
+
+  it("excludeOnDrive also leaves out people queued on another live, not-past drive of the same requisition (no cross-day re-pointing)", async () => {
+    await lineUpCandidates("d1", { audience, excludeOnDrive: true, limit: 1 });
+    const [sql, params] = cand();
+    expect(sql).toContain("AND NOT EXISTS (SELECT 1 FROM he_match mx LEFT JOIN he_drive dx ON dx.id = mx.drive_id WHERE mx.lead_id = l.id AND (mx.drive_id = ? OR (mx.requisition_id = ? AND dx.status <> 'closed' AND dx.drive_date >= CURDATE())))");
+    expect(params.slice(0, 3)).toEqual(["c9", "d1", "r1"]);
+  });
+
   it("write:false is a preview: no refresh, no INSERT, no DELETE, leadIds still returned", async () => {
     flags.stale = true;
     const r = await lineUpCandidates("d1", { write: false });

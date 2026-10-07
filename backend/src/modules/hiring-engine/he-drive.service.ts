@@ -185,9 +185,13 @@ export interface LineUpOptions {
   limit?: number; metaOnly?: boolean;
   /** Replaces the drive's own audience (a stream's source). */
   audience?: AudienceSpec;
-  /** Leave out people who already have a match row on this drive (another stream's first touch). */
+  /**
+   * Leave out people who already have a match row on this drive (another stream's first touch) or are queued on another live drive of
+   * this requisition that has not passed (he_match is one row per person and requisition: lining them up here would re-point them, and
+   * two days' top-ups would pass them back and forth). Implies keepOtherSuggestions.
+   */
   excludeOnDrive?: boolean;
-  /** Do not delete the drive's other `suggested` matches (they belong to other streams). */
+  /** Do not delete the drive's other `suggested` matches (they belong to other streams). Always on with excludeOnDrive. */
   keepOtherSuggestions?: boolean;
   /** false = preview: nothing is refreshed, inserted or deleted. */
   write?: boolean;
@@ -279,7 +283,7 @@ export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): 
        LEFT JOIN he_lead_profile lp ON lp.lead_id = l.id
       WHERE l.status IN ('new','contacted','interested','declined','no_show')
         AND l.is_employee = 0 AND l.final_status <> 'joined'
-        ${aud.sql}${o.excludeOnDrive ? "\n        AND NOT EXISTS (SELECT 1 FROM he_match mx WHERE mx.lead_id = l.id AND mx.drive_id = ?)" : ""}
+        ${aud.sql}${o.excludeOnDrive ? "\n        AND NOT EXISTS (SELECT 1 FROM he_match mx LEFT JOIN he_drive dx ON dx.id = mx.drive_id WHERE mx.lead_id = l.id AND (mx.drive_id = ? OR (mx.requisition_id = ? AND dx.status <> 'closed' AND dx.drive_date >= CURDATE())))" : ""}
         -- Already booked: an invite on a LIVE drive, or a confirmation anywhere. An invite that sits on a closed drive (the drive was
         -- replaced or abandoned) no longer holds anyone, so that person can be lined up again; a confirmed person keeps their date.
         AND NOT EXISTS (SELECT 1 FROM he_match m LEFT JOIN he_drive dd ON dd.id = m.drive_id
@@ -292,7 +296,7 @@ export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): 
         ${locRe ? `AND ((${RESIDENCE_SQL} REGEXP ? AND NOT ${RESIDENCE_SQL} REGEXP ?) OR (TRIM(${RESIDENCE_SQL}) = '' AND mr.requisition_id = ?))` : ""}
         ${pre.map((c) => `AND ${c}`).join("\n        ")}
       ORDER BY (mr.requisition_id <=> ?) DESC, has_consent DESC, eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000`,
-    [...aud.args, ...(o.excludeOnDrive ? [driveId] : []), ...(locRe ? [locRe, negRe ?? "$^", req.id] : []), ...preArgs, req.id]))[0];
+    [...aud.args, ...(o.excludeOnDrive ? [driveId, drive.requisition_id] : []), ...(locRe ? [locRe, negRe ?? "$^", req.id] : []), ...preArgs, req.id]))[0];
   let leads = await selectCandidates();
   // The rollup columns decide who is an employee / already joined. Refresh any prefix whose rollup is missing or a day old
   // before trusting it, so a never-refreshed lead cannot slip through the gate.
@@ -350,7 +354,8 @@ export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): 
       .catch((err) => logger.warn({ driveId, err: String((err as Error).message).replace(/\d{6,}/g, "#") }, "[qualified-followup] matched enqueue failed"));
   }
   // Earlier suggestions that no longer qualify (e.g. before the location rule) are dropped; contacted people are kept.
-  if (!write || o.keepOtherSuggestions) { /* preview, or other streams' suggestions stay */ } else if (scored.length) {
+  // excludeOnDrive means a per-stream line-up: the people it left out are other streams' and must never be deleted here.
+  if (!write || o.keepOtherSuggestions || o.excludeOnDrive) { /* preview, or other streams' suggestions stay */ } else if (scored.length) {
     const keep = scored.map((x) => x.id);
     await db.execute(`DELETE FROM he_match WHERE drive_id = ? AND state = 'suggested' AND lead_id NOT IN (${keep.map(() => "?").join(",")})`, [driveId, ...keep]);
   } else await db.execute("DELETE FROM he_match WHERE drive_id = ? AND state = 'suggested'", [driveId]);

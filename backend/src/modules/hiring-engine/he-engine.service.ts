@@ -27,6 +27,7 @@ import { runBulkCallJobs, type RunSummary } from "./he-bulk-call.service.js";
 import { offerOtherRoles, type RerouteSummary } from "./he-reroute.service.js";
 import { whatsappRequiresOptIn } from "./he-policy.service.js";
 import { planNextDay } from "./he-plan.service.js";
+import { streamDriveIds, topUpStreamDrive } from "./he-stream-plan.service.js";
 import { sweepOwnedCampaigns } from "./he-meta-bridge.service.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
 import { followupSkipSql } from "./qualified-followup.policy.js";
@@ -109,10 +110,12 @@ async function replacementSlots(dryRun: boolean, c: Counts, max: number): Promis
 async function driveInvites(dryRun: boolean, c: Counts, max: number): Promise<void> {
   const [drives] = await db.execute<RowDataPacket[]>(
     "SELECT id FROM he_drive WHERE status = 'active' AND auto_send = 1 AND drive_date >= CURDATE() AND drive_date <= DATE_ADD(CURDATE(), INTERVAL 3 DAY)");
+  // Stream-fed drives are topped up per stream (suggestMatches would line up from the drive's own audience and drop other streams' suggestions).
+  const streamIds = dryRun ? new Set<string>() : await streamDriveIds(drives.map((d) => d.id as string));
   let budget = max;
   for (const d of drives) {
     if (budget <= 0) return;
-    if (!dryRun) await suggestMatches(d.id as string);
+    if (!dryRun) await (streamIds.has(d.id as string) ? topUpStreamDrive(d.id as string) : suggestMatches(d.id as string));
     const r = await inviteForDrive(d.id as string, { dryRun, max: budget });
     c.sent += r.sent; c.failed += r.failed; c.dryRun += r.dryRun;
     for (const [k, v] of Object.entries(r.blocked)) c.blocked[k] = (c.blocked[k] ?? 0) + v;

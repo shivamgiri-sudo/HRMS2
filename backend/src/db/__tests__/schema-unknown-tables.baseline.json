@@ -78,6 +78,11 @@
   "modules/hiring-engine/he-showup.service.ts": [
     "he_model_param"
   ],
+  "modules/hiring-engine/he-stream-plan.service.ts": [
+    "requisition_stream",
+    "requisition_stream_match",
+    "requisition_stream_plan"
+  ],
   "modules/hiring-engine/qualified-followup.attention.ts": [
     "qualified_followup"
   ],

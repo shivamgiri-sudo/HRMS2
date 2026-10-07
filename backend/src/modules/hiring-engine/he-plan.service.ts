@@ -9,6 +9,9 @@ import { createDrive, setDriveStatus, suggestMatches } from "./he-drive.service.
 import { bridgeAllMetaLeads, sweepOwnedCampaigns } from "./he-meta-bridge.service.js";
 import { getDailyPlan, getPlanMetaOnly, getPlanRequisitions } from "./he-policy.service.js";
 import { dailyPlanNumbers } from "./he-slots.js";
+import { logger } from "../../logger.js";
+import { planStreamsForDay, readStreamOwned, type StreamDayPlan, type StreamPassResult } from "./he-stream-plan.service.js";
+import { addDays, istToday, isSunday } from "./requisition-stream.window.js";
 
 export interface PlannedDay { requisitionId: string; code: string; role: string; branch: string; date: string; status: "created" | "exists" | "skipped"; reason?: string; invitesWanted: number; lined: number; driveId?: string }
 
@@ -19,7 +22,7 @@ export function nextWorkingDay(now: Date = new Date()): string {
   return d.toISOString().slice(0, 10);
 }
 
-export async function planNextDay(o: { date?: string; dryRun?: boolean } = {}): Promise<{ date: string; invitesPerDay: number; seatsPerSlot: number; days: PlannedDay[] }> {
+export async function planNextDay(o: { date?: string; dryRun?: boolean } = {}): Promise<{ date: string; invitesPerDay: number; seatsPerSlot: number; days: PlannedDay[]; streams: StreamDayPlan[]; streamsClosed: StreamPassResult["closed"] }> {
   const plan = await getDailyPlan();
   const n = dailyPlanNumbers(plan);
   const date = o.date && /^\d{4}-\d{2}-\d{2}$/.test(o.date) ? o.date : nextWorkingDay();
@@ -35,7 +38,9 @@ export async function planNextDay(o: { date?: string; dryRun?: boolean } = {}): 
   const ids = [...planIds, ...[...owned.keys()].filter((x) => !planIds.includes(x))];
   if (!o.dryRun) { await sweepOwnedCampaigns(); if (metaOnly) await bridgeAllMetaLeads(); }
   const days: PlannedDay[] = [];
-  for (const id of ids) {
+  // A requisition with an open or paused stream is planned only by the stream pass below.
+  const streamOwned = await readStreamOwned();
+  for (const id of streamOwned ? ids.filter((x) => !streamOwned.has(x)) : ids) {
     const [rq] = await db.execute<RowDataPacket[]>(
       `SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1`, [id]);
     const r = rq[0];
@@ -53,5 +58,30 @@ export async function planNextDay(o: { date?: string; dryRun?: boolean } = {}): 
       days.push({ ...base, status: "created", driveId: d.id, lined });
     } catch (e) { days.push({ ...base, status: "skipped", reason: (e instanceof Error ? e.message : String(e)).slice(0, 160) }); }
   }
-  return { date, invitesPerDay: n.invites, seatsPerSlot: n.perSlot, days };
+  const { streams, streamsClosed } = await streamPass(o, date, streamOwned !== null);
+  return { date, invitesPerDay: n.invites, seatsPerSlot: n.perSlot, days, streams, streamsClosed };
+}
+
+/**
+ * The stream pass for `date`; on Saturday's evening run (no explicit date) also for Sunday first, which only a stream that added that
+ * Sunday covers. Skipped when stream ownership could not be read (the legacy loop then saw every requisition). Never throws.
+ */
+async function streamPass(o: { date?: string; dryRun?: boolean }, date: string, ownershipKnown: boolean): Promise<{ streams: StreamDayPlan[]; streamsClosed: StreamPassResult["closed"] }> {
+  const out = { streams: [] as StreamDayPlan[], streamsClosed: [] as StreamPassResult["closed"] };
+  if (!ownershipKnown) { logger.warn({ date }, "[he-plan] stream pass skipped: stream ownership unknown"); return out; }
+  try {
+    const explicit = Boolean(o.date && /^\d{4}-\d{2}-\d{2}$/.test(o.date));
+    const tomorrow = addDays(istToday(), 1);
+    const dates = !explicit && isSunday(tomorrow) && tomorrow !== date ? [tomorrow, date] : [date];
+    for (const d of dates) {
+      const r = await planStreamsForDay({ date: d, dryRun: Boolean(o.dryRun) });
+      out.streams.push(...r.plans);
+      out.streamsClosed.push(...r.closed);
+      if (r.failed) logger.warn({ date: d }, "[he-plan] stream pass failed");
+    }
+    return out;
+  } catch (err) {
+    logger.warn({ date, code: (err as { code?: string })?.code ?? "error" }, "[he-plan] stream pass failed");
+    return { streams: [], streamsClosed: [] };
+  }
 }
