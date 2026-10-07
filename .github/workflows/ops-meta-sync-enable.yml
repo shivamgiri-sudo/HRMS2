@@ -1,0 +1,85 @@
+# Re-enables the Meta lead sync on the production host by restoring META_MARKETING_ACCESS_TOKEN
+# into backend/.env and restarting the backend + workers processes.
+#
+# The token was removed from the live .env on 2026-10-01 (backup .env.bak-metapause-*), which made
+# isMetaConfigured() false, so metaLeadSync.cron.ts skipped silently and no lead has arrived since
+# 2026-09-30. The owner confirmed the stored token is still valid and asked for the sync to be enabled.
+#
+# Safety: the token is read from the newest .env backup that holds one, checked against the Graph API
+# BEFORE anything is written (refuses on an invalid token), never printed, and .env is backed up first.
+# Runs on the self-hosted runner because backend/.env and pm2 exist only on 192.168.11.225.
+
+name: Ops Meta lead sync enable
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-meta-sync-flag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  enable:
+    name: Restore META_MARKETING_ACCESS_TOKEN on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - name: Restore and validate the token
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENV_FILE="/var/www/HRMS2/backend/.env"
+          KEY="META_MARKETING_ACCESS_TOKEN"
+          test -f "$ENV_FILE" || { echo "::error::$ENV_FILE not found."; exit 1; }
+          if grep -qE "^${KEY}=.+" "$ENV_FILE"; then
+            echo "$KEY already set in the live .env; nothing to restore."
+            exit 0
+          fi
+          SRC=""
+          for f in $(ls -1t "${ENV_FILE}".bak-* 2>/dev/null); do
+            if grep -qE "^${KEY}=.+" "$f"; then SRC="$f"; break; fi
+          done
+          [[ -n "$SRC" ]] || { echo "::error::No .env backup holds $KEY."; exit 1; }
+          echo "Reading the token from $SRC (modified $(stat -c %y "$SRC"))"
+          LINE="$(grep -m1 -E "^${KEY}=.+" "$SRC")"
+          TOKEN="${LINE#*=}"; TOKEN="${TOKEN%\"}"; TOKEN="${TOKEN#\"}"; TOKEN="${TOKEN%\'}"; TOKEN="${TOKEN#\'}"
+          # Validate before writing: /me must answer 200 for this token. Output is discarded; the token is never echoed.
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -G "https://graph.facebook.com/v19.0/me" --data-urlencode "access_token=${TOKEN}" || true)"
+          echo "Graph /me with the stored token: HTTP $CODE"
+          [[ "$CODE" == "200" ]] || { echo "::error::Stored token is not valid (HTTP $CODE). Not writing it."; exit 1; }
+          BACKUP="${ENV_FILE}.bak-meta-sync-enable-$(date -u +%Y%m%dT%H%M%SZ)"
+          cp -a "$ENV_FILE" "$BACKUP"
+          echo "Backed up to $BACKUP"
+          if [[ -s "$ENV_FILE" && -n "$(tail -c 1 "$ENV_FILE")" ]]; then printf '\n' >> "$ENV_FILE"; fi
+          sed -i -E "/^${KEY}=/d" "$ENV_FILE"
+          printf '%s\n' "$LINE" >> "$ENV_FILE"
+          COUNT="$(grep -cE "^${KEY}=.+" "$ENV_FILE" || true)"
+          if [[ "$COUNT" != "1" ]]; then
+            echo "::error::Expected exactly one ${KEY} line, found ${COUNT}. Restoring the backup."
+            cp -a "$BACKUP" "$ENV_FILE"
+            exit 1
+          fi
+          echo "$KEY restored (value not printed)."
+
+      - name: Restart backend and workers
+        shell: bash
+        run: |
+          set -euo pipefail
+          pm2 restart hrms2-backend hrms2-workers --update-env --no-color
+          pm2 save --no-color
+          pm2 status --no-color
+
+      - name: Confirm the sync started
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 60
+          for f in /home/masadmin/.pm2/logs/hrms2-backend-out.log /home/masadmin/.pm2/logs/hrms2-workers-out.log; do
+            echo "--- $f"
+            grep -a "\[meta-sync\]" "$f" | tail -n 8 | sed -E 's/access_token=[^&[:space:]"]+/access_token=***/g' || echo "no [meta-sync] lines yet"
+          done
