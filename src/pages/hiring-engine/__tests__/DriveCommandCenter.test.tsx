@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => undefined)) } }));
 
-import DriveCommandCenter, { DriveCommandView, type DriveCommandViewProps } from "../command/DriveCommandCenter";
+import DriveCommandCenter, { sectionParts, DriveCommandView, type DriveCommandViewProps } from "../command/DriveCommandCenter";
 import { defaultFilters } from "../command/driveCommandModel";
 import type { DriveAnalytics } from "../command/driveCommandTypes";
 import { tabFromHash } from "../hiringEngineTabs";
@@ -15,8 +15,9 @@ const noop = () => undefined;
 const filters = { ...defaultFilters(new Date("2026-10-07T06:00:00Z")), requisitionId: "42" };
 const reqs = [{ id: "42", label: "REQ-42 - Agent", branch: "Pune" }, { id: "43", label: "REQ-43 - Lead", branch: "Delhi" }];
 const analytics = (over: Partial<DriveAnalytics> = {}): DriveAnalytics => ({ requisitionCount: 3, truncated: false, partial: false, failedSections: [], ...over } as DriveAnalytics);
-const view = (over: Partial<DriveCommandViewProps> = {}, kids?: React.ReactNode) =>
-  renderToStaticMarkup(<DriveCommandView section="plan" filters={filters} analytics={null} loading={false} error={null} onSection={noop} onFilters={noop} onRetry={noop} requisitions={reqs} branches={["Delhi", "Pune"]} {...over}>{kids}</DriveCommandView>);
+const view = (over: Partial<DriveCommandViewProps> = {}, gated?: React.ReactNode, kids?: React.ReactNode) =>
+  renderToStaticMarkup(<DriveCommandView section="summary" filters={filters} analytics={null} loading={false} error={null} onSection={noop} onFilters={noop} onRetry={noop} requisitions={reqs} branches={["Delhi", "Pune"]} gated={gated} {...over}>{kids}</DriveCommandView>);
+const heView = (over: Partial<DriveCommandViewProps>) => { const p = sectionParts("he"); return view({ section: "he", ...over }, p.gated, p.always); };
 
 describe("DriveCommandCenter", () => {
   it("default export renders the busy skeleton and the health strip", () => {
@@ -31,7 +32,7 @@ describe("DriveCommandCenter", () => {
     expect(view({ loading: true })).toContain("animate-pulse");
   });
   it("tablist: five tabs, one selected with tabindex 0, the rest -1, sticky, wired to the panel", () => {
-    const html = view();
+    const html = view({ section: "plan" });
     expect(html).toContain('role="tablist"');
     expect(html).toContain('aria-label="Drive command sections"');
     expect(html.match(/role="tab"/g)).toHaveLength(5);
@@ -39,7 +40,9 @@ describe("DriveCommandCenter", () => {
     expect(html).toMatch(/id="drive-tab-plan"[^>]*aria-selected="true"[^>]*tabindex="0"/);
     expect(html.match(/tabindex="-1"/g)).toHaveLength(4);
     expect(html.match(/aria-controls="drive-section-panel"/g)).toHaveLength(5);
-    expect(html).toMatch(/class="sticky top-0 z-10[^"]*"[^>]*>|<div role="tablist"[^>]*class="sticky top-0 z-10/);
+    expect(html).toMatch(/<div role="tablist"[^>]*class="sticky z-20 /);
+    expect(html).toContain("top:var(--topbar-height, 64px)");
+    expect(html).toContain("focus-visible:ring-inset");
     expect(html).toContain('id="drive-section-panel"');
     expect(html).toContain('role="tabpanel"');
     expect(html).toContain('aria-labelledby="drive-tab-plan"');
@@ -63,10 +66,24 @@ describe("DriveCommandCenter", () => {
     const summary = view({ section: "summary", analytics: a }, <p>CONTENT</p>);
     expect(summary).toContain("No requisitions with drives in this window");
     expect(summary).not.toContain("CONTENT");
-    expect(view({ section: "he", analytics: a }, <p>CONTENT</p>)).toContain("CONTENT");
+    expect(view({ section: "he", analytics: a }, <p>GATED</p>, <p>CONTENT</p>)).toContain("CONTENT");
   });
-  it("children render once data is present", () => {
+  it("gated panels render once data is present", () => {
     expect(view({ analytics: analytics() }, <p>CONTENT</p>)).toContain("CONTENT");
+  });
+  it("All drives (existing DrivesTab) renders while analytics load, fail, or are empty; gated panels do not", () => {
+    for (const over of [{ loading: true }, { error: "boom" }, { analytics: analytics({ requisitionCount: 0 }) }]) {
+      const html = heView(over);
+      expect(html).toContain("All drives");
+      if (!("analytics" in over)) expect(html).not.toContain("Hiring Engine drives");
+    }
+    expect(heView({ loading: true })).toContain('aria-busy="true"');
+    expect(heView({ error: "boom" })).toContain("Retry");
+  });
+  it("the Plan section shows no analytics skeleton or error", () => {
+    const html = view({ section: "plan", error: "boom" }, null, <p>PLAN</p>);
+    expect(html).toContain("PLAN");
+    expect(html).not.toContain("Could not load drive analytics");
   });
   it("filter bar: labels match input ids, selects have the all-options, every button has a focus ring", () => {
     const html = view({ section: "summary" });

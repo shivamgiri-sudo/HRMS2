@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyBranchChange, applyDateChange, applyRequisitionChange, branchOptions, createRequestSequencer, dateBounds, describeError, requisitionOptions } from "../command/commandData";
+import { applyBranchChange, applyDateChange, applyRequisitionChange, branchOptions, createRequestSequencer, dateBounds, describeError, unusableMessage, requisitionOptions } from "../command/commandData";
 
 const now = new Date("2026-10-07T06:00:00Z"); // 2026-10-07 IST
 const f = { from: "2026-09-24", to: "2026-10-07", requisitionId: null, branch: null };
@@ -78,5 +78,14 @@ describe("filter edits", () => {
     expect(applyBranchChange({ ...f, branch: "Pune" }, "", reqs).branch).toBeNull();
     expect(applyRequisitionChange(f, "")).toMatchObject({ requisitionId: null });
     expect(applyRequisitionChange(f, "8").requisitionId).toBe("8");
+  });
+});
+
+describe("unusableMessage", () => {
+  it("prefers the body's error, then message, else the generic line", () => {
+    expect(unusableMessage({ error: " Bad window " })).toBe("Bad window");
+    expect(unusableMessage({ message: "Try later" })).toBe("Try later");
+    expect(unusableMessage({ success: false })).toBe("Unexpected response from the server");
+    expect(unusableMessage(null)).toBe("Unexpected response from the server");
   });
 });

@@ -38,6 +38,13 @@ export function describeError(e: unknown): string {
   return typeof m === "string" && m.trim() ? m : "Request failed";
 }
 
+/** The text of a 200 body that carries no data: its error/message when present, else a generic line. */
+export function unusableMessage(body: unknown): string {
+  const b = body as { error?: unknown; message?: unknown } | null | undefined;
+  for (const v of [b?.error, b?.message]) if (typeof v === "string" && v.trim()) return v.trim();
+  return "Unexpected response from the server";
+}
+
 // ---- options -----------------------------------------------------------------------------------------------------------------------------
 export interface RequisitionOption { id: string; label: string; branch: string }
 interface OpenRequisitionRow { id?: unknown; requisition_code?: unknown; designation_name?: unknown; branch_name?: unknown }

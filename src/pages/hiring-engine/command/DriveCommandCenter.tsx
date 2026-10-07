@@ -29,6 +29,9 @@ export interface DriveCommandViewProps {
   onRetry: () => void;
   requisitions: RequisitionOption[];
   branches: string[];
+  /** Rendered once analytics are usable (not loading-without-data, not failed, not empty). */
+  gated?: ReactNode;
+  /** Rendered regardless of the analytics state (the existing DrivesTab, the Plan section). */
   children?: ReactNode;
 }
 
@@ -46,9 +49,10 @@ function CommandSkeleton() {
   );
 }
 
-export function DriveCommandView({ section, filters, analytics, loading, error, onSection, onFilters, onRetry, requisitions, branches, children }: DriveCommandViewProps) {
-  const firstLoad = loading && !analytics;
-  const failed = !!error && !analytics;
+export function DriveCommandView({ section, filters, analytics, loading, error, onSection, onFilters, onRetry, requisitions, branches, gated, children }: DriveCommandViewProps) {
+  const needs = section !== "plan"; // the Plan section loads its own data
+  const firstLoad = needs && loading && !analytics;
+  const failed = needs && !!error && !analytics;
   const empty = !!analytics && analytics.requisitionCount === 0 && (section === "summary" || section === "live" || section === "old");
   return (
     <div className="space-y-0">
@@ -63,11 +67,11 @@ export function DriveCommandView({ section, filters, analytics, loading, error, 
             <button type="button" onClick={onRetry} className={RETRY_BTN}>Retry</button>
           </div>
         )}
-        {analytics && error && (
+        {needs && analytics && error && (
           <p role="alert" className="text-xs text-rose-800 dark:text-rose-200">Could not refresh: {error}. Showing the last result.</p>
         )}
-        {analytics?.partial && <DegradedBanner degraded={analytics.failedSections} onRetry={onRetry} />}
-        {analytics?.truncated && (
+        {needs && analytics?.partial && <DegradedBanner degraded={analytics.failedSections} onRetry={onRetry} />}
+        {needs && analytics?.truncated && (
           <p className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
             <Info className="h-4 w-4 shrink-0" aria-hidden /> Showing the 200 most recent requisitions; narrow the filters to see the rest
           </p>
@@ -79,7 +83,8 @@ export function DriveCommandView({ section, filters, analytics, loading, error, 
             <p className="text-xs text-slate-600 dark:text-slate-300">Widen the date range or clear the requisition and branch filters.</p>
           </div>
         )}
-        {!firstLoad && !failed && !empty && children}
+        {!firstLoad && !failed && !empty && gated}
+        {children}
       </div>
     </div>
   );
@@ -94,21 +99,22 @@ function Placeholder({ title }: { title: string }) {
   );
 }
 
-function SectionBody({ section }: { section: SectionId }) {
-  if (section === "summary") return <><Placeholder title="Summary charts" /><Placeholder title="Insights" /><Placeholder title="Follow-up pipeline" /></>;
-  if (section === "plan") return <Placeholder title="Plan" />;
+/** Analytics-dependent panels (gated) and panels that must not wait for analytics (children). */
+export function sectionParts(section: SectionId): { gated: ReactNode; always: ReactNode } {
+  if (section === "summary") return { gated: <><Placeholder title="Summary charts" /><Placeholder title="Insights" /><Placeholder title="Follow-up pipeline" /></>, always: null };
+  if (section === "plan") return { gated: null, always: <Placeholder title="Plan" /> };
   if (section === "he") {
-    return (
-      <>
-        <Placeholder title="Hiring Engine drives" />
+    return {
+      gated: <Placeholder title="Hiring Engine drives" />,
+      always: (
         <section aria-labelledby="all-drives-heading" className="space-y-2">
           <h3 id="all-drives-heading" className="text-base font-bold text-slate-900 dark:text-slate-100">All drives</h3>
           <Suspense fallback={<div className={PULSE} style={{ height: 240 }} aria-busy="true" />}><DrivesTab /></Suspense>
         </section>
-      </>
-    );
+      ),
+    };
   }
-  return <Placeholder title={section === "live" ? "Live Meta drives" : "Old Meta data drives"} />;
+  return { gated: <Placeholder title={section === "live" ? "Live Meta drives" : "Old Meta data drives"} />, always: null };
 }
 
 export default function DriveCommandCenter() {
@@ -131,12 +137,13 @@ export default function DriveCommandCenter() {
   const { data, error, loading, reload } = useDriveAnalytics(stable);
   const { requisitions, branches } = useFilterOptions();
 
+  const parts = sectionParts(section);
   return (
     <div className="space-y-3">
       <PipelineHealthStrip />
       <DriveCommandView section={section} filters={filters} analytics={data} loading={loading} error={error}
-        onSection={(s) => go(s, filters)} onFilters={(f) => go(section, f)} onRetry={reload} requisitions={requisitions} branches={branches}>
-        <SectionBody section={section} />
+        onSection={(s) => go(s, filters)} onFilters={(f) => go(section, f)} onRetry={reload} requisitions={requisitions} branches={branches} gated={parts.gated}>
+        {parts.always}
       </DriveCommandView>
     </div>
   );

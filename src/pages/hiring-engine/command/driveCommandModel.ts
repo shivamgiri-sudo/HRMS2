@@ -27,7 +27,6 @@ const MAX_SPAN_DAYS = 92;
 const MAX_AHEAD_DAYS = 14;
 const IST_OFFSET_MS = 19_800_000;
 const DAY_MS = 86_400_000;
-const MAX_REQ_LENGTH = 64;
 const MAX_BRANCH_LENGTH = 150;
 
 // ---- IST dates ---------------------------------------------------------------------------------------------------------------------------
@@ -63,6 +62,12 @@ function validWindow(from: string, to: string, now: Date): boolean {
 
 // ---- hash --------------------------------------------------------------------------------------------------------------------------------
 const sectionOf = (s: string): SectionId => SECTIONS.find((x) => x.id === s)?.id ?? "summary";
+const isHex = (c: string): boolean => (c >= "0" && c <= "9") || (c >= "a" && c <= "f") || (c >= "A" && c <= "F");
+/** A 36-char UUID shape (8-4-4-4-12 hex); anything else is dropped so the API never answers 400 for a hand-edited hash. */
+export function isUuidShape(x: string | null): x is string {
+  if (!x || x.length !== 36) return false;
+  return x.split("").every((c, i) => (i === 8 || i === 13 || i === 18 || i === 23 ? c === "-" : isHex(c)));
+}
 const cleanText = (v: string | null, max: number): string | null => (v && v.length <= max ? v : null);
 
 /** Total: any input (garbage, wrong prefix, bad dates) gives the default section and default filters; never throws. */
@@ -83,7 +88,7 @@ export function parseCommandHash(hash: string, now: Date = new Date()): { sectio
     const dates = (f !== null || t !== null) && validWindow(from, to, now) ? { from, to } : { from: filters.from, to: filters.to };
     return {
       section,
-      filters: { ...dates, requisitionId: cleanText(params.get("req"), MAX_REQ_LENGTH), branch: cleanText(params.get("branch"), MAX_BRANCH_LENGTH) },
+      filters: { ...dates, requisitionId: ((r) => (isUuidShape(r) ? r : null))(params.get("req")), branch: cleanText(params.get("branch"), MAX_BRANCH_LENGTH) },
     };
   } catch {
     return { section: "summary", filters };

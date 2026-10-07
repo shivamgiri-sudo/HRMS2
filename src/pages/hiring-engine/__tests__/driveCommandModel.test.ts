@@ -27,9 +27,9 @@ describe("IST dates", () => {
 
 describe("hash", () => {
   it("parses section and filters", () => {
-    const r = parseCommandHash("#drives:plan?req=r1&from=2026-10-01&to=2026-10-14", NOW);
+    const r = parseCommandHash("#drives:plan?req=123e4567-e89b-42d3-a456-426614174000&from=2026-10-01&to=2026-10-14", NOW);
     expect(r.section).toBe("plan");
-    expect(r.filters).toEqual({ from: "2026-10-01", to: "2026-10-14", requisitionId: "r1", branch: null });
+    expect(r.filters).toEqual({ from: "2026-10-01", to: "2026-10-14", requisitionId: "123e4567-e89b-42d3-a456-426614174000", branch: null });
   });
   it("unknown section and bad dates fall back", () => {
     expect(parseCommandHash("#drives:bogus", NOW).section).toBe("summary");
@@ -53,7 +53,7 @@ describe("hash", () => {
   });
   it("omits defaults and round-trips", () => {
     expect(commandHash("summary", defaultFilters(NOW), NOW)).toBe("#drives:summary");
-    const f: Filters = { from: "2026-10-01", to: "2026-10-14", requisitionId: "r1", branch: "Pune & Co" };
+    const f: Filters = { from: "2026-10-01", to: "2026-10-14", requisitionId: "123e4567-e89b-42d3-a456-426614174000", branch: "Pune & Co" };
     for (const section of SECTIONS.map((s) => s.id)) expect(parseCommandHash(commandHash(section, f, NOW), NOW)).toEqual({ section, filters: f });
     const onlyReq: Filters = { ...defaultFilters(NOW), requisitionId: "abc" };
     expect(commandHash("he", onlyReq, NOW)).toBe("#drives:he?req=abc");
@@ -81,8 +81,18 @@ describe("tabFromHash and the existing Hiring Engine hashes", () => {
   it("uses the part before the first colon", () => {
     expect(tabFromHash("#drives:plan", ["board", "drives"], "board")).toBe("drives");
     expect(tabFromHash("#drives:plan?req=a:b", ["board", "drives"], "board")).toBe("drives");
+    expect(tabFromHash("#drives?req=1", ["board", "drives"], "board")).toBe("drives");
     expect(tabFromHash("#nope", ["board", "drives"], "board")).toBe("board");
     expect(tabFromHash(undefined as unknown as string, ["board"], "board")).toBe("board");
+  });
+});
+
+describe("req validation", () => {
+  it("keeps a UUID req and drops junk", () => {
+    expect(parseCommandHash("#drives:plan?req=123e4567-e89b-42d3-a456-426614174000", NOW).filters.requisitionId).toBe("123e4567-e89b-42d3-a456-426614174000");
+    for (const bad of ["1", "r1", "123e4567-e89b-42d3-a456-42661417400g", "123e4567e89b42d3a456426614174000", "123e4567-e89b-42d3-a456-4266141740000"]) {
+      expect(parseCommandHash("#drives:plan?req=" + bad, NOW).filters.requisitionId).toBeNull();
+    }
   });
 });
 
