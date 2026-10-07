@@ -45,6 +45,8 @@ import { nextWorkingDay, planNextDay } from "./he-plan.service.js";
 import { dailyPlanNumbers } from "./he-slots.js";
 import { getInboxThread, listInbox, replyToCandidate } from "./he-inbox.service.js";
 import { resolveBranchScope } from "../meta-campaign/meta-access.js";
+import { followupSummary } from "./qualified-followup.service.js";
+import { followupMode } from "./qualified-followup.schedule.js";
 
 export const heRouter = Router();
 // Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
@@ -71,6 +73,16 @@ heRouter.get("/summary", requireAuth, requireRole(...VIEW_ROLES), async (_req, r
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] summary failed");
     res.status(500).json({ success: false, message: "Could not load summary" });
+  }
+});
+
+// Dry-run summary of the qualified-lead follow-up pipeline (mode + counts per source type).
+heRouter.get("/qualified-followup/summary", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try {
+    res.json({ success: true, mode: followupMode(), data: await followupSummary() });
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he] qualified-followup summary failed");
+    res.status(500).json({ success: false, message: "Could not load follow-up summary" });
   }
 });
 
