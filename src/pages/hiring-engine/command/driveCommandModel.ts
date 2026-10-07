@@ -237,5 +237,5 @@ function csvCell(v: string | number | null | undefined): string {
 export function toCsv(columns: ReadonlyArray<{ key: string; label: string }>, rows: Array<Record<string, string | number | null>>): string {
   const lines = [columns.map((c) => csvCell(c.label)).join(",")];
   for (const r of rows) lines.push(columns.map((c) => csvCell(r[c.key])).join(","));
-  return `﻿${lines.join("\r\n")}\r\n`;
+  return `\uFEFF${lines.join("\r\n")}\r\n`;
 }
