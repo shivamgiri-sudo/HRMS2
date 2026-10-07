@@ -14,6 +14,7 @@ const MIGRATIONS_VERIFY_ONLY = process.env.MIGRATIONS_VERIFY_ONLY === "true";
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
 import { startEmployeeMasterSnapshotScheduler } from "./cron/employee-master-snapshot.cron.js";
 import { startExitAutoAdvanceScheduler, stopExitAutoAdvanceScheduler } from "./cron/exitAutoAdvance.cron.js";
+import { startPipelineHealthAlerts, stopPipelineHealthAlerts } from "./modules/hiring-engine/pipeline-health.cron.js";
 import { startMetaLeadSyncScheduler, stopMetaLeadSyncScheduler } from "./cron/metaLeadSync.cron.js";
 import { startApprovalDigestScheduler } from "./modules/approval-center/approval-digest.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
@@ -133,6 +134,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     stopDailyGamesScheduler();
     stopExitAutoAdvanceScheduler();
     stopMetaLeadSyncScheduler();
+    stopPipelineHealthAlerts();
 
     // Clear all registered timers
     clearAllTimers();
@@ -332,6 +334,7 @@ function startServer() {
         // Hourly pull of new Meta Lead Ads leads + campaign metrics.
         // Idempotent safety net — skips already-imported leads, no-ops if META_MARKETING_ACCESS_TOKEN unset.
         startMetaLeadSyncScheduler();
+        startPipelineHealthAlerts();
         startBreachSlaCron();
         // Escalates DPDP withdrawal requests that passed their decision deadline.
         startWithdrawalSlaCron();
@@ -479,6 +482,7 @@ function startServer() {
         // Meta lead sync is a lightweight external API call — safe to run in the API process
         // even when WORKERS_PROCESS=external. No DB-intensive workers here.
         startMetaLeadSyncScheduler();
+        startPipelineHealthAlerts();
       }
     } else {
       console.log("[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)");
@@ -486,7 +490,10 @@ function startServer() {
       // workers process does not own the Meta lead sync (outreach would run twice). Gating it behind
       // ENABLE_SCHEDULERS meant it never started in production: no lead arrived after 2026-09-30.
       // Idempotent: the scheduler ignores a second start.
-      if (WORKERS_EXTERNAL) startMetaLeadSyncScheduler();
+      if (WORKERS_EXTERNAL) {
+        startMetaLeadSyncScheduler();
+        startPipelineHealthAlerts();
+      }
     }
     console.log(`MCN HRMS backend running on http://localhost:${env.PORT}`);
   });

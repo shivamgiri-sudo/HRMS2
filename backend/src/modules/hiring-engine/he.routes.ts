@@ -15,6 +15,7 @@ import { getDriveShortlist, SHORTLIST_FILTERS, type ShortlistFilter } from "./he
 import { getBoard, runHrArrivalAlerts } from "./he-alert.service.js";
 import { placeVoiceCall } from "./he-voice.service.js";
 import { generateWebhookToken, last4, saveSuperbot, superbotConfig, webhookToken } from "./he-secrets.service.js";
+import { getPipelineHealth } from "./he-pipeline-health.service.js";
 import { testSuperbotConnection } from "./he-superbot.service.js";
 import { buildSuperbotSheet } from "./he-superbot-sheet.service.js";
 import { applySuperbotReport } from "./he-superbot-report.service.js";
@@ -83,6 +84,16 @@ heRouter.get("/qualified-followup/summary", requireAuth, requireRole(...VIEW_ROL
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] qualified-followup summary failed");
     res.status(500).json({ success: false, message: "Could not load follow-up summary" });
+  }
+});
+
+// Lead pipeline health checks (Meta sync, intake freshness, WhatsApp failures, follow-up backlog).
+heRouter.get("/pipeline-health", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try {
+    res.json({ success: true, data: await getPipelineHealth() });
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he] pipeline-health failed");
+    res.status(500).json({ success: false, message: "Could not load pipeline health" });
   }
 });
 
