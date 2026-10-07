@@ -35,6 +35,8 @@ import { previewWhatsAppSamples, startWhatsAppSample, whatsAppSampleStatus } fro
 import { engineAutoOn, engineMode, getCoolingOffDays, getDailyPlan, getPlanRequisitions, lastEngineTick, setCoolingOffDays, setDailyPlan, setEngineAuto, setPlanRequisitions, setWhatsappRequiresOptIn, whatsappRequiresOptIn } from "./he-policy.service.js";
 import { nextWorkingDay, planNextDay } from "./he-plan.service.js";
 import { dailyPlanNumbers } from "./he-slots.js";
+import { getInboxThread, listInbox, replyToCandidate } from "./he-inbox.service.js";
+import { resolveBranchScope } from "../meta-campaign/meta-access.js";
 
 export const heRouter = Router();
 // Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
@@ -661,6 +663,26 @@ heRouter.put("/plan", requireAuth, requireRole(...ADMIN_ROLES), async (req, res)
 heRouter.post("/plan/run", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
   try { res.json({ success: true, ...(await planNextDay({ date: typeof (req.body ?? {}).date === "string" ? (req.body as { date: string }).date : undefined, dryRun: (req.body ?? {}).dryRun === true })) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] plan run failed"); res.status(500).json({ success: false, message: "Could not plan the day" }); }
+});
+
+/** WhatsApp Inbox, Hiring Engine source: conversations with candidates the engine has messaged (branch-scoped like the Meta inbox). */
+const inboxScope = async (req: AuthenticatedRequest) => resolveBranchScope(req.authUser.id, ((req as unknown as { userRoles?: string[] }).userRoles?.length ? (req as unknown as { userRoles: string[] }).userRoles : [req.authUser.role ?? ""]).filter(Boolean));
+heRouter.get("/inbox", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try { res.json({ success: true, ...(await listInbox(await inboxScope(req as AuthenticatedRequest), typeof req.query.search === "string" ? req.query.search : undefined)) }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] inbox failed"); res.status(500).json({ success: false, message: "Could not load the inbox" }); }
+});
+heRouter.get("/inbox/:leadId/messages", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try {
+    const t = await getInboxThread(String(req.params.leadId), await inboxScope(req as AuthenticatedRequest), (req as AuthenticatedRequest).authUser?.id ?? null);
+    if (!t) return res.status(404).json({ success: false, message: "Conversation not found or outside your branch" });
+    res.json({ success: true, ...t });
+  } catch (err) { logger.error({ err: (err as Error).message }, "[he] inbox thread failed"); res.status(500).json({ success: false, message: "Could not load the conversation" }); }
+});
+heRouter.post("/inbox/:leadId/reply", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  try {
+    const r = await replyToCandidate(String(req.params.leadId), String((req.body ?? {}).message ?? ""), await inboxScope(req as AuthenticatedRequest), (req as AuthenticatedRequest).authUser?.id ?? null);
+    res.status(r.ok ? 200 : r.status).json(r.ok ? { success: true, messageId: r.messageId } : { success: false, message: r.message });
+  } catch (err) { logger.error({ err: (err as Error).message }, "[he] inbox reply failed"); res.status(500).json({ success: false, message: "Could not send the reply" }); }
 });
 
 heRouter.get("/requisitions/:id/jd", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
