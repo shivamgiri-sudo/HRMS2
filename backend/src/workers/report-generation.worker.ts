@@ -581,6 +581,16 @@ async function runGenerationWorker(): Promise<void> {
   if (tickRunning) return;
   tickRunning = true;
   try {
+    // Cheap check first: with a 3s poll, taking the advisory lock (and logging it) on every empty
+    // tick would be pure noise and load. Only queued work or a stale PROCESSING row needs the lock.
+    const [pending] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 AS n FROM report_request
+       WHERE status = 'QUEUED'
+          OR (status = 'PROCESSING' AND processing_started_at < DATE_SUB(NOW(), INTERVAL ? MINUTE))
+       LIMIT 1`,
+      [STALE_PROCESSING_MINUTES]
+    );
+    if (!pending.length) return;
     await withWorkerLock(WORKER_NAME, async () => {
       await recoverStaleLocks();
       // Drain the queue (bounded) rather than one request per poll, so a burst finishes in one pass.

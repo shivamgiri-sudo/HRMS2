@@ -432,6 +432,13 @@ async function runDeliveryWorker(): Promise<void> {
   if (tickRunning) return;
   tickRunning = true;
   try {
+    // Cheap check first so an empty 3s tick takes no lock and writes no log line.
+    const [pending] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 AS n FROM report_email_delivery
+       WHERE status = 'QUEUED' AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+       LIMIT 1`
+    );
+    if (!pending.length) return;
     await withWorkerLock(WORKER_NAME, async () => {
       // Drain the queue (bounded) instead of one email per poll.
       for (let i = 0; i < MAX_DELIVERIES_PER_TICK; i++) {
