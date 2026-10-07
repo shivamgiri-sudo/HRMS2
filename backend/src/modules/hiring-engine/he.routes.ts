@@ -31,11 +31,12 @@ import { listOpenClashes, resolveClash } from "./he-identity.service.js";
 import { refreshExEmployees } from "./he-ex-employee.service.js";
 import { getMasterSummary, getRecruiterProductivity, listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
+import { getMetaFunnel } from "./he-meta-funnel.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendStageSamples } from "./he-samples.service.js";
 import { emailConfigured } from "./he-email.service.js";
 import { previewWhatsAppSamples, startWhatsAppSample, whatsAppSampleStatus } from "./he-whatsapp-sample.service.js";
-import { engineAutoOn, engineMode, getCoolingOffDays, getDailyPlan, getPlanRequisitions, lastEngineTick, setCoolingOffDays, setDailyPlan, setEngineAuto, setPlanRequisitions, setWhatsappRequiresOptIn, whatsappRequiresOptIn } from "./he-policy.service.js";
+import { engineAutoOn, engineMode, getCoolingOffDays, getDailyPlan, getPlanMetaOnly, getPlanRequisitions, lastEngineTick, setCoolingOffDays, setDailyPlan, setEngineAuto, setPlanMetaOnly, setPlanRequisitions, setWhatsappRequiresOptIn, whatsappRequiresOptIn } from "./he-policy.service.js";
 import { nextWorkingDay, planNextDay } from "./he-plan.service.js";
 import { dailyPlanNumbers } from "./he-slots.js";
 import { getInboxThread, listInbox, replyToCandidate } from "./he-inbox.service.js";
@@ -642,21 +643,22 @@ heRouter.put("/policy", requireAuth, requireRole(...ADMIN_ROLES), async (req, re
 heRouter.get("/plan", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try {
     const plan = await getDailyPlan();
-    res.json({ success: true, plan, numbers: dailyPlanNumbers(plan), requisitionIds: await getPlanRequisitions(), nextDay: nextWorkingDay() });
+    res.json({ success: true, plan, numbers: dailyPlanNumbers(plan), requisitionIds: await getPlanRequisitions(), metaOnly: await getPlanMetaOnly(), nextDay: nextWorkingDay() });
   } catch { res.status(500).json({ success: false }); }
 });
 heRouter.put("/plan", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
   try {
-    const b = (req.body ?? {}) as { plan?: Record<string, unknown>; requisitionIds?: unknown };
+    const b = (req.body ?? {}) as { plan?: Record<string, unknown>; requisitionIds?: unknown; metaOnly?: unknown };
     if (b.plan) await setDailyPlan({
       walkInsPerDay: b.plan.walkInsPerDay === undefined ? undefined : Number(b.plan.walkInsPerDay), minOutreachPerDay: b.plan.minOutreachPerDay === undefined ? undefined : Number(b.plan.minOutreachPerDay),
       showRatePct: b.plan.showRatePct === undefined ? undefined : Number(b.plan.showRatePct), slotStart: b.plan.slotStart === undefined ? undefined : String(b.plan.slotStart),
       slotEnd: b.plan.slotEnd === undefined ? undefined : String(b.plan.slotEnd), slotMinutes: b.plan.slotMinutes === undefined ? undefined : Number(b.plan.slotMinutes),
     } as never);
     if (Array.isArray(b.requisitionIds)) await setPlanRequisitions(b.requisitionIds as string[]);
+    if (b.metaOnly !== undefined) await setPlanMetaOnly(b.metaOnly === true);
     logger.info({ by: (req as AuthenticatedRequest).authUser?.id }, "[he] daily plan changed");
     const plan = await getDailyPlan();
-    res.json({ success: true, plan, numbers: dailyPlanNumbers(plan), requisitionIds: await getPlanRequisitions(), nextDay: nextWorkingDay() });
+    res.json({ success: true, plan, numbers: dailyPlanNumbers(plan), requisitionIds: await getPlanRequisitions(), metaOnly: await getPlanMetaOnly(), nextDay: nextWorkingDay() });
   } catch (err) {
     const e = err as Error & { statusCode?: number };
     res.status(e.statusCode ?? 500).json({ success: false, message: e.statusCode ? e.message : "Could not save the plan" });
@@ -760,4 +762,10 @@ heRouter.get("/drives/:id/superbot-sheet", requireAuth, requireRole(...WRITE_ROL
     logger.info({ drive: req.params.id, rows: r.rows, by: (req as AuthenticatedRequest).authUser?.id }, "[he] superbot call sheet downloaded");
     res.send(r.csv);
   } catch (err) { logger.error({ err: (err as Error).message }, "[he] superbot sheet failed"); res.status(500).json({ message: "Could not build the call sheet" }); }
+});
+
+/** The Meta campaign walk-in funnel (per campaign and total): form fill to outreach to walk-in to hire. */
+heRouter.get("/meta-funnel", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await getMetaFunnel() }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] meta funnel failed"); res.status(500).json({ success: false, message: "Could not load the Meta funnel" }); }
 });

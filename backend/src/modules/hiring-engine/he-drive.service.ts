@@ -19,8 +19,12 @@ import { industriesForProcess, rankRequisitions, scoreLead, type MatchRequisitio
 import { driveCapacity, inviteTarget, invitesForTarget, nextFreeSlot, nowIst, type SlotConfig } from "./he-slots.js";
 import { addEvent } from "./he-lead.service.js";
 
+/** Who a drive is lined up from. pool = everyone eligible; meta = anyone who filled a Meta form; campaign = those Meta campaigns' qualified leads; batch = those upload batches. */
+export interface DriveAudience { kind: "pool" | "meta" | "campaign" | "batch"; ids?: string[]; maxLeadAgeDays?: number | null; label?: string | null; reinvite?: boolean }
+
 export interface DriveInput {
   requisitionId: string;
+  audience?: DriveAudience;
   driveDate: string; // YYYY-MM-DD
   slotStart?: string;
   slotEnd?: string;
@@ -131,14 +135,21 @@ export async function createDrive(i: DriveInput): Promise<{ id: string; invites:
   const cap = driveCapacity(cfg);
   const { targetShows, invites } = i.targetShows && i.targetShows > 0 ? invitesForTarget({ targetShows: i.targetShows, showRatePct: i.showRatePct ?? 40, capacity: cap }) : inviteTarget({ openPositions: open, showRatePct: i.showRatePct ?? 40, capacity: cap });
   const [r] = await db.execute<ResultSetHeader>(
-    `INSERT INTO he_drive (requisition_id, branch_name, drive_date, slot_start, slot_end, slot_minutes, slot_capacity, target_shows, show_rate_pct, status, auto_send, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?, 'draft', ?, ?)
-     ON DUPLICATE KEY UPDATE slot_start = VALUES(slot_start), slot_end = VALUES(slot_end), slot_minutes = VALUES(slot_minutes),
+    `INSERT INTO he_drive (requisition_id, branch_name, drive_date, slot_start, slot_end, slot_minutes, slot_capacity, target_shows, show_rate_pct, status, auto_send, created_by,
+                           source_kind, source_ids, max_lead_age_days, run_label, reinvite)
+     VALUES (?,?,?,?,?,?,?,?,?, 'draft', ?, ?, ?,?,?,?,?)
+     ON DUPLICATE KEY UPDATE
+       -- the audience is only rewritten when the drive was closed (a re-run); a live drive keeps the audience it was made for
+       source_kind = IF(status = 'closed', VALUES(source_kind), source_kind), source_ids = IF(status = 'closed', VALUES(source_ids), source_ids),
+       max_lead_age_days = IF(status = 'closed', VALUES(max_lead_age_days), max_lead_age_days), run_label = IF(status = 'closed', VALUES(run_label), run_label),
+       reinvite = IF(status = 'closed', VALUES(reinvite), reinvite),
+       slot_start = VALUES(slot_start), slot_end = VALUES(slot_end), slot_minutes = VALUES(slot_minutes),
        slot_capacity = VALUES(slot_capacity), target_shows = VALUES(target_shows), show_rate_pct = VALUES(show_rate_pct),
        -- creating a drive for a requisition + date whose drive was closed means "run it again": reopen it as a draft instead of
        -- updating a closed drive that can never be started (the other statuses are left alone)
        status = IF(status = 'closed', 'draft', status)`,
-    [i.requisitionId, req.branch_name, i.driveDate, `${cfg.start}:00`.slice(0, 8), `${cfg.end}:00`.slice(0, 8), cfg.minutes, cfg.capacity, targetShows, i.showRatePct ?? 40, i.autoSend ? 1 : 0, i.createdBy ?? null]);
+    [i.requisitionId, req.branch_name, i.driveDate, `${cfg.start}:00`.slice(0, 8), `${cfg.end}:00`.slice(0, 8), cfg.minutes, cfg.capacity, targetShows, i.showRatePct ?? 40, i.autoSend ? 1 : 0, i.createdBy ?? null,
+      i.audience?.kind ?? "pool", i.audience?.ids?.length ? JSON.stringify(i.audience.ids) : null, i.audience?.maxLeadAgeDays ?? null, i.audience?.label?.slice(0, 120) ?? null, i.audience?.reinvite ? 1 : 0]);
   const [row] = await db.execute<RowDataPacket[]>("SELECT id FROM he_drive WHERE requisition_id = ? AND branch_name = ? AND drive_date = ?", [i.requisitionId, req.branch_name, i.driveDate]);
   void r;
   return { id: row[0].id as string, invites, targetShows, capacity: cap };
@@ -151,6 +162,7 @@ export async function setDriveStatus(id: string, status: "draft" | "active" | "p
 interface DriveRow extends RowDataPacket {
   id: string; requisition_id: string; branch_name: string; drive_date: string; slot_start: string; slot_end: string;
   slot_minutes: number; slot_capacity: number; target_shows: number; show_rate_pct: number; status: string; auto_send: number;
+  source_kind: string; source_ids: unknown; max_lead_age_days: number | null; run_label: string | null; reinvite: number;
 }
 const slotCfg = (d: DriveRow): SlotConfig => ({ date: String(d.drive_date).slice(0, 10), start: String(d.slot_start).slice(0, 5), end: String(d.slot_end).slice(0, 5), minutes: d.slot_minutes, capacity: d.slot_capacity });
 
@@ -161,12 +173,30 @@ const slotCfg = (d: DriveRow): SlotConfig => ({ date: String(d.drive_date).slice
  */
 export interface SuggestResult { suggested: number; blockedByReason: Record<string, number>; considered: number; location?: string[] | null }
 
-export async function suggestMatches(driveId: string, limit?: number): Promise<number> {
-  return (await suggestMatchesDetailed(driveId, limit)).suggested;
+function audienceSql(d: DriveRow, opts: { metaOnly?: boolean }): { sql: string; args: unknown[] } {
+  let ids: string[] = [];
+  try { const raw = d.source_ids; ids = Array.isArray(raw) ? raw.map(String) : raw ? JSON.parse(String(raw)) : []; } catch { ids = []; }
+  const age = d.max_lead_age_days && d.max_lead_age_days > 0 ? Math.floor(d.max_lead_age_days) : 0;
+  const kind = d.source_kind === "pool" && opts.metaOnly ? "meta" : d.source_kind;
+  const ph = (n: number) => Array.from({ length: n }, () => "?").join(",");
+  // Only QUALIFIED Meta form fills count (a rejected or pending lead is never lined up), newest fill first decides the age window.
+  const fill = (extra: string, args: unknown[]) => ({
+    sql: `AND EXISTS (SELECT 1 FROM he_lead_campaign lc JOIN meta_lead_raw q ON q.id = lc.meta_lead_id AND q.screening_result = 'qualified'
+                       WHERE lc.lead_id = l.id ${extra} ${age ? "AND lc.form_filled_at >= DATE_SUB(NOW(), INTERVAL ? DAY)" : ""})`,
+    args: [...args, ...(age ? [age] : [])],
+  });
+  if (kind === "campaign" && ids.length) return fill(`AND lc.campaign_id IN (${ph(ids.length)})`, ids);
+  if (kind === "batch" && ids.length) return { sql: `AND EXISTS (SELECT 1 FROM he_lead_batch lb WHERE lb.lead_id = l.id AND lb.batch_id IN (${ph(ids.length)}))`, args: ids };
+  if (kind === "meta") return fill("", []);
+  return { sql: "", args: [] };
+}
+
+export async function suggestMatches(driveId: string, limit?: number, opts: { metaOnly?: boolean } = {}): Promise<number> {
+  return (await suggestMatchesDetailed(driveId, limit, opts)).suggested;
 }
 
 /** Same as suggestMatches but also reports why people were not shortlisted (joined, employee, rejected in this process...). */
-export async function suggestMatchesDetailed(driveId: string, limit?: number): Promise<SuggestResult> {
+export async function suggestMatchesDetailed(driveId: string, limit?: number, opts: { metaOnly?: boolean } = {}): Promise<SuggestResult> {
   const [dr] = await db.execute<DriveRow[]>("SELECT * FROM he_drive WHERE id = ? LIMIT 1", [driveId]);
   const drive = dr[0];
   if (!drive) throw new Error("Drive not found");
@@ -201,6 +231,9 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
   // Walk-ins only work if people can reach the branch: shortlist only those whose records place them in the branch's
   // city/region (lead locality, ATS branch/address, Meta form location or campaign branch, recruiter-call branch), or
   // who applied to this very requisition. Unknown location = left out of a city drive.
+  // The drive's own audience (a campaign re-run, an upload batch, Meta-only) is applied on EVERY call, including the scheduler's
+  // re-line-up, so a launch can never widen back to the whole pool. `opts.metaOnly` (daily plan flag) still works for pool drives.
+  const aud = audienceSql(drive, opts);
   const locRe = locationRegex(branchLocationTokens(req.branch_name, req.bcity ?? null));
   const selectCandidates = async () => (await db.execute<RowDataPacket[]>(
     `SELECT l.id, l.mobile10, l.ats_candidate_id, l.status, l.primary_source, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome,
@@ -212,6 +245,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
        LEFT JOIN job_requisition jrm ON jrm.id = mr.requisition_id
       WHERE l.status IN ('new','contacted','interested','declined','no_show')
         AND l.is_employee = 0 AND l.final_status <> 'joined'
+        ${aud.sql}
         -- Already booked: an invite on a LIVE drive, or a confirmation anywhere. An invite that sits on a closed drive (the drive was
         -- replaced or abandoned) no longer holds anyone, so that person can be lined up again; a confirmed person keeps their date.
         AND NOT EXISTS (SELECT 1 FROM he_match m LEFT JOIN he_drive dd ON dd.id = m.drive_id
@@ -224,7 +258,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
                           AND LOWER(CONCAT_WS(' ', a.branch_name, a.location_name, a.candidate_location)) REGEXP ?))` : ""}
         ${pre.map((c) => `AND ${c}`).join("\n        ")}
       ORDER BY (mr.requisition_id <=> ?) DESC, has_consent DESC, eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000`,
-    [...(locRe ? [req.id, locRe, locRe] : []), ...preArgs, req.id]))[0];
+    [...aud.args, ...(locRe ? [req.id, locRe, locRe] : []), ...preArgs, req.id]))[0];
   let leads = await selectCandidates();
   // The rollup columns decide who is an employee / already joined. Refresh any prefix whose rollup is missing or a day old
   // before trusting it, so a never-refreshed lead cannot slip through the gate.
@@ -260,8 +294,9 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
        ON DUPLICATE KEY UPDATE
          -- moved to a new drive (the old one was closed, or its slot is past): back to 'suggested' with no slot, so it is invited
          -- afresh for the new date. Order matters: slot_at and state read the OLD drive_id before it is overwritten.
-         slot_at = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released'), slot_at, NULL),
-         state = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released'), state, 'suggested'),
+         -- a no-show of an earlier drive is invited afresh for a NEW drive (same-drive rows keep their state)
+         slot_at = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released','no_show'), slot_at, NULL),
+         state = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released','no_show'), state, 'suggested'),
          drive_id = VALUES(drive_id), score = VALUES(score), reasons_json = VALUES(reasons_json), distance_km = VALUES(distance_km)`,
       [s.id, drive.requisition_id, driveId, s.res.score, JSON.stringify({ reasons: s.res.reasons, unknown: s.res.unknown, confidence: s.res.confidence, priority: s.priority }), s.res.distanceKm, randomBytes(16).toString("hex")]);
   }

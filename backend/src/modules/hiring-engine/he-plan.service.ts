@@ -6,7 +6,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { createDrive, setDriveStatus, suggestMatches } from "./he-drive.service.js";
-import { getDailyPlan, getPlanRequisitions } from "./he-policy.service.js";
+import { getDailyPlan, getPlanMetaOnly, getPlanRequisitions } from "./he-policy.service.js";
 import { dailyPlanNumbers } from "./he-slots.js";
 
 export interface PlannedDay { requisitionId: string; code: string; role: string; branch: string; date: string; status: "created" | "exists" | "skipped"; reason?: string; invitesWanted: number; lined: number; driveId?: string }
@@ -23,6 +23,7 @@ export async function planNextDay(o: { date?: string; dryRun?: boolean } = {}): 
   const n = dailyPlanNumbers(plan);
   const date = o.date && /^\d{4}-\d{2}-\d{2}$/.test(o.date) ? o.date : nextWorkingDay();
   const ids = await getPlanRequisitions();
+  const metaOnly = await getPlanMetaOnly();
   const days: PlannedDay[] = [];
   for (const id of ids) {
     const [rq] = await db.execute<RowDataPacket[]>(
@@ -37,7 +38,7 @@ export async function planNextDay(o: { date?: string; dryRun?: boolean } = {}): 
     try {
       const d = await createDrive({ requisitionId: id, driveDate: date, slotStart: plan.slotStart, slotEnd: plan.slotEnd, slotMinutes: plan.slotMinutes, slotCapacity: n.perSlot, showRatePct: plan.showRatePct, targetShows: n.targetShows, autoSend: true });
       await setDriveStatus(d.id, "active");
-      const lined = await suggestMatches(d.id);
+      const lined = await suggestMatches(d.id, undefined, { metaOnly });
       days.push({ ...base, status: "created", driveId: d.id, lined });
     } catch (e) { days.push({ ...base, status: "skipped", reason: (e instanceof Error ? e.message : String(e)).slice(0, 160) }); }
   }

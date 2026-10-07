@@ -12,6 +12,7 @@ import CandidateImport from "./CandidateImport";
 import PolicyCard from "./PolicyCard";
 import IntegrationsCard from "./IntegrationsCard";
 import DailyPlanCard from "./DailyPlanCard";
+import MetaFunnelCard from "./MetaFunnelCard";
 import RecruiterBoard from "./RecruiterBoard";
 
 interface Summary {
@@ -141,6 +142,7 @@ export default function MasterTab() {
 
       <RecruiterBoard />
 
+      <MetaFunnelCard />
       <DailyPlanCard />
       <PolicyCard />
       <IntegrationsCard />

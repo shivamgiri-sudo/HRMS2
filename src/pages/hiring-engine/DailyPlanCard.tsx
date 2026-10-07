@@ -8,7 +8,7 @@ import { CalendarClock } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 interface Plan { walkInsPerDay: number; minOutreachPerDay: number; showRatePct: number; slotStart: string; slotEnd: string; slotMinutes: number }
-interface PlanResp { plan: Plan; numbers: { invites: number; targetShows: number; slots: number; perSlot: number; capacity: number }; requisitionIds: string[]; nextDay: string }
+interface PlanResp { plan: Plan; numbers: { invites: number; targetShows: number; slots: number; perSlot: number; capacity: number }; requisitionIds: string[]; nextDay: string; metaOnly?: boolean }
 interface Req { id: string; requisition_code: string; designation_name: string; branch_name: string; open_positions: number }
 interface Day { code: string; role: string; branch: string; date: string; status: "created" | "exists" | "skipped"; reason?: string; invitesWanted: number; lined: number }
 
@@ -19,6 +19,7 @@ export default function DailyPlanCard() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [saved, setSaved] = useState<string>("");
   const [ids, setIds] = useState<string[]>([]);
+  const [metaOnly, setMetaOnly] = useState(false);
   const [reqs, setReqs] = useState<Req[]>([]);
   const [nextDay, setNextDay] = useState("");
   const [busy, setBusy] = useState<"save" | "run" | null>(null);
@@ -28,7 +29,7 @@ export default function DailyPlanCard() {
   const load = useCallback(async () => {
     try {
       const [p, r] = await Promise.all([hrmsApi.get<PlanResp>("/api/he/plan"), hrmsApi.get<{ data: Req[] }>("/api/he/requisitions/open")]);
-      setPlan(p.plan); setSaved(JSON.stringify({ p: p.plan, i: [...p.requisitionIds].sort() })); setIds(p.requisitionIds); setNextDay(p.nextDay); setReqs(r.data ?? []);
+      setPlan(p.plan); setSaved(JSON.stringify({ p: p.plan, i: [...p.requisitionIds].sort(), m: p.metaOnly === true })); setMetaOnly(p.metaOnly === true); setIds(p.requisitionIds); setNextDay(p.nextDay); setReqs(r.data ?? []);
     } catch { setMsg({ ok: false, text: "Could not load the daily plan" }); }
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -42,12 +43,12 @@ export default function DailyPlanCard() {
     const perSlot = slots ? Math.min(50, Math.ceil(invites / slots)) : 0;
     return { invites, slots, perSlot, covered: slots * perSlot >= invites };
   }, [plan]);
-  const dirty = plan != null && saved !== JSON.stringify({ p: plan, i: [...ids].sort() });
+  const dirty = plan != null && saved !== JSON.stringify({ p: plan, i: [...ids].sort(), m: metaOnly });
   const set = (k: keyof Plan, v: string | number) => setPlan((p) => (p ? { ...p, [k]: v } : p));
 
   const save = async () => {
     if (!plan) return; setBusy("save"); setMsg(null);
-    try { const r = await hrmsApi.put<PlanResp>("/api/he/plan", { plan, requisitionIds: ids }); setPlan(r.plan); setIds(r.requisitionIds); setSaved(JSON.stringify({ p: r.plan, i: [...r.requisitionIds].sort() })); setMsg({ ok: true, text: "Saved. The engine works to these numbers from now on." }); }
+    try { const r = await hrmsApi.put<PlanResp>("/api/he/plan", { plan, requisitionIds: ids, metaOnly }); setPlan(r.plan); setIds(r.requisitionIds); setMetaOnly(r.metaOnly === true); setSaved(JSON.stringify({ p: r.plan, i: [...r.requisitionIds].sort(), m: r.metaOnly === true })); setMsg({ ok: true, text: "Saved. The engine works to these numbers from now on." }); }
     catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Only an admin can change the plan" }); }
     finally { setBusy(null); }
   };
@@ -72,6 +73,10 @@ export default function DailyPlanCard() {
             <label className="text-xs text-slate-600">Last slot ends<input aria-label="Last slot ends" type="time" className={`${input} mt-1`} value={plan.slotEnd} onChange={(e) => set("slotEnd", e.target.value)} /></label>
             <label className="text-xs text-slate-600">Slot length<select aria-label="Slot length" className={`${input} mt-1`} value={plan.slotMinutes} onChange={(e) => set("slotMinutes", Number(e.target.value))}>{[15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}</select></label>
           </div>
+          <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm text-slate-800">
+            <input type="checkbox" checked={metaOnly} onChange={(e) => setMetaOnly(e.target.checked)} className="mt-1" />
+            <span><b>Meta campaign leads only.</b> <span className="text-xs text-slate-600">Line up only people who filled a Meta lead form, instead of the whole pool. Their separate funnel is above.</span></span>
+          </label>
           {calc && <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900" role="status">Each day: message <b>{calc.invites}</b> qualified people (email, then WhatsApp) to get about <b>{plan.walkInsPerDay}</b> walk-ins, spread over <b>{calc.slots}</b> slots with <b>{calc.perSlot}</b> invitees per slot{calc.covered ? "" : ", which is not enough seats: widen the hours or shorten the slots"}.</p>}
           <fieldset className="mt-4">
             <legend className="text-xs font-semibold text-slate-700">Requisitions on the plan{nextDay ? ` (next drive: ${nextDay})` : ""}</legend>

@@ -103,3 +103,14 @@ export function engineMode(env: NodeJS.ProcessEnv, autoOn: boolean): "off" | "dr
   if (env.HE_ENGINE_ENABLED === "true") return env.HE_ENGINE_LIVE === "true" ? "live" : autoOn ? "live" : "dry";
   return autoOn ? "live" : "off";
 }
+
+/** Run the daily plan on Meta campaign leads only (people who filled a Meta lead form). Default off = the whole pool. */
+const META_ONLY_KEY = "policy.plan_meta_only";
+export async function getPlanMetaOnly(): Promise<boolean> {
+  const [r] = await db.execute<RowDataPacket[]>("SELECT value FROM he_model_param WHERE param_key = ? LIMIT 1", [META_ONLY_KEY]);
+  return Number(r[0]?.value) === 1;
+}
+export async function setPlanMetaOnly(on: boolean): Promise<boolean> {
+  await db.execute("INSERT INTO he_model_param (param_key, value, sample) VALUES (?,?,0) ON DUPLICATE KEY UPDATE value = VALUES(value)", [META_ONLY_KEY, on ? 1 : 0]);
+  return on;
+}
