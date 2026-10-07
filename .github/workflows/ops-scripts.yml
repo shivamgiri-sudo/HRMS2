@@ -51,6 +51,7 @@ on:
           - bank-account-encrypt-backfill
           - resend-address-bgv-links
           - roster-requests-verify
+          - payment-voucher-salary-verify
           - sbi-card-verify
           - sbi-card-demo-seed
           - sbi-card-demo-remove
@@ -275,6 +276,11 @@ jobs:
               # a column whose ciphertext does not match its plaintext must not have its
               # plaintext retired.
               npx tsx scripts/privacy-encryption-verify.ts
+              ;;
+            payment-voucher-salary-verify)
+              # Read-only by default; apply only adds 'salary' to payment_voucher.source_type if missing (idempotent ALTER).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/payment-voucher-salary-verify.mjs $FLAG
               ;;
             roster-requests-verify)
               # Read-only: SELECTs only, in a READ ONLY session. Checks the Roster Requests hub
