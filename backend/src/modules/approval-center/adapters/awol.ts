@@ -2,6 +2,7 @@ import type { ApprovalAdapter, ApprovalItem, LoopbackCtx } from "../types.js";
 import { LoopbackError } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { assertWorkItemAccess } from "../../work-inbox/work-inbox.service.js";
+import { keepWorkItemsForCaller } from "./_scope.js";
 
 const MAX_CONTEXT_CALLS = 15;
 
@@ -16,8 +17,15 @@ export const awolAdapter: ApprovalAdapter = {
   category: "Exit",
   async list(ctx) {
     const res = await ctx.call("GET", "/api/work-inbox/my");
-    const rows: any[] = (res?.data ?? []).filter(
-      (r: any) => r.source_table === "work_item" && r.item_type === "AWOL_SUSPECTED" && !["completed", "cancelled"].includes(str(r.status)),
+    // The case is assigned BY USER ID to the reporting manager. assertWorkItemAccess also lets any privileged role (admin, branch_head, ...)
+    // act, which would put every AWOL case in front of them; the popup shows it only to the assignee (or, for an unassigned
+    // role-queue case, to a role holder inside the case's branch).
+    const rows: any[] = await keepWorkItemsForCaller(
+      ctx.userId,
+      (res?.data ?? []).filter(
+        (r: any) => r.source_table === "work_item" && r.item_type === "AWOL_SUSPECTED" && !["completed", "cancelled"].includes(str(r.status)),
+      ),
+      (r: any) => r.id,
     );
     const actionable: any[] = [];
     for (const r of rows.slice(0, 100)) {

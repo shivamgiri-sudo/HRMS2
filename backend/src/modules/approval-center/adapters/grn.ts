@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { ageDays, callerBranchScope, callerRoles, hasRole, inBranchScope, rowsOf } from "./finance-shared.js";
+import { branchAllowed, callerScope } from "./scope-guard.js";
 
 /** GRN chain (owner ruling 2026-09-12): Branch Head -> Accounts Head -> Finance Head. Mirrors resolveFinanceStageRole("grn"). */
 const STAGES: Record<string, { role: string; label: string; step: number }> = {
@@ -31,6 +32,7 @@ export const grnAdapter: ApprovalAdapter = {
     if (!statuses.length) return [];
     const scope = await callerBranchScope(ctx, roles);
     if (!scope) return [];
+    const me = await callerScope(ctx);
 
     const out: ApprovalItem[] = [];
     for (const status of statuses) {
@@ -39,6 +41,10 @@ export const grnAdapter: ApprovalAdapter = {
         if (str(r.status) !== status) continue;
         // Reads include Head Office bills shared onto a branch; the review route only admits the record's own branch.
         if (!inBranchScope(scope, r.branch_id)) continue;
+        // Owner branch policy: the finance scope resolver treats `admin` as all-branch and unions assignment-granted branches, so a
+        // Branch Head who also holds such a role would see other branches' bills. A branch-bound stage needs the caller's OWN branch
+        // (Accounts Head / Finance Head / other org-wide roles: every branch).
+        if (!branchAllowed(me, r.branch_id)) continue;
         if (makerCheckerBlocked(r, status, ctx.userId)) continue;
         const st = STAGES[status];
         const age = ageDays(r.pending_since ?? r.submitted_at ?? r.created_at);

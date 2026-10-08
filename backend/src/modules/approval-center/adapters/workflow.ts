@@ -1,5 +1,6 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
+import { branchAllowed, callerScope, io } from "./scope-guard.js";
 
 /** Workflow codes owned by a dedicated adapter elsewhere in the Approval Center (avoid duplicate cards). */
 export const WORKFLOW_EXCLUDED_CODES = new Set(["JOB_REQUISITION_APPROVAL"]);
@@ -7,10 +8,17 @@ export const WORKFLOW_EXCLUDED_ENTITY_TYPES = new Set(["job_requisition"]);
 
 const AGING_HOURS_FALLBACK = 48;
 
+/** Steps owned by the requester's line manager rather than by a role holder anywhere in the branch. */
+export const MANAGER_STAGE_ROLES = new Set(["manager", "team_leader", "tl", "process_manager", "reporting_manager"]);
+
 /**
  * Generic multi-step workflow engine (approval_request). The module's own pending endpoint already
- * filters by the caller's approver role, current step and branch scope; we only drop the caller's own
- * requests and workflows another adapter owns.
+ * filters by the caller's approver role, current step and requester scope; we drop the caller's own
+ * requests and workflows another adapter owns, and then apply the responsible-person rules the endpoint does not:
+ *  - a MANAGER-type step (manager / team_leader / process_manager ...) is shown only to the requester's effective approver
+ *    (reporting manager, or the skip-level while the manager is on approved leave), not to every holder of that role;
+ *  - every other step is shown only when the requester's branch is the caller's OWN branch (org-wide roles: all).
+ *    A requester with no employee record has no branch, so only org-wide callers see theirs.
  */
 export const workflowAdapter: ApprovalAdapter = {
   kind: "workflow",
@@ -19,12 +27,23 @@ export const workflowAdapter: ApprovalAdapter = {
   async list(ctx) {
     const res = await ctx.call("GET", "/api/workflow/requests/pending");
     const rows: any[] = (Array.isArray(res) ? res : res?.data ?? []).slice(0, 200);
+    const me = await callerScope(ctx);
+    const requesters = await io.userEmployees(rows.map((r) => r.requested_by));
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       if (str(r.status) && str(r.status) !== "pending") continue;
       if (WORKFLOW_EXCLUDED_CODES.has(str(r.workflow_code))) continue;
       if (WORKFLOW_EXCLUDED_ENTITY_TYPES.has(str(r.entity_type))) continue;
       if (str(r.requested_by) && str(r.requested_by) === ctx.userId) continue; // never approve own request
+      const requester = requesters.get(str(r.requested_by));
+      if (MANAGER_STAGE_ROLES.has(str(r.approver_role).toLowerCase())) {
+        if (!me.roles.includes("super_admin")) {
+          if (!requester || !me.employeeId) continue;
+          const approver = await io.effectiveApproverEmployeeId(requester.employeeId);
+          // No resolvable manager: the module falls back to the privileged/branch role, so fall back to the branch rule.
+          if (approver ? approver !== me.employeeId : !branchAllowed(me, requester.branchId)) continue;
+        }
+      } else if (!branchAllowed(me, requester?.branchId)) continue;
       const summary = str(r.summary) || str(r.summary_text);
       const created = iso(r.created_at);
       const sla = Number(r.sla_hours) > 0 ? Number(r.sla_hours) : AGING_HOURS_FALLBACK;

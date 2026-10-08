@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { ageDays, callerRoles, hasRole, rowsOf } from "./finance-shared.js";
+import { branchAllowed, callerScope } from "./scope-guard.js";
 
 const STAGE_LABEL: Record<string, { label: string; step: number }> = {
   submitted: { label: "Branch Head", step: 1 },
@@ -31,6 +32,8 @@ function headTotals(lines: any[]): string {
  * Branch budget, 2 stages (Branch Head -> Finance Head). The module's own inbox endpoint already
  * filters by the caller's role/stage/branch; per-budget detail adds every component and the
  * submitter id so maker-checker (non-exempt reviewers) can be honoured before the buttons show.
+ * Stage ownership is checked per row (Branch Head stage needs the branch_head role AND the budget's branch to be the caller's own;
+ * the Finance Head stage needs finance_head), because the inbox is derived from the caller's PRIMARY role only.
  */
 export const branchBudgetAdapter: ApprovalAdapter = {
   kind: "branch_budget",
@@ -42,6 +45,7 @@ export const branchBudgetAdapter: ApprovalAdapter = {
     if (!pending.length) return [];
     const roles = await callerRoles(ctx);
     const exempt = hasRole(roles, "finance_head", "super_admin");
+    const me = await callerScope(ctx);
 
     const details = await Promise.all(
       pending.map((r) =>
@@ -58,6 +62,8 @@ export const branchBudgetAdapter: ApprovalAdapter = {
       // The inbox also lists 'submitted' budgets to a pure finance_head, but POST /review resolves the
       // stage owner for 'submitted' as branch_head (resolveFinanceStageRole) and 403s everyone else.
       if (status === "submitted" && !hasRole(roles, "branch_head", "super_admin")) return;
+      if (status === "branch_head_approved" && !hasRole(roles, "finance_head", "super_admin")) return;
+      if (!branchAllowed(me, r.branch_id ?? d?.branch_id)) return;
       // Detail missing and reviewer not exempt from maker-checker: cannot prove they may approve.
       if (!d && !exempt) return;
       if (d && !exempt && str(d.submitted_by) === ctx.userId) return;

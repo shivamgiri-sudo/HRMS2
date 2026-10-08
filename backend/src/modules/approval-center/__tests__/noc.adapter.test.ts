@@ -4,6 +4,9 @@ import { fakeCtx } from "./_ctx.js";
 const hasAnyRole = vi.fn();
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole: (...a: unknown[]) => hasAnyRole(...a) }));
 import { nocAdapter as a } from "../adapters/noc.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const n = (o: any = {}) => ({ id: "n1", employee_name: "Kiran", employee_code: "E2", noc_type: "fnf", run_month: "2026-09", upload_status: "uploaded", uploaded_by_name: "Branch Payroll", uploaded_at: "2026-10-01T00:00:00Z", ...o });
 beforeEach(() => hasAnyRole.mockReset());

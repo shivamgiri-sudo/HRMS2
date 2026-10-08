@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { workflowAdapter } from "../adapters/workflow.js";
 import { fakeCtx } from "./_fakeCtx.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const row = (o: any = {}) => ({
   id: "r1", workflow_id: "w1", module_key: "it", entity_type: "asset", entity_id: "a1", current_step: 2, status: "pending",

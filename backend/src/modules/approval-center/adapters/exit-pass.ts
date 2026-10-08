@@ -1,18 +1,29 @@
 import type { ApprovalAdapter, ApprovalItem, LoopbackCtx } from "../types.js";
 import { badge, date, dateText, f, fields, iso, long, str } from "../format.js";
-import { UNRESTRICTED_ROLES, getActorRoles, resolveRequestingEmployee } from "../../assets/exit-pass.service.js";
+import { getActorRoles, resolveRequestingEmployee } from "../../assets/exit-pass.service.js";
+import { branchAllowed, callerScope, type CallerScope } from "./scope-guard.js";
 
 const MAX_DETAIL_CALLS = 15;
 
 type Stage = "branch_head" | "admin";
 
-async function who(ctx: LoopbackCtx): Promise<{ employeeId: string | null; override: boolean }> {
-  const [roles, me] = await Promise.all([
+/**
+ * The module's UNRESTRICTED_ROLES (super_admin, admin, it_head) override the assigned-head / branch check at both stages. Owner policy
+ * keeps super_admin and it_head (a department head: org-wide) as true overrides but makes `admin` branch-scoped, so an admin may
+ * decide only passes of their OWN branch. Everyone else decides as the assigned Branch Head, or as the branch_admin of the pass's branch.
+ */
+async function who(ctx: LoopbackCtx): Promise<{ employeeId: string | null; roles: string[]; scope: CallerScope }> {
+  const [roles, me, scope] = await Promise.all([
     getActorRoles(ctx.userId).catch(() => [] as string[]),
     resolveRequestingEmployee(ctx.userId).catch(() => null),
+    callerScope(ctx),
   ]);
-  return { employeeId: me?.employeeId ?? null, override: roles.some((r) => UNRESTRICTED_ROLES.includes(r)) };
+  return { employeeId: me?.employeeId ?? null, roles, scope };
 }
+
+const GLOBAL_OVERRIDE_ROLES = ["super_admin", "it_head"];
+const globalOverride = (w: { roles: string[] }) => w.roles.some((r) => GLOBAL_OVERRIDE_ROLES.includes(r));
+const adminOfBranch = (w: { roles: string[]; scope: CallerScope }, branchId: unknown) => w.roles.includes("admin") && branchAllowed(w.scope, branchId);
 
 async function itemsFor(ctx: LoopbackCtx, rows: any[]): Promise<Map<string, any[]>> {
   const map = new Map<string, any[]>();
@@ -98,10 +109,11 @@ export const exitPassAdapter: ApprovalAdapter = {
     if (!me.employeeId) return [];
     const bhRows: any[] = (bh?.data ?? [])
       .filter((r: any) => r.status === "pending_branch_head" && r.requestor_employee_id !== me.employeeId)
-      .filter((r: any) => me.override || r.branch_head_employee_id === me.employeeId)
+      .filter((r: any) => r.branch_head_employee_id === me.employeeId || globalOverride(me) || adminOfBranch(me, r.branch_id))
       .slice(0, 200);
     const adminRows: any[] = (admin?.data ?? [])
       .filter((r: any) => r.status === "pending_admin_approval" && r.requestor_employee_id !== me.employeeId)
+      .filter((r: any) => globalOverride(me) || adminOfBranch(me, r.branch_id) || (me.roles.includes("branch_admin") && branchAllowed(me.scope, r.branch_id)))
       .slice(0, 200);
     const items = await itemsFor(ctx, [...bhRows, ...adminRows]);
     return [

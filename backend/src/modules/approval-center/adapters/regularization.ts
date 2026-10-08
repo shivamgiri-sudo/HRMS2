@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { nextRegularizationStatus, regularizationReviewRole } from "../../wfm/wfm.regularization.secure.routes.js";
+import { callerScope, employeeBranchMaps } from "./_scope.js";
 
 const AGE_HIGH_MS = 3 * 24 * 3600 * 1000;
 const STAGES: Record<string, string> = {
@@ -8,6 +9,11 @@ const STAGES: Record<string, string> = {
   manager_approved: "Stage 2 — WFM",
   payroll_pending: "Stage 3 — Payroll (month already frozen)",
 };
+
+async function branchOfEmployee(r: any): Promise<string | null> {
+  const { byId } = await employeeBranchMaps([{ employeeId: r.employee_id }]);
+  return byId.get(String(r.employee_id)) ?? null;
+}
 
 /** Run `fn` over items with bounded concurrency. */
 async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
@@ -37,11 +43,16 @@ export const regularizationAdapter: ApprovalAdapter = {
       query: { status: "pending,manager_approved,payroll_pending", limit: 200 },
     });
     const rows: any[] = res?.data ?? [];
+    const scope = await callerScope(ctx.userId);
+    // decision_support.canApproveNow is a ROLE flag (any wfm / payroll holder), not a per-row answer, so it is NOT trusted here:
+    // the row's own review-role resolution (manager = effective approver, wfm = hasScopedAccess, payroll = role) is the only gate.
     const actionable = await mapLimit(rows, 8, async (r) => {
-      if (r.decision_support?.canApproveNow === true) return true;
       try {
         const role = await regularizationReviewRole(ctx.userId, String(r.id));
-        return !!role && nextRegularizationStatus(role, str(r.status), "approved") !== null;
+        if (!role || nextRegularizationStatus(role, str(r.status), "approved") === null) return false;
+        // Payroll stage (3rd) is role-only in the module; owner branch policy still applies to non-org-wide payroll staff.
+        if (role === "payroll") return scope.allows(await branchOfEmployee(r));
+        return true;
       } catch {
         return false;
       }

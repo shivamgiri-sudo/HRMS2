@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { date, f, fields, iso, long, str } from "../format.js";
 import { getEmployeeForUser } from "../../../shared/accessGuard.js";
+import { keepInBranch } from "./_scope.js";
 
 const AGE_HIGH_MS = 3 * 24 * 3600 * 1000;
 
@@ -14,7 +15,13 @@ export const rmChangeAdapter: ApprovalAdapter = {
   category: "People",
   async list(ctx) {
     const res = await ctx.call("GET", "/api/rm-change/pending");
-    const rows: any[] = ((res?.data ?? []) as any[]).filter((r) => !str(r.status) || str(r.status) === "pending").slice(0, 200);
+    // The module treats hr / admin as ORG-WIDE here (approverBranchIds returns null for hasRole("hr"), which is true for admin).
+    // Owner policy: admin / hr / branch_head are branch-scoped, so rows are clamped to the branch on the caller's own record.
+    const rows: any[] = await keepInBranch(
+      ctx.userId,
+      ((res?.data ?? []) as any[]).filter((r) => !str(r.status) || str(r.status) === "pending").slice(0, 200),
+      (r: any) => ({ branchId: r.branch_id, employeeId: r.employee_id }),
+    );
     if (rows.length === 0) return [];
     const me = await getEmployeeForUser(ctx.userId);
     const out: ApprovalItem[] = [];

@@ -7,6 +7,9 @@ vi.mock("../adapters/finance-shared.js", async () => {
   return { ...actual, callerRoles: async () => roles };
 });
 import { budgetTopupAdapter } from "../adapters/budget-topup.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const row = (o: any = {}) => ({ id: "t1", status: "submitted", requested_by: "u-other", requested_by_name: "Asha", requested_amount: 25000, requested_quantity: 1.5, head: "Rent", sub_head: "Office", item_name: "Floor", unit: "Seat", unit_rate: 5000, budget_number: "BB-1", branch_id: "br1", branch_name: "Noida", period_code: "2026-10", reason: "Need more seats", created_at: "2026-10-01T00:00:00Z", pending_with: "Branch Head", is_new_line: 0, ...o });
 

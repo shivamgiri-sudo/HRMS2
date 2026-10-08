@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
-import { hasRole } from "../../../shared/accessGuard.js";
+import { callerRoleKeys, roleMeets } from "./payroll-shared.js";
+import { callerScope, keepEmployeeRowsInBranch } from "./scope-guard.js";
 import { INCREMENT_ROLE_GATES } from "../../salary-increment/salaryIncrement.service.js";
 
 const STAGE: Record<string, string> = {
@@ -13,20 +14,21 @@ const STAGE: Record<string, string> = {
  * Salary increment: the page's own list (status=pending) filtered to rows the caller's role can move next.
  * Payroll Head / super admin: approve (which also applies it) at any pending stage.
  * HR / admin without that role: only the HR-validate step, only on 'submitted' rows.
- * The endpoint re-checks roles, so the gates here are just INCREMENT_ROLE_GATES reused.
+ * Roles are matched on the caller's REAL role keys (roleMeets) - accessGuard.hasRole treats `admin` as a wildcard, which
+ * would have shown every admin the Payroll Head approve stage. Rows are then kept only for the caller's own branch
+ * (org-wide roles: all) and never the caller's own increment (owner branch policy 2026-10-01).
  */
 export const salaryIncrementAdapter: ApprovalAdapter = {
   kind: "salary_increment",
   label: "Salary increment",
   category: "Payroll",
   async list(ctx) {
-    const [canApprove, canValidate] = await Promise.all([
-      hasRole(ctx.userId, ...INCREMENT_ROLE_GATES.approve),
-      hasRole(ctx.userId, ...INCREMENT_ROLE_GATES.hr_validate),
-    ]);
+    const roles = await callerRoleKeys(ctx.userId);
+    const canApprove = roleMeets(roles, ...INCREMENT_ROLE_GATES.approve);
+    const canValidate = roleMeets(roles, ...INCREMENT_ROLE_GATES.hr_validate);
     if (!canApprove && !canValidate) return [];
     const res = await ctx.call("GET", "/api/salary-increment/", { query: { status: "pending", page: 1, limit: 200 } });
-    const rows: any[] = res?.data ?? [];
+    const rows: any[] = await keepEmployeeRowsInBranch(await callerScope(ctx), res?.data ?? [], (r) => r.employee_id);
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       const status = str(r.status);

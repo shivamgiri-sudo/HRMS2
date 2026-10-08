@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { dpdpWithdrawalAdapter } from "../adapters/dpdp-withdrawal.js";
 import { fakeCtx } from "./_fakeCtx.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const w = (o: any = {}) => ({ id: "d1", requester_id: "u-x", requester_name: "Tara", requester_type: "employee", status: "submitted", withdrawal_reason: "Privacy", withdrawal_scope_json: '["marketing","analytics"]', request_channel: "portal", reference_number: "DPDP-1", sla_due_at: "2020-01-01T00:00:00Z", created_at: "2026-10-01T00:00:00Z", processing_hold_active: 0, escalation_required: 0, ...o });
 

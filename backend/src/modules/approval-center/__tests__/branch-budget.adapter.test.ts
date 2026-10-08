@@ -7,6 +7,9 @@ vi.mock("../adapters/finance-shared.js", async () => {
   return { ...actual, callerRoles: async () => roles };
 });
 import { branchBudgetAdapter } from "../adapters/branch-budget.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const inbox = (o: any = {}) => ({ id: "b1", budget_number: "BB-1", period_code: "2026-10", status: "submitted", gross_budget: 500000, pnl_budget: 450000, revision_number: 2, updated_at: "2026-10-01 10:00:00", branch_id: "br1", branch_name: "Noida", ...o });
 const detail = (o: any = {}) => ({ success: true, data: { id: "b1", status: "submitted", submitted_by: "u-maker", financial_year: "2026-27", base_budget_amount: 400000, tax_budget_amount: 100000, submitted_at: "2026-10-01T05:00:00Z",

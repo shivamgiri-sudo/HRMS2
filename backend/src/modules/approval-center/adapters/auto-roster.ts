@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { hasScopedAccess } from "../../../shared/scopeAccess.js";
+import { callerScope } from "./_scope.js";
 
 const AGE_HIGH_MS = 2 * 24 * 3600 * 1000;
 
@@ -20,7 +21,10 @@ export const autoRosterAdapter: ApprovalAdapter = {
     if (plans.length === 0) return [];
 
     const ok: any[] = [];
+    const scope = await callerScope(ctx.userId);
     for (const p of plans) {
+      // Owner policy: a process_manager decides only plans of their OWN branch (an assignment row may narrow, never widen).
+      if (!scope.allows(p.branch_id)) continue;
       if (await hasScopedAccess(ctx.userId, ["process_manager"], { processId: p.process_id, branchId: p.branch_id })) ok.push(p);
     }
     if (ok.length === 0) return [];

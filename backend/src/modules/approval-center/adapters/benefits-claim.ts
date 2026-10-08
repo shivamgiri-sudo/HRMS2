@@ -1,11 +1,12 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
-import { getEmployeeForUser } from "../../../shared/accessGuard.js";
+import { callerScope, keepEmployeeRowsInBranch } from "./scope-guard.js";
 
 /**
  * Benefits / reimbursement claim review (admin / hr, branch-scoped by the module).
  * GET /api/benefits/claims returns the CALLER'S OWN claims to non-privileged users and adds `stats` only for
  * privileged reviewers, so a response without `stats` is not a review queue and is ignored.
+ * Rows are further limited to employees of the caller's OWN branch (org-wide roles: all) and never the caller's own claim.
  */
 export const benefitsClaimAdapter: ApprovalAdapter = {
   kind: "benefits_claim",
@@ -14,12 +15,14 @@ export const benefitsClaimAdapter: ApprovalAdapter = {
   async list(ctx) {
     const res = await ctx.call("GET", "/api/benefits/claims", { query: { status: "submitted" } });
     if (!res || res.stats === undefined) return [];
-    const rows: any[] = (res.data ?? []).slice(0, 200);
-    const me = await getEmployeeForUser(ctx.userId).catch(() => null);
+    const rows: any[] = await keepEmployeeRowsInBranch(
+      await callerScope(ctx),
+      ((res.data ?? []) as any[]).filter((r) => r.status === "submitted").slice(0, 200),
+      (r) => r.employee_id,
+    );
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       if (r.status !== "submitted") continue;
-      if (me && String(r.employee_id) === me.id) continue; // never review own claim
       out.push({
         uid: `benefits_claim:${r.id}`,
         kind: "benefits_claim",

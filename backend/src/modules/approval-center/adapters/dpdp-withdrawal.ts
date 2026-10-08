@@ -1,5 +1,6 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
+import { branchAllowed, callerScope, io } from "./scope-guard.js";
 
 function scopeText(raw: unknown): string {
   const s = str(raw);
@@ -17,6 +18,9 @@ function scopeText(raw: unknown): string {
  * DPDP consent-withdrawal review. Endpoints are role-gated (hr/admin/dpo/compliance/super_admin) and
  * branch-scoped by the module; open requests = submitted + in_review (approve/reject accept both).
  * The requester can never decide their own request (server enforces; filtered here too).
+ * The module treats `admin` as the DPO (accessGuard's admin-superset rule) and so lists every branch's requests to an admin. Owner
+ * policy: only a real `dpo` (or an org-wide role) sees all branches; hr / admin / compliance see requests raised by employees of their
+ * OWN branch. A requester with no employee record has no branch, so only org-wide / dpo callers see theirs.
  */
 export const dpdpWithdrawalAdapter: ApprovalAdapter = {
   kind: "dpdp_withdrawal",
@@ -28,10 +32,14 @@ export const dpdpWithdrawalAdapter: ApprovalAdapter = {
       ctx.call("GET", "/api/privacy/dpdp-withdrawal", { query: { status: "in_review" } }).catch(() => null),
     ]);
     const rows: any[] = [...(submitted?.data ?? []), ...(inReview?.data ?? [])].slice(0, 200);
+    const me = await callerScope(ctx);
+    const wide = me.orgWide || me.roles.includes("dpo");
+    const requesters = wide ? new Map() : await io.userEmployees(rows.map((r) => r.requester_id));
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       if (r.status !== "submitted" && r.status !== "in_review") continue;
       if (str(r.requester_id) && str(r.requester_id) === ctx.userId) continue;
+      if (!wide && !branchAllowed(me, requesters.get(str(r.requester_id))?.branchId)) continue;
       const due = iso(r.sla_due_at);
       const breached = due ? new Date(due).getTime() < Date.now() : false;
       out.push({

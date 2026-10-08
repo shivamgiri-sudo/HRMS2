@@ -7,6 +7,9 @@ vi.mock("../adapters/finance-shared.js", async () => {
   return { ...actual, callerRoles: async () => roles };
 });
 import { paymentVoucherAdapter } from "../adapters/payment-voucher.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const row = (o: any = {}) => ({ id: "v1", voucher_number: "PV/N/202610/1", voucher_type: "payment", source_type: "vendor_grn", status: "raised", raised_by: "u-fh", amount: 118000, vendor_name: "Acme", grn_number: "G/1", bank_account_name: "HDFC", payable_account_name: "AP", raised_at: "2026-10-05T00:00:00Z", reason: "Monthly", ...o });
 

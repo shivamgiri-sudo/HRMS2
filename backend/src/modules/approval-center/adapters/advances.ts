@@ -1,10 +1,13 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { ageDays, callerRoleKeys, roleMeets } from "./payroll-shared.js";
+import { callerScope, keepEmployeeRowsInBranch } from "./scope-guard.js";
 
 /**
  * Salary advances. The list endpoint has no status filter (scope-visible, advance_date DESC, max 100/page),
  * so read the two newest pages and keep status = 'pending'. Approve/reject endpoint roles: admin, finance, payroll, payroll_head, super_admin.
+ * Branch roles (admin, payroll) see only advances of employees in their own branch; finance / payroll_head / super_admin are org-wide.
+ * The caller's own advance is never theirs to decide.
  */
 export const advancesAdapter: ApprovalAdapter = {
   kind: "salary_advance",
@@ -21,8 +24,8 @@ export const advancesAdapter: ApprovalAdapter = {
       if (batch.length < 100) break;
     }
     const out: ApprovalItem[] = [];
-    for (const r of rows) {
-      if (str(r.status).toLowerCase() !== "pending") continue;
+    const mine = await keepEmployeeRowsInBranch(await callerScope(ctx), rows.filter((r) => str(r.status).toLowerCase() === "pending"), (r) => r.employee_id);
+    for (const r of mine) {
       const age = ageDays(r.advance_date ?? r.created_at);
       out.push({
         uid: `salary_advance:${r.id}`,

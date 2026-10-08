@@ -7,6 +7,9 @@ vi.mock("../adapters/finance-shared.js", async () => {
   return { ...actual, callerRoles: async () => roles };
 });
 import { imprestAllocationAdapter } from "../adapters/imprest-allocation.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const row = (o: any = {}) => ({ id: "a1", allocation_no: "IMP/1", status: "submitted", manager_name: "Ravi", branch_name: "Noida", amount: 50000, allocation_date: "2026-10-03", payment_mode: "NEFT", bank_name: "HDFC", reference_no: "UTR1", remarks: "Top-up", submitted_at: "2026-10-03T00:00:00Z", ...o });
 

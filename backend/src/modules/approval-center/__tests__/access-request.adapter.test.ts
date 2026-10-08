@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import { accessRequestAdapter } from "../adapters/access-request.js";
 import { fakeCtx } from "./_fakeCtx.js";
 import { LoopbackError } from "../types.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const rq = (o: any = {}) => ({ id: "q1", user_id: "u9", user_email: "a@b.com", page_code: "PAYROLL", page_name: "Payroll", reason: "need it", status: "pending", created_at: "2026-10-01T00:00:00Z", ...o });
 

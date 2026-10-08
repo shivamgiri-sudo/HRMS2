@@ -2,6 +2,7 @@ import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { LoopbackError } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { callerHasRole } from "./_roles.js";
+import { keepInBranch } from "./_scope.js";
 
 /** The branch-action endpoint takes remarks of at least 5 characters on both outcomes. */
 const MIN_REMARKS = 5;
@@ -31,7 +32,8 @@ export const rejoinAdapter: ApprovalAdapter = {
   async list(ctx) {
     if (!(await callerHasRole(ctx.userId, "branch_head"))) return [];
     const res = await ctx.call("GET", "/api/employees/reactivation/pending");
-    const rows: any[] = (res?.data ?? []).slice(0, 200);
+    // Scope behind the list is assignment-based (can reach several branches). Owner policy: branch_head decides only their OWN branch.
+    const rows: any[] = await keepInBranch(ctx.userId, (res?.data ?? []).slice(0, 200), (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }));
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       if (!["pending", "branch_head_approved"].includes(str(r.status))) continue;

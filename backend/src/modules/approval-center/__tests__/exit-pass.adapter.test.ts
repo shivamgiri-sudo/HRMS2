@@ -8,6 +8,9 @@ vi.mock("../../assets/exit-pass.service.js", () => ({
 
 import { exitPassAdapter } from "../adapters/exit-pass.js";
 import { fakeCtx } from "./_fakeCtx.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const pass = (o: any = {}) => ({
   id: "x1", status: "pending_branch_head", requestor_employee_id: "emp-other", requestor_name: "Kiran", branch_name: "Pune",

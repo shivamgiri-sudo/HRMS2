@@ -1,5 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
+import { callerHasRole } from "./_roles.js";
+import { keepInBranch } from "./_scope.js";
 
 const yes = (v: unknown) => (v === true || v === 1 || v === "1" ? "Yes" : "");
 
@@ -14,8 +16,11 @@ export const atsOfferAdapter: ApprovalAdapter = {
   label: "Offer approval",
   category: "Recruitment",
   async list(ctx) {
+    // The queue is also served to admin / hr / payroll_hr, who are not the branch head who owns this stage. The popup shows the
+    // approval only to a branch_head (or super_admin), and only for offers of the branch on their OWN record.
+    if (!(await callerHasRole(ctx.userId, "branch_head", "super_admin"))) return [];
     const res = await ctx.call("GET", "/api/ats/onboarding/pending-approval");
-    const rows: any[] = (Array.isArray(res) ? res : res?.data ?? []).slice(0, 200);
+    const rows: any[] = await keepInBranch(ctx.userId, (Array.isArray(res) ? res : res?.data ?? []).slice(0, 200), (r: any) => ({ branchId: r.branch_id }));
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       if (!(r.payroll_validated === 1 || r.payroll_validated === true)) continue;

@@ -3,6 +3,7 @@ import { badge, date, f, fields, iso, str } from "../format.js";
 import { hasAnyRole, hasScopedAccess } from "../../../shared/scopeAccess.js";
 import { APPROVER_ROLES, PAYROLL_APPROVER_ROLES } from "../../bulk-upload/bulk-approval.service.js";
 import { ageDays } from "./payroll-shared.js";
+import { branchAllowed, callerScope } from "./scope-guard.js";
 
 const TYPE_LABEL: Record<string, string> = {
   ATTENDANCE_REGULARIZATION_BULK: "Attendance regularization",
@@ -30,6 +31,7 @@ export const bulkUploadAdapter: ApprovalAdapter = {
       hasAnyRole(ctx.userId, ...APPROVER_ROLES),
       hasAnyRole(ctx.userId, ...PAYROLL_APPROVER_ROLES),
     ]);
+    const me = await callerScope(ctx);
     const scopeCache = new Map<string, boolean>();
     const inBranchScope = async (branchId: string): Promise<boolean> => {
       if (!scopeCache.has(branchId)) {
@@ -49,7 +51,10 @@ export const bulkUploadAdapter: ApprovalAdapter = {
         if (r.uploaded_by && String(r.uploaded_by) === String(ctx.userId)) continue;
         if (stage === "branch") {
           if (!isBranch) continue;
-          if (r.branch_id && !(await inBranchScope(String(r.branch_id)))) continue;
+          // A branch-stage batch must be in the caller's scope AND own branch; one with no branch at all is org-wide only
+          // (assertCanApprove would otherwise let any holder of an 'all' assignment row through).
+          if (!r.branch_id) { if (!me.orgWide) continue; }
+          else if (!branchAllowed(me, r.branch_id) || !(await inBranchScope(String(r.branch_id)))) continue;
         } else {
           if (!isPayroll) continue;
           if (r.branch_head_approved_by && String(r.branch_head_approved_by) === String(ctx.userId)) continue;

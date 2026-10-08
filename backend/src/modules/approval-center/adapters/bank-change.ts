@@ -1,5 +1,6 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
+import { keepInBranch } from "./_scope.js";
 
 const parse = (v: unknown): Record<string, any> => {
   if (!v) return {};
@@ -33,7 +34,8 @@ export const bankChangeAdapter: ApprovalAdapter = {
   category: "Payroll",
   async list(ctx) {
     const res = await ctx.call("GET", "/api/payroll/bank-change-requests");
-    const rows: any[] = (res?.data ?? []).slice(0, 200);
+    // `payroll` (non-head) is branch-scoped; only payroll_head / super_admin / finance roles are org-wide.
+    const rows: any[] = await keepInBranch(ctx.userId, (res?.data ?? []).slice(0, 200), (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }));
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       if (str(r.status) && str(r.status) !== "pending") continue;

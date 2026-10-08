@@ -1,12 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fakeCtx } from "./_ctx.js";
 
-const hasRole = vi.fn();
-vi.mock("../../../shared/accessGuard.js", () => ({ hasRole: (...a: unknown[]) => hasRole(...a) }));
+const execute = vi.fn();
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
 vi.mock("../../salary-increment/salaryIncrement.service.js", () => ({
   INCREMENT_ROLE_GATES: { hr_validate: ["admin", "hr", "payroll_head", "super_admin"], approve: ["payroll_head", "super_admin"] },
 }));
 import { salaryIncrementAdapter as a } from "../adapters/salaryIncrement.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const row = (o: any = {}) => ({
   id: "i1", employee_name: "Asha Rao", employee_code: "E1", branch_name: "Pune", designation_name: "Agent",
@@ -14,8 +17,8 @@ const row = (o: any = {}) => ({
   reason_code: "Promotion", reason: "Top performer", business_justification: "Retention", status: "submitted",
   created_at: "2026-10-01T00:00:00Z", ...o,
 });
-const roles = (set: string[]) => hasRole.mockImplementation(async (_u: string, ...r: string[]) => r.some((x) => set.includes(x)));
-beforeEach(() => hasRole.mockReset());
+const roles = (set: string[]) => execute.mockResolvedValue([set.map((role_key) => ({ role_key }))]);
+beforeEach(() => execute.mockReset());
 
 describe("salary increment adapter", () => {
   it("maps every component and routes payroll head to approve", async () => {

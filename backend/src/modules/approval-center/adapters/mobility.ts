@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { callerHasRole } from "./_roles.js";
+import { keepInBranch } from "./_scope.js";
 
 const TRANSFER_TYPE: Record<string, string> = {
   branch: "Branch transfer",
@@ -29,8 +30,12 @@ export const mobilityAdapter: ApprovalAdapter = {
       ctx.call("GET", "/api/mobility/transfers", { query: { status: "pending" } }),
       ctx.call("GET", "/api/mobility/promotions", { query: { status: "pending" } }),
     ]);
+    // admin / hr are branch-scoped (owner ruling 2026-10-01): only transfers / promotions of employees in their own branch.
+    const refOf = (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code });
+    const transfers = await keepInBranch(ctx.userId, ((t?.data ?? []) as any[]).slice(0, 200), refOf);
+    const promotions = await keepInBranch(ctx.userId, ((p?.data ?? []) as any[]).slice(0, 200), refOf);
     const out: ApprovalItem[] = [];
-    for (const r of ((t?.data ?? []) as any[]).slice(0, 200)) {
+    for (const r of transfers) {
       if (str(r.status) !== "pending") continue;
       const typeLabel = TRANSFER_TYPE[str(r.transfer_type)] ?? str(r.transfer_type);
       const created = iso(r.created_at);
@@ -62,7 +67,7 @@ export const mobilityAdapter: ApprovalAdapter = {
         meta: { type: "transfer" },
       });
     }
-    for (const r of ((p?.data ?? []) as any[]).slice(0, 200)) {
+    for (const r of promotions) {
       if (str(r.status) !== "pending") continue;
       const created = iso(r.created_at);
       out.push({

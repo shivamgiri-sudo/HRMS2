@@ -7,6 +7,9 @@ vi.mock("../adapters/finance-shared.js", async () => {
   return { ...actual, callerRoles: async () => roles };
 });
 import { pnlManualAdjustmentAdapter } from "../adapters/pnl-manual-adjustment.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const row = (o: any = {}) => ({ id: "m1", process_id: "p1", process_name: "Acme BPO", branch_name: "Noida", period_code: "2026-09", adjustment_type: "penalty", amount: 12000, reason: "SLA breach", status: "pending", created_by: "u-other", created_at: "2026-10-02T00:00:00Z", ...o });
 

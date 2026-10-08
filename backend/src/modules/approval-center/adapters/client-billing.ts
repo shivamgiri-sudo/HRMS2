@@ -1,6 +1,19 @@
 import { LoopbackError, type ApprovalAdapter, type ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { ageDays, rowsOf } from "./finance-shared.js";
+import { branchAllowed, callerScope, io, type CallerScope } from "./scope-guard.js";
+
+/**
+ * The client-billing routes have no branch scoping at all and admit `admin` (branch-scoped by owner ruling) alongside the finance roles,
+ * so rows are narrowed here: an invoice / credit note belongs to its cost centre's branch, which must be the caller's own unless the
+ * caller is org-wide (finance, finance_head, accounts_head ...). The maker (created_by) never sees their own document as a task.
+ */
+async function decidableBillingRows(ctx: { userId: string }, me: CallerScope, rows: any[]): Promise<any[]> {
+  const notMine = rows.filter((r) => !(r.created_by && String(r.created_by) === String(ctx.userId)));
+  if (me.orgWide) return notMine;
+  const branches = await io.costCentreBranches(notMine.map((r) => r.cost_centre_id));
+  return notMine.filter((r) => branchAllowed(me, branches.get(String(r.cost_centre_id))));
+}
 
 const MAX_DETAIL = 30;
 const lineText = (l: any) => {
@@ -19,7 +32,7 @@ export const clientInvoiceAdapter: ApprovalAdapter = {
   category: "Finance",
   async list(ctx) {
     const res = await ctx.call("GET", "/api/client-billing/proformas", { query: { status: "proforma", limit: 200 } });
-    const rows = rowsOf(res).filter((r) => str(r.invoice_status) === "proforma" && Number(r.is_migrated ?? 0) !== 1);
+    const rows = await decidableBillingRows(ctx, await callerScope(ctx), rowsOf(res).filter((r) => str(r.invoice_status) === "proforma" && Number(r.is_migrated ?? 0) !== 1));
     const picked = rows.slice(0, MAX_DETAIL);
     const details = await Promise.all(
       picked.map((r) => ctx.call("GET", `/api/client-billing/proformas/${encodeURIComponent(String(r.id))}`).then((d) => d?.data ?? d).catch(() => null)),
@@ -84,7 +97,7 @@ export const clientCreditNoteAdapter: ApprovalAdapter = {
   category: "Finance",
   async list(ctx) {
     const res = await ctx.call("GET", "/api/client-billing/credit-notes", { query: { status: "draft", limit: 200 } });
-    const rows = rowsOf(res).filter((r) => str(r.credit_status) === "draft" && Number(r.is_migrated ?? 0) !== 1);
+    const rows = await decidableBillingRows(ctx, await callerScope(ctx), rowsOf(res).filter((r) => str(r.credit_status) === "draft" && Number(r.is_migrated ?? 0) !== 1));
     const picked = rows.slice(0, MAX_DETAIL);
     const details = await Promise.all(
       picked.map((r) => ctx.call("GET", `/api/client-billing/credit-notes/${encodeURIComponent(String(r.id))}`).then((d) => d?.data ?? d).catch(() => null)),

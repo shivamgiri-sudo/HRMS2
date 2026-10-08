@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { callerHasRole } from "./_roles.js";
+import { keepInBranch } from "./_scope.js";
 
 const TYPE_LABEL: Record<string, string> = { pf_opt_out: "PF opt-out", esic_opt_out: "ESI opt-out" };
 const STALE_DAYS = 5;
@@ -17,7 +18,7 @@ export const statutoryOptOutAdapter: ApprovalAdapter = {
   async list(ctx) {
     if (!(await callerHasRole(ctx.userId, "payroll", "super_admin"))) return [];
     const res = await ctx.call("GET", "/api/payroll/statutory-overrides/pending");
-    const rows: any[] = (res?.data ?? []).slice(0, 200);
+    const rows: any[] = await keepInBranch(ctx.userId, (res?.data ?? []).slice(0, 200), (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }));
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       if (str(r.status) && str(r.status) !== "pending") continue;

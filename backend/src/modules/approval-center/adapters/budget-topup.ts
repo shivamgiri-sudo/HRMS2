@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { ageDays, callerRoles, hasRole, rowsOf } from "./finance-shared.js";
+import { branchAllowed, callerScope } from "./scope-guard.js";
 
 const STAGES: Record<string, { role: string; label: string; step: number }> = {
   submitted: { role: "branch_head", label: "Branch Head", step: 1 },
@@ -11,6 +12,8 @@ const STAGES: Record<string, { role: string; label: string; step: number }> = {
  * Budget top-up requests (2 stages). The list endpoint is branch-scoped but returns every status
  * and role's view; actionable = status at a stage the caller owns (or super_admin) and not raised by the caller
  * (budgetTopupService.review refuses both decisions on your own request).
+ * The list is scoped by the finance resolver (all-branch for `admin`, plus assignment-granted branches), so each row is also
+ * required to be in the caller's OWN branch unless the caller is org-wide (Finance Head and the other exempt roles).
  */
 export const budgetTopupAdapter: ApprovalAdapter = {
   kind: "budget_topup",
@@ -22,10 +25,12 @@ export const budgetTopupAdapter: ApprovalAdapter = {
     const allowed = Object.keys(STAGES).filter((s) => isSuper || hasRole(roles, STAGES[s].role));
     if (!allowed.length) return [];
     const res = await ctx.call("GET", "/api/finance/pnl/budget-topups");
+    const me = await callerScope(ctx);
     const out: ApprovalItem[] = [];
     for (const r of rowsOf(res)) {
       const status = str(r.status);
       if (!allowed.includes(status)) continue;
+      if (!branchAllowed(me, r.branch_id)) continue;
       if (str(r.requested_by) === ctx.userId) continue;
       const st = STAGES[status];
       const age = ageDays(r.pending_since ?? r.created_at);

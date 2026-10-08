@@ -7,6 +7,9 @@ vi.mock("../adapters/finance-shared.js", async () => {
   return { ...actual, callerRoles: async () => roles };
 });
 import { periodWindow, revenueForecastAdapter } from "../adapters/revenue-forecast.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const listRow = (o: any = {}) => ({ costCentreId: "c1", costCentreCode: "CC1", branchName: "Noida", processName: "Acme", forecastId: "f1", status: "submitted", financeHeadStatus: "pending", forecastAmount: 900000, ...o });
 const detail = (o: any = {}) => ({ data: { id: "f1", status: "submitted", finance_head_status: "pending", payroll_head_status: "pending", submitted_by: "u-bh", submitted_at: "2026-10-04T00:00:00Z", forecast_amount: 900000, cost_centre_code: "CC1", cost_centre_name: "Acme Noida", branch_name: "Noida", notes: "steady", lines: [{ line_type: "seat", description: "Seats", quantity: 60, rate: 15000, amount: 900000 }], ...o } });

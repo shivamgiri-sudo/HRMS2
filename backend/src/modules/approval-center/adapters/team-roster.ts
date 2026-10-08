@@ -1,8 +1,10 @@
 import type { ApprovalAdapter, ApprovalItem, LoopbackCtx } from "../types.js";
 import { LoopbackError } from "../types.js";
 import { badge, date, dateText, f, fields, iso, long, str } from "../format.js";
+import { callerHasRole } from "./_roles.js";
+import { callerScope, keepInBranch } from "./_scope.js";
 
-const DETAIL_CAP = 40;
+const DETAIL_CAP = 100;
 const LINES_SHOWN = 40;
 type Step = "manager" | "wfm";
 const STAGE: Record<Step, string> = { manager: "Stage 1 of 2 — Reporting manager", wfm: "Stage 2 of 2 — WFM (final, applies to roster)" };
@@ -33,11 +35,25 @@ async function listStep(ctx: LoopbackCtx, step: Step): Promise<ApprovalItem[]> {
       } catch { /* keep the list row */ }
     }),
   );
+  // The module treats admin as a GLOBAL approver (every branch, both steps). Owner policy: admin / wfm are branch-scoped, so outside
+  // org-wide callers a submission is shown only for the NAMED manager approver (manager step) or when its submitter is in the
+  // caller's own branch. Items without a loaded detail are dropped (fail closed) rather than shown unchecked.
+  const scope = await callerScope(ctx.userId);
+  const inBranch = new Set(
+    scope.orgWide ? [] : (await keepInBranch(ctx.userId, items, (it: any) => ({ employeeCode: it.submitter?.code }), scope)).map((it: any) => Number(it.id)),
+  );
+  // Manager step: the named approver, or an admin (the module's global approver) inside their own branch. No other role takes it over.
+  const isAdmin = !scope.orgWide && step === "manager" ? await callerHasRole(ctx.userId, "admin") : false;
   const out: ApprovalItem[] = [];
   for (const it of items) {
     const d = details.get(Number(it.id));
+    if (!d) continue;
     // The detail's own permission flag is the module's final word on "can this caller decide this step now".
     if (d?.permissions && !(step === "manager" ? d.permissions.canManagerDecide : d.permissions.canWfmDecide)) continue;
+    if (!scope.orgWide) {
+      const named = step === "manager" && !!scope.employeeId && String(d?.submission?.managerApprover?.id ?? "") === scope.employeeId;
+      if (step === "manager" ? !(named || (isAdmin && inBranch.has(Number(it.id)))) : !inBranch.has(Number(it.id))) continue;
+    }
     const sub = d?.submission ?? {};
     const lines: any[] = Array.isArray(d?.lines) ? d.lines : [];
     const shown = lines.slice(0, LINES_SHOWN).map(lineText);

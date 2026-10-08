@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+// Branch / approver policy is covered in scope.adapters.test.ts (fake DB); this file tests mapping + decide only.
+vi.mock("../adapters/_scope.js", async () => (await import("./_scopePassthrough.js")).passthrough);
 
 const roleMock = vi.fn();
 vi.mock("../../wfm/wfm.regularization.secure.routes.js", () => ({
@@ -36,12 +38,14 @@ describe("regularizationAdapter", () => {
     for (const l of ["Employee", "Branch", "Attendance date", "Requested status", "Reason", "Supporting document"]) expect(labels).toContain(l);
     expect(i.viewPath).toBe("/attendance-regularization?approvalId=r1");
   });
-  it("uses canApproveNow without a role lookup", async () => {
+  it("never trusts decision_support.canApproveNow (a role flag, not per-row): the row's own review role decides", async () => {
     roleMock.mockReset();
+    roleMock.mockResolvedValue(null);
     const call = vi.fn().mockResolvedValue({ data: [row({ status: "payroll_pending", decision_support: { canApproveNow: true } })] });
+    expect(await regularizationAdapter.list({ userId: "u", call } as any)).toHaveLength(0);
+    roleMock.mockResolvedValue("payroll");
     const items = await regularizationAdapter.list({ userId: "u", call } as any);
     expect(items).toHaveLength(1);
-    expect(roleMock).not.toHaveBeenCalled();
     expect(items[0].stage).toContain("Stage 3");
   });
   it("decides approve and reject", async () => {
