@@ -3,7 +3,7 @@
 exports[`campaignProgress statement (pinned) > reads campaign names, status and the campaign's own requisition by key 1`] = `
 [
   [
-    "SELECT /*+ MAX_EXECUTION_TIME(8000) */ mc.id, mc.campaign_name, mc.campaign_status, mc.requisition_id, jr.requisition_code FROM meta_campaign mc LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id COLLATE utf8mb4_unicode_ci WHERE mc.id IN (?)",
+    "SELECT /*+ MAX_EXECUTION_TIME(8000) */ mc.id, mc.campaign_name, mc.campaign_status, mc.meta_form_id, mc.requisition_id, jr.requisition_code, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.bmi_assessment_url IS NOT NULL AND jr.bmi_assessment_url <> '' AS has_bmi FROM meta_campaign mc LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id COLLATE utf8mb4_unicode_ci WHERE mc.id IN (?)",
     [
       "c1",
     ],
