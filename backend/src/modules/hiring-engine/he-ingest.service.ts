@@ -266,7 +266,8 @@ const ANSWER_TEXT: Record<InviteAnswer, string> = { yes: "Tapped: Yes, I will co
  * email channel, so the shortlist's Reply / Status columns, the cadence stop rule and the 360 view all see it.
  * "later" releases the slot and asks a recruiter to call with a new time.
  */
-export async function recordInviteAnswer(matchId: string, answer: InviteAnswer): Promise<{ state: string } | null> {
+export interface InviteAnswerOptions { channel?: "web" | "hr"; actor?: string | null; inviteId?: string | null }
+export async function recordInviteAnswer(matchId: string, answer: InviteAnswer, _o: InviteAnswerOptions = {}): Promise<{ state: string } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, l.mobile10, l.status, l.meta_lead_id
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1`, [matchId]);
