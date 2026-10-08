@@ -8,6 +8,7 @@ import { channelAllowed } from "./he-campaign-config.service.js";
 import type { GuardFacts, GuardStep } from "./followup-guards.js";
 import { istDayBounds, loadRequisitionFacts, reqEndDateEnforced } from "./followup-guards.service.js";
 import type { FollowupRow } from "./qualified-followup.context.js";
+import { followupGuardOn } from "../selection/selection-switches.js";
 
 const C = "COLLATE utf8mb4_unicode_ci";
 const ist = (v: unknown): Date | null => (v == null ? null : v instanceof Date ? v : new Date(String(v).replace(" ", "T") + "+05:30"));
@@ -17,6 +18,19 @@ const UNPROMPTED = "template_key NOT LIKE 'he_walkin_confirmed:%' AND template_k
 export interface GuardFactsInput {
   row: FollowupRow; step: GuardStep; now: Date; transactional: boolean; firstContact: boolean; cadenceStep: boolean; stage?: "A" | "B";
   killSwitch: boolean; sourcePaused: boolean; waBudgetLeft: number; branchCapLeft: number | null; uploadWaAllowed: boolean; hrOverride?: boolean;
+}
+
+/**
+ * The criteria verdict stored on the row (selection re-check, migration 2145). Read only with SELECTION_FOLLOWUP_GUARD on, in its own
+ * statement, so the guard path issues today's statements while the switch is off. HR's release counts as pass; a failed read = no verdict.
+ */
+async function criteriaVerdictOf(followupId: string): Promise<GuardFacts["criteriaVerdict"]> {
+  if (!followupGuardOn()) return null;
+  try {
+    const [r] = await db.execute<RowDataPacket[]>("SELECT criteria_verdict FROM qualified_followup WHERE id = ? LIMIT 1", [followupId]);
+    const v = String(r[0]?.criteria_verdict ?? "");
+    return v === "fail" || v === "review" || v === "pass" ? v : v === "released" ? "pass" : null;
+  } catch { return null; }
 }
 
 export async function loadGuardFacts(i: GuardFactsInput): Promise<GuardFacts> {
@@ -65,5 +79,6 @@ export async function loadGuardFacts(i: GuardFactsInput): Promise<GuardFacts> {
     callAttemptsToday: callsToday, lastCallAt: lastCall,
     waBudgetLeft: i.waBudgetLeft, branchCapLeft: i.branchCapLeft, lastFirstContactOtherReqAt: i.firstContact ? otherFirst : null, hrOverride: i.hrOverride ?? false,
     channelAllowed: allowed, uploadWithoutOptIn: false, uploadWaAllowed: i.uploadWaAllowed, templateApproved: true, missingVariables: [],
+    criteriaVerdict: await criteriaVerdictOf(row.id),
   };
 }
