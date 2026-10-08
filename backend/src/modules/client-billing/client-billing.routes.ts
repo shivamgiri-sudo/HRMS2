@@ -5,6 +5,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
+import { loadBranchPolicy } from "../../shared/branchDecisionScope.js";
 import { clientBillingService } from "./client-billing.service.js";
 import { clientBillingApprovalService } from "./client-billing-approval.service.js";
 import { clientBillingCreditNoteService } from "./client-billing-credit-note.service.js";
@@ -315,10 +316,33 @@ router.get(
   })
 );
 
+/**
+ * DECIDE guard (owner policy 2026-10-01; same predicate as the Approval Center popup). Finance roles are org-wide
+ * (isOrgWideUser); `admin` may only decide an invoice / credit note whose cost centre sits in the branch of their OWN
+ * employees record. Fails closed when the cost centre has no branch. A row that does not exist falls through so the
+ * service keeps its usual "not found" answer.
+ */
+async function guardDecide(req: AuthenticatedRequest, res: Response, kind: "invoice" | "creditNote"): Promise<boolean> {
+  const policy = await loadBranchPolicy(req.authUser!.id);
+  if (policy.orgWide) return true;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    kind === "invoice"
+      ? `SELECT cc.branch_id FROM client_invoice ci LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id WHERE ci.id = ? LIMIT 1`
+      : `SELECT cc.branch_id FROM client_credit_note ccn LEFT JOIN client_invoice ci ON ci.id = ccn.invoice_id LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id WHERE ccn.id = ? LIMIT 1`,
+    [req.params.id],
+  );
+  const row = (rows as RowDataPacket[])[0];
+  if (!row) return true;
+  if (policy.allows(row.branch_id)) return true;
+  res.status(403).json({ success: false, error: "Forbidden: this billing record is outside your branch / assigned scope" });
+  return false;
+}
+
 router.post(
   "/invoices/:id/approve",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardDecide(req, res, "invoice"))) return;
     const body = req.body as { poNumbers?: string[] };
     const data = await clientBillingApprovalService.approveInvoice({
       invoiceId: req.params.id,
@@ -333,6 +357,7 @@ router.post(
   "/invoices/:id/reject",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardDecide(req, res, "invoice"))) return;
     const body = req.body as { reason?: string };
     if (!body.reason || body.reason.trim().length === 0) {
       return res.status(400).json({ error: "reason is required" });
@@ -394,6 +419,7 @@ router.post(
   "/credit-notes/:id/approve",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardDecide(req, res, "creditNote"))) return;
     const data = await clientBillingCreditNoteService.approveCreditNote({
       creditNoteId: req.params.id, userId: req.authUser!.id,
     });

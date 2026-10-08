@@ -9,7 +9,7 @@ const { buildRequesterScope, guard, listAll, getStats } = vi.hoisted(() => ({
   listAll: vi.fn(async () => []),
   getStats: vi.fn(async () => ({})),
 }));
-vi.mock("../dpdp-withdrawal.scope.js", () => ({ buildRequesterScope, withdrawalScopeGuard: guard }));
+vi.mock("../dpdp-withdrawal.scope.js", () => ({ buildRequesterScope, withdrawalScopeGuard: guard, withdrawalDecideGuard: (_q: any, _s: any, next: any) => next() }));
 vi.mock("../dpdp-withdrawal.service.js", () => ({ listAll, getStats, getById: vi.fn(async () => ({ id: "w1" })), getTasksForWithdrawal: vi.fn(async () => []) }));
 vi.mock("../../../shared/roleResolver.js", () => ({ getUserRoleContext: vi.fn(async () => ({ primaryRole: "hr" })) }));
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {

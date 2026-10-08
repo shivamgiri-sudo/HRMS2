@@ -56,6 +56,15 @@ vi.mock("../../../middleware/requireRole.js", () => ({
   },
 }));
 
+// Branch policy for the decide guard: default org-wide (finance) so the pre-existing tests are untouched.
+const { policy } = vi.hoisted(() => ({ policy: { orgWide: true, ownBranchId: null as string | null } }));
+vi.mock("../../../shared/branchDecisionScope.js", () => ({
+  loadBranchPolicy: async () => ({
+    ...policy,
+    allows: (b: unknown) => policy.orgWide || (!!policy.ownBranchId && !!b && String(b) === policy.ownBranchId),
+  }),
+}));
+
 let clientBillingRouter: typeof import("../client-billing.routes.js")["clientBillingRouter"];
 let app: express.Express;
 
@@ -68,6 +77,8 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  policy.orgWide = true; policy.ownBranchId = null;
+  approveInvoice.mockReset(); rejectInvoice.mockReset(); approveCreditNote.mockReset();
   createProforma.mockReset();
   execute.mockReset();
   query.mockReset();
@@ -414,4 +425,39 @@ describe("GET /api/client-billing/summary", () => {
       pendingApprovalCount: 4,
     });
   });
+});
+
+describe("decide endpoints are branch-scoped for admin (owner policy 2026-10-01)", () => {
+  const asAdmin = (own: string) => { policy.orgWide = false; policy.ownBranchId = own; };
+  const branchRow = (b: string | null) => execute.mockResolvedValueOnce([[{ branch_id: b }]]);
+  const cases: Array<[string, string, Record<string, unknown>, () => ReturnType<typeof vi.fn>]> = [
+    ["invoice approve", "/api/client-billing/invoices/inv-1/approve", {}, () => approveInvoice],
+    ["invoice reject", "/api/client-billing/invoices/inv-1/reject", { reason: "wrong" }, () => rejectInvoice],
+    ["credit note approve", "/api/client-billing/credit-notes/cn-1/approve", {}, () => approveCreditNote],
+  ];
+  for (const [name, url, body, svc] of cases) {
+    it(`${name}: admin of another branch gets 403 and the service is not called`, async () => {
+      asAdmin("br-A"); branchRow("br-B");
+      const res = await request(app).post(url).set("x-test-role", "admin").send(body);
+      expect(res.status).toBe(403);
+      expect(svc()).not.toHaveBeenCalled();
+    });
+    it(`${name}: admin of the same branch is allowed`, async () => {
+      asAdmin("br-A"); branchRow("br-A");
+      svc().mockResolvedValueOnce({ ok: true });
+      const res = await request(app).post(url).set("x-test-role", "admin").send(body);
+      expect(res.status).toBe(200);
+      expect(svc()).toHaveBeenCalledTimes(1);
+    });
+    it(`${name}: cost centre without a branch fails closed for admin`, async () => {
+      asAdmin("br-A"); branchRow(null);
+      expect((await request(app).post(url).set("x-test-role", "admin").send(body)).status).toBe(403);
+    });
+    it(`${name}: org-wide finance is allowed without any branch lookup`, async () => {
+      svc().mockResolvedValueOnce({ ok: true });
+      const res = await request(app).post(url).set("x-test-role", "finance").send(body);
+      expect(res.status).toBe(200);
+      expect(execute).not.toHaveBeenCalled();
+    });
+  }
 });

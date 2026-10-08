@@ -32,6 +32,7 @@ import {
   type UserBusinessScope,
 } from "../../shared/enterpriseScope.js";
 import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { loadBranchPolicy, userBranchId, userBranchIds } from "../../shared/branchDecisionScope.js";
 import type { RowDataPacket } from "mysql2";
 
 const router = Router();
@@ -750,20 +751,50 @@ router.delete("/designation-role-map/:id", requireRole("admin"), h(async (req: A
 
 // ============ ACCESS REQUEST WORKFLOW ============
 
+/**
+ * DECIDE guard for access requests (owner policy 2026-10-01; same predicate as the Approval Center popup): nobody decides
+ * their own request; org-wide roles (super_admin ...) decide any; `admin` only a request whose REQUESTER sits in the branch
+ * of the admin's OWN employees record (fail closed when unknown). A request that does not exist falls through so the
+ * service keeps its "not found or already reviewed" answer.
+ */
+async function guardAccessRequestDecide(req: AuthenticatedRequest, res: Response): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT user_id FROM access_requests WHERE id = ? LIMIT 1", [req.params.id]);
+  const row = (rows as RowDataPacket[])[0];
+  if (!row) return true;
+  if (String(row.user_id) === String(req.authUser!.id)) {
+    res.status(403).json({ success: false, error: "Forbidden: you cannot decide your own access request" });
+    return false;
+  }
+  const policy = await loadBranchPolicy(req.authUser!.id);
+  if (policy.orgWide || policy.allows(await userBranchId(row.user_id))) return true;
+  res.status(403).json({ success: false, error: "Forbidden: this access request is outside your branch / assigned scope" });
+  return false;
+}
+
+/** Same predicate over a listing: org-wide callers see every request, `admin` those of requesters in their own branch. */
+async function clampAccessRequests<T extends { user_id: string }>(req: AuthenticatedRequest, rows: T[]): Promise<T[]> {
+  const policy = await loadBranchPolicy(req.authUser!.id);
+  if (policy.orgWide) return rows;
+  const branches = await userBranchIds(rows.map((r) => r.user_id));
+  return rows.filter((r) => policy.allows(branches.get(String(r.user_id))));
+}
+
 // GET /api/access/requests — redesign alias for access request queue
 router.get("/requests", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const status = req.query.status as "pending" | "approved" | "denied" | undefined;
-  res.json({ success: true, data: await listAccessRequests(status) });
+  res.json({ success: true, data: await clampAccessRequests(req, await listAccessRequests(status)) });
 }));
 
 // POST /api/access/requests/:id/approve — redesign alias
 router.post("/requests/:id/approve", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await guardAccessRequestDecide(req, res))) return;
   await approveAccessRequest(req.params.id, req.authUser!.id);
   res.json({ success: true });
 }));
 
 // POST /api/access/requests/:id/deny — redesign alias
 router.post("/requests/:id/deny", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await guardAccessRequestDecide(req, res))) return;
   const { reason, review_note } = req.body;
   await denyAccessRequest(req.params.id, req.authUser!.id, review_note ?? reason ?? "");
   res.json({ success: true });
@@ -772,7 +803,7 @@ router.post("/requests/:id/deny", requireRole("admin"), h(async (req: Authentica
 // GET /api/access/access-requests — admin lists requests
 router.get("/access-requests", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const status = req.query.status as "pending" | "approved" | "denied" | undefined;
-  res.json({ success: true, data: await listAccessRequests(status) });
+  res.json({ success: true, data: await clampAccessRequests(req, await listAccessRequests(status)) });
 }));
 
 // POST /api/access/access-requests — any user submits a request
@@ -787,12 +818,14 @@ router.post("/access-requests", h(async (req: AuthenticatedRequest, res: Respons
 
 // POST /api/access/access-requests/:id/approve
 router.post("/access-requests/:id/approve", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await guardAccessRequestDecide(req, res))) return;
   await approveAccessRequest(req.params.id, req.authUser!.id);
   res.json({ success: true });
 }));
 
 // POST /api/access/access-requests/:id/deny
 router.post("/access-requests/:id/deny", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await guardAccessRequestDecide(req, res))) return;
   const { reason } = req.body;
   await denyAccessRequest(req.params.id, req.authUser!.id, reason ?? "");
   res.json({ success: true });

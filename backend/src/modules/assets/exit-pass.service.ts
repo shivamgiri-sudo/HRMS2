@@ -40,6 +40,11 @@ export const UNRESTRICTED_ROLES = ['super_admin', 'admin', 'it_head'];
 // role_page_access grants in 1539, or a role that can open the page would
 // 403 on every action, the exact bug branch-head-approval.routes.ts warns
 // about.
+/**
+ * Admin stage only. super_admin and it_head decide a pass in any branch; `admin` is branch-scoped (owner policy
+ * 2026-10-01, same rule as the Approval Center popup) so it decides only passes of the branch on its OWN employees record.
+ */
+const ADMIN_STAGE_GLOBAL_ROLES = ['super_admin', 'it_head'];
 const SECURITY_ROLES = ['security_head', 'visitor_security', 'branch_admin', 'it', 'wfm'];
 
 export interface RequestingEmployee {
@@ -368,10 +373,11 @@ export async function adminDecision(
   }
   await assertCanActOnOwnBehalf(pass, actor.employeeId);
 
-  const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
-  const isBranchAdmin = actorRoles.includes('branch_admin') && actor.branchId === pass.branch_id;
+  const isOverride = actorRoles.some((r) => ADMIN_STAGE_GLOBAL_ROLES.includes(r));
+  const sameBranch = Boolean(actor.branchId) && actor.branchId === pass.branch_id;
+  const isBranchAdmin = (actorRoles.includes('branch_admin') || actorRoles.includes('admin')) && sameBranch;
   if (!isOverride && !isBranchAdmin) {
-    throw new ExitPassError(403, 'Only Admin, IT Head, Super Admin, or this branch\'s Branch Admin can decide this pass.');
+    throw new ExitPassError(403, 'Only Super Admin, IT Head, or this branch\'s Admin / Branch Admin can decide this pass.');
   }
   if (decision === 'rejected' && !remarks?.trim()) {
     throw new ExitPassError(400, 'Remarks are required for a rejection.');
@@ -816,10 +822,10 @@ export async function listPendingBranchHead(actor: RequestingEmployee, actorRole
   return rows;
 }
 
-/** Pending-Admin queue: Super Admin/Admin/IT Head see all branches; branch_admin sees only their own. */
+/** Pending-Admin queue: Super Admin/IT Head see all branches; admin and branch_admin only their own. */
 export async function listPendingAdmin(actor: RequestingEmployee, actorRoles: string[]) {
-  const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
-  const isBranchAdmin = actorRoles.includes('branch_admin');
+  const isOverride = actorRoles.some((r) => ADMIN_STAGE_GLOBAL_ROLES.includes(r));
+  const isBranchAdmin = actorRoles.includes('branch_admin') || actorRoles.includes('admin');
   if (!isOverride && !isBranchAdmin) return [];
   // branch_admin with no branch assigned cannot approve any passes
   if (!isOverride && !actor.branchId) return [];
