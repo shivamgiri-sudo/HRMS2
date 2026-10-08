@@ -1,3 +1,4 @@
+import { attributeSource } from "./he-source-attribution.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
 
 export const FOLLOWUP_GAP_MIN = 60;
@@ -6,11 +7,9 @@ const DAY_MS = 86_400_000;
 const OPEN_HOUR = 9;
 const CLOSE_HOUR = 20;
 
+/** The shared source rule (he-source-attribution.ts) on what a follow-up row knows at enqueue: the drive kind or the campaign status. */
 export function classifySource(i: { launchSourceKind?: "pool" | "meta" | "campaign" | "batch" | null; campaignStatus?: string | null }): SourceType {
-  if (i.launchSourceKind === "pool") return "he";
-  if (i.launchSourceKind) return "meta_old";
-  if (i.campaignStatus === "active" || i.campaignStatus === "draft") return "meta_live";
-  return "he";
+  return attributeSource({ driveSourceKind: i.launchSourceKind ?? null, campaignStatus: i.campaignStatus ?? null });
 }
 
 export function normaliseMobile10(raw: string | null | undefined): string | null {
