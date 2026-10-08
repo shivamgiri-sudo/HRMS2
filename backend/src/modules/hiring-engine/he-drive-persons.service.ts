@@ -213,6 +213,16 @@ export function campaignBlockers(c: RowDataPacket | Record<string, unknown> | un
   return out;
 }
 
+export interface OpenSeats { requisitionId: string; code: string; branch: string; open: number; closedReason: string | null }
+const nOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
+/** Open seats of a requisition row by the outreach path's own rule (lead-screener requisitionClosedReason): a closed, inactive or full requisition has none. */
+export const seatsOf = (r: RowDataPacket | Record<string, unknown>): { open: number; closedReason: string | null } => {
+  const closedReason = requisitionClosedReason({ approvalStatus: r.approval_status == null ? null : String(r.approval_status), activeStatus: nOrNull(r.active_status),
+    closedAt: r.closed_at == null ? null : String(r.closed_at), requestedHeadcount: nOrNull(r.requested_headcount), fulfilledHeadcount: nOrNull(r.fulfilled_headcount) });
+  const open = Math.max(0, Math.floor((Number(r.requested_headcount) || 0) - (Number(r.fulfilled_headcount) || 0)));
+  return { open: closedReason ? 0 : open, closedReason };
+};
+
 export const OTHER_BRANCH_CAMPAIGN = "Campaign of another branch";
 /**
  * Names, status and the campaign's own requisition (one keyed statement), plus the code and branch of the requisition the activity is for.
