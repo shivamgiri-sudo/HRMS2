@@ -8,6 +8,7 @@ import { MapPin, RefreshCcw, Radio } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { EmptyState } from "@/components/analytics/analytics-kit";
 import ControlRoom from "./ControlRoom";
+import OutcomeReasons from "./OutcomeReasons";
 
 interface Cand { matchId: string; leadId: string; name: string | null; mobile10: string; slotAt: string | null; state: string; liveKm: number | null; etaMin: number | null; tracked: boolean }
 interface BoardDrive { driveId: string; branchName: string; role: string; slotCapacity: number; expected: number; confirmed: number; live: number; arrived: number; candidates: Cand[] }
@@ -84,6 +85,7 @@ export default function BoardTab() {
           </div>
         </section>
       ))}
+      <OutcomeReasons />
     </div>
   );
 }
