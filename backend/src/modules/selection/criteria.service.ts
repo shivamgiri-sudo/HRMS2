@@ -264,7 +264,11 @@ export async function backfillCriteriaVersions(): Promise<number> {
   for (;;) {
     const [ids] = await db.execute<RowDataPacket[]>("SELECT id FROM job_requisition WHERE id > ? ORDER BY id LIMIT 500", [after]);
     if (!ids.length) break;
-    for (const r of ids) if (await recordCriteriaVersion(String(r.id), null, "backfill")) written++;
+    for (const r of ids) {
+      try { if (await recordCriteriaVersion(String(r.id), null, "backfill")) written++; } catch (e) {
+        logger.warn({ requisitionId: String(r.id), err: String((e as Error).message).slice(0, 200) }, "[criteria] backfill skipped one requisition");
+      }
+    }
     after = String(ids[ids.length - 1].id);
   }
   return written;

@@ -76,11 +76,19 @@ function columnValues(r: RequisitionCriteriaRow, cfg: MetaScreeningConfig, reloc
   if ((n(r.salaryMax) ?? 0) > 0) out.salary_fit = [{ max: n(r.salaryMax)!, maxRatio: 1.25, expectationOnly: false }];
   if (cfg.gender === "male" || cfg.gender === "female") out.gender = [{ gender: cfg.gender }];
   if (cfg.certifications?.length) out.certificate = cfg.certifications.map((code) => ({ code: String(code).toUpperCase(), level: "declared", verifiedBonus: 0 }));
-  if (cfg.language_requirements?.length) out.languages = [{ langs: cfg.language_requirements }];
+  const langs = normLangs(cfg.language_requirements);
+  if (langs.length) out.languages = [{ langs }];
   if (cfg.written_english_level) out.english = [{ level: cfg.written_english_level }];
   if ((n(cfg.min_typing_speed_wpm) ?? 0) > 0) out.typing = [{ wpm: n(cfg.min_typing_speed_wpm)! }];
   if (cfg.custom_field_rules?.length) out.form_answer = cfg.custom_field_rules.map((rule) => ({ rule }));
   return out;
+}
+
+/** Language requirements as stored: {language, skills} objects, or plain strings on older rows (skills unknown -> []). */
+export function normLangs(v: unknown): Array<{ language: string; skills: Array<"speak" | "read" | "write"> }> {
+  if (!Array.isArray(v)) return [];
+  return v.map((l) => (typeof l === "string" ? { language: l, skills: [] } : { language: String((l as { language?: unknown })?.language ?? ""), skills: Array.isArray((l as { skills?: unknown })?.skills) ? (l as { skills: Array<"speak" | "read" | "write"> }).skills : [] }))
+    .filter((l) => l.language.trim());
 }
 
 function shiftDecided(r: RequisitionCriteriaRow) {

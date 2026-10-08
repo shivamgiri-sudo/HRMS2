@@ -44,6 +44,14 @@ describe("legacy compile (no selection_rules)", () => {
     }
   });
 
+  it("tolerates language requirements stored as plain strings (seen on the rig data) and gender 'any'", () => {
+    const c = compileCriteria(onfidoRow({ screeningConfig: { gender: "any", language_requirements: ["Hindi"], min_typing_speed_wpm: 20 } as never }));
+    const langs = c.rules.find((r) => r.key === "languages" && r.only?.includes("meta_live"));
+    expect(langs?.required).toEqual({ langs: [{ language: "Hindi", skills: [] }] });
+    expect(langs?.requiredText).toBe("Hindi");
+    expect(c.rules.some((r) => r.key === "gender")).toBe(false);
+  });
+
   it("matchReq equals today's line-up requisition (no JD document)", () => {
     const c = compileCriteria(onfidoRow({ ageMin: 18, educationRequirement: "12th pass" }));
     expect(c.matchReq).toMatchObject({ ageMin: 18, minEducationRank: 3, nightShift: false, processName: "Onfido", salaryMax: 18000 });

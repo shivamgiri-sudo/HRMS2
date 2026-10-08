@@ -70,7 +70,7 @@ export function requiredText(key: RuleKey, r: unknown): string {
     }
     case "location_radius": return `within ${(r as Required["location_radius"]).km} km of the branch`;
     case "gender": return (r as Required["gender"]).gender;
-    case "languages": return (r as Required["languages"]).langs.map((l) => `${l.language} (${l.skills.join("/")})`).join(", ");
+    case "languages": return (r as Required["languages"]).langs.map((l) => (l.skills?.length ? `${l.language} (${l.skills.join("/")})` : l.language)).join(", ");
     case "certificate": {
       const v = r as Required["certificate"];
       return `${v.code} certificate (${v.level})`;
