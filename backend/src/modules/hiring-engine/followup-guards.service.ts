@@ -36,6 +36,16 @@ export async function branchFirstContactsToday(branchPrefix: string, now: Date):
   return Number(r[0]?.n ?? 0);
 }
 
+// policy.req_end_date_enforced = 1 makes a passed requisition end date skip stage A steps (D8); a missing row is off. Cached a minute.
+let endDatePolicy: { at: number; on: boolean } | null = null;
+export function resetEndDatePolicyCache(): void { endDatePolicy = null; }
+export async function reqEndDateEnforced(now: Date = new Date()): Promise<boolean> {
+  if (endDatePolicy && now.getTime() - endDatePolicy.at < 60_000) return endDatePolicy.on;
+  const [r] = await db.execute<RowDataPacket[]>("SELECT value FROM he_model_param WHERE param_key = 'policy.req_end_date_enforced' LIMIT 1");
+  endDatePolicy = { at: now.getTime(), on: Number(r[0]?.value ?? 0) === 1 };
+  return endDatePolicy.on;
+}
+
 export async function loadRequisitionFacts(requisitionId: string): Promise<RequisitionFacts | null> {
   const [r] = await db.execute<RowDataPacket[]>(
     "SELECT approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, requisition_validity FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);

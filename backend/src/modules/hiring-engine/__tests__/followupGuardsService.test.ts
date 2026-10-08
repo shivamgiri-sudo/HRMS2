@@ -4,6 +4,7 @@ const h = vi.hoisted(() => ({
   calls: [] as Array<{ sql: string; p: unknown[] }>,
   skipExists: false,
   req: null as Record<string, unknown> | null,
+  endDate: null as number | null,
 }));
 vi.mock("../../../db/mysql.js", () => ({
   db: {
@@ -13,15 +14,16 @@ vi.mock("../../../db/mysql.js", () => ({
       if (sql.includes("COUNT(*) AS n FROM qualified_followup")) return [[{ n: 3 }]];
       if (sql.includes("FROM job_requisition")) return [h.req ? [h.req] : []];
       if (sql.includes("FROM he_lead_event")) return [h.skipExists ? [{ hit: 1 }] : []];
+      if (sql.includes("policy.req_end_date_enforced")) return [h.endDate === null ? [] : [{ value: h.endDate }]];
       return [{ affectedRows: 1 }];
     }),
   },
 }));
 
-import { branchFirstContactsToday, istDayBounds, loadRequisitionFacts, recordGuardSkip, sharedWaSentToday } from "../followup-guards.service.js";
+import { branchFirstContactsToday, istDayBounds, loadRequisitionFacts, recordGuardSkip, reqEndDateEnforced, resetEndDatePolicyCache, sharedWaSentToday } from "../followup-guards.service.js";
 
 const THU_11 = new Date("2026-10-08T05:30:00Z");
-beforeEach(() => { h.calls = []; h.skipExists = false; h.req = null; });
+beforeEach(() => { h.calls = []; h.skipExists = false; h.req = null; h.endDate = null; resetEndDatePolicyCache(); });
 
 describe("followup-guards.service", () => {
   it("istDayBounds gives the IST calendar day as strings, whatever the server zone", () => {
@@ -51,6 +53,16 @@ describe("followup-guards.service", () => {
     expect(await loadRequisitionFacts("R1")).toBeNull();
     h.req = { approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 5, fulfilled_headcount: 1, requisition_validity: "2026-10-31" };
     expect(await loadRequisitionFacts("R1")).toEqual({ approvalStatus: "approved", activeStatus: 1, closedAt: null, requestedHeadcount: 5, fulfilledHeadcount: 1, validityDate: "2026-10-31" });
+  });
+
+  it("the end date only counts while policy.req_end_date_enforced = 1 (missing row = off), read at most once a minute", async () => {
+    expect(await reqEndDateEnforced(THU_11)).toBe(false);
+    resetEndDatePolicyCache();
+    h.endDate = 1;
+    expect(await reqEndDateEnforced(THU_11)).toBe(true);
+    h.endDate = 0;
+    expect(await reqEndDateEnforced(new Date(THU_11.getTime() + 30_000))).toBe(true); // cached
+    expect(await reqEndDateEnforced(new Date(THU_11.getTime() + 61_000))).toBe(false);
   });
 
   it("recordGuardSkip writes once per row+step+reason per IST day", async () => {

@@ -6,7 +6,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { channelAllowed } from "./he-campaign-config.service.js";
 import type { GuardFacts, GuardStep } from "./followup-guards.js";
-import { istDayBounds, loadRequisitionFacts } from "./followup-guards.service.js";
+import { istDayBounds, loadRequisitionFacts, reqEndDateEnforced } from "./followup-guards.service.js";
 import type { FollowupRow } from "./qualified-followup.context.js";
 
 const C = "COLLATE utf8mb4_unicode_ci";
@@ -60,7 +60,7 @@ export async function loadGuardFacts(i: GuardFactsInput): Promise<GuardFacts> {
     now, step: i.step, transactional: i.transactional, firstContact: i.firstContact, stage: i.stage,
     killSwitch: i.killSwitch, sourceRunnable: true, sourcePaused: i.sourcePaused,
     optedOut: person.status === "opted_out" || Number(person.revoked ?? 0) === 1 || person.opted_out_at != null,
-    requisition: await loadRequisitionFacts(row.requisitionId), journeyEnded,
+    requisition: await loadRequisitionFacts(row.requisitionId), journeyEnded, endDateEnforced: await reqEndDateEnforced(now),
     waUnpromptedToday: waToday, lastUnpromptedAt: lastUnprompted, lastCadenceStepAt: null, cadenceStep: i.cadenceStep, // the previous step is in he_message (lastUnpromptedAt)
     callAttemptsToday: callsToday, lastCallAt: lastCall,
     waBudgetLeft: i.waBudgetLeft, branchCapLeft: i.branchCapLeft, lastFirstContactOtherReqAt: i.firstContact ? otherFirst : null, hrOverride: i.hrOverride ?? false,
