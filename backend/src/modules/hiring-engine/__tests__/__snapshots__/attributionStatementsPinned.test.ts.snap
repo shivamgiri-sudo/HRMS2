@@ -1,0 +1,214 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`source-typed statements (pinned) > cost usage 1`] = `
+[
+  [
+    "SELECT param_key, value FROM he_model_param WHERE param_key LIKE 'cost.%'",
+    undefined,
+  ],
+  [
+    "SELECT id, spend_inr, last_synced_at FROM meta_campaign WHERE requisition_id IN (?) AND spend_inr > 0",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT COALESCE(rs.source_type, qf.source_type, 'he') AS source_type, h.channel, COUNT(DISTINCT h.mobile10, DATE(h.created_at)) AS persons_days, COUNT(DISTINCT h.id) AS msgs FROM he_message h LEFT JOIN he_match m ON m.lead_id = h.lead_id AND m.requisition_id = h.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = h.requisition_id LEFT JOIN qualified_followup qf ON qf.mobile10 = h.mobile10 AND qf.requisition_id = h.requisition_id WHERE h.requisition_id IN (?) AND h.created_at >= ? AND h.created_at < ? AND h.direction = 'out' AND h.channel IN ('whatsapp','email') AND h.delivery_status <> 'failed' GROUP BY 1, h.channel",
+    [
+      "r1",
+      "2026-10-01 00:00:00",
+      "2026-10-15 00:00:00",
+    ],
+  ],
+  [
+    "SELECT COALESCE(rs.source_type, 'he') AS source_type, COUNT(*) AS calls, SUM(CEIL(COALESCE(c.duration_s, 0) / 60)) AS minutes FROM he_call c LEFT JOIN requisition_stream_match sm ON sm.match_id = c.match_id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = c.requisition_id WHERE c.requisition_id IN (?) AND c.created_at >= ? AND c.created_at < ? GROUP BY 1",
+    [
+      "r1",
+      "2026-10-01 00:00:00",
+      "2026-10-15 00:00:00",
+    ],
+  ],
+]
+`;
+
+exports[`source-typed statements (pinned) > drive buckets, drive trend and campaign dashboard groups 1`] = `
+[
+  [
+    "SELECT jr.id AS requisition_id, jr.requisition_code, jr.designation_name, d.branch_name, d.id, d.drive_date, d.status, d.target_shows, s.id AS stream_id, s.source_type, COUNT(m.id) AS lined, SUM(m.state IN ('invited','confirmed','slot_released','arrived','no_show','selected')) AS invited, SUM(m.state IN ('confirmed','arrived','selected')) AS confirmed, SUM(m.state IN ('arrived','selected')) AS arrived, SUM(m.state = 'no_show') AS no_show, SUM(m.state = 'declined') AS declined, SUM((m.state IN ('arrived','selected') AND m.slot_at IS NULL)) AS unplanned FROM job_requisition jr LEFT JOIN he_drive d ON d.requisition_id = jr.id COLLATE utf8mb4_unicode_ci AND d.drive_date BETWEEN ? AND ? LEFT JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream s ON s.id = sm.stream_id AND s.requisition_id = d.requisition_id WHERE jr.id IN (?) GROUP BY jr.id, d.id, s.id",
+    [
+      "2026-10-01",
+      "2026-10-14",
+      "r1",
+    ],
+  ],
+  [
+    "SELECT branch_name FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT d.id, d.drive_date, d.status, d.target_shows, s.id AS stream_id, s.source_type, COUNT(m.id) AS lined, SUM(m.state IN ('invited','confirmed','slot_released','arrived','no_show','selected')) AS invited, SUM(m.state IN ('confirmed','arrived','selected')) AS confirmed, SUM(m.state IN ('arrived','selected')) AS arrived, SUM(m.state = 'no_show') AS no_show, SUM(m.state = 'declined') AS declined, SUM((m.state IN ('arrived','selected') AND m.slot_at IS NULL)) AS unplanned FROM he_drive d LEFT JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream s ON s.id = sm.stream_id AND s.requisition_id = d.requisition_id WHERE d.requisition_id = ? AND d.branch_name = ? AND d.drive_date BETWEEN ? AND ? GROUP BY d.id, s.id ORDER BY d.drive_date, d.id",
+    [
+      "r1",
+      "Pune",
+      "2026-10-01",
+      "2026-10-17",
+    ],
+  ],
+  [
+    "SELECT DISTINCT d.requisition_id, d.branch_name FROM he_drive d WHERE d.drive_date BETWEEN ? AND ? AND d.status <> 'closed'",
+    [
+      "2026-10-13",
+      "2026-10-17",
+    ],
+  ],
+  [
+    "SELECT jr.id AS requisition_id, jr.requisition_code, jr.designation_name, d.branch_name, d.id, d.drive_date, d.status, d.target_shows, s.id AS stream_id, s.source_type, COUNT(m.id) AS lined, SUM(m.state IN ('invited','confirmed','slot_released','arrived','no_show','selected')) AS invited, SUM(m.state IN ('confirmed','arrived','selected')) AS confirmed, SUM(m.state IN ('arrived','selected')) AS arrived, SUM(m.state = 'no_show') AS no_show, SUM(m.state = 'declined') AS declined, SUM((m.state IN ('arrived','selected') AND m.slot_at IS NULL)) AS unplanned FROM job_requisition jr LEFT JOIN he_drive d ON d.requisition_id = jr.id COLLATE utf8mb4_unicode_ci AND d.drive_date BETWEEN ? AND ? LEFT JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream s ON s.id = sm.stream_id AND s.requisition_id = d.requisition_id WHERE jr.id IN (?) GROUP BY jr.id, d.id, s.id",
+    [
+      "2026-10-01",
+      "2026-10-17",
+      "r1",
+    ],
+  ],
+]
+`;
+
+exports[`source-typed statements (pinned) > insight facts 1`] = `
+[
+  [
+    "SELECT STRAIGHT_JOIN COALESCE(rs.source_type, 'he') AS source_type, (LEAST(ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED)), 24 - ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED))) > ?) AS outside, COUNT(DISTINCT o.id) AS n, COUNT(DISTINCT CASE WHEN EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at > o.created_at AND i.created_at <= DATE_ADD(o.created_at, INTERVAL 24 HOUR)) THEN o.id END) AS hits FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id JOIN he_message o ON o.lead_id = m.lead_id AND o.direction = 'out' AND o.channel IN ('email','whatsapp') AND o.template_key LIKE 'he_walkin_invite%' AND o.created_at >= ? AND o.created_at < ? JOIN he_lead_insight li ON li.lead_id = m.lead_id AND li.best_hour_ist IS NOT NULL WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? GROUP BY 1, 2",
+    [
+      1,
+      "2026-10-01 00:00:00",
+      "2026-10-15 00:00:00",
+      "r1",
+      "2026-10-01",
+      "2026-10-14",
+    ],
+  ],
+  [
+    "SELECT STRAIGHT_JOIN COALESCE(rs.source_type, 'he') AS source_type, (EXISTS (SELECT 1 FROM he_message r1 WHERE r1.lead_id = m.lead_id AND r1.drive_id = d.id AND r1.direction = 'out' AND r1.template_key LIKE 'he_reminder_1d%' AND (r1.delivery_status IS NULL OR r1.delivery_status <> 'failed')) OR EXISTS (SELECT 1 FROM he_message r2 WHERE r2.lead_id = m.lead_id AND r2.drive_id = d.id AND r2.direction = 'out' AND r2.template_key LIKE 'he_reminder_2h%' AND (r2.delivery_status IS NULL OR r2.delivery_status <> 'failed'))) AS has_reminder, COUNT(DISTINCT m.id) AS n, COUNT(DISTINCT CASE WHEN m.state IN ('arrived','selected') THEN m.id END) AS hits FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? AND m.state IN ('confirmed','arrived','no_show','selected') GROUP BY 1, 2",
+    [
+      "r1",
+      "2026-10-01",
+      "2026-10-14",
+    ],
+  ],
+  [
+    "SELECT STRAIGHT_JOIN COALESCE(rs.source_type, 'he') AS source_type, (m.distance_km > ?) AS far, COUNT(DISTINCT m.id) AS n, COUNT(DISTINCT CASE WHEN m.state IN ('arrived','selected') THEN m.id END) AS hits FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? AND m.distance_km IS NOT NULL AND m.state IN ('confirmed','arrived','no_show','selected') GROUP BY 1, 2",
+    [
+      15,
+      "r1",
+      "2026-10-01",
+      "2026-10-14",
+    ],
+  ],
+  [
+    "SELECT STRAIGHT_JOIN COALESCE(rs.source_type, 'he') AS source_type, o.error_message AS err, COUNT(DISTINCT o.id) AS n FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id JOIN he_message o ON o.lead_id = m.lead_id AND o.direction = 'out' AND o.channel = 'whatsapp' AND o.delivery_status = 'failed' AND o.created_at >= ? AND o.created_at < ? WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? GROUP BY 1, 2",
+    [
+      "2026-10-01 00:00:00",
+      "2026-10-15 00:00:00",
+      "r1",
+      "2026-10-01",
+      "2026-10-14",
+    ],
+  ],
+  [
+    "SELECT STRAIGHT_JOIN COALESCE(rs.source_type, 'he') AS source_type, COUNT(DISTINCT CASE WHEN o.delivery_status IN ('delivered','read') THEN o.id END) AS wa_delivered, COUNT(DISTINCT CASE WHEN o.delivery_status = 'delivered' AND o.created_at < ? THEN o.id END) AS wa_unread FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id JOIN he_message o ON o.lead_id = m.lead_id AND o.direction = 'out' AND o.channel = 'whatsapp' AND o.created_at >= ? AND o.created_at < ? WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? GROUP BY 1",
+    [
+      "2026-10-13 11:30:00",
+      "2026-10-01 00:00:00",
+      "2026-10-15 00:00:00",
+      "r1",
+      "2026-10-01",
+      "2026-10-14",
+    ],
+  ],
+  [
+    "SELECT STRAIGHT_JOIN COALESCE(rs.source_type, 'he') AS source_type, COALESCE(li.language_pref = 'hi', 0) AS hi, COUNT(DISTINCT o.id) AS n, COUNT(DISTINCT CASE WHEN EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at > o.created_at AND i.created_at <= DATE_ADD(o.created_at, INTERVAL 24 HOUR)) THEN o.id END) AS hits FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id JOIN he_message o ON o.lead_id = m.lead_id AND o.direction = 'out' AND o.channel = 'whatsapp' AND o.created_at >= ? AND o.created_at < ? LEFT JOIN he_lead_insight li ON li.lead_id = m.lead_id WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? GROUP BY 1, 2",
+    [
+      "2026-10-01 00:00:00",
+      "2026-10-15 00:00:00",
+      "r1",
+      "2026-10-01",
+      "2026-10-14",
+    ],
+  ],
+  [
+    "SELECT d.id, d.requisition_id, d.drive_date, d.slot_start, d.slot_end, d.slot_minutes, d.slot_capacity FROM he_drive d WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? AND d.status <> 'closed' ORDER BY d.drive_date, d.id",
+    [
+      "r1",
+      "2026-10-14",
+      "2026-10-17",
+    ],
+  ],
+  [
+    "SELECT STRAIGHT_JOIN m.drive_id, m.state, m.distance_km, m.slot_at, hl.walkin_count, (SELECT COUNT(*) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'no_show' AND NOT EXISTS (SELECT 1 FROM he_lead_event ax WHERE ax.drive_id = e.drive_id AND ax.event_type = 'arrived' AND ax.lead_id = e.lead_id) AND (e.drive_id IS NULL OR e.drive_id <> m.drive_id)) AS past_no_shows, EXISTS (SELECT 1 FROM he_location_ping p WHERE p.match_id = m.id) AS shared_location, EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.intent IN ('confirm','on_my_way') AND i.created_at >= m.created_at) AS replied_yes FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id JOIN he_lead hl ON hl.id = m.lead_id WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? AND d.status <> 'closed' AND m.state IN ('invited','confirmed','arrived','selected')",
+    [
+      "r1",
+      "2026-10-14",
+      "2026-10-17",
+    ],
+  ],
+  [
+    "SELECT param_key, value FROM he_model_param WHERE param_key LIKE 'show.%'",
+    undefined,
+  ],
+]
+`;
+
+exports[`source-typed statements (pinned) > outcome reason counts 1`] = `
+[
+  [
+    "SELECT COALESCE(rs.source_type, 'he') AS source_type, r.outcome, r.reason_code, COUNT(*) AS n FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id AND m.state IN ('no_show','declined') JOIN he_match_outcome_reason r ON r.match_id = m.id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? AND r.outcome = m.state GROUP BY 1, r.outcome, r.reason_code",
+    [
+      "r1",
+      "2026-10-01",
+      "2026-10-14",
+    ],
+  ],
+]
+`;
+
+exports[`source-typed statements (pinned) > sources window 1`] = `
+[
+  [
+    "SELECT requisition_id, id, source_type, origin_id, origin_label, status FROM requisition_stream WHERE requisition_id IN (?)",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT f.requisition_id, f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label, COUNT(*) AS qualified, SUM(f.emailed) AS emailed, SUM(f.whatsapped) AS whatsapped, SUM(f.replied) AS replied, SUM(f.called) AS called, SUM(f.confirmed) AS confirmed, SUM(f.arrived) AS arrived, SUM(f.selected) AS selected, SUM(f.joined) AS joined FROM ( SELECT qf.requisition_id, qf.source_type, qf.origin_id, qf.origin_label, CASE WHEN qf.email_status = 'sent' OR EXISTS (SELECT 1 FROM he_message hm WHERE hm.requisition_id = qf.requisition_id AND hm.lead_id = qf.he_lead_id AND hm.channel = 'email' AND hm.direction = 'out' AND hm.delivery_status <> 'failed') THEN 1 ELSE 0 END AS emailed, CASE WHEN qf.wa_status = 'sent' OR EXISTS (SELECT 1 FROM he_message hm WHERE hm.requisition_id = qf.requisition_id AND hm.lead_id = qf.he_lead_id AND hm.channel = 'whatsapp' AND hm.direction = 'out' AND hm.delivery_status <> 'failed') THEN 1 ELSE 0 END AS whatsapped, CASE WHEN qf.stopped_reason = 'replied' OR EXISTS (SELECT 1 FROM he_message hi WHERE hi.lead_id = qf.he_lead_id AND hi.direction = 'in' AND hi.created_at > qf.qualified_at) OR EXISTS (SELECT 1 FROM meta_lead_messages mm WHERE mm.lead_id = qf.meta_lead_id COLLATE utf8mb4_unicode_ci AND mm.direction = 'inbound' AND mm.created_at > qf.qualified_at) THEN 1 ELSE 0 END AS replied, CASE WHEN qf.call_state = 'called' OR (m.id IS NOT NULL AND EXISTS (SELECT 1 FROM he_call c WHERE c.lead_id = m.lead_id AND c.match_id = m.id)) THEN 1 ELSE 0 END AS called, CASE WHEN m.state IN ('confirmed','arrived','selected') THEN 1 ELSE 0 END AS confirmed, CASE WHEN m.state IN ('arrived','selected') THEN 1 ELSE 0 END AS arrived, CASE WHEN (m.state IN ('arrived','selected') AND ((hl.status = 'joined' AND hl.status_at >= md.drive_date) OR (LOWER(ac.current_stage) IN ('joined','payroll_validated') AND (EXISTS (SELECT 1 FROM ats_candidate_stage_log sl WHERE sl.candidate_id = ac.id AND LOWER(sl.to_stage) IN ('joined','payroll_validated') AND sl.stage_date >= md.drive_date) OR EXISTS (SELECT 1 FROM ats_onboarding_bridge ob WHERE ob.candidate_id = ac.id AND ob.joining_date >= md.drive_date))))) THEN 1 ELSE 0 END AS joined, CASE WHEN ((m.state IN ('arrived','selected') AND ((hl.status = 'joined' AND hl.status_at >= md.drive_date) OR (LOWER(ac.current_stage) IN ('joined','payroll_validated') AND (EXISTS (SELECT 1 FROM ats_candidate_stage_log sl WHERE sl.candidate_id = ac.id AND LOWER(sl.to_stage) IN ('joined','payroll_validated') AND sl.stage_date >= md.drive_date) OR EXISTS (SELECT 1 FROM ats_onboarding_bridge ob WHERE ob.candidate_id = ac.id AND ob.joining_date >= md.drive_date))))) OR (m.state IN ('arrived','selected') AND ((m.state = 'selected' AND m.updated_at >= md.drive_date) OR (LOWER(ac.current_stage) IN ('selected','offered','offer','offer_approved','onboarded','converted') AND EXISTS (SELECT 1 FROM ats_candidate_stage_log sl WHERE sl.candidate_id = ac.id AND LOWER(sl.to_stage) IN ('selected','offered','offer','offer_approved','onboarded','converted','joined','payroll_validated') AND sl.stage_date >= md.drive_date))))) THEN 1 ELSE 0 END AS selected FROM qualified_followup qf LEFT JOIN he_match m ON m.lead_id = qf.he_lead_id AND m.requisition_id = qf.requisition_id LEFT JOIN he_drive md ON md.id = m.drive_id AND md.requisition_id = m.requisition_id LEFT JOIN he_lead hl ON hl.id = qf.he_lead_id LEFT JOIN ats_candidate ac ON ac.id = COALESCE(qf.ats_candidate_id, hl.ats_candidate_id) COLLATE utf8mb4_unicode_ci WHERE qf.requisition_id IN (?) AND qf.qualified_at >= ? AND qf.qualified_at < ? ) f GROUP BY f.requisition_id, f.source_type, f.origin_id",
+    [
+      "r1",
+      "2026-10-01 00:00:00",
+      "2026-10-15 00:00:00",
+    ],
+  ],
+  [
+    "SELECT d.requisition_id AS requisition_id, COALESCE(rs.source_type, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, 'meta_old', 'he')) AS source_type, COALESCE(rs.origin_id, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, d.id, 'pool')) AS origin_id, MAX(COALESCE(rs.origin_label, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, d.run_label, 'Pool: ATS history'))) AS origin_label, COUNT(DISTINCT m.lead_id) AS leads FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? AND (rs.source_type IS NULL OR rs.source_type <> 'meta_live') GROUP BY d.requisition_id, 2, 3",
+    [
+      "r1",
+      "2026-10-01",
+      "2026-10-14",
+    ],
+  ],
+  [
+    "SELECT id, requisition_id, campaign_name FROM meta_campaign WHERE requisition_id IN (?)",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT campaign_id, COUNT(DISTINCT RIGHT(REGEXP_REPLACE(parsed_phone, '[^0-9]', ''), 10)) AS leads FROM meta_lead_raw WHERE campaign_id IN (?) AND (requisition_id IS NULL OR requisition_id IN (?)) AND parsed_phone IS NOT NULL AND created_at >= ? AND created_at < ? GROUP BY campaign_id",
+    [
+      "c9",
+      "r1",
+      "2026-10-01 00:00:00",
+      "2026-10-15 00:00:00",
+    ],
+  ],
+]
+`;
