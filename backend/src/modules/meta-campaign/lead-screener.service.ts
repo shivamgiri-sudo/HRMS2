@@ -110,7 +110,7 @@ export function isSoftRequirement(value: string | null): boolean {
 const AFFIRMATIVE = /\b(yes|y|yep|ya|yah|yas|yea|yeah|have|hold|got|possess|certified|done|ok|okay|sure|confirmed|available|willing)\b/i;
 const NEGATIVE = /\b(no|nope|nahi|nahin|not|don't have|dont have|non|naan|without|fresher|na|n\/a)\b/i;
 
-function isAffirmative(answer: string): boolean | null {
+export function isAffirmative(answer: string): boolean | null {
   const pos = AFFIRMATIVE.test(answer);
   const neg = NEGATIVE.test(answer);
   if (pos && !neg) return true;
@@ -120,7 +120,7 @@ function isAffirmative(answer: string): boolean | null {
 
 // ── Certification field detection ─────────────────────────────────────────────────────────────
 // Maps a certification code to patterns that appear in META form field names.
-const CERT_FIELD_PATTERNS: Record<string, RegExp> = {
+export const CERT_FIELD_PATTERNS: Record<string, RegExp> = {
   DRA:  /dra/i,
   IRDA: /irda|insurance.*certif|certif.*insurance/i,
   NCFM: /ncfm/i,
@@ -145,7 +145,7 @@ function findRawFieldValue(rawFields: Record<string, string>, pattern: RegExp): 
 }
 
 // ── Typing speed extraction ───────────────────────────────────────────────────────────────────
-function extractWpm(answer: string): number | null {
+export function extractWpm(answer: string): number | null {
   // Handles "35 wpm", "35-40", "40+", "40 words per minute", etc.
   const m = answer.match(/(\d+)/);
   return m ? parseInt(m[1], 10) : null;
@@ -154,7 +154,7 @@ function extractWpm(answer: string): number | null {
 // ── Written English level ─────────────────────────────────────────────────────────────────────
 const ENGLISH_RANK: Record<string, number> = { basic: 1, intermediate: 2, advanced: 3, fluent: 3 };
 
-function englishRank(answer: string): number {
+export function englishRank(answer: string): number {
   const lower = answer.toLowerCase();
   for (const [key, rank] of Object.entries(ENGLISH_RANK)) {
     if (lower.includes(key)) return rank;

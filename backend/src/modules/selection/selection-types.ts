@@ -2,6 +2,10 @@
 // The job requisition is the single source of truth; these types describe how its columns plus
 // job_requisition.selection_rules are read, compiled and evaluated. Pure declarations only.
 import type { MatchLead, MatchRequisition } from "../hiring-engine/he-matcher.js";
+import type { ScreeningInput } from "../meta-campaign/lead-screener.service.js";
+
+/** Bumped whenever evaluation semantics change (stored with every version and decision). */
+export const ENGINE_VERSION = 1;
 
 export type Verdict = "pass" | "fail" | "review";
 export type SourceKind = "meta_live" | "meta_old" | "he";
@@ -36,7 +40,8 @@ export interface RuleValues {
   relocation_ok: boolean;
   salary_fit: { maxRatio: number };
   notice_period: { maxDays: number };
-  certificate: { level: "declared" | "verified" };
+  /** verifiedBonus: score added when the certificate is verified (the DRA template: MUST declared, +15 if verified). */
+  certificate: { level: "declared" | "verified"; verifiedBonus?: number };
   employer_include: string[];
   employer_exclude: string[];
   ex_employee: "allow_clean" | "exclude";
@@ -84,6 +89,8 @@ export interface CandidateFacts {
     eligibility: { ok: boolean; blocks: string[]; priority: number };
     inOtherJourney: string | null; bookedFor: string | null; exEmployee: "clean" | "not_clean" | null; rejectedOtherProcess: boolean;
   };
+  /** The Meta form exactly as ingest screens it (parseLead output); null for non-Meta people. */
+  metaInput: ScreeningInput | null;
   match: MatchLead;
 }
 
@@ -91,6 +98,8 @@ export interface CompiledRule {
   key: RuleKey; label: string; op: string; required: unknown; requiredText: string;
   mode: "must" | "prefer"; weight: number; missing: MissingPolicy;
   missingBySource?: Partial<Record<SubSource | SourceKind, MissingPolicy>>; origin: string;
+  /** Legacy compile only: the rule belongs to today's screener of these sources (Meta screening or the drive line-up). */
+  only?: SourceKind[];
 }
 
 export interface Completeness {
@@ -102,6 +111,7 @@ export interface Completeness {
 export interface CompiledCriteria {
   requisitionId: string; versionId: string | null; hash: string; engineVersion: number;
   rules: CompiledRule[]; undecided: RuleKey[]; completeness: Completeness; matchReq: MatchRequisition;
+  legacy: boolean; decided: RuleKey[]; templateId: string | null;
 }
 
 export interface RuleResult {

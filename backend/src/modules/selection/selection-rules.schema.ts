@@ -27,7 +27,7 @@ const VALUE_SCHEMAS: Record<ValueRuleKey, z.ZodTypeAny> = {
   relocation_ok: z.boolean(),
   salary_fit: z.object({ maxRatio: z.number().min(1).max(3) }).strict(),
   notice_period: z.object({ maxDays: z.number().int().min(0).max(365) }).strict(),
-  certificate: z.object({ level: z.enum(["declared", "verified"]) }).strict(),
+  certificate: z.object({ level: z.enum(["declared", "verified"]), verifiedBonus: z.number().int().min(0).max(MAX_WEIGHT).optional() }).strict(),
   employer_include: z.array(nonBlank).min(1).max(50),
   employer_exclude: z.array(nonBlank).min(1).max(50),
   ex_employee: z.enum(["allow_clean", "exclude"]),
