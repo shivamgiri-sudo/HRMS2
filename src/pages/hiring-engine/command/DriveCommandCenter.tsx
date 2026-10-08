@@ -9,7 +9,7 @@ import PipelineHealthStrip from "../PipelineHealthStrip";
 import FilterBar from "./FilterBar";
 import SectionNav, { PANEL_ID, tabDomId } from "./SectionNav";
 import { filtersKey, type RequisitionOption } from "./commandData";
-import { commandHash, defaultFilters, istTodayClient, parseCommandHash, sectionLabels, type Filters, type SectionId } from "./driveCommandModel";
+import { TYPE_LABEL, commandHash, defaultFilters, istTodayClient, parseCommandHash, sectionLabels, type Filters, type SectionId } from "./driveCommandModel";
 import type { DriveAnalytics } from "./driveCommandTypes";
 import { useDriveAnalytics, useFilterOptions } from "./useCommandData";
 import KpiStrip from "./charts/KpiStrip";
@@ -32,6 +32,7 @@ import { HE_META_NOTE } from "./sourceSectionModel";
 import PlanSection from "./PlanSection";
 import FollowupPanel from "./FollowupPanel";
 import ActionQueuePanel from "./ActionQueuePanel";
+import { DriveFunnelDepth, SummaryFunnelDepth } from "./FunnelDepth";
 
 const DrivesTab = lazy(() => import("../DrivesTab"));
 
@@ -112,12 +113,13 @@ export function DriveCommandView({ section, filters, analytics, loading, error, 
   );
 }
 
-/** Summary: KPI strip full width, then the comparison charts two per row on large screens. */
-function SummaryCharts({ analytics, insights }: { analytics: DriveAnalytics; insights?: ReactNode }) {
+/** Summary: KPI strip full width, the insights, the funnel depth block, then the comparison charts two per row on large screens. */
+function SummaryCharts({ analytics, insights, planHref }: { analytics: DriveAnalytics; insights?: ReactNode; planHref?: string }) {
   return (
     <div className="space-y-4">
       <KpiStrip analytics={analytics} />
       {insights}
+      <SummaryFunnelDepth analytics={analytics} planHref={planHref} />
       <div className="grid gap-4 lg:grid-cols-2">
         <FunnelCompare analytics={analytics} />
         <YieldChart analytics={analytics} />
@@ -131,12 +133,17 @@ function SummaryCharts({ analytics, insights }: { analytics: DriveAnalytics; ins
   );
 }
 
-/** Analytics-dependent panels (gated) and panels that must not wait for analytics (children). */
-export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions, plan?: ReactNode, followupOpen = 0, filters?: Filters, onFilters?: (f: Filters) => void): { gated: ReactNode; always: ReactNode } {
+/**
+ * Analytics-dependent panels (gated) and panels that must not wait for analytics (children). `typeInsights` renders the insights of one
+ * drive type inside its section (the Summary shows `insights`, all types).
+ */
+export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions, plan?: ReactNode, followupOpen = 0, filters?: Filters, onFilters?: (f: Filters) => void,
+  typeInsights?: (t: SourceType) => ReactNode): { gated: ReactNode; always: ReactNode } {
+  const planHref = commandHash("plan", filters ?? defaultFilters());
   if (section === "summary") {
     // The action queue does not wait for analytics; DriveCommandView draws the Summary's always slot above the gated charts.
     return {
-      gated: <>{analytics && <SummaryCharts analytics={analytics} insights={insights} />}<FollowupPanel requisitionId={actions?.requisitionId ?? null} qualifiedTracked={analytics?.qualifiedTracked ?? null} openSignal={followupOpen} /></>,
+      gated: <>{analytics && <SummaryCharts analytics={analytics} insights={insights} planHref={planHref} />}<FollowupPanel requisitionId={actions?.requisitionId ?? null} qualifiedTracked={analytics?.qualifiedTracked ?? null} openSignal={followupOpen} /></>,
       always: filters ? <ActionQueuePanel filters={filters} /> : null,
     };
   }
@@ -144,8 +151,9 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
   if (section === "he") {
     return {
       gated: analytics && (
-        <div className="space-y-2">
+        <div className="space-y-4">
           <Note>{HE_META_NOTE}</Note>
+          <DriveFunnelDepth analytics={analytics} type="he" insights={typeInsights?.("he")} planHref={planHref} />
           <DriveTypeSection type="he" groups={analytics.groups ?? []} today={istTodayClient()} title="Hiring Engine drives" actions={actions} />
         </div>
       ),
@@ -162,6 +170,7 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
     gated: analytics && (
       <div className="space-y-4">
         <SourceOverview analytics={analytics} type={type} filters={filters ?? defaultFilters()} onFilters={onFilters} />
+        <DriveFunnelDepth analytics={analytics} type={type} insights={typeInsights?.(type)} planHref={planHref} withFunnel={false} />
         <DriveTypeSection type={type} groups={analytics.groups ?? []} today={istTodayClient()} title={section === "live" ? "Live Meta drives" : "Old Meta data drives"} actions={actions} />
       </div>
     ),
@@ -222,7 +231,11 @@ export default function DriveCommandCenter() {
     <PlanSection requisitionId={filters.requisitionId} groups={data?.groups ?? null} groupsLoading={loading} requisitions={requisitions}
       onPick={(id) => go("plan", { ...filters, requisitionId: id })} onChanged={reload} autoPreview={planIntent} />
   ) : null;
-  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions, plan, followupOpen, filters, (f) => go(section, f));
+  const typeInsights = (t: SourceType) => (
+    <InsightsPanel analytics={data ? { insights: (data.insights ?? []).filter((i) => i.sourceType === t), partial: data.partial } : null} title={`Insights for ${TYPE_LABEL[t]}`}
+      dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />
+  );
+  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions, plan, followupOpen, filters, (f) => go(section, f), typeInsights);
   return (
     <div className="space-y-3">
       <PipelineHealthStrip />

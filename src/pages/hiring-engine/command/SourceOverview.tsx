@@ -1,44 +1,17 @@
 /**
- * Top of the Live Meta / Old Meta data sections: the Summary's KPI tiles, funnel and daily trend for one source type, the reason behind
+ * Top of the Live Meta / Old Meta data sections: the Summary's KPI tiles, the full-journey funnel and daily trend for one source type, the reason behind
  * any zero, and (Old Meta data) the one-tap widen. Shown whether or not a stream exists; the streams list follows below it.
  */
 import { Info } from "lucide-react";
 import KpiStrip from "./charts/KpiStrip";
 import YieldChart from "./charts/YieldChart";
-import ChartFrame, { BTN, Note } from "./charts/ChartFrame";
-import { funnelView, yieldView } from "./charts/summaryView";
-import { TYPE_LABEL, pctText, type Filters } from "./driveCommandModel";
+import { BTN } from "./charts/ChartFrame";
+import JourneyFunnel from "./charts/JourneyFunnel";
+import { yieldView } from "./charts/summaryView";
+import { TYPE_LABEL, type Filters } from "./driveCommandModel";
 import type { DriveAnalytics, SourceType } from "./driveCommandTypes";
 import CampaignMapping from "./CampaignMapping";
 import { ALL_TIME_HINT, SHOW_ALL_TIME, atWidestRange, scopeToType, showAllTimeFilters, zeroNotes } from "./sourceSectionModel";
-
-/** Funnel of one type as a list: the bar is decoration, the numbers and conversions are the text alternative. */
-function SourceFunnel({ analytics, type }: { analytics: DriveAnalytics; type: SourceType }) {
-  const v = funnelView(analytics);
-  const top = Math.max(1, ...v.rows.map((r) => r.values[type] ?? 0));
-  const table = {
-    caption: `${TYPE_LABEL[type]} funnel: people at each stage and conversion from the stage before`,
-    columns: ["Stage", "People", "From previous stage"],
-    rows: v.rows.map((r) => [r.label, r.text[type], r.stage === "leads" ? "–" : pctText(r.conversion[type])]),
-  };
-  return (
-    <ChartFrame title="Funnel" subtitle="People at each stage, with the share that moved on from the stage before." table={table} empty={false} aria={table.caption} kind="grid"
-      note={v.untracked ? <Note>Qualified is not tracked yet, so it shows a dash.</Note> : undefined}>
-      <ol className="space-y-2">
-        {v.rows.map((r) => {
-          const n = r.values[type];
-          return (
-            <li key={r.stage} className="grid grid-cols-[5.5rem_1fr_auto] items-center gap-2 text-xs text-slate-800 dark:text-slate-100" data-funnel-stage={r.stage}>
-              <span className="font-semibold">{r.label}</span>
-              <span className="h-3 min-w-0 rounded bg-slate-100 dark:bg-slate-800" aria-hidden><span className="block h-3 rounded bg-blue-600 dark:bg-blue-400" style={{ width: `${Math.round(((n ?? 0) / top) * 100)}%` }} /></span>
-              <span className="text-right tabular-nums"><strong>{r.text[type]}</strong>{r.stage !== "leads" && <span className="text-slate-600 dark:text-slate-300"> ({pctText(r.conversion[type])})</span>}</span>
-            </li>
-          );
-        })}
-      </ol>
-    </ChartFrame>
-  );
-}
 
 export default function SourceOverview({ analytics, type, filters, onFilters }: { analytics: DriveAnalytics; type: SourceType; filters: Filters; onFilters?: (f: Filters) => void }) {
   const scoped = scopeToType(analytics, type);
@@ -65,7 +38,7 @@ export default function SourceOverview({ analytics, type, filters, onFilters }: 
       )}
       {leads > 0 && (
         <div className="grid gap-3 lg:grid-cols-2">
-          <SourceFunnel analytics={scoped} type={type} />
+          <JourneyFunnel analytics={scoped} type={type} title={`Funnel: ${label} journey`} />
           {!trend.empty && <YieldChart analytics={scoped} />}
         </div>
       )}
