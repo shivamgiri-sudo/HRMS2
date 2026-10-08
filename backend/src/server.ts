@@ -16,6 +16,7 @@ import { startEmployeeMasterSnapshotScheduler } from "./cron/employee-master-sna
 import { startExitAutoAdvanceScheduler, stopExitAutoAdvanceScheduler } from "./cron/exitAutoAdvance.cron.js";
 import { startPipelineHealthAlerts, stopPipelineHealthAlerts } from "./modules/hiring-engine/pipeline-health.cron.js";
 import { startQualifiedFollowupWorker, stopQualifiedFollowupWorker } from "./modules/hiring-engine/qualified-followup.worker.js";
+import { startInboundEmailWorker, stopInboundEmailWorker } from "./workers/inbound-email.worker.js";
 import { startMetaLeadSyncScheduler, stopMetaLeadSyncScheduler } from "./cron/metaLeadSync.cron.js";
 import { startApprovalDigestScheduler } from "./modules/approval-center/approval-digest.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
@@ -137,6 +138,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     stopMetaLeadSyncScheduler();
     stopPipelineHealthAlerts();
     stopQualifiedFollowupWorker();
+    stopInboundEmailWorker();
 
     // Clear all registered timers
     clearAllTimers();
@@ -338,6 +340,7 @@ function startServer() {
         startMetaLeadSyncScheduler();
         startPipelineHealthAlerts();
         startQualifiedFollowupWorker();
+        startInboundEmailWorker();
         startBreachSlaCron();
         // Escalates DPDP withdrawal requests that passed their decision deadline.
         startWithdrawalSlaCron();
@@ -487,6 +490,7 @@ function startServer() {
         startMetaLeadSyncScheduler();
         startPipelineHealthAlerts();
         startQualifiedFollowupWorker();
+        startInboundEmailWorker();
       }
     } else {
       console.log("[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)");
@@ -498,6 +502,7 @@ function startServer() {
         startMetaLeadSyncScheduler();
         startPipelineHealthAlerts();
         startQualifiedFollowupWorker();
+        startInboundEmailWorker();
       }
     }
     console.log(`MCN HRMS backend running on http://localhost:${env.PORT}`);
