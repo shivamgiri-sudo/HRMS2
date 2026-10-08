@@ -47,6 +47,7 @@ import { dailyPlanNumbers } from "./he-slots.js";
 import { getInboxThread, listInbox, replyToCandidate } from "./he-inbox.service.js";
 import { branchScopeOf, registerStreamRoutes } from "./he-stream.routes.js";
 import { registerCommandRoutes } from "./he-command.routes.js";
+import { registerCampaignMatrixRoutes } from "./campaign-matrix.routes.js";
 import { registerActionRoutes } from "./he-action.routes.js";
 import { registerOutcomeRoutes } from "./he-outcome.routes.js";
 import { registerResponseRoutes } from "./response.routes.js";
@@ -66,6 +67,7 @@ const ADMIN_ROLES = ["super_admin", "admin"];
 const WRITE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr"];
 registerStreamRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES, admin: ADMIN_ROLES });
 registerCommandRoutes(heRouter, { view: VIEW_ROLES }); // before /qualified-followup/:id, which would answer /qualified-followup/status with 400
+registerCampaignMatrixRoutes(heRouter, { view: VIEW_ROLES });
 registerActionRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES });
 registerOutcomeRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES });
 registerResponseRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES });
