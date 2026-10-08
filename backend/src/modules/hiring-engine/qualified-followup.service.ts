@@ -170,6 +170,9 @@ export async function enqueueMatchedFollowups(
     const tag = enrolTag(sw, sourceType, drive.requisitionId);
     if (!tag) return out;
     if (requisitionOpenReason(await loadRequisitionFacts(drive.requisitionId))) return out;
+    // Branch and role of the requisition: the journey is booked at that branch and the messages name the role.
+    const [jr] = await db.execute<RowDataPacket[]>("SELECT branch_name, designation_name FROM job_requisition WHERE id = ? LIMIT 1", [drive.requisitionId]);
+    const branchName = jr[0]?.branch_name ?? null, roleName = jr[0]?.designation_name ?? null;
     const originId = stream ? stream.originId : sourceType === "he" ? "pool" : drive.id;
     const originLabel = stream ? stream.originLabel : sourceType === "he" ? "Pool: ATS history" : drive.runLabel ?? `Re-run ${drive.driveDate}`;
     for (let i = 0; i < leadIds.length; i += 500) {
@@ -184,7 +187,7 @@ export async function enqueueMatchedFollowups(
         const res = await enrol({
           sourceType, originId, originLabel, phone: mobile10, email: r.email ?? null, fullName: r.full_name ?? null,
           heLeadId: String(r.id), metaLeadId: r.meta_lead_id ?? null, atsCandidateId: r.ats_candidate_id ?? null,
-          requisitionId: drive.requisitionId, driveId: drive.id, matchId: r.match_id ?? null, eligibilityChecked: true,
+          requisitionId: drive.requisitionId, driveId: drive.id, matchId: r.match_id ?? null, eligibilityChecked: true, branchName, roleName,
         }, tag, mobile10);
         if (res.status === "enqueued") out.enqueued++;
         else if (res.status === "promoted") out.promoted++;

@@ -26,7 +26,7 @@ import { readSwitches } from "../qualified-followup.policy.js";
 
 const live = { QUAL_FOLLOWUP_MODE: "live" } as NodeJS.ProcessEnv;
 const at = (hhmm: string, day = "2026-10-07") => new Date(`${day}T${hhmm}:00+05:30`);
-// Screen switches: every source at `code` (4 live -> a live pass and a canary pass; 3 canary -> one canary pass). The env stays the ceiling.
+// Screen switches: every source at `code` (4 live -> a live pass and a canary pass; 1 dry_run -> one pass). The env stays the ceiling.
 const switchesAt = (code: number) => async (env: NodeJS.ProcessEnv) =>
   readSwitches(env, new Map([["policy.followup.meta_live", code], ["policy.followup.meta_old", code], ["policy.followup.he", code]]));
 const tick = (env: NodeJS.ProcessEnv, now: Date, deps: Record<string, unknown> = {}, code = 4) =>
@@ -142,8 +142,8 @@ describe("live tick", () => {
 describe("slots", () => {
   it("calling file runs once per slot, not outside the grace window", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
-    await tick(live, at("10:02", "2026-11-02"), { runCallFileBatch }, 3);
-    await tick(live, at("10:07", "2026-11-02"), { runCallFileBatch }, 3);
+    await tick(live, at("10:02", "2026-11-02"), { runCallFileBatch }, 1);
+    await tick(live, at("10:07", "2026-11-02"), { runCallFileBatch }, 1);
     expect(runCallFileBatch).toHaveBeenCalledTimes(1);
     const late = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
     await tick(live, at("21:00", "2026-11-03"), { runCallFileBatch: late });
@@ -151,39 +151,39 @@ describe("slots", () => {
   });
   it("calling file every 2 hours: 10, 12, 14, 16 and 18 IST, never 20:00; the slot key is passed so the batch can claim it", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
-    for (const m of ["10:01", "12:01", "14:01", "16:01", "18:01", "20:01"]) await tick(live, at(m, "2026-09-20"), { runCallFileBatch }, 3);
+    for (const m of ["10:01", "12:01", "14:01", "16:01", "18:01", "20:01"]) await tick(live, at(m, "2026-09-20"), { runCallFileBatch }, 1);
     expect(runCallFileBatch.mock.calls.map((c) => (c as unknown[])[3])).toEqual(
       ["10:00", "12:00", "14:00", "16:00", "18:00"].map((t) => ({ slotKey: `2026-09-20 ${t}`, config: expect.objectContaining({ slots: expect.any(Array) }) })));
   });
   it("slots come from the calling-file settings (he_model_param / env override)", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
     const callFileConfig = vi.fn(async () => ({ slots: ["11:30"], coolDays: 0, emptyNote: false }));
-    for (const m of ["10:01", "11:31", "12:01"]) await tick(live, at(m, "2026-09-21"), { runCallFileBatch, callFileConfig }, 3);
+    for (const m of ["10:01", "11:31", "12:01"]) await tick(live, at(m, "2026-09-21"), { runCallFileBatch, callFileConfig }, 1);
     expect(runCallFileBatch).toHaveBeenCalledTimes(1);
     expect((runCallFileBatch.mock.calls[0] as unknown[])[3]).toMatchObject({ slotKey: "2026-09-21 11:30" });
   });
   it("a slot another process already filed (already_done) is not tried again", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "already_done" as const, rows: 0, files: 0 }));
-    for (const m of ["10:02", "10:07"]) await tick(live, at(m, "2026-09-22"), { runCallFileBatch }, 3);
+    for (const m of ["10:02", "10:07"]) await tick(live, at(m, "2026-09-22"), { runCallFileBatch }, 1);
     expect(runCallFileBatch).toHaveBeenCalledTimes(1);
   });
   it("a failed batch leaves the slot open, capped at 3 attempts", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "failed" as const, rows: 0, files: 0, error: "smtp" }));
-    for (const m of ["10:02", "10:07", "10:12", "10:17", "10:22"]) await tick(live, at(m, "2026-11-10"), { runCallFileBatch }, 3);
+    for (const m of ["10:02", "10:07", "10:12", "10:17", "10:22"]) await tick(live, at(m, "2026-11-10"), { runCallFileBatch }, 1);
     expect(runCallFileBatch).toHaveBeenCalledTimes(3);
   });
   it("a failed daily report leaves the 08:30 slot open, capped at 3 attempts a day", async () => {
     const runDailyReport = vi.fn(async () => false);
-    for (const m of ["08:32", "08:37", "08:42", "08:47"]) await tick(live, at(m, "2026-11-12"), { runDailyReport }, 3);
+    for (const m of ["08:32", "08:37", "08:42", "08:47"]) await tick(live, at(m, "2026-11-12"), { runDailyReport }, 1);
     expect(runDailyReport).toHaveBeenCalledTimes(3);
     const ok = vi.fn(async () => true);
-    for (const m of ["08:32", "08:37"]) await tick(live, at(m, "2026-11-13"), { runDailyReport: ok }, 3);
+    for (const m of ["08:32", "08:37"]) await tick(live, at(m, "2026-11-13"), { runDailyReport: ok }, 1);
     expect(ok).toHaveBeenCalledTimes(1);
   });
   it("followupWorkerStatus records the report outcome per slot: fails twice then succeeds is 3 tries, ok", async () => {
     let n = 0;
     const runDailyReport = vi.fn(async () => ++n >= 3);
-    for (const m of ["08:32", "08:37", "08:42"]) await tick(live, at(m, "2026-10-08"), { runDailyReport }, 3);
+    for (const m of ["08:32", "08:37", "08:42"]) await tick(live, at(m, "2026-10-08"), { runDailyReport }, 1);
     expect(followupWorkerStatus().reports.find((r) => r.slot === "2026-10-08 08:30")).toEqual({ slot: "2026-10-08 08:30", ok: true, tries: 3 });
     const slots = followupWorkerStatus().reports.map((r) => r.slot);
     expect(slots.length).toBeLessThanOrEqual(5);
@@ -201,9 +201,9 @@ describe("slots", () => {
   it("calling file and daily report still run while sends are paused", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
     const runDailyReport = vi.fn(async () => true);
-    const r = await tick({ ...live, HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv, at("10:02", "2026-11-04"), { runCallFileBatch }, 3);
+    const r = await tick({ ...live, HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv, at("10:02", "2026-11-04"), { runCallFileBatch }, 1);
     expect(runCallFileBatch).toHaveBeenCalledTimes(1);
-    const r2 = await tick({ ...live, HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv, at("08:31", "2026-11-05"), { runDailyReport }, 3);
+    const r2 = await tick({ ...live, HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv, at("08:31", "2026-11-05"), { runDailyReport }, 1);
     expect(runDailyReport).toHaveBeenCalledTimes(1);
     expect(r.callFile?.status).toBe("empty");
     expect(r2.report).toBe(true);
@@ -215,8 +215,10 @@ describe("quiet hours through the real WhatsApp step", () => {
     const actual = await vi.importActual<typeof import("../qualified-followup.whatsapp.js")>("../qualified-followup.whatsapp.js");
     h.wa.mockImplementation(actual.runWhatsappStep);
     const rows = [1, 2, 3].map((i) => ({ id: `id-${i}`, source_type: "he", mobile10: "9876543210", requisition_id: "r", wa_due_at: "2026-10-07 20:00:00", qualified_at: "2026-10-07 09:00:00" }));
-    h.execute.mockImplementation(async (sql: string) => (String(sql).includes("FROM qualified_followup") ? [rows] : [{ affectedRows: 1 }]));
-    await tick(live, at("21:00"), { getPinbotQuality: async () => "GREEN" }, 3);
+    h.execute.mockImplementation(async (sql: string) => (String(sql).includes("FROM qualified_followup") ? [rows]
+      : String(sql).includes("FROM job_requisition") ? [[{ approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 5, fulfilled_headcount: 0 }]]
+      : [{ affectedRows: 1 }]));
+    await tick(live, at("21:00"), { getPinbotQuality: async () => "GREEN" }, 1);
     expect(h.wa).toHaveBeenCalled();
     expect(h.sendTemplate).not.toHaveBeenCalled();
     expect(h.execute.mock.calls.filter((c) => /UPDATE[\s\S]*wa_status/.test(String(c[0])))).toHaveLength(0);
@@ -283,7 +285,7 @@ describe("unified tick (Task 9)", () => {
   });
   it("stage B runs before stage A in each pass, on the same scope", async () => {
     const runStageB = vi.fn(async () => { h.calls.push("stageB"); return null; });
-    await tick(live, at("11:00"), { runStageB }, 3);
+    await tick(live, at("11:00"), { runStageB }, 1);
     expect(h.calls).toEqual(["expire", "sync", "stops", "stageB", "email", "wa", "call"]);
   });
 });

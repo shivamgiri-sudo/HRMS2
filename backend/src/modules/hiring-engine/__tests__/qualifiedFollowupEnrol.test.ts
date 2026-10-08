@@ -15,6 +15,7 @@ vi.mock("../../../db/mysql.js", () => ({
     execute: vi.fn(async (sql: string, p: unknown[] = []) => {
       const q = sql.replace(/\s+/g, " ").trim();
       h.sqls.push({ sql: q, p });
+      if (q.includes("SELECT branch_name, designation_name FROM job_requisition")) return [[{ branch_name: "NOIDA-2", designation_name: "CSE" }]];
       if (q.includes("FROM job_requisition")) return [h.req ? [h.req] : []];
       if (q.startsWith("SELECT") && q.includes("FROM qualified_followup WHERE mobile10 = ? AND requisition_id = ?")) return [h.existing ? [h.existing] : []];
       if (q.startsWith("INSERT INTO qualified_followup")) {
@@ -194,6 +195,7 @@ describe("enqueueMatchedFollowups", () => {
     expect(col(ins, "owner")).toBe("pipeline");
     expect(col(ins, "match_id")).toBe("M1");
     expect(col(ins, "source_type")).toBe("he");
+    expect([col(ins, "branch_name"), col(ins, "role_name")]).toEqual(["NOIDA-2", "CSE"]); // booking needs the branch (rig finding)
     expect(h.sqls.some((s) => s.sql.includes("'engine'") || s.p.includes("engine"))).toBe(false);
   });
   it("an existing row gets the match linked (no hand-over)", async () => {

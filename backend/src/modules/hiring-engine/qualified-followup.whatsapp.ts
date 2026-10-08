@@ -173,7 +173,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row0: Fol
 
   if (scope) {
     const g = await gate(s, tag, row, "whatsapp", now, scope, { firstContact, templateKey: pick.key });
-    if (g.action === "held") { counts.held++; return; }
+    if (g.action === "held" || (g.action === "shadowed" && g.held)) { counts.held++; return; }
     if (g.action === "ended") { counts.processed++; counts.blocked++; return; }
     if (g.action === "skipped") {
       const [b] = await db.execute<any>("UPDATE qualified_followup SET wa_status = 'skipped', wa_error = ?, call_due_at = ? WHERE id = ? AND wa_status IS NULL", [g.reason, next, row.id]);

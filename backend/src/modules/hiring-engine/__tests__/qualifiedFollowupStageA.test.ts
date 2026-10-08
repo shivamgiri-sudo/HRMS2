@@ -137,7 +137,7 @@ describe("gate", () => {
   });
   it("dry_run writes followup_shadow (would_send) and applies nothing", async () => {
     const g = await gate(S, "dry_run", row({ modeAtEnqueue: "dry_run" }), "whatsapp", THU_11, scope(), { firstContact: true, templateKey: "he_walkin_invite" });
-    expect(g).toEqual({ action: "shadowed", verdict: "would_send" });
+    expect(g).toEqual({ action: "shadowed", verdict: "would_send", held: false });
     const ins = writes()[0];
     expect(ins.sql).toContain("INSERT INTO followup_shadow");
     expect(ins.p.slice(0, 7)).toEqual(["F1", "9876543210", "R1", "meta_live", "whatsapp", "he_walkin_invite", "would_send"]);
@@ -145,7 +145,7 @@ describe("gate", () => {
   });
   it("dry_run shadow records the guard reason instead of holding", async () => {
     const g = await gate(S, "dry_run", row({ modeAtEnqueue: "dry_run" }), "whatsapp", THU_11, scope(0), { firstContact: true, templateKey: "he_walkin_invite" });
-    expect(g).toEqual({ action: "shadowed", verdict: "wa_budget" });
+    expect(g).toEqual({ action: "shadowed", verdict: "wa_budget", held: true });
     expect(writes()).toHaveLength(1);
   });
   it("kill switch holds every send", async () => {

@@ -143,9 +143,13 @@ export function enrolTag(s: FollowupSwitches, source: SourceType, requisitionId:
   return m;
 }
 
+/** live also runs canary rows (a canary promoted to live carries on); canary also runs the dry_run rows of its unlisted requisitions
+ *  (their shadow continues, resolved ambiguity 4). */
 export function runnableTags(mode: SourceMode): RowTag[] {
   if (mode === "off") return [];
-  return mode === "live" ? ["live", "canary"] : [mode];
+  if (mode === "live") return ["live", "canary"];
+  if (mode === "canary") return ["canary", "dry_run"];
+  return [mode];
 }
 
 /** Which sources each tag runs for in one tick, ordered live, canary, test, dry_run. */

@@ -74,7 +74,8 @@ describe("per-source modes", () => {
 
   it("live runs canary rows; canary does not run live rows", () => {
     expect(runnableTags("live")).toEqual(["live", "canary"]);
-    expect(runnableTags("canary")).toEqual(["canary"]);
+    // canary also runs the dry_run rows its unlisted requisitions get (resolved ambiguity 4: the shadow continues; rig finding)
+    expect(runnableTags("canary")).toEqual(["canary", "dry_run"]);
     expect(runnableTags("test")).toEqual(["test"]);
     expect(runnableTags("dry_run")).toEqual(["dry_run"]);
     expect(runnableTags("off")).toEqual([]);
@@ -156,5 +157,12 @@ describe("loadFollowupSwitches", () => {
     expect(s.killSwitch).toBe(false);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("canary keeps the shadow of unlisted requisitions", () => {
+  it("tickPlan for a canary source has a canary pass and a dry_run pass", () => {
+    const s = readSwitches(live, P({ "policy.followup.meta_live": 3 }));
+    expect(tickPlan(s)).toEqual([{ tag: "canary", sources: ["meta_live"] }, { tag: "dry_run", sources: ["meta_live"] }]);
   });
 });

@@ -126,7 +126,7 @@ describe("bookJourney", () => {
 describe("booking helpers", () => {
   it("markInvitedAfterSend moves suggested -> invited only", async () => {
     await markInvitedAfterSend("M1");
-    expect(h.sqls[0]).toEqual({ sql: "UPDATE he_match SET state = 'invited' WHERE id = ? AND state = 'suggested'", p: ["M1"] });
+    expect(h.sqls[0]).toEqual({ sql: "UPDATE he_match SET state = 'invited' WHERE id = ? AND state = 'suggested' AND slot_at IS NOT NULL", p: ["M1"] });
   });
   it("mirrorSlotToMeta writes interview_date / interview_time", async () => {
     await mirrorSlotToMeta("ML1", "2026-10-10 14:30:00");

@@ -18,7 +18,8 @@ import type { RowTag, SourceType } from "./qualified-followup.types.js";
 /** Shared across stage B then stage A within one tick. */
 export interface BudgetState { waLeft: number; branchLeft: Map<string, number> }
 export interface StepScope { sources: SourceType[]; budget: BudgetState; limit?: number }
-export type GateResult = { action: "send" } | { action: "held" | "skipped" | "ended"; reason: GuardReason } | { action: "shadowed"; verdict: "would_send" | GuardReason };
+/** shadowed (dry_run): `held` when a real row would wait (window, caps, budget): the dry row does not move on either. */
+export type GateResult = { action: "send" } | { action: "held" | "skipped" | "ended"; reason: GuardReason } | { action: "shadowed"; verdict: "would_send" | GuardReason; held: boolean };
 
 export const newBudget = (waLeft: number): BudgetState => ({ waLeft: Math.max(0, waLeft), branchLeft: new Map() });
 
@@ -70,7 +71,7 @@ export async function gate(
   const v = checkFollowupGuards(facts);
   if (tag === "dry_run") {
     await recordShadow(row, step, v.ok ? "would_send" : v.reason, o.templateKey, now);
-    return { action: "shadowed", verdict: v.ok ? "would_send" : v.reason };
+    return { action: "shadowed", verdict: v.ok ? "would_send" : v.reason, held: !v.ok && v.kind === "hold" };
   }
   if (v.ok) return { action: "send" };
   await recordGuardSkip(row.id, row.heLeadId, step, v.reason, now).catch((err: unknown) => logger.warn({ rowId: row.id, err: (err as Error).message }, "[qualified-followup] skip audit failed"));

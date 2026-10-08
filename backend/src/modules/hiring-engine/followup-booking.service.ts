@@ -70,7 +70,8 @@ async function writeBack(row: FollowupRow, b: { matchId: string; driveId: string
 
 /** A line-up match (suggested) becomes invited once the first message of its journey went out. */
 export async function markInvitedAfterSend(matchId: string): Promise<void> {
-  await db.execute("UPDATE he_match SET state = 'invited' WHERE id = ? AND state = 'suggested'", [matchId]);
+  // Only a booked seat becomes invited (a match without a slot stays suggested for the engine's own bookkeeping).
+  await db.execute("UPDATE he_match SET state = 'invited' WHERE id = ? AND state = 'suggested' AND slot_at IS NOT NULL", [matchId]);
 }
 
 /** The Meta screens read interview_date / interview_time; the booking is the truth, this is its mirror. */

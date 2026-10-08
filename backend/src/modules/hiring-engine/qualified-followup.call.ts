@@ -80,7 +80,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row0: Fol
     if (begun.held) { counts.held++; return; }
     row = begun.row;
     const g = await gate(s, tag, row, "call", now, scope, { firstContact, templateKey: null });
-    if (g.action === "held") { counts.held++; return; }
+    if (g.action === "held" || (g.action === "shadowed" && g.held)) { counts.held++; return; }
     if (g.action === "ended") { counts.processed++; counts.blocked++; return; }
     if (g.action === "skipped") {
       const [b] = await db.execute<any>("UPDATE qualified_followup SET call_state = 'skipped', call_error = ? WHERE id = ? AND call_state = 'pending'", [g.reason, row.id]);

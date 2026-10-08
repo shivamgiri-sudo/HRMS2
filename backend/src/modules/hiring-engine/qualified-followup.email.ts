@@ -111,7 +111,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row0: Fol
     if (begun.held) { counts.held++; return; }
     row = begun.row;
     const g = await gate(s, tag, row, "email", now, scope, { firstContact, templateKey: INVITE_EMAIL_KEY });
-    if (g.action === "held") { counts.held++; return; }
+    if (g.action === "held" || (g.action === "shadowed" && g.held)) { counts.held++; return; }
     if (g.action === "ended") { counts.processed++; counts.blocked++; return; }
     if (g.action === "skipped") { await finish(row, "skipped", g.reason, now, { advanceWa: true, sent: false }); counts.processed++; counts.blocked++; return; }
   }
