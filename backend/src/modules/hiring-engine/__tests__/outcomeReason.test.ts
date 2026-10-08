@@ -135,12 +135,12 @@ describe("outcomeReasonCounts", () => {
   beforeEach(() => { execute.mockReset(); });
   it("counts per source type and outcome from he_drive, with zeros on a missing table", async () => {
     execute.mockResolvedValueOnce([[{ source_type: "he", outcome: "declined", reason_code: "salary", n: 2 }, { source_type: "he", outcome: "no_show", reason_code: "timing", n: "5" }, { source_type: "weird", outcome: "no_show", reason_code: "timing", n: 1 }, { source_type: "he", outcome: "no_show", reason_code: "nope", n: 1 }]]);
-    const r = await outcomeReasonCounts(["R1"], "2026-10-01", "2026-10-07");
+    const r = await outcomeReasonCounts(["R1"], "2026-10-01", "2026-10-07", "2026-10-08"); // the analytics build passes its cutoff
     expect(r.he).toEqual({ no_show: { timing: 5 }, declined: { salary: 2 } });
     expect(r.meta_live).toEqual({ no_show: {}, declined: {} });
     expect(String(execute.mock.calls[0][0]).trimStart().startsWith("SELECT")).toBe(true);
     expect(String(execute.mock.calls[0][0])).toMatch(/FROM he_drive d/);
     execute.mockImplementation(async () => { throw Object.assign(new Error("x"), { code: "ER_NO_SUCH_TABLE" }); });
-    expect((await outcomeReasonCounts(["R1"], "2026-10-01", "2026-10-07")).he).toEqual({ no_show: {}, declined: {} });
+    expect((await outcomeReasonCounts(["R1"], "2026-10-01", "2026-10-07", "2026-10-08")).he).toEqual({ no_show: {}, declined: {} });
   });
 });

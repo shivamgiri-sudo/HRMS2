@@ -13,6 +13,8 @@ import { SOURCE_TYPES } from "./he-drive-analytics.js";
 import { readAgg } from "./he-drive-trend.service.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
+import { attributionJoinsSql, sourceTypeSql } from "./he-source-attribution.js";
+import { loadLiveFrom } from "./he-source-attribution.service.js";
 
 const COLL = "COLLATE utf8mb4_unicode_ci";
 const LIST_CAP = 300;
@@ -91,24 +93,25 @@ export async function listOutcomes(o: { from: string; to: string }, scope: Branc
 type Counts = Partial<Record<OutcomeReasonCode, number>>;
 export type ReasonCounts = Record<SourceType, { no_show: Counts; declined: Counts }>;
 
-const countsSql = (n: number, streams: boolean): string => `SELECT ${streams ? "COALESCE(rs.source_type, 'he')" : "'he'"} AS source_type, r.outcome, r.reason_code, COUNT(*) AS n
+// Typed by the shared source rule (he-source-attribution.ts).
+const countsSql = (n: number, streams: boolean, liveFrom: string): string => `SELECT ${sourceTypeSql({ streams, d: "d", lead: "al", liveFrom })} AS source_type, r.outcome, r.reason_code, COUNT(*) AS n
   FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id AND m.state IN ('no_show','declined')
-  JOIN he_match_outcome_reason r ON r.match_id = m.id${streams ? `
-  LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id
-  LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id` : ""}
+  JOIN he_match_outcome_reason r ON r.match_id = m.id
+  ${attributionJoinsSql({ streams, match: "m", requisition: "d.requisition_id", lead: "al", leadId: "m.lead_id" })}
  WHERE d.requisition_id IN (${Array(n).fill("?").join(",")}) AND d.drive_date BETWEEN ? AND ? AND r.outcome = m.state
  GROUP BY 1, r.outcome, r.reason_code`;
 
 /** Reason counts per source type for the given requisitions and drive dates. A missing table counts zero; other errors are thrown for the caller's section handling. */
-export async function outcomeReasonCounts(ids: string[], from: string, to: string): Promise<ReasonCounts> {
+export async function outcomeReasonCounts(ids: string[], from: string, to: string, liveFrom?: string): Promise<ReasonCounts> {
   const out = Object.fromEntries(SOURCE_TYPES.map((t) => [t, { no_show: {}, declined: {} }])) as ReasonCounts;
   if (!ids.length) return out;
   let rows: RowDataPacket[] = [];
+  const lf = liveFrom ?? await loadLiveFrom();
   try {
     for (let i = 0; i < ids.length; i += 200) {
       const b = ids.slice(i, i + 200);
-      rows = rows.concat(await readAgg((st) => countsSql(b.length, st), [...b, from, to]));
+      rows = rows.concat(await readAgg((st) => countsSql(b.length, st, lf), [...b, from, to]));
     }
   } catch (err) {
     if (noTable(err)) return out;

@@ -17,6 +17,7 @@ vi.mock("../he-insight-params.service.js", async () => ({ loadInsightThresholds:
 import { clearDriveAnalyticsCache, getDriveAnalytics, resolveWindow, type DriveAnalytics } from "../he-drive-analytics.service.js";
 import { getDriveTrend } from "../he-drive-trend.service.js";
 import { driveCreditSql } from "../he-drive-credit.js";
+import { stripRule } from "./attributionSql.js";
 
 const NOW = new Date("2026-10-14T06:00:00Z");
 const Q = { from: "2026-10-01", to: "2026-10-14" };
@@ -328,7 +329,8 @@ describe("getDriveAnalytics", () => {
     impl.discovery = [head("r1")];
     await getDriveAnalytics(Q, ALL, NOW);
     expect(execute.mock.calls.length).toBeGreaterThan(5);
-    for (const [q] of sqlOf()) for (const t of ["he_lead", "he_message", "he_lead_event", "meta_lead_raw"]) expect(q).not.toContain(`FROM ${t} `);
+    // the source rule's form-fill subqueries are keyed (sourceAttribution.test.ts) and folded away here
+    for (const [q] of sqlOf()) for (const t of ["he_lead", "he_message", "he_lead_event", "meta_lead_raw"]) expect(stripRule(q)).not.toContain(`FROM ${t} `);
   });
 });
 

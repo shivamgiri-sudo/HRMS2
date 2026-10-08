@@ -3,8 +3,10 @@
  * he-requisition-sources.service.ts, with the window applied to the populations that carry a date:
  * - qualified .. joined: qualified_followup rows with qualified_at in [from 00:00:00, to+1 00:00:00) (IST wall clock); selected /
  *   joined additionally follow the drive credit rule (arrived at the drive, selected / joined on or after its drive date);
- * - leads of meta_old / he: people lined up on drives with drive_date BETWEEN from AND to;
- * - leads of meta_live: form fills of the requisitions' campaigns with created_at in the same bounds.
+ * - leads of meta_old / he: people lined up on drives with drive_date BETWEEN from AND to, typed by the shared source rule
+ *   (he-source-attribution.ts; people it types meta_live are left to the form fill count);
+ * - leads of campaign origins: form fills of the requisitions' campaigns with created_at in the same bounds, meta_live / meta_old by
+ *   fill time at the Live Meta cutoff (he-source-attribution.ts).
  * Streams add zero rows (origin with no data). Shares are per requisition. leads = max(leads, qualified) per row.
  *
  * One statement per section and batch of 200 requisitions (never one per requisition). Every statement starts from
@@ -18,7 +20,8 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
-import { STAGE_FLAGS_SQL, STAGE_FROM_SQL, computeShares, readSection, type SourceCounts, type SourceRow } from "./he-requisition-sources.service.js";
+import { STAGE_FLAGS_SQL, STAGE_FROM_SQL, campaignFillTypeSql, computeShares, readSection, typedMatchLeadsSql, type SourceCounts, type SourceRow } from "./he-requisition-sources.service.js";
+import { loadLiveFrom } from "./he-source-attribution.service.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import type { StreamStatus } from "./requisition-stream.service.js";
 import { addDays } from "./requisition-stream.window.js";
@@ -30,7 +33,6 @@ export interface SourcesSlice { byRequisition: RequisitionSourceRows[]; partial:
 const BATCH = 200;
 const COUNT_KEYS: ReadonlyArray<keyof SourceCounts> = ["leads", "qualified", "emailed", "whatsapped", "replied", "confirmed", "called", "arrived", "selected", "joined"];
 const TYPE_ORDER: Record<SourceType, number> = { meta_live: 0, meta_old: 1, he: 2 };
-const POOL_LABEL = "Pool: ATS history";
 const isRealDay = (x: unknown): x is string => {
   if (typeof x !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(x)) return false;
   const t = Date.parse(`${x}T00:00:00Z`);
@@ -50,36 +52,25 @@ ${STAGE_FROM_SQL}
   ) f
  GROUP BY f.requisition_id, f.source_type, f.origin_id`;
 
-// Credit goes through he_match.id; the credit's own drive_id is ignored. A meta_live credit is skipped (that source counts form fills).
-const matchLeadsSql = (n: number): string => `
-SELECT d.requisition_id AS requisition_id,
-       COALESCE(rs.source_type, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, 'meta_old', 'he')) AS source_type,
-       COALESCE(rs.origin_id, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, d.id, 'pool')) AS origin_id,
-       MAX(COALESCE(rs.origin_label, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, d.run_label, '${POOL_LABEL}'))) AS origin_label,
-       COUNT(DISTINCT m.lead_id) AS leads
-  FROM he_drive d
-  JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
-  LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id
-  LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id
- WHERE d.requisition_id IN (${ph(n)}) AND d.drive_date BETWEEN ? AND ? AND (rs.source_type IS NULL OR rs.source_type <> 'meta_live')
- GROUP BY d.requisition_id, 2, 3`;
+// Typed by the shared source rule; Live Meta is skipped (that source counts form fills).
+const matchLeadsSql = (liveFrom: string) => (n: number): string => typedMatchLeadsSql(`d.requisition_id IN (${ph(n)}) AND d.drive_date BETWEEN ? AND ?`, true, liveFrom);
 
 const streamsSql = (n: number): string => `SELECT requisition_id, id, source_type, origin_id, origin_label, status FROM requisition_stream WHERE requisition_id IN (${ph(n)})`;
 const campaignsSql = (n: number): string => `SELECT id, requisition_id, campaign_name FROM meta_campaign WHERE requisition_id IN (${ph(n)})`;
-// campaign_id IN (...) uses idx_ml_campaign; the phone digits are computed per campaign only.
-const campaignLeadsSql = (n: number, owners: number): string =>
-  `SELECT campaign_id, COUNT(DISTINCT RIGHT(REGEXP_REPLACE(parsed_phone, '[^0-9]', ''), 10)) AS leads
-     FROM meta_lead_raw
-    WHERE campaign_id IN (${ph(n)}) AND (requisition_id IS NULL OR requisition_id IN (${ph(owners)}))
-      AND parsed_phone IS NOT NULL AND created_at >= ? AND created_at < ?
-    GROUP BY campaign_id`;
+// campaign_id IN (...) uses idx_ml_campaign; the phone digits are computed per campaign only; Live / Old split at the cutoff by fill time.
+const campaignLeadsSql = (n: number, owners: number, liveFrom: string): string =>
+  `SELECT r.campaign_id, ${campaignFillTypeSql("r", liveFrom)} AS source_type, COUNT(DISTINCT RIGHT(REGEXP_REPLACE(r.parsed_phone, '[^0-9]', ''), 10)) AS leads
+     FROM meta_lead_raw r
+    WHERE r.campaign_id IN (${ph(n)}) AND (r.requisition_id IS NULL OR r.requisition_id IN (${ph(owners)}))
+      AND r.parsed_phone IS NOT NULL AND r.created_at >= ? AND r.created_at < ?
+    GROUP BY r.campaign_id, source_type`;
 
 const noTable = (err: unknown): boolean => (err as { code?: unknown })?.code === "ER_NO_SUCH_TABLE";
 const zero = (): SourceCounts => ({ leads: 0, qualified: 0, emailed: 0, whatsapped: 0, replied: 0, confirmed: 0, called: 0, arrived: 0, selected: 0, joined: 0 });
 type Rows = RowDataPacket[];
 type Cell = Omit<SourceRow, "shareOfLeads" | "shareOfJoined" | "leadToJoinRate"> & { _rank: number };
 
-export async function getSourcesForRequisitions(ids: string[], w: DayWindow): Promise<SourcesSlice> {
+export async function getSourcesForRequisitions(ids: string[], w: DayWindow, liveFrom?: string): Promise<SourcesSlice> {
   const unique = [...new Set(ids)];
   if (!unique.length) return { byRequisition: [], partial: false, failedSections: [] };
   const failed: string[] = [];
@@ -92,6 +83,7 @@ export async function getSourcesForRequisitions(ids: string[], w: DayWindow): Pr
     logger.error({ section: "window", code: "invalid_window" }, "[he-sources] section failed");
     return { byRequisition: unique.map((requisitionId) => ({ requisitionId, rows: [] })), partial: true, failedSections: ["window"] };
   }
+  const lf = liveFrom ?? await loadLiveFrom();
   const batches: string[][] = [];
   for (let i = 0; i < unique.length; i += BATCH) batches.push(unique.slice(i, i + BATCH));
 
@@ -106,7 +98,7 @@ export async function getSourcesForRequisitions(ids: string[], w: DayWindow): Pr
   const [streams, stages, matchLeads, campaigns] = await Promise.all([
     run("streams", streamsSql, [], true),
     run("stages", stagesSql, dt, true),
-    run("driveLeads", matchLeadsSql, [w.from, w.to], true),
+    run("driveLeads", matchLeadsSql(lf), [w.from, w.to], true),
     run("campaigns", campaignsSql, [], false),
   ]);
   const owner = new Map<string, string>(); // campaign id -> requisition id
@@ -116,7 +108,7 @@ export async function getSourcesForRequisitions(ids: string[], w: DayWindow): Pr
   for (let i = 0; i < campaignIds.length; i += BATCH) campaignBatches.push(campaignIds.slice(i, i + BATCH));
   const fills = (await Promise.all(campaignBatches.map((b) => {
     const owners = [...new Set(b.map((c) => owner.get(c)!))];
-    return readSection<Rows>("campaignLeads", failed, async () => (await db.execute<Rows>(campaignLeadsSql(b.length, owners.length), [...b, ...owners, ...dt]))[0], []);
+    return readSection<Rows>("campaignLeads", failed, async () => (await db.execute<Rows>(campaignLeadsSql(b.length, owners.length, lf), [...b, ...owners, ...dt]))[0], []);
   }))).flat();
 
   const per = new Map<string, Map<string, Cell>>(unique.map((id) => [id, new Map()]));
@@ -142,11 +134,13 @@ export async function getSourcesForRequisitions(ids: string[], w: DayWindow): Pr
     const c = cell(String(r.requisition_id), String(r.source_type) as SourceType, String(r.origin_id), String(r.origin_label ?? ""), 3);
     if (c) c.leads = Number(r.leads ?? 0);
   }
+  const campaignName = new Map(campaigns.map((c) => [String(c.id), String(c.campaign_name ?? "")]));
   for (const c of campaigns) cell(String(c.requisition_id), "meta_live", String(c.id), String(c.campaign_name ?? ""), 3);
-  for (const r of fills) {
+  for (const r of fills) { // a campaign's fills split at the cutoff: Live Meta from it on, Old Meta data before it
     const req = owner.get(String(r.campaign_id));
-    const c = req ? cell(req, "meta_live", String(r.campaign_id), "", 0) : null;
-    if (c) c.leads = Number(r.leads ?? 0);
+    const t: SourceType = r.source_type === "meta_old" ? "meta_old" : "meta_live";
+    const c = req ? cell(req, t, String(r.campaign_id), campaignName.get(String(r.campaign_id)) ?? "", 3) : null;
+    if (c) c.leads += Number(r.leads ?? 0);
   }
 
   const byRequisition = unique.map((requisitionId) => {

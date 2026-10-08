@@ -4,11 +4,13 @@
  * Counts per drive day come from he_match state buckets (the same ones `driveDays` uses): lined = every match; invited / confirmed /
  * arrived / noShow / declined by he_match.state. They are state counts, not message counts, so delivery_status plays no part:
  * a person whose invite is still being sent (or whose delivery status is NULL) is already in state 'invited' and counts as invited.
- * Attribution (spec 9d): a match credited to a stream (requisition_stream_match) counts for that stream's type; every uncredited match counts as `he`.
- * The credit row can carry an old drive_id, so drives are always reached through he_match.drive_id, never through the credit.
+ * Attribution: the shared source rule (he-source-attribution.ts): a Meta-origin person (Meta stream credit, Meta-sourced drive, meta_lead_id or
+ * campaign link) is Live / Old Meta by form fill against the cutoff, everyone else `he`; the three never overlap. source_type is NULL for a
+ * `he` match, so `streamType` keeps meaning "typed other than he". The credit row can carry an old drive_id, so drives are always
+ * reached through he_match.drive_id, never through the credit.
  *
- * Every query starts from he_drive (requisition + branch + date window), then LEFT JOINs he_match by drive_id, the credit by match_id
- * and the stream by its key; he_lead is never touched. A failing sub-query yields a partial result with failedSections, never a throw.
+ * Every query starts from he_drive (requisition + branch + date window), then LEFT JOINs he_match by drive_id, the credit by match_id,
+ * the stream by its key and he_lead by primary key (form fills by key inside the rule). A failing sub-query yields a partial result with failedSections, never a throw.
  * No candidate data in the result or in any log line: counts, dates, ids and labels only.
  */
 import type { RowDataPacket } from "mysql2";
@@ -21,6 +23,8 @@ import { addDays, isSunday, istToday, windowDays } from "./requisition-stream.wi
 import type { DriveDayRow } from "./he-campaign-dashboard.service.js";
 import type { TaggedAggRow } from "./he-drive-analytics.js";
 import { UNPLANNED_ARRIVAL } from "./he-rate-buckets.js";
+import { attributionJoinsSql, sourceTypeSql } from "./he-source-attribution.js";
+import { loadLiveFrom } from "./he-source-attribution.service.js";
 
 export interface DriveTotals { wanted: number; lined: number; invited: number; confirmed: number; arrived: number; noShow: number; declined: number; showRate: number }
 export interface WindowInfo { from: string; to: string; dayIndex: number; days: number }
@@ -60,28 +64,31 @@ const BUCKETS_SQL = `COUNT(m.id) AS lined,
        SUM(m.state IN ('invited','confirmed','slot_released','arrived','no_show','selected')) AS invited,
        SUM(m.state IN ('confirmed','arrived','selected')) AS confirmed, SUM(m.state IN ('arrived','selected')) AS arrived,
        SUM(m.state = 'no_show') AS no_show, SUM(m.state = 'declined') AS declined, SUM(${UNPLANNED_ARRIVAL}) AS unplanned`;
-// `streams` false: the same read before 2135 is applied (no stream tables), every match counted as `he`.
-const joinsSql = (streams: boolean): string => `LEFT JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id${streams ? `
-  LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id
-  LEFT JOIN requisition_stream s ON s.id = sm.stream_id AND s.requisition_id = d.requisition_id` : ""}`;
-const streamCols = (streams: boolean): string => (streams ? "s.id AS stream_id, s.source_type" : "NULL AS stream_id, NULL AS source_type");
-const trendSql = (streams: boolean): string => `SELECT d.id, d.drive_date, d.status, d.target_shows, ${streamCols(streams)}, ${BUCKETS_SQL}
+// `streams` false: the same read before 2135 is applied (no stream tables): the rule without the stream credit.
+const joinsSql = (streams: boolean): string => `LEFT JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
+  ${attributionJoinsSql({ streams, match: "m", requisition: "d.requisition_id", lead: "al", leadId: "m.lead_id", stream: "s" })}`;
+// source_type: the shared rule, NULL for a `he` match (and for a drive with no match), so `streamType` keeps meaning "typed other than he".
+const typeSql = (streams: boolean, liveFrom: string): string =>
+  `IF(m.id IS NULL, NULL, NULLIF(${sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, stream: "s" })}, 'he'))`;
+// source_type is column 6 of the trend read and 10 of the groups read: GROUP BY uses the position, because a bare name would bind to s.source_type.
+const streamCols = (streams: boolean, liveFrom: string): string => `${streams ? "s.id" : "NULL"} AS stream_id, ${typeSql(streams, liveFrom)} AS source_type`;
+const trendSql = (liveFrom: string) => (streams: boolean): string => `SELECT d.id, d.drive_date, d.status, d.target_shows, ${streamCols(streams, liveFrom)}, ${BUCKETS_SQL}
   FROM he_drive d
   ${joinsSql(streams)}
  WHERE d.requisition_id = ? AND d.branch_name = ? AND d.drive_date BETWEEN ? AND ?
- GROUP BY d.id${streams ? ", s.id" : ""}
+ GROUP BY d.id${streams ? ", s.id" : ""}, 6
  ORDER BY d.drive_date, d.id`;
 const HEADER_SQL = "SELECT branch_name FROM job_requisition WHERE id = ? LIMIT 1";
 // Open drives of the next days and yesterday decide which requisitions get a group (idx_he_drive_date: drive_date, status).
 const DISCOVER_SQL = "SELECT DISTINCT d.requisition_id, d.branch_name FROM he_drive d WHERE d.drive_date BETWEEN ? AND ? AND d.status <> 'closed'";
 // job_requisition is the driving side only to carry code and role; its id is compared with an explicit collation (mixed table collations) and he_drive keeps its own index side.
-const groupsSql = (n: number, streams: boolean): string => `SELECT jr.id AS requisition_id, jr.requisition_code, jr.designation_name, d.branch_name,
-       d.id, d.drive_date, d.status, d.target_shows, ${streamCols(streams)}, ${BUCKETS_SQL}
+const groupsSql = (n: number, streams: boolean, liveFrom: string): string => `SELECT jr.id AS requisition_id, jr.requisition_code, jr.designation_name, d.branch_name,
+       d.id, d.drive_date, d.status, d.target_shows, ${streamCols(streams, liveFrom)}, ${BUCKETS_SQL}
   FROM job_requisition jr
   LEFT JOIN he_drive d ON d.requisition_id = jr.id COLLATE utf8mb4_unicode_ci AND d.drive_date BETWEEN ? AND ?
   ${joinsSql(streams)}
  WHERE jr.id IN (${Array(n).fill("?").join(",")})
- GROUP BY jr.id, d.id${streams ? ", s.id" : ""}`;
+ GROUP BY jr.id, d.id${streams ? ", s.id" : ""}, 10`;
 
 const noTable = (err: unknown): boolean => (err as { code?: string })?.code === "ER_NO_SUCH_TABLE";
 /** The stream-attributed read; before 2135 is applied the stream-free form (a missing table is not a failed section). */
@@ -202,11 +209,12 @@ export function buildDriveGroups(input: DriveGroupInput[]): DriveGroup[] {
 }
 
 /** Drive state buckets of many requisitions over a window, one statement per 200 ids (same SQL and parsing as the groups read). Throws on failure. */
-export async function readDriveAggRows(ids: string[], from: string, to: string): Promise<TaggedAggRow[]> {
+export async function readDriveAggRows(ids: string[], from: string, to: string, liveFrom?: string): Promise<TaggedAggRow[]> {
+  const lf = liveFrom ?? await loadLiveFrom();
   const unique = [...new Set(ids)];
   const batches: string[][] = [];
   for (let i = 0; i < unique.length; i += 200) batches.push(unique.slice(i, i + 200));
-  const parts = await Promise.all(batches.map((b) => readAgg((st) => groupsSql(b.length, st), [from, to, ...b])));
+  const parts = await Promise.all(batches.map((b) => readAgg((st) => groupsSql(b.length, st, lf), [from, to, ...b])));
   return parts.flat().filter((r) => r.id != null).map((r) => ({ ...parseAgg(r), requisitionId: String(r.requisition_id), branch: String(r.branch_name) }));
 }
 
@@ -245,7 +253,7 @@ export async function getDriveTrend(
   const streamDays = streams.length ? streamWindowDates(streams, []) : [];
   const from = streamDays.length ? streamDays[0] : addDays(today, -DEFAULT_BACK);
   const to = streamDays.length ? streamDays[streamDays.length - 1] : addDays(today, DEFAULT_AHEAD);
-  const rows = await section("drives", failed, async () => (await readAgg(trendSql, [q.requisitionId, branch, from, to])).map(parseAgg), [] as DriveAggRow[]);
+  const rows = await section("drives", failed, async () => (await readAgg(trendSql(await loadLiveFrom()), [q.requisitionId, branch, from, to])).map(parseAgg), [] as DriveAggRow[]);
   const driveDates = rows.map((r) => r.date);
   const dates = streamDays.length ? streamWindowDates(streams, driveDates) : defaultTrendDates(from, to, driveDates);
   const points = zeroFillPoints(dates, rows, sourceType);
@@ -273,7 +281,7 @@ export async function getDriveGroupsDetailed(now: Date = new Date()): Promise<{ 
   let from = addDays(today, -DEFAULT_BACK), to = addDays(today, DEFAULT_AHEAD);
   for (const s of active) { const d = windowDays(toWindow(s)); if (d.length) { if (d[0] < from) from = d[0]; if (d[d.length - 1] > to) to = d[d.length - 1]; } }
   const ids = [...new Set([...keys.values()].map((k) => k.requisitionId))];
-  const raw = await section("groups", failed, async () => await readAgg((st) => groupsSql(ids.length, st), [from, to, ...ids]), null as RowDataPacket[] | null);
+  const raw = await section("groups", failed, async () => { const lf = await loadLiveFrom(); return await readAgg((st) => groupsSql(ids.length, st, lf), [from, to, ...ids]); }, null as RowDataPacket[] | null);
   if (!raw) return { groups: [], failedSections: failed };
 
   const heads = new Map<string, { code: string; role: string }>();
