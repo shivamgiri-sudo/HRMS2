@@ -118,7 +118,7 @@ describe("GET /api/payroll/esi-reg-docs", () => {
 describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
   beforeEach(() => { vi.clearAllMocks(); scopeMock.canSee = true; scopeMock.visible = null; });
 
-  it("streams a zip with manifest.txt when no files exist on disk", async () => {
+  it("streams a zip without any manifest file when no files exist on disk", async () => {
     // The employee row is queued; everything after it resolves EMPTY by default.
     // appendEsiPack() looks up PAN, then Aadhaar, then identity, then the bank
     // row, and finally writes an audit row — five reads and a write, where this
