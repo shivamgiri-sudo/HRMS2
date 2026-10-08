@@ -8,6 +8,7 @@ import { logger } from "../../logger.js";
 import { readAgg } from "./he-drive-trend.service.js";
 import { calibrateShowRate, weekdayOf, type CalibratedRate, type RateSample } from "./he-showrate-calibration.js";
 import { addDays } from "./requisition-stream.window.js";
+import { RATE_ARRIVED_SQL, RATE_INVITED_SQL } from "./he-rate-buckets.js";
 
 export interface RateBucket { byWeekday: Map<number, RateSample>; overall: RateSample }
 export interface RateBook { byStream: Map<string, RateBucket>; byRequisition: Map<string, RateBucket> }
@@ -16,7 +17,7 @@ const BATCH = 200;
 const ph = (n: number): string => Array(n).fill("?").join(",");
 // Same state buckets as ratesSql of he-drive-plan.service.ts (and BUCKETS_SQL of he-drive-trend.service.ts). WEEKDAY: 0 = Monday.
 const sampleSql = (n: number) => (streams: boolean): string => `SELECT STRAIGHT_JOIN d.requisition_id, ${streams ? "rs.id" : "NULL"} AS stream_id, WEEKDAY(d.drive_date) AS wd,
-       SUM(m.state IN ('invited','confirmed','slot_released','arrived','no_show','selected')) AS invited, SUM(m.state IN ('arrived','selected')) AS arrived
+       ${RATE_INVITED_SQL}, ${RATE_ARRIVED_SQL}
   FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id${streams ? `
   LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id

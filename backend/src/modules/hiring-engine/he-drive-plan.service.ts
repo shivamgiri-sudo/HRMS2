@@ -23,6 +23,7 @@ import { readAgg } from "./he-drive-trend.service.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import { loadActiveStreams, toWindow, type StreamRow } from "./requisition-stream.service.js";
 import { addDays, coversDay, istToday, windowDays, windowEnd } from "./requisition-stream.window.js";
+import { RATE_ARRIVED_SQL, RATE_INVITED_SQL } from "./he-rate-buckets.js";
 
 export interface ChecklistItem { kind: "will_plan" | "already_planned" | "fill_soon" | "stream_ends_tomorrow" | "pool_below_quota" | "readiness"; text: string; streamId?: string }
 export interface DrivePlan {
@@ -79,7 +80,7 @@ const linedSql = (streams: boolean): string => `SELECT STRAIGHT_JOIN m.drive_id,
  GROUP BY 1, 2`;
 // Same state buckets as BUCKETS_SQL of he-drive-trend.service.ts.
 const ratesSql = (streams: boolean): string => `SELECT STRAIGHT_JOIN ${streams ? "rs.id" : "NULL"} AS stream_id,
-       SUM(m.state IN ('invited','confirmed','slot_released','arrived','no_show','selected')) AS invited, SUM(m.state IN ('arrived','selected')) AS arrived
+       ${RATE_INVITED_SQL}, ${RATE_ARRIVED_SQL}
   FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id${streams ? `
   LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id

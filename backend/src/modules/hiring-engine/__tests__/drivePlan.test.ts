@@ -18,6 +18,7 @@ vi.mock("../he-insight-params.service.js", async () => ({ loadInsightThresholds:
 import { calendarCells, planDay, streamRate, whatIf, type PlanStreamInput } from "../he-drive-plan.js";
 import { clearDrivePlanCache, getDrivePlan, poolRemaining, type DrivePlan } from "../he-drive-plan.service.js";
 import type { StreamRow } from "../requisition-stream.service.js";
+import { RATE_ARRIVED_SQL, RATE_INVITED_SQL } from "../he-rate-buckets.js";
 
 describe("streamRate", () => {
   const base = { streamId: "s", sourceType: "meta_live" as const, planShowRate: 0.4, minSample: 30 };
@@ -250,6 +251,7 @@ describe("getDrivePlan", () => {
     ok(await getDrivePlan({ requisitionId: "r1", from: "2026-10-15", days: 1 }, ALL, NOW, t));
     const rates = execute.mock.calls.find((c) => kindOf(String(c[0])) === "rates")!;
     expect(rates[1]).toEqual(["r1", "2026-10-11", "2026-10-13"]); // today 14 Oct minus 3 days
+    expect(String(rates[0]).replace(/\s+/g, " ")).toContain(`${RATE_INVITED_SQL}, ${RATE_ARRIVED_SQL}`);
   });
 
   it("returns copies from the cache so an edited result never leaks into the next one", async () => {

@@ -59,6 +59,7 @@ vi.mock("../he-policy.service.js", () => ({
 
 import { clearRateBookCache, loadRateBook, rateForStream, type RateBook } from "../he-showrate-calibration.service.js";
 import { calibratedPlanNumbers } from "../he-showrate-calibration.js";
+import { RATE_ARRIVED_SQL, RATE_INVITED_SQL } from "../he-rate-buckets.js";
 import { planStreamsForDay } from "../he-stream-plan.service.js";
 import { planNextDay } from "../he-plan.service.js";
 
@@ -95,6 +96,8 @@ describe("loadRateBook", () => {
     expect(sql).toMatch(/FROM he_drive d JOIN he_match m ON m.drive_id = d.id/);
     expect(sql).toContain("WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ?");
     expect(sql).not.toMatch(/he_lead|he_message/);
+    // an unplanned walk-in (arrived / selected with no slot ever booked) is not a sample of the invite-to-show rate
+    expect(sql).toContain(`${RATE_INVITED_SQL}, ${RATE_ARRIVED_SQL}`);
   });
 
   it("an uncredited row counts for the Hiring Engine stream and every row for the requisition", async () => {
