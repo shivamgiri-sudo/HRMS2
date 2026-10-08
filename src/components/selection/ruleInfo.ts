@@ -34,3 +34,12 @@ export const RULE_INFO: Record<string, { label: string; group: RuleGroup }> = {
   location_radius: { label: "Within N km of the branch", group: "where" },
 };
 export const labelOf = (key: string): string => RULE_INFO[key]?.label ?? key;
+
+/** Rules whose value lives in selection_rules, with the value a rule starts from when switched on (the server catalogue defaults). */
+export const VALUE_DEFAULTS: Record<string, unknown> = {
+  sources: { exclude: [] }, contact_recent: { days: 7 }, record_age: { maxDays: 365 }, valid_email: true, relocation_ok: true, certificate: { level: "declared" },
+  salary_fit: { maxRatio: 1.25 }, ex_employee: "allow_clean", skills: { match: "any" }, education_completed: "completed",
+  education_stream: [], employer_include: [], employer_exclude: [], notice_period: { maxDays: 30 },
+};
+export const DEFAULT_WEIGHT: Record<string, number> = { skills: 10, employer_include: 10, rejected_other_process: 10 };
+export const EDUCATION_LADDER = ["Below 10th", "10th", "12th", "Diploma", "Graduate", "Post Graduate"] as const;
