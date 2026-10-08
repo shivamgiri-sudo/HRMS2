@@ -9,14 +9,14 @@ import type { CandidateFacts, SourceKind, SubSource } from "./selection-types.js
 
 export const factsHashOf = (f: CandidateFacts) => sha256(canonicalJson(f));
 
-export async function refreshFactCache(o: { sourceKind: SourceKind; chunk?: number; now?: Date; subSources?: SubSource[]; liveWindowDays?: number; maxChunks?: number }) {
+export async function refreshFactCache(o: { sourceKind: SourceKind; chunk?: number; now?: Date; subSources?: SubSource[]; liveFrom?: string; maxChunks?: number }) {
   const now = o.now ?? new Date();
   const runAt = istText(now);
   const chunk = Math.max(1, Math.min(o.chunk ?? 2000, 5000));
   let after: string | undefined, chunks = 0, people = 0, skippedInvalidMobile = 0;
   for (;;) {
     if (o.maxChunks && chunks >= o.maxChunks) break;
-    const r = await loadRawPeople({ sourceKind: o.sourceKind, subSources: o.subSources, afterKey: after, limit: chunk, liveWindowDays: o.liveWindowDays }, now);
+    const r = await loadRawPeople({ sourceKind: o.sourceKind, subSources: o.subSources, afterKey: after, limit: chunk, liveFrom: o.liveFrom }, now);
     skippedInvalidMobile += r.skippedInvalidMobile;
     // the newest record wins when one person appears twice in a chunk (Meta: several form fills)
     const byPerson = new Map<string, unknown[]>();

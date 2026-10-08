@@ -7,11 +7,14 @@ import { db } from "../../db/mysql.js";
 import { evaluateEligibility } from "../hiring-engine/he-eligibility.js";
 import { loadEligibilityFacts, type LeadFactsRow } from "../hiring-engine/he-eligibility.service.js";
 import { normalizeMobile10 } from "../hiring-engine/he-phone.js";
+import { fillTypeSql } from "../hiring-engine/he-source-attribution.js";
+import { loadLiveFrom } from "../hiring-engine/he-source-attribution.service.js";
 import type { RawPerson } from "./facts-normalise.js";
 import type { CandidateFacts, SourceKind, SubSource } from "./selection-types.js";
 
 export const HE_RECORD_TYPES = ["candidate", "naukri_import", "workindia_import"] as const;
-export interface LoadScope { sourceKind: SourceKind; subSources?: SubSource[]; afterKey?: string; limit: number; liveWindowDays?: number }
+/** liveFrom: the Live Meta cutoff day (meta.live_from); read from he_model_param when not given. */
+export interface LoadScope { sourceKind: SourceKind; subSources?: SubSource[]; afterKey?: string; limit: number; liveFrom?: string }
 export interface Loaded { people: Array<{ person: RawPerson; sourceRef: string }>; nextKey: string | null; skippedInvalidMobile: number }
 
 const ph = (n: number) => Array.from({ length: n }, () => "?").join(",");
@@ -54,8 +57,9 @@ export function heBaseSql(subSources?: SubSource[]): { sql: string; args: unknow
   };
 }
 
-export const META_BASE_SQL = (live: boolean) => `SELECT m.id, m.parsed_phone, m.raw_payload, m.parsed_education, m.parsed_location, m.parsed_experience_yr, m.created_at, m.requisition_id
-  FROM meta_lead_raw m WHERE m.id > ? AND m.created_at ${live ? ">=" : "<"} ? ORDER BY m.id LIMIT ?`;
+/** Live vs Old Meta is the shared attribution rule (he-source-attribution fillTypeSql): the person's first Meta fill on or after the cutoff. */
+export const META_BASE_SQL = (liveFrom: string) => `SELECT m.id, m.parsed_phone, m.raw_payload, m.parsed_education, m.parsed_location, m.parsed_experience_yr, m.created_at, m.requisition_id
+  FROM meta_lead_raw m WHERE m.id > ? AND ${fillTypeSql("m", liveFrom)} = ? ORDER BY m.id LIMIT ?`;
 export const LEADS_BY_MOBILE_SQL = (n: number) => `SELECT l.id, l.mobile10, l.ats_candidate_id, l.status, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome,
        l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.locality, l.lat, l.lng, l.email, l.updated_at
   FROM he_lead l WHERE l.mobile10 IN (${ph(n)})`;
@@ -130,8 +134,8 @@ export async function loadRawPeople(scope: LoadScope, now: Date): Promise<Loaded
     return { people, nextKey: rows.length === limit ? String(rows[rows.length - 1].mobile10) : null, skippedInvalidMobile: 0 };
   }
   const live = scope.sourceKind === "meta_live";
-  const since = istText(new Date(now.getTime() - (scope.liveWindowDays ?? 3) * 86_400_000));
-  const [rows] = await db.execute<RowDataPacket[]>(META_BASE_SQL(live), [scope.afterKey ?? "", since, limit]);
+  const liveFrom = scope.liveFrom ?? await loadLiveFrom();
+  const [rows] = await db.execute<RowDataPacket[]>(META_BASE_SQL(liveFrom), [scope.afterKey ?? "", scope.sourceKind, limit]);
   const valid = rows.map((r) => ({ r, m: normalizeMobile10(r.parsed_phone) })).filter((x): x is { r: RowDataPacket; m: string } => !!x.m);
   const mobiles = [...new Set(valid.map((x) => x.m))];
   const [leads] = mobiles.length ? await db.execute<RowDataPacket[]>(LEADS_BY_MOBILE_SQL(mobiles.length), mobiles) : [[] as RowDataPacket[]];

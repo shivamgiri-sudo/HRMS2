@@ -31,6 +31,7 @@ vi.mock("../../hiring-engine/he-eligibility.service.js", () => ({
 
 import { HE_RECORD_TYPES, loadRawPeople } from "../facts-loader.service.js";
 import { factsHashOf, refreshFactCache } from "../fact-cache.service.js";
+import { fillTypeSql } from "../../hiring-engine/he-source-attribution.js";
 import { baseFacts, ok } from "./fixtures/facts.js";
 
 const heRow = (i: number, o: Record<string, unknown> = {}) => ({
@@ -83,16 +84,16 @@ describe("loadRawPeople (Hiring Engine pool)", () => {
 });
 
 describe("loadRawPeople (Meta)", () => {
-  it("live = created inside the live window; joins the pool lead by mobile; skips invalid phones", async () => {
+  it("live = the shared attribution rule (first Meta fill on or after meta.live_from); joins the pool lead by mobile; skips invalid phones", async () => {
     h.state.metaRows = [
       { id: "m1", parsed_phone: "+91 98765 43210", raw_payload: "{\"id\":\"x\",\"field_data\":[]}", parsed_education: null, parsed_location: null, parsed_experience_yr: null, created_at: "2026-10-08 10:00:00", requisition_id: "r1" },
       { id: "m2", parsed_phone: "123", raw_payload: null, parsed_education: null, parsed_location: null, parsed_experience_yr: null, created_at: "2026-10-08 10:00:00", requisition_id: "r1" },
     ];
     h.state.heByMobile.set("9876543210", heRow(1, { mobile10: "9876543210", id: "Lx" }));
-    const r = await loadRawPeople({ sourceKind: "meta_live", limit: 10, liveWindowDays: 3 }, NOW);
+    const r = await loadRawPeople({ sourceKind: "meta_live", limit: 10, liveFrom: "2026-10-08" }, NOW);
     const [sql, params] = h.state.sqls.find(([s]) => s.startsWith("SELECT m.id, m.parsed_phone"))!;
-    expect(sql).toContain("m.created_at >= ?");
-    expect(params[1]).toBe("2026-10-06 11:30:00"); // IST, like created_at
+    expect(sql).toContain(`${fillTypeSql("m", "2026-10-08")} = ?`.replace(/\s+/g, " "));
+    expect(params[1]).toBe("meta_live");
     expect(r.people.map((x) => x.person.mobile)).toEqual(["9876543210"]);
     expect(r.people[0].person.lead?.id).toBe("Lx");
     expect(r.skippedInvalidMobile).toBe(1);
