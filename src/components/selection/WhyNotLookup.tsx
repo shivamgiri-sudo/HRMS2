@@ -49,7 +49,7 @@ export default function WhyNotLookup({ permissions, requisitionId }: { permissio
       <h3 id={`${id}-t`} className="text-sm font-bold">Why not shortlisted?</h3>
       <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); void run(); }}>
         <div className="min-w-0 flex-1">
-          <label htmlFor={`${id}-q`} className="block text-xs font-semibold">Mobile or name</label>
+          <label htmlFor={`${id}-q`} className="block text-xs font-semibold text-slate-700 dark:text-slate-200">Mobile or name</label>
           <input id={`${id}-q`} value={q} onChange={(e) => setQ(e.target.value)} className={FIELD} autoComplete="off" inputMode="search" />
         </div>
         <button type="submit" className={SMALL_BTN} disabled={busy}><Search className="h-4 w-4" aria-hidden="true" />Look up</button>

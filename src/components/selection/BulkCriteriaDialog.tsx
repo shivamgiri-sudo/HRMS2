@@ -27,7 +27,7 @@ export function BulkCriteriaBody(p: BulkBodyProps) {
         <legend className="text-xs font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">1. Requisitions</legend>
         {p.items.length === 0 && <p className="text-slate-600 dark:text-slate-300">This campaign has no requisitions you can edit.</p>}
         {p.items.map((i) => (
-          <label key={i.id} className="flex min-h-11 cursor-pointer items-center gap-2 sm:min-h-9">
+          <label key={i.id} className="flex min-h-11 cursor-pointer items-center gap-2 sm:min-h-9 text-slate-700 dark:text-slate-200">
             <input type="checkbox" checked={p.picked.has(i.id)} disabled={i.approvalStatus === "closed"} onChange={(e) => p.onPick(i.id, e.target.checked)} className="h-5 w-5 cursor-pointer rounded" />
             <span className="min-w-0 break-words">{i.code} · {i.branch}{i.process ? ` · ${i.process}` : ""} · {i.approvalStatus ?? ""}{i.approvalStatus === "closed" ? " (read-only)" : ""}</span>
           </label>
@@ -35,22 +35,22 @@ export function BulkCriteriaBody(p: BulkBodyProps) {
       </fieldset>
       <fieldset className="grid gap-2 sm:grid-cols-2">
         <legend className="col-span-full text-xs font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">2. Values to set (empty = leave as is)</legend>
-        <label className="block text-xs font-semibold">Minimum qualification
+        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">Minimum qualification
           <select value={p.choice.educationRequirement} onChange={(e) => set("educationRequirement")(e.target.value)} className={FIELD}>
             <option value="">Leave as is</option>{EDUCATION_LADDER.map((l) => <option key={l} value={l}>{l} or above</option>)}
           </select></label>
-        <label className="block text-xs font-semibold">Night shift
+        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">Night shift
           <select value={p.choice.nightShift} onChange={(e) => set("nightShift")(e.target.value)} className={FIELD}>
             <option value="">Leave as is</option><option value="yes">Required</option><option value="no">Not required</option>
           </select></label>
-        <label className="block text-xs font-semibold">Age from<input type="number" inputMode="numeric" value={p.choice.ageMin} onChange={(e) => set("ageMin")(e.target.value)} className={FIELD} /></label>
-        <label className="block text-xs font-semibold">Age up to<input type="number" inputMode="numeric" value={p.choice.ageMax} onChange={(e) => set("ageMax")(e.target.value)} className={FIELD} /></label>
-        <label className="block text-xs font-semibold sm:col-span-2">Cities (comma separated)<input value={p.choice.cities} onChange={(e) => set("cities")(e.target.value)} className={FIELD} /></label>
-        <label className="block text-xs font-semibold">Enrolment
+        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">Age from<input type="number" inputMode="numeric" value={p.choice.ageMin} onChange={(e) => set("ageMin")(e.target.value)} className={FIELD} /></label>
+        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">Age up to<input type="number" inputMode="numeric" value={p.choice.ageMax} onChange={(e) => set("ageMax")(e.target.value)} className={FIELD} /></label>
+        <label className="block text-xs font-semibold sm:col-span-2 text-slate-700 dark:text-slate-200">Cities (comma separated)<input value={p.choice.cities} onChange={(e) => set("cities")(e.target.value)} className={FIELD} /></label>
+        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">Enrolment
           <select value={p.choice.enrolment} onChange={(e) => set("enrolment")(e.target.value)} className={FIELD}>
             <option value="">Leave as is</option><option value="hr_approves">HR approves shortlists</option><option value="off">Off</option>
           </select></label>
-        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs font-semibold sm:min-h-9">
+        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs font-semibold sm:min-h-9 text-slate-700 dark:text-slate-200">
           <input type="checkbox" checked={p.choice.replaceFilled} onChange={(e) => set("replaceFilled")(e.target.checked)} className="h-5 w-5 cursor-pointer rounded" />Also replace values that are already filled</label>
         <div className="col-span-full"><button type="button" className={SMALL_BTN} disabled={p.busy || !p.picked.size || !Object.keys(bulkPatch(p.choice)).length} onClick={p.onShow}>3. See the changes</button></div>
       </fieldset>
@@ -64,14 +64,14 @@ export function BulkCriteriaBody(p: BulkBodyProps) {
               <tbody>{view.items.map((i) => (
                 <tr key={i.id} className="border-b border-slate-100 align-top dark:border-slate-800">
                   <th scope="row" className="px-2 py-1 font-medium">{i.code}</th>
-                  <td className="px-2 py-1">{i.nothing ? "Nothing" : i.changes.map((c) => <div key={c.field}>{c.field}: {c.from} to {c.to}</div>)}</td>
-                  <td className="px-2 py-1">{i.kept.map((c) => <div key={c.field}>{c.field}: stays {c.from}</div>)}</td>
-                  <td className="px-2 py-1">{i.errors.map((e, k) => <div key={k} className="font-semibold text-rose-800 dark:text-rose-200">Error: {e}</div>)}{i.warnings.map((w, k) => <div key={`w${k}`}>Warning: {w}</div>)}</td>
-                  <td className="px-2 py-1"><input type="checkbox" aria-label={`Leave out ${i.code}`} checked={p.excluded.has(i.id)} onChange={(e) => p.onExclude(i.id, e.target.checked)} className="h-5 w-5 cursor-pointer rounded" /></td>
+                  <td className="px-2 py-1 text-slate-700 dark:text-slate-200">{i.nothing ? "Nothing" : i.changes.map((c) => <div key={c.field}>{c.field}: {c.from} to {c.to}</div>)}</td>
+                  <td className="px-2 py-1 text-slate-700 dark:text-slate-200">{i.kept.map((c) => <div key={c.field}>{c.field}: stays {c.from}</div>)}</td>
+                  <td className="px-2 py-1 text-slate-700 dark:text-slate-200">{i.errors.map((e, k) => <div key={k} className="font-semibold text-rose-800 dark:text-rose-200">Error: {e}</div>)}{i.warnings.map((w, k) => <div key={`w${k}`}>Warning: {w}</div>)}</td>
+                  <td className="px-2 py-1 text-slate-700 dark:text-slate-200"><input type="checkbox" aria-label={`Leave out ${i.code}`} checked={p.excluded.has(i.id)} onChange={(e) => p.onExclude(i.id, e.target.checked)} className="h-5 w-5 cursor-pointer rounded" /></td>
                 </tr>))}</tbody>
             </table>
           </div>
-          <label htmlFor={`${id}-reason`} className="block text-xs font-semibold">Reason{anyApproved ? " (required: approved requisitions are included)" : ""}</label>
+          <label htmlFor={`${id}-reason`} className="block text-xs font-semibold text-slate-700 dark:text-slate-200">Reason{anyApproved ? " (required: approved requisitions are included)" : ""}</label>
           <textarea id={`${id}-reason`} value={p.reason} maxLength={300} rows={2} onChange={(e) => p.onReason(e.target.value)} className={`${FIELD} py-2`} />
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className={PRIMARY} disabled={!verdict.ok || p.busy} onClick={p.onConfirm}>4. Save on every requisition</button>

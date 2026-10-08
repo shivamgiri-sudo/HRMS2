@@ -32,7 +32,7 @@ export default function CriteriaEditorBody(p: EditorBodyProps) {
         <CompletenessBadge completeness={p.resp.completeness} />
         <span className="text-xs text-slate-600 dark:text-slate-300">{p.resp.row.code} · {p.resp.row.branchName} · {p.resp.row.approvalStatus ?? "unknown status"}</span>
       </div>
-      {ro && <p className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800"><Lock className="h-4 w-4 shrink-0" aria-hidden="true" />You can read these criteria; only HR can change them.</p>}
+      {ro && <p className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800"><Lock className="h-4 w-4 shrink-0" aria-hidden="true" />{p.resp.permissions.edit ? "This requisition is closed: its criteria are read-only." : "You can read these criteria; only HR can change them."}</p>}
       {p.draft.legacy && !ro && <p className="flex items-start gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800"><Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />Today's screening rules apply until criteria are saved here. After the first save, any rule left undecided that has a value acts as MUST, so decide each one.</p>}
       {banner.length > 0 && (
         <section aria-labelledby={`${reasonId}-banner`} className="space-y-2 rounded-lg border border-amber-400 bg-amber-50 px-3 py-2 dark:border-amber-600 dark:bg-amber-950">
@@ -76,7 +76,7 @@ export default function CriteriaEditorBody(p: EditorBodyProps) {
       })}
       {!ro && (
         <section aria-label="Enrolment" className="space-y-1">
-          <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm sm:min-h-9">
+          <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm sm:min-h-9 text-slate-700 dark:text-slate-200">
             <input type="checkbox" checked={p.draft.enrolmentMode === "hr_approves"} onChange={(e) => p.onDraft(setEnrolment(p.draft, e.target.checked ? "hr_approves" : "off"))} className="h-5 w-5 cursor-pointer rounded" />
             HR approves each shortlist before anyone is contacted
           </label>
@@ -88,7 +88,7 @@ export default function CriteriaEditorBody(p: EditorBodyProps) {
         {warnings.length > 0 && (
           <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
             <ul className="space-y-0.5">{warnings.map((w, i) => <li key={i} className="flex gap-1.5"><Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />Warning: {w.text}</li>)}</ul>
-            {!ro && <label className="flex min-h-11 cursor-pointer items-center gap-2 sm:min-h-9"><input type="checkbox" checked={p.ack} onChange={(e) => p.onAck(e.target.checked)} className="h-5 w-5 cursor-pointer rounded" />I have read the warnings</label>}
+            {!ro && <label className="flex min-h-11 cursor-pointer items-center gap-2 sm:min-h-9 text-slate-700 dark:text-slate-200"><input type="checkbox" checked={p.ack} onChange={(e) => p.onAck(e.target.checked)} className="h-5 w-5 cursor-pointer rounded" />I have read the warnings</label>}
           </div>
         )}
       </div>
@@ -97,13 +97,13 @@ export default function CriteriaEditorBody(p: EditorBodyProps) {
           <table className="w-full min-w-max text-left text-sm">
             <caption className="mb-1 text-left text-xs text-slate-600 dark:text-slate-300">Draft against saved criteria ({p.whatIf.source.replace("_", " ")}, {p.whatIf.start} people). Nothing is saved yet.</caption>
             <thead><tr className="border-b border-slate-200 dark:border-slate-700"><th scope="col" className="px-2 py-1">Outcome</th><th scope="col" className="px-2 py-1">Saved</th><th scope="col" className="px-2 py-1">Draft</th><th scope="col" className="px-2 py-1">Change</th></tr></thead>
-            <tbody>{previewDelta(p.saved, p.whatIf).map((r) => <tr key={r.label} className="border-b border-slate-100 dark:border-slate-800"><th scope="row" className="px-2 py-1 font-medium">{r.label}</th><td className="px-2 py-1 tabular-nums">{r.saved}</td><td className="px-2 py-1 tabular-nums">{r.draft}</td><td className="px-2 py-1 tabular-nums">{r.change}</td></tr>)}</tbody>
+            <tbody>{previewDelta(p.saved, p.whatIf).map((r) => <tr key={r.label} className="border-b border-slate-100 dark:border-slate-800"><th scope="row" className="px-2 py-1 font-medium">{r.label}</th><td className="px-2 py-1 tabular-nums text-slate-700 dark:text-slate-200">{r.saved}</td><td className="px-2 py-1 tabular-nums text-slate-700 dark:text-slate-200">{r.draft}</td><td className="px-2 py-1 tabular-nums text-slate-700 dark:text-slate-200">{r.change}</td></tr>)}</tbody>
           </table>
         </div>
       )}
       {!ro && (
         <div className="space-y-2 border-t border-slate-200 pt-3 dark:border-slate-700">
-          <label htmlFor={reasonId} className="block text-sm font-semibold">Reason{approved ? " (required: this requisition is approved)" : " (optional)"}</label>
+          <label htmlFor={reasonId} className="block text-sm font-semibold text-slate-700 dark:text-slate-200">Reason{approved ? " (required: this requisition is approved)" : " (optional)"}</label>
           <textarea id={reasonId} value={p.reason} maxLength={300} onChange={(e) => p.onReason(e.target.value)} rows={2} className={`${FIELD} py-2`} />
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className={PRIMARY} disabled={!verdict.ok || p.busy} onClick={p.onSave}>Save criteria</button>

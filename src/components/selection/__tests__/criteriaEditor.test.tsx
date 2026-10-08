@@ -57,6 +57,11 @@ describe("criteria editor body", () => {
     expect(html).not.toContain("Decide: no requirement");
     expect(html).not.toContain("Templates and copy");
   });
+  it("a closed requisition is read-only for HR too, and says why", () => {
+    const html = render(resp({ approvalStatus: "closed" }));
+    expect(html).toContain("This requisition is closed: its criteria are read-only.");
+    expect(html).not.toContain("Save criteria");
+  });
   it("errors and warnings are written out, never colour only; warnings need ticking", () => {
     const html = render(resp(), { issues: [{ level: "error", keys: ["age"], text: "Age band 40 to 30" }, { level: "warning", keys: [], text: "Typing above 60" }] });
     expect(html).toContain("Error: Age band 40 to 30");

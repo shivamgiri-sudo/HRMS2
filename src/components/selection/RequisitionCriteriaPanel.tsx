@@ -43,7 +43,7 @@ export default function RequisitionCriteriaPanel({ requisitionId, initialTab = "
   const p = data.permissions;
   const tabs = panelTabs(p);
   return (
-    <div className="min-w-0 space-y-3">
+    <div className="min-w-0 space-y-3 rounded-xl bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">
       {title && <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{title}</h3>}
       <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Criteria views">
         {tabs.map((t) => (

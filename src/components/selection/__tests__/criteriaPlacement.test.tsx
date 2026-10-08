@@ -73,6 +73,27 @@ describe("campaign drawer and panel by role", () => {
   });
 });
 
+describe("dark mode on a host page that stays light", () => {
+  it("the section and the campaign block paint their own background, so light text is never on white", () => {
+    const sec = renderToStaticMarkup(<CriteriaSectionView items={[item("a")]} permissions={all} onlyIncomplete={false} onOnlyIncomplete={noop} selected={null} onSelect={noop} loading={false} error={null} onRetry={noop} now={now} />);
+    expect(sec).toMatch(/<section[^>]*class="[^"]*bg-white[^"]*dark:bg-slate-900/);
+    expect(sec).toMatch(/overflow-x-auto[^"]*bg-white[^"]*dark:bg-slate-900/);
+    const camp = renderToStaticMarkup(<CampaignCriteriaView items={[item("a")]} permissions={all} selected={null} onSelect={noop} onBulk={noop} now={now} />);
+    expect(camp).toMatch(/<section[^>]*class="[^"]*bg-white[^"]*dark:bg-slate-900/);
+  });
+});
+
+describe("dark mode beats the app's global td / label colours", () => {
+  it("every td and label in the selection screens carries its own dark text colour", async () => {
+    const fs = await import("node:fs");
+    const dir = new URL("..", import.meta.url).pathname;
+    for (const f of fs.readdirSync(dir).filter((x: string) => x.endsWith(".tsx"))) {
+      const src = fs.readFileSync(`${dir}${f}`, "utf8");
+      for (const m of src.matchAll(/<(td|label)\b[^>]*?className="([^"]*)"/g)) expect(`${f} <${m[1]}>: ${m[2]}`).toMatch(/dark:text-|sr-only/);
+    }
+  });
+});
+
 describe("375 px: screen-reader-only text stays inside its scroll box", () => {
   it("every table scroll wrapper is a positioning context (an absolute sr-only span would widen the page otherwise)", async () => {
     const fs = await import("node:fs");

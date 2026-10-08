@@ -13,9 +13,9 @@ export function BookedMismatchView({ rows }: { rows: Row[] }) {
         <thead><tr className="border-b border-slate-200 dark:border-slate-700"><th scope="col" className="px-2 py-1">Mobile</th><th scope="col" className="px-2 py-1">Name</th><th scope="col" className="px-2 py-1">Now</th><th scope="col" className="px-2 py-1">Booking</th><th scope="col" className="px-2 py-1">Slot</th></tr></thead>
         <tbody>{rows.map((r) => (
           <tr key={r.followupId} className="border-b border-slate-100 dark:border-slate-800">
-            <th scope="row" className="px-2 py-1 font-mono font-medium">{r.maskedMobile}</th><td className="px-2 py-1">{r.firstName || "–"}</td>
-            <td className="px-2 py-1">{r.verdict === "fail" ? "Fails a MUST rule" : r.verdict === "review" ? "Needs review" : r.verdict}</td>
-            <td className="px-2 py-1">{r.matchState.replaceAll("_", " ")}</td><td className="px-2 py-1">{r.slotAt ?? "–"}</td>
+            <th scope="row" className="px-2 py-1 font-mono font-medium">{r.maskedMobile}</th><td className="px-2 py-1 text-slate-700 dark:text-slate-200">{r.firstName || "–"}</td>
+            <td className="px-2 py-1 text-slate-700 dark:text-slate-200">{r.verdict === "fail" ? "Fails a MUST rule" : r.verdict === "review" ? "Needs review" : r.verdict}</td>
+            <td className="px-2 py-1 text-slate-700 dark:text-slate-200">{r.matchState.replaceAll("_", " ")}</td><td className="px-2 py-1 text-slate-700 dark:text-slate-200">{r.slotAt ?? "–"}</td>
           </tr>))}</tbody>
       </table>
     </div>

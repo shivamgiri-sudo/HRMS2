@@ -26,17 +26,17 @@ export default function SampleTable({ preview }: { preview: PreviewResult }) {
           {preview.sample.map((s, i) => (
             <tr key={i} className="border-t border-slate-100 dark:border-slate-800">
               <th scope="row" className="whitespace-nowrap px-2 py-1.5 font-mono font-medium">{s.maskedMobile}</th>
-              <td className="px-2 py-1.5">{s.firstName || "–"}</td>
-              <td className="px-2 py-1.5">{SUB[s.subSource] ?? s.subSource}</td>
-              <td className="px-2 py-1.5 font-semibold">{VERDICT[s.verdict] ?? s.verdict}{s.override ? <span className="block font-normal">{s.override}</span> : null}</td>
-              <td className="px-2 py-1.5 tabular-nums">{s.score}</td>
+              <td className="px-2 py-1.5 text-slate-700 dark:text-slate-200">{s.firstName || "–"}</td>
+              <td className="px-2 py-1.5 text-slate-700 dark:text-slate-200">{SUB[s.subSource] ?? s.subSource}</td>
+              <td className="px-2 py-1.5 font-semibold text-slate-700 dark:text-slate-200">{VERDICT[s.verdict] ?? s.verdict}{s.override ? <span className="block font-normal">{s.override}</span> : null}</td>
+              <td className="px-2 py-1.5 tabular-nums text-slate-700 dark:text-slate-200">{s.score}</td>
               {keys.map((k) => {
                 const c = s.cells.find((x) => x.key === k);
-                if (!c) return <td key={k} className="px-2 py-1.5 text-slate-500">–</td>;
+                if (!c) return <td key={k} className="px-2 py-1.5 text-slate-500 dark:text-slate-400">–</td>;
                 const v = cellView(c);
                 const Icon = v.icon === "check" ? Check : v.icon === "x" ? X : HelpCircle;
                 return (
-                  <td key={k} className="px-2 py-1.5">
+                  <td key={k} className="px-2 py-1.5 text-slate-700 dark:text-slate-200">
                     <span tabIndex={0} title={c.text} aria-label={v.aria} className="inline-flex min-h-8 items-center gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
                       <Icon className="h-3.5 w-3.5" aria-hidden="true" />{v.word}
                     </span>

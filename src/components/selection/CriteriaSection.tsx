@@ -13,13 +13,13 @@ export function CriteriaSectionView({ items, permissions, onlyIncomplete, onOnly
   { items: RequisitionItem[] | null; permissions: Permissions | null; onlyIncomplete: boolean; onOnlyIncomplete: (b: boolean) => void; selected: string | null; onSelect: (id: string) => void;
     loading: boolean; error: string | null; onRetry: () => void; now: Date; whyNot?: ReactNode; panel?: ReactNode }) {
   return (
-    <section aria-labelledby="criteria-section-title" className="space-y-3 text-slate-900 dark:text-slate-100">
+    <section aria-labelledby="criteria-section-title" className="space-y-3 rounded-xl bg-white p-3 text-slate-900 dark:bg-slate-900 dark:text-slate-100">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 id="criteria-section-title" className="text-base font-bold">Selection criteria</h2>
           <p className="text-xs text-slate-600 dark:text-slate-300">{items ? listCounts(items) : "Who each open requisition shortlists"}</p>
         </div>
-        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm sm:min-h-9">
+        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm sm:min-h-9 text-slate-700 dark:text-slate-200">
           <input type="checkbox" checked={onlyIncomplete} onChange={(e) => onOnlyIncomplete(e.target.checked)} className="h-5 w-5 cursor-pointer rounded" />Only criteria incomplete
         </label>
       </div>

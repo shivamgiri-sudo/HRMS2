@@ -14,7 +14,7 @@ export function CampaignCriteriaView({ items, permissions, selected, onSelect, o
   { items: RequisitionItem[]; permissions: Permissions; selected: string | null; onSelect: (id: string) => void; onBulk: () => void; now: Date; panel?: ReactNode }) {
   if (!permissions.read) return null;
   return (
-    <section aria-labelledby="campaign-criteria-title" className="space-y-2 text-slate-900 dark:text-slate-100">
+    <section aria-labelledby="campaign-criteria-title" className="space-y-2 rounded-xl bg-white p-3 text-slate-900 dark:bg-slate-900 dark:text-slate-100">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h3 id="campaign-criteria-title" className="text-sm font-bold">Selection criteria</h3><p className="text-xs text-slate-600 dark:text-slate-300">{listCounts(items)}</p></div>
         {permissions.edit && items.length > 1 && <button type="button" className={SMALL_BTN} onClick={onBulk}>Bulk edit criteria</button>}

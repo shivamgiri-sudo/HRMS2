@@ -67,15 +67,25 @@ async function settle(page, ms = 30000) {
 const shot = async (page, name) => { const f = path.join(SHOTS, `${name}.png`); await page.screenshot({ path: f, fullPage: true }); return f; };
 const noSideScroll = async (page) => page.evaluate(() => document.scrollingElement.scrollWidth);
 const visible = async (loc) => (await loc.count()) > 0 && (await loc.first().isVisible().catch(() => false));
+/** The app scrolls inside its own main box, so a full-page shot is the viewport: bring the selection UI into view first. */
+async function toSelection(page) {
+  for (const l of [page.getByRole("group", { name: "Criteria views" }), page.getByRole("heading", { name: "Selection criteria" })]) {
+    if (await visible(l)) { await l.first().scrollIntoViewIfNeeded().catch(() => {}); return; }
+  }
+}
 async function variants(page, name) {
   await page.setViewportSize({ width: 375, height: 800 });
   await settle(page, 8000);
   const sw = await noSideScroll(page);
+  await toSelection(page);
   await shot(page, `${name}_375`);
   await page.emulateMedia({ colorScheme: "dark" });
   await page.evaluate(() => document.documentElement.classList.add("dark"));
   await page.waitForTimeout(300);
   await shot(page, `${name}_375_dark`);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await toSelection(page);
+  await shot(page, `${name}_dark`);
   await page.evaluate(() => document.documentElement.classList.remove("dark"));
   await page.emulateMedia({ colorScheme: "light" });
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -207,6 +217,95 @@ try {
     ok(`${role}: no console errors`, consoleErr.length === 0, consoleErr.slice(0, 5));
     ok(`${role}: no failed network requests`, issues.failed.length === 0, issues.failed.slice(0, 5));
     perRole[role] = { shots: shots.length, selCalls: issues.selCalls.length, unrelatedHttp: unrelated, console: consoleErr };
+    await ctx.close();
+  }
+  // ── Deep matrix (super_admin): every seeded requisition type through the requisition page panel, plus the multi-requisition campaign ──
+  if (process.env.CRIT_MATRIX !== "0" && (!ONLY || ONLY.includes("super_admin") || ONLY.includes("matrix"))) {
+    console.log("\n== matrix");
+    const { ctx, page, issues } = await login(b, "super_admin");
+    // what the approve tab must say for each type (blocker in words); R01-R04/R08 may be blocked by incomplete criteria or enrolment off
+    const WANT = {
+      R01: /Criteria incomplete|Enrolment is off|Run the shortlist first|Nobody is ticked/, R02: /Criteria incomplete|Enrolment is off|Run the shortlist first|Nobody is ticked/,
+      R03: /Criteria incomplete|Enrolment is off|Run the shortlist first|Nobody is ticked/, R04: /Criteria incomplete|Enrolment is off|Run the shortlist first/,
+      R05: /not open/, R06: /past its hiring deadline/, R07: /seats/, R08: /Criteria incomplete|Enrolment is off|Run the shortlist first/, R09: /not approved/, R10: /on hold/,
+    };
+    for (const code of Object.keys(WANT)) {
+      if (code === "R05") {
+        // a closed requisition is not on the requisition list (active only); the campaign drawer reads through to it (RIGCMP-K7BK)
+        await page.goto(`${UI}/ats/meta-campaigns`, { waitUntil: "domcontentloaded" });
+        await settle(page);
+        const crow = page.locator("table tbody tr", { hasText: "RIG-R05" }).first();
+        if (!(await crow.count())) { ok("matrix R05: reachable through its campaign", false, "no campaign row"); continue; }
+        await crow.click();
+        await settle(page);
+        // a one-requisition campaign opens its requisition at once
+        if (!(await visible(page.getByRole("group", { name: "Criteria views" })))) { await page.getByRole("dialog").getByRole("button", { name: "Open criteria of RIG-R05" }).click().catch(() => {}); await settle(page); }
+      } else {
+        await page.goto(`${UI}/recruitment/job-requisition`, { waitUntil: "domcontentloaded" });
+        await settle(page);
+        const search = page.getByPlaceholder("Search code, position, branch…");
+        if (await visible(search)) { await search.fill(`RIG-${code}`); await page.waitForTimeout(800); }
+        const row = page.locator("tr", { hasText: `RIG-${code}` }).first();
+        if (!(await row.count())) { ok(`matrix ${code}: listed on the requisition page`, false, "row not found (list filter)"); continue; }
+        await row.locator('button[title="View Details"]').click();
+        await settle(page);
+      }
+      const views = page.getByRole("group", { name: "Criteria views" });
+      ok(`matrix ${code}: criteria panel on the requisition page`, await visible(views));
+      if (!(await visible(views))) continue;
+      await shot(page, `matrix_${code}__summary`);
+      await views.getByRole("button", { name: "Preview" }).click();
+      await settle(page, 60000);
+      ok(`matrix ${code}: preview renders (funnel, empty state or partial banner), no error`, !(await visible(page.getByText(/Could not load the preview/))));
+      await shot(page, `matrix_${code}__preview`);
+      await views.getByRole("button", { name: "Approve shortlist" }).click();
+      await settle(page);
+      const bar = page.locator("section", { has: page.getByRole("heading", { name: "Approve shortlist" }) }).first();
+      const barText = (await bar.textContent().catch(() => "")) ?? "";
+      ok(`matrix ${code}: approve bar explains (${barText.match(WANT[code])?.[0] ?? "?"})`, WANT[code].test(barText), barText.slice(0, 300));
+      if (["R05", "R06", "R07", "R09", "R10"].includes(code)) ok(`matrix ${code}: Approve disabled`, await bar.getByRole("button", { name: /^Approve \d+ people/ }).isDisabled().catch(() => true));
+      await shot(page, `matrix_${code}__approve`);
+      if (code === "R05") {
+        await page.getByRole("button", { name: "Edit criteria" }).click();
+        await settle(page);
+        const dlg = page.getByRole("dialog").filter({ hasText: "Selection criteria" });
+        ok("matrix R05 (closed): editor is read-only", (await visible(dlg.getByText("This requisition is closed: its criteria are read-only."))) && !(await visible(dlg.getByRole("button", { name: "Save criteria" }))));
+        await shot(page, "matrix_R05__editor_readonly");
+        await page.keyboard.press("Escape");
+      }
+      if (code === "R02") {
+        await views.getByRole("button", { name: "Summary" }).click();
+        ok("matrix R02 (night shift): summary names the night-shift rule", await visible(page.getByText(/night shift/i).first()));
+      }
+    }
+    // multi-requisition campaign: drawer lists R02, R03, R04 and offers bulk edit with a dry-run diff
+    await page.goto(`${UI}/ats/meta-campaigns`, { waitUntil: "domcontentloaded" });
+    await settle(page);
+    const multi = page.locator("table tbody tr", { hasText: "RIG-R02" }).first();
+    if (await multi.count()) {
+      await multi.click();
+      await settle(page);
+      const drawer = page.getByRole("dialog");
+      const n = await drawer.getByRole("button", { name: /^Open criteria of RIG-R0[234]/ }).count();
+      ok(`matrix multi-requisition campaign: drawer lists its requisitions (${n})`, n >= 2, n);
+      const bulk = drawer.getByRole("button", { name: "Bulk edit criteria" });
+      ok("matrix multi-requisition campaign: bulk edit offered", await visible(bulk));
+      if (await visible(bulk)) {
+        await bulk.click();
+        const dlg = page.getByRole("dialog").filter({ hasText: "Edit criteria on several requisitions" });
+        await dlg.waitFor({ timeout: 10000 }).catch(() => {});
+        await dlg.getByLabel("Age up to").fill("33");
+        await dlg.getByRole("button", { name: "3. See the changes" }).click();
+        await settle(page);
+        ok("matrix bulk edit: dry-run diff per requisition", await visible(dlg.getByRole("region", { name: "Changes per requisition" })));
+        await shot(page, "matrix_multi__bulk_diff");
+        await page.keyboard.press("Escape");
+      }
+      await shot(page, "matrix_multi__drawer");
+    } else ok("matrix multi-requisition campaign listed", false, "no RIG-R02 campaign row");
+    ok("matrix: no page errors", issues.pageErrors.length === 0, issues.pageErrors);
+    ok("matrix: every selection response masks mobiles", issues.unmasked.length === 0, issues.unmasked);
+    ok("matrix: no failed selection requests", issues.http.filter((h) => SEL.test(h) && !/ 409 /.test(h)).length === 0, issues.http.filter((h) => SEL.test(h)));
     await ctx.close();
   }
 } finally {

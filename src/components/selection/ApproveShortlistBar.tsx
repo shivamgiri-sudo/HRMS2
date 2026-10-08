@@ -35,12 +35,12 @@ export function ApproveBarView(p: BarViewProps) {
               const editable = x.status === "picked" || x.status === "review";
               return (
                 <tr key={x.id} className="border-t border-slate-100 dark:border-slate-800">
-                  <td className="px-2 py-1"><input type="checkbox" aria-label={`Include ${x.maskedMobile}`} checked={tick} disabled={!editable}
+                  <td className="px-2 py-1 text-slate-700 dark:text-slate-200"><input type="checkbox" aria-label={`Include ${x.maskedMobile}`} checked={tick} disabled={!editable}
                     onChange={(e) => (x.status === "picked" ? p.onUntick(x.id, !e.target.checked) : p.onReviewOk(x.id, e.target.checked))} className="h-5 w-5 cursor-pointer rounded" /></td>
                   <th scope="row" className="px-2 py-1 font-mono font-medium">{x.maskedMobile}</th>
-                  <td className="px-2 py-1">{STATUS[x.status] ?? x.status}</td>
-                  <td className="px-2 py-1 tabular-nums">{x.score}</td>
-                  <td className="px-2 py-1">{x.reasons.join("; ")}</td>
+                  <td className="px-2 py-1 text-slate-700 dark:text-slate-200">{STATUS[x.status] ?? x.status}</td>
+                  <td className="px-2 py-1 tabular-nums text-slate-700 dark:text-slate-200">{x.score}</td>
+                  <td className="px-2 py-1 text-slate-700 dark:text-slate-200">{x.reasons.join("; ")}</td>
                 </tr>
               );
             })}</tbody>
@@ -62,7 +62,7 @@ export function ApproveBarView(p: BarViewProps) {
           ))}
           {can && v.standing.length === 0 && (
             <div className="flex flex-wrap items-end gap-2">
-              <div><label htmlFor={`${id}-d`} className="block text-xs font-semibold">Standing approval for new Live Meta leads (days, up to 7)</label>
+              <div><label htmlFor={`${id}-d`} className="block text-xs font-semibold text-slate-700 dark:text-slate-200">Standing approval for new Live Meta leads (days, up to 7)</label>
                 <input id={`${id}-d`} type="number" min={1} max={7} value={p.days} onChange={(e) => p.onDays(Math.max(1, Math.min(7, Number(e.target.value) || 1)))} className={`${FIELD} w-24`} /></div>
               <button type="button" className={SMALL_BTN} disabled={p.busy || !!p.state.blocker || !p.state.currentVersion} onClick={p.onStanding}>Approve new leads that pass</button>
             </div>
