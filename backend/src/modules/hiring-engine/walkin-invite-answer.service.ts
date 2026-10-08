@@ -120,3 +120,28 @@ export async function answerInviteToken(inv: WalkinInviteRow, answer: InviteToke
   }
   return { state, matchToken: booked.token, booked: true, ...(responseId ? { responseId } : {}) };
 }
+
+/**
+ * HR's Yes / another time for a person whose match has no slot yet (only suggested, or released without a new time): book them on the
+ * requisition's drive first, then answer, under the engine lock (same path as a Yes on an invite link). Unavailable booking = HR follow-up.
+ */
+export async function bookAndAnswerMatch(a: { leadId: string; requisitionId: string; answer: "yes" | "later"; now: Date; actor: string; note: string }):
+  Promise<{ state: string; booked: boolean; reason?: string; responseId?: number; matchId?: string }> {
+  const lock = await takeEngineLock();
+  if (!lock) {
+    await addEvent(a.leadId, "needs_human_followup", { channel: "hr", detail: `HR recorded ${a.answer} while the engine was busy: book by hand`, actor: a.actor });
+    return { state: "pending", booked: false, reason: "busy" };
+  }
+  try {
+    const [jr] = await db.execute<RowDataPacket[]>("SELECT branch_name FROM job_requisition WHERE id = ? LIMIT 1", [a.requisitionId]);
+    const booked = await bookLeadOnDrive({ leadId: a.leadId, requisitionId: a.requisitionId, branchName: String(jr[0]?.branch_name ?? ""), preferredSlotAt: null, now: a.now, state: "invited" });
+    if (booked.status !== "booked") {
+      await addEvent(a.leadId, "needs_human_followup", { channel: "hr", detail: `HR recorded ${a.answer} but no slot could be booked (${booked.reason}): fix a time`, actor: a.actor });
+      return { state: "unavailable", booked: false, reason: booked.reason };
+    }
+    const ra = await recordInviteAnswer(booked.matchId, a.answer, { channel: "hr", actor: a.actor, note: a.note });
+    return { state: ra?.state ?? "", booked: true, responseId: ra?.responseId, matchId: booked.matchId };
+  } finally {
+    await releaseEngineLock(lock);
+  }
+}

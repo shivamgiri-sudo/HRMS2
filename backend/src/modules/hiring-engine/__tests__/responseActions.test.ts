@@ -34,6 +34,7 @@ vi.mock("../walkin-invite.service.js", () => ({
 }));
 vi.mock("../walkin-invite-answer.service.js", () => ({
   answerInviteToken: vi.fn(async (...a: unknown[]) => { h.calls.push(["answerInviteToken", ...a]); return { state: "confirmed", matchToken: "c".repeat(32), booked: true, responseId: 42 }; }),
+  bookAndAnswerMatch: vi.fn(async (...a: unknown[]) => { h.calls.push(["bookAndAnswerMatch", ...a]); return { state: "confirmed", booked: true, responseId: 43, matchId: "M1" }; }),
 }));
 vi.mock("../../../shared/auditLog.js", () => ({ writeAuditLog: vi.fn(async (e: unknown) => { h.audits.push(e); }) }));
 
@@ -46,11 +47,23 @@ const manual = { actor: "U1", mobile10: "9876543210", requisitionId: "R1", answe
 
 beforeEach(() => {
   h.sqls = []; h.calls = []; h.audits = []; h.claimed = 1;
-  h.req = { id: "R1", branch_name: "NOIDA-2" }; h.match = { id: "M1" };
+  h.req = { id: "R1", branch_name: "NOIDA-2" }; h.match = { id: "M1", lead_id: "L1", slot_at: "2026-10-09 10:30:00", state: "invited" };
   h.resp = { id: 7, status: "needs_review", handled_at: null, match_id: "M1", invite_id: null, mobile10: "9876543210", requisition_id: "R1", branch_name: "NOIDA-2", answer: "question", suggested_answer: "confirm" };
 });
 
 describe("manualResponse", () => {
+  it("confirm on a match without a slot (only suggested) books it first, then answers", async () => {
+    h.match = { id: "M1", lead_id: "L1", slot_at: null, state: "suggested" };
+    const r = await manualResponse(manual, noida);
+    expect(r).toEqual({ responseId: 43, matchId: "M1", state: "confirmed" });
+    expect(h.calls[0]).toEqual(["bookAndAnswerMatch", expect.objectContaining({ leadId: "L1", requisitionId: "R1", answer: "yes", actor: "U1", note: "phone_call: called, will come" })]);
+    expect(h.calls.some((c) => c[0] === "recordInviteAnswer")).toBe(false);
+  });
+  it("cannot come on a match without a slot books nothing", async () => {
+    h.match = { id: "M1", lead_id: "L1", slot_at: null, state: "suggested" };
+    await manualResponse({ ...manual, answer: "decline" }, noida);
+    expect(h.calls[0]).toEqual(["recordInviteAnswer", "M1", "no", { channel: "hr", actor: "U1", note: "phone_call: called, will come" }]);
+  });
   it("confirm on an existing match → recordInviteAnswer as hr with the actor and note", async () => {
     const r = await manualResponse(manual, noida);
     expect(r).toEqual({ responseId: 41, matchId: "M1", state: "confirmed" });

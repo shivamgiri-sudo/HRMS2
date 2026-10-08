@@ -164,3 +164,24 @@ describe("engine selection never picks a booked + confirmed match", () => {
     expect(inv).not.toMatch(/m\.state = 'confirmed'|'invited','confirmed'/);
   });
 });
+
+describe("bookAndAnswerMatch (HR answer for a match without a slot)", () => {
+  it("books on the requisition's drive, then answers as hr, under the engine lock", async () => {
+    const { bookAndAnswerMatch } = await import("../walkin-invite-answer.service.js");
+    const r = await bookAndAnswerMatch({ leadId: "L1", requisitionId: "R1", answer: "yes", now, actor: "U1", note: "phone_call: yes" });
+    expect(r).toMatchObject({ state: "confirmed", booked: true, matchId: "M1" });
+    const order = ["GET_LOCK=1", "book", "recordInviteAnswer:M1:yes:hr", "RELEASE_LOCK"].map((x) => h.log.indexOf(x));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(h.bookArgs).toMatchObject({ leadId: "L1", requisitionId: "R1", branchName: "NOIDA-2", preferredSlotAt: null, state: "invited" });
+  });
+  it("no slot can be booked: HR follow-up event, nothing answered", async () => {
+    const { bookAndAnswerMatch } = await import("../walkin-invite-answer.service.js");
+    h.book = { status: "unavailable", reason: "requisition_closed" };
+    const r = await bookAndAnswerMatch({ leadId: "L1", requisitionId: "R1", answer: "yes", now, actor: "U1", note: "n" });
+    expect(r).toMatchObject({ state: "unavailable", booked: false, reason: "requisition_closed" });
+    expect(h.log.some((x) => x.startsWith("recordInviteAnswer"))).toBe(false);
+    expect(h.events.some((e) => e[1] === "needs_human_followup")).toBe(true);
+    expect(h.log).toContain("RELEASE_LOCK");
+  });
+});

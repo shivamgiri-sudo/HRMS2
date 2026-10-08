@@ -12,7 +12,7 @@ import { recordInviteAnswer, type InviteAnswer } from "./he-ingest.service.js";
 import { normalizeMobile10 } from "./he-phone.js";
 import type { ResponseAnswer } from "./response-normalise.js";
 import { inviteLinkFor, resolveAnswerToken, type WalkinInviteRow } from "./walkin-invite.service.js";
-import { answerInviteToken } from "./walkin-invite-answer.service.js";
+import { answerInviteToken, bookAndAnswerMatch } from "./walkin-invite-answer.service.js";
 
 export class ResponseActionError extends Error {
   constructor(public status: 400 | 404 | 409, message: string) { super(message); }
@@ -63,7 +63,11 @@ export async function manualResponse(a: ManualInput, scope: BranchScope): Promis
   const at = a.at ?? new Date();
   const fullNote = `${a.via}: ${note}`;
   const [m] = await db.execute<RowDataPacket[]>(
-    "SELECT m.id FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE l.mobile10 = ? AND m.requisition_id = ? LIMIT 1", [mobile10, a.requisitionId]);
+    "SELECT m.id, m.lead_id, m.slot_at, m.state FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE l.mobile10 = ? AND m.requisition_id = ? LIMIT 1", [mobile10, a.requisitionId]);
+  if (m[0] && m[0].slot_at == null && a.answer !== "decline") { // a match with no slot yet (only suggested): book it like an invite Yes
+    const r = await bookAndAnswerMatch({ leadId: String(m[0].lead_id), requisitionId: a.requisitionId, answer: TAP[a.answer] as "yes" | "later", now: at, actor: a.actor, note: fullNote });
+    return { responseId: r.responseId ?? 0, matchId: r.matchId ?? String(m[0].id), state: r.state };
+  }
   if (m[0]) {
     const r = await recordInviteAnswer(String(m[0].id), TAP[a.answer], { channel: "hr", actor: a.actor, note: fullNote });
     return { responseId: r?.responseId ?? 0, matchId: String(m[0].id), state: r?.state ?? "" };
