@@ -77,9 +77,9 @@ export const calledSql = (liveFrom: string, n: number) => (streams: boolean): st
  GROUP BY ${TYPE_KEY_GROUP}, mob`;
 
 /** People e-mailed an invite link without a match (legacy Meta / pipeline): typed by the invite's stamp, else their form fill. */
-export const invitedSql = (liveFrom: string, n: number): string => `SELECT COALESCE(wi.drive_type, IF(ml.id IS NULL, 'he', ${fillTypeSql("ml", liveFrom)})) AS t, wi.mobile10 AS mob
+export const invitedSql = (liveFrom: string, n: number): string => `SELECT COALESCE(wi.drive_type, IF(ml.id IS NULL, 'he', ${fillTypeSql("ml", liveFrom)})) AS t, wi.mobile10 AS mob, wi.match_id
   FROM walkin_invite wi LEFT JOIN meta_lead_raw ml ON ml.id = wi.meta_lead_id ${CI}
- WHERE wi.requisition_id IN (${ph(n)}) AND wi.last_sent_at >= ? AND wi.last_sent_at < ? AND wi.match_id IS NULL`;
+ WHERE wi.requisition_id IN (${ph(n)}) AND wi.last_sent_at >= ? AND wi.last_sent_at < ?`; // matched invites are skipped in code, so the read stays on the requisition index
 
 /** People who answered on a channel (no-answer call results excluded). */
 export const respondedSql = (n: number): string => `SELECT cr.channel AS ch, cr.mobile10 AS mob
@@ -116,7 +116,7 @@ export async function readResponseStats(ids: string[], w: { from: string; to: st
   const reached = perType(() => ({ email: new Set<string>(), whatsapp: new Set<string>(), voice_bot: new Set<string>() }) as Record<RateChannel, Set<string>>);
   for (const r of contacted) { const ch = rateChannelOf(r.ch), mob = mobOf(r.mob); if (ch && mob) reached[pf.typeOf(r)][ch].add(mob); }
   for (const r of called) { const mob = mobOf(r.mob); if (mob) reached[pf.typeOf(r)].voice_bot.add(mob); }
-  for (const r of invited) { const mob = mobOf(r.mob); if (mob) reached[TYPES.includes(r.t as SourceType) ? (r.t as SourceType) : "he"].email.add(mob); }
+  for (const r of invited) { const mob = mobOf(r.mob); if (mob && r.match_id == null) reached[TYPES.includes(r.t as SourceType) ? (r.t as SourceType) : "he"].email.add(mob); }
   const answered: Record<RateChannel, Set<string>> = { email: new Set(), whatsapp: new Set(), voice_bot: new Set() };
   for (const r of responded) { const ch = rateChannelOf(r.ch), mob = mobOf(r.mob); if (ch && mob) answered[ch].add(mob); }
   for (const t of TYPES) for (const ch of RATE_CHANNELS) {

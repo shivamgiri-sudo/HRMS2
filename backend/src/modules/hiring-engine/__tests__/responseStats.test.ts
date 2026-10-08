@@ -64,7 +64,7 @@ describe("response rate per channel and drive type", () => {
       { tl: "L3", tm: 0, tr: 1, ch: "whatsapp", mob: "9000000003" },
     ];
     rows.called = [{ tl: "L3", tm: 0, tr: 1, mob: "9000000003" }];
-    rows.invited = [{ t: "meta_old", mob: "9000000002" }];
+    rows.invited = [{ t: "meta_old", mob: "9000000002", match_id: null }, { t: "meta_old", mob: "9000000007", match_id: "M7" }]; // a booked invite counts through its match
     rows.responded = [
       { ch: "web", mob: "9000000001" }, { ch: "email", mob: "9000000002" }, { ch: "whatsapp", mob: "9000000009" }, { ch: "call_file", mob: "9000000003" },
     ];
