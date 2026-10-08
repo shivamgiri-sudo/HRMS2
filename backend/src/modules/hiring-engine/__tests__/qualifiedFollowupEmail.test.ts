@@ -246,3 +246,60 @@ describe("runEmailStep", () => {
     expect(JSON.stringify(rowUpdate()[1])).not.toContain("cand@example.com");
   });
 });
+
+describe("answer buttons on pipeline emails for Meta rows without a match (policy.email_buttons.pipeline_meta)", () => {
+  function withButtons(on: boolean) {
+    let inviteToken: string | null = null;
+    const impl = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, p: unknown[]) => {
+      const q = String(sql);
+      if (q.includes("FROM he_model_param") && q.includes("policy.email_buttons")) return [on ? [{ param_key: "policy.email_buttons.pipeline_meta", value: 1 }] : []];
+      if (q.includes("FROM org_settings")) return [[]];
+      if (q.includes("FROM he_match m JOIN he_lead l")) return [[]];
+      if (q.startsWith("INSERT INTO walkin_invite")) { inviteToken = String(p[1]); return [{ affectedRows: 1 }]; }
+      if (q.includes("FROM walkin_invite WHERE mobile10")) return [inviteToken ? [{ id: "inv-1", token: inviteToken }] : []];
+      return impl(sql, p);
+    });
+  }
+  const inviteInserts = () => calls(/^INSERT INTO walkin_invite/);
+
+  it("live, switch on: the email carries the three answers to a fresh token and the invite is written after the send", async () => {
+    world(); withButtons(true);
+    vi.stubEnv("HE_PUBLIC_BASE_URL", "https://x");
+    await runEmailStep(readSwitches(liveEnv), "live", now);
+    const html = String(send.mock.calls[0][0].html);
+    const m = html.match(/https:\/\/x\/w\/([a-f0-9]{32})\?a=yes/);
+    expect(m).not.toBeNull();
+    expect(m![1]).not.toBe("0".repeat(32));
+    for (const a of ["later", "no", "stop"]) expect(html).toContain(`/w/${m![1]}?a=${a}`);
+    expect(inviteInserts()).toHaveLength(1);
+    const p = inviteInserts()[0][1] as unknown[];
+    expect(p[1]).toBe(m![1]);
+    expect(p).toContain("0f1e2d3c-aaaa-bbbb-cccc-000000000000");
+    expect(p).toContain("pipeline");
+    const order = execute.mock.invocationCallOrder[execute.mock.calls.findIndex(([s]) => String(s).startsWith("INSERT INTO walkin_invite"))];
+    expect(order).toBeGreaterThan(send.mock.invocationCallOrder[0]);
+  });
+
+  it("test mode, switch on: demo token, nothing written", async () => {
+    world(); withButtons(true);
+    vi.stubEnv("HE_PUBLIC_BASE_URL", "https://x");
+    await runEmailStep(readSwitches(testEnv), "test", now);
+    expect(String(send.mock.calls[0][0].html)).toContain(`/w/${"0".repeat(32)}?a=yes`);
+    expect(inviteInserts()).toHaveLength(0);
+  });
+
+  it("switch off: today's email (no answer links, no invite)", async () => {
+    world(); withButtons(false);
+    await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(String(send.mock.calls[0][0].html)).not.toContain("?a=yes");
+    expect(inviteInserts()).toHaveLength(0);
+  });
+
+  it("a failed send writes no invite", async () => {
+    world(); withButtons(true);
+    send.mockRejectedValueOnce(new Error("550 mailbox unavailable"));
+    await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(inviteInserts()).toHaveLength(0);
+  });
+});

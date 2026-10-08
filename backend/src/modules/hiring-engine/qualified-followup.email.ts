@@ -17,6 +17,9 @@ import { afterFailure, followupRef, nextStepDue } from "./qualified-followup.rul
 import { bestOfferSkipSql } from "./he-best-offer.js";
 import { notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
+import { loadEmailButtonSwitches } from "./email-buttons.policy.js";
+import { answerUrlFor, DEMO_TOKEN } from "./he-email-parts.js";
+import { inviteLinkFor, newInviteToken, type InviteLink, type InviteLinkInput } from "./walkin-invite.service.js";
 
 const env = (k: string, d: string) => (process.env[k]?.trim() ? process.env[k]!.trim() : d);
 /** SMTP errors echo the recipient; never log or store an address. */
@@ -115,6 +118,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
   const isTest = tag === "test";
   let heLeadId: string | null;
   let mail: { subject: string; html: string; text: string };
+  let invite: { input: InviteLinkInput; link: InviteLink } | null = null;
   try {
     // Test mode must not write he_lead, so it never bridges.
     heLeadId = isTest ? row.heLeadId : await ensureHeLead(row);
@@ -133,11 +137,23 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
     const role = row.roleName ?? "the role";
     const branch = row.branchName ?? "";
     const base = env("HE_PUBLIC_BASE_URL", env("FRONTEND_URL", "https://mcnhrms.teammas.in")).replace(/\/$/, "");
+    // A Meta row without a match gets the same answer buttons on an invite token (switch, default off). Test mode only reads
+    // (demo token on the page); live writes the invite after a successful send with the token the email carried.
+    if (ctx.slot && !ctx.matchToken && (await loadEmailButtonSwitches()).pipelineMeta) {
+      const input: InviteLinkInput = { mobile10: row.mobile10, requisitionId: row.requisitionId, leadId: heLeadId ?? null, metaLeadId: row.metaLeadId, followupId: row.id,
+        branchName: row.branchName, slotAt: `${ctx.slot.date} ${ctx.slot.time}`.slice(0, 19), sourcePath: "pipeline", driveType: row.sourceType, now };
+      // Test mode never shows a real person's invite token to the tester: the demo page only.
+      const link: InviteLink = isTest
+        ? { kind: "invite", token: DEMO_TOKEN, answerUrl: answerUrlFor(DEMO_TOKEN), matchId: null, inviteId: null }
+        : await inviteLinkFor(input, { simulate: true, token: newInviteToken() });
+      invite = { input, link };
+    }
+    const answerUrl = ctx.matchToken ? `${base}/w/${ctx.matchToken}` : invite?.link.answerUrl ?? null;
     mail = ctx.slot
       ? buildInviteEmail({
           name, role, company, branch, address: ctx.branchAddress ?? "", date: dateLabel(ctx.slot.date), time: timeLabel(`${ctx.slot.date}T${ctx.slot.time}`), maps: ctx.mapsLink,
           docs: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"), reference: followupRef(row.id), contact,
-          answerUrl: ctx.matchToken ? `${base}/w/${ctx.matchToken}` : null,
+          answerUrl, ...(invite ? { stopUrl: invite.link.answerUrl } : {}),
         })
       : buildSlotlessInviteEmail({ name, role, company, branch, address: ctx.branchAddress, contact });
   } catch (err) {
@@ -174,6 +190,10 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
   // The mail is out: never retry or mark failed from here on. If recording fails the row stays 'sending' and the
   // stale-claim expiry marks it "outcome unknown".
   counts.sent++;
+  if (invite && !isTest && invite.link.kind === "invite") {
+    await inviteLinkFor(invite.input, { token: invite.link.token })
+      .catch((err: unknown) => logger.warn({ rowId: row.id, err: scrub((err as Error).message) }, "[qualified-followup] invite record failed after send"));
+  }
   try {
     if (!isTest) {
       await db.execute(

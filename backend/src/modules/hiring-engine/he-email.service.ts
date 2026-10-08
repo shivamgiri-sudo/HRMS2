@@ -14,7 +14,7 @@ import { istHour } from "./he-guardrails.js";
 import { displayFirstName } from "./he-name.js";
 import { dateLabel, metaFlowNotifiedRecently, sendsPaused, timeLabel, type SendResult } from "./he-send.service.js";
 import { channelAllowed } from "./he-campaign-config.service.js";
-import { answerButtonsHtml, answerButtonsText, escHtml, publicBaseUrl } from "./he-email-parts.js";
+import { answerButtonsHtml, answerButtonsText, escHtml, publicBaseUrl, stopLinkHtml, stopLinkText } from "./he-email-parts.js";
 
 export const INVITE_EMAIL_KEY = "he_walkin_invite_email";
 const env = (k: string, d: string) => (process.env[k]?.trim() ? process.env[k]!.trim() : d);
@@ -28,6 +28,8 @@ export interface InviteEmailInput {
   /** Candidate's invitation page; the Yes / Cannot come / Another time buttons open it with ?a=... */
   answerUrl?: string | null;
   optInUrl?: string | null;
+  /** Small "Stop messages" link under the answers (new paths / switch); absent → the email is unchanged. */
+  stopUrl?: string | null;
 }
 
 /**
@@ -40,7 +42,7 @@ export function buildInviteEmail(c: InviteEmailInput): { subject: string; html: 
   const docs = c.docs.split(/\s*,\s*/).filter(Boolean);
   const row = (label: string, value: string) =>
     `<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">${label}</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a">${value}</td></tr>`;
-  const answer = c.answerUrl ? answerButtonsHtml(c.answerUrl) : "";
+  const answer = c.answerUrl ? `${answerButtonsHtml(c.answerUrl)}${c.stopUrl ? `\n${stopLinkHtml(c.stopUrl)}` : ""}` : "";
   const html = `<!doctype html><html><body style="margin:0;padding:0;background:#f1f5f9">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
@@ -68,7 +70,7 @@ ${c.optInUrl ? `<tr><td style="padding:12px 28px 0;font-size:13px;color:#475569"
 </table></td></tr></table></body></html>`;
   const text = [`Hi ${c.name},`, "", `Your profile matches our ${c.role} opening. Your walk-in interview slot:`, `${c.date}, ${c.time}`,
     `Venue: ${c.branch}${c.address ? `, ${c.address}` : ""}`, c.maps ? `Directions: ${c.maps}` : "", `Please carry: ${docs.join(", ")}`, `Reference: ${c.reference}`,
-    c.answerUrl ? answerButtonsText(c.answerUrl) : "",
+    c.answerUrl ? answerButtonsText(c.answerUrl) : "", c.answerUrl && c.stopUrl ? stopLinkText(c.stopUrl) : "",
     c.contact ? `Questions: ${c.contact}` : "", "", `All the best,`, `${c.company} Hiring Team`].filter((l) => l !== "").join("\n");
   return { subject, html, text };
 }
