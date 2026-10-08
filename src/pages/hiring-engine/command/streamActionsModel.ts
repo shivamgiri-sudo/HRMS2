@@ -18,6 +18,8 @@ export const changePath = (id: string): string => `${streamPath(id)}/change`;
 export const readinessPath = (requisitionId: string, t: SourceType): string => `/api/he/requisitions/${encodeURIComponent(requisitionId)}/readiness?sourceType=${t}`;
 export const CAMPAIGNS_PATH = "/api/he/campaign-config";
 export const LAUNCHES_PATH = "/api/he/launches";
+/** The launches of one requisition (every non-pool drive, filtered server side). */
+export const launchesPath = (requisitionCode: string): string => `${LAUNCHES_PATH}?requisition=${encodeURIComponent(requisitionCode)}`;
 
 // ---- menu ----------------------------------------------------------------------------------------------------------------------------------
 /** The brief's eight actions plus shorten, pause and resume (the change route has them; resume sends "open"). */
@@ -217,7 +219,8 @@ export function errorText(e: unknown, ctx: { what?: "change" | "create"; overrid
     return { text: blocked && ctx.overrideAsked ? `${message}. ${OVERRIDE_HINT}` : message, problems };
   }
   if (status === 403) return { text: FORBIDDEN_TEXT, problems: [] };
-  if (status === 404) return { text: ctx.what === "create" ? GONE_CREATE_TEXT : GONE_TEXT, problems: [] };
+  // a create 404 names what is missing ("Source not found", "Requisition not found"): shown exactly
+  if (status === 404) return { text: ctx.what === "create" ? message || GONE_CREATE_TEXT : GONE_TEXT, problems: [] };
   return { text: GENERIC_TEXT, problems: [] };
 }
 
@@ -249,11 +252,23 @@ export const toCreateForm = (t: CreateFormText): CreateForm => ({ ...t, openDays
 export const BLOCKED_OPEN_TEXT = "Blocking problems stop the stream from opening: fix them, untick Open now, or ask an admin to override";
 
 /** Mirrors the create route's validation; `problems` (from the readiness read) only matter when the stream opens now. */
-export function createErrors(f: CreateForm, today: string, problems: ReadinessProblem[] = [], neverOverride: string[] = []): string[] {
+export const NO_LIVE_SOURCE = "No campaign is linked to this requisition";
+export const NO_OLD_SOURCE = "No old Meta drive exists for this requisition yet";
+export const LINK_CAMPAIGN_HINT = "Link a campaign to this requisition in Meta Campaigns first";
+
+/** Why no source is chosen, by source type; `count` is how many sources the picker lists (undefined: not known). */
+export function sourceError(t: SourceType, count?: number): string {
+  if (t === "meta_live") return count === 0 ? NO_LIVE_SOURCE : "Pick a Live Meta campaign";
+  if (t === "meta_old") return count === 0 ? NO_OLD_SOURCE : "Pick an old Meta drive";
+  return "Pick a source";
+}
+
+export function createErrors(f: CreateForm, today: string, problems: ReadinessProblem[] = [], neverOverride: string[] = [], originCount?: number): string[] {
   const out: string[] = [];
   if (!isUuidShape(f.requisitionId || null)) out.push("Pick a requisition");
   // an old-data re-run's origin is a launch drive id (uuid); a typed id is checked for that shape before the request
-  if (!(f.sourceType in TYPE_LABEL) || !f.originId || f.originId.length > 64 || (f.sourceType === "meta_old" && !isUuidShape(f.originId))) out.push("Pick a source");
+  if (!(f.sourceType in TYPE_LABEL) || !f.originId || f.originId.length > 64) out.push(sourceError(f.sourceType, originCount));
+  else if (f.sourceType === "meta_old" && !isUuidShape(f.originId)) out.push("That is not a valid launch drive id");
   if (!isIsoDay(f.openFrom)) out.push("Pick a valid start date");
   else if (f.openFrom < today) out.push("Start date cannot be before today");
   if (!Number.isInteger(f.openDays) || f.openDays < 1 || f.openDays > MAX_CREATE_DAYS) out.push("Days must be a whole number from 1 to 60");
@@ -274,8 +289,8 @@ export function createBody(f: CreateForm, problems: ReadinessProblem[] = [], nev
   };
 }
 
-export interface CampaignOption { campaignId: string; campaignName: string; requisitionCode: string | null }
-export interface LaunchOption { driveId: string; label: string; requisition: string; kind: string; date?: string }
+export interface CampaignOption { campaignId: string; campaignName: string; requisitionCode: string | null; status?: string }
+export interface LaunchOption { driveId: string; label: string; requisition: string; kind: string; date?: string; lined?: number }
 export const POOL_OPTION = { id: "pool", label: "Pool: ATS history" } as const;
 
 /** Origins the create route accepts for this requisition: its linked campaigns, its campaign / batch launches, or the pool. */
@@ -287,12 +302,28 @@ export function originOptions(t: SourceType, req: { code: string }, campaigns: C
     return (Array.isArray(campaigns) ? campaigns : []).filter((c) => c && c.campaignId && c.requisitionCode === code)
       .map((c) => ({ id: String(c.campaignId), label: String(c.campaignName || c.campaignId) }));
   }
-  return (Array.isArray(launches) ? launches : []).filter((l) => l && l.driveId && l.requisition === code && (l.kind === "campaign" || l.kind === "batch"))
+  // the route accepts every non-pool drive of the requisition (kinds campaign, batch, meta ...), so list them all
+  return (Array.isArray(launches) ? launches : []).filter((l) => l && l.driveId && l.requisition === code && l.kind !== "pool" && l.kind !== "he")
     .map((l) => {
       const name = (l.label ?? "").trim();
       const when = l.date && isIsoDay(l.date) ? dayLabel(l.date) : "";
-      return { id: String(l.driveId), label: name ? (when ? `${name} (${when})` : name) : when ? `Re-run ${when}` : "Re-run" };
+      if (name) return { id: String(l.driveId), label: when ? `${name} (${when})` : name };
+      if (l.kind === "meta") {
+        const n = Number(l.lined);
+        const people = Number.isFinite(n) && n > 0 ? ` (${n} ${n === 1 ? "person" : "people"})` : "";
+        return { id: String(l.driveId), label: `Meta drive${when ? ` ${when}` : ""}${people}` };
+      }
+      return { id: String(l.driveId), label: when ? `Re-run ${when}` : "Re-run" };
     });
+}
+
+export interface LiveEmptyState { message: string; others: Array<{ id: string; name: string; linkedTo: string | null }>; hint: string }
+/** Live Meta with nothing to pick: the cause, the active campaigns and the requisition each is linked to, and what to do. */
+export function liveEmptyState(code: string, campaigns: CampaignOption[]): LiveEmptyState {
+  const c = (code ?? "").trim();
+  const others = (Array.isArray(campaigns) ? campaigns : []).filter((x) => x && x.campaignId && x.status === "active")
+    .map((x) => ({ id: String(x.campaignId), name: String(x.campaignName || x.campaignId), linkedTo: x.requisitionCode || null }));
+  return { message: c ? `${NO_LIVE_SOURCE} (${c})` : NO_LIVE_SOURCE, others, hint: LINK_CAMPAIGN_HINT };
 }
 
 /** The override box shows only when there is something to override and every blocking problem is overridable. */

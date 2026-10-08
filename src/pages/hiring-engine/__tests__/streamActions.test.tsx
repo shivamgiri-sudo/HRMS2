@@ -141,7 +141,10 @@ describe("errorText", () => {
     ["boom", GENERIC_TEXT],
   ])("%#", (e, want) => expect(errorText(e).text).toBe(want));
   it("404 on create names the requisition or source; malformed problems are dropped", () => {
-    expect(errorText(apiError(404, "Source not found"), { what: "create" }).text).toBe(GONE_CREATE_TEXT);
+    expect(errorText(apiError(404, "Source not found"), { what: "create" }).text).toBe("Source not found");
+    expect(errorText(apiError(404, ""), { what: "create" }).text).toBe(GONE_CREATE_TEXT);
+    expect(errorText(apiError(409, "Link this campaign to the requisition first"), { what: "create" }).text).toBe("Link this campaign to the requisition first");
+    expect(errorText(apiError(409, "That campaign is linked to another requisition"), { what: "create" }).text).toBe("That campaign is linked to another requisition");
     expect(errorText(apiError(409, "x", { problems: [{ code: 1 }, null, { code: "no_template", severity: "weird", message: "m" }] })).problems).toEqual([]);
   });
 });
@@ -154,11 +157,11 @@ describe("create form", () => {
   it("createErrors", () => {
     expect(createErrors(ok, TODAY)).toEqual([]);
     expect(createErrors({ ...ok, openDays: 0, openFrom: "2026-10-07" }, TODAY)).toEqual(["Start date cannot be before today", "Days must be a whole number from 1 to 60"]);
-    expect(createErrors({ ...ok, requisitionId: "", originId: "" }, TODAY)).toEqual(["Pick a requisition", "Pick a source"]);
+    expect(createErrors({ ...ok, requisitionId: "", originId: "" }, TODAY)).toEqual(["Pick a requisition", "Pick a Live Meta campaign"]);
     expect(createErrors({ ...ok, openDays: 61, dailyInvites: 501 }, TODAY)).toEqual(["Days must be a whole number from 1 to 60", "Daily invites must be a whole number from 1 to 500"]);
     expect(createErrors({ ...ok, openDays: 2.5, dailyInvites: Number.NaN }, TODAY)).toEqual(["Days must be a whole number from 1 to 60", "Daily invites must be a whole number from 1 to 500"]);
     expect(createErrors({ ...ok, openFrom: "2026-11-31" }, TODAY)).toEqual(["Pick a valid start date"]);
-    expect(createErrors({ ...ok, sourceType: "meta_old", originId: "not-a-drive" }, TODAY)).toEqual(["Pick a source"]);
+    expect(createErrors({ ...ok, sourceType: "meta_old", originId: "not-a-drive" }, TODAY)).toEqual(["That is not a valid launch drive id"]);
     expect(createErrors({ ...ok, sourceType: "meta_old", originId: D }, TODAY)).toEqual([]);
   });
   it("opening now with a blocking problem needs an allowed override", () => {
@@ -194,7 +197,29 @@ describe("create form", () => {
     ];
     expect(originOptions("meta_old", { code: "RQ-1" }, [], launches)).toEqual([{ id: "d1", label: "Sept rerun (Mon 21 Sep)" }, { id: "d2", label: "Re-run Tue 22 Sep" }]);
     expect(originOptions("he", { code: "" }, [], [])).toEqual([{ id: "pool", label: "Pool: ATS history" }]);
+    // prod shape: Meta drives carry kind "meta" and no run_label
+    const meta = [
+      { driveId: "m1", label: "", requisition: "RQ-1", kind: "meta", date: "2026-09-21", lined: 12 },
+      { driveId: "m2", label: "", requisition: "RQ-1", kind: "meta", date: "2026-09-22", lined: 1 },
+      { driveId: "m3", label: "", requisition: "RQ-1", kind: "meta", date: "2026-09-23" },
+      { driveId: "x1", label: "Odd", requisition: "RQ-1", kind: "something_new", date: "2026-09-24" },
+      { driveId: "p1", label: "", requisition: "RQ-1", kind: "pool", date: "2026-09-25" },
+      { driveId: "m9", label: "", requisition: "RQ-2", kind: "meta", date: "2026-09-21", lined: 4 },
+    ];
+    expect(originOptions("meta_old", { code: "RQ-1" }, [], meta)).toEqual([
+      { id: "m1", label: "Meta drive Mon 21 Sep (12 people)" }, { id: "m2", label: "Meta drive Tue 22 Sep (1 person)" },
+      { id: "m3", label: "Meta drive Wed 23 Sep" }, { id: "x1", label: "Odd (Thu 24 Sep)" },
+    ]);
     expect(originOptions("meta_live", { code: "" }, campaigns, [])).toEqual([]);
+  });
+  it("createErrors names the source type and why when no source is chosen", () => {
+    const live = { ...ok, originId: "" };
+    expect(createErrors(live, TODAY, [], [], 0)).toEqual(["No campaign is linked to this requisition"]);
+    expect(createErrors(live, TODAY, [], [], 2)).toEqual(["Pick a Live Meta campaign"]);
+    const old = { ...ok, sourceType: "meta_old" as const, originId: "" };
+    expect(createErrors(old, TODAY, [], [], 0)).toEqual(["No old Meta drive exists for this requisition yet"]);
+    expect(createErrors(old, TODAY, [], [], 3)).toEqual(["Pick an old Meta drive"]);
+    expect(createErrors({ ...old, originId: D }, TODAY, [], [], 0)).toEqual([]);
   });
   it("canOverride: only when every blocking problem is overridable", () => {
     const never = ["requisition_not_open", "no_headcount"];
@@ -300,9 +325,33 @@ describe("static markup", () => {
     expect(html).toContain("Checking readiness");
     expect(html).toContain("Launch drive id");
     expect(html).toContain("Creating…");
-    const live = renderToStaticMarkup(<CreateStreamForm {...baseProps} form={formText({ originId: "" })} origins={[]} errors={["Pick a source"]} showErrors />);
-    expect(live).toContain("No live campaign is linked to this requisition");
-    expect(live).toContain("Pick a source");
+    const live = renderToStaticMarkup(<CreateStreamForm {...baseProps} form={formText({ originId: "" })} origins={[]} errors={["No campaign is linked to this requisition"]} showErrors />);
+    expect(live).toContain("No campaign is linked to this requisition");
+    expect(live).toContain("Link a campaign to this requisition in Meta Campaigns first");
+  });
+  it("live empty state lists the active campaigns with the requisition each is linked to", () => {
+    const campaigns = [
+      { campaignId: "c2", campaignName: "Delhi ads", requisitionCode: "RQ-2", status: "active" },
+      { campaignId: "c3", campaignName: "Loose ads", requisitionCode: null, status: "active" },
+      { campaignId: "c4", campaignName: "Old ads", requisitionCode: "RQ-9", status: "paused" },
+    ];
+    const html = renderToStaticMarkup(<CreateStreamForm {...baseProps} form={formText({ originId: "" })} origins={[]} campaigns={campaigns} />);
+    expect(html).toContain("No campaign is linked to this requisition (RQ-1)");
+    expect(html).toContain("Delhi ads");
+    expect(html).toContain("linked to RQ-2");
+    expect(html).toContain("Loose ads");
+    expect(html).toContain("not linked to any requisition");
+    expect(html).not.toContain("Old ads");
+    expect(html).toContain("Link a campaign to this requisition in Meta Campaigns first");
+    expect(html).not.toContain("<select id=\"c-origin\"");
+  });
+  it("old Meta empty state says no drive exists yet and keeps the typed id as last resort; a listed drive shows a select", () => {
+    const empty = renderToStaticMarkup(<CreateStreamForm {...baseProps} form={formText({ sourceType: "meta_old", originId: "" })} origins={[]} />);
+    expect(empty).toContain("No old Meta drive exists for this requisition yet");
+    expect(empty).toContain("Launch drive id");
+    const some = renderToStaticMarkup(<CreateStreamForm {...baseProps} form={formText({ sourceType: "meta_old", originId: "" })} origins={[{ id: D, label: "Meta drive Mon 21 Sep (12 people)" }]} />);
+    expect(some).toContain("Meta drive Mon 21 Sep (12 people)");
+    expect(some).not.toContain("Launch drive id");
   });
 });
 

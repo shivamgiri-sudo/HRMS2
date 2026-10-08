@@ -100,7 +100,9 @@ export interface LaunchRow {
   lined: number; invited: number; confirmed: number; arrived: number; noShow: number; declined: number; emailed: number; whatsapped: number; called: number; replied: number;
 }
 
-export async function listLaunches(limit = 40): Promise<LaunchRow[]> {
+/** Non-pool drives, newest first. `requisitionCode` narrows to one requisition in SQL so its older drives are not cut off by the latest-N limit. */
+export async function listLaunches(limit = 40, requisitionCode?: string): Promise<LaunchRow[]> {
+  const code = (requisitionCode ?? "").trim();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT d.id, d.run_label, d.source_kind, d.source_ids, d.drive_date, d.status, d.reinvite, d.auto_send, jr.requisition_code, jr.designation_name, jr.branch_name,
             (SELECT COUNT(*) FROM he_match m WHERE m.drive_id = d.id) AS lined,
@@ -114,7 +116,8 @@ export async function listLaunches(limit = 40): Promise<LaunchRow[]> {
             (SELECT COUNT(DISTINCT c.lead_id) FROM he_call c JOIN he_match m ON m.id = c.match_id WHERE m.drive_id = d.id) AS called,
             (SELECT COUNT(DISTINCT x.lead_id) FROM he_message x JOIN he_match m ON m.lead_id = x.lead_id AND m.drive_id = d.id WHERE x.direction = 'in' AND x.created_at >= d.created_at) AS replied
        FROM he_drive d JOIN job_requisition jr ON jr.id = d.requisition_id
-      WHERE d.source_kind <> 'pool' ORDER BY d.drive_date DESC, d.created_at DESC LIMIT ?`, [Math.max(1, Math.min(100, Math.floor(limit)))]);
+      WHERE d.source_kind <> 'pool'${code ? " AND jr.requisition_code = ?" : ""} ORDER BY d.drive_date DESC, d.created_at DESC LIMIT ?`,
+    [...(code ? [code] : []), Math.max(1, Math.min(100, Math.floor(limit)))]);
   const names = new Map<string, string>();
   const [cn] = await db.execute<RowDataPacket[]>("SELECT id, campaign_name AS n FROM meta_campaign");
   for (const r of cn) names.set(String(r.id), String(r.n));
