@@ -7,10 +7,11 @@ vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => 
 vi.mock("@/hooks/useUserRole", () => ({ useHasRole: vi.fn(() => true) }));
 
 import SourceOverview from "../command/SourceOverview";
+import { CampaignMappingTable } from "../command/CampaignMapping";
 import { sectionParts } from "../command/DriveCommandCenter";
 import { commandHash, defaultFilters, parseCommandHash } from "../command/driveCommandModel";
 import {
-  HISTORIC_NOTE, SHOW_ALL_TIME, atWidestRange, campaignMappingView, scopeToType, showAllTimeFilters, showHistoricNote, zeroNotes,
+  HISTORIC_NOTE, MAPPING_COLUMNS, MAPPING_NOTE, SHOW_ALL_TIME, atWidestRange, campaignMappingView, scopeToType, showAllTimeFilters, showHistoricNote, zeroNotes,
 } from "../command/sourceSectionModel";
 import { kpiView } from "../command/charts/summaryView";
 import { STAGES } from "../command/driveCommandTypes";
@@ -118,9 +119,29 @@ describe("sourceSectionModel", () => {
   it("zero notes tell no-activity from untracked from no-stream", () => {
     const a = fixture({ qualifiedTracked: false, types: { ...fixture().types, meta_live: typ(sc({ leads: 5 })) } });
     const ids = zeroNotes(a, "meta_live", filters, NOW).map((n) => n.id);
-    expect(ids).toEqual(["untracked", "no-activity", "no-streams"]);
+    expect(ids).toEqual(["untracked", "no-activity", "no-credit", "no-streams"]);
     expect(zeroNotes(fixture(), "meta_old", filters, NOW).map((n) => n.id)).toEqual(["historic"]);
     expect(zeroNotes(fixture(), "meta_live", filters, NOW).map((n) => n.id)).toEqual(["no-streams"]);
+  });
+  it("zero Selected / Joined say why: no arrival recorded at a drive, or nobody who arrived selected yet", () => {
+    const none = zeroNotes(fixture({ types: { ...fixture().types, meta_live: typ(sc({ leads: 5, qualified: 2, invited: 2, confirmed: 1 })) } }), "meta_live", filters, NOW);
+    expect(none.find((n) => n.id === "no-activity")?.text).toBe("Arrived: no activity in this range yet.");
+    expect(none.find((n) => n.id === "no-credit")?.text).toBe("Selected, Joined: no arrival was recorded at a drive in this range, and only people who arrived at a drive are counted.");
+    const arrived = zeroNotes(fixture({ types: { ...fixture().types, meta_live: typ(sc({ leads: 5, qualified: 2, invited: 2, confirmed: 1, arrived: 1, selected: 1 })) } }), "meta_live", filters, NOW);
+    expect(arrived.find((n) => n.id === "no-activity")).toBeUndefined();
+    expect(arrived.find((n) => n.id === "no-credit")?.text).toBe("Joined: nobody who arrived at a drive in this range has reached it yet.");
+    for (const n of [...none, ...arrived]) expect(n.text).not.toContain("Selected, Joined: no activity");
+  });
+  it("campaign mapping has no Joined column (it would contradict the drive-credited tiles) and says where its counts come from", () => {
+    expect(MAPPING_COLUMNS).toEqual(["Campaign", "Requisition", "Branch", "Status", "Leads", "Qualified"]);
+    const v = campaignMappingView({ campaigns: [{ campaignId: "a", campaignName: "A", status: "active", requisitionCode: "REQ-1", branchName: "Pune", leads: 5, qualified: 2, joined: 9 }] });
+    expect(v.rows[0]).not.toHaveProperty("joined");
+    const html = renderToStaticMarkup(<CampaignMappingTable view={v} />);
+    expect(html).not.toContain("Joined");
+    expect(html).not.toContain(">9<");
+    expect(html).toContain(MAPPING_NOTE);
+    expect(MAPPING_NOTE).toContain("counted from the requisition, not credited to a drive");
+    expect(html).toContain('<th scope="col" class="px-2 py-1 font-semibold">Qualified</th>');
   });
   it("campaign mapping lists campaigns with leads, biggest first, and counts the unlinked", () => {
     const v = campaignMappingView({ campaigns: [

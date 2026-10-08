@@ -59,7 +59,7 @@ export function atWidestRange(f: Filters, now: Date = new Date()): boolean {
 }
 
 export interface ZeroNote { id: string; text: string }
-/** Why numbers are zero, in plain words: nothing in range vs a stage that is not measured vs leads that have no stream yet. */
+/** Why numbers are zero, in plain words: nothing in range vs no drive credit yet vs a stage that is not measured vs leads that have no stream yet. */
 export function zeroNotes(a: DriveAnalytics, type: SourceType, f: Filters, now: Date = new Date()): ZeroNote[] {
   const s = stagesOf(a, type);
   const label = TYPE_LABEL[type];
@@ -72,15 +72,28 @@ export function zeroNotes(a: DriveAnalytics, type: SourceType, f: Filters, now: 
   const tracked = a?.qualifiedTracked !== false;
   const zeros = STAGES.filter((st) => st !== "leads" && s[st] === 0 && (tracked || st !== "qualified"));
   if (!tracked) out.push({ id: "untracked", text: "Qualified is not tracked yet: the follow-up pipeline is off, so it shows a dash instead of a zero." });
-  if (zeros.length) out.push({ id: "no-activity", text: `${zeros.map((z) => STAGE_LABEL[z]).join(", ")}: no activity in this range yet.` });
+  // Selected and joined are credited to a drive only after a recorded arrival there, so their zero says that, not "no activity".
+  const credited = zeros.filter((z) => z === "selected" || z === "joined");
+  const plain = zeros.filter((z) => !credited.includes(z));
+  const names = (xs: typeof zeros): string => xs.map((z) => STAGE_LABEL[z]).join(", ");
+  if (plain.length) out.push({ id: "no-activity", text: `${names(plain)}: no activity in this range yet.` });
+  if (credited.length) {
+    out.push({ id: "no-credit", text: s.arrived === 0
+      ? `${names(credited)}: no arrival was recorded at a drive in this range, and only people who arrived at a drive are counted.`
+      : `${names(credited)}: nobody who arrived at a drive in this range has reached ${credited.length > 1 ? "them" : "it"} yet.` });
+  }
   const hasRows = (a?.groups ?? []).some((g) => g.sourceType === type || g.types?.includes(type));
   if (!hasRows) out.push({ id: "no-streams", text: `These ${label} leads are not linked to a stream yet, so there are no drive rows. Open a stream to start inviting them.` });
   return out;
 }
 
 // ---- campaign mapping (GET /api/he/meta-recruitment) ------------------------------------------------------------------------------------
-export interface CampaignRecruitmentRow { campaignId: string; campaignName: string; status: string; requisitionCode: string | null; branchName: string | null; leads: number; qualified: number; joined: number }
-export interface CampaignMappingRow { id: string; name: string; requisition: string; branch: string; status: string; leads: string; qualified: string; joined: string }
+// No Joined column: the endpoint's joined comes from the requisition's onboarding records with no drive or arrival rule, so it would
+// contradict the drive-credited Selected / Joined tiles above.
+export const MAPPING_COLUMNS = ["Campaign", "Requisition", "Branch", "Status", "Leads", "Qualified"] as const;
+export const MAPPING_NOTE = "Leads and Qualified are all-time form fills of each campaign, counted from the requisition, not credited to a drive and not limited to the date range above.";
+export interface CampaignRecruitmentRow { campaignId: string; campaignName: string; status: string; requisitionCode: string | null; branchName: string | null; leads: number; qualified: number; joined?: number }
+export interface CampaignMappingRow { id: string; name: string; requisition: string; branch: string; status: string; leads: string; qualified: string }
 export interface CampaignMappingView { rows: CampaignMappingRow[]; unmapped: number; total: number; empty: boolean }
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
@@ -90,7 +103,7 @@ export function campaignMappingView(data: { campaigns?: CampaignRecruitmentRow[]
   const sorted = [...list].sort((p, q) => num(q.leads) - num(p.leads) || String(p.campaignName).localeCompare(String(q.campaignName)));
   const rows = sorted.map((c) => ({
     id: String(c.campaignId), name: String(c.campaignName ?? ""), requisition: c.requisitionCode || "Not linked", branch: c.branchName || "No branch", status: String(c.status ?? ""),
-    leads: countText(num(c.leads)), qualified: countText(num(c.qualified)), joined: countText(num(c.joined)),
+    leads: countText(num(c.leads)), qualified: countText(num(c.qualified)),
   }));
   return { rows, unmapped: sorted.filter((c) => !c.requisitionCode).length, total: rows.length, empty: rows.length === 0 };
 }

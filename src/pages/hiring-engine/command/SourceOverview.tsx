@@ -10,7 +10,7 @@ import { funnelView, yieldView } from "./charts/summaryView";
 import { TYPE_LABEL, pctText, type Filters } from "./driveCommandModel";
 import type { DriveAnalytics, SourceType } from "./driveCommandTypes";
 import CampaignMapping from "./CampaignMapping";
-import { ALL_TIME_HINT, SHOW_ALL_TIME, atWidestRange, scopeToType, showAllTimeFilters, showHistoricNote, zeroNotes } from "./sourceSectionModel";
+import { ALL_TIME_HINT, SHOW_ALL_TIME, atWidestRange, scopeToType, showAllTimeFilters, zeroNotes } from "./sourceSectionModel";
 
 /** Funnel of one type as a list: the bar is decoration, the numbers and conversions are the text alternative. */
 function SourceFunnel({ analytics, type }: { analytics: DriveAnalytics; type: SourceType }) {
@@ -45,8 +45,7 @@ export default function SourceOverview({ analytics, type, filters, onFilters }: 
   const leads = scoped.types[type]?.stages?.leads ?? 0;
   const trend = yieldView(scoped);
   const notes = zeroNotes(analytics, type, filters);
-  const historic = showHistoricNote(analytics, type, filters);
-  const canWiden = (historic || (leads === 0 && type === "meta_old")) && !atWidestRange(filters);
+  const canWiden = leads === 0 && type === "meta_old" && !atWidestRange(filters);
   const label = TYPE_LABEL[type];
   return (
     <div className="space-y-3" data-source-overview={type}>
