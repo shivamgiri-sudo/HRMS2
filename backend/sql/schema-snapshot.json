@@ -1,9 +1,13 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1216,
-  "columnCount": 18100,
+  "tableCount": 1222,
+  "columnCount": 18185,
   "tables": {
-    "_migrations": ["migration_id", "applied_at", "checksum"],
+    "_migrations": [
+      "migration_id",
+      "applied_at",
+      "checksum"
+    ],
     "absence_penalty_config": [
       "id",
       "config_key",
@@ -157,8 +161,18 @@
       "created_at",
       "updated_at"
     ],
-    "alert_cooldown": ["alert_key", "last_sent_at", "send_count", "updated_at"],
-    "applicant": ["id", "job_id", "current_stage", "created_at"],
+    "alert_cooldown": [
+      "alert_key",
+      "last_sent_at",
+      "send_count",
+      "updated_at"
+    ],
+    "applicant": [
+      "id",
+      "job_id",
+      "current_stage",
+      "created_at"
+    ],
     "appointment_letter_audit": [
       "id",
       "letter_request_id",
@@ -973,7 +987,12 @@
       "candidate_id",
       "details"
     ],
-    "ats_command_config": ["setting", "value_text", "notes", "updated_at"],
+    "ats_command_config": [
+      "setting",
+      "value_text",
+      "notes",
+      "updated_at"
+    ],
     "ats_command_email_log": [
       "id",
       "created_at",
@@ -2162,7 +2181,12 @@
       "derivation_version",
       "derived_at"
     ],
-    "attendance_reason_master": ["code", "label", "allowed_for", "active"],
+    "attendance_reason_master": [
+      "code",
+      "label",
+      "allowed_for",
+      "active"
+    ],
     "attendance_reconciliation_cosec_exclusion": [
       "cosec_user_id",
       "exclusion_reason",
@@ -2488,7 +2512,12 @@
       "attempts",
       "created_at"
     ],
-    "auth_password_history": ["id", "user_id", "password_hash", "changed_at"],
+    "auth_password_history": [
+      "id",
+      "user_id",
+      "password_hash",
+      "changed_at"
+    ],
     "auth_password_policy": [
       "id",
       "expiry_days",
@@ -4613,33 +4642,41 @@
       "created_at"
     ],
     "client_invoice": [
-      "id",
-      "cost_centre_id",
-      "invoice_status",
-      "category",
-      "finance_year",
-      "month_label",
-      "invoice_date",
-      "description",
-      "proforma_no",
-      "bill_no",
-      "gst_type",
       "apply_gst",
-      "total_amount",
-      "igst_amount",
+      "bill_no",
+      "category",
       "cgst_amount",
-      "sgst_amount",
-      "grand_total",
-      "created_by",
+      "client_tally_name",
+      "cost_centre_id",
       "created_at",
-      "updated_at",
-      "rejected_reason",
-      "rejected_by",
-      "rejected_at",
+      "created_by",
+      "description",
+      "finance_year",
+      "grand_total",
+      "grn_date",
+      "grn_no",
+      "gst_type",
+      "id",
+      "igst_amount",
+      "invoice_date",
+      "invoice_status",
       "is_migrated",
+      "jcc_date",
+      "jcc_no",
+      "last_sent_at",
+      "last_sent_by",
       "legacy_id",
+      "month_label",
+      "po_numbers",
+      "proforma_no",
+      "rcm_applicable",
+      "rejected_at",
+      "rejected_by",
+      "rejected_reason",
+      "sgst_amount",
       "tally_head",
-      "client_tally_name"
+      "total_amount",
+      "updated_at"
     ],
     "client_invoice_audit_log": [
       "id",
@@ -5369,7 +5406,11 @@
       "device_id",
       "synced_at"
     ],
-    "cosec_sync_watermark": ["wm_key", "wm_value", "updated_at"],
+    "cosec_sync_watermark": [
+      "wm_key",
+      "wm_value",
+      "updated_at"
+    ],
     "cosec_unmapped_users": [
       "id",
       "cosec_user_id",
@@ -5919,7 +5960,11 @@
       "created_at",
       "updated_at"
     ],
-    "day_threshold_rule_dimension_value": ["rule_id", "dimension", "value_id"],
+    "day_threshold_rule_dimension_value": [
+      "rule_id",
+      "dimension",
+      "value_id"
+    ],
     "department_master": [
       "id",
       "dept_code",
@@ -6207,7 +6252,12 @@
       "magic_bytes_validated",
       "quarantine_reason"
     ],
-    "dpdp_config": ["config_key", "config_value", "description", "updated_at"],
+    "dpdp_config": [
+      "config_key",
+      "config_value",
+      "description",
+      "updated_at"
+    ],
     "dpdp_consent_log": [
       "id",
       "employee_id",
@@ -6982,7 +7032,12 @@
       "resolved_by",
       "created_at"
     ],
-    "employee_exit_record": ["id", "employee_id", "exit_date", "created_at"],
+    "employee_exit_record": [
+      "id",
+      "employee_id",
+      "exit_date",
+      "created_at"
+    ],
     "employee_experience": [
       "id",
       "employee_id",
@@ -12702,7 +12757,12 @@
       "raw_data",
       "created_at"
     ],
-    "migration_lock": ["id", "locked_by", "locked_at", "lock_expires_at"],
+    "migration_lock": [
+      "id",
+      "locked_by",
+      "locked_at",
+      "lock_expires_at"
+    ],
     "migration_log": [
       "id",
       "migration_run_id",
@@ -17262,7 +17322,12 @@
       "success",
       "error_message"
     ],
-    "schema_version": ["id", "version", "last_migration", "updated_at"],
+    "schema_version": [
+      "id",
+      "version",
+      "last_migration",
+      "updated_at"
+    ],
     "security_audit_event": [
       "id",
       "event_type",
@@ -17520,7 +17585,10 @@
       "created_at",
       "updated_at"
     ],
-    "stg_dol_update": ["emp_code", "exit_date"],
+    "stg_dol_update": [
+      "emp_code",
+      "exit_date"
+    ],
     "stg_legacy_attendance": [
       "id",
       "sync_run_id",
@@ -17649,7 +17717,10 @@
       "created_at",
       "updated_at"
     ],
-    "sync_log": ["id", "last_sync"],
+    "sync_log": [
+      "id",
+      "last_sync"
+    ],
     "task_escalation_log": [
       "id",
       "tat_instance_id",
@@ -17832,7 +17903,12 @@
       "deactivated_at",
       "deactivated_by"
     ],
-    "tds_deductor_branch": ["id", "deductor_id", "branch_id", "created_at"],
+    "tds_deductor_branch": [
+      "id",
+      "deductor_id",
+      "branch_id",
+      "created_at"
+    ],
     "tenant_config": [
       "id",
       "tenant_key",
@@ -18611,7 +18687,10 @@
       "change_reason",
       "source"
     ],
-    "v_month_working_days": ["run_month", "working_days"],
+    "v_month_working_days": [
+      "run_month",
+      "working_days"
+    ],
     "v_monthly_deductions_summary": [
       "salary_year",
       "salary_month_num",
@@ -19998,7 +20077,10 @@
       "active_status",
       "backed_up_at"
     ],
-    "zz_vpt_due_date_backup_20260827": ["id", "due_date"],
+    "zz_vpt_due_date_backup_20260827": [
+      "id",
+      "due_date"
+    ],
     "portal_admin_impersonation_log": [
       "id",
       "admin_user_id",
@@ -20465,6 +20547,95 @@
       "seq_date",
       "current_seq",
       "updated_at"
+    ],
+    "client_invoice_change_request": [
+      "created_at",
+      "current_value",
+      "decided_at",
+      "decided_by",
+      "decision_note",
+      "id",
+      "invoice_id",
+      "reason",
+      "request_status",
+      "request_type",
+      "requested_at",
+      "requested_by",
+      "requested_value",
+      "review_note",
+      "reviewed_at",
+      "reviewed_by",
+      "updated_at"
+    ],
+    "client_invoice_submission": [
+      "cc_emails",
+      "error_message",
+      "id",
+      "invoice_id",
+      "message_id",
+      "send_status",
+      "sent_at",
+      "sent_by",
+      "subject",
+      "to_emails",
+      "with_letterhead"
+    ],
+    "tally_export_config": [
+      "config_key",
+      "config_scope",
+      "config_value",
+      "updated_at",
+      "updated_by"
+    ],
+    "tally_voucher_batch": [
+      "clean_vouchers",
+      "company_gstin",
+      "company_name",
+      "created_at",
+      "downloaded_at",
+      "downloaded_by",
+      "exception_vouchers",
+      "generated_at",
+      "generated_by",
+      "id",
+      "notes",
+      "period_month",
+      "status",
+      "superseded_by_id",
+      "total_credit",
+      "total_debit",
+      "total_vouchers",
+      "updated_at",
+      "voucher_kinds"
+    ],
+    "tally_voucher_batch_line": [
+      "amount",
+      "batch_id",
+      "content_hash",
+      "created_at",
+      "guid",
+      "id",
+      "model_json",
+      "party_ledger",
+      "sequence_no",
+      "source_id",
+      "source_type",
+      "validation_errors",
+      "validation_status",
+      "voucher_date",
+      "voucher_kind",
+      "voucher_number"
+    ],
+    "tally_voucher_export": [
+      "content_hash",
+      "export_count",
+      "first_exported_at",
+      "guid",
+      "last_batch_id",
+      "last_exported_at",
+      "source_id",
+      "source_type",
+      "voucher_number"
     ]
   },
   "pendingMigrations": "journal_entry, journal_entry_line (migrations 1789/1798), journal_voucher and journal_voucher_line (migration 1836), onfido_manpower_plan and onfido_utilization_daily_input (migration 1845; fixed_* columns migration 1916), appointment_letter_esign_transaction and appointment_letter_issue.accept_token_hash (migration 1858), employee_salary_start_date_audit (migration 1883) are observed via a real full-manifest migration replay against a disposable local MySQL 8.4 (backend/scripts pattern: same discipline as scripts/snapshot-pending-kpi-studio.mjs), not applied to production mas_hrms yet. Everything else mirrors live mas_hrms. Remove this key once these migrations are applied to production and the snapshot is regenerated by generate-schema-snapshot.mjs."
