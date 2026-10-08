@@ -83,6 +83,7 @@ const SNAPSHOT_COLUMNS = [
   "esi_eligible",
   "entry_date",
   "status",
+  "exit_reason",
   "date_of_leaving",
   "left_remarks",
   "source_type",

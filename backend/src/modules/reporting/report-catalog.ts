@@ -1264,6 +1264,13 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       },
       { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
       {
+        key: "salary_effective_date",
+        label: "Salary Start Date",
+        format: "date",
+        width: 130,
+        sensitive: true,
+      },
+      {
         key: "joining_month",
         label: "Joining Month",
         format: "text",
@@ -1447,13 +1454,6 @@ export const REPORT_CATALOG: ReportDefinition[] = [
         sensitive: true,
       },
       {
-        key: "salary_effective_date",
-        label: "Salary Start Date",
-        format: "date",
-        width: 130,
-        sensitive: true,
-      },
-      {
         key: "bank_account_number",
         label: "AcNo",
         format: "text",
@@ -1532,6 +1532,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       },
       { key: "entry_date", label: "EntryDate", format: "date", width: 90 },
       { key: "status", label: "Status", format: "status", width: 90 },
+      { key: "exit_reason", label: "Exit Reason", format: "text", width: 140 },
       { key: "date_of_leaving", label: "LeftDate", format: "date", width: 90 },
       { key: "left_remarks", label: "LeftRmks", format: "text", width: 220 },
       { key: "source_type", label: "SourceType", format: "text", width: 130 },
