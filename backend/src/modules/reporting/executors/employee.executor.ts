@@ -353,7 +353,7 @@ export async function headcount(
 const SNAPSHOT_DISPLAY_COLUMNS = [
   "employee_code", "biometric_code", "employment_type", "employee_name", "father_husband_name",
   "father_husband_relation", "gender", "nominee_name", "nominee_relation", "nominee_dob",
-  "date_of_birth", "date_of_joining", "joining_month", "designation_name", "billable_status",
+  "date_of_birth", "date_of_joining", "salary_effective_date", "joining_month", "designation_name", "billable_status",
   "department_name", "emp_for", "profile_type", "branch_name", "cost_centre_name", "qualification",
   "qualification_details", "passed_out_year", "passed_out_state", "passed_out_city",
   "passed_out_percentage", "working_experience", "experience_years", "marital_status",
@@ -362,10 +362,9 @@ const SNAPSHOT_DISPLAY_COLUMNS = [
   "permanent_pincode", "current_address_line1", "current_city", "current_state",
   "current_pincode", "contact_number", "permanent_landline", "temporary_mobile",
   "temporary_landline", "email", "document_done", "gross", "ctc_offered", "net_in_hand",
-  "salary_effective_date",
   "bank_account_number", "ifsc_code", "bank_name", "bank_branch", "passport_no", "dl_no",
   "uan_number", "epf_number", "pf_eligible", "esi_number", "esi_eligible", "entry_date",
-  "status", "date_of_leaving", "left_remarks", "source_type", "source", "box_file_no",
+  "status", "exit_reason", "date_of_leaving", "left_remarks", "source_type", "source", "box_file_no",
   "aadhaar_number", "pan_number", "work_status", "manual_update_by", "manual_update_date",
 ] as const;
 
@@ -541,17 +540,20 @@ export async function employeeMasterLive(
     params.push(options.cursor);
   }
 
-  // Single, consolidated status column. The old query carried both `employment_status`
-  // (raw HR text) and `employee_status` (a binary Active/Inactive CASE on active_status) —
-  // for the overwhelming majority of rows these render the same thing, and the Report
-  // Library correctly read that as one fact shown twice. active_status is the definition
-  // of "active" everywhere else in this codebase (see headcount() above); the raw text
-  // still carries value for exited employees (resigned/terminated/absconding), so it wins
-  // when the employee is inactive, not when they aren't.
+  // Status: binary "Active" / "Left" only (active_status is the definition of "active"
+  // everywhere else in this codebase, see headcount() above). The attrition category is a
+  // separate concern surfaced in exit_reason below — mixing resignation/absconding/termination
+  // text into Status made it impossible to filter on a single stable value for "not active".
   const statusExpr = `
+    CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Left' END`;
+
+  // Exit reason: the employment_status text (resigned / absconded / terminated / etc.) for
+  // inactive employees only; NULL for active employees. This is the voluntary-vs-involuntary
+  // attrition dimension.
+  const exitReasonExpr = `
     CASE
-      WHEN e.active_status = 1 THEN 'Active'
-      ELSE COALESCE(NULLIF(e.employment_status,''), 'Inactive')
+      WHEN e.active_status = 0 THEN COALESCE(NULLIF(e.employment_status,''), 'Inactive')
+      ELSE NULL
     END`;
 
   // "Salary date" = the CTC/salary-structure effective date, not the joining date and not
@@ -683,6 +685,7 @@ export async function employeeMasterLive(
            -- there is separately near-zero — employees.candidate_id is barely populated — but
            -- it costs nothing to check).
            COALESCE(DATE_FORMAT(lm.entry_date, '%d-%m-%Y'), DATE_FORMAT(cop.submitted_at, '%d-%m-%Y')) AS entry_date,
+           ${exitReasonExpr} AS exit_reason,
            -- LeftRmks = exit reason. Free-text resignation_reason wins when present (matches the
            -- field's literal meaning); falls back to the coded exit_reason_category (same source
            -- leftEmployeeExport() elsewhere in this file uses), then to

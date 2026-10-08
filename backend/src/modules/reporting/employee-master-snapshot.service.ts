@@ -1,7 +1,7 @@
 /**
  * Employee Master snapshot refresher.
  *
- * Computes the full 73-column employee-master row set (via employeeMasterLive() — the full
+ * Computes the full 74-column employee-master row set (via employeeMasterLive() — the full
  * computation, never the snapshot-reading fast path, or this would be circular) and writes it
  * into employee_master_snapshot (migration 1615), so the report can read a plain table instead
  * of re-running two cross-database fallback fetches plus a dozen mas_hrms joins on every
@@ -14,7 +14,7 @@ import { db } from "../../db/mysql.js";
 import { employeeMasterLive } from "./executors/employee.executor.js";
 import type { ExecScope, ExecOptions } from "./executors/types.js";
 
-// The 73 columns this table mirrors from report-catalog.ts's "employee-master" entry, in the
+// The 74 columns this table mirrors from report-catalog.ts's "employee-master" entry, in the
 // same order the INSERT below lists them. employee_code is the key and is never null (the
 // executor's WHERE clause never emits a row without one).
 const SNAPSHOT_COLUMNS = [
@@ -32,7 +32,7 @@ const SNAPSHOT_COLUMNS = [
   "salary_effective_date",
   "bank_account_number", "ifsc_code", "bank_name", "bank_branch", "passport_no", "dl_no",
   "uan_number", "epf_number", "pf_eligible", "esi_number", "esi_eligible", "entry_date",
-  "status", "date_of_leaving", "left_remarks", "source_type", "source", "box_file_no",
+  "status", "exit_reason", "date_of_leaving", "left_remarks", "source_type", "source", "box_file_no",
   "aadhaar_number", "pan_number", "work_status", "manual_update_by", "manual_update_date",
 ] as const;
 
