@@ -1,4 +1,4 @@
-/** KPI strip: one tile per drive type (seven stages, arrivals sparkline, change arrow as icon + words) and the cost placeholder tile. */
+/** KPI strip: one tile per drive type (seven stages, arrivals sparkline, change arrow as icon + words) and the cost tile (estimated figures when cost is available, otherwise the placeholder). */
 import { ArrowDown, ArrowUp, Coins, Minus } from "lucide-react";
 import type { DriveAnalytics } from "../driveCommandTypes";
 import { sparklinePath } from "../driveChartModel";
@@ -6,6 +6,7 @@ import { seriesColor, useIsDark } from "../chartTheme";
 import ChartFrame, { Note } from "./ChartFrame";
 import { ShapeGlyph } from "./TypePatterns";
 import { UNTRACKED_NOTE, kpiView } from "./summaryView";
+import { COST_TITLE, costNoteFor, costTiles } from "./costView";
 
 const SPARK_W = 96;
 const SPARK_H = 28;
@@ -14,6 +15,7 @@ const ICON = { "arrow-up": ArrowUp, "arrow-down": ArrowDown, minus: Minus } as c
 export default function KpiStrip({ analytics }: { analytics: DriveAnalytics }) {
   const dark = useIsDark();
   const v = kpiView(analytics);
+  const cost = costTiles(analytics);
   const note = analytics?.cost?.note || "Cost per source arrives with Plan 5";
   return (
     <ChartFrame
@@ -54,10 +56,32 @@ export default function KpiStrip({ analytics }: { analytics: DriveAnalytics }) {
             </article>
           );
         })}
-        <article className="flex min-w-0 flex-col justify-center gap-1 rounded-lg border border-dashed border-slate-300 p-3 text-slate-600 dark:border-slate-600 dark:text-slate-300">
-          <p className="flex items-center gap-1.5 text-sm font-semibold"><Coins className="h-4 w-4 shrink-0" aria-hidden /> Cost per source</p>
-          <p className="text-xs">{note}</p>
-        </article>
+        {cost ? (
+          <article data-cost-tile className="min-w-0 space-y-2 rounded-lg border border-slate-200 p-3 sm:col-span-2 xl:col-span-4 dark:border-slate-700">
+            <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100"><Coins className="h-4 w-4 shrink-0" aria-hidden /> {COST_TITLE}</p>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {cost.map((c) => (
+                <section key={c.sourceType} aria-label={`${c.label} cost`} className="min-w-0">
+                  <h5 className="text-xs font-bold text-slate-900 dark:text-slate-100">{c.label}</h5>
+                  <dl className="grid grid-cols-4 gap-x-2 sm:grid-cols-2 xl:grid-cols-4">
+                    {c.rows.map((r) => (
+                      <div key={r.label} className="min-w-0">
+                        <dt className="truncate text-xs text-slate-600 dark:text-slate-300">{r.label}</dt>
+                        <dd className="text-sm font-bold tabular-nums text-slate-900 dark:text-slate-100" data-cost={`${c.sourceType}-${r.label}`}>{r.text}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+              ))}
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300">{costNoteFor(analytics)}</p>
+          </article>
+        ) : (
+          <article className="flex min-w-0 flex-col justify-center gap-1 rounded-lg border border-dashed border-slate-300 p-3 text-slate-600 dark:border-slate-600 dark:text-slate-300">
+            <p className="flex items-center gap-1.5 text-sm font-semibold"><Coins className="h-4 w-4 shrink-0" aria-hidden /> Cost per source</p>
+            <p className="text-xs">{note}</p>
+          </article>
+        )}
       </div>
     </ChartFrame>
   );

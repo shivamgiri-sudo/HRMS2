@@ -92,6 +92,16 @@ export interface DriveInsight {
 }
 
 // backend/src/modules/hiring-engine/he-drive-analytics.service.ts
+// backend/src/modules/hiring-engine/he-cost.ts
+export interface CostRates { "cost.whatsapp_per_conversation": number; "cost.call_per_minute": number; "cost.call_per_call": number; "cost.email": number }
+export interface CostUsage { adSpend: number; waConversations: number; calls: number; callMinutes: number; emails: number }
+export interface TypeCost {
+  total: number; adSpend: number; messaging: number;
+  perLead: number | null; perQualified: number | null; perArrival: number | null; perJoin: number | null;
+  usage: CostUsage;
+}
+export interface CostBlock { available: boolean; note: string; estimated: boolean; ratesConfigured: boolean; rates: CostRates; byType: Record<SourceType, TypeCost> | null }
+
 export interface TypeAnalytics { stages: StageCounts; previous: StageCounts; noShow: number; declined: number; conversions: Conversion[]; sparkline: number[] }
 export interface DriveAnalytics {
   generatedAt: string;
@@ -107,7 +117,7 @@ export interface DriveAnalytics {
   scatter: ScatterPoint[];
   waterfall: Record<SourceType, WaterfallStep[]>;
   groups: DriveGroup[];
-  cost: { available: false; note: string };
+  cost: CostBlock | { available: false; note: string };
   insights: DriveInsight[];
   requisitionCount: number;
   truncated: boolean;

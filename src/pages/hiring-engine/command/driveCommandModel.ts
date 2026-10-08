@@ -3,7 +3,7 @@
  * KPI tiles, compare rows and the CSV builder. No I/O, no browser zone: dates are IST by arithmetic. Every formatter returns an en dash
  * instead of NaN / Infinity. No regex literals (Tailwind scans source text).
  */
-import { STAGES, type DriveAnalytics, type SourceType, type Stage } from "./driveCommandTypes";
+import { STAGES, type CostBlock, type DriveAnalytics, type SourceType, type Stage, type TypeCost } from "./driveCommandTypes";
 
 export type SectionId = "summary" | "live" | "old" | "he" | "plan";
 export const SECTIONS: ReadonlyArray<{ id: SectionId; label: string; sourceType: SourceType | null }> = [
@@ -189,7 +189,7 @@ export function kpiTiles(a: DriveAnalytics): KpiTile[] {
 }
 
 // ---- compare table -----------------------------------------------------------------------------------------------------------------------
-export const COMPARE_COLUMNS: ReadonlyArray<{ key: string; label: string; kind: "count" | "rate" }> = [
+export const COMPARE_COLUMNS: ReadonlyArray<{ key: string; label: string; kind: "count" | "rate" | "money" }> = [
   { key: "leads", label: "Leads", kind: "count" },
   { key: "qualified", label: "Qualified", kind: "count" },
   { key: "invited", label: "Invited", kind: "count" },
@@ -200,6 +200,12 @@ export const COMPARE_COLUMNS: ReadonlyArray<{ key: string; label: string; kind: 
   { key: "showRate", label: "Show rate", kind: "rate" },
   { key: "leadToJoin", label: "Lead to join", kind: "rate" },
 ];
+export const COST_CELLS = [["cost_per_lead", "perLead"], ["cost_per_qualified", "perQualified"], ["cost_per_arrival", "perArrival"], ["cost_per_join", "perJoin"]] as const;
+/** The per-type cost block, or null while cost is unavailable (placeholder, off, or no source). */
+export function costOf(a: DriveAnalytics): Record<SourceType, TypeCost> | null {
+  const c = a?.cost as Partial<CostBlock> | undefined;
+  return c && c.available === true && c.byType && typeof c.byType === "object" ? c.byType : null;
+}
 export interface CompareRow { sourceType: SourceType; label: string; cells: Record<string, number | null> }
 
 const rateOrNull = (n: number, d: number): number | null => (d > 0 && Number.isFinite(n / d) ? n / d : null);
@@ -212,6 +218,8 @@ export function compareRows(a: DriveAnalytics): CompareRow[] {
     for (const stage of STAGES) cells[stage] = safe(s?.[stage]);
     cells.showRate = rateOrNull(safe(s?.arrived), safe(s?.confirmed));
     cells.leadToJoin = rateOrNull(safe(s?.joined), safe(s?.leads));
+    const c = costOf(a)?.[t]; // money cells exist only while cost is available, so today's cells are unchanged
+    if (c) for (const [key, field] of COST_CELLS) cells[key] = typeof c[field] === "number" && Number.isFinite(c[field]) ? (c[field] as number) : null;
     return { sourceType: t, label: TYPE_LABEL[t], cells };
   });
 }
@@ -250,6 +258,7 @@ const SECTION_LABEL: Record<string, string> = {
   requisitions: "requisition list", sources: "lead sources", drives: "drive numbers", outcomes: "selections and joins", stops: "follow-up stops",
   replies: "reply times", arrivals: "arrival times", previous: "previous period", insights: "suggestions", streams: "streams", groups: "drive rows",
   header: "requisition details", lined: "people lined up", rates: "show rates", pool: "remaining pool", plan: "daily plan", preview: "tonight's dry run",
+  cost: "cost per source", "cost:rates": "cost rates", "cost:spend": "Meta ad spend", "cost:messages": "message counts", "cost:calls": "call counts",
   planned: "already planned days", calibration: "calibrated show rates", readiness: "readiness checks",
   "insight:contact": "contact timing", "insight:reminders": "reminders", "insight:distance": "travel distance", "insight:channel": "message delivery",
   "insight:language": "message language", "insight:slots": "slot bookings", "insight:sources": "source comparison", "insight:plan": "planning facts",

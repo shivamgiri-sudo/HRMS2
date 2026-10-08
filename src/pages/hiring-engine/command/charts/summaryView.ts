@@ -8,6 +8,7 @@ import { STAGES } from "../driveCommandTypes";
 import type { DriveAnalytics, SourceType, Stage } from "../driveCommandTypes";
 import { COMPARE_COLUMNS, SOURCE_TYPES, STAGE_LABEL, TYPE_LABEL, compareRows, countText, kpiTiles, pctText } from "../driveCommandModel";
 import type { CompareRow, KpiTile } from "../driveCommandModel";
+import { compareColumnsFor, moneyText } from "./costView";
 import { conversionHeatmap, funnelChart, scatterChart, timingHeatmap, waterfallChart, yieldChart } from "../driveChartModel";
 import type { ChartOpts, HeatCell, TextTable } from "../driveChartModel";
 
@@ -174,16 +175,17 @@ export function compareView(a: DriveAnalytics): { rows: CompareRow[]; untracked:
   const empty = rows.every((r) => STAGES.every((s) => !r.cells[s]));
   return { rows, untracked, empty };
 }
-export function compareCellText(kind: "count" | "rate", v: number | null | undefined): string {
+export function compareCellText(kind: "count" | "rate" | "money", v: number | null | undefined): string {
   if (v === null || v === undefined) return DASH;
-  return kind === "rate" ? pctText(v) : countText(v);
+  return kind === "rate" ? pctText(v) : kind === "money" ? moneyText(v) : countText(v);
 }
 export const CSV_COLUMNS: ReadonlyArray<{ key: string; label: string }> = [{ key: "type", label: "Drive type" }, ...COMPARE_COLUMNS];
-/** CSV rows with the same text the table shows (counts as numbers, rates as whole percent, untracked as empty). */
-export function compareCsvRows(rows: CompareRow[]): Array<Record<string, string | number | null>> {
+export const csvColumnsFor = (a: DriveAnalytics): ReadonlyArray<{ key: string; label: string }> => [{ key: "type", label: "Drive type" }, ...compareColumnsFor(a)];
+/** CSV rows with the same text the table shows (counts and money as numbers, rates as whole percent, untracked or missing as empty). */
+export function compareCsvRows(rows: CompareRow[], columns: ReadonlyArray<{ key: string; kind: "count" | "rate" | "money" }> = COMPARE_COLUMNS): Array<Record<string, string | number | null>> {
   return rows.map((r) => {
     const out: Record<string, string | number | null> = { type: r.label };
-    for (const c of COMPARE_COLUMNS) { const v = r.cells[c.key]; out[c.key] = v === null || v === undefined ? null : c.kind === "rate" ? pctText(v) : v; }
+    for (const c of columns) { const v = r.cells[c.key]; out[c.key] = v === null || v === undefined ? null : c.kind === "rate" ? pctText(v) : v; }
     return out;
   });
 }
