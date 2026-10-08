@@ -51,6 +51,8 @@ describe("relink a campaign to an open requisition (K7BK)", () => {
     // the contacted lock covers every contact path
     const leadSql = h.sqls.find((x) => x.sql.startsWith("SELECT r.id, r.screening_result"))!.sql;
     for (const part of ["notification_sent_at IS NOT NULL", "he_match", "walkin_invite", "qualified_followup"]) expect(leadSql).toContain(part);
+    // a follow-up row locks only once it sent something or while it runs live (a row stopped before any send, e.g. requisition_closed, does not)
+    expect(leadSql).toContain("cq.email_sent_at IS NOT NULL OR cq.wa_sent_at IS NOT NULL OR cq.called_at IS NOT NULL OR (cq.stopped_at IS NULL AND cq.mode_at_enqueue <> 'dry_run')");
   });
 
   it("refuses a closed or full target", async () => {

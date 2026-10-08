@@ -1,6 +1,7 @@
 /**
  * "Already contacted" lock (WS3 review focus 2): a Meta lead that the old flow notified, that has an Hiring Engine match for its
- * requisition, a walk-in invite or a follow-up row is never moved to another requisition (routing, retro-route, HR relink).
+ * requisition, a walk-in invite, or a follow-up row that sent something or is live and running, is never moved to another requisition
+ * (routing, retro-route, HR relink).
  * Optional tables (walkin_invite from 2140, qualified_followup from 2133) are used only when present; the presence check is cached.
  */
 import type { RowDataPacket } from "mysql2";
@@ -28,7 +29,10 @@ export function isLeadContactedSql(alias: string, tables: Set<string>): string {
     `EXISTS (SELECT 1 FROM he_lead cl JOIN he_match cm ON cm.lead_id = cl.id WHERE (cl.meta_lead_id = ${alias}.id ${CI} OR cl.mobile10 = ${fillPhoneSql(alias)} ${CI}) AND cm.requisition_id = ${alias}.requisition_id ${CI})`,
   ];
   if (tables.has("walkin_invite")) parts.push(`EXISTS (SELECT 1 FROM walkin_invite cw WHERE cw.meta_lead_id = ${alias}.id ${CI})`);
-  if (tables.has("qualified_followup")) parts.push(`EXISTS (SELECT 1 FROM qualified_followup cq WHERE cq.meta_lead_id = ${alias}.id ${CI})`);
+  // A follow-up row locks the lead once it sent something, or while it is live and running; a row stopped before any send (for
+  // example requisition_closed, the K7BK case) or a dry-run shadow does not.
+  if (tables.has("qualified_followup")) parts.push(`EXISTS (SELECT 1 FROM qualified_followup cq WHERE cq.meta_lead_id = ${alias}.id ${CI}
+    AND (cq.email_sent_at IS NOT NULL OR cq.wa_sent_at IS NOT NULL OR cq.called_at IS NOT NULL OR (cq.stopped_at IS NULL AND cq.mode_at_enqueue <> 'dry_run')))`);
   return `(${parts.join(" OR ")})`;
 }
 
