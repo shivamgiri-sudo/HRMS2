@@ -103,6 +103,8 @@ beforeEach(() => {
       return [reasonRows];
     }
     if (q.includes("FROM he_drive d WHERE d.drive_date BETWEEN")) return [[{ id: "r1", requisition_code: "REQ-r1", designation_name: "Agent", branch_name: "Pune", last_drive: "2026-10-12" }]];
+    // events-based persons read (checked first: it also LEFT JOINs he_drive): the people of the bucket row
+    if (q.includes("AS contacted")) return [[{ requisition_id: "r1", source_type: "he", campaign_id: null, leads: driveRow.lined, qualified: 0, contacted: driveRow.invited, invited: driveRow.invited, confirmed: driveRow.confirmed, arrived: driveRow.arrived, selected: 0, joined: 0 }]];
     if (q.includes("LEFT JOIN he_drive d ON")) return [[driveRow]];
     return [[]];
   });
@@ -138,7 +140,9 @@ describe("analytics with HE_OUTCOME_REASONS", () => {
       const q = String(sql);
       if (q.includes("he_match_outcome_reason")) throw Object.assign(new Error("boom"), { code: "ER_X" });
       if (q.includes("FROM he_drive d WHERE d.drive_date BETWEEN")) return [[{ id: "r1", requisition_code: "REQ-r1", designation_name: "Agent", branch_name: "Pune", last_drive: "2026-10-12" }]];
-      if (q.includes("LEFT JOIN he_drive d ON")) return [[driveRow]];
+      // events-based persons read (checked first: it also LEFT JOINs he_drive): the people of the bucket row
+    if (q.includes("AS contacted")) return [[{ requisition_id: "r1", source_type: "he", campaign_id: null, leads: driveRow.lined, qualified: 0, contacted: driveRow.invited, invited: driveRow.invited, confirmed: driveRow.confirmed, arrived: driveRow.arrived, selected: 0, joined: 0 }]];
+    if (q.includes("LEFT JOIN he_drive d ON")) return [[driveRow]];
       return [[]];
     });
     const r = (await getDriveAnalytics(Q, ALL, NOW)) as never as { partial: boolean; failedSections: string[]; waterfall: Record<string, Array<{ reasons: Array<{ detail?: unknown }> }>> };

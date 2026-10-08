@@ -29,10 +29,14 @@ const srcRow = (sourceType: string, leads: number, extra: object = {}) => ({ sou
 const head = (id: string, branch = "Pune", day = "2026-10-12") => ({ id, requisition_code: `REQ-${id}`, designation_name: "Agent", branch_name: branch, last_drive: day });
 const driveRow = (rid: string, o: Record<string, unknown> = {}) => ({ requisition_id: rid, requisition_code: `REQ-${rid}`, designation_name: "Agent", branch_name: "Pune", id: `d-${rid}`, drive_date: "2026-10-12", status: "active", target_shows: 10, stream_id: null, source_type: null, lined: 20, invited: 15, confirmed: 10, arrived: 6, no_show: 2, declined: 1, ...o });
 
-type Impl = { discovery?: unknown[]; header?: unknown[]; drives?: unknown[]; outcomes?: unknown[]; fail?: Record<string, string>; sources?: unknown; branchKnown?: boolean };
+// A row of the events-based persons read (he-drive-persons.service.ts).
+const personRow = (source_type: string, leads: number, invited: number, confirmed: number, arrived: number) =>
+  ({ requisition_id: "r1", source_type, campaign_id: null, leads, qualified: 0, contacted: invited, invited, confirmed, arrived, selected: 0, joined: 0 });
+type Impl = { discovery?: unknown[]; header?: unknown[]; drives?: unknown[]; outcomes?: unknown[]; persons?: unknown[]; campaigns?: unknown[]; fail?: Record<string, string>; sources?: unknown; branchKnown?: boolean };
 let impl: Impl;
 const kindOf = (q: string): string =>
-  q.includes("FROM job_requisition WHERE id") ? "header" : q.includes("FROM he_drive d WHERE d.drive_date BETWEEN") ? "discovery" : q.includes("LEFT JOIN he_drive d ON") ? "drives"
+  q.includes("AS contacted") ? "persons" : q.includes("FROM meta_campaign mc LEFT JOIN job_requisition jr") ? "campaignNames"
+    : q.includes("FROM job_requisition WHERE id") ? "header" : q.includes("FROM he_drive d WHERE d.drive_date BETWEEN") ? "discovery" : q.includes("LEFT JOIN he_drive d ON") ? "drives"
     : q.includes("AS slot_released") ? "outcomes" : q.includes("FROM qualified_followup qf") ? "stops" : q.includes("JOIN he_message hm") ? "replies" : q.includes("JOIN he_lead_event ev") ? "arrivals" : "other";
 const sqlOf = () => execute.mock.calls.map((c) => [String(c[0]), (c[1] ?? []) as unknown[]] as const);
 const callsOf = (k: string) => sqlOf().filter(([q]) => kindOf(q) === k);
@@ -55,6 +59,8 @@ beforeEach(() => {
     if (k === "discovery") return [impl.discovery ?? []];
     if (k === "drives") return [impl.drives ?? []];
     if (k === "outcomes") return [impl.outcomes ?? []];
+    if (k === "persons") return [impl.persons ?? []];
+    if (k === "campaignNames") return [impl.campaigns ?? []];
     return [[]];
   });
 });
@@ -82,6 +88,7 @@ describe("getDriveAnalytics", () => {
     impl.sources = {
       byRequisition: [{ requisitionId: "r1", rows: [srcRow("meta_live", 60, { qualified: 40, joined: 3 }), srcRow("meta_old", 30), srcRow("he", 20)] }], partial: false, failedSections: [],
     };
+    impl.persons = [personRow("meta_live", 60, 6, 4, 2), personRow("meta_old", 30, 4, 3, 1), personRow("he", 20, 15, 10, 6)];
     const r = ok(await getDriveAnalytics(Q, ALL, NOW));
     expect(r.types.meta_live.stages).toMatchObject({ leads: 60, qualified: 40, invited: 6, confirmed: 4, arrived: 2, joined: 3 });
     expect(r.types.he.stages).toMatchObject({ leads: 20, invited: 15, confirmed: 10, arrived: 6 });
@@ -220,6 +227,7 @@ describe("getDriveAnalytics", () => {
     it("flags a rejecting outcomes read, keeps other numbers and does not cache it", async () => {
       impl.discovery = [head("r1")];
       impl.drives = [driveRow("r1")];
+      impl.persons = [personRow("he", 20, 15, 10, 6)];
       impl.fail = { outcomes: "ER_BAD_FIELD_ERROR" };
       const r = ok(await getDriveAnalytics(Q, ALL, NOW));
       expect(r).toMatchObject({ partial: true, failedSections: ["outcomes", "previous"] }); // the previous period reads outcomes too
@@ -302,6 +310,7 @@ describe("getDriveAnalytics", () => {
       if (k === "stops") return [[{ source_type: "he", stopped_reason: "opted_out", n: 4 }]];
       if (k === "replies") return [[{ source_type: "he", wd: 6, hr: 23, n: 5 }, { source_type: "he", wd: 9, hr: 1, n: 5 }]];
       if (k === "arrivals") return [[{ source_type: "he", wd: 0, hr: 10, n: 2 }]];
+      if (k === "persons") return [[personRow("he", 30, 15, 10, 6)]];
       return [[]];
     });
     const r = ok(await getDriveAnalytics(Q, ALL, NOW));
@@ -330,7 +339,43 @@ describe("getDriveAnalytics", () => {
     await getDriveAnalytics(Q, ALL, NOW);
     expect(execute.mock.calls.length).toBeGreaterThan(5);
     // the source rule's form-fill subqueries are keyed (sourceAttribution.test.ts) and folded away here
-    for (const [q] of sqlOf()) for (const t of ["he_lead", "he_message", "he_lead_event", "meta_lead_raw"]) expect(stripRule(q)).not.toContain(`FROM ${t} `);
+    // the persons read starts from he_message / he_lead_event / meta_lead_raw on purpose, each by an index range bounded by requisition
+    // ids and the window (asserted in drivePersons.test.ts); every other statement reaches them by key only
+    for (const [q] of sqlOf().filter(([x]) => kindOf(x) !== "persons")) for (const t of ["he_lead", "he_message", "he_lead_event", "meta_lead_raw"]) expect(stripRule(q)).not.toContain(`FROM ${t} `);
+  });
+});
+
+describe("events-based stages and per-campaign progress", () => {
+  const p = (o: Record<string, unknown>) => ({ requisition_id: "r1", source_type: "he", campaign_id: null, leads: 0, qualified: 0, contacted: 0, invited: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0, ...o });
+  it("takes leads / invited / confirmed / arrived per type from the persons read, selected / joined still from the drive credit", async () => {
+    impl.discovery = [head("r1")];
+    impl.drives = [driveRow("r1")]; // state buckets: he 15 / 10 / 6 (they stay behind the daily series)
+    impl.outcomes = [{ source_type: "meta_old", selected: 1, joined: 0, slot_released: 0 }];
+    impl.persons = [
+      p({ source_type: "meta_old", campaign_id: "c1", leads: 40, qualified: 12, contacted: 35, invited: 30, confirmed: 11, arrived: 2, selected: 1 }),
+      p({ source_type: "meta_live", campaign_id: "c2", leads: 9, contacted: 1 }),
+      p({ source_type: "he", leads: 25, contacted: 20, invited: 18, confirmed: 7, arrived: 6 }),
+    ];
+    impl.campaigns = [{ id: "c1", campaign_name: "Ahmedabad ads", campaign_status: "paused", requisition_code: "REQ-r1" }, { id: "c2", campaign_name: "Onfido night", campaign_status: "active", requisition_code: "REQ-x" }];
+    const r = ok(await getDriveAnalytics(Q, ALL, NOW));
+    expect(r.types.meta_old.stages).toMatchObject({ leads: 40, invited: 30, confirmed: 11, arrived: 2, selected: 1 });
+    expect(r.types.meta_live.stages).toMatchObject({ leads: 9, invited: 0 });
+    expect(r.types.he.stages).toMatchObject({ leads: 25, invited: 18, confirmed: 7, arrived: 6 });
+    expect(r.liveFrom).toBe("2026-10-08");
+    expect(r.campaigns).toEqual([
+      { campaignId: "c2", campaignName: "Onfido night", campaignStatus: "active", campaignRequisitionCode: "REQ-x", requisitionId: "r1", requisitionCode: "REQ-r1", branch: "Pune", sourceType: "meta_live",
+        stages: { leads: 9, qualified: 0, contacted: 1, invited: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0 } },
+      { campaignId: "c1", campaignName: "Ahmedabad ads", campaignStatus: "paused", campaignRequisitionCode: "REQ-r1", requisitionId: "r1", requisitionCode: "REQ-r1", branch: "Pune", sourceType: "meta_old",
+        stages: { leads: 40, qualified: 12, contacted: 35, invited: 30, confirmed: 11, arrived: 2, selected: 1, joined: 0 } },
+    ]);
+    expect(callsOf("persons")).toHaveLength(2); // window and previous window
+  });
+  it("a failing persons read flags its section and leaves the stages at zero", async () => {
+    impl.discovery = [head("r1")];
+    impl.fail = { persons: "ER_X" };
+    const r = ok(await getDriveAnalytics(Q, ALL, NOW));
+    expect(r.failedSections).toContain("persons");
+    expect(r.campaigns).toEqual([]);
   });
 });
 

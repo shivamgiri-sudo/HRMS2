@@ -22,9 +22,12 @@ const ratio = (n: number, d: number): number => (d > 0 ? n / d : 0);
 export const zeroStages = (): StageCounts => ({ leads: 0, qualified: 0, invited: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0 });
 const perType = <T>(make: () => T): Record<SourceType, T> => ({ meta_live: make(), meta_old: make(), he: make() });
 
+export interface PersonStageCounts { leads: number; invited: number; confirmed: number; arrived: number }
 /** leads / qualified from the sources read model, invited / confirmed / arrived from drive state buckets,
- *  selected / joined = max(match outcome, sources value) so overlapping populations are not added twice. */
-export function stageCountsByType(sources: SourceRow[], agg: DriveAggRow[], outcomes: MatchOutcome[]): Record<SourceType, TypedStageCounts> {
+ *  selected / joined = max(match outcome, sources value) so overlapping populations are not added twice.
+ *  With `persons` (the events-based read, he-drive-persons.service.ts) leads / invited / confirmed / arrived come from it instead
+ *  (leads never below qualified); noShow / declined stay the drive state counts. */
+export function stageCountsByType(sources: SourceRow[], agg: DriveAggRow[], outcomes: MatchOutcome[], persons?: Record<SourceType, PersonStageCounts>): Record<SourceType, TypedStageCounts> {
   const out = perType<TypedStageCounts>(() => ({ ...zeroStages(), noShow: 0, declined: 0 }));
   const outSel = perType(() => 0);
   const outJoin = perType(() => 0);
@@ -46,6 +49,11 @@ export function stageCountsByType(sources: SourceRow[], agg: DriveAggRow[], outc
   for (const k of SOURCE_TYPES) {
     out[k].selected = Math.max(out[k].selected, outSel[k]);
     out[k].joined = Math.max(out[k].joined, outJoin[k]);
+    const p = persons?.[k];
+    if (p) {
+      out[k].leads = Math.max(num(p.leads), out[k].qualified);
+      out[k].invited = num(p.invited); out[k].confirmed = num(p.confirmed); out[k].arrived = num(p.arrived);
+    }
   }
   return out;
 }
