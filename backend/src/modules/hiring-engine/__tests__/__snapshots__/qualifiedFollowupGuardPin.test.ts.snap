@@ -1,0 +1,86 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`follow-up stop checks pin > decideStop for today's facts 1`] = `
+[
+  null,
+  "opted_out",
+  "replied",
+  "requisition_closed",
+  "joined",
+  "no_contact_details",
+  "opted_out",
+  null,
+]
+`;
+
+exports[`follow-up stop checks pin > runStopChecks statements and stops for a page of rows 1`] = `
+{
+  "calls": [
+    [
+      "SELECT qf.id, qf.mobile10, qf.email, (SELECT hl.status FROM he_lead hl WHERE hl.mobile10 = qf.mobile10 COLLATE utf8mb4_unicode_ci ORDER BY (hl.status = 'opted_out') DESC, (hl.status = 'joined') DESC LIMIT 1) AS lead_status, EXISTS (SELECT 1 FROM he_consent hc JOIN he_lead hl2 ON hl2.id = hc.lead_id WHERE hl2.mobile10 = qf.mobile10 COLLATE utf8mb4_unicode_ci AND hc.consent_type = 'whatsapp_contact' AND hc.revoked_at IS NOT NULL) AS consent_revoked, EXISTS (SELECT 1 FROM he_message hm WHERE hm.mobile10 = qf.mobile10 COLLATE utf8mb4_unicode_ci AND hm.direction = 'in' AND hm.created_at > qf.qualified_at) AS he_replied, EXISTS (SELECT 1 FROM meta_lead_messages mm WHERE mm.lead_id = qf.meta_lead_id COLLATE utf8mb4_unicode_ci AND mm.direction = 'inbound' AND mm.created_at > qf.qualified_at) AS meta_replied, ac.current_stage AS ats_stage, jr.id AS jr_id, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount FROM qualified_followup qf LEFT JOIN job_requisition jr ON jr.id = qf.requisition_id COLLATE utf8mb4_unicode_ci LEFT JOIN ats_candidate ac ON ac.id = qf.ats_candidate_id COLLATE utf8mb4_unicode_ci WHERE qf.stopped_reason IS NULL AND qf.mode_at_enqueue = ? AND ((qf.email_status IS NULL AND qf.email_due_at IS NOT NULL) OR qf.email_status = 'sending' OR qf.wa_status IS NULL OR qf.wa_status = 'sending' OR qf.call_state = 'pending' OR (qf.call_state = 'in_file' AND qf.call_file_batch_id IS NULL)) ORDER BY qf.id LIMIT 500",
+      [
+        "live",
+      ],
+    ],
+    [
+      "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
+      [
+        "opted_out",
+        "b",
+      ],
+    ],
+    [
+      "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
+      [
+        "replied",
+        "c",
+      ],
+    ],
+    [
+      "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
+      [
+        "requisition_closed",
+        "d",
+      ],
+    ],
+    [
+      "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
+      [
+        "joined",
+        "e",
+      ],
+    ],
+    [
+      "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
+      [
+        "no_contact_details",
+        "f",
+      ],
+    ],
+    [
+      "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
+      [
+        "requisition_closed",
+        "g",
+      ],
+    ],
+    [
+      "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
+      [
+        "requisition_closed",
+        "h",
+      ],
+    ],
+  ],
+  "out": {
+    "checked": 8,
+    "stopped": {
+      "joined": 1,
+      "no_contact_details": 1,
+      "opted_out": 1,
+      "replied": 1,
+      "requisition_closed": 3,
+    },
+  },
+}
+`;
