@@ -1,5 +1,6 @@
 // The selection API as the screens call it. Every read carries the caller's permissions; the server enforces them too.
 import { hrmsApi } from "@/lib/hrmsApi";
+import type { RunPerson } from "./approvalModel";
 import type {
   ApprovalState, BulkRow, CriteriaPatch, CriteriaResponse, Permissions, PreviewResult, RequisitionItem, SaveResult, SourceKind, SubSource, WhyNotPerson,
 } from "./selectionTypes";
@@ -30,8 +31,10 @@ export const selectionApi = {
   approvalState: (requisitionId: string, sourceKind: SourceKind) =>
     hrmsApi.get<Env<ApprovalState>>(`/api/he/shortlist/approval-state?requisitionId=${enc(requisitionId)}&sourceKind=${sourceKind}`).then((r) => r.data),
   run: (requisitionId: string, sourceKind: SourceKind) => hrmsApi.post<Env<{ runId: string }>>("/api/he/shortlist/run", { requisitionId, sourceKind }).then((r) => r.data),
-  approve: (requisitionId: string, sourceKind: SourceKind, runId: string, untick: string[], approveReview: string[], note: string | null) =>
-    hrmsApi.post<Env<{ approved: number }>>("/api/he/shortlist/approve", { requisitionId, sourceKind, runId, untick, approveReview, note }).then((r) => r.data),
+  runPeople: (runId: string) => hrmsApi.get<Env<{ requisitionId: string; items: RunPerson[] }>>(`/api/he/shortlist/run/${enc(runId)}/candidates`).then((r) => r.data),
+  /** Unticks and review approvals travel as row ids of the run; the screen never holds full mobiles. */
+  approve: (requisitionId: string, sourceKind: SourceKind, runId: string, untickIds: string[], approveReviewIds: string[], note: string | null) =>
+    hrmsApi.post<Env<{ approved: number }>>("/api/he/shortlist/approve", { requisitionId, sourceKind, runId, untickIds, approveReviewIds, note }).then((r) => r.data),
   approveStanding: (requisitionId: string, versionId: string, days: number) => hrmsApi.post<Env<{ validUntil: string }>>("/api/he/shortlist/approve-standing", { requisitionId, versionId, days }).then((r) => r.data),
   revokeStanding: (id: string) => hrmsApi.delete(`/api/he/shortlist/approve-standing/${enc(id)}`),
   bookedMismatch: (requisitionId: string) => hrmsApi.get<Env<Array<{ followupId: string; maskedMobile: string; firstName: string; verdict: string; slotAt: string; matchState: string }>>>(`/api/he/shortlist/booked-mismatch?requisitionId=${enc(requisitionId)}`).then((r) => r.data),
