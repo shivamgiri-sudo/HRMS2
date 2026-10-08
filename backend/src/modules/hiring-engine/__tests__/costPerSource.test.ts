@@ -29,7 +29,7 @@ const driveRow = (rid: string, o: Record<string, unknown> = {}) => ({ requisitio
 type Rows = { rates?: unknown[]; spend?: unknown[]; messages?: unknown[]; calls?: unknown[]; fail?: Record<string, string>; noStreamTables?: boolean };
 let impl: Rows;
 const kindOf = (q: string): string =>
-  q.includes("FROM he_model_param") ? "rates" : q.includes("FROM meta_campaign WHERE") ? "spend" : q.includes("FROM he_message h") ? "messages" : q.includes("FROM he_call c") ? "calls"
+  q.includes("AS contacted") ? "persons" : q.includes("param_key LIKE ? AND value = 1") ? "cutoff" : q.includes("FROM he_model_param") ? "rates" : q.includes("FROM meta_campaign WHERE") ? "spend" : q.includes("FROM he_message h") ? "messages" : q.includes("FROM he_call c") ? "calls"
     : q.includes("FROM he_drive d WHERE d.drive_date BETWEEN") ? "discovery" : q.includes("LEFT JOIN he_drive d ON") ? "drives" : "other";
 const calls = (k: string) => execute.mock.calls.filter((c) => kindOf(String(c[0])) === k).map((c) => [String(c[0]), (c[1] ?? []) as unknown[]] as const);
 const rates = (o: Partial<CostRates> = {}): CostRates => ({ ...COST_DEFAULTS, ...o });
@@ -55,6 +55,8 @@ beforeEach(() => {
     if (impl.noStreamTables && q.includes("requisition_stream") && k !== "discovery") throw Object.assign(new Error("no table"), { code: "ER_NO_SUCH_TABLE" });
     if (k === "discovery") return [[head("r1")]];
     if (k === "drives") return [[driveRow("r1", { stream_id: "s1", source_type: "meta_live", arrived: 12 })]];
+    // events-based persons read: the same people as the sources and bucket rows above
+    if (k === "persons") return [[{ requisition_id: "r1", source_type: "meta_live", campaign_id: null, leads: 150, qualified: 0, contacted: 15, invited: 15, confirmed: 10, arrived: 12, selected: 0, joined: 0 }]];
     if (k === "rates") return [impl.rates ?? []];
     if (k === "spend") return [impl.spend ?? []];
     if (k === "messages") return [impl.messages ?? []];

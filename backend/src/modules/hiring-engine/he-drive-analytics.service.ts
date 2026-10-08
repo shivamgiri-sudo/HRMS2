@@ -16,7 +16,7 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
 import {
-  SOURCE_TYPES, conversions, dailySeries, scatterPoints, stageCountsByType, timingGrids, waterfall,
+  SOURCE_TYPES, conversions, type PersonStageCounts, dailySeries, scatterPoints, stageCountsByType, timingGrids, waterfall,
   type Conversion, type DailyPoint, type Grid, type MatchOutcome, type ScatterPoint, type StageCounts, type TaggedAggRow, type TimingCell, type TypedStageCounts, type WaterfallStep,
 } from "./he-drive-analytics.js";
 import { costBlock, type CostBlock } from "./he-cost.js";
@@ -29,6 +29,7 @@ import { collectInsightFacts } from "./he-drive-insight-facts.service.js";
 import { loadInsightThresholds } from "./he-insight-params.service.js";
 import { buildDriveGroups, readAgg, readDriveAggRows, type DriveGroup, type DriveGroupInput } from "./he-drive-trend.service.js";
 import { getSourcesForRequisitions, type RequisitionSourceRows } from "./he-sources-window.service.js";
+import { campaignProgress, readPersonStages, type CampaignProgress, type CampaignProgressRow } from "./he-drive-persons.service.js";
 import { outcomeReasonCounts } from "./he-outcome-reason.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
 import { followupMode } from "./qualified-followup.schedule.js";
@@ -57,6 +58,8 @@ export interface DriveAnalytics {
   groups: DriveGroup[];
   cost: CostBlock | { available: false; note: string };
   insights: DriveInsight[];
+  /** Per Meta campaign and requisition: people at each stage in the window (events-based, same rules as `types`). */
+  campaigns: CampaignProgress[];
   requisitionCount: number;
   truncated: boolean;
   partial: boolean;
@@ -314,7 +317,8 @@ async function build(
   const none = ids.length === 0;
   const liveFrom = none ? LIVE_FROM_DEFAULT : await loadLiveFrom(); // one cutoff for every read of this build
   const empty = { outcomes: [] as MatchOutcome[], slotReleased: perType(() => 0) };
-  const [sources, driveRows, outcomeRead, stops, repliesRows, arrivalsRows, previous] = await Promise.all([
+  const noPersons = { byType: null as Record<SourceType, PersonStageCounts> | null, campaigns: [] as CampaignProgressRow[] };
+  const [sources, driveRows, outcomeRead, stops, repliesRows, arrivalsRows, previous, persons] = await Promise.all([
     none ? null : section("sources", failed, async () => {
       const s = await getSourcesForRequisitions(ids, w, liveFrom);
       if (s.partial) failed.push("sources");
@@ -326,18 +330,25 @@ async function build(
     none ? ([] as RowDataPacket[]) : section("replies", failed, async () => (await runBatched(ids, repliesSql(liveFrom), (b) => [...dt, ...b, w.from, w.to])), [] as RowDataPacket[]),
     none ? ([] as RowDataPacket[]) : section("arrivals", failed, async () => (await runBatched(ids, arrivalsSql(liveFrom), (b) => [...b, w.from, w.to])), [] as RowDataPacket[]),
     none ? null : section("previous", failed, async () => {
-      const [s, rows, o] = await Promise.all([getSourcesForRequisitions(ids, prev, liveFrom), readDriveAggRows(ids, prev.from, prev.to, liveFrom), readOutcomes(ids, prev.from, prev.to, liveFrom)]);
+      const [s, rows, o, p] = await Promise.all([getSourcesForRequisitions(ids, prev, liveFrom), readDriveAggRows(ids, prev.from, prev.to, liveFrom), readOutcomes(ids, prev.from, prev.to, liveFrom),
+        readPersonStages(ids, prev, liveFrom)]);
       if (s.partial) failed.push("previous");
-      return { sources: s, rows, outcomes: o.outcomes };
-    }, null as { sources: Awaited<ReturnType<typeof getSourcesForRequisitions>>; rows: TaggedAggRow[]; outcomes: MatchOutcome[] } | null),
+      return { sources: s, rows, outcomes: o.outcomes, persons: p.byType };
+    }, null as { sources: Awaited<ReturnType<typeof getSourcesForRequisitions>>; rows: TaggedAggRow[]; outcomes: MatchOutcome[]; persons: Record<SourceType, PersonStageCounts> } | null),
+    none ? noPersons : section("persons", failed, () => readPersonStages(ids, w, liveFrom), noPersons),
   ]);
 
   const flat = (list: RequisitionSourceRows[] | undefined) => (list ?? []).flatMap((r) => r.rows);
   const inWindow = driveRows.filter((r) => inRange(r.date, w.from, w.to));
-  const cur = stageCountsByType(flat(sources?.byRequisition), inWindow, outcomeRead.outcomes);
+  // A failed persons read leaves leads / invited / confirmed / arrived at zero (flagged), never the state buckets in disguise.
+  const zeroPersons = perType((): PersonStageCounts => ({ leads: 0, invited: 0, confirmed: 0, arrived: 0 }));
+  const cur = stageCountsByType(flat(sources?.byRequisition), inWindow, outcomeRead.outcomes, none ? undefined : persons.byType ?? zeroPersons);
   const before = previous
-    ? stageCountsByType(flat(previous.sources.byRequisition), previous.rows.filter((r) => inRange(r.date, prev.from, prev.to)), previous.outcomes)
+    ? stageCountsByType(flat(previous.sources.byRequisition), previous.rows.filter((r) => inRange(r.date, prev.from, prev.to)), previous.outcomes, previous.persons)
     : stageCountsByType([], [], []);
+  const campaigns = persons.campaigns.length
+    ? await section("campaigns", failed, () => campaignProgress(persons.campaigns, new Map(heads.map((h) => [h.id, { code: h.code, branch: h.branch }]))), [] as CampaignProgress[])
+    : [];
   const daily = dailySeries(inWindow, w.from, w.to);
   const replies = timingGrids(toCells(repliesRows));
   const arrivals = timingGrids(toCells(arrivalsRows));
@@ -423,6 +434,7 @@ async function build(
     groups,
     cost,
     insights,
+    campaigns,
     requisitionCount: ids.length,
     truncated,
     partial: failedSections.length > 0,
