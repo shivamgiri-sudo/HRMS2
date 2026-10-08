@@ -71,6 +71,14 @@ describe("runStopChecks", () => {
     expect(sql).toContain("qf.wa_status IS NULL OR qf.wa_status = 'sending'");
     expect(sql).toContain("qf.call_state = 'pending'");
   });
+  it("joins job_requisition, ats_candidate and meta_lead_messages with the collation on the qualified_followup side (keys stay usable)", async () => {
+    execute.mockResolvedValueOnce([[]]);
+    await runStopChecks("live");
+    const sql = String(execute.mock.calls[0][0]);
+    expect(sql).toContain("jr.id = qf.requisition_id COLLATE utf8mb4_unicode_ci");
+    expect(sql).toContain("ac.id = qf.ats_candidate_id COLLATE utf8mb4_unicode_ci");
+    expect(sql).toContain("mm.lead_id = qf.meta_lead_id COLLATE utf8mb4_unicode_ci");
+  });
   it("a row without an email address is not pending email work forever (email_due_at NULL)", async () => {
     execute.mockResolvedValueOnce([[]]);
     await runStopChecks("live");

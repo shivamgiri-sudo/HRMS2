@@ -18,6 +18,8 @@ import {
   markCalledText, modeText, reportText, retryErrorText, retryOkText, retryPath, rowName, scrubText, sourceFunnelRows, sourcesPath, type SummaryRow,
 } from "./followupPanelModel";
 import { createInFlightGuard } from "./inFlight";
+import HeldOffers from "./HeldOffers";
+import { HELD_PATH, type HeldOffers as HeldData } from "./heldOffersModel";
 import { FOLLOWUP_STATUS_PATH } from "./driveCommandModel";
 
 export const FOLLOWUP_PANEL_ID = "followup-panel-body";
@@ -30,6 +32,8 @@ export interface PanelData {
   summary: { mode: FollowupMode | null; data: SummaryRow[] } | null;
   attention: AttentionGroup[] | null;
   sources: RequisitionSources | null;
+  /** Held offers (null: could not be loaded; undefined: not requested). */
+  held?: HeldData | null;
   /** Names of the sections that failed to load. */
   failed: string[];
 }
@@ -203,6 +207,7 @@ export function FollowupPanelView(p: FollowupPanelViewProps) {
                 <p role="status" className={`text-sm font-semibold empty:hidden ${p.result && !p.result.ok ? "text-rose-800 dark:text-rose-200" : "text-emerald-800 dark:text-emerald-200"}`}>{p.result?.text ?? ""}</p>
                 <Attention data={p.data} busy={p.busy} result={p.result} onRetry={p.onRetry} onMarkCalled={p.onMarkCalled} />
               </section>
+              <HeldOffers held={p.data.held} />
               <section aria-labelledby="followup-files-h" className="space-y-1">
                 <h4 id="followup-files-h" className="text-sm font-bold text-slate-900 dark:text-slate-100">Calling files</h4>
                 <CallFiles status={p.data.status} />
@@ -218,11 +223,12 @@ export function FollowupPanelView(p: FollowupPanelViewProps) {
 // ---- wiring --------------------------------------------------------------------------------------------------------------------------------
 async function loadAll(requisitionId: string | null, signal: AbortSignal): Promise<{ data: PanelData; error: string | null }> {
   const get = <T,>(path: string) => hrmsApi.get<T>(path, undefined, signal);
-  const [st, su, at, so] = await Promise.allSettled([
+  const [st, su, at, so, he] = await Promise.allSettled([
     get<{ data?: FollowupStatus }>(FOLLOWUP_STATUS_PATH),
     get<{ mode?: FollowupMode; data?: SummaryRow[] }>(SUMMARY_PATH),
     get<{ data?: AttentionGroup[] }>(ATTENTION_PATH),
     requisitionId && isUuidShape(requisitionId) ? get<{ data?: RequisitionSources }>(sourcesPath(requisitionId)) : Promise.resolve(null),
+    get<{ data?: HeldData }>(HELD_PATH),
   ]);
   const ok = <T,>(r: PromiseSettledResult<T>): T | null => (r.status === "fulfilled" ? r.value : null);
   const status = ok(st)?.data ?? null;
@@ -230,13 +236,15 @@ async function loadAll(requisitionId: string | null, signal: AbortSignal): Promi
   const summary = sm && Array.isArray(sm.data) ? { mode: sm.mode ?? null, data: sm.data } : null;
   const attention = Array.isArray(ok(at)?.data) ? (ok(at)!.data as AttentionGroup[]) : null;
   const sources = ok(so)?.data ?? null;
+  const held = ok(he)?.data ?? null;
   const failed: string[] = [];
   if (!status) failed.push("the call-file status");
   if (!summary) failed.push("the funnel");
   if (!attention) failed.push("the needs-attention list");
   if (requisitionId && isUuidShape(requisitionId) && so.status === "rejected") failed.push("the requisition sources");
+  if (!held) failed.push("the held offers");
   const firstRejection = [st, su, at].find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
-  return { data: { status, summary, attention, sources, failed }, error: !status && !summary && !attention ? describeError(firstRejection?.reason) : null };
+  return { data: { status, summary, attention, sources, held, failed }, error: !status && !summary && !attention ? describeError(firstRejection?.reason) : null };
 }
 
 /** `openSignal` changes (the insight action "Open follow-up issues") expand the panel. */

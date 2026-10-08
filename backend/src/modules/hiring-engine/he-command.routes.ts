@@ -12,6 +12,7 @@ import { logger } from "../../logger.js";
 import { branchScopeOf, isIsoDate } from "./he-stream.routes.js";
 import { getDriveAnalytics, MAX_AHEAD_DAYS, MAX_SPAN_DAYS, tidy } from "./he-drive-analytics.service.js";
 import { getDrivePlan } from "./he-drive-plan.service.js";
+import { listHeldOffers } from "./he-best-offer.service.js";
 import { followupWorkerStatus } from "./qualified-followup.worker.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupMode } from "./qualified-followup.types.js";
@@ -93,5 +94,12 @@ export function registerCommandRoutes(r: Router, roles: { view: readonly string[
       const data: FollowupStatus = { mode: followupMode(), callFiles: await callFiles(), report: { running: w.running, last: w.reports[0] ?? null } };
       res.json({ success: true, data });
     } catch (err) { fail(res, err, "Could not load the follow-up status", "status"); }
+  });
+
+  // Registered before the legacy /qualified-followup/:id (which would answer "held" with 400).
+  r.get("/qualified-followup/held", ...view, async (req: Request, res: Response) => {
+    try {
+      res.json({ success: true, data: await listHeldOffers(await branchScopeOf(req as AuthenticatedRequest)) });
+    } catch (err) { fail(res, err, "Could not load the held offers", "held offers"); }
   });
 }

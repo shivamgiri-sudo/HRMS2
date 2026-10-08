@@ -7,7 +7,8 @@ import { decideStop, nextStepDue, OUTCOME_UNKNOWN_ERROR, SENDING_STALE_MIN, type
 
 const C = "COLLATE utf8mb4_unicode_ci";
 
-// Collects facts only; every decision is made by decideStop.
+// Collects facts only; every decision is made by decideStop. The collation sits on the qualified_followup side of each comparison so
+// the other table's key stays usable and tables with a different collation do not raise ER_CANT_AGGREGATE_2COLLATIONS.
 // Only rows that still have a step to run (a finished row has nothing left that a stop could prevent); keyset-paged by id.
 function factsSql(limit: number, paged: boolean): string {
   return `SELECT qf.id, qf.mobile10, qf.email,
@@ -16,12 +17,12 @@ function factsSql(limit: number, paged: boolean): string {
        EXISTS (SELECT 1 FROM he_consent hc JOIN he_lead hl2 ON hl2.id = hc.lead_id
                 WHERE hl2.mobile10 = qf.mobile10 ${C} AND hc.consent_type = 'whatsapp_contact' AND hc.revoked_at IS NOT NULL) AS consent_revoked,
        EXISTS (SELECT 1 FROM he_message hm WHERE hm.mobile10 = qf.mobile10 ${C} AND hm.direction = 'in' AND hm.created_at > qf.qualified_at) AS he_replied,
-       EXISTS (SELECT 1 FROM meta_lead_messages mm WHERE mm.lead_id = qf.meta_lead_id AND mm.direction = 'inbound' AND mm.created_at > qf.qualified_at) AS meta_replied,
+       EXISTS (SELECT 1 FROM meta_lead_messages mm WHERE mm.lead_id = qf.meta_lead_id ${C} AND mm.direction = 'inbound' AND mm.created_at > qf.qualified_at) AS meta_replied,
        ac.current_stage AS ats_stage,
        jr.id AS jr_id, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount
   FROM qualified_followup qf
-  LEFT JOIN job_requisition jr ON jr.id = qf.requisition_id
-  LEFT JOIN ats_candidate ac ON ac.id = qf.ats_candidate_id
+  LEFT JOIN job_requisition jr ON jr.id = qf.requisition_id ${C}
+  LEFT JOIN ats_candidate ac ON ac.id = qf.ats_candidate_id ${C}
  WHERE qf.stopped_reason IS NULL AND qf.mode_at_enqueue = ?
    AND ((qf.email_status IS NULL AND qf.email_due_at IS NOT NULL) OR qf.email_status = 'sending' OR qf.wa_status IS NULL OR qf.wa_status = 'sending' OR qf.call_state = 'pending'
         OR (qf.call_state = 'in_file' AND qf.call_file_batch_id IS NULL))
