@@ -87,6 +87,12 @@ describe("live tick", () => {
     expect(h.conn.execute.mock.calls.some((c) => String(c[0]).includes("RELEASE_LOCK"))).toBe(true);
     expect(h.conn.release).toHaveBeenCalledTimes(1);
   });
+  it("reads the answer-button switches once per tick and hands them to the email step", async () => {
+    h.execute.mockImplementation(async (sql: string) => (String(sql).includes("policy.email_buttons") ? [[{ param_key: "policy.email_buttons.pipeline_meta", value: 1 }]] : [[]]));
+    await tick(live, at("11:00"));
+    expect(h.execute.mock.calls.filter((c) => String(c[0]).includes("policy.email_buttons"))).toHaveLength(1);
+    expect(h.email.mock.calls[0][4]).toMatchObject({ pipelineMeta: true, legacyMeta: false });
+  });
   it("test mode uses tag test", async () => {
     const env = { ...live, QUAL_FOLLOWUP_TEST_MODE: "true", QUAL_FOLLOWUP_TEST_TO_PHONE: "9123456789", QUAL_FOLLOWUP_TEST_TO_EMAIL: "o@x.in" } as NodeJS.ProcessEnv;
     await tick(env, at("11:00"));

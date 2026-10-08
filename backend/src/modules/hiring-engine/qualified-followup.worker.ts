@@ -11,6 +11,7 @@ import { readSwitches, rowTag, type FollowupSwitches, type RowTag } from "./qual
 import { DAILY_REPORT_SLOTS, dueSlot, waDailyBudget, type PinbotQuality } from "./qualified-followup.rules.js";
 import { expireStaleClaims, runStopChecks, syncWaReceipts } from "./qualified-followup.stops.js";
 import { runEmailStep } from "./qualified-followup.email.js";
+import { EMAIL_BUTTONS_OFF, loadEmailButtonSwitches } from "./email-buttons.policy.js";
 import { pipelineWaSentToday, runWhatsappStep } from "./qualified-followup.whatsapp.js";
 import { runCallStep } from "./qualified-followup.call.js";
 import { loadCallFileConfig, runCallFileBatch } from "./qualified-followup.callfile.js";
@@ -125,7 +126,8 @@ async function runSteps(s: FollowupSwitches, tag: RowTag, now: Date, deps: TickD
   r.stops = stopped ? Object.values(stopped.stopped).reduce<number>((a, n) => a + (n ?? 0), 0) : 0;
 
   if (!s.sendsPaused) {
-    r.email = await guarded("email", () => runEmailStep(s, tag, now), emptyCounts());
+    // Answer-button switches are read once per tick (not per row), and not at all for dry_run rows (no email is sent).
+    r.email = await guarded("email", async () => runEmailStep(s, tag, now, 200, tag === "dry_run" ? EMAIL_BUTTONS_OFF : await loadEmailButtonSwitches()), emptyCounts());
     r.whatsapp = await guarded("whatsapp", async () => {
       const budget = waDailyBudget(await deps.getPinbotQuality(), s.waDailyMax) - (await pipelineWaSentToday(tag, now));
       return runWhatsappStep(s, tag, now, Math.max(0, budget));

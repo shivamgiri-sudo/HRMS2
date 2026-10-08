@@ -14,6 +14,7 @@ vi.mock("../../meta-campaign/interview-slot.service.js", () => ({ assignIntervie
 import { readSwitches } from "../qualified-followup.policy.js";
 import { nextStepDue } from "../qualified-followup.rules.js";
 import { runEmailStep } from "../qualified-followup.email.js";
+import { EMAIL_BUTTONS_OFF } from "../email-buttons.policy.js";
 
 const liveEnv = { QUAL_FOLLOWUP_MODE: "live" } as NodeJS.ProcessEnv;
 const testEnv = { QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true", QUAL_FOLLOWUP_TEST_TO_PHONE: "9876543210", QUAL_FOLLOWUP_TEST_TO_EMAIL: "qa@x.in" } as NodeJS.ProcessEnv;
@@ -248,6 +249,7 @@ describe("runEmailStep", () => {
 });
 
 describe("answer buttons on pipeline emails for Meta rows without a match (policy.email_buttons.pipeline_meta)", () => {
+  const ON = { ...EMAIL_BUTTONS_OFF, pipelineMeta: true };
   function withButtons(on: boolean) {
     let inviteToken: string | null = null;
     const impl = execute.getMockImplementation()!;
@@ -266,7 +268,7 @@ describe("answer buttons on pipeline emails for Meta rows without a match (polic
   it("live, switch on: the email carries the three answers to a fresh token and the invite is written after the send", async () => {
     world(); withButtons(true);
     vi.stubEnv("HE_PUBLIC_BASE_URL", "https://x");
-    await runEmailStep(readSwitches(liveEnv), "live", now);
+    await runEmailStep(readSwitches(liveEnv), "live", now, 200, ON);
     const html = String(send.mock.calls[0][0].html);
     const m = html.match(/https:\/\/x\/w\/([a-f0-9]{32})\?a=yes/);
     expect(m).not.toBeNull();
@@ -284,7 +286,7 @@ describe("answer buttons on pipeline emails for Meta rows without a match (polic
   it("test mode, switch on: demo token, nothing written", async () => {
     world(); withButtons(true);
     vi.stubEnv("HE_PUBLIC_BASE_URL", "https://x");
-    await runEmailStep(readSwitches(testEnv), "test", now);
+    await runEmailStep(readSwitches(testEnv), "test", now, 200, ON);
     expect(String(send.mock.calls[0][0].html)).toContain(`/w/${"0".repeat(32)}?a=yes`);
     expect(inviteInserts()).toHaveLength(0);
   });
@@ -292,6 +294,7 @@ describe("answer buttons on pipeline emails for Meta rows without a match (polic
   it("switch off: today's email (no answer links, no invite)", async () => {
     world(); withButtons(false);
     await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(calls(/he_model_param|org_settings/)).toHaveLength(0);
     expect(String(send.mock.calls[0][0].html)).not.toContain("?a=yes");
     expect(inviteInserts()).toHaveLength(0);
   });
@@ -299,7 +302,7 @@ describe("answer buttons on pipeline emails for Meta rows without a match (polic
   it("a failed send writes no invite", async () => {
     world(); withButtons(true);
     send.mockRejectedValueOnce(new Error("550 mailbox unavailable"));
-    await runEmailStep(readSwitches(liveEnv), "live", now);
+    await runEmailStep(readSwitches(liveEnv), "live", now, 200, ON);
     expect(inviteInserts()).toHaveLength(0);
   });
 });

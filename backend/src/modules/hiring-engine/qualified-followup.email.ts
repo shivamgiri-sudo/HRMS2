@@ -17,7 +17,7 @@ import { afterFailure, followupRef, nextStepDue } from "./qualified-followup.rul
 import { bestOfferSkipSql } from "./he-best-offer.js";
 import { notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
-import { loadEmailButtonSwitches, replyToFor } from "./email-buttons.policy.js";
+import { EMAIL_BUTTONS_OFF, replyToFor, type EmailButtonSwitches } from "./email-buttons.policy.js";
 import { answerUrlFor, DEMO_TOKEN } from "./he-email-parts.js";
 import { inviteLinkFor, newInviteToken, type InviteLink, type InviteLinkInput } from "./walkin-invite.service.js";
 
@@ -63,7 +63,8 @@ async function finish(row: FollowupRow, status: Outcome, error: string | null, n
     [status, error, ...(o.advanceWa ? [nextStepDue(now)] : []), row.id]);
 }
 
-export async function runEmailStep(s: FollowupSwitches, tag: RowTag, now: Date, limit = 200): Promise<StepCounts> {
+/** `buttons` is read once per tick by the worker; callers that pass nothing get today's email (and no extra query). */
+export async function runEmailStep(s: FollowupSwitches, tag: RowTag, now: Date, limit = 200, buttons: EmailButtonSwitches = EMAIL_BUTTONS_OFF): Promise<StepCounts> {
   const counts = emptyCounts();
   if (rowTag(s) !== tag) return counts;
   if (tag !== "dry_run" && s.sendsPaused) return counts;
@@ -86,7 +87,7 @@ export async function runEmailStep(s: FollowupSwitches, tag: RowTag, now: Date, 
   for (const row of list) {
     if (held?.has(row.id)) { counts.held++; continue; }
     try {
-      await processRow(s, tag, now, row, counts);
+      await processRow(s, tag, now, row, counts, buttons);
     } catch (err) {
       logger.warn({ rowId: row.id, err: (err as Error).message }, "[qualified-followup] email step failed for row");
     }
@@ -94,7 +95,7 @@ export async function runEmailStep(s: FollowupSwitches, tag: RowTag, now: Date, 
   return counts;
 }
 
-async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: FollowupRow, counts: StepCounts): Promise<void> {
+async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: FollowupRow, counts: StepCounts, buttons: EmailButtonSwitches): Promise<void> {
   if (tag === "dry_run") {
     const [res] = await db.execute<any>(
       "UPDATE qualified_followup SET email_status = 'dry_run', wa_due_at = ? WHERE id = ? AND email_status IS NULL", [nextStepDue(now), row.id]);
@@ -140,7 +141,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
     const base = env("HE_PUBLIC_BASE_URL", env("FRONTEND_URL", "https://mcnhrms.teammas.in")).replace(/\/$/, "");
     // A Meta row without a match gets the same answer buttons on an invite token (switch, default off). Test mode only reads
     // (demo token on the page); live writes the invite after a successful send with the token the email carried.
-    if (ctx.slot && !ctx.matchToken && (await loadEmailButtonSwitches()).pipelineMeta) {
+    if (ctx.slot && !ctx.matchToken && buttons.pipelineMeta) {
       const input: InviteLinkInput = { mobile10: row.mobile10, requisitionId: row.requisitionId, leadId: heLeadId ?? null, metaLeadId: row.metaLeadId, followupId: row.id,
         branchName: row.branchName, slotAt: `${ctx.slot.date} ${ctx.slot.time}`.slice(0, 19), sourcePath: "pipeline", driveType: row.sourceType, now };
       // Test mode never shows a real person's invite token to the tester: the demo page only.
