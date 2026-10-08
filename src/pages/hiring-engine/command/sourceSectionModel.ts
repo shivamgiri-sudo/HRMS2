@@ -74,7 +74,8 @@ export function zeroNotes(a: DriveAnalytics, type: SourceType, f: Filters, now: 
   const label = TYPE_LABEL[type];
   const out: ZeroNote[] = [];
   const cutoff = a?.liveFrom ?? null;
-  if (type === "meta_live" && cutoff && dayText(cutoff) && (a?.window?.to ?? f.to) < cutoff) {
+  // Nothing before the cutoff is ever Live (the person rule), so the note only explains an all-zero Live section; never next to numbers.
+  if (type === "meta_live" && cutoff && dayText(cutoff) && (a?.window?.to ?? f.to) < cutoff && STAGES.every((st) => s[st] === 0)) {
     out.push({ id: "before-cutoff", text: `Live Meta starts with form fills on ${dayText(cutoff)}. This range ends before that, so its Meta leads are under Old Meta data.` });
   }
   if (s.leads === 0) {

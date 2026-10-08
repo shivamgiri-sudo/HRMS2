@@ -132,9 +132,10 @@ export function calibrationNote(days?: number): string {
 export const NOT_ENOUGH_HISTORY = "Plan default (not enough history)";
 
 export interface StreamRowView { streamId: string; label: string; typeLabel: string; lined: number; rate: string; basis: string; /** Calibration is on but this stream has too little history: shown as "Plan default (not enough history)". */ notEnough: boolean; expected: string; recommended: number; reasoning: string; open: boolean }
+/** Rows of a plan day. typeLabel says "(by stream)": the plan types by stream, the Live / Old / Hiring Engine sections by person. */
 export function streamRows(d: PlanDay | null | undefined, calibrated = false): StreamRowView[] {
   return (d?.streams ?? []).map((s) => ({
-    streamId: s.streamId, label: s.label || TYPE_LABEL[s.sourceType] || "Stream", typeLabel: TYPE_LABEL[s.sourceType] ?? "", lined: finite(s.lined) ?? 0,
+    streamId: s.streamId, label: s.label || TYPE_LABEL[s.sourceType] || "Stream", typeLabel: TYPE_LABEL[s.sourceType] ? `${TYPE_LABEL[s.sourceType]} (by stream)` : "", lined: finite(s.lined) ?? 0,
     rate: pctText(finite(s.rate)), basis: basisLabel(s.basis), notEnough: calibrated && s.basis === "plan_default", expected: num1(s.expected),
     recommended: finite(s.recommended) ?? 0, reasoning: typeof s.reasoning === "string" && s.reasoning ? s.reasoning : "–", open: coversDay(s),
   }));
