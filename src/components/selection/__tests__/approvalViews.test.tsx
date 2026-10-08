@@ -20,14 +20,14 @@ describe("approve bar view", () => {
   it("untick list with masked mobiles, approve count, standing approval with Revoke", () => {
     const html = bar();
     expect(html).toContain('aria-label="Include 98xxxxxx10"');
-    expect(html).toContain("Approve 1 people");
+    expect(html).toContain("Approve 1 person");
     expect(html).toContain("Standing approval for Live Meta until 2026-10-12 10:00:00");
     expect(html).toContain(">Revoke<");
     expect(html).toContain("Age: not known");
   });
   it("blocked: approve disabled and the reason in words", () => {
     const html = bar({ state: { ...state, blocker: "criteria_incomplete: x" } });
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Approve 1 people/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Approve 1 person/);
     expect(html).toContain("Criteria incomplete: decide location, education, shift and age first");
   });
   it("view-only roles see counts but no write controls", () => {

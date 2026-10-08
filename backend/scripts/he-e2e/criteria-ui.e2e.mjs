@@ -263,7 +263,7 @@ try {
       const bar = page.locator("section", { has: page.getByRole("heading", { name: "Approve shortlist" }) }).first();
       const barText = (await bar.textContent().catch(() => "")) ?? "";
       ok(`matrix ${code}: approve bar explains (${barText.match(WANT[code])?.[0] ?? "?"})`, WANT[code].test(barText), barText.slice(0, 300));
-      if (["R05", "R06", "R07", "R09", "R10"].includes(code)) ok(`matrix ${code}: Approve disabled`, await bar.getByRole("button", { name: /^Approve \d+ people/ }).isDisabled().catch(() => true));
+      if (["R05", "R06", "R07", "R09", "R10"].includes(code)) ok(`matrix ${code}: Approve disabled`, await bar.getByRole("button", { name: /^Approve \d+ (person|people)/ }).isDisabled().catch(() => true));
       await shot(page, `matrix_${code}__approve`);
       if (code === "R05") {
         await page.getByRole("button", { name: "Edit criteria" }).click();

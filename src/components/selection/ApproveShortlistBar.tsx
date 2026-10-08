@@ -50,7 +50,7 @@ export function ApproveBarView(p: BarViewProps) {
       {can && (
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" className={SMALL_BTN} disabled={p.busy} onClick={p.onRun}><Play className="h-4 w-4" aria-hidden="true" />Run the shortlist</button>
-          <button type="button" className={PRIMARY} disabled={!v.canApprove || p.busy} onClick={p.onApprove}><CheckCircle2 className="h-4 w-4" aria-hidden="true" />Approve {v.approveCount} people</button>
+          <button type="button" className={PRIMARY} disabled={!v.canApprove || p.busy} onClick={p.onApprove}><CheckCircle2 className="h-4 w-4" aria-hidden="true" />Approve {v.approveCount} {v.approveCount === 1 ? "person" : "people"}</button>
           {v.why && <span className="text-xs">{v.why}</span>}
         </div>
       )}
