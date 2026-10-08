@@ -52,7 +52,7 @@ function VoucherSheet({ id, onClose }: { id: string | null; onClose: () => void 
   const v = q.data;
   return (
     <Sheet open={Boolean(id)} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+      <SheetContent className="w-full overflow-y-auto !max-w-xl sm:!max-w-xl">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2 text-base">
             <BookOpen className="h-4 w-4 text-blue-600" aria-hidden /> {v ? `${v.sourceLabel} voucher` : "Voucher"}

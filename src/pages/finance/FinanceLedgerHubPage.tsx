@@ -72,7 +72,7 @@ export default function FinanceLedgerHubPage() {
         </div>
 
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="flex-wrap">
+          <TabsList className="h-auto flex-wrap justify-start gap-1">
             {TABS.map((t) => (
               <TabsTrigger key={t.key} value={t.key} className="cursor-pointer">{t.label}</TabsTrigger>
             ))}
