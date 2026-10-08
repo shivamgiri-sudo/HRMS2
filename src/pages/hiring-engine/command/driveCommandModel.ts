@@ -250,7 +250,7 @@ const SECTION_LABEL: Record<string, string> = {
   requisitions: "requisition list", sources: "lead sources", drives: "drive numbers", outcomes: "selections and joins", stops: "follow-up stops",
   replies: "reply times", arrivals: "arrival times", previous: "previous period", insights: "suggestions", streams: "streams", groups: "drive rows",
   header: "requisition details", lined: "people lined up", rates: "show rates", pool: "remaining pool", plan: "daily plan", preview: "tonight's dry run",
-  planned: "already planned days", readiness: "readiness checks",
+  planned: "already planned days", calibration: "calibrated show rates", readiness: "readiness checks",
   "insight:contact": "contact timing", "insight:reminders": "reminders", "insight:distance": "travel distance", "insight:channel": "message delivery",
   "insight:language": "message language", "insight:slots": "slot bookings", "insight:sources": "source comparison", "insight:plan": "planning facts",
   "insight:tomorrow": "tomorrow's plan", "insight:streams": "stream pools",

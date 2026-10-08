@@ -7,7 +7,7 @@ vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => 
 
 import { calendarCells, invitesToClose, planDay, streamRate, whatIf, type PlanStreamInput } from "../command/planMath";
 import {
-  EMPTY_PLAN_TEXT, PLAN_FORBIDDEN_TEXT, PLAN_GENERIC_TEXT, PLAN_GONE_TEXT, calendarView, checklistGroups, fillLevel, hasEdits, planNowBody, planNowErrorText,
+  basisLabel, EMPTY_PLAN_TEXT, PLAN_FORBIDDEN_TEXT, PLAN_GENERIC_TEXT, PLAN_GONE_TEXT, calendarView, checklistGroups, fillLevel, hasEdits, planNowBody, planNowErrorText,
   coversDay, planNowLines, planNowSummary, planPickList, planState, recomputeDay, streamRows,
 } from "../command/planModel";
 import { PlanSectionView, WhatIfPanel, type PlanSectionViewProps } from "../command/PlanSection";
@@ -34,7 +34,7 @@ describe("planning maths: shared case table (frontend copy)", () => {
 });
 
 // ---- fixtures -----------------------------------------------------------------------------------------------------------------------------
-const rate = (streamId: string, r: number, basis: "actual" | "plan_default", invited = 0) => ({ streamId, sourceType: "meta_live" as const, invited, arrived: 0, rate: r, basis });
+const rate = (streamId: string, r: number, basis: "actual_weekday" | "actual" | "plan_default", invited = 0, weekday?: number) => ({ streamId, sourceType: "meta_live" as const, invited, arrived: 0, rate: r, basis, ...(weekday != null ? { weekday } : {}) });
 const input = (o: Partial<PlanStreamInput> & { streamId: string }): PlanStreamInput => ({
   sourceType: "meta_live", label: o.streamId, cap: 30, lined: 0, rate: rate(o.streamId, 0.4, "plan_default"), poolRemaining: null, covers: true, ...o,
 });
@@ -299,5 +299,40 @@ describe("Plan section markup", () => {
     const parts = sectionParts("plan", null, null, undefined, <p>PLAN-SECTION</p>);
     expect(parts.gated).toBeNull();
     expect(renderToStaticMarkup(<>{parts.always}</>)).toBe("<p>PLAN-SECTION</p>");
+  });
+});
+
+describe("calibrated show rates in the Plan section", () => {
+  const WED = input({ streamId: "s1", label: "Oct ads", lined: 20, rate: rate("s1", 0.4, "actual_weekday", 30, 2) });
+  const THIN = input({ streamId: "s2", sourceType: "he", label: "Pool: ATS history", lined: 10, rate: { ...rate("s2", 0.25, "plan_default"), sourceType: "he" }, poolRemaining: 3 });
+  const dayC = planDay({ date: "2026-10-14", driveId: "d1", target: 20, capacity: 60, streams: [WED, THIN] });
+  const calibrated = planOf([dayC], { showRateMode: "calibrated", checklist: { date: "2026-10-14", preview: null, items: [] } });
+
+  it("labels the three bases", () => {
+    expect(basisLabel("actual_weekday", 2)).toBe("Same weekday, 14-day actual");
+    expect(basisLabel("actual")).toBe("14-day actual");
+    expect(basisLabel("plan_default")).toBe("Plan default");
+  });
+  it("the weekday reasoning names the day", () => {
+    expect(dayC.streams.find((s) => s.streamId === "s1")!.reasoning).toContain("(Wed 14-day actual, 30 invited)");
+  });
+  it("rows say not enough history only when calibration is on", () => {
+    expect(streamRows(dayC, true).find((r) => r.streamId === "s2")).toMatchObject({ basis: "Plan default", notEnough: true });
+    expect(streamRows(dayC).find((r) => r.streamId === "s2")).toMatchObject({ basis: "Plan default", notEnough: false });
+    expect(streamRows(dayC, true).find((r) => r.streamId === "s1")).toMatchObject({ rate: "40%", basis: "Same weekday, 14-day actual", notEnough: false });
+  });
+  it("markup shows the calibration line, the basis and the honest thin-history state", () => {
+    const html = view({ plan: calibrated, checklist: null });
+    expect(html).toContain("Show rates are calibrated from the last 14 days (kept between 5% and 95%)");
+    expect(html).toContain("(Same weekday, 14-day actual)");
+    expect(html).toContain("Plan default (not enough history)");
+    expect(html).not.toMatch(NOT_NUMBER);
+  });
+  it("a fixed plan shows neither the line nor the new labels", () => {
+    const html = view({ plan: NORMAL });
+    expect(html).not.toContain("calibrated from the last 14 days");
+    expect(html).not.toContain("Same weekday");
+    expect(html).not.toContain("not enough history");
+    expect(html).toContain("(14-day actual)");
   });
 });

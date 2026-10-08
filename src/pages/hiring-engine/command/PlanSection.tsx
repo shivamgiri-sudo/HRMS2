@@ -4,14 +4,14 @@
  * and each stream's Extend menu (Task 14). PlanSectionView is presentational (static-markup tested); the default export loads data.
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Inbox, Plus, RefreshCw, RotateCcw } from "lucide-react";
+import { AlertTriangle, Gauge, Inbox, Plus, RefreshCw, RotateCcw } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { createRequestSequencer, type RequisitionOption } from "./commandData";
 import { dayLabel } from "./driveChartModel";
 import { istTodayClient, sectionLabels } from "./driveCommandModel";
 import type { DriveGroup, DrivePlan, PlanDay, StreamView } from "./driveCommandTypes";
 import {
-  EMPTY_PLAN_TEXT, PICK_LABEL, QUOTA_MAX, clampQuota, coversDay, clampShowRate, dayRows, hasEdits, planPickList, planState, recomputeDay, sliderValues, streamRows,
+  CALIBRATION_NOTE, EMPTY_PLAN_TEXT, NOT_ENOUGH_HISTORY, PICK_LABEL, QUOTA_MAX, clampQuota, coversDay, clampShowRate, dayRows, hasEdits, planPickList, planState, recomputeDay, sliderValues, streamRows,
   whatIfAnnouncement, type WhatIf,
 } from "./planModel";
 import { useDrivePlan } from "./useCommandData";
@@ -161,7 +161,7 @@ export function PlanSectionView(p: PlanSectionViewProps) {
                   {days.map((d) => <option key={d.date} value={d.date}>{dayLabel(d.date)}</option>)}
                 </select>
               </div>
-              <StreamsTable day={current} streamActions={p.streamActions} />
+              <StreamsTable day={current} streamActions={p.streamActions} calibrated={plan?.showRateMode === "calibrated"} />
               <WhatIfPanel day={current} />
               <PlanCalendar plan={plan} />
             </>
@@ -202,11 +202,14 @@ function DaysTable({ plan }: { plan: DrivePlan }) {
   );
 }
 
-function StreamsTable({ day, streamActions }: { day: PlanDay; streamActions?: (streamId: string) => ReactNode }) {
-  const rows = streamRows(day);
+function StreamsTable({ day, streamActions, calibrated }: { day: PlanDay; streamActions?: (streamId: string) => ReactNode; calibrated: boolean }) {
+  const rows = streamRows(day, calibrated);
   return (
     <section aria-labelledby="plan-rec-heading" className="space-y-2">
       <h4 id="plan-rec-heading" className={H4}>Recommended invites for {dayLabel(day.date)}</h4>
+      {calibrated && (
+        <p className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-200"><Gauge className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /><span>{CALIBRATION_NOTE}</span></p>
+      )}
       <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
         <table className="min-w-full text-sm">
           <caption className="sr-only">Per stream: people lined up, show rate and its basis, expected arrivals, recommended invites and why</caption>
@@ -218,7 +221,7 @@ function StreamsTable({ day, streamActions }: { day: PlanDay; streamActions?: (s
               <tr key={r.streamId} className="border-t border-slate-200 align-top dark:border-slate-700">
                 <th scope="row" className={`${TH} max-w-xs break-words`}>{r.label}<span className="block font-normal text-slate-700 dark:text-slate-200">{r.typeLabel}{r.open ? "" : ", not open"}</span></th>
                 <td className={`${TD} tabular-nums`}>{r.lined}</td>
-                <td className={TD}><span className="tabular-nums">{r.rate}</span> <span className="text-xs text-slate-700 dark:text-slate-200">({r.basis})</span></td>
+                <td className={TD}><span className="tabular-nums">{r.rate}</span> <span className="text-xs text-slate-700 dark:text-slate-200">{r.notEnough ? NOT_ENOUGH_HISTORY : `(${r.basis})`}</span></td>
                 <td className={`${TD} tabular-nums`}>{r.expected}</td>
                 <td className={`${TD} font-semibold tabular-nums`}>{r.recommended}</td>
                 <td className={`${TD} min-w-48 break-words text-xs`}>{r.reasoning}</td>

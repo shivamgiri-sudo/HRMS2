@@ -14,6 +14,9 @@ import { loadInsightThresholds } from "./he-insight-params.service.js";
 import { nextWorkingDay } from "./he-plan.service.js";
 import { getRequisitionReadiness } from "./he-readiness.service.js";
 import { getDailyPlan } from "./he-policy.service.js";
+import { valueAddOn } from "./he-valueadd-switches.js";
+import { calibratedCaps } from "./he-showrate-calibration.js";
+import { loadRateBook, rateForStream, type RateBook } from "./he-showrate-calibration.service.js";
 import { driveCapacity, dailyPlanNumbers, DEFAULT_DAILY_PLAN, type DailyPlan } from "./he-slots.js";
 import { planStreamsForDay, streamCaps, type StreamDayPlan } from "./he-stream-plan.service.js";
 import { readAgg } from "./he-drive-trend.service.js";
@@ -25,6 +28,8 @@ export interface ChecklistItem { kind: "will_plan" | "already_planned" | "fill_s
 export interface DrivePlan {
   requisitionId: string; code: string; branch: string; generatedAt: string; from: string;
   days: PlanDay[]; calendar: CalendarCell[]; rates: StreamRate[];
+  /** Present only with HE_SHOWRATE_CALIBRATION on and measured: the day lines and caps use the planner's calibrated rates. */
+  showRateMode?: "calibrated";
   checklist: { date: string; preview: StreamDayPlan | null; items: ChecklistItem[] };
   partial: boolean; failedSections: string[];
 }
@@ -222,11 +227,29 @@ async function build(
   const rateOf = new Map(rates.map((r) => [r.streamId, r]));
 
   const nums = dailyPlanNumbers(plan);
+  // HE_SHOWRATE_CALIBRATION: the same service the planner uses, so the grid, the caps and the preview line agree. A failed read keeps today's numbers.
+  let book: RateBook | null = null;
+  if (valueAddOn("showrate_calibration")) {
+    const heStreamOf = new Map<string, string>();
+    if (heStream) heStreamOf.set(requisitionId, heStream.id);
+    book = await loadRateBook({ requisitionIds: [requisitionId], today, trailingDays: thresholds["insight.plan_trailing_days"], heStreamOf });
+    if (!book && !failed.includes("calibration")) failed.push("calibration");
+  }
+  const calibrated = book;
+  const minSample = thresholds["insight.plan_min_sample"];
+  const lineRate = (s: StreamRow, date: string): StreamRate => {
+    if (!calibrated) return rateOf.get(s.id) as StreamRate;
+    const r = rateForStream(calibrated, s.id, date, planRate, minSample);
+    return { streamId: s.id, sourceType: s.sourceType, invited: r.invited, arrived: r.arrived, rate: r.rate, basis: r.basis, ...(r.weekday != null ? { weekday: r.weekday } : {}) };
+  };
+  const capsFor = (covering: StreamRow[], date: string): Map<string, number> => calibrated
+    ? calibratedCaps(covering, plan, (id) => rateForStream(calibrated, id, date, planRate, minSample).rate)
+    : streamCaps(covering, nums.invites);
   const poolLeft = new Map(pools); // successive days draw on the same audience
   const planDays: PlanDay[] = dates.map((date) => {
     const drive = driveBy.get(date) ?? null;
     const covering = open.filter((s) => coversDay(toWindow(s), date));
-    const caps = streamCaps(covering, nums.invites);
+    const caps = capsFor(covering, date);
     // people lined up without a stream while the requisition has no Hiring Engine stream still hold seats
     const orphanSeats = drive && !heStream ? (linedBy.get(`${drive.id}|`) ?? 0) : 0;
     const inputs: PlanStreamInput[] = streams.map((s) => {
@@ -234,7 +257,7 @@ async function build(
       const credited = drive ? (linedBy.get(`${drive.id}|${s.id}`) ?? 0) : 0;
       const uncredited = drive && s === heStream ? (linedBy.get(`${drive.id}|`) ?? 0) : 0; // people no stream touched count for the Hiring Engine stream
       return { streamId: s.id, sourceType: s.sourceType, label: labelOf(s), cap: covers ? (caps.get(s.id) ?? 0) : 0, lined: credited + uncredited,
-        rate: rateOf.get(s.id) as StreamRate, poolRemaining: poolLeft.get(s.id) ?? null, covers };
+        rate: lineRate(s, date), poolRemaining: poolLeft.get(s.id) ?? null, covers };
     });
     const day = planDay({
       date, driveId: drive?.id ?? null, target: drive && drive.target > 0 ? drive.target : nums.targetShows,
@@ -245,17 +268,17 @@ async function build(
     return day;
   });
 
-  const checklist = await buildChecklist({ requisitionId, head: o.head, streams, open, pools, nums, checkDate, thresholds, failed });
+  const checklist = await buildChecklist({ requisitionId, head: o.head, streams, open, pools, nums, checkDate, thresholds, failed, capsFor });
   const failedSections = [...new Set(failed)];
   return {
     requisitionId, code: String(o.head?.requisition_code ?? requisitionId), branch: String(o.head?.branch_name ?? ""), generatedAt: now.toISOString(), from,
-    days: planDays, calendar: calendarCells(planDays), rates, checklist, partial: failedSections.length > 0, failedSections,
+    days: planDays, calendar: calendarCells(planDays), rates, ...(calibrated ? { showRateMode: "calibrated" as const } : {}), checklist, partial: failedSections.length > 0, failedSections,
   };
 }
 
 async function buildChecklist(o: {
   requisitionId: string; head: RowDataPacket | null; streams: StreamRow[]; open: StreamRow[]; pools: Map<string, number | null>;
-  nums: ReturnType<typeof dailyPlanNumbers>; checkDate: string; thresholds: InsightThresholds; failed: string[];
+  nums: ReturnType<typeof dailyPlanNumbers>; checkDate: string; thresholds: InsightThresholds; failed: string[]; capsFor: (covering: StreamRow[], date: string) => Map<string, number>;
 }): Promise<DrivePlan["checklist"]> {
   const { requisitionId, checkDate, failed } = o;
   const items: ChecklistItem[] = [];
@@ -288,7 +311,7 @@ async function buildChecklist(o: {
 
   for (const s of o.open) if (windowEnd(toWindow(s)) === checkDate) items.push({ kind: "stream_ends_tomorrow", text: `${labelOf(s)}: this stream's last planned day is ${checkDate}`, streamId: s.id });
 
-  const caps = streamCaps(covering, o.nums.invites);
+  const caps = o.capsFor(covering, checkDate);
   for (const s of covering) {
     const pool = o.pools.get(s.id), cap = caps.get(s.id) ?? 0;
     if (pool != null && pool < cap) items.push({ kind: "pool_below_quota", text: `${labelOf(s)}: ${pool} people left in the pool for a daily quota of ${cap}`, streamId: s.id });

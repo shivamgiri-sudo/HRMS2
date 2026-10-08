@@ -5,7 +5,7 @@
  */
 import { dayLabel } from "./driveChartModel";
 import { TYPE_LABEL, pctText } from "./driveCommandModel";
-import type { ChecklistItem, DriveGroup, DrivePlan, PlanDay, PlanStreamLine, StreamDayPlan, StreamLine } from "./driveCommandTypes";
+import type { ChecklistItem, DriveGroup, DrivePlan, PlanDay, PlanStreamLine, StreamDayPlan, StreamLine, StreamRate } from "./driveCommandTypes";
 import { planDay, type PlanDayInput } from "./planMath";
 
 // ---- what-if -------------------------------------------------------------------------------------------------------------------------------
@@ -120,11 +120,18 @@ export function dayRows(plan: Pick<DrivePlan, "days">): DayRow[] {
   }));
 }
 
-export interface StreamRowView { streamId: string; label: string; typeLabel: string; lined: number; rate: string; basis: string; expected: string; recommended: number; reasoning: string; open: boolean }
-export function streamRows(d: PlanDay | null | undefined): StreamRowView[] {
+/** Basis wording of a show rate; the weekday is optional because the label never names it (the reasoning column does). */
+export function basisLabel(b: StreamRate["basis"], _weekday?: number): string {
+  return b === "actual_weekday" ? "Same weekday, 14-day actual" : b === "actual" ? "14-day actual" : "Plan default";
+}
+export const CALIBRATION_NOTE = "Show rates are calibrated from the last 14 days (kept between 5% and 95%)";
+export const NOT_ENOUGH_HISTORY = "Plan default (not enough history)";
+
+export interface StreamRowView { streamId: string; label: string; typeLabel: string; lined: number; rate: string; basis: string; /** Calibration is on but this stream has too little history: shown as "Plan default (not enough history)". */ notEnough: boolean; expected: string; recommended: number; reasoning: string; open: boolean }
+export function streamRows(d: PlanDay | null | undefined, calibrated = false): StreamRowView[] {
   return (d?.streams ?? []).map((s) => ({
     streamId: s.streamId, label: s.label || TYPE_LABEL[s.sourceType] || "Stream", typeLabel: TYPE_LABEL[s.sourceType] ?? "", lined: finite(s.lined) ?? 0,
-    rate: pctText(finite(s.rate)), basis: s.basis === "actual" ? "14-day actual" : "Plan default", expected: num1(s.expected),
+    rate: pctText(finite(s.rate)), basis: basisLabel(s.basis), notEnough: calibrated && s.basis === "plan_default", expected: num1(s.expected),
     recommended: finite(s.recommended) ?? 0, reasoning: typeof s.reasoning === "string" && s.reasoning ? s.reasoning : "–", open: coversDay(s),
   }));
 }

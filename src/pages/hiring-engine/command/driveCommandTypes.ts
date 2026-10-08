@@ -116,7 +116,7 @@ export interface DriveAnalytics {
 }
 
 // backend/src/modules/hiring-engine/he-drive-plan.ts
-export interface StreamRate { streamId: string; sourceType: SourceType; invited: number; arrived: number; rate: number; basis: "actual" | "plan_default" }
+export interface StreamRate { streamId: string; sourceType: SourceType; invited: number; arrived: number; rate: number; basis: "actual_weekday" | "actual" | "plan_default"; weekday?: number }
 export interface PlanStreamLine { streamId: string; sourceType: SourceType; label: string; cap: number; lined: number; expected: number; rate: number; basis: StreamRate["basis"]; recommended: number; reasoning: string; covers: boolean }
 export interface PlanDay { date: string; driveId: string | null; target: number; capacity: number; seatsUsed: number; expected: number; gap: number; streams: PlanStreamLine[] }
 export interface CalendarCell { date: string; streamId: string; planned: number; cap: number; capacity: number; fill: number }
@@ -133,6 +133,8 @@ export interface ChecklistItem { kind: "will_plan" | "already_planned" | "fill_s
 export interface DrivePlan {
   requisitionId: string; code: string; branch: string; generatedAt: string; from: string;
   days: PlanDay[]; calendar: CalendarCell[]; rates: StreamRate[];
+  /** Present only when the server calibrated the show rates (HE_SHOWRATE_CALIBRATION on). */
+  showRateMode?: "calibrated";
   checklist: { date: string; preview: StreamDayPlan | null; items: ChecklistItem[] };
   partial: boolean; failedSections: string[];
 }

@@ -22,6 +22,7 @@ export function invitesToClose(targetShows: number, expectedShows: number, pNewI
 const count = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0; };
 const whole = (v: unknown): number => Math.floor(count(v));
 const rateOf = (v: unknown, fallback = 0): number => { const n = Number(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : fallback; };
+const WEEKDAY = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const round1 = (v: number): number => Math.round(v * 10) / 10;
 /** "13", "8.2": one decimal, no trailing ".0". */
 const text1 = (v: number): string => String(round1(v));
@@ -53,7 +54,8 @@ export function planDay(o: PlanDayInput): PlanDay {
     if (!s.covers) return { ...base, recommended: 0, reasoning: "Not open on this day" };
     const need = invitesToClose(remaining, 0, s.rate.rate);
     const rec = Math.min(need, s.poolRemaining ?? need, seatsLeft);
-    const basisText = s.rate.basis === "actual" ? `14-day actual, ${s.rate.invited} invited` : "plan default";
+    const basisText = s.rate.basis === "actual_weekday" ? `${WEEKDAY[s.rate.weekday ?? -1] ?? "Same weekday"} 14-day actual, ${s.rate.invited} invited`
+      : s.rate.basis === "actual" ? `14-day actual, ${s.rate.invited} invited` : "plan default";
     let reasoning = `Gap ${text1(remaining)} shows / ${Math.round(s.rate.rate * 100)}% show rate (${basisText}) = ${need} invites`;
     if (need === 0) reasoning += "; no gap";
     else if (s.poolRemaining != null && s.poolRemaining < need && s.poolRemaining <= seatsLeft) reasoning += `; pool has ${s.poolRemaining} left, so ${rec}`;
