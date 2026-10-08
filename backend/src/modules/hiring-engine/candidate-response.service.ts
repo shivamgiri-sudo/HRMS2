@@ -51,6 +51,13 @@ async function matchCtx(matchId: string, liveFrom: string): Promise<Ctx | null> 
   };
 }
 
+/** A Meta form fill's requisition, campaign and Live / Old type (the shared attribution rule). */
+async function metaFill(metaLeadId: string, liveFrom: string): Promise<{ requisitionId: string | null; campaignId: string | null; driveType: string | null } | null> {
+  const [mr] = await db.execute<RowDataPacket[]>(
+    `SELECT r.id, r.requisition_id, r.campaign_id, ${fillTypeSql("r", liveFrom)} AS drive_type FROM meta_lead_raw r WHERE r.id = ? LIMIT 1`, [metaLeadId]);
+  return mr[0] ? { requisitionId: str(mr[0].requisition_id), campaignId: str(mr[0].campaign_id), driveType: str(mr[0].drive_type) } : null;
+}
+
 async function resolveContext(i: ResponseInput): Promise<Ctx> {
   const liveFrom = await loadLiveFrom();
   const empty: Ctx = { leadId: i.leadId ?? null, metaLeadId: i.metaLeadId ?? null, matchId: null, inviteId: i.inviteId ?? null, followupId: i.followupId ?? null,
@@ -61,8 +68,11 @@ async function resolveContext(i: ResponseInput): Promise<Ctx> {
     const [w] = await db.execute<RowDataPacket[]>("SELECT * FROM walkin_invite WHERE id = ? LIMIT 1", [i.inviteId]);
     const v = w[0];
     if (v?.match_id) { const c = await matchCtx(String(v.match_id), liveFrom); if (c) return withIds(c); }
-    if (v) return withIds({ ...empty, leadId: str(v.lead_id), metaLeadId: str(v.meta_lead_id), followupId: str(v.followup_id), requisitionId: str(v.requisition_id),
-      campaignId: str(v.campaign_id), driveType: str(v.drive_type), slotAt: str(v.slot_at), branchName: str(v.branch_name) });
+    if (v) {
+      const driveType = str(v.drive_type) ?? (v.meta_lead_id ? (await metaFill(String(v.meta_lead_id), liveFrom))?.driveType ?? null : null);
+      return withIds({ ...empty, leadId: str(v.lead_id), metaLeadId: str(v.meta_lead_id), followupId: str(v.followup_id), requisitionId: str(v.requisition_id),
+        campaignId: str(v.campaign_id), driveType, slotAt: str(v.slot_at), branchName: str(v.branch_name) });
+    }
   }
   const [l] = i.leadId
     ? await db.execute<RowDataPacket[]>("SELECT id, meta_lead_id FROM he_lead WHERE id = ? LIMIT 1", [i.leadId])
@@ -74,11 +84,8 @@ async function resolveContext(i: ResponseInput): Promise<Ctx> {
     if (am[0]) { const c = await matchCtx(String(am[0].id), liveFrom); if (c) return withIds(c); }
   }
   const metaLeadId = i.metaLeadId ?? str(lead?.meta_lead_id);
-  if (metaLeadId) {
-    const [mr] = await db.execute<RowDataPacket[]>(
-      `SELECT r.id, r.requisition_id, r.campaign_id, ${fillTypeSql("r", liveFrom)} AS drive_type FROM meta_lead_raw r WHERE r.id = ? LIMIT 1`, [metaLeadId]);
-    if (mr[0]) return withIds({ ...empty, leadId: str(lead?.id), metaLeadId, requisitionId: str(mr[0].requisition_id), campaignId: str(mr[0].campaign_id), driveType: str(mr[0].drive_type) });
-  }
+  const fill = metaLeadId ? await metaFill(metaLeadId, liveFrom) : null;
+  if (fill) return withIds({ ...empty, leadId: str(lead?.id), metaLeadId, ...fill });
   return withIds({ ...empty, leadId: str(lead?.id) });
 }
 

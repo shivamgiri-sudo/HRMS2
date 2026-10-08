@@ -288,7 +288,7 @@ export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped
       }
       // notifyQualifiedLead reports refusals/skips in its outcome instead of throwing, so count
       // by what actually landed. Counting every non-throw as "sent" hid leads that never got a message.
-      const outcome = await notifyQualifiedLead(lead.id);
+      const outcome = await notifyQualifiedLead(lead.id, { sourcePath: 'legacy_meta_sync' });
       if (outcome.succeeded.length > 0) sent++;
       else skipped++;
       for (const s of outcome.skipped) {

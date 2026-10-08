@@ -42,6 +42,9 @@ import { requisitionClosedReason } from './lead-screener.service.js';
 import { followupEnrolled, personOptedOut } from '../hiring-engine/qualified-followup.service.js';
 import { pipelineOwnsSends } from '../hiring-engine/qualified-followup.policy.js';
 import { normaliseMobile10 } from '../hiring-engine/qualified-followup.schedule.js';
+import { buildLegacyInviteEmail, buildMapsLink, buildSalaryString, type LeadContext } from './lead-outreach-email.js';
+import { legacyButtonsOn, loadEmailButtonSwitches, replyToFor } from '../hiring-engine/email-buttons.policy.js';
+import { inviteLinkFor, newInviteToken, type InviteLink, type InviteSourcePath } from '../hiring-engine/walkin-invite.service.js';
 
 export interface OutreachOutcome {
   leadId: string;
@@ -55,41 +58,6 @@ export interface OutreachOutcome {
 // never messaged can only be reached with an approved template, so no free-text fallback is attempted.
 const pinbotInvite = new PinbotWhatsAppProvider();
 
-interface LeadContext {
-  id: string;
-  name: string;
-  phone: string | null;
-  email: string | null;
-  designation: string | null;
-  branch: string | null;
-  requisitionCode: string | null;
-  bmiUrl: string | null;
-  // Branch details loaded from branch_master
-  branchAddress: string | null;
-  branchCity: string | null;
-  branchLat: number | null;
-  branchLng: number | null;
-  salaryMin: number | null;
-  salaryMax: number | null;
-}
-
-function buildMapsLink(ctx: LeadContext): string {
-  if (ctx.branchLat && ctx.branchLng) {
-    return `https://maps.google.com/?q=${ctx.branchLat},${ctx.branchLng}`;
-  }
-  if (ctx.branchAddress) {
-    return `https://maps.google.com/?q=${encodeURIComponent(ctx.branchAddress)}`;
-  }
-  return '';
-}
-
-function buildSalaryString(ctx: LeadContext): string {
-  if (ctx.salaryMin && ctx.salaryMax) {
-    return `₹${ctx.salaryMin.toLocaleString('en-IN')} – ₹${ctx.salaryMax.toLocaleString('en-IN')} per month`;
-  }
-  if (ctx.salaryMin) return `₹${ctx.salaryMin.toLocaleString('en-IN')} per month`;
-  return '';
-}
 
 function buildWhatsAppBody(ctx: LeadContext, slot?: InterviewSlot): string {
   const role = ctx.designation ?? 'a position';
@@ -133,62 +101,12 @@ function buildWhatsAppBody(ctx: LeadContext, slot?: InterviewSlot): string {
   return body;
 }
 
-function buildEmailHtml(ctx: LeadContext, slot?: InterviewSlot): string {
-  const esc = (v: string | null) =>
-    (v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const role = esc(ctx.designation) || 'a position';
-  const firstName = esc(ctx.name.split(' ')[0]);
-  const mapsLink = buildMapsLink(ctx);
-  const salary = buildSalaryString(ctx);
-  const address = ctx.branchAddress ? ctx.branchAddress.replace(/\n/g, '<br>') : null;
-
-  return `<!DOCTYPE html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.6;max-width:600px;margin:0 auto">
-<div style="background:#1e40af;padding:20px 24px;border-radius:8px 8px 0 0">
-  <h1 style="color:#fff;margin:0;font-size:20px">🎉 Congratulations ${firstName}! Shortlisted for ${role} at Mas Callnet</h1>
-</div>
-<div style="padding:24px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px">
-  <p>Dear ${firstName},</p>
-  <p><strong>Congratulations! 🎉</strong></p>
-  <p>Your profile has been shortlisted for the <strong>${role}</strong> position at <strong>Mas Callnet India Pvt. Ltd.</strong></p>
-
-  <p>To proceed with the recruitment process, please complete your assessment and confirm your interview slot through the link below.</p>
-
-${ctx.bmiUrl ? `  <p style="margin:20px 0">
-    <a href="${esc(ctx.bmiUrl)}" style="background:#1e40af;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;display:inline-block;font-weight:bold">👉 Complete Assessment &amp; Confirm Interview</a>
-  </p>
-  <p style="color:#666;font-size:13px">Please note: completing the assessment is an important step in the selection process.</p>` : ''}
-
-  <table style="width:100%;margin:20px 0;border-collapse:collapse">
-${slot ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px;width:130px"><strong>📅 Interview Date</strong></td><td style="padding:8px 12px"><strong>${esc(slot.dateLabel)}</strong></td></tr>
-    <tr><td style="padding:8px 12px"><strong>🕒 Interview Time</strong></td><td style="padding:8px 12px"><strong>${esc(slot.timeLabel)}</strong></td></tr>` : ''}
-${ctx.branchCity || ctx.branch ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px"><strong>📍 Location</strong></td><td style="padding:8px 12px">${esc(ctx.branchCity ?? ctx.branch)}</td></tr>` : ''}
-${address ? `    <tr><td style="padding:8px 12px"><strong>🏢 Full Address</strong></td><td style="padding:8px 12px">${address}</td></tr>` : ''}
-${mapsLink ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px"><strong>🗺️ Google Maps</strong></td><td style="padding:8px 12px"><a href="${mapsLink}" style="color:#1e40af">View on Google Maps</a></td></tr>` : ''}
-    <tr><td style="padding:8px 12px"><strong>💼 Role</strong></td><td style="padding:8px 12px">${role}</td></tr>
-${salary ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px"><strong>💰 Salary</strong></td><td style="padding:8px 12px">${esc(salary)}</td></tr>` : ''}
-  </table>
-
-  <p>We recommend completing the process at the earliest to avoid missing your opportunity.</p>
-  <p>We look forward to speaking with you!</p>
-
-  <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;color:#888;font-size:12px">
-    <strong style="color:#333">Warm regards,</strong><br>
-    Mas Callnet HR Team<br>
-    Mas Callnet India Pvt. Ltd.<br>
-    <a href="https://www.mascallnet.ai" style="color:#1e40af">www.mascallnet.ai</a>
-  </div>
-
-  <p style="font-size:11px;color:#bbb;margin-top:16px">Reference: ${esc(ctx.requisitionCode ?? ctx.id)}</p>
-</div>
-</body></html>`;
-}
-
 async function loadLeadContext(
   leadId: string
 ): Promise<{ ctx: LeadContext; qualified: boolean; alreadySent: boolean; closedReason: string | null; locationText: string; branchState: string | null } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ml.id, ml.parsed_name, ml.parsed_phone, ml.parsed_email,
-            ml.screening_result, ml.notification_sent_at,
+            ml.screening_result, ml.notification_sent_at, ml.requisition_id, ml.campaign_id,
             jr.designation_name, jr.branch_name, jr.requisition_code, jr.bmi_assessment_url,
             jr.salary_min, jr.salary_max,
             jr.approval_status, jr.active_status, jr.closed_at,
@@ -221,6 +139,8 @@ async function loadLeadContext(
       branchLng: row.branch_lng !== null ? Number(row.branch_lng) : null,
       salaryMin: row.salary_min !== null ? Number(row.salary_min) : null,
       salaryMax: row.salary_max !== null ? Number(row.salary_max) : null,
+      requisitionId: (row.requisition_id as string | null) ?? null,
+      campaignId: (row.campaign_id as string | null) ?? null,
     },
     qualified: row.screening_result === 'qualified',
     locationText: [row.parsed_location, row.current_address, row.permanent_address].filter(Boolean).join(' '),
@@ -279,7 +199,7 @@ export async function buildNotifyPreview(leadId: string): Promise<{
 
 export async function notifyQualifiedLead(
   leadId: string,
-  options: { force?: boolean; skipVoice?: boolean } = {}
+  options: { force?: boolean; skipVoice?: boolean; sourcePath?: InviteSourcePath } = {}
 ): Promise<OutreachOutcome> {
   const outcome: OutreachOutcome = { leadId, attempted: [], succeeded: [], skipped: [], failed: [] };
 
@@ -410,13 +330,35 @@ export async function notifyQualifiedLead(
     outcome.skipped.push({ channel: 'email', reason: 'Email provider is not configured' });
   } else {
     outcome.attempted.push('email');
+    // Answer buttons (switch per path, default off): the token is chosen before the send and the invite row is written only after a
+    // successful send. A person who already has an he_match answers on that match's token (no invite row).
+    const inviteInput = slot && mobile10 && ctx.requisitionId
+      ? { mobile10, requisitionId: ctx.requisitionId, metaLeadId: ctx.id, campaignId: ctx.campaignId ?? null, branchName: ctx.branch,
+          slotAt: `${slot.date} ${slot.time}`.slice(0, 19), sourcePath: options.sourcePath ?? 'legacy_meta' as InviteSourcePath, now: new Date() }
+      : null;
+    let link: InviteLink | null = null;
+    const token = newInviteToken();
+    if (inviteInput && legacyButtonsOn(await loadEmailButtonSwitches(), { campaignId: ctx.campaignId ?? null, metaLeadId: ctx.id })) {
+      link = await inviteLinkFor(inviteInput, { simulate: true, token }).catch((e: unknown) => {
+        console.warn('[meta] answer link failed, sending without buttons', e instanceof Error ? e.message : e);
+        return null;
+      });
+    }
     try {
+      const mail = buildLegacyInviteEmail(ctx, slot, link, { stopLink: true });
+      const replyTo = replyToFor(link?.token ?? null);
       await emailService.send({
         to: ctx.email,
-        subject: `Congratulations ${ctx.name.split(' ')[0]}! Shortlisted for ${ctx.designation ?? 'a position'} at Mas Callnet`,
-        html: buildEmailHtml(ctx, slot),
+        subject: mail.subject,
+        html: mail.html,
+        ...(mail.text ? { text: mail.text } : {}),
+        ...(replyTo ? { replyTo } : {}),
       });
       outcome.succeeded.push('email');
+      if (link?.kind === 'invite' && inviteInput) {
+        await inviteLinkFor(inviteInput, { token: link.token }).catch((e: unknown) =>
+          console.warn('[meta] invite record failed after send', e instanceof Error ? e.message : e));
+      }
     } catch (err) {
       outcome.failed.push({ channel: 'email', error: err instanceof Error ? err.message : String(err) });
     }

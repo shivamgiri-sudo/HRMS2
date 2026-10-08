@@ -110,6 +110,13 @@ describe("recordResponse", () => {
     expect(h.rows[0]).toMatchObject({ requisition_id: "R7", campaign_id: "C7", drive_type: "meta_old", match_id: null });
   });
 
+  it("an invite sent without a drive type takes it from its Meta form fill", async () => {
+    h.invites.set("I2", { id: "I2", requisition_id: "R7", campaign_id: null, drive_type: null, branch_name: "AHMEDABAD", slot_at: null, meta_lead_id: "ML7", lead_id: null, match_id: null, followup_id: null });
+    h.metaRow = { id: "ML7", requisition_id: "R7", campaign_id: "C7", drive_type: "meta_old" };
+    await recordResponse(base({ matchId: null, inviteId: "I2", answer: "decline", sourceRef: "t-10" }));
+    expect(h.rows[0]).toMatchObject({ requisition_id: "R7", drive_type: "meta_old" });
+  });
+
   it("context from activeMatch when an inbound row has no requisition", async () => {
     h.lead = { id: "L1", meta_lead_id: null };
     h.activeMatchId = "M1";
