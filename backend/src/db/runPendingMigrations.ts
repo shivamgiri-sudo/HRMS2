@@ -1328,6 +1328,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2137_qualified_followup_call_batch_slot.sql", // Registered 2026-10-08. qualified_followup_call_batch: mode_tag, slot_key, slot_claim (uq_qfcb_slot, one batch per tag and IST slot), summary JSON; qualified_followup.idx_qfu_mobile_batch. information_schema-guarded, re-runnable.
   "migrations/2140_walkin_invite.sql", // Registered 2026-10-08. walkin_invite (answer tokens for people invited without an he_match, one per mobile10+requisition); he_match.confirmed_at/confirmed_via/confirmed_response_id + idx_he_match_confirmed. CREATE TABLE IF NOT EXISTS plus information_schema-guarded ALTERs, re-runnable.
   "migrations/2141_candidate_response.sql", // Registered 2026-10-08. candidate_response (one response row per inbound event, unique source_kind+source_ref) and inbound_email_cursor. CREATE TABLE IF NOT EXISTS only, re-runnable.
+  "migrations/2145_requisition_selection_rules.sql", // Registered 2026-10-09. job_requisition.selection_rules JSON (rule mode/weight/missing policy, new rule kinds), job_requisition_criteria_version + _audit, qualified_followup.criteria_version_id/_verdict/_checked_at. CREATE TABLE IF NOT EXISTS plus information_schema-guarded ALTERs, re-runnable, no FKs.
 ];
 
 export type MigrationHealth = {
