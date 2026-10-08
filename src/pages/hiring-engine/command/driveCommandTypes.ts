@@ -168,5 +168,5 @@ export interface ActionItem {
   recruiter: { name: string | null; basis: "assigned" | "suggested" | "none" };
 }
 export interface ActionQueue {
-  enabled: boolean; generatedAt: string; items: ActionItem[]; counts: Record<ActionKind, number>; truncated: boolean; partial: boolean; failedSections: string[];
+  enabled: boolean; generatedAt: string; items: ActionItem[]; counts: Record<ActionKind, number>; truncated: boolean; partial: boolean; failedSections: string[]; partialReason?: string;
 }

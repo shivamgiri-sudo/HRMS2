@@ -76,7 +76,35 @@ export function rowView(i: ActionItem): ActionRowView {
   };
 }
 
-export const actionTitle = (n: number): string => `Act now (${n})`;
+export const actionTitle = (n: number, truncated = false): string => (truncated ? `Act now (${n}, showing first 100)` : `Act now (${n})`);
+export const REFRESH_FAILED = "Could not refresh; showing the last result.";
+
+/** Total people across all reasons; the list itself is capped, the counts are not. Falls back to the list length without counts. */
+export function queueTotal(q: Pick<ActionQueue, "items" | "counts">): number {
+  if (!q.counts) return q.items.length;
+  return KIND_ORDER.reduce((n, k) => n + (Number(q.counts[k]) || 0), 0);
+}
+
+// What the server last said about the switch, kept for the session so a switched-off panel does not flash a skeleton on every visit.
+const MEMORY_KEY = "he-action-queue-enabled";
+let remembered: boolean | null = null;
+export function rememberQueueEnabled(enabled: boolean): void {
+  remembered = enabled;
+  try { sessionStorage.setItem(MEMORY_KEY, enabled ? "1" : "0"); } catch { /* storage may be blocked */ }
+}
+/** True only when an earlier response in this session was enabled; unknown and off both mean render nothing until the response arrives. */
+export function queueKnownOn(): boolean {
+  if (remembered !== null) return remembered;
+  try {
+    const v = sessionStorage.getItem(MEMORY_KEY);
+    if (v === "1" || v === "0") remembered = v === "1";
+  } catch { /* storage may be blocked */ }
+  return remembered === true;
+}
+export function resetQueueMemory(): void {
+  remembered = null;
+  try { sessionStorage.removeItem(MEMORY_KEY); } catch { /* storage may be blocked */ }
+}
 export const chipLabel = (n: number): string => `${n} ${n === 1 ? "person" : "people"}`;
 
 /** The queue when it is usable: null when not loaded or switched off (the panel renders nothing). */

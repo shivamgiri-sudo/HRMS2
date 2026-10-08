@@ -77,6 +77,18 @@ describe("contactHref and parseRef", () => {
     expect(contactHref("whatsapp", "9876543210")).toBe("https://wa.me/919876543210");
     expect(contactHref("whatsapp", "5876543210")).toBeNull();
   });
+  it("facts without a ten-digit mobile are not collapsed into one person", () => {
+    const facts = [
+      fact({ mobile10: "", ref: { type: "match", id: "a" } }),
+      fact({ mobile10: "", ref: { type: "match", id: "b" } }),
+      fact({ mobile10: "12345", ref: { type: "match", id: "c" } }),
+      fact({ mobile10: "9000000001", ref: { type: "match", id: "d" } }),
+      fact({ mobile10: "9000000001", kind: "wa_failed", ref: { type: "match", id: "e" } }),
+    ];
+    const { items } = rankActions(facts, NOW, () => null);
+    expect(items).toHaveLength(4);
+    expect(items.filter((i) => i.kind === "high_score_not_reached" && i.ref !== "match:d")).toHaveLength(3);
+  });
   it("parses match and followup refs only", () => {
     const id = "0f1e2d3c-aaaa-bbbb-cccc-0000000abcde";
     expect(parseRef(`match:${id}`)).toEqual({ type: "match", id });
@@ -164,6 +176,27 @@ describe("getActionQueue", () => {
     expect(JSON.stringify(r)).not.toMatch(/\d{10}/);
     for (const q of sqls()) expect(q.trimStart()).not.toMatch(/^(INSERT|UPDATE|DELETE)/i);
     expect(sqls().find((q) => q.includes("FROM employees e"))!.trimStart()).toMatch(/^SELECT/);
+  });
+  it("selects the requisition's branch for display and the recruiter lookup", async () => {
+    byKind.high_score_not_reached = [row({ branch_name: "Thane" })];
+    const r = (await getActionQueue({}, { all: true }, NOW_DATE))!;
+    expect(r.items[0].branch).toBe("Thane");
+    for (const q of sqls().filter((x) => kindOf(x) && !x.includes("FROM qualified_followup"))) {
+      expect(q).toMatch(/jr\.branch_name,\s*d\.drive_date/);
+      expect(q).not.toMatch(/\bd\.branch_name\b/);
+    }
+    expect(execute.mock.calls.find((c) => String(c[0]).includes("FROM employees e"))![1]).toEqual(["2026-10-14", "Thane", "Thane"]);
+  });
+  it("more than 20 branches needing a suggestion is partial with a reason and is not cached", async () => {
+    byKind.high_score_not_reached = Array.from({ length: 21 }, (_, i) => row({ ref_id: `m${i}`, mobile10: `90000000${String(10 + i)}`, branch_name: `B${i}` }));
+    const r = (await getActionQueue({}, { all: true }, NOW_DATE))!;
+    expect(r.partial).toBe(true);
+    expect(r.failedSections).toEqual(["recruiters"]);
+    expect(r.partialReason).toMatch(/first 20 of 21 branches/);
+    expect(execute.mock.calls.filter((c) => String(c[0]).includes("FROM employees e"))).toHaveLength(20);
+    const n = execute.mock.calls.length;
+    await getActionQueue({}, { all: true }, NOW_DATE);
+    expect(execute.mock.calls.length).toBeGreaterThan(n);
   });
   it("out-of-scope requisition or branch is null without reading the lists", async () => {
     expect(await getActionQueue({ branch: "Noida" }, { all: false, branchName: "Pune" }, NOW_DATE)).toBeNull();

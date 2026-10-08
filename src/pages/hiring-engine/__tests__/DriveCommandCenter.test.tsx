@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => undefined)) } }));
+vi.mock("@/hooks/useUserRole", () => ({ useHasRole: vi.fn(() => true) }));
 
 import DriveCommandCenter, { sectionParts, DriveCommandView, type DriveCommandViewProps } from "../command/DriveCommandCenter";
 import { defaultFilters } from "../command/driveCommandModel";

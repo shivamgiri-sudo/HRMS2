@@ -101,8 +101,10 @@ export function rankActions(
 ): { items: ActionItem[]; truncated: boolean } {
   const best = new Map<string, ActionFact>();
   for (const f of facts) {
-    const cur = best.get(f.mobile10);
-    if (!cur || ACTION_PRIORITY[f.kind] < ACTION_PRIORITY[cur.kind] || (f.kind === cur.kind && f.eventAt < cur.eventAt)) best.set(f.mobile10, f);
+    // A missing or malformed mobile is not an identity: key those on their own ref so unrelated people are not collapsed into one.
+    const key = /^\d{10}$/.test(f.mobile10) ? f.mobile10 : `ref:${f.ref.type}:${f.ref.id}`;
+    const cur = best.get(key);
+    if (!cur || ACTION_PRIORITY[f.kind] < ACTION_PRIORITY[cur.kind] || (f.kind === cur.kind && f.eventAt < cur.eventAt)) best.set(key, f);
   }
   const now = wall(nowIst);
   const items: ActionItem[] = [...best.values()].map((f) => {

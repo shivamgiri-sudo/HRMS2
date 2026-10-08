@@ -26,6 +26,8 @@ export interface ActionQueue {
   truncated: boolean;
   partial: boolean;
   failedSections: string[];
+  /** Plain-language reason when the result is partial for a reason other than a failed section read. */
+  partialReason?: string;
 }
 
 export const zeroCounts = (): Record<ActionKind, number> => ({ replied_not_confirmed: 0, confirmed_no_reminder: 0, no_show_recovery: 0, wa_failed: 0, high_score_not_reached: 0 });
@@ -57,7 +59,7 @@ function driveSql(select: string, joins: string, where: string, group: string, f
  WHERE ${where} AND d.status <> 'closed'${f.requisitionId ? ` AND d.requisition_id = ?` : ""}${f.branch ? ` AND jr.branch_name = ? ${COLL}` : ""}
  ${group} LIMIT ${READ_CAP}`;
 }
-const BASE = "m.id AS ref_id, m.lead_id, l.mobile10, l.full_name, d.requisition_id, jr.requisition_code, d.branch_name, d.drive_date, m.score, ac.recruiter_assigned_name AS recruiter";
+const BASE = "m.id AS ref_id, m.lead_id, l.mobile10, l.full_name, d.requisition_id, jr.requisition_code, jr.branch_name, d.drive_date, m.score, ac.recruiter_assigned_name AS recruiter";
 const filterParams = (f: Filter): string[] => [...(f.requisitionId ? [f.requisitionId] : []), ...(f.branch ? [f.branch] : [])];
 
 interface Section { name: ActionKind; run: (ctx: Ctx) => Promise<ActionFact[]> }
@@ -79,7 +81,7 @@ const SECTIONS: Section[] = [
     name: "replied_not_confirmed",
     run: async (c) => (await rows(
       driveSql(`${BASE}, MAX(h.created_at) AS event_at`, "JOIN he_message h ON h.lead_id = m.lead_id AND h.direction = 'in' AND h.created_at >= ?",
-        "d.drive_date BETWEEN ? AND ? AND m.state = 'invited'", "GROUP BY m.id, m.lead_id, l.mobile10, l.full_name, d.requisition_id, jr.requisition_code, d.branch_name, d.drive_date, m.score, ac.recruiter_assigned_name", c.f),
+        "d.drive_date BETWEEN ? AND ? AND m.state = 'invited'", "GROUP BY m.id, m.lead_id, l.mobile10, l.full_name, d.requisition_id, jr.requisition_code, jr.branch_name, d.drive_date, m.score, ac.recruiter_assigned_name", c.f),
       [c.replySince, c.today, c.ahead, ...filterParams(c.f)])).map((r) => toFact("replied_not_confirmed", "match", r, r.event_at)),
   },
   {
@@ -115,7 +117,7 @@ const SECTIONS: Section[] = [
         driveSql(`${BASE}, MAX(w.created_at) AS event_at`,
           `JOIN he_message w ON w.lead_id = m.lead_id AND w.direction = 'out' AND w.channel = 'whatsapp' AND w.delivery_status = 'failed'
            LEFT JOIN he_message nx ON nx.lead_id = w.lead_id AND nx.direction = 'out' AND nx.channel = 'whatsapp' AND nx.created_at > w.created_at`,
-          "d.drive_date BETWEEN ? AND ? AND m.state = 'invited' AND nx.id IS NULL", "GROUP BY m.id, m.lead_id, l.mobile10, l.full_name, d.requisition_id, jr.requisition_code, d.branch_name, d.drive_date, m.score, ac.recruiter_assigned_name", c.f),
+          "d.drive_date BETWEEN ? AND ? AND m.state = 'invited' AND nx.id IS NULL", "GROUP BY m.id, m.lead_id, l.mobile10, l.full_name, d.requisition_id, jr.requisition_code, jr.branch_name, d.drive_date, m.score, ac.recruiter_assigned_name", c.f),
         [c.today, c.ahead, ...filterParams(c.f)]);
       return [...a.map((r) => toFact("wa_failed", "followup", r, r.event_at)), ...b.map((r) => toFact("wa_failed", "match", r, r.event_at))];
     },
@@ -199,7 +201,13 @@ export async function getActionQueue(q: { requisitionId?: string | null; branch?
   const facts = settled.flat();
 
   const pools = new Map<string, string | null>();
-  const need = [...new Set(facts.filter((f) => !f.assignedRecruiter && f.branch).map((f) => f.branch))].slice(0, POOL_BRANCHES);
+  const wanted = [...new Set(facts.filter((f) => !f.assignedRecruiter && f.branch).map((f) => f.branch))];
+  const need = wanted.slice(0, POOL_BRANCHES);
+  let partialReason: string | undefined;
+  if (wanted.length > need.length) { // suggestions beyond the cap are missing: partial, not cached
+    fail("recruiters", { code: "POOL_BRANCH_CAP" });
+    partialReason = `Recruiter suggestions were looked up for the first ${POOL_BRANCHES} of ${wanted.length} branches; filter by branch to see the rest.`;
+  }
   await Promise.all(need.map(async (b) => {
     try { pools.set(b, pickRecruiter(await loadPool(b, today))); } catch (err) { fail("recruiters", err); pools.set(b, null); }
   }));
@@ -209,7 +217,7 @@ export async function getActionQueue(q: { requisitionId?: string | null; branch?
   for (const i of ranked.items) counts[i.kind] += 1;
   const data: ActionQueue = {
     enabled: true, generatedAt: now.toISOString(), items: ranked.items.slice(0, ACTION_LIMITS.cap), counts,
-    truncated: ranked.items.length > ACTION_LIMITS.cap, partial: failed.length > 0, failedSections: failed,
+    truncated: ranked.items.length > ACTION_LIMITS.cap, partial: failed.length > 0, failedSections: failed, ...(partialReason ? { partialReason } : {}),
   };
   if (!data.partial) {
     for (const [k, v] of cache) if (t - v.at >= CACHE_MS) cache.delete(k);

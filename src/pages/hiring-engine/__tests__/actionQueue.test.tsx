@@ -5,10 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => undefined)) } }));
 
+vi.mock("@/hooks/useUserRole", () => ({ useHasRole: vi.fn(() => true) }));
+
 import ActionQueuePanel, { ActionQueueView, type ActionViewProps } from "../command/ActionQueuePanel";
 import { sectionParts, DriveCommandView } from "../command/DriveCommandCenter";
 import {
-  ACTION_EMPTY, ACTION_NOTE, ACTION_TRUNCATED, KIND_LABEL, actionQueuePath, contactErrorText, contactPath, driveDayText, filterItems, recruiterText, safeHref,
+  ACTION_EMPTY, ACTION_NOTE, ACTION_TRUNCATED, KIND_LABEL, REFRESH_FAILED, actionQueuePath, queueKnownOn, queueTotal, rememberQueueEnabled, resetQueueMemory, contactErrorText, contactPath, driveDayText, filterItems, recruiterText, safeHref,
 } from "../command/actionQueueModel";
 import { defaultFilters } from "../command/driveCommandModel";
 import type { ActionItem, ActionKind, ActionQueue } from "../command/driveCommandTypes";
@@ -104,14 +106,74 @@ describe("ActionQueueView markup", () => {
     expect(e).toContain("Retry");
     expect(html(queue(), { contactError: "Only HR can open contact details" })).toContain("Only HR can open contact details");
   });
-  it("the stateful panel starts as the loading skeleton", () => {
+  it("the stateful panel starts as the loading skeleton once the switch is known on, and as nothing before", () => {
+    resetQueueMemory();
+    expect(renderToStaticMarkup(<ActionQueuePanel filters={defaultFilters(new Date("2026-10-14T06:00:00Z"))} />)).toBe("");
+    rememberQueueEnabled(true);
     expect(renderToStaticMarkup(<ActionQueuePanel filters={defaultFilters(new Date("2026-10-14T06:00:00Z"))} />)).toContain('aria-busy="true"');
+    resetQueueMemory();
+  });
+});
+
+describe("layout stability, totals, refresh errors, roles", () => {
+  it("remembers an off answer in-session and draws nothing while loading; remembered on keeps the skeleton", () => {
+    resetQueueMemory();
+    expect(queueKnownOn()).toBe(false);
+    rememberQueueEnabled(false);
+    expect(queueKnownOn()).toBe(false);
+    expect(renderToStaticMarkup(<ActionQueuePanel filters={defaultFilters(new Date("2026-10-14T06:00:00Z"))} />)).toBe("");
+    rememberQueueEnabled(true);
+    expect(queueKnownOn()).toBe(true);
+    expect(renderToStaticMarkup(<ActionQueuePanel filters={defaultFilters(new Date("2026-10-14T06:00:00Z"))} />)).toContain('aria-busy="true"');
+    resetQueueMemory();
+  });
+  it("view draws nothing while loading when not expected on", () => {
+    expect(html(null, { loading: true, expectOn: false })).toBe("");
+  });
+  it("title and All chip use the sum of counts; truncated says first 100", () => {
+    const q = queue({ truncated: true, counts: counts({ replied_not_confirmed: 150, wa_failed: 80 }) });
+    expect(queueTotal(q)).toBe(230);
+    const h = html(q);
+    expect(h).toContain("Act now (230, showing first 100)");
+    expect(h).toContain("All, 230 people");
+    expect(html(queue())).toContain("Act now (3)");
+  });
+  it("a refresh error keeps the list and shows a status with Retry", () => {
+    const h = html(queue(), { error: "Request failed" });
+    expect(h).toContain(REFRESH_FAILED);
+    expect(h).toContain("Asha");
+    expect(h).toContain("Retry");
+  });
+  it("the selected chip carries a check icon besides aria-pressed", () => {
+    const sel = html(queue(), { kind: "wa_failed" });
+    expect(sel.match(/lucide-check/g)).toHaveLength(1);
+    expect(html(queue()).match(/lucide-check/g)).toHaveLength(1);
+  });
+  it("roles without write see no Call or WhatsApp buttons", () => {
+    const h = html(queue(), { canContact: false });
+    expect(h).not.toContain(">Call<");
+    expect(h).not.toContain("WhatsApp Asha");
+    expect(h).toContain("Open 360 for Asha");
+  });
+  it("partial reason is shown", () => {
+    expect(html(queue({ partial: true, failedSections: ["recruiters"], partialReason: "Recruiter suggestions were looked up for the first 20 of 25 branches" }))).toContain("first 20 of 25 branches");
+  });
+  it("summary children render before the skeleton and the failed block", () => {
+    const f = defaultFilters(new Date("2026-10-14T06:00:00Z"));
+    const h = renderToStaticMarkup(
+      <DriveCommandView section="summary" filters={f} analytics={null} loading={true} error={null} onSection={noop} onFilters={noop} onRetry={noop} requisitions={[]} branches={[]}><p>ALWAYS-MARK</p></DriveCommandView>);
+    expect(h.indexOf("ALWAYS-MARK")).toBeGreaterThan(-1);
+    expect(h.indexOf("ALWAYS-MARK")).toBeLessThan(h.indexOf("Loading drive analytics"));
+    const e = renderToStaticMarkup(
+      <DriveCommandView section="summary" filters={f} analytics={null} loading={false} error="boom" onSection={noop} onFilters={noop} onRetry={noop} requisitions={[]} branches={[]}><p>ALWAYS-MARK</p></DriveCommandView>);
+    expect(e.indexOf("ALWAYS-MARK")).toBeLessThan(e.indexOf("Could not load drive analytics"));
   });
 });
 
 describe("Command Center wiring", () => {
   const f = defaultFilters(new Date("2026-10-14T06:00:00Z"));
   it("Summary keeps five tabs and draws the panel above the gated charts", () => {
+    rememberQueueEnabled(true);
     const p = sectionParts("summary", null, undefined, undefined, undefined, 0, f);
     const h = renderToStaticMarkup(
       <DriveCommandView section="summary" filters={f} analytics={null} loading={false} error={null} onSection={noop} onFilters={noop} onRetry={noop} requisitions={[]} branches={[]} gated={<p>GATED-MARK</p>}>{p.always}</DriveCommandView>);

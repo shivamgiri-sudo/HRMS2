@@ -76,6 +76,7 @@ export function DriveCommandView({ section, filters, analytics, loading, error, 
       <SectionNav current={section} onSelect={onSection} />
       <FilterBar filters={filters} requisitions={requisitions} branches={branches} onChange={onFilters} />
       <div id={PANEL_ID} role="tabpanel" tabIndex={-1} aria-labelledby={tabDomId(section)} aria-busy={loading} className="space-y-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+        {section === "summary" && children}
         {firstLoad && <CommandSkeleton />}
         {failed && !firstLoad && (
           <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-700 dark:bg-rose-950 dark:text-rose-200">
@@ -100,7 +101,6 @@ export function DriveCommandView({ section, filters, analytics, loading, error, 
             <p className="text-xs text-slate-600 dark:text-slate-300">Widen the date range or clear the requisition and branch filters.</p>
           </div>
         )}
-        {section === "summary" && children}
         {!firstLoad && !failed && !empty && gated}
         {section !== "summary" && children}
       </div>
