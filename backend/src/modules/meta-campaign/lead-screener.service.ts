@@ -137,6 +137,28 @@ const LANG_SKILL_PATTERNS: Record<string, RegExp> = {
   write: /write|writing|written|type/i,
 };
 
+const LANG_SKILLS = ['speak', 'read', 'write'] as const;
+type LangSkill = (typeof LANG_SKILLS)[number];
+
+/**
+ * Language requirements as stored can be {language, skills} objects or, on some rows, plain strings ("Hindi"). One shape for the
+ * screener and the selection engine: a plain string means the language must be spoken; an object without skills checks nothing;
+ * blanks and anything else are dropped. Never throws.
+ */
+export function normaliseLanguageRequirements(v: unknown): Array<{ language: string; skills: LangSkill[] }> {
+  if (!Array.isArray(v)) return [];
+  const out: Array<{ language: string; skills: LangSkill[] }> = [];
+  for (const l of v) {
+    if (typeof l === 'string') {
+      if (l.trim()) out.push({ language: l.trim(), skills: ['speak'] });
+    } else if (l && typeof l === 'object' && typeof (l as { language?: unknown }).language === 'string' && (l as { language: string }).language.trim()) {
+      const skills = Array.isArray((l as { skills?: unknown }).skills) ? ((l as { skills: unknown[] }).skills.filter((x): x is LangSkill => LANG_SKILLS.includes(x as LangSkill))) : [];
+      out.push({ language: (l as { language: string }).language.trim(), skills });
+    }
+  }
+  return out;
+}
+
 function findRawFieldValue(rawFields: Record<string, string>, pattern: RegExp): string | null {
   for (const [key, val] of Object.entries(rawFields)) {
     if (pattern.test(key)) return val;
@@ -289,13 +311,13 @@ export function screenLead(input: ScreeningInput, req: ScreeningRequirements): S
   }
 
   // ── 6. Language requirements ──────────────────────────────────────────────────────────────
-  for (const lr of (cfg.language_requirements ?? [])) {
+  for (const lr of normaliseLanguageRequirements(cfg.language_requirements)) {
     for (const skill of lr.skills) {
       const pattern = LANG_SKILL_PATTERNS[skill];
       if (!pattern) continue;
 
       // Look for a field whose name mentions both the language and the skill
-      const langPattern = new RegExp(lr.language, 'i');
+      const langPattern = new RegExp(lr.language.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       let answer: string | null = null;
 
       for (const [key, val] of Object.entries(input.rawFields)) {

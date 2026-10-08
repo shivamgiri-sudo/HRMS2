@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import type { MetaScreeningConfig } from "../job-requisition/job-requisition.types.js";
 import { legacyMatchRequisition, type MatchReqRow } from "../hiring-engine/he-match-requisition.js";
 import type { MatchRequisition } from "../hiring-engine/he-matcher.js";
-import { eduRank, isSoftRequirement } from "../meta-campaign/lead-screener.service.js";
+import { eduRank, isSoftRequirement, normaliseLanguageRequirements } from "../meta-campaign/lead-screener.service.js";
 import { catalogueEntry } from "./rule-catalogue.js";
 import { completeness, WEIGHTED_DECIDABLE } from "./completeness.js";
 import { requiredText, splitList, type Required } from "./compile-rules.js";
@@ -95,12 +95,8 @@ function columnValues(r: RequisitionCriteriaRow, cfg: MetaScreeningConfig, reloc
   return out;
 }
 
-/** Language requirements as stored: {language, skills} objects, or plain strings on older rows (skills unknown -> []). */
-export function normLangs(v: unknown): Array<{ language: string; skills: Array<"speak" | "read" | "write"> }> {
-  if (!Array.isArray(v)) return [];
-  return v.map((l) => (typeof l === "string" ? { language: l, skills: [] } : { language: String((l as { language?: unknown })?.language ?? ""), skills: Array.isArray((l as { skills?: unknown })?.skills) ? (l as { skills: Array<"speak" | "read" | "write"> }).skills : [] }))
-    .filter((l) => l.language.trim());
-}
+/** Language requirements in the screener's one shape (a plain string means the language must be spoken). */
+export const normLangs = normaliseLanguageRequirements;
 
 function shiftDecided(r: RequisitionCriteriaRow) {
   return Number(r.nightShiftRequired ?? 0) === 1 || Number(r.rotationalShift ?? 0) === 1 || !blank(r.shiftRequirement);

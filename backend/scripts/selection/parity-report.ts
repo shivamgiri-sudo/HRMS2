@@ -18,7 +18,7 @@ const conn = await mysql.createConnection({ host: process.env.DB_HOST, port: Num
 await conn.query("SET SESSION TRANSACTION READ ONLY");
 await conn.query("START TRANSACTION READ ONLY");
 const NOW = new Date();
-const out = { leads: 0, skipped_unparseable: 0, skipped_screener_error: 0, agree: 0, differ: 0, stored_vs_recomputed_differ: 0, differ_by_rule: {} as Record<string, number>, engine: { pass: 0, review: 0, fail: 0 } };
+const out = { leads: 0, skipped_unparseable: 0, skipped_screener_error: 0, agree: 0, differ: 0, stored_vs_recomputed_differ: 0, system_blocked: {} as Record<string, number>, differ_by_rule: {} as Record<string, number>, engine: { pass: 0, review: 0, fail: 0 } };
 const rows = new Map<string, ReturnType<typeof compileCriteria> | null>();
 const SYS = { eligibility: { ok: true, blocks: [], priority: 1 }, inOtherJourney: null, bookedFor: null, exEmployee: null, rejectedOtherProcess: false };
 
@@ -54,6 +54,8 @@ for (;;) {
     if ((l.screening_result === "qualified") !== qualified && l.screening_result !== "pending") out.stored_vs_recomputed_differ++;
     const e = evaluate(normaliseFacts({ sourceKind: "meta_old", subSource: "meta_old", mobile: p.phone ?? "0", ats: null, lead: null, profile: null,
       meta: { rawPayload: payload, parsedEducation: null, parsedLocation: null, parsedExperienceYr: null, createdAt: String(l.created_at) }, dra: null, system: SYS, contact: { lastFirstContactAt: null } }, NOW), c, NOW);
+    // system rules (e.g. no valid phone) are outside what screenLead checks: counted, not compared
+    if (e.systemBlock) { out.system_blocked[e.systemBlock] = (out.system_blocked[e.systemBlock] ?? 0) + 1; continue; }
     out.engine[e.verdict]++;
     if ((e.verdict === "fail") === !qualified) out.agree++;
     else { out.differ++; const k = e.failed[0]?.key ?? "none"; out.differ_by_rule[k] = (out.differ_by_rule[k] ?? 0) + 1; }
