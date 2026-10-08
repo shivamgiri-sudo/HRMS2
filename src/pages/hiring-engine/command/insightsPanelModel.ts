@@ -76,6 +76,8 @@ export interface InsightCard {
   suggestion: string;
   /** Estimated effect text, or null when the engine had no estimate. */
   effect: string | null;
+  /** Who does what (funnel-depth rules), or null. */
+  ownerAction: string | null;
   action: ActionTarget | null;
   actionAriaLabel: string | null;
   dismissAriaLabel: string;
@@ -102,6 +104,7 @@ export function toCard(i: DriveInsight): InsightCard {
     evidence: (Array.isArray(i.evidence) ? i.evidence : []).filter((e) => e && typeof e === "object").map((e) => ({ label: text(e.label, "Value"), value: text(e.value, "–") })),
     suggestion: text(i.suggestion, ""),
     effect: i.effect && typeof i.effect === "object" ? (typeof i.effect.text === "string" && i.effect.text.trim() !== "" ? i.effect.text.trim() : null) : null,
+    ownerAction: typeof i.ownerAction === "string" && i.ownerAction.trim() !== "" ? i.ownerAction.trim() : null,
     action,
     actionAriaLabel: action ? `${action.label}: ${title}` : null,
     dismissAriaLabel: `Dismiss: ${title}`,

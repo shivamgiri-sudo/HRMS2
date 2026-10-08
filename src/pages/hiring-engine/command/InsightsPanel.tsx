@@ -2,7 +2,7 @@
  * Ranked suggestions with evidence, estimated effect and one action each. Presentational: dismissal lives in the parent (memory only),
  * the action handler receives the pure target. Severity is icon + word; the drive type is its marker shape + name.
  */
-import { AlertOctagon, AlertTriangle, CheckCircle2, Info, RotateCcw, X, type LucideIcon } from "lucide-react";
+import { AlertOctagon, AlertTriangle, CheckCircle2, Info, RotateCcw, UserCheck, X, type LucideIcon } from "lucide-react";
 import { useIsDark } from "./chartTheme";
 import { ShapeGlyph } from "./charts/TypePatterns";
 import type { ActionTarget, InsightCard } from "./insightsPanelModel";
@@ -50,6 +50,11 @@ function Card({ card, index, dark, onAction, onDismiss }: { card: InsightCard; i
           </dl>
         )}
         {card.suggestion && <p className="break-words text-sm text-slate-800 dark:text-slate-100">{card.suggestion}</p>}
+        {card.ownerAction && (
+          <p className="flex items-start gap-1.5 break-words text-sm text-slate-800 dark:text-slate-100" data-owner-action>
+            <UserCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /><span><span className="font-semibold">Owner action: </span>{card.ownerAction}</span>
+          </p>
+        )}
         {card.effect && <p className="break-words text-sm font-bold text-slate-900 dark:text-slate-100">Estimated effect: {card.effect}</p>}
         <div className="flex flex-wrap gap-2 pt-1">
           {card.action && (
@@ -73,9 +78,11 @@ export interface InsightsPanelProps {
   onRestore: () => void;
   onAction: (t: ActionTarget) => void;
   onRetry?: () => void;
+  /** Heading text; "Insights" by default (a drive section names its drive). */
+  title?: string;
 }
 
-export default function InsightsPanel({ analytics, dismissed, onDismiss, onRestore, onAction, onRetry }: InsightsPanelProps) {
+export default function InsightsPanel({ analytics, dismissed, onDismiss, onRestore, onAction, onRetry, title = "Insights" }: InsightsPanelProps) {
   const dark = useIsDark();
   const v = panelView(analytics, dismissed);
   const dismissAndKeepFocus = (id: string) => {
@@ -86,7 +93,7 @@ export default function InsightsPanel({ analytics, dismissed, onDismiss, onResto
     <section aria-labelledby={INSIGHTS_HEADING_ID} className="space-y-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700" style={{ minHeight: 120 }}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 id={INSIGHTS_HEADING_ID} tabIndex={-1} className="text-base font-bold text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-100">Insights</h3>
+          <h3 id={INSIGHTS_HEADING_ID} tabIndex={-1} className="text-base font-bold text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-100">{title}</h3>
           <p className="text-xs text-slate-700 dark:text-slate-200" data-testid="insights-counts">{v.heading}: {v.countsText}</p>
         </div>
         {v.dismissedCount > 0 && (

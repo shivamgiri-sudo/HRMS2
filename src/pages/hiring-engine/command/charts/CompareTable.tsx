@@ -6,23 +6,13 @@ import { COMPARE_COLUMNS, sortCompareRows, toCsv } from "../driveCommandModel";
 import { compareColumnsFor, costNoteFor } from "./costView";
 import { useIsDark } from "../chartTheme";
 import { BTN, Note } from "./ChartFrame";
+import { download } from "./download";
 import { ShapeGlyph } from "./TypePatterns";
 import { CREDIT_NOTE, EMPTY_TEXT, UNTRACKED_NOTE, compareCellText, compareCsvName, compareCsvRows, compareView, csvColumnsFor } from "./summaryView";
 
 type Dir = "asc" | "desc";
 const COMPARE_BASE = COMPARE_COLUMNS.length;
 const SORT_BTN = "inline-flex min-h-11 w-full cursor-pointer items-center justify-end gap-1 rounded px-1 font-semibold transition-colors duration-150 hover:bg-slate-100 motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-slate-800 sm:min-h-8";
-
-function download(name: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
 
 export default function CompareTable({ analytics }: { analytics: DriveAnalytics }) {
   const dark = useIsDark();
