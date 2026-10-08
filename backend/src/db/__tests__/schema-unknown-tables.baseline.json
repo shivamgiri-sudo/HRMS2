@@ -241,5 +241,8 @@
   ],
   "modules/hiring-engine/walkin-invite.service.ts": [
     "walkin_invite"
+  ],
+  "modules/hiring-engine/walkin-booking.service.ts": [
+    "he_drive"
   ]
 }
