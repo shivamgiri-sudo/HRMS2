@@ -28,6 +28,7 @@ import { StreamDialog } from "./RowStreamActions";
 import type { SourceType } from "./driveCommandTypes";
 import PlanSection from "./PlanSection";
 import FollowupPanel from "./FollowupPanel";
+import ActionQueuePanel from "./ActionQueuePanel";
 
 const DrivesTab = lazy(() => import("../DrivesTab"));
 
@@ -99,8 +100,9 @@ export function DriveCommandView({ section, filters, analytics, loading, error, 
             <p className="text-xs text-slate-600 dark:text-slate-300">Widen the date range or clear the requisition and branch filters.</p>
           </div>
         )}
+        {section === "summary" && children}
         {!firstLoad && !failed && !empty && gated}
-        {children}
+        {section !== "summary" && children}
       </div>
     </div>
   );
@@ -126,9 +128,13 @@ function SummaryCharts({ analytics, insights }: { analytics: DriveAnalytics; ins
 }
 
 /** Analytics-dependent panels (gated) and panels that must not wait for analytics (children). */
-export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions, plan?: ReactNode, followupOpen = 0): { gated: ReactNode; always: ReactNode } {
+export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions, plan?: ReactNode, followupOpen = 0, filters?: Filters): { gated: ReactNode; always: ReactNode } {
   if (section === "summary") {
-    return { gated: <>{analytics && <SummaryCharts analytics={analytics} insights={insights} />}<FollowupPanel requisitionId={actions?.requisitionId ?? null} qualifiedTracked={analytics?.qualifiedTracked ?? null} openSignal={followupOpen} /></>, always: null };
+    // The action queue does not wait for analytics; DriveCommandView draws the Summary's always slot above the gated charts.
+    return {
+      gated: <>{analytics && <SummaryCharts analytics={analytics} insights={insights} />}<FollowupPanel requisitionId={actions?.requisitionId ?? null} qualifiedTracked={analytics?.qualifiedTracked ?? null} openSignal={followupOpen} /></>,
+      always: filters ? <ActionQueuePanel filters={filters} /> : null,
+    };
   }
   if (section === "plan") return { gated: null, always: plan ?? null }; // the Plan section loads its own data
   if (section === "he") {
@@ -199,7 +205,7 @@ export default function DriveCommandCenter() {
     <PlanSection requisitionId={filters.requisitionId} groups={data?.groups ?? null} groupsLoading={loading} requisitions={requisitions}
       onPick={(id) => go("plan", { ...filters, requisitionId: id })} onChanged={reload} autoPreview={planIntent} />
   ) : null;
-  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions, plan, followupOpen);
+  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions, plan, followupOpen, filters);
   return (
     <div className="space-y-3">
       <PipelineHealthStrip />

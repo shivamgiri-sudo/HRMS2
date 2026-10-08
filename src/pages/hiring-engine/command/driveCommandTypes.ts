@@ -159,3 +159,14 @@ export interface FollowupStatus {
   callFiles: Array<{ id: string; createdAt: string; rows: number; status: string; error: string | null }>;
   report: { running: boolean; last: { slot: string; ok: boolean; tries: number } | null };
 }
+
+// backend/src/modules/hiring-engine/he-action-queue.ts and he-action-queue.service.ts
+export type ActionKind = "replied_not_confirmed" | "confirmed_no_reminder" | "no_show_recovery" | "wa_failed" | "high_score_not_reached";
+export interface ActionItem {
+  id: string; kind: ActionKind; reason: string; ageMinutes: number; ageText: string; suggested: "call" | "whatsapp"; ref: string; leadId: string | null;
+  name: string; mobileMasked: string; requisitionId: string; requisitionCode: string; branch: string; driveDate: string | null;
+  recruiter: { name: string | null; basis: "assigned" | "suggested" | "none" };
+}
+export interface ActionQueue {
+  enabled: boolean; generatedAt: string; items: ActionItem[]; counts: Record<ActionKind, number>; truncated: boolean; partial: boolean; failedSections: string[];
+}
