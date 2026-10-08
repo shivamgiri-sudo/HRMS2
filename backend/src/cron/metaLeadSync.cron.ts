@@ -277,7 +277,7 @@ export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped
       // Live pipeline: enqueue first; an enqueued or already-enrolled lead is handed over and not messaged from here. Any other
       // result (invalid, not_qualified, a throw) falls through to the old flow, whose own guard fails closed on a lookup error.
       if (pipelineOwnsSends()) {
-        const enq = await enqueueMetaLeadFollowup(lead.id, "live").catch(() => null);
+        const enq = await enqueueMetaLeadFollowup(lead.id).catch(() => null);
         // `exists` may be a dry_run/test row the live worker never sends: hand over only when a live row exists (a lookup error falls to the old flow).
         const handed = enq?.status === "enqueued" || (enq?.status === "exists" && await followupHasLiveRow(lead.id).catch(() => false));
         if (enq && handed) {

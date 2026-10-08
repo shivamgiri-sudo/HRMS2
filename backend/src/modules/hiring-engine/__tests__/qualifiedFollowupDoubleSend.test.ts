@@ -153,7 +153,7 @@ describe.each(MODES)("mode $name", ({ env, owns }) => {
       const res = await notifyNewQualifiedLeads();
       if (owns) {
         expect(h.enqueue).toHaveBeenCalledTimes(2);
-        expect(h.enqueue).toHaveBeenCalledWith("L1", "live");
+        expect(h.enqueue).toHaveBeenCalledWith("L1"); // the screen switches decide the tag now (Task 7)
         // enqueue says "enqueued": handed over, nothing messaged by the old flow
         expect(h.sendTemplate).not.toHaveBeenCalled();
         expect(res).toEqual({ sent: 0, skipped: 2, failed: 0 });
@@ -328,6 +328,14 @@ describe("ingest enqueue ordering", () => {
     setEnv(mode ? { QUAL_FOLLOWUP_MODE: mode } : {});
     await ingest();
     expect(order[0]).toBe("notify");
+  });
+  it("ingest passes skipOutreach to the enrolment (held_manual for backfills, D13)", async () => {
+    setEnv({ QUAL_FOLLOWUP_MODE: "dry_run" });
+    await ingest();
+    expect(h.enqueue).toHaveBeenCalledWith(expect.any(String), { skipOutreach: false });
+    h.enqueue.mockClear();
+    await metaCampaignService.ingestLead({ formId: "f1", leadgenId: "g2", prefetchedDetail: { id: "g2", field_data: [] } as never, skipOutreach: true });
+    expect(h.enqueue).toHaveBeenCalledWith(expect.any(String), { skipOutreach: true });
   });
   it("a rejected enqueue never breaks ingest, and notifyQualifiedLead still runs", async () => {
     setEnv({ QUAL_FOLLOWUP_MODE: "dry_run" });

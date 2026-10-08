@@ -27,8 +27,17 @@ export interface EnqueueInput {
   branchName?: string | null;
   roleName?: string | null;
   qualifiedAt?: Date;
-  /** Record-only row: the Hiring Engine sends to this person, the pipeline never selects it. */
-  engineOwned?: boolean;
+  /** Enrol held for HR (no sends until released): the campaign has auto_notify off, or the import asked for no outreach (D13). */
+  heldReason?: "auto_notify_off" | "skip_outreach" | null;
+  /** The line-up's booking for this person and requisition. */
+  matchId?: string | null;
+  /** A drive line-up already applied the eligibility gate (he-drive suggestMatches); the enrolment does not run it again. */
+  eligibilityChecked?: boolean;
+  /** Live Meta: the lead's own location answer for the location rule. */
+  location?: { text: string | null; branchName: string | null; branchCity: string | null; branchState: string | null } | null;
+  /** Accepted for WS3 shortlists / the criteria engine; stored once their columns exist (2143 / 2145). */
+  shortlistId?: string | null;
+  criteriaVersionId?: string | null;
 }
 
 /** The drive a line-up ran for (what the enqueue hook needs to classify and label it). */
