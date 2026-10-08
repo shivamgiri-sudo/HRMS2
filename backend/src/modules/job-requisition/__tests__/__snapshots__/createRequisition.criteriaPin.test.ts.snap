@@ -1,0 +1,44 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`createRequisition criteria columns (pin) > one INSERT with the criteria values in their columns 1`] = `"INSERT INTO job_requisition ( id, requisition_code, designation_id, designation_name, department_id, department_name, branch_id, branch_name, process_id, process_name, requested_headcount, employment_type, salary_min, salary_max, experience_min_years, experience_max_years, education_requirement, skills_required, job_description, shift_requirement, rotational_shift, night_shift_required, target_joining_date, requisition_validity, priority, requisition_type, business_justification, preferred_sources, internal_posting, requested_by, requested_by_name, bmi_assessment_url, meta_target_age_min, meta_target_age_max, meta_target_locations, meta_target_radius_km, meta_screening_config, ad_required, approval_status ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')"`;
+
+exports[`createRequisition criteria columns (pin) > one INSERT with the criteria values in their columns 2`] = `
+[
+  null,
+  "CSE",
+  null,
+  null,
+  null,
+  "NOIDA-2",
+  null,
+  "Onfido",
+  10,
+  "full_time",
+  null,
+  null,
+  1,
+  3,
+  "Graduate",
+  "Excel",
+  "KYC",
+  "Night",
+  0,
+  1,
+  null,
+  null,
+  "normal",
+  "new_position",
+  null,
+  null,
+  0,
+  "u1",
+  "User One",
+  null,
+  18,
+  35,
+  "["Noida"]",
+  15,
+  "{"auto_notify":true,"x":1}",
+  1,
+]
+`;
