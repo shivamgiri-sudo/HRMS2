@@ -7,6 +7,7 @@
 import { STAGES } from "./driveCommandTypes";
 import type { DriveAnalytics, Grid, ScatterPoint, SourceType, Stage } from "./driveCommandTypes";
 import { SOURCE_TYPES, STAGE_LABEL, TYPE_LABEL, pctText } from "./driveCommandModel";
+import { REASON_CHIPS } from "../outcomeReasonsModel";
 import { chartMotion } from "./chartTheme";
 import type { ChartMotion } from "./chartTheme";
 
@@ -141,11 +142,18 @@ export function scatterChart(a: DriveAnalytics, opts?: ChartOpts) {
 
 // ---- waterfall -------------------------------------------------------------------------------------------------------------------------
 function reasonText(r: string): string { return r.split("_").join(" "); }
+/** "declined 4 (distance 2, salary 1, not stated 1)"; an entry without a detail prints as before. */
+function lossText(r: { reason: string; n: number; detail?: Array<{ code: string; n: number }> }): string {
+  const head = `${reasonText(r.reason)} ${cnt(r.n)}`;
+  const parts = (r.detail ?? []).filter((d) => cnt(d.n) > 0)
+    .map((d) => `${d.code === "not_stated" ? "not stated" : (REASON_CHIPS.find((c) => c.code === d.code)?.label ?? reasonText(d.code)).toLowerCase()} ${cnt(d.n)}`);
+  return parts.length ? `${head} (${parts.join(", ")})` : head;
+}
 export function waterfallChart(a: DriveAnalytics, t: SourceType, opts?: ChartOpts) {
   const bars = (a?.waterfall?.[t] ?? []).map((w) => {
     const from = stageValue(a, t, w.from);
     const lost = Math.min(from, cnt(w.lost));
-    const reasons = (w.reasons ?? []).filter((r) => cnt(r.n) > 0).map((r) => `${reasonText(r.reason)} ${cnt(r.n)}`).join(", ");
+    const reasons = (w.reasons ?? []).filter((r) => cnt(r.n) > 0).map(lossText).join(", ");
     return { label: `${STAGE_LABEL[w.from]} to ${STAGE_LABEL[w.to]}`, base: from - lost, lost, reasons };
   });
   const rows = bars.map((b) => [b.label, txt(b.base + b.lost), txt(b.base), txt(b.lost), b.reasons || DASH]);

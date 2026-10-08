@@ -9,6 +9,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
+import { valueAddOn } from "./he-valueadd-switches.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
 import { SOURCE_TYPES, type Grid, type TaggedAggRow } from "./he-drive-analytics.js";
 import type { InsightFacts, InsightThresholds, RateFact } from "./he-drive-insights.js";
@@ -28,6 +29,8 @@ export interface InsightFactsCtx {
   types: InsightFacts["types"]; agg: TaggedAggRow[]; sources: RequisitionSourceRows[]; codes: Map<string, string>; t: InsightThresholds;
   /** Arrival grids of the window (busy hours); open streams already loaded by the caller; the clock. */
   arrivals?: Record<SourceType, Grid>; streams?: StreamRow[]; now?: Date;
+  /** Recorded no-show and decline reasons of the window (read once by the caller); passed through only while HE_OUTCOME_REASONS is on. */
+  reasons?: InsightFacts["reasons"];
 }
 
 export const MAX_PLAN_REQUISITIONS = 20;
@@ -193,6 +196,7 @@ export async function collectInsightFacts(ctx: InsightFactsCtx, scope: BranchSco
     language: perType(() => ({ hi: rate0(), other: rate0() })),
     slots: [], streams: [], sources: [], weekdays: [],
   };
+  if (ctx.reasons && valueAddOn("outcome_reasons")) facts.reasons = ctx.reasons;
   if (ids.length === 0) return { facts, failedSections: [] };
 
   // The groups below are independent reads; each fills only its own part of `facts`.

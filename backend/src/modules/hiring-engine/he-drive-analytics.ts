@@ -2,6 +2,7 @@
  * Pure aggregation for the Drive Command Center: per-type funnel, conversions, daily series, timing grids, scatter points and the
  * loss waterfall. No I/O and no clock. Rates are n / d when d > 0, else 0 (stored) or null (displayed conversions); never NaN / Infinity.
  */
+import type { OutcomeReasonCode } from "./he-outcome-reason.js";
 import { defaultTrendDates, showRate, type DriveAggRow } from "./he-drive-trend.service.js";
 import type { SourceRow } from "./he-requisition-sources.service.js";
 import type { SourceType } from "./qualified-followup.types.js";
@@ -115,7 +116,9 @@ export function scatterPoints(
 
 export type LossReason = "not_qualified" | "opted_out" | "requisition_closed" | "no_contact_details" | "not_invited" | "declined" | "no_reply"
   | "no_show" | "slot_released" | "not_selected" | "not_joined_yet" | "other";
-export interface WaterfallStep { from: Stage; to: Stage; lost: number; reasons: Array<{ reason: LossReason; n: number }> }
+export type ReasonDetail = Array<{ code: OutcomeReasonCode | "not_stated"; n: number }>;
+export interface WaterfallStep { from: Stage; to: Stage; lost: number; reasons: Array<{ reason: LossReason; n: number; detail?: ReasonDetail }> }
+type ReasonCounts = Partial<Record<OutcomeReasonCode, number>>;
 export interface KpiTotals { current: StageCounts; previous: StageCounts }
 
 /** Named reasons first (each capped by what is left of `lost`), the remainder under `rest`, so reasons always sum to `lost`. */
@@ -134,6 +137,7 @@ export function waterfall(
   s: TypedStageCounts,
   stops: Partial<Record<"opted_out" | "requisition_closed" | "no_contact_details", number>>,
   slotReleased: number,
+  detail?: { declined?: ReasonCounts; no_show?: ReasonCounts },
 ): WaterfallStep[] {
   const named: Partial<Record<Stage, Array<[LossReason, number]>>> = {
     qualified: [],
@@ -147,6 +151,23 @@ export function waterfall(
   return STAGES.slice(1).map((to, i) => {
     const from = STAGES[i];
     const lost = Math.max(0, num(s[from]) - num(s[to]));
-    return { from, to, lost, reasons: allocate(lost, named[to] ?? [], rest[to] ?? "other") };
+    const reasons = allocate(lost, named[to] ?? [], rest[to] ?? "other");
+    if (detail) for (const r of reasons) if (r.reason === "declined" || r.reason === "no_show") r.detail = reasonDetail(r.n, detail[r.reason]);
+    return { from, to, lost, reasons };
   });
+}
+
+/** Recorded reasons by count (desc, then code), each capped at what is left of `n`; the unrecorded remainder is `not_stated`. */
+function reasonDetail(n: number, counts: ReasonCounts | undefined): ReasonDetail {
+  const out: ReasonDetail = [];
+  let left = n;
+  const sorted = (Object.entries(counts ?? {}) as Array<[OutcomeReasonCode, number]>)
+    .map(([code, c]) => ({ code, n: Math.floor(num(c)) })).filter((x) => x.n > 0)
+    .sort((a, b) => b.n - a.n || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+  for (const x of sorted) {
+    const take = Math.min(x.n, left);
+    if (take > 0) { out.push({ code: x.code, n: take }); left -= take; }
+  }
+  if (left > 0) out.push({ code: "not_stated", n: left });
+  return out;
 }

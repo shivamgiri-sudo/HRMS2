@@ -24,6 +24,7 @@ import { collectInsightFacts } from "./he-drive-insight-facts.service.js";
 import { loadInsightThresholds } from "./he-insight-params.service.js";
 import { buildDriveGroups, readAgg, readDriveAggRows, type DriveGroup, type DriveGroupInput } from "./he-drive-trend.service.js";
 import { getSourcesForRequisitions, type RequisitionSourceRows } from "./he-sources-window.service.js";
+import { outcomeReasonCounts } from "./he-outcome-reason.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
@@ -62,6 +63,7 @@ const DEFAULT_BACK = 13;
 const CACHE_MS = 60_000;
 const CACHE_MAX = 100;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+const hasReasons = (r: { no_show: object; declined: object }): boolean => Object.keys(r.no_show).length + Object.keys(r.declined).length > 0;
 const ph = (n: number): string => Array(n).fill("?").join(",");
 const noTable = (err: unknown): boolean => (err as { code?: unknown })?.code === "ER_NO_SUCH_TABLE";
 const perType = <T>(make: (t: SourceType) => T): Record<SourceType, T> => ({ meta_live: make("meta_live"), meta_old: make("meta_old"), he: make("he") });
@@ -366,6 +368,10 @@ async function build(
     sums.set(k, g);
   }
 
+  // reasons: recorded no-show and decline reasons per type; its own statement only while HE_OUTCOME_REASONS is on (a missing table counts zero)
+  let reasons: Awaited<ReturnType<typeof outcomeReasonCounts>> | null = null;
+  if (!none && valueAddOn("outcome_reasons")) reasons = await section("reasons", failed, () => outcomeReasonCounts(ids, w.from, w.to), null);
+
   // insights: thresholds once per call, facts (own sections), then the pure rules; any throw leaves the response without insights
   let insights: DriveInsight[] = [];
   if (!none) {
@@ -374,6 +380,7 @@ async function build(
       const { facts, failedSections: factFailed } = await collectInsightFacts({
         requisitionIds: ids, from: w.from, to: w.to, today, windowDays: w.days,
         types: perType((k) => ({ current: types[k].stages, previous: types[k].previous })),
+        ...(reasons ? { reasons } : {}),
         agg: inWindow, sources: sources?.byRequisition ?? [], codes: new Map(heads.map((h) => [h.id, h.code])), t, arrivals, streams: active, now,
       }, scope);
       for (const f of factFailed) if (!failed.includes(f)) failed.push(f);
@@ -403,7 +410,7 @@ async function build(
     daily,
     timing: { replies, arrivals, arrivalsWithoutTime: Math.max(0, arrivedTotal - timed) },
     scatter: scatterPoints([...sums.values()], sources?.byRequisition ?? []),
-    waterfall: perType((t) => waterfall(cur[t], stops[t], outcomeRead.slotReleased[t])),
+    waterfall: perType((t) => waterfall(cur[t], stops[t], outcomeRead.slotReleased[t], reasons && hasReasons(reasons[t]) ? reasons[t] : undefined)),
     groups,
     cost,
     insights,

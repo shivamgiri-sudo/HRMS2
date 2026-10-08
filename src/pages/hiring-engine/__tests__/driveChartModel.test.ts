@@ -148,6 +148,20 @@ describe("waterfall", () => {
     expect(w.bars[1].base + w.bars[1].lost).toBe(live.confirmed);
     expect(w.bars[0].reasons).toBe("declined 4, no reply 16");
   });
+  it("names the recorded reasons under declined and no-show, and the table cell equals it", () => {
+    const a = fixture();
+    a.waterfall.meta_live[0].reasons[0].detail = [{ code: "distance", n: 2 }, { code: "salary", n: 1 }, { code: "not_stated", n: 1 }];
+    a.waterfall.meta_live[1].reasons[0].detail = [{ code: "other_job", n: 6 }, { code: "not_stated", n: 4 }];
+    const w = waterfallChart(a, "meta_live");
+    expect(w.bars[0].reasons).toBe("declined 4 (distance 2, salary 1, not stated 1), no reply 16");
+    expect(w.bars[1].reasons).toBe("no show 10 (got another job 6, not stated 4)");
+    w.bars.forEach((b, i) => expect(w.table.rows[i][4]).toBe(b.reasons));
+  });
+  it("an empty detail prints as today", () => {
+    const a = fixture();
+    a.waterfall.meta_live[0].reasons[0].detail = [];
+    expect(waterfallChart(a, "meta_live").bars[0].reasons).toBe("declined 4, no reply 16");
+  });
 });
 
 describe("sparklinePath", () => {

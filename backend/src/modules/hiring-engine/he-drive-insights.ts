@@ -4,6 +4,7 @@
  * labels only, never candidate data. Evidence lists the exact inputs of the estimated-effect formula.
  */
 import { SOURCE_TYPES, type StageCounts } from "./he-drive-analytics.js";
+import { OUTCOME_REASONS, OUTCOME_REASON_LABEL, type OutcomeReasonCode } from "./he-outcome-reason.js";
 import type { SourceType } from "./qualified-followup.types.js";
 
 export const INSIGHT_DEFAULTS = {
@@ -17,7 +18,7 @@ export const INSIGHT_DEFAULTS = {
 export type InsightKey = keyof typeof INSIGHT_DEFAULTS;
 export type InsightThresholds = Record<InsightKey, number>;
 
-export type InsightRule = "under_target" | "weak_stage" | "contact_timing" | "reminder_gap" | "distance" | "channel_gap" | "language" | "overbooking" | "stream_dry" | "best_source" | "weekday";
+export type InsightRule = "under_target" | "weak_stage" | "contact_timing" | "reminder_gap" | "distance" | "channel_gap" | "language" | "overbooking" | "stream_dry" | "best_source" | "weekday" | "outcome_reason";
 export type InsightSeverity = "critical" | "warn" | "info";
 export type EffectUnit = "arrivals_per_day" | "replies_per_day" | "joins_per_day" | "people" | "seats";
 export type InsightAction =
@@ -50,7 +51,12 @@ export interface InsightFacts {
   streams: Array<{ streamId: string; requisitionId: string; code: string; sourceType: SourceType; cap: number; remainingDays: number; poolRemaining: number | null }>;
   sources: Array<{ requisitionId: string; code: string; byType: Partial<Record<SourceType, { leads: number; joined: number; invited: number }>> }>;
   weekdays: Array<{ weekday: number; confirmed: number; arrived: number }>;
+  /** Recorded no-show and decline reasons per type (HE_OUTCOME_REASONS); absent while the switch is off. */
+  reasons?: PerType<{ no_show: Partial<Record<OutcomeReasonCode, number>>; declined: Partial<Record<OutcomeReasonCode, number>> }>;
 }
+
+/** One reason must be at least this share of the recorded reasons (and the total at least insight.min_sample) to be named. A code constant this release. */
+export const REASON_SHARE = 0.4
 
 export const MAX_INSIGHTS = 20;
 export const TYPE_LABEL: Record<SourceType, string> = { meta_live: "Live Meta", meta_old: "Old Meta data", he: "Hiring Engine" };
@@ -389,10 +395,38 @@ function weekday({ f, t, D, ok }: Ctx): DriveInsight[] {
   })];
 }
 
+const REASON_SUGGESTION: Record<OutcomeReasonCode, string> = {
+  distance: "Line up people nearer the branch, or offer the nearer branch",
+  other_job: "Invite sooner after people qualify; they are taking other offers",
+  salary: "Check the offer against what candidates expect",
+  timing: "Offer later or Saturday slots",
+  not_interested: "Tighten the screening questions for this source",
+  other: "Read the notes on the walk-in board",
+};
+function outcomeReason({ f, ok }: Ctx): DriveInsight[] {
+  const out: DriveInsight[] = [];
+  for (const type of SOURCE_TYPES) for (const outcome of ["no_show", "declined"] as const) {
+    const counts = f.reasons?.[type]?.[outcome];
+    if (!counts) continue;
+    const rows = OUTCOME_REASONS.map((code) => ({ code, n: Math.max(0, Math.floor(num(counts[code]))) }));
+    const total = rows.reduce((a, r) => a + r.n, 0);
+    if (!ok(total)) continue;
+    const top = rows.reduce((b, r) => (r.n > b.n ? r : b), rows[0]);
+    if (!(top.n / total >= REASON_SHARE)) continue;
+    out.push(mk({
+      rule: "outcome_reason", severity: "info", sourceType: type, requisitionId: null, key: `${outcome}.${top.code}`,
+      title: `Most ${outcome === "no_show" ? "no-shows" : "declines"} from ${TYPE_LABEL[type]} say "${OUTCOME_REASON_LABEL[top.code]}" (${pct(top.n / total)})`,
+      evidence: [{ label: outcome === "no_show" ? "No-show reasons recorded" : "Decline reasons recorded", value: str(total) }, { label: `Said "${OUTCOME_REASON_LABEL[top.code]}"`, value: str(top.n) }],
+      suggestion: REASON_SUGGESTION[top.code], effect: null, action: { type: "none" },
+    }));
+  }
+  return out;
+}
+
 export function evaluateInsights(f: InsightFacts, t: InsightThresholds): DriveInsight[] {
   const min = num(t["insight.min_sample"]);
   const ctx: Ctx = { f, t, D: Math.max(1, num(f.windowDays)), min, ok: (n) => n > 0 && n >= min };
-  const all = [underTarget, weakStage, contactTiming, reminderGap, distance, channelGap, language, overbooking, streamDry, bestSource, weekday].flatMap((r) => r(ctx));
+  const all = [underTarget, weakStage, contactTiming, reminderGap, distance, channelGap, language, overbooking, streamDry, bestSource, weekday, outcomeReason].flatMap((r) => r(ctx));
   const seen = new Set<string>();
   // Every per-day effect divides by D, so the window length is part of its evidence (under_target is not per-day-scaled).
   for (const i of all) if (i.rule !== "under_target" && i.effect?.unit.endsWith("_per_day")) i.evidence.push({ label: "Days in the window", value: str(ctx.D) });

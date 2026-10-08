@@ -17,7 +17,8 @@ export interface DailyPoint { date: string; target: number; byType: Record<Sourc
 export interface ScatterPoint { requisitionId: string; code: string; branch: string; sourceType: SourceType; leads: number; showRate: number; leadToJoinRate: number }
 export type LossReason = "not_qualified" | "opted_out" | "requisition_closed" | "no_contact_details" | "not_invited" | "declined" | "no_reply"
   | "no_show" | "slot_released" | "not_selected" | "not_joined_yet" | "other";
-export interface WaterfallStep { from: Stage; to: Stage; lost: number; reasons: Array<{ reason: LossReason; n: number }> }
+export type ReasonDetail = Array<{ code: "distance" | "other_job" | "salary" | "timing" | "not_interested" | "other" | "not_stated"; n: number }>;
+export interface WaterfallStep { from: Stage; to: Stage; lost: number; reasons: Array<{ reason: LossReason; n: number; detail?: ReasonDetail }> }
 
 // backend/src/modules/hiring-engine/requisition-stream.service.ts
 export type StreamStatus = "draft" | "open" | "paused" | "closed";
@@ -74,7 +75,7 @@ export interface RequisitionSources {
 }
 
 // backend/src/modules/hiring-engine/he-drive-insights.ts
-export type InsightRule = "under_target" | "weak_stage" | "contact_timing" | "reminder_gap" | "distance" | "channel_gap" | "language" | "overbooking" | "stream_dry" | "best_source" | "weekday";
+export type InsightRule = "under_target" | "weak_stage" | "contact_timing" | "reminder_gap" | "distance" | "channel_gap" | "language" | "overbooking" | "stream_dry" | "best_source" | "weekday" | "outcome_reason";
 export type InsightSeverity = "critical" | "warn" | "info";
 export type EffectUnit = "arrivals_per_day" | "replies_per_day" | "joins_per_day" | "people" | "seats";
 export type InsightAction =
