@@ -272,5 +272,10 @@
   ],
   "modules/meta-campaign/campaign-requisition.service.ts": [
     "meta_campaign_requisition"
+  ],
+  "modules/hiring-engine/he-upload-bridge.service.ts": [
+    "he_lead",
+    "he_lead_batch",
+    "he_lead_profile"
   ]
 }
