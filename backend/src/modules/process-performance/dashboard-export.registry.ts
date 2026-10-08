@@ -87,6 +87,9 @@ const DU_TIME_COLUMNS = [
 const NO_RANGE_NOTE ="Exported in full: this report does not filter these rows by the selected date range.";
 
 export const RAW_SOURCES: Record<string, RawSource[]> = {
+  ahm: [
+    { kind: "masmis", sheet: "ahm_dump_raw", table: "ahm_dump_raw", dateExpr: "survey_date" },
+  ],
   gnc_sale: [
     { kind: "masmis", sheet: "gnc_sale", table: "gnc_sale", dateExpr: "sale_date" },
     { kind: "masmis", sheet: "gnc_allocation", table: "gnc_allocation", dateExpr: "alloc_date" },

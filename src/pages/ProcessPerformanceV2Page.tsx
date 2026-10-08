@@ -22,7 +22,7 @@ import {
   Mail, Star, ShieldCheck, Repeat, RotateCcw, TrendingUp,
   Heart, Footprints, HeartPulse, Home, Crown, Shirt, FileText, Tag,
   Building2, Globe, Settings, Zap, CreditCard, LayoutGrid, UploadCloud, Sparkles, Download,
-  CalendarClock,
+  CalendarClock, Truck,
 } from "lucide-react";
 import { MisEmailScheduleDrawer } from "@/components/process-performance/MisEmailScheduleDrawer";
 
@@ -52,6 +52,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
   sbi_card: { icon: CreditCard, tone: "blue" },
   du_thailand: { icon: PhoneIncoming, tone: "red" },
   du_korea: { icon: PhoneIncoming, tone: "blue" },
+  ahm: { icon: Truck, tone: "orange" },
 };
 
 
@@ -229,6 +230,13 @@ const SBI_CARD_UPLOADERS = [
   { code: "SBI_CARD_PEN_ESTIMATION", label: "Pen Estimation",   description: "Upload SBI Card penetration estimation",                     icon: Target },
 ];
 
+/** AHM's "Dump" export, one row per outlet/SKU order line -- two uploaders (branch-level
+ * files, same shape), one shared table (sql/1875). See ahm-dump-bulk.service.ts. */
+const AHM_UPLOADERS = [
+  { code: "AHM_DUMP_MP", label: "Dump (MP)", description: "Upload AHM's order/survey-to-delivery export, MP branch", icon: Truck },
+  { code: "AHM_DUMP_MM", label: "Dump (MM)", description: "Upload AHM's order/survey-to-delivery export, MM branch", icon: Truck },
+];
+
 const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
   bellavita: BELLAVITA_UPLOADERS,
   gnc: GNC_UPLOADERS,
@@ -246,6 +254,7 @@ const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
   lp_onboarding: LP_ONBOARDING_UPLOADERS,
   du_thailand: DU_THAILAND_UPLOADERS,
   du_korea: DU_KOREA_UPLOADERS,
+  ahm: AHM_UPLOADERS,
 };
 
 function BoxGrid({ children }: { children: React.ReactNode }) {

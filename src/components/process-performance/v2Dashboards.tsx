@@ -23,6 +23,7 @@ import { LpOnboardingDashboard } from "@/components/process-performance/LpOnboar
 import { SatyaRetailDashboard } from "@/components/process-performance/SatyaRetailDashboard";
 import { CloviaDashboard } from "@/components/process-performance/CloviaDashboard";
 import { DuDigitalDashboard } from "@/components/process-performance/DuDigitalDashboard";
+import { AhmDashboard } from "@/components/process-performance/AhmDashboard";
 import { AltRxDashboard } from "@/components/process-performance/AltRxDashboard";
 import { BirlanuDashboard } from "@/components/process-performance/BirlanuDashboard";
 import { AppreciateWealthDashboard } from "@/components/process-performance/AppreciateWealthDashboard";
@@ -35,7 +36,7 @@ import { UploaderWorkspace } from "@/components/process-performance/UploaderWork
  * company is passed straight through as projectKey with no separate
  * mapping table, same as bellavita/gnc/clovia/neemans already are.
  */
-export type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "alt_rx" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom" | "sbi_card" | "du_thailand" | "du_korea";
+export type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "alt_rx" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom" | "sbi_card" | "du_thailand" | "du_korea" | "ahm";
 
 /**
  * Named dashboard entries per company. "inbound" entries render the exact
@@ -68,6 +69,7 @@ export const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
   { key: "sbi_card", label: "SBI Card Collections" },
   { key: "du_thailand", label: "DU Digital Thailand" },
   { key: "du_korea", label: "DU Digital Korea" },
+  { key: "ahm", label: "AHM" },
 ];
 
 export const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, V2Dashboard[]>> = {
@@ -141,6 +143,9 @@ export const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, V2Dashboard[]>> =
   du_korea: [
     { key: "dashboard", label: "Dashboard", description: "Offered/Answered/SL/AL/Abandon%, AHT, Intraday Call Flow, Language/Queue view, Today/WTD/MTD snapshot — live from uploaded CDR/APR data", kind: "du_digital_korea" },
   ],
+  ahm: [
+    { key: "dashboard", label: "Dashboard", description: "Order vs Delivery, Disposition, Hourly order-taking, Product Mix, Telesales and Delivery Partner performance — live from the uploaded Dump data", kind: "ahm_dashboard" },
+  ],
 };
 
 
@@ -198,7 +203,7 @@ function InboundDashboardTab({ projectKey }: { projectKey: string }) {
   );
 }
 
-export type V2Dashboard = { key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "alt_rx" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "sbi_card_dashboard" | "du_digital_thailand" | "du_digital_korea" | "category_template" };
+export type V2Dashboard = { key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "alt_rx" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "sbi_card_dashboard" | "du_digital_thailand" | "du_digital_korea" | "ahm_dashboard" | "category_template" };
 export type DashboardKind = V2Dashboard["kind"];
 
 /**
@@ -274,6 +279,8 @@ export function V2DashboardView({ company, dashboard, onOpenDashboard }: {
               <DuDigitalDashboard country="THAILAND" />
             ) : dashboard.kind === "du_digital_korea" ? (
               <DuDigitalDashboard country="KOREA" />
+            ) : dashboard.kind === "ahm_dashboard" ? (
+              <AhmDashboard />
             ) : (
               <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">
                 Nothing here yet
@@ -292,6 +299,7 @@ const V2_COMPANIES_BY_PROCESS_CODE: Record<string, CompanyKey[]> = {
   CLOVIA: ["clovia"],
   DALMIA_CEMENT: ["dalmia"],
   DU_DIGITAL: ["du_thailand", "du_korea"],
+  AHM: ["ahm"],
   SBI_CARD: ["sbi_card"],
   ERESOLUTION: ["lp_feedback", "lp_onboarding"],
   HOUSING_OWNER: ["housing_owner"],

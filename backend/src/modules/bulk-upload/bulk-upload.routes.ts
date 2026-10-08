@@ -620,6 +620,9 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_du_apr_thailand_batch",
   "import_du_cdr_korea_batch",
   "import_du_cdr_thailand_batch",
+  // AHM "Dump" export (one row per outlet/SKU order line), two uploaders, one shared table (sql/1875).
+  "import_ahm_dump_mp_batch",
+  "import_ahm_dump_mm_batch",
   "import_du_team_mapping_korea_batch",
   "import_du_team_mapping_thailand_batch",
   "import_bella_repeat_alignment_batch",

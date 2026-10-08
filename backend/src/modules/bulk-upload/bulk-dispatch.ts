@@ -779,6 +779,18 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_ahm_dump_mp_batch") {
+    const { importAhmDumpMpBatch } = await import("./ahm-dump-bulk.service.js");
+    const data = await importAhmDumpMpBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_ahm_dump_mm_batch") {
+    const { importAhmDumpMmBatch } = await import("./ahm-dump-bulk.service.js");
+    const data = await importAhmDumpMmBatch(id, userId);
+    return { success: true, data };
+  }
+
   if (rpc_name === "import_du_team_mapping_korea_batch") {
     const { importDuTeamMappingKoreaBatch } = await import("./du-team-mapping-bulk.service.js");
     const data = await importDuTeamMappingKoreaBatch(id, userId);
