@@ -174,3 +174,12 @@ describe("afterFirstSend", () => {
     expect(writes().some((w) => w.sql.includes("meta_lead_raw"))).toBe(false);
   });
 });
+
+describe("beginJourney re-books a row that already carries a match", () => {
+  it("a re-invite (old no-show match) or a line-up match without a slot is booked before the first send", async () => {
+    h.book.mockResolvedValue({ status: "booked", matchId: "M1", driveId: "D9", slotAt: "2026-10-17 10:00:00" });
+    const r = await beginJourney(S, "live", row({ matchId: "M1", reinviteNo: 1 }), THU_11);
+    expect(h.book).toHaveBeenCalledTimes(1);
+    expect(r.row.driveId).toBe("D9");
+  });
+});

@@ -34,11 +34,11 @@ const RETRY_MIN = 15;
 export async function beginJourney(s: FollowupSwitches, tag: RowTag, row: FollowupRow, now: Date): Promise<{ row: FollowupRow; held: boolean }> {
   if (row.journeyState !== "enrolled" && row.journeyState !== "held_best_offer") return { row, held: false };
   let r = row;
-  if (!r.matchId) {
-    const simulate = tag === "dry_run" || (tag === "test" && r.mobile10 !== s.testPhone);
-    const b = await bookJourney(r, { now, simulate });
-    if (b.status === "booked") r = { ...r, matchId: b.matchId, driveId: b.driveId };
-  }
+  // Always at the first send of a stage A run: bookJourney keeps a booking still ahead and books anything else (a fresh row, a line-up
+  // match without a slot, a re-invite's old no-show match).
+  const simulate = tag === "dry_run" || (tag === "test" && r.mobile10 !== s.testPhone);
+  const b = await bookJourney(r, { now, simulate });
+  if (b.status === "booked") r = { ...r, matchId: b.matchId, driveId: b.driveId };
   if (tag === "dry_run") {
     const holder = (await personFacts(r.mobile10)).activeFollowupId;
     return { row: r, held: holder !== null && holder !== r.id };
