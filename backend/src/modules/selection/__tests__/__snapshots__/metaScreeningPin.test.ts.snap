@@ -1,0 +1,486 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`screenLead pin over the Meta fixtures > qualified + reason for every requisition x lead 1`] = `
+{
+  "DRA Ahmedabad | 12th, can relocate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DRA Ahmedabad | ambiguous answers": {
+    "qualified": false,
+    "reason": "DRA certification required but candidate answered: "applied, not yet"",
+  },
+  "DRA Ahmedabad | diploma, half year": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DRA Ahmedabad | empty form": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DRA Ahmedabad | female for male-only": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DRA Ahmedabad | off-ladder education text": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DRA Ahmedabad | post graduate, 5 years": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DRA Ahmedabad | strong fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DRA Ahmedabad | under age graduate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DRA Ahmedabad | weak fit": {
+    "qualified": false,
+    "reason": "DRA certification required but candidate answered: "No"",
+  },
+  "DZCV | 12th, can relocate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DZCV | ambiguous answers": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DZCV | diploma, half year": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DZCV | empty form": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DZCV | female for male-only": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DZCV | off-ladder education text": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DZCV | post graduate, 5 years": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DZCV | strong fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DZCV | under age graduate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "DZCV | weak fit": {
+    "qualified": false,
+    "reason": "Custom rule failed: Can travel to Noida (expected no)",
+  },
+  "K7BK | 12th, can relocate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "K7BK | ambiguous answers": {
+    "qualified": true,
+    "reason": null,
+  },
+  "K7BK | diploma, half year": {
+    "qualified": true,
+    "reason": null,
+  },
+  "K7BK | empty form": {
+    "qualified": true,
+    "reason": null,
+  },
+  "K7BK | female for male-only": {
+    "qualified": true,
+    "reason": null,
+  },
+  "K7BK | off-ladder education text": {
+    "qualified": true,
+    "reason": null,
+  },
+  "K7BK | post graduate, 5 years": {
+    "qualified": true,
+    "reason": null,
+  },
+  "K7BK | strong fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "K7BK | under age graduate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "K7BK | weak fit": {
+    "qualified": false,
+    "reason": "Custom rule failed: Graduate (must) (expected a yes answer)",
+  },
+  "age 18-35 | 12th, can relocate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "age 18-35 | ambiguous answers": {
+    "qualified": true,
+    "reason": null,
+  },
+  "age 18-35 | diploma, half year": {
+    "qualified": true,
+    "reason": null,
+  },
+  "age 18-35 | empty form": {
+    "qualified": true,
+    "reason": null,
+  },
+  "age 18-35 | female for male-only": {
+    "qualified": true,
+    "reason": null,
+  },
+  "age 18-35 | off-ladder education text": {
+    "qualified": true,
+    "reason": null,
+  },
+  "age 18-35 | post graduate, 5 years": {
+    "qualified": true,
+    "reason": null,
+  },
+  "age 18-35 | strong fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "age 18-35 | under age graduate": {
+    "qualified": false,
+    "reason": "Age 17 below minimum 18",
+  },
+  "age 18-35 | weak fit": {
+    "qualified": false,
+    "reason": "Age 41 above maximum 35",
+  },
+  "experience 1-3 | 12th, can relocate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "experience 1-3 | ambiguous answers": {
+    "qualified": true,
+    "reason": null,
+  },
+  "experience 1-3 | diploma, half year": {
+    "qualified": false,
+    "reason": "Experience 0.5 yrs below minimum 1 yrs",
+  },
+  "experience 1-3 | empty form": {
+    "qualified": true,
+    "reason": null,
+  },
+  "experience 1-3 | female for male-only": {
+    "qualified": true,
+    "reason": null,
+  },
+  "experience 1-3 | off-ladder education text": {
+    "qualified": false,
+    "reason": "Experience 0 yrs below minimum 1 yrs",
+  },
+  "experience 1-3 | post graduate, 5 years": {
+    "qualified": true,
+    "reason": null,
+  },
+  "experience 1-3 | strong fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "experience 1-3 | under age graduate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "experience 1-3 | weak fit": {
+    "qualified": false,
+    "reason": "Experience 0 yrs below minimum 1 yrs",
+  },
+  "female hindi typing english | 12th, can relocate": {
+    "qualified": false,
+    "reason": "Gender: female required",
+  },
+  "female hindi typing english | ambiguous answers": {
+    "qualified": true,
+    "reason": null,
+  },
+  "female hindi typing english | diploma, half year": {
+    "qualified": false,
+    "reason": "Gender: female required",
+  },
+  "female hindi typing english | empty form": {
+    "qualified": true,
+    "reason": null,
+  },
+  "female hindi typing english | female for male-only": {
+    "qualified": true,
+    "reason": null,
+  },
+  "female hindi typing english | off-ladder education text": {
+    "qualified": true,
+    "reason": null,
+  },
+  "female hindi typing english | post graduate, 5 years": {
+    "qualified": false,
+    "reason": "Typing speed 24 WPM below required 25 WPM",
+  },
+  "female hindi typing english | strong fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "female hindi typing english | under age graduate": {
+    "qualified": false,
+    "reason": "Age 17 below minimum 18",
+  },
+  "female hindi typing english | weak fit": {
+    "qualified": false,
+    "reason": "Age 41 above maximum 40",
+  },
+  "graduate preferred (soft) | 12th, can relocate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate preferred (soft) | ambiguous answers": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate preferred (soft) | diploma, half year": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate preferred (soft) | empty form": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate preferred (soft) | female for male-only": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate preferred (soft) | off-ladder education text": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate preferred (soft) | post graduate, 5 years": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate preferred (soft) | strong fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate preferred (soft) | under age graduate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate preferred (soft) | weak fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate | 12th, can relocate": {
+    "qualified": false,
+    "reason": "Education "12th" is below required "Graduate"",
+  },
+  "graduate | ambiguous answers": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate | diploma, half year": {
+    "qualified": false,
+    "reason": "Education "diploma" is below required "Graduate"",
+  },
+  "graduate | empty form": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate | female for male-only": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate | off-ladder education text": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate | post graduate, 5 years": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate | strong fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate | under age graduate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "graduate | weak fit": {
+    "qualified": false,
+    "reason": "Education "below_12th" is below required "Graduate"",
+  },
+  "male only | 12th, can relocate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "male only | ambiguous answers": {
+    "qualified": true,
+    "reason": null,
+  },
+  "male only | diploma, half year": {
+    "qualified": true,
+    "reason": null,
+  },
+  "male only | empty form": {
+    "qualified": true,
+    "reason": null,
+  },
+  "male only | female for male-only": {
+    "qualified": true,
+    "reason": null,
+  },
+  "male only | off-ladder education text": {
+    "qualified": true,
+    "reason": null,
+  },
+  "male only | post graduate, 5 years": {
+    "qualified": true,
+    "reason": null,
+  },
+  "male only | strong fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "male only | under age graduate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "male only | weak fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "no criteria | 12th, can relocate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "no criteria | ambiguous answers": {
+    "qualified": true,
+    "reason": null,
+  },
+  "no criteria | diploma, half year": {
+    "qualified": true,
+    "reason": null,
+  },
+  "no criteria | empty form": {
+    "qualified": true,
+    "reason": null,
+  },
+  "no criteria | female for male-only": {
+    "qualified": true,
+    "reason": null,
+  },
+  "no criteria | off-ladder education text": {
+    "qualified": true,
+    "reason": null,
+  },
+  "no criteria | post graduate, 5 years": {
+    "qualified": true,
+    "reason": null,
+  },
+  "no criteria | strong fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "no criteria | under age graduate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "no criteria | weak fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "off-ladder education | 12th, can relocate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "off-ladder education | ambiguous answers": {
+    "qualified": true,
+    "reason": null,
+  },
+  "off-ladder education | diploma, half year": {
+    "qualified": true,
+    "reason": null,
+  },
+  "off-ladder education | empty form": {
+    "qualified": true,
+    "reason": null,
+  },
+  "off-ladder education | female for male-only": {
+    "qualified": true,
+    "reason": null,
+  },
+  "off-ladder education | off-ladder education text": {
+    "qualified": true,
+    "reason": null,
+  },
+  "off-ladder education | post graduate, 5 years": {
+    "qualified": true,
+    "reason": null,
+  },
+  "off-ladder education | strong fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "off-ladder education | under age graduate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "off-ladder education | weak fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "unknown cert + gte rule | 12th, can relocate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "unknown cert + gte rule | ambiguous answers": {
+    "qualified": true,
+    "reason": null,
+  },
+  "unknown cert + gte rule | diploma, half year": {
+    "qualified": true,
+    "reason": null,
+  },
+  "unknown cert + gte rule | empty form": {
+    "qualified": true,
+    "reason": null,
+  },
+  "unknown cert + gte rule | female for male-only": {
+    "qualified": true,
+    "reason": null,
+  },
+  "unknown cert + gte rule | off-ladder education text": {
+    "qualified": true,
+    "reason": null,
+  },
+  "unknown cert + gte rule | post graduate, 5 years": {
+    "qualified": true,
+    "reason": null,
+  },
+  "unknown cert + gte rule | strong fit": {
+    "qualified": true,
+    "reason": null,
+  },
+  "unknown cert + gte rule | under age graduate": {
+    "qualified": true,
+    "reason": null,
+  },
+  "unknown cert + gte rule | weak fit": {
+    "qualified": false,
+    "reason": "Custom rule failed: 6+ months (expected 6)",
+  },
+}
+`;
