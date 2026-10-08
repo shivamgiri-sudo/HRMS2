@@ -26,6 +26,7 @@ import { istToday, addDays } from "../requisition-stream.window.js";
 import type { StreamRow } from "../requisition-stream.service.js";
 import { heRouter } from "../he.routes.js";
 import { UNPLANNED_ARRIVAL } from "../he-rate-buckets.js";
+import { stripRule } from "./attributionSql.js";
 
 const RID = "0f1e2d3c-aaaa-bbbb-cccc-0000000abcde";
 const SID = "1f1e2d3c-aaaa-bbbb-cccc-0000000abcde";
@@ -191,7 +192,8 @@ describe("getDriveTrend", () => {
     expect(sql).toMatch(/d\.requisition_id = \?/);
     expect(sql).toMatch(/d\.branch_name = \?/);
     expect(sql).toMatch(/GROUP BY d\.id, s\.id/);
-    expect(sql).not.toMatch(/he_lead/);
+    // he_lead only by primary key for the source rule (its form-fill subqueries are keyed, see sourceAttribution.test.ts)
+    expect(stripRule(sql).replace("LEFT JOIN he_lead al ON al.id = m.lead_id", "")).not.toMatch(/he_lead\b/);
     expect(params).toEqual([RID, "Pune", "2026-09-26", "2026-10-12"]);
     // 2026-09-26 .. 2026-10-12 is 17 days, 3 of them Sundays (27 Sep, 4 Oct, 11 Oct)
     expect(t!.points).toHaveLength(14);

@@ -7,6 +7,7 @@ vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), e
 
 import { clearRequisitionSourcesCache, getRequisitionSources } from "../he-requisition-sources.service.js";
 import { getSourcesForRequisitions } from "../he-sources-window.service.js";
+import { stripRule } from "./attributionSql.js";
 
 describe("getRequisitionSources SQL (pinned)", () => {
   beforeEach(() => { vi.clearAllMocks(); clearRequisitionSourcesCache(); });
@@ -143,7 +144,7 @@ describe("getSourcesForRequisitions", () => {
 
   it("scopes every statement by requisition or campaign and never scans lead or message tables", async () => {
     await getSourcesForRequisitions(["r1", "r2"], W);
-    for (const [q] of calls()) {
+    for (const q of calls().map(([c]) => stripRule(c))) { // the source rule's subqueries are keyed (sourceAttribution.test.ts)
       expect(q).toMatch(/requisition_id IN \(|campaign_id IN \(/);
       if (q.includes("FROM meta_lead_raw")) expect(q).toContain("campaign_id IN (");
       // he_lead / he_message appear only as keyed EXISTS subqueries or key joins of the follow-up rows, never as a scan

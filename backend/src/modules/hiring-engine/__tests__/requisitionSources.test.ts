@@ -16,6 +16,7 @@ vi.mock("../he-inbox.service.js", () => ({ listInbox: vi.fn(), getInboxThread: v
 
 import { clearRequisitionSourcesCache, computeShares, getRequisitionSources } from "../he-requisition-sources.service.js";
 import { heRouter } from "../he.routes.js";
+import { stripRule } from "./attributionSql.js";
 
 const RID = "0f1e2d3c-aaaa-bbbb-cccc-0000000abcde";
 const C9 = "c9c9c9c9-aaaa-bbbb-cccc-0000000abcde";
@@ -122,7 +123,7 @@ describe("getRequisitionSources", () => {
     campaignLeads = [];
     const out = (await getRequisitionSources(RID, ALL))!;
     expect(out.rows[0]).toMatchObject({ sourceType: "meta_live", originLabel: "old label", leads: 20 });
-    expect(sqlSeen().some((q) => q.includes("FROM meta_lead_raw"))).toBe(false);
+    expect(sqlSeen().some((q) => stripRule(q).includes("FROM meta_lead_raw"))).toBe(false); // no campaign: no form fill read (the source rule's keyed fill lookup aside)
   });
 
   it("two label variants of one origin add up (never overwrite) and the shares stay consistent; the SQL groups by origin only", async () => {
@@ -150,7 +151,7 @@ describe("getRequisitionSources", () => {
   it("keys every statement by requisition or campaign, never scans he_lead, and collates string joins", async () => {
     campaigns = [{ id: C9, campaign_name: "x" }];
     await getRequisitionSources(RID, ALL);
-    const all = sqlSeen();
+    const all = sqlSeen().map((q) => stripRule(q)); // the source rule's subqueries are keyed (sourceAttribution.test.ts)
     expect(all.length).toBeGreaterThanOrEqual(6);
     for (const q of all) expect(q).toMatch(/requisition_id = \?|campaign_id IN|WHERE id = \?/);
     for (const q of all) for (const m of q.matchAll(/\bhe_lead\b/g)) expect(q.slice(0, m.index).trimEnd()).toMatch(/JOIN$/);

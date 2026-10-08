@@ -13,6 +13,7 @@ import { readCostUsage } from "../he-cost.service.js";
 import { collectInsightFacts } from "../he-drive-insight-facts.service.js";
 import { outcomeReasonCounts } from "../he-outcome-reason.service.js";
 import { INSIGHT_DEFAULTS } from "../he-drive-insights.js";
+import { clearLiveFromCache } from "../he-source-attribution.service.js";
 
 // Pins every statement that types a match / person by source (Live Meta, Old Meta data, Hiring Engine) outside the analytics service
 // itself (driveAnalyticsOff pins that one), so a change to the attribution rule shows up here as a deliberate statement change.
@@ -25,6 +26,7 @@ const grid = () => Array.from({ length: 7 }, () => new Array<number>(24).fill(0)
 beforeEach(() => {
   vi.clearAllMocks();
   clearDriveTrendCache();
+  clearLiveFromCache();
   loadActiveStreams.mockResolvedValue([]);
   execute.mockImplementation(async (sql: string) => {
     const q = String(sql);

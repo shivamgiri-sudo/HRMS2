@@ -21,6 +21,8 @@ import {
 } from "./he-drive-analytics.js";
 import { costBlock, type CostBlock } from "./he-cost.js";
 import { driveCreditSql } from "./he-drive-credit.js";
+import { LIVE_FROM_DEFAULT, attributionJoinsSql, sourceTypeSql } from "./he-source-attribution.js";
+import { loadLiveFrom } from "./he-source-attribution.service.js";
 import { readCostUsage } from "./he-cost.service.js";
 import { evaluateInsights, type DriveInsight } from "./he-drive-insights.js";
 import { collectInsightFacts } from "./he-drive-insight-facts.service.js";
@@ -44,6 +46,8 @@ export interface DriveAnalytics {
   filter: { requisitionId: string | null; branch: string | null };
   followupMode: FollowupMode;
   qualifiedTracked: boolean;
+  /** Live Meta cutoff day (IST): Meta-origin people with a form fill on or after it are meta_live, earlier ones meta_old. */
+  liveFrom: string;
   types: Record<SourceType, TypeAnalytics>;
   typesPresent: SourceType[];
   daily: DailyPoint[];
@@ -115,18 +119,17 @@ async function tolerant<T>(fn: () => Promise<T>, empty: T): Promise<T> {
 // ---- SQL ---------------------------------------------------------------------------------------------------------------------------------
 // Selected / joined only for people who arrived at the drive and were selected / joined on or after its drive date (he-drive-credit.ts).
 const { joined: FLAG_JOINED, selected: FLAG_SELECTED } = driveCreditSql({ m: "m", d: "d", hl: "hl", ac: "ac" });
-// Credit goes through he_match.id (the credit's own drive_id is ignored); an uncredited match counts as `he`.
-const creditJoin = (streams: boolean): string => (streams
-  ? `LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id
-  LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id` : "");
-const typeCol = (streams: boolean): string => (streams ? "COALESCE(rs.source_type, 'he')" : "'he'");
+// The shared source rule (he-source-attribution.ts): credit through he_match.id (the credit's own drive_id is ignored), else a Meta drive or a
+// Meta-origin person (Live / Old by form fill time), else `he`. he_lead is joined by primary key as `al`.
+const creditJoin = (streams: boolean): string => attributionJoinsSql({ streams, match: "m", requisition: "d.requisition_id", lead: "al", leadId: "m.lead_id" });
+const typeCol = (streams: boolean, liveFrom: string): string => sourceTypeSql({ streams, d: "d", lead: "al", liveFrom });
 const DRIVE_MATCH = `FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id`;
 
 // STRAIGHT_JOIN on the three he_match readers: always drive from he_drive (window + requisition) and reach he_message / he_lead_event / he_lead by key,
 // whatever the table statistics say. Same predicates as the header of he-requisition-sources.service.ts; he_lead and ats_candidate by primary key only,
 // the ATS stage log and onboarding bridge by candidate id inside the credit rule.
-const outcomesSql = (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(streams)} AS source_type,
+const outcomesSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(streams, liveFrom)} AS source_type,
        COUNT(DISTINCT CASE WHEN ${FLAG_SELECTED} THEN m.id END) AS selected, COUNT(DISTINCT CASE WHEN ${FLAG_JOINED} THEN m.id END) AS joined,
        COUNT(DISTINCT CASE WHEN m.state = 'slot_released' THEN m.id END) AS slot_released
   ${DRIVE_MATCH}
@@ -142,7 +145,7 @@ const stopsSql = (n: number): string => `SELECT qf.source_type, qf.stopped_reaso
  GROUP BY qf.source_type, qf.stopped_reason`;
 
 // Inbound messages of leads matched on window drives (idx_he_msg_lead); IST wall clock, so WEEKDAY() 0 = Monday and HOUR() 0-23 are IST.
-const repliesSql = (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(streams)} AS source_type, WEEKDAY(hm.created_at) AS wd, HOUR(hm.created_at) AS hr, COUNT(DISTINCT hm.id) AS n
+const repliesSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(streams, liveFrom)} AS source_type, WEEKDAY(hm.created_at) AS wd, HOUR(hm.created_at) AS hr, COUNT(DISTINCT hm.id) AS n
   ${DRIVE_MATCH}
   ${creditJoin(streams)}
   JOIN he_message hm ON hm.lead_id = m.lead_id AND hm.direction = 'in' AND hm.created_at >= ? AND hm.created_at < ?
@@ -150,7 +153,7 @@ const repliesSql = (n: number, streams: boolean): string => `SELECT STRAIGHT_JOI
  GROUP BY 1, 2, 3`;
 
 // idx_he_event_drive (drive_id, event_type).
-const arrivalsSql = (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(streams)} AS source_type, WEEKDAY(ev.created_at) AS wd, HOUR(ev.created_at) AS hr, COUNT(DISTINCT m.id) AS n
+const arrivalsSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(streams, liveFrom)} AS source_type, WEEKDAY(ev.created_at) AS wd, HOUR(ev.created_at) AS hr, COUNT(DISTINCT m.id) AS n
   ${DRIVE_MATCH}
   ${creditJoin(streams)}
   JOIN he_lead_event ev ON ev.drive_id = d.id AND ev.lead_id = m.lead_id AND ev.event_type = 'arrived'
@@ -184,8 +187,8 @@ const batchesOf = (ids: string[]): string[][] => { const out: string[][] = []; f
 const runBatched = async (ids: string[], sqlOf: (n: number, streams: boolean) => string, params: (b: string[]) => unknown[]): Promise<RowDataPacket[]> =>
   (await Promise.all(batchesOf(ids).map((b) => readAgg((st) => sqlOf(b.length, st), params(b))))).flat();
 
-const readOutcomes = async (ids: string[], from: string, to: string): Promise<{ outcomes: MatchOutcome[]; slotReleased: Record<SourceType, number> }> => {
-  const rows = await runBatched(ids, outcomesSql, (b) => [...b, from, to]);
+const readOutcomes = async (ids: string[], from: string, to: string, liveFrom: string): Promise<{ outcomes: MatchOutcome[]; slotReleased: Record<SourceType, number> }> => {
+  const rows = await runBatched(ids, outcomesSql(liveFrom), (b) => [...b, from, to]);
   const slotReleased = perType(() => 0);
   const outcomes: MatchOutcome[] = [];
   for (const r of rows) {
@@ -309,20 +312,21 @@ async function build(
   }
 
   const none = ids.length === 0;
+  const liveFrom = none ? LIVE_FROM_DEFAULT : await loadLiveFrom(); // one cutoff for every read of this build
   const empty = { outcomes: [] as MatchOutcome[], slotReleased: perType(() => 0) };
   const [sources, driveRows, outcomeRead, stops, repliesRows, arrivalsRows, previous] = await Promise.all([
     none ? null : section("sources", failed, async () => {
-      const s = await getSourcesForRequisitions(ids, w);
+      const s = await getSourcesForRequisitions(ids, w, liveFrom);
       if (s.partial) failed.push("sources");
       return s;
     }, null as Awaited<ReturnType<typeof getSourcesForRequisitions>> | null),
-    none ? ([] as TaggedAggRow[]) : section("drives", failed, () => readDriveAggRows(ids, dFrom, dTo), [] as TaggedAggRow[]),
-    none ? empty : section("outcomes", failed, () => readOutcomes(ids, w.from, w.to), empty),
+    none ? ([] as TaggedAggRow[]) : section("drives", failed, () => readDriveAggRows(ids, dFrom, dTo, liveFrom), [] as TaggedAggRow[]),
+    none ? empty : section("outcomes", failed, () => readOutcomes(ids, w.from, w.to, liveFrom), empty),
     none ? perType(() => ({})) : section("stops", failed, () => readStops(ids, dt), perType(() => ({}))),
-    none ? ([] as RowDataPacket[]) : section("replies", failed, async () => (await runBatched(ids, repliesSql, (b) => [...dt, ...b, w.from, w.to])), [] as RowDataPacket[]),
-    none ? ([] as RowDataPacket[]) : section("arrivals", failed, async () => (await runBatched(ids, arrivalsSql, (b) => [...b, w.from, w.to])), [] as RowDataPacket[]),
+    none ? ([] as RowDataPacket[]) : section("replies", failed, async () => (await runBatched(ids, repliesSql(liveFrom), (b) => [...dt, ...b, w.from, w.to])), [] as RowDataPacket[]),
+    none ? ([] as RowDataPacket[]) : section("arrivals", failed, async () => (await runBatched(ids, arrivalsSql(liveFrom), (b) => [...b, w.from, w.to])), [] as RowDataPacket[]),
     none ? null : section("previous", failed, async () => {
-      const [s, rows, o] = await Promise.all([getSourcesForRequisitions(ids, prev), readDriveAggRows(ids, prev.from, prev.to), readOutcomes(ids, prev.from, prev.to)]);
+      const [s, rows, o] = await Promise.all([getSourcesForRequisitions(ids, prev, liveFrom), readDriveAggRows(ids, prev.from, prev.to, liveFrom), readOutcomes(ids, prev.from, prev.to, liveFrom)]);
       if (s.partial) failed.push("previous");
       return { sources: s, rows, outcomes: o.outcomes };
     }, null as { sources: Awaited<ReturnType<typeof getSourcesForRequisitions>>; rows: TaggedAggRow[]; outcomes: MatchOutcome[] } | null),
@@ -374,7 +378,7 @@ async function build(
 
   // reasons: recorded no-show and decline reasons per type; its own statement only while HE_OUTCOME_REASONS is on (a missing table counts zero)
   let reasons: Awaited<ReturnType<typeof outcomeReasonCounts>> | null = null;
-  if (!none && valueAddOn("outcome_reasons")) reasons = await section("reasons", failed, () => outcomeReasonCounts(ids, w.from, w.to), null);
+  if (!none && valueAddOn("outcome_reasons")) reasons = await section("reasons", failed, () => outcomeReasonCounts(ids, w.from, w.to, liveFrom), null);
 
   // insights: thresholds once per call, facts (own sections), then the pure rules; any throw leaves the response without insights
   let insights: DriveInsight[] = [];
@@ -382,7 +386,7 @@ async function build(
     insights = await section("insights", failed, async () => {
       const t = await loadInsightThresholds();
       const { facts, failedSections: factFailed } = await collectInsightFacts({
-        requisitionIds: ids, from: w.from, to: w.to, today, windowDays: w.days,
+        requisitionIds: ids, from: w.from, to: w.to, today, windowDays: w.days, liveFrom,
         types: perType((k) => ({ current: types[k].stages, previous: types[k].previous, noShow: types[k].noShow, declined: types[k].declined })),
         ...(reasons ? { reasons } : {}),
         agg: inWindow, sources: sources?.byRequisition ?? [], codes: new Map(heads.map((h) => [h.id, h.code])), t, arrivals, streams: active, now,
@@ -395,7 +399,7 @@ async function build(
   let cost: DriveAnalytics["cost"] = { available: false, note: "Cost per source arrives with Plan 5" };
   if (!none && valueAddOn("cost_per_source")) {
     cost = await section<DriveAnalytics["cost"]>("cost", failed, async () => {
-      const c = await readCostUsage(ids, w);
+      const c = await readCostUsage(ids, w, liveFrom);
       for (const f of c.failedSections) if (!failed.includes(f)) failed.push(f);
       return costBlock(c.usage, c.rates, perType((t) => stageOnly(cur[t])));
     }, cost);
@@ -409,6 +413,7 @@ async function build(
     filter: { requisitionId, branch },
     followupMode: mode,
     qualifiedTracked: mode !== "off",
+    liveFrom,
     types,
     typesPresent: SOURCE_TYPES.filter((t) => anyStage(types[t].stages) || anyStage(types[t].previous)),
     daily,

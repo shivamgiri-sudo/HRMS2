@@ -9,6 +9,12 @@ exports[`getRequisitionSources SQL (pinned) > issues the same statements and par
     ],
   ],
   [
+    "SELECT param_key FROM he_model_param WHERE param_key LIKE ? AND value = 1",
+    [
+      "meta.live_from.%",
+    ],
+  ],
+  [
     "SELECT id, source_type, origin_id, origin_label, status FROM requisition_stream WHERE requisition_id = ?",
     [
       "r1",
@@ -48,15 +54,22 @@ SELECT f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
   ],
   [
     "
-SELECT COALESCE(rs.source_type, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, 'meta_old', 'he')) AS source_type,
-       COALESCE(rs.origin_id, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, d.id, 'pool')) AS origin_id,
-       MAX(COALESCE(rs.origin_label, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, d.run_label, 'Pool: ATS history'))) AS origin_label,
-       COUNT(DISTINCT m.lead_id) AS leads
-  FROM he_drive d
-  JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
-  LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id
+SELECT x.source_type,
+       COALESCE(x.stream_origin_id, IF(x.source_type = 'he', 'pool', x.drive_id)) AS origin_id,
+       MAX(COALESCE(x.stream_origin_label, IF(x.source_type = 'he', 'Pool: ATS history', COALESCE(x.run_label, CONCAT('Re-run ', DATE_FORMAT(x.drive_date, '%Y-%m-%d')))))) AS origin_label,
+       COUNT(DISTINCT x.lead_id) AS leads
+  FROM (
+    SELECT d.requisition_id, d.id AS drive_id, d.run_label, d.drive_date, rs.origin_id AS stream_origin_id, rs.origin_label AS stream_origin_label, m.lead_id,
+           CASE WHEN COALESCE(rs.source_type, 'he') <> 'he' OR COALESCE(d.source_kind, 'pool') <> 'pool' OR (al.meta_lead_id IS NOT NULL OR EXISTS (SELECT 1 FROM he_lead_campaign alx WHERE alx.lead_id = al.id)) THEN IF(((alf.created_at >= TIMESTAMP '2026-10-08 00:00:00' AND LEAST(alf.created_at, COALESCE(IF(alf.raw_payload->>'$.created_time' REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$', CONVERT_TZ(STR_TO_DATE(LEFT(alf.raw_payload->>'$.created_time', 19), '%Y-%m-%dT%H:%i:%s'), CONCAT(SUBSTRING(alf.raw_payload->>'$.created_time', 20, 3), ':', SUBSTRING(alf.raw_payload->>'$.created_time', 23, 2)), '+05:30'), NULL), alf.created_at)) >= TIMESTAMP '2026-10-08 00:00:00') OR EXISTS (SELECT 1 FROM he_lead_campaign alc JOIN meta_lead_raw afr ON afr.id = alc.meta_lead_id COLLATE utf8mb4_unicode_ci WHERE alc.lead_id = al.id AND (alc.form_filled_at IS NULL OR alc.form_filled_at >= TIMESTAMP '2026-10-08 00:00:00') AND LEAST(afr.created_at, COALESCE(IF(afr.raw_payload->>'$.created_time' REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$', CONVERT_TZ(STR_TO_DATE(LEFT(afr.raw_payload->>'$.created_time', 19), '%Y-%m-%dT%H:%i:%s'), CONCAT(SUBSTRING(afr.raw_payload->>'$.created_time', 20, 3), ':', SUBSTRING(afr.raw_payload->>'$.created_time', 23, 2)), '+05:30'), NULL), afr.created_at)) >= TIMESTAMP '2026-10-08 00:00:00')), 'meta_live', 'meta_old') ELSE 'he' END AS source_type
+      FROM he_drive d
+      JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
+      LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id
   LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id
- WHERE d.requisition_id = ? AND (rs.source_type IS NULL OR rs.source_type <> 'meta_live')
+  LEFT JOIN he_lead al ON al.id = m.lead_id
+  LEFT JOIN meta_lead_raw alf ON alf.id = al.meta_lead_id COLLATE utf8mb4_unicode_ci
+     WHERE d.requisition_id = ?
+  ) x
+ WHERE x.source_type <> 'meta_live'
  GROUP BY 1, 2",
     [
       "r1",
@@ -69,10 +82,10 @@ SELECT COALESCE(rs.source_type, IF(d.source_kind <> 'pool' AND d.run_label IS NO
     ],
   ],
   [
-    "SELECT campaign_id, COUNT(DISTINCT RIGHT(REGEXP_REPLACE(parsed_phone, '[^0-9]', ''), 10)) AS leads
-     FROM meta_lead_raw
-    WHERE campaign_id IN (?) AND (requisition_id IS NULL OR requisition_id = ?) AND parsed_phone IS NOT NULL
-    GROUP BY campaign_id",
+    "SELECT r.campaign_id, IF(r.created_at >= TIMESTAMP '2026-10-08 00:00:00' AND LEAST(r.created_at, COALESCE(IF(r.raw_payload->>'$.created_time' REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$', CONVERT_TZ(STR_TO_DATE(LEFT(r.raw_payload->>'$.created_time', 19), '%Y-%m-%dT%H:%i:%s'), CONCAT(SUBSTRING(r.raw_payload->>'$.created_time', 20, 3), ':', SUBSTRING(r.raw_payload->>'$.created_time', 23, 2)), '+05:30'), NULL), r.created_at)) >= TIMESTAMP '2026-10-08 00:00:00', 'meta_live', 'meta_old') AS source_type, COUNT(DISTINCT RIGHT(REGEXP_REPLACE(r.parsed_phone, '[^0-9]', ''), 10)) AS leads
+     FROM meta_lead_raw r
+    WHERE r.campaign_id IN (?) AND (r.requisition_id IS NULL OR r.requisition_id = ?) AND r.parsed_phone IS NOT NULL
+    GROUP BY r.campaign_id, source_type",
     [
       "c9",
       "r1",

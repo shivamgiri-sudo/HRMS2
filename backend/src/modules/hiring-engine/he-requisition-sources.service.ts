@@ -19,14 +19,16 @@
  *   joining_date; he_match 'selected' by its updated_at; ATS stage selected / offered / offer / offer_approved / onboarded / converted
  *   by a stage log row. A stage label with no such time is not counted. ATS id COALESCE(qf.ats_candidate_id, he_lead.ats_candidate_id).
  *   (The Plan 2 stop check keeps its own stage-only joined rule: it stops follow-ups, it does not credit a source.)
- * - leads: meta_live (origin = campaign): distinct RIGHT(REGEXP_REPLACE(parsed_phone,'[^0-9]',''),10) of meta_lead_raw with that
- *   campaign_id and (requisition_id NULL or this requisition), for every meta_campaign with requisition_id = this requisition;
- *   meta_old and he: distinct he_match.lead_id of this requisition's drives attributed to the origin (credited match: its stream's type
- *   and origin; else a drive with source_kind <> 'pool' and a run_label: meta_old / drive id; else he / pool); finally
+ * - leads: campaign fills (origin = campaign): distinct RIGHT(REGEXP_REPLACE(parsed_phone,'[^0-9]',''),10) of meta_lead_raw with that
+ *   campaign_id and (requisition_id NULL or this requisition), for every meta_campaign with requisition_id = this requisition, split by
+ *   fill time at the Live Meta cutoff (meta_live on or after it, meta_old before it);
+ *   meta_old and he: distinct he_match.lead_id of this requisition's drives typed by the shared source rule (he-source-attribution.ts:
+ *   stream credit, else a Meta drive or a Meta-origin person, Live / Old by form fill time, else he) with the origin of
+ *   typedMatchLeadsSql (stream origin, else drive id for Meta, else pool); people typed meta_live are left to the form fill count; finally
  *   leads = max(leads, qualified).
  * Origins listed: every origin above, every qualified_followup origin and every stream of the requisition (stream rows carry
  * streamId / streamStatus; an origin with no data shows zeros). Labels: campaign name, run_label, "Pool: ATS history", or the stream's
- * origin_label. Shares: shareOfLeads = leads / sum(leads), shareOfJoined = joined / sum(joined), leadToJoinRate = joined / leads, each 0
+ * origin_label ("Re-run <drive date>" for a Meta drive with no run_label). Shares: shareOfLeads = leads / sum(leads), shareOfJoined = joined / sum(joined), leadToJoinRate = joined / leads, each 0
  * when the denominator is 0, unrounded fractions.
  *
  * Every query starts from qualified_followup / he_drive / requisition_stream / meta_campaign filtered by requisition (or from
@@ -39,6 +41,8 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
 import { driveCreditSql } from "./he-drive-credit.js";
+import { attributionJoinsSql, cutoffSql, rawFillSql, sourceTypeSql } from "./he-source-attribution.js";
+import { loadLiveFrom } from "./he-source-attribution.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
 import type { StreamStatus } from "./requisition-stream.service.js";
@@ -108,28 +112,38 @@ ${STAGE_FROM_SQL}
   ) f
  GROUP BY f.source_type, f.origin_id`;
 
-// People lined up on this requisition's drives, attributed to an origin (credit through he_match.id; the credit's own drive_id is ignored).
-// A meta_live credit is skipped: that source counts its form fills instead.
-const MATCH_LEADS_SQL = `
-SELECT COALESCE(rs.source_type, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, 'meta_old', 'he')) AS source_type,
-       COALESCE(rs.origin_id, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, d.id, 'pool')) AS origin_id,
-       MAX(COALESCE(rs.origin_label, IF(d.source_kind <> 'pool' AND d.run_label IS NOT NULL, d.run_label, '${POOL_LABEL}'))) AS origin_label,
-       COUNT(DISTINCT m.lead_id) AS leads
-  FROM he_drive d
-  JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
-  LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id
-  LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id
- WHERE d.requisition_id = ? AND (rs.source_type IS NULL OR rs.source_type <> 'meta_live')
- GROUP BY 1, 2`;
+/**
+ * People lined up on drives, typed by the shared source rule (he-source-attribution.ts) and given an origin: a stream credit's origin, else the
+ * drive for Live / Old Meta (label run_label or "Re-run <drive date>"), else the pool. Live Meta is skipped: that source counts form fills.
+ * `where` filters he_drive d; `byRequisition` adds requisition_id as the first column. The rule runs once per row (inside the derived table).
+ */
+export const typedMatchLeadsSql = (where: string, byRequisition: boolean, liveFrom: string): string => `
+SELECT ${byRequisition ? "x.requisition_id, " : ""}x.source_type,
+       COALESCE(x.stream_origin_id, IF(x.source_type = 'he', 'pool', x.drive_id)) AS origin_id,
+       MAX(COALESCE(x.stream_origin_label, IF(x.source_type = 'he', '${POOL_LABEL}', COALESCE(x.run_label, CONCAT('Re-run ', DATE_FORMAT(x.drive_date, '%Y-%m-%d')))))) AS origin_label,
+       COUNT(DISTINCT x.lead_id) AS leads
+  FROM (
+    SELECT d.requisition_id, d.id AS drive_id, d.run_label, d.drive_date, rs.origin_id AS stream_origin_id, rs.origin_label AS stream_origin_label, m.lead_id,
+           ${sourceTypeSql({ streams: true, d: "d", lead: "al", liveFrom })} AS source_type
+      FROM he_drive d
+      JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
+      ${attributionJoinsSql({ streams: true, match: "m", requisition: "d.requisition_id", lead: "al", leadId: "m.lead_id" })}
+     WHERE ${where}
+  ) x
+ WHERE x.source_type <> 'meta_live'
+ GROUP BY ${byRequisition ? "1, 2, 3" : "1, 2"}`;
 
 const STREAMS_SQL = "SELECT id, source_type, origin_id, origin_label, status FROM requisition_stream WHERE requisition_id = ?";
 const CAMPAIGNS_SQL = "SELECT id, campaign_name FROM meta_campaign WHERE requisition_id = ?";
-// campaign_id IN (...) uses idx_ml_campaign; the phone digits are computed per campaign only.
-const campaignLeadsSql = (n: number): string =>
-  `SELECT campaign_id, COUNT(DISTINCT RIGHT(REGEXP_REPLACE(parsed_phone, '[^0-9]', ''), 10)) AS leads
-     FROM meta_lead_raw
-    WHERE campaign_id IN (${Array(n).fill("?").join(",")}) AND (requisition_id IS NULL OR requisition_id = ?) AND parsed_phone IS NOT NULL
-    GROUP BY campaign_id`;
+// campaign_id IN (...) uses idx_ml_campaign; the phone digits are computed per campaign only. Live / Old by the shared fill-time rule; the
+// payload is parsed only for imports on or after the cutoff.
+export const campaignFillTypeSql = (r: string, liveFrom: string): string =>
+  `IF(${r}.created_at >= ${cutoffSql(liveFrom)} AND ${rawFillSql(r)} >= ${cutoffSql(liveFrom)}, 'meta_live', 'meta_old')`;
+const campaignLeadsSql = (n: number, liveFrom: string): string =>
+  `SELECT r.campaign_id, ${campaignFillTypeSql("r", liveFrom)} AS source_type, COUNT(DISTINCT RIGHT(REGEXP_REPLACE(r.parsed_phone, '[^0-9]', ''), 10)) AS leads
+     FROM meta_lead_raw r
+    WHERE r.campaign_id IN (${Array(n).fill("?").join(",")}) AND (r.requisition_id IS NULL OR r.requisition_id = ?) AND r.parsed_phone IS NOT NULL
+    GROUP BY r.campaign_id, source_type`;
 const HEADER_SQL = "SELECT requisition_code, branch_name, designation_name FROM job_requisition WHERE id = ? LIMIT 1";
 
 interface Cell extends RawRow { _labelRank: number }
@@ -146,6 +160,7 @@ export async function readSection<T>(name: string, failed: string[], fn: () => P
 
 async function build(requisitionId: string, head: { code: string; branch: string; role: string }): Promise<RequisitionSources> {
   const failed: string[] = [];
+  const liveFrom = await loadLiveFrom();
   const cells = new Map<string, Cell>();
   const cell = (t: SourceType, o: string, label: string, rank: number): Cell => {
     const k = keyOf(t, o);
@@ -158,7 +173,7 @@ async function build(requisitionId: string, head: { code: string; branch: string
   const [streams, stages, matchLeads, campaigns] = await Promise.all([
     readSection("streams", failed, async () => (await db.execute<RowDataPacket[]>(STREAMS_SQL, [requisitionId]))[0], [] as RowDataPacket[]),
     readSection("stages", failed, async () => (await db.execute<RowDataPacket[]>(STAGES_SQL, [requisitionId]))[0], [] as RowDataPacket[]),
-    readSection("driveLeads", failed, async () => (await db.execute<RowDataPacket[]>(MATCH_LEADS_SQL, [requisitionId]))[0], [] as RowDataPacket[]),
+    readSection("driveLeads", failed, async () => (await db.execute<RowDataPacket[]>(typedMatchLeadsSql("d.requisition_id = ?", false, liveFrom), [requisitionId]))[0], [] as RowDataPacket[]),
     readSection("campaigns", failed, async () => (await db.execute<RowDataPacket[]>(CAMPAIGNS_SQL, [requisitionId]))[0], [] as RowDataPacket[]),
   ]);
   // Label precedence: qualified_followup text (1) < stream label (2) < campaign name / run_label / pool label (3).
@@ -176,10 +191,15 @@ async function build(requisitionId: string, head: { code: string; branch: string
     c.leads = Number(r.leads ?? 0);
   }
   const campaignIds = campaigns.map((c) => String(c.id));
+  const campaignName = new Map(campaigns.map((c) => [String(c.id), String(c.campaign_name ?? "")]));
   for (const c of campaigns) cell("meta_live", String(c.id), String(c.campaign_name ?? ""), 3);
   if (campaignIds.length) {
-    const rows = await readSection("campaignLeads", failed, async () => (await db.execute<RowDataPacket[]>(campaignLeadsSql(campaignIds.length), [...campaignIds, requisitionId]))[0], [] as RowDataPacket[]);
-    for (const r of rows) cell("meta_live", String(r.campaign_id), "", 0).leads = Number(r.leads ?? 0);
+    const rows = await readSection("campaignLeads", failed, async () => (await db.execute<RowDataPacket[]>(campaignLeadsSql(campaignIds.length, liveFrom), [...campaignIds, requisitionId]))[0], [] as RowDataPacket[]);
+    // A campaign's fills split at the cutoff: Live Meta from it on, Old Meta data before it (same origin id, campaign name as label).
+    for (const r of rows) {
+      const t: SourceType = r.source_type === "meta_old" ? "meta_old" : "meta_live";
+      cell(t, String(r.campaign_id), campaignName.get(String(r.campaign_id)) ?? "", 3).leads += Number(r.leads ?? 0);
+    }
   }
 
   const raw: RawRow[] = [...cells.values()].map(({ _labelRank, ...c }) => {
