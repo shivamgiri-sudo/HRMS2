@@ -33,6 +33,7 @@ export default function CriteriaEditorBody(p: EditorBodyProps) {
         <span className="text-xs text-slate-600 dark:text-slate-300">{p.resp.row.code} · {p.resp.row.branchName} · {p.resp.row.approvalStatus ?? "unknown status"}</span>
       </div>
       {ro && <p className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800"><Lock className="h-4 w-4 shrink-0" aria-hidden="true" />You can read these criteria; only HR can change them.</p>}
+      {p.draft.legacy && !ro && <p className="flex items-start gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800"><Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />Today's screening rules apply until criteria are saved here. After the first save, any rule left undecided that has a value acts as MUST, so decide each one.</p>}
       {banner.length > 0 && (
         <section aria-labelledby={`${reasonId}-banner`} className="space-y-2 rounded-lg border border-amber-400 bg-amber-50 px-3 py-2 dark:border-amber-600 dark:bg-amber-950">
           <h3 id={`${reasonId}-banner`} className="flex items-center gap-1.5 text-sm font-bold text-amber-900 dark:text-amber-100"><AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -92,7 +93,7 @@ export default function CriteriaEditorBody(p: EditorBodyProps) {
         )}
       </div>
       {p.whatIf && p.saved && (
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="w-full min-w-max text-left text-sm">
             <caption className="mb-1 text-left text-xs text-slate-600 dark:text-slate-300">Draft against saved criteria ({p.whatIf.source.replace("_", " ")}, {p.whatIf.start} people). Nothing is saved yet.</caption>
             <thead><tr className="border-b border-slate-200 dark:border-slate-700"><th scope="col" className="px-2 py-1">Outcome</th><th scope="col" className="px-2 py-1">Saved</th><th scope="col" className="px-2 py-1">Draft</th><th scope="col" className="px-2 py-1">Change</th></tr></thead>

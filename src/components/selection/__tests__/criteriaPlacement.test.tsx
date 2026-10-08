@@ -72,3 +72,14 @@ describe("campaign drawer and panel by role", () => {
     expect(listCounts([])).toBe("0 requisitions, 0 with criteria incomplete");
   });
 });
+
+describe("375 px: screen-reader-only text stays inside its scroll box", () => {
+  it("every table scroll wrapper is a positioning context (an absolute sr-only span would widen the page otherwise)", async () => {
+    const fs = await import("node:fs");
+    const dir = new URL("..", import.meta.url).pathname;
+    for (const f of fs.readdirSync(dir).filter((x: string) => x.endsWith(".tsx"))) {
+      const src = fs.readFileSync(`${dir}${f}`, "utf8");
+      for (const m of src.matchAll(/className="([^"]*\boverflow-(?:x-)?auto\b[^"]*)"/g)) expect(`${f}: ${m[1]}`).toMatch(/\brelative\b/);
+    }
+  });
+});

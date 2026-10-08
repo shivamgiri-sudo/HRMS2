@@ -47,7 +47,7 @@ export default function RuleRow({ ruleKey, label, row, readOnly, lock, coverage,
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span id={`${id}-label`} className="min-w-0 break-words text-sm font-semibold text-slate-900 dark:text-slate-100">{label}</span>
         {row.mode === "undecided"
-          ? <span className="text-xs font-semibold text-amber-800 dark:text-amber-200">{row.defaulted ? "Not decided: acts as MUST now" : "Not decided"}</span>
+          ? <span className="text-xs font-semibold text-amber-800 dark:text-amber-200">{row.defaulted ? "Not decided: acts as MUST now" : row.today ? `Not decided: today's screening treats it as ${row.today}` : "Not decided"}</span>
           : null}
         {lock && <span className="inline-flex items-center gap-1 text-xs text-slate-700 dark:text-slate-200"><Lock className="h-3.5 w-3.5" aria-hidden="true" />{lock}</span>}
       </div>

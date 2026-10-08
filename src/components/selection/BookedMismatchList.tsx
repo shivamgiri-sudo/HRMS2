@@ -7,7 +7,7 @@ type Row = { followupId: string; maskedMobile: string; firstName: string; verdic
 export function BookedMismatchView({ rows }: { rows: Row[] }) {
   if (!rows.length) return <p className="text-sm text-slate-600 dark:text-slate-300">Nobody booked is affected by the current criteria.</p>;
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="w-full min-w-max text-left text-xs text-slate-900 dark:text-slate-100">
         <caption className="mb-1 text-left text-xs text-slate-600 dark:text-slate-300">Booked but no longer meet the criteria. Booked slots continue; keep or cancel them by hand.</caption>
         <thead><tr className="border-b border-slate-200 dark:border-slate-700"><th scope="col" className="px-2 py-1">Mobile</th><th scope="col" className="px-2 py-1">Name</th><th scope="col" className="px-2 py-1">Now</th><th scope="col" className="px-2 py-1">Booking</th><th scope="col" className="px-2 py-1">Slot</th></tr></thead>

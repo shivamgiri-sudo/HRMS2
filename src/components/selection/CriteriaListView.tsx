@@ -7,7 +7,7 @@ import type { RequisitionItem } from "./selectionTypes";
 export default function CriteriaListView({ items, selected, onSelect, now, caption }: { items: RequisitionItem[]; selected: string | null; onSelect: (id: string) => void; now: Date; caption: string }) {
   const rows = listRows(items, now);
   return (
-    <div className="max-w-full overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+    <div className="relative max-w-full overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
       <table className="w-full min-w-max text-left text-xs text-slate-900 dark:text-slate-100">
         <caption className="sr-only">{caption}</caption>
         <thead className="bg-slate-50 dark:bg-slate-800"><tr>

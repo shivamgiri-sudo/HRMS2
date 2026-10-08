@@ -63,6 +63,12 @@ describe("criteria editor body", () => {
     expect(html).toContain("Warning: Typing above 60");
     expect(html).toContain("I have read the warnings");
   });
+  it("legacy requisition: says today's screening applies until the first save", () => {
+    const r = resp({ selectionRules: null });
+    const html = render({ ...r, compiled: { ...r.compiled, legacy: true } });
+    expect(html).toContain("Today&#x27;s screening rules apply until criteria are saved here.");
+    expect(render(resp())).not.toContain("Today&#x27;s screening rules apply");
+  });
   it("what-if delta table", () => {
     const html = render(resp(), { whatIf: { ...preview, draft: true, outcome: { shortlist: 20, review: 3, rejected: 0, systemExcluded: 7 } } });
     expect(html).toContain("Draft against saved criteria");

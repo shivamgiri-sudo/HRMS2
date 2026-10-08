@@ -57,7 +57,7 @@ export function BulkCriteriaBody(p: BulkBodyProps) {
       {view && (
         <section aria-label="Changes per requisition" className="space-y-2">
           <p className="text-xs text-slate-700 dark:text-slate-200">{view.counts.changing} requisitions change, {view.counts.kept} values kept because they are already filled, {view.counts.withErrors} with errors.</p>
-          <div className="overflow-x-auto">
+          <div className="relative overflow-x-auto">
             <table className="w-full min-w-max text-left text-xs">
               <caption className="sr-only">Changes the bulk edit would make, per requisition</caption>
               <thead><tr className="border-b border-slate-200 dark:border-slate-700"><th scope="col" className="px-2 py-1">Requisition</th><th scope="col" className="px-2 py-1">Changes</th><th scope="col" className="px-2 py-1">Kept, already filled</th><th scope="col" className="px-2 py-1">Problems</th><th scope="col" className="px-2 py-1">Leave out</th></tr></thead>

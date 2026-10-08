@@ -25,6 +25,17 @@ describe("initDraft", () => {
   });
 });
 
+describe("legacy requisitions (nothing saved in the editor yet)", () => {
+  it("an undecided row says how today's screening treats it", () => {
+    const d = initDraft(resp({}, [{ key: "age", label: "Age", requiredText: "18 to 32", mode: "must", weight: 0, missing: "review", origin: "column" },
+      { key: "skills", label: "Skills", requiredText: "Excel", mode: "prefer", weight: 10, missing: "pass", origin: "column" }]));
+    expect(d.rows.age).toMatchObject({ mode: "undecided", today: "MUST" });
+    expect(d.rows.skills.today).toBe("PREFER");
+    expect(d.rows.typing.today).toBeNull();
+    expect(initDraft(withRules()).rows.skills.today).toBeNull();
+  });
+});
+
 describe("toPatch (only what changed)", () => {
   it("no change -> empty patch", () => expect(toPatch(initDraft(withRules()), initDraft(withRules()))).toEqual({}));
   it("a column change -> that column only, typed", () => {

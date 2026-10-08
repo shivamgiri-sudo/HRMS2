@@ -4,7 +4,9 @@ import { DEFAULT_WEIGHT, RULE_INFO, VALUE_DEFAULTS, labelOf } from "./ruleInfo";
 import type { CriteriaIssue, CriteriaPatch, CriteriaResponse, MissingPolicy, PreviewResult, RuleMode, RuleSetting, SelectionRules } from "./selectionTypes";
 
 export type RowMode = RuleMode | "undecided";
-export interface RowState { mode: RowMode; weight: number; missing: MissingPolicy; missingBySource: Record<string, MissingPolicy>; value: unknown; defaulted: boolean }
+export interface RowState { mode: RowMode; weight: number; missing: MissingPolicy; missingBySource: Record<string, MissingPolicy>; value: unknown; defaulted: boolean;
+  /** Legacy requisitions: how today's screening treats this rule (null when it does not apply or HR rules are saved). */
+  today?: "MUST" | "PREFER" | null }
 export const COLUMN_KEYS = ["educationRequirement", "skillsRequired", "experienceMinYears", "experienceMaxYears", "ageMin", "ageMax", "targetLocations", "radiusKm", "shiftRequirement", "nightShiftRequired", "rotationalShift"] as const;
 export type ColumnKey = (typeof COLUMN_KEYS)[number];
 export const CONFIG_KEYS = ["gender", "written_english_level", "min_typing_speed_wpm", "certifications", "language_requirements"] as const;
@@ -17,6 +19,12 @@ export interface Draft {
 const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 const list = (v: unknown) => (Array.isArray(v) ? v.map((x) => (typeof x === "string" ? x : str((x as { language?: unknown })?.language))).filter(Boolean).join(", ") : "");
 
+function todayMode(r: CriteriaResponse, key: string): "MUST" | "PREFER" | null {
+  if (!r.compiled.legacy) return null;
+  const hits = r.compiled.rules.filter((c) => c.key === key);
+  return hits.some((c) => c.mode === "must") ? "MUST" : hits.some((c) => c.mode === "prefer") ? "PREFER" : null;
+}
+
 export function initDraft(r: CriteriaResponse): Draft {
   const row = r.row;
   const settings = row.selectionRules?.rules ?? {};
@@ -26,6 +34,7 @@ export function initDraft(r: CriteriaResponse): Draft {
     rows[key] = {
       mode: s ? s.mode : "undecided", weight: s?.weight ?? DEFAULT_WEIGHT[key] ?? 10, missing: s?.missing ?? "review", missingBySource: { ...(s?.missingBySource ?? {}) } as Record<string, MissingPolicy>,
       value: s?.value ?? VALUE_DEFAULTS[key], defaulted: r.compiled.rules.some((c) => c.key === key && c.defaulted),
+      today: todayMode(r, key),
     };
   }
   const cfg = row.screeningConfig ?? {};

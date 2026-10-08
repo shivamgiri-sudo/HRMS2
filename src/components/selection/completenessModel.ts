@@ -20,7 +20,7 @@ export function summaryGroups(rules: CompiledRuleView[]): Array<{ group: RuleGro
   for (const r of rules) {
     const g = RULE_INFO[r.key]?.group ?? "who";
     const line: SummaryLine = { key: r.key, text: `${r.label}: ${r.requiredText}`, mode: r.mode === "must" ? "MUST" : `PREFER +${r.weight}`,
-      unknown: r.mode === "must" ? unknownText(r.missing) : null, scope: scopeOf(r.only), defaulted: !!r.defaulted };
+      unknown: r.mode === "must" ? unknownText(r.missing) : null, scope: scopeOf(r.only) ?? (r.origin === "line_up" ? "today's drive line-up check" : null), defaulted: !!r.defaulted };
     by.set(g, [...(by.get(g) ?? []), line]);
   }
   return GROUP_ORDER.filter((g) => by.has(g)).map((g) => ({ group: g, title: GROUP_TITLE[g], lines: by.get(g)! }));

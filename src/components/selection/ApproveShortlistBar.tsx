@@ -26,7 +26,7 @@ export function ApproveBarView(p: BarViewProps) {
       <p>{v.runText}</p>
       <p className="text-xs text-slate-600 dark:text-slate-300">{v.versionText}</p>
       {can && p.people.length > 0 && (
-        <div className="max-h-72 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
+        <div className="relative max-h-72 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
           <table className="w-full min-w-max text-left text-xs">
             <caption className="sr-only">People in the last run: untick to leave someone out; tick a review row to approve it</caption>
             <thead className="bg-slate-50 dark:bg-slate-800"><tr><th scope="col" className="px-2 py-1">Include</th><th scope="col" className="px-2 py-1">Mobile</th><th scope="col" className="px-2 py-1">Status</th><th scope="col" className="px-2 py-1">Score</th><th scope="col" className="px-2 py-1">Why review</th></tr></thead>

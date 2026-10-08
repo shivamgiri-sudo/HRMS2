@@ -25,6 +25,10 @@ describe("badgeOf", () => {
 });
 
 describe("summaryGroups", () => {
+  it("legacy mode: the line-up's own copy of a rule says so, so two 'Age' lines are not read as a duplicate", () => {
+    const g = summaryGroups([rule({ key: "age", label: "Age", requiredText: "18 to 32", origin: "column" }), rule({ key: "age", label: "Age", requiredText: "18 to 32", origin: "line_up" })]);
+    expect(g[0].lines.map((l) => l.scope)).toEqual([null, "today's drive line-up check"]);
+  });
   it("groups lines Who / Where / ... in order, each with MUST or PREFER and the unknown policy", () => {
     const g = summaryGroups([rule({ key: "night_shift", label: "Willing to work night shift", requiredText: "willing to work night shift", missing: "pass" }),
       rule({}), rule({ key: "skills", label: "Skills", requiredText: "any of Excel", mode: "prefer", weight: 10, missing: "pass" }),
