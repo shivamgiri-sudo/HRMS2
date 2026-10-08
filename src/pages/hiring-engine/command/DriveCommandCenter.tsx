@@ -9,7 +9,9 @@ import PipelineHealthStrip from "../PipelineHealthStrip";
 import FilterBar from "./FilterBar";
 import SectionNav, { PANEL_ID, tabDomId } from "./SectionNav";
 import { filtersKey, type RequisitionOption } from "./commandData";
-import { TYPE_LABEL, commandHash, defaultFilters, istTodayClient, parseCommandHash, sectionLabels, type Filters, type SectionId } from "./driveCommandModel";
+import { SECTIONS, TYPE_LABEL, commandHash, defaultFilters, istTodayClient, parseCommandHash, sectionLabels, sectionsFor, type Filters, type SectionId } from "./driveCommandModel";
+import { useHasRole } from "@/hooks/useUserRole";
+import { CRITERIA_READ_ROLES } from "@/components/selection/criteriaListModel";
 import type { DriveAnalytics } from "./driveCommandTypes";
 import { useDriveAnalytics, useFilterOptions } from "./useCommandData";
 import KpiStrip from "./charts/KpiStrip";
@@ -35,6 +37,7 @@ import ActionQueuePanel from "./ActionQueuePanel";
 import { DriveFunnelDepth, SummaryFunnelDepth } from "./FunnelDepth";
 
 const DrivesTab = lazy(() => import("../DrivesTab"));
+const CriteriaSection = lazy(() => import("@/components/selection/CriteriaSection"));
 
 const RETRY_BTN = "min-h-11 cursor-pointer rounded-lg border border-rose-400 bg-white px-3 text-sm font-semibold text-rose-800 transition-colors duration-150 hover:bg-rose-100 motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:bg-slate-900 dark:text-rose-200 dark:hover:bg-slate-800 sm:min-h-8";
 const PULSE = "animate-pulse rounded-xl border border-slate-200 bg-slate-100 motion-reduce:animate-none dark:border-slate-700 dark:bg-slate-800";
@@ -54,6 +57,8 @@ export interface DriveCommandViewProps {
   gated?: ReactNode;
   /** Rendered regardless of the analytics state (the existing DrivesTab, the Plan section). */
   children?: ReactNode;
+  /** The tabs shown (the Selection criteria tab only for roles that may read criteria). */
+  sections?: typeof SECTIONS;
 }
 
 /** Reserved-height skeleton: four KPI tiles (112 px) and two charts (280 px). */
@@ -70,16 +75,16 @@ function CommandSkeleton() {
   );
 }
 
-export function DriveCommandView({ section, filters, analytics, loading, error, onSection, onFilters, onRetry, requisitions, branches, gated, children }: DriveCommandViewProps) {
-  const needs = section !== "plan"; // the Plan section loads its own data
+export function DriveCommandView({ section, filters, analytics, loading, error, onSection, onFilters, onRetry, requisitions, branches, gated, children, sections = SECTIONS }: DriveCommandViewProps) {
+  const needs = section !== "plan" && section !== "criteria"; // Plan and Selection criteria load their own data
   const firstLoad = needs && loading && !analytics;
   const failed = needs && !!error && !analytics;
   // Live Meta / Old Meta data explain their own zeros (and still offer Open a stream), so the generic empty box is the Summary's only.
   const empty = !!analytics && analytics.requisitionCount === 0 && section === "summary";
   return (
     <div className="space-y-0">
-      <SectionNav current={section} onSelect={onSection} />
-      <FilterBar filters={filters} requisitions={requisitions} branches={branches} onChange={onFilters} />
+      <SectionNav current={section} onSelect={onSection} sections={sections} />
+      {section !== "criteria" && <FilterBar filters={filters} requisitions={requisitions} branches={branches} onChange={onFilters} />}
       <div id={PANEL_ID} role="tabpanel" tabIndex={-1} aria-labelledby={tabDomId(section)} aria-busy={loading} className="space-y-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
         {section === "summary" && children}
         {firstLoad && <CommandSkeleton />}
@@ -148,6 +153,9 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
     };
   }
   if (section === "plan") return { gated: null, always: plan ?? null }; // the Plan section loads its own data
+  if (section === "criteria") {
+    return { gated: null, always: <Suspense fallback={<div className={PULSE} style={{ height: 240 }} aria-busy="true" />}><CriteriaSection requisitionId={filters?.requisitionId ?? null} /></Suspense> };
+  }
   if (section === "he") {
     return {
       gated: analytics && (
@@ -186,7 +194,11 @@ export function requisitionCodeOf(id: string, analytics: Pick<DriveAnalytics, "g
 
 export default function DriveCommandCenter() {
   const [state, setState] = useState(() => parseCommandHash(typeof window === "undefined" ? "" : window.location.hash));
-  const { section, filters } = state;
+  const showCriteria = useHasRole(...CRITERIA_READ_ROLES);
+  const sections = sectionsFor(showCriteria);
+  // a role that may not read criteria lands on the Summary even with #drives:criteria in the address
+  const section: SectionId = state.section === "criteria" && !showCriteria ? "summary" : state.section;
+  const { filters } = state;
   useEffect(() => {
     const h = () => setState(parseCommandHash(window.location.hash));
     window.addEventListener("hashchange", h);
@@ -241,7 +253,7 @@ export default function DriveCommandCenter() {
       <PipelineHealthStrip />
       <p role="status" className="text-sm text-emerald-800 empty:hidden dark:text-emerald-200">{pageNote}</p>
       <DriveCommandView section={section} filters={filters} analytics={data} loading={loading} error={error}
-        onSection={(s) => go(s, filters)} onFilters={(f) => go(section, f)} onRetry={reload} requisitions={requisitions} branches={branches} gated={parts.gated}>
+        onSection={(s) => go(s, filters)} onFilters={(f) => go(section, f)} onRetry={reload} requisitions={requisitions} branches={branches} gated={parts.gated} sections={sections}>
         {parts.always}
       </DriveCommandView>
       <StreamDialog open={dialog?.kind === "extend_stream"} onOpenChange={(o) => { if (!o) setDialog(null); }} streamId={dialog?.kind === "extend_stream" ? dialog.streamId : null} today={today} onChanged={reload} />

@@ -94,7 +94,7 @@ const planView = (
     checklist={<D1ChecklistView checklist={plan.checklist} date="2026-10-09" busy={null} run={{ dryRun: true, result: plan.checklist.preview, error: null }} onPreview={noop} onPlanNow={noop} />}
     onCreateStream={noop} />
 );
-const extras: Record<SectionId, React.ReactNode> = {
+const extras: Record<Exclude<SectionId, "criteria">, React.ReactNode> = {
   summary: <FollowupPanelView expanded loading={false} error={null} data={followup} qualifiedTracked onToggle={noop} onReload={noop} onRetry={noop} onMarkCalled={noop} />,
   live: (
     <>
@@ -114,8 +114,8 @@ const extras: Record<SectionId, React.ReactNode> = {
   ),
   plan: <WhatIfPanel day={day1} />,
 };
-const SECTIONS: SectionId[] = ["summary", "live", "old", "he", "plan"];
-function render(section: SectionId): string {
+const SECTIONS: Array<Exclude<SectionId, "criteria">> = ["summary", "live", "old", "he", "plan"];
+function render(section: Exclude<SectionId, "criteria">): string {
   const p = sectionParts(section, analytics, insightsPanel, { requisitions: reqs, requisitionId: R, onChanged: noop }, planView);
   return renderToStaticMarkup(
     <DriveCommandView section={section} filters={filters} analytics={analytics} loading={false} error={null} onSection={noop} onFilters={noop} onRetry={noop}

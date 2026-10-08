@@ -20,7 +20,7 @@
  * URL) and none is configured on any environment yet. Without the banner an empty dashboard looks
  * like "the campaigns are not performing" instead of "nothing is connected yet".
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   BadgeCheck,
@@ -40,6 +40,8 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { useHasRole } from "@/hooks/useUserRole";
+import { CRITERIA_READ_ROLES } from "@/components/selection/criteriaListModel";
 import {
   Select,
   SelectContent,
@@ -66,6 +68,7 @@ import {
   pct,
   ratio,
 } from "@/components/analytics/analytics-kit";
+const CampaignCriteria = lazy(() => import("@/components/selection/CampaignCriteria"));
 
 type Overview = {
   campaigns: number;
@@ -229,6 +232,7 @@ export default function MetaCampaignDashboard() {
   const [funnel, setFunnel] = useState<Funnel | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [drawerLoading, setDrawerLoading] = useState(false);
+  const canReadCriteria = useHasRole(...CRITERIA_READ_ROLES);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -755,6 +759,13 @@ export default function MetaCampaignDashboard() {
                     <span className="font-bold">Last metrics sync failed: </span>
                     {selected.lastSyncError}
                   </div>
+                )}
+
+                {/* Selection criteria of the requisitions this campaign points at (plan 2026-10-09, S20); nothing for recruiters. */}
+                {selected && canReadCriteria && (
+                  <Suspense fallback={<div aria-busy="true" className="h-24 animate-pulse rounded-xl bg-slate-100 motion-reduce:animate-none dark:bg-slate-800" />}>
+                    <CampaignCriteria key={selected.id} campaignId={selected.id} />
+                  </Suspense>
                 )}
 
                 <div className="grid grid-cols-2 gap-3">

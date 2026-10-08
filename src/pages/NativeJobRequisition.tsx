@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { HeadcountShortagePanel } from '@/components/workforce/HeadcountShortagePanel';
 import RequisitionMetaPanel from '@/components/ats/RequisitionMetaPanel';
 import AssessmentLinkEditor from '@/components/requisition/AssessmentLinkEditor';
+import { CRITERIA_READ_ROLES } from '@/components/selection/criteriaListModel';
 import { canEditAssessmentLink } from '@/components/requisition/assessmentLink.model';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { formatISTDate } from '@/lib/utils';
@@ -17,6 +18,7 @@ import {
   Trash2, Download, Mail, Bell, UserPlus, Phone, ArrowUpDown,
   UserCheck, RotateCcw
 } from 'lucide-react';
+const RequisitionCriteriaPanel = lazy(() => import('@/components/selection/RequisitionCriteriaPanel'));
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -1856,6 +1858,15 @@ export default function NativeJobRequisition() {
                       loadRequisitions();
                     }}
                   />
+                )}
+
+                {/* Selection criteria (plan 2026-10-09, S20): summary, editor, preview and approval; nothing for roles without read access. */}
+                {(CRITERIA_READ_ROLES as readonly string[]).includes(currentUserRole ?? '') && (
+                  <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
+                    <Suspense fallback={<div aria-busy="true" className="h-24 animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none dark:bg-slate-800" />}>
+                      <RequisitionCriteriaPanel key={selectedRequisition.id} requisitionId={selectedRequisition.id} title="Selection criteria" onChanged={() => loadRequisitions()} />
+                    </Suspense>
+                  </div>
                 )}
 
                 {/* META campaign link — the manual step that lets the Lead Gen webhook route an

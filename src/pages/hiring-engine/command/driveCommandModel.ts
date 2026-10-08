@@ -5,7 +5,7 @@
  */
 import { STAGES, type CostBlock, type DriveAnalytics, type SourceType, type Stage, type TypeCost } from "./driveCommandTypes";
 
-export type SectionId = "summary" | "live" | "old" | "he" | "plan";
+export type SectionId = "summary" | "criteria" | "live" | "old" | "he" | "plan";
 export const SECTIONS: ReadonlyArray<{ id: SectionId; label: string; sourceType: SourceType | null }> = [
   { id: "summary", label: "Summary", sourceType: null },
   { id: "live", label: "Live Meta", sourceType: "meta_live" },
@@ -13,6 +13,10 @@ export const SECTIONS: ReadonlyArray<{ id: SectionId; label: string; sourceType:
   { id: "he", label: "Hiring Engine", sourceType: "he" },
   { id: "plan", label: "Plan", sourceType: null },
 ];
+/** The Selection criteria section (plan 2026-10-09, S20) sits after Summary, only for roles that may read criteria. */
+export const CRITERIA_SECTION = { id: "criteria" as SectionId, label: "Selection criteria", sourceType: null };
+export const ALL_SECTIONS: ReadonlyArray<{ id: SectionId; label: string; sourceType: SourceType | null }> = [SECTIONS[0], CRITERIA_SECTION, ...SECTIONS.slice(1)];
+export const sectionsFor = (showCriteria: boolean) => (showCriteria ? ALL_SECTIONS : SECTIONS);
 export const TYPE_LABEL: Record<SourceType, string> = { meta_live: "Live Meta", meta_old: "Old Meta data", he: "Hiring Engine" };
 export const SOURCE_TYPES: readonly SourceType[] = ["meta_live", "meta_old", "he"];
 export const STAGE_LABEL: Record<Stage, string> = {
@@ -61,7 +65,7 @@ function validWindow(from: string, to: string, now: Date): boolean {
 }
 
 // ---- hash --------------------------------------------------------------------------------------------------------------------------------
-const sectionOf = (s: string): SectionId => SECTIONS.find((x) => x.id === s)?.id ?? "summary";
+const sectionOf = (s: string): SectionId => ALL_SECTIONS.find((x) => x.id === s)?.id ?? "summary";
 const isHex = (c: string): boolean => (c >= "0" && c <= "9") || (c >= "a" && c <= "f") || (c >= "A" && c <= "F");
 /** A 36-char UUID shape (8-4-4-4-12 hex); anything else is dropped so the API never answers 400 for a hand-edited hash. */
 export function isUuidShape(x: string | null): x is string {
@@ -107,14 +111,14 @@ export function commandHash(section: SectionId, f: Filters, now: Date = new Date
 }
 
 /** Tablist keyboard: ArrowRight / ArrowLeft wrap, Home and End jump; any other key is null. */
-export function nextSectionByKey(current: SectionId, key: string): SectionId | null {
-  const i = SECTIONS.findIndex((s) => s.id === current);
-  const n = SECTIONS.length;
+export function nextSectionByKey(current: SectionId, key: string, list: ReadonlyArray<{ id: SectionId }> = SECTIONS): SectionId | null {
+  const i = list.findIndex((s) => s.id === current);
+  const n = list.length;
   const at = i < 0 ? 0 : i;
-  if (key === "ArrowRight") return SECTIONS[(at + 1) % n].id;
-  if (key === "ArrowLeft") return SECTIONS[(at - 1 + n) % n].id;
-  if (key === "Home") return SECTIONS[0].id;
-  if (key === "End") return SECTIONS[n - 1].id;
+  if (key === "ArrowRight") return list[(at + 1) % n].id;
+  if (key === "ArrowLeft") return list[(at - 1 + n) % n].id;
+  if (key === "Home") return list[0].id;
+  if (key === "End") return list[n - 1].id;
   return null;
 }
 
