@@ -16,8 +16,6 @@ import multer from "multer";
 import { registerUpload } from "../document-vault/documentVault.service.js";
 import PDFDocument from "pdfkit";
 import sharp from "sharp";
-import { execFile } from "child_process";
-import os from "os";
 import { ZipArchive } from "archiver";
 import type { Archiver as ArchiverInstance } from "archiver";
 import { fetchEsiPendingRows } from "./esi-pending.query.js";
@@ -672,21 +670,30 @@ export async function resolveEsiDocPath(
  */
 const ESI_JPG_MAX_BYTES = 90 * 1024;
 
+/**
+ * First page of a PDF as a JPG buffer. Pure Node (pdfjs-dist + @napi-rs/canvas,
+ * both ship prebuilt binaries) so production needs no poppler/system package —
+ * the deploy runner there has no passwordless sudo to install one.
+ */
 async function pdfFirstPageToJpg(pdfPath: string): Promise<Buffer> {
-  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "esi-pdf-"));
+  const [{ getDocument }, { createCanvas }] = await Promise.all([
+    import("pdfjs-dist/legacy/build/pdf.mjs"),
+    import("@napi-rs/canvas"),
+  ]);
+  const data = new Uint8Array(await fs.promises.readFile(pdfPath));
+  const doc = await getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise;
   try {
-    const out = path.join(dir, "p");
-    await new Promise<void>((resolve, reject) =>
-      execFile(
-        "pdftoppm",
-        ["-jpeg", "-r", "150", "-f", "1", "-l", "1", "-singlefile", pdfPath, out],
-        { timeout: 30_000 },
-        (err) => (err ? reject(err) : resolve()),
-      ),
-    );
-    return await fs.promises.readFile(`${out}.jpg`);
+    const page = await doc.getPage(1);
+    const base = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: Math.min(3, 1600 / base.width) });
+    const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx as any, canvas: canvas as any, viewport }).promise;
+    return canvas.toBuffer("image/jpeg", 90);
   } finally {
-    await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    await doc.destroy();
   }
 }
 

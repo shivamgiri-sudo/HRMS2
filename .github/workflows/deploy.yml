@@ -81,7 +81,7 @@ jobs:
           # added to prevent - just one step later.
           if sudo -n true 2>/dev/null; then
             sudo apt-get update
-            sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev poppler-utils
+            sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
           else
             echo "Passwordless sudo unavailable on this runner - relying on the host's existing cairo/pango headers."
           fi
