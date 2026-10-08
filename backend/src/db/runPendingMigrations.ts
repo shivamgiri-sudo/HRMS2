@@ -1325,6 +1325,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2136_he_match_outcome_reason.sql", // Registered 2026-10-08. he_match_outcome_reason (one no-show/decline reason per he_match, last tap wins). CREATE TABLE IF NOT EXISTS only, re-runnable.
   "migrations/2144_employee_master_snapshot_exit_reason.sql", // Registered 2026-10-08. employee_master_snapshot.exit_reason (Employee Master "Exit Reason" column). information_schema-guarded ALTER, re-runnable.
   "migrations/2137_candidate_dra_certificate.sql", // Registered 2026-10-08. candidate_dra_certificate: DRA certificate upload + verification history for SBI Credit Card onboarding (cost centre BSS/OB/AHMH-JD/1050)
+  "migrations/2137_qualified_followup_call_batch_slot.sql", // Registered 2026-10-08. qualified_followup_call_batch: mode_tag, slot_key, slot_claim (uq_qfcb_slot, one batch per tag and IST slot), summary JSON; qualified_followup.idx_qfu_mobile_batch. information_schema-guarded, re-runnable.
 ];
 
 export type MigrationHealth = {

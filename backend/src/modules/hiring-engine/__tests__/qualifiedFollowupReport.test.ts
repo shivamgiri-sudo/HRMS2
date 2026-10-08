@@ -21,6 +21,7 @@ const data = (over: Partial<DailyReportData> = {}): DailyReportData => ({
   skipped: [{ reason: "no_phone", count: 1, examples: [{ name: "Asha", mobileMasked: "xxxxxx3210", requisition: "REQ-1" }] }],
   waFailuresByCode: [{ code: "132018", count: 2, sample: "(#132018) a <b>" }],
   blockedByReason: [{ channel: "whatsapp", reason: "whatsapp_not_configured", count: 4 }],
+  callFiles: [],
   ...over,
 });
 
@@ -44,6 +45,42 @@ describe("buildDailyReport", () => {
   it("subject and html escaping", () => {
     expect(buildDailyReport(data()).subject).toBe("[HRMS] Qualified follow-up daily report 2026-10-07 (live)");
     expect(buildDailyReport(data()).html).toContain("&lt;b&gt;");
+  });
+});
+
+describe("calling-file batches in the daily report", () => {
+  it("collects each batch of the window for this tag with its counts; empty batches included", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.includes("FROM qualified_followup_call_batch")) return [[
+        { slot_key: "2026-10-06 10:00", status: "sent", row_count: 12, summary: JSON.stringify({ rows: 12, skipped: { already_in_file: 3, opted_out: 1 }, merged: 2, deferred: 0 }) },
+        { slot_key: "2026-10-06 12:00", status: "empty", row_count: 0, summary: null },
+      ]];
+      if (q.includes("COUNT(*)")) return [[{ n: 0 }]];
+      return [[]];
+    });
+    const d = await collectDailyReport(new Date("2026-10-06T08:30:00+05:30"), now, "live");
+    const sql = execute.mock.calls.map(([q]) => String(q)).find((q) => q.includes("FROM qualified_followup_call_batch"))!;
+    expect(sql).toContain("mode_tag = ?");
+    expect(d.callFiles).toEqual([
+      { slot: "2026-10-06 10:00", status: "sent", rows: 12, notFiled: 4, merged: 2 },
+      { slot: "2026-10-06 12:00", status: "empty", rows: 0, notFiled: 0, merged: 0 },
+    ]);
+  });
+  it("a failed batch read leaves the report going, marked unavailable", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      if (String(sql).includes("FROM qualified_followup_call_batch")) throw new Error("Unknown column 'mode_tag'");
+      return String(sql).includes("COUNT(*)") ? [[{ n: 0 }]] : [[]];
+    });
+    expect((await collectDailyReport(new Date("2026-10-06T08:30:00+05:30"), now, "live")).callFiles).toBeNull();
+  });
+  it("renders a Calling files section with totals", () => {
+    const r = buildDailyReport(data({ callFiles: [
+      { slot: "2026-10-06 10:00", status: "sent", rows: 12, notFiled: 4, merged: 2 }, { slot: "2026-10-06 12:00", status: "empty", rows: 0, notFiled: 0, merged: 0 }] }));
+    expect(r.html).toContain("<h3>Calling files</h3>");
+    expect(r.html).toMatch(/2 batches, 12 people filed, 4 not filed/);
+    expect(r.text).toMatch(/2026-10-06 10:00 sent: 12 people, 4 not filed \(duplicates or stops\), 2 merged/);
+    expect(buildDailyReport(data({ callFiles: null })).text).toMatch(/Calling files\nunavailable/);
   });
 });
 

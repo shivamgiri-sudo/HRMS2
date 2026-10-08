@@ -8,12 +8,13 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { emptyCounts, type CallFileResult, type StepCounts } from "./qualified-followup.context.js";
 import { readSwitches, rowTag, type FollowupSwitches, type RowTag } from "./qualified-followup.policy.js";
-import { CALL_FILE_SLOTS, DAILY_REPORT_SLOTS, dueSlot, waDailyBudget, type PinbotQuality } from "./qualified-followup.rules.js";
+import { DAILY_REPORT_SLOTS, dueSlot, waDailyBudget, type PinbotQuality } from "./qualified-followup.rules.js";
 import { expireStaleClaims, runStopChecks, syncWaReceipts } from "./qualified-followup.stops.js";
 import { runEmailStep } from "./qualified-followup.email.js";
 import { pipelineWaSentToday, runWhatsappStep } from "./qualified-followup.whatsapp.js";
 import { runCallStep } from "./qualified-followup.call.js";
-import { runCallFileBatch } from "./qualified-followup.callfile.js";
+import { loadCallFileConfig, runCallFileBatch } from "./qualified-followup.callfile.js";
+import type { CallFileConfig } from "./qualified-followup.callfile-plan.js";
 import { getPinbotQuality } from "./he-pinbot-quality.service.js";
 import { runDailyReport } from "./qualified-followup.report.js";
 import type { FollowupMode } from "./qualified-followup.types.js";
@@ -33,18 +34,21 @@ export interface TickReport {
 }
 
 export interface TickDeps {
-  runCallFileBatch: (s: FollowupSwitches, tag: RowTag, now: Date) => Promise<CallFileResult>;
+  runCallFileBatch: (s: FollowupSwitches, tag: RowTag, now: Date, o: { slotKey: string; config: CallFileConfig }) => Promise<CallFileResult>;
+  callFileConfig: () => Promise<CallFileConfig>;
   runDailyReport: (s: FollowupSwitches, tag: RowTag, now: Date) => Promise<boolean>;
   getPinbotQuality: () => Promise<PinbotQuality | null>;
 }
 
 const defaultDeps: TickDeps = {
   runCallFileBatch,
+  callFileConfig: () => loadCallFileConfig(),
   runDailyReport,
   getPinbotQuality,
 };
 
-// Slot keys are kept in memory: a restart inside the grace window can repeat one calling file or report.
+// Slot keys are kept in memory; the calling file also claims its slot in the database (uq_qfcb_slot), so a restart or a second process
+// cannot send a second file for the same slot. The daily report has only the in-memory guard.
 const doneCallSlots = new Set<string>();
 const doneReportSlots = new Set<string>();
 // A failed batch retries on the next tick, at most this many times per slot, so an outage cannot create a batch row every 5 minutes.
@@ -130,12 +134,13 @@ async function runSteps(s: FollowupSwitches, tag: RowTag, now: Date, deps: TickD
   }
 
   // Both only email the owner, so they run while sends are paused.
-  const fileSlot = dueSlot(now, CALL_FILE_SLOTS, doneCallSlots);
-  if (fileSlot) {
+  const config = await guarded("call-file-config", () => deps.callFileConfig(), null);
+  const fileSlot = config ? dueSlot(now, config.slots, doneCallSlots) : null;
+  if (fileSlot && config) {
     r.callFile = await guarded("call-file", async () => {
       const tries = (fileAttempts.get(fileSlot) ?? 0) + 1;
       fileAttempts.set(fileSlot, tries);
-      const res = await deps.runCallFileBatch(s, tag, now);
+      const res = await deps.runCallFileBatch(s, tag, now, { slotKey: fileSlot, config });
       if (res.status !== "failed" || tries >= MAX_FILE_ATTEMPTS) doneCallSlots.add(fileSlot);
       return res;
     }, null);
@@ -149,7 +154,7 @@ async function runSteps(s: FollowupSwitches, tag: RowTag, now: Date, deps: TickD
     if (r.report || tries >= MAX_FILE_ATTEMPTS) doneReportSlots.add(reportSlot);
     noteReport(reportSlot, r.report, tries);
   }
-  logger.info({ mode: s.mode, tag, stops: r.stops, email: r.email, whatsapp: r.whatsapp, call: r.call }, "[qualified-followup] tick");
+  logger.info({ mode: s.mode, tag, stops: r.stops, email: r.email, whatsapp: r.whatsapp, call: r.call, callFile: r.callFile }, "[qualified-followup] tick");
   return r;
 }
 

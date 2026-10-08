@@ -3,13 +3,17 @@ import { db } from "../../db/mysql.js";
 import { bridgeOneMetaLead } from "./he-meta-bridge.service.js";
 import { assignInterviewSlot } from "../meta-campaign/interview-slot.service.js";
 import type { SourceType } from "./qualified-followup.types.js";
+import type { CallFileSummary } from "./qualified-followup.callfile-plan.js";
 
 const C = "COLLATE utf8mb4_unicode_ci";
 
 /** Per-step tallies; every step returns this shape so the worker can log them uniformly. */
 export interface StepCounts { processed: number; sent: number; failed: number; blocked: number; held: number; dryRun: number }
 /** Result of one calling-file batch run (Task 9); lives here so the worker and the batch module share it without a cycle. */
-export type CallFileResult = { status: "empty" | "sent" | "failed" | "dry_run"; batchId?: string; rows: number; files: number; error?: string };
+export type CallFileResult = {
+  /** already_done: this slot was claimed before (another process, or a restart inside the grace window). */
+  status: "empty" | "sent" | "failed" | "dry_run" | "already_done"; batchId?: string; rows: number; files: number; error?: string; summary?: CallFileSummary;
+};
 export const emptyCounts = (): StepCounts => ({ processed: 0, sent: 0, failed: 0, blocked: 0, held: 0, dryRun: 0 });
 
 export interface FollowupRow {
