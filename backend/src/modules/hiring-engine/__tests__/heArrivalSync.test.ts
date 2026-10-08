@@ -98,7 +98,8 @@ describe("late and unplanned walk-ins are recorded as arrivals", () => {
     const s = arrivalSql();
     expect(s).toContain("m.state IN ('invited','confirmed')");
     expect(s).toContain("m.state IN ('no_show','suggested','slot_released')");
-    expect(s).not.toMatch(/'selected'|'arrived'|'declined'/);
+    // the match's own states (the same-day NOT EXISTS over other matches may name them)
+    expect(s.slice(0, s.indexOf("NOT EXISTS"))).not.toMatch(/'selected'|'arrived'|'declined'/);
     expect(s).toContain("x.walk_in_date = CURDATE()");
     expect(s).toContain("d.drive_date = CURDATE()");
     // A match that was not booked for this drive needs the walk-in at the drive's branch (when the form names one).
@@ -154,5 +155,40 @@ describe("runFollowUps state hygiene (pinned before arrival sync was added to it
     const r = await runFollowUps({ dryRun: false });
     expect(r.noShows).toBe(1);
     expect(h.calls).toMatchSnapshot("sql");
+  });
+});
+
+describe("one walk-in credits at most one same-day match", () => {
+  const arrivalSql = () => h.calls.find(([s]) => s.includes("JOIN ats_candidate"))![0];
+
+  it("late states need the walk-in's requisition (when the form names one) and no better same-day match of the lead", async () => {
+    await runEngineTick({ dryRun: true });
+    const s = arrivalSql();
+    const late = s.slice(s.indexOf("m.state IN ('no_show','suggested','slot_released')"));
+    expect(late).toContain("(c.applied_for_branch IS NULL OR c.applied_for_branch = d.branch_name)");
+    expect(late).toContain("(c.requisition_id IS NULL OR c.requisition_id = m.requisition_id)");
+    // Another same-day match that is booked / arrived / selected anywhere wins: the walk-in belongs to that booking, and a no_show of
+    // the booked requisition is not blocked by a merely suggested one (suggested ranks below no_show).
+    expect(late).toContain("NOT EXISTS (SELECT 1 FROM he_match m2 JOIN he_drive d2 ON d2.id = m2.drive_id AND d2.drive_date = CURDATE() WHERE m2.lead_id = m.lead_id AND m2.id <> m.id AND (m2.state IN ('invited','confirmed','arrived','selected')");
+    // Among late matches at the same branch that the walk-in's requisition allows: no_show, then slot_released, then suggested, then lowest id.
+    expect(late).toContain("OR (d2.branch_name = d.branch_name AND m2.state IN ('no_show','suggested','slot_released') AND (c.requisition_id IS NULL OR c.requisition_id = m2.requisition_id) AND (FIELD(m2.state, 'no_show','slot_released','suggested') < FIELD(m.state, 'no_show','slot_released','suggested') OR (m2.state = m.state AND m2.id < m.id)))))");
+    // booked states keep the old rule (no extra conditions before the OR)
+    expect(s).toContain("AND (m.state IN ('invited','confirmed') OR (m.state IN ('no_show','suggested','slot_released') AND");
+  });
+});
+
+describe("runFollowUps records arrivals before marking no-shows", () => {
+  it("arrival sync runs first, so a same-day walk-in is arrived before the no-show pass and gets no T6", async () => {
+    h.arrivalRows = [{ id: "m1", lead_id: "L1", drive_id: "d1", state: "invited" }];
+    const r = await runFollowUps({ dryRun: false });
+    expect(r.arrivals).toBe(1);
+    const order = h.calls.map(([q]) => (q.includes("JOIN ats_candidate") ? "arrival" : q.includes("INTERVAL 120 MINUTE") ? "noshow" : null)).filter(Boolean);
+    expect(order).toEqual(["arrival", "noshow"]);
+  });
+  it("dry run counts and writes nothing", async () => {
+    h.arrivalRows = [{ id: "m1", lead_id: "L1", drive_id: "d1", state: "invited" }];
+    const r = await runFollowUps({ dryRun: true });
+    expect(r.arrivals).toBe(1);
+    expect(h.calls.filter(([q]) => q.startsWith("UPDATE"))).toEqual([]);
   });
 });

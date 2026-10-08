@@ -176,9 +176,11 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
  * the scheduler is off: WhatsApp step, reminders (T3/T4), bot calls, no-shows + recovery (T6), replacement slots after a
  * reschedule (T5) and other-role offers (T7).
  */
-export async function runFollowUps(o: { dryRun: boolean }): Promise<{ whatsapp: Counts; reminders: Counts; calls: Counts; recovery: Counts; replacement: Counts; noShows: number; otherRoles: RerouteSummary | null }> {
-  const out = { whatsapp: counts(), reminders: counts(), calls: counts(), recovery: counts(), replacement: counts(), noShows: 0, otherRoles: null as RerouteSummary | null };
-  out.noShows = await noShows(o.dryRun, out.recovery); // state hygiene runs even while sends are paused
+export async function runFollowUps(o: { dryRun: boolean }): Promise<{ whatsapp: Counts; reminders: Counts; calls: Counts; recovery: Counts; replacement: Counts; arrivals: number; noShows: number; otherRoles: RerouteSummary | null }> {
+  const out = { whatsapp: counts(), reminders: counts(), calls: counts(), recovery: counts(), replacement: counts(), arrivals: 0, noShows: 0, otherRoles: null as RerouteSummary | null };
+  // State hygiene runs even while sends are paused. Arrivals first (as in the tick), so a same-day walk-in is never marked no_show and sent T6.
+  out.arrivals = await arrivalSync(o.dryRun);
+  out.noShows = await noShows(o.dryRun, out.recovery);
   if (sendsPaused()) return out;
   await replacementSlots(o.dryRun, out.replacement, 50);
   await whatsappFollowUps(o.dryRun, out.whatsapp, 200);
@@ -238,17 +240,27 @@ async function reminders(dryRun: boolean, c: Counts): Promise<void> {
 /** Match states that a same-day branch walk-in turns into 'arrived'. Never 'selected' (no step backwards), 'arrived' (done) or 'declined'. */
 const BOOKED_STATES = "'invited','confirmed'";
 const LATE_STATES = "'no_show','suggested','slot_released'";
+// One walk-in credits one match: a lead has one match per requisition and can be lined up for several on the same day. A late match is
+// skipped when the lead has a booked / arrived / selected match that day (anywhere), or a better late match at the same branch that the
+// walk-in's requisition allows (rank: no_show, slot_released, suggested; then the lowest id). The walk-in form's requisition, when set,
+// must be the match's.
+const LATE_RANK = "'no_show','slot_released','suggested'";
 // From today's drives (idx_he_drive_date) to their matches (idx_he_match_drive) and leads, then today's walk-ins. The phone pass reads only
 // the covering (mobile, walk_in_date) index of ats_candidate; the branch is read by primary key for the few rows that match. A match that
 // was not booked (late after a no-show, suggested, released) also needs the walk-in at the drive's branch when the form names one, so a
-// person lined up for two requisitions on the same day is not marked arrived at both.
+// person lined up for two requisitions on the same day is not marked arrived at both (see LATE_RANK).
 const ARRIVAL_SQL = `SELECT /*+ NO_MERGE(w) */ DISTINCT STRAIGHT_JOIN m.id, m.lead_id, m.drive_id, m.state FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id
   JOIN he_lead l ON l.id = m.lead_id
   JOIN (SELECT x.id, RIGHT(REGEXP_REPLACE(x.mobile, '[^0-9]', ''), 10) AS mobile10 FROM ats_candidate x WHERE x.walk_in_date = CURDATE()) w ON w.mobile10 = l.mobile10
   JOIN ats_candidate c ON c.id = w.id
  WHERE d.drive_date = CURDATE()
-   AND (m.state IN (${BOOKED_STATES}) OR (m.state IN (${LATE_STATES}) AND (c.applied_for_branch IS NULL OR c.applied_for_branch = d.branch_name)))`;
+   AND (m.state IN (${BOOKED_STATES}) OR (m.state IN (${LATE_STATES}) AND (c.applied_for_branch IS NULL OR c.applied_for_branch = d.branch_name)
+        AND (c.requisition_id IS NULL OR c.requisition_id = m.requisition_id)
+        AND NOT EXISTS (SELECT 1 FROM he_match m2 JOIN he_drive d2 ON d2.id = m2.drive_id AND d2.drive_date = CURDATE()
+              WHERE m2.lead_id = m.lead_id AND m2.id <> m.id AND (m2.state IN ('invited','confirmed','arrived','selected')
+                 OR (d2.branch_name = d.branch_name AND m2.state IN (${LATE_STATES}) AND (c.requisition_id IS NULL OR c.requisition_id = m2.requisition_id)
+                     AND (FIELD(m2.state, ${LATE_RANK}) < FIELD(m.state, ${LATE_RANK}) OR (m2.state = m.state AND m2.id < m.id)))))))`;
 
 const arrivalDetail = (from: string): string =>
   from === "no_show" ? "registered at branch after being marked no-show" : from === "suggested" ? "walked in without a booking" : "registered at branch";
