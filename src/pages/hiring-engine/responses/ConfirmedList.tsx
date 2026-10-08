@@ -47,7 +47,7 @@ export function ConfirmedView({ data, loading, error, canWrite, onRetry, onPrint
         <button type="button" className={BTN} onClick={onPrint} disabled={!rows.length} aria-label="Print the arrival checklist"><Printer className="h-3.5 w-3.5" aria-hidden /> Print checklist</button>
       </div>
       {!rows.length ? <p className="rounded-lg border border-dashed border-slate-300 px-3 py-4 text-sm text-slate-700 dark:border-slate-600 dark:text-slate-200">No one has confirmed for this drive yet.</p> : (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+        <div className="relative overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
           <table className="w-full min-w-[720px] text-left text-sm text-slate-800 dark:text-slate-100">
             <caption className="sr-only">People confirmed to attend, by slot, with how they confirmed and whether they arrived</caption>
             <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-300">

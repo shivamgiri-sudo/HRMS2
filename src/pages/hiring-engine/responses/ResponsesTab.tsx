@@ -69,7 +69,7 @@ export function ChannelCounts({ summary }: { summary: ResponseSummary | null }) 
   return (
     <section aria-labelledby="rc-heading" className={CARD}>
       <h3 id="rc-heading" className="mb-2 text-sm font-bold text-slate-900 dark:text-slate-100">Answers by channel</h3>
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table className="w-full min-w-[480px] text-left text-sm text-slate-800 dark:text-slate-100">
           <caption className="sr-only">Responses, confirms and people per channel in the selected range</caption>
           <thead className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
@@ -121,7 +121,7 @@ export function ResponsesView({ filters, options, summary, list, loading, error,
             {activeFilterCount(filters) ? "No answer matches these filters in this range." : "No answers recorded in this range yet."}</p>
         )}
         {rows.length > 0 && (
-          <div className="overflow-x-auto">
+          <div className="relative overflow-x-auto">
             <table className="w-full min-w-[820px] text-left text-sm text-slate-800 dark:text-slate-100">
               <caption className="sr-only">Answers from every channel, newest first</caption>
               <thead className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">

@@ -26,7 +26,7 @@ export default function ResponseChannels({ analytics, only }: { analytics: Drive
         <p className="text-xs text-slate-700 dark:text-slate-200">Which channel each confirmation came from, and how many people answered of those contacted on each channel.</p>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="w-full min-w-max border-collapse text-xs text-slate-800 dark:text-slate-100">
             <caption className="mb-1 text-left text-xs font-semibold text-slate-800 dark:text-slate-100">Confirmed, by the channel they confirmed on</caption>
             <thead>{head("Channel")}</thead>
@@ -36,7 +36,7 @@ export default function ResponseChannels({ analytics, only }: { analytics: Drive
             ))}</tbody>
           </table>
         </div>
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="w-full min-w-max border-collapse text-xs text-slate-800 dark:text-slate-100">
             <caption className="mb-1 text-left text-xs font-semibold text-slate-800 dark:text-slate-100">Response rate: answered of contacted</caption>
             <thead>{head("Channel")}</thead>
