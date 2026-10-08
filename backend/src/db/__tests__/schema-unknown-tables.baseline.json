@@ -28,6 +28,9 @@
     "tally_import_batch",
     "tally_import_voucher"
   ],
+  "modules/hiring-engine/followup-person.service.ts": [
+    "followup_person"
+  ],
   "modules/hiring-engine/he-action-queue.service.ts": [
     "qualified_followup"
   ],
