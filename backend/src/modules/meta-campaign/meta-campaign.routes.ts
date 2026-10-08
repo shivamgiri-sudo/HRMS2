@@ -41,6 +41,7 @@ import { runMetaLeadSyncNow } from '../../cron/metaLeadSync.cron.js';
 import { parseVapiCallback, isVapiConfigured } from './vapi-voicebot.provider.js';
 import type { VapiCallbackPayload } from './vapi-voicebot.provider.js';
 import { recordMetaVoiceResponse } from './meta-response-bridge.service.js';
+import { BULK_MAX, notifyLeadsBulk, parseLeadIds } from './meta-notify-bulk.service.js';
 import {
   isWassengerConfigured,
   parseWassengerWebhook,
@@ -797,6 +798,22 @@ metaCampaignRouter.post(
     if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const data = await notifyQualifiedLead(req.params.id!, { force: req.body?.force === true });
     return res.json({ success: true, data });
+  })
+);
+
+/** Notify All: one request, per-lead results. Every id must be in the caller's branch (else 403, nothing sent); force is never used. */
+metaCampaignRouter.post(
+  '/leads/notify-all',
+  requireAuth,
+  requireRole(...CAMPAIGN_WRITE_ROLES),
+  h(async (req, res) => {
+    const ids = parseLeadIds(req.body?.leadIds);
+    if (!ids) return res.status(400).json({ success: false, message: `Send 1 to ${BULK_MAX} lead ids` });
+    const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
+    for (const id of ids) {
+      if (!(await canAccessLead(id, scope))) return res.status(403).json({ success: false, message: 'Some of these leads belong to another branch' });
+    }
+    return res.json({ success: true, data: await notifyLeadsBulk(ids, { actor: req.authUser!.id }) });
   })
 );
 

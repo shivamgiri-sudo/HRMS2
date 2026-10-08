@@ -34,6 +34,8 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { runNotifyAll, unnotifiedQualifiedIds, type BulkTotals } from "./metaNotifyAll";
+import { BulkNotifyResult } from "./BulkNotifyResult";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   Dialog,
@@ -204,7 +206,7 @@ export default function MetaLeadsPage() {
 
   // Bulk notify state
   const [bulkNotifying, setBulkNotifying] = useState(false);
-  const [bulkResult, setBulkResult] = useState<{ sent: number; failed: number } | null>(null);
+  const [bulkResult, setBulkResult] = useState<BulkTotals | null>(null);
 
   // Notify preview dialog state
   const [previewFor, setPreviewFor] = useState<{ id: string; preview: NotifyPreview } | null>(null);
@@ -334,26 +336,19 @@ export default function MetaLeadsPage() {
 
   async function notifyAllQualified() {
     if (bulkNotifying) return;
-    const unnotified = rows.filter(
-      (r) => r.screeningResult === 'qualified' && !sentOverrides.has(r.id) && !r.notificationSentAt
-    );
-    if (unnotified.length === 0) return;
+    const ids = unnotifiedQualifiedIds(rows, sentOverrides);
+    if (ids.length === 0) return;
     setBulkNotifying(true);
     setBulkResult(null);
-    let sent = 0, failed = 0;
-    for (const lead of unnotified) {
-      try {
-        await hrmsApi.post(`/api/meta/leads/${lead.id}/notify`, {});
-        sent++;
-        setSentOverrides((prev) => new Set([...prev, lead.id]));
-        setRows((prev) => prev.map((r) => r.id === lead.id ? { ...r, notificationSentAt: new Date().toISOString() } : r));
-      } catch {
-        failed++;
-      }
-      await new Promise((r) => setTimeout(r, 300));
-    }
+    // The server sends one lead after another with the single Notify guards and says per lead what happened.
+    const totals = await runNotifyAll(ids, (url, body) => hrmsApi.post(url, body), (sentIds) => {
+      if (!sentIds.length) return;
+      const stamp = new Date().toISOString();
+      setSentOverrides((prev) => new Set([...prev, ...sentIds]));
+      setRows((prev) => prev.map((r) => (sentIds.includes(r.id) ? { ...r, notificationSentAt: stamp } : r)));
+    });
     setBulkNotifying(false);
-    setBulkResult({ sent, failed });
+    setBulkResult(totals);
   }
 
   async function openNotifyPreview(leadId: string, e: React.MouseEvent) {
@@ -568,11 +563,7 @@ export default function MetaLeadsPage() {
                   ? 'Notifying…'
                   : `Notify All (${rows.filter((r) => r.screeningResult === 'qualified' && !sentOverrides.has(r.id) && !r.notificationSentAt).length})`}
               </button>
-              {bulkResult && (
-                <span className="text-sm font-medium text-emerald-700">
-                  {bulkResult.sent} sent{bulkResult.failed > 0 ? `, ${bulkResult.failed} failed` : ''}
-                </span>
-              )}
+              {bulkResult && <BulkNotifyResult r={bulkResult} />}
             </div>
           )}
         </div>
