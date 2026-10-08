@@ -376,11 +376,12 @@ describe("events-based stages and per-campaign progress", () => {
     expect(r.types.he.stages).toMatchObject({ leads: 25, invited: 18, confirmed: 7, arrived: 6 });
     expect(r.liveFrom).toBe("2026-10-08");
     expect(r.campaigns).toEqual([
-      { campaignId: "c2", campaignName: "Onfido night", campaignStatus: "active", campaignRequisitionCode: "REQ-x", requisitionId: "r1", requisitionCode: "REQ-r1", branch: "Pune", sourceType: "meta_live",
-        stages: { leads: 9, qualified: 0, contacted: 1, invited: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0 } },
-      { campaignId: "c1", campaignName: "Ahmedabad ads", campaignStatus: "paused", campaignRequisitionCode: "REQ-r1", requisitionId: "r1", requisitionCode: "REQ-r1", branch: "Pune", sourceType: "meta_old",
-        stages: { leads: 40, qualified: 12, contacted: 35, invited: 30, confirmed: 11, arrived: 2, selected: 1, joined: 0 } },
+      expect.objectContaining({ campaignId: "c2", campaignName: "Onfido night", campaignStatus: "active", campaignRequisitionCode: "REQ-x", requisitionId: "r1", requisitionCode: "REQ-r1", branch: "Pune", sourceType: "meta_live",
+        stages: { leads: 9, fills: 0, screened: 0, qualified: 0, contacted: 1, invited: 0, replied: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0 } }),
+      expect.objectContaining({ campaignId: "c1", campaignName: "Ahmedabad ads", campaignStatus: "paused", campaignRequisitionCode: "REQ-r1", requisitionId: "r1", requisitionCode: "REQ-r1", branch: "Pune", sourceType: "meta_old",
+        stages: { leads: 40, fills: 0, screened: 0, qualified: 12, contacted: 35, invited: 30, replied: 0, confirmed: 11, arrived: 2, selected: 1, joined: 0 } }),
     ]);
+    expect(r.campaigns?.[1].blockers.map((b) => b.code)).toContain("campaign_not_active");
     // the window and the previous window: the same statement twice, side by side (the previous window holds bulk imports)
     expect(callsOf("persons")).toHaveLength(2);
   });
