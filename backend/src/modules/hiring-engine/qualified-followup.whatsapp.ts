@@ -145,8 +145,8 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row0: Fol
     try {
       const [m] = await db.execute<RowDataPacket[]>(
         `SELECT 1 AS hit FROM he_message WHERE mobile10 = ? AND requisition_id = ? AND direction = 'out'
-            AND (template_key LIKE 'he_walkin_invite:%' OR template_key LIKE 'he_winback:%') AND delivery_status <> 'failed' LIMIT 1`,
-        [row.mobile10, row.requisitionId]);
+            AND (template_key LIKE 'he_walkin_invite:%' OR template_key LIKE 'he_winback:%') AND delivery_status <> 'failed'${row.reinviteNo > 0 ? " AND created_at >= DATE_SUB(?, INTERVAL 7 DAY)" : ""} LIMIT 1`,
+        [row.mobile10, row.requisitionId, ...(row.reinviteNo > 0 ? [now] : [])]);
       engineInvited = m.length > 0;
     } catch (err) {
       logger.warn({ rowId: row.id, err: scrub((err as Error).message) }, "[qualified-followup] engine-invite check failed; holding the row");

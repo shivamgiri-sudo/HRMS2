@@ -148,8 +148,9 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row0: Fol
     if (!isTest && !heLeadId) { await finish(row, "blocked", "no_he_lead", now, { advanceWa: true, sent: false }); counts.blocked++; return; }
     if (!isTest && heLeadId) {
       const [dup] = await db.execute<RowDataPacket[]>(
-        `SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = ? AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1`,
-        [heLeadId, row.requisitionId, INVITE_EMAIL_KEY]);
+        // A re-invite comes >= 7 days after the first contact: only an invite inside that window is a duplicate.
+        `SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = ? AND direction = 'out' AND delivery_status <> 'failed'${row.reinviteNo > 0 ? " AND created_at >= DATE_SUB(?, INTERVAL 7 DAY)" : ""} LIMIT 1`,
+        [heLeadId, row.requisitionId, INVITE_EMAIL_KEY, ...(row.reinviteNo > 0 ? [now] : [])]);
       if (dup.length) { await finish(row, "skipped", "already_emailed", now, { advanceWa: true, sent: false }); counts.blocked++; return; }
     }
     const company = env("HE_COMPANY_NAME", "MAS Callnet");

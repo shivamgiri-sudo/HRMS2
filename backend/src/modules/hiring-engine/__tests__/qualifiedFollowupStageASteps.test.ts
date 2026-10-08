@@ -203,3 +203,22 @@ describe("T9 after two missed calls (Task 10)", () => {
     expect(t9sel).toHaveLength(1);
   });
 });
+
+describe("re-invite sends are not taken for duplicates of the first invite", () => {
+  it("the email and WhatsApp duplicate checks look back 7 days only for a re-invite (>= 7 days after the first contact)", async () => {
+    h.rows = [row({ email_status: null, wa_due_at: null, reinvite_no: 1, journey_state: "enrolled", match_id: "M1" })];
+    await runEmailStep(S, "live", NOW, scope());
+    const dup = find(/FROM he_message WHERE lead_id = \? AND requisition_id = \? AND template_key = \?/)[0];
+    expect(dup.sql).toContain("AND created_at >= DATE_SUB(?, INTERVAL 7 DAY)");
+    h.sqls = [];
+    h.rows = [row({ reinvite_no: 1, journey_state: "reach", match_id: "M1" })];
+    await runWhatsappStep(S, "live", NOW, scope());
+    const wa = find(/template_key LIKE 'he_walkin_invite:%' OR template_key LIKE 'he_winback:%'/)[0];
+    expect(wa.sql).toContain("AND created_at >= DATE_SUB(?, INTERVAL 7 DAY)");
+  });
+  it("a first invite keeps the all-time duplicate check", async () => {
+    h.rows = [row({ email_status: null, wa_due_at: null })];
+    await runEmailStep(S, "live", NOW, scope());
+    expect(find(/FROM he_message WHERE lead_id = \? AND requisition_id = \? AND template_key = \?/)[0].sql).not.toContain("INTERVAL 7 DAY");
+  });
+});
