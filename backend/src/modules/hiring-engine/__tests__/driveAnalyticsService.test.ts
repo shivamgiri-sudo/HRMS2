@@ -391,6 +391,34 @@ describe("events-based stages and per-campaign progress", () => {
     const r = ok(await getDriveAnalytics(Q, ALL, NOW));
     expect(r.failedSections).toContain("persons");
     expect(r.campaigns).toEqual([]);
+    expect(r.journey).toBeNull(); // unknown, never zeros that look like data
+  });
+  it("returns the journey per drive type (form fills, screened, qualified, contacted, replied) from the same persons read", async () => {
+    impl.discovery = [head("r1")];
+    impl.persons = [
+      p({ source_type: "meta_live", campaign_id: "c2", leads: 9, fills: 9, screened: 8, qualified: 6, contacted: 4, invited: 3, replied: 2, confirmed: 1 }),
+      p({ source_type: "he", leads: 25, contacted: 20, invited: 18, replied: 9, confirmed: 7, arrived: 6 }),
+    ];
+    const r = ok(await getDriveAnalytics(Q, ALL, NOW));
+    expect(r.journey?.meta_live).toEqual({ leads: 9, fills: 9, screened: 8, qualified: 6, contacted: 4, invited: 3, replied: 2, confirmed: 1, arrived: 0 });
+    expect(r.journey?.he).toMatchObject({ fills: 0, contacted: 20, replied: 9 });
+    expect(r.journey?.meta_old).toMatchObject({ leads: 0, contacted: 0 });
+  });
+  it("returns open seats per requisition from the discovery statement (no extra read); closed or full requisitions have none", async () => {
+    impl.discovery = [
+      { ...head("r1"), approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 20, fulfilled_headcount: 5 },
+      { ...head("r2", "Noida"), approval_status: "approved", active_status: 1, closed_at: "2026-09-26 10:57:00", requested_headcount: 20, fulfilled_headcount: 18 },
+      { ...head("r3"), approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 10, fulfilled_headcount: 12 },
+    ];
+    const r = ok(await getDriveAnalytics(Q, ALL, NOW));
+    expect(r.openSeats).toEqual([
+      { requisitionId: "r1", code: "REQ-r1", branch: "Pune", open: 15, closedReason: null },
+      { requisitionId: "r2", code: "REQ-r2", branch: "Noida", open: 0, closedReason: "requisition is closed" },
+      { requisitionId: "r3", code: "REQ-r3", branch: "Pune", open: 0, closedReason: "all seats in this batch are filled" },
+    ]);
+    const disc = callsOf("discovery")[0][0].replace(/\s+/g, " ");
+    expect(disc).toContain("jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount");
+    expect(callsOf("discovery")).toHaveLength(1);
   });
 });
 
