@@ -14,10 +14,11 @@ import { istHour } from "./he-guardrails.js";
 import { displayFirstName } from "./he-name.js";
 import { dateLabel, metaFlowNotifiedRecently, sendsPaused, timeLabel, type SendResult } from "./he-send.service.js";
 import { channelAllowed } from "./he-campaign-config.service.js";
+import { answerButtonsHtml, answerButtonsText, escHtml, publicBaseUrl } from "./he-email-parts.js";
 
 export const INVITE_EMAIL_KEY = "he_walkin_invite_email";
 const env = (k: string, d: string) => (process.env[k]?.trim() ? process.env[k]!.trim() : d);
-const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+const esc = escHtml;
 
 export const emailConfigured = (): boolean => emailService.isConfigured();
 
@@ -37,14 +38,9 @@ export interface InviteEmailInput {
 export function buildInviteEmail(c: InviteEmailInput): { subject: string; html: string; text: string } {
   const subject = `Walk-in interview: ${c.date}, ${c.time} - ${c.role}, ${c.company}`;
   const docs = c.docs.split(/\s*,\s*/).filter(Boolean);
-  const btn = (href: string, label: string, bg: string, fg: string, border: string) =>
-    `<a href="${esc(href)}" style="display:inline-block;background:${bg};color:${fg};border:1px solid ${border};padding:14px 18px;border-radius:8px;font-weight:bold;font-size:16px;text-decoration:none;margin:0 0 10px;display:block;text-align:center">${label}</a>`;
   const row = (label: string, value: string) =>
     `<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">${label}</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a">${value}</td></tr>`;
-  const answer = c.answerUrl ? `
-<tr><td style="padding:8px 28px 4px"><p style="margin:0 0 8px;font-size:15px;font-weight:bold;color:#0f172a">Will you come?</p>
-${btn(`${c.answerUrl}?a=yes`, "Yes, I will come", "#15803d", "#ffffff", "#15803d")}${btn(`${c.answerUrl}?a=later`, "Need another time", "#ffffff", "#1e3a8a", "#94a3b8")}${btn(`${c.answerUrl}?a=no`, "Cannot come", "#ffffff", "#b91c1c", "#fecaca")}
-<p style="margin:6px 0 0;font-size:12px;color:#64748b">One tap tells the branch to expect you, or frees your slot for someone else.</p></td></tr>` : "";
+  const answer = c.answerUrl ? answerButtonsHtml(c.answerUrl) : "";
   const html = `<!doctype html><html><body style="margin:0;padding:0;background:#f1f5f9">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
@@ -72,7 +68,7 @@ ${c.optInUrl ? `<tr><td style="padding:12px 28px 0;font-size:13px;color:#475569"
 </table></td></tr></table></body></html>`;
   const text = [`Hi ${c.name},`, "", `Your profile matches our ${c.role} opening. Your walk-in interview slot:`, `${c.date}, ${c.time}`,
     `Venue: ${c.branch}${c.address ? `, ${c.address}` : ""}`, c.maps ? `Directions: ${c.maps}` : "", `Please carry: ${docs.join(", ")}`, `Reference: ${c.reference}`,
-    c.answerUrl ? `\nWill you come? Yes: ${c.answerUrl}?a=yes | Another time: ${c.answerUrl}?a=later | Cannot come: ${c.answerUrl}?a=no` : "",
+    c.answerUrl ? answerButtonsText(c.answerUrl) : "",
     c.contact ? `Questions: ${c.contact}` : "", "", `All the best,`, `${c.company} Hiring Team`].filter((l) => l !== "").join("\n");
   return { subject, html, text };
 }
@@ -107,7 +103,7 @@ export async function sendInviteEmail(matchId: string, o: { dryRun?: boolean } =
   const slot = String(m.slot_at);
   const maps = m.latitude != null && m.longitude != null ? `https://maps.google.com/?q=${m.latitude},${m.longitude}` : m.address ? `https://maps.google.com/?q=${encodeURIComponent(String(m.address))}` : null;
   const phone = env("HE_HR_CONTACT_PHONE", ""), cname = env("HE_HR_CONTACT_NAME", "");
-  const base = env("HE_PUBLIC_BASE_URL", env("FRONTEND_URL", "https://mcnhrms.teammas.in")).replace(/\/$/, "");
+  const base = publicBaseUrl();
   const mail = buildInviteEmail({
     name: displayFirstName(m.full_name), role: String(m.designation_name ?? "the role"), company: env("HE_COMPANY_NAME", "MAS Callnet"),
     branch: String(m.branch_name ?? ""), address: String(m.address ?? ""), date: m.drive_date ? dateLabel(String(m.drive_date)) : slot.slice(0, 10), time: timeLabel(slot), maps,

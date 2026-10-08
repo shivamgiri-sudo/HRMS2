@@ -238,5 +238,8 @@
   ],
   "modules/ats/dra-certificate.service.ts": [
     "candidate_dra_certificate"
+  ],
+  "modules/hiring-engine/walkin-invite.service.ts": [
+    "walkin_invite"
   ]
 }

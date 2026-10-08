@@ -17,12 +17,13 @@ import { addEvent } from "./he-lead.service.js";
 import { istHour } from "./he-guardrails.js";
 import { displayFirstName } from "./he-name.js";
 import { dateLabel, sendsPaused, timeLabel, type SendResult } from "./he-send.service.js";
+import { escHtml, publicBaseUrl } from "./he-email-parts.js";
 
 export type FollowKind = "confirmed" | "reminder_1d" | "reschedule_offer" | "no_show";
 export const followKey = (k: FollowKind) => `he_email_${k}`;
 const TRANSACTIONAL: FollowKind[] = ["confirmed", "reschedule_offer"];
 const env = (k: string, d: string) => (process.env[k]?.trim() ? process.env[k]!.trim() : d);
-const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+const esc = escHtml;
 
 export interface FollowEmailInput {
   kind: FollowKind; name: string; role: string; company: string; branch: string; address: string; date: string; time: string; maps: string | null;
@@ -108,7 +109,7 @@ export async function sendFollowUpEmail(kind: FollowKind, matchId: string, o: { 
   if (!emailService.isConfigured()) return { status: "blocked", reason: "email_not_configured" };
   const slot = String(m.slot_at);
   const maps = m.latitude != null && m.longitude != null ? `https://maps.google.com/?q=${m.latitude},${m.longitude}` : m.address ? `https://maps.google.com/?q=${encodeURIComponent(String(m.address))}` : null;
-  const base = env("HE_PUBLIC_BASE_URL", env("FRONTEND_URL", "https://mcnhrms.teammas.in")).replace(/\/$/, "");
+  const base = publicBaseUrl();
   const cname = env("HE_HR_CONTACT_NAME", ""), phone = env("HE_HR_CONTACT_PHONE", "");
   const mail = buildFollowUpEmail({
     kind, name: displayFirstName(m.full_name), role: String(m.designation_name ?? "the role"), company: env("HE_COMPANY_NAME", "MAS Callnet"), branch: String(m.branch_name ?? ""), address: String(m.address ?? ""),
