@@ -81,8 +81,18 @@ const PINNED_EDIT_FORM_NON_CRITERIA = {
 };
 
 describe('requisition form pin', () => {
+  // S1 adds exactly these four keys (blank criteria inputs); every other key is unchanged.
+  const S1_ADDED = { education_requirement: null, shift_requirement: null, night_shift_required: false, rotational_shift: false };
+
   it('new draft payload on the wire', () => {
-    expect(wire(buildRequisitionPayload(draftForm))).toEqual(PINNED_NEW_DRAFT_PAYLOAD);
+    expect(wire(buildRequisitionPayload(draftForm))).toEqual({ ...PINNED_NEW_DRAFT_PAYLOAD, ...S1_ADDED });
+  });
+
+  it('the payload differs from the pre-S1 pin only by the four criteria keys', () => {
+    const now = wire(buildRequisitionPayload(draftForm));
+    const added = Object.keys(now).filter((k) => !(k in PINNED_NEW_DRAFT_PAYLOAD));
+    expect(added.sort()).toEqual(Object.keys(S1_ADDED).sort());
+    for (const k of Object.keys(PINNED_NEW_DRAFT_PAYLOAD)) expect([k, now[k]]).toEqual([k, (PINNED_NEW_DRAFT_PAYLOAD as Record<string, unknown>)[k]]);
   });
 
   it('edit form loads every non-criteria field as before', () => {

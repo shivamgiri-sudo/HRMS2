@@ -31,6 +31,13 @@ export const emptyForm = {
   business_justification: '',
   skills_required: '',
   job_description: '',
+  // Selection criteria (S1). education_level is a ladder label, '' (no requirement given) or 'other'
+  // (free text in education_other); both collapse into the education_requirement column on save.
+  education_level: '',
+  education_other: '',
+  shift_requirement: '',
+  night_shift_required: false,
+  rotational_shift: false,
   planned_batch_no: '',
   training_start_date: '',
   target_joining_date: '',
@@ -82,9 +89,54 @@ export interface StoredRequisition {
   meta_target_radius_km?: number | null;
   ad_required?: number | boolean | null;
   meta_screening_config?: MetaScreeningConfig | null;
+  // Criteria columns; DECIMAL arrives as a string from mysql2, TINYINT as 0/1.
+  experience_min_years?: number | string | null;
+  experience_max_years?: number | string | null;
+  education_requirement?: string | null;
+  skills_required?: string | null;
+  job_description?: string | null;
+  shift_requirement?: string | null;
+  night_shift_required?: number | boolean | null;
+  rotational_shift?: number | boolean | null;
 }
 
-export function buildRequisitionPayload(formData: RequisitionForm) {
+// Labels match the keys lead-screener eduRank reads, so a stored label ranks exactly as picked.
+export const EDUCATION_LADDER = ['Below 10th', '10th', '12th', 'Diploma', 'Graduate', 'Post Graduate'] as const;
+
+export function educationFromStored(stored: string | null | undefined): { level: string; other: string } {
+  const text = (stored ?? '').trim();
+  if (!text) return { level: '', other: '' };
+  const hit = EDUCATION_LADDER.find((l) => l.toLowerCase() === text.toLowerCase());
+  return hit ? { level: hit, other: '' } : { level: 'other', other: text };
+}
+
+export function educationToStored(level: string, other: string): string | null {
+  if (level === 'other') return other.trim() || null;
+  return level || null;
+}
+
+// The keys the modal edits. Anything else in the stored object belongs to another writer and is kept.
+const FORM_OWNED_SCREENING_KEYS = [
+  'auto_notify', 'gender', 'certifications', 'language_requirements', 'min_typing_speed_wpm', 'written_english_level', 'custom_field_rules',
+] as const;
+
+export function mergeScreeningConfig(stored: unknown, edited: Record<string, unknown>): Record<string, unknown> {
+  let base: unknown = stored;
+  if (typeof base === 'string') {
+    try { base = JSON.parse(base); } catch { base = null; }
+  }
+  const out: Record<string, unknown> = base && typeof base === 'object' && !Array.isArray(base) ? { ...(base as Record<string, unknown>) } : {};
+  for (const k of FORM_OWNED_SCREENING_KEYS) delete out[k];
+  for (const [k, v] of Object.entries(edited)) if (v !== undefined) out[k] = v;
+  return out;
+}
+
+/** The legacy modal never changes the criteria of an approved or closed requisition (the backend 409s it too). */
+export function criteriaReadOnly(approvalStatus: string): boolean {
+  return approvalStatus === 'approved' || approvalStatus === 'closed';
+}
+
+export function buildRequisitionPayload(formData: RequisitionForm, storedScreeningConfig: unknown = null) {
   return {
     ...formData,
     salary_min: formData.salary_min ? Number(formData.salary_min) : null,
@@ -107,8 +159,14 @@ export function buildRequisitionPayload(formData: RequisitionForm) {
       ? formData.meta_target_locations.split(',').map((s) => s.trim()).filter(Boolean)
       : null,
     meta_target_radius_km: formData.meta_target_radius_km ? Number(formData.meta_target_radius_km) : null,
-    // META screening config — build the JSON object
-    meta_screening_config: {
+    education_requirement: educationToStored(formData.education_level, formData.education_other),
+    shift_requirement: formData.shift_requirement.trim() || null,
+    night_shift_required: formData.night_shift_required,
+    rotational_shift: formData.rotational_shift,
+    education_level: undefined,
+    education_other: undefined,
+    // META screening config — the form's keys merged over the stored object
+    meta_screening_config: mergeScreeningConfig(storedScreeningConfig, {
       auto_notify: formData.meta_screening_auto_notify,
       gender: formData.meta_screening_gender !== 'any' ? formData.meta_screening_gender : undefined,
       certifications: formData.meta_screening_certifications.length > 0 ? formData.meta_screening_certifications : undefined,
@@ -120,7 +178,7 @@ export function buildRequisitionPayload(formData: RequisitionForm) {
       custom_field_rules: formData.meta_screening_custom_rules.length > 0
         ? formData.meta_screening_custom_rules
         : undefined,
-    },
+    }),
     // Strip UI-only keys from payload spread
     meta_screening_auto_notify: undefined,
     meta_screening_gender: undefined,
@@ -143,13 +201,18 @@ export function formFromRequisition(req: StoredRequisition): RequisitionForm {
     employment_type: req.employment_type,
     salary_min: req.salary_min?.toString() || '',
     salary_max: req.salary_max?.toString() || '',
-    experience_min_years: '',
-    experience_max_years: '',
+    experience_min_years: req.experience_min_years != null ? String(req.experience_min_years) : '',
+    experience_max_years: req.experience_max_years != null ? String(req.experience_max_years) : '',
     priority: req.priority,
     requisition_type: req.requisition_type,
     business_justification: req.business_justification || '',
-    skills_required: '',
-    job_description: '',
+    skills_required: req.skills_required || '',
+    job_description: req.job_description || '',
+    education_level: educationFromStored(req.education_requirement).level,
+    education_other: educationFromStored(req.education_requirement).other,
+    shift_requirement: req.shift_requirement || '',
+    night_shift_required: Number(req.night_shift_required ?? 0) === 1,
+    rotational_shift: Number(req.rotational_shift ?? 0) === 1,
     planned_batch_no: req.planned_batch_no || '',
     training_start_date: req.training_start_date ? req.training_start_date.substring(0, 10) : '',
     target_joining_date: req.target_joining_date ? req.target_joining_date.substring(0, 10) : '',

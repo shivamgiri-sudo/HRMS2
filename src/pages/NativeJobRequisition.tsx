@@ -7,7 +7,8 @@ import { canEditAssessmentLink } from '@/components/requisition/assessmentLink.m
 import { hrmsApi } from '@/lib/hrmsApi';
 import { formatISTDate } from '@/lib/utils';
 import { useApprovalFocus } from '@/hooks/useApprovalFocus';
-import { emptyForm, buildRequisitionPayload, formFromRequisition, type MetaScreeningConfig } from './requisition/criteriaFormModel';
+import { emptyForm, buildRequisitionPayload, criteriaReadOnly, formFromRequisition, type MetaScreeningConfig, type StoredRequisition } from './requisition/criteriaFormModel';
+import RequisitionCriteriaFields from './requisition/RequisitionCriteriaFields';
 import {
   Users, Target, Clock, CheckCircle, AlertCircle,
   Plus, Search, Briefcase, Calendar,
@@ -74,6 +75,15 @@ interface JobRequisition {
   meta_target_radius_km?: number | null;
   ad_required?: number | boolean | null;
   meta_screening_config?: MetaScreeningConfig | null;
+  // Criteria columns, also returned via `jr.*`.
+  experience_min_years?: StoredRequisition['experience_min_years'];
+  experience_max_years?: StoredRequisition['experience_max_years'];
+  education_requirement?: string | null;
+  skills_required?: string | null;
+  job_description?: string | null;
+  shift_requirement?: string | null;
+  night_shift_required?: number | boolean | null;
+  rotational_shift?: number | boolean | null;
 }
 
 interface DashboardMetrics {
@@ -371,7 +381,7 @@ export default function NativeJobRequisition() {
 
     setSaving(true);
     try {
-      const payload = buildRequisitionPayload(formData);
+      const payload = buildRequisitionPayload(formData, editingRequisition?.meta_screening_config ?? null);
 
       if (editingRequisition) {
         await hrmsApi.patch(`/api/job-requisition/${editingRequisition.id}`, payload);
@@ -1353,6 +1363,12 @@ export default function NativeJobRequisition() {
                     placeholder="List required skills..."
                   />
                 </div>
+
+                <RequisitionCriteriaFields
+                  form={formData}
+                  onChange={(patch) => setFormData(prev => ({ ...prev, ...patch }))}
+                  readOnly={editingRequisition ? criteriaReadOnly(editingRequisition.approval_status) : false}
+                />
 
                 {/* ── META Campaign Targeting ───────────────────────────────────
                     Feeds the campaign brief emailed to marketing on approval, and the age band
