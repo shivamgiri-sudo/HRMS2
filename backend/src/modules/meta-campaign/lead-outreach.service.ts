@@ -39,6 +39,7 @@ import { metaOutreachBlockedByEngine } from '../hiring-engine/he-campaign-config
 import { assignInterviewSlot } from './interview-slot.service.js';
 import type { InterviewSlot } from './interview-slot.service.js';
 import { requisitionClosedReason } from './lead-screener.service.js';
+import { requisitionEndRefusal } from '../hiring-engine/requisition-criteria.js';
 import { followupEnrolled, personOptedOut } from '../hiring-engine/qualified-followup.service.js';
 import { pipelineOwnsSends } from '../hiring-engine/qualified-followup.policy.js';
 import { normaliseMobile10 } from '../hiring-engine/qualified-followup.schedule.js';
@@ -254,6 +255,12 @@ export async function notifyQualifiedLead(
   // more candidates, so refuse outreach outright (force does not override this).
   if (loaded.closedReason) {
     outcome.skipped.push({ channel: 'all', reason: `Outreach refused: ${loaded.closedReason}` });
+    return outcome;
+  }
+  // WS3 E1: a requisition past its end date takes no new first contacts when enforced (env + policy; off issues no statement). Force does not override.
+  const ended = await requisitionEndRefusal(loaded.ctx.requisitionId);
+  if (ended) {
+    outcome.skipped.push({ channel: 'all', reason: `Outreach refused: ${ended}` });
     return outcome;
   }
   // Location: a lead whose own answer says they are elsewhere ("Gujarat" for a Noida branch, "No Noida location") is not invited to walk in. An answer that

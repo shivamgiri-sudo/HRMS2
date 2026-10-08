@@ -31,6 +31,7 @@ import { planNextDay } from "./he-plan.service.js";
 import { streamDriveIds, topUpStreamDrive, type StreamDayPlan } from "./he-stream-plan.service.js";
 import { sweepOwnedCampaigns } from "./he-meta-bridge.service.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
+import { loadEndDateEnforced, requisitionEndedReason } from "./requisition-criteria.js";
 import { followupSkipSql } from "./qualified-followup.policy.js";
 
 export interface TickSummary {
@@ -134,6 +135,13 @@ export interface LaunchResult extends Counts { planned: PlannedInvite[]; conside
  */
 export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max: number }): Promise<LaunchResult> {
   const out: LaunchResult = { ...counts(), planned: [], considered: 0 };
+  // WS3 E1: no first invites for a requisition past its end date when enforced (env + policy; off issues no statement). Reminders,
+  // no-show follow-up and anything for people already booked run elsewhere and are untouched.
+  if (await loadEndDateEnforced()) {
+    const [dr] = await db.execute<RowDataPacket[]>("SELECT d.requisition_id, jr.requisition_validity FROM he_drive d JOIN job_requisition jr ON jr.id = d.requisition_id WHERE d.id = ? LIMIT 1", [driveId]);
+    const ended = dr[0] ? requisitionEndedReason({ validity: dr[0].requisition_validity as string | Date | null }, new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10), true) : null;
+    if (ended) { out.blocked[ended] = 1; return out; }
+  }
   const [ms] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, l.full_name, l.mobile10,
             (l.last_contact_at IS NOT NULL AND l.last_contact_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) AS dormant,

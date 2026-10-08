@@ -11,7 +11,7 @@ import type { BranchScope } from "../meta-campaign/meta-access.js";
 import { closedReasonOf } from "../meta-campaign/campaign-requisition.service.js";
 import { compileCriteria } from "../selection/compile-criteria.js";
 import { LOAD_ROW_SQL, toCriteriaRow } from "../selection/criteria-row.js";
-import { endDateOf, endDatePassed, seatsLeft } from "./requisition-criteria.js";
+import { endDateEnforcementAllowed, endDateOf, endDatePassed, seatsLeft } from "./requisition-criteria.js";
 import { fillPhoneSql, fillTypeSql } from "./he-source-attribution.js";
 import { loadLiveFrom } from "./he-source-attribution.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
@@ -85,7 +85,7 @@ async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<
     loadLiveFrom(),
   ]);
   const param = (k: string) => Number(params.find((p) => p.param_key === k)?.value ?? 0) === 1;
-  const enforced = param("policy.req_end_date_enforced");
+  const enforced = endDateEnforcementAllowed() && param("policy.req_end_date_enforced");
   const engineLive = engineMode(process.env, param("policy.engine_auto")) === "live";
   const enrolHe = engineLive || param("policy.shortlist.enrol");
 

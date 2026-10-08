@@ -13,6 +13,7 @@ import type { SourceType } from "./qualified-followup.types.js";
 import { getRequisitionReadiness } from "./he-readiness.service.js";
 import { isBlocking, NEVER_OVERRIDE, type ReadinessProblem } from "./requisition-readiness.js";
 import { linkedRequisitionIds } from "../meta-campaign/campaign-requisition.service.js";
+import { loadEndDateEnforced, requisitionEndedReason } from "./requisition-criteria.js";
 import {
   MAX_CREATE_DAYS, WINDOW_MESSAGES, applyWindowChange, istToday, windowEnd, windowLabel, windowStatus,
   type StreamWindow, type WindowChange,
@@ -387,9 +388,11 @@ export async function loadStreamsOfType(requisitionId: string, sourceType: Sourc
 export async function autoCloseStreams(date: string, dryRun: boolean): Promise<Array<{ streamId: string; requisitionId: string; reason: AutoCloseReason }>> {
   const out: Array<{ streamId: string; requisitionId: string; reason: AutoCloseReason }> = [];
   let rows: RowDataPacket[];
+  // WS3 E1: an enforced end date closes the stream as window_ended (env + policy; off reads exactly the pinned columns).
+  const endEnforced = await loadEndDateEnforced();
   try {
     const [r] = await db.execute<RowDataPacket[]>(
-      `SELECT s.*, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.id AS jr_id
+      `SELECT s.*, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.id AS jr_id${endEnforced ? ", jr.requisition_validity" : ""}
          FROM requisition_stream s
          LEFT JOIN job_requisition jr ON jr.id = s.requisition_id COLLATE utf8mb4_unicode_ci
         WHERE s.status IN ('open','paused') ORDER BY s.created_at, s.id`);
@@ -406,6 +409,7 @@ export async function autoCloseStreams(date: string, dryRun: boolean): Promise<A
     if (r.jr_id == null || r.approval_status !== "approved" || !r.active_status) reason = "requisition_closed";
     else if (Number(r.fulfilled_headcount) >= Number(r.requested_headcount)) reason = "requisition_filled";
     else if (windowEnd(toWindow(s)) < date) reason = "window_ended";
+    else if (endEnforced && requisitionEndedReason({ validity: r.requisition_validity as string | Date | null }, date, true)) reason = "window_ended";
     if (!reason) continue;
     if (dryRun) { out.push({ streamId: s.id, requisitionId: s.requisitionId, reason }); continue; }
     let conn: Awaited<ReturnType<typeof db.getConnection>> | null = null;
@@ -413,7 +417,7 @@ export async function autoCloseStreams(date: string, dryRun: boolean): Promise<A
       conn = await db.getConnection();
       await conn.beginTransaction();
       // window_ended was decided on the rows read above: an extend / add_day landing meanwhile must make the close miss
-      const windowGuard = reason === "window_ended";
+      const windowGuard = reason === "window_ended" && windowEnd(toWindow(s)) < date;
       const [u] = await conn.execute<ResultSetHeader>(
         `UPDATE requisition_stream SET status = 'closed', closed_reason = ?, version = version + 1 WHERE id = ? AND status IN ('open','paused')${windowGuard ? " AND open_from = ? AND open_days = ? AND version = ?" : ""}`,
         windowGuard ? [reason, s.id, s.openFrom, s.openDays, s.version] : [reason, s.id]);

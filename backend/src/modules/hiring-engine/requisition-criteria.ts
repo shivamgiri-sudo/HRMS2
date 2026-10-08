@@ -44,10 +44,29 @@ export function requisitionEndedReason(r: Pick<RequisitionRow, "validity">, toda
 export const seatsLeft = (r: Pick<RequisitionRow, "requestedHeadcount" | "fulfilledHeadcount">): number =>
   Math.max(0, Math.floor((Number(r.requestedHeadcount) || 0) - (Number(r.fulfilledHeadcount) || 0)));
 
-/** policy.req_end_date_enforced (he_model_param); absent, unreadable or anything but 1 means off. */
-export async function loadEndDateEnforced(): Promise<boolean> {
+/**
+ * Two keys turn the end date on (decision C8, default off): REQ_END_DATE_ENFORCEMENT = policy (env) lets the policy decide, and
+ * policy.req_end_date_enforced = 1 (he_model_param) enforces it. While the env key is off nothing is read, so the live paths issue
+ * exactly the pinned statements.
+ */
+export function endDateEnforcementAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^(policy|on|1|true)$/i.test(String(env.REQ_END_DATE_ENFORCEMENT ?? "").trim());
+}
+
+/** policy.req_end_date_enforced (he_model_param), only when the env key allows it; absent, unreadable or anything but 1 means off. */
+export async function loadEndDateEnforced(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  if (!endDateEnforcementAllowed(env)) return false;
   try {
     const [r] = await db.execute<RowDataPacket[]>("SELECT value FROM he_model_param WHERE param_key = ? LIMIT 1", [END_DATE_KEY]);
     return r[0] ? Number(r[0].value) === 1 : false;
   } catch { return false; }
+}
+
+/** The refusal text for a requisition by id when the end date is enforced and passed (one keyed read); null otherwise or on any error. */
+export async function requisitionEndRefusal(requisitionId: string | null | undefined, now = new Date(), env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  if (!requisitionId || !(await loadEndDateEnforced(env))) return null;
+  try {
+    const [r] = await db.execute<RowDataPacket[]>("SELECT requisition_validity FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
+    return r[0] ? requisitionEndedReason({ validity: r[0].requisition_validity as string | Date | null }, istDay(now), true) : null;
+  } catch { return null; }
 }

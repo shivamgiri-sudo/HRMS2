@@ -110,3 +110,15 @@ describe("getCampaignMatrix (C1 service)", () => {
     expect(m.rows.find((r) => r.key === "cm|onf18")!.cells.he.reason).toBe("awaiting_approval");
   });
 });
+
+describe("end-date enforcement shown in the matrix", () => {
+  it("needs both the env key and the policy", async () => {
+    h.params = [{ param_key: "policy.req_end_date_enforced", value: 1 }];
+    delete process.env.REQ_END_DATE_ENFORCEMENT;
+    expect((await getCampaignMatrix({}, ALL, NOW)).enforcedEndDate).toBe(false);
+    clearMatrixCache();
+    process.env.REQ_END_DATE_ENFORCEMENT = "policy";
+    expect((await getCampaignMatrix({}, ALL, NOW)).enforcedEndDate).toBe(true);
+    delete process.env.REQ_END_DATE_ENFORCEMENT;
+  });
+});
