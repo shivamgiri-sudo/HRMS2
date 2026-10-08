@@ -186,8 +186,16 @@ export function pipelineOwnsSends(env: NodeJS.ProcessEnv = process.env): boolean
 /** Row-based: a live/canary pipeline row for this person and requisition (open or stopped), or any requisition while the person's
  *  live/canary journey is in stage A/B. Independent of the current mode, so a rollback keeps those people away from other senders. */
 export function followupSkipSql(a: { mobileExpr: string; requisitionExpr: string }): string {
-  return ` AND NOT EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = ${a.mobileExpr} COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND (qf.requisition_id = ${a.requisitionExpr} COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded')))`;
+  return ` AND NOT ${followupOwnedExpr(a)}`;
 }
+
+/** The same predicate as a value (1 = the follow-up method owns this person for this requisition). */
+export function followupOwnedExpr(a: { mobileExpr: string; requisitionExpr: string }): string {
+  return `EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = ${a.mobileExpr} COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND (qf.requisition_id = ${a.requisitionExpr} COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded')))`;
+}
+
+/** The match's lead mobile, for engine statements that select he_match without joining he_lead. */
+export const LEAD_MOBILE_OF_MATCH = "(SELECT lx.mobile10 FROM he_lead lx WHERE lx.id = m.lead_id)";
 
 /** First-contact sends wait out the 7-day re-contact hold (followup_person). */
 export function firstContactHoldSql(a: { mobileExpr: string }): string {

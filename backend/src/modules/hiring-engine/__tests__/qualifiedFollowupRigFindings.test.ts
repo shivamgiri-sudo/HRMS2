@@ -50,3 +50,18 @@ describe("rig findings", () => {
     expect(h.sqls.find((s) => s.sql.startsWith("INSERT INTO he_message"))!.sql).not.toContain("sent_by");
   });
 });
+
+describe("D8: one requisition-open rule in he-send", () => {
+  it("a closed_at requisition blocks the engine's WhatsApp even when approved with seats", async () => {
+    const { db } = await import("../../../db/mysql.js");
+    const orig = vi.mocked(db.execute).getMockImplementation()!;
+    vi.mocked(db.execute).mockImplementation((async (sql: string, p: unknown[] = []) => {
+      const r = await (orig as (s: string, p: unknown[]) => Promise<unknown>)(sql, p);
+      if (sql.includes("FROM he_match m LEFT JOIN he_drive d")) return [[{ ...(r as any)[0][0], closed_at: "2026-10-01 10:00:00" }]];
+      return r;
+    }) as never);
+    h.notified = false;
+    expect(await sendTemplateToLead({ leadId: "L1", key: "he_walkin_invite", matchId: "M1" })).toEqual({ status: "blocked", reason: "requisition_closed" });
+    vi.mocked(db.execute).mockImplementation(orig as never);
+  });
+});

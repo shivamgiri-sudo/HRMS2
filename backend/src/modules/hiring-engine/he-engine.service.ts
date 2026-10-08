@@ -31,7 +31,10 @@ import { planNextDay } from "./he-plan.service.js";
 import { streamDriveIds, topUpStreamDrive, type StreamDayPlan } from "./he-stream-plan.service.js";
 import { sweepOwnedCampaigns } from "./he-meta-bridge.service.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
-import { followupSkipSql } from "./qualified-followup.policy.js";
+import { firstContactHoldSql, followupOwnedExpr, followupSkipSql, LEAD_MOBILE_OF_MATCH } from "./qualified-followup.policy.js";
+
+// People the unified follow-up owns (row-based, any mode) get no engine send; marking and hygiene still cover them.
+const OWNED_BY_MATCH = { mobileExpr: LEAD_MOBILE_OF_MATCH, requisitionExpr: "m.requisition_id" };
 
 export interface TickSummary {
   dryRun: boolean;
@@ -68,7 +71,7 @@ async function voiceCalls(dryRun: boolean, c: Counts, max: number): Promise<void
                         AND e.delivery_status <> 'failed' AND e.created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE))
               AND NOT EXISTS (SELECT 1 FROM he_message w WHERE w.lead_id = m.lead_id AND w.direction = 'out' AND w.template_key LIKE 'he_walkin_invite:%'))
         )
-        AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at > DATE_SUB(NOW(), INTERVAL 2 DAY))
+        AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at > DATE_SUB(NOW(), INTERVAL 2 DAY))${followupSkipSql(OWNED_BY_MATCH)}
       ORDER BY m.slot_at LIMIT ?`, [cadenceGapMin(), cadenceGapMin() * 2, max]);
   for (const r of rows) {
     if (bestHourWait({ now: new Date(), bestHourIst: r.best_hour == null ? null : Number(r.best_hour), slotAt: r.slot_at ? new Date(String(r.slot_at).replace(" ", "T") + "+05:30") : null })) {
@@ -93,7 +96,7 @@ async function replacementSlots(dryRun: boolean, c: Counts, max: number): Promis
     `SELECT m.id AS match_id, m.lead_id FROM he_match m
       WHERE m.state = 'slot_released' AND m.drive_id IS NOT NULL
         AND (SELECT MAX(id) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'reschedule_requested')
-          > COALESCE((SELECT MAX(id) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'slot_offered'), 0)
+          > COALESCE((SELECT MAX(id) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'slot_offered'), 0)${followupSkipSql(OWNED_BY_MATCH)}
       LIMIT ?`, [max]);
   for (const r of rows) {
     if (dryRun) { c.dryRun++; continue; }
@@ -143,7 +146,7 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
             (EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL)
               OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent c2 WHERE c2.lead_id = m.lead_id AND c2.consent_type = 'whatsapp_contact' AND c2.revoked_at IS NOT NULL))) AS has_consent
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id
-      WHERE m.drive_id = ? AND m.state = 'suggested' AND l.status <> 'opted_out'${followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" })}
+      WHERE m.drive_id = ? AND m.state = 'suggested' AND l.status <> 'opted_out'${followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" })}${firstContactHoldSql({ mobileExpr: "l.mobile10" })}
       ORDER BY has_email DESC, m.score DESC LIMIT ?`, [(await whatsappRequiresOptIn()) ? 1 : 0, driveId, Math.max(1, Math.min(2000, Math.floor(o.max)))]);
   const [tpl] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_template WHERE template_key LIKE 'he_walkin_invite:%' AND approval_state = 'approved'");
   const waTemplateOk = Number(tpl[0]?.n ?? 0) > 0;
@@ -187,7 +190,7 @@ export async function runFollowUps(o: { dryRun: boolean }): Promise<{ whatsapp: 
   await reminders(o.dryRun, out.reminders);
   await followUpCatchUp(o.dryRun, out.recovery);
   await voiceCalls(o.dryRun, out.calls, 50);
-  out.otherRoles = await offerOtherRoles({ dryRun: o.dryRun, max: 50 });
+  out.otherRoles = await offerOtherRoles({ dryRun: o.dryRun, max: 50, scope: "exclude_enrolled" });
   return out;
 }
 
@@ -222,7 +225,7 @@ async function reminders(dryRun: boolean, c: Counts): Promise<void> {
   for (const [key, evt, loMin, hiMin] of [["he_reminder_1d", "reminder_1d_sent", 22 * 60, 26 * 60], ["he_reminder_2h_location", "reminder_2h_sent", 90, 150]] as const) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT m.id, m.lead_id, m.drive_id FROM he_match m
-        WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE)`, [loMin, hiMin]);
+        WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE)${followupSkipSql(OWNED_BY_MATCH)}`, [loMin, hiMin]);
     for (const r of rows) {
       if (!(await eventExists(r.lead_id as string, r.drive_id as string, evt))) {
         const res = await sendTemplateToLead({ leadId: r.lead_id as string, key, matchId: r.id as string, dryRun });
@@ -292,7 +295,7 @@ async function arrivalSync(dryRun: boolean): Promise<number> {
 
 async function noShows(dryRun: boolean, c: Counts): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT m.id, m.lead_id, m.drive_id FROM he_match m
+    `SELECT m.id, m.lead_id, m.drive_id, ${followupOwnedExpr(OWNED_BY_MATCH)} AS followup_owned FROM he_match m
       WHERE m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL AND m.slot_at < DATE_SUB(NOW(), INTERVAL 120 MINUTE)
         AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY)`);
   for (const r of rows) {
@@ -303,7 +306,8 @@ async function noShows(dryRun: boolean, c: Counts): Promise<number> {
     await recomputeInsight(r.lead_id as string);
     // One recovery message for a first no-show only; the insight stops it after two.
     const [ns] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_match WHERE lead_id = ? AND state = 'no_show'", [r.lead_id]);
-    if (Number(ns[0].n) === 1) {
+    // The follow-up method sends its own recovery (confirmed people only, D5) to the people it owns.
+    if (Number(ns[0].n) === 1 && !Number(r.followup_owned)) {
       tally(c, await sendTemplateToLead({ leadId: r.lead_id as string, key: "he_no_show_recovery", matchId: r.id as string }));
       tally(c, await sendFollowUpEmail("no_show", r.id as string));
     }
@@ -317,7 +321,7 @@ async function followUpCatchUp(dryRun: boolean, c: Counts): Promise<void> {
     `SELECT m.id FROM he_match m JOIN he_lead l ON l.id = m.lead_id
       WHERE m.state = 'no_show' AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY) AND l.email IS NOT NULL AND l.email <> ''
         AND (SELECT COUNT(*) FROM he_match x WHERE x.lead_id = m.lead_id AND x.state = 'no_show') = 1
-        AND NOT EXISTS (SELECT 1 FROM he_message e WHERE e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = 'he_email_no_show' AND e.direction = 'out' AND e.delivery_status <> 'failed' AND (e.drive_id <=> m.drive_id))
+        AND NOT EXISTS (SELECT 1 FROM he_message e WHERE e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = 'he_email_no_show' AND e.direction = 'out' AND e.delivery_status <> 'failed' AND (e.drive_id <=> m.drive_id))${followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" })}
       LIMIT 100`);
   for (const r of rows) tally(c, await sendFollowUpEmail("no_show", r.id as string, { dryRun }));
 }
@@ -363,7 +367,7 @@ export async function runEngineTick(o: { dryRun?: boolean; maxInvites?: number }
     await guard("followup-email-catch-up", () => followUpCatchUp(dryRun, s.recovery));
     await guard("voice", () => voiceCalls(dryRun, s.calls, 20));
     await guard("bulk-calls", async () => { s.bulkCalls = await runBulkCallJobs({ dryRun, max: 20 }); });
-    await guard("other-role-offers", async () => { s.otherRoles = await offerOtherRoles({ dryRun, max: 50 }); });
+    await guard("other-role-offers", async () => { s.otherRoles = await offerOtherRoles({ dryRun, max: 50, scope: "exclude_enrolled" }); });
   }
   return s;
 }

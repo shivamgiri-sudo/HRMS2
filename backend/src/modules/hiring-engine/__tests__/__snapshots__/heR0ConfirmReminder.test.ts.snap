@@ -31,7 +31,7 @@ exports[`R0 pin: email-tap confirm with the HR contact configured > pins the T2 
 
 exports[`R0 pin: email-tap confirm with the HR contact configured > pins the T2 + confirmation email calls on an email-tap confirm 3`] = `
 [
-  "SELECT m.id, m.requisition_id, m.slot_at, m.token, m.state, d.id AS drive_id, d.drive_date, d.status AS drive_status, d.reinvite, jr.designation_name, jr.branch_name, jr.bmi_assessment_url, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, bm.address, bm.latitude, bm.longitude, bm.hr_contact FROM he_match m LEFT JOIN he_drive d ON d.id = m.drive_id JOIN job_requisition jr ON jr.id = m.requisition_id LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1 WHERE m.id = ? LIMIT 1",
+  "SELECT m.id, m.requisition_id, m.slot_at, m.token, m.state, d.id AS drive_id, d.drive_date, d.status AS drive_status, d.reinvite, jr.designation_name, jr.branch_name, jr.bmi_assessment_url, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.closed_at, bm.address, bm.latitude, bm.longitude, bm.hr_contact FROM he_match m LEFT JOIN he_drive d ON d.id = m.drive_id JOIN job_requisition jr ON jr.id = m.requisition_id LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1 WHERE m.id = ? LIMIT 1",
   "SELECT template_key, pinbot_name, language, approval_state FROM he_template WHERE template_key IN (?, ?) AND approval_state = 'approved' AND pinbot_name IS NOT NULL",
   "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, error_message, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
 ]
@@ -39,7 +39,7 @@ exports[`R0 pin: email-tap confirm with the HR contact configured > pins the T2 
 
 exports[`R0 pin: reminders select confirmed matches only > pins the reminder SQL of a dry-run follow-up pass 1`] = `
 [
-  "SELECT m.id, m.lead_id, m.drive_id FROM he_match m WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE)",
-  "SELECT m.id, m.lead_id, m.drive_id FROM he_match m WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE)",
+  "SELECT m.id, m.lead_id, m.drive_id FROM he_match m WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE) AND NOT EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = (SELECT lx.mobile10 FROM he_lead lx WHERE lx.id = m.lead_id) COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND (qf.requisition_id = m.requisition_id COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded')))",
+  "SELECT m.id, m.lead_id, m.drive_id FROM he_match m WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE) AND NOT EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = (SELECT lx.mobile10 FROM he_lead lx WHERE lx.id = m.lead_id) COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND (qf.requisition_id = m.requisition_id COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded')))",
 ]
 `;

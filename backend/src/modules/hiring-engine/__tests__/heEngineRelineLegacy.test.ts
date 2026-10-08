@@ -36,11 +36,14 @@ vi.mock("../he-followup-email.service.js", () => ({ sendFollowUpEmail: vi.fn(asy
 vi.mock("../he-readiness.service.js", () => ({ getRequisitionReadiness: vi.fn(async () => null) }));
 
 import { runEngineTick } from "../he-engine.service.js";
-import { followupSkipSql } from "../qualified-followup.policy.js";
+import { firstContactHoldSql, followupOwnedExpr, followupSkipSql, LEAD_MOBILE_OF_MATCH } from "../qualified-followup.policy.js";
 
 // The unified method's row-based follow-up skip (always on since 2138, and the he_lead join it needs) is not part of this pin.
 const SKIP = followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" });
-const withoutFollowupSkip = (sql: string) => sql.split(SKIP).join("").replace("FROM he_match m JOIN he_lead l ON l.id = m.lead_id JOIN he_message e", "FROM he_match m JOIN he_message e");
+const OWNED = { mobileExpr: LEAD_MOBILE_OF_MATCH, requisitionExpr: "m.requisition_id" };
+// Strip-only: every clause the unified method added to the engine (Tasks 4 and 13), nothing else.
+const STRIP = [SKIP, followupSkipSql(OWNED), firstContactHoldSql({ mobileExpr: "l.mobile10" }), `, ${followupOwnedExpr(OWNED)} AS followup_owned`];
+const withoutFollowupSkip = (sql: string) => STRIP.reduce((x, c) => x.split(c).join(""), sql).replace("FROM he_match m JOIN he_lead l ON l.id = m.lead_id JOIN he_message e", "FROM he_match m JOIN he_message e");
 const legacyCalls = () => h.calls.filter(([sql]) => !sql.includes("requisition_stream")).map(([sql, p]) => [withoutFollowupSkip(sql), p]);
 
 beforeEach(() => {
