@@ -29,7 +29,7 @@ const driveRow = (rid: string, o: Record<string, unknown> = {}) => ({ requisitio
 type Rows = { rates?: unknown[]; spend?: unknown[]; messages?: unknown[]; calls?: unknown[]; fail?: Record<string, string>; noStreamTables?: boolean };
 let impl: Rows;
 const kindOf = (q: string): string =>
-  q.includes("AS lead_rows") ? "persons" : q.includes("param_key LIKE ? AND value = 1") ? "cutoff" : q.includes("FROM he_model_param") ? "rates" : q.includes("FROM meta_campaign WHERE") ? "spend" : q.includes("FROM he_message h") ? "messages" : q.includes("FROM he_call c") ? "calls"
+  q.includes("AS lead_rows") ? "persons" : q.includes(" AS mob") || q.includes(" AS via") ? "responses" : q.includes("param_key LIKE ? AND value = 1") ? "cutoff" : q.includes("FROM he_model_param") ? "rates" : q.includes("FROM meta_campaign WHERE") ? "spend" : q.includes("FROM he_message h") ? "messages" : q.includes("FROM he_call c") ? "calls"
     : q.includes("FROM he_drive d WHERE d.drive_date BETWEEN") ? "discovery" : q.includes("LEFT JOIN he_drive d ON") ? "drives" : "other";
 const calls = (k: string) => execute.mock.calls.filter((c) => kindOf(String(c[0])) === k).map((c) => [String(c[0]), (c[1] ?? []) as unknown[]] as const);
 const rates = (o: Partial<CostRates> = {}): CostRates => ({ ...COST_DEFAULTS, ...o });
