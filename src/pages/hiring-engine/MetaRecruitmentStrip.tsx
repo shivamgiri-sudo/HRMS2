@@ -13,12 +13,24 @@ export interface Rec { leads: number; qualified: number; invited: number; applie
 export interface CampRec extends Rec { campaignId: string; campaignName: string; status: string; requisitionCode: string | null; branchName: string | null }
 export interface MetaRecruitment { campaigns: CampRec[]; total: Rec }
 
+// One read for the page: the strip (every tab) and the Bulk calls tab both use these numbers, so they share one request for a minute.
+let shared: { at: number; p: Promise<MetaRecruitment> } | null = null;
+export function loadMetaRecruitment(now: number = Date.now()): Promise<MetaRecruitment> {
+  if (!shared || now - shared.at > 60_000) {
+    const p = hrmsApi.get<{ data: MetaRecruitment }>("/api/he/meta-recruitment").then((r) => r.data);
+    shared = { at: now, p };
+    p.catch(() => { if (shared?.p === p) shared = null; }); // a failed read is not kept
+  }
+  return shared.p;
+}
+export function resetMetaRecruitmentCache(): void { shared = null; }
+
 export function useMetaRecruitment(): { data: MetaRecruitment | null; error: boolean } {
   const [data, setData] = useState<MetaRecruitment | null>(null);
   const [error, setError] = useState(false);
   useEffect(() => {
     let alive = true;
-    hrmsApi.get<{ data: MetaRecruitment }>("/api/he/meta-recruitment").then((r) => alive && setData(r.data)).catch(() => alive && setError(true));
+    loadMetaRecruitment().then((d) => alive && setData(d)).catch(() => alive && setError(true));
     return () => { alive = false; };
   }, []);
   return { data, error };
