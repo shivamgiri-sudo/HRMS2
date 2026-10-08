@@ -56,6 +56,7 @@ async function reset() {
   execFileSync("bash", ["-c", ". /home/shuvam/he-e2e2/config.sh; rig_mysql ws3_rig < /home/shuvam/he-e2e2/seed/ws3-seed.sql"]);
 }
 await reset();
+if (process.env.WS3_RESET_ONLY) { console.log("reset done"); await pool.end(); process.exit(0); }
 const H = {};
 for (const role of Object.keys(USERS)) H[role] = await login(role);
 const before = { qfu: Number((await q("SELECT COUNT(*) n FROM qualified_followup"))[0].n), heMsg: Number((await q("SELECT COUNT(*) n FROM he_message"))[0].n), approvals: Number((await q("SELECT COUNT(*) n FROM shortlist_approval"))[0].n) };

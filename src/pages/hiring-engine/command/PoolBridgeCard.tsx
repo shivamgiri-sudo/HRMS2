@@ -31,9 +31,9 @@ export function PoolBridgeView({ sources, loading, error, picked, result, busy, 
         <button type="button" className={BTN} onClick={onRetry}>Retry</button></p>}
       {groups.length > 0 && (
         <fieldset className="space-y-1">
-          <legend className="text-xs font-semibold">Sources</legend>
+          <legend className="text-xs font-semibold text-slate-800 dark:text-slate-100">Sources</legend>
           {groups.map((g) => (
-            <label key={g.recordType} className="flex min-h-11 cursor-pointer items-center gap-2 text-sm sm:min-h-8">
+            <label key={g.recordType} className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800 dark:text-slate-100 sm:min-h-8">
               <input type="checkbox" className="h-4 w-4 cursor-pointer accent-blue-700" checked={picked.includes(g.recordType)} disabled={busy} onChange={() => toggle(g.recordType)} />
               {g.label}: {fmt(g.rows)} rows in {g.files} file{g.files === 1 ? "" : "s"}, {fmt(g.inPool)} already in the pool
             </label>

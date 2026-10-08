@@ -88,7 +88,7 @@ export function CampaignMatrixView({ data, loading, error, canWrite, filters, br
             <option value="all">All</option><option value="running">Running</option><option value="idle">Idle</option><option value="not_mapped">Not mapped</option>
           </select>
         </div>
-        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm sm:min-h-9">
+        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800 dark:text-slate-100 sm:min-h-9">
           <input type="checkbox" className="h-4 w-4 cursor-pointer accent-blue-700" checked={filters.onlyProblems} onChange={(e) => onFilters({ ...filters, onlyProblems: e.target.checked })} /> Only problems
         </label>
         {sum && <p className="text-xs text-slate-700 dark:text-slate-200">{sum.rows} rows: {sum.running} running, {sum.idle} idle, {sum.notMapped} not mapped</p>}

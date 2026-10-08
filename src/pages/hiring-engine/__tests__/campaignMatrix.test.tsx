@@ -92,3 +92,13 @@ describe("relink model and form", () => {
     expect(after).not.toMatch(/<button[^>]*disabled=""[^>]*>Confirm relink/);
   });
 });
+
+describe("dark mode guard (the host page's global label colour is light-theme only)", () => {
+  it("every label in the map and the bridge card carries its own dark text colour", async () => {
+    const { readFileSync } = await import("node:fs");
+    for (const f of ["../command/CampaignMatrix.tsx", "../command/PoolBridgeCard.tsx"]) {
+      const src = readFileSync(new URL(f, import.meta.url), "utf8");
+      for (const m of src.matchAll(/<(label|legend)[^>]*className="([^"]*)"/g)) expect(m[2], `${f}: ${m[0].slice(0, 80)}`).toMatch(/dark:text-/);
+    }
+  });
+});
