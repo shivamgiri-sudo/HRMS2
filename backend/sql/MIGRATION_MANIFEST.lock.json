@@ -1315,6 +1315,7 @@
     "1874_process_details_page_access.sql",
     "1884_employees_salary_start_check_v2.sql",
     "1894_dalmia_apr_raw.sql",
+    "1961_employee_master_snapshot_exit_reason.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
     "206_ats_recruiter_contact_details.sql",
