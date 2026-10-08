@@ -28,7 +28,8 @@ const ATS_COLS = `ac.record_type, ac.sourcing_channel, ac.full_name AS ac_full_n
        ac.permanent_address AS ac_permanent_address, ac.preferred_locations AS ac_preferred_locations, ac.hometown AS ac_hometown, ac.annual_salary AS ac_annual_salary,
        ac.notice_period AS ac_notice_period, ac.current_employer AS ac_current_employer, ac.last_active_naukri AS ac_last_active_naukri, ac.night_shift_ok AS ac_night_shift_ok,
        ac.night_shift_comfortable AS ac_night_shift_comfortable, ac.rotational_shift AS ac_rotational_shift, ac.rotational_shift_comfort AS ac_rotational_shift_comfort,
-       ac.typing_speed AS ac_typing_speed, ac.role_applied AS ac_role_applied, ac.created_at AS ac_created_at, ac.updated_at AS ac_updated_at`;
+       ac.typing_speed AS ac_typing_speed, ac.role_applied AS ac_role_applied, ac.created_at AS ac_created_at, ac.updated_at AS ac_updated_at,
+       ac.current_designation AS ac_current_designation, ac.naukri_application_date AS ac_naukri_application_date`;
 const PROFILE_COLS = `lp.gender AS p_gender, lp.languages AS p_languages, lp.certifications AS p_certifications, lp.typing_wpm AS p_typing_wpm, lp.english_level AS p_english_level,
        lp.salary_expectation AS p_salary_expectation, lp.last_employer AS p_last_employer, lp.education_status AS p_education_status, lp.stream AS p_stream,
        lp.last_salary AS p_last_salary, lp.prev_industry AS p_prev_industry, lp.state AS p_state, lp.address AS p_address, lp.dob AS p_dob, lp.skills_text AS p_skills_text`;

@@ -85,7 +85,9 @@ export interface CandidateFacts {
   experienceYears: FactValue<number>; skillsText: FactValue<string>; locationText: FactValue<string>; preferredLocations: FactValue<string[]>; hometown: FactValue<string>;
   relocationOk: FactValue<boolean>; nightShiftOk: FactValue<boolean>; rotationalOk: FactValue<boolean>; salaryMonthly: FactValue<number>; salaryIsExpectation: boolean;
   noticeDays: FactValue<number>; englishLevel: FactValue<1 | 2 | 3>; typingWpm: FactValue<number>; languages: FactValue<string[]>; gender: FactValue<"male" | "female" | "other">;
-  certificates: FactValue<Array<{ code: string; level: "declared" | "verified" }>>; employers: FactValue<string[]>; formAnswers: Record<string, string> | null;
+  certificates: FactValue<Array<{ code: string; level: "declared" | "verified" }>>; employers: FactValue<string[]>;
+  /** Current designation (Naukri import), WS3 D2; absent on facts cached before it. */
+  designation?: FactValue<string>; formAnswers: Record<string, string> | null;
   lastActiveAt: FactValue<string>; recordUpdatedAt: FactValue<string>; lastFirstContactAt: string | null; email: FactValue<string>; mobileValid: boolean;
   system: {
     eligibility: { ok: boolean; blocks: string[]; priority: number };

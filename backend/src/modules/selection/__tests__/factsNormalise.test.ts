@@ -93,3 +93,24 @@ describe("normaliseFacts", () => {
     expect(f.recordUpdatedAt.value).toBe("2026-10-01 00:00:00");
   });
 });
+
+describe("imported columns mapped into the facts (WS3 D2: the 55k Naukri / WorkIndia bridge)", () => {
+  it("current designation joins the skills text and is its own fact", () => {
+    const f = normaliseFacts(person({ subSource: "naukri_import", ats: { record_type: "naukri_import", current_designation: "Senior Telecaller", role_applied: "Customer support" } }), NOW);
+    expect(f.designation).toMatchObject({ value: "Senior Telecaller", quality: "ok", from: "naukri.current_designation" });
+    expect(f.skillsText.value).toContain("Senior Telecaller");
+  });
+  it("a placeholder designation is unknown and stays out of the skills", () => {
+    const f = normaliseFacts(person({ subSource: "workindia_import", ats: { record_type: "workindia_import", current_designation: "ccc" } }), NOW);
+    expect(f.designation?.quality).toBe("placeholder");
+    expect(f.skillsText.value ?? "").not.toContain("ccc");
+  });
+  it("the Naukri application date is the recency when last-active is missing or unreadable", () => {
+    const missingActive = normaliseFacts(person({ ats: { record_type: "naukri_import", naukri_application_date: "2026-09-30" } }), NOW);
+    expect(missingActive.lastActiveAt).toMatchObject({ value: "2026-09-30", quality: "ok", from: "naukri.naukri_application_date" });
+    const both = normaliseFacts(person({ ats: { record_type: "naukri_import", naukri_application_date: "2026-09-01", last_active_naukri: "Active yesterday", created_at: "2026-10-07 10:00:00" } }), NOW);
+    expect(both.lastActiveAt.from).toBe("naukri.last_active_naukri");
+    const dateObj = normaliseFacts(person({ ats: { record_type: "naukri_import", naukri_application_date: new Date("2026-09-29T18:30:00Z") as never } }), NOW);
+    expect(dateObj.lastActiveAt.value).toBe("2026-09-30");
+  });
+});

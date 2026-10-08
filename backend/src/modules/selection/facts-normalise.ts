@@ -115,6 +115,13 @@ function metaParsed(raw: unknown) {
   return d && typeof d === "object" && Array.isArray((d as { field_data?: unknown }).field_data) ? parseLead(d as MetaLeadDetail) : null;
 }
 
+/** A DATE column as YYYY-MM-DD (the driver gives a Date at IST midnight, or text). */
+function dayOf(v: unknown): string | null {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : new Date(v.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+  const t = str(v);
+  return t && t.length >= 10 && Number.isFinite(Date.parse(`${t.slice(0, 10)}T00:00:00Z`)) ? t.slice(0, 10) : null;
+}
+
 export function normaliseFacts(p: RawPerson, now: Date): CandidateFacts {
   const a = p.ats ?? {}, l = p.lead ?? {}, pr = p.profile ?? {};
   const isWorkIndia = p.subSource === "workindia_import" || a.record_type === "workindia_import";
@@ -179,7 +186,9 @@ export function normaliseFacts(p: RawPerson, now: Date): CandidateFacts {
     : answers.certificates ?? missing<Array<{ code: string; level: "declared" | "verified" }>>("certificates");
   const emps = [str(a.current_employer), str(pr.last_employer)].filter((x): x is string => !!x && !isPlaceholder(x));
   const employers = emps.length ? fv(emps, "ok", "employer") : missing<string[]>("employer");
-  const skills = [str(pr.skills_text), str(a.role_applied)].filter(Boolean).join(" ");
+  const desig = str(a.current_designation);
+  const designation = desig === null ? missing<string>("naukri.current_designation") : isPlaceholder(desig) ? fv<string>(null, "placeholder", "naukri.current_designation") : fv(desig, "ok", "naukri.current_designation");
+  const skills = [str(pr.skills_text), str(a.role_applied), designation.value].filter(Boolean).join(" ");
   const skillsText = skills ? fv(skills, "ok", "skills") : missing<string>("skills");
   const g = gender(pr.gender) ?? gender(a.gender) ?? gender(metaInput?.parsedGender);
   const genderF = g ? fv(g, "ok", "gender") : missing<"male" | "female" | "other">("gender");
@@ -191,7 +200,9 @@ export function normaliseFacts(p: RawPerson, now: Date): CandidateFacts {
   const emailRaw = str(a.email) ?? str(l.email) ?? parsed?.email ?? null;
   const email = emailRaw === null ? missing<string>("email") : EMAIL.test(emailRaw) ? fv(emailRaw.toLowerCase(), "ok", "email") : fv<string>(null, "ambiguous", "email");
   const la = anchorLastActive(str(a.last_active_naukri), str(a.created_at));
-  const lastActiveAt = la ? fv(la, "ok", "naukri.last_active_naukri") : str(a.last_active_naukri) ? fv<string>(null, "ambiguous", "naukri.last_active_naukri") : missing<string>("naukri.last_active_naukri");
+  const applied = dayOf(a.naukri_application_date);
+  const lastActiveAt = la ? fv(la, "ok", "naukri.last_active_naukri") : applied ? fv(applied, "ok", "naukri.naukri_application_date")
+    : str(a.last_active_naukri) ? fv<string>(null, "ambiguous", "naukri.last_active_naukri") : missing<string>("naukri.last_active_naukri");
   const upd = str(l.updated_at) ?? str(a.updated_at) ?? p.meta?.createdAt ?? null;
   const recordUpdatedAt = upd ? fv(upd, "ok", "record") : missing<string>("record");
   const key = normalizeMobile10(p.mobile);
@@ -209,7 +220,7 @@ export function normaliseFacts(p: RawPerson, now: Date): CandidateFacts {
   return {
     personKey: key ?? String(p.mobile).replace(/\D/g, "").slice(-10), firstName: name ? name.split(/\s+/)[0].slice(0, 40) : null, sourceKind: p.sourceKind, subSource: p.subSource, sourceDetail: str(a.source_details), recordType: str(a.record_type),
     age, educationRank, educationStatus, stream, experienceYears, skillsText, locationText, preferredLocations, hometown, relocationOk, nightShiftOk, rotationalOk,
-    salaryMonthly, salaryIsExpectation: expectation !== null, noticeDays, englishLevel, typingWpm, languages, gender: genderF, certificates, employers,
+    salaryMonthly, salaryIsExpectation: expectation !== null, noticeDays, englishLevel, typingWpm, languages, gender: genderF, certificates, employers, designation,
     formAnswers: parsed?.rawFields ?? null, lastActiveAt, recordUpdatedAt, lastFirstContactAt: p.contact.lastFirstContactAt, email, mobileValid: key !== null,
     system: p.system, metaInput, match,
   };
