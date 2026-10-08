@@ -1,0 +1,107 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`legacy Meta Notify pin (switches off) > email, WhatsApp, voice and meta_lead_raw writes 1`] = `
+{
+  "email": [
+    [
+      {
+        "html": "<!DOCTYPE html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.6;max-width:600px;margin:0 auto">
+<div style="background:#1e40af;padding:20px 24px;border-radius:8px 8px 0 0">
+  <h1 style="color:#fff;margin:0;font-size:20px">🎉 Congratulations Asha! Shortlisted for CSE at Mas Callnet</h1>
+</div>
+<div style="padding:24px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px">
+  <p>Dear Asha,</p>
+  <p><strong>Congratulations! 🎉</strong></p>
+  <p>Your profile has been shortlisted for the <strong>CSE</strong> position at <strong>Mas Callnet India Pvt. Ltd.</strong></p>
+
+  <p>To proceed with the recruitment process, please complete your assessment and confirm your interview slot through the link below.</p>
+
+  <p style="margin:20px 0">
+    <a href="https://bmi.test/x" style="background:#1e40af;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;display:inline-block;font-weight:bold">👉 Complete Assessment &amp; Confirm Interview</a>
+  </p>
+  <p style="color:#666;font-size:13px">Please note: completing the assessment is an important step in the selection process.</p>
+
+  <table style="width:100%;margin:20px 0;border-collapse:collapse">
+    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px;width:130px"><strong>📅 Interview Date</strong></td><td style="padding:8px 12px"><strong>Fri, 9 Oct 2026</strong></td></tr>
+    <tr><td style="padding:8px 12px"><strong>🕒 Interview Time</strong></td><td style="padding:8px 12px"><strong>11:00 AM</strong></td></tr>
+    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px"><strong>📍 Location</strong></td><td style="padding:8px 12px">Noida</td></tr>
+    <tr><td style="padding:8px 12px"><strong>🏢 Full Address</strong></td><td style="padding:8px 12px">C-27, Sector 62, Noida</td></tr>
+    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px"><strong>🗺️ Google Maps</strong></td><td style="padding:8px 12px"><a href="https://maps.google.com/?q=28.6,77.3" style="color:#1e40af">View on Google Maps</a></td></tr>
+    <tr><td style="padding:8px 12px"><strong>💼 Role</strong></td><td style="padding:8px 12px">CSE</td></tr>
+    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px"><strong>💰 Salary</strong></td><td style="padding:8px 12px">₹15,000 – ₹18,000 per month</td></tr>
+  </table>
+
+  <p>We recommend completing the process at the earliest to avoid missing your opportunity.</p>
+  <p>We look forward to speaking with you!</p>
+
+  <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;color:#888;font-size:12px">
+    <strong style="color:#333">Warm regards,</strong><br>
+    Mas Callnet HR Team<br>
+    Mas Callnet India Pvt. Ltd.<br>
+    <a href="https://www.mascallnet.ai" style="color:#1e40af">www.mascallnet.ai</a>
+  </div>
+
+  <p style="font-size:11px;color:#bbb;margin-top:16px">Reference: R-1</p>
+</div>
+</body></html>",
+        "subject": "Congratulations Asha! Shortlisted for CSE at Mas Callnet",
+        "to": "asha@x.in",
+      },
+    ],
+  ],
+  "outcome": {
+    "attempted": [
+      "whatsapp",
+      "email",
+      "voice",
+    ],
+    "failed": [],
+    "leadId": "L1",
+    "skipped": [],
+    "succeeded": [
+      "whatsapp",
+      "email",
+      "voice",
+    ],
+  },
+  "pinbot": [
+    [
+      "9876543210",
+      "interview_invitation",
+      [
+        "Asha Rao",
+        "Fri, 9 Oct 2026",
+        "11:00 AM",
+        "C-27, Sector 62, Noida",
+        "https://bmi.test/x",
+      ],
+    ],
+  ],
+  "vapi": [
+    [
+      {
+        "branch": "NOIDA-2",
+        "designation": "CSE",
+        "name": "Asha Rao",
+        "phone": "9876543210",
+        "referenceId": "L1",
+      },
+    ],
+  ],
+  "writes": [
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "UPDATE meta_lead_raw SET voice_call_status = 'triggered', voice_called_at = NOW() WHERE id = ?",
+    },
+    {
+      "p": [
+        "["whatsapp","email","voice"]",
+        "L1",
+      ],
+      "sql": "UPDATE meta_lead_raw SET notification_sent_at = NOW(), notification_channels = ? WHERE id = ?",
+    },
+  ],
+}
+`;
