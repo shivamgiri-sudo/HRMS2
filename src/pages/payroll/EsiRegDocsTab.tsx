@@ -39,7 +39,21 @@ interface ListResponse {
   limit: number;
 }
 
-function useEsiList(params: { search: string; branchId: string; page: number; dateFrom: string; dateTo: string }) {
+/** Last 12 joining months (YYYY-MM), newest first. */
+function useMonthOptions() {
+  return useMemo(() => {
+    const opts: { value: string; label: string }[] = [];
+    const now = new Date();
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      opts.push({ value, label: d.toLocaleString("en-IN", { month: "short", year: "numeric" }) });
+    }
+    return opts;
+  }, []);
+}
+
+function useEsiList(params: { search: string; branchId: string; page: number; dateFrom: string; dateTo: string; activeStatus: string; month: string }) {
   return useQuery<ListResponse>({
     queryKey: ["esi-reg-docs", params],
     queryFn: () => {
@@ -48,6 +62,8 @@ function useEsiList(params: { search: string; branchId: string; page: number; da
       if (params.branchId) qs.set("branch_id", params.branchId);
       if (params.dateFrom) qs.set("date_from", params.dateFrom);
       if (params.dateTo) qs.set("date_to", params.dateTo);
+      if (params.activeStatus && params.activeStatus !== "1") qs.set("active_status", params.activeStatus);
+      if (params.month) qs.set("month", params.month);
       return hrmsApi.get<ListResponse>(`/api/payroll/esi-reg-docs?${qs}`);
     },
     staleTime: 30_000,
@@ -671,6 +687,9 @@ export default function EsiRegDocsTab() {
   const [branchId, setBranchId] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [activeStatus, setActiveStatus] = useState("1");
+  const [month, setMonth] = useState("");
+  const monthOptions = useMonthOptions();
   const [docs, setDocsState] = useState<Set<DocKey>>(loadDocs);
   const setDocs = (next: Set<DocKey>) => {
     setDocsState(next);
@@ -690,7 +709,7 @@ export default function EsiRegDocsTab() {
   const [bulkDownloading, setBulkDownloading] = useState(false);
   const [reminding, setReminding] = useState(false);
 
-  const { data, isLoading } = useEsiList({ search, branchId, page, dateFrom, dateTo });
+  const { data, isLoading } = useEsiList({ search, branchId, page, dateFrom, dateTo, activeStatus, month });
   const employees = data?.employees ?? [];
   const notFoundCodes = useMemo(() => {
     if (!pastedCodes.length || !data) return [];
@@ -821,7 +840,7 @@ export default function EsiRegDocsTab() {
   async function exportCsv() {
     try {
       const blob = await hrmsApi.getBlob(
-        `/api/payroll/esi-reg-docs/export-csv?${new URLSearchParams({ ...(branchId ? { branch_id: branchId } : {}), ...(dateFrom ? { date_from: dateFrom } : {}), ...(dateTo ? { date_to: dateTo } : {}) })}`,
+        `/api/payroll/esi-reg-docs/export-csv?${new URLSearchParams({ ...(branchId ? { branch_id: branchId } : {}), ...(dateFrom ? { date_from: dateFrom } : {}), ...(dateTo ? { date_to: dateTo } : {}), ...(activeStatus !== "1" ? { active_status: activeStatus } : {}), ...(month ? { month } : {}) })}`,
       );
       triggerBlobDownload(blob, `ESI_Reg_${new Date().toISOString().slice(0, 10)}.csv`);
     } catch {
@@ -831,7 +850,7 @@ export default function EsiRegDocsTab() {
 
   function handleUploaded(employeeId: string, patch: Partial<EsiEmployee>) {
     queryClient.setQueryData<ListResponse>(
-      ["esi-reg-docs", { search, branchId, page, dateFrom, dateTo }],
+      ["esi-reg-docs", { search, branchId, page, dateFrom, dateTo, activeStatus, month }],
       (old) => {
         if (!old) return old;
         return {
@@ -904,6 +923,27 @@ export default function EsiRegDocsTab() {
           <option value="">All branches</option>
           {branches.map((b) => (
             <option key={b.id} value={b.id}>{b.branch_name ?? b.name}</option>
+          ))}
+        </select>
+        <select
+          value={activeStatus}
+          onChange={(e) => { setActiveStatus(e.target.value); setSelected(new Set()); }}
+          aria-label="Filter by active status"
+          className="h-10 rounded-xl border border-blue-200 bg-white px-3 text-sm text-slate-700"
+        >
+          <option value="1">Active</option>
+          <option value="0">Inactive</option>
+          <option value="all">All status</option>
+        </select>
+        <select
+          value={month}
+          onChange={(e) => { setMonth(e.target.value); setSelected(new Set()); }}
+          aria-label="Filter by joining month"
+          className="h-10 rounded-xl border border-blue-200 bg-white px-3 text-sm text-slate-700"
+        >
+          <option value="">All joining months</option>
+          {monthOptions.map((m) => (
+            <option key={m.value} value={m.value}>{m.label}</option>
           ))}
         </select>
         <Button

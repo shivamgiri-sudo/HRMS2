@@ -147,6 +147,23 @@ const ESI_ROLES = [
   "super_admin",
 ] as const;
 
+/**
+ * active_status filter shared by the list and the CSV export: "1" (default,
+ * active only), "0" (inactive only), "all" (no condition). Anything else falls
+ * back to the default so a bad value can never widen the queue silently.
+ */
+function activeStatusCondition(raw: unknown): string | null {
+  const v = typeof raw === "string" ? raw : "";
+  if (v === "all") return null;
+  if (v === "0") return "e.active_status = 0";
+  return "e.active_status = 1";
+}
+
+/** Joining-month filter (YYYY-MM) shared by the list and the CSV export. */
+function joiningMonthParam(raw: unknown): string | null {
+  return typeof raw === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(raw) ? raw : null;
+}
+
 esiRegDocsRouter.get(
   "/esi-reg-docs",
   requireRole(...ESI_ROLES),
@@ -184,7 +201,8 @@ esiRegDocsRouter.get(
     const safeOffset =
       Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0;
 
-    // active_status = 1 is the load-bearing one. Without it this listed every
+    // active_status = 1 (the default of the active_status filter below; "0" and
+    // "all" are explicit opt-ins) is the load-bearing one. Without it this listed every
     // employee who ever held an ESI flag, terminated or not: 12,858 rows live on
     // 2026-09-08 against 567 who are actually on the payroll. An ESI
     // REGISTRATION queue made mostly of people who left is not a long list, it
@@ -210,7 +228,6 @@ esiRegDocsRouter.get(
     // backfilled onto `employees`. Checking only `esic_number` would have shown
     // some already-registered employees as "not registered" too.
     const whereParts: string[] = [
-      `e.active_status = 1`,
       `esi.esi_eligible = 1`,
       ESI_STILL_APPLICABLE_SQL,
       `COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL`,
@@ -227,6 +244,16 @@ esiRegDocsRouter.get(
     if (branchId) {
       whereParts.push("e.branch_id = ?");
       params.push(branchId);
+    }
+    // Active / inactive / all (default active — see the note above).
+    {
+      const cond = activeStatusCondition(req.query.active_status);
+      if (cond) whereParts.push(cond);
+    }
+    // Joining month (YYYY-MM).
+    {
+      const month = joiningMonthParam(req.query.month);
+      if (month) { whereParts.push("DATE_FORMAT(e.date_of_joining, '%Y-%m') = ?"); params.push(month); }
     }
     // Date of joining range (YYYY-MM-DD, either end optional).
     const dateRe = /^\d{4}-\d{2}-\d{2}$/;
@@ -1073,7 +1100,6 @@ esiRegDocsRouter.get(
     // on the list query above: this must select eligible-but-not-yet-registered
     // employees, not the inverted "already has a number OR eligible" population.
     const whereParts = [
-      `e.active_status = 1`,
       `esi.esi_eligible = 1`,
       ESI_STILL_APPLICABLE_SQL,
       `COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL`,
@@ -1088,6 +1114,14 @@ esiRegDocsRouter.get(
     if (branchId) {
       whereParts.push("e.branch_id = ?");
       params.push(branchId);
+    }
+    {
+      const cond = activeStatusCondition(req.query.active_status);
+      if (cond) whereParts.push(cond);
+    }
+    {
+      const month = joiningMonthParam(req.query.month);
+      if (month) { whereParts.push("DATE_FORMAT(e.date_of_joining, '%Y-%m') = ?"); params.push(month); }
     }
     for (const [col, op, key] of [["date_of_joining", ">=", "date_from"], ["date_of_joining", "<=", "date_to"]] as const) {
       const v = String(req.query[key] ?? "");

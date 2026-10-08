@@ -113,6 +113,36 @@ describe("GET /api/payroll/esi-reg-docs", () => {
     const res = await request(app).get("/api/payroll/esi-reg-docs?limit=999");
     expect(res.status).toBe(400);
   });
+
+  async function countSqlFor(qs: string): Promise<{ sql: string; params: unknown[] }> {
+    vi.mocked(db.execute)
+      .mockResolvedValueOnce([[{ total: 0 }] as any, []])
+      .mockResolvedValueOnce([[] as any, []]);
+    const res = await request(app).get(`/api/payroll/esi-reg-docs${qs}`);
+    expect(res.status).toBe(200);
+    const [sql, params] = vi.mocked(db.execute).mock.calls[0] as [string, unknown[]];
+    return { sql, params };
+  }
+
+  it("defaults to active employees; active_status=0 / all switch the condition", async () => {
+    expect((await countSqlFor("")).sql).toContain("e.active_status = 1");
+    vi.clearAllMocks();
+    const inactive = await countSqlFor("?active_status=0");
+    expect(inactive.sql).toContain("e.active_status = 0");
+    expect(inactive.sql).not.toContain("e.active_status = 1");
+    vi.clearAllMocks();
+    expect((await countSqlFor("?active_status=all")).sql).not.toContain("e.active_status");
+    vi.clearAllMocks();
+    expect((await countSqlFor("?active_status=bogus")).sql).toContain("e.active_status = 1");
+  });
+
+  it("filters by joining month (YYYY-MM) and ignores a malformed month", async () => {
+    const ok = await countSqlFor("?month=2026-09");
+    expect(ok.sql).toContain("DATE_FORMAT(e.date_of_joining, '%Y-%m') = ?");
+    expect(ok.params).toContain("2026-09");
+    vi.clearAllMocks();
+    expect((await countSqlFor("?month=2026-9")).sql).not.toContain("DATE_FORMAT(e.date_of_joining");
+  });
 });
 
 describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
