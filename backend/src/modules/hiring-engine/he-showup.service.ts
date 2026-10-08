@@ -7,6 +7,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { invitesToClose, learnMultiplier, learnRate, pShow, type ShowParams } from "./he-showup.js";
 import { learnLifts } from "./he-learn.js";
+import { countedNoShow } from "./he-no-show-events.js";
 
 export async function loadShowParams(): Promise<ShowParams> {
   const [rows] = await db.execute<RowDataPacket[]>("SELECT param_key, value FROM he_model_param WHERE param_key LIKE 'show.%'");
@@ -15,7 +16,7 @@ export async function loadShowParams(): Promise<ShowParams> {
 
 const FACTS_SQL = `
   SELECT m.id, m.drive_id, m.state, m.distance_km, m.slot_at, l.walkin_count,
-         (SELECT COUNT(*) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'no_show' AND (e.drive_id IS NULL OR e.drive_id <> m.drive_id)) AS past_no_shows,
+         (SELECT COUNT(*) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND ${countedNoShow("e")} AND (e.drive_id IS NULL OR e.drive_id <> m.drive_id)) AS past_no_shows,
          EXISTS (SELECT 1 FROM he_location_ping p WHERE p.match_id = m.id) AS shared_location,
          EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.intent IN ('confirm','on_my_way') AND i.created_at >= m.created_at) AS replied_yes
     FROM he_match m JOIN he_lead l ON l.id = m.lead_id`;

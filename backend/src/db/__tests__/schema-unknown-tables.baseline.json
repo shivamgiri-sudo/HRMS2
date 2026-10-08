@@ -77,6 +77,9 @@
     "he_drive",
     "he_match"
   ],
+  "modules/hiring-engine/he-engine.service.ts": [
+    "he_match"
+  ],
   "modules/hiring-engine/he-ex-employee.service.ts": [
     "he_ex_employee"
   ],

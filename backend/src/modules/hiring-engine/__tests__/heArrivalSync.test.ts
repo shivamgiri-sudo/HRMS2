@@ -47,6 +47,7 @@ vi.mock("../he-followup-email.service.js", () => ({ sendFollowUpEmail: h.sendFol
 vi.mock("../he-readiness.service.js", () => ({ getRequisitionReadiness: vi.fn(async () => null) }));
 
 import { runEngineTick } from "../he-engine.service.js";
+import { countedNoShow } from "../he-no-show-events.js";
 
 const hygiene = () => h.calls.filter(([s]) => !s.startsWith("SELECT COUNT(*) AS n FROM he_lead l") && !s.startsWith("UPDATE he_lead l"));
 
@@ -56,13 +57,14 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); });
 
-describe("arrival sync and no-show marking (pinned before the late-arrival change)", () => {
+describe("arrival sync and no-show marking (pinned before the late-arrival change; arrival statements updated by it)", () => {
   it("an invited match with a same-day branch walk-in is marked arrived, with one timeline event", async () => {
     h.arrivalRows = [{ id: "m1", lead_id: "L1", drive_id: "d1", state: "invited" }];
     const s = await runEngineTick({ dryRun: false });
     expect(s.arrivals).toBe(1);
     expect(hygiene()).toMatchSnapshot("sql");
-    expect(h.setLeadStatus.mock.calls).toEqual([["L1", "arrived"]]);
+    // Was setLeadStatus(L1, arrived); now a guarded UPDATE (in the sql snapshot) that never overwrites an opt-out or a join.
+    expect(h.setLeadStatus).not.toHaveBeenCalled();
     expect(h.addEvent.mock.calls).toEqual([["L1", "arrived", { driveId: "d1", channel: "branch", detail: "registered at branch" }]]);
     expect(h.recomputeInsight.mock.calls).toEqual([["L1"]]);
   });
@@ -84,5 +86,64 @@ describe("arrival sync and no-show marking (pinned before the late-arrival chang
     expect(h.addEvent.mock.calls).toEqual([["L2", "no_show", { driveId: "d2", channel: "system" }]]);
     expect(h.sendTemplateToLead.mock.calls).toEqual([[{ leadId: "L2", key: "he_no_show_recovery", matchId: "m2" }]]);
     expect(h.sendFollowUpEmail.mock.calls).toEqual([["no_show", "m2"]]);
+  });
+});
+
+describe("late and unplanned walk-ins are recorded as arrivals", () => {
+  const arrivalSql = () => h.calls.find(([s]) => s.includes("JOIN ats_candidate"))![0];
+  const lead = () => h.calls.filter(([s]) => s.startsWith("UPDATE he_lead SET"));
+
+  it("reads same-day walk-ins for booked, no-show, suggested and released matches, never selected / arrived / declined", async () => {
+    await runEngineTick({ dryRun: true });
+    const s = arrivalSql();
+    expect(s).toContain("m.state IN ('invited','confirmed')");
+    expect(s).toContain("m.state IN ('no_show','suggested','slot_released')");
+    expect(s).not.toMatch(/'selected'|'arrived'|'declined'/);
+    expect(s).toContain("x.walk_in_date = CURDATE()");
+    expect(s).toContain("d.drive_date = CURDATE()");
+    // A match that was not booked for this drive needs the walk-in at the drive's branch (when the form names one).
+    expect(s).toContain("(c.applied_for_branch IS NULL OR c.applied_for_branch = d.branch_name)");
+    // From today's drives by key; the phone pass reads the covering (mobile, walk_in_date) index only.
+    expect(s).toMatch(/^SELECT \/\*\+ NO_MERGE\(w\) \*\/ DISTINCT STRAIGHT_JOIN .* FROM he_drive d JOIN he_match m ON m.drive_id = d.id /);
+  });
+
+  it("a no_show who registers at the branch later that day becomes arrived, keeps an opt-out, and gets no recovery message", async () => {
+    h.arrivalRows = [{ id: "m3", lead_id: "L3", drive_id: "d3", state: "no_show" }];
+    const s = await runEngineTick({ dryRun: false });
+    expect(s.arrivals).toBe(1);
+    const upd = h.calls.find(([q]) => q.startsWith("UPDATE he_match SET state = 'arrived'"))!;
+    expect(upd).toEqual(["UPDATE he_match SET state = 'arrived' WHERE id = ? AND state IN ('invited','confirmed','no_show','suggested','slot_released')", ["m3"]]);
+    expect(lead()).toEqual([["UPDATE he_lead SET status = 'arrived', status_at = NOW() WHERE id = ? AND status NOT IN ('opted_out','joined')", ["L3"]]]);
+    expect(h.setLeadStatus).not.toHaveBeenCalled();
+    expect(h.addEvent.mock.calls).toEqual([["L3", "arrived", { driveId: "d3", channel: "branch", detail: "registered at branch after being marked no-show", meta: { from: "no_show" } }]]);
+    expect(h.recomputeInsight.mock.calls).toEqual([["L3"]]);
+    expect(h.sendTemplateToLead).not.toHaveBeenCalled();
+    expect(h.sendFollowUpEmail).not.toHaveBeenCalled();
+  });
+
+  it("suggested and slot_released walk-ins are arrivals with the earlier state on the event", async () => {
+    h.arrivalRows = [{ id: "m4", lead_id: "L4", drive_id: "d4", state: "suggested" }, { id: "m5", lead_id: "L5", drive_id: "d4", state: "slot_released" }];
+    const s = await runEngineTick({ dryRun: false });
+    expect(s.arrivals).toBe(2);
+    expect(h.addEvent.mock.calls).toEqual([
+      ["L4", "arrived", { driveId: "d4", channel: "branch", detail: "walked in without a booking", meta: { from: "suggested" } }],
+      ["L5", "arrived", { driveId: "d4", channel: "branch", detail: "registered at branch", meta: { from: "slot_released" } }],
+    ]);
+  });
+
+  it("is idempotent: a match whose state moved on meanwhile (selected, already arrived) is not touched and not counted", async () => {
+    h.arrivalRows = [{ id: "m6", lead_id: "L6", drive_id: "d6", state: "no_show" }];
+    h.affected = 0;
+    const s = await runEngineTick({ dryRun: false });
+    expect(s.arrivals).toBe(0);
+    expect(lead()).toEqual([]);
+    expect(h.addEvent).not.toHaveBeenCalled();
+    expect(h.recomputeInsight).not.toHaveBeenCalled();
+  });
+});
+
+describe("a no-show event corrected by an arrival at the same drive is not counted", () => {
+  it("countedNoShow excludes no_show events with an arrived event for the same lead and drive (idx_he_event_drive)", () => {
+    expect(countedNoShow("e")).toBe("e.event_type = 'no_show' AND NOT EXISTS (SELECT 1 FROM he_lead_event ax WHERE ax.drive_id = e.drive_id AND ax.event_type = 'arrived' AND ax.lead_id = e.lead_id)");
   });
 });

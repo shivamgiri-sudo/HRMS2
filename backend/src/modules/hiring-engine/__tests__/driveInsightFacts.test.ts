@@ -24,6 +24,7 @@ vi.mock("../he-drive-insight-facts.service.js", async (orig) => {
 
 import { INSIGHT_DEFAULTS, type DriveInsight } from "../he-drive-insights.js";
 import { collectInsightFacts } from "../he-drive-insight-facts.service.js";
+import { countedNoShow } from "../he-no-show-events.js";
 import { clearDriveAnalyticsCache, driveAnalyticsCacheSize, getDriveAnalytics, type DriveAnalytics } from "../he-drive-analytics.service.js";
 
 const NOW = new Date("2026-10-14T06:00:00Z"); // 11:30 IST, Wednesday 2026-10-14; next working day 2026-10-15
@@ -133,6 +134,8 @@ describe("collectInsightFacts", () => {
     expect(facts.slots[0]).toMatchObject({ driveId: "d1", requisitionId: "r1", code: "REQ-1", date: "2026-10-15", capacity: 12, busyHourSeats: 12, busyHourBooked: 3 });
     expect(facts.slots[0].expected).toBeCloseTo(0.55 + 0.3 + 1, 3); // pShow(confirmed) + pShow(invited) + the arrived one
     expect(sqls().filter((s) => s.kind === "slotMatches")).toHaveLength(1);
+    // past no-shows skip the ones a later arrival at the same drive corrected
+    expect(sqls().find((s) => s.kind === "slotMatches")!.sql).toContain(countedNoShow("e"));
   });
 
   it("calls getDrivePlan for at most 20 requisitions, earliest stream end first", async () => {

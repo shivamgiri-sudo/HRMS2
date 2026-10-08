@@ -3,7 +3,7 @@
 exports[`engine re-line-up before streams (snapshot of today's behaviour) > dry-run tick re-lines nothing > sql 1`] = `
 [
   [
-    "SELECT m.id, m.lead_id, m.drive_id FROM he_match m JOIN he_drive d ON d.id = m.drive_id AND d.drive_date = CURDATE() JOIN he_lead l ON l.id = m.lead_id JOIN ats_candidate c ON RIGHT(REGEXP_REPLACE(c.mobile, '[^0-9]', ''), 10) = l.mobile10 AND c.walk_in_date = CURDATE() WHERE m.state IN ('invited','confirmed')",
+    "SELECT /*+ NO_MERGE(w) */ DISTINCT STRAIGHT_JOIN m.id, m.lead_id, m.drive_id, m.state FROM he_drive d JOIN he_match m ON m.drive_id = d.id JOIN he_lead l ON l.id = m.lead_id JOIN (SELECT x.id, RIGHT(REGEXP_REPLACE(x.mobile, '[^0-9]', ''), 10) AS mobile10 FROM ats_candidate x WHERE x.walk_in_date = CURDATE()) w ON w.mobile10 = l.mobile10 JOIN ats_candidate c ON c.id = w.id WHERE d.drive_date = CURDATE() AND (m.state IN ('invited','confirmed') OR (m.state IN ('no_show','suggested','slot_released') AND (c.applied_for_branch IS NULL OR c.applied_for_branch = d.branch_name)))",
     [],
   ],
   [
@@ -89,7 +89,7 @@ exports[`engine re-line-up before streams (snapshot of today's behaviour) > dry-
 exports[`engine re-line-up before streams (snapshot of today's behaviour) > live tick: every active auto-send drive is re-lined with suggestMatches > sql 1`] = `
 [
   [
-    "SELECT m.id, m.lead_id, m.drive_id FROM he_match m JOIN he_drive d ON d.id = m.drive_id AND d.drive_date = CURDATE() JOIN he_lead l ON l.id = m.lead_id JOIN ats_candidate c ON RIGHT(REGEXP_REPLACE(c.mobile, '[^0-9]', ''), 10) = l.mobile10 AND c.walk_in_date = CURDATE() WHERE m.state IN ('invited','confirmed')",
+    "SELECT /*+ NO_MERGE(w) */ DISTINCT STRAIGHT_JOIN m.id, m.lead_id, m.drive_id, m.state FROM he_drive d JOIN he_match m ON m.drive_id = d.id JOIN he_lead l ON l.id = m.lead_id JOIN (SELECT x.id, RIGHT(REGEXP_REPLACE(x.mobile, '[^0-9]', ''), 10) AS mobile10 FROM ats_candidate x WHERE x.walk_in_date = CURDATE()) w ON w.mobile10 = l.mobile10 JOIN ats_candidate c ON c.id = w.id WHERE d.drive_date = CURDATE() AND (m.state IN ('invited','confirmed') OR (m.state IN ('no_show','suggested','slot_released') AND (c.applied_for_branch IS NULL OR c.applied_for_branch = d.branch_name)))",
     [],
   ],
   [

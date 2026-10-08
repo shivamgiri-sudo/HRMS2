@@ -4,7 +4,8 @@
  *   1 replacement slots  - candidates who asked to reschedule get ONE new slot (second no -> human, see he-state)
  *   2 drive invites      - suggested matches of ACTIVE auto-send drives get slot + invite
  *   3 reminders          - T-1d and T-2h for confirmed candidates
- *   4 arrival sync       - candidates who registered at the branch on the drive day are marked arrived
+ *   4 arrival sync       - candidates who registered at the branch on the drive day are marked arrived (also late after a no-show,
+ *                          or an unplanned walk-in of a suggested / released match at the drive's branch)
  *   5 no-shows           - slot passed with no arrival -> no_show + one recovery message
  *   2b cadence follow-up - email sent an hour ago -> WhatsApp invite (HE_CADENCE_GAP_MIN, default 60)
  *   6 voice calls        - invited, one cadence gap since the WhatsApp invite, no reply -> BRD confirmation call (1 retry after 2h)
@@ -234,22 +235,47 @@ async function reminders(dryRun: boolean, c: Counts): Promise<void> {
   }
 }
 
-/** A candidate who filled the branch walk-in form on the drive day (matched by mobile) has arrived. */
+/** Match states that a same-day branch walk-in turns into 'arrived'. Never 'selected' (no step backwards), 'arrived' (done) or 'declined'. */
+const BOOKED_STATES = "'invited','confirmed'";
+const LATE_STATES = "'no_show','suggested','slot_released'";
+// From today's drives (idx_he_drive_date) to their matches (idx_he_match_drive) and leads, then today's walk-ins. The phone pass reads only
+// the covering (mobile, walk_in_date) index of ats_candidate; the branch is read by primary key for the few rows that match. A match that
+// was not booked (late after a no-show, suggested, released) also needs the walk-in at the drive's branch when the form names one, so a
+// person lined up for two requisitions on the same day is not marked arrived at both.
+const ARRIVAL_SQL = `SELECT /*+ NO_MERGE(w) */ DISTINCT STRAIGHT_JOIN m.id, m.lead_id, m.drive_id, m.state FROM he_drive d
+  JOIN he_match m ON m.drive_id = d.id
+  JOIN he_lead l ON l.id = m.lead_id
+  JOIN (SELECT x.id, RIGHT(REGEXP_REPLACE(x.mobile, '[^0-9]', ''), 10) AS mobile10 FROM ats_candidate x WHERE x.walk_in_date = CURDATE()) w ON w.mobile10 = l.mobile10
+  JOIN ats_candidate c ON c.id = w.id
+ WHERE d.drive_date = CURDATE()
+   AND (m.state IN (${BOOKED_STATES}) OR (m.state IN (${LATE_STATES}) AND (c.applied_for_branch IS NULL OR c.applied_for_branch = d.branch_name)))`;
+
+const arrivalDetail = (from: string): string =>
+  from === "no_show" ? "registered at branch after being marked no-show" : from === "suggested" ? "walked in without a booking" : "registered at branch";
+
+/**
+ * A candidate who filled the branch walk-in form on the drive day (matched by mobile) has arrived, whatever the match said before: booked,
+ * already marked no_show (came after the 2-hour mark), only suggested (an unplanned walk-in) or released. Idempotent: the state-guarded
+ * UPDATE makes a second pass (or a match that moved on meanwhile) a no-op with no event. A corrected no_show stops the no-show follow-ups
+ * (they all read state 'no_show') and its no_show event is no longer counted (countedNoShow).
+ */
 async function arrivalSync(dryRun: boolean): Promise<number> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT m.id, m.lead_id, m.drive_id FROM he_match m
-       JOIN he_drive d ON d.id = m.drive_id AND d.drive_date = CURDATE()
-       JOIN he_lead l ON l.id = m.lead_id
-       JOIN ats_candidate c ON RIGHT(REGEXP_REPLACE(c.mobile, '[^0-9]', ''), 10) = l.mobile10 AND c.walk_in_date = CURDATE()
-      WHERE m.state IN ('invited','confirmed')`);
+  const [rows] = await db.execute<RowDataPacket[]>(ARRIVAL_SQL);
   if (dryRun) return rows.length;
+  let n = 0;
   for (const r of rows) {
-    await db.execute("UPDATE he_match SET state = 'arrived' WHERE id = ?", [r.id]);
-    await setLeadStatus(r.lead_id as string, "arrived");
-    await addEvent(r.lead_id as string, "arrived", { driveId: r.drive_id as string, channel: "branch", detail: "registered at branch" });
+    const [u] = await db.execute<import("mysql2").ResultSetHeader>(
+      `UPDATE he_match SET state = 'arrived' WHERE id = ? AND state IN (${BOOKED_STATES},${LATE_STATES})`, [r.id]);
+    if (!u.affectedRows) continue;
+    n++;
+    const from = String(r.state ?? "");
+    // An opt-out or a join is never overwritten by an arrival.
+    await db.execute("UPDATE he_lead SET status = 'arrived', status_at = NOW() WHERE id = ? AND status NOT IN ('opted_out','joined')", [r.lead_id]);
+    const booked = from === "invited" || from === "confirmed";
+    await addEvent(r.lead_id as string, "arrived", { driveId: r.drive_id as string, channel: "branch", detail: arrivalDetail(from), ...(booked ? {} : { meta: { from } }) });
     await recomputeInsight(r.lead_id as string);
   }
-  return rows.length;
+  return n;
 }
 
 async function noShows(dryRun: boolean, c: Counts): Promise<number> {

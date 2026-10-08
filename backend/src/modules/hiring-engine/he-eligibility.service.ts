@@ -7,6 +7,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { evaluateEligibility, type Eligibility, type EligibilityFacts, type PastRejection } from "./he-eligibility.js";
 import { getCoolingOffDays } from "./he-policy.service.js";
+import { countedNoShow } from "./he-no-show-events.js";
 
 const CHUNK = 1000;
 
@@ -93,7 +94,7 @@ export async function loadEligibilityFacts(
     }
     const [n] = await db.execute<RowDataPacket[]>(
       `SELECT e.lead_id, COUNT(*) AS n FROM he_lead_event e JOIN he_drive d ON d.id = e.drive_id
-        WHERE e.event_type = 'no_show' AND d.requisition_id = ? AND e.lead_id IN (${ph(part.length)}) GROUP BY e.lead_id`, [requisition.id, ...part]);
+        WHERE ${countedNoShow("e")} AND d.requisition_id = ? AND e.lead_id IN (${ph(part.length)}) GROUP BY e.lead_id`, [requisition.id, ...part]);
     for (const r of n) noShows.set(r.lead_id, Number(r.n));
   }
 

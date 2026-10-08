@@ -23,6 +23,7 @@ import type { SourceType } from "./qualified-followup.types.js";
 import { loadActiveStreams, toWindow, type StreamRow } from "./requisition-stream.service.js";
 import { countPlannedDays, addDays, windowEnd } from "./requisition-stream.window.js";
 import type { RequisitionSourceRows } from "./he-sources-window.service.js";
+import { countedNoShow } from "./he-no-show-events.js";
 
 export interface InsightFactsCtx {
   requisitionIds: string[]; from: string; to: string; today: string; windowDays: number;
@@ -119,7 +120,7 @@ const slotDrivesSql = (n: number): string => `SELECT d.id, d.requisition_id, d.d
  WHERE ${DRIVE_WHERE(n)} AND d.status <> 'closed'
  ORDER BY d.drive_date, d.id`;
 const slotMatchesSql = (n: number): string => `SELECT STRAIGHT_JOIN m.drive_id, m.state, m.distance_km, m.slot_at, hl.walkin_count,
-       (SELECT COUNT(*) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'no_show' AND (e.drive_id IS NULL OR e.drive_id <> m.drive_id)) AS past_no_shows,
+       (SELECT COUNT(*) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND ${countedNoShow("e")} AND (e.drive_id IS NULL OR e.drive_id <> m.drive_id)) AS past_no_shows,
        EXISTS (SELECT 1 FROM he_location_ping p WHERE p.match_id = m.id) AS shared_location,
        EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.intent IN ('confirm','on_my_way') AND i.created_at >= m.created_at) AS replied_yes
   ${FROM_MATCH}
