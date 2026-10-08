@@ -1,0 +1,33 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Meta voice callbacks pin > /vapi-callback 1`] = `
+{
+  "body": {
+    "success": true,
+  },
+  "calls": [
+    [
+      "ML1",
+      "completed_not_interested",
+      "not_interested: Candidate is not interested",
+    ],
+  ],
+  "status": 200,
+}
+`;
+
+exports[`Meta voice callbacks pin > /voice-callback 1`] = `
+{
+  "body": {
+    "success": true,
+  },
+  "calls": [
+    [
+      "ML1",
+      "completed",
+      "not_interested",
+    ],
+  ],
+  "status": 200,
+}
+`;
