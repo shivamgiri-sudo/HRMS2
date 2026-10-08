@@ -10,6 +10,7 @@ import { EmptyState, num } from "@/components/analytics/analytics-kit";
 import Candidate360Drawer from "./Candidate360Drawer";
 import CandidateImport from "./CandidateImport";
 import PolicyCard from "./PolicyCard";
+import FollowupSwitchCard from "./FollowupSwitchCard";
 import IntegrationsCard from "./IntegrationsCard";
 import DailyPlanCard from "./DailyPlanCard";
 import MetaFunnelCard from "./MetaFunnelCard";
@@ -152,6 +153,7 @@ export default function MasterTab() {
       <CampaignSettingsCard />
       <LaunchCard />
       <DailyPlanCard />
+      <FollowupSwitchCard />
       <PolicyCard />
       <IntegrationsCard />
       <CandidateImport onDone={() => void load()} />

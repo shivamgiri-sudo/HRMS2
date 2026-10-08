@@ -53,3 +53,19 @@ export async function bodyRequisitionScoped(req: Request, res: Response, next: N
     res.status(500).json({ success: false, message: "Could not check access to this requisition" });
   }
 }
+
+/** Route guard for /qualified-followup/:id/* row actions (HR opt-out, mark-called): the row's requisition must be in the caller's branch scope (404 otherwise). */
+export async function followupRowScoped(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const scope = await branchScopeOf(req as AuthenticatedRequest);
+    if (scope.all) return next();
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT jr.branch_name FROM qualified_followup qf JOIN job_requisition jr ON jr.id COLLATE utf8mb4_unicode_ci = qf.requisition_id COLLATE utf8mb4_unicode_ci WHERE qf.id = ? LIMIT 1",
+      [String(req.params.id)]);
+    if (rows[0] && covers(scope, rows[0].branch_name)) return next();
+    res.status(404).json({ success: false, message: "not_found" });
+  } catch (err) {
+    logger.error({ code: (err as { code?: unknown })?.code ?? "unknown" }, "[he] follow-up row scope check failed");
+    res.status(500).json({ success: false, message: "Could not check access to this follow-up" });
+  }
+}

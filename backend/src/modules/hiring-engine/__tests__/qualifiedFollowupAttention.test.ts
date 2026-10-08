@@ -186,10 +186,11 @@ describe("routes", () => {
     expect(JSON.stringify(bad.body)).not.toMatch(/SELECT|secret|\.ts/);
   });
   it("mark-called: 404 unknown, 200 with updated count", async () => {
+    // super_admin is org-wide (no branch lookup); the branch rule is in followupSwitchRoutes.test.ts.
     execute.mockResolvedValueOnce([[]]);
-    expect((await request(appFor("hr")).post(`/api/he/qualified-followup/${ID}/mark-called`)).status).toBe(404);
+    expect((await request(appFor("super_admin")).post(`/api/he/qualified-followup/${ID}/mark-called`)).status).toBe(404);
     execute.mockResolvedValueOnce([[{ mobile10: "9876543210" }]]).mockResolvedValueOnce([{ affectedRows: 1 }]);
-    const res = await request(appFor("hr")).post(`/api/he/qualified-followup/${ID}/mark-called`);
+    const res = await request(appFor("super_admin")).post(`/api/he/qualified-followup/${ID}/mark-called`);
     expect(res.body).toEqual({ success: true, updated: 1 });
     expect((await request(appFor("ceo")).post(`/api/he/qualified-followup/${ID}/mark-called`)).status).toBe(403);
   });
