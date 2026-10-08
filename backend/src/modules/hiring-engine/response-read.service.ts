@@ -183,7 +183,7 @@ export interface ConfirmedRow {
   otherChannels: ResponseChannel[]; conflict: boolean; state: string; arrivedAt: string | null;
 }
 export interface DriveConfirmed {
-  drive: { id: string; date: string; branch: string; status: string; requisitionCode: string; role: string; slotStart: string | null; slotEnd: string | null };
+  drive: { id: string; requisitionId: string; date: string; branch: string; status: string; requisitionCode: string; role: string; slotStart: string | null; slotEnd: string | null };
   rows: ConfirmedRow[]; counts: { total: number; confirmed: number; arrived: number; noShow: number; conflicts: number };
 }
 
@@ -196,7 +196,7 @@ const confirmedListSql = (stamped: boolean): string => `SELECT m.id, m.lead_id, 
 
 /** People confirmed to attend a drive (also its arrival checklist). Null when the drive is unknown or outside the caller's branch. */
 export async function driveConfirmed(driveId: string, scope: BranchScope): Promise<DriveConfirmed | null> {
-  const [d] = await read(`SELECT d.id, d.drive_date, d.branch_name, d.status, d.slot_start, d.slot_end, jr.requisition_code, jr.designation_name, jr.branch_name AS req_branch
+  const [d] = await read(`SELECT d.id, d.requisition_id, d.drive_date, d.branch_name, d.status, d.slot_start, d.slot_end, jr.requisition_code, jr.designation_name, jr.branch_name AS req_branch
                             FROM he_drive d JOIN job_requisition jr ON jr.id = d.requisition_id WHERE d.id = ? LIMIT 1`, [driveId]);
   if (!d) return null;
   if (!scope.all && (!scope.branchName || String(d.req_branch ?? d.branch_name) !== scope.branchName)) return null;
@@ -218,7 +218,7 @@ export async function driveConfirmed(driveId: string, scope: BranchScope): Promi
       confirmedVia: via, confirmedAt: str(m.confirmed_at), otherChannels: other, conflict, state: String(m.state), arrivedAt: str(m.arrived_at) };
   });
   return {
-    drive: { id: String(d.id), date: String(d.drive_date), branch: String(d.branch_name ?? ""), status: String(d.status), requisitionCode: String(d.requisition_code ?? ""),
+    drive: { id: String(d.id), requisitionId: String(d.requisition_id ?? ""), date: String(d.drive_date), branch: String(d.branch_name ?? ""), status: String(d.status), requisitionCode: String(d.requisition_code ?? ""),
       role: String(d.designation_name ?? ""), slotStart: str(d.slot_start), slotEnd: str(d.slot_end) },
     rows,
     counts: { total: rows.length, confirmed: rows.filter((r) => r.state === "confirmed").length, arrived: rows.filter((r) => r.state === "arrived" || r.state === "selected").length,

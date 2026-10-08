@@ -130,7 +130,7 @@ describe("responseSummary", () => {
 });
 
 describe("driveConfirmed", () => {
-  const drive = { id: "D1", drive_date: "2026-10-09", branch_name: "PUNE", status: "active", requisition_code: "REQ-1", designation_name: "Agent", slot_start: "10:00:00", slot_end: "17:30:00" };
+  const drive = { id: "D1", requisition_id: "R1", drive_date: "2026-10-09", branch_name: "PUNE", status: "active", requisition_code: "REQ-1", designation_name: "Agent", slot_start: "10:00:00", slot_end: "17:30:00" };
   const m = (o: Record<string, unknown>) => ({ id: "M1", lead_id: "L1", state: "confirmed", slot_at: "2026-10-09 10:30:00", confirmed_at: "2026-10-08 09:00:00", confirmed_via: "web", confirmed_response_id: 11, full_name: "Ravi Shankar", mobile10: "9123456789", arrived_at: null, ...o });
   it("outside the caller's branch (or unknown) is null", async () => {
     handler = (q) => (q.includes("FROM he_drive d JOIN job_requisition jr") ? [{ ...drive, branch_name: "DELHI" }] : undefined);
@@ -149,7 +149,7 @@ describe("driveConfirmed", () => {
       return undefined;
     };
     const r = (await driveConfirmed("D1", PUNE))!;
-    expect(r.drive).toMatchObject({ id: "D1", date: "2026-10-09", branch: "PUNE", requisitionCode: "REQ-1", role: "Agent" });
+    expect(r.drive).toMatchObject({ id: "D1", requisitionId: "R1", date: "2026-10-09", branch: "PUNE", requisitionCode: "REQ-1", role: "Agent" });
     expect(r.rows.map((x) => [x.matchId, x.confirmedVia, x.otherChannels, x.conflict, x.state])).toEqual([
       ["M1", "web", ["whatsapp"], false, "confirmed"], ["M2", "whatsapp", [], false, "arrived"], ["M3", "voice_bot", [], true, "declined"]]);
     expect(r.rows[1].arrivedAt).toBe("2026-10-09 10:20:00");
