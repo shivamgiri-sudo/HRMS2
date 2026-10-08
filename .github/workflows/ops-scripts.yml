@@ -83,6 +83,7 @@ on:
           - digilocker-sync-pending
           - digilocker-bridge-backfill
           - alt-rx-apply
+          - ahm-apply
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
           - deduction-duplicates-scan
@@ -642,6 +643,12 @@ jobs:
               # dry-run reports db_masmis.altdump + template (READ ONLY). apply registers the template and tries the CREATE.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               node scripts/alt-rx-apply.mjs $FLAG
+              ;;
+            ahm-apply)
+              # dry-run reports AHM table/process/templates + the aw disposition columns + grants (READ ONLY session).
+              # apply registers the AHM process/templates, then tries the CREATE TABLE and the two ALTERs (a refused one is reported, not fatal).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/ahm-apply.mjs $FLAG
               ;;
             du-mis-apply)
               # dry-run reports table/template state (READ ONLY session). apply runs sql/1965 + sql/1966 (additive, idempotent).
