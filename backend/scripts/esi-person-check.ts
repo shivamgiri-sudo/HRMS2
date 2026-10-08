@@ -29,8 +29,12 @@ const run = async (label: string, sql: string, params: unknown[]) => {
     if (!e) { console.log("  not found"); continue; }
     show("employee", [e]);
     await run("statutory_info (flag the ESI screen trusts)", `SELECT esi_eligible, esi_number, pf_eligible, epf_number, created_at, updated_at FROM employee_statutory_info WHERE employee_id = ?`, [e.id]);
-    await run("statutory overrides (opt-outs)", `SELECT override_type, status, effective_from_month, created_at FROM employee_statutory_override WHERE employee_id = ?`, [e.id]);
-    await run("latest salary snapshots", `SELECT effective_date, gross, basic, ctc FROM employee_salary_snapshot WHERE employee_id = ? ORDER BY effective_date DESC LIMIT 3`, [e.id]);
+    await run("statutory overrides (opt-outs)", `SELECT override_type, status, effective_from_month FROM employee_statutory_override WHERE employee_id = ?`, [e.id]);
+    await run("latest salary snapshots", `SELECT effective_date, gross, basic FROM employee_salary_snapshot WHERE employee_id = ? ORDER BY effective_date DESC LIMIT 3`, [e.id]);
+    try {
+      const [o] = await db.execute<RowDataPacket[]>(`SELECT o.* FROM ats_onboarding_bridge b JOIN ats_employment_offer o ON o.candidate_id = b.candidate_id WHERE b.employee_id = ? ORDER BY o.created_at DESC LIMIT 1`, [e.id]);
+      show("ATS offer (money / ESI columns only)", (o as RowDataPacket[]).map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => /gross|ctc|esi|pf_el|salary/i.test(k))) as unknown as RowDataPacket));
+    } catch (err) { console.log(`  -- offer FAILED: ${(err as Error).message}`); }
     await run("offer esi_eligible (ATS)", `SELECT o.esi_eligible, o.pf_eligible FROM ats_onboarding_bridge b JOIN ats_employment_offer o ON o.candidate_id = b.candidate_id WHERE b.employee_id = ? ORDER BY o.created_at DESC LIMIT 2`, [e.id]);
     try {
       const rows = await billQuery<RowDataPacket>(
