@@ -1,0 +1,225 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`invite email markup pin > follow-up confirmed 1`] = `
+{
+  "html": "<!doctype html><html><body style="margin:0;padding:0;background:#f1f5f9">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+<tr><td style="background:#1e3a8a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold;letter-spacing:.3px">MAS Callnet <span style="font-weight:normal;font-size:13px;color:#c7d2fe">&nbsp;|&nbsp; Careers</span></td></tr>
+<tr><td style="padding:26px 28px 6px"><p style="margin:0 0 6px;font-size:16px">Hi Asha,</p><p style="margin:0;font-size:15px;line-height:1.55;color:#334155">Thank you, your walk-in interview for <b>Customer Success Executive</b> is confirmed. We will expect you.</p></td></tr>
+<tr><td style="padding:16px 28px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px"><tr><td style="padding:16px 18px">
+<div style="font-size:12px;color:#1e40af;text-transform:uppercase;letter-spacing:1px;font-weight:bold">Confirmed slot</div>
+<div style="font-size:22px;font-weight:bold;color:#0f172a;margin-top:4px">Fri 9 Oct</div><div style="font-size:18px;color:#1e3a8a;margin-top:2px">11:00 AM</div></td></tr></table></td></tr>
+<tr><td style="padding:6px 28px 0;font-size:13px;color:#475569">Something came up? <a href="https://x.test/w/0123456789abcdef0123456789abcdef?a=later" style="color:#1d4ed8">Ask for another time</a>.</td></tr>
+<tr><td style="padding:14px 28px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Venue</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><b>NOIDA-2</b><br/><span style="font-size:14px;color:#334155">C-27, Sector 62, Noida</span><br/><a href="https://maps.google.com/?q=28.6,77.3" style="font-size:14px;color:#1d4ed8">Get directions</a></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Please carry</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><ul style="margin:0;padding-left:18px"><li style="margin:2px 0">Aadhaar</li><li style="margin:2px 0">PAN</li><li style="margin:2px 0">12th marksheet</li></ul></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Reference</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><span style="font-family:Consolas,monospace">HE-ABC123</span> <span style="font-size:13px;color:#64748b">(show this at reception)</span></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Questions</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a">Riya 9999999999</td></tr></table></td></tr>
+<tr><td style="padding:22px 28px 26px;font-size:14px;color:#334155">All the best,<br/><b>MAS Callnet Hiring Team</b></td></tr>
+<tr><td style="background:#f8fafc;padding:14px 28px;font-size:11px;color:#94a3b8;line-height:1.5">You are receiving this because you applied for a job with MAS Callnet. The interview is free of charge; we never ask for money.</td></tr>
+</table></td></tr></table></body></html>",
+  "subject": "Confirmed: your interview on Fri 9 Oct, 11:00 AM - Customer Success Executive",
+  "text": "Hi Asha,
+Thank you, your walk-in interview for Customer Success Executive is confirmed. We will expect you.
+Confirmed slot: Fri 9 Oct, 11:00 AM
+Venue: NOIDA-2, C-27, Sector 62, Noida
+Directions: https://maps.google.com/?q=28.6,77.3
+Please carry: Aadhaar, PAN, 12th marksheet
+Reference: HE-ABC123
+Questions: Riya 9999999999
+All the best,
+MAS Callnet Hiring Team",
+}
+`;
+
+exports[`invite email markup pin > follow-up no_show 1`] = `
+{
+  "html": "<!doctype html><html><body style="margin:0;padding:0;background:#f1f5f9">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+<tr><td style="background:#1e3a8a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold;letter-spacing:.3px">MAS Callnet <span style="font-weight:normal;font-size:13px;color:#c7d2fe">&nbsp;|&nbsp; Careers</span></td></tr>
+<tr><td style="padding:26px 28px 6px"><p style="margin:0 0 6px;font-size:16px">Hi Asha,</p><p style="margin:0;font-size:15px;line-height:1.55;color:#334155">We expected you for your walk-in interview for <b>Customer Success Executive</b> on Fri 9 Oct at 11:00 AM, but could not see you. If you would still like to interview, we can find you a new time.</p></td></tr>
+<tr><td style="padding:16px 28px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px"><tr><td style="padding:16px 18px">
+<div style="font-size:12px;color:#1e40af;text-transform:uppercase;letter-spacing:1px;font-weight:bold">Missed slot</div>
+<div style="font-size:22px;font-weight:bold;color:#0f172a;margin-top:4px">Fri 9 Oct</div><div style="font-size:18px;color:#1e3a8a;margin-top:2px">11:00 AM</div></td></tr></table></td></tr>
+<tr><td style="padding:8px 28px 4px"><p style="margin:0 0 8px;font-size:15px;font-weight:bold;color:#0f172a">What would you like to do?</p><a href="https://x.test/w/0123456789abcdef0123456789abcdef?a=later" style="display:block;text-align:center;background:#ffffff;color:#1e3a8a;border:1px solid #94a3b8;padding:14px 18px;border-radius:8px;font-weight:bold;font-size:16px;text-decoration:none;margin:0 0 10px">I need a new slot</a><a href="https://x.test/w/0123456789abcdef0123456789abcdef?a=no" style="display:block;text-align:center;background:#ffffff;color:#b91c1c;border:1px solid #fecaca;padding:14px 18px;border-radius:8px;font-weight:bold;font-size:16px;text-decoration:none;margin:0 0 10px">Not interested</a></td></tr>
+<tr><td style="padding:14px 28px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Venue</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><b>NOIDA-2</b><br/><span style="font-size:14px;color:#334155">C-27, Sector 62, Noida</span><br/><a href="https://maps.google.com/?q=28.6,77.3" style="font-size:14px;color:#1d4ed8">Get directions</a></td></tr>
+
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Reference</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><span style="font-family:Consolas,monospace">HE-ABC123</span> <span style="font-size:13px;color:#64748b">(show this at reception)</span></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Questions</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a">Riya 9999999999</td></tr></table></td></tr>
+<tr><td style="padding:22px 28px 26px;font-size:14px;color:#334155">All the best,<br/><b>MAS Callnet Hiring Team</b></td></tr>
+<tr><td style="background:#f8fafc;padding:14px 28px;font-size:11px;color:#94a3b8;line-height:1.5">You are receiving this because you applied for a job with MAS Callnet. The interview is free of charge; we never ask for money.</td></tr>
+</table></td></tr></table></body></html>",
+  "subject": "We missed you at your interview - Customer Success Executive",
+  "text": "Hi Asha,
+We expected you for your walk-in interview for Customer Success Executive on Fri 9 Oct at 11:00 AM, but could not see you. If you would still like to interview, we can find you a new time.
+Missed slot: Fri 9 Oct, 11:00 AM
+Venue: NOIDA-2, C-27, Sector 62, Noida
+Directions: https://maps.google.com/?q=28.6,77.3
+Reference: HE-ABC123
+
+What would you like to do? I need a new slot: https://x.test/w/0123456789abcdef0123456789abcdef?a=later | Not interested: https://x.test/w/0123456789abcdef0123456789abcdef?a=no
+Questions: Riya 9999999999
+All the best,
+MAS Callnet Hiring Team",
+}
+`;
+
+exports[`invite email markup pin > follow-up reminder_1d 1`] = `
+{
+  "html": "<!doctype html><html><body style="margin:0;padding:0;background:#f1f5f9">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+<tr><td style="background:#1e3a8a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold;letter-spacing:.3px">MAS Callnet <span style="font-weight:normal;font-size:13px;color:#c7d2fe">&nbsp;|&nbsp; Careers</span></td></tr>
+<tr><td style="padding:26px 28px 6px"><p style="margin:0 0 6px;font-size:16px">Hi Asha,</p><p style="margin:0;font-size:15px;line-height:1.55;color:#334155">This is a reminder of your walk-in interview for <b>Customer Success Executive</b>. Please confirm that you can still come.</p></td></tr>
+<tr><td style="padding:16px 28px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px"><tr><td style="padding:16px 18px">
+<div style="font-size:12px;color:#1e40af;text-transform:uppercase;letter-spacing:1px;font-weight:bold">Your slot</div>
+<div style="font-size:22px;font-weight:bold;color:#0f172a;margin-top:4px">Fri 9 Oct</div><div style="font-size:18px;color:#1e3a8a;margin-top:2px">11:00 AM</div></td></tr></table></td></tr>
+<tr><td style="padding:8px 28px 4px"><p style="margin:0 0 8px;font-size:15px;font-weight:bold;color:#0f172a">Will you come?</p><a href="https://x.test/w/0123456789abcdef0123456789abcdef?a=yes" style="display:block;text-align:center;background:#15803d;color:#ffffff;border:1px solid #15803d;padding:14px 18px;border-radius:8px;font-weight:bold;font-size:16px;text-decoration:none;margin:0 0 10px">Yes, I will come</a><a href="https://x.test/w/0123456789abcdef0123456789abcdef?a=later" style="display:block;text-align:center;background:#ffffff;color:#1e3a8a;border:1px solid #94a3b8;padding:14px 18px;border-radius:8px;font-weight:bold;font-size:16px;text-decoration:none;margin:0 0 10px">Need another time</a><a href="https://x.test/w/0123456789abcdef0123456789abcdef?a=no" style="display:block;text-align:center;background:#ffffff;color:#b91c1c;border:1px solid #fecaca;padding:14px 18px;border-radius:8px;font-weight:bold;font-size:16px;text-decoration:none;margin:0 0 10px">Cannot come</a></td></tr>
+<tr><td style="padding:14px 28px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Venue</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><b>NOIDA-2</b><br/><span style="font-size:14px;color:#334155">C-27, Sector 62, Noida</span><br/><a href="https://maps.google.com/?q=28.6,77.3" style="font-size:14px;color:#1d4ed8">Get directions</a></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Please carry</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><ul style="margin:0;padding-left:18px"><li style="margin:2px 0">Aadhaar</li><li style="margin:2px 0">PAN</li><li style="margin:2px 0">12th marksheet</li></ul></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Reference</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><span style="font-family:Consolas,monospace">HE-ABC123</span> <span style="font-size:13px;color:#64748b">(show this at reception)</span></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Questions</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a">Riya 9999999999</td></tr></table></td></tr>
+<tr><td style="padding:22px 28px 26px;font-size:14px;color:#334155">All the best,<br/><b>MAS Callnet Hiring Team</b></td></tr>
+<tr><td style="background:#f8fafc;padding:14px 28px;font-size:11px;color:#94a3b8;line-height:1.5">You are receiving this because you applied for a job with MAS Callnet. The interview is free of charge; we never ask for money.</td></tr>
+</table></td></tr></table></body></html>",
+  "subject": "Reminder: your interview on Fri 9 Oct, 11:00 AM - Customer Success Executive",
+  "text": "Hi Asha,
+This is a reminder of your walk-in interview for Customer Success Executive. Please confirm that you can still come.
+Your slot: Fri 9 Oct, 11:00 AM
+Venue: NOIDA-2, C-27, Sector 62, Noida
+Directions: https://maps.google.com/?q=28.6,77.3
+Please carry: Aadhaar, PAN, 12th marksheet
+Reference: HE-ABC123
+
+Will you come? Yes, I will come: https://x.test/w/0123456789abcdef0123456789abcdef?a=yes | Need another time: https://x.test/w/0123456789abcdef0123456789abcdef?a=later | Cannot come: https://x.test/w/0123456789abcdef0123456789abcdef?a=no
+Questions: Riya 9999999999
+All the best,
+MAS Callnet Hiring Team",
+}
+`;
+
+exports[`invite email markup pin > follow-up reschedule_offer 1`] = `
+{
+  "html": "<!doctype html><html><body style="margin:0;padding:0;background:#f1f5f9">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+<tr><td style="background:#1e3a8a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold;letter-spacing:.3px">MAS Callnet <span style="font-weight:normal;font-size:13px;color:#c7d2fe">&nbsp;|&nbsp; Careers</span></td></tr>
+<tr><td style="padding:26px 28px 6px"><p style="margin:0 0 6px;font-size:16px">Hi Asha,</p><p style="margin:0;font-size:15px;line-height:1.55;color:#334155">Here is a new time for your walk-in interview for <b>Customer Success Executive</b>. Please tell us whether it works.</p></td></tr>
+<tr><td style="padding:16px 28px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px"><tr><td style="padding:16px 18px">
+<div style="font-size:12px;color:#1e40af;text-transform:uppercase;letter-spacing:1px;font-weight:bold">New slot</div>
+<div style="font-size:22px;font-weight:bold;color:#0f172a;margin-top:4px">Fri 9 Oct</div><div style="font-size:18px;color:#1e3a8a;margin-top:2px">11:00 AM</div></td></tr></table></td></tr>
+<tr><td style="padding:8px 28px 4px"><p style="margin:0 0 8px;font-size:15px;font-weight:bold;color:#0f172a">Does this time work?</p><a href="https://x.test/w/0123456789abcdef0123456789abcdef?a=yes" style="display:block;text-align:center;background:#15803d;color:#ffffff;border:1px solid #15803d;padding:14px 18px;border-radius:8px;font-weight:bold;font-size:16px;text-decoration:none;margin:0 0 10px">Yes, this works</a><a href="https://x.test/w/0123456789abcdef0123456789abcdef?a=no" style="display:block;text-align:center;background:#ffffff;color:#b91c1c;border:1px solid #fecaca;padding:14px 18px;border-radius:8px;font-weight:bold;font-size:16px;text-decoration:none;margin:0 0 10px">This does not work either</a></td></tr>
+<tr><td style="padding:14px 28px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Venue</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><b>NOIDA-2</b><br/><span style="font-size:14px;color:#334155">C-27, Sector 62, Noida</span><br/><a href="https://maps.google.com/?q=28.6,77.3" style="font-size:14px;color:#1d4ed8">Get directions</a></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Please carry</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><ul style="margin:0;padding-left:18px"><li style="margin:2px 0">Aadhaar</li><li style="margin:2px 0">PAN</li><li style="margin:2px 0">12th marksheet</li></ul></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Reference</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><span style="font-family:Consolas,monospace">HE-ABC123</span> <span style="font-size:13px;color:#64748b">(show this at reception)</span></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Questions</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a">Riya 9999999999</td></tr></table></td></tr>
+<tr><td style="padding:22px 28px 26px;font-size:14px;color:#334155">All the best,<br/><b>MAS Callnet Hiring Team</b></td></tr>
+<tr><td style="background:#f8fafc;padding:14px 28px;font-size:11px;color:#94a3b8;line-height:1.5">You are receiving this because you applied for a job with MAS Callnet. The interview is free of charge; we never ask for money.</td></tr>
+</table></td></tr></table></body></html>",
+  "subject": "New interview time for you: Fri 9 Oct, 11:00 AM - Customer Success Executive",
+  "text": "Hi Asha,
+Here is a new time for your walk-in interview for Customer Success Executive. Please tell us whether it works.
+New slot: Fri 9 Oct, 11:00 AM
+Venue: NOIDA-2, C-27, Sector 62, Noida
+Directions: https://maps.google.com/?q=28.6,77.3
+Please carry: Aadhaar, PAN, 12th marksheet
+Reference: HE-ABC123
+
+Does this time work? Yes, this works: https://x.test/w/0123456789abcdef0123456789abcdef?a=yes | This does not work either: https://x.test/w/0123456789abcdef0123456789abcdef?a=no
+Questions: Riya 9999999999
+All the best,
+MAS Callnet Hiring Team",
+}
+`;
+
+exports[`invite email markup pin > with answer buttons and opt-in 1`] = `
+{
+  "html": "<!doctype html><html><body style="margin:0;padding:0;background:#f1f5f9">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+<tr><td style="background:#1e3a8a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold;letter-spacing:.3px">MAS Callnet <span style="font-weight:normal;font-size:13px;color:#c7d2fe">&nbsp;|&nbsp; Careers</span></td></tr>
+<tr><td style="padding:26px 28px 6px">
+<p style="margin:0 0 6px;font-size:16px">Hi Asha,</p>
+<p style="margin:0;font-size:15px;line-height:1.55;color:#334155">Thank you for your interest. Your profile matches our <b>Customer Success Executive</b> opening, and we have reserved a walk-in interview slot for you.</p>
+</td></tr>
+<tr><td style="padding:16px 28px 6px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px"><tr><td style="padding:16px 18px">
+<div style="font-size:12px;color:#1e40af;text-transform:uppercase;letter-spacing:1px;font-weight:bold">Your slot</div>
+<div style="font-size:22px;font-weight:bold;color:#0f172a;margin-top:4px">Fri 9 Oct</div>
+<div style="font-size:18px;color:#1e3a8a;margin-top:2px">11:00 AM</div>
+</td></tr></table></td></tr>
+
+<tr><td style="padding:8px 28px 4px"><p style="margin:0 0 8px;font-size:15px;font-weight:bold;color:#0f172a">Will you come?</p>
+<a href="https://x.test/w/0123456789abcdef0123456789abcdef?a=yes" style="display:inline-block;background:#15803d;color:#ffffff;border:1px solid #15803d;padding:14px 18px;border-radius:8px;font-weight:bold;font-size:16px;text-decoration:none;margin:0 0 10px;display:block;text-align:center">Yes, I will come</a><a href="https://x.test/w/0123456789abcdef0123456789abcdef?a=later" style="display:inline-block;background:#ffffff;color:#1e3a8a;border:1px solid #94a3b8;padding:14px 18px;border-radius:8px;font-weight:bold;font-size:16px;text-decoration:none;margin:0 0 10px;display:block;text-align:center">Need another time</a><a href="https://x.test/w/0123456789abcdef0123456789abcdef?a=no" style="display:inline-block;background:#ffffff;color:#b91c1c;border:1px solid #fecaca;padding:14px 18px;border-radius:8px;font-weight:bold;font-size:16px;text-decoration:none;margin:0 0 10px;display:block;text-align:center">Cannot come</a>
+<p style="margin:6px 0 0;font-size:12px;color:#64748b">One tap tells the branch to expect you, or frees your slot for someone else.</p></td></tr>
+<tr><td style="padding:14px 28px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Venue</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><b>NOIDA-2</b><br/><span style="font-size:14px;color:#334155">C-27, Sector 62, Noida</span><br/><a href="https://maps.google.com/?q=28.6,77.3" style="font-size:14px;color:#1d4ed8">Get directions</a></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Please carry</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><ul style="margin:0;padding-left:18px"><li style="margin:2px 0">Aadhaar</li><li style="margin:2px 0">PAN</li><li style="margin:2px 0">12th marksheet</li></ul></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Reference</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><span style="font-family:Consolas,monospace">HE-ABC123</span> <span style="font-size:13px;color:#64748b">(show this at reception)</span></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Questions</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a">Riya 9999999999</td></tr>
+</table></td></tr>
+<tr><td style="padding:12px 28px 0;font-size:13px;color:#475569">Want reminders and directions on WhatsApp? <a href="https://x.test/w/0123456789abcdef0123456789abcdef" style="color:#15803d;font-weight:bold">Turn on WhatsApp updates</a> (optional).</td></tr>
+<tr><td style="padding:22px 28px 26px;font-size:14px;color:#334155">All the best,<br/><b>MAS Callnet Hiring Team</b></td></tr>
+<tr><td style="background:#f8fafc;padding:14px 28px;font-size:11px;color:#94a3b8;line-height:1.5">You are receiving this because you applied for a job with MAS Callnet or shared your profile with us. The interview is free of charge; we never ask for money.</td></tr>
+</table></td></tr></table></body></html>",
+  "subject": "Walk-in interview: Fri 9 Oct, 11:00 AM - Customer Success Executive, MAS Callnet",
+  "text": "Hi Asha,
+Your profile matches our Customer Success Executive opening. Your walk-in interview slot:
+Fri 9 Oct, 11:00 AM
+Venue: NOIDA-2, C-27, Sector 62, Noida
+Directions: https://maps.google.com/?q=28.6,77.3
+Please carry: Aadhaar, PAN, 12th marksheet
+Reference: HE-ABC123
+
+Will you come? Yes: https://x.test/w/0123456789abcdef0123456789abcdef?a=yes | Another time: https://x.test/w/0123456789abcdef0123456789abcdef?a=later | Cannot come: https://x.test/w/0123456789abcdef0123456789abcdef?a=no
+Questions: Riya 9999999999
+All the best,
+MAS Callnet Hiring Team",
+}
+`;
+
+exports[`invite email markup pin > without a token 1`] = `
+{
+  "html": "<!doctype html><html><body style="margin:0;padding:0;background:#f1f5f9">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+<tr><td style="background:#1e3a8a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold;letter-spacing:.3px">MAS Callnet <span style="font-weight:normal;font-size:13px;color:#c7d2fe">&nbsp;|&nbsp; Careers</span></td></tr>
+<tr><td style="padding:26px 28px 6px">
+<p style="margin:0 0 6px;font-size:16px">Hi Asha,</p>
+<p style="margin:0;font-size:15px;line-height:1.55;color:#334155">Thank you for your interest. Your profile matches our <b>Customer Success Executive</b> opening, and we have reserved a walk-in interview slot for you.</p>
+</td></tr>
+<tr><td style="padding:16px 28px 6px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px"><tr><td style="padding:16px 18px">
+<div style="font-size:12px;color:#1e40af;text-transform:uppercase;letter-spacing:1px;font-weight:bold">Your slot</div>
+<div style="font-size:22px;font-weight:bold;color:#0f172a;margin-top:4px">Fri 9 Oct</div>
+<div style="font-size:18px;color:#1e3a8a;margin-top:2px">11:00 AM</div>
+</td></tr></table></td></tr>
+
+<tr><td style="padding:14px 28px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Venue</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><b>NOIDA-2</b><br/><span style="font-size:14px;color:#334155">C-27, Sector 62, Noida</span><br/><a href="https://maps.google.com/?q=28.6,77.3" style="font-size:14px;color:#1d4ed8">Get directions</a></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Please carry</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><ul style="margin:0;padding-left:18px"><li style="margin:2px 0">Aadhaar</li><li style="margin:2px 0">PAN</li><li style="margin:2px 0">12th marksheet</li></ul></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Reference</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><span style="font-family:Consolas,monospace">HE-ABC123</span> <span style="font-size:13px;color:#64748b">(show this at reception)</span></td></tr>
+<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Questions</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a">Riya 9999999999</td></tr>
+</table></td></tr>
+
+<tr><td style="padding:22px 28px 26px;font-size:14px;color:#334155">All the best,<br/><b>MAS Callnet Hiring Team</b></td></tr>
+<tr><td style="background:#f8fafc;padding:14px 28px;font-size:11px;color:#94a3b8;line-height:1.5">You are receiving this because you applied for a job with MAS Callnet or shared your profile with us. The interview is free of charge; we never ask for money.</td></tr>
+</table></td></tr></table></body></html>",
+  "subject": "Walk-in interview: Fri 9 Oct, 11:00 AM - Customer Success Executive, MAS Callnet",
+  "text": "Hi Asha,
+Your profile matches our Customer Success Executive opening. Your walk-in interview slot:
+Fri 9 Oct, 11:00 AM
+Venue: NOIDA-2, C-27, Sector 62, Noida
+Directions: https://maps.google.com/?q=28.6,77.3
+Please carry: Aadhaar, PAN, 12th marksheet
+Reference: HE-ABC123
+Questions: Riya 9999999999
+All the best,
+MAS Callnet Hiring Team",
+}
+`;
