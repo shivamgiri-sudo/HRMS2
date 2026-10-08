@@ -1,0 +1,108 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`legacy Meta outreach pin (switches off) > notifyNewQualifiedLeads SQL 1`] = `
+[
+  {
+    "p": [
+      2026-10-06T21:38:58.336Z,
+    ],
+    "sql": "SELECT id FROM meta_lead_raw WHERE screening_result = 'qualified' AND notification_sent_at IS NULL AND created_at >= ? ORDER BY created_at ASC LIMIT 100",
+  },
+]
+`;
+
+exports[`legacy Meta outreach pin (switches off) > notifyQualifiedLead, Pinbot configured: provider calls 1`] = `
+{
+  "calls": [
+    [
+      "pinbot",
+      "9876543210",
+      "interview_invitation",
+      [
+        "Asha Rao",
+        "Sat 10 Oct",
+        "11:00 AM",
+        "Sector 62, Noida",
+        "https://bmi.test/x",
+      ],
+    ],
+    [
+      "email",
+      "a@x.in",
+      "Congratulations Asha! Shortlisted for CSE at Mas Callnet",
+    ],
+  ],
+  "out": {
+    "attempted": [
+      "whatsapp",
+      "email",
+    ],
+    "failed": [],
+    "leadId": "L1",
+    "skipped": [
+      {
+        "channel": "voice",
+        "reason": "No voice provider configured (VAPI_API_KEY or VOICEBOT_TRIGGER_URL)",
+      },
+    ],
+    "succeeded": [
+      "whatsapp",
+      "email",
+    ],
+  },
+}
+`;
+
+exports[`legacy Meta outreach pin (switches off) > notifyQualifiedLead, Pinbot not configured: provider calls 1`] = `
+{
+  "calls": [
+    [
+      "db_provider",
+      "9876543210",
+      "Shortlisted",
+      "Hi Asha! 🎉
+
+Congratulations! Your profile has been shortlisted for the *CSE* position at *Mas Callnet India Pvt. Ltd.*
+
+To proceed, please complete your assessment and confirm your interview slot:
+👉 https://bmi.test/x
+
+📅 Date: Sat 10 Oct
+🕒 Time: 11:00 AM
+📍 Location: Noida
+🏢 Full Address: Sector 62, Noida
+🗺️ Google Maps: https://maps.google.com/?q=Sector%2062%2C%20Noida
+💼 Role: CSE
+
+We recommend completing the process at the earliest to avoid missing your opportunity.
+Looking forward to speaking with you!
+
+— Mas Callnet HR Team
+https://www.mascallnet.ai",
+    ],
+    [
+      "email",
+      "a@x.in",
+      "Congratulations Asha! Shortlisted for CSE at Mas Callnet",
+    ],
+  ],
+  "out": {
+    "attempted": [
+      "whatsapp",
+      "email",
+    ],
+    "failed": [],
+    "leadId": "L1",
+    "skipped": [
+      {
+        "channel": "voice",
+        "reason": "No voice provider configured (VAPI_API_KEY or VOICEBOT_TRIGGER_URL)",
+      },
+    ],
+    "succeeded": [
+      "whatsapp",
+      "email",
+    ],
+  },
+}
+`;
