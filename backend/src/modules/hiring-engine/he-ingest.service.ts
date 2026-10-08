@@ -21,6 +21,8 @@ import { sendTemplateToLead } from "./he-send.service.js";
 import type { TemplateKey } from "./he-template-catalog.js";
 import { markFollowupCalled } from "./qualified-followup.attention.js";
 import { callResultCode } from "./qualified-followup.callresult.js";
+import { journeyAfterReply, ownedJourneyForMatch, sendTransactionalForJourney } from "./qualified-followup.stageb.js";
+import { followupMode } from "./qualified-followup.schedule.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
 import { recordResponseSafe } from "./candidate-response.service.js";
 import { classifyReply } from "./response-classifier.js";
@@ -77,9 +79,15 @@ async function sendFollowUpTemplate(leadId: string, key: TemplateKey, matchId: s
 }
 
 async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPlan, ctx: { matchId: string | null; channel: string; detail: string | null; metaLeadId: string | null; replyText: string | null; ackStop?: boolean }): Promise<void> {
+  // A journey of the unified follow-up booked on this match answers through it (guards, tagging, journey state). Nothing is read while
+  // QUAL_FOLLOWUP_MODE is off, so people without a journey keep exactly today's path.
+  const owned = ctx.matchId && followupMode() !== "off" ? await ownedJourneyForMatch(ctx.matchId).catch(() => null) : null;
   // T10: acknowledge STOP while the consent still exists (the reply opened a 24h window); suppression follows below.
   // A Stop tapped on the web page is acknowledged on the page itself, not by a WhatsApp message.
-  if (plan.event === "opted_out" && ctx.ackStop !== false) await sendFollowUpTemplate(leadId, "he_optout_ack", ctx.matchId);
+  if (plan.event === "opted_out" && ctx.ackStop !== false) {
+    if (owned) await sendTransactionalForJourney(owned, "he_optout_ack", { now: new Date() }).catch((err: unknown) => logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] STOP acknowledgement failed"));
+    else await sendFollowUpTemplate(leadId, "he_optout_ack", ctx.matchId);
+  }
   if (plan.leadStatus && plan.leadStatus !== current) await setLeadStatus(leadId, plan.leadStatus);
   if (plan.matchState && ctx.matchId) await db.execute("UPDATE he_match SET state = ? WHERE id = ?", [plan.matchState, ctx.matchId]);
   if (plan.revokeConsent) await revokeConsent(leadId, "whatsapp_contact");
@@ -88,13 +96,24 @@ async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPl
   if (ctx.channel !== "voice" && ctx.matchId && (plan.matchState || plan.event === "opted_out")) void dequeueSuperbotForMatch(ctx.matchId);
   if (plan.humanHandoff) await addEvent(leadId, "needs_human_followup", { channel: ctx.channel, detail: "second decline / declined offered slot" });
   await mirrorToMeta(ctx.metaLeadId, plan);
+  if (owned) {
+    const next = journeyAfterReply(owned.journeyState, plan);
+    if (next !== owned.journeyState) {
+      await db.execute(
+        `UPDATE qualified_followup SET journey_state = ?, stage_a_ended_at = COALESCE(stage_a_ended_at, IF(? IN ('enrolled','reach','held_best_offer'), NOW(), NULL))${next === "stopped" ? ", stopped_reason = COALESCE(stopped_reason, 'opted_out'), stopped_at = COALESCE(stopped_at, NOW())" : ""} WHERE id = ?`,
+        [next, owned.journeyState, owned.id]);
+    }
+  }
   // T2: appointment details + reference once the candidate confirms (button, email tap or bot call).
   if (plan.matchState === "confirmed" && ctx.matchId) {
-    await sendFollowUpTemplate(leadId, "he_walkin_confirmed", ctx.matchId);
-    try { await sendFollowUpEmail("confirmed", ctx.matchId); } catch (err) { logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] confirmation email failed"); }
+    if (owned) await sendTransactionalForJourney(owned, "he_walkin_confirmed", { now: new Date() }).catch((err: unknown) => logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] confirmation failed"));
+    else {
+      await sendFollowUpTemplate(leadId, "he_walkin_confirmed", ctx.matchId);
+      try { await sendFollowUpEmail("confirmed", ctx.matchId); } catch (err) { logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] confirmation email failed"); }
+    }
   }
-  // T9: the bot could not reach them twice -> ask on WhatsApp instead.
-  if (plan.event === "call_no_answer" && ctx.matchId) {
+  // T9: the bot could not reach them twice -> ask on WhatsApp instead (a journey gets its T9 from the follow-up worker).
+  if (plan.event === "call_no_answer" && ctx.matchId && !owned) {
     const [n] = await db.execute<RowDataPacket[]>(
       "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'call_no_answer' AND created_at >= (SELECT COALESCE(MAX(created_at), '2000-01-01') FROM he_message WHERE lead_id = ? AND direction = 'out' AND template_key = 'he_walkin_invite_email')", [leadId, leadId]);
     if (Number(n[0].n) >= 2) await sendFollowUpTemplate(leadId, "he_missed_call", ctx.matchId);

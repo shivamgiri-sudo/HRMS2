@@ -15,6 +15,7 @@ import { EMAIL_BUTTONS_OFF, loadEmailButtonSwitches } from "./email-buttons.poli
 import { runWhatsappStep } from "./qualified-followup.whatsapp.js";
 import { sharedWaSentToday } from "./followup-guards.service.js";
 import { newBudget, type StepScope } from "./qualified-followup.stagea.js";
+import { runStageB } from "./qualified-followup.stageb.js";
 import { runCallStep } from "./qualified-followup.call.js";
 import { loadCallFileConfig, runCallFileBatch } from "./qualified-followup.callfile.js";
 import type { CallFileConfig } from "./qualified-followup.callfile-plan.js";
@@ -52,7 +53,7 @@ export interface TickDeps {
 const defaultDeps: TickDeps = {
   loadSwitches: (env) => loadFollowupSwitches(env),
   sharedWaSentToday,
-  runStageB: async () => null,
+  runStageB: (s, tag, now, o) => runStageB(s, tag, now, o),
   runCallFileBatch,
   callFileConfig: () => loadCallFileConfig(),
   runDailyReport,

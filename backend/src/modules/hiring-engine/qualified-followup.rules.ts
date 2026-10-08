@@ -14,9 +14,9 @@ export interface StopFacts {
   hasEmail: boolean;
 }
 
+/** A reply no longer stops the journey (unified method): it ends stage A (journey 'engaged') and stage B continues. */
 export function decideStop(f: StopFacts): StopReason | null {
   if (f.optedOut) return "opted_out";
-  if (f.repliedSinceQualified) return "replied";
   if (f.requisitionClosed) return "requisition_closed";
   if (f.joined) return "joined";
   if (!f.hasMobile && !f.hasEmail) return "no_contact_details";

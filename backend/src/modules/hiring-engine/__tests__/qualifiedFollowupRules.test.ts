@@ -76,7 +76,7 @@ describe("decideStop", () => {
   it("order", () => {
     expect(decideStop(none)).toBeNull();
     expect(decideStop({ ...none, optedOut: true, repliedSinceQualified: true })).toBe("opted_out");
-    expect(decideStop({ ...none, repliedSinceQualified: true })).toBe("replied");
+    expect(decideStop({ ...none, repliedSinceQualified: true })).toBeNull(); // a reply ends stage A, it does not stop the journey
     expect(decideStop({ ...none, requisitionClosed: "requisition is closed" })).toBe("requisition_closed");
     expect(decideStop({ ...none, joined: true })).toBe("joined");
     expect(decideStop({ ...none, hasMobile: false, hasEmail: false })).toBe("no_contact_details");

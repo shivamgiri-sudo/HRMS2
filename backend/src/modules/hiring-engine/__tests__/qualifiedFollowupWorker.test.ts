@@ -30,7 +30,7 @@ const at = (hhmm: string, day = "2026-10-07") => new Date(`${day}T${hhmm}:00+05:
 const switchesAt = (code: number) => async (env: NodeJS.ProcessEnv) =>
   readSwitches(env, new Map([["policy.followup.meta_live", code], ["policy.followup.meta_old", code], ["policy.followup.he", code]]));
 const tick = (env: NodeJS.ProcessEnv, now: Date, deps: Record<string, unknown> = {}, code = 4) =>
-  runQualifiedFollowupTick({ env, now, deps: { loadSwitches: switchesAt(code), sharedWaSentToday: h.waSent, ...deps } as never });
+  runQualifiedFollowupTick({ env, now, deps: { loadSwitches: switchesAt(code), sharedWaSentToday: h.waSent, runStageB: async () => null, ...deps } as never });
 const PASS = ["expire", "sync", "stops", "email", "wa", "call"];
 
 function lockOk(got = 1) {
@@ -258,7 +258,7 @@ describe("start and stop", () => {
 describe("unified tick (Task 9)", () => {
   const sw = (codes: Record<string, number>) => async (env: NodeJS.ProcessEnv) => readSwitches(env, new Map(Object.entries(codes).map(([k, v]) => [`policy.followup.${k}`, v])));
   it("one tick runs live and dry_run sources with their own tags", async () => {
-    await runQualifiedFollowupTick({ env: live, now: at("11:00"), deps: { loadSwitches: sw({ meta_live: 4, he: 1 }), sharedWaSentToday: h.waSent } as never });
+    await runQualifiedFollowupTick({ env: live, now: at("11:00"), deps: { loadSwitches: sw({ meta_live: 4, he: 1 }), sharedWaSentToday: h.waSent, runStageB: async () => null } as never });
     expect(h.email.mock.calls.map((c) => [c[1], c[3].sources])).toEqual([["live", ["meta_live"]], ["canary", ["meta_live"]], ["dry_run", ["he"]]]);
   });
   it("every source off on the screen: rows frozen, no step, no stop check", async () => {
@@ -278,7 +278,7 @@ describe("unified tick (Task 9)", () => {
     expect(h.email).toHaveBeenCalled();
   });
   it("kill switch from the screen: stops and receipts still run, no step", async () => {
-    await runQualifiedFollowupTick({ env: live, now: at("11:00"), deps: { loadSwitches: sw({ he: 4, paused: 1 }), sharedWaSentToday: h.waSent } as never });
+    await runQualifiedFollowupTick({ env: live, now: at("11:00"), deps: { loadSwitches: sw({ he: 4, paused: 1 }), sharedWaSentToday: h.waSent, runStageB: async () => null } as never });
     expect(h.calls).toEqual(["expire", "sync", "stops", "expire", "sync", "stops"]);
   });
   it("stage B runs before stage A in each pass, on the same scope", async () => {
