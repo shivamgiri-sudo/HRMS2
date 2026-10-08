@@ -62,7 +62,7 @@ try {
   for (const role of Object.keys(USERS)) {
     const req = await call(S[role], "GET", `/api/job-requisition/${ids.R01}`);
     const pv = await call(S[role], "GET", `/api/job-requisition/${ids.R01}/selection/preview?source=he`);
-    const want = role === "admin" ? 404 : req.status === 200 ? 200 : req.status;
+    const want = role === "recruiter" ? 403 : role === "admin" ? 404 : req.status === 200 ? 200 : req.status;
     ok(`${role}: preview R01 (NOIDA-2) follows scope (${want})`, pv.status === want, { req: req.status, pv: pv.status });
     const csv = await call(S[role], "GET", `/api/job-requisition/${ids.R01}/selection/preview.csv?source=he`);
     const csvWant = ["super_admin", "hr", "branch_hr_ahm", "branch_hr_noida2"].includes(role) ? (pv.status === 200 ? 200 : 404) : 403;
@@ -74,6 +74,24 @@ try {
     const run = await call(S[role], "POST", "/api/he/shortlist/run", { requisitionId: ids.R01, sourceKind: "he" });
     const runWant = ["recruiter", "ceo", "admin"].includes(role) ? 403 : ["hr", "branch_hr_ahm"].includes(role) ? 404 : 200;
     ok(`${role}: shortlist run on R01 -> ${runWant}`, run.status === runWant, run.status);
+  }
+  // S15-S20 read models: recruiters get nothing; lists follow scope; permissions travel with the data
+  for (const url of ["/api/job-requisition/selection/requisitions", `/api/he/shortlist/approval-state?requisitionId=${ids.R01}&sourceKind=he`, "/api/job-requisition/selection/why?q=99999"]) {
+    ok(`recruiter: ${url.split("?")[0]} -> 403`, (await call(S.recruiter, "GET", url)).status === 403);
+  }
+  const lists = {};
+  for (const role of ["super_admin", "ceo", "branch_hr_noida2", "branch_hr_ahm"]) lists[role] = (await call(S[role], "GET", "/api/job-requisition/selection/requisitions")).json?.data;
+  const codesOf = (d) => new Set((d?.items ?? []).map((i) => i.code));
+  ok("NOIDA-2 HR list: R01 and R02, no Ahmedabad R03", codesOf(lists.branch_hr_noida2).has("RIG-R01") && !codesOf(lists.branch_hr_noida2).has("RIG-R03"), [...codesOf(lists.branch_hr_noida2)]);
+  ok("Ahmedabad HR list: R03, no NOIDA-2 R01", codesOf(lists.branch_hr_ahm).has("RIG-R03") && !codesOf(lists.branch_hr_ahm).has("RIG-R01"), [...codesOf(lists.branch_hr_ahm)]);
+  ok("ceo list: org-wide, read-only permissions", codesOf(lists.ceo).has("RIG-R01") && codesOf(lists.ceo).has("RIG-R03") && lists.ceo.permissions.edit === false && lists.ceo.permissions.approve === false, lists.ceo?.permissions);
+  ok("closed / past-end / full / pending / on-hold are not in the open list", !["RIG-R05", "RIG-R06", "RIG-R07", "RIG-R09", "RIG-R10"].some((c) => codesOf(lists.super_admin).has(c)), [...codesOf(lists.super_admin)]);
+  const incOnly = (await call(S.super_admin, "GET", "/api/job-requisition/selection/requisitions?onlyIncomplete=1")).json?.data?.items ?? [];
+  ok("only-incomplete filter returns incomplete rows only", incOnly.every((i) => i.completeness.label !== "complete"), incOnly.map((i) => i.completeness.label));
+  const camp = (await q("SELECT id FROM meta_campaign WHERE requisition_id IS NOT NULL LIMIT 1"))[0];
+  if (camp) {
+    ok("campaign read-through: 200 for super_admin, 403 for recruiter", (await call(S.super_admin, "GET", `/api/job-requisition/selection/campaign/${camp.id}/requisitions`)).status === 200
+      && (await call(S.recruiter, "GET", `/api/job-requisition/selection/campaign/${camp.id}/requisitions`)).status === 403);
   }
   const star = await call(S.branch_hr_noida2, "PUT", "/api/he/shortlist/override", { mobile: "9999900103", requisitionScope: "*", kind: "exclude", reason: "rig" });
   ok("branch HR cannot set an override for every requisition (*) -> 403", star.status === 403, star.status);
@@ -162,9 +180,14 @@ try {
   const picked = await q("SELECT mobile10, status FROM shortlist_candidate WHERE run_id = ?", [run1.json.data.runId]);
   const pickedOnly = picked.filter((p) => p.status === "picked");
   ok("the R01 run picks people to approve", pickedOnly.length >= 2, picked.map((p) => p.status));
-  const untick = pickedOnly.slice(0, 1).map((p) => p.mobile10);
-  const ap1 = await call(SA, "POST", "/api/he/shortlist/approve", { requisitionId: ids.R01, sourceKind: "he", runId: run1.json.data.runId, untick, note: "rig batch" });
-  ok("approve with untick: the unticked person is not approved", ap1.status === 200 && (await q("SELECT status FROM shortlist_candidate WHERE run_id = ? AND mobile10 = ?", [run1.json.data.runId, untick[0] ?? ""]))[0]?.status === (untick.length ? "unticked" : undefined), ap1.json);
+  const people = await call(SA, "GET", `/api/he/shortlist/run/${run1.json.data.runId}/candidates`);
+  ok("run people for the approve bar: masked, row ids only", people.status === 200 && people.json.data.items.length > 0 && !/\b[6-9]\d{9}\b/.test(people.text), people.text.slice(0, 200));
+  ok("ceo and recruiter cannot list a run's people (403)", (await call(S.ceo, "GET", `/api/he/shortlist/run/${run1.json.data.runId}/candidates`)).status === 403
+    && (await call(S.recruiter, "GET", `/api/he/shortlist/run/${run1.json.data.runId}/candidates`)).status === 403);
+  // the approve bar unticks by row id (the screen never holds full mobiles)
+  const untickIds = people.json.data.items.filter((p) => p.status === "picked").slice(0, 1).map((p) => p.id);
+  const ap1 = await call(SA, "POST", "/api/he/shortlist/approve", { requisitionId: ids.R01, sourceKind: "he", runId: run1.json.data.runId, untickIds, note: "rig batch" });
+  ok("approve with untick by row id: the unticked person is not approved", ap1.status === 200 && untickIds.length === 1 && (await q("SELECT status FROM shortlist_candidate WHERE id = ?", [untickIds[0]]))[0]?.status === "unticked", ap1.json);
   const en0 = await call(SA, "POST", "/api/he/shortlist/enrol", { requisitionId: ids.R01, sourceKind: "he" });
   ok("enrol switch off: nothing enrolled", en0.json?.data?.status === "enrol_switch_off" && (await q("SELECT COUNT(*) n FROM qualified_followup WHERE origin_label = 'Approved shortlist'"))[0].n === 0, en0.json);
   await q("INSERT INTO he_model_param (param_key, value, sample) VALUES ('policy.shortlist.enrol', 1, 0) ON DUPLICATE KEY UPDATE value = 1");

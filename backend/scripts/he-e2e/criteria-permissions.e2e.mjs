@@ -60,7 +60,8 @@ ok("every role logs in", Object.keys(S).length === 7);
 for (const role of Object.keys(USERS).filter((r) => r !== "admin")) for (const [code, id] of [["R01", R01], ["R03", R03]]) {
   const req = await call(S[role], "GET", `/api/job-requisition/${id}`);
   const crit = await call(S[role], "GET", `/api/job-requisition/${id}/criteria`);
-  const want = req.status === 200 ? 200 : req.status === 403 && role !== "admin" ? 403 : req.status;
+  // recruiters see nothing of selection (owner ruling 2026-10-09), whatever they may read of the requisition
+  const want = role === "recruiter" ? 403 : req.status === 200 ? 200 : req.status === 403 && role !== "admin" ? 403 : req.status;
   ok(`${role} GET ${code}/criteria = requisition read (${req.status})`, crit.status === want || (role === "admin" && crit.status === req.status), { req: req.status, crit: crit.status });
 }
 // admin is not a requisition reader but is a Hiring Engine viewer: criteria readable, inside its (NOIDA) branch scope only

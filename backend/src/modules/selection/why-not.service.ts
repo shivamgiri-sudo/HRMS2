@@ -11,7 +11,7 @@ import { compileCriteria } from "./compile-criteria.js";
 import { loadDbRow, toCriteriaRow } from "./criteria-row.js";
 import { evaluate } from "./evaluate.js";
 import { normaliseFacts } from "./facts-normalise.js";
-import { loadHePeopleByMobiles } from "./facts-loader.service.js";
+import { istText, loadHePeopleByMobiles } from "./facts-loader.service.js";
 import { finalVerdict } from "./funnel.js";
 import { loadOverrides, withOverride, type Override } from "./override.service.js";
 import { forRequisition, maskMobile } from "./preview.service.js";
@@ -66,10 +66,13 @@ async function resolvePeople(q: string): Promise<{ mobiles: Array<{ m: string; n
   return { mobiles: [...seen].map(([m, name]) => ({ m, name })).slice(0, 10), searchedMobile: null };
 }
 
-export async function openRequisitionsInScope(user: NonNullable<AuthenticatedRequest["authUser"]>, requisitionId?: string): Promise<string[]> {
+/** Open as the approval gate means it: approved, active, not closed, seats left and not past the hiring deadline (IST day). */
+export async function openRequisitionsInScope(user: NonNullable<AuthenticatedRequest["authUser"]>, requisitionId?: string, now = new Date()): Promise<string[]> {
+  const today = istText(now).slice(0, 10);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT jr.id FROM job_requisition jr WHERE jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.closed_at IS NULL
-        AND jr.fulfilled_headcount < jr.requested_headcount${requisitionId ? " AND jr.id = ?" : ""} ORDER BY jr.created_at DESC LIMIT 200`, requisitionId ? [requisitionId] : []);
+        AND jr.fulfilled_headcount < jr.requested_headcount AND (jr.requisition_validity IS NULL OR DATE(jr.requisition_validity) >= ?)${requisitionId ? " AND jr.id = ?" : ""}
+      ORDER BY jr.created_at DESC LIMIT 200`, requisitionId ? [today, requisitionId] : [today]);
   const ids = rows.map((r) => String(r.id)).filter((id) => !requisitionId || id === requisitionId);
   const out: string[] = [];
   for (const id of ids) if (await jobRequisitionService.isRequisitionVisible(user, { id })) out.push(id);
@@ -86,7 +89,7 @@ export async function whyNot(q: string, o: { user: NonNullable<AuthenticatedRequ
   const now = o.now ?? new Date();
   const { mobiles, searchedMobile } = await resolvePeople(q);
   if (!mobiles.length) return [];
-  const reqIds = await openRequisitionsInScope(o.user, o.requisitionId);
+  const reqIds = await openRequisitionsInScope(o.user, o.requisitionId, now);
   const compiled = new Map<string, { code: string; c: ReturnType<typeof compileCriteria> }>();
   for (const id of reqIds) {
     const d = await loadDbRow((sql, p) => db.execute(sql, p as never) as never, id);

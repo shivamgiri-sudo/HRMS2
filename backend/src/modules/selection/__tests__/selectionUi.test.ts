@@ -63,6 +63,12 @@ describe("listCriteriaRequisitions", () => {
     expect(out.permissions.edit).toBe(true);
     expect(h.sqls.filter(([s]) => s.startsWith("SELECT jr.id, jr.requisition_code"))).toHaveLength(1);
   });
+  it("open means not past the hiring deadline either (IST day), like the approval gate", async () => {
+    await listCriteriaRequisitions(user("hr"), {});
+    const [sql, p] = h.sqls.find(([x]) => x.startsWith("SELECT jr.id FROM job_requisition jr"))!;
+    expect(sql).toContain("jr.requisition_validity IS NULL OR DATE(jr.requisition_validity) >= ?");
+    expect(p).toEqual([expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/)]);
+  });
   it("only incomplete", async () => {
     h.open = ["a", "b"];
     h.rows = [row("a"), row("b", { targetLocations: null, meta_target_locations: ["Noida"], education_requirement: "12th", night_shift_required: 1, meta_target_age_min: 18 })];
