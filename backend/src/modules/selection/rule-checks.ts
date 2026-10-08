@@ -110,7 +110,7 @@ export function checkRule(rule: CompiledRule, f: CandidateFacts, now: Date): Che
     case "rotational_shift": return !known(f.rotationalOk) ? unknown(unknownText(f.rotationalOk)) : f.rotationalOk.value ? pass("OK with rotation") : fail("not OK with rotational shifts");
     case "location_region": case "location_cities": {
       const reloc = (r as { relocationOk: boolean }).relocationOk && known(f.relocationOk) && f.relocationOk.value;
-      if (!known(f.locationText)) return reloc ? pass("will relocate") : unknown(unknownText(f.locationText));
+      if (!known(f.locationText)) return reloc ? pass("will relocate") : unknown(f.locationText.quality === "placeholder" ? `location unknown (${f.locationText.from})` : unknownText(f.locationText));
       const text = f.locationText.value;
       let ok: boolean;
       if (rule.key === "location_region") {

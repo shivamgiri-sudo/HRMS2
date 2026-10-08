@@ -141,7 +141,8 @@ export function normaliseFacts(p: RawPerson, now: Date): CandidateFacts {
   // location: every residence text; all placeholders = placeholder, none = missing
   const parts = [str(l.locality), str(a.current_address), str(a.address), str(a.permanent_address), p.meta?.parsedLocation ?? null, str(parsed?.rawFields?.city), str(pr.address), str(pr.state)].filter((x): x is string => x !== null);
   const real = parts.filter((x) => !isPlaceholder(x));
-  const locationText = real.length ? fv(real.join(" ").toLowerCase(), "ok", "residence") : parts.length ? fv<string>(null, "placeholder", "residence") : missing<string>("residence");
+  const locationText = real.length ? fv(real.join(" ").toLowerCase(), "ok", "residence")
+    : parts.length ? fv<string>(null, "placeholder", `placeholder '${parts[0].trim().slice(0, 20)}'`) : missing<string>("residence");
   const pref = jsonList(a.preferred_locations);
   const preferredLocations = pref?.length ? fv(pref, "ok", "ats.preferred_locations") : missing<string[]>("ats.preferred_locations");
   const hometown = str(a.hometown) && !isPlaceholder(str(a.hometown)) ? fv(str(a.hometown)!, "ok", "ats.hometown") : missing<string>("ats.hometown");

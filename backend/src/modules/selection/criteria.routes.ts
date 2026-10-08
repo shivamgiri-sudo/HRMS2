@@ -11,6 +11,7 @@ import {
   applyTemplateToRequisition, bulkSaveCriteria, copyCriteria, CRITERIA_EDIT_ROLES, getRequisitionCriteria, listCriteriaAudit, saveRequisitionCriteria,
 } from "./criteria.service.js";
 import { previewCsv, previewRequisition } from "./preview.service.js";
+import { whyNot } from "./why-not.service.js";
 import { RULE_KEYS, SOURCE_KINDS, SUB_SOURCES, type RuleKey, type SourceKind, type SubSource } from "./selection-types.js";
 import { TEMPLATES, type CriteriaPatch } from "./templates.js";
 
@@ -69,6 +70,14 @@ criteriaRouter.post("/criteria/copy", requireAuth, requireRole(...CRITERIA_EDIT_
   if (!(await allVisible(req, [b.fromRequisitionId, ...to]))) return res.status(403).json({ success: false, message: "One or more requisitions are outside your scope" });
   const data = await copyCriteria({ fromRequisitionId: b.fromRequisitionId, toRequisitionIds: to, keys, replaceFilled: b.replaceFilled === true, actor: actorOf(req), reason, dryRun: b.dryRun !== false });
   return res.json({ success: true, data });
+}));
+
+// Why-not lookup (S11): read roles; only open requisitions in the caller's scope are evaluated (inside whyNot).
+criteriaRouter.get("/selection/why", requireAuth, requireRole(...CRITERIA_READ_ROLES), h(async (req, res) => {
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  const rid = typeof req.query.requisitionId === "string" && req.query.requisitionId ? req.query.requisitionId : undefined;
+  if (!q || q.length > 80) return bad(res, "q (a mobile, candidate code or at least 3 letters of a name) is required");
+  return res.json({ success: true, data: await whyNot(q, { user: req.authUser!, requisitionId: rid }) });
 }));
 
 criteriaRouter.get("/:id/criteria", requireAuth, requireRole(...CRITERIA_READ_ROLES), inScope, h(async (req, res) =>

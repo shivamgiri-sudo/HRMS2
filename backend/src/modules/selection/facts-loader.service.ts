@@ -35,7 +35,7 @@ const PROFILE_COLS = `lp.gender AS p_gender, lp.languages AS p_languages, lp.cer
 const RT = HE_RECORD_TYPES.map((t) => `'${t}'`).join(",");
 
 /** Pool people: he_lead + its ATS record (candidate / Naukri / WorkIndia only) + profile, keyset on he_lead.mobile10 (unique). */
-export function heBaseSql(subSources?: SubSource[]): { sql: string; args: unknown[] } {
+export function heBaseSql(subSources?: SubSource[], byMobiles = 0): { sql: string; args: unknown[] } {
   const conds: string[] = [];
   const args: unknown[] = [];
   if (subSources?.length) {
@@ -51,7 +51,7 @@ export function heBaseSql(subSources?: SubSource[]): { sql: string; args: unknow
   FROM he_lead l FORCE INDEX (uq_he_lead_mobile)
   LEFT JOIN ats_candidate ac ON ac.id = l.ats_candidate_id
   LEFT JOIN he_lead_profile lp ON lp.lead_id = l.id
- WHERE l.mobile10 > ? AND (ac.id IS NULL OR ac.record_type IN (${RT}))${conds.length ? ` AND (${conds.join(" OR ")})` : ""}
+ WHERE ${byMobiles ? `l.mobile10 IN (${ph(byMobiles)})` : "l.mobile10 > ?"} AND (ac.id IS NULL OR ac.record_type IN (${RT}))${conds.length ? ` AND (${conds.join(" OR ")})` : ""}
  ORDER BY l.mobile10 LIMIT ?`,
     args,
   };
@@ -116,21 +116,33 @@ async function systemFacts(leads: Array<Record<string, unknown>>, mobiles: strin
   return { sysFor, contact, dra };
 }
 
+/** Pool people by mobile (why-not lookup, re-evaluation after a criteria change); same families as a chunk. */
+export async function loadHePeopleByMobiles(mobiles: string[], now: Date): Promise<Loaded["people"]> {
+  if (!mobiles.length) return [];
+  const q = heBaseSql(undefined, mobiles.length);
+  const [rows] = await db.execute<RowDataPacket[]>(q.sql, [...mobiles, mobiles.length]);
+  return heRowsToPeople(rows, now);
+}
+
+async function heRowsToPeople(rows: RowDataPacket[], now: Date): Promise<Loaded["people"]> {
+  const { sysFor, contact, dra } = await systemFacts(rows, rows.map((r) => String(r.mobile10)), now);
+  return rows.map((r) => {
+    const ats = r.record_type ? { record_type: r.record_type, sourcing_channel: r.sourcing_channel, source_details: r.ac_source_details, ...pick(r, "ac_") } : null;
+    const lead = Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith("ac_") && !k.startsWith("p_") && k !== "record_type" && k !== "sourcing_channel"));
+    const profile = Object.values(pick(r, "p_")).some((v) => v !== null && v !== undefined) ? pick(r, "p_") : null;
+    const draStatus = r.ats_candidate_id ? dra.get(String(r.ats_candidate_id)) : undefined;
+    const person: RawPerson = { sourceKind: "he", subSource: heSubSource(r), mobile: String(r.mobile10), ats, lead, profile, meta: null,
+      dra: draStatus ? { status: draStatus } : null, system: sysFor(r, String(r.mobile10)), contact: { lastFirstContactAt: contact.get(String(r.mobile10)) ?? null } };
+    return { person, sourceRef: String(r.id) };
+  });
+}
+
 export async function loadRawPeople(scope: LoadScope, now: Date): Promise<Loaded> {
   const limit = Math.max(1, Math.min(scope.limit, 5000));
   if (scope.sourceKind === "he") {
     const q = heBaseSql(scope.subSources);
     const [rows] = await db.execute<RowDataPacket[]>(q.sql, [scope.afterKey ?? "", ...q.args, limit]);
-    const { sysFor, contact, dra } = await systemFacts(rows, rows.map((r) => String(r.mobile10)), now);
-    const people = rows.map((r) => {
-      const ats = r.record_type ? { record_type: r.record_type, sourcing_channel: r.sourcing_channel, source_details: r.ac_source_details, ...pick(r, "ac_") } : null;
-      const lead = Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith("ac_") && !k.startsWith("p_") && k !== "record_type" && k !== "sourcing_channel"));
-      const profile = Object.values(pick(r, "p_")).some((v) => v !== null && v !== undefined) ? pick(r, "p_") : null;
-      const draStatus = r.ats_candidate_id ? dra.get(String(r.ats_candidate_id)) : undefined;
-      const person: RawPerson = { sourceKind: "he", subSource: heSubSource(r), mobile: String(r.mobile10), ats, lead, profile, meta: null,
-        dra: draStatus ? { status: draStatus } : null, system: sysFor(r, String(r.mobile10)), contact: { lastFirstContactAt: contact.get(String(r.mobile10)) ?? null } };
-      return { person, sourceRef: String(r.id) };
-    });
+    const people = await heRowsToPeople(rows, now);
     return { people, nextKey: rows.length === limit ? String(rows[rows.length - 1].mobile10) : null, skippedInvalidMobile: 0 };
   }
   const live = scope.sourceKind === "meta_live";

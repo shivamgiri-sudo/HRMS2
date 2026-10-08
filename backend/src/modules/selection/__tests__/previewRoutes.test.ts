@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   user: { id: "u1", role: "hr" }, outOfScope: new Set<string>(),
-  preview: vi.fn(async () => ({ steps: [] })), csv: vi.fn(async () => "mobile,first_name\n98xxxxxx10,A\n"),
+  preview: vi.fn(async () => ({ steps: [] })), csv: vi.fn(async () => "mobile,first_name\n98xxxxxx10,A\n"), why: vi.fn(async () => []),
 }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn() } }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({ requireAuth: (req: any, _res: any, next: any) => { req.authUser = { ...h.user }; next(); } }));
@@ -13,6 +13,7 @@ vi.mock("../../../middleware/requireRole.js", () => ({
 }));
 vi.mock("../../job-requisition/job-requisition.service.js", () => ({ jobRequisitionService: { isRequisitionVisible: vi.fn(async (_u: unknown, k: { id: string }) => !h.outOfScope.has(k.id)) } }));
 vi.mock("../preview.service.js", () => ({ previewRequisition: h.preview, previewCsv: h.csv }));
+vi.mock("../why-not.service.js", () => ({ whyNot: h.why }));
 
 async function app() {
   const { criteriaRouter } = await import("../criteria.routes.js");
@@ -55,5 +56,20 @@ describe("preview routes", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/text\/csv/);
     expect(res.headers["content-disposition"]).toContain("shortlist-preview-meta_old.csv");
+  });
+});
+
+describe("why-not route", () => {
+  it("passes the query, the caller and an optional requisition", async () => {
+    const res = await request(await app()).get("/api/job-requisition/selection/why?q=9876543210&requisitionId=r1");
+    expect(res.status).toBe(200);
+    expect(h.why).toHaveBeenCalledWith("9876543210", { user: { id: "u1", role: "hr" }, requisitionId: "r1" });
+  });
+  it("a missing or very long query is 400; an employee is 403", async () => {
+    const a = await app();
+    expect((await request(a).get("/api/job-requisition/selection/why")).status).toBe(400);
+    expect((await request(a).get(`/api/job-requisition/selection/why?q=${"x".repeat(81)}`)).status).toBe(400);
+    h.user.role = "employee";
+    expect((await request(a).get("/api/job-requisition/selection/why?q=abc")).status).toBe(403);
   });
 });
