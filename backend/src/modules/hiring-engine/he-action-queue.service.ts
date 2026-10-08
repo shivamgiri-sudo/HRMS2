@@ -47,9 +47,12 @@ const wallStr = (v: unknown): string => (v instanceof Date ? v.toISOString().sli
 
 interface Filter { requisitionId: string | null; branch: string | null }
 
-/** Drive-based statements: window and drive status first, then the requisition / branch filter through job_requisition. */
+/**
+ * Drive-based statements: window and drive status first, then the requisition / branch filter through job_requisition. STRAIGHT_JOIN keeps
+ * that order: left to itself the optimizer sometimes scans all of he_match first (seen on the throwaway MySQL check), which grows with the table.
+ */
 function driveSql(select: string, joins: string, where: string, group: string, f: Filter): string {
-  return `SELECT ${select}
+  return `SELECT STRAIGHT_JOIN ${select}
   FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
   JOIN he_lead l ON l.id = m.lead_id

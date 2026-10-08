@@ -102,6 +102,7 @@ describe("listOutcomes", () => {
     const [sql, params] = execute.mock.calls[0];
     expect(String(sql)).toContain("FROM he_drive d JOIN job_requisition jr ON jr.id = d.requisition_id COLLATE utf8mb4_unicode_ci");
     expect(String(sql)).toContain("jr.branch_name = ? COLLATE utf8mb4_unicode_ci");
+    expect(String(sql).trimStart()).toMatch(/^SELECT STRAIGHT_JOIN /);
     expect(String(sql)).toContain("ORDER BY d.drive_date DESC, m.slot_at, m.id LIMIT 301");
     expect(params).toEqual(["2026-10-06", "2026-10-08", "Pune"]);
     expect(r.rows[0]).toMatchObject({ matchId: ID, name: "Asha", mobileMasked: "xxxxxx3210", reason: "distance", outcome: "no_show", driveDate: "2026-10-07" });

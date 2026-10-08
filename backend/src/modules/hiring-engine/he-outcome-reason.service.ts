@@ -48,7 +48,8 @@ export interface OutcomeRow {
 }
 export interface OutcomeList { enabled: boolean; rows: OutcomeRow[]; truncated: boolean; partial: boolean }
 
-const listSql = (withReason: boolean, scoped: boolean): string => `SELECT m.id AS match_id, m.lead_id, l.full_name, l.mobile10, d.id AS drive_id, d.drive_date, jr.branch_name, jr.requisition_code,
+// STRAIGHT_JOIN: start from the drives in the window (idx_he_drive_date), then reach their matches by idx_he_match_drive, never a scan of he_match.
+const listSql = (withReason: boolean, scoped: boolean): string => `SELECT STRAIGHT_JOIN m.id AS match_id, m.lead_id, l.full_name, l.mobile10, d.id AS drive_id, d.drive_date, jr.branch_name, jr.requisition_code,
        m.state AS outcome, m.slot_at, ${withReason ? "r.reason_code, r.note" : "NULL AS reason_code, NULL AS note"}
   FROM he_drive d JOIN job_requisition jr ON jr.id = d.requisition_id ${COLL}
   JOIN he_match m ON m.drive_id = d.id AND m.state IN ('no_show','declined')
