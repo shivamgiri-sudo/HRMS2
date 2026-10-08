@@ -235,6 +235,18 @@ export function defaultCreateForm(today: string, requisitionId = "", sourceType:
   return { requisitionId, sourceType, originId: sourceType === "he" ? "pool" : "", openFrom: addDaysIso(today, 1), openDays: DEFAULT_OPEN_DAYS, dailyInvites: null, open: false, override: false, reason: "" };
 }
 
+/** The form opened from a matrix "Map it" cell (WS3 C4): requisition, source and origin already chosen. */
+export function prefillCreateForm(today: string, p: { requisitionId: string; sourceType: SourceType; originId: string | null }): CreateForm {
+  const d = defaultCreateForm(today, p.requisitionId, p.sourceType);
+  return { ...d, originId: p.originId ?? d.originId };
+}
+
+/** The prefilled Live Meta campaign stays selectable even when the campaign list files it under its primary requisition (a non-primary link). */
+export function withPrefilledOrigin(origins: Array<{ id: string; label: string }>, t: SourceType, originId: string | null | undefined, label: string): Array<{ id: string; label: string }> {
+  if (t !== "meta_live" || !originId || origins.some((o) => o.id === originId)) return origins;
+  return [...origins, { id: originId, label: label || "This campaign" }];
+}
+
 /** Text of a number input: "" means not set (daily invites use the plan default); anything else must be a number. */
 export function parseCount(text: string): number | null {
   const t = text.trim();

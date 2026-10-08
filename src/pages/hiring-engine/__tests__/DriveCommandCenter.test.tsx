@@ -126,3 +126,17 @@ describe("DriveCommandCenter", () => {
     expect(readFileSync(new URL("../command/DriveCommandCenter.tsx", import.meta.url), "utf8")).toContain('import("../DrivesTab")');
   });
 });
+
+describe("campaign map placement (WS3 C4)", () => {
+  it("the Summary's always slot carries the campaign map next to the action queue; other sections do not", () => {
+    const f = defaultFilters();
+    const summary = renderToStaticMarkup(<>{sectionParts("summary", null, null, undefined, null, 0, f, undefined, undefined, undefined, <p>CAMPAIGN-MAP</p>).always}</>);
+    expect(summary).toContain("CAMPAIGN-MAP");
+    const he = renderToStaticMarkup(<>{sectionParts("he", null, null, undefined, null, 0, f, undefined, undefined, undefined, <p>CAMPAIGN-MAP</p>).always}</>);
+    expect(he).not.toContain("CAMPAIGN-MAP");
+  });
+  it("the full page renders the map on the Summary (server render: loading state)", () => {
+    const html = renderToStaticMarkup(<DriveCommandCenter />);
+    expect(html).toContain("Campaign map: which drive works on which requisition");
+  });
+});

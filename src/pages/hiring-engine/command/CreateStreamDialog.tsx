@@ -14,7 +14,7 @@ import type { RequisitionOption } from "./commandData";
 import type { ReadinessProblem, SourceType, StreamView } from "./driveCommandTypes";
 import {
   CAMPAIGNS_PATH, NO_OLD_SOURCE, STREAMS_PATH, canOverride, launchesPath, liveEmptyState, createBody, createErrors, createSuccessText, defaultCreateForm, errorText, originOptions,
-  parseReadiness, presetOptions, readinessPath, toCreateForm, type CampaignOption, type CreateFormText, type LaunchOption,
+  parseReadiness, prefillCreateForm, presetOptions, readinessPath, toCreateForm, withPrefilledOrigin, type CampaignOption, type CreateFormText, type LaunchOption,
 } from "./streamActionsModel";
 import { BTN, FIELD, FormErrors, LABEL, PRIMARY, ProblemList } from "./StreamActions";
 import { createInFlightGuard } from "./inFlight";
@@ -171,15 +171,19 @@ export interface CreateStreamDialogProps {
   sourceType?: SourceType; lockRequisition?: boolean; today: string; onCreated: (s: StreamView, text: string) => void;
   /** A requisition named by an insight: used (and locked) even when it is not among the filter's open requisitions. */
   preset?: { id: string; code: string } | null;
+  /** WS3 C4 "Map it": the origin already chosen (campaign id, 'pool', or none for a launch), with its label. */
+  originId?: string | null; originLabel?: string;
 }
 
 /** State, the three reads (campaigns, launches, readiness) and the write. Mounted only while open, so each opening starts fresh. */
-function CreatePanel({ requisitions: options, requisitionId, sourceType, lockRequisition: lockProp = false, today, onCreated, onCancel, onBusy, preset }: Omit<CreateStreamDialogProps, "open" | "onOpenChange"> & { onCancel: () => void; onBusy: (b: boolean) => void }) {
+function CreatePanel({ requisitions: options, requisitionId, sourceType, lockRequisition: lockProp = false, today, onCreated, onCancel, onBusy, preset, originId, originLabel }: Omit<CreateStreamDialogProps, "open" | "onOpenChange"> & { onCancel: () => void; onBusy: (b: boolean) => void }) {
   const idPrefix = `cs-${useId().replaceAll(":", "")}`;
   const { requisitions, lock: lockRequisition } = presetOptions(options, preset, lockProp);
   const guard = useRef(createInFlightGuard());
   const [form, setForm] = useState<CreateFormText>(() => {
-    const d = defaultCreateForm(today, preset?.id || requisitionId || "", sourceType ?? "meta_live");
+    const d = originId !== undefined
+      ? prefillCreateForm(today, { requisitionId: preset?.id || requisitionId || "", sourceType: sourceType ?? "meta_live", originId })
+      : defaultCreateForm(today, preset?.id || requisitionId || "", sourceType ?? "meta_live");
     return { ...d, openDays: String(d.openDays), dailyInvites: "" };
   });
   const [campaigns, setCampaigns] = useState<CampaignOption[] | null>(null);
@@ -228,7 +232,8 @@ function CreatePanel({ requisitions: options, requisitionId, sourceType, lockReq
   }, [form.requisitionId, t]);
 
   const req = requisitions.find((r) => r.id === form.requisitionId);
-  const origins = useMemo(() => originOptions(t, { code: req?.code ?? "" }, campaigns ?? [], launchSet?.list ?? []), [t, req?.code, campaigns, launchSet]);
+  const origins = useMemo(() => withPrefilledOrigin(originOptions(t, { code: req?.code ?? "" }, campaigns ?? [], launchSet?.list ?? []), t, originId, originLabel ?? ""),
+    [t, req?.code, campaigns, launchSet, originId, originLabel]);
   const originsLoading = t === "meta_live" ? campaigns === null : t === "meta_old" ? !!reqCode && launchSet?.code !== reqCode : false;
   const parsed = toCreateForm(form);
   const errors = createErrors(parsed, today, readiness.problems, readiness.neverOverride, originsLoading ? undefined : origins.length);

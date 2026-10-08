@@ -145,6 +145,8 @@ export interface DriveAnalytics {
   liveFrom?: string;
   /** Per Meta campaign and requisition progress in the window (events-based, same rules as `types`). Absent on older servers. */
   campaigns?: CampaignProgress[];
+  /** WS3 C3: people at each stage per requisition and drive type (Hiring Engine included). Absent on older servers. */
+  byRequisition?: Array<{ requisitionId: string; code: string; branch: string; sourceType: SourceType; stages: Partial<Record<string, number>> }>;
   /** Journey per drive type from the persons read; null when that read failed. Absent on older servers. */
   journey?: Record<SourceType, JourneyCounts> | null;
   /** Open seats per requisition in scope. Absent on older servers. */

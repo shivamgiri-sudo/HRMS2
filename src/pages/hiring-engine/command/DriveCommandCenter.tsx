@@ -35,6 +35,10 @@ import PlanSection from "./PlanSection";
 import FollowupPanel from "./FollowupPanel";
 import ActionQueuePanel from "./ActionQueuePanel";
 import { DriveFunnelDepth, SummaryFunnelDepth } from "./FunnelDepth";
+import CampaignMatrix from "./CampaignMatrix";
+import RelinkDialog from "./RelinkDialog";
+import { RELINK_ROLES } from "./relinkModel";
+import type { CellAction, MatrixRowData } from "./campaignMatrixModel";
 
 const DrivesTab = lazy(() => import("../DrivesTab"));
 const CriteriaSection = lazy(() => import("@/components/selection/CriteriaSection"));
@@ -143,13 +147,13 @@ function SummaryCharts({ analytics, insights, planHref }: { analytics: DriveAnal
  * drive type inside its section (the Summary shows `insights`, all types).
  */
 export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions, plan?: ReactNode, followupOpen = 0, filters?: Filters, onFilters?: (f: Filters) => void,
-  typeInsights?: (t: SourceType) => ReactNode, now?: Date): { gated: ReactNode; always: ReactNode } {
+  typeInsights?: (t: SourceType) => ReactNode, now?: Date, matrix?: ReactNode): { gated: ReactNode; always: ReactNode } {
   const planHref = commandHash("plan", filters ?? defaultFilters());
   if (section === "summary") {
     // The action queue does not wait for analytics; DriveCommandView draws the Summary's always slot above the gated charts.
     return {
       gated: <>{analytics && <SummaryCharts analytics={analytics} insights={insights} planHref={planHref} />}<FollowupPanel requisitionId={actions?.requisitionId ?? null} qualifiedTracked={analytics?.qualifiedTracked ?? null} openSignal={followupOpen} /></>,
-      always: filters ? <ActionQueuePanel filters={filters} /> : null,
+      always: filters || matrix ? <>{filters && <ActionQueuePanel filters={filters} />}{matrix}</> : null,
     };
   }
   if (section === "plan") return { gated: null, always: plan ?? null }; // the Plan section loads its own data
@@ -221,7 +225,15 @@ export default function DriveCommandCenter() {
   const dismiss = useCallback((id: string) => setDismissed((d) => new Set(d).add(id)), []);
   const restore = useCallback(() => setDismissed(new Set()), []);
   // Extend and create-stream open their real dialogs over the current section; Plan now opens the Plan section with its dry-run preview.
-  const [dialog, setDialog] = useState<{ kind: "extend_stream"; streamId: string } | { kind: "create_stream"; requisitionId: string; sourceType: SourceType } | null>(null);
+  const [dialog, setDialog] = useState<{ kind: "extend_stream"; streamId: string } | { kind: "create_stream"; requisitionId: string; sourceType: SourceType; originId?: string | null; originLabel?: string }
+    | { kind: "relink"; row: MatrixRowData } | null>(null);
+  const canMap = useHasRole(...RELINK_ROLES);
+  const [matrixTick, setMatrixTick] = useState(0);
+  const onMatrixAction = useCallback((a: CellAction, row: MatrixRowData) => {
+    if (a.kind === "map_it") setDialog({ kind: "create_stream", requisitionId: a.prefill.requisitionId, sourceType: a.prefill.sourceType, originId: a.prefill.originId, originLabel: row.campaign?.name ?? "" });
+    else if (a.kind === "open_stream") setDialog({ kind: "extend_stream", streamId: a.streamId });
+    else setDialog({ kind: "relink", row });
+  }, []);
   const [planIntent, setPlanIntent] = useState<{ requisitionId: string; date?: string; nonce: number } | null>(null);
   useEffect(() => { if (section !== "plan") setPlanIntent(null); }, [section]); // a later visit to Plan does not re-run the preview
   const [followupOpen, setFollowupOpen] = useState(0);
@@ -247,7 +259,11 @@ export default function DriveCommandCenter() {
     <InsightsPanel analytics={data ? { insights: (data.insights ?? []).filter((i) => i.sourceType === t), partial: data.partial } : null} title={`Insights for ${TYPE_LABEL[t]}`}
       dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />
   );
-  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions, plan, followupOpen, filters, (f) => go(section, f), typeInsights);
+  const matrix = section === "summary" ? (
+    <CampaignMatrix branch={filters.branch} requisitionId={filters.requisitionId} canWrite={canMap} analytics={data ? { campaigns: data.campaigns, byRequisition: data.byRequisition } : null}
+      reloadSignal={matrixTick} onAction={onMatrixAction} />
+  ) : null;
+  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions, plan, followupOpen, filters, (f) => go(section, f), typeInsights, undefined, matrix);
   return (
     <div className="space-y-3">
       <PipelineHealthStrip />
@@ -256,11 +272,16 @@ export default function DriveCommandCenter() {
         onSection={(s) => go(s, filters)} onFilters={(f) => go(section, f)} onRetry={reload} requisitions={requisitions} branches={branches} gated={parts.gated} sections={sections}>
         {parts.always}
       </DriveCommandView>
-      <StreamDialog open={dialog?.kind === "extend_stream"} onOpenChange={(o) => { if (!o) setDialog(null); }} streamId={dialog?.kind === "extend_stream" ? dialog.streamId : null} today={today} onChanged={reload} />
+      <StreamDialog open={dialog?.kind === "extend_stream"} onOpenChange={(o) => { if (!o) setDialog(null); }} streamId={dialog?.kind === "extend_stream" ? dialog.streamId : null} today={today} onChanged={() => { reload(); setMatrixTick((n) => n + 1); }} />
+      <RelinkDialog open={dialog?.kind === "relink"} onOpenChange={(o) => { if (!o) setDialog(null); }} campaign={dialog?.kind === "relink" && dialog.row.campaign ? { id: dialog.row.campaign.id, name: dialog.row.campaign.name } : null}
+        fromCode={dialog?.kind === "relink" ? dialog.row.requisition.code : ""}
+        options={requisitions.filter((r) => dialog?.kind !== "relink" || r.id !== dialog.row.requisition.id).map((r) => ({ id: r.id, label: r.branch ? `${r.label} · ${r.branch}` : r.label }))}
+        onDone={(text) => { setDialog(null); setPageNote(text); reload(); setMatrixTick((n) => n + 1); }} />
       <CreateStreamDialog open={dialog?.kind === "create_stream"} onOpenChange={(o) => { if (!o) setDialog(null); }} today={today} requisitions={requisitions}
         requisitionId={dialog?.kind === "create_stream" ? dialog.requisitionId : null} sourceType={dialog?.kind === "create_stream" ? dialog.sourceType : undefined}
         preset={dialog?.kind === "create_stream" ? { id: dialog.requisitionId, code: requisitionCodeOf(dialog.requisitionId, data, requisitions) } : null}
-        onCreated={(_s, text) => { setDialog(null); setPageNote(text); reload(); }} />
+        originId={dialog?.kind === "create_stream" ? dialog.originId : undefined} originLabel={dialog?.kind === "create_stream" ? dialog.originLabel : undefined}
+        onCreated={(_s, text) => { setDialog(null); setPageNote(text); reload(); setMatrixTick((n) => n + 1); }} />
     </div>
   );
 }
