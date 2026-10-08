@@ -4,6 +4,9 @@ import { fakeCtx } from "./_ctx.js";
 const hasAnyRole = vi.fn();
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole: (...a: unknown[]) => hasAnyRole(...a) }));
 import { loansAdapter as a } from "../adapters/loans.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const loan = (o: any = {}) => ({ id: "l1", employee_name: "Tia", employee_code: "E5", loan_type: "Salary Advance", amount: 20000, installments: 4, deduction_per_month: 5000, start_date: "2026-11-01", end_date: "2027-02-01", reason: "Family", status: "pending_approval", created_by: "someone", branch_name: "Goa", created_at: "2026-10-01T00:00:00Z", ...o });
 beforeEach(() => hasAnyRole.mockReset());

@@ -6,6 +6,9 @@ const hasScopedAccess = vi.fn();
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole: (...a: unknown[]) => hasAnyRole(...a), hasScopedAccess: (...a: unknown[]) => hasScopedAccess(...a) }));
 vi.mock("../../bulk-upload/bulk-approval.service.js", () => ({ APPROVER_ROLES: ["branch_head"], PAYROLL_APPROVER_ROLES: ["payroll_head"] }));
 import { bulkUploadAdapter as a } from "../adapters/bulkUpload.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const r = (o: any = {}) => ({ id: "u1", upload_batch_no: "UB-1", upload_type_code: "INCENTIVE_BULK", original_file_name: "inc.xlsx", total_rows: 50, imported_rows: 48, error_rows: 2, approval_status: "pending_branch_head", branch_id: "br1", branch_name: "Pune", uploaded_by: "up1", uploaded_by_name: "Wfm User", submitted_for_approval_at: "2026-10-01T00:00:00Z", ...o });
 const roles = (set: string[]) => hasAnyRole.mockImplementation(async (_u: string, ...rr: string[]) => rr.some((x) => set.includes(x)));

@@ -1,6 +1,10 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { callerHasRole } from "./_roles.js";
+import { keepApproverOrBranchRole } from "./_scope.js";
+
+/** Roles that may decide a resignation they are not the reporting manager for - only inside their OWN branch. */
+const FALLBACK_ROLES = ["admin", "hr", "branch_head"];
 
 /** Same role set PATCH /api/exit/:id/approve and /return demand. Scope is enforced by the endpoint itself (guardExitEmployee). */
 const DECIDER_ROLES = ["manager", "assistant_manager", "process_manager", "branch_head", "admin", "hr", "super_admin"];
@@ -23,7 +27,9 @@ export const exitResignationAdapter: ApprovalAdapter = {
     const seen = new Set<string>();
     for (const status of PENDING_STATUSES) {
       const res = await ctx.call("GET", "/api/exit", { query: { status, limit: 100 } });
-      const rows: any[] = res?.data ?? [];
+      // Manager stage: the employee's effective approver, or admin / hr / branch_head inside their own branch. A manager / process_manager
+      // who is not this employee's reporting manager (or an assignment-scope reach into another branch) does not see it.
+      const rows: any[] = await keepApproverOrBranchRole(ctx.userId, res?.data ?? [], (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }), FALLBACK_ROLES);
       for (const r of rows) {
         const id = String(r.id);
         if (seen.has(id)) continue;

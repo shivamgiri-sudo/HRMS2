@@ -2,6 +2,7 @@ import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { LoopbackError } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { buildActionDeeplink } from "../../work-inbox/action-item-registry.js";
+import { keepWorkItemsForCaller } from "./_scope.js";
 
 /**
  * Work-inbox item types shown as VIEW-ONLY cards. Only approval/decision flavoured types that no dedicated
@@ -32,12 +33,16 @@ export const workItemAdapter: ApprovalAdapter = {
   category: "Admin",
   async list(ctx) {
     const res = await ctx.call("GET", "/api/work-inbox/my");
-    const rows: any[] = (res?.data ?? []).slice(0, 200);
+    const candidates: any[] = ((res?.data ?? []) as any[])
+      .slice(0, 200)
+      .filter((r) => r.source_table === "work_item") // derived / bell rows are not work items
+      .filter((r) => WORK_ITEM_VIEW_ONLY_TYPES.has(str(r.item_type)))
+      .filter((r) => !(r.status && ["completed", "cancelled"].includes(str(r.status))));
+    // /my also returns every ROLE-QUEUE item to every holder of the role in every branch: keep only the caller's own items and
+    // unassigned role-queue items of a branch the caller may act in.
+    const rows = await keepWorkItemsForCaller(ctx.userId, candidates, (r: any) => r.id);
     const out: ApprovalItem[] = [];
     for (const r of rows) {
-      if (r.source_table !== "work_item") continue; // derived / bell rows are not work items
-      if (!WORK_ITEM_VIEW_ONLY_TYPES.has(str(r.item_type))) continue;
-      if (r.status && ["completed", "cancelled"].includes(str(r.status))) continue;
       const link = buildActionDeeplink(str(r.item_type), str(r.entity_id)) ?? "/work-inbox";
       const sep = link.includes("?") ? "&" : "?";
       const due = iso(r.due_at);

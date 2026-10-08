@@ -8,6 +8,9 @@ vi.mock("../adapters/finance-shared.js", async () => {
 });
 import { vendorApprovalAdapter } from "../adapters/vendor-approval.js";
 import { vendorBankChangeAdapter } from "../adapters/vendor-bank-change.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const req = (o: any = {}) => ({ id: "r1", request_type: "create", status: "pending", raised_by: "u-ba", raised_by_name: "Branch Admin", branch_name: "Noida", raised_at: "2026-10-04T00:00:00Z",
   payload: { vendor_name: "Acme", vendor_type: "supplier", gst_number: "07AAA", pan_number: "AAAAA0000A", payment_terms: "Net 30", contact_email: "a@b.c", expense_head_code: "RM", tds_applicable: true }, ...o });

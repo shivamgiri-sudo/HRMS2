@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { ageDays } from "./payroll-shared.js";
+import { branchAllowed, callerScope, isOwnEmployee } from "./scope-guard.js";
 
 type Stage = "manager" | "branch_head";
 
@@ -44,6 +45,11 @@ function mapClaim(r: any, stage: Stage): ApprovalItem {
  * Reimbursement / imprest claims, two approval stages. Each queue endpoint already returns only what the caller can act on
  * (manager queue = the caller's own reportees' submitted claims; branch-head queue = manager-approved claims in the caller's
  * branches, role-gated). The third queue (conversion to GRN) is a finance conversion, not an approve/reject, so it is not listed.
+ *
+ * Responsible-person rules applied on top: the manager stage is only ever the employee's own reporting manager (the module's queue and
+ * decide both resolve it from reporting_manager_id, so nothing extra is needed); the branch-head stage is narrowed to the claim's branch
+ * being the caller's OWN branch (the module's queue also unions user_assignment_scope branches, which may narrow but never widen)
+ * unless the caller is org-wide; nobody sees their own claim.
  */
 export const reimbursementsAdapter: ApprovalAdapter = {
   kind: "reimbursement",
@@ -54,9 +60,15 @@ export const reimbursementsAdapter: ApprovalAdapter = {
       ctx.call("GET", "/api/payroll/reimbursements/manager-queue").catch(() => null),
       ctx.call("GET", "/api/payroll/reimbursements/branch-head-queue").catch(() => null),
     ]);
+    const me = await callerScope(ctx);
     const out: ApprovalItem[] = [];
-    for (const r of ((mgr?.data ?? []) as any[]).slice(0, 200)) if (r.status === "submitted") out.push(mapClaim(r, "manager"));
-    for (const r of ((bh?.data ?? []) as any[]).slice(0, 200)) if (r.status === "manager_approved") out.push(mapClaim(r, "branch_head"));
+    for (const r of ((mgr?.data ?? []) as any[]).slice(0, 200)) {
+      if (r.status === "submitted" && !isOwnEmployee(me, r.employee_id)) out.push(mapClaim(r, "manager"));
+    }
+    for (const r of ((bh?.data ?? []) as any[]).slice(0, 200)) {
+      if (r.status !== "manager_approved" || isOwnEmployee(me, r.employee_id) || !branchAllowed(me, r.branch_id)) continue;
+      out.push(mapClaim(r, "branch_head"));
+    }
     return out;
   },
   async decide(ctx, item, action, remarks) {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { fakeCtx, field } from "./finance-test-utils.js";
 import { clientCreditNoteAdapter, clientInvoiceAdapter } from "../adapters/client-billing.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const inv = (o: any = {}) => ({ id: "i1", invoice_status: "proforma", is_migrated: 0, proforma_no: "PF/1", cost_centre_display_name: "Acme Ltd", cost_centre_code: "CC1", category: "Manpower", finance_year: "2026-27", month_label: "Sep", invoice_date: "2026-10-01", gst_type: "cgst_sgst", apply_gst: 1, total_amount: 100000, igst_amount: 0, cgst_amount: 9000, sgst_amount: 9000, grand_total: 118000, created_at: "2026-09-25T00:00:00Z", description: "Sep seats", ...o });
 

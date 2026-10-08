@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { ageDays, callerRoles, hasRole, rowsOf } from "./finance-shared.js";
+import { branchAllowed, callerScope } from "./scope-guard.js";
 
 const yn = (v: unknown) => (v === null || v === undefined || v === "" ? "" : Number(v) === 1 || v === true ? "Yes" : "No");
 
@@ -9,6 +10,9 @@ const yn = (v: unknown) => (v === null || v === undefined || v === "" ? "" : Num
  * L2 (pending_l2): admin / super_admin only (approve-l2 route). The queue endpoint picks rows from the
  * caller's primary role; we additionally require the stage's role in the caller's full role set and drop
  * anything the caller raised or submitted (maker-checker at both stages).
+ * The approval queue and approve/reject routes have NO branch check, and `admin` (branch-scoped) is an L1 and L2 approver, so a
+ * cost centre is only shown to an admin when it belongs to the admin's OWN branch; finance_head / accounts_head / super_admin
+ * (org-wide) see every branch.
  */
 export const costCentreAdapter: ApprovalAdapter = {
   kind: "cost_centre",
@@ -20,9 +24,11 @@ export const costCentreAdapter: ApprovalAdapter = {
     const l2 = hasRole(roles, "admin", "super_admin");
     if (!l1 && !l2) return [];
     const res = await ctx.call("GET", "/api/finance/cost-centres/approval-queue");
+    const me = await callerScope(ctx);
     const out: ApprovalItem[] = [];
     for (const r of rowsOf(res)) {
       const status = str(r.status);
+      if (!branchAllowed(me, r.branch_id)) continue;
       if (status === "pending_l1" ? !l1 : status === "pending_l2" ? !l2 : true) continue;
       if (str(r.created_by) === ctx.userId || str(r.submitted_by) === ctx.userId) continue;
       const age = ageDays(r.submitted_at);

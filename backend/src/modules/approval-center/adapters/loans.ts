@@ -2,6 +2,7 @@ import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { hasAnyRole } from "../../../shared/scopeAccess.js";
 import { ageDays } from "./payroll-shared.js";
+import { callerScope, keepEmployeeRowsInBranch } from "./scope-guard.js";
 
 /**
  * Loans: GET /api/payroll/loans?status=pending_approval (branch-scoped for the caller). Approve/reject are head-level only
@@ -15,7 +16,9 @@ export const loansAdapter: ApprovalAdapter = {
   async list(ctx) {
     if (!(await hasAnyRole(ctx.userId, "finance_head", "payroll_head", "admin", "super_admin"))) return [];
     const res = await ctx.call("GET", "/api/payroll/loans/", { query: { status: "pending_approval", page: 1, limit: 200 } });
-    const rows: any[] = res?.data ?? [];
+    // The module scopes by employee (and includes the caller's own row); keep only the caller's own branch (admin is branch-scoped,
+    // finance_head / payroll_head org-wide) and never a loan for the caller themself.
+    const rows: any[] = await keepEmployeeRowsInBranch(await callerScope(ctx), res?.data ?? [], (r) => r.employee_id);
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       if (str(r.status) !== "pending_approval") continue;

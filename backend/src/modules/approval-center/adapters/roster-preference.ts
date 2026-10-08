@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { getEmployeeForUser } from "../../../shared/accessGuard.js";
+import { keepApproverOrBranchRole } from "./_scope.js";
 
 /**
  * Employee roster / week-off preference (employee_roster_preference, status pending). The module's list is
@@ -13,7 +14,10 @@ export const rosterPreferenceAdapter: ApprovalAdapter = {
   category: "Attendance",
   async list(ctx) {
     const res = await ctx.call("GET", "/api/wfm/roster-preferences/pending");
-    const rows: any[] = ((res?.data ?? []) as any[]).filter((r) => !str(r.status) || str(r.status) === "pending").slice(0, 200);
+    const pending: any[] = ((res?.data ?? []) as any[]).filter((r) => !str(r.status) || str(r.status) === "pending").slice(0, 200);
+    if (pending.length === 0) return [];
+    // Reporting manager (effective approver) decides; admin / hr / wfm only inside their own branch (owner ruling 2026-10-01).
+    const rows: any[] = await keepApproverOrBranchRole(ctx.userId, pending, (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }), ["admin", "hr", "wfm"]);
     if (rows.length === 0) return [];
     const me = await getEmployeeForUser(ctx.userId);
     const out: ApprovalItem[] = [];

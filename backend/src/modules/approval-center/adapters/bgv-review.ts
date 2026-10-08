@@ -1,5 +1,10 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
+import { callerHasRole } from "./_roles.js";
+import { keepCandidatesInBranch } from "./_scope.js";
+
+/** "HR decision": the inbox endpoint also admits recruiters, who are not the deciders of a failed/mismatched check. */
+const DECIDER_ROLES = ["hr", "hr_head", "recruitment_hr", "admin", "super_admin"];
 
 const MAX_ROWS = 100;
 const CHUNK = 10;
@@ -17,6 +22,7 @@ export const bgvReviewAdapter: ApprovalAdapter = {
   label: "BGV manual review",
   category: "Recruitment",
   async list(ctx) {
+    if (!(await callerHasRole(ctx.userId, ...DECIDER_ROLES))) return [];
     const res = await ctx.call("GET", "/api/inbox/my-pending");
     const tasks: any[] = (res?.items ?? []).filter(
       (t: any) => t?.source === "derived" && t?.entity_type === "candidate_bgv_check" && t?.entity_id,
@@ -69,7 +75,8 @@ export const bgvReviewAdapter: ApprovalAdapter = {
         });
       });
     }
-    return out;
+    // canAccessCandidate also admits process-scoped / multi-branch assignment scope; owner policy: own-record branch only.
+    return keepCandidatesInBranch(ctx.userId, out, (i) => i.meta?.candidateId);
   },
   async decide(ctx, item, action, remarks) {
     await ctx.call("POST", `/api/inbox/derived/candidate_bgv_check/${encodeURIComponent(item.id)}/decide`, {

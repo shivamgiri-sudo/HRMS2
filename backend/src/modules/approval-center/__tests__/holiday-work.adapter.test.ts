@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+// Branch / approver policy is covered in scope.adapters.test.ts (fake DB); this file tests mapping + decide only.
+vi.mock("../adapters/_scope.js", async () => (await import("./_scopePassthrough.js")).passthrough);
 const hasRole = vi.fn();
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole: (...a: any[]) => hasRole(...a) }));
 import { holidayWorkAdapter } from "../adapters/holiday-work.js";

@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { fakeCtx } from "./_ctx.js";
 import { reimbursementsAdapter as a } from "../adapters/reimbursements.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const c = (o: any = {}) => ({ id: "c1", employee_name: "Ola", employee_code: "E8", claim_type: "FUEL", claim_month: "2026-09", amount_claimed: 3200, amount_approved: null, description: "Site visits", status: "submitted", submitted_at: "2026-10-01T00:00:00Z", attachment_original_name: "bill.pdf", ...o });
 

@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, f, fields, iso, long, money, str } from "../format.js";
 import { ageDays, callerRoleKeys, roleMeets } from "./payroll-shared.js";
+import { branchAllowed, callerScope } from "./scope-guard.js";
 
 function mapBatch(r: any, mode: "batch" | "chain"): ApprovalItem {
   const age = ageDays(r.created_at);
@@ -41,6 +42,10 @@ function mapBatch(r: any, mode: "batch" | "chain"): ApprovalItem {
  *  - chain (branch_head -> operations_head -> finance_head, GET /approvals/pending, POST /batches/:id/step-approve|step-reject): that list already
  *    filters to the caller's first role = the pending step's required role and to visible batches, so every row is actionable.
  * No frontend currently starts the chain; its items are listed in case /approval-chain/init was called directly.
+ *
+ * GET /batches lists EVERY batch of every branch and POST /batches/:id/approve|reject has no branch guard, so an `admin` (branch-scoped)
+ * would otherwise be offered other branches' batches. Both modes are therefore narrowed to batches of the caller's OWN branch
+ * (finance and the other org-wide roles: all), and a batch is never decided by the person who uploaded it.
  */
 export const incentivesAdapter: ApprovalAdapter = {
   kind: "incentive_batch",
@@ -48,18 +53,20 @@ export const incentivesAdapter: ApprovalAdapter = {
   category: "Payroll",
   async list(ctx) {
     const roles = await callerRoleKeys(ctx.userId);
+    const me = await callerScope(ctx);
+    const mayDecide = (b: any) => branchAllowed(me, b.branch_id) && !(b.uploaded_by && String(b.uploaded_by) === String(ctx.userId));
     const out: ApprovalItem[] = [];
     const seen = new Set<string>();
     if (roleMeets(roles, "admin", "finance")) {
       const res = await ctx.call("GET", "/api/incentives/batches").catch(() => null);
-      for (const r of ((res?.data ?? []) as any[]).filter((b) => b.status === "pending_approval").slice(0, 200)) {
+      for (const r of ((res?.data ?? []) as any[]).filter((b) => b.status === "pending_approval" && mayDecide(b)).slice(0, 200)) {
         seen.add(String(r.id));
         out.push(mapBatch(r, "batch"));
       }
     }
     const chain = await ctx.call("GET", "/api/incentives/approvals/pending").catch(() => null);
     for (const r of ((chain?.data ?? []) as any[]).slice(0, 200)) {
-      if (seen.has(String(r.id))) continue;
+      if (seen.has(String(r.id)) || !mayDecide(r)) continue;
       out.push(mapBatch(r, "chain"));
     }
     return out;

@@ -1,5 +1,6 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
+import { keepInBranch } from "./_scope.js";
 
 const yn = (v: unknown) => (v === true || v === 1 || v === "1" ? "Yes" : "");
 const range = (a: unknown, b: unknown, unit = "") => {
@@ -19,7 +20,8 @@ export const jobRequisitionAdapter: ApprovalAdapter = {
   category: "Recruitment",
   async list(ctx) {
     const res = await ctx.call("GET", "/api/job-requisition/pending-approvals");
-    const rows: any[] = (res?.data ?? []).slice(0, 200);
+    // The module's HR branch scope can include assignment branches; owner policy clamps a branch_head to the branch on their own record.
+    const rows: any[] = await keepInBranch(ctx.userId, (res?.data ?? []).slice(0, 200), (r: any) => ({ branchId: r.branch_id }));
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       const aging = Number(r.aging_days);

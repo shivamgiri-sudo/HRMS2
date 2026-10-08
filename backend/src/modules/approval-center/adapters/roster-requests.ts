@@ -2,6 +2,18 @@ import type { ApprovalAction, ApprovalAdapter, ApprovalItem, LoopbackCtx } from 
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { hasRole } from "../../../shared/accessGuard.js";
 import { rolesForKindAction } from "../../roster-requests/roster-requests.routes.js";
+import { keepApproverOrBranchRole } from "./_scope.js";
+
+/**
+ * Branch roles that may decide a request they are not the employee's reporting manager for - but only inside their OWN branch
+ * (owner ruling 2026-10-01: admin / hr / wfm / branch_head are branch-scoped). Anyone else must be the effective approver.
+ */
+const FALLBACK_ROLES: Record<HubKind, string[]> = {
+  swap: ["admin", "hr", "wfm"],
+  weekoff_rejection: ["admin", "hr", "wfm", "branch_head"],
+  dispute: ["admin", "hr", "wfm", "branch_head", "process_manager"],
+  conflict: ["admin", "hr", "wfm"],
+};
 
 /**
  * Roster Requests Hub: four sub-kinds, each listed from its own existing endpoint (exactly what the hub page loads)
@@ -50,7 +62,8 @@ export const rosterSwapAdapter: ApprovalAdapter = {
     if (!(await allowed(ctx, "swap"))) return [];
     const res = await ctx.call("GET", "/api/wfm-ext/roster/swaps", { query: { status: "pending" } });
     const out: ApprovalItem[] = [];
-    for (const s of (res?.data ?? []) as any[]) {
+    const swaps = await keepApproverOrBranchRole(ctx.userId, (res?.data ?? []) as any[], (s: any) => ({ employeeId: s.requester_employee_id }), FALLBACK_ROLES.swap);
+    for (const s of swaps) {
       if (str(s.status) && str(s.status) !== "pending") continue;
       // The swap service refuses an approve until the counterpart accepted; only offer rows the manager can actually move.
       const cp = str(s.counterpart_status);
@@ -94,7 +107,8 @@ export const rosterWeekoffAdapter: ApprovalAdapter = {
     if (!(await allowed(ctx, "weekoff_rejection"))) return [];
     const res = await ctx.call("GET", "/api/wfm/manager/weekoff-review");
     const out: ApprovalItem[] = [];
-    for (const w of (res?.data ?? []) as any[]) {
+    const weekoffs = await keepApproverOrBranchRole(ctx.userId, (res?.data ?? []) as any[], (w: any) => ({ employeeId: w.employee_id, employeeCode: w.employee_code }), FALLBACK_ROLES.weekoff_rejection);
+    for (const w of weekoffs) {
       const id = mkId("weekoff_rejection", w.id);
       const raised = w.employee_ack_at ?? w.updated_at ?? w.created_at;
       out.push({
@@ -141,7 +155,8 @@ export const rosterDisputeAdapter: ApprovalAdapter = {
     if (!(await allowed(ctx, "dispute"))) return [];
     const res = await ctx.call("GET", "/api/roster-gov/manager-review-queue");
     const out: ApprovalItem[] = [];
-    for (const r of (res?.data ?? []) as any[]) {
+    const disputes = await keepApproverOrBranchRole(ctx.userId, (res?.data ?? []) as any[], (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }), FALLBACK_ROLES.dispute);
+    for (const r of disputes) {
       if (r.dispute_resolved_at) continue;
       const id = String(r.id);
       const name = `${str(r.first_name)} ${str(r.last_name)}`.trim() || "Employee";
@@ -187,7 +202,8 @@ export const rosterConflictAdapter: ApprovalAdapter = {
     if (!(await allowed(ctx, "conflict"))) return [];
     const res = await ctx.call("GET", "/api/wfm-ext/roster/conflicts", { query: { resolved: "false" } });
     const out: ApprovalItem[] = [];
-    for (const c of (res?.data ?? []) as any[]) {
+    const conflicts = await keepApproverOrBranchRole(ctx.userId, (res?.data ?? []) as any[], (c: any) => ({ employeeId: Array.isArray(c.employees_involved) ? c.employees_involved[0] : undefined }), FALLBACK_ROLES.conflict);
+    for (const c of conflicts) {
       if (str(c.status) === "resolved") continue;
       const id = String(c.id);
       const names = Array.isArray(c.employee_names) ? c.employee_names.map(str).filter(Boolean).join(", ") : "";

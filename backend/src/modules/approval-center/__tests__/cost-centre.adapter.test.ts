@@ -7,6 +7,9 @@ vi.mock("../adapters/finance-shared.js", async () => {
   return { ...actual, callerRoles: async () => roles };
 });
 import { costCentreAdapter } from "../adapters/cost-centre.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const row = (o: any = {}) => ({ id: "c1", cost_centre_code: "CC9", cost_centre_name: "Acme Noida", client_name: "Acme", branch_name: "Noida", process_name: "Voice", status: "pending_l1", created_by: "u-a", submitted_by: "u-a", submitted_by_name: "Ops", submitted_at: "2026-10-01T00:00:00Z", mandated_seats_value: 60, revenue_flag: true, payment_terms: "Net 30", fixed_amount: 100000, ...o });
 

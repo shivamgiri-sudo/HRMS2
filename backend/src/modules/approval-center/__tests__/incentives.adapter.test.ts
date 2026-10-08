@@ -4,6 +4,9 @@ import { fakeCtx } from "./_ctx.js";
 const execute = vi.fn();
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
 import { incentivesAdapter as a } from "../adapters/incentives.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const b = (o: any = {}) => ({ id: "b1", incentive_name: "Attendance bonus", incentive_code: "ATT", pay_month: "2026-09", total_employees: 40, total_amount: 120000, status: "pending_approval", remarks: "monthly", created_at: "2026-10-01T00:00:00Z", ...o });
 beforeEach(() => execute.mockReset());

@@ -2,6 +2,7 @@ import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { LoopbackError } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { callerHasRole } from "./_roles.js";
+import { keepInBranch } from "./_scope.js";
 
 /** POST /api/exit/ff/:id/approve is requireRole(admin, finance, payroll); /verify also admits hr. */
 const APPROVER_ROLES = ["admin", "finance", "payroll"];
@@ -31,7 +32,9 @@ export const exitFfAdapter: ApprovalAdapter = {
 
     const cc = await ctx.call("GET", "/api/exit/command-center");
     const requests: any[] = cc?.data?.requests ?? [];
-    const candidates = requests
+    // `admin` approves F&F but is branch-scoped (owner ruling 2026-10-01); finance / payroll_head / super_admin are org-wide.
+    const inScope = await keepInBranch(ctx.userId, requests, (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }));
+    const candidates = inScope
       .filter((r) => ["draft", "verified"].includes(str(r.ff_status)))
       .filter((r) => Number(r.clearance_cleared ?? 0) >= Number(r.clearance_total ?? 0))
       .filter((r) => (Number(r.is_ff_provisional ?? 0) === 1 ? canVerify : canApprove))

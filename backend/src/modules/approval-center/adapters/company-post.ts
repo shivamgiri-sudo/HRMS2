@@ -1,9 +1,12 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
+import { branchAllowed, callerScope, io } from "./scope-guard.js";
 
 /**
  * Company feed post moderation. The module's approvals endpoint is role-gated (admin / super_admin /
  * hr_head) and returns only queued posts; 403 for everyone else is swallowed by the service.
+ * The queue is company-wide, but `admin` is a branch-scoped role: a post is shown only when its author sits in the caller's OWN
+ * branch (hr_head / super_admin and the other org-wide roles: every post). Nobody moderates their own post.
  */
 export const companyPostAdapter: ApprovalAdapter = {
   kind: "company_post",
@@ -12,10 +15,14 @@ export const companyPostAdapter: ApprovalAdapter = {
   async list(ctx) {
     const res = await ctx.call("GET", "/api/engagement/company-posts/approvals", { query: { page: 1, limit: 100 } });
     const rows: any[] = res?.posts ?? res?.data?.posts ?? [];
+    const me = await callerScope(ctx);
+    const authors = me.orgWide ? new Map() : await io.userEmployees(rows.map((r) => r.author_user_id));
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       if (r.status !== "pending_approval" && r.status !== "borderline_flagged") continue;
       if (r.active_status === false || r.active_status === 0) continue;
+      if (str(r.author_user_id) && str(r.author_user_id) === ctx.userId) continue; // never moderate own post
+      if (!branchAllowed(me, authors.get(str(r.author_user_id))?.branchId)) continue;
       const media = Array.isArray(r.media) ? r.media.length : 0;
       const flagged = r.status === "borderline_flagged";
       const text = str(r.content_text);

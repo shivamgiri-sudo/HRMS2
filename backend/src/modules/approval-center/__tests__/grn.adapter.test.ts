@@ -8,6 +8,9 @@ vi.mock("../adapters/finance-shared.js", async () => {
   return { ...actual, callerRoles: async () => roles, callerBranchScope: async () => scope };
 });
 import { grnAdapter } from "../adapters/grn.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const row = (o: any = {}) => ({
   id: "g1", grn_number: null, grn_type: "vendor", branch_id: "b1", branch_name: "Noida", vendor_name: "Acme Ltd",

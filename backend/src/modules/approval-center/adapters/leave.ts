@@ -1,5 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, dateText, f, fields, iso, long, str } from "../format.js";
+import { callerHasRole } from "./_roles.js";
+import { callerScope, keepEffectiveApprover, keepInBranch } from "./_scope.js";
 
 /** Leave: reporting manager / skip-level / branch-head exception tier. `can_review` is computed by the leave module itself. */
 export const leaveAdapter: ApprovalAdapter = {
@@ -8,10 +10,21 @@ export const leaveAdapter: ApprovalAdapter = {
   category: "People",
   async list(ctx) {
     const res = await ctx.call("GET", "/api/leave/requests", { query: { status: "pending,pending_branch_head", limit: 200 } });
-    const rows: any[] = res?.data ?? [];
+    const reviewable: any[] = (res?.data ?? []).filter((r: any) => r.can_review);
+    // can_review lets HR/admin in through their assignment scope and the branch-head tier through the bare role. Owner policy:
+    // the only person outside their own branch who sees a leave is its EFFECTIVE APPROVER (reporting manager / skip-level) at the
+    // manager stage; every other reviewer (hr, admin, branch_head exception tier, ...) is clamped to the branch on their own record.
+    const scope = await callerScope(ctx.userId);
+    const rows: any[] = scope.orgWide ? reviewable : await (async () => {
+      const mgrStage = reviewable.filter((r) => r.status !== "pending_branch_head");
+      const asApprover = new Set((await keepEffectiveApprover(ctx.userId, mgrStage, (r: any) => r.employee_id, scope)).map((r) => r.id));
+      // Only the roles the module lets review leave inside a branch (HR/admin scoped reviewers, branch-head exception tier) get the branch fallback.
+      const branchReviewer = await callerHasRole(ctx.userId, "admin", "hr", "hr_admin", "payroll_hr", "branch_head");
+      const inBranch = new Set((branchReviewer ? await keepInBranch(ctx.userId, reviewable, (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }), scope) : []).map((r) => r.id));
+      return reviewable.filter((r) => asApprover.has(r.id) || inBranch.has(r.id));
+    })();
     const out: ApprovalItem[] = [];
     for (const r of rows) {
-      if (!r.can_review) continue;
       const escalated = r.status === "pending_branch_head";
       out.push({
         uid: `leave:${r.id}`,

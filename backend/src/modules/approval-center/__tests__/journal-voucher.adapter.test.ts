@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { fakeCtx, field } from "./finance-test-utils.js";
 import { journalVoucherAdapter } from "../adapters/journal-voucher.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const row = (o: any = {}) => ({ id: "j1", voucherNumber: "JV-1", voucherDate: "2026-10-01", jvType: "accrual", narration: "Accrue rent", referenceNo: "REF1", branchName: "Noida", costCentreName: "CC1", processName: null, totalAmount: 50000, lineCount: 2, status: "pending_approval", createdByName: "Maker", submittedAt: "2026-10-02T00:00:00Z", pendingHours: 60, permissions: { canApprove: true }, ...o });
 const detail = { data: { lines: [{ accountLabel: "Rent", debitAmount: 50000, creditAmount: 0, narration: "oct" }, { accountLabel: "Payable", accountHint: "AP", debitAmount: 0, creditAmount: 50000 }] } };

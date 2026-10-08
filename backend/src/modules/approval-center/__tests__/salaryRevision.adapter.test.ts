@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { fakeCtx } from "./_ctx.js";
 import { salaryRevisionAdapter as a } from "../adapters/salaryRevision.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const row = (o: any = {}) => ({ id: 7, employee_id: "e1", full_name: "Ravi K", employee_code: "E7", branch_name: "Delhi", current_effective_from: "2026-09-01", requested_effective_from: "2026-08-15", reason: "Joined earlier", status: "pending", requested_by_email: "hr@x.in", created_at: "2026-10-01T00:00:00Z", ...o });
 

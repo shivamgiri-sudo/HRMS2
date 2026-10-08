@@ -2,6 +2,7 @@ import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { canClearTask } from "../../exit/exit.routes.js";
 import { callerRoleKeys } from "./_roles.js";
+import { keepApproverOrBranchRole, keepInBranch } from "./_scope.js";
 
 /** Same mapping the work inbox uses for an exit clearance task's action_url. */
 const PAGE_BY_OWNER_ROLE: Record<string, string> = {
@@ -39,9 +40,17 @@ export const exitClearanceAdapter: ApprovalAdapter = {
     const rows: any[] = res?.data ?? [];
     if (rows.length === 0) return [];
     const roles = await callerRoleKeys(ctx.userId);
+    // Owner policy: the manager-handover task belongs to the leaver's effective approver (admin / branch_head only inside their own
+    // branch); every other area (hr, it, wfm, payroll, ...) is a departmental task limited to the branch on the caller's own record
+    // unless they are org-wide (admin is a wildcard in canClearTask but is NOT org-wide).
+    const clearable = rows.filter((r) => canClearTask(str(r.clearance_area), roles));
+    const refOf = (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code });
+    const mgr = await keepApproverOrBranchRole(ctx.userId, clearable.filter((r) => str(r.clearance_area) === "manager"), refOf, ["admin", "branch_head"]);
+    const dept = await keepInBranch(ctx.userId, clearable.filter((r) => str(r.clearance_area) !== "manager"), refOf);
+    const allowedIds = new Set([...mgr, ...dept].map((r) => String(r.id)));
     const out: ApprovalItem[] = [];
-    for (const r of rows) {
-      if (!canClearTask(str(r.clearance_area), roles)) continue;
+    for (const r of clearable) {
+      if (!allowedIds.has(String(r.id))) continue;
       const exitReqId = str(r.exit_request_id);
       const owner = str(r.owner_role);
       const area = str(r.clearance_area);

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+// Branch / approver policy is covered in scope.adapters.test.ts (fake DB); this file tests mapping + decide only.
+vi.mock("../adapters/_scope.js", async () => (await import("./_scopePassthrough.js")).passthrough);
 import { makeCtx } from "./fakeCtx.js";
 import { LoopbackError } from "../types.js";
 

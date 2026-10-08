@@ -1,14 +1,18 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { date, f, fields, iso, long, str } from "../format.js";
+import { callerScope, keepEmployeeRowsInBranch } from "./scope-guard.js";
 
-/** Salary date revision: Payroll Head / super admin only (endpoint 403s everyone else, which the service swallows). */
+/**
+ * Salary date revision: Payroll Head / super admin only (endpoint 403s everyone else, which the service swallows). Both are org-wide
+ * roles; the branch filter is a second lock so a role mix-up can never widen this, and the caller's own request is never theirs to decide.
+ */
 export const salaryRevisionAdapter: ApprovalAdapter = {
   kind: "salary_revision",
   label: "Salary date revision",
   category: "Payroll",
   async list(ctx) {
     const res = await ctx.call("GET", "/api/salary-revision/", { query: { status: "pending" } });
-    const rows: any[] = (res?.data ?? []).slice(0, 200);
+    const rows: any[] = await keepEmployeeRowsInBranch(await callerScope(ctx), ((res?.data ?? []) as any[]).slice(0, 200), (r) => r.employee_id);
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       if (str(r.status) && str(r.status) !== "pending") continue;

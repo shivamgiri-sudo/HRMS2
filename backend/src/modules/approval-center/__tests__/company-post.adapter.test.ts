@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { companyPostAdapter } from "../adapters/company-post.js";
 import { fakeCtx } from "./_fakeCtx.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const post = (o: any = {}) => ({
   id: "p1", author_name: "Ravi", author_code: "E1", content_text: "Hello team", status: "pending_approval", moderation_state: "clean",

@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { fakeCtx } from "./_ctx.js";
 import { salaryDisputeAdapter as a } from "../adapters/salaryDispute.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const d = (o: any = {}) => ({ id: "d1", employee_name: "Meera", employee_code: "E9", run_month: "2026-09", dispute_type: "MISSING_OT", affected_dates: ["2026-09-03", "2026-09-04"], description: "OT not paid", status: "pending_wfm", differential_amount: null, wfm_remarks: null, created_at: "2026-10-01T00:00:00Z", ...o });
 

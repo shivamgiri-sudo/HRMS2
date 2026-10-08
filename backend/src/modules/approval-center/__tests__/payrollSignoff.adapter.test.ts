@@ -4,6 +4,9 @@ import { fakeCtx } from "./_ctx.js";
 const execute = vi.fn();
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
 import { payrollSignoffAdapter as a } from "../adapters/payrollSignoff.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const run = (o: any = {}) => ({ id: "r1", run_month: "2026-09", status: "processing", created_by: "system", header_employee_count: 1400, employee_count: 1467, total_net_salary: 61000000, finance_approved_at: null, ceo_acknowledged_at: null, ...o });
 const asRoles = (...r: string[]) => execute.mockResolvedValue([r.map((role_key) => ({ role_key }))]);

@@ -4,6 +4,9 @@ import { fakeCtx } from "./_ctx.js";
 const execute = vi.fn();
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
 import { advancesAdapter as a } from "../adapters/advances.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const adv = (o: any = {}) => ({ id: "a1", employee_id: "e1", employee_name: "Sam", employee_code: "E3", amount: 8000, advance_date: "2026-10-02", status: "pending", recovery_months: 3, purpose: "Medical", created_at: "2026-10-02T00:00:00Z", ...o });
 beforeEach(() => execute.mockReset());

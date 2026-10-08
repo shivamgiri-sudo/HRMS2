@@ -2,9 +2,13 @@ import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, dateText, f, fields, iso, long, str } from "../format.js";
 import { visitorService } from "../../visitor/visitor.service.js";
 
-/** Mirrors the decide rules in visitorService.decide (kept in sync by the tests): global override, same-branch override, or assigned host. */
-export const VISITOR_GLOBAL_APPROVER_ROLES = ["super_admin", "admin"];
-export const VISITOR_BRANCH_APPROVER_ROLES = ["branch_head", "security_head", "ho_hr", "hr_admin"];
+/**
+ * Mirrors the decide rules in visitorService.decide, narrowed to the owner's branch policy: only super_admin is a global override
+ * (the module also lets any `admin` decide every branch's visits, but admin is branch-scoped), the branch roles - now including admin -
+ * decide only visits of their OWN branch, and the assigned host always decides their own visitors.
+ */
+export const VISITOR_GLOBAL_APPROVER_ROLES = ["super_admin"];
+export const VISITOR_BRANCH_APPROVER_ROLES = ["admin", "branch_head", "security_head", "ho_hr", "hr_admin"];
 
 export function canDecideVisit(
   scope: { employeeId: string | null; branchId: string | null; roles: string[] },

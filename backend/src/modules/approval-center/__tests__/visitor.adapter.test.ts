@@ -5,6 +5,9 @@ vi.mock("../../visitor/visitor.service.js", () => ({ visitorService: { getScope:
 
 import { visitorAdapter, canDecideVisit } from "../adapters/visitor.js";
 import { fakeCtx } from "./_fakeCtx.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const visit = (o: any = {}) => ({
   id: "v1", visit_number: "VIS-1", visit_type: "business_meeting", purpose: "Demo", status: "pending_approval", scheduled_start: "2026-10-08T09:00:00Z",
@@ -29,7 +32,11 @@ describe("visitorAdapter", () => {
     expect((await visitorAdapter.list(ctx)).map((i) => i.id)).toEqual(["a"]);
   });
   it("canDecideVisit mirrors decide rules", () => {
-    expect(canDecideVisit({ employeeId: null, branchId: null, roles: ["admin"] }, { branch_id: "z" })).toBe(true);
+    expect(canDecideVisit({ employeeId: null, branchId: null, roles: ["super_admin"] }, { branch_id: "z" })).toBe(true);
+    // admin is branch-scoped (owner ruling): own branch only, never every branch
+    expect(canDecideVisit({ employeeId: null, branchId: "z", roles: ["admin"] }, { branch_id: "z" })).toBe(true);
+    expect(canDecideVisit({ employeeId: null, branchId: "y", roles: ["admin"] }, { branch_id: "z" })).toBe(false);
+    expect(canDecideVisit({ employeeId: null, branchId: null, roles: ["admin"] }, { branch_id: "z" })).toBe(false);
     expect(canDecideVisit({ employeeId: null, branchId: "b", roles: ["visitor_security"] }, { branch_id: "b" })).toBe(false);
   });
   it("decide: approve drops short reason, reject sends reason", async () => {

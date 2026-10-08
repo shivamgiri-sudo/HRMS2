@@ -4,6 +4,9 @@ vi.mock("../../../shared/accessGuard.js", () => ({ getEmployeeForUser: vi.fn(asy
 
 import { benefitsClaimAdapter } from "../adapters/benefits-claim.js";
 import { fakeCtx } from "./_fakeCtx.js";
+import { beforeEach as __scopeBeforeEach } from "vitest";
+import { useScope, ORG_WIDE } from "./scope-fixture.js";
+__scopeBeforeEach(() => useScope({ ...ORG_WIDE, employeeId: "emp-me" }));
 
 const claim = (o: any = {}) => ({ id: "c1", employee_id: "emp-x", employee_name: "Nina", employee_code: "E7", claim_type: "medical", amount: "2500.50", claim_date: "2026-09-30", description: "Dental", receipt_ref: "R-9", status: "submitted", created_at: "2026-10-01T00:00:00Z", ...o });
 

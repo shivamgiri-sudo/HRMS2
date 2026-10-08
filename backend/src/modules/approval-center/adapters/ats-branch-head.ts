@@ -1,5 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, money, str } from "../format.js";
+import { callerHasRole } from "./_roles.js";
+import { keepInBranchByKey } from "./_scope.js";
 
 /**
  * Legacy branch-head approval queue (/ats/branch-head-approval, table ats_branch_head_approval).
@@ -12,8 +14,11 @@ export const atsBranchHeadAdapter: ApprovalAdapter = {
   label: "Branch head approval (legacy)",
   category: "Recruitment",
   async list(ctx) {
+    // The legacy queue is open to admin / hr / payroll_hr / manager and its branch scope comes from assignment rows (which can
+    // cover several branches). Owner policy: only a branch_head (or super_admin), only for the branch on their own record.
+    if (!(await callerHasRole(ctx.userId, "branch_head", "super_admin"))) return [];
     const res = await ctx.call("GET", "/api/ats/branch-head-approval/pending");
-    const rows: any[] = (res?.data ?? []).slice(0, 200);
+    const rows: any[] = await keepInBranchByKey(ctx.userId, (res?.data ?? []).slice(0, 200), (r: any) => r.applied_for_branch || r.branch_display_name);
     if (!rows.length) return [];
     const inOffers = new Set<string>();
     try {

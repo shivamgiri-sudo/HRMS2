@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { hasAnyRole } from "../../../shared/scopeAccess.js";
+import { keepInBranch } from "./_scope.js";
 
 const AGE_HIGH_MS = 3 * 24 * 3600 * 1000;
 const pretty = (v: unknown) => str(v).replace(/_/g, " ");
@@ -16,7 +17,12 @@ export const manualOverrideAdapter: ApprovalAdapter = {
   category: "Payroll",
   async list(ctx) {
     const res = await ctx.call("GET", "/api/attendance/manual-overrides", { query: { status: "pending" } });
-    const rows: any[] = (res?.data ?? []).filter((r: any) => str(r.approval_status) === "pending").slice(0, 200);
+    // Owner branch policy: payroll_head / super_admin see every branch; admin / payroll_admin only their own employees.record branch.
+    const rows: any[] = await keepInBranch(
+      ctx.userId,
+      (res?.data ?? []).filter((r: any) => str(r.approval_status) === "pending").slice(0, 200),
+      (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }),
+    );
     let superAdmin: boolean | null = null;
     const out: ApprovalItem[] = [];
     for (const r of rows) {
