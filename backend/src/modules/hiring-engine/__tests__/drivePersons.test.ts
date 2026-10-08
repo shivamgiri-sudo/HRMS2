@@ -174,3 +174,12 @@ describe("campaignProgress branch scope", () => {
     expect(out.map((c) => c.campaignName)).toEqual(["Pune ads", "Delhi ads"]);
   });
 });
+
+describe("campaignProgress statement (pinned)", () => {
+  it("reads campaign names, status and the campaign's own requisition by key", async () => {
+    execute.mockResolvedValue([[]]);
+    await campaignProgress([{ campaignId: "c1", requisitionId: "r1", sourceType: "meta_live", leads: 1, qualified: 1, contacted: 0, invited: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0 }],
+      new Map([["r1", { code: "REQ-1", branch: "Pune" }]]));
+    expect(execute.mock.calls.map((c) => [String(c[0]).replace(/\s+/g, " ").trim(), c[1]])).toMatchSnapshot();
+  });
+});
