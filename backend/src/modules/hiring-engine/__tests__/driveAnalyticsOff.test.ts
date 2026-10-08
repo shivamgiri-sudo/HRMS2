@@ -36,7 +36,7 @@ beforeEach(() => {
     const q = String(sql);
     // The events-based persons read (added with the attribution fix) answers the same people the drive buckets below hold, so the
     // recorded output stays the same: on real data events only add people (closed drives, deleted matches, no-show after confirming).
-    if (q.includes("AS contacted")) {
+    if (q.includes("AS lead_rows")) {
       if (!params.includes("2026-10-15 00:00:00")) return [[]]; // the previous window has no drive (the bucket rows are dated 2026-10-12)
       const p = (source_type: string, leads: number, invited: number, confirmed: number, arrived: number) =>
         ({ requisition_id: "r1", source_type, campaign_id: null, leads, qualified: 0, contacted: invited, invited, confirmed, arrived, selected: 0, joined: 0 });

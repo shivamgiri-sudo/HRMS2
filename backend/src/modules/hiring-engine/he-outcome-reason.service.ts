@@ -13,7 +13,8 @@ import { SOURCE_TYPES } from "./he-drive-analytics.js";
 import { readAgg } from "./he-drive-trend.service.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
-import { attributionJoinsSql, sourceTypeSql } from "./he-source-attribution.js";
+import { creditJoinsSql } from "./he-source-attribution.js";
+import { PersonFacts, TYPE_KEY_GROUP, typeKeyColsSql } from "./he-person-facts.service.js";
 import { loadLiveFrom } from "./he-source-attribution.service.js";
 
 const COLL = "COLLATE utf8mb4_unicode_ci";
@@ -93,17 +94,17 @@ export async function listOutcomes(o: { from: string; to: string }, scope: Branc
 type Counts = Partial<Record<OutcomeReasonCode, number>>;
 export type ReasonCounts = Record<SourceType, { no_show: Counts; declined: Counts }>;
 
-// Typed by the shared source rule (he-source-attribution.ts).
-const countsSql = (n: number, streams: boolean, liveFrom: string): string => `SELECT ${sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, ref: "d.drive_date" })} AS source_type, r.outcome, r.reason_code, COUNT(*) AS n
+// Typed by the shared source rule: the row signals next to the lead id, typed in JS by PersonFacts (he-person-facts.service.ts).
+const countsSql = (n: number, streams: boolean, liveFrom: string): string => `SELECT ${typeKeyColsSql({ streams, d: "d", leadId: "m.lead_id", ref: "d.drive_date", liveFrom })}, r.outcome, r.reason_code, COUNT(*) AS n
   FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id AND m.state IN ('no_show','declined')
   JOIN he_match_outcome_reason r ON r.match_id = m.id
-  ${attributionJoinsSql({ streams, match: "m", requisition: "d.requisition_id", lead: "al", leadId: "m.lead_id" })}
+  ${creditJoinsSql({ streams, match: "m", requisition: "d.requisition_id" })}
  WHERE d.requisition_id IN (${Array(n).fill("?").join(",")}) AND d.drive_date BETWEEN ? AND ? AND r.outcome = m.state
- GROUP BY 1, r.outcome, r.reason_code`;
+ GROUP BY ${TYPE_KEY_GROUP}, r.outcome, r.reason_code`;
 
 /** Reason counts per source type for the given requisitions and drive dates. A missing table counts zero; other errors are thrown for the caller's section handling. */
-export async function outcomeReasonCounts(ids: string[], from: string, to: string, liveFrom?: string): Promise<ReasonCounts> {
+export async function outcomeReasonCounts(ids: string[], from: string, to: string, liveFrom?: string, facts?: PersonFacts): Promise<ReasonCounts> {
   const out = Object.fromEntries(SOURCE_TYPES.map((t) => [t, { no_show: {}, declined: {} }])) as ReasonCounts;
   if (!ids.length) return out;
   let rows: RowDataPacket[] = [];
@@ -117,8 +118,11 @@ export async function outcomeReasonCounts(ids: string[], from: string, to: strin
     if (noTable(err)) return out;
     throw err;
   }
+  const pf = facts ?? new PersonFacts(lf);
+  await pf.loadRows(rows);
   for (const r of rows) {
-    const t = SOURCE_TYPES.find((x) => x === r.source_type), code = OUTCOME_REASONS.find((c) => c === r.reason_code);
+    const rt = pf.typeOf(r);
+    const t = SOURCE_TYPES.find((x) => x === rt), code = OUTCOME_REASONS.find((c) => c === r.reason_code);
     const o = r.outcome === "declined" ? "declined" : r.outcome === "no_show" ? "no_show" : null;
     const n = Number(r.n);
     if (!t || !code || !o || !Number.isFinite(n) || n <= 0) continue;

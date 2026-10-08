@@ -8,7 +8,8 @@ vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), e
 import { clearRequisitionSourcesCache, getRequisitionSources } from "../he-requisition-sources.service.js";
 import { getSourcesForRequisitions } from "../he-sources-window.service.js";
 import { stripRule } from "./attributionSql.js";
-import { qfTypeSql } from "../he-requisition-sources.service.js";
+import { qfTypeKeysSql, sourcesLeadsRows } from "../he-requisition-sources.service.js";
+import { PersonFacts } from "../he-person-facts.service.js";
 import { fillTypeSql } from "../he-source-attribution.js";
 
 describe("getRequisitionSources SQL (pinned)", () => {
@@ -77,20 +78,42 @@ describe("getSourcesForRequisitions", () => {
   it("types qualified .. joined by the person rule, never by qualified_followup.source_type (the pipeline's enqueue-time type)", async () => {
     await getSourcesForRequisitions(["r1"], W);
     const stages = calls().find(([q]) => kindOf(q) === "stages")![0];
-    expect(stages).toContain(`${qfTypeSql("2026-10-08")} AS source_type`);
+    expect(stages).toContain(`${qfTypeKeysSql("2026-10-08")}, qf.origin_id`);
     expect(stages).not.toMatch(/qf\.source_type/);
   });
 
   it("counts a person once: one type and one origin per person and requisition (a campaign fill plus a re-run line-up is one lead)", async () => {
     await getSourcesForRequisitions(["r1"], W);
     const q = calls().find(([x]) => kindOf(x) === "driveLeads")![0].replace(/\s+/g, " ");
-    expect(q).toContain("GROUP BY u.person, u.requisition_id");
-    expect(q).toContain("SUBSTRING(MIN(CONCAT(FIELD(u.source_type, 'meta_live', 'meta_old', 'he'), u.source_type)), 2) AS source_type");
-    // origin precedence stream (4) > campaign (3) > drive (2) > pool (1), behind the person's type
-    expect(q).toContain("CONCAT(4 - FIELD(f.source_type, 'meta_live', 'meta_old', 'he'), 3, CHAR(31), 'campaign'");
-    expect(q).toContain("IF(y.sid IS NOT NULL, 4, IF(y.source_type = 'he', 1, 2))");
-    expect(q).toContain(fillTypeSql("r", "2026-10-08").replace(/\s+/g, " "));
-    expect(q).toContain("GROUP BY p.requisition_id, p.source_type, p.origin_kind, p.origin_id");
+    // per person (a hash of the mobile, never the mobile) the best campaign key of their fills, typed in SQL ...
+    expect(q).toContain("SELECT /*+ MAX_EXECUTION_TIME(8000) */ 'f' AS src, MD5(f.person) AS pkey, f.requisition_id, MAX(CONCAT(4 - f.ft, 3, CHAR(31), 'campaign'");
+    expect(q).toContain(`FIELD(${fillTypeSql("r", "2026-10-08").replace(/\s+/g, " ")}, 'meta_live', 'meta_old', 'he') AS ft`);
+    expect(q).toContain("GROUP BY pkey, f.requisition_id");
+    // ... and every line-up with its person signals, typed once per person in JS
+    expect(q).toContain("SELECT 'l', MD5(al.mobile10 COLLATE utf8mb4_unicode_ci), d.requisition_id COLLATE utf8mb4_unicode_ci, NULL, m.lead_id AS tl,");
+  });
+
+  it("sourcesLeadsRows picks the same origin and type the SQL used to: most-Meta type, then stream > campaign > drive > pool", async () => {
+    execute.mockResolvedValue([[{ id: "old", pm: 1, fl: 0 }]]);
+    const pf = new PersonFacts("2026-10-08");
+    await pf.load(["old"]);
+    const sep = String.fromCharCode(31);
+    const f = (pkey: string, rank: number, cid: string, name: string) => ({ src: "f", pkey, requisition_id: "r1", fkey: `${4 - rank}3${sep}campaign${sep}${cid}${sep}${name}` });
+    const l = (pkey: string, tl: string | null, tm: number, o: Record<string, unknown> = {}) =>
+      ({ src: "l", pkey, requisition_id: "r1", tl, tm, tr: 0, sid: null, so_id: null, so_label: null, drive_id: "d7", dlabel: "Re-run 2026-10-07", ...o });
+    const out = sourcesLeadsRows([
+      f("p1", 2, "c9", "Ad"), l("p1", "old", 0), // a campaign fill and a re-run line-up of one Old person: one lead, under the campaign
+      l("p2", "old", 0),                          // an Old person on a pool drive: the drive is the origin
+      l("p3", "new-pool", 0),                     // a Hiring Engine person: the pool
+      l("p4", "new-pool", 1),                     // on a Meta drive: Old Meta data, the drive
+      l("p5", "new-pool", 0, { sid: 5, so_id: "pool", so_label: "HR run" }), // a he stream credit: the stream's origin
+    ] as never, pf);
+    expect(out).toEqual([
+      { requisition_id: "r1", source_type: "meta_old", origin_kind: "campaign", origin_id: "c9", origin_label: "Ad", leads: 1 },
+      { requisition_id: "r1", source_type: "meta_old", origin_kind: "drive", origin_id: "d7", origin_label: "Re-run 2026-10-07", leads: 2 },
+      { requisition_id: "r1", source_type: "he", origin_kind: "pool", origin_id: "pool", origin_label: "Pool: ATS history", leads: 1 },
+      { requisition_id: "r1", source_type: "he", origin_kind: "stream", origin_id: "pool", origin_label: "HR run", leads: 1 },
+    ]);
   });
 
   it("adds the leads rows per origin and never lets a person-typed origin double", async () => {
@@ -184,7 +207,8 @@ describe("getSourcesForRequisitions", () => {
     await getSourcesForRequisitions(["r1", "r2"], W);
     for (const q of calls().map(([c]) => stripRule(c))) { // the source rule's subqueries are keyed (sourceAttribution.test.ts)
       expect(q).toMatch(/requisition_id IN \(|campaign_id IN \(/);
-      if (q.includes("FROM meta_lead_raw")) expect(q).toContain("campaign_id IN (");
+      // form fills only by import-time range (idx_ml_created) of the window, each tied to one of the requisitions' campaigns
+      if (q.includes("FROM meta_lead_raw")) { expect(q).toContain("FROM meta_lead_raw r FORCE INDEX (idx_ml_created)"); expect(q).toContain("r.created_at >= ? AND r.created_at < ?"); }
       // he_lead / he_message appear only as keyed EXISTS subqueries or key joins of the follow-up rows, never as a scan
       expect(q.replaceAll("SELECT 1 FROM he_message", "").replaceAll("SELECT 1 FROM he_lead", "")).not.toMatch(/FROM he_message|FROM he_lead/);
     }

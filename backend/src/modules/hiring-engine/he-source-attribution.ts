@@ -11,8 +11,9 @@
  * A person's form fills are their bridged fills (he_lead.meta_lead_id and he_lead_campaign); a fill with no he_lead is judged with the other
  * raw fills of the same parsed_phone. Fill time: Meta's created_time from raw_payload in IST, never later than our import time (created_at),
  * else created_at (he-pipeline-health effectiveLeadTime, with the import time as "now").
- * The follow-up pipeline keeps its own enqueue-time type (classifySource, unchanged). The SQL below is the same rule as attributeSource;
- * the tests hold them together.
+ * The follow-up pipeline keeps its own enqueue-time type (classifySource, unchanged). sourceTypeSql is the whole rule as one SQL expression
+ * (the specification the prod parity check runs against attributeSource); the analytics reads do not embed it: they return the row signals
+ * (typeKeyColsSql) and he-person-facts.service.ts reads each person's facts once per build (liveFirstFillSql, metaOriginSql) and types in JS.
  */
 import { effectiveLeadTime } from "./he-pipeline-health.js";
 import type { SourceType } from "./qualified-followup.types.js";
@@ -165,6 +166,13 @@ export const fillFirstCampaignSql = (r: string): string =>
 /** Sort key over already computed columns, for picking ONE type per person: Live, Old, he. SUBSTRING(MIN(key), 2) is the type. */
 export function typeKeySql(type: string): string {
   return `CONCAT(FIELD(${type}, 'meta_live', 'meta_old', 'he'), ${type})`;
+}
+
+/** Only the stream credit joins (by match id); with person facts resolved once per build (he-person-facts.service.ts) a statement needs no more. */
+export function creditJoinsSql(o: { streams: boolean; match: string; requisition: string; stream?: string }): string {
+  const s = o.stream ?? "rs";
+  return o.streams ? `LEFT JOIN requisition_stream_match sm ON sm.match_id = ${o.match}.id
+  LEFT JOIN requisition_stream ${s} ON ${s}.id = sm.stream_id AND ${s}.requisition_id = ${o.requisition}` : "";
 }
 
 /** Joins the rule needs after the match and drive are in scope: the stream credit by match id, the person and their first form fill

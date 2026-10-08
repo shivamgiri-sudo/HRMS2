@@ -137,7 +137,8 @@ describe("getRequisitionSources", () => {
     expect(d.rows.reduce((a, r) => a + r.shareOfJoined, 0)).toBeCloseTo(1);
     expect(d.totals.qualified).toBe(36);
     const stagesSql = sqlSeen().find((q) => /FROM qualified_followup qf/.test(q))!;
-    expect(stagesSql).toMatch(/GROUP BY f\.source_type, f\.origin_id`?\s*$/);
+    // grouped by the person signals (typed once per person in JS) and the origin; never by the label
+    expect(stagesSql).toMatch(/GROUP BY f\.tl, f\.tm, f\.tr, f\.tx, f\.origin_id`?\s*$/);
     expect(stagesSql).not.toMatch(/GROUP BY[^`]*origin_label/);
   });
 

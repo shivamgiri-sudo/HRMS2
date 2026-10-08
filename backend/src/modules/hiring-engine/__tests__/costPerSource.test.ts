@@ -29,7 +29,7 @@ const driveRow = (rid: string, o: Record<string, unknown> = {}) => ({ requisitio
 type Rows = { rates?: unknown[]; spend?: unknown[]; messages?: unknown[]; calls?: unknown[]; fail?: Record<string, string>; noStreamTables?: boolean };
 let impl: Rows;
 const kindOf = (q: string): string =>
-  q.includes("AS contacted") ? "persons" : q.includes("param_key LIKE ? AND value = 1") ? "cutoff" : q.includes("FROM he_model_param") ? "rates" : q.includes("FROM meta_campaign WHERE") ? "spend" : q.includes("FROM he_message h") ? "messages" : q.includes("FROM he_call c") ? "calls"
+  q.includes("AS lead_rows") ? "persons" : q.includes("param_key LIKE ? AND value = 1") ? "cutoff" : q.includes("FROM he_model_param") ? "rates" : q.includes("FROM meta_campaign WHERE") ? "spend" : q.includes("FROM he_message h") ? "messages" : q.includes("FROM he_call c") ? "calls"
     : q.includes("FROM he_drive d WHERE d.drive_date BETWEEN") ? "discovery" : q.includes("LEFT JOIN he_drive d ON") ? "drives" : "other";
 const calls = (k: string) => execute.mock.calls.filter((c) => kindOf(String(c[0])) === k).map((c) => [String(c[0]), (c[1] ?? []) as unknown[]] as const);
 const rates = (o: Partial<CostRates> = {}): CostRates => ({ ...COST_DEFAULTS, ...o });
@@ -47,7 +47,7 @@ beforeEach(() => {
   getSources.mockResolvedValue({
     byRequisition: [{ requisitionId: "r1", rows: [srcRow("meta_live", 150, { qualified: 60, joined: 3 }), srcRow("meta_old", 30), srcRow("he", 20)] }], partial: false, failedSections: [],
   });
-  execute.mockImplementation(async (sql: string) => {
+  execute.mockImplementation(async (sql: string, _params: unknown[] = []) => {
     const q = String(sql);
     const k = kindOf(q);
     const code = impl.fail?.[k];
@@ -56,6 +56,7 @@ beforeEach(() => {
     if (k === "discovery") return [[head("r1")]];
     if (k === "drives") return [[driveRow("r1", { stream_id: "s1", source_type: "meta_live", arrived: 12 })]];
     // events-based persons read: the same people as the sources and bucket rows above
+    if (k === "persons" && Array.isArray(_params) && _params.includes("2026-09-17 00:00:00")) return [[]]; // the previous window's read: no people here
     if (k === "persons") return [[{ requisition_id: "r1", source_type: "meta_live", campaign_id: null, leads: 150, qualified: 0, contacted: 15, invited: 15, confirmed: 10, arrived: 12, selected: 0, joined: 0 }]];
     if (k === "rates") return [impl.rates ?? []];
     if (k === "spend") return [impl.spend ?? []];
@@ -127,9 +128,21 @@ describe("readCostUsage", () => {
     await readCostUsage(["r1"], W);
     const [sql, params] = calls("messages")[0];
     expect(sql).toContain("h.requisition_id IN (");
-    expect(sql).toContain("COUNT(DISTINCT h.mobile10, DATE(h.created_at))");
+    // one row per person signals, channel and (hashed mobile, day): the person-days are counted distinct per type in JS
+    expect(sql).toContain("MD5(h.mobile10) AS mk, DATE(h.created_at) AS dy, COUNT(DISTINCT h.id) AS msgs");
     expect(sql).toContain("h.direction = 'out'");
     expect(params).toEqual(["r1", "2026-10-01 00:00:00", "2026-10-15 00:00:00"]);
+  });
+  it("counts a WhatsApp conversation (person and IST day) once per type however many signal rows carry it", async () => {
+    impl.messages = [
+      { tl: "l1", tm: 0, tr: 0, channel: "whatsapp", mk: "a", dy: "2026-10-05", msgs: 2 },
+      { tl: "l1", tm: 1, tr: 0, channel: "whatsapp", mk: "a", dy: "2026-10-05", msgs: 1 }, // the same person-day on a Meta drive
+      { tl: "l1", tm: 0, tr: 0, channel: "whatsapp", mk: "a", dy: "2026-10-06", msgs: 1 },
+      { tl: "l1", tm: 0, tr: 0, channel: "email", mk: "a", dy: "2026-10-05", msgs: 3 },
+    ];
+    const r = await readCostUsage(["r1"], W);
+    expect(r.usage.he).toMatchObject({ waConversations: 2, emails: 3 }); // l1 has no person facts here: the tm = 0 rows are Hiring Engine
+    expect(r.usage.meta_old).toMatchObject({ waConversations: 1 });
   });
   it("reads spend by requisition and rates by key prefix", async () => {
     await readCostUsage(["r1"], W);

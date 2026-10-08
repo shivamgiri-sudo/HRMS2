@@ -23,7 +23,8 @@ import { addDays, isSunday, istToday, windowDays } from "./requisition-stream.wi
 import type { DriveDayRow } from "./he-campaign-dashboard.service.js";
 import type { TaggedAggRow } from "./he-drive-analytics.js";
 import { UNPLANNED_ARRIVAL } from "./he-rate-buckets.js";
-import { attributionJoinsSql, sourceTypeSql } from "./he-source-attribution.js";
+import { creditJoinsSql } from "./he-source-attribution.js";
+import { PersonFacts, TYPE_KEY_GROUP, typeKeyColsSql } from "./he-person-facts.service.js";
 import { loadLiveFrom } from "./he-source-attribution.service.js";
 
 export interface DriveTotals { wanted: number; lined: number; invited: number; confirmed: number; arrived: number; noShow: number; declined: number; showRate: number }
@@ -66,17 +67,15 @@ const BUCKETS_SQL = `COUNT(m.id) AS lined,
        SUM(m.state = 'no_show') AS no_show, SUM(m.state = 'declined') AS declined, SUM(${UNPLANNED_ARRIVAL}) AS unplanned`;
 // `streams` false: the same read before 2135 is applied (no stream tables): the rule without the stream credit.
 const joinsSql = (streams: boolean): string => `LEFT JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
-  ${attributionJoinsSql({ streams, match: "m", requisition: "d.requisition_id", lead: "al", leadId: "m.lead_id", stream: "s" })}`;
-// source_type: the shared rule, NULL for a `he` match (and for a drive with no match), so `streamType` keeps meaning "typed other than he".
-const typeSql = (streams: boolean, liveFrom: string): string =>
-  `IF(m.id IS NULL, NULL, NULLIF(${sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, stream: "s", ref: "d.drive_date" })}, 'he'))`;
-// source_type is column 6 of the trend read and 10 of the groups read: GROUP BY uses the position, because a bare name would bind to s.source_type.
-const streamCols = (streams: boolean, liveFrom: string): string => `${streams ? "s.id" : "NULL"} AS stream_id, ${typeSql(streams, liveFrom)} AS source_type`;
+  ${creditJoinsSql({ streams, match: "m", requisition: "d.requisition_id", stream: "s" })}`;
+// The row signals of the shared rule next to the lead id (tl, tm, tr); PersonFacts types them in JS (parseAgg), once per person per read.
+const streamCols = (streams: boolean, liveFrom: string): string =>
+  `${streams ? "s.id" : "NULL"} AS stream_id, ${typeKeyColsSql({ streams, d: "d", leadId: "m.lead_id", ref: "d.drive_date", liveFrom, stream: "s" })}`;
 const trendSql = (liveFrom: string) => (streams: boolean): string => `SELECT d.id, d.drive_date, d.status, d.target_shows, ${streamCols(streams, liveFrom)}, ${BUCKETS_SQL}
   FROM he_drive d
   ${joinsSql(streams)}
  WHERE d.requisition_id = ? AND d.branch_name = ? AND d.drive_date BETWEEN ? AND ?
- GROUP BY d.id${streams ? ", s.id" : ""}, 6
+ GROUP BY d.id${streams ? ", s.id" : ""}, ${TYPE_KEY_GROUP}
  ORDER BY d.drive_date, d.id`;
 const HEADER_SQL = "SELECT branch_name FROM job_requisition WHERE id = ? LIMIT 1";
 // Open drives of the next days and yesterday decide which requisitions get a group (idx_he_drive_date: drive_date, status).
@@ -88,7 +87,7 @@ const groupsSql = (n: number, streams: boolean, liveFrom: string): string => `SE
   LEFT JOIN he_drive d ON d.requisition_id = jr.id COLLATE utf8mb4_unicode_ci AND d.drive_date BETWEEN ? AND ?
   ${joinsSql(streams)}
  WHERE jr.id IN (${Array(n).fill("?").join(",")})
- GROUP BY jr.id, d.id${streams ? ", s.id" : ""}, 10`;
+ GROUP BY jr.id, d.id${streams ? ", s.id" : ""}, ${TYPE_KEY_GROUP}`;
 
 const noTable = (err: unknown): boolean => (err as { code?: string })?.code === "ER_NO_SUCH_TABLE";
 /** The stream-attributed read; before 2135 is applied the stream-free form (a missing table is not a failed section). */
@@ -103,10 +102,17 @@ const orNoStreams = async (fn: () => Promise<StreamRow[]>): Promise<StreamRow[]>
   try { return await fn(); } catch (err) { if (noTable(err)) return []; throw err; }
 };
 
-function parseAgg(r: RowDataPacket): DriveAggRow {
+/** streamType: the shared rule's type, NULL for `he` and for a drive with no match (lined 0), so it keeps meaning "typed other than he". */
+function streamTypeOf(r: RowDataPacket, facts?: PersonFacts): SourceType | null {
+  if (r.tl === undefined && r.tm === undefined) return r.source_type == null ? null : (String(r.source_type) as SourceType);
+  if (!facts || Number(r.lined ?? 0) === 0) return null;
+  const t = facts.typeOf(r);
+  return t === "he" ? null : t;
+}
+function parseAgg(r: RowDataPacket, facts?: PersonFacts): DriveAggRow {
   return {
     driveId: String(r.id), date: String(r.drive_date).slice(0, 10), status: String(r.status), wanted: Number(r.target_shows ?? 0),
-    streamId: r.stream_id == null ? null : String(r.stream_id), streamType: r.source_type == null ? null : (String(r.source_type) as SourceType),
+    streamId: r.stream_id == null ? null : String(r.stream_id), streamType: streamTypeOf(r, facts),
     lined: Number(r.lined ?? 0), invited: Number(r.invited ?? 0), confirmed: Number(r.confirmed ?? 0), arrived: Number(r.arrived ?? 0),
     noShow: Number(r.no_show ?? 0), declined: Number(r.declined ?? 0), unplanned: Number(r.unplanned ?? 0),
   };
@@ -209,13 +215,16 @@ export function buildDriveGroups(input: DriveGroupInput[]): DriveGroup[] {
 }
 
 /** Drive state buckets of many requisitions over a window, one statement per 200 ids (same SQL and parsing as the groups read). Throws on failure. */
-export async function readDriveAggRows(ids: string[], from: string, to: string, liveFrom?: string): Promise<TaggedAggRow[]> {
+export async function readDriveAggRows(ids: string[], from: string, to: string, liveFrom?: string, facts?: PersonFacts): Promise<TaggedAggRow[]> {
   const lf = liveFrom ?? await loadLiveFrom();
+  const pf = facts ?? new PersonFacts(lf);
   const unique = [...new Set(ids)];
   const batches: string[][] = [];
   for (let i = 0; i < unique.length; i += 200) batches.push(unique.slice(i, i + 200));
   const parts = await Promise.all(batches.map((b) => readAgg((st) => groupsSql(b.length, st, lf), [from, to, ...b])));
-  return parts.flat().filter((r) => r.id != null).map((r) => ({ ...parseAgg(r), requisitionId: String(r.requisition_id), branch: String(r.branch_name) }));
+  const rows = parts.flat().filter((r) => r.id != null);
+  await pf.loadRows(rows);
+  return rows.map((r) => ({ ...parseAgg(r, pf), requisitionId: String(r.requisition_id), branch: String(r.branch_name) }));
 }
 
 // Never the driver message (it can echo SQL and values): only the section and the error code.
@@ -253,7 +262,12 @@ export async function getDriveTrend(
   const streamDays = streams.length ? streamWindowDates(streams, []) : [];
   const from = streamDays.length ? streamDays[0] : addDays(today, -DEFAULT_BACK);
   const to = streamDays.length ? streamDays[streamDays.length - 1] : addDays(today, DEFAULT_AHEAD);
-  const rows = await section("drives", failed, async () => (await readAgg(trendSql(await loadLiveFrom()), [q.requisitionId, branch, from, to])).map(parseAgg), [] as DriveAggRow[]);
+  const rows = await section("drives", failed, async () => {
+    const pf = new PersonFacts(await loadLiveFrom());
+    const raw = await readAgg(trendSql(pf.liveFrom), [q.requisitionId, branch, from, to]);
+    await pf.loadRows(raw);
+    return raw.map((r) => parseAgg(r, pf));
+  }, [] as DriveAggRow[]);
   const driveDates = rows.map((r) => r.date);
   const dates = streamDays.length ? streamWindowDates(streams, driveDates) : defaultTrendDates(from, to, driveDates);
   const points = zeroFillPoints(dates, rows, sourceType);
@@ -281,7 +295,13 @@ export async function getDriveGroupsDetailed(now: Date = new Date()): Promise<{ 
   let from = addDays(today, -DEFAULT_BACK), to = addDays(today, DEFAULT_AHEAD);
   for (const s of active) { const d = windowDays(toWindow(s)); if (d.length) { if (d[0] < from) from = d[0]; if (d[d.length - 1] > to) to = d[d.length - 1]; } }
   const ids = [...new Set([...keys.values()].map((k) => k.requisitionId))];
-  const raw = await section("groups", failed, async () => { const lf = await loadLiveFrom(); return await readAgg((st) => groupsSql(ids.length, st, lf), [from, to, ...ids]); }, null as RowDataPacket[] | null);
+  const typed = await section("groups", failed, async () => {
+    const pf = new PersonFacts(await loadLiveFrom());
+    const rows = await readAgg((st) => groupsSql(ids.length, st, pf.liveFrom), [from, to, ...ids]);
+    await pf.loadRows(rows);
+    return { rows, pf };
+  }, null as { rows: RowDataPacket[]; pf: PersonFacts } | null);
+  const raw = typed?.rows ?? null, pf = typed?.pf;
   if (!raw) return { groups: [], failedSections: failed };
 
   const heads = new Map<string, { code: string; role: string }>();
@@ -292,7 +312,7 @@ export async function getDriveGroupsDetailed(now: Date = new Date()): Promise<{ 
     if (r.id == null) continue;
     const k = keyOf(rid, String(r.branch_name));
     const l = rowsBy.get(k);
-    if (l) l.push(parseAgg(r)); else rowsBy.set(k, [parseAgg(r)]);
+    if (l) l.push(parseAgg(r, pf)); else rowsBy.set(k, [parseAgg(r, pf)]);
   }
   const input: DriveGroupInput[] = [];
   for (const [k, v] of keys) {

@@ -18,7 +18,7 @@ import { BUILD_BUDGET_MS, clearDriveAnalyticsCache, driveAnalyticsCacheSize, get
 import { getDriveTrend } from "../he-drive-trend.service.js";
 import { driveCreditSql } from "../he-drive-credit.js";
 import { stripRule } from "./attributionSql.js";
-import { qfTypeSql } from "../he-requisition-sources.service.js";
+import { qfTypeKeysSql } from "../he-requisition-sources.service.js";
 
 const NOW = new Date("2026-10-14T06:00:00Z");
 const Q = { from: "2026-10-01", to: "2026-10-14" };
@@ -30,13 +30,15 @@ const srcRow = (sourceType: string, leads: number, extra: object = {}) => ({ sou
 const head = (id: string, branch = "Pune", day = "2026-10-12") => ({ id, requisition_code: `REQ-${id}`, designation_name: "Agent", branch_name: branch, last_drive: day });
 const driveRow = (rid: string, o: Record<string, unknown> = {}) => ({ requisition_id: rid, requisition_code: `REQ-${rid}`, designation_name: "Agent", branch_name: "Pune", id: `d-${rid}`, drive_date: "2026-10-12", status: "active", target_shows: 10, stream_id: null, source_type: null, lined: 20, invited: 15, confirmed: 10, arrived: 6, no_show: 2, declined: 1, ...o });
 
+// The persons read runs once for the window and once for the previous window (its bounds start at the previous window's first day).
+const prevPersons = (params: unknown): boolean => Array.isArray(params) && params.includes("2026-09-17 00:00:00");
 // A row of the events-based persons read (he-drive-persons.service.ts).
 const personRow = (source_type: string, leads: number, invited: number, confirmed: number, arrived: number) =>
   ({ requisition_id: "r1", source_type, campaign_id: null, leads, qualified: 0, contacted: invited, invited, confirmed, arrived, selected: 0, joined: 0 });
 type Impl = { discovery?: unknown[]; header?: unknown[]; drives?: unknown[]; outcomes?: unknown[]; persons?: unknown[]; campaigns?: unknown[]; fail?: Record<string, string>; sources?: unknown; branchKnown?: boolean };
 let impl: Impl;
 const kindOf = (q: string): string =>
-  q.includes("AS contacted") ? "persons" : q.includes("FROM meta_campaign mc LEFT JOIN job_requisition jr") ? "campaignNames"
+  q.includes("AS lead_rows") ? "persons" : q.includes("FROM meta_campaign mc LEFT JOIN job_requisition jr") ? "campaignNames"
     : q.includes("FROM job_requisition WHERE id") ? "header" : q.includes("FROM he_drive d WHERE d.drive_date BETWEEN") ? "discovery" : q.includes("LEFT JOIN he_drive d ON") ? "drives"
     : q.includes("AS slot_released") ? "outcomes" : q.includes("FROM qualified_followup qf") ? "stops" : q.includes("JOIN he_message hm") ? "replies" : q.includes("JOIN he_lead_event ev") ? "arrivals" : "other";
 const sqlOf = () => execute.mock.calls.map((c) => [String(c[0]), (c[1] ?? []) as unknown[]] as const);
@@ -51,7 +53,7 @@ beforeEach(() => {
   mode.mockReturnValue("live");
   loadActiveStreams.mockResolvedValue([]);
   getSources.mockImplementation(async (ids: string[]) => impl.sources ?? { byRequisition: ids.map((requisitionId) => ({ requisitionId, rows: [] })), partial: false, failedSections: [] });
-  execute.mockImplementation(async (sql: string) => {
+  execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
     const k = kindOf(String(sql));
     const code = impl.fail?.[k];
     if (code) throw Object.assign(new Error("SELECT boom WHERE mobile = 9876543210"), { code });
@@ -60,7 +62,7 @@ beforeEach(() => {
     if (k === "discovery") return [impl.discovery ?? []];
     if (k === "drives") return [impl.drives ?? []];
     if (k === "outcomes") return [impl.outcomes ?? []];
-    if (k === "persons") return [impl.persons ?? []];
+    if (k === "persons") return [prevPersons(params) ? [] : impl.persons ?? []]; // these fixtures hold the window's people only
     if (k === "campaignNames") return [impl.campaigns ?? []];
     return [[]];
   });
@@ -307,14 +309,14 @@ describe("getDriveAnalytics", () => {
 
   it("counts opt-out stops into the waterfall and reads reply and arrival grids by IST weekday and hour", async () => {
     impl.sources = { byRequisition: [{ requisitionId: "r1", rows: [srcRow("he", 30, { qualified: 30 })] }], partial: false, failedSections: [] };
-    execute.mockImplementation(async (sql: string) => {
+    execute.mockImplementation(async (sql: string, _p: unknown[] = []) => {
       const k = kindOf(String(sql));
       if (k === "discovery") return [[head("r1")]];
       if (k === "drives") return [[driveRow("r1")]];
       if (k === "stops") return [[{ source_type: "he", stopped_reason: "opted_out", n: 4 }]];
       if (k === "replies") return [[{ source_type: "he", wd: 6, hr: 23, n: 5 }, { source_type: "he", wd: 9, hr: 1, n: 5 }]];
       if (k === "arrivals") return [[{ source_type: "he", wd: 0, hr: 10, n: 2 }]];
-      if (k === "persons") return [[personRow("he", 30, 15, 10, 6)]];
+      if (k === "persons") return [prevPersons(_p) ? [] : [personRow("he", 30, 15, 10, 6)]];
       return [[]];
     });
     const r = ok(await getDriveAnalytics(Q, ALL, NOW));
@@ -354,7 +356,7 @@ describe("events-based stages and per-campaign progress", () => {
     impl.discovery = [head("r1")];
     await getDriveAnalytics(Q, ALL, NOW);
     const stops = callsOf("stops")[0][0];
-    expect(stops).toContain(`SELECT /*+ MAX_EXECUTION_TIME(8000) */ ${qfTypeSql("2026-10-08")} AS source_type, qf.stopped_reason`);
+    expect(stops).toContain(`SELECT /*+ MAX_EXECUTION_TIME(8000) */ ${qfTypeKeysSql("2026-10-08")}, qf.stopped_reason`);
     expect(stops).not.toMatch(/qf\.source_type/);
   });
   const p = (o: Record<string, unknown>) => ({ requisition_id: "r1", source_type: "he", campaign_id: null, leads: 0, qualified: 0, contacted: 0, invited: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0, ...o });
@@ -379,7 +381,8 @@ describe("events-based stages and per-campaign progress", () => {
       { campaignId: "c1", campaignName: "Ahmedabad ads", campaignStatus: "paused", campaignRequisitionCode: "REQ-r1", requisitionId: "r1", requisitionCode: "REQ-r1", branch: "Pune", sourceType: "meta_old",
         stages: { leads: 40, qualified: 12, contacted: 35, invited: 30, confirmed: 11, arrived: 2, selected: 1, joined: 0 } },
     ]);
-    expect(callsOf("persons")).toHaveLength(1); // the window and the previous window in one statement
+    // the window and the previous window: the same statement twice, side by side (the previous window holds bulk imports)
+    expect(callsOf("persons")).toHaveLength(2);
   });
   it("a failing persons read flags its section and leaves the stages at zero", async () => {
     impl.discovery = [head("r1")];
