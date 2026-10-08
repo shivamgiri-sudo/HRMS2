@@ -5,6 +5,11 @@
 import { useEffect, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { TimelineSection } from "./responses/TimelineDrawer";
+import ManualConfirmDialog from "./responses/ManualConfirmDialog";
+import type { ManualTarget } from "./responses/manualConfirmModel";
+import { canWriteHe } from "./responses/responsesModel";
 
 interface Elig { requisitionId: string; code: string; process: string | null; position: string | null; branch: string | null; eligible: boolean; priority: number; blocks: string[]; warnings: string[] }
 interface Rec360 {
@@ -26,6 +31,24 @@ const TIER: Record<string, string> = { high: "bg-emerald-50 text-emerald-700 rin
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return <section className="mt-5"><h3 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">{title}</h3>{children}</section>;
+}
+
+/** "Record an answer" for write roles (mounted only inside the open drawer, so the role lookup runs only then). */
+function RecordAnswer({ leadId, name, choices }: { leadId: string; name: string; choices: Array<{ id: string; label: string }> }) {
+  const { roleKeys, isResolved } = useWorkforceAccess();
+  const [mark, setMark] = useState<ManualTarget | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  if (!isResolved || !canWriteHe(roleKeys)) return null;
+  return (
+    <>
+      <button type="button" onClick={() => setMark({ leadId, name })}
+        className="mb-2 inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 sm:min-h-9">
+        Record an answer (call or desk)
+      </button>
+      <p role="status" className="mb-2 text-sm text-emerald-800 empty:hidden dark:text-emerald-200">{saved}</p>
+      <ManualConfirmDialog target={mark} choices={choices} onClose={() => setMark(null)} onDone={setSaved} />
+    </>
+  );
 }
 
 export default function Candidate360Drawer({ leadId, onClose }: { leadId: string | null; onClose: () => void }) {
@@ -102,6 +125,12 @@ export default function Candidate360Drawer({ leadId, onClose }: { leadId: string
                 {rec.interviews.map((w, i) => <li key={`i${i}`}>{day(w.submitted_at)} · interviewed for {w.process ?? "-"}: <span className="font-medium">{w.final_decision ?? "-"}</span></li>)}
                 {rec.walkins.length + rec.interviews.length === 0 && <li className="text-slate-500">No walk-in on record.</li>}
               </ul>
+            </Section>
+
+            <Section title="Timeline of messages and answers">
+              {leadId && <RecordAnswer leadId={leadId} name={rec.lead.full_name || "the candidate"}
+                choices={rec.eligibility.map((e) => ({ id: e.requisitionId, label: `${e.code} · ${e.process ?? "-"} · ${e.branch ?? "-"}` }))} />}
+              <TimelineSection k={leadId ? { leadId } : null} />
             </Section>
 
             <Section title={`Every connect attempt (${rec.attempts.length})`}>

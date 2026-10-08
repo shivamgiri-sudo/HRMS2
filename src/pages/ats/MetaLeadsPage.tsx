@@ -36,6 +36,10 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { runNotifyAll, unnotifiedQualifiedIds, type BulkTotals } from "./metaNotifyAll";
 import { BulkNotifyResult } from "./BulkNotifyResult";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import ManualConfirmDialog from "../hiring-engine/responses/ManualConfirmDialog";
+import type { ManualTarget } from "../hiring-engine/responses/manualConfirmModel";
+import { canWriteHe } from "../hiring-engine/responses/responsesModel";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   Dialog,
@@ -196,6 +200,10 @@ export default function MetaLeadsPage() {
   // Drill-down drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [detail, setDetail] = useState<LeadDetail | null>(null);
+  const { roleKeys, isResolved } = useWorkforceAccess();
+  const canAnswer = isResolved && canWriteHe(roleKeys); // HR records a call / desk answer (Hiring Engine write roles)
+  const [answerFor, setAnswerFor] = useState<ManualTarget | null>(null);
+  const [answerNote, setAnswerNote] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
 
@@ -830,6 +838,17 @@ export default function MetaLeadsPage() {
               </section>
             )}
 
+            {detail && canAnswer && detail.requisitionId && (
+              <section className="rounded-lg border border-slate-200 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Answer from a call or the desk</p>
+                <button type="button" onClick={() => setAnswerFor({ metaLeadId: detail.id, name: detail.parsedName ?? "the candidate", requisitionId: detail.requisitionId })}
+                  className="mt-1.5 inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:min-h-9">
+                  Record an answer
+                </button>
+                <p role="status" className="mt-1 text-xs text-emerald-700 empty:hidden">{answerNote}</p>
+              </section>
+            )}
+
             {/* Calling Feedback */}
             {detail && (
               <section className="rounded-lg border border-slate-200 p-3">
@@ -945,6 +964,8 @@ export default function MetaLeadsPage() {
           </div>
         </SheetContent>
       </Sheet>
+      {canAnswer && <ManualConfirmDialog target={answerFor} choices={answerFor?.requisitionId ? [{ id: answerFor.requisitionId, label: detail?.designationName ?? "This lead's requisition" }] : []}
+        onClose={() => setAnswerFor(null)} onDone={setAnswerNote} />}
       {/* Notify preview dialog */}
       <Dialog open={!!previewFor} onOpenChange={(o) => { if (!o) setPreviewFor(null); }}>
         <DialogContent className="max-w-lg">
