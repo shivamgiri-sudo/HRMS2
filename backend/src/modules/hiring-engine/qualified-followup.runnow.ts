@@ -7,7 +7,8 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { addEvent } from "./he-lead.service.js";
-import { enqueueMetaLeadFollowup, followupHasLiveRow } from "./qualified-followup.service.js";
+import { followupHasLiveRow } from "./qualified-followup.service.js";
+import { enrolMetaArrival } from "../selection/meta-arrival.service.js";
 import { enrolTag, loadFollowupSwitches, type FollowupSwitches } from "./qualified-followup.policy.js";
 import { ROW_COLUMNS, toFollowupRow } from "./qualified-followup.context.js";
 import { newBudget, type StepScope } from "./qualified-followup.stagea.js";
@@ -26,7 +27,7 @@ export async function legacyOutreachDecision(metaLeadId: string, o: { force: boo
   if (owned) return o.manual && methodRuns ? { action: "enrol_and_run" } : { action: "skip", reason: HANDLED };
   if (!methodRuns) return { action: "send" };
   if (o.manual) return { action: "enrol_and_run" };
-  await enqueueMetaLeadFollowup(metaLeadId, { switches: s });
+  await enrolMetaArrival(metaLeadId, { switches: s });
   return { action: "skip", reason: HANDLED };
 }
 

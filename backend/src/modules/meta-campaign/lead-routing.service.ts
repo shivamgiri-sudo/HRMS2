@@ -56,17 +56,24 @@ export async function routeLeadRequisition(a: { campaignId: string; primaryRequi
   return { requisitionId: best.requisitionId, routedBy: "best_fit", candidates: all };
 }
 
-/** HR places a lead on one of its campaign's requisitions. Refused once the lead was contacted (review focus 2). */
-export async function overrideLeadRequisition(a: { metaLeadId: string; requisitionId: string; actor: string; rescreen: (leadId: string) => Promise<unknown> }): Promise<void> {
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT id, campaign_id, requisition_id, parsed_phone FROM meta_lead_raw WHERE id = ? LIMIT 1", [a.metaLeadId]);
+/**
+ * HR places a lead on one of its campaign's requisitions. Refused once the lead was contacted (review focus 2). The lead is then
+ * enrolled through the one Live Meta arrival path (`enrol`, idempotent); a held lead placed where it already sits stops being held.
+ */
+export async function overrideLeadRequisition(a: { metaLeadId: string; requisitionId: string; actor: string; rescreen: (leadId: string) => Promise<unknown>; enrol?: (leadId: string) => Promise<unknown> }): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT id, campaign_id, requisition_id, parsed_phone, routed_by FROM meta_lead_raw WHERE id = ? LIMIT 1", [a.metaLeadId]);
   const lead = rows[0];
   if (!lead) throw fail(404, "Lead not found");
   if (await leadContacted(a.metaLeadId)) throw fail(409, "This person has already been contacted for their requisition; it cannot be changed");
   const linked = lead.campaign_id ? await linkedRequisitionIds(String(lead.campaign_id)) : [];
   if (!linked.includes(a.requisitionId)) throw fail(409, "Pick one of the campaign's requisitions");
-  if (String(lead.requisition_id ?? "") === a.requisitionId) return;
-  await db.execute("UPDATE meta_lead_raw SET requisition_id = ?, routed_by = 'hr', routed_at = NOW() WHERE id = ?", [a.requisitionId, a.metaLeadId]);
-  await a.rescreen(a.metaLeadId);
+  if (String(lead.requisition_id ?? "") === a.requisitionId) {
+    if (lead.routed_by === "hold") await db.execute("UPDATE meta_lead_raw SET routed_by = 'hr', routed_at = NOW() WHERE id = ?", [a.metaLeadId]);
+  } else {
+    await db.execute("UPDATE meta_lead_raw SET requisition_id = ?, routed_by = 'hr', routed_at = NOW() WHERE id = ?", [a.requisitionId, a.metaLeadId]);
+    await a.rescreen(a.metaLeadId);
+  }
+  if (a.enrol) await a.enrol(a.metaLeadId);
 }
 
 const maskMobile = (m: string): string => (/^\d{10}$/.test(m) ? `${m.slice(0, 2)}xxxxxx${m.slice(-2)}` : "xxxxxxxxxx");

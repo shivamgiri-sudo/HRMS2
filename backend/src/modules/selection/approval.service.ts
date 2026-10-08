@@ -11,7 +11,7 @@ import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.
 import { jobRequisitionService } from "../job-requisition/job-requisition.service.js";
 import { compileCriteria } from "./compile-criteria.js";
 import { loadDbRow, toCriteriaRow } from "./criteria-row.js";
-import type { EnrolmentPort } from "./enrolment-port.js";
+import type { EnrolInput, EnrolmentPort } from "./enrolment-port.js";
 import { evaluate } from "./evaluate.js";
 import { istText } from "./facts-loader.service.js";
 import { buildFunnel, finalVerdict } from "./funnel.js";
@@ -196,7 +196,9 @@ export async function enrolApproved(a: { requisitionId: string; sourceKind: Sour
 }
 
 /** A Live Meta arrival under a standing approval: a pass enrols at once; a review always waits for HR. */
-export async function enrolLiveArrival(a: { requisitionId: string; facts: CandidateFacts; port: EnrolmentPort; now?: Date }) {
+export async function enrolLiveArrival(a: { requisitionId: string; facts: CandidateFacts; port: EnrolmentPort; now?: Date;
+  /** The Meta lead behind the arrival (linked on the journey) and the campaign's auto_notify hold. */
+  arrival?: Pick<EnrolInput, "metaLeadId" | "campaignId" | "atsCandidateId" | "heldReason"> }) {
   const now = a.now ?? new Date();
   if (!(await shortlistEnrolOn())) return { decision: "enrol_switch_off" as const };
   const standing = await standingApprovalFor(a.requisitionId, now);
@@ -215,7 +217,7 @@ export async function enrolLiveArrival(a: { requisitionId: string; facts: Candid
   if (!r[0] || r[0].status !== "approved") return { decision: "already_enrolled" as const };
   const out = await a.port.enqueue({ sourceType: "meta_live", requisitionId: a.requisitionId, mobile10: f.personKey, fullName: f.firstName ?? null,
     email: f.email.quality === "ok" ? String(f.email.value) : null, branchName: g.branchName, roleName: g.roleName, originId: standing.id, originLabel: "Standing approval",
-    shortlistId: String(r[0].id), criteriaVersionId: standing.versionId });
+    shortlistId: String(r[0].id), criteriaVersionId: standing.versionId, ...(a.arrival ?? {}) });
   if (["enqueued", "exists", "promoted", "held"].includes(out.status)) await db.execute("UPDATE shortlist_candidate SET status = 'enrolled' WHERE id = ?", [r[0].id]);
-  return { decision: "enrolled" as const, status: out.status };
+  return out.id ? { decision: "enrolled" as const, status: out.status, id: out.id } : { decision: "enrolled" as const, status: out.status };
 }

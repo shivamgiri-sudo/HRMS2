@@ -37,6 +37,8 @@ vi.mock("../campaign-screening.js", () => ({ loadCampaignScreeningConfig: vi.fn(
 vi.mock("../../hiring-engine/he-campaign-config.service.js", () => ({ heOwnsCampaign: vi.fn(async () => false) }));
 vi.mock("../../hiring-engine/he-meta-bridge.service.js", () => ({ bridgeOneMetaLead: h.bridge }));
 vi.mock("../../hiring-engine/qualified-followup.service.js", () => ({ enqueueMetaLeadFollowup: h.enqueue }));
+// The ingest enrols through the one Live Meta arrival path (final integration); it hands over to the enrolment above.
+vi.mock("../../selection/meta-arrival.service.js", () => ({ enrolMetaArrival: (id: string, o: unknown) => h.enqueue(id, o) }));
 vi.mock("../../hiring-engine/qualified-followup.schedule.js", () => ({ followupMode: () => "off" }));
 vi.mock("../lead-routing.service.js", async (orig) => ({ ...(await orig<typeof import("../lead-routing.service.js")>()), routeLeadRequisition: h.route }));
 vi.mock("../lead-contact-lock.js", async (orig) => ({ ...(await orig<typeof import("../lead-contact-lock.js")>()), leadContacted: vi.fn(async () => h.contacted) }));

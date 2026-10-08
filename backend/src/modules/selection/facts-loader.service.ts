@@ -9,7 +9,7 @@ import { loadEligibilityFacts, type LeadFactsRow } from "../hiring-engine/he-eli
 import { normalizeMobile10 } from "../hiring-engine/he-phone.js";
 import { fillTypeSql } from "../hiring-engine/he-source-attribution.js";
 import { loadLiveFrom } from "../hiring-engine/he-source-attribution.service.js";
-import type { RawPerson } from "./facts-normalise.js";
+import { normaliseFacts, type RawPerson } from "./facts-normalise.js";
 import type { CandidateFacts, SourceKind, SubSource } from "./selection-types.js";
 
 export const HE_RECORD_TYPES = ["candidate", "naukri_import", "workindia_import"] as const;
@@ -138,17 +138,8 @@ async function heRowsToPeople(rows: RowDataPacket[], now: Date): Promise<Loaded[
   });
 }
 
-export async function loadRawPeople(scope: LoadScope, now: Date): Promise<Loaded> {
-  const limit = Math.max(1, Math.min(scope.limit, 5000));
-  if (scope.sourceKind === "he") {
-    const q = heBaseSql(scope.subSources);
-    const [rows] = await db.execute<RowDataPacket[]>(q.sql, [scope.afterKey ?? "", ...q.args, limit]);
-    const people = await heRowsToPeople(rows, now);
-    return { people, nextKey: rows.length === limit ? String(rows[rows.length - 1].mobile10) : null, skippedInvalidMobile: 0 };
-  }
-  const live = scope.sourceKind === "meta_live";
-  const liveFrom = scope.liveFrom ?? await loadLiveFrom();
-  const [rows] = await db.execute<RowDataPacket[]>(META_BASE_SQL(liveFrom), [scope.afterKey ?? "", scope.sourceKind, limit]);
+async function metaRowsToPeople(rows: RowDataPacket[], sourceKind: SourceKind, now: Date) {
+  const live = sourceKind === "meta_live";
   const valid = rows.map((r) => ({ r, m: normalizeMobile10(r.parsed_phone) })).filter((x): x is { r: RowDataPacket; m: string } => !!x.m);
   const mobiles = [...new Set(valid.map((x) => x.m))];
   const [leads] = mobiles.length ? await db.execute<RowDataPacket[]>(LEADS_BY_MOBILE_SQL(mobiles.length), mobiles) : [[] as RowDataPacket[]];
@@ -157,11 +148,33 @@ export async function loadRawPeople(scope: LoadScope, now: Date): Promise<Loaded
   const people = valid.map(({ r, m }) => {
     const lead = leadByMobile.get(m) ?? null;
     const draStatus = lead?.ats_candidate_id ? dra.get(String(lead.ats_candidate_id)) : undefined;
-    const person: RawPerson = { sourceKind: scope.sourceKind, subSource: live ? "meta_live" : "meta_old", mobile: m, ats: null, lead, profile: null,
+    const person: RawPerson = { sourceKind, subSource: live ? "meta_live" : "meta_old", mobile: m, ats: null, lead, profile: null,
       meta: { rawPayload: r.raw_payload, parsedEducation: r.parsed_education ?? null, parsedLocation: r.parsed_location ?? null,
         parsedExperienceYr: r.parsed_experience_yr == null ? null : Number(r.parsed_experience_yr), createdAt: String(r.created_at) },
       dra: draStatus ? { status: draStatus } : null, system: sysFor(lead, m), contact: { lastFirstContactAt: contact.get(m) ?? null } };
     return { person, sourceRef: String(r.id) };
   });
+  return { people, valid };
+}
+
+/** One Live Meta lead by id (the arrival path): its person facts, or null without a valid mobile. */
+export async function loadMetaLeadFacts(metaLeadId: string, now: Date): Promise<CandidateFacts | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT m.id, m.parsed_phone, m.raw_payload, m.parsed_education, m.parsed_location, m.parsed_experience_yr, m.created_at, m.requisition_id FROM meta_lead_raw m WHERE m.id = ? LIMIT 1", [metaLeadId]);
+  const { people } = await metaRowsToPeople(rows, "meta_live", now);
+  return people[0] ? normaliseFacts(people[0].person, now) : null;
+}
+
+export async function loadRawPeople(scope: LoadScope, now: Date): Promise<Loaded> {
+  const limit = Math.max(1, Math.min(scope.limit, 5000));
+  if (scope.sourceKind === "he") {
+    const q = heBaseSql(scope.subSources);
+    const [rows] = await db.execute<RowDataPacket[]>(q.sql, [scope.afterKey ?? "", ...q.args, limit]);
+    const people = await heRowsToPeople(rows, now);
+    return { people, nextKey: rows.length === limit ? String(rows[rows.length - 1].mobile10) : null, skippedInvalidMobile: 0 };
+  }
+  const liveFrom = scope.liveFrom ?? await loadLiveFrom();
+  const [rows] = await db.execute<RowDataPacket[]>(META_BASE_SQL(liveFrom), [scope.afterKey ?? "", scope.sourceKind, limit]);
+  const { people, valid } = await metaRowsToPeople(rows, scope.sourceKind, now);
   return { people, nextKey: rows.length === limit ? String(rows[rows.length - 1].id) : null, skippedInvalidMobile: rows.length - valid.length };
 }

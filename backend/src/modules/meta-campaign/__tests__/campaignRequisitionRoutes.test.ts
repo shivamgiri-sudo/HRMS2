@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   routing: { override: vi.fn(async () => undefined), held: vi.fn(async () => ({ counts: { hold: 1 }, held: [{ id: "l1", name: "Rig", maskedMobile: "99xxxxxx22" }] })) },
   leadBranch: { "cccccccc-cccc-4ccc-8ccc-cccccccccccc": "NOIDA-2", "dddddddd-dddd-4ddd-8ddd-dddddddddddd": "AHMEDABAD" } as Record<string, string>,
   rescreen: vi.fn(async () => null),
+  arrival: vi.fn(async () => ({ path: "unified", status: "enqueued" })),
 }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: "u1", role: h.caller.roles[0] }; req.userRoles = h.caller.roles; next(); },
@@ -31,6 +32,7 @@ vi.mock("../campaign-requisition.service.js", () => ({
 }));
 vi.mock("../lead-routing.service.js", () => ({ overrideLeadRequisition: h.routing.override, campaignRoutingSummary: h.routing.held }));
 vi.mock("../meta-campaign.service.js", () => ({ metaCampaignService: { rescreenLead: h.rescreen } }));
+vi.mock("../../selection/meta-arrival.service.js", () => ({ enrolMetaArrival: h.arrival }));
 vi.mock("../campaign-relink.service.js", () => ({ previewRelink: h.relink.preview, applyRelink: h.relink.apply }));
 
 import { campaignRequisitionRouter } from "../campaign-requisition.routes.js";
@@ -95,6 +97,10 @@ describe("lead placement (B1 override) and the held list", () => {
     expect(r.status).toBe(200);
     expect(h.routing.override).toHaveBeenCalledWith(expect.objectContaining({ metaLeadId: L1, requisitionId: R1, actor: "u1" }));
     expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ action_type: "META_LEAD_REQUISITION_OVERRIDE", entity_id: L1 }));
+    // the placement enrols through the one Live Meta arrival path
+    const enrol = (h.routing.override.mock.calls[0] as unknown as [{ enrol: (id: string) => Promise<unknown> }])[0].enrol;
+    await enrol(L1);
+    expect(h.arrival).toHaveBeenCalledWith(L1);
   });
   it("another branch's lead is 403; a contacted lead's 409 comes through", async () => {
     expect((await request(app()).put(`/api/meta/leads/${L2}/requisition`).send({ requisitionId: R1 })).status).toBe(403);

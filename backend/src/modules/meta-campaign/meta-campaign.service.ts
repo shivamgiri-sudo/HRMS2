@@ -38,7 +38,7 @@ import { syncPrimaryLink } from './campaign-requisition.service.js';
 import { multiReqRoutingOn, routeLeadRequisition, ROUTED_SCREENING_SQL, type RoutedBy } from './lead-routing.service.js';
 import { leadContacted } from './lead-contact-lock.js';
 import { bridgeOneMetaLead } from '../hiring-engine/he-meta-bridge.service.js';
-import { enqueueMetaLeadFollowup } from '../hiring-engine/qualified-followup.service.js';
+import { enrolMetaArrival } from '../selection/meta-arrival.service.js';
 import { followupMode } from '../hiring-engine/qualified-followup.schedule.js';
 import { buildCanonicalFunnel, canonicalStage, CANONICAL_STAGE_LABEL, CANONICAL_STAGE_ORDER } from '../ats/ats-stage-model.js';
 import type {
@@ -722,8 +722,9 @@ export const metaCampaignService = {
       // A campaign handed to the Hiring Engine: the lead joins the engine's pool right away (it does the outreach, see notifyQualifiedLead).
       if (campaign?.id && (await heOwnsCampaign(campaign.id).catch(() => false))) await bridgeOneMetaLead(id);
       // Qualified-lead follow-up (a no-op while QUAL_FOLLOWUP_MODE is off, the default): fire-and-forget, fail-open so ingest is unaffected.
-      const enqueued = enqueueMetaLeadFollowup(id, { skipOutreach: Boolean(args.skipOutreach) }).catch((e: unknown) =>
-        console.warn('[meta] enqueueMetaLeadFollowup failed', e instanceof Error ? e.message : e)
+      // One Live Meta arrival path: a standing approval enrols through the criteria, otherwise the unified enrolment (both idempotent).
+      const enqueued = enrolMetaArrival(id, { skipOutreach: Boolean(args.skipOutreach) }).catch((e: unknown) =>
+        console.warn('[meta] enrolMetaArrival failed', e instanceof Error ? e.message : e)
       );
       // Not off: wait for the row so notifyQualifiedLead's guard can see it. Off: fire-and-forget as before.
       if (followupMode() !== 'off') await enqueued; else void enqueued;

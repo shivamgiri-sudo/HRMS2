@@ -18,7 +18,7 @@ import { db } from "../db/mysql.js";
 import { metaCampaignService } from "../modules/meta-campaign/meta-campaign.service.js";
 import { isMetaConfigured } from "../modules/meta-campaign/meta-api.client.js";
 import { notifyQualifiedLead } from "../modules/meta-campaign/lead-outreach.service.js";
-import { enqueueMetaLeadFollowup } from "../modules/hiring-engine/qualified-followup.service.js";
+import { enrolMetaArrival } from "../modules/selection/meta-arrival.service.js";
 import { readSyncStatus, safeErrorCode, writeSyncStatus, type SyncStatusRecord } from "../modules/meta-campaign/meta-sync-status.store.js";
 
 let scheduler: NodeJS.Timeout | undefined;
@@ -273,7 +273,7 @@ export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped
       // auto_notify off on the requisition, or a backfill import: never messaged from here; enrolled held for HR when the source runs (D13).
       const autoOff = Number(lead.auto_notify_off) === 1;
       if (autoOff || isBackfill(lead.meta_created)) {
-        await enqueueMetaLeadFollowup(lead.id, { skipOutreach: !autoOff }).catch(() => null);
+        await enrolMetaArrival(lead.id, { skipOutreach: !autoOff }).catch(() => null);
         skipped++;
         continue;
       }

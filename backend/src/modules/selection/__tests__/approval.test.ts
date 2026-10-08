@@ -213,6 +213,16 @@ describe("standing approval for Live Meta", () => {
     expect((await enrolLiveArrival({ requisitionId: "r1", facts: person(24, { sourceKind: "meta_live", subSource: "meta_live" }), port: p, now: NOW })).decision).toBe("no_standing_approval");
     expect(p.calls).toHaveLength(1);
   });
+  it("the arrival's Meta lead, campaign and auto_notify hold reach the port with the shortlist link", async () => {
+    await createShortlistRun({ requisitionId: "r1", sourceKind: "meta_live", actor, now: NOW }).then((r) => approveBatch({ requisitionId: "r1", sourceKind: "meta_live", runId: r.runId, actor, now: NOW }));
+    await approveStanding({ requisitionId: "r1", versionId: "v1", actor, now: NOW });
+    h.state.enrol = 1;
+    const p = port();
+    await enrolLiveArrival({ requisitionId: "r1", facts: person(30, { sourceKind: "meta_live", subSource: "meta_live" }), port: p, now: NOW,
+      arrival: { metaLeadId: "M30", campaignId: "C1", atsCandidateId: null, heldReason: "auto_notify_off" } });
+    expect(p.calls[0]).toMatchObject({ sourceType: "meta_live", requisitionId: "r1", metaLeadId: "M30", campaignId: "C1", heldReason: "auto_notify_off", criteriaVersionId: "v1", originLabel: "Standing approval" });
+    expect(String((p.calls[0] as { shortlistId: string }).shortlistId)).not.toBe("");
+  });
   it("switch off: no arrival is enrolled", async () => {
     const p = port();
     expect((await enrolLiveArrival({ requisitionId: "r1", facts: person(20), port: p, now: NOW })).decision).toBe("enrol_switch_off");

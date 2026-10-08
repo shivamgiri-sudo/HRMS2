@@ -13,7 +13,7 @@ vi.mock("../../../db/mysql.js", () => {
     const s = sql.replace(/\s+/g, " ").trim();
     h.sqls.push({ sql: s, p });
     if (s.includes("FROM job_requisition jr LEFT JOIN branch_master")) return [h.critRows.filter((r) => p.includes(r.id)), []];
-    if (s.startsWith("SELECT id, campaign_id, requisition_id, parsed_phone FROM meta_lead_raw")) return [h.lead ? [h.lead] : [], []];
+    if (s.startsWith("SELECT id, campaign_id, requisition_id, parsed_phone, routed_by FROM meta_lead_raw")) return [h.lead ? [h.lead] : [], []];
     if (s.startsWith("SELECT TABLE_NAME AS t")) return [[{ t: "qualified_followup" }], []];
     if (s.includes(" AS c FROM meta_lead_raw r")) return [[{ c: h.contacted ? 1 : 0 }], []];
     if (s.startsWith("SELECT COALESCE(routed_by, 'legacy') AS k")) return [[{ k: "legacy", n: 4 }, { k: "hold", n: 1 }], []];
@@ -89,6 +89,26 @@ describe("overrideLeadRequisition (HR)", () => {
     const upd = h.sqls.find((x) => x.sql.startsWith("UPDATE meta_lead_raw SET requisition_id = ?, routed_by = 'hr'"))!;
     expect(upd.p).toEqual(["day", "l1"]);
     expect(h.rescreen).toHaveBeenCalledWith("l1");
+  });
+
+  it("placed by HR, the lead is enrolled through the one Live Meta arrival path (after the re-screen)", async () => {
+    h.lead = { id: "l1", campaign_id: "c1", requisition_id: "night", parsed_phone: "9999900222" };
+    const order: string[] = [];
+    h.rescreen.mockImplementationOnce(async () => { order.push("rescreen"); return null; });
+    const enrol = vi.fn(async () => { order.push("enrol"); });
+    await overrideLeadRequisition({ metaLeadId: "l1", requisitionId: "day", actor: "u1", rescreen: h.rescreen, enrol });
+    expect(enrol).toHaveBeenCalledWith("l1");
+    expect(order).toEqual(["rescreen", "enrol"]);
+  });
+
+  it("a held lead placed on the requisition it already sits on stops being held (routed_by hr) and is enrolled", async () => {
+    h.lead = { id: "l1", campaign_id: "c1", requisition_id: "night", parsed_phone: "9999900222", routed_by: "hold" };
+    const enrol = vi.fn(async () => undefined);
+    await overrideLeadRequisition({ metaLeadId: "l1", requisitionId: "night", actor: "u1", rescreen: h.rescreen, enrol });
+    const upd = h.sqls.find((x) => x.sql.startsWith("UPDATE meta_lead_raw SET routed_by = 'hr'"))!;
+    expect(upd.p).toEqual(["l1"]);
+    expect(h.rescreen).not.toHaveBeenCalled();
+    expect(enrol).toHaveBeenCalledWith("l1");
   });
 
   it("refuses a contacted lead (409), a requisition not linked to the campaign (409) and an unknown lead (404)", async () => {

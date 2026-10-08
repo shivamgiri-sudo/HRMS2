@@ -10,6 +10,7 @@ import { writeAuditLog } from "../../shared/auditLog.js";
 import { canAccessCampaign, canAccessLead, canAccessRequisition, resolveBranchScope } from "./meta-access.js";
 import { addCampaignRequisition, listCampaignRequisitions, removeCampaignRequisition, setPrimaryRequisition } from "./campaign-requisition.service.js";
 import { applyRelink, previewRelink } from "./campaign-relink.service.js";
+import { enrolMetaArrival } from "../selection/meta-arrival.service.js";
 import { campaignRoutingSummary, overrideLeadRequisition } from "./lead-routing.service.js";
 import { metaCampaignService } from "./meta-campaign.service.js";
 
@@ -108,7 +109,8 @@ campaignRequisitionRouter.put("/leads/:id/requisition", requireAuth, requireRole
   const scope = await resolveBranchScope(req.authUser!.id, rolesOf(req));
   if (!(await canAccessLead(id, scope))) return void res.status(403).json({ success: false, message: "This lead belongs to another branch" });
   if (!scope.all && !(await canAccessRequisition(requisitionId, scope))) return void res.status(403).json({ success: false, message: "Forbidden: that requisition belongs to another branch" });
-  await overrideLeadRequisition({ metaLeadId: id, requisitionId, actor: req.authUser!.id, rescreen: (leadId) => metaCampaignService.rescreenLead(leadId, { createCandidate: false }) });
+  await overrideLeadRequisition({ metaLeadId: id, requisitionId, actor: req.authUser!.id, rescreen: (leadId) => metaCampaignService.rescreenLead(leadId, { createCandidate: false }),
+    enrol: (leadId) => enrolMetaArrival(leadId) });
   await writeAuditLog({ actor_user_id: req.authUser!.id, action_type: "META_LEAD_REQUISITION_OVERRIDE", module_key: "meta_campaign", entity_type: "meta_lead_raw", entity_id: id, metadata: { requisitionId }, req });
   res.json({ success: true, data: { requisitionId } });
 }));

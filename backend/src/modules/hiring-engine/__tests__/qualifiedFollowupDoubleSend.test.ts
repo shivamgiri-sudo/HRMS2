@@ -246,10 +246,10 @@ describe("ingest enqueue ordering", () => {
   it("ingest passes skipOutreach to the enrolment (held_manual for backfills, D13)", async () => {
     setEnv({ QUAL_FOLLOWUP_MODE: "dry_run" });
     await ingest();
-    expect(h.enqueue).toHaveBeenCalledWith(expect.any(String), { skipOutreach: false });
+    expect(h.enqueue).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ skipOutreach: false })); // through the one arrival path, with its switches
     h.enqueue.mockClear();
     await metaCampaignService.ingestLead({ formId: "f1", leadgenId: "g2", prefetchedDetail: { id: "g2", field_data: [] } as never, skipOutreach: true });
-    expect(h.enqueue).toHaveBeenCalledWith(expect.any(String), { skipOutreach: true });
+    expect(h.enqueue).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ skipOutreach: true }));
   });
   it("a rejected enqueue never breaks ingest, and notifyQualifiedLead still runs", async () => {
     setEnv({ QUAL_FOLLOWUP_MODE: "dry_run" });
