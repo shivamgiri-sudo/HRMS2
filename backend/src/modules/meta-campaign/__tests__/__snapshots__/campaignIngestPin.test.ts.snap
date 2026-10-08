@@ -1,0 +1,215 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`campaign link pin (before many requisitions) > createCampaign 1`] = `
+[
+  {
+    "params": [
+      "00000000-0000-4000-8000-0000000000a1",
+    ],
+    "sql": "SELECT id FROM job_requisition WHERE id = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "123",
+    ],
+    "sql": "SELECT mc.id, jr.requisition_code FROM meta_campaign mc LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id WHERE mc.meta_form_id = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "<uuid>",
+      "00000000-0000-4000-8000-0000000000a1",
+      null,
+      null,
+      null,
+      "123",
+      "C",
+      "draft",
+      null,
+      "u1",
+    ],
+    "sql": "INSERT INTO meta_campaign (id, requisition_id, meta_campaign_id, meta_adset_id, meta_ad_id, meta_form_id, campaign_name, campaign_status, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  },
+  {
+    "params": [
+      "<uuid>",
+    ],
+    "sql": "SELECT mc.*, jr.requisition_code, jr.designation_name, jr.branch_name, jr.process_name, jr.demand_raised_date, jr.training_start_date, jr.target_joining_date, jr.requested_by_name, jr.requested_headcount, jr.planned_batch_no, jr.planned_batch_name, jr.priority AS requisition_priority FROM meta_campaign mc LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id WHERE mc.id = ? LIMIT 1",
+  },
+]
+`;
+
+exports[`campaign link pin (before many requisitions) > ingest of a qualified lead for a single-requisition campaign 1`] = `
+[
+  {
+    "params": [
+      "lead-1",
+    ],
+    "sql": "SELECT * FROM meta_lead_raw WHERE meta_lead_id = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "form-1",
+    ],
+    "sql": "SELECT mc.id, mc.requisition_id, jr.meta_target_age_min, jr.meta_target_age_max, jr.education_requirement, jr.experience_min_years, jr.experience_max_years, jr.designation_name, jr.branch_name, jr.process_name, jr.meta_screening_config FROM meta_campaign mc LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id WHERE mc.meta_form_id = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "<uuid>",
+      "form-1",
+      "lead-1",
+      "00000000-0000-4000-8000-0000000000c1",
+      "00000000-0000-4000-8000-0000000000a1",
+      "{"id":"lead-1","created_time":"2026-10-09T05:00:00+0000","field_data":[{"name":"full_name","values":["Rig Person"]},{"name":"phone_number","values":["+919999900111"]}]}",
+      "Rig Person",
+      "9999900111",
+      null,
+      null,
+      null,
+      null,
+      null,
+      "qualified",
+      null,
+    ],
+    "sql": "INSERT INTO meta_lead_raw (id, meta_form_id, meta_lead_id, campaign_id, requisition_id, raw_payload, parsed_name, parsed_phone, parsed_email, parsed_age, parsed_location, parsed_education, parsed_experience_yr, screening_result, disqualification_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  },
+  {
+    "params": [
+      "00000000-0000-4000-8000-0000000000c1",
+    ],
+    "sql": "UPDATE meta_campaign SET leads_count = leads_count + 1 WHERE id = ?",
+  },
+  {
+    "params": [
+      "<uuid>",
+    ],
+    "sql": "SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1",
+  },
+]
+`;
+
+exports[`campaign link pin (before many requisitions) > re-screen retro-routes by the routing code 1`] = `
+[
+  {
+    "params": [
+      "lead-x",
+    ],
+    "sql": "SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "REQ-B2",
+    ],
+    "sql": "SELECT id, requisition_code FROM job_requisition WHERE UPPER(requisition_code) = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "form-1",
+    ],
+    "sql": "SELECT id, requisition_id FROM meta_campaign WHERE meta_form_id = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "form-1",
+    ],
+    "sql": "SELECT mc.id, mc.requisition_id, jr.meta_target_age_min, jr.meta_target_age_max, jr.education_requirement, jr.experience_min_years, jr.experience_max_years, jr.designation_name, jr.branch_name, jr.process_name, jr.meta_screening_config FROM meta_campaign mc LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id WHERE mc.meta_form_id = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "00000000-0000-4000-8000-0000000000c1",
+      "00000000-0000-4000-8000-0000000000b2",
+      "lead-x",
+    ],
+    "sql": "UPDATE meta_lead_raw SET campaign_id = ?, requisition_id = ? WHERE id = ?",
+  },
+  {
+    "params": [
+      "00000000-0000-4000-8000-0000000000b2",
+    ],
+    "sql": "SELECT meta_target_age_min, meta_target_age_max, education_requirement, experience_min_years, experience_max_years, meta_screening_config FROM job_requisition WHERE id = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "Rig Person",
+      "9999900111",
+      null,
+      null,
+      null,
+      null,
+      null,
+      "qualified",
+      null,
+      "lead-x",
+    ],
+    "sql": "UPDATE meta_lead_raw SET parsed_name = ?, parsed_phone = ?, parsed_email = ?, parsed_age = ?, parsed_location = ?, parsed_education = ?, parsed_experience_yr = ?, screening_result = ?, disqualification_reason = ? WHERE id = ?",
+  },
+  {
+    "params": [
+      "lead-x",
+    ],
+    "sql": "SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1",
+  },
+]
+`;
+
+exports[`campaign link pin (before many requisitions) > routing-code self-heal auto-creates a campaign for an unknown form 1`] = `
+[
+  {
+    "params": [
+      "REQ-B2",
+    ],
+    "sql": "SELECT id, requisition_code FROM job_requisition WHERE UPPER(requisition_code) = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "form-9",
+    ],
+    "sql": "SELECT id, requisition_id FROM meta_campaign WHERE meta_form_id = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "<uuid>",
+      "00000000-0000-4000-8000-0000000000b2",
+      "form-9",
+      "Auto-linked · REQ-B2",
+      "Self-registered from hidden requisition_code field on form form-9.",
+    ],
+    "sql": "INSERT INTO meta_campaign (id, requisition_id, meta_form_id, campaign_name, campaign_status, notes, created_by) VALUES (?, ?, ?, ?, 'active', ?, NULL)",
+  },
+  {
+    "params": [
+      "form-9",
+    ],
+    "sql": "SELECT mc.id, mc.requisition_id, jr.meta_target_age_min, jr.meta_target_age_max, jr.education_requirement, jr.experience_min_years, jr.experience_max_years, jr.designation_name, jr.branch_name, jr.process_name, jr.meta_screening_config FROM meta_campaign mc LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id WHERE mc.meta_form_id = ? LIMIT 1",
+  },
+]
+`;
+
+exports[`campaign link pin (before many requisitions) > routing-code self-heal re-points a drifted campaign 1`] = `
+[
+  {
+    "params": [
+      "REQ-B2",
+    ],
+    "sql": "SELECT id, requisition_code FROM job_requisition WHERE UPPER(requisition_code) = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "form-1",
+    ],
+    "sql": "SELECT id, requisition_id FROM meta_campaign WHERE meta_form_id = ? LIMIT 1",
+  },
+  {
+    "params": [
+      "00000000-0000-4000-8000-0000000000b2",
+      "00000000-0000-4000-8000-0000000000c1",
+    ],
+    "sql": "UPDATE meta_campaign SET requisition_id = ? WHERE id = ?",
+  },
+  {
+    "params": [
+      "form-1",
+    ],
+    "sql": "SELECT mc.id, mc.requisition_id, jr.meta_target_age_min, jr.meta_target_age_max, jr.education_requirement, jr.experience_min_years, jr.experience_max_years, jr.designation_name, jr.branch_name, jr.process_name, jr.meta_screening_config FROM meta_campaign mc LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id WHERE mc.meta_form_id = ? LIMIT 1",
+  },
+]
+`;
