@@ -198,7 +198,12 @@ async function reinvites(tag: RowTag, now: Date, o: StepScope, out: StageBCounts
     try {
       const p = await personFacts(row.mobile10);
       const [f] = await db.execute<RowDataPacket[]>(
-        `SELECT (SELECT COUNT(*) FROM he_attempt_v a WHERE a.mobile10 = ? AND a.attempted_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)) AS approaches,
+        // D7 approaches = invitations only (owner ruling 2026-10-09): one invitation run (email / WhatsApp of a requisition on a day) counts
+        // once; answers and reminders (T2-T6, T10, confirmation emails) never count. The line-up gate keeps he_attempt_v.
+        `SELECT (SELECT COUNT(DISTINCT a.requisition_id, DATE(a.created_at)) FROM he_message a WHERE a.mobile10 = ? AND a.direction = 'out' AND a.delivery_status <> 'failed'
+                   AND a.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                   AND (a.template_key = 'he_walkin_invite_email' OR a.template_key LIKE 'he_walkin_invite:%' OR a.template_key LIKE 'he_winback:%'
+                        OR a.template_key LIKE 'he_reinvite:%' OR a.template_key LIKE 'he_other_role_offer:%')) AS approaches,
                 (SELECT COUNT(*) FROM he_lead_event e JOIN he_drive d ON d.id = e.drive_id WHERE e.lead_id = ? AND e.event_type = 'no_show' AND d.requisition_id = ?) AS no_shows,
                 (SELECT status FROM he_lead WHERE id = ?) AS lead_status`, [row.mobile10, row.leadId, row.requisitionId, row.leadId]);
       const ok = reinviteAllowed({

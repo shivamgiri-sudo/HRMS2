@@ -243,3 +243,16 @@ describe("reschedule (T5)", () => {
     expect(h.events).toContainEqual(["L1", "needs_human_followup", expect.objectContaining({ detail: "no free slot to reschedule into" })]);
   });
 });
+
+describe("D7 approaches count invitations only (owner ruling 2026-10-09)", () => {
+  it("T2-T6 / T10 and confirmation emails do not count; one invitation run per requisition and day counts once", async () => {
+    h.sel.reinvite = [jrow({ journey_state: "reinvite_wait", m_state: "no_show" })];
+    h.person.lastFirstContactAt = ist("2026-10-01T10:00:00");
+    await runStageB(S, "live", ist("2026-10-12T11:00:00"), scope());
+    const f = find(/AS approaches/)[0];
+    expect(f.sql).not.toContain("he_attempt_v");
+    expect(f.sql).toContain("COUNT(DISTINCT a.requisition_id, DATE(a.created_at))");
+    for (const k of ["he_walkin_invite_email", "he_walkin_invite:%", "he_winback:%", "he_reinvite:%", "he_other_role_offer:%"]) expect(f.sql).toContain(k);
+    for (const k of ["he_walkin_confirmed", "he_reminder_1d", "he_reminder_2h_location", "he_reschedule_offer", "he_no_show_recovery", "he_optout_ack"]) expect(f.sql).not.toContain(k);
+  });
+});
