@@ -1333,6 +1333,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2145_requisition_selection_rules.sql", // Registered 2026-10-09. job_requisition.selection_rules JSON (rule mode/weight/missing policy, new rule kinds), job_requisition_criteria_version + _audit, qualified_followup.criteria_version_id/_verdict/_checked_at. CREATE TABLE IF NOT EXISTS plus information_schema-guarded ALTERs, re-runnable, no FKs.
   "migrations/2146_selection_person_fact.sql", // Registered 2026-10-09. selection_person_fact: per-person selection facts cache (mobile10 x source kind) for the criteria preview. CREATE TABLE IF NOT EXISTS only, no FKs.
   "migrations/2147_shortlist_decisions.sql", // Registered 2026-10-09. shortlist_run, shortlist_candidate, shortlist_override (+ _log), shortlist_approval: selection decisions, HR overrides and approvals (from the amended WS3 2143). CREATE TABLE IF NOT EXISTS only, no FKs.
+  "migrations/2148_followup_shortlist_link.sql", // Registered 2026-10-09. qualified_followup.shortlist_id (+ criteria_version_id where 2145 skipped it); shortlist_run.trigger_kind / evening_date + uq_slr_evening (one evening preview per requisition x source x IST day). information_schema-guarded, re-runnable, no FKs.
 ];
 
 export type MigrationHealth = {
