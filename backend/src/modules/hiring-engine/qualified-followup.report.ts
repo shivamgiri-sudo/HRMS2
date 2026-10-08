@@ -9,6 +9,7 @@ import { emailService } from "../communication/email.service.js";
 import type { FollowupSwitches, RowTag } from "./qualified-followup.policy.js";
 import { maskMobile, metaErrorCode, type StopReason } from "./qualified-followup.rules.js";
 import type { SourceType } from "./qualified-followup.types.js";
+import { collectResponsesSection, responsesLines, type ResponsesSection } from "./qualified-followup.report-responses.js";
 
 const C = "COLLATE utf8mb4_unicode_ci";
 const IST_MS = 5.5 * 3600_000;
@@ -31,6 +32,8 @@ export interface DailyReportData {
   blockedByReason: Array<{ channel: "email" | "whatsapp"; reason: string; count: number }>;
   /** Calling-file batches of the window (empty ones too); null when they could not be read. */
   callFiles: Array<{ slot: string | null; status: string; rows: number; notFiled: number; merged: number }> | null;
+  /** Candidate responses and inbound health (null = unavailable); absent = the section is not shown. */
+  responses?: ResponsesSection | null;
 }
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -135,6 +138,7 @@ export async function collectDailyReport(from: Date, to: Date, tag: RowTag): Pro
   return {
     date: new Date(to.getTime() + IST_MS).toISOString().slice(0, 10), mode: tag, perSource, skipped,
     waFailuresByCode: groupWaFailures(fails.map((r) => r.wa_error)), blockedByReason, callFiles: await collectCallFiles(f, t, tag),
+    responses: await collectResponsesSection(f, t, to),
   };
 }
 
@@ -181,7 +185,8 @@ export function buildDailyReport(d: DailyReportData): { subject: string; html: s
     ? `<ul>${d.blockedByReason.map((b) => `<li>${esc(b.channel)}: <b>${esc(b.reason)}</b> x${b.count}</li>`).join("")}</ul>` : "<p>None.</p>";
   const cf = callFileLines(d.callFiles);
   const cfHtml = `<p>${esc(cf.head)}</p>${cf.lines.length ? `<ul>${cf.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}`;
-  const html = `<h3>Qualified follow-up, last 24 hours to ${esc(d.date)} 08:30 IST (${esc(d.mode)})</h3>${table}<h3>Calling files</h3>${cfHtml}<h3>Skipped</h3>${skipHtml}<h3>WhatsApp failures by Meta code</h3>${failHtml}<h3>Blocked or skipped by reason</h3>${blockedHtml}`;
+  const resp = d.responses === undefined ? null : responsesLines(d.responses);
+  const html = `<h3>Qualified follow-up, last 24 hours to ${esc(d.date)} 08:30 IST (${esc(d.mode)})</h3>${table}<h3>Calling files</h3>${cfHtml}<h3>Skipped</h3>${skipHtml}<h3>WhatsApp failures by Meta code</h3>${failHtml}<h3>Blocked or skipped by reason</h3>${blockedHtml}${resp?.html ?? ""}`;
   const text = [
     `Qualified follow-up, last 24 hours to ${d.date} 08:30 IST (${d.mode})`, "",
     ...d.perSource.map((p) => cells(p).map((c, i) => `${head[i]} ${c}`).join(" | ").replace(/^Source /, "")),
@@ -192,6 +197,7 @@ export function buildDailyReport(d: DailyReportData): { subject: string; html: s
     ...(d.waFailuresByCode.length ? d.waFailuresByCode.map((f) => `${f.code} x${f.count}: ${f.sample}`) : ["None."]),
     "", "Blocked or skipped by reason",
     ...(d.blockedByReason.length ? d.blockedByReason.map((b) => `${b.channel}: ${b.reason} x${b.count}`) : ["None."]),
+    ...(resp ? ["", ...resp.text] : []),
   ].join("\n");
   return { subject, html, text };
 }
