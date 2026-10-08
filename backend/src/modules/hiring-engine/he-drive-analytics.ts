@@ -26,7 +26,7 @@ export interface PersonStageCounts { leads: number; invited: number; confirmed: 
 /** leads / qualified from the sources read model, invited / confirmed / arrived from drive state buckets,
  *  selected / joined = max(match outcome, sources value) so overlapping populations are not added twice.
  *  With `persons` (the events-based read, he-drive-persons.service.ts) leads / invited / confirmed / arrived come from it instead
- *  (leads never below qualified); noShow / declined stay the drive state counts. */
+ *  (as they are: no qualified floor); noShow / declined stay the drive state counts. */
 export function stageCountsByType(sources: SourceRow[], agg: DriveAggRow[], outcomes: MatchOutcome[], persons?: Record<SourceType, PersonStageCounts>): Record<SourceType, TypedStageCounts> {
   const out = perType<TypedStageCounts>(() => ({ ...zeroStages(), noShow: 0, declined: 0 }));
   const outSel = perType(() => 0);
@@ -51,7 +51,7 @@ export function stageCountsByType(sources: SourceRow[], agg: DriveAggRow[], outc
     out[k].joined = Math.max(out[k].joined, outJoin[k]);
     const p = persons?.[k];
     if (p) {
-      out[k].leads = Math.max(num(p.leads), out[k].qualified);
+      out[k].leads = num(p.leads); // no qualified floor: qualified comes from another read and must never lift a section's leads
       out[k].invited = num(p.invited); out[k].confirmed = num(p.confirmed); out[k].arrived = num(p.arrived);
     }
   }

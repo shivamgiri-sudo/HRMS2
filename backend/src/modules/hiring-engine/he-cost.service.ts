@@ -27,7 +27,7 @@ const spendSql = (n: number): string => `SELECT id, spend_inr, last_synced_at FR
 // Messages and calls are typed by the shared source rule (he-source-attribution.ts): a Meta-origin person (the match's stream credit, the
 // message's / call's drive kind, meta_lead_id or campaign link) is Live / Old Meta by form fill against the cutoff, everyone else he.
 // WhatsApp is billed per conversation: distinct (mobile, IST day).
-const messagesSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT ${sourceTypeSql({ streams, d: "d", lead: "al", liveFrom })} AS source_type, h.channel,
+const messagesSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT ${sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, ref: "h.created_at" })} AS source_type, h.channel,
        COUNT(DISTINCT h.mobile10, DATE(h.created_at)) AS persons_days, COUNT(DISTINCT h.id) AS msgs
   FROM he_message h
   LEFT JOIN he_drive d ON d.id = h.drive_id
@@ -36,7 +36,7 @@ const messagesSql = (liveFrom: string) => (n: number, streams: boolean): string 
  WHERE h.requisition_id IN (${ph(n)}) AND h.created_at >= ? AND h.created_at < ? AND h.direction = 'out' AND h.channel IN ('whatsapp','email') AND h.delivery_status <> 'failed'
  GROUP BY 1, h.channel`;
 
-const callsSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT ${sourceTypeSql({ streams, d: "d", lead: "al", liveFrom })} AS source_type,
+const callsSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT ${sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, ref: "c.created_at" })} AS source_type,
        COUNT(*) AS calls, SUM(CEIL(COALESCE(c.duration_s, 0) / 60)) AS minutes
   FROM he_call c
   LEFT JOIN he_match m ON m.id = c.match_id

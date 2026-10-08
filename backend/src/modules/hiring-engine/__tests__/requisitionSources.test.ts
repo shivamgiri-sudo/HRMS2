@@ -52,7 +52,7 @@ beforeEach(() => {
   ];
   execute.mockImplementation(async (sql: string, params: unknown[]) => {
     const q = String(sql);
-    const section = q.includes("FROM qualified_followup qf") ? "stages" : q.includes("FROM he_drive d") ? "driveLeads" : q.includes("FROM meta_lead_raw") ? "campaignLeads" : null;
+    const section = q.includes("FROM qualified_followup qf") ? "stages" : q.includes("FROM he_drive d") ? "driveLeads" : null;
     if (section && failOnce === section) { failOnce = null; throw new Error("SELECT boom WHERE mobile = 9876543210\n  at x.ts:1"); }
     if (q.includes("FROM job_requisition WHERE id")) {
       if (failOnce === "header") { failOnce = null; throw new Error("SELECT header boom"); }
@@ -60,9 +60,9 @@ beforeEach(() => {
     }
     if (q.includes("FROM requisition_stream WHERE")) return [streams];
     if (q.includes("FROM qualified_followup qf")) return [stages];
-    if (q.includes("FROM he_drive d")) return [matchLeads];
+    // one leads statement (sourcesLeadsSql): campaign fills and drive line-ups, one origin per person
+    if (q.includes("FROM he_drive d")) return [[...campaignLeads.map((c) => ({ source_type: "meta_live", origin_kind: "campaign", origin_id: c.campaign_id, origin_label: "Pune walk-in ad", leads: c.leads })), ...matchLeads]];
     if (q.includes("FROM meta_campaign")) return [campaigns];
-    if (q.includes("FROM meta_lead_raw")) return [campaignLeads];
     if (q.includes("FROM employees e")) return [[{ branch_name: hrBranch }]];
     return [[]];
   });
@@ -152,8 +152,8 @@ describe("getRequisitionSources", () => {
     campaigns = [{ id: C9, campaign_name: "x" }];
     await getRequisitionSources(RID, ALL);
     const all = sqlSeen().map((q) => stripRule(q)); // the source rule's subqueries are keyed (sourceAttribution.test.ts)
-    expect(all.length).toBeGreaterThanOrEqual(6);
-    for (const q of all) expect(q).toMatch(/requisition_id = \?|campaign_id IN|WHERE id = \?/);
+    expect(all.length).toBeGreaterThanOrEqual(5); // header, streams, stages, leads (fills + line-ups in one), campaigns
+    for (const q of all) expect(q).toMatch(/requisition_id = \?|requisition_id IN \(\?\)|campaign_id IN|WHERE id = \?/);
     for (const q of all) for (const m of q.matchAll(/\bhe_lead\b/g)) expect(q.slice(0, m.index).trimEnd()).toMatch(/JOIN$/);
     for (const q of all) expect(q).not.toMatch(/FROM\s+he_lead\b/);
     for (const q of all) for (const m of q.matchAll(/JOIN\s+(?:meta_lead_raw|meta_campaign|job_requisition)\b[^()]*?\bON\b([^\n]*)/g)) expect(m[1]).toContain("COLLATE utf8mb4_unicode_ci");
@@ -199,10 +199,10 @@ describe("getRequisitionSources", () => {
     const good = (await getRequisitionSources(RID, ALL))!;
     expect(good).toMatchObject({ partial: false, failedSections: [] });
     expect(good.rows[0].qualified).toBe(20);
-    failOnce = "campaignLeads";
+    failOnce = "driveLeads";
     clearRequisitionSourcesCache();
     const bad2 = (await getRequisitionSources(RID, ALL))!;
-    expect([bad2.partial, bad2.failedSections, bad2.rows[0].leads]).toEqual([true, ["campaignLeads"], 20]);
+    expect([bad2.partial, bad2.failedSections, bad2.rows[0].leads]).toEqual([true, ["driveLeads"], 20]);
   });
 });
 

@@ -31,6 +31,7 @@ import { buildDriveGroups, readAgg, readDriveAggRows, type DriveGroup, type Driv
 import { getSourcesForRequisitions, type RequisitionSourceRows } from "./he-sources-window.service.js";
 import { campaignProgress, readPersonStages, type CampaignProgress, type CampaignProgressRow } from "./he-drive-persons.service.js";
 import { outcomeReasonCounts } from "./he-outcome-reason.service.js";
+import { QF_TYPE_FROM_SQL, qfTypeSql } from "./he-requisition-sources.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
@@ -125,7 +126,7 @@ const { joined: FLAG_JOINED, selected: FLAG_SELECTED } = driveCreditSql({ m: "m"
 // The shared source rule (he-source-attribution.ts): credit through he_match.id (the credit's own drive_id is ignored), else a Meta drive or a
 // Meta-origin person (Live / Old by form fill time), else `he`. he_lead is joined by primary key as `al`.
 const creditJoin = (streams: boolean): string => attributionJoinsSql({ streams, match: "m", requisition: "d.requisition_id", lead: "al", leadId: "m.lead_id" });
-const typeCol = (streams: boolean, liveFrom: string): string => sourceTypeSql({ streams, d: "d", lead: "al", liveFrom });
+const typeCol = (streams: boolean, liveFrom: string): string => sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, ref: "d.drive_date" });
 const DRIVE_MATCH = `FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id`;
 
@@ -142,10 +143,11 @@ const outcomesSql = (liveFrom: string) => (n: number, streams: boolean): string 
  WHERE d.requisition_id IN (${ph(n)}) AND d.drive_date BETWEEN ? AND ?
  GROUP BY 1`;
 
-const stopsSql = (n: number): string => `SELECT qf.source_type, qf.stopped_reason, COUNT(*) AS n
-  FROM qualified_followup qf
+// Stops typed by the person rule (qfTypeSql), never qualified_followup.source_type (the pipeline's enqueue-time type).
+const stopsSql = (n: number, liveFrom: string): string => `SELECT ${qfTypeSql(liveFrom)} AS source_type, qf.stopped_reason, COUNT(*) AS n
+  ${QF_TYPE_FROM_SQL}
  WHERE qf.requisition_id IN (${ph(n)}) AND qf.qualified_at >= ? AND qf.qualified_at < ? AND qf.stopped_reason IN ('opted_out','requisition_closed','no_contact_details')
- GROUP BY qf.source_type, qf.stopped_reason`;
+ GROUP BY 1, qf.stopped_reason`;
 
 // Inbound messages of leads matched on window drives (idx_he_msg_lead); IST wall clock, so WEEKDAY() 0 = Monday and HOUR() 0-23 are IST.
 const repliesSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(streams, liveFrom)} AS source_type, WEEKDAY(hm.created_at) AS wd, HOUR(hm.created_at) AS hr, COUNT(DISTINCT hm.id) AS n
@@ -203,9 +205,9 @@ const readOutcomes = async (ids: string[], from: string, to: string, liveFrom: s
   return { outcomes, slotReleased };
 };
 
-const readStops = async (ids: string[], dt: string[]): Promise<Record<SourceType, Partial<Record<"opted_out" | "requisition_closed" | "no_contact_details", number>>>> => {
+const readStops = async (ids: string[], dt: string[], liveFrom: string): Promise<Record<SourceType, Partial<Record<"opted_out" | "requisition_closed" | "no_contact_details", number>>>> => {
   const out = perType(() => ({}) as Partial<Record<"opted_out" | "requisition_closed" | "no_contact_details", number>>);
-  const parts = await Promise.all(batchesOf(ids).map((b) => tolerant(async () => (await db.execute<RowDataPacket[]>(stopsSql(b.length), [...b, ...dt]))[0], [] as RowDataPacket[])));
+  const parts = await Promise.all(batchesOf(ids).map((b) => tolerant(async () => (await db.execute<RowDataPacket[]>(stopsSql(b.length, liveFrom), [...b, ...dt]))[0], [] as RowDataPacket[])));
   for (const r of parts.flat()) {
     const t = String(r.source_type) as SourceType;
     const k = String(r.stopped_reason) as "opted_out" | "requisition_closed" | "no_contact_details";
@@ -326,7 +328,7 @@ async function build(
     }, null as Awaited<ReturnType<typeof getSourcesForRequisitions>> | null),
     none ? ([] as TaggedAggRow[]) : section("drives", failed, () => readDriveAggRows(ids, dFrom, dTo, liveFrom), [] as TaggedAggRow[]),
     none ? empty : section("outcomes", failed, () => readOutcomes(ids, w.from, w.to, liveFrom), empty),
-    none ? perType(() => ({})) : section("stops", failed, () => readStops(ids, dt), perType(() => ({}))),
+    none ? perType(() => ({})) : section("stops", failed, () => readStops(ids, dt, liveFrom), perType(() => ({}))),
     none ? ([] as RowDataPacket[]) : section("replies", failed, async () => (await runBatched(ids, repliesSql(liveFrom), (b) => [...dt, ...b, w.from, w.to])), [] as RowDataPacket[]),
     none ? ([] as RowDataPacket[]) : section("arrivals", failed, async () => (await runBatched(ids, arrivalsSql(liveFrom), (b) => [...b, w.from, w.to])), [] as RowDataPacket[]),
     none ? null : section("previous", failed, async () => {
@@ -347,7 +349,7 @@ async function build(
     ? stageCountsByType(flat(previous.sources.byRequisition), previous.rows.filter((r) => inRange(r.date, prev.from, prev.to)), previous.outcomes, previous.persons)
     : stageCountsByType([], [], []);
   const campaigns = persons.campaigns.length
-    ? await section("campaigns", failed, () => campaignProgress(persons.campaigns, new Map(heads.map((h) => [h.id, { code: h.code, branch: h.branch }]))), [] as CampaignProgress[])
+    ? await section("campaigns", failed, () => campaignProgress(persons.campaigns, new Map(heads.map((h) => [h.id, { code: h.code, branch: h.branch }])), scope.all), [] as CampaignProgress[])
     : [];
   const daily = dailySeries(inWindow, w.from, w.to);
   const replies = timingGrids(toCells(repliesRows));

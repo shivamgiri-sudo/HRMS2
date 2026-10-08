@@ -10,8 +10,9 @@
  *     before the event (the events carry no requisition), so a confirmation whose match later became no_show or was deleted still counts;
  *   - arrival events on the window's drives.
  * Selected / joined per person follow the drive credit rule (he-drive-credit.ts) on the window's drives, for the per-campaign rows; the
- * typed totals keep the analytics outcomes read. One type per person and requisition (Live before Old before he) and one campaign (an
- * in-window form fill's campaign first, else the person's first fill's campaign). Each part starts from an index range: meta_campaign by
+ * typed totals keep the analytics outcomes read. One type per person and requisition (the person rule: Live only for a first form fill on
+ * or after the cutoff and activity on or after it) and one campaign: the campaign of the person's first fill (he_lead.meta_lead_id), or
+ * of the fill itself for a person not in the pool. Each part starts from an index range: meta_campaign by
  * requisition, he_drive by requisition + date, he_message by idx_he_msg_req (forced: on a small table the optimizer would scan it),
  * he_lead_event by idx_he_event_type_time or idx_he_event_drive;
  * everything else by key. Counts and ids only.
@@ -20,8 +21,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { driveCreditSql } from "./he-drive-credit.js";
 import { readAgg } from "./he-drive-trend.service.js";
-import { campaignFillTypeSql } from "./he-requisition-sources.service.js";
-import { attributionJoinsSql, sourceTypeSql } from "./he-source-attribution.js";
+import { attributionJoinsSql, fillPersonJoinsSql, fillPhoneSql, fillTypeSql, sourceTypeSql } from "./he-source-attribution.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import { addDays } from "./requisition-stream.window.js";
 
@@ -35,9 +35,9 @@ const ph = (n: number): string => Array(n).fill("?").join(",");
 const CI = "COLLATE utf8mb4_unicode_ci";
 const { joined: FLAG_JOINED, selected: FLAG_SELECTED } = driveCreditSql({ m: "m", d: "d", hl: "al", ac: "ac" });
 
-/** Every part yields: person, requisition_id, source_type, campaign_id, cpri (2 = in-window fill), stage, q, sel, joi. */
+/** Every part yields: person, requisition_id, source_type, campaign_id, cpri (campaign tie-break), stage, q, sel, joi. */
 export const personsSql = (n: number, streams: boolean, liveFrom: string): string => {
-  const type = sourceTypeSql({ streams, d: "d", lead: "al", liveFrom });
+  const type = (ref: string): string => sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, ref });
   const joins = (leadId: string, requisition: string): string => attributionJoinsSql({ streams, match: "m", requisition, lead: "al", leadId });
   const ids = ph(n);
   return `SELECT p.requisition_id, p.source_type, p.campaign_id, COUNT(*) AS leads, SUM(p.q) AS qualified, SUM(p.stage >= 1) AS contacted,
@@ -47,14 +47,15 @@ export const personsSql = (n: number, streams: boolean, liveFrom: string): strin
            NULLIF(SUBSTRING(MAX(CONCAT(u.cpri, COALESCE(u.campaign_id, ''))), 2), '') AS campaign_id,
            MAX(u.stage) AS stage, MAX(u.q) AS q, MAX(u.sel) AS sel, MAX(u.joi) AS joi
       FROM (
-        SELECT RIGHT(REGEXP_REPLACE(r.parsed_phone, '[^0-9]', ''), 10) ${CI} AS person, mc.requisition_id ${CI} AS requisition_id,
-               ${campaignFillTypeSql("r", liveFrom)} AS source_type, r.campaign_id ${CI} AS campaign_id, 2 AS cpri, 0 AS stage,
+        SELECT ${fillPhoneSql("r")} ${CI} AS person, mc.requisition_id ${CI} AS requisition_id,
+               ${fillTypeSql("r", liveFrom)} AS source_type, COALESCE(plf.campaign_id, r.campaign_id) ${CI} AS campaign_id, 1 AS cpri, 0 AS stage,
                (r.screening_result = 'qualified') AS q, 0 AS sel, 0 AS joi
-          FROM meta_campaign mc JOIN meta_lead_raw r ON r.campaign_id = mc.id
+          FROM meta_campaign mc JOIN meta_lead_raw r ON r.campaign_id = mc.id ${CI}
+          ${fillPersonJoinsSql("r")}
          WHERE mc.requisition_id IN (${ids}) AND (r.requisition_id IS NULL OR r.requisition_id = mc.requisition_id) AND r.parsed_phone IS NOT NULL
            AND r.created_at >= ? AND r.created_at < ?
         UNION ALL
-        SELECT al.mobile10 ${CI}, d.requisition_id ${CI}, ${type}, alf.campaign_id ${CI}, 1,
+        SELECT al.mobile10 ${CI}, d.requisition_id ${CI}, ${type("d.drive_date")}, alf.campaign_id ${CI}, 1,
                CASE WHEN m.state IN ('arrived','selected') THEN 4 WHEN m.state = 'confirmed' THEN 3 WHEN m.state IN ('invited','slot_released','no_show') THEN 2 ELSE 0 END,
                0, ${FLAG_SELECTED}, ${FLAG_JOINED}
           FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
@@ -62,8 +63,9 @@ export const personsSql = (n: number, streams: boolean, liveFrom: string): strin
           LEFT JOIN ats_candidate ac ON ac.id = al.ats_candidate_id ${CI}
          WHERE d.requisition_id IN (${ids}) AND d.drive_date BETWEEN ? AND ?
         UNION ALL
-        SELECT x.mobile10 ${CI}, x.requisition_id ${CI}, ${type}, alf.campaign_id ${CI}, 1, x.stage, 0, 0, 0
-          FROM (SELECT hm.mobile10, hm.requisition_id, hm.lead_id, hm.drive_id, MAX(IF(hm.template_key LIKE 'he_walkin_invite%', 2, 1)) AS stage
+        SELECT x.mobile10 ${CI}, x.requisition_id ${CI}, ${type("x.last_at")}, alf.campaign_id ${CI}, 1, x.stage, 0, 0, 0
+          FROM (SELECT hm.mobile10, hm.requisition_id, hm.lead_id, hm.drive_id, MAX(IF(hm.template_key LIKE 'he_walkin_invite%', 2, 1)) AS stage,
+                       MAX(hm.created_at) AS last_at
                   FROM he_message hm FORCE INDEX (idx_he_msg_req) WHERE hm.requisition_id IN (${ids}) AND hm.created_at >= ? AND hm.created_at < ? AND hm.direction = 'out'
                    AND (hm.delivery_status IS NULL OR hm.delivery_status <> 'failed')
                  GROUP BY hm.mobile10, hm.requisition_id, hm.lead_id, hm.drive_id) x
@@ -71,15 +73,16 @@ export const personsSql = (n: number, streams: boolean, liveFrom: string): strin
           LEFT JOIN he_match m ON m.lead_id = x.lead_id AND m.requisition_id = x.requisition_id
           ${joins("x.lead_id", "x.requisition_id")}
         UNION ALL
-        SELECT al.mobile10 ${CI}, x.requisition_id ${CI}, ${type}, alf.campaign_id ${CI}, 1, 3, 0, 0, 0
+        SELECT al.mobile10 ${CI}, x.requisition_id ${CI}, ${type("ev.created_at")}, alf.campaign_id ${CI}, 1, 3, 0, 0, 0
           FROM he_lead_event ev JOIN he_message x ON x.id = (SELECT h.id FROM he_message h WHERE h.lead_id = ev.lead_id AND h.direction = 'out'
-                 AND h.requisition_id IS NOT NULL AND h.created_at <= ev.created_at ORDER BY h.created_at DESC, h.id DESC LIMIT 1)
-          LEFT JOIN he_drive d ON d.id = COALESCE(ev.drive_id, x.drive_id)
+                 AND h.requisition_id IS NOT NULL AND (h.delivery_status IS NULL OR h.delivery_status <> 'failed') AND h.created_at <= ev.created_at
+                 ORDER BY h.created_at DESC, h.id DESC LIMIT 1)
+          LEFT JOIN he_drive d ON d.id = x.drive_id
           LEFT JOIN he_match m ON m.lead_id = ev.lead_id AND m.requisition_id = x.requisition_id
           ${joins("ev.lead_id", "x.requisition_id")}
          WHERE ev.event_type IN ('confirmed','call_confirmed') AND ev.created_at >= ? AND ev.created_at < ? AND x.requisition_id IN (${ids})
         UNION ALL
-        SELECT al.mobile10 ${CI}, d.requisition_id ${CI}, ${type}, alf.campaign_id ${CI}, 1, 4, 0, 0, 0
+        SELECT al.mobile10 ${CI}, d.requisition_id ${CI}, ${type("d.drive_date")}, alf.campaign_id ${CI}, 1, 4, 0, 0, 0
           FROM he_drive d JOIN he_lead_event ev ON ev.drive_id = d.id AND ev.event_type = 'arrived'
           LEFT JOIN he_match m ON m.lead_id = ev.lead_id AND m.requisition_id = d.requisition_id
           ${joins("ev.lead_id", "d.requisition_id")}
@@ -118,27 +121,44 @@ export interface CampaignProgress {
   requisitionId: string; requisitionCode: string; branch: string; sourceType: "meta_live" | "meta_old";
   stages: { leads: number; qualified: number; contacted: number; invited: number; confirmed: number; arrived: number; selected: number; joined: number };
 }
-const campaignsSql = (n: number): string => `SELECT mc.id, mc.campaign_name, mc.campaign_status, jr.requisition_code
+const campaignsSql = (n: number): string => `SELECT mc.id, mc.campaign_name, mc.campaign_status, mc.requisition_id, jr.requisition_code
   FROM meta_campaign mc LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id ${CI}
  WHERE mc.id IN (${ph(n)})`;
 
-/** Names, status and the campaign's own requisition (one keyed statement), plus the code and branch of the requisition the activity is for. */
-export async function campaignProgress(rows: CampaignProgressRow[], heads: Map<string, { code: string; branch: string }>): Promise<CampaignProgress[]> {
+export const OTHER_BRANCH_CAMPAIGN = "Campaign of another branch";
+/**
+ * Names, status and the campaign's own requisition (one keyed statement), plus the code and branch of the requisition the activity is for.
+ * A branch-scoped caller never sees a campaign whose own requisition is outside their scope (`heads` are the in-scope requisitions): its
+ * rows keep their counts under a blank campaign ("Campaign of another branch") and are merged per requisition and type.
+ */
+export async function campaignProgress(rows: CampaignProgressRow[], heads: Map<string, { code: string; branch: string }>, scopeAll = true): Promise<CampaignProgress[]> {
   const ids = [...new Set(rows.map((r) => r.campaignId).filter((x): x is string => !!x))];
   const info = new Map<string, RowDataPacket>();
   for (let i = 0; i < ids.length; i += 200) {
     const b = ids.slice(i, i + 200);
     for (const r of (await db.execute<RowDataPacket[]>(campaignsSql(b.length), b))[0]) info.set(String(r.id), r);
   }
-  return rows.map((r) => {
-    const c = r.campaignId ? info.get(r.campaignId) : undefined;
+  const out = new Map<string, CampaignProgress>();
+  for (const r of rows) {
+    const found = r.campaignId ? info.get(r.campaignId) : undefined;
+    const hidden = !scopeAll && !!r.campaignId && !heads.has(String(found?.requisition_id ?? ""));
+    const c = hidden ? undefined : found;
+    const campaignId = hidden ? null : r.campaignId;
     const h = heads.get(r.requisitionId);
-    const { campaignId, requisitionId, sourceType, ...stages } = r;
-    return {
-      campaignId, campaignName: c ? String(c.campaign_name ?? "") : campaignId ? "" : "No campaign", campaignStatus: c?.campaign_status == null ? null : String(c.campaign_status),
-      campaignRequisitionCode: c?.requisition_code == null ? null : String(c.requisition_code), requisitionId, requisitionCode: h?.code ?? "", branch: h?.branch ?? "", sourceType, stages,
-    };
-  }).sort((a, b) => a.requisitionCode.localeCompare(b.requisitionCode) || a.sourceType.localeCompare(b.sourceType) || b.stages.leads - a.stages.leads
+    const { requisitionId, sourceType, ...counts } = r;
+    delete (counts as Partial<CampaignProgressRow>).campaignId;
+    const key = `${campaignId ?? (hidden ? "~other" : "~none")}|${requisitionId}|${sourceType}`;
+    const prev = out.get(key);
+    if (prev) { for (const k of Object.keys(prev.stages) as Array<keyof CampaignProgress["stages"]>) prev.stages[k] += counts[k]; continue; }
+    out.set(key, {
+      campaignId, campaignName: c ? String(c.campaign_name ?? "") : hidden ? OTHER_BRANCH_CAMPAIGN : campaignId ? "" : "No campaign",
+      campaignStatus: c?.campaign_status == null ? null : String(c.campaign_status),
+      campaignRequisitionCode: c?.requisition_code == null ? null : String(c.requisition_code), requisitionId, requisitionCode: h?.code ?? "", branch: h?.branch ?? "", sourceType,
+      stages: { ...counts },
+    });
+  }
+  return [...out.values()].sort((a, b) => a.requisitionCode.localeCompare(b.requisitionCode) || a.sourceType.localeCompare(b.sourceType)
+    || Number(a.campaignId === null) - Number(b.campaignId === null) || b.stages.leads - a.stages.leads
     || a.campaignName.localeCompare(b.campaignName));
 }
 
