@@ -52,6 +52,8 @@ describe("worker registration parity", () => {
     "startPipelineHealthAlerts",
     // Qualified follow-up cadence tick (5 min, MySQL advisory lock); no-op unless QUAL_FOLLOWUP_MODE is dry_run or live.
     "startQualifiedFollowupWorker",
+    // WS3 D4 shortlist preview runs (5 min, MySQL advisory lock); not started unless SHORTLIST_AUTO_PREVIEW names campaigns or "all".
+    "startShortlistPreviewWorker",
     // Inbound email replies -> response review queue (5 min, MySQL advisory lock); not started unless INBOUND_EMAIL_MODE is set.
     "startInboundEmailWorker",
     // Scheduled MIS emails (e93e050e1): gated by its own MIS_EMAIL_SCHEDULER_ENABLED,

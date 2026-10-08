@@ -17,6 +17,7 @@ import { startEmployeeMasterSnapshotScheduler } from "./cron/employee-master-sna
 import { startExitAutoAdvanceScheduler, stopExitAutoAdvanceScheduler } from "./cron/exitAutoAdvance.cron.js";
 import { startPipelineHealthAlerts, stopPipelineHealthAlerts } from "./modules/hiring-engine/pipeline-health.cron.js";
 import { startQualifiedFollowupWorker, stopQualifiedFollowupWorker } from "./modules/hiring-engine/qualified-followup.worker.js";
+import { startShortlistPreviewWorker, stopShortlistPreviewWorker } from "./modules/selection/shortlist-preview.worker.js";
 import { startInboundEmailWorker, stopInboundEmailWorker } from "./workers/inbound-email.worker.js";
 import { startMetaLeadSyncScheduler, stopMetaLeadSyncScheduler } from "./cron/metaLeadSync.cron.js";
 import { startApprovalDigestScheduler } from "./modules/approval-center/approval-digest.cron.js";
@@ -139,6 +140,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     stopMetaLeadSyncScheduler();
     stopPipelineHealthAlerts();
     stopQualifiedFollowupWorker();
+    stopShortlistPreviewWorker();
     stopInboundEmailWorker();
 
     // Clear all registered timers
@@ -341,6 +343,7 @@ function startServer() {
         startMetaLeadSyncScheduler();
         startPipelineHealthAlerts();
         startQualifiedFollowupWorker();
+        startShortlistPreviewWorker();
         startInboundEmailWorker();
         startBreachSlaCron();
         // Escalates DPDP withdrawal requests that passed their decision deadline.
@@ -491,6 +494,7 @@ function startServer() {
         startMetaLeadSyncScheduler();
         startPipelineHealthAlerts();
         startQualifiedFollowupWorker();
+        startShortlistPreviewWorker();
         startInboundEmailWorker();
       }
     } else {
@@ -503,6 +507,7 @@ function startServer() {
         startMetaLeadSyncScheduler();
         startPipelineHealthAlerts();
         startQualifiedFollowupWorker();
+        startShortlistPreviewWorker();
         startInboundEmailWorker();
       }
     }

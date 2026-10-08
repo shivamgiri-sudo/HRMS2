@@ -4,7 +4,7 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { canonicalJson, sha256 } from "./compile-criteria.js";
 import { normaliseFacts } from "./facts-normalise.js";
-import { istText, loadRawPeople } from "./facts-loader.service.js";
+import { istText, loadMetaLeadFacts, loadRawPeople } from "./facts-loader.service.js";
 import type { CandidateFacts, SourceKind, SubSource } from "./selection-types.js";
 
 export const factsHashOf = (f: CandidateFacts) => sha256(canonicalJson(f));
@@ -63,4 +63,21 @@ export async function readFactCache(o: { sourceKind: SourceKind; subSources?: Su
       facts: (typeof r.facts_json === "string" ? JSON.parse(r.facts_json) : r.facts_json) as CandidateFacts })),
     nextKey: rows.length === limit ? String(rows[rows.length - 1].mobile10) : null,
   };
+}
+
+/** Live Meta arrivals (the D4 worker): each lead's facts into the cache before an arrival preview, newest record winning. Bounded by the caller. */
+export async function cacheMetaLeadFacts(ids: string[], now = new Date()): Promise<number> {
+  const runAt = istText(now);
+  let n = 0;
+  for (const id of ids) {
+    const f = await loadMetaLeadFacts(id, now);
+    if (!f) continue;
+    await db.execute(
+      `INSERT INTO selection_person_fact (mobile10, source_kind, sub_source, source_ref, facts_json, facts_hash, refreshed_at) VALUES (?, 'meta_live', ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE sub_source = VALUES(sub_source), source_ref = VALUES(source_ref),
+         facts_json = IF(facts_hash = VALUES(facts_hash), facts_json, VALUES(facts_json)), facts_hash = VALUES(facts_hash), refreshed_at = VALUES(refreshed_at)`,
+      [f.personKey, f.subSource, id, JSON.stringify(f), factsHashOf(f), runAt]);
+    n++;
+  }
+  return n;
 }
