@@ -88,7 +88,7 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
     const [mr] = await db.execute<RowDataPacket[]>(
       `SELECT m.id, m.requisition_id, m.slot_at, m.token, m.state, d.id AS drive_id, d.drive_date, d.status AS drive_status, d.reinvite,
               jr.designation_name, jr.branch_name, jr.bmi_assessment_url, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount,
-              bm.address, bm.latitude, bm.longitude
+              bm.address, bm.latitude, bm.longitude, bm.hr_contact
          FROM he_match m LEFT JOIN he_drive d ON d.id = m.drive_id JOIN job_requisition jr ON jr.id = m.requisition_id
          LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
         WHERE m.id = ? LIMIT 1`, [o.matchId]);
@@ -154,7 +154,10 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
     maps_link: lat != null && lng != null ? `https://maps.google.com/?q=${lat},${lng}` : m?.address ? `https://maps.google.com/?q=${encodeURIComponent(String(m.address))}` : null,
     assessment_link: m?.bmi_assessment_url || env("HE_ASSESSMENT_TEXT", "Given at the branch on arrival"), docs_list: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"),
     reference_id: m ? `HE-${String(m.id).replace(/-/g, "").slice(0, 6).toUpperCase()}` : null,
-    contact_name: env("HE_HR_CONTACT_NAME", ""), contact_phone: env("HE_HR_CONTACT_PHONE", ""),
+    // T2 needs both. Unset on prod, they blocked every T2 ("missing contact_name", R0 2026-10-09); the branch's HR contact, then the
+    // reception, keep the transactional confirmation going.
+    contact_name: env("HE_HR_CONTACT_NAME", "our HR team"),
+    contact_phone: env("HE_HR_CONTACT_PHONE", "") || String(m?.hr_contact ?? "").trim() || "the branch reception",
     location_token: m?.token, ...o.extra,
   };
   let params: string[];

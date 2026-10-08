@@ -67,7 +67,11 @@ async function sendFollowUpTemplate(leadId: string, key: TemplateKey, matchId: s
           AND (? IS NULL OR w.drive_id <=> (SELECT drive_id FROM he_match WHERE id = ?)) LIMIT 1`, [leadId, `${key}:%`, matchId, matchId]);
     if (dup.length) return;
     const r = await sendTemplateToLead({ leadId, key, matchId, transactional: true });
-    if (r.status !== "sent") logger.info({ leadId, key, status: r.status, reason: "reason" in r ? r.reason : undefined }, "[he-ingest] follow-up template not sent");
+    if (r.status === "blocked") {
+      // Visible to the report and ops reads (a blocked T2 used to be an info log only).
+      logger.warn({ leadId, key, status: r.status, reason: r.reason }, "[he-ingest] follow-up template not sent");
+      await addEvent(leadId, "followup_template_blocked", { channel: "whatsapp", detail: `${key}: ${r.reason}` });
+    } else if (r.status !== "sent") logger.warn({ leadId, key, status: r.status, error: "error" in r ? r.error : undefined }, "[he-ingest] follow-up template not sent");
   } catch (err) { logger.warn({ leadId, key, err: (err as Error).message }, "[he-ingest] follow-up template failed"); }
 }
 

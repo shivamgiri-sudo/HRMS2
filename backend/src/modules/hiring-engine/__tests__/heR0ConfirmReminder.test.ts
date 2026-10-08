@@ -82,3 +82,34 @@ describe("R0 pin: reminders select confirmed matches only", () => {
     expect(h.sqls.filter((s) => s.includes("he_reminder") || s.includes("m.state = 'confirmed'"))).toMatchSnapshot();
   });
 });
+
+describe("R0 fix: T2 needs no HR contact env; a blocked follow-up template is visible", () => {
+  it("sends T2 with the approved Pinbot name and en language when the HR contact env is unset (branch HR contact)", async () => {
+    await recordInviteAnswer("M1", "yes");
+    expect(h.pinbot).toHaveLength(1);
+    const [to, name, params, lang] = h.pinbot[0] as [string, string, string[], string];
+    expect(to).toBe("9876543210");
+    expect(name).toBe("t2_he_appointment_confirmed");
+    expect(lang).toBe("en");
+    expect(params.slice(5)).toEqual(["our HR team", "hr.noida@teammas.in"]);
+  });
+
+  it("falls back to the branch reception when the branch has no HR contact either", async () => {
+    h.hrContact = null;
+    const r = await sendTemplateToLead({ leadId: "L1", key: "he_walkin_confirmed", matchId: "M1", transactional: true });
+    expect(r.status).toBe("sent");
+    expect((h.pinbot[0] as [string, string, string[]])[2].slice(5)).toEqual(["our HR team", "the branch reception"]);
+  });
+
+  it("logs a blocked T2 at warn and records followup_template_blocked", async () => {
+    const { channelAllowed } = await import("../he-campaign-config.service.js");
+    vi.mocked(channelAllowed).mockResolvedValueOnce(false);
+    const { logger } = await import("../../../logger.js");
+    const warn = vi.spyOn(logger, "warn");
+    await recordInviteAnswer("M1", "yes");
+    expect(h.pinbot).toHaveLength(0);
+    expect(h.events).toContainEqual(["L1", "followup_template_blocked", expect.objectContaining({ channel: "whatsapp", detail: "he_walkin_confirmed: whatsapp_off_for_campaign" })]);
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ key: "he_walkin_confirmed", status: "blocked", reason: "whatsapp_off_for_campaign" }), "[he-ingest] follow-up template not sent");
+    warn.mockRestore();
+  });
+});
