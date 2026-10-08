@@ -27,6 +27,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { providerFactory } from "../communication/providers/provider.factory.js";
 import { providerConfigService } from "../communication/provider-config.service.js";
+import { PinbotWhatsAppProvider } from "../communication/providers/whatsapp/pinbot.provider.js";
 import { emailService } from "../communication/email.service.js";
 import { triggerVoiceCall, isVoicebotConfigured } from "./voicebot.provider.js";
 import {
@@ -197,9 +198,7 @@ ${salary ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius
 </body></html>`;
 }
 
-async function loadLeadContext(
-  leadId: string,
-): Promise<{
+async function loadLeadContext(leadId: string): Promise<{
   ctx: LeadContext;
   qualified: boolean;
   alreadySent: boolean;
@@ -362,6 +361,26 @@ export async function notifyQualifiedLead(
       channel: "whatsapp",
       reason: "Lead has no phone number",
     });
+  } else if (
+    pinbotInvite.isConfigured() &&
+    slot &&
+    ctx.branchAddress &&
+    ctx.bmiUrl
+  ) {
+    // Approved-template invite via Pinbot. A candidate we have never messaged can only be
+    // reached with a template; on failure the Wassenger fallback below still runs.
+    outcome.attempted.push("whatsapp");
+    const res = await pinbotInvite.sendTemplate(
+      ctx.phone,
+      process.env.PINBOT_INTERVIEW_TEMPLATE || "interview_invitation",
+      [ctx.name, slot.dateLabel, slot.timeLabel, ctx.branchAddress, ctx.bmiUrl],
+    );
+    if (res.success) outcome.succeeded.push("whatsapp");
+    else
+      outcome.failed.push({
+        channel: "whatsapp",
+        error: res.error ?? "unknown error",
+      });
   } else {
     try {
       // DB config first, env second — same resolution order as dispatch.service.ts, so a provider
