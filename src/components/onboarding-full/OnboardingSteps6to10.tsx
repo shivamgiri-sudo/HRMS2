@@ -638,7 +638,7 @@ export function Step10Statutory({
   // no longer refuses a submission without it, so this button must not either —
   // and the "still missing" line below must not name it as the reason, or it sends
   // candidates back to Step 4 for a document that is not holding them up.
-  const missingMandatoryDocs = findMissingBlockingDocs(status?.documents, digilockerDone);
+  const missingMandatoryDocs = findMissingBlockingDocs(status?.documents, digilockerDone, !!status?.dra?.required);
   const documentsOk = missingMandatoryDocs.length === 0;
   const canSubmit = statutory.declarationAccepted && otpVerified && privacyConsentAccepted && consentAccepted && documentsOk;
 

@@ -32,7 +32,8 @@ import {
 import type { EmployeeForm, BankForm, StatusData, BgvStatus } from "./useOnboardingFull";
 import { PennyDropButton } from "./PennyDropButton";
 import { INDIA_STATES, citiesForState, OTHER_CITY } from "@/data/indiaStatesCities";
-import { findMissingMandatoryDocs, MANDATORY_DOCUMENT_RULES } from "./mandatoryDocuments";
+import { findMissingMandatoryDocs, MANDATORY_DOCUMENT_RULES, DRA_RULE } from "./mandatoryDocuments";
+import { DraDetailsForm, type DraDetails } from "./DraDetailsForm";
 
 // ── Constants (unchanged) ─────────────────────────────────────────────────────
 
@@ -62,12 +63,17 @@ const REQUIRED_DOCS = [
   { type: "Voter ID", label: "Voter ID (optional)", required: false },
 ];
 
+const DRA_STATUS_TEXT: Record<string, string> = {
+  pending: "Pending verification", verified: "Verified", invalid: "Invalid",
+  expired: "Expired", mismatch: "Needs attention",
+};
+
 const DOC_TYPES = [
   "Aadhaar", "PAN Card", "Passport", "Driving License", "Voter ID",
   "Cancelled Cheque", "Bank Passbook", "Passport Photo",
   "10th Marksheet", "12th Marksheet", "Degree Certificate", "Diploma Certificate",
   "Experience Letter", "Offer Letter", "Appointment Letter", "Salary Slip",
-  "Relieving Letter", "NOC Letter", "Form 16", "Address Proof", "Other",
+  "Relieving Letter", "NOC Letter", "Form 16", "Address Proof", "DRA Certificate", "Other",
 ];
 
 // City Field (unchanged logic)
@@ -539,13 +545,14 @@ export function Step3AddressKyc({
 // ── Step 4: Document Upload (Redesigned) ──────────────────────────────────────
 
 export function Step4Documents({
-  status, token, saving, consentAccepted, onUpload, onDelete,
+  status, token, saving, consentAccepted, onUpload, onSaveDraDetails, onDelete,
 }: {
   status: StatusData | null;
   token: string;
   saving: boolean;
   consentAccepted: boolean;
   onUpload: (file: File, docType: string, docName: string, pageNo: string) => Promise<void>;
+  onSaveDraDetails?: (d: DraDetails) => Promise<void>;
   onDelete: (id: string) => void;
 }) {
   const [docType, setDocType] = useState("Aadhaar");
@@ -593,7 +600,9 @@ export function Step4Documents({
   };
 
   const digilockerDone = status?.digilocker?.status === "documents_received";
-  const requiredMissing = findMissingMandatoryDocs(status?.documents, digilockerDone);
+  const draRequired = !!status?.dra?.required;
+  const dra = status?.dra?.current ?? null;
+  const requiredMissing = findMissingMandatoryDocs(status?.documents, digilockerDone, draRequired);
 
   return (
     <GlassCard>
@@ -624,6 +633,22 @@ export function Step4Documents({
           </InfoBox>
         )}
 
+        {draRequired && (
+          <InfoBox variant={!dra ? "warning" : dra.status === "verified" ? "success" : dra.status === "pending" ? "info" : "warning"}>
+            <p className="font-bold">DRA Certificate {dra ? `· ${DRA_STATUS_TEXT[dra.status]}` : "· required"}</p>
+            <p className="text-xs mt-1">
+              {!dra && "Upload your IIBF DRA (Debt Recovery Agent) certificate: choose “DRA Certificate” as the document type. It is mandatory for this process."}
+              {dra?.status === "pending" && "Received. HR will verify it with IIBF. Nothing more is needed from you unless HR contacts you."}
+              {dra?.status === "verified" && "Your certificate has been verified."}
+              {dra && ["invalid", "expired", "mismatch"].includes(dra.status) && `${dra.reason ?? "The certificate needs attention."} You can upload the correct certificate again below.`}
+            </p>
+            {onSaveDraDetails && !dra?.detailsEntered && (
+              <p className="mt-1 text-xs font-bold">Also required: enter the four certificate details below, then upload the file.</p>
+            )}
+            {onSaveDraDetails && <DraDetailsForm saved={dra} onSave={onSaveDraDetails} />}
+          </InfoBox>
+        )}
+
         {/* Document Checklist */}
         <div className="rounded-xl border-2 border-slate-200 overflow-hidden">
           <button
@@ -639,7 +664,7 @@ export function Step4Documents({
           </button>
           {showChecklist && (
             <div className="p-4 grid gap-2 sm:grid-cols-2">
-              {MANDATORY_DOCUMENT_RULES.map((rule) => {
+              {(draRequired ? [...MANDATORY_DOCUMENT_RULES, DRA_RULE] : MANDATORY_DOCUMENT_RULES).map((rule) => {
                 const done = !requiredMissing.some((m) => m.label === rule.label);
                 return (
                   <div key={rule.label} className={`flex items-center gap-2 text-xs rounded-xl px-3 py-2.5 border ${

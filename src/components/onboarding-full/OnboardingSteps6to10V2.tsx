@@ -442,7 +442,7 @@ export function Step10Statutory({
   const form11ConsentReady = pfForm11Check1 && pfForm11Check2 && pfForm11Check3;
 
   const digilockerDone = status?.digilocker?.status === "documents_received";
-  const missingMandatoryDocs = findMissingBlockingDocs(status?.documents, digilockerDone);
+  const missingMandatoryDocs = findMissingBlockingDocs(status?.documents, digilockerDone, !!status?.dra?.required);
   const documentsOk = missingMandatoryDocs.length === 0;
   const canSubmit = statutory.declarationAccepted && otpVerified && privacyConsentAccepted && consentAccepted && documentsOk;
 

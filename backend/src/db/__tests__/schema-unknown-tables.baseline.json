@@ -235,5 +235,8 @@
   ],
   "workers/bulk-import.worker.ts": [
     "bulk_import_queue"
+  ],
+  "modules/ats/dra-certificate.service.ts": [
+    "candidate_dra_certificate"
   ]
 }

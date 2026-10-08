@@ -41,6 +41,11 @@ export const MANDATORY_DOCUMENT_RULES: MandatoryDocRule[] = [
 // backend/src/modules/ats/onboarding-full.service.ts — if the two disagree, the
 // button either stays disabled for no reason or enables against a backend that
 // still refuses the submission with a 400.
+// DRA Certificate: mandatory ONLY for the SBI Credit Card cost centre (BSS/OB/AHMH-JD/1050). The backend decides
+// that from the candidate's offer and reports it as status.dra.required; keep the label and match text identical to
+// onboarding-full.service.ts.
+export const DRA_RULE: MandatoryDocRule = { label: "DRA Certificate", matches: ["dra certificate"] };
+
 export const NON_BLOCKING_DOCUMENT_LABELS = new Set<string>(["PAN Card"]);
 
 /**
@@ -52,11 +57,12 @@ export const NON_BLOCKING_DOCUMENT_LABELS = new Set<string>(["PAN Card"]);
 export function findMissingMandatoryDocs(
   documents: Pick<DocRecord, "doc_type" | "doc_name">[] | undefined,
   digilockerDone = false,
+  draRequired = false,
 ): MandatoryDocRule[] {
   const held = (documents ?? [])
     .map((d) => `${d.doc_type ?? ""} ${d.doc_name ?? ""}`.toLowerCase())
     .filter(Boolean);
-  return MANDATORY_DOCUMENT_RULES.filter((rule) => {
+  return (draRequired ? [...MANDATORY_DOCUMENT_RULES, DRA_RULE] : MANDATORY_DOCUMENT_RULES).filter((rule) => {
     if (digilockerDone && (rule.matches.includes("aadhaar") || rule.matches.includes("pan"))) return false;
     return !held.some((text) => rule.matches.some((m) => text.includes(m)));
   });
@@ -71,7 +77,8 @@ export function findMissingMandatoryDocs(
 export function findMissingBlockingDocs(
   documents: Pick<DocRecord, "doc_type" | "doc_name">[] | undefined,
   digilockerDone = false,
+  draRequired = false,
 ): MandatoryDocRule[] {
-  return findMissingMandatoryDocs(documents, digilockerDone)
+  return findMissingMandatoryDocs(documents, digilockerDone, draRequired)
     .filter((rule) => !NON_BLOCKING_DOCUMENT_LABELS.has(rule.label));
 }

@@ -1324,6 +1324,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2135_requisition_streams.sql", // Registered 2026-10-07. requisition_stream (+ _day, _event, _plan, _match), requisition_stream.version, created_at/updated_at DATETIME(6), requisition_stream_plan.idx_rsp_date and qualified_followup.owner. CREATE TABLE IF NOT EXISTS plus information_schema-guarded ALTERs, re-runnable.
   "migrations/2136_he_match_outcome_reason.sql", // Registered 2026-10-08. he_match_outcome_reason (one no-show/decline reason per he_match, last tap wins). CREATE TABLE IF NOT EXISTS only, re-runnable.
   "migrations/2144_employee_master_snapshot_exit_reason.sql", // Registered 2026-10-08. employee_master_snapshot.exit_reason (Employee Master "Exit Reason" column). information_schema-guarded ALTER, re-runnable.
+  "migrations/2137_candidate_dra_certificate.sql", // Registered 2026-10-08. candidate_dra_certificate: DRA certificate upload + verification history for SBI Credit Card onboarding (cost centre BSS/OB/AHMH-JD/1050)
 ];
 
 export type MigrationHealth = {

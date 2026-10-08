@@ -49,6 +49,21 @@ export type StatusData = {
     client_transaction_id?: string | null;
     stale?: boolean;
   };
+  /** SBI Credit Card only: is the DRA certificate mandatory, and where does the current upload stand. */
+  dra?: {
+    required: boolean;
+    current: null | {
+      status: "pending" | "verified" | "invalid" | "expired" | "mismatch";
+      reason: string | null;
+      uploadedAt: string;
+      verifiedAt: string | null;
+      detailsEntered: boolean;
+      registrationNo: string | null;
+      serialNo: string | null;
+      securityCode: string | null;
+      certificateDate: string | null;
+    };
+  };
   esign?: {
     status?: string;
     verification_url?: string | null;
@@ -905,6 +920,11 @@ export function useOnboardingFull(token: string) {
     hrmsApi.post(`${API}/progress`, { token, stepIdx: Math.min(10, step) }).catch((e) => console.warn("[onboarding] Background operation failed:", e));
   };
 
+  const saveDraDetails = async (d: { registrationNo: string; serialNo: string; securityCode: string; certificateDate: string }) => {
+    await hrmsApi.post(`${API}/dra-details`, { token, ...d });
+    await load();
+  };
+
   const uploadDoc = async (file: File, docType: string, docName: string, pageNo: string) => {
     const fd = new FormData();
     fd.append("token", token); fd.append("docType", docType); fd.append("docName", docName);
@@ -966,7 +986,7 @@ export function useOnboardingFull(token: string) {
     load, autosave, advanceStep,
     saveEmployee, saveBank, addQualification, saveExperience, saveStatutory,
     sendOtp, verifyOtp, grantConsent, verifyPan, verifyBank, verifyAadhaar, verifyUan,
-    startDigilocker, startEsign, lookupIfsc, uploadDoc, deleteDoc, submit,
+    startDigilocker, startEsign, lookupIfsc, uploadDoc, saveDraDetails, deleteDoc, submit,
     redirectUrl,
     // Lets Step 3 say "already connected" instead of inviting a second attempt.
     // Documents are through when the session completes; the session itself

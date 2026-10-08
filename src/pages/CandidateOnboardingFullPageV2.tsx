@@ -278,6 +278,7 @@ export default function CandidateOnboardingFullPageV2() {
             saving={onb.saving}
             consentAccepted={onb.consentAccepted}
             onUpload={onb.uploadDoc}
+            onSaveDraDetails={onb.saveDraDetails}
             onDelete={onb.deleteDoc}
           />
         )}
