@@ -1,0 +1,43 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`single Notify route pin > in scope, with and without force 1`] = `
+{
+  "bodies": [
+    {
+      "data": {
+        "sent": true,
+      },
+      "success": true,
+    },
+    {
+      "data": {
+        "sent": true,
+      },
+      "success": true,
+    },
+    {
+      "message": "This conversation belongs to another branch",
+      "success": false,
+    },
+  ],
+  "calls": [
+    [
+      "lead-noida",
+      {
+        "force": false,
+      },
+    ],
+    [
+      "lead-noida",
+      {
+        "force": true,
+      },
+    ],
+  ],
+  "statuses": [
+    200,
+    200,
+    403,
+  ],
+}
+`;
