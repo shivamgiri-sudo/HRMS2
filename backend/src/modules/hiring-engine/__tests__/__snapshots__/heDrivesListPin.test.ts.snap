@@ -1,0 +1,13 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`GET /api/he/drives (pin) > org-wide caller: the statement and its parameters 1`] = `
+[
+  "SELECT d.id, d.requisition_id, d.branch_name, d.drive_date, d.slot_start, d.slot_end, d.slot_capacity, d.target_shows, d.show_rate_pct, d.status, d.auto_send,
+              jr.designation_name, jr.requisition_code, (jr.requested_headcount - jr.fulfilled_headcount) AS open_positions,
+              SUM(m.state = 'suggested') AS suggested, SUM(m.state = 'invited') AS invited, SUM(m.state = 'confirmed') AS confirmed,
+              SUM(m.state = 'arrived') AS arrived, SUM(m.state = 'no_show') AS no_show, SUM(m.state = 'declined') AS declined
+         FROM he_drive d JOIN job_requisition jr ON jr.id = d.requisition_id LEFT JOIN he_match m ON m.drive_id = d.id
+        WHERE d.drive_date >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+        GROUP BY d.id ORDER BY d.drive_date DESC, d.branch_name LIMIT 200",
+]
+`;
