@@ -17,11 +17,17 @@ import { autoCloseStreams, loadActiveStreams, toWindow, type AutoCloseReason, ty
 import { coversDay, istToday, windowEnd } from "./requisition-stream.window.js";
 import { enqueueMatchedFollowups } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
+import { valueAddOn } from "./he-valueadd-switches.js";
+import { calibratedCaps, type CalibratedRate, type CalibrationBasis } from "./he-showrate-calibration.js";
+import { loadRateBook, rateForStream, type RateBook } from "./he-showrate-calibration.service.js";
+import { loadInsightThresholds } from "./he-insight-params.service.js";
 
 export interface StreamLine { streamId: string; sourceType: SourceType; originLabel: string; cap: number; alreadyLined: number; lined: number; wouldLine?: number; skipped?: string }
 export interface StreamDayPlan {
   requisitionId: string; code: string; branch: string; date: string; driveId: string | null;
   drive: "created" | "exists" | "would_create" | "skipped"; reason?: string; streams: StreamLine[];
+  /** Set only with HE_SHOWRATE_CALIBRATION on. */
+  rates?: Array<{ streamId: string; rate: number; basis: CalibrationBasis }>;
 }
 export interface StreamPassResult { plans: StreamDayPlan[]; closed: Array<{ streamId: string; requisitionId: string; reason: AutoCloseReason }>; failed?: string }
 
@@ -134,7 +140,27 @@ async function markPlanned(streamId: string, date: string, driveId: string, line
      ON DUPLICATE KEY UPDATE drive_id = VALUES(drive_id), lined = VALUES(lined)`, [streamId, date, driveId, lined]);
 }
 
-interface Ctx { date: string; dryRun: boolean; mayCreate: boolean; plan: DailyPlan; invites: number; perSlot: number }
+interface Ctx {
+  date: string; dryRun: boolean; mayCreate: boolean; plan: DailyPlan; invites: number; perSlot: number;
+  /** HE_SHOWRATE_CALIBRATION on: each due stream's rate; `measured` false when the sample read failed (today's caps are kept). */
+  rates?: Map<string, CalibratedRate>; measured?: boolean;
+}
+
+/** Calibrated caps; today's caps when the sample read failed. */
+function capsOf(streams: StreamRow[], c: Ctx): Map<string, number> {
+  const rates = c.rates;
+  if (!rates || !c.measured) return streamCaps(streams, c.invites);
+  return calibratedCaps(streams, c.plan, (id) => rates.get(id)?.rate ?? c.plan.showRatePct / 100);
+}
+
+/** The created drive's show-up rate and target: cap-weighted over the streams; today's plan numbers when not measured. */
+function driveTargetOf(caps: Map<string, number>, c: Ctx): { showRatePct: number; targetShows: number } {
+  const sum = [...caps.values()].reduce((a, b) => a + b, 0);
+  const legacy = { showRatePct: c.plan.showRatePct, targetShows: Math.max(1, Math.round((sum * c.plan.showRatePct) / 100)) };
+  if (!c.rates || !c.measured || sum <= 0) return legacy;
+  const shows = [...caps].reduce((a, [id, cap]) => a + cap * (c.rates?.get(id)?.rate ?? c.plan.showRatePct / 100), 0);
+  return { showRatePct: Math.round((shows / sum) * 100), targetShows: Math.max(1, Math.round(shows)) };
+}
 
 interface DriveRef { id: string; requisitionId: string; sourceKind: string; runLabel: string | null }
 
@@ -210,6 +236,7 @@ const ownStreamsDraft = (d: RowDataPacket): boolean => d.status === "draft" && d
 
 async function planRequisition(requisitionId: string, streams: StreamRow[], c: Ctx): Promise<StreamDayPlan> {
   const base: StreamDayPlan = { requisitionId, code: requisitionId, branch: streams[0].branchName, date: c.date, driveId: null, drive: "skipped", streams: [] };
+  if (c.rates) base.rates = streams.map((s) => { const r = c.rates?.get(s.id); return { streamId: s.id, rate: r?.rate ?? 0, basis: r?.basis ?? "plan_default" }; });
   const [rq] = await db.execute<RowDataPacket[]>(
     "SELECT id, requisition_code, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
   const r = rq[0];
@@ -218,7 +245,7 @@ async function planRequisition(requisitionId: string, streams: StreamRow[], c: C
   // the requisition's CURRENT branch: the same key createDrive writes, so a closed drive is always found (and never reopened)
   const branch = String(r.branch_name ?? base.branch);
   base.branch = branch;
-  const caps = streamCaps(streams, c.invites);
+  const caps = c.rates ? capsOf(streams, c) : streamCaps(streams, c.invites);
 
   const work = async (): Promise<StreamDayPlan> => {
     const [ex] = await db.execute<RowDataPacket[]>(
@@ -231,9 +258,10 @@ async function planRequisition(requisitionId: string, streams: StreamRow[], c: C
     else if (c.mayCreate === false) return { ...base, reason: "no drive" };
     else {
       const sum = [...caps.values()].reduce((a, b) => a + b, 0);
+      const t = c.rates ? driveTargetOf(caps, c) : null;
       const d = await createDrive({
         requisitionId, driveDate: c.date, slotStart: c.plan.slotStart, slotEnd: c.plan.slotEnd, slotMinutes: c.plan.slotMinutes, slotCapacity: c.perSlot,
-        showRatePct: c.plan.showRatePct, targetShows: Math.max(1, Math.round((sum * c.plan.showRatePct) / 100)), autoSend: true, audience: { kind: "pool", label: "Streams" },
+        showRatePct: t ? t.showRatePct : c.plan.showRatePct, targetShows: t ? t.targetShows : Math.max(1, Math.round((sum * c.plan.showRatePct) / 100)), autoSend: true, audience: { kind: "pool", label: "Streams" },
       });
       const [after] = await db.execute<RowDataPacket[]>("SELECT status, run_label, source_kind, created_by FROM he_drive WHERE id = ?", [d.id]);
       row = { ...(after[0] ?? {}), id: d.id } as RowDataPacket;
@@ -268,6 +296,24 @@ async function planRequisition(requisitionId: string, streams: StreamRow[], c: C
   return res ?? { ...base, reason: "planning already running" };
 }
 
+/** Each due stream's measured rate (same weekday, then the trailing window, then the plan default). Never throws. */
+async function calibrate(c: Ctx, active: StreamRow[], due: StreamRow[]): Promise<void> {
+  const planDefault = c.plan.showRatePct / 100;
+  let book: RateBook | null = null;
+  let minSample = 30;
+  try {
+    const t = await loadInsightThresholds();
+    minSample = t["insight.plan_min_sample"];
+    const heStreamOf = new Map<string, string>();
+    for (const s of active) if (s.sourceType === "he" && !heStreamOf.has(s.requisitionId)) heStreamOf.set(s.requisitionId, s.id);
+    book = await loadRateBook({ requisitionIds: [...new Set(due.map((s) => s.requisitionId))], today: istToday(), trailingDays: t["insight.plan_trailing_days"], heStreamOf });
+  } catch (err) {
+    logger.warn({ code: codeOf(err) }, "[he-streams] show-rate calibration unavailable; today's caps kept");
+  }
+  c.measured = book !== null;
+  c.rates = new Map(due.map((s) => [s.id, rateForStream(book, s.id, c.date, planDefault, minSample)]));
+}
+
 /** Plans one day for every requisition with an open stream covering it (or only `requisitionId`). Never throws. */
 export async function planStreamsForDay(o: { date: string; dryRun: boolean; requisitionId?: string; mayCreate?: boolean }): Promise<StreamPassResult> {
   const out: StreamPassResult = { plans: [], closed: [] };
@@ -283,6 +329,7 @@ export async function planStreamsForDay(o: { date: string; dryRun: boolean; requ
     const byReq = new Map<string, StreamRow[]>();
     for (const s of due) byReq.set(s.requisitionId, [...(byReq.get(s.requisitionId) ?? []), s]);
     const c: Ctx = { date: o.date, dryRun: o.dryRun, mayCreate: o.mayCreate !== false, plan, invites: n.invites, perSlot: n.perSlot };
+    if (valueAddOn("showrate_calibration")) await calibrate(c, active, due);
     for (const [requisitionId, streams] of byReq) {
       try { out.plans.push(await planRequisition(requisitionId, streams, c)); }
       catch (err) {

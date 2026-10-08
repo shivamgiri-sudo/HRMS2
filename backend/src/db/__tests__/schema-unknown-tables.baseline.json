@@ -100,6 +100,10 @@
   "modules/hiring-engine/he-reroute.service.ts": [
     "he_match"
   ],
+  "modules/hiring-engine/he-showrate-calibration.service.ts": [
+    "requisition_stream",
+    "requisition_stream_match"
+  ],
   "modules/hiring-engine/he-showup.service.ts": [
     "he_model_param"
   ],

@@ -8,12 +8,46 @@ import { db } from "../../db/mysql.js";
 import { createDrive, setDriveStatus, suggestMatches } from "./he-drive.service.js";
 import { bridgeAllMetaLeads, sweepOwnedCampaigns } from "./he-meta-bridge.service.js";
 import { getDailyPlan, getPlanMetaOnly, getPlanRequisitions } from "./he-policy.service.js";
-import { dailyPlanNumbers } from "./he-slots.js";
+import { dailyPlanNumbers, type DailyPlan } from "./he-slots.js";
 import { logger } from "../../logger.js";
 import { planStreamsForDay, readStreamOwned, readStreamPlanned, type StreamDayPlan, type StreamPassResult } from "./he-stream-plan.service.js";
 import { addDays, istToday, isSunday } from "./requisition-stream.window.js";
+import { valueAddOn } from "./he-valueadd-switches.js";
+import { calibratedPlanNumbers, type CalibrationBasis } from "./he-showrate-calibration.js";
+import { loadRateBook, rateForRequisition, type RateBook } from "./he-showrate-calibration.service.js";
+import { loadInsightThresholds } from "./he-insight-params.service.js";
 
-export interface PlannedDay { requisitionId: string; code: string; role: string; branch: string; date: string; status: "created" | "exists" | "skipped"; reason?: string; invitesWanted: number; lined: number; driveId?: string }
+export interface PlannedDay { requisitionId: string; code: string; role: string; branch: string; date: string; status: "created" | "exists" | "skipped"; reason?: string; invitesWanted: number; lined: number; driveId?: string;
+  /** Set only with HE_SHOWRATE_CALIBRATION on. */
+  showRate?: { rate: number; basis: CalibrationBasis } }
+
+interface LegacyCalibration { numbers: ReturnType<typeof dailyPlanNumbers>; showRatePct: number; showRate: { rate: number; basis: CalibrationBasis } }
+
+/**
+ * Each legacy requisition's drive sized on its measured show-up rate (one thresholds read, one sample read). When the sample read fails
+ * every requisition keeps today's numbers. Never throws.
+ */
+async function calibrateLegacy(ids: string[], plan: DailyPlan, date: string): Promise<Map<string, LegacyCalibration>> {
+  const out = new Map<string, LegacyCalibration>();
+  if (!ids.length) return out;
+  const planDefault = plan.showRatePct / 100;
+  let book: RateBook | null = null;
+  let minSample = 30;
+  try {
+    const t = await loadInsightThresholds();
+    minSample = t["insight.plan_min_sample"];
+    book = await loadRateBook({ requisitionIds: ids, today: istToday(), trailingDays: t["insight.plan_trailing_days"], heStreamOf: new Map() });
+  } catch (err) {
+    logger.warn({ code: (err as { code?: string })?.code ?? "error" }, "[he-plan] show-rate calibration unavailable; today's numbers kept");
+  }
+  for (const id of ids) {
+    const cr = rateForRequisition(book, id, date, planDefault, minSample);
+    out.set(id, book
+      ? { numbers: calibratedPlanNumbers(plan, cr.rate), showRatePct: Math.round(cr.rate * 100), showRate: { rate: cr.rate, basis: cr.basis } }
+      : { numbers: dailyPlanNumbers(plan), showRatePct: plan.showRatePct, showRate: { rate: cr.rate, basis: cr.basis } });
+  }
+  return out;
+}
 
 /** Tomorrow in IST, skipping Sundays. */
 export function nextWorkingDay(now: Date = new Date()): string {
@@ -47,11 +81,14 @@ export async function planNextDay(o: { date?: string; dryRun?: boolean } = {}): 
     const reason = !streamOwned ? "stream ownership read failed" : "planned-day read failed";
     for (const id of ids.filter((x) => !streamOwned?.has(x))) days.push({ requisitionId: id, code: id, role: "", branch: "", date, status: "skipped", reason, invitesWanted: n.invites, lined: 0 });
   }
+  const cal = valueAddOn("showrate_calibration")
+    ? await calibrateLegacy(streamOwned && streamPlanned ? ids.filter((x) => !streamOwned.has(x) && !streamPlanned.has(x)) : [], plan, date) : null;
   for (const id of streamOwned && streamPlanned ? ids.filter((x) => !streamOwned.has(x) && !streamPlanned.has(x)) : []) {
+    const k = cal?.get(id);
     const [rq] = await db.execute<RowDataPacket[]>(
       `SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1`, [id]);
     const r = rq[0];
-    const base = { requisitionId: id, code: String(r?.requisition_code ?? id), role: String(r?.designation_name ?? ""), branch: String(r?.branch_name ?? ""), date, invitesWanted: n.invites, lined: 0 };
+    const base = { requisitionId: id, code: String(r?.requisition_code ?? id), role: String(r?.designation_name ?? ""), branch: String(r?.branch_name ?? ""), date, invitesWanted: n.invites, lined: 0, ...(k ? { invitesWanted: k.numbers.invites, showRate: k.showRate } : {}) };
     if (!r) { days.push({ ...base, status: "skipped", reason: "requisition not found" }); continue; }
     if (r.approval_status !== "approved" || !r.active_status || Number(r.fulfilled_headcount) >= Number(r.requested_headcount)) { days.push({ ...base, status: "skipped", reason: "requisition is closed or filled" }); continue; }
     const [ex] = await db.execute<RowDataPacket[]>("SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1", [id, date]);
@@ -59,7 +96,7 @@ export async function planNextDay(o: { date?: string; dryRun?: boolean } = {}): 
     if (o.dryRun) { days.push({ ...base, status: "created", reason: "dry run" }); continue; }
     try {
       const audience = planIds.includes(id) ? (metaOnly ? { kind: "meta" as const } : undefined) : { kind: "campaign" as const, ids: owned.get(id) };
-      const d = await createDrive({ requisitionId: id, audience, driveDate: date, slotStart: plan.slotStart, slotEnd: plan.slotEnd, slotMinutes: plan.slotMinutes, slotCapacity: n.perSlot, showRatePct: plan.showRatePct, targetShows: n.targetShows, autoSend: true });
+      const d = await createDrive({ requisitionId: id, audience, driveDate: date, slotStart: plan.slotStart, slotEnd: plan.slotEnd, slotMinutes: plan.slotMinutes, slotCapacity: k ? k.numbers.perSlot : n.perSlot, showRatePct: k ? k.showRatePct : plan.showRatePct, targetShows: k ? k.numbers.targetShows : n.targetShows, autoSend: true });
       await setDriveStatus(d.id, "active");
       const lined = await suggestMatches(d.id);
       days.push({ ...base, status: "created", driveId: d.id, lined });
