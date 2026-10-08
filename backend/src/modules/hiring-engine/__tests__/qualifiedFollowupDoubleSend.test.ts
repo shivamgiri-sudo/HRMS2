@@ -165,36 +165,27 @@ describe.each(MODES)("mode $name", ({ env, owns }) => {
       }
     });
 
-    it("inviteForDrive", async () => {
+    it("inviteForDrive skips by row existence in every mode (the mock's enrolled lead = a live/canary row)", async () => {
       h.state.matches = twoMatches();
       const r = await inviteForDrive("d1", { dryRun: false, max: 10 });
       const select = h.sqls.find((s) => s.includes("FROM he_match m JOIN he_lead l"))!;
-      if (owns) {
-        expect(select).toContain("NOT EXISTS (SELECT 1 FROM qualified_followup qf");
-        expect(select).toContain("COLLATE utf8mb4_unicode_ci");
-      } else {
-        expect(select).not.toContain("qualified_followup");
-      }
+      expect(select).toContain("NOT EXISTS (SELECT 1 FROM qualified_followup qf");
+      expect(select).toContain("qf.mode_at_enqueue IN ('live','canary')");
+      expect(select).toContain("COLLATE utf8mb4_unicode_ci");
       const invited = h.sendInviteEmail.mock.calls.map((c) => c[0]);
-      if (steps) { expect(invited).toEqual(["m2"]); expect(r.sent).toBe(1); }
+      if (enrolled) { expect(invited).toEqual(["m2"]); expect(r.sent).toBe(1); }
       else { expect(invited).toEqual(["m1", "m2"]); expect(r.sent).toBe(2); }
     });
   });
 
-  it("whatsappFollowUps SQL carries the skip clause only when the pipeline owns sends", async () => {
+  it("whatsappFollowUps SQL carries the row-based skip clause in every mode", async () => {
     setEnv(env);
     await runFollowUps({ dryRun: false });
     const q = h.sqls.find((s) => s.includes("JOIN he_message e ON e.lead_id = m.lead_id") && s.includes("he_walkin_invite:%"))!;
-    if (owns) {
-      expect(q).toContain("JOIN he_lead l ON l.id = m.lead_id");
-      expect(q).toContain("NOT EXISTS (SELECT 1 FROM qualified_followup qf");
-      expect(q).toContain("qf.mobile10 = l.mobile10 COLLATE utf8mb4_unicode_ci");
-      expect(q).toContain("qf.requisition_id = m.requisition_id");
-    } else {
-      expect(q).not.toContain("qualified_followup");
-      expect(q).not.toContain("JOIN he_lead l ON"); // original SQL, no extra join
-      expect(q).toContain("FROM he_match m\n       JOIN he_message e ON");
-    }
+    expect(q).toContain("JOIN he_lead l ON l.id = m.lead_id");
+    expect(q).toContain("NOT EXISTS (SELECT 1 FROM qualified_followup qf");
+    expect(q).toContain("qf.mobile10 = l.mobile10 COLLATE utf8mb4_unicode_ci");
+    expect(q).toContain("qf.requisition_id = m.requisition_id");
   });
 });
 

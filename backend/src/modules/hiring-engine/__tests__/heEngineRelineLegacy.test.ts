@@ -36,8 +36,12 @@ vi.mock("../he-followup-email.service.js", () => ({ sendFollowUpEmail: vi.fn(asy
 vi.mock("../he-readiness.service.js", () => ({ getRequisitionReadiness: vi.fn(async () => null) }));
 
 import { runEngineTick } from "../he-engine.service.js";
+import { followupSkipSql } from "../qualified-followup.policy.js";
 
-const legacyCalls = () => h.calls.filter(([sql]) => !sql.includes("requisition_stream"));
+// The unified method's row-based follow-up skip (always on since 2138, and the he_lead join it needs) is not part of this pin.
+const SKIP = followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" });
+const withoutFollowupSkip = (sql: string) => sql.split(SKIP).join("").replace("FROM he_match m JOIN he_lead l ON l.id = m.lead_id JOIN he_message e", "FROM he_match m JOIN he_message e");
+const legacyCalls = () => h.calls.filter(([sql]) => !sql.includes("requisition_stream")).map(([sql, p]) => [withoutFollowupSkip(sql), p]);
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });

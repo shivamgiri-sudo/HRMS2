@@ -138,19 +138,12 @@ describe("enqueueMatchedFollowups", () => {
   });
 });
 
-describe("followupSkipSql owner condition", () => {
+describe("followupSkipSql owner condition (row-based since the unified method)", () => {
   const a = { mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" };
-  it("live: only OPEN live rows owned by the pipeline silence a lead", () => {
-    const s = followupSkipSql(a, { QUAL_FOLLOWUP_MODE: "live" });
-    expect(s).toContain("qf.stopped_reason IS NULL AND qf.mode_at_enqueue = 'live' AND qf.owner = 'pipeline')");
-  });
-  it("not owned by the pipeline (unset, dry_run, test flag): empty, byte-identical to before", () => {
-    expect(followupSkipSql(a, {})).toBe("");
-    expect(followupSkipSql(a, { QUAL_FOLLOWUP_MODE: "dry_run" })).toBe("");
-    expect(followupSkipSql(a, { QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true" })).toBe("");
-  });
-  it("live output equals the previous string plus only the owner condition", () => {
-    const prev = " AND NOT EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = l.mobile10 COLLATE utf8mb4_unicode_ci AND qf.requisition_id = m.requisition_id AND qf.stopped_reason IS NULL AND qf.mode_at_enqueue = 'live')";
-    expect(followupSkipSql(a, { QUAL_FOLLOWUP_MODE: "live" })).toBe(prev.replace("'live')", "'live' AND qf.owner = 'pipeline')"));
+  it("only pipeline-owned live/canary rows silence a lead, open or stopped, whatever the env", () => {
+    const s = followupSkipSql(a);
+    expect(s).toContain("qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary')");
+    expect(s).not.toContain("stopped_reason");
   });
 });
+

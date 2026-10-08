@@ -64,12 +64,11 @@ describe("rowTag / pipelineOwnsSends / skip sql", () => {
     expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true" })).toBe(false);
     expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "live" })).toBe(true);
   });
-  it("followupSkipSql", () => {
+  it("followupSkipSql is row-based (same clause whatever the env; detailed in qualifiedFollowupPolicy.test.ts)", () => {
     const a = { mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" };
-    expect(followupSkipSql(a, {})).toBe("");
-    const q = followupSkipSql(a, { QUAL_FOLLOWUP_MODE: "live" });
+    const q = followupSkipSql(a);
     expect(q.startsWith(" AND NOT EXISTS")).toBe(true);
-    for (const frag of ["qf.mobile10 = l.mobile10 COLLATE utf8mb4_unicode_ci", "qf.requisition_id = m.requisition_id", "qf.stopped_reason IS NULL", "mode_at_enqueue = 'live'"]) expect(q).toContain(frag);
+    for (const frag of ["qf.mobile10 = l.mobile10 COLLATE utf8mb4_unicode_ci", "qf.requisition_id = m.requisition_id", "mode_at_enqueue IN ('live','canary')"]) expect(q).toContain(frag);
   });
 });
 
