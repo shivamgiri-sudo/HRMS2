@@ -31,7 +31,8 @@ const fixture = (over: Partial<DriveAnalytics> = {}): DriveAnalytics => ({
 }) as unknown as DriveAnalytics;
 const filters = defaultFilters(NOW);
 const noop = () => undefined;
-const render = (a: DriveAnalytics, type: SourceType, f = filters) => renderToStaticMarkup(<SourceOverview analytics={a} type={type} filters={f} onFilters={noop} />);
+// the window rules read the clock: pin it to NOW so the tests do not depend on the day they run
+const render = (a: DriveAnalytics, type: SourceType, f = filters) => renderToStaticMarkup(<SourceOverview analytics={a} type={type} filters={f} onFilters={noop} now={NOW} />);
 
 describe("source sections without streams", () => {
   it("Live Meta with data but no groups shows its KPI tiles, funnel and trend, and only its own type", () => {
@@ -100,7 +101,7 @@ describe("empty window", () => {
   it("does not hide the Old Meta section behind the generic empty box when no requisition has drives", async () => {
     const { DriveCommandView } = await import("../command/DriveCommandCenter");
     const a = fixture({ requisitionCount: 0 });
-    const p = sectionParts("old", a, undefined, undefined, undefined, 0, filters, noop);
+    const p = sectionParts("old", a, undefined, undefined, undefined, 0, filters, noop, undefined, NOW);
     const html = renderToStaticMarkup(
       <DriveCommandView section="old" filters={filters} analytics={a} loading={false} error={null} onSection={noop} onFilters={noop} onRetry={noop} requisitions={[]} branches={[]} gated={p.gated} />);
     expect(html).not.toContain("No requisitions with drives in this window");

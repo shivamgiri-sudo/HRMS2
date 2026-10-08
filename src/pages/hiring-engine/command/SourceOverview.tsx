@@ -13,12 +13,13 @@ import type { DriveAnalytics, SourceType } from "./driveCommandTypes";
 import CampaignMapping from "./CampaignMapping";
 import { ALL_TIME_HINT, SHOW_ALL_TIME, atWidestRange, scopeToType, showAllTimeFilters, zeroNotes } from "./sourceSectionModel";
 
-export default function SourceOverview({ analytics, type, filters, onFilters }: { analytics: DriveAnalytics; type: SourceType; filters: Filters; onFilters?: (f: Filters) => void }) {
+/** `now`: the clock for the window rules (tests pin it; the page uses the real time). */
+export default function SourceOverview({ analytics, type, filters, onFilters, now }: { analytics: DriveAnalytics; type: SourceType; filters: Filters; onFilters?: (f: Filters) => void; now?: Date }) {
   const scoped = scopeToType(analytics, type);
   const leads = scoped.types[type]?.stages?.leads ?? 0;
   const trend = yieldView(scoped);
-  const notes = zeroNotes(analytics, type, filters);
-  const canWiden = leads === 0 && type === "meta_old" && !atWidestRange(filters);
+  const notes = zeroNotes(analytics, type, filters, now);
+  const canWiden = leads === 0 && type === "meta_old" && !atWidestRange(filters, now);
   const label = TYPE_LABEL[type];
   return (
     <div className="space-y-3" data-source-overview={type}>
@@ -32,7 +33,7 @@ export default function SourceOverview({ analytics, type, filters, onFilters }: 
       )}
       {canWiden && onFilters && (
         <div className="flex flex-wrap items-center gap-3">
-          <button type="button" className={BTN} onClick={() => onFilters(showAllTimeFilters(filters))}>{SHOW_ALL_TIME}</button>
+          <button type="button" className={BTN} onClick={() => onFilters(showAllTimeFilters(filters, now))}>{SHOW_ALL_TIME}</button>
           <span className="text-xs text-slate-600 dark:text-slate-300">{ALL_TIME_HINT}</span>
         </div>
       )}

@@ -138,7 +138,7 @@ function SummaryCharts({ analytics, insights, planHref }: { analytics: DriveAnal
  * drive type inside its section (the Summary shows `insights`, all types).
  */
 export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions, plan?: ReactNode, followupOpen = 0, filters?: Filters, onFilters?: (f: Filters) => void,
-  typeInsights?: (t: SourceType) => ReactNode): { gated: ReactNode; always: ReactNode } {
+  typeInsights?: (t: SourceType) => ReactNode, now?: Date): { gated: ReactNode; always: ReactNode } {
   const planHref = commandHash("plan", filters ?? defaultFilters());
   if (section === "summary") {
     // The action queue does not wait for analytics; DriveCommandView draws the Summary's always slot above the gated charts.
@@ -169,7 +169,7 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
   return {
     gated: analytics && (
       <div className="space-y-4">
-        <SourceOverview analytics={analytics} type={type} filters={filters ?? defaultFilters()} onFilters={onFilters} />
+        <SourceOverview analytics={analytics} type={type} filters={filters ?? defaultFilters(now)} onFilters={onFilters} now={now} />
         <DriveFunnelDepth analytics={analytics} type={type} insights={typeInsights?.(type)} planHref={planHref} withFunnel={false} />
         <DriveTypeSection type={type} groups={analytics.groups ?? []} today={istTodayClient()} title={section === "live" ? "Live Meta drives" : "Old Meta data drives"} actions={actions} />
       </div>
