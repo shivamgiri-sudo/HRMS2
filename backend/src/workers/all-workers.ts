@@ -20,6 +20,8 @@ import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from 
 import { startCostCentreProcessResolverWorker, stopCostCentreProcessResolverWorker } from "./cost-centre-process-resolver.worker.js";
 import { startPnlRunningSalaryRefreshWorker, stopPnlRunningSalaryRefreshWorker } from "./pnl-running-salary-refresh.worker.js";
 import { startGstExportAutoWorker, stopGstExportAutoWorker } from "./gst-export-auto.worker.js";
+import { startGrnTallyExportWorker } from "./grn-tally-export.worker.js";
+import { startGrnIntegrityAlertsWorker } from "./grn-integrity-alerts.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
 import { startMolecularEmailSyncWorker, stopMolecularEmailSyncWorker } from "./molecular-email-sync.worker.js";
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
@@ -230,6 +232,23 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // WORKERS_PROCESS=external.
     name: "gst-export-auto",
     start: () => { startGstExportAutoWorker(); return Promise.resolve(); },
+  },
+  {
+    // Daily file of fully approved GRNs for the Tally connector. Idle until its folder is configured.
+    name: "grn-tally-export",
+    start: () => {
+      startGrnTallyExportWorker();
+      return Promise.resolve();
+    },
+  },
+  {
+    // Daily GRN check for the Accounts Head and Finance Head: paid twins still in approval, late bills,
+    // vendor GRNs with no vendor, repeated imprest bills. Silent when nothing is flagged.
+    name: "grn-integrity-alerts",
+    start: () => {
+      startGrnIntegrityAlertsWorker();
+      return Promise.resolve();
+    },
   },
   {
     name: "payroll-nightly-recalc",

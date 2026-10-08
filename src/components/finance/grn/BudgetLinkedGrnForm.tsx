@@ -2847,6 +2847,13 @@ export function BudgetLinkedGrnForm({
                           }));
                         }}
                       />
+                      {form.vendorId &&
+                        !form.vendorGstin.trim() &&
+                        !String(vendors.find((vendor) => vendor.id === form.vendorId)?.gst_number ?? "").trim() && (
+                          <p className="mt-0.5 text-[10px] text-amber-700">
+                            No GSTIN on file for this vendor. Enter it once; it is saved to the vendor when you submit.
+                          </p>
+                        )}
                     </DenseField>
                     <DenseField label="GST Applicable">
                       <div className="flex items-center gap-2 h-8">

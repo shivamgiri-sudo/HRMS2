@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1239,
-  "columnCount": 17997,
+  "tableCount": 1241,
+  "columnCount": 18014,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -10077,6 +10077,27 @@
       "reminder_count",
       "last_reminder_at",
       "is_branch_split"
+    ],
+    "grn_tally_export": [
+      "grn_request_id",
+      "grn_number",
+      "batch_id",
+      "amount",
+      "exported_at"
+    ],
+    "grn_tally_export_batch": [
+      "id",
+      "file_name",
+      "target_dir",
+      "voucher_count",
+      "total_amount",
+      "exception_count",
+      "status",
+      "trigger_source",
+      "created_by",
+      "error_message",
+      "created_at",
+      "written_at"
     ],
     "grn_validation_override": [
       "id",

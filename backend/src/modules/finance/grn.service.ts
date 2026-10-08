@@ -21,6 +21,7 @@ import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { resolveAccountingPeriod } from "./grn-number-monthly.service.js";
 import { grnSmartService } from "./grn-smart.service.js";
 import { assertNoPaidTwinForGrn } from "./grn-duplicate-guard.js";
+import { captureVendorGstin } from "./vendor-gstin-capture.js";
 import { resolveGrnNumberOnSubmit } from "./grn-number-on-submit.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import { applyImprestNoGst, IMPREST_TAX_PROFILE } from "./grn-imprest-tax.js";
@@ -830,6 +831,15 @@ export const grnService = {
       `GRN ${grn.grn_number ?? grn.invoice_number ?? grnId}`,
       { allow: payload?.allowPossibleDuplicate === true, actorRole },
     );
+    // A valid GSTIN typed on this GRN is remembered on a vendor that has none, so the next GRN fills it in.
+    try {
+      await captureVendorGstin(db, {
+        vendorId: grn.vendor_id ? String(grn.vendor_id) : null,
+        grnGstin: grn.vendor_gstin ? String(grn.vendor_gstin) : null,
+      });
+    } catch (error) {
+      console.error("[grn] could not save the GSTIN to the vendor", grnId, error);
+    }
 
     // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not at
     // submission — mirrors the live path's own change in grn-validation-control.service.ts's

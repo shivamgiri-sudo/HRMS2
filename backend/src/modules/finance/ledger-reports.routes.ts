@@ -4,6 +4,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { BANK_ACCOUNT_READ_ROLES } from "./company-bank-account.routes.js";
 import { callerBranchScope } from "./finance-branch-guard.js";
 import { ledgerReportsService, startTrialBalanceWarmer } from "./ledger-reports.service.js";
+import { financialStatements } from "./financial-statements.service.js";
 
 /**
  * Own prefix (/api/finance/ledger-reports), same rationale as every other finance router that
@@ -100,6 +101,18 @@ ledgerReportsRouter.get(
     const scope = await callerBranchScope(req, filters.branchId);
     const result = await ledgerReportsService.headSubHeadLedger(from, to, filters, scope);
     res.json({ success: true, data: result });
+  }),
+);
+
+/** Balance sheet and profit and loss, built from the trial balance (see financial-statements.ts). */
+ledgerReportsRouter.get(
+  "/financial-statements",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (req, res) => {
+    const raw = req.query.asOfDate ? String(req.query.asOfDate) : undefined;
+    const asOfDate = raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : undefined;
+    const scope = await callerBranchScope(req);
+    res.json({ success: true, data: await financialStatements(asOfDate, scope) });
   }),
 );
 

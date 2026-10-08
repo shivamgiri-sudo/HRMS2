@@ -116,3 +116,48 @@ tdsRouter.get(
     }
   },
 );
+
+/** Monthly register by vendor and section: paid, what should have been deducted, what was, and the shortfall. */
+tdsRouter.get("/register", requireRole(...TDS_READ_ROLES), async (req, res) => {
+  try {
+    const raw = String(req.query.month ?? "");
+    const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(raw) ? raw : new Date().toISOString().slice(0, 7);
+    const start = `${month}-01`;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT vendor_id, section_code, COUNT(*) AS payments, ROUND(SUM(payment_amount), 2) AS paid, ROUND(SUM(base_amount), 2) AS base,
+              ROUND(SUM(expected_tds), 2) AS expected_tds, ROUND(SUM(deducted_tds), 2) AS deducted_tds, ROUND(SUM(shortfall), 2) AS shortfall,
+              MIN(pan_valid) AS all_pan_valid
+         FROM tds_assessment
+        WHERE created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 MONTH)
+        GROUP BY vendor_id, section_code
+        ORDER BY SUM(shortfall) DESC, SUM(payment_amount) DESC
+        LIMIT 1000`,
+      [start, start],
+    );
+    const vendorIds = [...new Set(rows.map((r) => String(r.vendor_id ?? "")).filter(Boolean))];
+    const vendors = new Map<string, { name: string; pan: string | null }>();
+    for (let i = 0; i < vendorIds.length; i += 500) {
+      const chunk = vendorIds.slice(i, i + 500);
+      const [found] = await db.execute<RowDataPacket[]>(
+        `SELECT id, vendor_name, pan_number FROM vendor_master WHERE id IN (${chunk.map(() => "?").join(",")})`,
+        chunk,
+      );
+      for (const v of found) vendors.set(String(v.id), { name: String(v.vendor_name ?? ""), pan: v.pan_number ? String(v.pan_number) : null });
+    }
+    res.json({
+      success: true,
+      data: {
+        month,
+        rows: rows.map((r) => ({
+          ...r,
+          vendor_name: vendors.get(String(r.vendor_id))?.name ?? null,
+          pan_number: vendors.get(String(r.vendor_id))?.pan ?? null,
+          any_invalid_pan: Number(r.all_pan_valid) === 1 ? 0 : 1,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error("[tds] register failed", error);
+    res.status(500).json({ success: false, error: "Unable to load the TDS register" });
+  }
+});
