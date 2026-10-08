@@ -69,6 +69,7 @@ import {
   ratio,
 } from "@/components/analytics/analytics-kit";
 const CampaignCriteria = lazy(() => import("@/components/selection/CampaignCriteria"));
+const CampaignRequisitionsEditor = lazy(() => import("./meta/CampaignRequisitionsEditor"));
 
 type Overview = {
   campaigns: number;
@@ -759,6 +760,13 @@ export default function MetaCampaignDashboard() {
                     <span className="font-bold">Last metrics sync failed: </span>
                     {selected.lastSyncError}
                   </div>
+                )}
+
+                {/* The campaign's requisitions (WS3 A4): many per campaign, one main; held Live Meta leads are placed here. */}
+                {selected && (
+                  <Suspense fallback={<div aria-busy="true" className="h-16 animate-pulse rounded-xl bg-slate-100 motion-reduce:animate-none dark:bg-slate-800" />}>
+                    <CampaignRequisitionsEditor key={`reqs-${selected.id}`} campaignId={selected.id} />
+                  </Suspense>
                 )}
 
                 {/* Selection criteria of the requisitions this campaign points at (plan 2026-10-09, S20); nothing for recruiters. */}
