@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { grnAllocationExGstSql, grnRequestExGstSql } from "./pnl-ex-gst.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 /**
  * The two P&L lines that already exist as data but were never read by the statement.
@@ -32,6 +33,9 @@ export interface ActualsByKey {
   byProcess: Map<string, number>;
   /** Populated only by sources that carry a cost centre at the line level. */
   byCostCentre: Map<string, number>;
+  /** Where each cost centre's amount was attributed (branch / process), so one cost centre's share
+   *  can be taken back out exactly (pnl-forecast-overlay.ts withoutCostCentres). */
+  ccKeys?: Map<string, { branchId: string | null; processId: string | null }>;
 }
 
 const emptyActuals = (): ActualsByKey => ({
@@ -57,11 +61,14 @@ function accumulate(
         processId,
         (into.byProcess.get(processId) ?? 0) + amount,
       );
-    if (costCentreId)
+    if (costCentreId) {
       into.byCostCentre.set(
         costCentreId,
         (into.byCostCentre.get(costCentreId) ?? 0) + amount,
       );
+      if (!into.ccKeys) into.ccKeys = new Map();
+      if (!into.ccKeys.has(costCentreId)) into.ccKeys.set(costCentreId, { branchId, processId });
+    }
   }
   return into;
 }
@@ -265,6 +272,13 @@ function grnScope(opts: GrnSpendOptions): { sql: string; params: unknown[] } {
  */
 const HRMS_RAISED_GRN_SQL = `gr.bill_source_id IS NULL AND COALESCE(gr.created_by, '') NOT LIKE '00000000-%'`;
 
+/** grn_request statuses at which an ordinary (allocation-less) GRN's budget is consumed —
+ *  Finance Head approval and everything after it (same set as grn-report's fully_approved). */
+const ORDINARY_GRN_CONSUMED_SQL =
+  "'finance_head_approved','approved','pending_accounts_payment','payment_scheduled','partially_paid','paid'";
+/** …and at which it still holds a reservation (approved by Branch/Accounts Head, not yet Finance Head). */
+const ORDINARY_GRN_RESERVED_SQL = "'branch_head_approved','accounts_head_approved'";
+
 export async function readGrnSpend(
   periodCode: string,
   kind: GrnSpendKind,
@@ -319,25 +333,26 @@ export async function readGrnSpend(
   );
   params.push(periodCode, ...scope.params);
 
-  if (kind === "consumed") {
-    // Leg 2 — ordinary GRN: amount on grn_request itself, no allocation rows (so a Smart GRN is
-    // never counted twice).
-    legs.push(
-      `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
-              ${processCol("gr.process_id", "pc2")} AS process_id, ${grnRequestExGstSql("gr")} AS amount,
-              ${detailCols("app_grn", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
-         FROM grn_request gr
-         LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
-         ${processJoin("pc2")}
-        WHERE gr.budget_line_id IS NOT NULL
-          AND gr.status NOT IN ('draft', 'rejected', 'cancelled')
-          AND gr.accounting_period = ?
-          AND ${HRMS_RAISED_GRN_SQL}
-          AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)
-          AND ${scope.sql}`,
-    );
-    params.push(periodCode, ...scope.params);
-  }
+  // Leg 2 — ordinary GRN: amount on grn_request itself, no allocation rows (so a Smart GRN is
+  // never counted twice). Its status says where the money sits: only Branch/Accounts Head approval
+  // holds a reservation and only Finance Head approval consumes it. "Anything but draft" used to
+  // book submitted, returned and consumption_reversed GRNs as consumed.
+  const ordinaryStatuses = kind === "reserved" ? ORDINARY_GRN_RESERVED_SQL : ORDINARY_GRN_CONSUMED_SQL;
+  legs.push(
+    `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
+            ${processCol("gr.process_id", "pc2")} AS process_id, ${grnRequestExGstSql("gr")} AS amount,
+            ${detailCols("app_grn", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
+       FROM grn_request gr
+       LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
+       ${processJoin("pc2")}
+      WHERE gr.budget_line_id IS NOT NULL
+        AND gr.status IN (${ordinaryStatuses})
+        AND gr.accounting_period = ?
+        AND ${HRMS_RAISED_GRN_SQL}
+        AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)
+        AND ${scope.sql}`,
+  );
+  params.push(periodCode, ...scope.params);
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id, cost_centre_id, process_id, source, grn_ref, label, bill_date, SUM(amount) AS amount
@@ -480,16 +495,19 @@ export async function getDriverRevenueActuals(
     // Process via the precomputed PROCESS_BY_COST_CENTRE join (once per cost centre) rather than
     // the per-row correlated PROCESS_FROM_EMPLOYEES subquery — the same modal-process rule, the
     // same rows (see PROCESS_BY_COST_CENTRE's own note), without re-scanning employees per driver.
-    `SELECT branch_id, process_id, SUM(amount) AS amount FROM (
+    // cost_centre_id is carried (totals unchanged) so a cost centre with an approved revenue
+    // forecast can be taken out of planned revenue and replaced by the forecast (pnl-forecast-overlay.ts).
+    `SELECT branch_id, process_id, cost_centre_id, SUM(amount) AS amount FROM (
        SELECT d.branch_id AS branch_id,
               pc.process_id AS process_id,
+              ccm.id AS cost_centre_id,
               d.planned_headcount * d.revenue_rate_per_head AS amount
          FROM finance_cost_centre_monthly_driver d
          JOIN cost_centre_master ccm ON ccm.id = d.cost_centre_id
          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
         WHERE d.period_code = ?
      ) t
-      GROUP BY branch_id, process_id`,
+      GROUP BY branch_id, process_id, cost_centre_id`,
     [periodCode],
   );
   return accumulate(rows);
@@ -787,7 +805,7 @@ export async function getSeatRevenueActuals(
             LEAST(1, GREATEST(0, COALESCE(l.final_payable_days, 0)
                                  / NULLIF(l.active_calendar_days, 0))) AS proration
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
+       JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ? AND ${nonVoidRunSql("r")}
        JOIN employees e ON e.id = l.employee_id
        LEFT JOIN pnl_running_salary_snapshot snap
               ON snap.employee_id = e.id AND snap.period_code = ?

@@ -276,6 +276,67 @@ export async function resolveStatutoryApplicabilityForPeriod(
   return out;
 }
 
+/**
+ * The employees that PF / ESI explicitly do NOT apply to for a payroll month, for the payroll
+ * ENGINE to honour.
+ *
+ * The ruling above (db_bill's flags are authoritative) was only ever applied to the readiness
+ * screens; payrollCalculate decided on its own - ESIC from earned gross plus a continuity rule,
+ * PF from HRMS opt-outs alone. For August 2026 that deducted ESIC from 91 employees and PF from 12
+ * whom db_bill flags NO, and db_bill deducts nothing for any employee it flags NO (502/502 ESIC,
+ * 313/313 PF). Only an explicit NOT_APPLICABLE is returned: APPLICABLE or UNRESOLVED leaves the
+ * engine's own wage rules untouched, because db_bill deducts ESIC for a flagged-YES employee only
+ * while wages are inside the ceiling.
+ *
+ * Never throws. db_bill being unreachable must not stop a payroll run, so it returns null and the
+ * caller keeps today's behaviour (the HRMS opt-out overrides still apply on their own path).
+ */
+export async function loadStatutoryNotApplicable(
+  payrollMonth: string,
+): Promise<{ pf: Set<string>; esi: Set<string> } | null> {
+  try {
+    const all = await resolveStatutoryApplicabilityForPeriod(payrollMonth);
+    const pf = new Set<string>();
+    const esi = new Set<string>();
+    for (const [code, r] of all) {
+      if (r.pf.status === "NOT_APPLICABLE") pf.add(code);
+      if (r.esi.status === "NOT_APPLICABLE") esi.add(code);
+    }
+
+    // The employee's own active salary assignment carries pf_applicable / esi_applicable too. It
+    // agreed with db_bill on 97-98% of August employees and, for most of the 91 ESIC cases, already
+    // said NO - the engine just never read it. It is the fallback ONLY where the resolver above
+    // could not decide (no db_bill row for the month yet, no HRMS statutory record): a month
+    // calculated before db_bill closes would otherwise lose the flag entirely.
+    try {
+      const [aRows] = await db.execute<RowDataPacket[]>(
+        `SELECT UPPER(TRIM(e.employee_code)) AS code, a.pf_applicable, a.esi_applicable
+           FROM salary_component_assignments a
+           JOIN employees e ON e.id = a.employee_id
+          WHERE a.status = 'active'`,
+      );
+      for (const row of aRows as Array<{ code?: unknown; pf_applicable?: unknown; esi_applicable?: unknown }>) {
+        const code = String(row.code ?? "").trim().toUpperCase();
+        if (!code) continue;
+        const decided = all.get(code);
+        if (row.pf_applicable !== null && row.pf_applicable !== undefined
+            && Number(row.pf_applicable) === 0 && (!decided || decided.pf.status === "UNRESOLVED")) pf.add(code);
+        if (row.esi_applicable !== null && row.esi_applicable !== undefined
+            && Number(row.esi_applicable) === 0 && (!decided || decided.esi.status === "UNRESOLVED")) esi.add(code);
+      }
+    } catch (err) {
+      console.warn(`[payroll] salary assignment PF/ESI flags could not be read: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return { pf, esi };
+  } catch (err) {
+    console.warn(
+      `[payroll] PF/ESI applicability for ${payrollMonth} could not be read, using the engine's own rules: `
+      + `${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
 /** The same answer for one employee. Convenience only — it resolves the whole period. */
 export async function resolveStatutoryApplicability(
   employeeCode: string,

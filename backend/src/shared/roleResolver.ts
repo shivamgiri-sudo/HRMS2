@@ -227,11 +227,10 @@ export async function getUserRoleContext(userId: string): Promise<{
 }> {
   const roleKeys = await getUserRoleKeys(userId);
   const primaryRole = resolvePrimaryRole(roleKeys);
-  const isSuperAdmin =
-    roleKeys.includes("super_admin") || roleKeys.includes("admin");
-  const isHO = roleKeys.some(
-    (role) =>
-      role.startsWith("ho_") || ["ceo", "coo", "management"].includes(role),
+  // admin is branch-scoped (owner ruling 2026-10-01): only super_admin counts as system-wide here.
+  const isSuperAdmin = roleKeys.includes("super_admin");
+  const isHO = roleKeys.some((role) =>
+    role.startsWith("ho_") || ["ceo", "coo", "management"].includes(role),
   );
 
   return { roleKeys, primaryRole, isSuperAdmin, isHO };

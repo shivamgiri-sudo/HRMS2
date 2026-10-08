@@ -119,26 +119,12 @@ describe("normalizeJournalVoucherInput", () => {
     );
   });
 
-  it("rejects an account type outside the allowed set (bank_account, vendor)", () => {
-    const body = baseBody({
-      lines: [
-        {
-          accountType: "bank_account",
-          accountId: "11111111-1111-1111-1111-111111111111",
-          debitAmount: 10,
-          creditAmount: 0,
-        },
-        {
-          accountType: "payable_account",
-          accountId: "22222222-2222-2222-2222-222222222222",
-          debitAmount: 0,
-          creditAmount: 10,
-        },
-      ],
-    });
-    expect(() => normalizeJournalVoucherInput(body, TODAY)).toThrow(
-      /only expense heads and ledger heads/i,
-    );
+  it("rejects an account type outside the allowed set (e.g. imprest_manager)", () => {
+    const body = baseBody({ lines: [
+      { accountType: "imprest_manager", accountId: "11111111-1111-1111-1111-111111111111", debitAmount: 10, creditAmount: 0 },
+      { accountType: "payable_account", accountId: "22222222-2222-2222-2222-222222222222", debitAmount: 0, creditAmount: 10 },
+    ] });
+    expect(() => normalizeJournalVoucherInput(body, TODAY)).toThrow(/only expense heads, ledger heads, bank accounts and vendors/i);
   });
 
   it("rejects an amount with more than two decimal places", () => {

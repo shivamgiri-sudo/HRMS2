@@ -38,6 +38,10 @@ vi.mock("../src/shared/scopeAccess.js", () => ({
   getUserRoles: vi.fn().mockResolvedValue([{ role_key: "admin" }]),
   hasRole: vi.fn().mockResolvedValue(true),
   buildScopeWhereClause: vi.fn().mockReturnValue({ where: "", params: [] }),
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  // role lookup used by enterpriseScope (user_roles + the synthetic department_head role)
+  USER_ROLES_WITH_DEPARTMENT_HEAD_SQL: "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+  DEPARTMENT_HEAD_ROLES: [],
   AccessDeniedError: class AccessDeniedError extends Error {},
   BadRequestAccessError: class BadRequestAccessError extends Error {},
 }));
@@ -67,6 +71,7 @@ const svc = employeeService as {
   [K in keyof typeof employeeService]: ReturnType<typeof vi.fn>;
 };
 const AUTH = { Authorization: "Bearer mock-token-admin" };
+const COST_CENTRE_ID = "550e8400-e29b-41d4-a716-446655440010";
 
 const fakeEmployee = {
   id: "emp-1",
@@ -87,8 +92,16 @@ beforeEach(() => {
   // reorder queries without silently shifting a positional chain.
   mockExecute.mockImplementation(async (sql: unknown) => {
     const text = String(sql);
-    if (/FROM employees WHERE id/i.test(text)) {
-      return [[{ branch_id: "branch-1", process_id: "proc-1" }], []];
+    if (/FROM user_roles/i.test(text)) return [[{ role_key: "admin" }], []];
+    if (/FROM user_assignment_scope/i.test(text)) {
+      return [[{ role_key: "admin", scope_type: "branch", branch_id: "branch-1" }], []];
+    }
+    if (/FROM employees\s+WHERE user_id/i.test(text)) {
+      return [[{ id: "caller-emp", employee_code: "ADM001", branch_id: "branch-1" }], []];
+    }
+    // admin is branch-scoped (owner policy 2026-10-01): its own branch is branch-1, the same as the target.
+    if (/FROM employees\s+WHERE id/i.test(text)) {
+      return [[{ id: "emp-1", branch_id: "branch-1", process_id: "proc-1", reporting_manager_id: null }], []];
     }
     return [[], []];
   });
@@ -101,9 +114,21 @@ describe("POST /api/employees", () => {
       employeeCode: "MCN001",
       firstName: "Ravi",
       dateOfJoining: "2026-01-01",
+      costCentreId: COST_CENTRE_ID,
     });
     expect(r.status).toBe(201);
     expect(r.body.data.employee_code).toBe("MCN001");
+    expect(svc.createEmployee.mock.calls[0][0]).toMatchObject({ costCentreId: COST_CENTRE_ID });
+  });
+
+  it("returns 400 when costCentreId is missing — a cost centre is mandatory at creation", async () => {
+    const r = await request(app).post("/api/employees").set(AUTH).send({
+      employeeCode: "MCN001",
+      firstName: "Ravi",
+      dateOfJoining: "2026-01-01",
+    });
+    expect(r.status).toBe(400);
+    expect(svc.createEmployee).not.toHaveBeenCalled();
   });
 
   it("returns 400 when employeeCode missing", async () => {

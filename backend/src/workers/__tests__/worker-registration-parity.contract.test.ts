@@ -30,13 +30,75 @@ describe("worker registration parity", () => {
       .filter((n) => n !== "startServer"),
   );
 
+  /**
+   * Starters the API process owns in EVERY topology, so all-workers.ts must not
+   * carry them. The cache warmers fill in-memory caches that the API's own
+   * request handlers read — warmed in the workers process they would load the DB
+   * for a cache nobody serves from. Meta lead sync was deliberately placed on the
+   * API's WORKERS_PROCESS=external path (49f96b644); a second copy in the workers
+   * process would run the lead outreach twice.
+   *
+   * Being listed here is not an exemption from running: each must be started by
+   * server.ts somewhere OUTSIDE its `if (!WORKERS_EXTERNAL)` blocks, asserted below.
+   */
+  const API_PROCESS_OWNED = [
+    "startFeedHealthCacheWarmer",
+    "startOnfidoCacheWarmer",
+    "startOpsSummaryWarmer",
+    // Warms the API process's in-memory P&L allocation summary cache (canonical-pnl.service.ts).
+    "startPnlSummaryWarmer",
+    "startMetaLeadSyncScheduler",
+    // Opt-in (PIPELINE_HEALTH_ALERTS) owner email on critical lead-pipeline checks; in-memory dedupe.
+    "startPipelineHealthAlerts",
+    // Qualified follow-up cadence tick (5 min, MySQL advisory lock); no-op unless QUAL_FOLLOWUP_MODE is dry_run or live.
+    "startQualifiedFollowupWorker",
+    // Scheduled MIS emails (e93e050e1): gated by its own MIS_EMAIL_SCHEDULER_ENABLED,
+    // started outside the guards, and toggled by mis-scheduler-enable.yml, which
+    // restarts hrms2-backend only. Both pm2 apps read the same backend/.env, so a
+    // copy in all-workers.ts would start a second ticker in hrms2-workers.
+    "startMisEmailScheduler",
+  ];
+
+  // server.ts with every `if (!WORKERS_EXTERNAL) { ... }` block cut out: what is
+  // left is the code that still runs when the API has WORKERS_PROCESS=external.
+  const serverWhenExternal = (() => {
+    const guard = "if (!WORKERS_EXTERNAL) {";
+    let out = server;
+    for (let at = out.indexOf(guard); at !== -1; at = out.indexOf(guard)) {
+      let depth = 0;
+      let end = at + guard.length - 1;
+      for (; end < out.length; end++) {
+        if (out[end] === "{") depth++;
+        else if (out[end] === "}" && --depth === 0) break;
+      }
+      out = out.slice(0, at) + out.slice(end + 1);
+    }
+    return out;
+  })();
+
   it("all-workers.ts registers everything server.ts starts", () => {
-    const missing = [...serverStarters].filter((fn) => !workers.includes(fn));
+    const missing = [...serverStarters].filter(
+      (fn) => !API_PROCESS_OWNED.includes(fn) && !workers.includes(fn)
+    );
     expect(
       missing,
       `Registered in server.ts but not all-workers.ts. With WORKERS_PROCESS=external ` +
         `these run NOWHERE:\n  ${missing.join("\n  ")}`,
     ).toEqual([]);
+  });
+
+  it("API-owned starters run in the API under WORKERS_PROCESS=external and nowhere else", () => {
+    expect(serverWhenExternal).not.toContain("if (!WORKERS_EXTERNAL)");
+    for (const fn of API_PROCESS_OWNED) {
+      expect(serverStarters.has(fn), `${fn} is no longer started by server.ts — drop it from API_PROCESS_OWNED`).toBe(true);
+      expect(
+        serverWhenExternal,
+        `${fn} is only started inside a !WORKERS_EXTERNAL block, so it runs NOWHERE in production`
+      ).toMatch(new RegExp(`\\b${fn}\\(`));
+      expect(workers, `${fn} is API-owned; registering it in all-workers.ts runs it twice`).not.toContain(fn);
+    }
+    // The guarded-only case this list must never hide.
+    expect(serverWhenExternal).not.toMatch(/\bstartExitAutoAdvanceScheduler\(/);
   });
 
   it("server.ts still gates worker startup behind WORKERS_PROCESS", () => {

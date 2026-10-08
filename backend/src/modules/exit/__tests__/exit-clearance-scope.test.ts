@@ -70,8 +70,8 @@ vi.mock("../exit-intelligence.service.js", () => ({
   getExitCommandCenter: vi.fn(),
   saveExitInterview: vi.fn(),
 }));
-vi.mock("../resignation.routes.js", () => {
-  const { Router } = require("express");
+vi.mock("../resignation.routes.js", async () => {
+  const { Router } = await import("express");
   return { resignationRouter: Router() };
 });
 
@@ -164,8 +164,12 @@ describe("PATCH /:id/clearance/:taskId — scope", () => {
   });
 
   it("allows a wfm caller whose scope covers the task's employee, then updates it", async () => {
+    // The route now also gates on the task's clearance_area (CLEARANCE_ROLE_MAP — wfm may
+    // clear the wfm area) and resolves the actor's name for the cleared_by_* audit columns,
+    // so there are three statements: task SELECT, actor-name SELECT, UPDATE.
     dbExecute
-      .mockResolvedValueOnce([[{ employee_id: EMPLOYEE_ID }], []])
+      .mockResolvedValueOnce([[{ employee_id: EMPLOYEE_ID, clearance_area: "wfm" }], []])
+      .mockResolvedValueOnce([[{ full_name: "Wfm Actor" }], []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     canViewEmployee.mockResolvedValue(true);
 
@@ -174,9 +178,22 @@ describe("PATCH /:id/clearance/:taskId — scope", () => {
       .send({ status: "cleared" });
 
     expect(res.status).toBe(200);
-    expect(dbExecute).toHaveBeenCalledTimes(2);
-    const [sql] = dbExecute.mock.calls[1];
+    expect(dbExecute).toHaveBeenCalledTimes(3);
+    const [sql] = dbExecute.mock.calls[2];
     expect(String(sql)).toContain("UPDATE exit_clearance_task");
+  });
+
+  it("403s an in-scope wfm caller clearing an area wfm does not own, and never updates it", async () => {
+    dbExecute.mockResolvedValueOnce([[{ employee_id: EMPLOYEE_ID, clearance_area: "finance" }], []]);
+    canViewEmployee.mockResolvedValue(true);
+
+    const res = await request(app())
+      .patch(`/api/exit/${EXIT_ID}/clearance/${TASK_ID}`)
+      .send({ status: "cleared" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("clearance_role_mismatch");
+    expect(dbExecute).toHaveBeenCalledTimes(1); // only the SELECT, no UPDATE
   });
 
   it("rejects an invalid status before any scope check", async () => {

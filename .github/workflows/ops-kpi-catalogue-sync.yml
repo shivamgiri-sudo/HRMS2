@@ -1,0 +1,76 @@
+name: Ops KPI Catalogue Sync (manual, additive)
+
+# Loads the KPI catalogue seed into the production database. Additive and idempotent: writes only to the new
+# kpi_catalogue* tables and the nullable kpi_studio_definition.catalogue_id link, and (feed backfill) upserts per-agent rows into
+# kpi_daily_actual for the SBI / Bellavita-chat / Clovia-email metric codes; nothing is altered or deleted elsewhere. Needs migration 1990 applied (it runs at backend start). workflow_dispatch only.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-kpi-catalogue-sync-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: Sync KPI catalogue
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Sync catalogue
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
+          npx tsx scripts/kpi-catalogue-sync.ts
+
+      - name: Backfill upload feeds into kpi_daily_actual (45 days, idempotent upserts)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          npx tsx scripts/kpi-feed-backfill.ts 45
+
+      - name: Smoke-test live performance on real data (read-only)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          npx tsx scripts/kpi-performance-smoke.ts
+
+      - name: Map catalogue processes to the process rows that hold employees (read-only)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          npx tsx scripts/kpi-process-employee-map.ts

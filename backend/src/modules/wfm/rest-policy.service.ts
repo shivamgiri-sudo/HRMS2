@@ -20,6 +20,7 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { hasTable } from "./schema-probe.util.js";
+import { onRosterRequestRaised } from "../roster-requests/roster-requests.raise.js";
 
 type Executor = {
   execute<T extends RowDataPacket[] = RowDataPacket[]>(
@@ -498,12 +499,15 @@ export async function recordRestGapWarning(
     `Allowed because the minimum-rest policy is in WARN mode.`;
 
   try {
-    await executor.execute(
+    // The id is generated here (not UUID() in SQL) so the raise hook can reference the new row.
+    const conflictId = randomUUID();
+    const [header] = await executor.execute(
       `INSERT INTO wfm_roster_conflict_log
          (id, plan_id, assignment_id, employee_id, conflict_date, roster_date,
           conflict_type, severity, description, message, resolved, resolution_status, detected_at)
-       VALUES (UUID(), ?, ?, ?, ?, ?, 'REST_GAP_WARNING', 'high', ?, ?, 0, 'open', NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, 'REST_GAP_WARNING', 'high', ?, ?, 0, 'open', NOW())`,
       [
+        conflictId,
         input.planId ?? null,
         input.assignmentId ?? null,
         input.employeeId,
@@ -513,6 +517,10 @@ export async function recordRestGapWarning(
         message,
       ],
     );
+    // Plain INSERT: a row exists unless the driver reports zero affected rows. Deferred + non-fatal.
+    if (((header as { affectedRows?: number } | undefined)?.affectedRows ?? 1) > 0) {
+      onRosterRequestRaised({ kind: "conflict", sourceId: conflictId, employeeId: input.employeeId, date: input.rosterDate, summary: "Roster conflict: REST_GAP_WARNING" });
+    }
   } catch (err) {
     console.error(
       `[rest-policy] REST_GAP_WARNING could not be recorded for employee ${input.employeeId} on ${input.rosterDate}:`,
@@ -536,8 +544,7 @@ export interface RestOverrideInput {
   actualRestMinutes: number;
   requiredRestMinutes: number;
   policyId: string | null;
-  source:
-    "weekly_generation" | "manual_assignment" | "bulk_upload" | "shift_swap";
+  source: "weekly_generation" | "manual_assignment" | "bulk_upload" | "shift_swap" | "dispute_resolution";
   reason: string;
   requestedBy: string;
   approvedBy: string;

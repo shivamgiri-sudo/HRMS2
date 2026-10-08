@@ -7,6 +7,7 @@ import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { TtlCache } from "../../shared/ttlCache.js";
 import { resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { branchNameVariants } from "./ats-vocabulary.js";
 import {
   createCandidateSchema,
   updateCandidateSchema,
@@ -52,10 +53,8 @@ const resolveProcessNames = (ids: readonly string[]) =>
 // so viewers with the same filters share one computation per 30s window, and concurrent
 // requests share the in-flight one instead of each running the whole query batch.
 const ATS_STATS_TTL_MS = 30_000;
-export const atsStatsCache = new TtlCache<unknown>({
-  maxEntries: 100,
-  defaultTtlMs: ATS_STATS_TTL_MS,
-});
+// Stale-while-revalidate: ~9-16s cold, so a visit after the TTL gets the previous result at once while one refresh runs.
+export const atsStatsCache = new TtlCache<unknown>({ maxEntries: 100, defaultTtlMs: ATS_STATS_TTL_MS, defaultStaleMs: 30 * 60_000 });
 
 export const atsController = {
   async listCandidates(req: AuthenticatedRequest, res: Response) {
@@ -280,11 +279,20 @@ export const atsController = {
       resolveProcessNames(processIds),
     ]);
 
+    // A browser-supplied ?branch= / ?process= may only NARROW the entitlement (owner ruling 2026-10-01):
+    // outside the caller's scope it is ignored and the entitled names are used (never widened). Only an
+    // ORG_ALL scope honours an arbitrary name.
+    const within = (asked: string | undefined, entitled: string[], expand: (n: string) => string[]) => {
+      if (!asked) return undefined;
+      if (scope.level === "ORG_ALL") return asked;
+      const ok = new Set(entitled.flatMap((n) => expand(n)).map((n) => n.toLowerCase()));
+      return ok.has(asked.trim().toLowerCase()) ? asked : undefined;
+    };
     const statsFilters = {
       fromDate,
       toDate,
-      branch: branch ?? branchNames,
-      process: process ?? processNames,
+      branch: within(branch, branchNames, branchNameVariants) ?? branchNames,
+      process: within(process, processNames, (n) => [n]) ?? processNames,
     };
     const asKey = (v: unknown) => JSON.stringify(v ?? null);
     const { value: data } = await atsStatsCache.getOrCompute(

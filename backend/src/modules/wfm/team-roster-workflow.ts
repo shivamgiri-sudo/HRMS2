@@ -130,13 +130,16 @@ export async function assertWfmScopeCoversSubmission(
   }
 }
 
-async function lockSubmission(conn: SqlExecutor, id: number, expected: string) {
-  const s = rowsOf<RowDataPacket>(
-    await conn.execute(
-      `SELECT * FROM roster_team_submission WHERE id = ? FOR UPDATE`,
-      [id],
-    ),
-  )[0];
+/** Throws unless one employee is inside the caller's WFM scope. */
+export async function assertWfmScopeCoversEmployee(actor: Actor, employeeId: string, exec: SqlExecutor = db): Promise<void> {
+  if (isGlobalApprover(actor)) return;
+  const scope = await wfmEmployeeScope(actor);
+  const hit = rowsOf<RowDataPacket>(await exec.execute(`SELECT 1 AS x FROM employees e WHERE e.id = ? AND ${scope.sql} LIMIT 1`, [employeeId, ...scope.params]));
+  if (!hit.length) throw new TeamRosterError(403, "This employee is outside your branch/process scope.", "OUT_OF_SCOPE");
+}
+
+export async function lockSubmission(conn: SqlExecutor, id: number, expected: string) {
+  const s = rowsOf<RowDataPacket>(await conn.execute(`SELECT * FROM roster_team_submission WHERE id = ? FOR UPDATE`, [id]))[0];
   if (!s) throw new TeamRosterError(404, "Submission not found.", "NOT_FOUND");
   if (String(s.status) !== expected) {
     throw new TeamRosterError(
@@ -148,7 +151,7 @@ async function lockSubmission(conn: SqlExecutor, id: number, expected: string) {
   return s;
 }
 
-async function refuseSelfApproval(actor: Actor, s: RowDataPacket) {
+export async function refuseSelfApproval(actor: Actor, s: RowDataPacket) {
   const caller = await resolveCallerEmployee(actor.id);
   if (
     (s.submitter_user_id && String(s.submitter_user_id) === actor.id) ||

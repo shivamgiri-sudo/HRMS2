@@ -21,6 +21,17 @@ function resetDbMock() {
   mockExecute.mockReset().mockResolvedValue([[], []]);
 }
 
+/**
+ * createCandidate now opens with a rehire lookup (c0c429b87: a mobile that belongs
+ * only to departed employees re-opens the old candidate row). Every case below is
+ * a NON-rehire, so that lookup answers "no reusable row" before the duplicate
+ * checks each test then scripts.
+ */
+function resetForCreate() {
+  resetDbMock();
+  mockExecute.mockResolvedValueOnce([[]]); // rehire lookup — not a departed employee
+}
+
 const validInput = {
   fullName: "Priya Singh",
   mobile: "9876543210",
@@ -51,7 +62,7 @@ const fakeCandidate = {
 };
 
 describe("atsService.createCandidate — valid registration", () => {
-  beforeEach(resetDbMock);
+  beforeEach(resetForCreate);
 
   it("inserts and returns new candidate when all mandatory fields provided", async () => {
     mockExecute
@@ -72,21 +83,16 @@ describe("atsService.createCandidate — valid registration", () => {
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
-      .mockResolvedValueOnce([
-        [{ ...fakeCandidate, sourcing_channel: "Walk-In" }],
-      ]);
-    const result = await atsService.createCandidate(
-      { ...validInput, sourcingChannel: "walk-in" },
-      "user-1",
-    );
-    const insertSql: string = mockExecute.mock.calls[2][0];
+      .mockResolvedValueOnce([[{ ...fakeCandidate, sourcing_channel: "Walk-In" }]]);
+    const result = await atsService.createCandidate({ ...validInput, sourcingChannel: "walk-in" }, "user-1");
+    const insertSql: string = mockExecute.mock.calls[3][0]; // after rehire, mobile and email lookups
     expect(insertSql).toMatch(/INSERT INTO ats_candidate/i);
     expect(result.sourcing_channel).toBe("Walk-In");
   });
 });
 
 describe("atsService.createCandidate — duplicate mobile", () => {
-  beforeEach(resetDbMock);
+  beforeEach(resetForCreate);
 
   it("throws 409 DUPLICATE_MOBILE for active candidate", async () => {
     mockExecute.mockResolvedValueOnce([
@@ -136,7 +142,7 @@ describe("atsService.createCandidate — duplicate mobile", () => {
 });
 
 describe("atsService.createCandidate — placeholder emails are not deduplicated", () => {
-  beforeEach(resetDbMock);
+  beforeEach(resetForCreate);
 
   /**
    * 14,246 of 33,856 production candidates carry no usable email. "0" alone
@@ -182,7 +188,7 @@ describe("atsService.createCandidate — placeholder emails are not deduplicated
 });
 
 describe("atsService.createCandidate — duplicate email", () => {
-  beforeEach(resetDbMock);
+  beforeEach(resetForCreate);
 
   it("throws 409 DUPLICATE_EMAIL when email already registered", async () => {
     mockExecute

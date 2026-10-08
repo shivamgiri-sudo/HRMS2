@@ -692,7 +692,7 @@ export async function detectUnplannedAbsences(
 }
 
 /** RBAC scope + UI filters -> SQL conditions on alias `e`. Filters only ever NARROW the scope. */
-function buildEmployeeScope(
+export function buildEmployeeScope(
   scope?: RosterIntelligenceScope,
   filters?: RosterIntelligenceFilters,
 ): { conds: string[]; params: unknown[] } {

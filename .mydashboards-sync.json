@@ -1,0 +1,13 @@
+{
+  "repo": "https://github.com/tausifansari-mcn/Mydashboards.git",
+  "sha": "4fbd5df813de0d1ba01a5a61d70e69b61d7c4ba1",
+  "files": [
+    "backend/src/modules/call-master/upstream/call-master.service.ts",
+    "backend/src/modules/call-master/upstream/customer-intelligence.service.ts",
+    "backend/src/modules/call-master/upstream/opening-intelligence.service.ts",
+    "src/features/call-master-sync/upstream/CallMasterDashboard.tsx",
+    "src/features/call-master-sync/upstream/CustomerIntelligenceDashboard.tsx",
+    "src/features/call-master-sync/upstream/OpeningIntelligenceDashboard.tsx",
+    "src/features/call-master-sync/upstream/OutboundSalesDashboard.tsx"
+  ]
+}

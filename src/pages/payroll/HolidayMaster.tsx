@@ -67,7 +67,13 @@ export default function HolidayMaster() {
     },
   });
 
-  const { data: branches = [] } = useQuery<Branch[]>({
+  // Branches the caller may write holidays for (null = all). The API enforces the same rule.
+  const { data: allowedBranchIds } = useQuery<string[] | null>({
+    queryKey: ["holiday-master-my-branches"],
+    queryFn: () => hrmsApi.get<any>("/api/payroll/holiday-master/my-branches").then((d: any) => d?.data ?? null),
+  });
+  const branchesLimited = Array.isArray(allowedBranchIds);
+  const { data: allBranches = [] } = useQuery<Branch[]>({
     queryKey: ["org-branches-active"],
     queryFn: () => hrmsApi.get<any>("/api/org/branches?active_status=1").then((d: any) => d.data ?? d ?? []),
   });
@@ -82,17 +88,23 @@ export default function HolidayMaster() {
     queryFn: () => hrmsApi.get<any>("/api/org/designations?active_status=1").then((d: any) => d.data ?? d ?? []),
   });
 
-  const branchMap = useMemo(() => new Map(branches.map((b) => [b.id, b.branch_name])), [branches]);
+  const branches = useMemo(
+    () => (branchesLimited ? allBranches.filter((b) => allowedBranchIds!.includes(b.id)) : allBranches),
+    [allBranches, allowedBranchIds, branchesLimited],
+  );
+  // Names resolve against every branch so all-branch / other-branch holidays still display.
+  const branchMap = useMemo(() => new Map(allBranches.map((b) => [b.id, b.branch_name])), [allBranches]);
 
   const filteredCostCentres = useMemo(() =>
     costCentres.filter((cc) => {
+      if (branchesLimited && !allowedBranchIds!.includes(cc.branch_id)) return false;
       const matchesSearch = !ccSearch ||
         cc.cost_centre_name.toLowerCase().includes(ccSearch.toLowerCase()) ||
         cc.cost_centre_code.toLowerCase().includes(ccSearch.toLowerCase()) ||
         (cc.process_name && cc.process_name.toLowerCase().includes(ccSearch.toLowerCase()));
       const matchesBranch = ccBranchFilter.size === 0 || ccBranchFilter.has(cc.branch_id);
       return matchesSearch && matchesBranch;
-    }), [costCentres, ccSearch, ccBranchFilter]);
+    }), [costCentres, ccSearch, ccBranchFilter, branchesLimited, allowedBranchIds]);
 
   const ccByBranch = useMemo(() => {
     const map = new Map<string, CostCentre[]>();
@@ -141,7 +153,7 @@ export default function HolidayMaster() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["holiday-master"] }); setDesRow(null); },
   });
 
-  const ALLOWED_ROLES = ["super_admin", "admin", "payroll_head", "payroll_branch"];
+  const ALLOWED_ROLES = ["super_admin", "admin", "payroll_head", "payroll_branch", "branch_wfm"];
   if (!roleKeys.some(r => ALLOWED_ROLES.includes(r))) {
     return <DashboardLayout><div className="p-8 text-red-600">Access denied.</div></DashboardLayout>;
   }
@@ -336,13 +348,13 @@ export default function HolidayMaster() {
                 </select>
               </div>
               <div className="space-y-1">
-                <label className="text-sm font-medium">Branch <span className="text-xs text-muted-foreground">(leave blank for all branches)</span></label>
+                <label className="text-sm font-medium">Branch {!branchesLimited && <span className="text-xs text-muted-foreground">(leave blank for all branches)</span>}</label>
                 <Select value={form.branch_id || "__all__"} onValueChange={v => setForm(p => ({ ...p, branch_id: v === "__all__" ? "" : v }))}>
                   <SelectTrigger className="w-full text-sm">
                     <SelectValue placeholder="All branches" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__all__">All branches</SelectItem>
+                    {!branchesLimited && <SelectItem value="__all__">All branches</SelectItem>}
                     {branches.map(b => (
                       <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
                     ))}

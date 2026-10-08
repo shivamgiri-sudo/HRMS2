@@ -86,6 +86,21 @@ describe("UnifiedPerformanceCommandCenter — missing sources must not read as z
     expect(page).not.toMatch(/\['Quality', scopedQuality\.length, `\$\{metrics\.avgQuality\}% avg score`\],/);
   });
 
+  it("calls existing endpoints within their limits (crawl 2026-10-06: 404 / 400 / 400)", () => {
+    // No GET /api/wfm/roster exists; the scoped roster read is /roster/actual-assignments.
+    expect(page).not.toContain("/api/wfm/roster?");
+    expect(page).toContain("/api/wfm/roster/actual-assignments?fromDate=");
+    // /api/ats/candidates: max 500, filters are fromDate/toDate.
+    expect(page).not.toMatch(/\/api\/ats\/candidates\?[^`]*limit=1000/);
+    expect(page).toContain("/api/ats/candidates?fromDate=${fromDate}&toDate=${toDate}&limit=500");
+    // /api/wfm/sessions: max 100; counts come from `total` with limit=1.
+    expect(page).not.toMatch(/\/api\/wfm\/sessions\?[^`]*limit=1000/);
+    expect(page).toContain('new URLSearchParams({ fromDate, toDate, limit: "1" })');
+    // "On Shift" is not a current_status value; the live ones are Logged In / Partial.
+    expect(page).not.toContain('"On Shift").length');
+    expect(page).toContain('count("Logged In"), count("Partial")');
+  });
+
   it("names the unavailable sources at the top of the page", () => {
     expect(page).toContain("Some data sources did not load");
     expect(page).toContain("unavailable.join(\", \")");

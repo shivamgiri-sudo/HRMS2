@@ -1,13 +1,16 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import { attendanceInEmploymentWindowSql } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../lib/logger.js";
 import { missingTdsConfigKeys } from "./statutory-regime.js";
 // The closed-run set was `["locked", "disbursed"]`, which matched no row in
 // production — runs finish as FINALIZED — so this guard never fired.
 import { isRunClosed, CLOSED_RUN_STATUSES_SQL } from "./run-status.js";
-// PT removed 2026-09-11 per user decision — professional-tax-states.ts is no longer
-// consumed here; kept in the tree for historical reference only, not deleted.
+// PT is off from PT_REMOVED_FROM_MONTH (below), so professional-tax-states.ts is consulted
+// again, but only when an EARLIER month is calculated.
+import { isProfessionalTaxExempt } from "./professional-tax-states.js";
+import { loadStatutoryNotApplicable } from "./statutory-applicability.service.js";
 import {
   EMPLOYMENT_END_DATE_SELECT,
   employmentWindowPredicate,
@@ -20,6 +23,8 @@ import type { SalaryPrepRun } from "./payroll.types.js";
 import { maternityService } from "../compliance/maternity.service.js";
 import { calculateWeekoffEligibility } from "./weekoff-eligibility.service.js";
 import { resolveHolidaysForEmployeeV2 } from "./holiday-work.service.js";
+import { isStintPayrollEnabled, loadStintScopes, type StintScope } from "./stint-payroll.service.js";
+import { isIncrementSplitEnabled, resolveIncrementPackage, toPackageParts, type Executor as IncrementExecutor } from "./increment-package-split.js";
 import { checkAndReverseLeave } from "./leave-reversal.service.js";
 import {
   detectAndCalculateHolidayWork,
@@ -106,6 +111,33 @@ const PAYSLIP_COMPONENT_NAMES: Record<string, string> = {
 };
 
 /**
+ * One earned component, the way db_bill earns it: ROUND(component * EarnedDays / WorkingDays) to a
+ * WHOLE RUPEE (Basic1, HRA1, Bonus1, Conv1 ... are integers in db_bill.salary_data). Multiplies
+ * before it divides so rounding boundaries land where MySQL DECIMAL puts them.
+ */
+export function prorateToRupee(value: number, days: number, daysInMonth: number): number {
+  if (!daysInMonth) return 0;
+  return Math.round((value * days) / daysInMonth);
+}
+
+/**
+ * Earned gross for a per-employee component package: the SUM of each component earned on its own
+ * (db_bill's Gross1), never the unrounded package gross times a ratio — that gave 59,139.52 where
+ * db_bill pays 59,140 (MAS60236, 2026-08). Covers exactly the components the payslip itemises.
+ */
+export function sumProratedComponents(
+  compAmounts: Record<string, number>,
+  days: number,
+  daysInMonth: number,
+): number {
+  let total = 0;
+  for (const [code, val] of Object.entries(compAmounts)) {
+    if (val > 0 && PAYSLIP_COMPONENT_NAMES[code]) total += prorateToRupee(val, days, daysInMonth);
+  }
+  return total;
+}
+
+/**
  * Builds the itemized earning-component breakdown for one salary_prep_line's
  * payslip. Extracted 2026-08-14 for testability, from logic that used to be
  * inline in calculatePayrollRunScoped — behaviour unchanged except for the two
@@ -181,8 +213,8 @@ export function buildPayslipEarningComponents(params: {
   const rDen = params.ratioDenominator;
   const prorate = (v: number): number =>
     rNum !== undefined && rDen !== undefined && rDen !== 0
-      ? Math.round((v * rNum * 100) / rDen) / 100
-      : Math.round(v * params.ratio * 100) / 100;
+      ? prorateToRupee(v, rNum, rDen)
+      : Math.round(v * params.ratio);
 
   if (params.hasFixedComponents) {
     for (const [code, val] of Object.entries(params.compAmounts)) {
@@ -531,19 +563,71 @@ export function calculateTds(
 // ─── Professional Tax from Slab ───────────────────────────────────────────────
 
 /**
- * PT removed 2026-09-11 per user decision — full company-wide removal across all
- * states. This previously looked up pt_amount from pt_slab_master (and consulted
- * professional-tax-states.ts for genuinely-exempt states vs configuration gaps).
- * That table is kept for historical reference only (additive-only rule — nothing
- * dropped), but is no longer queried for live calculation: this always resolves
- * to 0 now, unconditionally, for every state. Signature kept unchanged for API/
- * caller shape compatibility (ats/salary.calculator.ts, running-salary.service.ts,
- * payroll-compliance's own copy).
+ * First payroll month with NO professional tax.
+ *
+ * PT was removed company-wide on 2026-09-11, "go-forward only" (commit 9c5212e09), and that
+ * commit made the engine return 0 for every month. That reached BACK: recalculating an
+ * earlier month dropped PT that had been deducted when the month was first calculated and that
+ * the legacy ledger still deducts. MAS60236, 2026-08: HRMS 59,140 net against db_bill's
+ * 58,940, after a targeted recalculation — the other 71 Ahmedabad-Jaldarshan lines in that run,
+ * untouched by any recalculation, still carried the Rs 200. A month before this one keeps its
+ * state-slab PT; this month and later never has any.
+ */
+export const PT_REMOVED_FROM_MONTH = "2026-09";
+
+/** True when professional tax still applies to payroll for `runMonth` ("YYYY-MM" or a date). */
+export function isProfessionalTaxActiveForMonth(runMonth: string | null | undefined): boolean {
+  if (!runMonth) return false;
+  return String(runMonth).slice(0, 7) < PT_REMOVED_FROM_MONTH;
+}
+
+/**
+ * PT amount for a state and monthly income from pt_slab_master, for months in which PT is still
+ * levied. With no `runMonth`, or one from PT_REMOVED_FROM_MONTH on, this is 0 and the table is
+ * not read - the removal is the default for any live or future calculation. Signature gained one
+ * optional argument; ats/salary.calculator.ts and running-salary.service.ts, which pass none,
+ * keep resolving to 0.
  */
 export async function getPtFromSlab(
-  _stateCode: string,
-  _monthlyIncome: number,
+  stateCode: string,
+  monthlyIncome: number,
+  runMonth?: string | null,
 ): Promise<number> {
+  if (!isProfessionalTaxActiveForMonth(runMonth)) return 0;
+
+  // Case-insensitive match on state_code (abbreviation) OR state_name (full name)
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT pt_amount FROM pt_slab_master
+      WHERE (LOWER(state_code) = LOWER(?) OR LOWER(state_name) = LOWER(?))
+        AND is_active = 1
+        AND income_from <= FLOOR(?)
+        AND (income_to IS NULL OR income_to >= FLOOR(?))
+      ORDER BY income_from DESC
+      LIMIT 1`,
+    [stateCode, stateCode, monthlyIncome, monthlyIncome],
+  );
+  const row = (rows as Array<{ pt_amount: number }>)[0];
+  if (row) return Number(row.pt_amount);
+
+  const [anyRows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM pt_slab_master
+      WHERE (LOWER(state_code) = LOWER(?) OR LOWER(state_name) = LOWER(?)) AND is_active = 1
+      LIMIT 1`,
+    [stateCode, stateCode],
+  );
+
+  if ((anyRows as RowDataPacket[]).length === 0) {
+    // No slab rows: either the state levies no PT (0 is right) or nobody configured it (0 would
+    // be an under-deduction). The exempt states are named explicitly; anything else is a gap.
+    if (isProfessionalTaxExempt(stateCode)) return 0;
+    throw new Error(
+      `Professional tax is not configured for state "${stateCode}". Add its slabs to ` +
+        `pt_slab_master, or record the state as PT-exempt if it levies none. ` +
+        `No amount is assumed, because zero would be an under-deduction if the state does levy PT.`,
+    );
+  }
+
+  // State has slabs but the income falls below the lowest bracket -> genuinely 0.
   return 0;
 }
 
@@ -619,21 +703,25 @@ interface StatutoryRow {
 }
 
 /**
- * PT removed 2026-09-11 per user decision — full company-wide removal.
- *
- * This used to throw when an employee's branch had no state (PT is a state
- * levy, so an indeterminate state meant an indeterminate liability), which
- * blocked that employee out of the run entirely via pt_blocked_employees. With
- * PT removed there is nothing to determine and nothing to block on — this now
- * always resolves to 0 for every employee, state known or not. Signature and
- * the async contract are kept unchanged so every caller keeps compiling.
+ * Professional tax for one employee in `runMonth`. 0 from PT_REMOVED_FROM_MONTH on - nothing to
+ * determine and nothing to block on. For an earlier month the state decides it, as it did before
+ * the removal, and an employee whose branch has no state throws (PT is a state levy, so no
+ * default is applied) and is blocked out of the run via pt_blocked_employees, exactly as then.
  */
 export async function resolveProfessionalTax(
-  _employeeCode: string,
-  _stateCode: string | null | undefined,
-  _monthlyGross: number,
+  employeeCode: string,
+  stateCode: string | null | undefined,
+  monthlyGross: number,
+  runMonth?: string | null,
 ): Promise<number> {
-  return 0;
+  if (!isProfessionalTaxActiveForMonth(runMonth)) return 0;
+  if (!stateCode) {
+    throw new Error(
+      `Professional tax cannot be determined for ${employeeCode}: their branch has no state set. ` +
+        `PT is levied per state, so no default is applied. Set the branch's state and re-run.`,
+    );
+  }
+  return getPtFromSlab(stateCode, monthlyGross, runMonth);
 }
 
 /**
@@ -869,6 +957,13 @@ export async function calculatePayrollRunScoped(
     );
   }
 
+  // Rejoin v3 stint-aware payroll (migration 2081), default OFF and fail-closed: any read error is
+  // OFF. When off, nothing below changes: stintScope is undefined for every employee.
+  const stintPayrollOn = await isStintPayrollEnabled();
+  // Increment requests priced from their effective date (split by days mid-month). Default OFF: unchanged behaviour.
+  const incrementSplitOn = await isIncrementSplitEnabled();
+  let incrementSplitApplied = 0;
+
   // Salary is resolved as of the run month, not as of today.
   //
   // The join below was "ON esa.employee_id = e.id" filtered by "esa.active_status = 1" —
@@ -1073,6 +1168,12 @@ export async function calculatePayrollRunScoped(
 
   // All DB writes go through a single connection wrapped in a transaction so
   // that a crash mid-loop leaves the run fully rolled back rather than partially written.
+  // PF / ESI the payroll source (db_bill) or an HRMS opt-out says do not apply, read once per run
+  // and before the transaction opens, so a slow remote read never holds a connection.
+  const statutoryNotApplicable = await loadStatutoryNotApplicable(
+    String(run.run_month).slice(0, 7),
+  );
+
   const conn = await db.getConnection();
   await conn.beginTransaction();
 
@@ -1139,6 +1240,7 @@ export async function calculatePayrollRunScoped(
          FROM attendance_daily_record
         WHERE employee_id IN (${empIdPh()})
           AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+          AND ${attendanceInEmploymentWindowSql("attendance_daily_record")}
         GROUP BY employee_id`,
       [...empIds, loopMonthStart, loopMonthEnd],
     );
@@ -1161,6 +1263,8 @@ export async function calculatePayrollRunScoped(
        FROM attendance_daily_record adr
        WHERE adr.employee_id IN (${empIdPh()})
          AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+         -- Only days inside the employment window (salary start date .. exit date) count for pay.
+         AND ${attendanceInEmploymentWindowSql("adr")}
        GROUP BY adr.employee_id`,
       [...empIds, loopMonthStart, loopMonthEnd],
     );
@@ -1185,6 +1289,8 @@ export async function calculatePayrollRunScoped(
        FROM attendance_daily_record adr
        WHERE adr.employee_id IN (${empIdPh()})
          AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+         -- Only days inside the employment window (salary start date .. exit date) count for pay.
+         AND ${attendanceInEmploymentWindowSql("adr")}
        GROUP BY adr.employee_id`,
       [...empIds, loopMonthStart, loopMonthEnd],
     );
@@ -1209,6 +1315,10 @@ export async function calculatePayrollRunScoped(
         Number((r as any).present_days),
       );
   }
+
+  // Rejoin v3: employment stints, only when the flag is on. Only employees with employment_stint rows
+  // (rejoiners) get an entry; everyone else follows the unchanged path.
+  const stintScopes = stintPayrollOn ? await loadStintScopes(empIds, loopMonthStart, loopMonthEnd, new Map(employees.map((e) => [e.employee_id, e.salary_start_date ?? null])), new Map(employees.map((e) => [e.employee_id, e.employment_end_date ?? null]))) : new Map<string, StintScope>();
 
   try {
     for (const emp of employees) {
@@ -1236,6 +1346,12 @@ export async function calculatePayrollRunScoped(
           // Still in unpaid training — no payroll entry this month
           continue;
         }
+      }
+      // Rejoin v3: a rejoiner's month wholly inside the gap between stints gets no line, the same as
+      // the salary_start_date skip above. stintScope is undefined when the flag is off.
+      const stintScope = stintPayrollOn ? stintScopes.get(emp.employee_id) : undefined;
+      if (stintScope && stintScope.employedDays === 0) {
+        continue;
       }
       processedCount++;
 
@@ -1286,15 +1402,18 @@ export async function calculatePayrollRunScoped(
       // them: a company holiday is not a day the employee could have worked, so it must not count
       // against "did you work every available working day". This used to be resolved further down,
       // after the week-off call, which is why the test could never see it.
-      const { eligibleHolidayCount } = await resolveHolidaysForEmployeeV2(
-        emp.employee_id,
-        run.run_month,
-      );
+      // Rejoin v3: stintScope?.ranges drops holidays that fall inside the gap between stints (undefined when
+      // the flag is off or the employee has no stints, which is the unchanged call).
+      // A holiday is paid when it falls after the joining date and before the exit date; no worked-days gate.
+      const { eligibleHolidayCount } = await resolveHolidaysForEmployeeV2(emp.employee_id, run.run_month, stintScope?.ranges);
+      // Rejoin v3: an empty tuple when there is no scope, so the flag-off call is the same 4-argument call.
+      const stintWeekoffArg: [] | [{ employedDays: number; sundays: number }] = stintScope ? [{ employedDays: stintScope.employedDays, sundays: stintScope.sundays }] : [];
       const eligibleWeekoffs = await calculateWeekoffEligibility(
         emp.employee_id,
         paidBase,
         run.run_month,
         eligibleHolidayCount,
+        ...stintWeekoffArg,
       );
 
       // Check if auto-generation of holiday work payouts is enabled
@@ -1361,6 +1480,7 @@ export async function calculatePayrollRunScoped(
             effectivePaidBase,
             run.run_month,
             eligibleHolidayCount,
+            ...stintWeekoffArg,
           )
         : eligibleWeekoffs;
       const finalHolidays = reversalResult.reversed
@@ -1377,7 +1497,8 @@ export async function calculatePayrollRunScoped(
       // the same rule (Finance decision: align locked run to active-days cap).
       const calculatedPayable =
         effectivePaidBase + finalWeekoffs + finalHolidays;
-      const activeCals = (() => {
+      // Rejoin v3: with a stint scope the cap is the employed days (never 0 here: that case was skipped).
+      const activeCals = stintScope ? Math.min(stintScope.employedDays, daysInMonth) : (() => {
         const effectiveStart =
           emp.salary_start_date && emp.salary_start_date > monthStart
             ? emp.salary_start_date
@@ -1416,13 +1537,37 @@ export async function calculatePayrollRunScoped(
       // Use conn so reads are within the transaction snapshot.
       const [scaRows] = await conn.execute<RowDataPacket[]>(
         `SELECT basic, hra, conveyance, special_allowance,
-              bonus, portfolio, medical_allowance, lta, other_allowance, pli, gross
+              bonus, portfolio, medical_allowance, lta, other_allowance, pli, gross, effective_date
          FROM salary_component_assignments
         WHERE employee_id = ? AND status = 'active'
         ORDER BY effective_date DESC LIMIT 1`,
         [emp.employee_id],
       );
-      const scaRow = (scaRows as any[])[0];
+      let scaRow = (scaRows as any[])[0];
+      // Approved increment requests: from the effective date the catalog package for the approved CTC replaces an
+      // older package row, split by calendar days when the date falls inside the employee's paid window. Off by
+      // default; see increment-package-split.ts. Any failure here leaves the package row exactly as read.
+      if (incrementSplitOn && scaRow && Number(scaRow.gross) > 0) {
+        try {
+          const windowStart = (emp.salary_start_date && String(emp.salary_start_date).slice(0, 10) > monthStart)
+            ? String(emp.salary_start_date).slice(0, 10)
+            : monthStart;
+          const windowEnd = payableThrough(emp.employment_end_date, monthEnd);
+          const inc = await resolveIncrementPackage(conn as unknown as IncrementExecutor, {
+            employeeId: emp.employee_id,
+            current: toPackageParts(scaRow),
+            currentEffectiveDate: scaRow.effective_date,
+            windowStart,
+            windowEnd,
+          });
+          if (inc) {
+            scaRow = { ...scaRow, ...inc.package };
+            incrementSplitApplied++;
+          }
+        } catch (err) {
+          logger.warn(`[payroll] run ${runId}: increment package split skipped for ${emp.employee_code}: ${err instanceof Error ? err.message : err}`);
+        }
+      }
 
       const [compRows] = await conn.execute<RowDataPacket[]>(
         `SELECT scm.component_code, ssc.calc_type, ssc.value
@@ -1565,9 +1710,13 @@ export async function calculatePayrollRunScoped(
       // Days-based gross calculation
       const isOnMaternityLeave = maternityExemptIds.has(emp.employee_id);
       // Maternity employees receive full monthly gross (MBA 1961 s.5(1))
+      // Per-employee component packages are earned component by component and summed, each
+      // rounded to a whole rupee like db_bill's Gross1; the CTC fallback keeps the plain ratio.
       const grossMonthly = isOnMaternityLeave
         ? monthlyGrossBase
-        : monthlyGrossBase * (finalPayableDays / daysInMonth);
+        : hasFixedComponents
+          ? sumProratedComponents(compAmounts, finalPayableDays, daysInMonth)
+          : monthlyGrossBase * (finalPayableDays / daysInMonth);
       // No separate LWP deduction needed — absent days just reduce finalPayableDays
       const lwpDeduction = 0; // absorbed into days-based calculation
       const grossAfterLwp = grossMonthly;
@@ -1957,6 +2106,7 @@ export async function calculatePayrollRunScoped(
           emp.employee_code,
           emp.state_code,
           grossAfterLwp,
+          String(run.run_month),
         );
       } catch (err) {
         ptBlockedEmployees.push({
@@ -1975,12 +2125,17 @@ export async function calculatePayrollRunScoped(
          AND (effective_from_month IS NULL OR effective_from_month <= ?)`,
         [emp.employee_id, run.run_month],
       );
-      const pfOptOut = (overrideRows as Array<{ override_type: string }>).some(
-        (r) => r.override_type === "pf_opt_out",
-      );
-      const esicOptOutDeclared = (
-        overrideRows as Array<{ override_type: string }>
-      ).some((r) => r.override_type === "esic_opt_out");
+      const empCodeKey = String(emp.employee_code ?? "").trim().toUpperCase();
+      // Not deducted when an approved HRMS opt-out exists OR the payroll source flags the scheme
+      // NOT applicable for the employee (statutory-applicability.service.ts).
+      const pfOptOut =
+        (overrideRows as Array<{ override_type: string }>).some(
+          (r) => r.override_type === "pf_opt_out",
+        ) || statutoryNotApplicable?.pf.has(empCodeKey) === true;
+      const esicOptOutDeclared =
+        (overrideRows as Array<{ override_type: string }>).some(
+          (r) => r.override_type === "esic_opt_out",
+        ) || statutoryNotApplicable?.esi.has(empCodeKey) === true;
 
       // ESI Act contribution-period rule (section 2(6A) / Reg 3):
       // Once covered at the start of a contribution period (Apr-Sep or Oct-Mar),
@@ -2012,6 +2167,10 @@ export async function calculatePayrollRunScoped(
           if (periodStart < run.run_month) {
             // Check if the employee had a salary_prep_line in an earlier month of
             // this period where gross was at or below the ESI wage limit.
+            // Coverage means ESIC was actually deducted. An earned (prorated) gross under
+            // the ceiling alone is not coverage: joiners and LWP months fall under it
+            // while their package is above it, and db_bill decides on the package
+            // (Aug 2026: 91 lines wrongly deducted).
             const esicWageLimit = stat.esic_wage_limit;
             const [esiPriorRows] = await db.execute<RowDataPacket[]>(
               `SELECT 1 FROM salary_prep_line spl
@@ -2022,6 +2181,7 @@ export async function calculatePayrollRunScoped(
                 AND LOWER(spr.status) NOT IN ('draft', 'cancelled')
                 AND spl.gross_salary > 0
                 AND spl.gross_salary <= ?
+                AND spl.esic_employee > 0
               LIMIT 1`,
               [emp.employee_id, periodStart, run.run_month, esicWageLimit],
             );
@@ -2041,6 +2201,9 @@ export async function calculatePayrollRunScoped(
       const effectiveHraPct = hasFixedComponents
         ? (fixedHRA / monthlyGrossBase) * 100
         : (emp.hra_pct ?? 20);
+
+      // db_bill's IncomeTax is a whole rupee, so the net is one too.
+      tdsMonthly = Math.round(tdsMonthly);
 
       const calc = payrollService.calculateNetSalary({
         grossMonthlyCTC: grossAfterLwp,
@@ -2603,6 +2766,10 @@ export async function calculatePayrollRunScoped(
     "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1",
     [runId],
   );
+
+  if (incrementSplitApplied > 0) {
+    logger.info(`[payroll] run ${runId}: ${incrementSplitApplied} employee(s) priced from an approved increment request`);
+  }
 
   return {
     run_id: runId,

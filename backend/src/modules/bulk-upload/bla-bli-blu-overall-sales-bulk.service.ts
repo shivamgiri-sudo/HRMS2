@@ -2,10 +2,8 @@ import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { markRowsImported } from "./batch-row-status.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { parseDurationSeconds, parseFlexibleDate, parseFlexibleDateTime } from "./dalmia-import-helpers.js";
 
 /**
  * Bla Bli Blu's own "B-3 Dashboard" workbook family's "Overall Sales Raw"
@@ -59,7 +57,8 @@ export function parseDate(raw: unknown): string | null {
   }
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (m) return m[0];
-  return null;
+  // The Hub reads CSV/Excel as displayed text ("01-09-26"), not serials.
+  return parseFlexibleDate(v);
 }
 
 /**
@@ -80,7 +79,7 @@ export function parseDateTime(raw: unknown): string | null {
   if (!v) return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(v);
   if (m) return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`;
-  return null;
+  return parseFlexibleDateTime(v);
 }
 
 /**
@@ -96,6 +95,7 @@ export function parseCallDurationSeconds(raw: unknown): number | null {
   }
   const v = String(raw ?? "").trim();
   if (!v) return null;
+  if (v.includes(":")) return parseDurationSeconds(v); // "0:07:12"
   const n = Number(v);
   return Number.isFinite(n) ? Math.round(n * 86400) : null;
 }
@@ -178,10 +178,12 @@ export async function importBlaBliBluOverallSalesBatch(
     const orderId = cleanText(data["OrderID"]);
     const reportDate = parseDate(data["Date"]);
     if (!orderId || !reportDate) {
-      const msg = `Row ${row.row_no}: "OrderID" and "Date" are both required -- OrderID is this row's identity`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      const problems = [
+        !orderId ? `"OrderID" is missing (it is this row's identity)` : null,
+        !reportDate ? `"Date" is missing or not a recognised date (got "${String(data["Date"] ?? "")}"; use YYYY-MM-DD or DD-MM-YYYY)` : null,
+      ].filter(Boolean);
+      const msg = `Row ${row.row_no}: ${problems.join("; ")}`;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     toInsert.push({
@@ -222,6 +224,17 @@ export async function importBlaBliBluOverallSalesBatch(
     });
   }
 
+  // Keep the current version of every order this file is about to replace, so a change stays traceable and a
+  // wrong upload can be undone. Best effort: a database without the history table still imports.
+  if (processId && toInsert.length) {
+    try {
+      const { snapshotSalesBeforeReplace } = await import("../bla-bli-blu-dashboard/bbb-uploads.service.js");
+      await snapshotSalesBeforeReplace(processId, toInsert.map((r) => String(r.values[2])), batchId, importedByUserId);
+    } catch (e) {
+      console.warn("[bla-bli-blu-overall-sales] history snapshot skipped:", e instanceof Error ? e.message : e);
+    }
+  }
+
   const inserted = await chunkedMasmisInsert({
     insertPrefix: `INSERT INTO bla_bli_blu_overall_sales_raw
            (id, process_id, order_id, report_date, week_label, emp_code, emp_name,
@@ -231,12 +244,20 @@ export async function importBlaBliBluOverallSalesBatch(
             source_channel, business_type, order_creation_time, call_date_time,
             call_duration_seconds, call_attempt_count, source_created_by,
             recording_link, data_source, source_reference, created_by)`,
-    placeholderGroup:
-      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    // Order ID is the business key: a re-uploaded order REPLACES the stored row with the latest values (Cancel ->
+    // RTO -> Delivered stays one row). Every uploaded column is updated, and the row now belongs to this batch.
     insertSuffix: `ON DUPLICATE KEY UPDATE
-            payment_status = VALUES(payment_status),
-            current_status = VALUES(current_status),
-            amount = VALUES(amount)`,
+            report_date = VALUES(report_date), week_label = VALUES(week_label), emp_code = VALUES(emp_code),
+            emp_name = VALUES(emp_name), customer_number = VALUES(customer_number), alternate_number = VALUES(alternate_number),
+            payment_status = VALUES(payment_status), amount = VALUES(amount), campaign = VALUES(campaign),
+            calling_status = VALUES(calling_status), discount_code = VALUES(discount_code), item_count = VALUES(item_count),
+            current_status = VALUES(current_status), lineitem_sku = VALUES(lineitem_sku), new_sold_line_item = VALUES(new_sold_line_item),
+            new_sold_line_item_category = VALUES(new_sold_line_item_category), lead_line_item = VALUES(lead_line_item),
+            source_channel = VALUES(source_channel), business_type = VALUES(business_type), order_creation_time = VALUES(order_creation_time),
+            call_date_time = VALUES(call_date_time), call_duration_seconds = VALUES(call_duration_seconds),
+            call_attempt_count = VALUES(call_attempt_count), source_created_by = VALUES(source_created_by),
+            recording_link = VALUES(recording_link), source_reference = VALUES(source_reference)`,
     rows: toInsert,
   });
   errorUpdates.push(...inserted.errorUpdates);

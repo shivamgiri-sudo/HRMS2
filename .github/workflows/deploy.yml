@@ -532,6 +532,17 @@ jobs:
           mkdir -p "$STAGE_DIR"
           cp -a "$ARTIFACT"/. "$STAGE_DIR"/
 
+          # Keep the PREVIOUS release's hashed assets alongside the new ones. The whole dist folder is swapped
+          # below, so without this every chunk of the old build vanished at the instant of deploy and any tab
+          # that was already open failed on its next lazy import ("Failed to fetch dynamically imported module")
+          # until the user hard-refreshed. index.html always comes from the new build; -n keeps a same-named
+          # new file; files older than 7 days (their original build time is preserved by cp -a) are pruned so
+          # the folder cannot grow without bound.
+          if [[ -d "$LIVE_DIR/assets" && -d "$STAGE_DIR/assets" ]]; then
+            cp -an "$LIVE_DIR/assets/." "$STAGE_DIR/assets/"
+            find "$STAGE_DIR/assets" -type f -mtime +7 -delete
+          fi
+
           stop_frontend_preview() {
             if pm2 describe hrms2-frontend >/dev/null 2>&1; then
               pm2 delete hrms2-frontend --no-color || true

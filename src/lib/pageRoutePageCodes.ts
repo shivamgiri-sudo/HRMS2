@@ -7,6 +7,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   // path and a Gate pageCode.
   "/ats/dashboard-v2": "ATS_DASHBOARD",
   "/ats/sourcing-analysis": "ATS_DASHBOARD",
+  "/ats/hiring-engine": "ATS_HIRING_ENGINE",
   "/ats/meta-campaigns": "ATS_META_CAMPAIGNS",
   "/ats/meta-leads": "ATS_META_CAMPAIGNS",
   "/ats/meta-shortlist": "ATS_META_CAMPAIGNS",
@@ -23,6 +24,8 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/finance/client-payments": "FINANCE_CLIENT_PAYMENTS",
   "/finance/gst-export": "FINANCE_GST_EXPORT",
   "/kpi-targets": "KPI_MASTER",
+  "/kpi/catalogue": "KPI_CONFIG",
+  "/kpi/performance": "KPI_PERFORMANCE",
   "/kpi/process-metrics": "KPI_CONFIG",
   "/maternity-leave": "MATERNITY_LEAVE",
   "/meetings": "MCNMEET",
@@ -46,6 +49,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/performance/process-performance": "OPERATIONS_DASHBOARD",
   "/performance/process-kpi-dashboard": "PROCESS_KPI_DASHBOARD",
   "/performance/process-data-sources": "PROCESS_DATA_SOURCE",
+  "/performance/process-dashboard-admin": "PROCESS_DASHBOARD_ADMIN",
   "/kpi-studio": "KPI_STUDIO",
   "/dashboard-builder": "DASHBOARD_BUILDER",
   "/process-operations": "PROCESS_OPERATIONS",
@@ -151,6 +155,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   // then met the Gate's denial page. That is the precise drift this map exists to prevent.
   "/finance/process-pnl/configuration": "FINANCE_PNL_CONFIG",
   "/finance/cost-centres": "FINANCE_COST_CENTRES",
+  "/finance/revenue-forecast": "FINANCE_REVENUE_FORECAST",
   "/finance/masters": "FINANCE_MASTERS",
   "/finance/vendor-payment-tracking": "FINANCE_VENDOR_PAYMENTS",
   "/quality/audit-forms": "QA_EVALUATION",
@@ -329,6 +334,9 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/business-command-center": "BUSINESS_COMMAND_CENTER",
   "/call-master": "CALL_MASTER",
   "/call-master/inbound": "CALL_MASTER_INBOUND",
+  "/call-master/opening-intelligence": "CALL_MASTER",
+  "/call-master/customer-intelligence": "CALL_MASTER",
+  "/call-master/outbound-sales": "CALL_MASTER",
   "/candidate-onboarding-full": "CANDIDATE_ONBOARDING_FULL",
   "/admin/configuration": "CONFIGURATION_CENTER",
   "/engagement/command-center": "ENGAGEMENT_COMMAND_CENTER",
@@ -413,6 +421,9 @@ export const PAGE_CODE_BY_ROUTE_PATTERN: Record<string, string> = {
   "/employees/:id": "EMPLOYEE_MANAGEMENT",
   "/employees/:id/360": "EMPLOYEE_MANAGEMENT",
   "/employees/:employeeId/joining-documents": "EMPLOYEE_JOINING_DOCUMENTS",
+  // Rejoin v3 branch head review (granted in migration 1894 to branch_head / hr / admin / super_admin / payroll_head;
+  // the route's role list narrows it to the dossier API's roles).
+  "/employees/reactivation/:id/review": "EMPLOYEE_REACTIVATION",
   "/letters/:id/preview": "LETTERS",
   // Same drift as PAYROLL_HEAD_SALARY_REVIEW_QUEUE above; this one is parameterized.
   "/payroll/salary-review/:employeeId": "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",

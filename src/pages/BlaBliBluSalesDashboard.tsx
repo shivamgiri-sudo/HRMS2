@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Loader2, Target, TrendingUp, Upload, Users, IndianRupee } from "lucide-react";
 import BlaAnalytics from "@/components/process-operations/BlaAnalytics";
+import BbbUploadedFiles from "@/components/process-operations/BbbUploadedFiles";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 /**
@@ -24,7 +25,7 @@ interface Block { lob: string; hasTarget: boolean; daily: Row[]; weekly: Row[]; 
 interface Overview { from: string; to: string; latestDataDate?: string | null; lobs: string[]; blocks: Block[]; all: Block }
 interface Product { product: string; cartAbc: number; inbound: number; upgrade: number; other?: number; total: number; contributionPct: number; paid: number; cod: number }
 interface ProductWise { grandTotal: number; products: Product[] }
-interface UploadResult { validRows: number; totalRows: number; storedRows: number; datesReplaced: number; dateFrom: string | null; dateTo: string | null; skippedNoDate: number }
+interface UploadResult { validRows: number; totalRows: number; storedRows: number; dateFrom: string | null; dateTo: string | null; skippedNoDate: number; duplicateSameDay?: number; skippedNoNumber?: number; fresh?: number; nc?: number; pending?: boolean }
 
 const ALL = "All LOBs";
 const fmt = (n: number) => Math.round(n).toLocaleString("en-IN");
@@ -63,7 +64,14 @@ function UploadBox({ title, hint, endpoint, onDone }: { title: string; hint: str
       form.append("file", file);
       const res = await hrmsApi.postForm<{ data: UploadResult }>(endpoint, form);
       const d = res.data;
-      setMsg({ ok: true, text: `${d.storedRows} of ${d.totalRows} rows loaded for ${d.datesReplaced} date(s) (${d.dateFrom ?? "—"} to ${d.dateTo ?? "—"})${d.skippedNoDate ? `, ${d.skippedNoDate} skipped: no valid date` : ""}. Re-uploaded dates were replaced.` });
+      const parts = [
+        `${fmt(d.storedRows)} of ${fmt(d.totalRows)} rows added${d.dateFrom ? ` (${d.dateFrom}${d.dateTo && d.dateTo !== d.dateFrom ? ` to ${d.dateTo}` : ""})` : ""}`,
+        d.pending ? "Fresh / NC and the dashboard totals are still being worked out for this file; they will appear in a few minutes" : d.fresh !== undefined && d.storedRows > 0 ? `${fmt(d.fresh)} Fresh, ${fmt(d.nc ?? 0)} NC` : "",
+        d.duplicateSameDay ? `${fmt(d.duplicateSameDay)} skipped: number already uploaded for that date` : "",
+        d.skippedNoNumber ? `${fmt(d.skippedNoNumber)} skipped: no 10-digit mobile number` : "",
+        d.skippedNoDate ? `${fmt(d.skippedNoDate)} skipped: no valid date` : "",
+      ].filter(Boolean);
+      setMsg({ ok: true, text: `${parts.join(". ")}.` });
       onDone();
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "Upload failed" });
@@ -96,6 +104,7 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
   const [products, setProducts] = useState<ProductWise | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [filesKey, setFilesKey] = useState(0);
   const [jumpedTo, setJumpedTo] = useState<string | null>(null);
   const autoJumped = useRef(false);
 
@@ -255,7 +264,7 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
 
       {canUpload && (
         <div className="grid gap-3 md:grid-cols-2">
-          <UploadBox title="Received Data" hint="Daily data allocation sheet (Date, LOB, Data Type, Workable, Same Day Attempt, Final Dispo…). Re-uploading a date replaces it." endpoint="/api/bla-bli-blu-dashboard/upload/received-data" onDone={() => void load()} />
+          <UploadBox title="Received Data" hint="Daily data allocation sheet (Date, Phone, LOB, Workable, Same Day Attempt, Final Dispo…). Each number is kept once per date; a repeat for the same date is skipped. Fresh / NC is worked out from the previous 3 days." endpoint="/api/bla-bli-blu-dashboard/upload/received-data" onDone={() => { void load(); setFilesKey((k) => k + 1); }} />
           <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
             <p className="text-sm font-semibold text-slate-700">Overall Sales</p>
             <p className="text-xs text-slate-400">Both uploads are also in the Bulk Upload Hub: "Bla Bli Blu — Overall Sales Raw" (the workbook's Overall Sales sheet) and "Bla Bli Blu — Abandon (Received Data)" (the Received Data sheet). Rows are keyed by OrderID, so re-uploading a file does not duplicate orders.</p>
@@ -263,6 +272,7 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
           </div>
         </div>
       )}
+      {canUpload && <BbbUploadedFiles refreshKey={filesKey} onChanged={() => void load()} />}
     </div>
   );
 }

@@ -13,6 +13,8 @@ import {
   recordingUpdateSchema,
 } from "./mcnmeet.validation.js";
 import * as service from "./mcnmeet.service.js";
+import { meetingParamGuard, meetingScopeSql } from "./mcnmeetScope.js";
+import { employeeRowScope } from "../org/branchScope.js";
 import type { MeetingStatus, MeetingType } from "./mcnmeet.types.js";
 
 const router = Router();
@@ -92,11 +94,10 @@ function getAllowedMeetingTypes(role: string | undefined): MeetingType[] {
   );
 }
 
-function featureGuard(
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction,
-) {
+function featureGuard(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  // /config is the client's "is the module on?" probe: it must answer 200 { enabled: false }
+  // when disabled so pages can render a disabled state without a failing request.
+  if (req.path === '/config') return next();
   if (!env.MCNMEET_ENABLED) {
     return res
       .status(404)
@@ -108,9 +109,13 @@ function featureGuard(
 router.use(featureGuard);
 router.use(requireAuth);
 
-router.get("/config", (req: AuthenticatedRequest, res: Response) => {
+// Branch scoping (owner ruling 2026-10-01): every /meetings/:id... route requires the meeting to be in the
+// caller's scope (creator / host / invitee / host in own branch). Org-wide roles pass.
+router.param("id", meetingParamGuard);
+
+router.get('/config', (req: AuthenticatedRequest, res: Response) => {
   const role = req.authUser?.role;
-  const allowedTypes = getAllowedMeetingTypes(role);
+  const allowedTypes = env.MCNMEET_ENABLED ? getAllowedMeetingTypes(role) : [];
 
   res.json({
     success: true,
@@ -132,18 +137,33 @@ router.get("/preview-room", (req, res) => {
   res.json({ success: true, roomName, joinUrl });
 });
 
-router.get(
-  "/meetings",
-  requireRole(...MANAGER_ROLES),
-  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    try {
-      const { status, type, from, to, page } = req.query;
-      const result = await service.listMeetings({
-        status: status as MeetingStatus | undefined,
-        type: type as MeetingType | undefined,
-        from: from as string | undefined,
-        to: to as string | undefined,
-        page: page ? parseInt(page as string) : undefined,
+router.get('/meetings', requireRole(...MANAGER_ROLES), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const { status, type, from, to, page } = req.query;
+    const result = await service.listMeetings({
+      status: status as MeetingStatus | undefined,
+      type: type as MeetingType | undefined,
+      from: from as string | undefined,
+      to: to as string | undefined,
+      page: page ? parseInt(page as string) : undefined,
+    }, await meetingScopeSql(req.authUser!));
+    res.json({ success: true, ...result });
+  } catch (err) { next(err); }
+});
+
+router.post('/meetings', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const parsed = createMeetingSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, errors: parsed.error.flatten().fieldErrors });
+    }
+
+    // Check type-specific permission
+    const role = req.authUser?.role;
+    if (!canCreateMeetingType(role, parsed.data.meeting_type)) {
+      return res.status(403).json({
+        success: false,
+        message: `Your role (${role}) cannot create meetings of type '${parsed.data.meeting_type}'`,
       });
       res.json({ success: true, ...result });
     } catch (err) {
@@ -220,25 +240,18 @@ router.patch(
   },
 );
 
-router.post(
-  "/meetings/:id/cancel",
-  requireRole(...MANAGER_ROLES),
-  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    try {
-      const parsed = cancelMeetingSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res
-          .status(400)
-          .json({ success: false, errors: parsed.error.flatten().fieldErrors });
-      }
-      const cancelled = await service.cancelMeeting(
-        req.params.id,
-        parsed.data.cancel_reason,
-        req.authUser!.id,
-      );
-      res.json({ success: true, cancelled });
-    } catch (err) {
-      next(err);
+router.post('/meetings/:id/invitees/resolve', requireRole(...MANAGER_ROLES), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const inviteesAdded = await service.resolveInvitees(req.params.id, req.authUser!.id, await employeeRowScope(req.authUser!, "e"));
+    res.json({ success: true, invitees_added: inviteesAdded });
+  } catch (err) { next(err); }
+});
+
+router.post('/meetings/:id/attendance', requireRole(...MANAGER_ROLES), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const parsed = attendanceUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, errors: parsed.error.flatten().fieldErrors });
     }
   },
 );
@@ -284,90 +297,13 @@ router.post(
   },
 );
 
-router.post(
-  "/meetings/:id/self-join",
-  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    try {
-      const updated = await service.selfJoin(req.params.id, req.authUser!.id);
-      res.json({ success: true, updated });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-router.post(
-  "/meetings/:id/acknowledge",
-  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    try {
-      const updated = await service.acknowledgeInvite(
-        req.params.id,
-        req.authUser!.id,
-      );
-      res.json({ success: true, updated });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-router.post(
-  "/meetings/:id/recording",
-  requireRole(...ADMIN_ROLES),
-  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    try {
-      const parsed = recordingUpdateSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res
-          .status(400)
-          .json({ success: false, errors: parsed.error.flatten().fieldErrors });
-      }
-      const updated = await service.updateRecording(
-        req.params.id,
-        parsed.data.recording_url,
-        req.authUser!.id,
-      );
-      res.json({ success: true, updated });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-router.get(
-  "/my-meetings",
-  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    try {
-      const { status, from, to, page } = req.query;
-      const result = await service.listMyMeetings(req.authUser!.id, {
-        status: status as MeetingStatus | undefined,
-        from: from as string | undefined,
-        to: to as string | undefined,
-        page: page ? parseInt(page as string) : undefined,
-      });
-      res.json({ success: true, ...result });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-router.get(
-  "/reports/summary",
-  requireRole(...ADMIN_ROLES),
-  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    try {
-      const { from, to } = req.query;
-      const report = await service.getSummaryReport(
-        from as string | undefined,
-        to as string | undefined,
-      );
-      res.json({ success: true, report });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
+router.get('/reports/summary', requireRole(...ADMIN_ROLES), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const { from, to } = req.query;
+    const report = await service.getSummaryReport(from as string | undefined, to as string | undefined, await meetingScopeSql(req.authUser!));
+    res.json({ success: true, report });
+  } catch (err) { next(err); }
+});
 
 // .ics calendar download
 router.get(

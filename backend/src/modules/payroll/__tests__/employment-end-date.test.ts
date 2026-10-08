@@ -31,15 +31,16 @@ import {
 const MONTH_START = "2026-07-01";
 const MONTH_END = "2026-07-31";
 
-describe("precedence — exit LWD, then date_of_exit, then legacy date_of_leaving", () => {
-  it("prefers a qualifying resignation's LWD over the employee master", () => {
-    expect(EMPLOYMENT_END_DATE_SQL).toMatch(
-      /last_working_day_confirmed, x\.last_working_day_proposed/,
-    );
+describe("precedence — date_of_exit, then exit LWD, then legacy date_of_leaving", () => {
+  // Owner decision 2026-10-06: the employee-master Exit Date wins; the resignation LWD only fills a
+  // blank Exit Date (accepted resignation, HR has not finished the exit yet).
+  it("prefers the employee-master Exit Date over a qualifying resignation's LWD", () => {
+    expect(EMPLOYMENT_END_DATE_SQL).toMatch(/last_working_day_confirmed, x\.last_working_day_proposed/);
     const exitIdx = EMPLOYMENT_END_DATE_SQL.indexOf("exit_request");
     const masterIdx = EMPLOYMENT_END_DATE_SQL.indexOf("e.date_of_exit");
     expect(exitIdx).toBeGreaterThan(-1);
-    expect(masterIdx).toBeGreaterThan(exitIdx);
+    expect(masterIdx).toBeGreaterThan(-1);
+    expect(masterIdx).toBeLessThan(exitIdx);
   });
 
   it("prefers confirmed LWD over proposed", () => {
@@ -61,9 +62,8 @@ describe("precedence — exit LWD, then date_of_exit, then legacy date_of_leavin
 
   it("keeps legacy date_of_leaving last, and only as a fallback", () => {
     const legacyIdx = EMPLOYMENT_END_DATE_SQL.indexOf("e.date_of_leaving");
-    expect(legacyIdx).toBeGreaterThan(
-      EMPLOYMENT_END_DATE_SQL.indexOf("e.date_of_exit"),
-    );
+    expect(legacyIdx).toBeGreaterThan(EMPLOYMENT_END_DATE_SQL.indexOf("e.date_of_exit"));
+    expect(legacyIdx).toBeGreaterThan(EMPLOYMENT_END_DATE_SQL.indexOf("exit_request"));
   });
 
   it("correlates rather than joins, so multiple exit requests cannot multiply the row", () => {

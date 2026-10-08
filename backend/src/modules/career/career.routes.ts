@@ -5,6 +5,22 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { careerService } from "./career.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { canViewEmployee, resolveUserBusinessScope, buildEmployeeScopeCondition } from "../../shared/enterpriseScope.js";
+
+const FORBIDDEN_SCOPE = { success: false, error: "Forbidden: employee is outside your branch / assigned scope" };
+
+/** Employee-row scope for the career/PIP lists (career_path / pip_record joined to employees e). */
+async function employeeScopeFor(userId: string) {
+  const scope = await resolveUserBusinessScope(userId);
+  return buildEmployeeScopeCondition(scope, {
+    employeeId: "e.id",
+    branchId: "e.branch_id",
+    processId: "e.process_id",
+    lobId: "e.lob_id",
+    departmentId: "e.department_id",
+    managerEmployeeId: "e.reporting_manager_id",
+  });
+}
 
 export const careerRouter = Router();
 careerRouter.use(requireAuth);
@@ -29,6 +45,8 @@ careerRouter.get(
       if (!emp || emp.id !== employeeId) {
         return res.status(403).json({ success: false, error: "Forbidden" });
       }
+    } else if (!(await canViewEmployee(userId, employeeId))) {
+      return res.status(403).json(FORBIDDEN_SCOPE);
     }
 
     const record = await careerService.getCareerPath(employeeId);
@@ -42,6 +60,9 @@ careerRouter.post(
   requireRole("admin", "hr"),
   h(async (req, res) => {
     const { employeeId } = req.params;
+    if (!(await canViewEmployee(req.authUser!.id, employeeId))) {
+      return res.status(403).json(FORBIDDEN_SCOPE);
+    }
     const {
       current_role,
       target_role,
@@ -86,8 +107,8 @@ careerRouter.post(
 careerRouter.get(
   "/succession",
   requireRole("admin", "hr"),
-  h(async (_req, res) => {
-    const records = await careerService.listAllCareerPaths();
+  h(async (req, res) => {
+    const records = await careerService.listAllCareerPaths(await employeeScopeFor(req.authUser!.id));
     return res.json({ success: true, data: records });
   }),
 );
@@ -106,10 +127,10 @@ careerRouter.get(
     const privileged = await hasRole(userId, "admin", "hr");
 
     if (privileged) {
-      const records = await careerService.listPips({
-        employeeId: employee_id,
-        status,
-      });
+      if (employee_id && !(await canViewEmployee(userId, employee_id))) {
+        return res.status(403).json(FORBIDDEN_SCOPE);
+      }
+      const records = await careerService.listPips({ employeeId: employee_id, status }, await employeeScopeFor(userId));
       return res.json({ success: true, data: records });
     }
 
@@ -170,6 +191,10 @@ careerRouter.post(
         .json({ success: false, error: "end_date must be after start_date" });
     }
 
+    if (!(await canViewEmployee(req.authUser!.id, employee_id.trim()))) {
+      return res.status(403).json(FORBIDDEN_SCOPE);
+    }
+
     const record = await careerService.createPip({
       employee_id: employee_id.trim(),
       initiated_by: req.authUser!.id,
@@ -194,6 +219,9 @@ careerRouter.get(
         .status(404)
         .json({ success: false, error: "PIP record not found" });
     }
+    if (!(await canViewEmployee(req.authUser!.id, String(record.employee_id)))) {
+      return res.status(403).json(FORBIDDEN_SCOPE);
+    }
     return res.json({ success: true, data: record });
   }),
 );
@@ -208,6 +236,11 @@ careerRouter.patch(
       outcome?: "improved" | "not_improved" | "resigned" | "terminated" | null;
       review_notes?: string | null;
     };
+
+    const pipOwner = await careerService.getPipEmployeeId(req.params.id);
+    if (pipOwner && !(await canViewEmployee(req.authUser!.id, pipOwner))) {
+      return res.status(403).json(FORBIDDEN_SCOPE);
+    }
 
     const validStatuses = ["active", "completed", "extended", "terminated"];
     if (status && !validStatuses.includes(status)) {
@@ -254,6 +287,11 @@ careerRouter.post(
       rating: "on_track" | "at_risk" | "off_track";
       notes?: string;
     };
+
+    const pipOwner = await careerService.getPipEmployeeId(req.params.id);
+    if (pipOwner && !(await canViewEmployee(req.authUser!.id, pipOwner))) {
+      return res.status(403).json(FORBIDDEN_SCOPE);
+    }
 
     if (!checkpoint_date) {
       return res

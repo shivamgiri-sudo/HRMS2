@@ -4,14 +4,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import jwt from "jsonwebtoken";
-vi.mock("../src/db/supabaseAdmin.js", () => ({
-  supabaseAdmin: {},
-  supabaseAuthClient: { auth: { getUser: vi.fn() } },
+vi.mock("../src/db/supabaseAdmin.js", () => ({ supabaseAdmin: {}, supabaseAuthClient: { auth: { getUser: vi.fn() } } }));
+// Branch scoping is covered in branchScoping.batch2.test.ts; this test is about other behaviour, so allow-all here.
+vi.mock("../src/modules/dashboards/branch-scope-guards.js", () => ({
+  canAccessEmployeeRecord: async () => true,
+  employeeListScope: async () => null,
+  employeeIdInScope: async () => null,
+  attachEmployeeScope: () => (_q: any, _s: any, n: any) => n(),
+  OUTSIDE_SCOPE_MESSAGE: "outside",
 }));
-vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]) },
-  pingDb: vi.fn(),
-}));
+vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
 import { app } from "../src/app.js";
 import { db } from "../src/db/mysql.js";
 // supabaseAdmin stays mocked above (app.ts imports it); authMiddleware no
@@ -65,8 +67,11 @@ function authAs(sub: string, roles: string[]) {
     if (/FROM user_roles/i.test(text))
       return [roles.map((r) => ({ role_key: r })), []];
     if (/user_assignment_scope|FROM auth_user/i.test(text)) return [[], []];
-    if (/^\s*(INSERT|UPDATE|DELETE|REPLACE)/i.test(text))
-      return [{ affectedRows: 1 }, []];
+    // requireRoleOrDirectReports' "does this caller manage anyone" probe runs before the
+    // handler. None of these subjects is admitted by it — they pass or fail on the role
+    // gate — so it is answered by shape instead of eating the handler's first fixture.
+    if (/FROM employees mgr\s+WHERE mgr\.user_id = \?/i.test(text)) return [[], []];
+    if (/^\s*(INSERT|UPDATE|DELETE|REPLACE)/i.test(text)) return [{ affectedRows: 1 }, []];
     return [selectQueue.length ? selectQueue.shift()! : [], []];
   });
   return bearer(sub);
@@ -80,6 +85,8 @@ beforeEach(() => {
 });
 
 const mockAdmin = () => authAs("u-admin", ["admin"]);
+// plain admin is branch-scoped (owner policy 2026-10-01); org-wide ("sees all") behaviour is exercised as super_admin.
+const mockOrgWide = () => authAs("u-super", ["super_admin"]);
 const mockEmployeeRole = () => authAs("u-emp", ["employee"]);
 const mockManager = () => authAs("u-mgr", ["manager"]);
 /** Employee whose user maps to a specific employee record (first SELECT). */
@@ -93,7 +100,7 @@ function mockEmployee(empId: string) {
 
 describe("GET /api/management/team-kpi", () => {
   it("returns 200 for admin with kpi rows", async () => {
-    const auth = mockAdmin();
+    const auth = mockOrgWide();
     // resolveTeamScope hasRole check — admin is a wide role
     // getTeamKpiSummary db.execute
     selectRows([
@@ -126,7 +133,7 @@ describe("GET /api/management/team-kpi", () => {
 describe("GET /api/management/coaching", () => {
   it("returns 200 for admin and sees all sessions", async () => {
     // admin sees all sessions
-    const auth = mockAdmin();
+    const auth = mockOrgWide();
     // hasRole call: SELECT role_key FROM user_roles
     // listCoachingSessions db.execute
     selectRows([
@@ -237,7 +244,7 @@ describe("POST /api/management/coaching", () => {
 
 describe("GET /api/management/alerts", () => {
   it("returns 200 for admin with alert rows", async () => {
-    const auth = mockAdmin();
+    const auth = mockOrgWide();
     // resolveTeamScope hasRole check — admin is a wide role
     // listAlerts db.execute
     selectRows([
@@ -293,7 +300,7 @@ describe("POST /api/management/alerts/:id/acknowledge", () => {
 
 describe("GET /api/management/dashboard", () => {
   it("returns a live operational summary for admin", async () => {
-    const auth = mockAdmin();
+    const auth = mockOrgWide();
     // resolveTeamScope hasRole check — admin is a wide role
     selectRows([{ headcount: 100, exits_30d: 5 }]);
     selectRows([{ pending_leaves: 3 }]);

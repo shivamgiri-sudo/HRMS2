@@ -3,6 +3,8 @@ import { db } from "../../db/mysql.js";
 import { computeRunningSalary } from "../payroll/running-salary.service.js";
 import { getCostCentrePeriods } from "./cost-centre-history.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
+import { snapshotUncoveredByRunSql } from "./pnl-payroll-coverage.js";
 
 /**
  * Snapshots each employee's running-month salary so the P&L can show a live Operating Profit %
@@ -150,7 +152,7 @@ async function loadEmployees(
              OR EXISTS (SELECT 1
                           FROM salary_prep_line spl
                           JOIN salary_prep_run spr ON spr.id = spl.run_id
-                         WHERE spl.employee_id = e.id AND spr.run_month = ?))
+                         WHERE spl.employee_id = e.id AND spr.run_month = ? AND ${nonVoidRunSql("spr")}))
         ${branchClause}`,
     [periodCode, ...params],
   );
@@ -430,8 +432,11 @@ const emptyBuckets = (): Record<PnlPeopleBucket, number> => ({
 });
 
 /** Read the snapshot for a period, grouped the way the statement needs it. */
+/** `uncoveredOnly`: only staff no valid payroll run of the month covers yet (pnl-payroll-coverage.ts),
+ *  for blending with posted payroll in a month where some cost centres have been run. */
 export async function getRunningPeopleCost(
   periodCode: string,
+  opts: { uncoveredOnly?: boolean } = {},
 ): Promise<PeopleCostByKey> {
   const out: PeopleCostByKey = {
     byBranch: new Map(),
@@ -468,7 +473,7 @@ export async function getRunningPeopleCost(
             MAX(s.as_of_date) AS as_of_date
        FROM pnl_running_salary_snapshot s
        ${attribution.join}
-      WHERE s.period_code = ?
+      WHERE s.period_code = ?${opts.uncoveredOnly ? ` AND ${await snapshotUncoveredByRunSql("s")}` : ""}
       GROUP BY ${attribution.effectiveBranchExpr}, ${attribution.effectiveProcessExpr}, s.pnl_bucket`,
     [periodCode],
   );

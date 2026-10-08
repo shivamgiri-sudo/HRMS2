@@ -43,23 +43,30 @@ describe("APR-only judgement is scoped to the covered population", () => {
     expect(body).not.toMatch(/ReportDate\s*=\s*\?/);
   });
 
-  it("gates the biometric fallback on NOT being covered", () => {
-    const at = ENGINE.indexOf("if (rawMinutes === 0 && biometricMinutes > 0");
-    expect(at, "the fallback condition has moved").toBeGreaterThan(-1);
-    expect(ENGINE.slice(at, at + 120)).toMatch(/!aprFeedCoversEmployee/);
+  // SUPERSEDED 2026-09-03 (commit d13772385, "APR employees with no feed record are absent,
+  // not biometric-fallback"). The two tests below used to pin the 2026-08-07 shape, where the
+  // biometric fallback and the missing_punch exemption were both gated on aprFeedCoversEmployee.
+  // The later ruling removed the fallback for every APR-scoped employee: no APR record on a
+  // working day is the attendance answer, whether or not the feed has ever carried them, and
+  // enrolment is kept only for mismatch notification and audit. They now pin that ruling, so a
+  // change in either direction has to be made deliberately.
+  it("has no biometric fallback for an APR employee whose feed is silent", () => {
+    expect(ENGINE).not.toContain("if (rawMinutes === 0 && biometricMinutes > 0");
+    // Plain 'apr' never falls back. Under apr_validated_by_cosec biometric builds the day when APR
+    // is short OR silent (owner ruling 2026-10-05), so the guard no longer requires rawMinutes > 0.
+    expect(ENGINE).toMatch(
+      /attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr\s*&& biometricMinutes > 0\s*&& statusRank/,
+    );
+    expect(ENGINE).not.toMatch(/attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr\s*&& rawMinutes > 0/);
   });
 
-  it("sends a covered employee's empty day to the classifier, not the review queue", () => {
-    // classifyOperationsNetLogin(0) is 'absent' with lwp 1.00 — the ruling. An
-    // uncovered employee still takes the missing_punch path.
-    const at = ENGINE.indexOf("if (rawMinutes === 0 && !(");
-    expect(
-      at,
-      "the missing_punch guard is not scoped to coverage",
-    ).toBeGreaterThan(-1);
-    expect(ENGINE.slice(at, at + 90)).toMatch(
-      /isAprEmployee && aprFeedCoversEmployee/,
-    );
+  it("sends an APR employee's empty day to the classifier, not the review queue", () => {
+    // classifyOperationsNetLogin(0) is 'absent' with lwp 1.00 — the ruling. Only a biometric
+    // employee with no evidence takes the missing_punch review path.
+    const at = ENGINE.indexOf("if (rawMinutes === 0 && !isAprEmployee) {");
+    expect(at, "the missing_punch guard is no longer scoped to biometric employees").toBeGreaterThan(-1);
+    expect(ENGINE.slice(at, at + 700)).toMatch(/status: 'missing_punch'/);
+    expect(ENGINE).not.toContain("if (rawMinutes === 0 && !(");
   });
 
   it("leaves the uncovered population on the fallback", () => {

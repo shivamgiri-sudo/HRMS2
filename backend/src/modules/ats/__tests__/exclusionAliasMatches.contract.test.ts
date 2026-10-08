@@ -33,26 +33,29 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * Where a function-ish region begins: a `function name`, a method `name(...) {`, or a
+ * `name: async (...) =>` property.
+ *
+ * The first version accepted any line starting `word(` or `word:`, which also matches `if (`
+ * and — inside a SQL template — `COUNT(*) AS ...`. That cut a region off between the helper
+ * call and the `FROM ats_candidate c` of the very query it belongs to, so
+ * recruitment.executor.ts's sourceEffectiveness was reported as aliasing nothing while its
+ * query plainly says `c`. See the file header on detectors that cry wolf.
+ */
+const REGION_START =
+  /^\s*(?:export\s+)?(?:async\s+)?(?:function\s+\w+|(?!(?:if|for|while|switch|catch|return)\b)\w+\s*\([^\n]*\{\s*$|\w+\s*:\s*(?:async\s+)?(?:function\b|\([^\n]*=>))/gm;
+
+/** Blank out comments, keeping offsets and line numbers: prose is not a query. */
+const stripComments = (src: string) =>
+  src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, (m) => m.replace(/[^\n]/g, " "));
+
 /** Split a file into function-ish regions, so a lookup cannot cross into a neighbouring query. */
 function enclosingRegion(src: string, index: number): string {
-  const starts = [
-    ...src.matchAll(
-      /^\s*(?:export\s+)?(?:async\s+)?(?:function\s+\w+|\w+\s*[:(])/gm,
-    ),
-  ]
-    .map((m) => m.index!)
-    .filter((i) => i <= index);
-  const ends = [
-    ...src.matchAll(
-      /^\s*(?:export\s+)?(?:async\s+)?(?:function\s+\w+|\w+\s*[:(])/gm,
-    ),
-  ]
-    .map((m) => m.index!)
-    .filter((i) => i > index);
-  return src.slice(
-    starts.length ? starts[starts.length - 1] : 0,
-    ends.length ? ends[0] : src.length,
-  );
+  const marks = [...src.matchAll(REGION_START)].map((m) => m.index!);
+  const starts = marks.filter((i) => i <= index);
+  const ends = marks.filter((i) => i > index);
+  return src.slice(starts.length ? starts[starts.length - 1] : 0, ends.length ? ends[0] : src.length);
 }
 
 interface Site {
@@ -65,18 +68,15 @@ interface Site {
 function callSites(): Site[] {
   const sites: Site[] = [];
   for (const file of sourceFiles(BACKEND_SRC)) {
-    const src = readFileSync(file, "utf8");
-    if (!src.includes("excludeEmployeeShapedCandidatesSql(")) continue;
+    const raw = readFileSync(file, "utf8");
+    if (!raw.includes("excludeEmployeeShapedCandidatesSql(")) continue;
+    const src = stripComments(raw);
 
     for (const m of src.matchAll(
       /excludeEmployeeShapedCandidatesSql\(\s*["'`]([^"'`]+)["'`]\s*\)/g,
     )) {
       const region = enclosingRegion(src, m.index!);
-      const decl = [
-        ...region.matchAll(
-          /\b(?:FROM|JOIN)\s+ats_candidate\b(?:\s+(?:AS\s+)?([a-zA-Z_]\w*))?/gi,
-        ),
-      ];
+      const decl = [...region.matchAll(/\b(?:FROM|JOIN)\s+ats_candidate\b(?![.\w])(?:\s+(?:AS\s+)?([a-zA-Z_]\w*))?/gi)];
       if (!decl.length) continue; // module-level constant; validated where it is used
 
       // If the function queries ats_candidate under several names, any of them is acceptable —
@@ -112,6 +112,21 @@ describe("the legacy-row exclusion is passed the alias its query uses", () => {
         .length;
     }
     expect(found).toBeGreaterThan(10);
+  });
+
+  it("the detector still catches the mistake it exists for", () => {
+    // The original defect: the table name passed to a query that aliases it.
+    const broken = [
+      "export async function listCandidates() {",
+      "  const where = excludeEmployeeShapedCandidatesSql(\"ats_candidate\");",
+      "  return db.execute(`SELECT COUNT(*) AS n",
+      "    FROM ats_candidate c WHERE ${where}`);",
+      "}",
+    ].join("\n");
+    const region = enclosingRegion(broken, broken.indexOf("excludeEmployeeShapedCandidatesSql("));
+    expect(region).toContain("FROM ats_candidate c");
+    const decl = [...region.matchAll(/\b(?:FROM|JOIN)\s+ats_candidate\b(?![.\w])(?:\s+(?:AS\s+)?([a-zA-Z_]\w*))?/gi)];
+    expect(decl.map((d) => d[1])).toEqual(["c"]);
   });
 
   it("every call site names the alias in its own query", () => {

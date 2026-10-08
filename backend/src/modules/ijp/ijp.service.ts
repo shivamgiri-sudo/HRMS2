@@ -5,13 +5,10 @@
 
 import { randomUUID } from "crypto";
 import { sqlLimitOffset } from "../../db/pagination.js";
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import {
-  resolveUserBusinessScope,
-  buildProcessScopeCondition,
-  type EnterpriseUser,
-} from "../../shared/enterpriseScope.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { resolveUserBusinessScope, buildProcessScopeCondition, type EnterpriseUser, type UserBusinessScope } from '../../shared/enterpriseScope.js';
+import { ORG_WIDE_EXEMPT_ROLES } from '../../shared/scopeAccess.js';
 import type {
   IjpPosting,
   IjpPostingWithDetails,
@@ -90,6 +87,73 @@ async function auditLog(
       opts.userAgent ?? null,
     ],
   );
+}
+
+// ─── Branch scope ───────────────────────────────────────────────────────────
+
+export function isOrgWideScope(scope: UserBusinessScope): boolean {
+  return scope.roles.some((r) => (ORG_WIDE_EXEMPT_ROLES as readonly string[]).includes(r));
+}
+
+/**
+ * Row scope for IJP postings. Org-wide roles see everything; hr and every other role are limited to
+ * their assignments PLUS their own employee branch (an hr user with no user_assignment_scope row
+ * still sees their own branch's postings, but nothing else). No resolvable scope => 1=0.
+ */
+export function postingScopeCondition(
+  scope: UserBusinessScope,
+  alias: { processId: string; branchId: string; departmentId: string }
+): { sql: string; params: unknown[] } {
+  if (isOrgWideScope(scope)) return { sql: '1=1', params: [] };
+  const base = buildProcessScopeCondition(scope, alias);
+  if (!scope.branchId) return base;
+  return {
+    sql: base.sql === '1=0' ? `${alias.branchId} = ?` : `(${base.sql}) OR ${alias.branchId} = ?`,
+    params: [...base.params, scope.branchId],
+  };
+}
+
+async function postingInScope(scope: UserBusinessScope, postingId: string): Promise<'ok' | 'not_found' | 'forbidden'> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT process_id, branch_id, department_id FROM ijp_posting WHERE id = ? LIMIT 1',
+    [postingId]
+  );
+  if (!rows.length) return 'not_found';
+  if (isOrgWideScope(scope)) return 'ok';
+  const cond = postingScopeCondition(scope, { processId: 'p.process_id', branchId: 'p.branch_id', departmentId: 'p.department_id' });
+  const [hit] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM ijp_posting p WHERE p.id = ? AND (${cond.sql}) LIMIT 1`,
+    [postingId, ...cond.params]
+  );
+  return hit.length ? 'ok' : 'forbidden';
+}
+
+/** Scope check for a posting-level read/write. */
+export async function checkPostingScope(actor: EnterpriseUser, postingId: string): Promise<'ok' | 'not_found' | 'forbidden'> {
+  return postingInScope(await resolveUserBusinessScope(actor), postingId);
+}
+
+/** Scope check for an application (via its posting). */
+export async function checkApplicationScope(actor: EnterpriseUser, applicationId: string): Promise<'ok' | 'not_found' | 'forbidden'> {
+  const app = await getApplicationById(applicationId);
+  if (!app) return 'not_found';
+  return checkPostingScope(actor, app.posting_id);
+}
+
+/** Branch id a new posting must carry: non-org-wide callers cannot create outside their own branch. */
+export async function resolvePostingBranchForCreate(
+  actor: EnterpriseUser,
+  requested: string | undefined
+): Promise<{ ok: true; branchId: string | undefined } | { ok: false }> {
+  const scope = await resolveUserBusinessScope(actor);
+  if (isOrgWideScope(scope)) return { ok: true, branchId: requested };
+  const allowed = new Set<string>([
+    ...(scope.branchId ? [scope.branchId] : []),
+    ...scope.assignments.filter((a) => a.scopeType !== 'all' && a.branchId).map((a) => a.branchId as string),
+  ]);
+  if (allowed.size === 0) return { ok: false };
+  if (requested) return allowed.has(requested) ? { ok: true, branchId: requested } : { ok: false };
+  return { ok: true, branchId: scope.branchId ?? [...allowed][0] };
 }
 
 // ─── Posting CRUD ───────────────────────────────────────────────────────────
@@ -200,10 +264,10 @@ export async function listPostings(
   // branch/process/department via user_assignment_scope, the same mechanism
   // job-requisition.service.ts already uses for this exact role set.
   const scope = await resolveUserBusinessScope(actor);
-  const scopeCond = buildProcessScopeCondition(scope, {
-    processId: "p.process_id",
-    branchId: "p.branch_id",
-    departmentId: "p.department_id",
+  const scopeCond = postingScopeCondition(scope, {
+    processId: 'p.process_id',
+    branchId: 'p.branch_id',
+    departmentId: 'p.department_id',
   });
 
   const conditions: string[] = ["1=1", `(${scopeCond.sql})`];
@@ -733,10 +797,10 @@ export async function listApplicationsForPosting(
   // name/email/mobile/employee_code company-wide. Scoped against the posting's own
   // branch_id/process_id, the same columns listPostings scopes on.
   const scope = await resolveUserBusinessScope(actor);
-  const scopeCond = buildProcessScopeCondition(scope, {
-    processId: "p.process_id",
-    branchId: "p.branch_id",
-    departmentId: "p.department_id",
+  const scopeCond = postingScopeCondition(scope, {
+    processId: 'p.process_id',
+    branchId: 'p.branch_id',
+    departmentId: 'p.department_id',
   });
 
   const conditions: string[] = ["a.posting_id = ?", `(${scopeCond.sql})`];
@@ -792,6 +856,44 @@ export async function listApplicationsForPosting(
     })) as IjpApplicationWithDetails[],
     total,
   };
+}
+
+/**
+ * Applications waiting on this manager's own decision (status pending_manager, manager_id = the caller's
+ * employee id): exactly the rows PATCH /applications/:id/manager-action will accept from them.
+ */
+export async function listPendingManagerApplications(
+  managerEmployeeId: string,
+  limit = 100
+): Promise<IjpApplicationWithDetails[]> {
+  const capped = Math.min(Math.max(Math.trunc(limit) || 100, 1), 200);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT a.*,
+            e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+            e.email AS employee_email, e.mobile AS employee_mobile,
+            dm.dept_name AS current_department_name,
+            pm.process_name AS current_process_name,
+            dsm.designation_name AS current_designation_name,
+            bm.branch_name AS current_branch_name,
+            CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')) AS manager_name,
+            p.posting_code, p.job_title
+     FROM ijp_application a
+     JOIN employees e ON e.id = a.employee_id
+     LEFT JOIN department_master dm ON dm.id = a.current_department_id
+     LEFT JOIN process_master pm ON pm.id = a.current_process_id
+     LEFT JOIN designation_master dsm ON dsm.id = a.current_designation_id
+     LEFT JOIN branch_master bm ON bm.id = a.current_branch_id
+     LEFT JOIN employees mgr ON mgr.id = a.manager_id
+     JOIN ijp_posting p ON p.id = a.posting_id
+     WHERE a.manager_id = ? AND a.status = 'pending_manager'
+     ORDER BY a.applied_at ASC
+     ${sqlLimitOffset(capped, 0)}`,
+    [managerEmployeeId]
+  );
+  return rows.map((row) => ({
+    ...row,
+    offer_details: parseJson(row.offer_details, null),
+  })) as IjpApplicationWithDetails[];
 }
 
 export async function listMyApplications(
@@ -956,21 +1058,27 @@ export async function withdrawApplication(
 
 // ─── Dashboard Stats ────────────────────────────────────────────────────────
 
-export async function getIjpStats(): Promise<{
+export async function getIjpStats(actor?: EnterpriseUser): Promise<{
   total_postings: number;
   open_postings: number;
   total_applications: number;
   pending_review: number;
   selected_this_month: number;
 }> {
+  // Aggregates are scoped to the caller's postings; no actor/scope => nothing (fail closed).
+  const scope = actor ? await resolveUserBusinessScope(actor) : null;
+  const cond = scope
+    ? postingScopeCondition(scope, { processId: 'p.process_id', branchId: 'p.branch_id', departmentId: 'p.department_id' })
+    : { sql: '1=0', params: [] as unknown[] };
   const [rows] = await db.execute<RowDataPacket[]>(`
     SELECT
-      (SELECT COUNT(*) FROM ijp_posting) AS total_postings,
-      (SELECT COUNT(*) FROM ijp_posting WHERE status = 'open') AS open_postings,
-      (SELECT COUNT(*) FROM ijp_application) AS total_applications,
-      (SELECT COUNT(*) FROM ijp_application WHERE status IN ('submitted', 'pending_manager', 'under_review')) AS pending_review,
-      (SELECT COUNT(*) FROM ijp_application WHERE status = 'selected' AND selected_at >= DATE_FORMAT(NOW(), '%Y-%m-01')) AS selected_this_month
-  `);
+      (SELECT COUNT(*) FROM ijp_posting p WHERE ${cond.sql}) AS total_postings,
+      (SELECT COUNT(*) FROM ijp_posting p WHERE p.status = 'open' AND (${cond.sql})) AS open_postings,
+      (SELECT COUNT(*) FROM ijp_application a JOIN ijp_posting p ON p.id = a.posting_id WHERE ${cond.sql}) AS total_applications,
+      (SELECT COUNT(*) FROM ijp_application a JOIN ijp_posting p ON p.id = a.posting_id WHERE a.status IN ('submitted', 'pending_manager', 'under_review') AND (${cond.sql})) AS pending_review,
+      (SELECT COUNT(*) FROM ijp_application a JOIN ijp_posting p ON p.id = a.posting_id WHERE a.status = 'selected' AND a.selected_at >= DATE_FORMAT(NOW(), '%Y-%m-01') AND (${cond.sql})) AS selected_this_month
+  `, [...cond.params, ...cond.params, ...cond.params, ...cond.params, ...cond.params]);
+
   return rows[0] as {
     total_postings: number;
     open_postings: number;

@@ -61,7 +61,7 @@ export async function recalculateOpenPayrollForEmployee(params: {
   // reliable way to tell which run is authoritative (both are `processing`, both
   // unfiltered), so the only correct answer is to update all of them.
   const [runRows] = await db.execute<RowDataPacket[]>(
-    `SELECT spr.id, spr.status
+    `SELECT spr.id, spr.status, spr.finance_approved_at, spr.ceo_acknowledged_at, spr.validation_status
        FROM salary_prep_run spr
        JOIN salary_prep_line spl ON spl.run_id = spr.id AND spl.employee_id = ?
       WHERE spr.run_month = ?
@@ -90,8 +90,18 @@ export async function recalculateOpenPayrollForEmployee(params: {
     };
   }
 
-  const openRuns = runs.filter((r) => !isRunClosed(r.status));
-  const closedRuns = runs.filter((r) => isRunClosed(r.status));
+  // A successful calculation clears finance/CEO sign-off and validation and demotes 'approved'
+  // back to 'processing' (payrollCalculate.service.ts). 'approved' is not a closed status, so
+  // without this an employee-level event would silently undo a run's approval. Treat a signed-off
+  // run like a closed one: queue the recalculation so the divergence is recorded, and let a human
+  // recalculate deliberately (POST /runs/:id/calculate with force) if the figures must change.
+  const isSignedOff = (r: any) =>
+    String(r.status ?? "").toLowerCase() === "approved" ||
+    !!r.finance_approved_at ||
+    !!r.ceo_acknowledged_at ||
+    r.validation_status === "validated";
+  const openRuns = runs.filter((r) => !isRunClosed(r.status) && !isSignedOff(r));
+  const closedRuns = runs.filter((r) => isRunClosed(r.status) || isSignedOff(r));
 
   // A closed run cannot be rewritten in place; queue it so the divergence is at
   // least recorded rather than lost.

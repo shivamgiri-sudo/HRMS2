@@ -7,6 +7,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { lookupLobNames } from "../../shared/lobNames.js";
 import { requireCaller } from "./team-roster.service.js";
+import { buildCoverage } from "./team-roster-coverage.js";
 import { resolveCallerEmployee } from "./team-roster-tree.js";
 import {
   assertWfmScopeCoversSubmission,
@@ -258,6 +259,18 @@ export async function getSubmissionDetail(actor: Actor, id: number) {
       ? String(l.applied_assignment_id)
       : null,
   }));
+  let coverage: Awaited<ReturnType<typeof buildCoverage>> | null = null;
+  if (s.from_d && s.to_d && decorated.length) {
+    try {
+      coverage = await buildCoverage({
+        submitterId: String(s.submitter_employee_id), from: String(s.from_d), to: String(s.to_d),
+        names: new Map(decorated.map((l) => [l.employeeId, { name: l.employeeName, code: l.employeeCode }])),
+        lines: decorated.map((l) => ({ employeeId: l.employeeId, date: l.date, newType: l.new.type, newLabel: l.new.label, status: l.status })),
+      });
+    } catch (err) {
+      console.error("[team-roster] coverage unavailable:", (err as Error)?.message);
+    }
+  }
   const count = (st: string) => decorated.filter((l) => l.status === st).length;
   const isSelf =
     Boolean(caller && caller.id === String(s.submitter_employee_id)) ||
@@ -313,14 +326,8 @@ export async function getSubmissionDetail(actor: Actor, id: number) {
       appliedAt: s.applied_s ?? null,
     },
     lines: decorated,
-    summary: {
-      total: decorated.length,
-      applied: count("applied"),
-      skipped: count("skipped"),
-      failed: count("failed"),
-      pending: count("pending"),
-      withWarnings: decorated.filter((l) => l.warnings.length).length,
-    },
+    coverage,
+    summary: { total: decorated.length, applied: count("applied"), skipped: count("skipped"), failed: count("failed"), pending: count("pending"), withWarnings: decorated.filter((l) => l.warnings.length).length },
     timeline: timeline.map((t) => ({
       action: String(t.action),
       actorName: t.actor_name ? String(t.actor_name) : null,

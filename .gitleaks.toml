@@ -1,0 +1,11 @@
+# Extend the default ruleset; only allowlist known false positives.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Metric-key identifiers (e.g. \"privileged_grants_30d\") that match generic-api-key by entropy, not secrets."
+paths = [
+  '''src/pages/dashboards/reference/superadmin/AccessPanels\.tsx''',
+  '''backend/src/modules/dashboards/role-insights/providers/superAdminSections\.ts''',
+  '''backend/src/modules/dashboards/role-insights/providers/superAdmin\.ts''',
+]

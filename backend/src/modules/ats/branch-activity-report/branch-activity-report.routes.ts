@@ -7,8 +7,11 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../../../middleware/authMiddleware.js";
 import { requireRole } from "../../../middleware/requireRole.js";
 import { getCurrentDateIST } from "../../../shared/istDate.js";
+import type { AuthenticatedRequest } from "../../../middleware/authMiddleware.js";
+import { branchInScope, resolveAtsBranchScope, OUT_OF_BRANCH_MESSAGE } from "../ats-branch-scope.js";
 import {
   getBranchActivityReportData,
+  getBranchActivityReportDataForBranches,
   getBranchActivityExportData,
 } from "./index.js";
 
@@ -46,7 +49,11 @@ branchActivityReportRouter.get("/", async (req: Request, res: Response) => {
       .json({ success: false, message: "date must be YYYY-MM-DD" });
   }
   try {
-    const data = await getBranchActivityReportData(date || getCurrentDateIST());
+    // Owner ruling 2026-10-01: only org-wide roles see every branch; everyone else gets their own branch only.
+    const scope = await resolveAtsBranchScope((req as AuthenticatedRequest).authUser!.id);
+    const data = scope.orgWide
+      ? await getBranchActivityReportData(date || getCurrentDateIST())
+      : await getBranchActivityReportDataForBranches(date || getCurrentDateIST(), scope.branchSpellings);
     return res.json({ success: true, data });
   } catch (error: unknown) {
     return res
@@ -70,9 +77,15 @@ branchActivityReportRouter.get(
     }
     try {
       const reportDate = date || getCurrentDateIST();
+      // ?branch= may only narrow the caller's own branch scope; a foreign branch is refused.
+      const scope = await resolveAtsBranchScope((req as AuthenticatedRequest).authUser!.id);
+      if (!scope.orgWide && branch && !branchInScope(scope, branch)) {
+        return res.status(403).json({ success: false, message: OUT_OF_BRANCH_MESSAGE });
+      }
       const { rows, csv } = await getBranchActivityExportData(
         reportDate,
         branch,
+        scope.orgWide ? undefined : scope.branchSpellings,
       );
       const filename = branch
         ? `recruitment-activity-${branch}-${reportDate}.csv`

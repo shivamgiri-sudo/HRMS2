@@ -94,7 +94,19 @@ function authHeader() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockDbExecute.mockReset().mockResolvedValue([[{ role_key: "admin" }], []]);
+  // admin is branch-scoped (owner policy 2026-10-01): process writes need a resolvable own branch, so the
+  // caller is an admin whose own branch is br-1 and the processes under test belong to br-1. Matched on SQL.
+  mockDbExecute.mockReset().mockImplementation(async (sql: unknown) => {
+    const text = String(sql);
+    if (/FROM user_assignment_scope/i.test(text)) {
+      return [[{ role_key: "admin", scope_type: "branch", branch_id: "br-1" }], []];
+    }
+    if (/FROM employees\s+WHERE user_id/i.test(text)) {
+      return [[{ id: "emp-admin", employee_code: "ADM001", branch_id: "br-1" }], []];
+    }
+    if (/FROM process_master WHERE id/i.test(text)) return [[{ branch_id: "br-1" }], []];
+    return [[{ role_key: "admin" }], []];
+  });
   mockGetRepo.mockReturnValue(mockRepo);
 });
 

@@ -20,6 +20,8 @@ import {
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
+import { snapshotUncoveredByRunSql } from "./pnl-payroll-coverage.js";
 
 /**
  * The row-level detail behind every clickable P&L cell — "what actually makes up this number".
@@ -398,6 +400,8 @@ async function peopleSnapshotRows(
   scope: PnlDrilldownScope,
   aggregate: boolean,
   bucket?: PnlPeopleBucket,
+  /** Only staff no valid payroll run covers yet — the fallback beside posted lines. */
+  uncoveredOnly = false,
 ): Promise<DrilldownRow[]> {
   if (!(await tableExists("pnl_running_salary_snapshot"))) return [];
   // Both the un-bucketed accrual fallback (a Live P&L / CEO cell, audit item 17b) and a bucketed
@@ -407,6 +411,7 @@ async function peopleSnapshotRows(
   const s = await effectivePeopleScope(scope, SNAPSHOT_COLS);
   const bucketSql = bucket ? " AND s.pnl_bucket = ?" : "";
   const bucketParams = bucket ? [bucket] : [];
+  const uncovered = uncoveredOnly ? ` AND ${await snapshotUncoveredByRunSql("s")}` : "";
   const rows: DrilldownRow[] = [];
   if (aggregate) {
     const [groupRows] = await db.execute<RowDataPacket[]>(
@@ -414,7 +419,7 @@ async function peopleSnapshotRows(
               COUNT(*) AS headcount, SUM(COALESCE(s.earned_salary_till_date,0)) AS amount
          FROM pnl_running_salary_snapshot s
          ${s.join}
-        WHERE s.period_code = ? AND ${s.sql}${bucketSql}
+        WHERE s.period_code = ? AND ${s.sql}${bucketSql}${uncovered}
         GROUP BY designation_name
         ORDER BY amount DESC`,
       [period, s.param, ...bucketParams],
@@ -437,7 +442,7 @@ async function peopleSnapshotRows(
        FROM pnl_running_salary_snapshot s
        LEFT JOIN employees e ON e.id = s.employee_id
        ${s.join}
-      WHERE s.period_code = ? AND ${s.sql}${bucketSql}
+      WHERE s.period_code = ? AND ${s.sql}${bucketSql}${uncovered}
       ORDER BY amount DESC`,
     [period, s.param, ...bucketParams],
   );
@@ -484,7 +489,7 @@ async function peopleDrilldownRowsAggregated(
               COUNT(*) AS headcount,
               SUM(${peopleCostSql("l")}) AS amount
          FROM salary_prep_line l
-         JOIN salary_prep_run r ON r.id = l.run_id
+         JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
          JOIN employees e ON e.id = l.employee_id
          LEFT JOIN designation_master des ON des.id = e.designation_id
          ${emp.join}
@@ -504,22 +509,13 @@ async function peopleDrilldownRowsAggregated(
       });
     }
   }
-  if (rows.length === 0) {
-    const fallback = await peopleSnapshotRows(period, scope, true);
-    return {
-      metric: "people",
-      scope: { period, ...scope },
-      rows: fallback,
-      total: fallback.reduce((s, r) => s + r.amount, 0),
-      hasEstimatedRows: fallback.length > 0,
-    };
-  }
+  // Staff no valid run covers yet keep their accrual, alongside the posted lines (per employee —
+  // a scoped run must not zero the rest; pnl-payroll-coverage.ts).
+  const accrued = await peopleSnapshotRows(period, scope, true, undefined, true);
+  const all = [...rows, ...accrued];
   return {
-    metric: "people",
-    scope: { period, ...scope },
-    rows,
-    total: rows.reduce((s, r) => s + r.amount, 0),
-    hasEstimatedRows: false,
+    metric: "people", scope: { period, ...scope }, rows: all,
+    total: all.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: accrued.length > 0,
   };
 }
 
@@ -534,7 +530,7 @@ async function peopleDrilldownRows(
       `SELECT l.id, e.employee_code, e.full_name, e.cost_center_code,
               ${peopleCostSql("l")} AS amount
          FROM salary_prep_line l
-         JOIN salary_prep_run r ON r.id = l.run_id
+         JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
          JOIN employees e ON e.id = l.employee_id
          ${emp.join}
         WHERE r.run_month = ? AND ${emp.sql}
@@ -555,22 +551,13 @@ async function peopleDrilldownRows(
       });
     }
   }
-  if (rows.length === 0) {
-    const fallback = await peopleSnapshotRows(period, scope, false);
-    return {
-      metric: "people",
-      scope: { period, ...scope },
-      rows: fallback,
-      total: fallback.reduce((s, r) => s + r.amount, 0),
-      hasEstimatedRows: fallback.length > 0,
-    };
-  }
+  // Staff no valid run covers yet keep their accrual, alongside the posted lines (per employee —
+  // a scoped run must not zero the rest; pnl-payroll-coverage.ts).
+  const accrued = await peopleSnapshotRows(period, scope, false, undefined, true);
+  const all = [...rows, ...accrued];
   return {
-    metric: "people",
-    scope: { period, ...scope },
-    rows,
-    total: rows.reduce((s, r) => s + r.amount, 0),
-    hasEstimatedRows: false,
+    metric: "people", scope: { period, ...scope }, rows: all,
+    total: all.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: accrued.length > 0,
   };
 }
 

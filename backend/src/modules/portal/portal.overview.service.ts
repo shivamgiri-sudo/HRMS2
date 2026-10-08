@@ -245,6 +245,7 @@ export const portalOverviewService = {
       const card = processMap.get(processIdList[i])!;
       for (const r of rows) {
         if (r.availability !== "ok") continue; // no real reading -- must not move the card
+        if (r.target == null) continue; // no configured target -- nothing to score the client against
         const rag = mapScorecardRag(r.rag);
         if (!rag) continue;
         card.headline_metrics.push({

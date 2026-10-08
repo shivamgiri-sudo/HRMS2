@@ -33,6 +33,7 @@ import {
 } from "./team-roster-attendance.js";
 import { getGrid, getMe, listTemplates } from "./team-roster.service.js";
 import { getAutofillSuggestions } from "./team-roster-autofill.js";
+import { editSubmissionLine } from "./team-roster-approver-edit.js";
 import { managerDecide, wfmDecide } from "./team-roster-workflow.js";
 import {
   MAX_REMARKS_LENGTH,
@@ -91,29 +92,17 @@ const schemas = {
   }),
   note: z.object({ note: z.string().trim().max(500).nullable() }),
   submit: z.object({ note: z.string().trim().max(500).nullish() }),
-  decision: z.object({
-    remarks: z.string().trim().max(MAX_REMARKS_LENGTH).nullish(),
+  editLine: cellRef.extend({
+    type: z.enum(NEW_ASSIGNMENT_TYPES),
+    shiftStart: z.string().trim().regex(/^\d{1,2}:\d{2}$/, "expected HH:MM").nullish(),
+    shiftEnd: z.string().trim().regex(/^\d{1,2}:\d{2}$/, "expected HH:MM").nullish(),
+    reason: z.string().trim().max(500).nullish(),
   }),
-  mine: z.object({
-    status: z.string().trim().max(30).optional(),
-    offset: int,
-    limit: int,
-  }),
-  approvals: z.object({
-    step: z.enum(["manager", "wfm"]),
-    offset: int,
-    limit: int,
-  }),
-  attendance: z.object({
-    month: z.string().regex(/^\d{4}-\d{2}$/, "expected YYYY-MM"),
-    search: z.string().trim().max(100).optional(),
-    processId: z.string().trim().max(36).optional(),
-    offset: int,
-    limit: int,
-  }),
-  attendanceDetail: z.object({
-    month: z.string().regex(/^\d{4}-\d{2}$/, "expected YYYY-MM"),
-  }),
+  decision: z.object({ remarks: z.string().trim().max(MAX_REMARKS_LENGTH).nullish() }),
+  mine: z.object({ status: z.string().trim().max(30).optional(), offset: int, limit: int }),
+  approvals: z.object({ step: z.enum(["manager", "wfm"]), offset: int, limit: int }),
+  attendance: z.object({ month: z.string().regex(/^\d{4}-\d{2}$/, "expected YYYY-MM"), search: z.string().trim().max(100).optional(), processId: z.string().trim().max(36).optional(), offset: int, limit: int }),
+  attendanceDetail: z.object({ month: z.string().regex(/^\d{4}-\d{2}$/, "expected YYYY-MM") }),
 };
 
 const actorOf = (req: Request): Actor => {
@@ -183,133 +172,37 @@ const idOf = (req: Request) => {
 };
 
 // Static paths first so nothing is captured by "/submissions/:id".
-teamRosterRouter.get(
-  "/me",
-  run("none", null, (a) => getMe(a)),
-);
-teamRosterRouter.get(
-  "/templates",
-  run("none", null, (a) => listTemplates(a)),
-);
-teamRosterRouter.get(
-  "/grid",
-  (req, res, next) => {
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    (req as any).lob = lob;
-    next();
-  },
-  run("query", schemas.grid, (a, q, req) =>
-    getGrid(a, { ...q, lob: (req as any).lob }),
-  ),
-);
-teamRosterRouter.get(
-  "/attendance",
-  (req, res, next) => {
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    (req as any).lob = lob;
-    next();
-  },
-  run("query", schemas.attendance, (a, q, req) =>
-    getTeamAttendance(a, { ...q, lob: (req as any).lob }),
-  ),
-);
-teamRosterRouter.get(
-  "/attendance/:employeeId",
-  run("query", schemas.attendanceDetail, (a, q, req) =>
-    getTeamAttendanceDetail(
-      a,
-      String(req.params.employeeId).slice(0, 36),
-      q.month,
-    ),
-  ),
-);
-teamRosterRouter.post(
-  "/autofill",
-  run("body", schemas.autofill, (a, b) => getAutofillSuggestions(a, b)),
-);
-teamRosterRouter.get(
-  "/draft",
-  run("none", null, (a) => getMyDraft(a)),
-);
-teamRosterRouter.put(
-  "/draft/lines",
-  run("body", schemas.lines, (a, b) =>
-    upsertDraftLines(a, {
-      upserts: b.upserts?.map((u) => ({
-        ...u,
-        shiftTemplateId: u.shiftTemplateId ?? null,
-        shiftStart: u.shiftStart ?? null,
-        shiftEnd: u.shiftEnd ?? null,
-        shiftMasterId: u.shiftMasterId ?? null,
-        reason: u.reason ?? null,
-      })),
-      deletes: b.deletes,
-    }),
-  ),
-);
-teamRosterRouter.put(
-  "/draft/note",
-  run("body", schemas.note, async (a, b) => {
-    await setDraftNote(a, b.note);
-    return { saved: true };
-  }),
-);
-teamRosterRouter.delete(
-  "/draft",
-  run("none", null, (a) => discardDraft(a)),
-);
-teamRosterRouter.post(
-  "/draft/submit",
-  run(
-    "body",
-    schemas.submit,
-    (a, b) => submitDraft(a, { note: b.note ?? null }),
-    201,
-  ),
-);
-teamRosterRouter.get(
-  "/submissions",
-  run("query", schemas.mine, (a, q) => listMySubmissions(a, q)),
-);
-teamRosterRouter.get(
-  "/approvals",
-  run("query", schemas.approvals, (a, q) => listApprovals(a, q)),
-);
-teamRosterRouter.get(
-  "/submissions/:id",
-  run("none", null, (a, _i, req) => getSubmissionDetail(a, idOf(req))),
-);
-teamRosterRouter.post(
-  "/submissions/:id/cancel",
-  run("none", null, (a, _i, req) => cancelSubmission(a, idOf(req))),
-);
-teamRosterRouter.post(
-  "/submissions/:id/copy-to-draft",
-  run("none", null, (a, _i, req) => copySubmissionToDraft(a, idOf(req))),
-);
-teamRosterRouter.post(
-  "/submissions/:id/manager-approve",
-  run("body", schemas.decision, (a, b, req) =>
-    managerDecide(a, idOf(req), "approve", b.remarks),
-  ),
-);
-teamRosterRouter.post(
-  "/submissions/:id/manager-reject",
-  run("body", schemas.decision, (a, b, req) =>
-    managerDecide(a, idOf(req), "reject", b.remarks),
-  ),
-);
-teamRosterRouter.post(
-  "/submissions/:id/wfm-approve",
-  run("body", schemas.decision, (a, b, req) =>
-    wfmDecide(a, idOf(req), "approve", b.remarks),
-  ),
-);
-teamRosterRouter.post(
-  "/submissions/:id/wfm-reject",
-  run("body", schemas.decision, (a, b, req) =>
-    wfmDecide(a, idOf(req), "reject", b.remarks),
-  ),
-);
+teamRosterRouter.get("/me", run("none", null, (a) => getMe(a)));
+teamRosterRouter.get("/templates", run("none", null, (a) => listTemplates(a)));
+teamRosterRouter.get("/grid", (req, res, next) => {
+  const lob = readLobFilter(req, res);
+  if (!lob) return;
+  (req as any).lob = lob;
+  next();
+}, run("query", schemas.grid, (a, q, req) => getGrid(a, { ...q, lob: (req as any).lob })));
+teamRosterRouter.get("/attendance", (req, res, next) => {
+  const lob = readLobFilter(req, res);
+  if (!lob) return;
+  (req as any).lob = lob;
+  next();
+}, run("query", schemas.attendance, (a, q, req) => getTeamAttendance(a, { ...q, lob: (req as any).lob })));
+teamRosterRouter.get("/attendance/:employeeId", run("query", schemas.attendanceDetail, (a, q, req) => getTeamAttendanceDetail(a, String(req.params.employeeId).slice(0, 36), q.month)));
+teamRosterRouter.post("/autofill", run("body", schemas.autofill, (a, b) => getAutofillSuggestions(a, b)));
+teamRosterRouter.get("/draft", run("none", null, (a) => getMyDraft(a)));
+teamRosterRouter.put("/draft/lines", run("body", schemas.lines, (a, b) => upsertDraftLines(a, {
+  upserts: b.upserts?.map((u) => ({ ...u, shiftTemplateId: u.shiftTemplateId ?? null, shiftStart: u.shiftStart ?? null, shiftEnd: u.shiftEnd ?? null, shiftMasterId: u.shiftMasterId ?? null, reason: u.reason ?? null })),
+  deletes: b.deletes,
+})));
+teamRosterRouter.put("/draft/note", run("body", schemas.note, async (a, b) => { await setDraftNote(a, b.note); return { saved: true }; }));
+teamRosterRouter.delete("/draft", run("none", null, (a) => discardDraft(a)));
+teamRosterRouter.post("/draft/submit", run("body", schemas.submit, (a, b) => submitDraft(a, { note: b.note ?? null }), 201));
+teamRosterRouter.get("/submissions", run("query", schemas.mine, (a, q) => listMySubmissions(a, q)));
+teamRosterRouter.get("/approvals", run("query", schemas.approvals, (a, q) => listApprovals(a, q)));
+teamRosterRouter.get("/submissions/:id", run("none", null, (a, _i, req) => getSubmissionDetail(a, idOf(req))));
+teamRosterRouter.post("/submissions/:id/cancel", run("none", null, (a, _i, req) => cancelSubmission(a, idOf(req))));
+teamRosterRouter.post("/submissions/:id/copy-to-draft", run("none", null, (a, _i, req) => copySubmissionToDraft(a, idOf(req))));
+teamRosterRouter.post("/submissions/:id/edit-line", run("body", schemas.editLine, (a, b, req) => editSubmissionLine(a, idOf(req), b)));
+teamRosterRouter.post("/submissions/:id/manager-approve", run("body", schemas.decision, (a, b, req) => managerDecide(a, idOf(req), "approve", b.remarks)));
+teamRosterRouter.post("/submissions/:id/manager-reject", run("body", schemas.decision, (a, b, req) => managerDecide(a, idOf(req), "reject", b.remarks)));
+teamRosterRouter.post("/submissions/:id/wfm-approve", run("body", schemas.decision, (a, b, req) => wfmDecide(a, idOf(req), "approve", b.remarks)));
+teamRosterRouter.post("/submissions/:id/wfm-reject", run("body", schemas.decision, (a, b, req) => wfmDecide(a, idOf(req), "reject", b.remarks)));

@@ -1,0 +1,118 @@
+name: Ops Attendance Repair (manual)
+
+# Repairs attendance for a past date range on the production host, one day at a time:
+#   biometric sync -> engine sweep (same call as the 23:00 cron) -> re-check of that day's mismatch items.
+# See backend/scripts/attendance-repair-range.ts for what each step does and why it is safe.
+#
+# SAFETY
+#   - workflow_dispatch only. Nothing here runs on push, on schedule or on merge.
+#   - Defaults to a DRY RUN, which only reads. Applying needs mode=apply AND confirm=REPAIR-ATTENDANCE.
+#   - At most 14 days per run; days run one after another, never in parallel.
+#   - Payroll-finalised rows (is_locked = 1) are protected in SQL by the code it runs.
+#   - Serialised with the other production ops scripts.
+#
+# After an apply, the payroll head should re-prepare any payroll run that is still processing so it picks the
+# repaired attendance up.
+
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "First date to repair, YYYY-MM-DD (must be in the past)"
+        required: true
+        type: string
+      to:
+        description: "Last date to repair, YYYY-MM-DD (at most 14 days after 'from')"
+        required: true
+        type: string
+      mode:
+        description: "dry-run only reads and reports; apply repairs"
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - apply
+      confirm:
+        description: "To APPLY, type REPAIR-ATTENDANCE exactly. Ignored for a dry run."
+        required: false
+        type: string
+      steps:
+        description: "full = biometric pull + fill missing + re-check; sweep-only skips the slow biometric pull; report-prejoin / delete-prejoin find / remove rows created today for dates before the employee joined (range up to 31 days)"
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+          - sweep-only
+          - report-prejoin
+          - delete-prejoin
+
+concurrency:
+  group: ops-scripts-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    name: "attendance repair ${{ inputs.from }}..${{ inputs.to }} (${{ inputs.mode }})"
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 600
+
+    steps:
+      - name: Validate inputs
+        shell: bash
+        env:
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          re='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          [[ "$FROM" =~ $re ]] || { echo "::error::from must look like 2026-08-03"; exit 1; }
+          [[ "$TO" =~ $re ]]   || { echo "::error::to must look like 2026-08-03"; exit 1; }
+          if [ "$MODE" = "apply" ] && [ "$CONFIRM" != "REPAIR-ATTENDANCE" ]; then
+            echo "::error::To apply, 'confirm' must be exactly REPAIR-ATTENDANCE."
+            exit 1
+          fi
+          echo "inputs ok: $FROM .. $TO ($MODE)"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Verify the production environment file is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f /var/www/HRMS2/backend/.env || { echo "::error::/var/www/HRMS2/backend/.env not found — is this the prod host?"; exit 1; }
+
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+          MODE: ${{ inputs.mode }}
+          STEPS: ${{ inputs.steps }}
+        run: |
+          set -euo pipefail
+          FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+          [ "$STEPS" = "sweep-only" ] && FLAG="$FLAG --skip-sync"
+          [ "$STEPS" = "report-prejoin" ] && FLAG="--report-prejoin"
+          [ "$STEPS" = "delete-prejoin" ] && FLAG="--delete-prejoin $( [ "$MODE" = "apply" ] && echo --apply )"
+          npx tsx scripts/attendance-repair-range.ts "$FROM" "$TO" $FLAG

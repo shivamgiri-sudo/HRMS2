@@ -33,11 +33,14 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { managementService } from "./management.service.js";
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
+import { canViewEmployee } from "../../shared/enterpriseScope.js";
 
 /** Roles that may look at any employee, matching resolveTeamScope()'s wide set. */
-const WIDE_ROLES = ["admin", "hr", "ceo", "qa", "super_admin"] as const;
+// Owner ruling 2026-10-01: hr and qa are no longer wide; they reach a member through their branch / assigned scope.
+const WIDE_ROLES = ORG_WIDE_EXEMPT_ROLES;
 
 /** How far back every trend in the drawer looks. */
 const WINDOW_DAYS = 90;
@@ -61,22 +64,16 @@ function httpError(message: string, statusCode: number): Error {
  * direct reports hold only the `employee` role, so a role test locks the real audience out.
  * The test that matches the page's purpose is the reporting line itself.
  */
-export async function assertCanViewMember(
-  userId: string,
-  targetEmployeeId: string,
-): Promise<void> {
-  if (await hasRole(userId, ...WIDE_ROLES)) return;
+export async function assertCanViewMember(userId: string, targetEmployeeId: string): Promise<void> {
+  if (await hasAnyRole(userId, ...WIDE_ROLES)) return;
 
   const caller = await getEmployeeForUser(userId);
   if (!caller) throw httpError("No employee record for this user", 403);
   if (caller.id === targetEmployeeId) return; // own record
 
   const reports = await managementService.getDirectReportIds(caller.id);
-  if (!reports.includes(targetEmployeeId)) {
-    throw httpError(
-      "Forbidden: this employee is not in your reporting line",
-      403,
-    );
+  if (!reports.includes(targetEmployeeId) && !(await canViewEmployee({ id: userId }, targetEmployeeId))) {
+    throw httpError("Forbidden: this employee is not in your reporting line", 403);
   }
 }
 

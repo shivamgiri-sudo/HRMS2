@@ -1,29 +1,229 @@
 {
-  "db/__tests__/schema-column-refs.test.ts": ["leave_requests"],
-  "modules/ats/mock-digilocker.routes.ts": ["ats_bgv_check"],
-  "modules/bulk-upload/batch-auto-recovery.service.ts": ["bulk_import_queue"],
-  "modules/bulk-upload/bulk-upload.routes.ts": ["bulk_import_queue"],
+  "db/__tests__/schema-column-refs.test.ts": [
+    "leave_requests"
+  ],
+  "modules/ats/mock-digilocker.routes.ts": [
+    "ats_bgv_check"
+  ],
+  "modules/bulk-upload/alt-rx-dump-bulk.service.ts": [
+    "db_masmis"
+  ],
+  "modules/bulk-upload/batch-auto-recovery.service.ts": [
+    "bulk_import_queue"
+  ],
+  "modules/bulk-upload/bulk-upload.routes.ts": [
+    "bulk_import_queue"
+  ],
   "modules/finance/client-payment-tracking.service.ts": [
     "client_invoice_payment_log",
     "client_invoice_payment_status"
   ],
-  "modules/integrations/cosec/cosec-registration.service.ts": ["mx_usermst"],
-  "modules/lms/lms-provisioning.service.ts": ["trainee_master"],
-  "modules/mcnmeet/mcnmeet.cron.ts": ["mcnmeet_meeting"],
+  "modules/finance/salary-voucher-tally-push.service.ts": [
+    "salary_voucher_tally_push_log"
+  ],
+  "modules/finance/tally-export-lock.service.ts": [
+    "tally_export_lock"
+  ],
+  "modules/finance/tally-payment-import.service.ts": [
+    "tally_import_batch",
+    "tally_import_voucher"
+  ],
+  "modules/hiring-engine/he-action-queue.service.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/he-best-offer.service.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/he-best-offer.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/he-outcome-reason.service.ts": [
+    "he_match_outcome_reason"
+  ],
+  "modules/hiring-engine/he-bulk-call.service.ts": [
+    "he_call_batch",
+    "he_call_job"
+  ],
+  "modules/hiring-engine/he-campaign-config.service.ts": [
+    "he_campaign_config"
+  ],
+  "modules/hiring-engine/he-command.routes.ts": [
+    "qualified_followup_call_batch"
+  ],
+  "modules/hiring-engine/he-cost.service.ts": [
+    "qualified_followup",
+    "requisition_stream",
+    "requisition_stream_match"
+  ],
+  "modules/hiring-engine/he-drive-analytics.service.ts": [
+    "qualified_followup",
+    "requisition_stream",
+    "requisition_stream_match"
+  ],
+  "modules/hiring-engine/he-drive-insight-facts.service.ts": [
+    "requisition_stream",
+    "requisition_stream_match"
+  ],
+  "modules/hiring-engine/he-drive-plan.service.ts": [
+    "requisition_stream",
+    "requisition_stream_match",
+    "requisition_stream_plan"
+  ],
+  "modules/hiring-engine/he-drive-trend.service.ts": [
+    "requisition_stream",
+    "requisition_stream_match"
+  ],
+  "modules/hiring-engine/he-drive.service.ts": [
+    "he_drive",
+    "he_match"
+  ],
+  "modules/hiring-engine/he-engine.service.ts": [
+    "he_match"
+  ],
+  "modules/hiring-engine/he-ex-employee.service.ts": [
+    "he_ex_employee"
+  ],
+  "modules/hiring-engine/he-identity.service.ts": [
+    "he_identity_clash",
+    "he_lead_identity"
+  ],
+  "modules/hiring-engine/he-ingest.service.ts": [
+    "he_call",
+    "he_message"
+  ],
+  "modules/hiring-engine/he-insight.service.ts": [
+    "he_lead_insight"
+  ],
+  "modules/hiring-engine/he-intake.service.ts": [
+    "he_consent",
+    "he_import_mapping",
+    "he_lead_profile"
+  ],
+  "modules/hiring-engine/he-jd.service.ts": [
+    "he_requisition_jd"
+  ],
+  "modules/hiring-engine/he-lead.service.ts": [
+    "he_consent",
+    "he_lead"
+  ],
+  "modules/hiring-engine/he-meta-bridge.service.ts": [
+    "he_lead",
+    "he_lead_campaign"
+  ],
+  "modules/hiring-engine/he-profile.service.ts": [
+    "he_lead_profile"
+  ],
+  "modules/hiring-engine/he-requisition-sources.service.ts": [
+    "requisition_stream",
+    "requisition_stream_match"
+  ],
+  "modules/hiring-engine/he-reroute.service.ts": [
+    "he_match"
+  ],
+  "modules/hiring-engine/he-showrate-calibration.service.ts": [
+    "requisition_stream",
+    "requisition_stream_match"
+  ],
+  "modules/hiring-engine/he-showup.service.ts": [
+    "he_model_param"
+  ],
+  "modules/hiring-engine/he-sources-window.service.ts": [
+    "qualified_followup",
+    "requisition_stream",
+    "requisition_stream_match"
+  ],
+  "modules/hiring-engine/he-stream-plan.service.ts": [
+    "requisition_stream",
+    "requisition_stream_match",
+    "requisition_stream_plan"
+  ],
+  "modules/hiring-engine/qualified-followup.attention.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/qualified-followup.call.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/qualified-followup.callfile.ts": [
+    "qualified_followup",
+    "qualified_followup_call_batch"
+  ],
+  "modules/hiring-engine/qualified-followup.context.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/qualified-followup.email.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/qualified-followup.service.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/qualified-followup.stops.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/qualified-followup.whatsapp.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/requisition-stream.service.ts": [
+    "requisition_stream",
+    "requisition_stream_day",
+    "requisition_stream_event"
+  ],
+  "modules/integrations/cosec/cosec-registration.service.ts": [
+    "mx_usermst"
+  ],
+  "modules/lms/lms-provisioning.service.ts": [
+    "trainee_master"
+  ],
+  "modules/mcnmeet/mcnmeet.cron.ts": [
+    "mcnmeet_meeting"
+  ],
   "modules/mcnmeet/mcnmeet.service.ts": [
     "mcnmeet_meeting",
     "mcnmeet_meeting_audience",
     "mcnmeet_meeting_event",
     "mcnmeet_meeting_invitee"
   ],
-  "modules/org-chart/org-chart.validation.ts": ["org_chart_data_issue"],
-  "modules/performance-feedback/quality-upload.service.ts": ["quality_audit"],
-  "modules/process-performance/process-targets.service.ts": ["db_masmis"],
+  "modules/ops-control-tower/ops-nudge.service.ts": [
+    "ops_nudge_log"
+  ],
+  "modules/org-chart/org-chart.validation.ts": [
+    "org_chart_data_issue"
+  ],
+  "modules/performance-feedback/quality-upload.service.ts": [
+    "quality_audit"
+  ],
+  "modules/process-dashboard/alerts/alerts.repo.ts": [
+    "process_dashboard_alert_event",
+    "process_dashboard_alert_rule",
+    "process_dashboard_digest"
+  ],
+  "modules/process-dashboard/pd.config.service.ts": [
+    "process_dashboard_config"
+  ],
+  "modules/process-dashboard/pd.inbound.service.ts": [
+    "process_inbound_config"
+  ],
+  "modules/process-performance/mis-schedule.service.ts": [
+    "mis_email_schedule",
+    "mis_email_schedule_run"
+  ],
+  "modules/process-performance/process-targets.service.ts": [
+    "db_masmis"
+  ],
   "modules/quality-dashboard/onfido-utilization.routes.ts": [
     "onfido_utilization_upload"
   ],
-  "modules/salary-dispute/salary-dispute.service.ts": ["email_queue"],
-  "modules/sales-upload/sales-upload.service.ts": ["db_masmis"],
+  "modules/roster-requests/roster-requests.auto-rule.ts": [
+    "roster_request_auto_rule"
+  ],
+  "modules/roster-requests/roster-requests.decision-log.ts": [
+    "roster_request_decision_log"
+  ],
+  "modules/salary-dispute/salary-dispute.service.ts": [
+    "email_queue"
+  ],
+  "modules/sales-upload/sales-upload.service.ts": [
+    "db_masmis"
+  ],
   "modules/skill-roadmap/skill-roadmap.service.ts": [
     "employee_roadmap_assignments",
     "employee_skill_states",

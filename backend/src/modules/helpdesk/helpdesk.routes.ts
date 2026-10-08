@@ -35,6 +35,7 @@ import {
 } from "./helpdesk-sla.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 import { registerUpload } from "../document-vault/documentVault.service.js";
 
 // ── Grievance evidence multer setup ───────────────────────────────────────────
@@ -100,14 +101,7 @@ const HELPDESK_ADMIN_ROLES = [
 // tickets (see the PATCH route's own note on 'closed'); 'cancelled' is terminal too and never
 // set by any live route. Matches the live enum, confirmed 2026-08-24:
 // enum('open','in_progress','pending_info','on_hold','resolved','closed','cancelled').
-const ACTIVE_TICKET_STATUSES = [
-  "open",
-  "in_progress",
-  "pending_info",
-  "on_hold",
-] as const;
-// The subset of HELPDESK_ADMIN_ROLES that is org-wide by design (unchanged).
-const HELPDESK_ORG_WIDE_ROLES = ["admin", "hr", "super_admin"] as const;
+const ACTIVE_TICKET_STATUSES = ["open", "in_progress", "pending_info", "on_hold"] as const;
 // The subset that must be scoped to its own branch/process — previously treated
 // identically to org-wide roles, giving company-wide ticket visibility to a role
 // named "branch_it" (delta-audit 2026-08-14, P1; same anti-pattern the same-HEAD
@@ -122,6 +116,32 @@ for (const [category, roles] of Object.entries(CATEGORY_OWNER_ROLES)) {
   for (const role of roles) {
     (ROLE_OWNED_CATEGORIES[role] ??= []).push(category);
   }
+}
+
+/**
+ * Branch/process part of the helpdesk row scope (no category restriction). Owner ruling 2026-10-01:
+ * only ORG_WIDE_EXEMPT roles (admin, super_admin, ceo ...) are branch-unrestricted; hr is limited to its
+ * own branch / assignments like it/branch_it/it_admin. Used directly by the aggregate endpoints that never
+ * had a category restriction (sla-summary, owner-workload, root-causes, agents).
+ */
+async function resolveHelpdeskBranchScope(
+  user: AuthenticatedRequest["authUser"]
+): Promise<{ sql: string; params: unknown[] }> {
+  if (await hasRoleForRequest(user, "super_admin")) return { sql: "1=1", params: [] };
+  let branchScope: { sql: string; params: unknown[] };
+  if (await hasRoleForRequest(user, "admin")) {
+    branchScope = { sql: "1=1", params: [] };
+  } else {
+    const scope = await resolveUserBusinessScope(user as { id: string });
+    branchScope = buildProcessScopeCondition(scope, { branchId: "e.branch_id", processId: "e.process_id" });
+    // hr without an assignment row still has a resolvable scope: its own employee branch.
+    if (branchScope.sql !== "1=1" && scope.roles?.includes("hr") && scope.branchId) {
+      branchScope = branchScope.sql === "1=0"
+        ? { sql: "e.branch_id = ?", params: [scope.branchId] }
+        : { sql: `(${branchScope.sql}) OR e.branch_id = ?`, params: [...branchScope.params, scope.branchId] };
+    }
+  }
+  return branchScope;
 }
 
 /**
@@ -170,16 +190,7 @@ async function resolveHelpdeskTicketScope(
     ),
   ];
 
-  let branchScope: { sql: string; params: unknown[] };
-  if (await hasRoleForRequest(user, ...HELPDESK_ORG_WIDE_ROLES)) {
-    branchScope = { sql: "1=1", params: [] };
-  } else {
-    const scope = await resolveUserBusinessScope(user as { id: string });
-    branchScope = buildProcessScopeCondition(scope, {
-      branchId: "e.branch_id",
-      processId: "e.process_id",
-    });
-  }
+  const branchScope = await resolveHelpdeskBranchScope(user);
 
   // A HELPDESK_ADMIN_ROLES member holding none of the mapped roles (shouldn't happen given
   // the current mapping covers every role in HELPDESK_ADMIN_ROLES, but fail closed rather than
@@ -250,14 +261,10 @@ router.get(
   }),
 );
 
-router.get(
-  "/sla-summary",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await getHelpdeskSlaSummary(req.query as any);
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/sla-summary", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await getHelpdeskSlaSummary(req.query as any, await resolveHelpdeskBranchScope(req.authUser));
+  return res.json({ success: true, data });
+}));
 
 router.get(
   "/category-breakdown",
@@ -269,14 +276,10 @@ router.get(
   }),
 );
 
-router.get(
-  "/owner-workload",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const data = await getOwnerWorkload();
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/owner-workload", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await getOwnerWorkload(await resolveHelpdeskBranchScope(req.authUser));
+  return res.json({ success: true, data });
+}));
 
 router.get(
   "/aging",
@@ -288,14 +291,10 @@ router.get(
   }),
 );
 
-router.get(
-  "/root-causes",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await getRootCauses(req.query as any);
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/root-causes", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await getRootCauses(req.query as any, await resolveHelpdeskBranchScope(req.authUser));
+  return res.json({ success: true, data });
+}));
 
 router.get(
   "/it-analysis",
@@ -526,11 +525,148 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const ticket = (await loadTicketInScope(req)) as any;
     if (!ticket) return res.status(404).json({ error: "Not found" });
-    const newLevel = Number(ticket.escalation_level ?? 0) + 1;
-    const data = await helpdeskService.updateTicket(req.params.id, {
-      escalation_level: newLevel,
-      status: "in_progress",
-    } as any);
+  } else {
+    ticket = await helpdeskService.getTicket(req.params.id) as any;
+    if (!ticket) return res.status(404).json({ error: "Not found" });
+    const emp = await getEmployeeForUser(userId);
+    if (!emp || emp.id !== ticket.employee_id) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+  }
+  const data = await helpdeskService.reopenTicket(req.params.id, userId);
+  res.json({ data });
+}));
+
+router.post("/tickets/:id/rating", h(async (req: AuthenticatedRequest, res: Response) => {
+  const rating = Number(req.body?.rating);
+  if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+    return res.status(400).json({ success: false, error: "rating must be 1-5" });
+  }
+
+  const userId = req.authUser!.id;
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+
+  const data = await helpdeskService.rateTicket(req.params.id, rating, emp.id);
+  res.json({ success: true, data });
+}));
+
+router.post("/tickets/:id/comments", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const { text, is_internal } = req.body;
+  if (!text) return res.status(400).json({ error: "text required" });
+
+  const wantInternal = !!is_internal;
+  const isHelpdeskAdmin = await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES);
+  if (wantInternal && !isHelpdeskAdmin) {
+    return res.status(403).json({ success: false, message: "Only admin/hr/IT can post internal comments" });
+  }
+
+  const ticket = isHelpdeskAdmin
+    ? await loadTicketInScope(req) as any
+    : await helpdeskService.getTicket(req.params.id) as any;
+  if (!ticket) return res.status(404).json({ error: "Not found" });
+  if (!isHelpdeskAdmin) {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp || emp.id !== ticket.employee_id) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+  }
+
+  const id = await helpdeskService.addComment(req.params.id, userId, text, wantInternal);
+  await writeSensitiveAuditLog({
+    actorUserId: userId,
+    actionType: wantInternal ? "TICKET_INTERNAL_NOTE_ADDED" : "TICKET_COMMENT_ADDED",
+    moduleKey: "HELPDESK",
+    entityType: "helpdesk_ticket",
+    entityId: req.params.id,
+    changeSummary: { comment_id: id, is_internal: wantInternal },
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+  res.status(201).json({ data: { id } });
+}));
+
+// ── Grievances ─────────────────────────────────────────────────────────────────
+
+// Branch scoping for grievances (owner ruling 2026-10-01): admin/hr used to see every branch's grievances
+// and act on any of them. HR is limited to employees inside its own branch / assignments; org-wide roles
+// (admin, super_admin, ceo ...) are unaffected - buildEmployeeScopeCondition returns 1=1 for them.
+async function grievanceScope(req: AuthenticatedRequest) {
+  const { buildEmployeeScopeCondition, resolveUserBusinessScope } = await import("../../shared/enterpriseScope.js");
+  return buildEmployeeScopeCondition(await resolveUserBusinessScope(req.authUser!), {
+    employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", lobId: "e.lob_id",
+    departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id",
+  });
+}
+
+router.get("/grievances/command-center", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await getGrievanceCommandCenter(req.query as any, await grievanceScope(req));
+  return res.json({ success: true, data });
+}));
+
+router.get("/grievances/dashboard", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await getGrievanceDashboard(req.query as any, await grievanceScope(req));
+  return res.json({ success: true, data });
+}));
+
+router.get("/grievances", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  if (await hasRoleForRequest(req.authUser, "admin", "hr")) {
+    return res.json({ data: await helpdeskService.listGrievances(req.query as any, await grievanceScope(req)) });
+  }
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+  return res.json({ data: await helpdeskService.listGrievances({ employee_id: emp.id }) });
+}));
+
+router.post("/grievances", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record linked to your account" });
+
+  res.status(201).json({
+    data: await helpdeskService.createGrievance({
+      ...req.body,
+      employee_id: emp.id,
+    }),
+  });
+}));
+
+// Grievance detail — every privileged access is audit logged
+// Every /grievances/:id/* endpoint: an admin/hr caller must be able to see the employee who raised it.
+// (command-center / dashboard / the list are registered above and never reach this.)
+router.use("/grievances/:id", async (req: any, res: Response, next: any) => {
+  try {
+    if (!(await hasRoleForRequest(req.authUser, "admin", "hr"))) return next();
+    const { canViewEmployee } = await import("../../shared/enterpriseScope.js");
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT employee_id FROM grievance WHERE id = ? LIMIT 1", [req.params.id]);
+    const employeeId = (rows as RowDataPacket[])[0]?.employee_id;
+    if (!employeeId) return next(); // unknown id: let the handler return its own 404
+    if (await canViewEmployee(req.authUser!, String(employeeId))) return next();
+    return res.status(403).json({ success: false, message: "Forbidden: this grievance is outside your branch / assigned scope" });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.get("/grievances/:id", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const isAdminHr = await hasRoleForRequest(req.authUser, "admin", "hr");
+
+  if (!isAdminHr) {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+    const list = await helpdeskService.listGrievances({ employee_id: emp.id });
+    const found = (list as any[]).find(g => g.id === req.params.id);
+    if (!found) return res.status(403).json({ success: false, message: "Forbidden" });
+  }
+
+  const roles = isAdminHr ? ["admin", "hr"] : ["employee"];
+  const grievance = await helpdeskService.getGrievance(req.params.id, roles);
+  if (!grievance) return res.status(404).json({ error: "Not found" });
+
+  if (isAdminHr) {
     await writeSensitiveAuditLog({
       actorUserId: req.authUser!.id,
       actionType: "TICKET_ESCALATED",
@@ -1189,15 +1325,12 @@ router.post(
 
 // ── Agents list (for assign dropdown) ─────────────────────────────────────────
 
-router.get(
-  "/agents",
-  requireRole(...HELPDESK_ADMIN_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { branch_id } = req.query as { branch_id?: string };
-    const data = await helpdeskService.listAgents({ branch_id });
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/agents", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { branch_id } = req.query as { branch_id?: string };
+  const scope = await resolveHelpdeskBranchScope(req.authUser);
+  const data = await helpdeskService.listAgents({ branch_id }, scope);
+  return res.json({ success: true, data });
+}));
 
 // ── Self-assign (Take) ────────────────────────────────────────────────────────
 

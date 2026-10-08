@@ -22,6 +22,8 @@ const BATCH_ID = "batch-1";
 let actor = "user-1";
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
+// Per-batch branch visibility is covered by bulk-batch-visibility.test.ts; these tests exercise other behaviour.
+vi.mock("../bulk-batch-visibility.js", () => ({ requireBatchVisible: () => (_q: unknown, _s: unknown, next: () => void) => next() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
@@ -49,6 +51,7 @@ vi.mock("../department-master-bulk.service.js", () => ({
 }));
 
 const { bulkUploadRouter } = await import("../bulk-upload.routes.js");
+const { dispatchImport } = await import("../bulk-dispatch.js");
 
 function app() {
   const a = express();
@@ -97,16 +100,28 @@ describe("bulk department upload is super_admin-only", () => {
   it("allows a department upload from super_admin", async () => {
     roles = ["super_admin"];
     const res = await importDepartments();
-    // 202: the import is started and run in the background (see batch-job.ts), so
-    // the service call is awaited rather than asserted synchronously.
+    // 202: the import is accepted and handed to hrms-workers through bulk_import_queue
+    // (d9c6bc7ba) — the API process no longer runs the service itself.
     expect(res.status).toBe(202);
-    await vi.waitFor(() =>
-      expect(importDepartmentMasterBatch).toHaveBeenCalledWith(
-        BATCH_ID,
-        "user-1",
-      ),
-    );
+    const queued = execute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO bulk_import_queue"));
+    expect(queued).toBeDefined();
+    expect(queued![1]).toEqual([BATCH_ID, "import_department_upload_batch", "user-1"]);
+
+    // The worker's half: dispatchImport runs the service for that batch and actor.
+    await dispatchImport("import_department_upload_batch", BATCH_ID, "user-1");
+    expect(importDepartmentMasterBatch).toHaveBeenCalledWith(BATCH_ID, "user-1");
   });
+
+  // The worker calls dispatchImport with the user_id stored on the queue row, outside any
+  // request. The gate has to hold there too, or a queue row is a way round it.
+  for (const role of ["hr", "admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"]) {
+    it(`the worker-side dispatch also refuses ${role}`, async () => {
+      roles = [role];
+      await expect(dispatchImport("import_department_upload_batch", BATCH_ID, "user-1"))
+        .rejects.toMatchObject({ statusCode: 403 });
+      expect(importDepartmentMasterBatch).not.toHaveBeenCalled();
+    });
+  }
 });
 
 describe("other bulk imports are unaffected", () => {

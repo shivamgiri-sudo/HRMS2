@@ -37,7 +37,7 @@ export class ExitPassError extends Error {
   }
 }
 
-const UNRESTRICTED_ROLES = ["super_admin", "admin", "it_head"];
+export const UNRESTRICTED_ROLES = ['super_admin', 'admin', 'it_head'];
 // No dedicated 'security' role_key exists live (checked mas_hrms.user_roles
 // 2026-08-21). Reusing the role keys Visitor Management already grants to
 // physical-security staff (navConfig.tsx), plus 'it' and 'wfm' per owner
@@ -725,14 +725,29 @@ async function shapeForVerification(pass: RowDataPacket) {
   return { ...pass, items, verdict, is_overdue: isOverdue };
 }
 
+/**
+ * Branch scoping (owner ruling 2026-10-01): a gate-security user verifies passes of their OWN branch only.
+ * The unrestricted roles (super_admin / admin / it_head) are unaffected; a caller with no resolvable branch
+ * fails closed. `caller` is optional only so non-HTTP callers / older tests keep working.
+ */
+export type VerifyCaller = { actor: RequestingEmployee; roles: string[] };
+function assertPassBranchAccess(passBranchId: unknown, caller?: VerifyCaller): void {
+  if (!caller) return;
+  if (caller.roles.some((r) => UNRESTRICTED_ROLES.includes(r))) return;
+  if (!caller.actor.branchId || String(passBranchId ?? '') !== caller.actor.branchId) {
+    throw new ExitPassError(403, 'Forbidden: this gate pass belongs to another branch.');
+  }
+}
+
 /** Guard's "enter pass number" lookup. Deliberately returns only what a gate check needs. */
-export async function findPassForVerification(passNumber: string) {
+export async function findPassForVerification(passNumber: string, caller?: VerifyCaller) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ${VERIFICATION_COLUMNS} ${VERIFICATION_FROM} WHERE epr.pass_number = ? LIMIT 1`,
     [passNumber],
   );
   const pass = rows[0];
-  if (!pass) throw new ExitPassError(404, "No pass found with that number.");
+  if (!pass) throw new ExitPassError(404, 'No pass found with that number.');
+  assertPassBranchAccess(pass.branch_id, caller);
   return shapeForVerification(pass);
 }
 
@@ -743,7 +758,7 @@ export async function findPassForVerification(passNumber: string) {
  * the verify screen renders one verdict UI regardless of how the pass was
  * found. Deciding the exit is still a separate authorised POST — this is a read.
  */
-export async function findPassForVerificationByQrToken(token: string) {
+export async function findPassForVerificationByQrToken(token: string, caller?: VerifyCaller) {
   // Shape-check before querying: a camera pointed at a courier label or an
   // asset sticker must not turn into database load.
   if (!looksLikeQrToken(token)) {
@@ -776,6 +791,7 @@ export async function findPassForVerificationByQrToken(token: string) {
     );
   }
   delete pass.qr_token_hash;
+  assertPassBranchAccess(pass.branch_id, caller);
   return shapeForVerification(pass);
 }
 
@@ -808,12 +824,10 @@ export async function verifyExit(
     [passNumber],
   );
   const pass = rows[0];
-  if (!pass) throw new ExitPassError(404, "No pass found with that number.");
-  if (pass.status !== "approved") {
-    throw new ExitPassError(
-      409,
-      `Pass is '${pass.status}', not approved — cannot verify exit.`,
-    );
+  if (!pass) throw new ExitPassError(404, 'No pass found with that number.');
+  assertPassBranchAccess(pass.branch_id, { actor, roles: actorRoles });
+  if (pass.status !== 'approved') {
+    throw new ExitPassError(409, `Pass is '${pass.status}', not approved — cannot verify exit.`);
   }
 
   // exit_verification_method has existed since 1539 but was self-reported: any
@@ -891,12 +905,10 @@ export async function verifyReturn(
     [passNumber],
   );
   const pass = rows[0];
-  if (!pass) throw new ExitPassError(404, "No pass found with that number.");
-  if (pass.status !== "outside_premises") {
-    throw new ExitPassError(
-      409,
-      `Pass is '${pass.status}', not outside premises — cannot verify return.`,
-    );
+  if (!pass) throw new ExitPassError(404, 'No pass found with that number.');
+  assertPassBranchAccess(pass.branch_id, { actor, roles: actorRoles });
+  if (pass.status !== 'outside_premises') {
+    throw new ExitPassError(409, `Pass is '${pass.status}', not outside premises — cannot verify return.`);
   }
   if (!input.items?.length) {
     throw new ExitPassError(400, "At least one item condition is required.");

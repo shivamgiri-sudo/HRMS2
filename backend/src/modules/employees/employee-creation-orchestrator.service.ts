@@ -68,6 +68,8 @@ import { inboxService } from "../inbox/inbox.service.js";
 import { encryptField } from "../../shared/fieldEncryption.js";
 import { computeAccountBlindIndex } from "../../shared/bankAccountDuplicate.js";
 import { applySingleMappedLob } from "../wfm/process-lob-map.service.js";
+import { checkReturningLeaver } from "./rehire/returningLeaver.js";
+import { notifyRejoinBlockedAtJoining } from "./rehire/rejoinNotifications.js";
 
 export interface EmployeeCreationInput {
   candidateId: string;
@@ -243,6 +245,27 @@ export async function createEmployeeFromCandidate(
       result.blockers.push(...statutoryValidation.blockers);
       await conn.rollback();
       return result;
+    }
+
+    // RULE 12: a returning LEAVER is a rejoin, not a new employee. findActiveEmployeeByStatutoryId only sees
+    // active employees, so before this a former employee silently got a second record.
+    const leaverCheck = await checkReturningLeaver(conn, candidateId, offer?.date_of_joining ?? null);
+    if (leaverCheck.warning) result.warnings.push(leaverCheck.warning);
+    if (leaverCheck.outcome.action === 'block_rejoin_required' || leaverCheck.outcome.action === 'block_not_allowed') {
+      if (leaverCheck.outcome.action === 'block_not_allowed') {
+        result.blockers.push({ type: 'rejoin_not_allowed', reason: leaverCheck.outcome.reason, severity: 'critical' });
+      } else {
+        result.blockers.push({ type: 'rejoin_required', reason: leaverCheck.outcome.reason, severity: 'critical' });
+      }
+      await conn.rollback();
+      if (leaverCheck.leaver) {
+        // Best effort, after the rollback; never throws.
+        void notifyRejoinBlockedAtJoining({ candidateId, leaver: leaverCheck.leaver, message: leaverCheck.outcome.reason });
+      }
+      return result;
+    }
+    if (leaverCheck.outcome.action === 'allow_fresh_onboarding') {
+      result.warnings.push(leaverCheck.outcome.warning);
     }
 
     // RULE 11: minimum employment age. A critical blocker with a rollback, the

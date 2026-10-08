@@ -265,3 +265,25 @@ describe("classifyNameMatch — transliterated spelling", () => {
     );
   });
 });
+
+describe("classifyNameMatch — live cases from the Ops Control Tower, 2026-10-06", () => {
+  it("clears a dropped inherent vowel: Bharadwaj / Bhardwaj", () => {
+    const r = classifyNameMatch("Nikhil Bharadwaj", "NIKHIL BHARDWAJ");
+    expect(r.suspicious).toBe(false);
+    expect(r.tier).toBe("variant");
+  });
+
+  it("reads SBI's KM (Kumari) as an honorific: Ms. KM HEMKALA is HEMKALA NEGI", () => {
+    expect(normalizeIndianName("Ms. KM HEMKALA")).toBe("hemkala");
+    expect(classifyNameMatch("HEMKALA NEGI", "Ms. KM HEMKALA").suspicious).toBe(false);
+  });
+
+  it("clears a bank name that adds the surname the record lacks", () => {
+    expect(classifyNameMatch("KAJAL", "KAJAL KASHYAP").suspicious).toBe(false);
+  });
+
+  it("a dropped vowel still cannot bridge a changed consonant", () => {
+    expect(classifyNameMatch("Nikhil Bharadwaj", "Nikhil Bhardwak").suspicious).toBe(true);
+    expect(classifyNameMatch("Ramesh Agarawal", "Rakesh Agarwal").suspicious).toBe(true);
+  });
+});

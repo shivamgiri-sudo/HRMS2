@@ -23,29 +23,25 @@
  * form, and guessing wrong is worse than sending both.
  */
 
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { providerFactory } from "../communication/providers/provider.factory.js";
-import { providerConfigService } from "../communication/provider-config.service.js";
-import { PinbotWhatsAppProvider } from "../communication/providers/whatsapp/pinbot.provider.js";
-import { emailService } from "../communication/email.service.js";
-import { triggerVoiceCall, isVoicebotConfigured } from "./voicebot.provider.js";
-import {
-  triggerVapiCallWithInlineScript,
-  isVapiConfigured,
-} from "./vapi-voicebot.provider.js";
-import {
-  sendWhatsAppNotification,
-  isWhatsAppWebConfigured,
-} from "./whatsapp-web.provider.js";
-import {
-  sendShortlistMessage,
-  isWassengerConfigured,
-} from "./wassenger.provider.js";
-import { saveMessage as saveLeadMessage } from "./meta-messages.service.js";
-import { assignInterviewSlot } from "./interview-slot.service.js";
-import type { InterviewSlot } from "./interview-slot.service.js";
-import { requisitionClosedReason } from "./lead-screener.service.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { providerFactory } from '../communication/providers/provider.factory.js';
+import { providerConfigService } from '../communication/provider-config.service.js';
+import { PinbotWhatsAppProvider } from '../communication/providers/whatsapp/pinbot.provider.js';
+import { emailService } from '../communication/email.service.js';
+import { triggerVoiceCall, isVoicebotConfigured } from './voicebot.provider.js';
+import { triggerVapiCallWithInlineScript, isVapiConfigured } from './vapi-voicebot.provider.js';
+import { sendWhatsAppNotification, isWhatsAppWebConfigured } from './whatsapp-web.provider.js';
+import { sendShortlistMessage, isWassengerConfigured } from './wassenger.provider.js';
+import { saveMessage as saveLeadMessage } from './meta-messages.service.js';
+import { locationVerdict } from '../hiring-engine/he-location-match.js';
+import { metaOutreachBlockedByEngine } from '../hiring-engine/he-campaign-config.service.js';
+import { assignInterviewSlot } from './interview-slot.service.js';
+import type { InterviewSlot } from './interview-slot.service.js';
+import { requisitionClosedReason } from './lead-screener.service.js';
+import { followupEnrolled, personOptedOut } from '../hiring-engine/qualified-followup.service.js';
+import { pipelineOwnsSends } from '../hiring-engine/qualified-followup.policy.js';
+import { normaliseMobile10 } from '../hiring-engine/qualified-followup.schedule.js';
 
 export interface OutreachOutcome {
   leadId: string;
@@ -54,6 +50,10 @@ export interface OutreachOutcome {
   skipped: Array<{ channel: string; reason: string }>;
   failed: Array<{ channel: string; error: string }>;
 }
+
+// Pinbot (WABA) is the sole WhatsApp channel for candidate outreach when configured: a candidate we have
+// never messaged can only be reached with an approved template, so no free-text fallback is attempted.
+const pinbotInvite = new PinbotWhatsAppProvider();
 
 interface LeadContext {
   id: string;
@@ -198,12 +198,9 @@ ${salary ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius
 </body></html>`;
 }
 
-async function loadLeadContext(leadId: string): Promise<{
-  ctx: LeadContext;
-  qualified: boolean;
-  alreadySent: boolean;
-  closedReason: string | null;
-} | null> {
+async function loadLeadContext(
+  leadId: string
+): Promise<{ ctx: LeadContext; qualified: boolean; alreadySent: boolean; closedReason: string | null; locationText: string; branchState: string | null } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ml.id, ml.parsed_name, ml.parsed_phone, ml.parsed_email,
             ml.screening_result, ml.notification_sent_at,
@@ -211,11 +208,13 @@ async function loadLeadContext(leadId: string): Promise<{
             jr.salary_min, jr.salary_max,
             jr.approval_status, jr.active_status, jr.closed_at,
             jr.requested_headcount, jr.fulfilled_headcount,
+            ml.parsed_location, ac.current_address, ac.permanent_address, bm.state AS branch_state,
             bm.address AS branch_address, bm.city AS branch_city,
             bm.latitude AS branch_lat, bm.longitude AS branch_lng
        FROM meta_lead_raw ml
        LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
        LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
+       LEFT JOIN ats_candidate ac ON ac.id = ml.ats_candidate_id
       WHERE ml.id = ? LIMIT 1`,
     [leadId],
   );
@@ -238,7 +237,9 @@ async function loadLeadContext(leadId: string): Promise<{
       salaryMin: row.salary_min !== null ? Number(row.salary_min) : null,
       salaryMax: row.salary_max !== null ? Number(row.salary_max) : null,
     },
-    qualified: row.screening_result === "qualified",
+    qualified: row.screening_result === 'qualified',
+    locationText: [row.parsed_location, row.current_address, row.permanent_address].filter(Boolean).join(' '),
+    branchState: (row.branch_state as string | null) ?? null,
     alreadySent: Boolean(row.notification_sent_at),
     closedReason: requisitionClosedReason({
       approvalStatus: (row.approval_status as string | null) ?? null,
@@ -321,6 +322,44 @@ export async function notifyQualifiedLead(
     });
     return outcome;
   }
+  // STOP is honoured in every mode and force does not override it. A lookup error fails open unless the pipeline owns sends (then it fails closed).
+  const mobile10 = normaliseMobile10(loaded.ctx.phone);
+  if (mobile10) {
+    let stop = false;
+    try { stop = await personOptedOut(mobile10); } catch (e) {
+      if (pipelineOwnsSends()) {
+        outcome.skipped.push({ channel: 'all', reason: 'Opt-out lookup failed; pipeline owns sends' });
+        return outcome;
+      }
+      console.warn('[meta] opt-out lookup failed', e instanceof Error ? e.message : e);
+    }
+    if (stop) {
+      outcome.skipped.push({ channel: 'all', reason: 'Candidate opted out (STOP)' });
+      return outcome;
+    }
+  }
+  // Live follow-up pipeline owns the sends for an enrolled lead (live and not test mode only). Fails closed: the sync retries next run
+  // because notification_sent_at stays NULL.
+  if (!options.force && pipelineOwnsSends()) {
+    try {
+      if (await followupEnrolled(leadId)) {
+        outcome.skipped.push({ channel: 'all', reason: 'Handled by the follow-up pipeline' });
+        return outcome;
+      }
+    } catch {
+      outcome.skipped.push({ channel: 'all', reason: 'Follow-up lookup failed; pipeline owns sends' });
+      return outcome;
+    }
+  }
+  // One owner per lead: a campaign handed to the Hiring Engine, or a person the Hiring Engine already contacted, is not messaged from here
+  // (the Hiring Engine does email, WhatsApp, bot call, reminders and no-show follow-up with its own guards). Fails open: a lookup error must not stop outreach.
+  if (!options.force) {
+    const blocked = await metaOutreachBlockedByEngine(leadId).catch(() => null);
+    if (blocked) {
+      outcome.skipped.push({ channel: 'all', reason: blocked });
+      return outcome;
+    }
+  }
   // Shortlisting is against the batch requisition: a closed or fully-staffed batch cannot take
   // more candidates, so refuse outreach outright (force does not override this).
   if (loaded.closedReason) {
@@ -329,6 +368,15 @@ export async function notifyQualifiedLead(
       reason: `Outreach refused: ${loaded.closedReason}`,
     });
     return outcome;
+  }
+  // Location: a lead whose own answer says they are elsewhere ("Gujarat" for a Noida branch, "No Noida location") is not invited to walk in. An answer that
+  // names no known place (a neighbourhood) or no answer at all passes: the Meta ad is already geo-targeted. A recruiter's explicit force overrides.
+  if (!options.force && loaded.ctx.branch) {
+    const v = locationVerdict(loaded.locationText, loaded.ctx.branch, loaded.ctx.branchCity, loaded.branchState);
+    if (v === 'elsewhere') {
+      outcome.skipped.push({ channel: 'all', reason: `Outreach refused: the lead's location ("${loaded.locationText.slice(0, 60)}") is outside the ${loaded.ctx.branch} area` });
+      return outcome;
+    }
   }
   // Re-notifying is a real recruiter need, but it must be explicit. Without this guard a webhook
   // redelivery or a page refresh could message the same candidate repeatedly.
@@ -357,30 +405,23 @@ export async function notifyQualifiedLead(
 
   // ── WhatsApp ──
   if (!ctx.phone) {
-    outcome.skipped.push({
-      channel: "whatsapp",
-      reason: "Lead has no phone number",
-    });
-  } else if (
-    pinbotInvite.isConfigured() &&
-    slot &&
-    ctx.branchAddress &&
-    ctx.bmiUrl
-  ) {
-    // Approved-template invite via Pinbot. A candidate we have never messaged can only be
-    // reached with a template; on failure the Wassenger fallback below still runs.
-    outcome.attempted.push("whatsapp");
-    const res = await pinbotInvite.sendTemplate(
-      ctx.phone,
-      process.env.PINBOT_INTERVIEW_TEMPLATE || "interview_invitation",
-      [ctx.name, slot.dateLabel, slot.timeLabel, ctx.branchAddress, ctx.bmiUrl],
-    );
-    if (res.success) outcome.succeeded.push("whatsapp");
-    else
-      outcome.failed.push({
-        channel: "whatsapp",
-        error: res.error ?? "unknown error",
+    outcome.skipped.push({ channel: 'whatsapp', reason: 'Lead has no phone number' });
+  } else if (pinbotInvite.isConfigured()) {
+    if (!slot || !ctx.branchAddress || !ctx.bmiUrl) {
+      outcome.skipped.push({
+        channel: 'whatsapp',
+        reason: 'Approved invite template needs interview slot, branch address and BookMyInterview link',
       });
+    } else {
+      outcome.attempted.push('whatsapp');
+      const res = await pinbotInvite.sendTemplate(
+        ctx.phone,
+        process.env.PINBOT_INTERVIEW_TEMPLATE || 'interview_invitation',
+        [ctx.name, slot.dateLabel, slot.timeLabel, ctx.branchAddress, ctx.bmiUrl],
+      );
+      if (res.success) outcome.succeeded.push('whatsapp');
+      else outcome.failed.push({ channel: 'whatsapp', error: res.error ?? 'unknown error' });
+    }
   } else {
     try {
       // DB config first, env second — same resolution order as dispatch.service.ts, so a provider
@@ -455,7 +496,8 @@ export async function notifyQualifiedLead(
   // and it supports inbound message webhooks for walk-in confirmation replies.
   if (
     ctx.phone &&
-    !outcome.succeeded.includes("whatsapp") &&
+    !pinbotInvite.isConfigured() &&
+    !outcome.succeeded.includes('whatsapp') &&
     isWassengerConfigured()
   ) {
     outcome.attempted.push("whatsapp_wassenger");
@@ -513,8 +555,9 @@ export async function notifyQualifiedLead(
   // If neither primary nor Wassenger worked, try the self-hosted whatsapp-web.js session.
   if (
     ctx.phone &&
-    !outcome.succeeded.includes("whatsapp") &&
-    !outcome.succeeded.includes("whatsapp_wassenger") &&
+    !pinbotInvite.isConfigured() &&
+    !outcome.succeeded.includes('whatsapp') &&
+    !outcome.succeeded.includes('whatsapp_wassenger') &&
     isWhatsAppWebConfigured()
   ) {
     outcome.attempted.push("whatsapp_web");

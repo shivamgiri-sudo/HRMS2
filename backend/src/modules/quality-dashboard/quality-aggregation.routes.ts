@@ -6,7 +6,8 @@
  *
  * All endpoints:
  * - Auth: requireAuth → requireAgent (agent sees own data only)
- * - Error handling: 403 (unauthorized), 404 (not found), 400 (invalid params), 503 (service down + cached fallback)
+ * - Error handling: 403 (unauthorized), 404 (not found), 400 (invalid params), 503 (service down, nothing cached).
+ *   Service down WITH a cached copy answers 200 { cached: true } so the client can render it.
  * - Cache: Redis with fallback to null if unavailable
  *
  * Endpoints:
@@ -50,7 +51,7 @@ const qualityService = new QualityAggregationService(db);
  *
  * Response: { cq_score_current, rank, gap_pct, trend_7day, weekly, status, ... }
  * Cache: 5 minutes
- * Error: 503 if service down (returns cached data if available)
+ * Error: 503 if service down and nothing cached (cached copy is served as 200, cached: true)
  */
 qualityAggregationRouter.get(
   "/cq-score",
@@ -81,10 +82,10 @@ qualityAggregationRouter.get(
       const cached = await cacheInstance.get(cacheKey);
 
       if (cached) {
-        logger.warn(
-          `Serving cached CQ score for agent ${(req as AuthenticatedRequest & { agentCode: string }).agentCode}`,
-        );
-        res.status(503).json({
+        logger.warn(`Serving cached CQ score for agent ${(req as AuthenticatedRequest & { agentCode: string }).agentCode}`);
+        // 200, not 503: the cached payload is a usable answer, and the HRMS client
+        // throws away the body of any non-2xx response, so a 503 here hid it.
+        res.status(200).json({
           success: true,
           data: cached,
           cached: true,
@@ -108,7 +109,7 @@ qualityAggregationRouter.get(
  *
  * Returns: { weakness_areas: [ { category, score, peer_avg, gap, sub_metrics, related_calls }, ... ] }
  * Cache: 10 minutes
- * Error: 503 if service down (returns cached data if available)
+ * Error: 503 if service down and nothing cached (cached copy is served as 200, cached: true)
  */
 qualityAggregationRouter.get(
   "/weakness-detail",
@@ -133,10 +134,10 @@ qualityAggregationRouter.get(
       const cached = await cacheInstance.get(cacheKey);
 
       if (cached) {
-        logger.warn(
-          `Serving cached weakness detail for agent ${(req as AuthenticatedRequest & { agentCode: string }).agentCode}`,
-        );
-        res.status(503).json({
+        logger.warn(`Serving cached weakness detail for agent ${(req as AuthenticatedRequest & { agentCode: string }).agentCode}`);
+        // 200, not 503: the cached payload is a usable answer, and the HRMS client
+        // throws away the body of any non-2xx response, so a 503 here hid it.
+        res.status(200).json({
           success: true,
           data: cached,
           cached: true,
@@ -224,10 +225,10 @@ qualityAggregationRouter.get(
       const cached = await cacheInstance.get(cacheKey);
 
       if (cached) {
-        logger.warn(
-          `Serving cached calls review for agent ${(req as AuthenticatedRequest & { agentCode: string }).agentCode}`,
-        );
-        res.status(503).json({
+        logger.warn(`Serving cached calls review for agent ${(req as AuthenticatedRequest & { agentCode: string }).agentCode}`);
+        // 200, not 503: the cached payload is a usable answer, and the HRMS client
+        // throws away the body of any non-2xx response, so a 503 here hid it.
+        res.status(200).json({
           success: true,
           data: cached,
           cached: true,

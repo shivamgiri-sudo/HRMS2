@@ -1,0 +1,13 @@
+import "./kit.css";
+export { DashHero, type HeroStat } from "./DashHero";
+export { PulseTile, PulseGrid, type PulseTileProps } from "./PulseTile";
+export { ActionCenter } from "./ActionCenter";
+export { SignalList } from "./SignalList";
+export { Panel, LazySection, SectionTitle, DashSkeleton } from "./Panel";
+export { InsightStatus } from "./InsightStatus";
+export { Sparkline } from "./Sparkline";
+export { TrendChart, BarsChart, RankedBars, DonutChart, FunnelChart, HeatStrip, HealthRing, ChartEmpty, Legend } from "./charts";
+export { SeriesPanel, TablePanel, KpiTiles, InsightGrid } from "./InsightsRenderer";
+export { useRoleInsights, type RoleInsights, type InsightAction, type InsightKpi, type InsightSeries, type InsightTable, type InsightSignal } from "./useRoleInsights";
+export { formatUnit, formatCompact, formatDelta, drillHref } from "./format";
+export { TONE, SERIES_COLORS, HERO_GRADIENT, type Tone, type Accent } from "./tone";

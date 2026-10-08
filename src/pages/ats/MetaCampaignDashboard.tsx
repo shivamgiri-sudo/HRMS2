@@ -28,6 +28,7 @@ import {
   Footprints,
   Megaphone,
   RefreshCcw,
+  RefreshCw,
   Send,
   ThumbsUp,
   UserCheck,
@@ -205,6 +206,8 @@ export default function MetaCampaignDashboard() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncNote, setSyncNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [search, setSearch] = useState("");
@@ -257,6 +260,28 @@ export default function MetaCampaignDashboard() {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // Manual "Sync now": same cycle as the 30-minute scheduler (pull leads, metrics, outreach).
+  const syncNow = useCallback(async () => {
+    setSyncing(true);
+    setSyncNote(null);
+    try {
+      const res = await hrmsApi.post<{
+        success: boolean;
+        data: { imported: number; forms: number; formErrors: number; outreach: { sent: number; skipped: number; failed: number } };
+      }>("/api/meta/sync-now", {}, 300_000);
+      const d = res.data;
+      setSyncNote({
+        ok: true,
+        text: `Synced ${d.forms} form(s): ${d.imported} new lead(s), ${d.formErrors} form error(s); outreach ${d.outreach.sent} sent, ${d.outreach.skipped} skipped, ${d.outreach.failed} failed.`,
+      });
+      await load(true);
+    } catch (err: unknown) {
+      setSyncNote({ ok: false, text: (err as { message?: string })?.message || "Sync failed" });
+    } finally {
+      setSyncing(false);
+    }
   }, [load]);
 
   useEffect(() => {
@@ -349,6 +374,16 @@ export default function MetaCampaignDashboard() {
                 </div>
               </div>
             </div>
+            <div className="flex items-center gap-2">
+            <button
+              onClick={() => void syncNow()}
+              disabled={syncing || refreshing}
+              title="Pull new leads from META now (the scheduler also does this every 30 minutes)"
+              className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-bold text-blue-900 hover:bg-blue-50 disabled:opacity-60 transition-all"
+            >
+              <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Syncing…" : "Sync now"}
+            </button>
             <button
               onClick={() => void load(true)}
               disabled={refreshing}
@@ -357,8 +392,18 @@ export default function MetaCampaignDashboard() {
               <RefreshCcw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
               {refreshing ? "Loading…" : "Refresh"}
             </button>
+            </div>
           </div>
         </header>
+
+        {syncNote && (
+          <div
+            role="status"
+            className={`rounded-xl border-2 px-4 py-3 text-sm font-medium ${syncNote.ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}
+          >
+            {syncNote.text}
+          </div>
+        )}
 
         {errorMsg && (
           <div role="alert" className="rounded-xl border-2 border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800">

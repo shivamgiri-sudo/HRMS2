@@ -1,19 +1,12 @@
-import {
-  Router,
-  type NextFunction,
-  type Request,
-  type Response,
-} from "express";
-import { db } from "../../db/mysql.js";
-import { upsertOpenWorkItem } from "../../shared/workItem.js";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import { requireWriteAccess } from "../../middleware/authMiddleware.js";
-import type { RowDataPacket } from "mysql2";
-import { randomUUID } from "crypto";
+import { Router, type NextFunction, type Request, type Response } from 'express';
+import { db } from '../../db/mysql.js';
+import { upsertOpenWorkItem } from '../../shared/workItem.js';
+import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import { candidateParamGuard } from './candidate-access.js';
+import { requireWriteAccess } from '../../middleware/authMiddleware.js';
+import type { RowDataPacket } from 'mysql2';
+import { randomUUID } from 'crypto';
 
 const router = Router();
 type AsyncHandler = (
@@ -25,6 +18,10 @@ const h =
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     void fn(req, res).catch(next);
   };
+
+// Branch scoping (owner ruling 2026-10-01): every :candidateId route is limited to candidates inside the
+// caller's own branch / assigned scope (org-wide roles unaffected; out-of-branch id looks like a missing one).
+router.param('candidateId', candidateParamGuard());
 
 // GET /api/ats/jclr/:candidateId
 router.get(

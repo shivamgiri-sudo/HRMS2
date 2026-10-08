@@ -32,24 +32,12 @@ vi.mock("../shared/auditLog.js", () => ({ logSensitiveAction }));
 // Real resolveUserBusinessScope hits three tables; mocked entirely so tests only assert on
 // what the ROUTE does with the condition it gets back — same style as
 // helpdesk-ticket-row-scope.test.ts and cost-centre-scope.access.test.ts.
-const { resolveUserBusinessScope, buildEmployeeScopeCondition } = vi.hoisted(
-  () => ({
-    resolveUserBusinessScope: vi.fn(async () => ({
-      isSuperAdmin: false,
-      isAdmin: false,
-      isHr: false,
-      roles: ["wfm"],
-    })),
-    buildEmployeeScopeCondition: vi.fn(() => ({
-      sql: "1=1",
-      params: [] as unknown[],
-    })),
-  }),
-);
-vi.mock("../shared/enterpriseScope.js", () => ({
-  resolveUserBusinessScope,
-  buildEmployeeScopeCondition,
+const { resolveUserBusinessScope, buildEmployeeScopeCondition, canViewEmployee } = vi.hoisted(() => ({
+  canViewEmployee: vi.fn(async (..._a: unknown[]) => true),
+  resolveUserBusinessScope: vi.fn(async () => ({ isSuperAdmin: false, isAdmin: false, isHr: false, roles: ["wfm"] })),
+  buildEmployeeScopeCondition: vi.fn(() => ({ sql: "1=1", params: [] as unknown[] })),
 }));
+vi.mock("../shared/enterpriseScope.js", () => ({ resolveUserBusinessScope, buildEmployeeScopeCondition, canViewEmployee }));
 
 let actor: { id: string; role: string; roles: string[] };
 vi.mock("../middleware/authMiddleware.js", async (importOriginal) => {
@@ -144,17 +132,9 @@ function stubDb(
 }
 
 beforeEach(() => {
-  resolveUserBusinessScope
-    .mockClear()
-    .mockResolvedValue({
-      isSuperAdmin: false,
-      isAdmin: false,
-      isHr: false,
-      roles: ["wfm"],
-    });
-  buildEmployeeScopeCondition
-    .mockClear()
-    .mockReturnValue({ sql: "1=1", params: [] });
+  resolveUserBusinessScope.mockClear().mockResolvedValue({ isSuperAdmin: false, isAdmin: false, isHr: false, roles: ["wfm"] });
+  buildEmployeeScopeCondition.mockClear().mockReturnValue({ sql: "1=1", params: [] });
+  canViewEmployee.mockClear().mockResolvedValue(true);
   logSensitiveAction.mockClear();
   stubDb();
 });
@@ -193,6 +173,15 @@ describe("1a — dead payroll-lock guard on PATCH /:id/resolve", () => {
       .send(body);
     expect(res.status).toBe(409);
     expect(res.body.message).toMatch(/locked by payroll/i);
+  });
+
+  it("returns 403 and writes nothing when the record's employee is outside the caller's branch scope", async () => {
+    canViewEmployee.mockResolvedValue(false);
+    stubDb({ checkRow: { id: "rec-3", attendance_status: "present", lwp_value: 0, mismatch_flag: 1, employee_id: "e-other", record_date: "2026-08-01", is_locked: 0 } });
+    const res = await request(appFor("wfm")).patch("/api/wfm/mismatches/rec-3/resolve").send(body);
+    expect(res.status).toBe(403);
+    expect(canViewEmployee).toHaveBeenCalledWith(expect.anything(), "e-other");
+    expect(execute.mock.calls.some(([sql]) => /UPDATE attendance_daily_record/.test(String(sql)))).toBe(false);
   });
 
   it("still resolves an unlocked record (guard does not over-fire)", async () => {
@@ -239,15 +228,9 @@ describe("1d — scope predicate coverage across the three read paths", () => {
     );
     expect(summaryRes.status).toBe(200);
 
-    const listCall = execute.mock.calls.find(([sql]) =>
-      /ORDER BY adr\.record_date DESC/.test(sql),
-    );
-    const countCall = execute.mock.calls.find(([sql]) =>
-      /COUNT\(\*\) AS total/.test(sql),
-    );
-    const summaryCall = execute.mock.calls.find(([sql]) =>
-      /unresolved_mismatches/.test(sql),
-    );
+    const listCall = execute.mock.calls.find(([sql]) => /ORDER BY adr\.record_date DESC/.test(sql));
+    const countCall = execute.mock.calls.find(([sql]) => /COUNT\(\*\) OVER\(\) AS total_count/.test(sql));
+    const summaryCall = execute.mock.calls.find(([sql]) => /unresolved_mismatches/.test(sql));
 
     const readPaths: Array<[string, typeof listCall]> = [
       ["list (GET /)", listCall],
@@ -335,9 +318,7 @@ describe("1f — summary honours the passed window (and defaults to 30 days)", (
   it("the list also defaults to a 30-day window", async () => {
     const res = await request(appFor("wfm")).get("/api/wfm/mismatches");
     expect(res.status).toBe(200);
-    const countCall = execute.mock.calls.find(([sql]) =>
-      /COUNT\(\*\) AS total/.test(sql),
-    );
+    const countCall = execute.mock.calls.find(([sql]) => /COUNT\(\*\) OVER\(\) AS total_count/.test(sql));
     expect(countCall![0]).toMatch(/INTERVAL 30 DAY/);
   });
 });

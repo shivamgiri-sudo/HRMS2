@@ -122,6 +122,14 @@ const mockConnection = {
   release: vi.fn(),
 };
 
+// Branch scoping is covered in branchScoping.batch2.test.ts; this test is about other behaviour, so allow-all here.
+vi.mock("../src/modules/dashboards/branch-scope-guards.js", () => ({
+  canAccessEmployeeRecord: async () => true,
+  employeeListScope: async () => null,
+  employeeIdInScope: async () => null,
+  attachEmployeeScope: () => (_q: any, _s: any, n: any) => n(),
+  OUTSIDE_SCOPE_MESSAGE: "outside",
+}));
 vi.mock("../src/db/mysql.js", () => ({
   db: {
     execute: vi.fn().mockResolvedValue([[], []]),

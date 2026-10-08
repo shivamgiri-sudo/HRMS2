@@ -89,8 +89,10 @@ router.post(
   h(async (req, res) => {
     const input = createPostingSchema.parse(req.body);
     const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp)
-      return res.status(403).json({ error: "Employee record not found" });
+    if (!emp) return res.status(403).json({ error: 'Employee record not found' });
+    const branch = await ijpService.resolvePostingBranchForCreate(req.authUser, input.branch_id);
+    if (!branch.ok) return res.status(403).json({ error: 'Forbidden: outside your branch / assigned scope' });
+    input.branch_id = branch.branchId;
 
     const posting = await ijpService.createPosting(input, emp.id, {
       ipAddress: req.ip,
@@ -145,8 +147,14 @@ router.patch(
   h(async (req, res) => {
     const input = updatePostingSchema.parse(req.body);
     const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp)
-      return res.status(403).json({ error: "Employee record not found" });
+    if (!emp) return res.status(403).json({ error: 'Employee record not found' });
+    const gate = await ijpService.checkPostingScope(req.authUser, req.params.id);
+    if (gate === 'not_found') return res.status(404).json({ error: 'Posting not found' });
+    if (gate === 'forbidden') return res.status(403).json({ error: 'Forbidden: outside your branch / assigned scope' });
+    if (input.branch_id) {
+      const target = await ijpService.resolvePostingBranchForCreate(req.authUser, input.branch_id);
+      if (!target.ok) return res.status(403).json({ error: 'Forbidden: outside your branch / assigned scope' });
+    }
 
     const posting = await ijpService.updatePosting(
       req.params.id,
@@ -169,8 +177,10 @@ router.post(
   requireRole("super_admin", "hr", "hr_admin", "recruitment_hr"),
   h(async (req, res) => {
     const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp)
-      return res.status(403).json({ error: "Employee record not found" });
+    if (!emp) return res.status(403).json({ error: 'Employee record not found' });
+    const gate = await ijpService.checkPostingScope(req.authUser, req.params.id);
+    if (gate === 'not_found') return res.status(404).json({ error: 'Posting not found' });
+    if (gate === 'forbidden') return res.status(403).json({ error: 'Forbidden: outside your branch / assigned scope' });
 
     const posting = await ijpService.publishPosting(req.params.id, emp.id, {
       ipAddress: req.ip,
@@ -192,8 +202,10 @@ router.post(
   h(async (req, res) => {
     const { reason, filled } = req.body;
     const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp)
-      return res.status(403).json({ error: "Employee record not found" });
+    if (!emp) return res.status(403).json({ error: 'Employee record not found' });
+    const gate = await ijpService.checkPostingScope(req.authUser, req.params.id);
+    if (gate === 'not_found') return res.status(404).json({ error: 'Posting not found' });
+    if (gate === 'forbidden') return res.status(403).json({ error: 'Forbidden: outside your branch / assigned scope' });
 
     const posting = await ijpService.closePosting(
       req.params.id,
@@ -245,8 +257,10 @@ router.patch(
   h(async (req, res) => {
     const input = updateStatusSchema.parse(req.body);
     const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp)
-      return res.status(403).json({ error: "Employee record not found" });
+    if (!emp) return res.status(403).json({ error: 'Employee record not found' });
+    const gate = await ijpService.checkApplicationScope(req.authUser, req.params.id);
+    if (gate === 'not_found') return res.status(404).json({ error: 'Application not found' });
+    if (gate === 'forbidden') return res.status(403).json({ error: 'Forbidden: outside your branch / assigned scope' });
 
     const application = await ijpService.updateApplicationStatus(
       req.params.id,
@@ -268,10 +282,10 @@ router.patch(
 
 // Get IJP dashboard stats
 router.get(
-  "/stats",
-  requireRole("super_admin", "hr", "hr_admin", "recruitment_hr"),
-  h(async (_req, res) => {
-    const stats = await ijpService.getIjpStats();
+  '/stats',
+  requireRole('super_admin', 'hr', 'hr_admin', 'recruitment_hr'),
+  h(async (req, res) => {
+    const stats = await ijpService.getIjpStats(req.authUser);
     return res.json({ stats });
   }),
 );
@@ -409,6 +423,17 @@ router.delete(
 );
 
 // ─── Manager Approval Route ─────────────────────────────────────────────────
+
+// Applications waiting on the caller as the assigned manager (read-only; own rows only).
+router.get(
+  '/applications/pending-manager',
+  h(async (req, res) => {
+    const emp = await getEmployeeForUser(req.authUser!.id);
+    if (!emp) return res.json({ applications: [], total: 0 });
+    const applications = await ijpService.listPendingManagerApplications(emp.id, Number(req.query.limit) || 100);
+    return res.json({ applications, total: applications.length });
+  })
+);
 
 // Manager approve/reject application (for their direct reports)
 router.patch(

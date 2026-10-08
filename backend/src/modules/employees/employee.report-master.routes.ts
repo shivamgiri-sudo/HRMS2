@@ -23,21 +23,19 @@ const REPORT_MASTER_SCOPE_ROLES = [
   "payroll",
 ];
 
-employeeReportMasterRouter.get(
-  "/directory-masters",
-  h(async (req: any, res: any) => {
-    const scoped = await buildScopeWhereClause(
-      req.authUser!.id,
-      REPORT_MASTER_SCOPE_ROLES,
-      {
-        branchId: "e.branch_id",
-        processId: "e.process_id",
-        departmentId: "e.department_id",
-        managerEmployeeId: "e.reporting_manager_id",
-        employeeId: "e.id",
-      },
-      { allowAdminBypass: true, allowCeoAllRead: true },
-    );
+employeeReportMasterRouter.get("/directory-masters", h(async (req: any, res: any) => {
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    REPORT_MASTER_SCOPE_ROLES,
+    {
+      branchId: "e.branch_id",
+      processId: "e.process_id",
+      departmentId: "e.department_id",
+      managerEmployeeId: "e.reporting_manager_id",
+      employeeId: "e.id",
+    },
+    { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
+  );
 
     const employeeWhere = `e.active_status = 1 AND (${scoped.sql})`;
 

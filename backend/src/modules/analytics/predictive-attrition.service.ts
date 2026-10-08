@@ -17,9 +17,10 @@
  * exit_probability_30d = ROUND(score / 100 * 85, 1)
  */
 
-import { Request, Response } from "express";
-import type { RowDataPacket } from "mysql2";
-import { db as pool } from "../../db/mysql.js";
+import { Request, Response } from 'express';
+import { canAccessEmployeeRecord } from '../dashboards/branch-scope-guards.js';
+import type { RowDataPacket } from 'mysql2';
+import { db as pool } from '../../db/mysql.js';
 
 // ---------------------------------------------------------------------------
 // Interfaces
@@ -348,8 +349,17 @@ export async function getAtRiskEmployees(req: Request, res: Response) {
       params.push(parseInt(processId as string));
     }
 
-    const baseWhereClause =
-      filterClauses.length > 0 ? `AND ${filterClauses.join(" AND ")}` : "";
+    // Branch scoping (owner ruling 2026-10-01): the caller's own employee scope, set by the route; the client's
+    // branchId/processId above only narrow it. null/undefined = org-wide, SQL unchanged.
+    const empScope = (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope;
+    if (empScope) {
+      filterClauses.push(empScope.sql);
+      params.push(...(empScope.params as (string | number)[]));
+    }
+
+    const baseWhereClause = filterClauses.length > 0
+      ? `AND ${filterClauses.join(' AND ')}`
+      : '';
 
     // Tier filter applied in outer query against the computed score
     let tierHaving = "";
@@ -465,6 +475,9 @@ export async function getPredictiveScoreForEmployee(
           success: false,
           error: "Invalid employeeId — must be a numeric employee id",
         });
+    }
+    if (!(await canAccessEmployeeRecord((req as Request & { authUser?: { id: string } }).authUser as { id: string }, String(employeeId)))) {
+      return res.status(403).json({ success: false, error: 'Forbidden: this employee is outside your branch / assigned scope' });
     }
 
     const query = `
@@ -616,6 +629,10 @@ export async function getPredictiveScoreForEmployee(
  */
 export async function getAttritionRiskSummary(req: Request, res: Response) {
   try {
+    const sumScope = (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope;
+    const sumFrom = sumScope ? 'employees e' : 'employees';
+    const sumAnd = sumScope ? ` AND ${sumScope.sql}` : '';
+    const sumParams = sumScope ? (sumScope.params as (string | number)[]) : [];
     // ULTRA-FAST: Direct single-pass query using employee table columns only
     // Factors: tenure (35 max), source (10), ctc (8) = max 53
     // Note: Attendance, quality, late marks, pip excluded for speed
@@ -652,21 +669,21 @@ export async function getAttritionRiskSummary(req: Request, res: Response) {
           ELSE 'LOW'
         END AS risk_tier,
         COUNT(*) AS employee_count
-      FROM employees
+      FROM ${sumFrom}
       WHERE employment_status = 'Active'
-        AND active_status = 1
+        AND active_status = 1${sumAnd}
       GROUP BY risk_tier
     `;
 
     const totalActiveQuery = `
       SELECT COUNT(*) AS total_active
-      FROM mas_hrms.employees
-      WHERE employment_status = 'Active' AND active_status = 1
+      FROM mas_hrms.${sumFrom}
+      WHERE employment_status = 'Active' AND active_status = 1${sumAnd}
     `;
 
     const [[tierRows], [totalRows]] = await Promise.all([
-      pool.query<AttritionSummaryRow[]>(summaryQuery),
-      pool.query<TotalActiveRow[]>(totalActiveQuery),
+      pool.query<AttritionSummaryRow[]>(summaryQuery, sumParams),
+      pool.query<TotalActiveRow[]>(totalActiveQuery, sumParams)
     ]);
 
     // Map tier rows into named counts

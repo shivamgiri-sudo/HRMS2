@@ -110,18 +110,17 @@ describe("envelope construction", () => {
   });
 });
 
-describe("templates", () => {
-  it("uses the rendered template when one resolves", async () => {
-    (
-      templateService.renderTemplate as ReturnType<typeof vi.fn>
-    ).mockResolvedValueOnce({
-      html: "<p>Rendered</p>",
-      subject: "Real subject",
-      text: "Rendered",
-    });
-    await call({ templateKey: "LEAVE_DECISION" });
-    expect(sent().subject).toBe("Real subject");
-    expect(sent().html).toBe("<p>Rendered</p>");
+describe('templates', () => {
+  it('uses the rendered template when one resolves', async () => {
+    (templateService.renderTemplate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ html: '<p>Rendered</p>', subject: 'Real subject', text: 'Rendered' });
+    await call({ templateKey: 'LEAVE_DECISION' });
+    expect(sent().subject).toBe('Real subject');
+    // The rendered body is kept intact; the deliverer appends the event's landing-page link
+    // (leave_* -> /leaves) because this template carries none of its own.
+    expect(sent().html.startsWith('<p>Rendered</p>')).toBe(true);
+    expect(sent().html).toContain('/leaves');
+    expect(sent().text).toContain('/leaves');
   });
 
   it("still sends when a named template is missing — a missing template must not suppress an escalation", async () => {

@@ -20,6 +20,10 @@ import {
 } from "./pnl-budget-source.js";
 import { cachedPnlRead } from "./pnl-read-cache.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
+import { snapshotUncoveredByRunSql } from "./pnl-payroll-coverage.js";
+import { getForecastRevenueByCostCentre } from "./revenue-forecast.service.js";
+import { readOpenBudgetReserve } from "./pnl-open-budget.js";
 
 /*
  * PER-REQUEST DEDUP (2026-09-24). One overview asks for the same month's revenue / people / spend /
@@ -136,6 +140,12 @@ export interface CeoFilters {
   branchIds?: string[] | null;
   processIds?: string[] | null;
   costCentreIds?: string[] | null;
+  /**
+   * Set only by the route for a branch-confined caller (Branch Head): the branches they may see.
+   * Narrows the branch filter options and drops company-wide exceptions, which a global user
+   * comparing branches must still get.
+   */
+  visibleBranchIds?: string[] | null;
 }
 
 /** Filters after the singular and plural forms have been merged into one list each. */
@@ -499,7 +509,7 @@ async function readIdcContamination(
     `SELECT COUNT(*) AS cnt,
             SUM(${peopleCostSql("l")}) AS amt
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
        JOIN employees e ON e.id = l.employee_id
       WHERE r.run_month = ? AND e.employee_code LIKE 'IDC%'`,
     [period],
@@ -552,7 +562,7 @@ async function peopleByBranch(
             COUNT(*) AS staff,
             SUM(${peopleCostSql("l")}) AS cost
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
        JOIN employees e ON e.id = l.employee_id
        ${ov.join}
       WHERE ${where.join(" AND ")}
@@ -565,8 +575,7 @@ async function peopleByBranch(
       staff: n(r.staff),
     });
   }
-  if (out.size > 0 || !(await tableExists("pnl_running_salary_snapshot")))
-    return out;
+  if (!(await tableExists("pnl_running_salary_snapshot"))) return out;
 
   // Same fallback as pnl-reconciliation.service.ts's readPayroll() (2026-09-16 finding: it existed
   // there and worked, but nothing had ever triggered it for September — see
@@ -583,7 +592,8 @@ async function peopleByBranch(
     homeProcessExpr: "s.process_id",
     ccAlias: "pcc",
   });
-  const runningWhere: string[] = ["s.period_code = ?"];
+  // Per employee: only staff no valid run covers yet (pnl-payroll-coverage.ts).
+  const runningWhere: string[] = ["s.period_code = ?", await snapshotUncoveredByRunSql("s")];
   const runningParams: unknown[] = [period];
   if (s.processIds.length) {
     runningWhere.push(
@@ -607,10 +617,9 @@ async function peopleByBranch(
     runningParams,
   );
   for (const r of runningRows) {
-    out.set(r.branch_id ? String(r.branch_id) : "", {
-      cost: n(r.cost),
-      staff: n(r.staff),
-    });
+    const key = r.branch_id ? String(r.branch_id) : "";
+    const prev = out.get(key);
+    out.set(key, { cost: (prev?.cost ?? 0) + n(r.cost), staff: (prev?.staff ?? 0) + n(r.staff) });
   }
   return out;
 }
@@ -1137,6 +1146,48 @@ function estimateByBranch(
 }
 
 /**
+ * Revenue forecast + open-budget accounting (owner rule 2026-10-06), per branch, from the same Live
+ * P&L rows so the two tabs agree. `revenue` is what a forecast changes relative to this page's own
+ * invoice/accrual read (recognised - invoice - accrual + credit note, on forecast rows only);
+ * `cost` is the open budget headroom counted as cost (rows, plus branch-pooled lines when the view is
+ * not narrowed to cost centres). Not applied under a client/process filter, like the estimate.
+ */
+const forecastAdjustCache = new Map<string, { at: number; value: Promise<{ revenue: Map<string, number>; cost: Map<string, number> }> }>();
+function forecastAdjustByBranch(period: string, s: CeoScope) {
+  const empty = { revenue: new Map<string, number>(), cost: new Map<string, number>() };
+  if (s.processIds.length) return Promise.resolve(empty);
+  const key = `${period}|${[...s.branchIds].sort().join(",")}|${[...s.costCentreIds].sort().join(",")}`;
+  const hit = forecastAdjustCache.get(key);
+  if (hit && Date.now() - hit.at < 60_000) return hit.value;
+  const value = (async () => {
+    const out = { revenue: new Map<string, number>(), cost: new Map<string, number>() };
+    try {
+      // Two cheap reads first: a month with no approved forecast and no open budget headroom
+      // changes nothing, and must not cost the page a full Live P&L build per trend month.
+      const [forecasts, openBudget] = await Promise.all([getForecastRevenueByCostCentre(period), readOpenBudgetReserve(period)]);
+      if (!forecasts.size && !openBudget.byCostCentre.size && !openBudget.unallocatedByBranch.size) return out;
+      const rec = await getPnlReconciliation(period, { branchIds: s.branchIds });
+      const only = new Set(s.costCentreIds);
+      const add = (m: Map<string, number>, k: string, v: number) => { if (v) m.set(k, (m.get(k) ?? 0) + v); };
+      for (const row of rec.rows) {
+        if (!row.branchId || (only.size && !only.has(row.costCentreId))) continue;
+        if (row.revenueBasis === "FORECAST_OPEN" || row.revenueBasis === "FORECAST_CLOSED") {
+          add(out.revenue, row.branchId, row.recognisedRevenue - (row.revenueInvoice + row.revenueAccrual - row.creditNote));
+        }
+        if (only.size) add(out.cost, row.branchId, row.openBudgetReserve);
+      }
+      if (!only.size) for (const b of rec.branches) if (b.branchId) add(out.cost, b.branchId, b.openBudgetReserve);
+    } catch {
+      // Supplementary, like the estimate: the page still stands on invoiced revenue and GRN spend.
+    }
+    return out;
+  })();
+  forecastAdjustCache.set(key, { at: Date.now(), value });
+  if (forecastAdjustCache.size > 40) forecastAdjustCache.delete(forecastAdjustCache.keys().next().value as string);
+  return value;
+}
+
+/**
  * `inScope` decides which branch keys of the per-branch maps count toward a trend month. It MUST be
  * the same rule the headline uses (getCeoOverview's branchKeyInHeadline), because the current month
  * is overwritten with the headline figures while prior months are summed here — a looser rule here
@@ -1170,20 +1221,14 @@ async function marginTrend(
     );
   return Promise.all(
     periods.map(async (period) => {
-      const [rev, ppl, spend, est] = await Promise.all([
-        memoRevenueByBranch(period, s),
-        memoPeopleByBranch(period, s),
-        memoSpendByBranch(period, s),
-        estimateByBranch(period, s),
+      const [rev, ppl, spend, est, adj] = await Promise.all([
+        memoRevenueByBranch(period, s), memoPeopleByBranch(period, s), memoSpendByBranch(period, s), estimateByBranch(period, s),
+        forecastAdjustByBranch(period, s),
       ]);
-      const revenue = sum(rev) + sum(est);
-      const people = [...ppl.entries()].reduce(
-        (a, [key, p]) => (inScope(key) ? a + p.cost : a),
-        0,
-      );
-      const operatingProfit = revenue - people - sum(spend);
-      const idcMissing =
-        people > 0 && !(await grnExistsCompanyWide(period, s, spend));
+      const revenue = sum(rev) + sum(est) + sum(adj.revenue);
+      const people = [...ppl.entries()].reduce((a, [key, p]) => (inScope(key) ? a + p.cost : a), 0);
+      const operatingProfit = revenue - people - sum(spend) - sum(adj.cost);
+      const idcMissing = people > 0 && !(await grnExistsCompanyWide(period, s, spend));
       return {
         period,
         revenue,
@@ -1225,7 +1270,7 @@ async function filterOptions(period: string, scope: CeoScope) {
         await db.execute<RowDataPacket[]>(
           `SELECT DISTINCT pm.id AS id, pm.process_name AS name
            FROM salary_prep_line l
-           JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
+           JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ? AND ${nonVoidRunSql("r")}
            JOIN employees e ON e.id = l.employee_id
            JOIN process_master pm ON pm.id = e.process_id
           WHERE pm.active_status = 1
@@ -1314,7 +1359,7 @@ async function buildFocus(
     const [paid] = await db.execute<RowDataPacket[]>(
       `SELECT SUM(CASE WHEN COALESCE(l.gross_salary, 0) = 0 THEN 1 ELSE 0 END) AS zero_paid
          FROM salary_prep_line l
-         JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
+         JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ? AND ${nonVoidRunSql("r")}
          JOIN employees e ON e.id = l.employee_id
         WHERE e.process_id = ?`,
       [period, processId],
@@ -1457,9 +1502,8 @@ export function getCeoOverview(
   filters: CeoFilters = {},
 ): Promise<CeoOverview> {
   const scope = scopeOf(filters);
-  return cachedPnlRead("ceo-overview", scopeKey(period, scope), () =>
-    buildCeoOverview(period, filters),
-  );
+  const confined = filters.visibleBranchIds ? [...filters.visibleBranchIds].sort().join(",") : "";
+  return cachedPnlRead("ceo-overview", { ...scopeKey(period, scope), confined }, () => buildCeoOverview(period, filters));
 }
 
 /**
@@ -1508,27 +1552,16 @@ async function buildCeoOverview(
    * and billing-completeness need it, so they chain off it while revenue / people / spend / budget /
    * estimate / IDC run at once.
    */
-  const branchRowsPromise = db
-    .execute<RowDataPacket[]>(
-      `SELECT id, branch_name, active_status FROM branch_master`,
-    )
-    .then(([rows]) => rows);
-  const [
-    revenue,
-    people,
-    spend,
-    budget,
-    estimate,
-    idcContamination,
-    branchRows,
-  ] = await Promise.all([
-    memoRevenueByBranch(period, scope),
-    memoPeopleByBranch(period, scope),
-    memoSpendByBranch(period, scope),
-    budgetByBranch(period),
+  const branchRowsPromise = db.execute<RowDataPacket[]>(
+    `SELECT id, branch_name, active_status FROM branch_master`,
+  ).then(([rows]) => rows);
+  const [revenue, people, spend, budget, estimate, idcContamination, branchRows, forecastAdj] = await Promise.all([
+    memoRevenueByBranch(period, scope), memoPeopleByBranch(period, scope),
+    memoSpendByBranch(period, scope), budgetByBranch(period),
     estimateByBranch(period, scope),
     idcContaminationFor(period),
     branchRowsPromise,
+    forecastAdjustByBranch(period, scope),
   ]);
   const nameOfBranch = (id: string) =>
     String(
@@ -1629,7 +1662,7 @@ async function buildCeoOverview(
       )
       .map((r) => String(r.id));
     const est = ids.reduce((t, i) => t + (estimate.get(i) ?? 0), 0);
-    const rev = ids.reduce((t, i) => t + (revenue.get(i) ?? 0), 0) + est;
+    const rev = ids.reduce((t, i) => t + (revenue.get(i) ?? 0) + (forecastAdj.revenue.get(i) ?? 0), 0) + est;
     const pay = ids.reduce(
       (t, i) => {
         const p = people.get(i);
@@ -1637,8 +1670,9 @@ async function buildCeoOverview(
       },
       { cost: 0, staff: 0 },
     );
-    const idc = ids.reduce((t, i) => t + (spend.get(i) ?? 0), 0);
-    if (rev === 0 && pay.staff === 0 && idc === 0) continue; // nothing happened here this month
+    // Indirect cost includes the open budget headroom (open lines count at full budget).
+    const idc = ids.reduce((t, i) => t + (spend.get(i) ?? 0) + (forecastAdj.cost.get(i) ?? 0), 0);
+    if (rev === 0 && pay.staff === 0 && idc === 0) continue;   // nothing happened here this month
 
     const isClosed = !entry.active;
     /*
@@ -1848,18 +1882,17 @@ async function buildCeoOverview(
       branches: traded
         .filter((t) => !t.hiddenAsClosed)
         .map((t) => ({ id: t.row.branchId ?? "", name: t.row.branchName }))
-        .filter((b) => b.id)
+        .filter((b) => b.id && (!filters.visibleBranchIds || filters.visibleBranchIds.includes(b.id)))
         .sort((a, b) => a.name.localeCompare(b.name)),
     },
-    exceptions: idcContamination
-      ? [
-          {
-            code: "PAYROLL_IDC_CODE_IN_MAS_HRMS",
-            label: "IDC-coded payroll present in MAS Callnet's own P&L",
-            count: idcContamination.count,
-            amount: idcContamination.amount,
-          },
-        ]
+    // Company-wide figure: not for a branch-confined caller.
+    exceptions: idcContamination && !filters.visibleBranchIds
+      ? [{
+          code: "PAYROLL_IDC_CODE_IN_MAS_HRMS",
+          label: "IDC-coded payroll present in MAS Callnet's own P&L",
+          count: idcContamination.count,
+          amount: idcContamination.amount,
+        }]
       : [],
   };
 }

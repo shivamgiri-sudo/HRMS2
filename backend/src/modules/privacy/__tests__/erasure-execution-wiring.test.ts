@@ -47,6 +47,8 @@ vi.mock("../privacy.service.js", () => ({
     getAllRightsRequests: vi.fn(),
     listRetentionPolicies: vi.fn(),
   },
+  // Branch scoping for the DPDP admin lists: hr is limited to employees in its own branch.
+  buildPrincipalScope: vi.fn(async () => ({ consentSql: "1=1", rightsSql: "1=1", params: [] })),
 }));
 
 const { dbExecute } = vi.hoisted(() => ({
@@ -64,6 +66,8 @@ const { dbExecute } = vi.hoisted(() => ({
       }
       return [[], []];
     }
+    // PATCH now also checks the request belongs to an employee inside the caller's branch.
+    if (/SELECT 1 FROM data_rights_request WHERE id = \?/i.test(sql)) return [[{ 1: 1 }], []];
     if (/SELECT \* FROM data_rights_request WHERE id = \?/i.test(sql)) {
       return [
         [{ id: params[0], request_type: "erasure", status: "resolved" }],
@@ -127,7 +131,7 @@ describe("PATCH /rights/requests/:id — erasure execution wiring", () => {
   });
 
   it("calls executeErasure (not the generic updater) when a DPO resolves an erasure request", async () => {
-    hasRole.mockResolvedValueOnce(true);
+    hasRole.mockResolvedValue(true);
     const res = await request(app())
       .patch("/api/privacy/rights/requests/req-erasure-pending")
       .send({ status: "resolved" });
@@ -140,7 +144,7 @@ describe("PATCH /rights/requests/:id — erasure execution wiring", () => {
   });
 
   it("refuses to re-execute an already-resolved erasure request, even as DPO", async () => {
-    hasRole.mockResolvedValueOnce(true);
+    hasRole.mockResolvedValue(true);
     const res = await request(app())
       .patch("/api/privacy/rights/requests/req-erasure-already-resolved")
       .send({ status: "resolved" });
@@ -148,7 +152,7 @@ describe("PATCH /rights/requests/:id — erasure execution wiring", () => {
     expect(executeErasure).not.toHaveBeenCalled();
   });
 
-  it("leaves non-erasure request types on the unchanged generic path, no DPO check", async () => {
+  it("leaves non-erasure request types on the unchanged generic path, no erasure DPO gate (only the branch-scope check asks the role)", async () => {
     const res = await request(app())
       .patch("/api/privacy/rights/requests/req-access-pending")
       .send({ status: "resolved" });
@@ -158,7 +162,7 @@ describe("PATCH /rights/requests/:id — erasure execution wiring", () => {
       "req-access-pending",
       expect.objectContaining({ status: "resolved" }),
     );
-    expect(hasRole).not.toHaveBeenCalled();
+    expect(hasRole).toHaveBeenCalledTimes(1); // the branch-scope check, not the erasure gate
   });
 
   it("leaves non-'resolved' status changes on an erasure request on the generic path (e.g. moving to in_review)", async () => {

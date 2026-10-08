@@ -65,9 +65,13 @@ type Snapshot = {
  * Identifiers that follow FROM/JOIN but are not physical tables.
  *
  * Kept explicit rather than pattern-matched: "it looked like a CTE" is how a real typo gets
- * waved through. Empty today.
+ * waved through.
+ *
+ *   dual - MySQL's built-in one-row pseudo-table. resignation-self.service.ts uses
+ *          `INSERT ... SELECT ... FROM DUAL WHERE NOT EXISTS (...)` so the talk-first 24 h limit
+ *          and its audit row are one atomic statement.
  */
-const ALLOWED_NON_TABLES = new Set<string>([]);
+const ALLOWED_NON_TABLES = new Set<string>(["dual"]);
 
 /** Databases other than mas_hrms, whose tables the snapshot legitimately does not cover. */
 const FOREIGN_SCHEMAS = new Set([

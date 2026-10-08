@@ -11,6 +11,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { assessmentAdminPage } from "./assessment.admin.page.js";
 import { candidateAssessmentPage } from "./assessment.page.js";
 import { assessmentService } from "./assessment.service.js";
+import { resolveAtsBranchScope, buildCandidateScopeSql, checkCandidateScope, OUT_OF_SCOPE_MESSAGE } from "../ats-extensions/ats-ext-scope.js";
 
 export const assessmentPublicRouter = Router();
 export const assessmentProtectedRouter = Router();
@@ -458,165 +459,139 @@ const candidateSummaryRoles = requireRole(
   "operations_manager",
 );
 
-assessmentProtectedRouter.get(
-  "/assessment-admin/dashboard",
-  readRoles,
-  h(async (_req, res) => {
-    try {
-      return res.json({
-        success: true,
-        data: await assessmentService.getAssessmentDashboard(),
-      });
-    } catch (error) {
-      return sendError(res, error);
-    }
-  }),
-);
+/** Owner policy 2026-10-01: only org-wide roles see every branch's candidates; everyone else is scoped. */
+async function candidateAllowed(req: Request, res: Response, candidateId: string): Promise<boolean> {
+  const verdict = await checkCandidateScope(await resolveAtsBranchScope(actorId(req)), candidateId);
+  if (verdict === "ok") return true;
+  if (verdict === "not_found") res.status(404).json({ success: false, message: "Candidate not found", code: "CANDIDATE_NOT_FOUND" });
+  else res.status(403).json({ success: false, message: OUT_OF_SCOPE_MESSAGE, code: "OUT_OF_SCOPE" });
+  return false;
+}
+
+async function attemptAllowed(req: Request, res: Response, attemptId: string): Promise<boolean> {
+  const candidateId = await assessmentService.getAttemptCandidateId(attemptId);
+  if (!candidateId) {
+    res.status(404).json({ success: false, message: "Assessment attempt not found", code: "ASSESSMENT_NOT_FOUND" });
+    return false;
+  }
+  return candidateAllowed(req, res, candidateId);
+}
+
+assessmentProtectedRouter.get("/assessment-admin/dashboard", readRoles, h(async (req, res) => {
+  try {
+    return res.json({ success: true, data: await assessmentService.getAssessmentDashboard(await resolveAtsBranchScope(actorId(req))) });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}));
 
 // Candidate search — powers the autocomplete in the Assign Assessment panel
-assessmentProtectedRouter.get(
-  "/assessment-admin/candidates/search",
-  readRoles,
-  h(async (req, res) => {
-    try {
-      const q = z
-        .string()
-        .trim()
-        .min(1)
-        .max(100)
-        .parse(req.query.q ?? "");
-      const { db } = await import("../../db/mysql.js");
-      const like = `%${q}%`;
-      const [rows] = await db.execute(
-        `SELECT id, full_name, candidate_code, mobile
+assessmentProtectedRouter.get("/assessment-admin/candidates/search", readRoles, h(async (req, res) => {
+  try {
+    const q = z.string().trim().min(1).max(100).parse(req.query.q ?? "");
+    const { db } = await import("../../db/mysql.js");
+    const like = `%${q}%`;
+    const sc = buildCandidateScopeSql(await resolveAtsBranchScope(actorId(req)));
+    const [rows] = await db.execute(
+      `SELECT id, full_name, candidate_code, mobile
          FROM ats_candidate
         WHERE active_status = 1
+          AND (${sc.sql})
           AND (full_name LIKE ? OR candidate_code LIKE ? OR mobile LIKE ?)
         ORDER BY created_at DESC
         LIMIT 15`,
-        [like, like, like],
-      );
-      return res.json({ success: true, data: rows });
-    } catch (error) {
-      return sendError(res, error);
-    }
-  }),
-);
+      [...sc.params, like, like, like]
+    );
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}));
 
-assessmentProtectedRouter.get(
-  "/assessment-admin/candidates/:candidateId/summary",
-  candidateSummaryRoles,
-  h(async (req, res) => {
-    try {
-      const candidateId = uuidSchema.parse(req.params.candidateId);
-      return res.json({
-        success: true,
-        data: await assessmentService.getCandidateAssessmentSummary(
-          candidateId,
-        ),
-      });
-    } catch (error) {
-      return sendError(res, error);
-    }
-  }),
-);
+assessmentProtectedRouter.get("/assessment-admin/candidates/:candidateId/summary", candidateSummaryRoles, h(async (req, res) => {
+  try {
+    const candidateId = uuidSchema.parse(req.params.candidateId);
+    if (!(await candidateAllowed(req, res, candidateId))) return;
+    return res.json({ success: true, data: await assessmentService.getCandidateAssessmentSummary(candidateId) });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}));
 
-assessmentProtectedRouter.post(
-  "/assessment-admin/candidates/:candidateId/assign",
-  readRoles,
-  h(async (req, res) => {
-    try {
-      const candidateId = uuidSchema.parse(req.params.candidateId);
-      const input = manualAssignSchema.parse(req.body);
-      const userId = actorId(req);
-      const data = await assessmentService.assignAssessmentManually({
-        candidateId,
-        templateId: input.templateId,
-        actorId: userId,
-        sendEmail: input.sendEmail,
-        meta: requestMeta(req, "recruiter"),
-      });
-      return res.status(201).json({ success: true, data });
-    } catch (error) {
-      return sendError(res, error);
-    }
-  }),
-);
+assessmentProtectedRouter.post("/assessment-admin/candidates/:candidateId/assign", readRoles, h(async (req, res) => {
+  try {
+    const candidateId = uuidSchema.parse(req.params.candidateId);
+    const input = manualAssignSchema.parse(req.body);
+    const userId = actorId(req);
+    if (!(await candidateAllowed(req, res, candidateId))) return;
+    const data = await assessmentService.assignAssessmentManually({
+      candidateId,
+      templateId: input.templateId,
+      actorId: userId,
+      sendEmail: input.sendEmail,
+      meta: requestMeta(req, "recruiter"),
+    });
+    return res.status(201).json({ success: true, data });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}));
 
-assessmentProtectedRouter.get(
-  "/assessment-admin/attempts",
-  readRoles,
-  h(async (req, res) => {
-    try {
-      const filters = attemptsQuerySchema.parse(req.query);
-      return res.json({
-        success: true,
-        data: await assessmentService.listAssessmentAttempts(filters),
-      });
-    } catch (error) {
-      return sendError(res, error);
-    }
-  }),
-);
+assessmentProtectedRouter.get("/assessment-admin/attempts", readRoles, h(async (req, res) => {
+  try {
+    const filters = attemptsQuerySchema.parse(req.query);
+    return res.json({ success: true, data: await assessmentService.listAssessmentAttempts(filters, await resolveAtsBranchScope(actorId(req))) });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}));
 
-assessmentProtectedRouter.get(
-  "/assessment-admin/attempts/:attemptId",
-  readRoles,
-  h(async (req, res) => {
-    try {
-      const attemptId = uuidSchema.parse(req.params.attemptId);
-      return res.json({
-        success: true,
-        data: await assessmentService.getAssessmentAttemptDetail(attemptId),
-      });
-    } catch (error) {
-      return sendError(res, error);
-    }
-  }),
-);
+assessmentProtectedRouter.get("/assessment-admin/attempts/:attemptId", readRoles, h(async (req, res) => {
+  try {
+    const attemptId = uuidSchema.parse(req.params.attemptId);
+    if (!(await attemptAllowed(req, res, attemptId))) return;
+    return res.json({ success: true, data: await assessmentService.getAssessmentAttemptDetail(attemptId) });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}));
 
-assessmentProtectedRouter.post(
-  "/assessment-admin/attempts/:attemptId/review",
-  reviewRoles,
-  h(async (req, res) => {
-    try {
-      const attemptId = uuidSchema.parse(req.params.attemptId);
-      const input = reviewSchema.parse(req.body);
-      const reviewerId = actorId(req);
-      const data = await assessmentService.reviewAssessment({
-        attemptId,
-        reviewerId,
-        scores: input.scores,
-        decisionOverride: input.decisionOverride,
-        reviewRemarks: input.reviewRemarks,
-        meta: requestMeta(req, "hr"),
-      });
-      return res.json({ success: true, data });
-    } catch (error) {
-      return sendError(res, error);
-    }
-  }),
-);
+assessmentProtectedRouter.post("/assessment-admin/attempts/:attemptId/review", reviewRoles, h(async (req, res) => {
+  try {
+    const attemptId = uuidSchema.parse(req.params.attemptId);
+    const input = reviewSchema.parse(req.body);
+    const reviewerId = actorId(req);
+    if (!(await attemptAllowed(req, res, attemptId))) return;
+    const data = await assessmentService.reviewAssessment({
+      attemptId,
+      reviewerId,
+      scores: input.scores,
+      decisionOverride: input.decisionOverride,
+      reviewRemarks: input.reviewRemarks,
+      meta: requestMeta(req, "hr"),
+    });
+    return res.json({ success: true, data });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}));
 
-assessmentProtectedRouter.post(
-  "/assessment-admin/attempts/:attemptId/cancel",
-  configureRoles,
-  h(async (req, res) => {
-    try {
-      const attemptId = uuidSchema.parse(req.params.attemptId);
-      const input = cancellationSchema.parse(req.body);
-      const data = await assessmentService.cancelUnstartedAssessment(
-        attemptId,
-        actorId(req),
-        input.reason,
-        requestMeta(req, "admin"),
-      );
-      return res.json({ success: true, data });
-    } catch (error) {
-      return sendError(res, error);
-    }
-  }),
-);
+assessmentProtectedRouter.post("/assessment-admin/attempts/:attemptId/cancel", configureRoles, h(async (req, res) => {
+  try {
+    const attemptId = uuidSchema.parse(req.params.attemptId);
+    const input = cancellationSchema.parse(req.body);
+    if (!(await attemptAllowed(req, res, attemptId))) return;
+    const data = await assessmentService.cancelUnstartedAssessment(
+      attemptId,
+      actorId(req),
+      input.reason,
+      requestMeta(req, "admin"),
+    );
+    return res.json({ success: true, data });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}));
 
 assessmentProtectedRouter.get(
   "/assessment-admin/templates",

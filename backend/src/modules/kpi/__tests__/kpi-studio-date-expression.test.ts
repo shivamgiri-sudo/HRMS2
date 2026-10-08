@@ -100,3 +100,25 @@ describe("compute loads the columns dateExpression needs", () => {
     expect(line).toContain("date_format");
   });
 });
+
+describe('employee-grain plan honours the declared date format', () => {
+  const field = { field_name: 'calls', source_column: 'calls', aggregate_fn: 'SUM' } as never;
+  const base = { id: 's', source_code: 'S', source_name: 'S', source_type: 'local_query', source_object: 'raw_tbl', employee_key_column: 'emp', date_column: 'dt' };
+
+  it('uses the bare column when no format is declared (unchanged behaviour)', async () => {
+    const { buildQueryPlan } = await import('../kpi-studio.sources.js');
+    const plan = buildQueryPlan(base as never, [field], ['E1'], '2026-08-01', '2026-08-31');
+    expect(plan.sql).toContain('WHERE `dt` >= ? AND `dt` < DATE_ADD(?, INTERVAL 1 DAY)');
+    expect(plan.sql).toContain('GROUP BY `emp`, DATE(`dt`)');
+  });
+
+  it('parses text dates and Excel serials before comparing, as the process plan does', async () => {
+    const { buildQueryPlan } = await import('../kpi-studio.sources.js');
+    const text = buildQueryPlan({ ...base, date_format: '%d-%m-%Y %H:%i:%s' } as never, [field], ['E1'], '2026-08-01', '2026-08-31');
+    expect(text.sql).toContain("WHERE STR_TO_DATE(`dt`, '%d-%m-%Y %H:%i:%s') >= ?");
+    expect(text.sql).not.toContain('WHERE `dt` >=');
+    const serial = buildQueryPlan({ ...base, date_format: 'excel_serial' } as never, [field], ['E1'], '2026-08-01', '2026-08-31');
+    expect(serial.sql).toContain("DATE(DATE_ADD('1899-12-30', INTERVAL CAST(`dt` AS SIGNED) DAY)) AS __score_date");
+    expect(() => buildQueryPlan({ ...base, date_format: "'; DROP" } as never, [field], ['E1'], '2026-08-01', '2026-08-31')).toThrow(/Unsupported date format/);
+  });
+});

@@ -1,15 +1,12 @@
-import { Router } from "express";
-import multer from "multer";
-import { randomUUID, createHash } from "crypto";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
-import {
-  isOperationsExecutiveByRegex as isOperationsExecutive,
-  classifyOperationsNetLogin,
-  resolveHalfDayFloorMinutes,
-} from "./attendance-engine.service.js";
+import { Router } from 'express';
+import multer from 'multer';
+import { randomUUID, createHash } from 'crypto';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import { loadEmploymentWindows, isWithinWindows, OUTSIDE_EMPLOYMENT_MESSAGE } from '../../shared/employmentWindow.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import { isOperationsExecutiveByRegex as isOperationsExecutive, classifyOperationsNetLogin, resolveHalfDayFloorMinutes } from './attendance-engine.service.js';
 import {
   resolveAprBulkUploadAttribution,
   createAprBulkUploadBatch,
@@ -540,6 +537,8 @@ router.post(
     const toInsert: InsertCandidate[] = [];
     // Non-Operations-Executive rows. Stored as evidence in phase 3, skipped by phase 2.
     const evidenceOnly: InsertCandidate[] = [];
+    // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+    const employmentWindows = await loadEmploymentWindows([...empMap.values()].map((e: any) => String(e.employee_id)));
 
     for (const row of csvRows) {
       const emp = empMap.get(row.employee_code);
@@ -562,6 +561,12 @@ router.post(
             protectedReasonByKey.get(lockKey) ??
             "Attendance record is locked for payroll",
         });
+        continue;
+      }
+
+      const empWindows = employmentWindows.get(String(emp.employee_id));
+      if (empWindows && !isWithinWindows(row.attendance_date, empWindows)) {
+        rowErrors.push({ row: row.rowNum, employee_code: row.employee_code, reason: OUTSIDE_EMPLOYMENT_MESSAGE });
         continue;
       }
 

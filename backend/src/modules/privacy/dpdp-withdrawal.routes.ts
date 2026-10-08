@@ -4,7 +4,8 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import * as svc from "./dpdp-withdrawal.service.js";
-import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { hasRole } from "../../shared/accessGuard.js";
+import { buildRequesterScope, withdrawalScopeGuard } from "./dpdp-withdrawal.scope.js";
 
 export const dpdpWithdrawalRouter = Router();
 
@@ -19,26 +20,20 @@ dpdpWithdrawalRouter.post(
   "/dpdp-withdrawal/request",
   requireAuth,
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { scope_json, reason, channel, requester_type } = req.body as {
-      scope_json?: unknown;
-      reason: string;
-      channel?: string;
-      requester_type?: string;
-    };
-
-    if (!reason?.trim()) {
-      return res
-        .status(400)
-        .json({ success: false, message: "reason is required" });
+    // The reason is optional (DPDP Act s.6(4): withdrawal must be as easy as consent).
+    const parsed = svc.validateSubmission((req.body ?? {}) as Record<string, unknown>);
+    if (!parsed.ok) {
+      return res.status(400).json({ success: false, message: parsed.message });
     }
+    const v = parsed.value;
 
     const data = await svc.submitRequest(
       req.authUser!.id,
-      requester_type ?? "employee",
-      scope_json ?? null,
-      reason,
-      channel ?? "self",
-      { requester_ip: req.ip, requester_ua: req.headers["user-agent"] },
+      v.requesterType,
+      v.scope,
+      v.reason,
+      v.channel,
+      { requester_ip: req.ip, requester_ua: req.headers['user-agent'] as string | undefined }
     );
 
     return res.status(201).json({ success: true, data });
@@ -66,7 +61,7 @@ dpdpWithdrawalRouter.get(
       branchId: req.query.branch_id as string | undefined,
       dateFrom: req.query.date_from as string | undefined,
       dateTo: req.query.date_to as string | undefined,
-    });
+    }, await buildRequesterScope(req.authUser!));
     return res.json({ success: true, data });
   }),
 );
@@ -86,27 +81,23 @@ dpdpWithdrawalRouter.get(
   "/dpdp-withdrawal/stats",
   requireAuth,
   requireRole("hr", "admin", "dpo", "compliance", "super_admin"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const data = await svc.getStats();
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await svc.getStats(await buildRequesterScope(req.authUser!));
     return res.json({ success: true, data });
   }),
 );
+
+// Branch scope for every /dpdp-withdrawal/:id/* route below (static routes above never reach this).
+dpdpWithdrawalRouter.use("/dpdp-withdrawal/:id", requireAuth, withdrawalScopeGuard);
 
 // GET /dpdp-withdrawal/:id — get single (own or HR)
 dpdpWithdrawalRouter.get(
   "/dpdp-withdrawal/:id",
   requireAuth,
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { primaryRole: role } = await getUserRoleContext(
-      (req as any).authUser?.id ?? "",
-    );
-    const isHr = ["admin", "hr", "compliance", "dpo"].includes(role);
-    const record = await svc.getById(
-      req.params.id,
-      req.authUser!.id,
-      isHr,
-      true,
-    );
+    // Any held role counts (the old primaryRole-only check missed super_admin and multi-role users).
+    const isHr = await hasRole(req.authUser!.id, "hr", "compliance", "dpo");
+    const record = await svc.getById(req.params.id, req.authUser!.id, isHr, true);
     if (!record) {
       return res
         .status(404)
@@ -175,12 +166,7 @@ dpdpWithdrawalRouter.get(
   "/dpdp-withdrawal/:id/audit",
   requireAuth,
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { primaryRole: role } = await getUserRoleContext(
-      (req as any).authUser?.id ?? "",
-    );
-    const isHr = ["admin", "hr", "compliance", "dpo", "super_admin"].includes(
-      role,
-    );
+    const isHr = await hasRole(req.authUser!.id, "hr", "compliance", "dpo");
     // Anyone can see audit for their own request; HR can see all
     const record = await svc.getById(req.params.id, req.authUser!.id, isHr);
     if (!record) {
@@ -213,7 +199,11 @@ dpdpWithdrawalRouter.patch(
   requireRole("hr", "admin", "dpo", "compliance", "super_admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { notes } = req.body as { notes?: string };
-    await svc.completeTask(req.params.taskId, req.authUser!.id, notes);
+    // The task must belong to THIS withdrawal; the branch-scope guard only checked :id.
+    const found = await svc.completeTask(req.params.taskId, req.authUser!.id, notes, req.params.id);
+    if (!found) {
+      return res.status(404).json({ success: false, message: "Task not found for this withdrawal" });
+    }
     return res.json({ success: true, message: "Task marked complete" });
   }),
 );

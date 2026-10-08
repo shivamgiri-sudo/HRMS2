@@ -74,8 +74,7 @@ export const BACKEND_DOMAIN_REGISTRY: BackendDomain[] = [
     business_owner: "HR Admin",
     router_count: 9,
     consolidation_target: true,
-    notes:
-      "employeeRouter + employeeSecureRouter + employeeGovernanceRouter + employeePhotoCompatRouter + employee360Router + employeeReportMasterRouter + employeeJoiningDocumentsRouter + employeeReactivationRouter + employeeVerifyRouter",
+    notes: "employeeRouter + employeeSecureRouter + employeeGovernanceRouter + employeePhotoCompatRouter + employee360Router + employeeReportMasterRouter + employeeJoiningDocumentsRouter + employeeReactivationRouter + rejoinDossierRouter + employeeVerifyRouter",
   },
   {
     domain_code: "ATS",

@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { calculateEmployeeEngagementHealth } from "../engagement/engagement-health.service.js";
 import { scalar } from "../../shared/dbHelpers.js";
-import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 
 function riskLabel(score: number): "low" | "medium" | "high" | "critical" {
   if (score >= 75) return "critical";
@@ -204,7 +204,8 @@ export async function createDefaultClearanceTasks(
   return { created: tasks.length, skipped: false };
 }
 
-const BYPASS_SCOPE_ROLES = new Set(["super_admin", "payroll_head"]);
+// Owner policy 2026-10-01: only the org-wide roles skip the scope; hr and the branch roles are scoped.
+const BYPASS_SCOPE_ROLES = new Set<string>(ORG_WIDE_EXEMPT_ROLES);
 
 export async function getExitCommandCenter(scope: {
   actorUserId: string;
@@ -216,30 +217,19 @@ export async function getExitCommandCenter(scope: {
   let scopeParams: unknown[] = [];
 
   if (!bypass) {
-    const SCOPED_ROLES = [
-      "admin",
-      "hr",
-      "finance",
-      "payroll",
-      "ceo",
-      "manager",
-      "branch_head",
-      "process_manager",
-      "assistant_manager",
-      "tl",
-      "wfm",
-      "it",
-    ];
+    const SCOPED_ROLES = ['admin','hr','finance','payroll','payroll_hr','ceo','manager','branch_head',
+                         'process_manager','assistant_manager','tl','wfm','it','branch_hr','hr_admin'];
     const clause = await buildScopeWhereClause(
       scope.actorUserId,
       SCOPED_ROLES,
-      { branchId: "e.branch_id", processId: "e.process_id" },
+      { branchId: 'e.branch_id', processId: 'e.process_id' },
+      { blockOrgWideForRoles: ["hr", "hr_admin", "payroll", "payroll_hr", "branch_hr"] }
     );
     scopeWhere = clause.sql;
     scopeParams = clause.params;
   }
 
-  const [summary] = await db.execute<RowDataPacket[]>(
+  const summaryP = db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS total,
        SUM(CASE WHEN er.status IN ('submitted','manager_review','hr_review','admin_review') THEN 1 ELSE 0 END) AS pending_review,
@@ -253,7 +243,7 @@ export async function getExitCommandCenter(scope: {
     [...scopeParams],
   );
 
-  const [requests] = await db.execute<RowDataPacket[]>(
+  const requestsP = db.execute<RowDataPacket[]>(
     `SELECT er.*,
             CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
             e.employee_code,
@@ -300,7 +290,7 @@ export async function getExitCommandCenter(scope: {
        JOIN employees e ON e.id = er.employee_id`;
   const clearanceWhere = bypass ? "" : `WHERE (${scopeWhere})`;
 
-  const [clearance] = await db.execute<RowDataPacket[]>(
+  const clearanceP = db.execute<RowDataPacket[]>(
     `SELECT ect.clearance_area, ect.status, COUNT(*) AS count
        FROM exit_clearance_task ect
        ${clearanceJoin}
@@ -311,7 +301,7 @@ export async function getExitCommandCenter(scope: {
   );
 
   // Attrition trend (last 6 months)
-  const [attritionTrend] = await db.execute<RowDataPacket[]>(
+  const attritionTrendP = db.execute<RowDataPacket[]>(
     `SELECT
        DATE_FORMAT(er.created_at, '%Y-%m') AS month,
        SUM(CASE WHEN er.exit_type = 'voluntary' THEN 1 ELSE 0 END) AS voluntary,
@@ -352,7 +342,7 @@ export async function getExitCommandCenter(scope: {
   );
 
   // Exit reason breakdown
-  const [reasonBreakdown] = await db.execute<RowDataPacket[]>(
+  const reasonBreakdownP = db.execute<RowDataPacket[]>(
     `SELECT
        COALESCE(er.exit_reason_category, 'other') AS reason,
        COUNT(*) AS count
@@ -368,7 +358,7 @@ export async function getExitCommandCenter(scope: {
   );
 
   // Branch breakdown
-  const [branchBreakdown] = await db.execute<RowDataPacket[]>(
+  const branchBreakdownP = db.execute<RowDataPacket[]>(
     `SELECT
        COALESCE(b.branch_name, 'Unknown') AS branch,
        COUNT(*) AS count,
@@ -388,6 +378,33 @@ export async function getExitCommandCenter(scope: {
     [...scopeParams],
   );
 
+
+  // AON (age on network) at exit: tenure bucket of each leaver, same 0-30/31-60/61-90/90+
+  // vocabulary as the AON & Attrition report. Derived at read time from date_of_joining.
+  const aonBreakdownP = db.execute<RowDataPacket[]>(
+    `SELECT
+       CASE
+         WHEN DATEDIFF(COALESCE(er.last_working_day_proposed, er.created_at), e.date_of_joining) <= 30 THEN '0-30'
+         WHEN DATEDIFF(COALESCE(er.last_working_day_proposed, er.created_at), e.date_of_joining) <= 60 THEN '31-60'
+         WHEN DATEDIFF(COALESCE(er.last_working_day_proposed, er.created_at), e.date_of_joining) <= 90 THEN '61-90'
+         ELSE '90+'
+       END AS bucket,
+       SUM(CASE WHEN er.exit_type = 'voluntary' THEN 1 ELSE 0 END) AS voluntary,
+       SUM(CASE WHEN er.exit_type = 'involuntary' THEN 1 ELSE 0 END) AS involuntary,
+       COUNT(*) AS count
+     FROM exit_request er
+     JOIN employees e ON e.id = er.employee_id
+     WHERE er.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+       AND e.date_of_joining IS NOT NULL
+       AND er.status NOT IN ('draft', 'rejected', 'revoked', 'withdrawn')
+       AND (${scopeWhere})
+     GROUP BY bucket`,
+    [...scopeParams],
+  );
+
+  const [[summary], [requests], [clearance], [attritionTrend], [reasonBreakdown], [branchBreakdown], [aonBreakdown]] =
+    await Promise.all([summaryP, requestsP, clearanceP, attritionTrendP, reasonBreakdownP, branchBreakdownP, aonBreakdownP]);
+
   return {
     summary: summary[0] ?? {},
     requests,
@@ -395,6 +412,7 @@ export async function getExitCommandCenter(scope: {
     attrition_trend: attritionTrend,
     reason_breakdown: reasonBreakdown,
     branch_breakdown: branchBreakdown,
+    aon_breakdown: aonBreakdown,
   };
 }
 

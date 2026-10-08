@@ -69,7 +69,9 @@ const DENIED = ["employee", "hr", "recruiter", "wfm", "manager"];
 beforeEach(() => {
   execute.mockReset();
   // Every read route ends in a SELECT; shape is irrelevant to an access test.
-  execute.mockResolvedValue([[], []]);
+  // payroll_branch is branch-scoped: its own employee row supplies the branch it is pinned to.
+  execute.mockImplementation(async (sql: string) =>
+    /FROM employees/.test(sql) && /user_id/.test(sql) ? [[{ branch_id: "b1", id: "e1" }], []] : [[], []]);
 });
 
 describe("billability API — role access", () => {

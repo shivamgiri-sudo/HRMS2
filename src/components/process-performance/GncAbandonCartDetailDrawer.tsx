@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { Download, X } from "lucide-react";
 import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { formatINR, formatShortDate } from "./DashboardKit";
 import { useSortableRows } from "./useSortableRows";
@@ -32,7 +32,7 @@ const fmtVal = (v: unknown, fmt: DrawerSeries["fmt"]): string => {
  * Mandate: a right-side slide-over, not a page or modal, with Week-wise and
  * Date-wise sections shown separately. */
 export function GncDetailDrawer({
-  title, eyebrow = "GNC · Week-wise & Date-wise", gradient = "from-pink-700 via-rose-700 to-pink-800", series, dailyRows, weeklyRows, onClose,
+  title, eyebrow = "GNC · Week-wise & Date-wise", gradient = "from-pink-700 via-rose-700 to-pink-800", series, dailyRows, weeklyRows, onClose, onExport,
 }: {
   title: string;
   eyebrow?: string;
@@ -41,6 +41,8 @@ export function GncDetailDrawer({
   dailyRows: Array<Record<string, string | number>>;
   weeklyRows: Array<Record<string, string | number>>;
   onClose: () => void;
+  /** Optional -- when set, the header shows an export icon that calls it. Omitted by existing callers. */
+  onExport?: () => void;
 }) {
   const [shown, setShown] = useState(false);
 
@@ -77,9 +79,16 @@ export function GncDetailDrawer({
             <p className="text-[11px] font-semibold uppercase tracking-wider text-white/75">{eyebrow}</p>
             <h3 className="truncate text-lg font-bold">{title}</h3>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-white/85 transition-colors hover:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70">
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            {onExport && (
+              <button type="button" onClick={onExport} aria-label="Export to CSV" title="Export to CSV" className="rounded-lg p-1.5 text-white/85 transition-colors hover:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70">
+                <Download className="h-5 w-5" />
+              </button>
+            )}
+            <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-white/85 transition-colors hover:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </header>
 
         <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">

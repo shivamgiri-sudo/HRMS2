@@ -33,8 +33,19 @@ function handler(pathLiteral: string): string {
 describe("Appointment letters — branch RBAC", () => {
   it("resolves scope through buildScopeWhereClause, not a request-supplied branch", () => {
     expect(routes).toContain("buildScopeWhereClause");
-    // A branch id read off the request would let any HR name someone else's branch.
-    expect(routes).not.toMatch(/req\.(query|body)\s*[.[]\s*["']?branch/i);
+    // A branch id read off the request must never DEFINE the scope — that would let any HR name
+    // someone else's branch. The only request-supplied branch allowed is the `branch_id` query
+    // filter, which is ANDed onto the scope condition (see the next test) and so can only narrow it.
+    expect(routes).not.toMatch(/req\.body\s*[.[]\s*["']?branch/i);
+    expect(routes).not.toMatch(/req\.query\s*[.[]\s*["']?branch(?!_id\b)/i);
+  });
+
+  it("applies the optional branch_id filter in addition to scope, never instead of it", () => {
+    for (const marker of ['"/appointment-letters/queue"', 'router.get("/appointment-letters", ']) {
+      const h = handler(marker);
+      expect(h).toContain("branchScope(req");
+      expect(h).toContain("branch_id");
+    }
   });
 
   it("scopes the queue", () => {

@@ -1,5 +1,5 @@
 /**
- * Payment & Disbursal Center — /payroll/payment-disbursal
+ * Payment & Disbursal Center — /payroll/payment-center
  *
  * Merged hub combining Bank Payment Readiness and Disbursal Management into
  * a single URL-param-driven surface.
@@ -236,7 +236,76 @@ function fmtDateTime(v: string | null | undefined): string {
 // Kept as one constant so the frontend gate can never silently drift from the backend
 // again — the Bank Readiness tab's own roles stay broader, this only narrows the
 // Disbursal tab's write controls (Upload, Manual Entry, Mark as Disbursed).
-const DISBURSAL_WRITE_ROLES = ["payroll", "super_admin", "finance"];
+// payroll_head / finance_head / payroll_admin are the roles that may lock and disburse a run
+// (payroll.service.updateRunStatus), so they must be able to open this tab and press the button.
+const DISBURSAL_WRITE_ROLES = ["payroll", "super_admin", "finance", "payroll_head", "finance_head", "payroll_admin"];
+
+/**
+ * Presentation only: a read-only strip showing where a run stands on the payment journey. Every value
+ * is derived from data the page already loads (readiness gate, run status, transfer item buckets); it
+ * performs no action and gates nothing - the backend still decides what is allowed.
+ */
+function PaymentJourney(props: {
+  gateClear: boolean | undefined;
+  runStatus: string | undefined;
+  exportedCount: number;
+  confirmedCount: number;
+  rejectedCount: number;
+  /** False when the transfer items failed to load: the export / return steps are then unknown, not "not done". */
+  itemsKnown: boolean;
+}) {
+  const status = String(props.runStatus ?? "").toLowerCase();
+  const approved = ["approved", "locked", "finalized", "disbursed"].includes(status);
+  const steps: Array<{ label: string; done: boolean; note?: string; unknown?: boolean }> = [
+    { label: "Bank details ready", done: props.gateClear === true },
+    { label: "Run approved", done: approved },
+    {
+      label: "File exported",
+      done: props.itemsKnown && props.exportedCount + props.confirmedCount + props.rejectedCount > 0,
+      unknown: !props.itemsKnown,
+    },
+    {
+      label: "Bank return imported",
+      done: props.itemsKnown && props.confirmedCount > 0,
+      note: props.itemsKnown && props.confirmedCount > 0 ? `${props.confirmedCount.toLocaleString("en-IN")} confirmed` : undefined,
+      unknown: !props.itemsKnown,
+    },
+    { label: "Run disbursed", done: status === "disbursed" },
+  ];
+  const current = steps.findIndex((st) => !st.done && !st.unknown);
+  return (
+    <ol
+      aria-label="Payment progress"
+      className="flex flex-wrap items-center gap-x-1 gap-y-2 rounded-md border bg-muted/30 px-3 py-2 text-xs"
+    >
+      {steps.map((st, i) => (
+        <li key={st.label} className="flex items-center gap-1">
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ${
+              st.done
+                ? "bg-emerald-100 text-emerald-800"
+                : i === current
+                  ? "bg-blue-100 text-blue-800 ring-1 ring-blue-300"
+                  : "bg-slate-100 text-slate-500"
+            }`}
+          >
+            {st.done ? <CheckCircle2 className="h-3 w-3" aria-hidden="true" /> : <CircleDot className="h-3 w-3" aria-hidden="true" />}
+            {st.label}
+            {st.unknown ? <span className="font-normal">· unknown (couldn't load)</span> : null}
+            {st.note ? <span className="font-normal">· {st.note}</span> : null}
+          </span>
+          {i < steps.length - 1 ? <span className="text-slate-300" aria-hidden="true">›</span> : null}
+        </li>
+      ))}
+      {props.rejectedCount > 0 ? (
+        <li className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800">
+          <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+          {props.rejectedCount.toLocaleString("en-IN")} rejected by bank
+        </li>
+      ) : null}
+    </ol>
+  );
+}
 
 export default function PaymentDisbursalCenter() {
   const qc = useQueryClient();
@@ -349,10 +418,15 @@ export default function PaymentDisbursalCenter() {
     employee_code: string;
     employee_name: string;
     branch_name: string | null;
-    verification_status: "verified" | "manual_review";
+    verification_status: "verified" | "manual_review" | "mismatch";
     account_masked: string;
     ifsc_code: string | null;
     account_holder_name: string | null;
+    bank_registered_name: string | null;
+    recorded_names: string[];
+    account_changed: boolean;
+    review_reason: string | null;
+    risk_flags: string[];
     name_match_score: number | null;
     verified_at: string | null;
     bank_name: string | null;
@@ -376,6 +450,17 @@ export default function PaymentDisbursalCenter() {
       void qc.invalidateQueries({ queryKey: ["bank-readiness-exceptions"] });
     },
     onError: (e: any) => toast.error(e?.message ?? "Approval failed"),
+  });
+  const [manualReviewRejectReason, setManualReviewRejectReason] = useState("");
+  const rejectManualReviewMutation = useMutation({
+    mutationFn: (p: { employeeId: string; reason: string }) =>
+      hrmsApi.patch(`/api/payroll/bank-readiness/manual-review-queue/${p.employeeId}/reject`, { reason: p.reason }),
+    onSuccess: (res: any) => {
+      toast.success(res?.message ?? "Rejected; the joiner has been asked for their own account");
+      setManualReviewRejectReason("");
+      void qc.invalidateQueries({ queryKey: ["bank-readiness-manual-review"] });
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Rejection failed"),
   });
 
   // Row drill-down drawer: full onboarding-typed fields + the uploaded passbook/cheque proof
@@ -509,6 +594,31 @@ export default function PaymentDisbursalCenter() {
       setSelectedIds(new Set());
     },
     onError: (e: any) => toast.error(e?.message ?? "Bulk update failed"),
+  });
+
+  /**
+   * Email the selected employees a link to add their bank details. The server applies branch
+   * scope, the 3-day gap and the 5-reminder cap, and reports per employee why anyone was skipped.
+   */
+  const reminderMutation = useMutation({
+    mutationFn: (employeeIds: string[]) =>
+      hrmsApi.post<{
+        summary: { sent: number; skipped: number; failed: number };
+        results: Array<{ employee_code: string | null; status: string; reason?: string }>;
+      }>("/api/payroll/pendency-reminders", { kind: "bank_account", employee_ids: employeeIds }),
+    onSuccess: (r) => {
+      const { sent, skipped, failed } = r.summary;
+      const why = r.results
+        .filter((x) => x.status === "skipped")
+        .slice(0, 3)
+        .map((x) => `${x.employee_code ?? "?"}: ${x.reason}`)
+        .join("; ");
+      const msg = `Reminders: ${sent} sent${skipped ? `, ${skipped} skipped (${why}${skipped > 3 ? "…" : ""})` : ""}${failed ? `, ${failed} failed` : ""}`;
+      if (failed || (sent === 0 && skipped > 0)) toast.warning(msg);
+      else toast.success(msg);
+      if (sent > 0) setSelectedIds(new Set());
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Could not send reminders"),
   });
 
   // ── Salary Transfer queries ────────────────────────────────────────────────
@@ -741,7 +851,7 @@ export default function PaymentDisbursalCenter() {
   });
 
   // ── Disbursal queries ──────────────────────────────────────────────────────
-  const { data: disbData, isLoading: disbLoading } = useQuery<{
+  const { data: disbData, isLoading: disbLoading, isError: disbError, error: disbErr, refetch: refetchDisb } = useQuery<{
     data: DisbursalRow[];
   }>({
     queryKey: ["disbursal", selectedRunId],
@@ -768,6 +878,9 @@ export default function PaymentDisbursalCenter() {
   });
 
   const [showBreakGlass, setShowBreakGlass] = useState(false);
+  // Why the break-glass dialog opened: no finance sign-off, or salary transfers still unconfirmed.
+  const [breakGlassKind, setBreakGlassKind] = useState<"signoff" | "transfers">("signoff");
+  const [breakGlassDetail, setBreakGlassDetail] = useState("");
   const [breakGlassReason, setBreakGlassReason] = useState("");
 
   // Maps the backend's own well-named error codes (payroll.service.ts::updateRunStatus)
@@ -779,6 +892,9 @@ export default function PaymentDisbursalCenter() {
       "Disbursing a run is reserved for Finance or Payroll heads.",
     PAYROLL_SELF_APPROVAL:
       "You prepared this run, so it must be approved by someone else first.",
+    PAYROLL_TRANSFERS_OUTSTANDING:
+      "Some salary transfers for this run are not confirmed yet (exported, rejected or awaiting re-export). " +
+      "Import the bank's return file and clear them first, or have an authorised head record a break-glass reason.",
   };
 
   const markDisbursedMutation = useMutation({
@@ -798,6 +914,15 @@ export default function PaymentDisbursalCenter() {
     },
     onError: (e: any) => {
       if (e?.code === "PAYROLL_FINANCE_SIGNOFF_REQUIRED") {
+        setBreakGlassKind("signoff");
+        setBreakGlassDetail("");
+        setShowBreakGlass(true);
+        return;
+      }
+      if (e?.code === "PAYROLL_TRANSFERS_OUTSTANDING") {
+        // Not a dead end: an independent head can override with a recorded reason (audited as break-glass).
+        setBreakGlassKind("transfers");
+        setBreakGlassDetail(typeof e?.message === "string" ? e.message : "");
         setShowBreakGlass(true);
         return;
       }
@@ -815,6 +940,7 @@ export default function PaymentDisbursalCenter() {
   const sourceDown = summary && !summary.verification_source.available;
   const asOf = useMemo(() => fmtDateTime(summary?.as_of), [summary?.as_of]);
   const selectedRun = runs.find((r) => r.id === selectedRunId);
+  const bankRun = runs.find((r) => r.id === bankRunId);
 
   // ── Selection handlers ────────────────────────────────────────────────────
   const allVisibleSelected =
@@ -1237,6 +1363,15 @@ export default function PaymentDisbursalCenter() {
                     </Button>
                     <Button
                       size="sm"
+                      variant="outline"
+                      disabled={reminderMutation.isPending}
+                      onClick={() => reminderMutation.mutate(Array.from(selectedIds))}
+                      title="Email the selected employees a link to add their bank details"
+                    >
+                      {reminderMutation.isPending ? "Sending…" : "Send reminder"}
+                    </Button>
+                    <Button
+                      size="sm"
                       variant="ghost"
                       onClick={() => setSelectedIds(new Set())}
                     >
@@ -1506,21 +1641,21 @@ export default function PaymentDisbursalCenter() {
                     at onboarding but never got a live bank record
                   </p>
                   <p className="text-sky-900 mt-1">
-                    <strong>Manual review</strong> — penny-drop couldn't confirm the account
-                    automatically. Click a row to see the uploaded passbook/cheque proof and the
-                    exact details the candidate typed, and judge it yourself before approving.{" "}
-                    <strong>Penny drop verified</strong> — the bank already confirmed this
-                    account on a later attempt; it was simply never copied over. Click a row to
-                    see the full confirmed details — there is nothing to judge, only to approve.
-                    Either way, approving copies the account exactly as captured; it does not
-                    change or re-verify it.
+                    Accounts the bank verified are copied to the employee record automatically.
+                    Only exceptions land here: the name the bank holds matches none of the
+                    joiner's recorded names, the bank returned no name, or the check could not
+                    complete. Click a row to compare the bank's name with the recorded names and
+                    the cheque, then <strong>Approve</strong> (copies the account exactly as
+                    captured) or <strong>Reject</strong> (the joiner is emailed a link to submit
+                    their own account). <strong>Penny drop verified</strong> rows are ones the
+                    automatic copy could not finish; approving them is a formality.
                   </p>
                 </div>
                 <div className="rounded-md border overflow-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-muted">
                       <tr>
-                        {["Code", "Name", "Branch", "Verification", "Account", "IFSC", "Account holder (onboarding)", "Name match", "Verified at", ""].map((hd) => (
+                        {["Code", "Name", "Branch", "Verification", "Account", "IFSC", "Name at bank", "Name match", "Verified at", ""].map((hd) => (
                           <th key={hd} className="px-3 py-2 text-left font-medium whitespace-nowrap">{hd}</th>
                         ))}
                       </tr>
@@ -1541,7 +1676,9 @@ export default function PaymentDisbursalCenter() {
                             <td className="px-3 py-2">{r.employee_name}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.branch_name ?? "—"}</td>
                             <td className="px-3 py-2">
-                              {r.verification_status === "verified" ? (
+                              {r.account_changed ? (
+                                <Badge variant="destructive">Account changed since verification</Badge>
+                              ) : r.verification_status === "verified" ? (
                                 <Badge className="bg-green-600 hover:bg-green-600">Penny drop verified</Badge>
                               ) : (
                                 <Badge variant="secondary">Manual review</Badge>
@@ -1549,13 +1686,14 @@ export default function PaymentDisbursalCenter() {
                             </td>
                             <td className="px-3 py-2 font-mono text-xs">{r.account_masked}</td>
                             <td className="px-3 py-2 font-mono text-xs">{r.ifsc_code ?? "—"}</td>
-                            <td className="px-3 py-2">{r.account_holder_name ?? "—"}</td>
+                            <td className="px-3 py-2">{r.bank_registered_name ?? <span className="text-amber-700">Not returned by bank</span>}</td>
                             <td className="px-3 py-2">{r.name_match_score == null ? "—" : `${Math.round(r.name_match_score)}%`}</td>
                             <td className="px-3 py-2 text-xs text-muted-foreground">{fmtDateTime(r.verified_at)}</td>
                             <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                               <Button
                                 size="sm"
-                                disabled={approveManualReviewMutation.isPending}
+                                disabled={approveManualReviewMutation.isPending || r.account_changed}
+                                title={r.account_changed ? "Re-run the bank check on the current number first" : undefined}
                                 onClick={() => {
                                   if (!window.confirm(`Approve ${r.employee_code}'s onboarding bank account (${r.account_masked}) for payment?`)) return;
                                   approveManualReviewMutation.mutate(r.employee_id);
@@ -1594,6 +1732,38 @@ export default function PaymentDisbursalCenter() {
                       </SheetHeader>
 
                       <div className="mt-4 space-y-5 text-sm">
+                        {manualReviewDrawerRow.account_changed && (
+                          <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-900 text-xs">
+                            <p className="font-semibold">The account number on file is not the one the bank verified.</p>
+                            <p className="mt-1">
+                              It was re-entered after the bank check, so nobody has confirmed the current number belongs to
+                              this person. Re-run the bank check from the candidate's BGV page; if it passes, the account is
+                              copied automatically. Approve stays disabled until then.
+                            </p>
+                          </div>
+                        )}
+                        {manualReviewDrawerRow.verification_status !== "verified" && (
+                          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950">
+                            <div className="text-xs font-bold uppercase tracking-wide text-amber-700 mb-2">Why this needs a decision</div>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                              <div>
+                                <span className="text-muted-foreground">Name the bank holds</span>
+                                <div className="font-semibold">{manualReviewDrawerRow.bank_registered_name ?? "Not returned by the bank"}</div>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground">Recorded as</span>
+                                <div>{manualReviewDrawerRow.recorded_names.length ? manualReviewDrawerRow.recorded_names.join(" · ") : "—"}</div>
+                              </div>
+                            </div>
+                            {manualReviewDrawerRow.review_reason && (
+                              <p className="mt-2 text-xs">{manualReviewDrawerRow.review_reason}</p>
+                            )}
+                            <p className="mt-2 text-xs">
+                              Approve if the bank's name is this person written differently. Reject if the
+                              account belongs to someone else — salary is not paid into a third party's account.
+                            </p>
+                          </div>
+                        )}
                         <div>
                           <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
                             {manualReviewDrawerRow.verification_status === "verified"
@@ -1663,7 +1833,7 @@ export default function PaymentDisbursalCenter() {
 
                         <Button
                           className="w-full"
-                          disabled={approveManualReviewMutation.isPending}
+                          disabled={approveManualReviewMutation.isPending || manualReviewDrawerRow.account_changed}
                           onClick={() => {
                             const row = manualReviewDrawerRow;
                             if (!row) return;
@@ -1675,6 +1845,34 @@ export default function PaymentDisbursalCenter() {
                         >
                           Approve for payment
                         </Button>
+
+                        {manualReviewDrawerRow.verification_status !== "verified" && (
+                          <div className="space-y-2 rounded-md border border-red-200 p-3">
+                            <div className="text-xs font-bold uppercase tracking-wide text-red-700">Reject this account</div>
+                            <Textarea
+                              value={manualReviewRejectReason}
+                              onChange={(e) => setManualReviewRejectReason(e.target.value)}
+                              placeholder="Reason, e.g. account is in the father's name"
+                              rows={2}
+                            />
+                            <Button
+                              variant="destructive"
+                              className="w-full"
+                              disabled={rejectManualReviewMutation.isPending || manualReviewRejectReason.trim().length < 5}
+                              onClick={() => {
+                                const row = manualReviewDrawerRow;
+                                if (!row) return;
+                                if (!window.confirm(`Reject ${row.employee_code}'s bank account? They will be asked to submit their own account.`)) return;
+                                rejectManualReviewMutation.mutate(
+                                  { employeeId: row.employee_id, reason: manualReviewRejectReason.trim() },
+                                  { onSuccess: () => setManualReviewDrawerRow(null) },
+                                );
+                              }}
+                            >
+                              Reject and ask for their own account
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </>
                   )}
@@ -1697,19 +1895,44 @@ export default function PaymentDisbursalCenter() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <Button
-                    asChild
-                    disabled={!bankRunId || !summary?.gate_clear || !!sourceDown}
-                    variant={summary?.gate_clear ? "default" : "secondary"}
-                  >
-                    <a
-                      href={`/api/payroll/bank-readiness/payment-file?run_id=${bankRunId}`}
+                  {bankRunId && bankRun ? (
+                    <span
+                      className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700"
+                      title="The bank file can be generated once the run is approved"
                     >
-                      <Download className="h-4 w-4 mr-2" /> Download payment
-                      file
-                    </a>
+                      Run status: {bankRun.status}
+                    </span>
+                  ) : null}
+                  {/* Uses the same batch-recording export as the Salary Transfer controls below. The
+                      previous link went to /payment-file, which writes no batch and does not skip people
+                      already exported, so a second click could produce a second file with the same
+                      employees. This one records a batch and excludes anyone already exported. */}
+                  <Button
+                    disabled={!bankRunId || !summary?.gate_clear || !!sourceDown || transferGenerating}
+                    variant={summary?.gate_clear ? "default" : "secondary"}
+                    onClick={() => void downloadSalaryTransferFile(false)}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    {transferGenerating ? "Preparing file…" : "Download payment file"}
                   </Button>
                 </div>
+                {bankRunId ? (
+                  <PaymentJourney
+                    gateClear={summary?.gate_clear}
+                    runStatus={bankRun?.status}
+                    exportedCount={readyForDisbursalItems.length}
+                    confirmedCount={disbursedItems.length}
+                    rejectedCount={rejectedItems.length}
+                    itemsKnown={!transferItemsQ.isError}
+                  />
+                ) : null}
+                {!bankRunId ? (
+                  <p className="text-xs text-muted-foreground">Select a payroll run to enable the payment file.</p>
+                ) : sourceDown ? (
+                  <p className="text-xs text-amber-700">The bank-verification source is unavailable, so the file can't be generated right now.</p>
+                ) : summary && !summary.gate_clear ? (
+                  <p className="text-xs text-amber-700">The file is disabled until the unresolved bank-readiness items are cleared.</p>
+                ) : null}
                 <p className="text-xs text-muted-foreground">
                   Debit account, Pay Mod (I for ICICI beneficiaries, N otherwise) and every
                   column are computed server-side from the reference Salary Transfer File format.
@@ -2077,7 +2300,13 @@ export default function PaymentDisbursalCenter() {
                     </div>
                   );
                 })()}
-                {bankRunId && transferItems.length === 0 && !transferItemsQ.isLoading && (
+                {bankRunId && transferItemsQ.isError && (
+                  <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                    <span>Couldn't load the transfer items for this run{transferItemsQ.error instanceof Error && transferItemsQ.error.message ? `: ${transferItemsQ.error.message}` : ""}.</span>
+                    <Button size="sm" variant="outline" onClick={() => void transferItemsQ.refetch()}>Retry</Button>
+                  </div>
+                )}
+                {bankRunId && transferItems.length === 0 && !transferItemsQ.isLoading && !transferItemsQ.isError && (
                   <div className="rounded-md border p-6 text-center text-sm text-muted-foreground">
                     No transfer batches generated for this run yet.
                   </div>
@@ -2266,6 +2495,12 @@ export default function PaymentDisbursalCenter() {
 
                 {/* Status Tab */}
                 <TabsContent value="status">
+                  {disbError && (
+                    <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                      <span>Couldn't load the disbursal records{(disbErr as { message?: string } | null)?.message ? `: ${(disbErr as { message?: string }).message}` : ""}.</span>
+                      <Button size="sm" variant="outline" onClick={() => void refetchDisb()}>Retry</Button>
+                    </div>
+                  )}
                   <div className="rounded-md border overflow-auto mt-3">
                     <table className="w-full text-sm">
                       <thead className="bg-muted">
@@ -2340,7 +2575,7 @@ export default function PaymentDisbursalCenter() {
                                 {row.uploaded_at
                                   ? new Date(
                                       row.uploaded_at
-                                    ).toLocaleString()
+                                    ).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
                                   : "—"}
                               </td>
                             </tr>
@@ -2813,21 +3048,40 @@ export default function PaymentDisbursalCenter() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Finance sign-off required</DialogTitle>
+            <DialogTitle>
+              {breakGlassKind === "transfers"
+                ? "Salary transfers not confirmed"
+                : "Finance sign-off required"}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              This run has not been finance-approved yet. You can obtain
-              sign-off on the Sign-Off page, or — for a genuine emergency
-              only — supply a break-glass reason below. Break-glass must be
-              invoked by someone who neither prepared nor approved this run.
-            </p>
-            <a
-              href="/payroll/sign-off"
-              className="text-sm font-medium text-sky-700 underline underline-offset-2"
-            >
-              Go to Sign-Off →
-            </a>
+            {breakGlassKind === "transfers" ? (
+              <>
+                <p className="text-sm text-muted-foreground">{breakGlassDetail}</p>
+                <p className="text-sm text-muted-foreground">
+                  Marking the run disbursed now would record money as paid that the bank has not
+                  confirmed. Normally: import the bank's return file on the Salary Transfer tab and
+                  clear the rejected rows first. Only for a genuine emergency, supply a break-glass
+                  reason below. Break-glass must be invoked by someone who neither prepared nor
+                  approved this run, and is recorded in the audit trail.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  This run has not been finance-approved yet. You can obtain
+                  sign-off on the Sign-Off page, or — for a genuine emergency
+                  only — supply a break-glass reason below. Break-glass must be
+                  invoked by someone who neither prepared nor approved this run.
+                </p>
+                <a
+                  href="/payroll/sign-off"
+                  className="text-sm font-medium text-sky-700 underline underline-offset-2"
+                >
+                  Go to Sign-Off →
+                </a>
+              </>
+            )}
             <div>
               <label className="text-sm font-medium">
                 Break-glass reason
@@ -2837,7 +3091,7 @@ export default function PaymentDisbursalCenter() {
                 rows={3}
                 value={breakGlassReason}
                 onChange={(e) => setBreakGlassReason(e.target.value)}
-                placeholder="Why this run must be disbursed without sign-off, right now."
+                placeholder={breakGlassKind === "transfers" ? "Why this run must be disbursed with unconfirmed transfers, right now." : "Why this run must be disbursed without sign-off, right now."}
               />
             </div>
           </div>

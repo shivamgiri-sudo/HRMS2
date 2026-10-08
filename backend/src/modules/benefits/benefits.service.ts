@@ -172,9 +172,15 @@ export const benefitsService = {
   async listClaims(filters: {
     employeeId?: string;
     status?: string;
-  }): Promise<ReimbursementClaim[]> {
+  }, scope?: { sql: string; params: unknown[] }): Promise<ReimbursementClaim[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
+
+    // Branch scoping: the employee filter / status above can only narrow what the scope allows.
+    if (scope && scope.sql !== "1=1") {
+      conds.push(`(${scope.sql})`);
+      params.push(...scope.params);
+    }
 
     if (filters.employeeId) {
       conds.push("rc.employee_id = ?");
@@ -270,17 +276,19 @@ export const benefitsService = {
     return (rows as ReimbursementClaim[])[0];
   },
 
-  async claimStats(): Promise<{
+  async claimStats(scope?: { sql: string; params: unknown[] }): Promise<{
     total_submitted: number;
     total_approved: number;
     total_amount_approved: number;
   }> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) AS total_submitted,
-         SUM(CASE WHEN status IN ('approved', 'paid') THEN 1 ELSE 0 END) AS total_approved,
-         SUM(CASE WHEN status IN ('approved', 'paid') THEN amount ELSE 0 END) AS total_amount_approved
-       FROM reimbursement_claim`,
+         SUM(CASE WHEN rc.status = 'submitted' THEN 1 ELSE 0 END) AS total_submitted,
+         SUM(CASE WHEN rc.status IN ('approved', 'paid') THEN 1 ELSE 0 END) AS total_approved,
+         SUM(CASE WHEN rc.status IN ('approved', 'paid') THEN rc.amount ELSE 0 END) AS total_amount_approved
+       FROM reimbursement_claim rc
+       ${scope && scope.sql !== "1=1" ? `JOIN employees e ON e.id = rc.employee_id WHERE (${scope.sql})` : ""}`,
+      scope && scope.sql !== "1=1" ? scope.params : []
     );
     const row = (
       rows as {

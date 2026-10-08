@@ -120,10 +120,7 @@ export async function listInterventionCases(req: Request, res: Response) {
       tier: normalizeTier(req.query.tier),
       owner: normalizeOwner(req.query.owner),
       limit: clampLimit(req.query.limit),
-      weekStart: isValidDateOnly(req.query.weekStart)
-        ? req.query.weekStart
-        : null,
-      emp: buildInterventionEmployeeFilter(req.query, lob),
+      weekStart: isValidDateOnly(req.query.weekStart) ? req.query.weekStart : null, emp: buildInterventionEmployeeFilter(req.query, lob, (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope),
     };
     const { sql, params } = buildCasesQuery(q);
     const [rows] = await pool.query<Row[]>(sql, params);

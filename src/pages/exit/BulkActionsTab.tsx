@@ -86,28 +86,59 @@ export function BulkActionsTab({
   const handleBulkAction = async () => {
     if (!bulkAction || selected.size === 0) return;
     setProcessing(true);
+    const ids = Array.from(selected);
     let success = 0;
     let failed = 0;
+    // Why rows failed, so "0 succeeded, 5 failed" is explained instead of silent.
+    const reasons = new Map<string, number>();
+    const noteFailure = (msg: string) => reasons.set(msg, (reasons.get(msg) ?? 0) + 1);
 
-    for (const id of selected) {
-      try {
-        if (bulkAction === "generate_clearance") {
-          await hrmsApi.post(`/api/exit/${id}/clearance/generate`, {});
-        } else {
-          await hrmsApi.patch(`/api/exit/${id}/status`, {
-            status: bulkAction,
-            remarks: `Bulk action: ${bulkAction}`,
-          });
-        }
-        success++;
-      } catch {
-        failed++;
+    try {
+      if (bulkAction === "generate_clearance") {
+        // Small worker pool instead of one-at-a-time.
+        let next = 0;
+        const worker = async () => {
+          while (next < ids.length) {
+            const id = ids[next++];
+            try {
+              await hrmsApi.post(`/api/exit/${id}/clearance/generate`, {});
+              success++;
+            } catch (err) {
+              failed++;
+              noteFailure(err instanceof Error ? err.message : "Request failed");
+            }
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(8, ids.length) }, worker));
+      } else {
+        // One request for the whole selection; the server applies the same per-exit checks.
+        const res = await hrmsApi.post<{
+          success: boolean;
+          succeeded: number;
+          failed: number;
+          results: Array<{ id: string; ok: boolean; message: string }>;
+        }>("/api/exit/bulk-status", {
+          ids,
+          status: bulkAction,
+          remarks: `Bulk action: ${bulkAction}`,
+        });
+        success = res.succeeded;
+        failed = res.failed;
+        res.results.filter((r) => !r.ok).forEach((r) => noteFailure(r.message));
       }
+    } catch (err) {
+      failed = ids.length - success;
+      noteFailure(err instanceof Error ? err.message : "Request failed");
     }
 
+    const topReasons = Array.from(reasons.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([msg, n]) => `${n} × ${msg}`)
+      .join(" | ");
     toast({
       title: "Bulk action complete",
-      description: `${success} succeeded, ${failed} failed`,
+      description: `${success} succeeded, ${failed} failed${topReasons ? ` — ${topReasons}` : ""}`,
       variant: failed > 0 ? "destructive" : "default",
     });
     setSelected(new Set());

@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { isQualityServiceUnavailable, qualityRetry } from "@/hooks/useAgentQualityData";
 
 interface WeaknessCategory {
   category: string;
@@ -55,14 +56,15 @@ export function RealTimeGuidePanel({ refetchInterval = 30_000 }: Props) {
     queryKey: ["weakness-detail"],
     queryFn: () => hrmsApi.get("/api/agent/weakness-detail").then((r) => r.data?.data ?? r.data ?? []),
     staleTime: 60_000,
+    retry: qualityRetry(1),
   });
 
   const { data: liveScore, dataUpdatedAt } = useQuery<LiveNumbers>({
     queryKey: ["live-cq-score", "1d"],
     queryFn: () => hrmsApi.get("/api/agent/cq-score?daysBack=1").then((r) => r.data?.data ?? r.data),
-    refetchInterval,
+    refetchInterval: (query) => (isQualityServiceUnavailable(query.state.error) ? false : refetchInterval),
     staleTime: refetchInterval * 0.8,
-    retry: 1,
+    retry: qualityRetry(1),
   });
 
   const topWeaknesses = (weaknesses ?? [])

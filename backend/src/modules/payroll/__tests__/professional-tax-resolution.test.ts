@@ -24,8 +24,8 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 
 import {
-  resolveProfessionalTax,
-  buildStatutoryRow,
+  resolveProfessionalTax, buildStatutoryRow, getPtFromSlab,
+  isProfessionalTaxActiveForMonth, PT_REMOVED_FROM_MONTH,
 } from "../payrollCalculate.service.js";
 
 describe("professional tax is no longer resolved or applied (removed 2026-09-11)", () => {
@@ -111,5 +111,44 @@ describe("PF and ESIC parameters", () => {
     expect(buildStatutoryRow({ professional_tax: 200 }).professional_tax).toBe(
       0,
     );
+  });
+});
+
+describe("professional tax stays in force for months BEFORE the removal month", () => {
+  // MAS60236, 2026-08: db_bill deducts 200; a recalculation under the always-zero rule dropped it.
+  beforeEach(() => execute.mockReset());
+
+  it("removal starts with September 2026 payroll", () => {
+    expect(PT_REMOVED_FROM_MONTH).toBe("2026-09");
+    expect(isProfessionalTaxActiveForMonth("2026-08")).toBe(true);
+    expect(isProfessionalTaxActiveForMonth("2026-08-01")).toBe(true);
+    expect(isProfessionalTaxActiveForMonth("2025-12")).toBe(true);
+    expect(isProfessionalTaxActiveForMonth("2026-09")).toBe(false);
+    expect(isProfessionalTaxActiveForMonth("2026-09-30")).toBe(false);
+    expect(isProfessionalTaxActiveForMonth("2027-01")).toBe(false);
+    expect(isProfessionalTaxActiveForMonth(undefined)).toBe(false);
+  });
+
+  it("resolves a Gujarat slab for 2026-08", async () => {
+    execute.mockResolvedValueOnce([[{ pt_amount: 200 }]]);
+    await expect(resolveProfessionalTax("MAS60236", "Gujarat", 59140, "2026-08")).resolves.toBe(200);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("a state with no PT law is 0 for an earlier month", async () => {
+    execute.mockResolvedValueOnce([[]]).mockResolvedValueOnce([[]]);
+    await expect(resolveProfessionalTax("MAS1", "Uttar Pradesh", 30000, "2026-08")).resolves.toBe(0);
+  });
+
+  it("an earlier month with no branch state still refuses to guess", async () => {
+    await expect(resolveProfessionalTax("MAS9", null, 30000, "2026-08")).rejects.toThrow(/no state set/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("2026-09 and later never read the slab table", async () => {
+    await expect(resolveProfessionalTax("MAS60236", "Gujarat", 59140, "2026-09")).resolves.toBe(0);
+    await expect(getPtFromSlab("Gujarat", 59140, "2026-10")).resolves.toBe(0);
+    await expect(getPtFromSlab("Gujarat", 59140)).resolves.toBe(0);
+    expect(execute).not.toHaveBeenCalled();
   });
 });

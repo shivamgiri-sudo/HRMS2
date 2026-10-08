@@ -44,7 +44,8 @@ vi.mock("../../../shared/accessGuard.js", () => ({
 }));
 vi.mock("../../../shared/scopeAccess.js", () => ({
   hasAnyRole: mocks.hasAnyRole,
-  buildScopeWhereClause: vi.fn(async () => ({ sql: "1=1", params: [] })),
+  isOrgWideUser: (id: string) => mocks.hasAnyRole(id, 'super_admin', 'admin'),
+  buildScopeWhereClause: vi.fn(async () => ({ sql: '1=1', params: [] })),
 }));
 vi.mock("../../../shared/approvalEscalation.js", () => ({
   resolveEffectiveApprover: vi.fn(async () => ({ approverId: "emp-reviewer" })),

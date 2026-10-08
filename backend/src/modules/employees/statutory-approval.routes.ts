@@ -27,6 +27,7 @@ import {
 } from "../../shared/syncPiiEncryption.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { validateStatutoryFields } from "../../shared/statutoryFormat.js";
+import { buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 
 const router = Router();
 const h =
@@ -39,23 +40,29 @@ router.use(requireAuth);
 const REVIEWER_ROLES = ["admin", "super_admin", "hr"];
 
 // GET /api/statutory-change-requests/pending
-router.get(
-  "/pending",
-  requireRole(...REVIEWER_ROLES),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT pua.id, pua.employee_id, pua.old_values, pua.new_values, pua.status, pua.requested_at,
+router.get("/pending", requireRole(...REVIEWER_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  // Branch scoping: HR sees and decides only the change requests of employees inside its own
+  // branch / assignments. This used to list every branch's pending PAN / Aadhaar / UAN changes to
+  // any hr user. admin, super_admin and the other org-wide roles are unaffected.
+  const scope = await resolveUserBusinessScope(req.authUser!);
+  const scoped = buildEmployeeScopeCondition(scope, {
+    employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", lobId: "e.lob_id",
+    departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id",
+  });
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT pua.id, pua.employee_id, pua.old_values, pua.new_values, pua.status, pua.requested_at,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
             e.employee_code, b.branch_name
        FROM profile_update_approval pua
        JOIN employees e ON e.id = pua.employee_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
       WHERE pua.request_type = 'statutory_details' AND pua.status = 'pending'
+        AND (${scoped.sql})
       ORDER BY pua.requested_at ASC`,
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    scoped.params,
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 // Never surface a raw PAN/Aadhaar/UAN/ESI number in an audit-log entry.
 // old_values is now nested ({ employees: {...}, employee_statutory_info: {...} }
@@ -65,18 +72,8 @@ router.get(
 // nested object so both shapes get the same sensitive-key masking, instead of
 // only matching flat top-level keys and silently passing PAN/Aadhaar through
 // unmasked for the nested case.
-const STATUTORY_SENSITIVE_KEYS = [
-  "pan_number",
-  "aadhaar_id",
-  "aadhaar_number",
-  "uan_number",
-  "esi_number",
-  "esic_number",
-  "epf_number",
-];
-function maskStatutoryValues(
-  values: Record<string, any> | undefined | null,
-): Record<string, unknown> {
+const STATUTORY_SENSITIVE_KEYS = ["pan_number", "aadhaar_id", "aadhaar_number", "uan_number", "esi_number", "esic_number", "epf_number"];
+export function maskStatutoryValues(values: Record<string, any> | undefined | null): Record<string, unknown> {
   if (!values) return {};
   const mask = (v: unknown) =>
     v == null || v === ""
@@ -109,13 +106,30 @@ router.patch(
       note?: string;
     };
 
-    if (!["approved", "rejected"].includes(decision)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "decision must be 'approved' or 'rejected'",
-        });
+  if (!["approved", "rejected"].includes(decision)) {
+    return res.status(400).json({ success: false, message: "decision must be 'approved' or 'rejected'" });
+  }
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [rows] = await connection.execute<RowDataPacket[]>(
+      `SELECT * FROM profile_update_approval WHERE id = ? AND request_type = 'statutory_details' LIMIT 1 FOR UPDATE`,
+      [req.params.id]
+    );
+    const rec = rows[0] as any;
+    if (!rec) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, message: "Request not found" });
+    }
+    if (!(await canViewEmployee(req.authUser!, String(rec.employee_id)))) {
+      await connection.rollback();
+      return res.status(403).json({ success: false, message: "Forbidden: this employee is outside your branch / assigned scope" });
+    }
+    if (rec.status !== "pending") {
+      await connection.rollback();
+      return res.status(409).json({ success: false, message: `Request already ${rec.status}` });
     }
 
     const connection = await db.getConnection();

@@ -32,6 +32,25 @@ export interface CosecRegistrationResult {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Columns differ between COSEC versions/tables (e.g. some installs have no
+ * ORGID on Mx_*Mst), and a hard-coded column makes every insert fail with
+ * "Invalid column name". Read the real column list and only use what exists.
+ */
+export async function getCosecColumns(pool: sql.ConnectionPool, table: string): Promise<Set<string>> {
+  const rows = await cosecQuery<Array<{ COLUMN_NAME: string }>>(
+    pool,
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @t`,
+    { t: { type: sql.NVarChar(128), value: table } },
+  );
+  return new Set(rows.map((r) => String(r.COLUMN_NAME).toUpperCase()));
+}
+
+/** Keep only entries whose column exists in the target table (case-insensitive). */
+export function filterByExistingColumns<T extends { col: string }>(entries: T[], existing: Set<string>): T[] {
+  return entries.filter((e) => existing.has(e.col.toUpperCase()));
+}
+
 async function resolveOrInsertCosecMaster(
   pool: sql.ConnectionPool,
   table: string,
@@ -49,12 +68,13 @@ async function resolveOrInsertCosecMaster(
   if (rows.length) return rows[0][idCol];
 
   // Insert a minimal master row and return the generated identity.
-  const extraCols = Object.keys(extra)
-    .map((k) => k)
-    .join(", ");
-  const extraVals = Object.keys(extra)
-    .map((k) => `@${k}`)
-    .join(", ");
+  const existing = await getCosecColumns(pool, table);
+  const extraKeys = filterByExistingColumns(Object.keys(extra).map((col) => ({ col })), existing).map((e) => e.col);
+  for (const k of Object.keys(extra)) {
+    if (!extraKeys.includes(k)) delete extra[k];
+  }
+  const extraCols = extraKeys.join(", ");
+  const extraVals = extraKeys.map((k) => `@${k}`).join(", ");
   const colList = extraCols ? `, ${extraCols}` : "";
   const valList = extraVals ? `, ${extraVals}` : "";
 
@@ -225,16 +245,30 @@ export async function registerEmployeeInCosec(
       inp("joinDt", sql.DateTime, joinDt);
       inp("intRef", sql.NVarChar(50), employeeCode);
 
-      await req.query(`
-        INSERT INTO Mx_UserMst
-          (UserID, Name, FullName, FirstName, LastName,
-           ORGID, BRCID, DPTID, DSGID, SGID, CTGID, SECID,
-           JoinDT, IntegrationRef, UserACTEnbl, dltdflg, CreationDT)
-        VALUES
-          (@uid, @name, @fullName, @firstName, @lastName,
-           @orgId, @brcId, @dptId, @dsgId, @sgId, @ctgId, @secId,
-           @joinDt, @intRef, 1, 0, GETDATE())
-      `);
+      const userCols = await getCosecColumns(pool, "Mx_UserMst");
+      const candidates = [
+        { col: "UserID", val: "@uid" },
+        { col: "Name", val: "@name" },
+        { col: "FullName", val: "@fullName" },
+        { col: "FirstName", val: "@firstName" },
+        { col: "LastName", val: "@lastName" },
+        { col: "ORGID", val: "@orgId" },
+        { col: "BRCID", val: "@brcId" },
+        { col: "DPTID", val: "@dptId" },
+        { col: "DSGID", val: "@dsgId" },
+        { col: "SGID", val: "@sgId" },
+        { col: "CTGID", val: "@ctgId" },
+        { col: "SECID", val: "@secId" },
+        { col: "JoinDT", val: "@joinDt" },
+        { col: "IntegrationRef", val: "@intRef" },
+        { col: "UserACTEnbl", val: "1" },
+        { col: "dltdflg", val: "0" },
+        { col: "CreationDT", val: "GETDATE()" },
+      ];
+      const use = filterByExistingColumns(candidates, userCols);
+      await req.query(
+        `INSERT INTO Mx_UserMst (${use.map((c) => c.col).join(", ")}) VALUES (${use.map((c) => c.val).join(", ")})`,
+      );
     } else {
       // Update name, branch, dept, designation on re-registration
       const req = pool.request();

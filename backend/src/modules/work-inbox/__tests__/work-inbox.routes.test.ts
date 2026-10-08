@@ -16,17 +16,20 @@ vi.mock("../../../shared/roleResolver.js", () => ({
 }));
 
 const mockAssertAccess = vi.fn().mockResolvedValue(undefined);
+const mockAssertRead = vi.fn().mockResolvedValue(undefined);
 const mockGetContext = vi.fn();
 const mockConfirm = vi.fn();
 const mockReject = vi.fn();
 
 vi.mock("../work-inbox.service.js", async () => {
-  const actual = await vi.importActual<
-    typeof import("../work-inbox.service.js")
-  >("../work-inbox.service.js");
+  const actual = await vi.importActual<typeof import("../work-inbox.service.js")>(
+    "../work-inbox.service.js",
+  );
   return {
     ...actual,
     assertWorkItemAccess: (...args: unknown[]) => mockAssertAccess(...args),
+    // awol-context now authorises through assertWorkItemReadAccess (branch scoping, owner ruling 2026-10-01)
+    assertWorkItemReadAccess: (...args: unknown[]) => mockAssertRead(...args),
   };
 });
 vi.mock("../awol-confirm.service.js", () => ({
@@ -44,6 +47,7 @@ app.use("/api/work-inbox", workInboxRouter);
 describe("AWOL confirm routes", () => {
   beforeEach(() => {
     mockAssertAccess.mockClear();
+    mockAssertRead.mockClear();
     mockGetContext.mockReset();
     mockConfirm.mockReset();
     mockReject.mockReset();
@@ -58,6 +62,14 @@ describe("AWOL confirm routes", () => {
     const res = await request(app).get("/api/work-inbox/wi-1/awol-context");
     expect(res.status).toBe(200);
     expect(res.body.data.lastWorkedDate).toBe("2026-09-10");
+    expect(mockAssertRead).toHaveBeenCalledWith("user-1", "wi-1");
+  });
+
+  it("GET /:id/awol-context is refused when the read check refuses (was: no authorization at all)", async () => {
+    mockAssertRead.mockRejectedValueOnce(Object.assign(new Error("Forbidden"), { statusCode: 403 }));
+    const res = await request(app).get("/api/work-inbox/wi-1/awol-context");
+    expect(res.status).toBe(403);
+    expect(mockGetContext).not.toHaveBeenCalled();
   });
 
   it("POST /:id/awol/confirm creates the exit and returns its id", async () => {

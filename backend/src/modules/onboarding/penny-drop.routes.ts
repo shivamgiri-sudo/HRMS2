@@ -6,17 +6,31 @@ import {
 } from "express";
 import { createHmac, timingSafeEqual } from "crypto";
 import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { resolveAtsBranchScope, checkCandidateScope, OUT_OF_SCOPE_MESSAGE } from "../ats-extensions/ats-ext-scope.js";
 import { PennyDropService } from "./penny-drop.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { env } from "../../config/env.js";
 
 const router = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: Request, res: Response, next: NextFunction) =>
-    fn(req, res).catch(next);
+
+/** Staff roles that may open candidate onboarding admin views (further limited to their branch below). */
+const ADMIN_VIEW_ROLES = [
+  "super_admin", "admin", "ceo", "coo", "cfo", "hr", "hr_admin", "hr_head", "ho_hr", "recruitment_hr", "recruiter",
+  "payroll_hr", "payroll", "payroll_head", "finance", "finance_head", "accounts_head", "branch_head",
+] as const;
+
+/** 403/404 unless the candidate is inside the caller's branch / assigned scope (org-wide roles pass). */
+async function candidateInCallerScope(req: AuthenticatedRequest, res: Response, candidateId: string): Promise<boolean> {
+  const verdict = await checkCandidateScope(await resolveAtsBranchScope(req.authUser!.id), candidateId);
+  if (verdict === "ok") return true;
+  if (verdict === "not_found") res.status(404).json({ success: false, error: "Candidate not found" });
+  else res.status(403).json({ success: false, error: OUT_OF_SCOPE_MESSAGE });
+  return false;
+}
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
 // ── Candidate endpoints (token-based for onboarding flow) ──
 
@@ -202,8 +216,10 @@ router.post(
 router.get(
   "/candidate/:candidateId",
   requireAuth,
+  requireRole(...ADMIN_VIEW_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { candidateId } = req.params;
+    if (!(await candidateInCallerScope(req, res, candidateId))) return;
 
     try {
       const [rows] = await db.execute<RowDataPacket[]>(

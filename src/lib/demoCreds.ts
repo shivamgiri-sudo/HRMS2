@@ -37,7 +37,7 @@ const ALL_PAGES = [
   "INTEGRATION_HUB","CLIENT_MASTER","PAYROLL_PAYSLIPS","TAX_DECLARATION","FULL_FINAL",
   "STATUTORY_CONFIG","KPI_CONFIG","OPERATIONS_KPI","PORTAL_DATA_MANAGER","PROCESS_CONFIG",
   "LEAVE_TYPES","RTA_BOARD",
-  "MY_PROFILE","ATTENDANCE_REGULARIZATION","MY_EXPENSES","EXPENSE_CREATE","MY_KPI",
+  "MY_PROFILE","ATTENDANCE_REGULARIZATION","MY_EXPENSES","EXPENSE_CREATE","MY_KPI","KPI_PERFORMANCE",
   "RESIGNATION_MY_REQUEST","DPDP_WITHDRAWAL",
   // Routed and referenced but previously absent here and from page_catalog (see 604), so
   // no role could be granted them and the routes were unreachable.
@@ -62,6 +62,8 @@ const ALL_PAGES = [
   // without it here the Process KPI Dashboard is unreachable under demo mode.
   "PROCESS_KPI_DASHBOARD",
   "PROCESS_DATA_SOURCE",
+  "PROCESS_DASHBOARD",
+  "PROCESS_DASHBOARD_ADMIN",
   "KPI_STUDIO",
   "DASHBOARD_BUILDER",
   // Same gap as the others above, one entry further on: PROCESS_OPERATIONS was

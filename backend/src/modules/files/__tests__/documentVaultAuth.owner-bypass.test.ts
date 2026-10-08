@@ -12,13 +12,15 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { findByStoredFilename, logDocumentAccess, isHoldActive } = vi.hoisted(
-  () => ({
-    findByStoredFilename: vi.fn(),
-    logDocumentAccess: vi.fn(),
-    isHoldActive: vi.fn(),
-  }),
-);
+const { findByStoredFilename, logDocumentAccess, isHoldActive, canViewEmployee, dbExecute } = vi.hoisted(() => ({
+  dbExecute: vi.fn(),
+  findByStoredFilename: vi.fn(),
+  logDocumentAccess: vi.fn(),
+  isHoldActive: vi.fn(),
+  canViewEmployee: vi.fn(),
+}));
+vi.mock("../../../shared/enterpriseScope.js", () => ({ canViewEmployee }));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 
 vi.mock("../../document-vault/documentVault.service.js", () => ({
   findByStoredFilename,
@@ -54,6 +56,8 @@ describe("authorizeDocumentAccess owner bypass", () => {
     findByStoredFilename.mockReset();
     logDocumentAccess.mockReset().mockResolvedValue(undefined);
     isHoldActive.mockReset().mockResolvedValue(null);
+    canViewEmployee.mockReset().mockResolvedValue(true);
+    dbExecute.mockReset().mockResolvedValue([[]]);
   });
 
   it("denies the owning employee when only actorUserId (not actorEmployeeId) is passed — the pre-fix shape", async () => {
@@ -73,8 +77,37 @@ describe("authorizeDocumentAccess owner bypass", () => {
     expect(result.reasonCode).toBe("INSUFFICIENT_ROLE_FOR_ACCESS_LEVEL");
   });
 
-  it("allows the owning employee to view their own pii document once actorEmployeeId is supplied", async () => {
+  it("denies the owner their own uploaded employee-document (HR / payroll open it, not the employee)", async () => {
+    findByStoredFilename.mockResolvedValue(PII_ITEM); // category: "employee-documents"
+
+    for (const action of ["view", "download"] as const) {
+      const result = await authorizeDocumentAccess({
+        actorUserId: USER_ID, actorEmployeeId: EMPLOYEE_ID, actorRole: "employee", storedFilename: "abc.pdf", action,
+      });
+      expect(`${action}: ${result.allowed} ${result.reasonCode}`).toBe(`${action}: false INSUFFICIENT_ROLE_FOR_ACCESS_LEVEL`);
+    }
+  });
+
+  it("allows the owner to open their own tax paperwork (Form 16) even in the employee-documents category", async () => {
     findByStoredFilename.mockResolvedValue(PII_ITEM);
+    dbExecute.mockResolvedValue([[{ doc_type: "form_16" }]]);
+    const result = await authorizeDocumentAccess({
+      actorUserId: USER_ID, actorEmployeeId: EMPLOYEE_ID, actorRole: "employee", storedFilename: "abc.pdf", action: "download",
+    });
+    expect(result.allowed).toBe(true);
+  });
+
+  it("a failed tax-file lookup never widens access (fails closed)", async () => {
+    findByStoredFilename.mockResolvedValue(PII_ITEM);
+    dbExecute.mockRejectedValue(new Error("db down"));
+    const result = await authorizeDocumentAccess({
+      actorUserId: USER_ID, actorEmployeeId: EMPLOYEE_ID, actorRole: "employee", storedFilename: "abc.pdf", action: "download",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  it("allows the owning employee to view their own pii document in an owner-readable category once actorEmployeeId is supplied", async () => {
+    findByStoredFilename.mockResolvedValue({ ...PII_ITEM, category: "payroll" });
 
     const result = await authorizeDocumentAccess({
       actorUserId: USER_ID,
@@ -103,8 +136,9 @@ describe("authorizeDocumentAccess owner bypass", () => {
     expect(result.reasonCode).toBe("INSUFFICIENT_ROLE_FOR_ACCESS_LEVEL");
   });
 
-  it("hr can still access a pii document they don't own, independent of the owner bypass", async () => {
+  it("hr can still access a pii document they don't own when the owner is inside their branch", async () => {
     findByStoredFilename.mockResolvedValue(PII_ITEM);
+    canViewEmployee.mockResolvedValue(true);
 
     const result = await authorizeDocumentAccess({
       actorUserId: "some-hr-user",
@@ -114,5 +148,62 @@ describe("authorizeDocumentAccess owner bypass", () => {
     });
 
     expect(result.allowed).toBe(true);
+    expect(canViewEmployee).toHaveBeenCalledWith({ id: "some-hr-user" }, EMPLOYEE_ID);
+  });
+
+  it("hr is refused a pii or payroll document whose owner is in another branch (branch scoping)", async () => {
+    canViewEmployee.mockResolvedValue(false);
+    for (const level of ["pii", "payroll"] as const) {
+      findByStoredFilename.mockResolvedValue({ ...PII_ITEM, access_level: level });
+      const result = await authorizeDocumentAccess({
+        actorUserId: "some-hr-user", actorRole: "hr", storedFilename: "abc.pdf", action: "view",
+      });
+      expect(result.allowed).toBe(false);
+      expect(result.reasonCode).toBe("OUTSIDE_BRANCH_SCOPE");
+    }
+  });
+
+  it("admin is branch-scoped like hr (owner ruling: admin sees its own branch / assignments)", async () => {
+    canViewEmployee.mockResolvedValue(false);
+    findByStoredFilename.mockResolvedValue(PII_ITEM);
+    const result = await authorizeDocumentAccess({ actorUserId: "u", actorRole: "admin", storedFilename: "abc.pdf", action: "view" });
+    expect(result.reasonCode).toBe("OUTSIDE_BRANCH_SCOPE");
+  });
+
+  it("org-wide roles and the DPO are never branch-checked", async () => {
+    canViewEmployee.mockResolvedValue(false);
+    findByStoredFilename.mockResolvedValue(PII_ITEM);
+    for (const role of ["super_admin", "ceo", "dpo"]) {
+      const result = await authorizeDocumentAccess({
+        actorUserId: "u", actorRole: role, storedFilename: "abc.pdf", action: "view",
+      });
+      expect(`${role}: ${result.allowed} ${result.reasonCode}`).toBe(`${role}: true ALLOWED`);
+    }
+    expect(canViewEmployee).not.toHaveBeenCalled();
+  });
+
+  it("admin is branch-checked like hr (no longer org-wide, owner ruling 2026-10-01)", async () => {
+    findByStoredFilename.mockResolvedValue(PII_ITEM);
+    canViewEmployee.mockResolvedValue(false);
+    const refused = await authorizeDocumentAccess({
+      actorUserId: "some-admin-user", actorRole: "admin", storedFilename: "abc.pdf", action: "view",
+    });
+    expect(refused.allowed).toBe(false);
+    expect(refused.reasonCode).toBe("OUTSIDE_BRANCH_SCOPE");
+    expect(canViewEmployee).toHaveBeenCalledWith({ id: "some-admin-user" }, EMPLOYEE_ID);
+    canViewEmployee.mockResolvedValue(true);
+    const allowed = await authorizeDocumentAccess({
+      actorUserId: "some-admin-user", actorRole: "admin", storedFilename: "abc.pdf", action: "view",
+    });
+    expect(allowed.allowed).toBe(true);
+  });
+
+  it("a canViewEmployee failure fails closed", async () => {
+    canViewEmployee.mockRejectedValue(new Error("db down"));
+    findByStoredFilename.mockResolvedValue(PII_ITEM);
+    const result = await authorizeDocumentAccess({
+      actorUserId: "some-hr-user", actorRole: "hr", storedFilename: "abc.pdf", action: "view",
+    });
+    expect(result.allowed).toBe(false);
   });
 });

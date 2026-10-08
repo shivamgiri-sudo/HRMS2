@@ -278,18 +278,24 @@ export async function getDataQualityReport(
     throw err;
   }
 
+  // Branch scoping: hr (not org-wide) is pinned to its own branch; a foreign ?branch_id is refused.
+  if (!ctx.isOrgWide && !ctx.isSuperAdmin) {
+    if (!ctx.branchId || (scopeFilter?.branchId && scopeFilter.branchId !== ctx.branchId)) {
+      const err = new Error("Forbidden: data quality is limited to your own branch") as Error & { statusCode?: number };
+      err.statusCode = 403;
+      throw err;
+    }
+    return validateOrgChartDataQuality({ ...scopeFilter, branchId: ctx.branchId });
+  }
   return validateOrgChartDataQuality(scopeFilter);
 }
 
 /**
  * Check if user can access a specific employee.
  */
-async function canAccessEmployee(
-  ctx: UserOrgContext,
-  employeeId: string,
-): Promise<boolean> {
-  // Super admin / admin / HR / CEO can see all
-  if (ctx.isSuperAdmin || ctx.isAdmin || ctx.isHr || ctx.isCeo) {
+async function canAccessEmployee(ctx: UserOrgContext, employeeId: string): Promise<boolean> {
+  // Org-wide roles (super_admin, ceo ...) can see all. hr and admin are branch-scoped (owner ruling 2026-10-01).
+  if (ctx.isOrgWide || ctx.isSuperAdmin || ctx.isCeo) {
     return true;
   }
 
@@ -308,13 +314,13 @@ async function canAccessEmployee(
 
   const emp = rows[0] as any;
 
-  // Branch head: same branch
-  if (ctx.isBranchHead && ctx.branchId === emp.branch_id) {
+  // Branch head / hr / admin: same branch
+  if ((ctx.isBranchHead || ctx.isHr || ctx.isAdmin) && ctx.branchId && ctx.branchId === emp.branch_id) {
     return true;
   }
 
   // Process manager / WFM: same process
-  if ((ctx.isProcessManager || ctx.isWfm) && ctx.processId === emp.process_id) {
+  if ((ctx.isProcessManager || ctx.isWfm) && ctx.processId === emp.process_id && ctx.branchId && ctx.branchId === emp.branch_id) {
     return true;
   }
 

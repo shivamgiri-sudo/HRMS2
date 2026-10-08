@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildShiftWindowInfo,
   classifyOperationsNetLogin,
+  dialerReportDates,
   isCrossMidnightShift,
   nextIstDate,
 } from "../attendance-engine.service.js";
@@ -52,5 +53,12 @@ describe("attendance engine night-shift helpers", () => {
       status: "absent",
       lwpValue: 1,
     });
+  });
+
+  it("reads dialler minutes from the attendance date only, even for a night shift", () => {
+    const night = buildShiftWindowInfo("2026-09-05", "21:00:00", "06:00:00");
+    expect(night.isNightShift).toBe(true);
+    expect(dialerReportDates("2026-09-05", night)).toEqual(["2026-09-05"]);
+    expect(dialerReportDates("2026-09-05")).toEqual(["2026-09-05"]);
   });
 });

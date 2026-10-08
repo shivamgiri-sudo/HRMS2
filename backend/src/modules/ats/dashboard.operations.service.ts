@@ -1,16 +1,6 @@
-import { createSwrCache } from "./dashboard.cache.js";
-import {
-  BRANCH_EXPR,
-  LEAD,
-  num,
-  q,
-  safe,
-} from "./dashboard.overview.service.js";
-import {
-  branchDisplay,
-  recruiterNamer,
-  reportingScope,
-} from "./dashboard.scope.js";
+import { createSwrCache } from './dashboard.cache.js';
+import { BRANCH_EXPR, LEAD, num, q, safe } from './dashboard.overview.service.js';
+import { branchDisplay, recruiterNamer, recruiterNameSql, reportingScope } from './dashboard.scope.js';
 
 /** Live operations view: today's queue, SLA history, recruiter capacity and recoverable candidates. */
 
@@ -40,17 +30,10 @@ async function compute() {
         q<Record<string, number>>(
           `SELECT COUNT(*) arrived, SUM(status='Selected') selected, SUM(status='Rejected') rejected, SUM(status='No Show') no_show,
               SUM(status IN (${ph(OPEN)})) waiting
-       FROM ats_candidate WHERE active_status = 1 AND ${reportingScope("ats_candidate")} AND status <> ? AND created_at >= CURDATE()`,
-          [...OPEN, LEAD],
-        ),
-      [],
-    ),
-    safe(
-      "queue",
-      () =>
-        q<Record<string, string | number | null>>(
-          `SELECT c.id, c.candidate_code code, c.full_name name, c.status, c.current_stage stage, c.applied_for_process process,
-              ${BRANCH_EXPR.replace(/\b(branch_display_name|applied_for_branch)\b/g, "c.$1")} branch, COALESCE(NULLIF(c.recruiter_name,''),'Unassigned') recruiter,
+       FROM ats_candidate WHERE active_status = 1 AND ${reportingScope('ats_candidate')} AND status <> ? AND created_at >= CURDATE()`, [...OPEN, LEAD]), []),
+    safe('queue', () => q<Record<string, string | number | null>>(
+      `SELECT c.id, c.candidate_code code, c.full_name name, c.status, c.current_stage stage, c.applied_for_process process,
+              ${BRANCH_EXPR.replace(/\b(branch_display_name|applied_for_branch)\b/g, 'c.$1')} branch, COALESCE(${recruiterNameSql('c')},'Unassigned') recruiter,
               c.created_at arrival, TIMESTAMPDIFF(MINUTE, c.created_at, NOW()) wait_min,
               (SELECT t.token_number FROM ats_queue_token t WHERE t.candidate_id = c.id ORDER BY t.created_at DESC LIMIT 1) token
        FROM ats_candidate c WHERE c.active_status = 1 AND ${reportingScope("c")} AND c.created_at >= CURDATE() AND c.status IN (${ph(OPEN)})

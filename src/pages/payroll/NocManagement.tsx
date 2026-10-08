@@ -13,6 +13,7 @@ import {
 import { DashboardLayout } from "../../components/layout/DashboardLayout";
 import { hrmsApi } from "../../lib/hrmsApi";
 import { useWorkforceAccess } from "../../hooks/useUserRole";
+import { useApprovalFocus } from "../../hooks/useApprovalFocus";
 
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -302,6 +303,7 @@ export default function NocManagement() {
   useEffect(() => {
     if (isHeadPayroll) loadNocs(statusFilter);
   }, [statusFilter, isHeadPayroll, loadNocs]);
+  useApprovalFocus(isHeadPayroll && !nocLoading && nocs.length > 0);
 
   // ---------------------------------------------------------------------------
   // Validate action
@@ -403,7 +405,7 @@ export default function NocManagement() {
           </div>
         </div>
 
-        <Tabs defaultValue={isBranchPayroll ? "upload" : "validate"}>
+        <Tabs defaultValue={isHeadPayroll && new URLSearchParams(window.location.search).has("approvalId") ? "validate" : isBranchPayroll ? "upload" : "validate"}>
           <TabsList>
             {isBranchPayroll && (
               <TabsTrigger value="upload">Upload NOC</TabsTrigger>
@@ -743,7 +745,7 @@ export default function NocManagement() {
                     )}
                     {!nocLoading &&
                       nocs.map((noc) => (
-                        <TableRow key={noc.id}>
+                        <TableRow key={noc.id} data-approval-id={noc.id}>
                           <TableCell>
                             <div className="font-medium text-sm">
                               {noc.employee_name}

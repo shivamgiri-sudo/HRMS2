@@ -2,6 +2,7 @@ import { env } from "../../config/env.js";
 import { withWorkerLock, recordWorkerRun } from "../../workers/worker-utils.js";
 import { attendanceReconciliationService } from "./attendance-reconciliation.service.js";
 import { runAttendanceMismatchBranchDigest } from "./attendance-mismatch-branch-digest.service.js";
+import { resolveFilledGaps } from "./attendance-heal.service.js";
 
 const WORKER_NAME = "ncosec-attendance-reconciliation";
 
@@ -47,6 +48,14 @@ async function execute() {
     console.log(
       `[${WORKER_NAME}] from=${result.from} to=${result.to} issues=${result.detectedIssues} resolved=${result.resolvedIssues} autoFix=${result.autoFix.status}`,
     );
+    // Close "missing attendance record" items whose record now exists, whatever their age (the audit window
+    // is only 7 days, so older ones could never clear themselves).
+    try {
+      const closed = await resolveFilledGaps();
+      if (closed > 0) console.log(`[${WORKER_NAME}] closed ${closed} filled gap item(s)`);
+    } catch (error) {
+      console.error(`[${WORKER_NAME}] closing filled gaps failed:`, error instanceof Error ? error.message : String(error));
+    }
     // Follow-up step in the same run: digest the *currently* open backlog (not just what
     // this run just wrote) into one Work Inbox item per branch. Isolated in its own
     // try/catch so a digest failure never turns a successful reconciliation run into a

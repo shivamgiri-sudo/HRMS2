@@ -65,6 +65,7 @@ interface CertificateData {
   annual_ctc: number | null;
   period_from: string | null;
   period_to: string | null;
+  period_month_count: number | null;
   addressee: string;
   purpose: string;
   body_text: string;
@@ -121,64 +122,185 @@ function formatDt(val: string | undefined | null): string {
 // ---------------------------------------------------------------------------
 
 function CertificatePreview({ data }: { data: CertificateData }) {
+  // Check if this is a period-based (yearly) certificate
+  const isPeriodCertificate = data.period_from && data.period_to && data.period_month_count;
+
+  // For period certificates, basic_salary and gross_salary are already totals from backend
+  // For monthly certificates, they are single month values
+  const basicValue = data.basic_salary ?? 0;
+
+  // Format salary breakdown (backend provides period totals when period_from/to specified)
+  const salaryComponents = [
+    { label: "Basic", value: basicValue },
+    { label: "HRA", value: Math.round(basicValue * 0.44) }, // 44% of basic
+    { label: "Conveyance", value: Math.round(basicValue * 0.10) }, // 10%
+    { label: "Bonus", value: Math.round(basicValue * 0.083) }, // ~8.3%
+    { label: "Portfolio Allowance", value: Math.round(basicValue * 0.083) },
+    { label: "Incentive", value: 0 }, // Variable
+  ];
+
+  const totalGross = salaryComponents.reduce((sum, comp) => sum + comp.value, 0);
+
   return (
     <div
       id="cert-print-area"
-      className="bg-white border border-slate-200 rounded-lg p-8 max-w-2xl mx-auto shadow-sm print:shadow-none print:border-0"
+      className="bg-white border border-slate-200 rounded-lg p-8 max-w-3xl mx-auto shadow-sm print:shadow-none print:border-0 print:p-12"
     >
-      {/* Company Header */}
-      <div className="text-center border-b border-slate-300 pb-5 mb-6">
-        <div className="flex items-center justify-center gap-2 mb-1">
-          <Building2 className="h-6 w-6 text-blue-700 print:hidden" />
-          <h1 className="text-xl font-bold text-slate-900">{data.company_name}</h1>
+      {/* MAS Letterhead */}
+      <div className="border-b-2 border-slate-800 pb-4 mb-6">
+        <div className="flex items-start gap-4">
+          {/* Logo */}
+          <img
+            src="/mcn-logo.png"
+            alt="MAS Callnet India"
+            className="h-16 w-auto object-contain"
+          />
+
+          {/* Company Details */}
+          <div className="flex-1">
+            <h1 className="text-xl font-bold text-slate-900 mb-1">Mas Callnet India Pvt. Ltd.</h1>
+            <p className="text-xs text-slate-700 leading-relaxed">
+              <span className="font-semibold">CIN No.:</span> U74899DL1990PTC038798<br />
+              <span className="font-semibold">Registered Office:</span> 102/C-1, Kanchan House, Karampura Commercial Complex,<br />
+              Karampura New Delhi-110015, India<br />
+              <span className="font-semibold">Tel.:</span> 011-91-61105550 |
+              <span className="font-semibold"> E-mail:</span> care@teammas.in |
+              <span className="font-semibold"> Web:</span> www.teammas.in
+            </p>
+          </div>
         </div>
-        <p className="text-sm text-slate-500">HR Department</p>
       </div>
 
-      {/* Meta */}
-      <div className="flex justify-between text-sm text-slate-600 mb-6">
-        <span>
-          <span className="font-medium">Date:</span> {data.issue_date}
-        </span>
-        {(data.period_from || data.period_to) && (
-          <span>
-            <span className="font-medium">Period:</span>{" "}
-            {data.period_from ?? "—"} to {data.period_to ?? "—"}
-          </span>
-        )}
+      {/* Date */}
+      <div className="text-right text-sm text-slate-700 mb-6">
+        <span className="font-semibold">Date:</span> {new Date(data.issue_date).toLocaleDateString('en-GB', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric'
+        })}
       </div>
 
       {/* Addressee */}
       <div className="mb-6">
-        <p className="text-sm font-medium text-slate-700">{data.addressee}</p>
+        <p className="text-sm font-bold text-slate-900 uppercase tracking-wide">{data.addressee}</p>
       </div>
 
-      {/* Title */}
-      <div className="text-center mb-6">
-        <h2 className="text-base font-bold uppercase tracking-widest text-slate-800 underline">
-          {templateLabel(data.template)}
-        </h2>
-      </div>
+      {/* Certificate Body */}
+      <div className="mb-6">
+        <p className="text-sm leading-relaxed text-slate-800">
+          This is to certify that <span className="font-semibold">{data.employee_name}</span>
+          {data.designation && <>, {data.designation}</>}
+          {data.branch_name && <>, working at {data.branch_name}</>}.
+        </p>
 
-      {/* Body */}
-      <div className="text-sm leading-relaxed text-slate-700 mb-8 whitespace-pre-wrap">
-        {data.body_text}
+        {/* Period-specific content */}
+        {data.template === "salary" && data.period_from && data.period_to && (
+          <div className="mt-4">
+            <p className="text-sm text-slate-800 mb-3">
+              Total Income for the period{" "}
+              <span className="font-semibold">
+                {new Date(data.period_from).toLocaleDateString('en-IN')} to {new Date(data.period_to).toLocaleDateString('en-IN')}
+              </span>{" "}
+              is <span className="font-semibold">Rs. {(data.gross_salary ?? totalGross).toLocaleString('en-IN')}/-</span>
+              {" "}({numberToWords(data.gross_salary ?? totalGross)}).
+            </p>
+
+            {/* Salary Breakdown Table */}
+            <div className="my-4 text-sm">
+              <p className="font-semibold mb-2">Details as per below:</p>
+              <table className="w-full border border-slate-300">
+                <tbody>
+                  {salaryComponents.map((comp, idx) => (
+                    <tr key={idx} className="border-b border-slate-300 last:border-b-2 last:border-slate-800 last:font-bold">
+                      <td className="px-3 py-1.5 border-r border-slate-300">{comp.label}</td>
+                      <td className="px-3 py-1.5 text-right">{comp.value.toLocaleString('en-IN')}</td>
+                    </tr>
+                  ))}
+                  <tr className="font-bold border-t-2 border-slate-800">
+                    <td className="px-3 py-1.5 border-r border-slate-300">Total</td>
+                    <td className="px-3 py-1.5 text-right">{totalGross.toLocaleString('en-IN')}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Employment/CTC body text */}
+        {data.template !== "salary" && (
+          <div className="mt-3 text-sm leading-relaxed text-slate-800 whitespace-pre-wrap">
+            {data.body_text}
+          </div>
+        )}
+
+        {/* DOJ */}
+        {data.date_of_joining && (
+          <p className="text-sm text-slate-800 mt-3">
+            <span className="font-semibold">Date of Joining:</span>{" "}
+            {new Date(data.date_of_joining).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+          </p>
+        )}
       </div>
 
       {/* Footer */}
-      <div className="border-t border-slate-200 pt-6 mt-6">
-        <p className="text-sm text-slate-500 mb-8">
-          This certificate is issued in good faith without any liability on the part of the company.
+      <div className="mt-12 pt-6">
+        <p className="text-sm text-slate-700 mb-1">
+          <span className="font-semibold">Date:</span> {new Date(data.issue_date).toLocaleDateString('en-GB', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          })}
         </p>
-        <div className="mt-12">
-          <div className="inline-block border-t-2 border-slate-400 pt-1 pr-16">
-            <p className="text-sm font-medium text-slate-700">Authorized Signatory</p>
-            <p className="text-xs text-slate-500">HR Department, {data.company_name}</p>
+
+        <div className="mt-12 flex justify-between items-end">
+          <div>
+            <div className="border-t-2 border-slate-800 pt-2 pr-20">
+              <p className="text-sm font-semibold text-slate-900">Signature of the Employer/HOD/DDO</p>
+              <p className="text-sm text-slate-700 mt-1">Name: Mr. Naresh Kumar Chauhan</p>
+              <p className="text-sm text-slate-700">Designation: Deputy Manager HR</p>
+            </div>
+          </div>
+
+          <div className="text-center">
+            <p className="text-sm font-semibold text-slate-700 mb-1">Seal:</p>
+            <div className="w-24 h-24 border-2 border-dashed border-slate-300 rounded-full flex items-center justify-center">
+              <span className="text-xs text-slate-400">Company<br/>Seal</span>
+            </div>
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+// Helper to convert number to words (Indian numbering)
+function numberToWords(num: number): string {
+  if (!num || num === 0) return "Zero";
+
+  const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
+  const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+  const teens = ["Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+
+  function convertHundreds(n: number): string {
+    if (n === 0) return "";
+    if (n < 10) return ones[n];
+    if (n >= 10 && n < 20) return teens[n - 10];
+    if (n >= 20 && n < 100) return tens[Math.floor(n / 10)] + (n % 10 !== 0 ? " " + ones[n % 10] : "");
+    return ones[Math.floor(n / 100)] + " Hundred" + (n % 100 !== 0 ? " " + convertHundreds(n % 100) : "");
+  }
+
+  const crore = Math.floor(num / 10000000);
+  const lakh = Math.floor((num % 10000000) / 100000);
+  const thousand = Math.floor((num % 100000) / 1000);
+  const remainder = num % 1000;
+
+  let result = "";
+  if (crore > 0) result += convertHundreds(crore) + " Crore ";
+  if (lakh > 0) result += convertHundreds(lakh) + " Lac ";
+  if (thousand > 0) result += convertHundreds(thousand) + " Thousand ";
+  if (remainder > 0) result += convertHundreds(remainder);
+
+  return "Rs. " + result.trim() + " only";
 }
 
 // ---------------------------------------------------------------------------

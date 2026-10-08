@@ -483,15 +483,13 @@ export const salaryDisputeService = {
     );
   },
 
-  async listQueue(role: string, branchId?: string): Promise<SalaryDispute[]> {
-    const statusFilter =
-      role === "payroll_head" ? "pending_payroll_head" : "pending_wfm";
+  async listQueue(role: string, branchId?: string, scope?: { sql: string; params: unknown[] }): Promise<SalaryDispute[]> {
+    const statusFilter = role === "payroll_head" ? "pending_payroll_head" : "pending_wfm";
     const params: unknown[] = [statusFilter];
     let branchSql = "";
-    if (branchId) {
-      branchSql = " AND sd.branch_id = ?";
-      params.push(branchId);
-    }
+    // Server-resolved caller scope over alias `e`; the browser branchId below can only narrow it.
+    if (scope && scope.sql !== "1=1") { branchSql += ` AND (${scope.sql})`; params.push(...scope.params); }
+    if (branchId) { branchSql += " AND sd.branch_id = ?"; params.push(branchId); }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT sd.*, e.full_name AS employee_name
          FROM salary_dispute sd

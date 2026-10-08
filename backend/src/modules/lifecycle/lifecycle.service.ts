@@ -7,7 +7,7 @@ import type { Request } from "express";
 export const lifecycleService = {
   // ── Probation / Confirmation ──────────────────────────────────────────────
 
-  async getProbationDue(days: number) {
+  async getProbationDue(days: number, scope: { sql: string; params: unknown[] } = { sql: "1=1", params: [] }) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id, e.employee_code, e.full_name, e.date_of_joining,
               e.employment_status, e.branch_id, b.branch_name,
@@ -17,8 +17,9 @@ export const lifecycleService = {
        WHERE e.employment_status = 'Probation'
          AND DATEDIFF(NOW(), e.date_of_joining) >= ?
          AND e.active_status = 1
+         AND (${scope.sql})
        ORDER BY e.date_of_joining`,
-      [days],
+      [days, ...scope.params]
     );
     return rows as RowDataPacket[];
   },
@@ -188,14 +189,15 @@ export const lifecycleService = {
     return rows as RowDataPacket[];
   },
 
-  async getExpiredOrExpiringDocuments(daysAhead = 30) {
+  async getExpiredOrExpiringDocuments(daysAhead = 30, scope: { sql: string; params: unknown[] } = { sql: "1=1", params: [] }) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT d.*, d.doc_name AS document_name, e.employee_code, e.full_name
        FROM employee_documents d
        JOIN employees e ON e.id = d.employee_id
        WHERE d.expiry_date IS NOT NULL AND d.expiry_date <= DATE_ADD(CURDATE(), INTERVAL ? DAY)
+         AND (${scope.sql})
        ORDER BY d.expiry_date ASC`,
-      [daysAhead],
+      [daysAhead, ...scope.params]
     );
     return rows as RowDataPacket[];
   },

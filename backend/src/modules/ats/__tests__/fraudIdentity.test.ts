@@ -1,15 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 type Handler = (sql: string, params: unknown[]) => Promise<unknown>;
-const h = vi.hoisted(() => ({
-  run: null as unknown as (sql: string, params: unknown[]) => Promise<unknown>,
+const h = vi.hoisted(() => ({ run: null as unknown as (sql: string, params: unknown[]) => Promise<unknown> }));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: (sql: string, params: unknown[]) => h.run(sql, params) } }));
+const setDb = (fn: Handler) => { h.run = fn; };
+// Photo presence is whatever the photo endpoint would serve; drive it directly.
+const photo = vi.hoisted(() => ({ withPhoto: new Set<string>() }));
+vi.mock("../digilocker-face-photo.js", () => ({
+  getDigilockerFacePhotoBuffer: async (id: string) => (photo.withPhoto.has(id) ? Buffer.from([1]) : null),
 }));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: (sql: string, params: unknown[]) => h.run(sql, params) },
-}));
-const setDb = (fn: Handler) => {
-  h.run = fn;
-};
 
 import {
   buildIdentityComparison,
@@ -177,5 +176,22 @@ describe("buildIdentityComparison", () => {
     );
     const cmp = await buildIdentityComparison("c1", "c2");
     expect(cmp!.sharedDevice).toBeNull();
+  });
+
+  it("hasDigilockerPhoto reflects an actual photo, not just verified demographics", async () => {
+    const cand = { candidate_code: "CND-1", full_name: "A B", mobile: "9999999999" };
+    // c1: verified DigiLocker demographics but no image -> false (used to be true and 404'd).
+    // c2: image present -> true.
+    setDb(async (sql: string, params: unknown[]) => {
+      if (sql.includes("FROM ats_candidate c")) return [[cand]];
+      if (sql.includes("candidate_bgv_check")) return [[{ rj: govtJson("A B", "01-01-2000", "M", "xxxxxxxx1234") }]];
+      return [[]];
+    });
+    photo.withPhoto = new Set(["c2"]);
+    const cmp = await buildIdentityComparison("c1", "c2");
+    expect(cmp!.subject.govt).not.toBeNull();
+    expect(cmp!.subject.hasDigilockerPhoto).toBe(false);
+    expect(cmp!.other!.hasDigilockerPhoto).toBe(true);
+    photo.withPhoto = new Set();
   });
 });

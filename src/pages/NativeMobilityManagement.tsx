@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, Loader,
   Plus, RefreshCcw, TrendingUp, X, XCircle,
@@ -6,6 +7,7 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useCostCentres } from "@/hooks/useCostCentres";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -129,7 +131,11 @@ function TypeBadge({ value }: { value: string }) {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function NativeMobilityManagement() {
-  const [activeTab, setActiveTab] = useState<"transfers" | "promotions">("transfers");
+  // ?tab=promotions lets the Approval Center deep-link straight to the right list.
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<"transfers" | "promotions">(
+    searchParams.get("tab") === "promotions" ? "promotions" : "transfers",
+  );
   const [transfers, setTransfers] = useState<TransferRecord[]>([]);
   const [promotions, setPromotions] = useState<PromotionRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -166,6 +172,7 @@ export default function NativeMobilityManagement() {
   };
 
   useEffect(() => { void load(); }, [activeTab]);
+  useApprovalFocus(!loading && (activeTab === "transfers" ? transfers.length : promotions.length) > 0);
 
   // ── Transfer submit ────────────────────────────────────────────────────────
 
@@ -617,7 +624,7 @@ function TransfersTable({
           </thead>
           <tbody>
             {records.map((r) => (
-              <tr key={r.id} className="border-t hover:bg-slate-50/80 transition-colors">
+              <tr key={r.id} data-approval-id={r.id} className="border-t hover:bg-slate-50/80 transition-colors">
                 <td className="p-4">
                   <div className="font-bold text-slate-950">{r.employee_name ?? r.employee_id}</div>
                   {r.employee_code && (
@@ -698,7 +705,7 @@ function PromotionsTable({
           </thead>
           <tbody>
             {records.map((r) => (
-              <tr key={r.id} className="border-t hover:bg-slate-50/80 transition-colors">
+              <tr key={r.id} data-approval-id={r.id} className="border-t hover:bg-slate-50/80 transition-colors">
                 <td className="p-4">
                   <div className="font-bold text-slate-950">{r.employee_name ?? r.employee_id}</div>
                   {r.employee_code && (

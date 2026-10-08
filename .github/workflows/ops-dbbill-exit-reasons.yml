@@ -1,0 +1,49 @@
+name: Ops db_bill exit reasons (manual, read-only)
+
+# Read-only diagnostic. Shows where db_bill keeps the reason an employee left and how many of the
+# exits mas_hrms has no reason for it could fill. Runs on the production host because that is the only
+# place the db_bill credentials exist. Writes nothing to either database; prints counts and column
+# names only (the script issues SELECT / INFORMATION_SCHEMA statements and refuses anything else).
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-dbbill-exit-reasons
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    name: Inspect db_bill exit reasons (read-only)
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Run the diagnostic
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found - is this the prod host?"; exit 1; }
+          node scripts/diag-dbbill-exit-reasons.mjs
+          echo
+          echo "===== same-stint check (joining dates) ====="
+          node scripts/diag-dbbill-stint-check.mjs

@@ -1,11 +1,14 @@
 import { db } from "../../db/mysql.js";
+import { getDialerPool } from "../../db/dialerDb.js";
 
 /**
  * The full "Inbound" MIS snapshot table (Call Offered .. Call Answered
  * (Agents), 29 rows) from the reference report, rebuilt from the real
- * uploaded db_masmis.cl_ib_cdr (Inbound CDR) and db_masmis.cl_apr (Agent
- * Productivity Report) tables per explicit user request, plus cl_feedback
- * (Feedback/CSAT rows) and cl_quality (Quality Score %, lob='Inbound').
+ * uploaded db_masmis.cl_ib_cdr (Inbound CDR) table, plus cl_quality
+ * (Quality Score %, lob='Inbound'). "Call Answered (Agents)" and CSAT/DSAT
+ * are read live off the dialer (dialer_db.vicidial_agent_log_250 and
+ * dialer_db.feedback_log_250) rather than the old cl_apr / cl_feedback
+ * manual uploads -- both left in place, untouched, just no longer read here.
  *
  * Every field mapping below was checked against cl_ib_cdr's real 1-Sep-26
  * values against the reference report's own 1-Sep column before being
@@ -21,16 +24,18 @@ import { db } from "../../db/mysql.js";
  * IMPORTANT known gaps, surfaced to the frontend rather than hidden:
  *   1. cl_ib_cdr only has rows for 1-Sep-26 .. 9-Sep-26 -- the upload does
  *      not yet cover the rest of the month. MTD/W-2 here reflect only
- *      those uploaded days, not the full month.
+ *      those uploaded days, not the full month. (CSAT and Call Answered
+ *      (Agents) no longer share this limitation -- they are live and cover
+ *      every day, since they come off the dialer, not the CDR upload.)
  *   2. cl_ib_cdr's own distinct-agent count is far lower per day (11-13)
  *      than the reference report's "Call Answered (Agents)" row (44+),
  *      strongly suggesting this export is a partial/sampled extract, not
  *      the complete CDR. "Call Answered (Agents)" is therefore sourced
- *      from cl_apr's distinct mas_id count instead (13 for 1-Sep, still
- *      short of 44 but the closer of the two real sources), per the
- *      explicit instruction to also use APR for this row.
- *   3. "Tagging %" has no corresponding column in cl_ib_cdr, cl_apr or any
- *      other uploaded Clovia table -- omitted rather than fabricated.
+ *      from the live dialer's distinct active-agent count instead (any
+ *      Clovia campaign, matching the old cl_apr row's own LOB-agnostic
+ *      scope), which is real and current rather than a partial extract.
+ *   3. "Tagging %" has no corresponding column in cl_ib_cdr or any other
+ *      uploaded Clovia table -- omitted rather than fabricated.
  */
 
 const MONTH_ABBR: Record<string, number> = {
@@ -111,24 +116,10 @@ interface CdrRow {
   hold_time: unknown;
   total_handled_time: unknown;
 }
-interface AprRow {
-  report_date: unknown;
-  mas_id: unknown;
-  attendance: unknown;
-}
-interface FeedbackRow {
-  report_date: unknown;
-  language: unknown;
-  csat_dsat: unknown;
-}
-interface QualityRow {
-  audit_date: unknown;
-  lob: unknown;
-  cq_score: unknown;
-}
-interface RechurnRow {
-  report_date: unknown;
-}
+interface AprRow { d: unknown; mas_id: unknown }
+interface FeedbackRow { d: unknown; language: unknown; csat_dsat: unknown }
+interface QualityRow { audit_date: unknown; lob: unknown; cq_score: unknown }
+interface RechurnRow { report_date: unknown }
 
 function computeMetricsForRows(
   cdr: CdrRow[],
@@ -169,18 +160,10 @@ function computeMetricsForRows(
 
   const aprAgents = new Set(apr.map((r) => String(r.mas_id))).size;
   const feedbackReceived = feedback.length;
-  const feedbackHindi = feedback.filter(
-    (r) => String(r.language).trim().toLowerCase() === "hindi",
-  ).length;
-  const feedbackEnglish = feedback.filter(
-    (r) => String(r.language).trim().toLowerCase() === "english",
-  ).length;
-  const satisfied = feedback.filter(
-    (r) => String(r.csat_dsat).trim() === "1",
-  ).length;
-  const notSatisfied = feedback.filter(
-    (r) => String(r.csat_dsat).trim() === "0",
-  ).length;
+  const feedbackHindi = feedback.filter((r) => String(r.language).trim().toLowerCase().startsWith("hin")).length;
+  const feedbackEnglish = feedback.filter((r) => String(r.language).trim().toLowerCase().startsWith("eng")).length;
+  const satisfied = feedback.filter((r) => String(r.csat_dsat).trim() === "1").length;
+  const notSatisfied = feedback.filter((r) => String(r.csat_dsat).trim() !== "1").length;
 
   const inboundQuality = quality.filter(
     (r) => String(r.lob).trim().toLowerCase() === "inbound",
@@ -244,21 +227,35 @@ function fmtSecs(s: number): string {
     : `${m}:${String(sec).padStart(2, "0")}`;
 }
 
+function isoToDate(s: string): Date {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+
 export async function getCloviaInboundSnapshot(): Promise<CloviaInboundSnapshot> {
   const [cdrRaw] = await db.execute<any[]>(
     `SELECT call_date, agent_id, disposition, unique_repeat, abn, call_20_sec_sl, short_calls, queue_duration, acw_duration, hold_time, total_handled_time FROM db_masmis.cl_ib_cdr`,
   );
-  const [aprRaw] = await db.execute<any[]>(
-    `SELECT report_date, mas_id, attendance FROM db_masmis.cl_apr`,
+  const [qualityRaw] = await db.execute<any[]>(`SELECT audit_date, lob, cq_score FROM db_masmis.cl_quality`);
+  const [rechurnRaw] = await db.execute<any[]>(`SELECT report_date FROM db_masmis.cl_rechurn_call`);
+
+  // APR and CSAT are read live off the dialer, bounded to the current calendar month:
+  // vicidial_agent_log_250 is a 1M+ row, continuously-written table, and this snapshot
+  // is always "this month", so an unbounded scan would be both unnecessary and slow.
+  const now = new Date();
+  const monthFrom = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const monthTo = isoDate(now);
+  const dialerPool = await getDialerPool();
+  const [aprRaw] = await dialerPool.execute<any[]>(
+    `SELECT DISTINCT DATE_FORMAT(event_time,'%Y-%m-%d') AS d, user AS mas_id
+       FROM vicidial_agent_log_250
+      WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY) AND user IS NOT NULL AND user <> ''`,
+    [monthFrom, monthTo],
   );
-  const [feedbackRaw] = await db.execute<any[]>(
-    `SELECT report_date, language, csat_dsat FROM db_masmis.cl_feedback`,
-  );
-  const [qualityRaw] = await db.execute<any[]>(
-    `SELECT audit_date, lob, cq_score FROM db_masmis.cl_quality`,
-  );
-  const [rechurnRaw] = await db.execute<any[]>(
-    `SELECT report_date FROM db_masmis.cl_rechurn_call`,
+  const [feedbackRaw] = await dialerPool.execute<any[]>(
+    `SELECT DATE_FORMAT(calltime,'%Y-%m-%d') AS d, language, option1 AS csat_dsat
+       FROM feedback_log_250 WHERE calltime >= ? AND calltime < DATE_ADD(?, INTERVAL 1 DAY)`,
+    [monthFrom, monthTo],
   );
 
   const withDate = <T extends object>(rows: T[], field: string) =>
@@ -268,10 +265,12 @@ export async function getCloviaInboundSnapshot(): Promise<CloviaInboundSnapshot>
         __date: parseShortDate((r as Record<string, unknown>)[field]),
       }))
       .filter((r): r is T & { __date: Date } => r.__date !== null);
+  const withIsoDate = <T extends object>(rows: T[]) =>
+    rows.map((r) => ({ ...r, __date: isoToDate(String((r as Record<string, unknown>).d)) }));
 
   const cdr = withDate(cdrRaw as CdrRow[], "call_date");
-  const apr = withDate(aprRaw as AprRow[], "report_date");
-  const feedback = withDate(feedbackRaw as FeedbackRow[], "report_date");
+  const apr = withIsoDate(aprRaw as AprRow[]);
+  const feedback = withIsoDate(feedbackRaw as FeedbackRow[]);
   const quality = withDate(qualityRaw as QualityRow[], "audit_date");
   const rechurn = withDate(rechurnRaw as RechurnRow[], "report_date");
 
@@ -432,9 +431,9 @@ export async function getCloviaInboundSnapshot(): Promise<CloviaInboundSnapshot>
     metrics,
     cdrCoverage: { minDate, maxDate },
     notes: [
-      `Inbound CDR (cl_ib_cdr) has only been uploaded for ${minDate} through ${maxDate} — "Sept'26" and "W-2" above reflect only those uploaded days, not the full month.`,
-      "cl_ib_cdr's own distinct-agent count per day (11-13) is far below the reference report's ~44-59 — this upload looks like a partial/sampled extract rather than the complete CDR. \"Call Answered (Agents)\" is sourced from cl_apr's roster instead, which is closer but may still undercount for the same reason.",
-      '"Tagging %" has no corresponding column in any uploaded Clovia table and is omitted rather than invented.',
+      `Inbound CDR (cl_ib_cdr) has only been uploaded for ${minDate} through ${maxDate} — "Sept'26" and "W-2" above reflect only those uploaded days, not the full month. CSAT and "Call Answered (Agents)" are unaffected by this gap: both are read live off the dialer and cover every day of the current month.`,
+      "cl_ib_cdr's own distinct-agent count per day (11-13) is far below the reference report's ~44-59 — this upload looks like a partial/sampled extract rather than the complete CDR. \"Call Answered (Agents)\" is sourced from the live dialer's distinct active-agent count instead (dialer_db.vicidial_agent_log_250, any Clovia campaign), which is real and current rather than a partial extract.",
+      "\"Tagging %\" has no corresponding column in any uploaded Clovia table and is omitted rather than invented.",
     ],
   };
 }

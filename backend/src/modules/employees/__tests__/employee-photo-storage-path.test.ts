@@ -42,7 +42,16 @@ describe("upload storage paths", () => {
 
   it("stores the URL the public file route actually serves", () => {
     expect(writer).toContain("`/api/files/employee-photos/${finalName}`");
-    expect(server).toContain('app.get("/api/files/employee-photos/:filename"');
+    // SEC-08: the unauthenticated app.get in app.ts is gone (it shadowed the authenticated
+    // handler). The URL is now served by filesRouter, mounted at /api/files, and that handler
+    // resolves the same uploads/employee-photos directory the writer uses.
+    expect(server).toContain('app.use("/api/files", filesRouter)');
+    expect(files).toMatch(/router\.get\(\s*"\/employee-photos\/:filename"/);
+    expect(files).toContain('path.join(UPLOADS_ROOT, "employee-photos", safeFile)');
+    expect(files).toContain('return res.status(401).json({ error: "Authentication required" })');
+    // ...and the public route must not come back in front of it.
+    expect(server).not.toMatch(/app\.(get|use)\(\s*["'`]\/api\/files\/employee-photos/);
+    expect(server).not.toMatch(/express\.static\(\s*employeePhotosDir/);
   });
 
   it("resolves every upload directory in the backend from the working directory", () => {

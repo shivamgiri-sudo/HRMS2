@@ -26,6 +26,7 @@ const AUTH_USER_ID = "33333333-3333-3333-3333-333333333333";
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 
+vi.mock("../payroll-branch-scope.js", async () => (await import("./helpers/orgWideScopeMock.js")).orgWideScopeMock);
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole:

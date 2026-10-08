@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Download, RefreshCw } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { downloadTallyFile } from "@/lib/tallyExportDownload";
 import { money } from "@/components/finance/grn/grn-format";
 import {
   GRN_TR, GrnAlert, GrnCard, GrnCardHeader, GrnCellSub, GrnChip, GrnEmptyState, GrnIconButton,
@@ -47,6 +48,7 @@ type Voucher = {
   totals: { debit: number; credit: number; balanced: boolean };
   payroll_gross: number;
   employees: number;
+  tally_lock?: { status: string; format: string | null; exported_at: string; exported_by_name: string | null; reexport_count: number } | null;
 };
 
 type Payload = {
@@ -81,8 +83,8 @@ export function SalaryVoucherPanel() {
   const runsQuery = useQuery({
     queryKey: ["payroll-runs-for-voucher"],
     queryFn: async () => {
-      const rows = unwrap<Run[]>(await hrmsApi.get<any>("/api/payroll/runs?limit=24"));
-      return Array.isArray(rows) ? rows : [];
+      const rows = unwrap<Run[]>(await hrmsApi.get<any>("/api/finance/payroll/runs"));
+      return Array.isArray(rows) ? rows.filter((r) => Boolean(r?.id)) : [];
     },
   });
 
@@ -93,38 +95,71 @@ export function SalaryVoucherPanel() {
   const runs = runsQuery.data ?? [];
   const period = runs.find((r) => r.id === runId)?.run_month ?? "";
 
-  /*
-   * IDC's payroll is not in mas_hrms — it lives in db_bill (see DB-BILL-FINDINGS). So IDC is
-   * served by a SEPARATE, explicitly-gated endpoint that reads db_bill for the run's month.
-   * That endpoint is inert (a clean error) unless the server has BILL_DB configured, so
-   * selecting IDC in an environment without it simply reports it is unavailable — it never
-   * silently reaches for an upstream database.
-   *
-   * Both full paths are written as literals below so the route-contract check can see them; a
-   * path hidden behind a variable would defeat it.
-   */
-  const isBillSourced = companyCode === "IDC";
-
+  // Salary vouchers come from mas_hrms only. IDC's payroll lives in db_bill and is deliberately
+  // not offered here: its endpoint has no Tally CSV export.
   const search = [
     companyCode ? `companyCode=${encodeURIComponent(companyCode)}` : "",
-    isBillSourced ? `entityPrefix=${encodeURIComponent(companyCode)}` : "",
     serialFrom.trim() ? `serialFrom=${encodeURIComponent(serialFrom.trim())}` : "",
   ].filter(Boolean).join("&");
   const query = search ? `?${search}` : "";
 
-  const previewUrl = isBillSourced
-    ? `/api/finance/payroll/runs/bill/${period}/vouchers${query}`
-    : `/api/finance/payroll/runs/${runId}/vouchers${query}`;
-  const exportUrl = isBillSourced
-    ? `/api/finance/payroll/runs/bill/${period}/vouchers${query}`
-    : `/api/finance/payroll/runs/${runId}/vouchers/export${query}`;
+  const previewUrl = `/api/finance/payroll/runs/${runId}/vouchers${query}`;
+  const exportUrl = `/api/finance/payroll/runs/${runId}/vouchers/export${query}`;
 
   const voucherQuery = useQuery({
     queryKey: ["salary-vouchers", runId, companyCode, serialFrom],
-    // The bill path needs a period, which comes from the selected run's month.
-    enabled: Boolean(runId) && (!isBillSourced || Boolean(period)),
+    enabled: Boolean(runId),
     queryFn: async () => unwrap<Payload>(await hrmsApi.get<any>(previewUrl)),
   });
+  const tallyStatus = useQuery({
+    queryKey: ["salary-voucher-tally-status"],
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => unwrap<{ configured: boolean; reachable: boolean; company: string | null; message: string }>(
+      await hrmsApi.get<any>("/api/finance/payroll/tally/status")),
+  });
+  const [pushing, setPushing] = useState(false);
+  const [pushResult, setPushResult] = useState<{ posted: number; failed: number; skipped: number; results: { voucher_no: string; branch_name: string; outcome: string; detail: string }[] } | null>(null);
+  const [pushError, setPushError] = useState("");
+  const postToTally = async () => {
+    if (!runId) return;
+    if (!serialFrom.trim()) { setPushError("Enter the next voucher number from Tally (the serial field) before posting."); return; }
+    const count = voucherQuery.data?.vouchers.length ?? 0;
+    if (!window.confirm(`Post ${count} salary voucher(s) to Tally now? Vouchers already posted from this run are skipped.`)) return;
+    setPushing(true); setPushError(""); setPushResult(null);
+    const send = async (extra: Record<string, unknown> = {}) =>
+      unwrap<any>(await hrmsApi.post<any>(`/api/finance/payroll/runs/${runId}/vouchers/push-to-tally`, {
+        serialFrom: serialFrom.trim(), companyCode: companyCode || undefined, ...extra,
+      }));
+    try {
+      try {
+        setPushResult(await send());
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Posting to Tally failed";
+        if (!/already pulled out/i.test(message)) throw error;
+        const reason = window.prompt(`${message}\n\nFinance head only: type a reason (at least 10 characters) to post them again, or press Cancel.`);
+        if (!reason) return;
+        setPushResult(await send({ reexport: true, reason }));
+      }
+      void voucherQuery.refetch();
+    } catch (error) {
+      setPushError(error instanceof Error ? error.message : "Posting to Tally failed");
+    } finally {
+      setPushing(false);
+    }
+  };
+
+  const lockedCount = (voucherQuery.data?.vouchers ?? []).filter((v) => v.tally_lock).length;
+  const releaseLocks = async () => {
+    const reason = window.prompt("Release the lock on this run's vouchers so they can be exported again.\nUse this only if the import into Tally failed. Finance head only. Type a reason (at least 10 characters):");
+    if (!reason) return;
+    try {
+      await hrmsApi.post<any>(`/api/finance/payroll/runs/${runId}/vouchers/locks/release`, { reason });
+      void voucherQuery.refetch();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Could not release the lock");
+    }
+  };
   const data = voucherQuery.data;
   const vouchers = data?.vouchers ?? [];
   const excluded = (data?.unassigned.length ?? 0) + (data?.unpaid.length ?? 0);
@@ -137,24 +172,66 @@ export function SalaryVoucherPanel() {
           description="What will post to Tally for this payroll run, one journal per company and branch."
           action={
             <div className="flex items-center gap-1">
-              <GrnChip
-                active={false}
-                onClick={() => {
-                  if (!runId) return;
-                  // Straight to the API so the file is produced by the same scope resolution as
-                  // the table, and in the column order Tally imports by position.
-                  window.open(exportUrl, "_blank", "noopener");
-                }}
-              >
-                <Download className="mr-1 h-3.5 w-3.5" />
-                Export for Tally
+              {([
+                ["csv", "CSV", "csv"],
+                ["xlsx", "Excel", "xlsx"],
+                ["xml", "Tally XML", "xml"],
+              ] as const).map(([format, label, ext]) => (
+                <GrnChip
+                  key={format}
+                  active={false}
+                  onClick={async () => {
+                    if (!runId) return;
+                    // Fetched through hrmsApi so the bearer token goes with it — a bare
+                    // window.open sends no Authorization header. With a serial the file is the real
+                    // import file and its vouchers are locked; without one it is a PREVIEW.
+                    try {
+                      const preview = !serialFrom.trim() && format !== "xml";
+                      const result = await downloadTallyFile(
+                        `${exportUrl}${query ? "&" : "?"}format=${format}`,
+                        `salary-voucher-${period || runId}${preview ? "-PREVIEW" : ""}.${ext}`,
+                      );
+                      if (result === "downloaded") void voucherQuery.refetch();
+                    } catch (error) {
+                      window.alert(error instanceof Error ? error.message : "Export failed");
+                    }
+                  }}
+                >
+                  <Download className="mr-1 h-3.5 w-3.5" />
+                  {format === "csv" ? "Export for Tally (CSV)" : label}
+                </GrnChip>
+              ))}
+              <GrnChip active={false} onClick={postToTally}>
+                {pushing ? "Posting…" : "Post to Tally"}
               </GrnChip>
+              {lockedCount > 0 && (
+                <GrnChip active={false} onClick={releaseLocks}>🔒 Release locks ({lockedCount})</GrnChip>
+              )}
               <GrnIconButton aria-label="Refresh" onClick={() => voucherQuery.refetch()}>
                 <RefreshCw className={`h-3.5 w-3.5 ${voucherQuery.isFetching ? "animate-spin" : ""}`} />
               </GrnIconButton>
             </div>
           }
         />
+
+        {(tallyStatus.data || pushError || pushResult) && (
+          <div className="space-y-1 border-b border-grn-line px-4 py-2 text-[11px]">
+            {tallyStatus.data && (
+              <div className={tallyStatus.data.reachable ? "text-emerald-700" : "text-amber-700"}>
+                Tally gateway: {tallyStatus.data.reachable ? `connected${tallyStatus.data.company ? ` (${tallyStatus.data.company})` : ""}` : `not available — ${tallyStatus.data.message}`}
+              </div>
+            )}
+            {pushError && <div className="text-rose-600">{pushError}</div>}
+            {pushResult && (
+              <div>
+                <div className="font-semibold text-gray-800">Posted {pushResult.posted} · failed {pushResult.failed} · skipped {pushResult.skipped}</div>
+                {pushResult.results.filter((r) => r.outcome !== "posted").map((r) => (
+                  <div key={r.voucher_no} className={r.outcome === "failed" ? "text-rose-600" : "text-gray-500"}>{r.voucher_no} — {r.outcome}: {r.detail}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-end gap-2 border-b border-grn-line px-4 py-3">
           <label className="text-[11px] font-semibold text-grn-ink">
@@ -173,7 +250,6 @@ export function SalaryVoucherPanel() {
             <GrnSelect className="mt-1 w-[180px]" value={companyCode} onChange={(e) => setCompanyCode(e.target.value)}>
               <option value="">All companies</option>
               <option value="MAS">MAS</option>
-              <option value="IDC">IDC</option>
               <option value="PIK">PIK</option>
             </GrnSelect>
           </label>
@@ -251,14 +327,21 @@ export function SalaryVoucherPanel() {
                 `${voucher.branch_name} · ${voucher.cost_centre} · ${voucher.employees} employees · ${voucher.date}`
               }
               action={
-                voucher.totals.balanced ? (
+                <span className="flex items-center gap-3">
+                  {voucher.tally_lock && (
+                    <span className="rounded bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700" title="Locked: already pulled out for Tally">
+                      🔒 {voucher.tally_lock.status === "posted" ? "Posted to Tally" : `Exported (${voucher.tally_lock.format ?? "file"})`} · {String(voucher.tally_lock.exported_at).slice(0, 10).split("-").reverse().join("-")}{voucher.tally_lock.exported_by_name ? ` · ${voucher.tally_lock.exported_by_name}` : ""}
+                    </span>
+                  )}
+                  {voucher.totals.balanced ? (
                   <span className="text-[11px] font-semibold text-grn-ok">Balanced</span>
                 ) : (
                   <span className="flex items-center gap-1 text-[11px] font-semibold text-grn-crit">
                     <AlertTriangle className="h-3.5 w-3.5" />
                     Does not balance
                   </span>
-                )
+                  )}
+                </span>
               }
             />
 

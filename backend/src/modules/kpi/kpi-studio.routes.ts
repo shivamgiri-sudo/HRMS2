@@ -67,8 +67,13 @@ import {
   previewFormula,
   previewProcessFormula,
   explainMetricForEmployee,
-} from "./kpi-studio.compute.js";
-import { validateFormula } from "./kpi-formula.engine.js";
+} from './kpi-studio.compute.js';
+import { validateFormula } from './kpi-formula.engine.js';
+import {
+  StudioForbiddenError, assertCanAuthor, assertCanCompute, assertCanEditSource, definitionTarget, definitionVisibilitySql, studioViewerFor,
+} from './kpi-studio.scope.js';
+import { cancelBackfill, getBackfill, listBackfills, startBackfill } from './kpi-studio.backfill.js';
+import { resetFieldNameCache } from './kpi-studio.compute.js';
 
 const router = Router();
 
@@ -115,6 +120,10 @@ const h =
             message: error.message,
             studio_installed: false,
           });
+      }
+      // Right role, wrong target: the caller tried to change or compute something outside their own scope.
+      if (error instanceof StudioForbiddenError) {
+        return res.status(403).json({ success: false, code: 'OUT_OF_SCOPE', message: error.message });
       }
       // A validation failure from the service layer is the user's mistake, not the server's, and
       // its message is written to be read by the person who made it. Anything without a message
@@ -190,8 +199,16 @@ router.post(
 router.get(
   "/scope-options",
   requireRole(...VIEW_ROLES),
-  h(async (_req, res) => {
-    res.json({ success: true, data: await getScopeOptions() });
+  h(async (req, res) => {
+    // Only what the caller can act on: offering every process and then refusing the save is a trap.
+    const [options, viewer] = await Promise.all([getScopeOptions(), studioViewerFor(req.authUser!.id)]);
+    if (viewer.orgWide) return res.json({ success: true, data: { ...options, org_wide: true } });
+    const processes = (options.processes as any[]).filter((p) => viewer.processIds.has(String(p.id)));
+    const branchIds = new Set(processes.map((p) => String(p.branch_id)));
+    res.json({
+      success: true,
+      data: { ...options, processes, branches: (options.branches as any[]).filter((b) => branchIds.has(String(b.id))), org_wide: false },
+    });
   }),
 );
 
@@ -199,16 +216,13 @@ router.get(
   "/employees",
   requireRole(...VIEW_ROLES),
   h(async (req, res) => {
+    const viewer = await studioViewerFor(req.authUser!.id);
     const rows = await findEmployeesForScope({
       search: req.query.search ? String(req.query.search) : undefined,
       branch_id: req.query.branch_id ? String(req.query.branch_id) : undefined,
-      process_id: req.query.process_id
-        ? String(req.query.process_id)
-        : undefined,
-      designation_id: req.query.designation_id
-        ? String(req.query.designation_id)
-        : undefined,
-    });
+      process_id: req.query.process_id ? String(req.query.process_id) : undefined,
+      designation_id: req.query.designation_id ? String(req.query.designation_id) : undefined,
+    }, viewer);
     res.json({ success: true, data: rows });
   }),
 );
@@ -272,6 +286,8 @@ router.post(
   "/data-sources",
   requireRole(...CONFIG_ROLES),
   h(async (req, res) => {
+    const b = req.body ?? {};
+    await assertCanEditSource(req.authUser!.id, { sourceId: b.id ? String(b.id) : undefined, newProcessId: b.process_id ? String(b.process_id) : null });
     const result = await saveDataSource(req.body ?? {}, req.authUser?.id);
     res.json({ success: true, data: result });
   }),
@@ -301,10 +317,9 @@ router.post(
   "/data-sources/:id/fields",
   requireRole(...CONFIG_ROLES),
   h(async (req, res) => {
-    const result = await saveSourceField({
-      ...(req.body ?? {}),
-      data_source_id: req.params.id,
-    });
+    await assertCanEditSource(req.authUser!.id, { sourceId: req.params.id });
+    const result = await saveSourceField({ ...(req.body ?? {}), data_source_id: req.params.id });
+    resetFieldNameCache();
     res.json({ success: true, data: result });
   }),
 );
@@ -317,6 +332,7 @@ router.delete(
   "/data-sources/:id",
   requireRole(...CONFIG_ROLES),
   h(async (req, res) => {
+    await assertCanEditSource(req.authUser!.id, { sourceId: req.params.id });
     res.json({ success: true, data: await deleteDataSource(req.params.id) });
   }),
 );
@@ -326,6 +342,7 @@ router.post(
   "/data-sources/:id/restore",
   requireRole(...CONFIG_ROLES),
   h(async (req, res) => {
+    await assertCanEditSource(req.authUser!.id, { sourceId: req.params.id });
     res.json({ success: true, data: await restoreDataSource(req.params.id) });
   }),
 );
@@ -334,10 +351,10 @@ router.delete(
   "/fields/:fieldId",
   requireRole(...CONFIG_ROLES),
   h(async (req, res) => {
-    res.json({
-      success: true,
-      data: await deleteSourceField(req.params.fieldId),
-    });
+    await assertCanEditSource(req.authUser!.id, { fieldId: req.params.fieldId });
+    const removed = await deleteSourceField(req.params.fieldId);
+    resetFieldNameCache();
+    res.json({ success: true, data: removed });
   }),
 );
 
@@ -360,6 +377,7 @@ router.get(
         ? String(req.query.employee_id)
         : undefined,
       as_of: req.query.as_of ? String(req.query.as_of) : undefined,
+      scopeSql: definitionVisibilitySql(await studioViewerFor(req.authUser!.id)),
     });
     res.json({ success: true, data: rows });
   }),
@@ -409,6 +427,10 @@ router.post(
   "/definitions",
   requireRole(...CONFIG_ROLES),
   h(async (req, res) => {
+    const b = req.body ?? {};
+    await assertCanAuthor(req.authUser!.id, {
+      branch_id: b.branch_id || null, process_id: b.process_id || null, designation_id: b.designation_id || null, employee_id: b.employee_id || null,
+    });
     const result = await saveDefinition(req.body ?? {}, req.authUser?.id);
     res.json({ success: true, data: result });
   }),
@@ -430,13 +452,11 @@ router.delete(
   "/definitions/:id",
   requireRole(...CONFIG_ROLES),
   h(async (req, res) => {
-    const effectiveTo = req.query.effective_to
-      ? String(req.query.effective_to)
-      : undefined;
-    res.json({
-      success: true,
-      data: await retireDefinition(req.params.id, effectiveTo),
-    });
+    const target = await definitionTarget(req.params.id);
+    if (!target) return res.status(404).json({ success: false, message: 'Definition not found' });
+    await assertCanAuthor(req.authUser!.id, target);
+    const effectiveTo = req.query.effective_to ? String(req.query.effective_to) : undefined;
+    res.json({ success: true, data: await retireDefinition(req.params.id, effectiveTo) });
   }),
 );
 
@@ -474,6 +494,8 @@ router.post(
           "Need a formula, a data source and an employee to test against",
       });
     }
+    // A preview returns that person's real source values, so it is scoped like an edit.
+    await assertCanAuthor(req.authUser!.id, { employee_id: String(body.employee_id) });
     const result = await previewFormula({
       formula: String(body.formula),
       dataSourceId: String(body.data_source_id),
@@ -506,6 +528,7 @@ router.post(
         message: "Need a formula and a data source to test against",
       });
     }
+    await assertCanCompute(req.authUser!.id, { process_id: body.process_id ? String(body.process_id) : null });
     const today = new Date().toISOString().slice(0, 10);
     const result = await previewProcessFormula({
       formula: String(body.formula),
@@ -534,6 +557,13 @@ router.post(
   h(async (req, res) => {
     const body = req.body ?? {};
     const date = String(body.date ?? new Date().toISOString().slice(0, 10));
+    await assertCanCompute(req.authUser!.id, {
+      process_id: body.process_id ? String(body.process_id) : null,
+      branch_id: body.branch_id ? String(body.branch_id) : null,
+      employee_ids: Array.isArray(body.employee_ids) ? body.employee_ids.map(String) : undefined,
+    });
+    // Picks up fields added since the last run; the cache otherwise lives as long as the server.
+    resetFieldNameCache();
     const result = await computeStudioKpis({
       date,
       processId: body.process_id ? String(body.process_id) : undefined,
@@ -545,6 +575,62 @@ router.post(
       limit: body.limit ? Number(body.limit) : undefined,
     });
     res.json({ success: true, data: result });
+  }),
+);
+
+/**
+ * Computes a range of days as a background job (see kpi-studio.backfill.ts). Dry run unless the caller sends
+ * dry_run: false explicitly: a range rewrites many days of stored scores at once.
+ */
+router.post(
+  '/compute-range',
+  requireRole('admin', 'hr', 'process_manager'),
+  h(async (req, res) => {
+    const body = req.body ?? {};
+    const processId = body.process_id ? String(body.process_id) : null;
+    const branchId = body.branch_id ? String(body.branch_id) : null;
+    await assertCanCompute(req.authUser!.id, { process_id: processId, branch_id: branchId });
+    const { job } = startBackfill(
+      { from: String(body.from ?? ''), to: String(body.to ?? ''), processId, branchId, dryRun: body.dry_run !== false },
+      req.authUser?.id ?? null,
+    );
+    res.status(202).json({ success: true, data: job });
+  }),
+);
+
+router.get(
+  '/compute-range',
+  requireRole('admin', 'hr', 'process_manager'),
+  h(async (req, res) => {
+    const viewer = await studioViewerFor(req.authUser!.id);
+    const jobs = listBackfills().filter((j) => viewer.orgWide || j.startedBy === req.authUser!.id);
+    res.json({ success: true, data: jobs });
+  }),
+);
+
+router.get(
+  '/compute-range/:jobId',
+  requireRole('admin', 'hr', 'process_manager'),
+  h(async (req, res) => {
+    const job = getBackfill(req.params.jobId);
+    const viewer = await studioViewerFor(req.authUser!.id);
+    if (!job || (!viewer.orgWide && job.startedBy !== req.authUser!.id)) {
+      return res.status(404).json({ success: false, message: 'That run was not found. Runs are forgotten when the server restarts.' });
+    }
+    res.json({ success: true, data: job });
+  }),
+);
+
+router.post(
+  '/compute-range/:jobId/cancel',
+  requireRole('admin', 'hr', 'process_manager'),
+  h(async (req, res) => {
+    const existing = getBackfill(req.params.jobId);
+    const viewer = await studioViewerFor(req.authUser!.id);
+    if (!existing || (!viewer.orgWide && existing.startedBy !== req.authUser!.id)) {
+      return res.status(404).json({ success: false, message: 'That run was not found.' });
+    }
+    res.json({ success: true, data: cancelBackfill(req.params.jobId) });
   }),
 );
 
@@ -571,6 +657,7 @@ router.post(
         .status(400)
         .json({ success: false, message: "Value must be a number or blank" });
     }
+    await assertCanAuthor(req.authUser!.id, { employee_id: String(body.employee_id) });
     await saveManualValue({
       dataSourceId: body.data_source_id ? String(body.data_source_id) : null,
       employeeId: String(body.employee_id),
@@ -677,7 +764,9 @@ router.post(
     }
 
     const parsed = await parseUploadBuffer(file.buffer, file.originalname);
+    const uploader = await studioViewerFor(req.authUser!.id);
     const result = await commitUploadRows({
+      allowedProcessIds: uploader.orgWide ? null : uploader.processIds,
       dataSourceId,
       fileName: file.originalname,
       employeeColumn,

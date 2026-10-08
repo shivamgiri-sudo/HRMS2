@@ -1,4 +1,5 @@
 import { db } from "../../db/mysql.js";
+import { getDialerPool } from "../../db/dialerDb.js";
 
 /**
  * Clovia's non-Inbound channels, read from the real db_masmis.cl_* tables
@@ -97,6 +98,32 @@ export interface QualityChannel {
   fatalCount: number;
 }
 
+/** One agent's one day on one campaign, from vicidial_agent_log_250. Seconds are
+ * left as raw numbers (not pre-formatted HH:MM:SS) for the frontend to format/sort. */
+export interface ProductivityAgentRow {
+  date: string;
+  agent: string;
+  campaignId: string;
+  calls: number;
+  waitSec: number;
+  talkSec: number;
+  dispoSec: number;
+  pauseSec: number;
+  ahtSec: number;
+  loginTime: string;
+  logoutTime: string;
+  netLoginSec: number;
+  loginSec: number;
+  bioSec: number;
+  lunchSec: number;
+  qaSec: number;
+  dismxSec: number;
+  trainingSec: number;
+  shortBreakSec: number;
+  outcallSec: number;
+  laggedSec: number;
+}
+
 export interface ProductivityChannel {
   available: true;
   agentCount: number;
@@ -104,6 +131,7 @@ export interface ProductivityChannel {
   totalLoginSeconds: number;
   avgUtilizationPct: number;
   totalCallsLogged: number;
+  byAgent: ProductivityAgentRow[];
 }
 
 export interface RechurnChannel {
@@ -229,17 +257,27 @@ async function getChatChannel(from: string, to: string): Promise<ChatChannel> {
   };
 }
 
-async function getFeedbackChannel(
-  from: string,
-  to: string,
-): Promise<FeedbackChannel> {
-  const [[totals]] = await db.execute<any[]>(
+/**
+ * Live feedback, from dialer_db.feedback_log_250 -- the same Clovia dialer
+ * instance (_250) as Inbound/Outbound. Confirmed live 2026-09-30: option1 is
+ * the feedback answer, with exactly two real values across 81k rows --
+ * '1' (75,328 rows, the large majority) and '2' (5,693 rows) -- mapped
+ * satisfied/not-satisfied the same direction db_masmis.cl_feedback's own
+ * csat_dsat flag already used ('1' = satisfied). calltime is a real DATETIME
+ * column, no free-text parsing needed. REPLACES db_masmis.cl_feedback (a
+ * manual Uploader -> Feedback upload) the same way Outbound replaced
+ * cl_outbound -- cl_feedback and its uploader are left in place, just no
+ * longer read here.
+ */
+async function getFeedbackChannel(from: string, to: string): Promise<FeedbackChannel> {
+  const pool = await getDialerPool();
+  const [[totals]] = await pool.execute<any[]>(
     `SELECT
        COUNT(*) AS totalFeedback,
-       COALESCE(SUM(CASE WHEN csat_dsat = '1' THEN 1 ELSE 0 END),0) AS satisfiedCount,
-       COALESCE(SUM(CASE WHEN csat_dsat = '0' THEN 1 ELSE 0 END),0) AS notSatisfiedCount
-     FROM db_masmis.cl_feedback
-     WHERE STR_TO_DATE(report_date, '${DMY_SHORT}') BETWEEN ? AND ?`,
+       COALESCE(SUM(CASE WHEN option1 = '1' THEN 1 ELSE 0 END),0) AS satisfiedCount,
+       COALESCE(SUM(CASE WHEN option1 = '2' THEN 1 ELSE 0 END),0) AS notSatisfiedCount
+     FROM feedback_log_250
+     WHERE calltime >= ? AND calltime < DATE_ADD(?, INTERVAL 1 DAY)`,
     [from, to],
   );
   const totalFeedback = num(totals?.totalFeedback);
@@ -282,28 +320,79 @@ async function getQualityChannel(
   };
 }
 
-async function getProductivityChannel(
-  from: string,
-  to: string,
-): Promise<ProductivityChannel> {
-  const [[totals]] = await db.execute<any[]>(
+/**
+ * Live agent productivity, from dialer_db.vicidial_agent_log_250 -- the same
+ * Clovia dialer instance (_250) as Inbound/Outbound/Feedback. Confirmed live
+ * 2026-09-30: sub_status values match this query's CASE labels exactly
+ * (LOGIN, OutCal, Short, LAGGED, Lunch, Bio, Qualit all seen in real recent
+ * rows; DISMX/Traini are real valid codes too, just not hit in a 2-day
+ * sample). campaign_id here is a call-TYPE label per log row (OUTBOUND/
+ * INBOUND/CHAT/EMAIL), not a company filter -- Clovia's whole dialer tenant
+ * already scopes this table, so every row belongs to Clovia. Per-agent
+ * query and column names port the user's own reference SQL (2026-09-30)
+ * directly, parametrised by date range instead of CURDATE() and grouped the
+ * same way (date, agent, campaign) so an agent who worked more than one
+ * campaign in a day gets one row per campaign, not one blended row.
+ *
+ * REPLACES db_masmis.cl_apr (a manual Uploader -> APR upload) the same way
+ * Outbound replaced cl_outbound -- cl_apr and its uploader are left in
+ * place, just no longer read here. The aggregate totals below are derived
+ * from the same per-row data as byAgent, not a separate query: totalLoginSeconds
+ * sums the real "Login" sub_status time (closest live equivalent to cl_apr's
+ * actual_login_hrs), and avgUtilizationPct is (talk+dispo) / login time.
+ */
+export async function getProductivityChannel(from: string, to: string): Promise<ProductivityChannel> {
+  const pool = await getDialerPool();
+  const [rows] = await pool.execute<any[]>(
     `SELECT
-       COUNT(DISTINCT mas_id) AS agentCount,
-       COALESCE(SUM(CAST(attendance AS DECIMAL(4,1))),0) AS presentDays,
-       COALESCE(SUM(TIME_TO_SEC(actual_login_hrs)),0) AS totalLoginSeconds,
-       COALESCE(AVG(CAST(REPLACE(utilization,'%','') AS DECIMAL(6,2))),0) AS avgUtilizationPct,
-       COALESCE(SUM(CAST(total_calls AS UNSIGNED)),0) AS totalCallsLogged
-     FROM db_masmis.cl_apr
-     WHERE STR_TO_DATE(report_date, '${DMY_SHORT}') BETWEEN ? AND ?`,
+       DATE(event_time) AS date, user AS agent, campaign_id AS campaignId,
+       COUNT(*) AS calls,
+       COALESCE(SUM(wait_sec),0) AS waitSec,
+       COALESCE(SUM(talk_sec),0) AS talkSec,
+       COALESCE(SUM(dispo_sec),0) AS dispoSec,
+       COALESCE(SUM(pause_sec),0) AS pauseSec,
+       ROUND((COALESCE(SUM(wait_sec),0)+COALESCE(SUM(talk_sec),0)+COALESCE(SUM(dispo_sec),0)) / NULLIF(COUNT(*),0)) AS ahtSec,
+       DATE_FORMAT(MIN(event_time), '%H:%i:%s') AS loginTime,
+       DATE_FORMAT(MAX(event_time), '%H:%i:%s') AS logoutTime,
+       TIMESTAMPDIFF(SECOND, MIN(event_time), MAX(event_time)) AS netLoginSec,
+       COALESCE(SUM(CASE WHEN sub_status = 'LOGIN' THEN pause_sec ELSE 0 END),0) AS loginSec,
+       COALESCE(SUM(CASE WHEN sub_status = 'Bio' THEN pause_sec ELSE 0 END),0) AS bioSec,
+       COALESCE(SUM(CASE WHEN sub_status = 'Lunch' THEN pause_sec ELSE 0 END),0) AS lunchSec,
+       COALESCE(SUM(CASE WHEN sub_status = 'Qualit' THEN pause_sec ELSE 0 END),0) AS qaSec,
+       COALESCE(SUM(CASE WHEN sub_status = 'DISMX' THEN pause_sec ELSE 0 END),0) AS dismxSec,
+       COALESCE(SUM(CASE WHEN sub_status = 'Traini' THEN pause_sec ELSE 0 END),0) AS trainingSec,
+       COALESCE(SUM(CASE WHEN sub_status = 'Short' THEN pause_sec ELSE 0 END),0) AS shortBreakSec,
+       COALESCE(SUM(CASE WHEN sub_status = 'OutCal' THEN pause_sec ELSE 0 END),0) AS outcallSec,
+       COALESCE(SUM(CASE WHEN sub_status = 'LAGGED' THEN pause_sec ELSE 0 END),0) AS laggedSec
+     FROM vicidial_agent_log_250
+     WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY) AND user IS NOT NULL AND user != ''
+     GROUP BY DATE(event_time), user, campaign_id
+     ORDER BY date ASC, agent ASC, campaignId ASC`,
     [from, to],
   );
+
+  const byAgent: ProductivityAgentRow[] = (rows as any[]).map((r) => ({
+    date: String(r.date), agent: String(r.agent), campaignId: String(r.campaignId ?? ""),
+    calls: num(r.calls), waitSec: num(r.waitSec), talkSec: num(r.talkSec), dispoSec: num(r.dispoSec), pauseSec: num(r.pauseSec),
+    ahtSec: num(r.ahtSec), loginTime: String(r.loginTime ?? ""), logoutTime: String(r.logoutTime ?? ""), netLoginSec: num(r.netLoginSec),
+    loginSec: num(r.loginSec), bioSec: num(r.bioSec), lunchSec: num(r.lunchSec), qaSec: num(r.qaSec), dismxSec: num(r.dismxSec),
+    trainingSec: num(r.trainingSec), shortBreakSec: num(r.shortBreakSec), outcallSec: num(r.outcallSec), laggedSec: num(r.laggedSec),
+  }));
+
+  const agentCount = new Set(byAgent.map((r) => r.agent)).size;
+  const presentDays = new Set(byAgent.map((r) => `${r.agent}|${r.date}`)).size;
+  const totalLoginSeconds = byAgent.reduce((s, r) => s + r.loginSec, 0);
+  const totalTalkDispo = byAgent.reduce((s, r) => s + r.talkSec + r.dispoSec, 0);
+  const totalCallsLogged = byAgent.reduce((s, r) => s + r.calls, 0);
+
   return {
     available: true,
-    agentCount: num(totals?.agentCount),
-    presentDays: num(totals?.presentDays),
-    totalLoginSeconds: num(totals?.totalLoginSeconds),
-    avgUtilizationPct: Math.round(num(totals?.avgUtilizationPct) * 100) / 100,
-    totalCallsLogged: num(totals?.totalCallsLogged),
+    agentCount,
+    presentDays,
+    totalLoginSeconds,
+    avgUtilizationPct: totalLoginSeconds > 0 ? Math.round((totalTalkDispo / totalLoginSeconds) * 10000) / 100 : 0,
+    totalCallsLogged,
+    byAgent,
   };
 }
 
@@ -371,26 +460,41 @@ async function getDispositionChannel(
   };
 }
 
-async function getOutboundChannel(
-  from: string,
-  to: string,
-): Promise<OutboundChannel> {
-  const [[totals]] = await db.execute<any[]>(
+/**
+ * Live outbound calling, from dialer_db.cdr_ob_250 -- the same dialer
+ * instance Clovia's Inbound tab already reads (cdr_in_250), confirmed live
+ * 2026-09-30 to be Clovia's real outbound dialer feed: CallDate is a real
+ * DATE column (no free-text parsing needed), campaign_id = 'OUTBOUND' is
+ * the live outbound-calling scope (197k+ rows, current through yesterday,
+ * 3-7 agents/day this month). Connected = LengthInSec >= 20 (user
+ * instruction, 2026-09-30), not CallStatus = 'A' -- a call is only counted
+ * once it ran long enough to be a real conversation, regardless of how the
+ * dialer itself tagged the attempt. talk_sec is real per-call talk time,
+ * read straight off the row rather than re-derived.
+ *
+ * This REPLACES the previous db_masmis.cl_outbound source (a manual
+ * Uploader -> Outbound upload, last real data 2026-09-16, only 3,270 rows
+ * total) -- same reasoning as Inbound already not needing a manual upload.
+ * cl_outbound and its uploader are left in place, just no longer read here.
+ */
+async function getOutboundChannel(from: string, to: string): Promise<OutboundChannel> {
+  const pool = await getDialerPool();
+  const [[totals]] = await pool.execute<any[]>(
     `SELECT
        COUNT(*) AS totalCalls,
-       COALESCE(SUM(CASE WHEN status = 'Connected' THEN 1 ELSE 0 END),0) AS connectedCalls,
-       COALESCE(AVG(CASE WHEN status = 'Connected' THEN CAST(length_sec AS UNSIGNED) END),0) AS avgTalkSec,
-       COUNT(DISTINCT agent) AS agentCount
-     FROM db_masmis.cl_outbound
-     WHERE STR_TO_DATE(call_date, '%c/%e/%y') BETWEEN ? AND ?`,
+       COALESCE(SUM(CASE WHEN CAST(LengthInSec AS UNSIGNED) >= 20 THEN 1 ELSE 0 END),0) AS connectedCalls,
+       COALESCE(AVG(CASE WHEN CAST(LengthInSec AS UNSIGNED) >= 20 THEN CAST(talk_sec AS UNSIGNED) END),0) AS avgTalkSec,
+       COUNT(DISTINCT Agent) AS agentCount
+     FROM cdr_ob_250
+     WHERE campaign_id = 'OUTBOUND' AND CallDate BETWEEN ? AND ?`,
     [from, to],
   );
-  const [trendRows] = await db.execute<any[]>(
-    `SELECT DATE_FORMAT(STR_TO_DATE(call_date, '%c/%e/%y'), '%Y-%m-%d') AS date,
+  const [trendRows] = await pool.execute<any[]>(
+    `SELECT DATE_FORMAT(CallDate, '%Y-%m-%d') AS date,
        COUNT(*) AS calls,
-       COALESCE(SUM(CASE WHEN status = 'Connected' THEN 1 ELSE 0 END),0) AS connected
-     FROM db_masmis.cl_outbound
-     WHERE STR_TO_DATE(call_date, '%c/%e/%y') BETWEEN ? AND ?
+       COALESCE(SUM(CASE WHEN CAST(LengthInSec AS UNSIGNED) >= 20 THEN 1 ELSE 0 END),0) AS connected
+     FROM cdr_ob_250
+     WHERE campaign_id = 'OUTBOUND' AND CallDate BETWEEN ? AND ?
      GROUP BY date ORDER BY date ASC`,
     [from, to],
   );

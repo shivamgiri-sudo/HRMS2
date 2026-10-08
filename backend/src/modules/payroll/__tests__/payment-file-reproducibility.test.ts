@@ -35,9 +35,8 @@ const MANIFEST = read("src/db/runPendingMigrations.ts");
 describe("the export records what it produced, before handing it over", () => {
   it("hashes the exact bytes that are sent", () => {
     // Hashing anything other than the sent payload would make the record unverifiable.
-    expect(ROUTES).toMatch(
-      /createHash\("sha256"\)\.update\(csv, "utf8"\)\.digest\("hex"\)/,
-    );
+    // \s* between the chained calls: prettier breaks the chain one call per line.
+    expect(ROUTES).toMatch(/createHash\("sha256"\)\s*\.update\(csv, "utf8"\)\s*\.digest\("hex"\)/);
   });
 
   it("writes the record before res.send, not after", () => {

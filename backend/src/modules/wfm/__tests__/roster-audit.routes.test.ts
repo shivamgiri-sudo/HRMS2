@@ -21,7 +21,18 @@ vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole: () => (_q: any, _s: any, n: any) => n(),
 }));
 
-import { rosterAuditRouter } from "../roster-audit.routes";
+// The by-id handlers check the row's own branch / process (console-scope). Tests call handlers directly, so
+// supply the caller's scope here: org-wide by default, switchable per test.
+const { scopeRef } = vi.hoisted(() => ({ scopeRef: { roles: ['super_admin'] as string[], branchId: null as string | null } }));
+vi.mock('../console-scope.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../console-scope.js')>();
+  return {
+    ...real,
+    getScope: async () => ({ userId: 'u', roles: scopeRef.roles, branchId: scopeRef.branchId, processId: null, assignments: [] }),
+  };
+});
+
+import { rosterAuditRouter } from '../roster-audit.routes';
 
 const get = (
   path: string,
@@ -29,10 +40,7 @@ const get = (
   params: Record<string, string> = {},
 ) => callHandler(getHandler(rosterAuditRouter, "get", path), { query, params });
 
-beforeEach(() => {
-  calls.length = 0;
-  respond.fn = () => [];
-});
+beforeEach(() => { calls.length = 0; respond.fn = () => []; scopeRef.roles = ['super_admin']; scopeRef.branchId = null; });
 
 describe("GET /trails", () => {
   it("resolves actor names from auth user id (employees.user_id), not employees.id", async () => {
@@ -341,7 +349,22 @@ describe("detail endpoints", () => {
     });
     expect(out.body.run).toBeNull();
   });
-  it("run detail summarises ALL decisions, not just the 100 listed", async () => {
+  it('branch scope: a branch head cannot open another branch\'s audit row or generation run by id', async () => {
+    scopeRef.roles = ['branch_head']; scopeRef.branchId = 'branch-own';
+    respond.fn = (sql) => {
+      if (sql.includes('rda.*')) return [{ id: 'a1', roster_date: '2026-09-03', decision_type: 'x', rule_applied: 'y', created_at: 't', employee_id: 'e1', scopeBranchId: 'branch-other', scopeProcessId: null }];
+      if (sql.includes('rgr.*')) return [{ id: 'r1', cycle_id: 'c1', branch_id: 'branch-other', process_id: null }];
+      return [];
+    };
+    expect((await get('/trails/:id', {}, { id: 'a1' })).status).toBe(403);
+    expect((await get('/generation-runs/:id', {}, { id: 'r1' })).status).toBe(403);
+    // ...but their own branch's rows open.
+    respond.fn = (sql) => sql.includes('rda.*')
+      ? [{ id: 'a1', roster_date: '2026-09-03', decision_type: 'x', rule_applied: 'y', created_at: 't', override_by: null, employee_id: 'e1', cycle_id: null, run_id: null, is_week_off: 0, scopeBranchId: 'branch-own', scopeProcessId: null }]
+      : [];
+    expect((await get('/trails/:id', {}, { id: 'a1' })).status).toBe(200);
+  });
+  it('run detail summarises ALL decisions, not just the 100 listed', async () => {
     respond.fn = (sql) => {
       if (sql.includes("rgr.*"))
         return [

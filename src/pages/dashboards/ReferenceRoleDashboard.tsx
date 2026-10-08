@@ -27,6 +27,8 @@ import {
   type ReferenceDashboardData,
 } from "./reference-dashboard-model";
 import { ReferenceError, UpdatedControl } from "./ReferenceDashboardUI";
+import { useRoleInsights } from "./kit/useRoleInsights";
+import { InsightStatus } from "./kit/InsightStatus";
 import { CeoReferenceLayout } from "./reference/CeoReferenceLayout";
 import { EmployeeReferenceLayout } from "./reference/EmployeeReferenceLayout";
 import { HrReferenceLayout } from "./reference/HrReferenceLayout";
@@ -206,6 +208,17 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     retry: 1,
   });
 
+  // The summary and insights are what the page paints from. The ~10 legacy feeds behind the older panels used
+  // to fire in the same instant and, with the browser's per-host connection cap, queued the insights behind
+  // them. They start once the summary lands (or after 2s, whichever is first).
+  const [legacyReady, setLegacyReady] = useState(false);
+  useEffect(() => {
+    if (legacyReady) return;
+    if (variant === "employee" || !summaryQuery.isLoading) { setLegacyReady(true); return; }
+    const timer = setTimeout(() => setLegacyReady(true), 2000);
+    return () => clearTimeout(timer);
+  }, [legacyReady, variant, summaryQuery.isLoading]);
+
   const employeeQuery = useQuery({
     queryKey: ["reference-dashboard-employee", roleData?.employeeId],
     queryFn: () => loadEmployee(roleData?.employeeId),
@@ -217,7 +230,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const atsQuery = useQuery({
     queryKey: ["reference-dashboard-ats", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/ats/stats${params}`))),
-    enabled: accessGranted && ["hr", "ceo", "manager", "super_admin", "recruiter"].includes(variant),
+    enabled: accessGranted && legacyReady && ["hr", "ceo", "manager", "super_admin", "recruiter"].includes(variant),
     staleTime: 60_000,
     retry: 1,
   });
@@ -230,7 +243,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
         `/api/ats/recruiter/hiring-dashboard?fromDate=${date}&toDate=${date}`,
       )));
     },
-    enabled: accessGranted && variant === "recruiter",
+    enabled: accessGranted && legacyReady && variant === "recruiter",
     staleTime: 30_000,
     retry: 1,
   });
@@ -238,7 +251,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const systemQuery = useQuery({
     queryKey: ["reference-dashboard-system"],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>("/api/management/system-dashboard"))),
-    enabled: accessGranted && variant === "super_admin",
+    enabled: accessGranted && legacyReady && variant === "super_admin",
     staleTime: 30_000,
     retry: 1,
   });
@@ -246,7 +259,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const workforceQuery = useQuery({
     queryKey: ["reference-dashboard-workforce", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/management/workforce-dashboard${params}`))),
-    enabled: accessGranted && ["ceo", "manager", "super_admin", "operations", "quality", "hr"].includes(variant),
+    enabled: accessGranted && legacyReady && ["ceo", "manager", "super_admin", "operations", "quality", "hr"].includes(variant),
     staleTime: 60_000,
     retry: 1,
   });
@@ -254,7 +267,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const pnlQuery = useQuery({
     queryKey: ["reference-dashboard-pnl", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/finance/pnl/summary${params}`))),
-    enabled: accessGranted && ["ceo", "payroll", "super_admin"].includes(variant),
+    enabled: accessGranted && legacyReady && ["ceo", "payroll", "super_admin"].includes(variant),
     staleTime: 60_000,
     retry: 1,
   });
@@ -265,7 +278,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
       const response = asRecord(await hrmsApi.get<unknown>("/api/payroll/runs?limit=50"));
       return asArray(response.data);
     },
-    enabled: accessGranted && variant === "payroll",
+    enabled: accessGranted && legacyReady && variant === "payroll",
     staleTime: 60_000,
     retry: 1,
   });
@@ -294,7 +307,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
       `/api/dashboards/PAYROLL_HR_DASHBOARD/operational-summary?runId=${selectedPayrollRunId}`,
     ))),
-    enabled: accessGranted && variant === "payroll" && Boolean(selectedPayrollRunId),
+    enabled: accessGranted && legacyReady && variant === "payroll" && Boolean(selectedPayrollRunId),
     staleTime: 60_000,
     retry: 1,
   });
@@ -302,7 +315,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const biometricQuery = useQuery({
     queryKey: ["reference-dashboard-biometric", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/wfm/biometric-summary/adherence-summary${params}`))),
-    enabled: accessGranted && ["wfm", "wfm_attendance", "manager", "operations"].includes(variant),
+    enabled: accessGranted && legacyReady && ["wfm", "wfm_attendance", "manager", "operations"].includes(variant),
     staleTime: 30_000,
     retry: 1,
   });
@@ -313,7 +326,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
       integrationStatus: asRecord(unwrap(await hrmsApi.get<unknown>("/api/integrations/cosec/sync-status"))),
       devices: [],
     }),
-    enabled: accessGranted && ["wfm", "wfm_attendance"].includes(variant),
+    enabled: accessGranted && legacyReady && ["wfm", "wfm_attendance"].includes(variant),
     staleTime: 30_000,
     retry: 1,
   });
@@ -321,7 +334,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const pulseQuery = useQuery({
     queryKey: ["reference-dashboard-pulse", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/bi/daily-operations-pulse${params}`))),
-    enabled: accessGranted && ["wfm", "wfm_attendance", "manager", "ceo", "super_admin", "operations", "quality"].includes(variant),
+    enabled: accessGranted && legacyReady && ["wfm", "wfm_attendance", "manager", "ceo", "super_admin", "operations", "quality"].includes(variant),
     staleTime: 30_000,
     retry: 1,
   });
@@ -333,7 +346,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
       const record = asRecord(value);
       return Array.isArray(value) ? asArray(value) : asArray(record.rows ?? record.requests ?? record.data);
     },
-    enabled: accessGranted && variant === "manager",
+    enabled: accessGranted && legacyReady && variant === "manager",
     staleTime: 30_000,
     retry: 1,
   });
@@ -343,7 +356,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
       `/api/dashboards/${code}/good-bad-insights`,
     ))),
-    enabled: accessGranted && variant === "manager",
+    enabled: accessGranted && legacyReady && variant === "manager",
     staleTime: 30_000,
     retry: 1,
   });
@@ -353,18 +366,18 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
       `/api/dashboards/${code}/owner-accountability`,
     ))),
-    enabled: accessGranted && variant === "manager",
+    enabled: accessGranted && legacyReady && variant === "manager",
     staleTime: 30_000,
     retry: 1,
   });
 
   const executiveQualityQuery = useExecutiveQualitySummary(
     30,
-    accessGranted && ["ceo", "super_admin"].includes(variant),
+    accessGranted && legacyReady && ["ceo", "super_admin"].includes(variant),
   );
   const orgKpiQuery = useOrgKpiSummary(
     undefined,
-    accessGranted && ["ceo", "super_admin", "manager"].includes(variant),
+    accessGranted && legacyReady && ["ceo", "super_admin", "manager"].includes(variant),
   );
 
   const itProvisioningQuery = useQuery({
@@ -372,7 +385,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
       `/api/it-provisioning/stats?assigned_role=it${branchId ? `&branch_id=${branchId}` : ""}${processId ? `&process_id=${processId}` : ""}`,
     ))),
-    enabled: accessGranted && variant === "it_manager",
+    enabled: accessGranted && legacyReady && variant === "it_manager",
     staleTime: 30_000,
     retry: 1,
   });
@@ -382,7 +395,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
       `/api/it-provisioning/it-dashboard-summary${branchId || processId ? `?${branchId ? `branch_id=${branchId}` : ""}${branchId && processId ? "&" : ""}${processId ? `process_id=${processId}` : ""}` : ""}`,
     ))),
-    enabled: accessGranted && variant === "it_manager",
+    enabled: accessGranted && legacyReady && variant === "it_manager",
     staleTime: 30_000,
     retry: 1,
   });
@@ -390,7 +403,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const qualitySummaryQuery = useQuery({
     queryKey: ["reference-dashboard-quality-summary", branchId, processId],
     queryFn: () => hrmsApi.get<unknown>(`/api/quality-dashboard/summary${params}`),
-    enabled: accessGranted && variant === "quality",
+    enabled: accessGranted && legacyReady && variant === "quality",
     staleTime: 60_000,
     retry: 1,
   });
@@ -398,7 +411,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const qualityTrendQuery = useQuery({
     queryKey: ["reference-dashboard-quality-trend", branchId, processId],
     queryFn: () => hrmsApi.get<unknown>(`/api/quality-dashboard/trend?granularity=day${branchId ? `&branchId=${branchId}` : ""}${processId ? `&processId=${processId}` : ""}`),
-    enabled: accessGranted && variant === "quality",
+    enabled: accessGranted && legacyReady && variant === "quality",
     staleTime: 60_000,
     retry: 1,
   });
@@ -406,7 +419,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const qualityAgentsQuery = useQuery({
     queryKey: ["reference-dashboard-quality-agents", branchId, processId],
     queryFn: () => hrmsApi.get<unknown>(`/api/quality-dashboard/agents?limit=100${branchId ? `&branchId=${branchId}` : ""}${processId ? `&processId=${processId}` : ""}`),
-    enabled: accessGranted && variant === "quality",
+    enabled: accessGranted && legacyReady && variant === "quality",
     staleTime: 60_000,
     retry: 1,
   });
@@ -415,10 +428,12 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const qaQualityQuery = useQuery({
     queryKey: ["reference-dashboard-qa-quality", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/bi/quality-intervention${params}`))),
-    enabled: accessGranted && ["operations", "manager", "super_admin", "ceo"].includes(variant),
+    enabled: accessGranted && legacyReady && ["operations", "manager", "super_admin", "ceo"].includes(variant),
     staleTime: 60_000,
     retry: 1,
   });
+
+  const insightsQuery = useRoleInsights(code, { branchId, processId }, accessGranted && !roleLoading);
 
   const summary = summaryQuery.data;
   const metrics = summary?.metrics ?? {};
@@ -441,6 +456,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     ...(variant === "quality" ? [qualitySummaryQuery, qualityTrendQuery, qualityAgentsQuery] : []),
     ...(["operations", "manager", "super_admin", "ceo"].includes(variant) ? [qaQualityQuery] : []),
     ...(variant === "it_manager" ? [itProvisioningQuery, itDashboardQuery] : []),
+    insightsQuery,
   ] : [];
 
   // Merge executive quality (for ceo/admin) with QA-role quality (for quality/operations roles)
@@ -516,6 +532,11 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
 
   const data: ReferenceDashboardData = {
     variant,
+    dashboardCode: code,
+    insights: insightsQuery.data,
+    insightsLoading: insightsQuery.isLoading || (insightsQuery.data?.pending?.length ?? 0) > 0,
+    insightsError: insightsQuery.isError ? (insightsQuery.error as Error)?.message ?? "Insights unavailable" : null,
+    openDrill: (metricCode, metricName, filters) => setActiveDrilldown({ metricCode, metricName, filters }),
     summary: summary ?? {} as DashboardSummary,
     metrics,
     drilldownFor,
@@ -526,6 +547,9 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     pnl: pnlQuery.data ?? {},
     payroll: payrollQuery.data ?? {},
     payrollRuns: payrollRunsQuery.data ?? [],
+    qualityLoading: ["ceo", "super_admin"].includes(variant) && (!legacyReady || executiveQualityQuery.isLoading),
+    payrollLoading: variant === "payroll" && (payrollRunsQuery.isLoading || payrollQuery.isLoading || ((payrollRunsQuery.data?.length ?? 0) > 0 && !selectedPayrollRunId)),
+    payrollError: payrollQuery.isError ? (payrollQuery.error as Error)?.message ?? "request failed" : null,
     selectedPayrollRunId,
     onPayrollRunChange: setSelectedPayrollRunId,
     biometric: biometricQuery.data ?? {},
@@ -547,7 +571,8 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     itDashboard: itDashboardQuery.data ?? {},
     loading: primaryLoading,
     // True while any feed a KPI tile reads is still resolving — see ReferenceDashboardData.
-    secondaryLoading: activeQueryResults.some((query) => query.isLoading),
+    // Deferred legacy feeds count as loading too, so a not-yet-requested feed never reads as a measured zero.
+    secondaryLoading: !legacyReady || activeQueryResults.some((query) => query.isLoading),
     refreshing: activeQueryResults.some((query) => query.isFetching),
     generatedAt: summary?.generatedAt,
   };
@@ -575,7 +600,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   // refresh, "data as of") rendered permanently empty. This control is generic
   // (driven by dashboardCode, not the variant), so adding payroll here is the same
   // fix every other listed dashboard already has, not a new behavior.
-  const filterControl = ["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin", "payroll"].includes(variant) ? (
+  const filterControl = ["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin", "payroll", "recruiter", "it_manager"].includes(variant) ? (
     <div className="flex flex-wrap items-center justify-end gap-3">
       <ScopedFilterBar
         onBranchChange={setBranchId}
@@ -621,6 +646,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
           <QuickLinksBar />
         </div>
 
+        <InsightStatus insights={insightsQuery.data} loading={insightsQuery.isLoading} error={data.insightsError} onRetry={() => void insightsQuery.refetch()} />
         {errorMessage ? <div className="mb-4"><ReferenceError message={errorMessage} onRetry={refreshAll} /></div> : null}
         {variant === "employee" ? <EmployeeReferenceLayout data={data} employeeName={employeeName} /> : null}
         {variant === "wfm" ? <WfmReferenceLayout data={data} filters={filterControl} /> : null}

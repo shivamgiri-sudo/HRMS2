@@ -59,9 +59,20 @@ export function isOffRollType(empType: string | null | undefined): boolean {
 /**
  * Reserves and returns the next employee code.
  *
- * Must be called inside the caller's transaction: the max-scan and the sequence
- * advance have to be atomic with the employee insert, or two concurrent
- * approvals can take the same number.
+ * Must be called inside the caller's transaction, and the caller must commit or roll
+ * back that same transaction: the sequence rows are locked here and stay locked until
+ * then, which is what serialises concurrent conversions.
+ *
+ * Why the lock is the sequence table and not the employees scan: under REPEATABLE READ a
+ * plain SELECT MAX() reads a snapshot, and an employee row inserted by another
+ * conversion is invisible until that conversion commits -- and a conversion keeps its
+ * transaction open for seconds after the INSERT. Two overlapping conversions therefore
+ * both read the same max and issued the same code (PRIYAM NARANG and ALOK PAL, both
+ * MAS63701, 2026-10-05 16:03:30 / 16:03:34). `SELECT ... FOR UPDATE` is a locking read: it
+ * waits for the other transaction and returns the latest committed value, so the second
+ * conversion starts from the first one's number. Every issuer advances the sequence rows
+ * inside the lock, which makes them authoritative; the employees scan below remains as a
+ * floor for codes written by paths that never touch the sequence (sync, bulk upload).
  */
 export async function generateEmployeeCode(
   conn: PoolConnection,
@@ -69,28 +80,33 @@ export async function generateEmployeeCode(
 ): Promise<string> {
   const isOffRoll = isOffRollType(empType);
 
+  // Fixed order (id) so two transactions can never lock the rows in opposite order.
+  const [seqRows] = await conn.execute<RowDataPacket[]>(
+    `SELECT id, current_sequence FROM employee_code_sequence ORDER BY id FOR UPDATE`
+  );
+  const lockedSeq = Math.max(0, ...(seqRows as RowDataPacket[]).map((r) => Number(r.current_sequence) || 0));
+
   // One shared counter across every historical format, so on-roll and off-roll
   // codes never collide on the same number.
   const [maxRows] = await conn.execute<RowDataPacket[]>(
     `SELECT GREATEST(
-       IFNULL((SELECT MAX(current_sequence) FROM employee_code_sequence), 0),
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^MAS[0-9]+$'),0),
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^IDC[0-9]+$'),0),
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,1,CHAR_LENGTH(employee_code)-1) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^[0-9]+C$'),0),
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4,CHAR_LENGTH(employee_code)-4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^IDC[0-9]+C$'),0)
      ) AS global_max`,
   );
+  const scanMax = Number((maxRows as RowDataPacket[])[0]?.global_max) || 0;
 
-  const nextSeq =
-    (Number((maxRows as RowDataPacket[])[0]?.global_max) || 0) + 1;
+  const nextSeq = Math.max(lockedSeq, scanMax) + 1;
+  const code = isOffRoll ? `${nextSeq}C` : `MAS${nextSeq}`;
 
-  // Keep the bookkeeping table in step. It is advisory only — the max scan
-  // above is authoritative, which is why the table currently lags reality.
+  // The rows are locked, so this cannot race. It commits or rolls back with the caller.
   await conn.execute(
-    `UPDATE employee_code_sequence SET current_sequence = ?, last_generated_at = NOW()
-     WHERE current_sequence < ?`,
-    [nextSeq, nextSeq],
+    `UPDATE employee_code_sequence
+        SET current_sequence = GREATEST(current_sequence, ?), last_generated_code = ?, last_generated_at = NOW()`,
+    [nextSeq, code]
   );
 
-  return isOffRoll ? `${nextSeq}C` : `MAS${nextSeq}`;
+  return code;
 }

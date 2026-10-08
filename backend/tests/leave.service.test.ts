@@ -6,8 +6,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // drain the mockResolvedValueOnce queue, the values those tests had queued
 // leaked into listRequests / getBalance / listHolidays / createHoliday and broke
 // them too.
-const { getConnection, connExecute, connQuery } = vi.hoisted(() => ({
+const { getConnection, connExecute, connQuery, poolQuery } = vi.hoisted(() => ({
   getConnection: vi.fn(),
+  // db.query (the pool's text protocol) — listHolidays uses it for its `IN (?)` scope lookups,
+  // which db.execute's prepared statements cannot expand. (778597519, 2026-09-02)
+  poolQuery: vi.fn(),
   connExecute: vi.fn(),
   // Separate from connExecute: reviewRequest's FOR UPDATE lock and
   // submitRequest's GET_LOCK/RELEASE_LOCK mutex now run on a dedicated
@@ -16,7 +19,7 @@ const { getConnection, connExecute, connQuery } = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]), getConnection },
+  db: { execute: vi.fn().mockResolvedValue([[], []]), query: poolQuery, getConnection },
   pingDb: vi.fn(),
 }));
 vi.mock("../src/modules/inbox/inbox.service.js", () => ({
@@ -105,6 +108,8 @@ beforeEach(() => {
   // first result.
   exec.mockReset();
   exec.mockResolvedValue([[], []]);
+  poolQuery.mockReset();
+  poolQuery.mockResolvedValue([[], []]);
   connExecute.mockReset();
   connExecute.mockResolvedValue([{ affectedRows: 1 }, []]);
   connQuery.mockReset();
@@ -175,26 +180,44 @@ describe("leaveService.createLeaveType", () => {
 });
 
 describe("leaveService.submitRequest", () => {
+  // submitRequest opens with an inactive-employee guard (78123bb39, 2026-09-18): it reads
+  // employees.active_status and refuses an unknown or exited employee before anything else.
+  function routeSubmit(employeeRows: unknown[]) {
+    exec.mockImplementation((sql: string) => {
+      if (/SELECT active_status FROM employees/i.test(sql)) return Promise.resolve([employeeRows, []]);
+      if (/SELECT id FROM leave_request/i.test(sql)) return Promise.resolve([[], []]);
+      if (/FROM leave_request/i.test(sql)) return Promise.resolve([[fakeRequest], []]);
+      if (/^\s*INSERT/i.test(sql)) return Promise.resolve([{ affectedRows: 1 }, []]);
+      return Promise.resolve([[], []]);
+    });
+  }
+  const threeDayRequest = {
+    employeeId: "emp-1", leaveTypeId: "lt-1",
+    fromDate: "2026-06-01", toDate: "2026-06-03", totalDays: 3,
+  };
+  const insertedLeaveRequest = () =>
+    [...exec.mock.calls, ...connExecute.mock.calls].some(([sql]) => /INSERT INTO leave_request\b/i.test(String(sql)));
+
   it("creates leave request and returns it", async () => {
     // Routed by SQL: submitRequest runs policy and eligibility reads before the
     // INSERT, and their number is not something this test should depend on.
-    exec.mockImplementation((sql: string) => {
-      if (/SELECT id FROM leave_request/i.test(sql))
-        return Promise.resolve([[], []]);
-      if (/FROM leave_request/i.test(sql))
-        return Promise.resolve([[fakeRequest], []]);
-      if (/^\s*INSERT/i.test(sql))
-        return Promise.resolve([{ affectedRows: 1 }, []]);
-      return Promise.resolve([[], []]);
-    });
-    const r = await leaveService.submitRequest({
-      employeeId: "emp-1",
-      leaveTypeId: "lt-1",
-      fromDate: "2026-06-01",
-      toDate: "2026-06-03",
-      totalDays: 3,
-    });
+    routeSubmit([{ active_status: 1 }]);
+    const r = await leaveService.submitRequest(threeDayRequest);
     expect(r.status).toBe("pending");
+  });
+
+  it("refuses a leave request for an employee that does not exist", async () => {
+    routeSubmit([]);
+    await expect(leaveService.submitRequest(threeDayRequest))
+      .rejects.toMatchObject({ message: "Employee not found", statusCode: 404 });
+    expect(insertedLeaveRequest()).toBe(false);
+  });
+
+  it("refuses a leave request for an inactive (exited) employee", async () => {
+    routeSubmit([{ active_status: 0 }]);
+    await expect(leaveService.submitRequest(threeDayRequest))
+      .rejects.toMatchObject({ statusCode: 409 });
+    expect(insertedLeaveRequest()).toBe(false);
   });
 });
 
@@ -752,19 +775,64 @@ describe("leaveService.listHolidays", () => {
     const r = await leaveService.listHolidays();
     expect(r).toHaveLength(1);
     expect(r[0].holiday_name).toBe("Diwali");
+    // No mapping rows means the holiday is branch-wide: both scope lists are empty.
+    expect(r[0].cost_centre_ids).toEqual([]);
+    expect(r[0].designation_ids).toEqual([]);
+  });
+
+  it("attaches each holiday's cost-centre and designation scope", async () => {
+    // The scope decides who is paid for the day, so the list has to show it (778597519).
+    exec.mockResolvedValueOnce([[fakeHoliday], []]);
+    poolQuery.mockImplementation((sql: string) => {
+      if (/FROM holiday_cost_centre_mapping/i.test(sql)) {
+        return Promise.resolve([[{ holiday_id: "hol-1", cost_centre_id: "cc-1" }, { holiday_id: "hol-1", cost_centre_id: "cc-2" }], []]);
+      }
+      if (/FROM holiday_designation_mapping/i.test(sql)) {
+        return Promise.resolve([[{ holiday_id: "hol-1", designation_id: "desig-1" }], []]);
+      }
+      return Promise.resolve([[], []]);
+    });
+    const r = await leaveService.listHolidays();
+    expect(r[0].cost_centre_ids).toEqual(["cc-1", "cc-2"]);
+    expect(r[0].designation_ids).toEqual(["desig-1"]);
+    for (const [, params] of poolQuery.mock.calls) {
+      expect(params).toEqual([["hol-1"]]);
+    }
   });
 });
 
 describe("leaveService.createHoliday", () => {
   it("creates holiday", async () => {
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    // The INSERT and its scope rows run in one transaction on a dedicated connection
+    // (778597519); only the read-back goes through the pool.
     exec.mockResolvedValueOnce([[fakeHoliday], []]);
     const r = await leaveService.createHoliday({
-      holidayName: "Diwali",
-      holidayDate: "2026-10-20",
-      holidayType: "national",
+      holidayName: "Diwali", holidayDate: "2026-10-20", holidayType: "national",
+      costCentreIds: ["cc-1"], designationIds: ["desig-1"],
     });
     expect(r.holiday_name).toBe("Diwali");
+    expect(r.cost_centre_ids).toEqual(["cc-1"]);
+    expect(r.designation_ids).toEqual(["desig-1"]);
+
+    const written = connExecute.mock.calls.map(([sql]) => String(sql));
+    expect(written.some((sql) => /INSERT INTO leave_holiday_master/i.test(sql))).toBe(true);
+    expect(written.some((sql) => /INSERT INTO holiday_cost_centre_mapping/i.test(sql))).toBe(true);
+    expect(written.some((sql) => /INSERT INTO holiday_designation_mapping/i.test(sql))).toBe(true);
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(rollback).not.toHaveBeenCalled();
+  });
+
+  it("rolls the holiday back when its scope cannot be written", async () => {
+    // A holiday saved without the scope its creator chose applies to the whole branch.
+    connExecute.mockImplementation((sql: string) => {
+      if (/INSERT INTO holiday_cost_centre_mapping/i.test(sql)) return Promise.reject(new Error("scope write failed"));
+      return Promise.resolve([{ affectedRows: 1 }, []]);
+    });
+    await expect(leaveService.createHoliday({
+      holidayName: "Diwali", holidayDate: "2026-10-20", holidayType: "national", costCentreIds: ["cc-1"],
+    })).rejects.toThrow("scope write failed");
+    expect(rollback).toHaveBeenCalledTimes(1);
+    expect(commit).not.toHaveBeenCalled();
   });
 });
 

@@ -90,7 +90,10 @@ function nextAction(blockers: string[]): string {
  * candidate. It is a builder because the queue used to call the single-row form 50 times per page
  * load; see candidateSnapshots() below.
  */
-const candidateSnapshotSql = (whereSql: string) => `SELECT
+// `scoped` pushes a candidate_id filter into the three derived tables so a single-candidate
+// lookup does not aggregate every candidate. Placeholders appear before the WHERE ones, so the
+// caller must pass 4 leading params (doc x2, bgv, dpdp) — see candidateSnapshot().
+const candidateSnapshotSql = (whereSql: string, scoped = false) => `SELECT
        c.id AS candidate_id,
        c.candidate_code,
        c.full_name,
@@ -112,8 +115,11 @@ const candidateSnapshotSql = (whereSql: string) => `SELECT
        COALESCE(doc_stats.verified_documents, 0) AS verified_documents,
        GREATEST(COALESCE(doc_stats.total_documents, 0) - COALESCE(doc_stats.verified_documents, 0), 0) AS document_pending_count,
        CASE
-         WHEN COALESCE(bgv_checks.blocker_count, 0) > 0 THEN 'blocked'
-         WHEN COALESCE(bgv_checks.verified_count, 0) > 0 OR bgv.verification_status = 'verified' THEN 'verified'
+         WHEN COALESCE(bgv_checks.blocker_count, 0) > 0 OR bgr.overall_status IN ('refer','negative') THEN 'blocked'
+         -- candidate_bgv_report.overall_status is the live verdict (computeAndSaveScore rewrites it on
+         -- every check update); ats_bgv_verification is a legacy tracker that stays 'in_progress'.
+         WHEN bgr.overall_status = 'clear' OR COALESCE(bgv_checks.verified_count, 0) > 0 OR bgv.verification_status = 'verified' THEN 'verified'
+         WHEN bgr.overall_status = 'in_progress' THEN 'in_progress'
          ELSE COALESCE(bgv.verification_status, 'pending')
        END AS bgv_status,
        phr.id AS payroll_validation_id,
@@ -148,9 +154,9 @@ const candidateSnapshotSql = (whereSql: string) => `SELECT
        SELECT candidate_id, COUNT(*) AS total_documents,
               SUM(CASE WHEN document_status = 'verified' OR verification_status = 'verified' THEN 1 ELSE 0 END) AS verified_documents
          FROM (
-           SELECT candidate_id, document_status, NULL AS verification_status FROM candidate_onboarding_document WHERE deleted_at IS NULL
+           SELECT candidate_id, document_status, NULL AS verification_status FROM candidate_onboarding_document WHERE deleted_at IS NULL${scoped ? " AND candidate_id = ?" : ""}
            UNION ALL
-           SELECT candidate_id, NULL AS document_status, verification_status FROM ats_candidate_documents
+           SELECT candidate_id, NULL AS document_status, verification_status FROM ats_candidate_documents${scoped ? " WHERE candidate_id = ?" : ""}
          ) d
         GROUP BY candidate_id
      ) doc_stats ON doc_stats.candidate_id = c.id
@@ -159,9 +165,11 @@ const candidateSnapshotSql = (whereSql: string) => `SELECT
               SUM(CASE WHEN status IN ('verified','waived') THEN 1 ELSE 0 END) AS verified_count,
               SUM(CASE WHEN status IN ('mismatch','failed','manual_review') THEN 1 ELSE 0 END) AS blocker_count
          FROM candidate_bgv_check
+        ${scoped ? "WHERE candidate_id = ?" : ""}
         GROUP BY candidate_id
      ) bgv_checks ON bgv_checks.candidate_id = c.id
      LEFT JOIN ats_bgv_verification bgv ON bgv.candidate_id = c.id
+     LEFT JOIN candidate_bgv_report bgr ON bgr.candidate_id = c.id
      LEFT JOIN ats_payroll_hr_validation phr ON phr.candidate_id = c.id
      LEFT JOIN salary_exception_proposal sep ON sep.candidate_id = c.id
      LEFT JOIN ats_branch_head_approval bha ON bha.candidate_id = c.id
@@ -176,7 +184,7 @@ const candidateSnapshotSql = (whereSql: string) => `SELECT
                 ELSE 'pending'
               END AS required_status
          FROM dpdp_consent_register
-        WHERE purpose_code IN ('candidate_onboarding','bgv_verification','payroll_processing','document_review')
+        WHERE purpose_code IN ('candidate_onboarding','bgv_verification','payroll_processing','document_review')${scoped ? " AND candidate_id = ?" : ""}
         GROUP BY candidate_id
      ) dpdp ON dpdp.candidate_id = c.id
      LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
@@ -187,8 +195,8 @@ async function candidateSnapshot(
   candidateId: string,
 ): Promise<RowDataPacket | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `${candidateSnapshotSql("c.id = ?")} LIMIT 1`,
-    [candidateId],
+    `${candidateSnapshotSql("c.id = ?", true)} LIMIT 1`,
+    [candidateId, candidateId, candidateId, candidateId, candidateId],
   );
   return rows[0] ?? null;
 }
@@ -220,7 +228,12 @@ async function candidateSnapshots(
     .filter(Boolean) as RowDataPacket[];
 }
 
-export async function listJoiningControlRoomQueue(search = "") {
+/**
+ * `branchKeys` restricts the queue to candidates applying to those branches: null = unrestricted,
+ * [] = nothing. ats_candidate.applied_for_branch holds a branch id on some rows and a branch NAME
+ * on others, so the caller passes both spellings for every allowed branch.
+ */
+export async function listJoiningControlRoomQueue(search = "", branchKeys: string[] | null = null) {
   let searchSql = "";
   let searchParams: unknown[] = [];
   if (search.trim()) {
@@ -228,6 +241,14 @@ export async function listJoiningControlRoomQueue(search = "") {
       "AND (c.full_name LIKE ? OR c.mobile LIKE ? OR c.email LIKE ? OR c.candidate_code LIKE ?)";
     const like = `%${search.trim()}%`;
     searchParams = [like, like, like, like];
+  }
+  if (branchKeys) {
+    if (!branchKeys.length) {
+      searchSql += " AND 1=0";
+    } else {
+      searchSql += ` AND c.applied_for_branch IN (${branchKeys.map(() => "?").join(",")})`;
+      searchParams = [...searchParams, ...branchKeys];
+    }
   }
   // The filter is interpolated into all four arms below, so its bindings repeat once per arm.
   const params: unknown[] = [

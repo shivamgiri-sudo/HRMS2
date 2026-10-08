@@ -243,6 +243,8 @@ export async function getNeverReported(
        LEFT JOIN upload_template_master t
               ON t.target_table = ds.source_object AND t.active_status = 1
       WHERE d.active_status = 1
+        -- A definition that has ended is not a feed that should still be reporting.
+        AND (d.effective_to IS NULL OR d.effective_to >= CURDATE())
         AND NOT EXISTS (
           SELECT 1 FROM process_metric_actual a
            WHERE a.process_id = d.process_id AND a.metric_key = m.metric_code

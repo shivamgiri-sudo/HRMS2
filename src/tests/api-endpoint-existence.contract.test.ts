@@ -386,6 +386,11 @@ const NOT_A_REQUEST: Record<string, string> = {
     "requested. Every value was checked 2026-09-15 against process-live-dashboard.routes.ts: the " +
     "static routes plus cdrRoutes(prefix) for gnc/bella-vita/clovia/neemans/viega/exicom/du-digital, " +
     "which register `/${prefix}/summary|daily|monthly` in a loop the static scan cannot expand.",
+  "/api/mydashboards":
+    "the PREFIX constant in features/call-master-sync/shim/api.ts. The shim requests `${PREFIX}${url}` and every " +
+    "caller passes a url that starts '/call-master/' (the synced Mydashboards code calls api.get('/call-master/...')), " +
+    "so the bare prefix is never requested. The real routes are mounted at /api/mydashboards/call-master in " +
+    "app.ts (myDashboardsRouter, call-master/mydashboards.routes.ts) and are matched by the static scan.",
   "/api/housing-dashboards/housing-owner":
     "the `base` argument NativeHousingDashboards.tsx passes into useFilterOptions(base), which " +
     "fetches `${base}/filter-options` -- a real, mounted route (housing-dashboards.routes.ts). " +

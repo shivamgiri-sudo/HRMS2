@@ -1,8 +1,10 @@
+import { employeeFulltextAvailable } from "./employee-search-index.js";
 import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import { normalizeBloodGroup } from "./bloodGroup.util.js";
 import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
 import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
@@ -505,20 +507,48 @@ export const employeeService = {
       // unindexable OR-chain and no consuming page's UI advertises searching by
       // personal email (every one is labelled "search by name or employee code").
       const term = search.trim();
-      const isCodeSearch = /^MAS/i.test(term);
+      const isCodeSearch = /^MAS\d/i.test(term); // "Masood Alam" is a name, not a code
+      // Every word must match (AND). The old single `term*` in BOOLEAN MODE was an OR across the
+      // words, so "Abid ali" matched every "Abid" and every "ali…", and with the pickers' limit=10
+      // the person typed was often not among the 10 rows returned — name search looked broken and
+      // only an employee code reliably found anyone. Operator characters are stripped so a stray
+      // "+", "-" or quote cannot turn the term into a boolean-mode syntax error.
+      const words = term.replace(/[+\-<>()~*"@]/g, " ").split(/\s+/).filter(Boolean);
+      const longWords = words.filter((w) => w.length >= 3);
+      const shortWords = words.filter((w) => w.length < 3);
       if (isCodeSearch) {
         filterConds.push("e.employee_code LIKE ?");
         filterParams.push(`${term.toUpperCase()}%`);
-      } else if (term.length < 3) {
-        filterConds.push(
-          "(e.first_name LIKE ? OR e.last_name LIKE ? OR e.employee_code LIKE ?)",
-        );
+      } else if (words.length === 0) {
+        // only operator characters typed: nothing searchable
+        filterConds.push("1 = 0");
+      } else if (words.length === 1 && term.length < 3) {
+        filterConds.push("(e.first_name LIKE ? OR e.last_name LIKE ? OR e.employee_code LIKE ?)");
         filterParams.push(`${term}%`, `${term}%`, `${term}%`);
       } else {
+        // Name search. Live, this took 20-25s per keystroke (a code search takes 0.2s), so the
+        // pickers' dropdown never filled and only employee codes seemed to work: with
+        // ORDER BY employee_code ... LIMIT the planner walks the employee_code index and runs the
+        // name filter against every row it passes. Resolving the matching ids FIRST, in a derived
+        // table with its own LIMIT (MySQL materialises it and cannot push the outer ORDER BY into
+        // it), keeps the name filter off the outer plan whichever access path it picks.
+        const nameConds: string[] = [];
+        const nameParams: unknown[] = [];
+        if (longWords.length > 0 && (await employeeFulltextAvailable())) {
+          nameConds.push("MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)");
+          nameParams.push(words.length === 1 ? `${longWords[0]}*` : longWords.map((w) => `+${w}*`).join(" "));
+          for (const w of shortWords) { nameConds.push("e.full_name LIKE ?"); nameParams.push(`%${w}%`); }
+        } else if (words.length === 1) {
+          // No FULLTEXT index on this database (see employee-search-index.ts): plain LIKE.
+          nameConds.push("(e.full_name LIKE ? OR e.employee_code LIKE ?)");
+          nameParams.push(`%${words[0]}%`, `%${words[0]}%`);
+        } else {
+          for (const w of words) { nameConds.push("e.full_name LIKE ?"); nameParams.push(`%${w}%`); }
+        }
         filterConds.push(
-          "MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)",
+          `e.id IN (SELECT m.id FROM (SELECT e.id FROM employees e WHERE ${[recordStatusCond, ...nameConds].filter(Boolean).join(" AND ")} LIMIT 2000) AS m)`,
         );
-        filterParams.push(`${term}*`);
+        filterParams.push(...nameParams);
       }
     }
 
@@ -539,6 +569,14 @@ export const employeeService = {
     const filterWhere = filterConds.length
       ? `WHERE ${filterConds.join(" AND ")}`
       : "";
+
+    // Index hint for branch-scoped queries: when the scope resolves to a single branch_id
+    // (mandatory for HR users after blockOrgWideForRoles enforcement), the covering index
+    // idx_emp_active_branch (active_status, branch_id) cuts the scan from ~57k rows to the
+    // branch population (~100-500 rows) even before the ORDER BY step.
+    const scopeSql = scopeFilter?.sql ?? "";
+    const isBranchScoped = /e\.branch_id\s*=\s*\?/.test(scopeSql) && !/OR/.test(scopeSql);
+    const indexHint = isBranchScoped ? "USE INDEX (idx_emp_active_branch)" : "";
 
     // Use string interpolation for LIMIT/OFFSET to avoid parameter binding issues
     const orderExpr =
@@ -587,7 +625,7 @@ export const employeeService = {
            pm.process_name,
            bm.branch_name,
            CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name,'')) AS reporting_manager_name
-         FROM employees e
+         FROM employees e ${indexHint}
          LEFT JOIN designation_master  desig ON desig.id = e.designation_id
          LEFT JOIN department_master   dept  ON dept.id  = e.department_id
          LEFT JOIN cost_centre_master  cc    ON cc.id    = e.cost_centre_id
@@ -595,15 +633,14 @@ export const employeeService = {
          LEFT JOIN branch_master       bm    ON bm.id    = e.branch_id
          LEFT JOIN employees           mgr   ON mgr.id   = COALESCE(e.reporting_manager_id, e.manager_id)
          ${where} ${orderClause} LIMIT ${limit} OFFSET ${offset}`,
-          params,
-        ),
-        db.execute<RowDataPacket[]>(
-          `SELECT COUNT(*) AS total FROM employees e ${where}`,
-          params,
-        ),
-        includeAnalytics
-          ? db.execute<RowDataPacket[]>(
-              `SELECT
+        params
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS total FROM employees e ${indexHint} ${where}`, params
+      ),
+      includeAnalytics
+        ? db.execute<RowDataPacket[]>(
+            `SELECT
                COUNT(*) AS total_employees,
                SUM(e.active_status = 1) AS active_employees,
                SUM(e.active_status = 0) AS inactive_employees,
@@ -1303,19 +1340,21 @@ export const employeeService = {
     const wheres: string[] = ["e.active_status = 1"];
     const qp: unknown[] = [];
 
-    if (isSuperAdmin || isAdmin || isCeo || isHr) {
-      if (processId) {
-        wheres.push("e.process_id = ?");
-        qp.push(processId);
-      }
-      if (branchId) {
-        wheres.push("e.branch_id = ?");
-        qp.push(branchId);
-      }
-      if (departmentId) {
-        wheres.push("e.department_id = ?");
-        qp.push(departmentId);
-      }
+    // Owner policy 2026-10-01: only the org-wide roles see every branch. hr is limited to its own
+    // branch (fails closed with no branch); ?branch_id= can only narrow, never widen.
+    const isOrgWide = isSuperAdmin || isCeo || roles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r));
+    if (isOrgWide) {
+      if (processId)    { wheres.push("e.process_id = ?");    qp.push(processId); }
+      if (branchId)     { wheres.push("e.branch_id = ?");     qp.push(branchId); }
+      if (departmentId) { wheres.push("e.department_id = ?"); qp.push(departmentId); }
+    } else if ((isHr || isAdmin) && !isBranchHead) {
+      if (!self?.branch_id) return EMPTY_ORG_TREE(self?.id ?? null);
+      wheres.push("e.branch_id = ?");
+      qp.push(self.branch_id);
+      if (processId)    { wheres.push("e.process_id = ?");    qp.push(processId); }
+      if (departmentId) { wheres.push("e.department_id = ?"); qp.push(departmentId); }
+      // A requested branch outside the caller's own branch yields nothing.
+      if (branchId && branchId !== self.branch_id) return EMPTY_ORG_TREE(self.id);
     } else if (isBranchHead) {
       const scopeBranch = self?.branch_id;
       if (!scopeBranch) return EMPTY_ORG_TREE(self?.id ?? null);
@@ -1326,6 +1365,10 @@ export const employeeService = {
       if (!scopeProcess) return EMPTY_ORG_TREE(self?.id ?? null);
       wheres.push("e.process_id = ?");
       qp.push(scopeProcess);
+      // Process-scoped roles no longer cross branches: own process AND own branch.
+      if (!self?.branch_id) return EMPTY_ORG_TREE(self?.id ?? null);
+      wheres.push("e.branch_id = ?");
+      qp.push(self.branch_id);
     } else {
       // Employee / executive / agent: scope to own process
       const scopeProcess = self?.process_id;

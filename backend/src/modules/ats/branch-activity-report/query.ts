@@ -75,6 +75,15 @@ const B_CLOSE = `COALESCE(s.submitted_at, c.hr_form_submission_time)`;
  * overwritten by it (registration writes the newest token to ats_candidate), so the older registration would
  * otherwise reappear here as a second "token" attached to the same interview form.
  */
+/**
+ * created_date is the day the report buckets a registration under. A bulk load that read d/m as m/d wrote it
+ * day-month swapped (10-Mar-2026 stored as 2026-10-03), and the later created_at repair did not touch it, so such a
+ * row claims a day it never happened on. created_at still holds the true date: when created_date is exactly its
+ * swap, the row is not a registration of that day.
+ */
+const DATE_NOT_SWAPPED = `NOT (c.created_at IS NOT NULL
+        AND c.created_date <> DATE(c.created_at)
+        AND DATE_FORMAT(c.created_date,'%Y-%d-%m') = DATE_FORMAT(c.created_at,'%Y-%m-%d'))`;
 const NO_QUEUE_ROW = `NOT EXISTS (SELECT 1 FROM ats_queue_token q WHERE q.candidate_id = c.id)`;
 async function tokenOnlyRegistrations(
   from: string,
@@ -94,7 +103,8 @@ async function tokenOnlyRegistrations(
       WHERE ${SCOPE}
         AND c.created_date BETWEEN ? AND ?
         AND c.q_token IS NOT NULL AND c.q_token <> ''
-        AND ${NO_QUEUE_ROW}`,
+        AND ${NO_QUEUE_ROW}
+        AND ${DATE_NOT_SWAPPED}`,
     [from, to],
   );
   return rows as RawTokenRow[];

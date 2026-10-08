@@ -38,13 +38,38 @@ export async function getRbacReconciliation(): Promise<ReconciliationReport> {
     mysqlByUser.set(row.user_id, existing);
   }
 
-  // 2. Supabase removed — MySQL is the single source of truth; no secondary store to compare.
-  // No mismatches possible.
+  // 2. Supabase removed — MySQL is the single source of truth, so there is no secondary store
+  // to diff against. Comparing against an always-empty Supabase map flagged EVERY MySQL user as
+  // a conflict (fixed in 953d78fec), but returning a constant [] also dropped the one mismatch
+  // that is still real inside MySQL itself: an active user_roles row whose user_id has no
+  // auth_user. Such a grant belongs to nobody who can sign in and is never shown on the Access
+  // Control page (that page is built from auth_user), so this report is the only place it
+  // surfaces. Read-only, like the rest of this function.
+  const [orphanRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ur.user_id, ur.role_key
+       FROM user_roles ur
+       LEFT JOIN auth_user au ON au.id = ur.user_id
+      WHERE ur.active_status = 1 AND au.id IS NULL
+      ORDER BY ur.user_id`
+  );
+  const orphanByUser = new Map<string, string[]>();
+  for (const row of orphanRows as { user_id: string; role_key: string }[]) {
+    const existing = orphanByUser.get(row.user_id) ?? [];
+    existing.push(row.role_key);
+    orphanByUser.set(row.user_id, existing);
+  }
+  const mismatches: RbacMismatch[] = [...orphanByUser].map(([userId, roles]) => ({
+    user_id: userId,
+    mysql_roles: mysqlByUser.get(userId) ?? roles,
+    supabase_roles: [],
+    in_supabase_only: [],
+    in_mysql_only: roles,
+  }));
 
   return {
     total_mysql_users: mysqlByUser.size,
     total_supabase_users: 0,
-    mismatches: [],
+    mismatches,
     checked_at: new Date().toISOString(),
   };
 }

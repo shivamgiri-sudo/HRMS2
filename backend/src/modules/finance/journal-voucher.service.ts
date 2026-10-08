@@ -158,6 +158,28 @@ async function assertMastersValid(connection: Connection, input: JvInput) {
     }
   }
 
+  const bankIds = [...new Set(input.lines.filter((l) => l.accountType === "bank_account").map((l) => l.accountId))];
+  if (bankIds.length) {
+    const [rows] = await connection.execute<RowDataPacket[]>(
+      `SELECT id FROM company_bank_account WHERE active_status = 1 AND id IN (${bankIds.map(() => "?").join(",")})`,
+      bankIds,
+    );
+    if ((rows as RowDataPacket[]).length !== bankIds.length) {
+      throw refuse(422, "JV_ACCOUNT_INACTIVE", "One of the bank accounts is missing or closed - pick an active bank account.");
+    }
+  }
+
+  const vendorIds = [...new Set(input.lines.filter((l) => l.accountType === "vendor").map((l) => l.accountId))];
+  if (vendorIds.length) {
+    const [rows] = await connection.execute<RowDataPacket[]>(
+      `SELECT id FROM vendor_master WHERE is_active = 1 AND id IN (${vendorIds.map(() => "?").join(",")})`,
+      vendorIds,
+    );
+    if ((rows as RowDataPacket[]).length !== vendorIds.length) {
+      throw refuse(422, "JV_ACCOUNT_INACTIVE", "One of the vendors is missing or inactive - pick an active vendor.");
+    }
+  }
+
   if (input.branchId) {
     const [rows] = await connection.execute<RowDataPacket[]>(
       `SELECT id FROM branch_master WHERE id = ? AND active_status = 1`,

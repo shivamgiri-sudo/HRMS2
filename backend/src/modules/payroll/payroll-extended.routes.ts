@@ -15,10 +15,8 @@ import {
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import * as XLSX from "xlsx";
-import {
-  resolveAccountNumber,
-  resolveAccountNumberWithConflict,
-} from "../../shared/fieldEncryption.js";
+import { resolveAccountNumber, resolveAccountNumberWithConflict } from "../../shared/fieldEncryption.js";
+import { guardEmployee } from "./payroll-branch-scope.js";
 
 /**
  * Roles whose payroll authority can be org-wide. Used with hasExportScope (below) for
@@ -109,46 +107,29 @@ const h =
     fn(req, res).catch(next);
 payrollExtendedRouter.use(requireAuth);
 
-payrollExtendedRouter.get(
-  "/uan/:employeeId",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { employeeId } = req.params;
-    const isPrivileged = await hasRole(
-      req.authUser!.id,
-      "admin",
-      "hr",
-      "finance",
-      "payroll",
-    );
-    if (!isPrivileged) {
-      const callerEmp = await getEmployeeForUser(req.authUser!.id);
-      if (!callerEmp || callerEmp.id !== employeeId)
-        return res.status(403).json({ success: false, message: "Forbidden" });
-    }
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM employee_uan WHERE employee_id = ? LIMIT 1",
-      [employeeId],
-    );
-    return res.json({ success: true, data: rows[0] ?? null });
-  }),
-);
+payrollExtendedRouter.get("/uan/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId } = req.params;
+  const isPrivileged = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+  if (!isPrivileged) {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp || callerEmp.id !== employeeId) return res.status(403).json({ success: false, message: "Forbidden" });
+  } else {
+    // Branch scoping (owner ruling 2026-10-01): admin / hr are limited to their own branch. Org-wide
+    // roles pass canViewEmployee; the employee's own record is always visible.
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (callerEmp?.id !== employeeId && !(await guardEmployee(req, res, employeeId))) return;
+  }
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM employee_uan WHERE employee_id = ? LIMIT 1", [employeeId]);
+  return res.json({ success: true, data: rows[0] ?? null });
+}));
 
-payrollExtendedRouter.post(
-  "/uan/:employeeId",
-  requireRole("admin", "hr", "finance"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { employeeId } = req.params;
-    const { uan, member_id, epf_join_date } = req.body as {
-      uan: string;
-      member_id?: string;
-      epf_join_date?: string;
-    };
-    if (!uan)
-      return res
-        .status(400)
-        .json({ success: false, message: "uan is required" });
-    await db.execute(
-      `INSERT INTO employee_uan (id, employee_id, uan, member_id, epf_join_date)
+payrollExtendedRouter.post("/uan/:employeeId", requireRole("admin", "hr", "finance"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId } = req.params;
+  const { uan, member_id, epf_join_date } = req.body as { uan: string; member_id?: string; epf_join_date?: string };
+  if (!uan) return res.status(400).json({ success: false, message: "uan is required" });
+  if (!(await guardEmployee(req, res, employeeId))) return;
+  await db.execute(
+    `INSERT INTO employee_uan (id, employee_id, uan, member_id, epf_join_date)
      VALUES (UUID(), ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE uan = VALUES(uan), member_id = VALUES(member_id), epf_join_date = VALUES(epf_join_date), updated_at = NOW()`,
       [employeeId, uan, member_id ?? null, epf_join_date ?? null],
@@ -326,36 +307,23 @@ payrollExtendedRouter.get(
   }),
 );
 
-payrollExtendedRouter.get(
-  "/runs/:id/neft-export",
-  requireRole("admin", "finance", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const runId = req.params.id;
-    // requireRole alone let a branch-scoped payroll user download decrypted bank account
-    // numbers for the entire organisation. Denying rather than row-filtering is deliberate:
-    // a silently branch-filtered bank file would be uploaded as if it paid everyone.
-    if (!(await hasExportScope(req.authUser!.id))) {
-      return res
-        .status(403)
-        .json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
-    }
-    const [runRows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1",
-      [runId],
-    );
-    const run = runRows[0];
-    if (!run) return res.status(404).json({ error: "Run not found" });
-    // isRunClosed (locked/disbursed/finalized, case-insensitive) — a literal ["locked","disbursed"]
-    // list here previously blocked NEFT export for every FINALIZED production run.
-    if (!isRunClosed(run.status))
-      return res
-        .status(400)
-        .json({
-          error:
-            "Run must be locked, finalized, or disbursed to generate NEFT export",
-        });
-    const [lines] = await db.execute<RowDataPacket[]>(
-      `SELECT spl.employee_id, spl.net_salary, e.employee_code, e.full_name, ebd.bank_name, ebd.ifsc_code, ebd.account_number_enc, ebd.account_number
+payrollExtendedRouter.get("/runs/:id/neft-export", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const runId = req.params.id;
+  // requireRole alone let a branch-scoped payroll user download decrypted bank account
+  // numbers for the entire organisation. Denying rather than row-filtering is deliberate:
+  // a silently branch-filtered bank file would be uploaded as if it paid everyone.
+  if (!(await hasExportScope(req.authUser!.id))) {
+    return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+  }
+  const [runRows] = await db.execute<RowDataPacket[]>("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);
+  const run = runRows[0];
+  if (!run) return res.status(404).json({ error: "Run not found" });
+  // isRunClosed (locked/disbursed/finalized, case-insensitive) — a literal ["locked","disbursed"]
+  // list here previously blocked NEFT export for every FINALIZED production run.
+  // 'approved' is exportable too (owner ruling 2026-10-03, "export first, finance after"); see payroll.routes.ts neftExportHandler.
+  if (!isRunClosed(run.status) && String(run.status ?? "").toLowerCase() !== "approved") return res.status(400).json({ error: "Run must be approved, locked, finalized, or disbursed to generate NEFT export" });
+  const [lines] = await db.execute<RowDataPacket[]>(
+    `SELECT spl.employee_id, spl.net_salary, e.employee_code, e.full_name, ebd.bank_name, ebd.ifsc_code, ebd.account_number_enc, ebd.account_number
        FROM salary_prep_line spl
        JOIN employees e ON e.id = spl.employee_id
        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
@@ -529,26 +497,25 @@ payrollExtendedRouter.get(
     if (!run)
       return res.status(404).json({ success: false, message: "Run not found" });
 
-    // Unlike the bank file above this is a report, so it row-filters to the caller's
-    // branch/process the way /runs and /records already do, rather than denying
-    // outright. Previously requireRole alone let any hr/finance/payroll user export
-    // the whole organisation's salary register, including decrypted account numbers.
-    const scoped = await buildScopeWhereClause(
-      req.authUser!.id,
-      PAYROLL_REPORT_SCOPE_ROLES,
-      { branchId: "e.branch_id", processId: "e.process_id" },
-      { allowAdminBypass: true },
-    );
-    // buildScopeWhereClause returns 1=0 for a caller with no assigned scope. Letting that
-    // through would download an empty workbook, which reads as "this run has no payroll"
-    // rather than "you have no access" — so say so instead.
-    if (scoped.sql === "1=0") {
-      return res.status(403).json({
-        success: false,
-        message:
-          "No branch or process scope is assigned to your account, so there is nothing you are authorised to export.",
-      });
-    }
+  // Unlike the bank file above this is a report, so it row-filters to the caller's
+  // branch/process the way /runs and /records already do, rather than denying
+  // outright. Previously requireRole alone let any hr/finance/payroll user export
+  // the whole organisation's salary register, including decrypted account numbers.
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    PAYROLL_REPORT_SCOPE_ROLES,
+    { branchId: "e.branch_id", processId: "e.process_id" },
+    { allowAdminBypass: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
+  );
+  // buildScopeWhereClause returns 1=0 for a caller with no assigned scope. Letting that
+  // through would download an empty workbook, which reads as "this run has no payroll"
+  // rather than "you have no access" — so say so instead.
+  if (scoped.sql === "1=0") {
+    return res.status(403).json({
+      success: false,
+      message: "No branch or process scope is assigned to your account, so there is nothing you are authorised to export.",
+    });
+  }
 
     const [lines] = await db.execute<RowDataPacket[]>(
       `SELECT

@@ -553,54 +553,19 @@ export function warmInsights() {
 }
 
 /* ───────────── Sourcing leads drill (recruiter call-log records) ───────────── */
-export interface LeadFilters {
-  notSource?: string;
-  source?: string;
-  recruiter?: string;
-  stage?: string;
-  month?: string;
-  reason?: string;
-  page: number;
-  limit: number;
-}
+export interface LeadFilters { notSource?: string; source?: string; recruiter?: string; stage?: string; month?: string; reason?: string; page: number; limit: number; scope?: { sql: string; params: unknown[] } }
 const leadsCache = createSwrCache<Record<string, unknown>>({ freshMs: 60_000 });
 const leadSourceSql = canonicalSourceSql("hiring_source");
 
 async function computeLeads(f: LeadFilters) {
-  const c = ["1=1"],
-    p: unknown[] = [];
-  if (f.source) {
-    if (f.source === "Unspecified")
-      c.push("(hiring_source IS NULL OR hiring_source = '')");
-    else {
-      c.push(`${leadSourceSql} = ?`);
-      p.push(sourceCode(f.source));
-    }
-  }
-  if (f.notSource) {
-    c.push(`(hiring_source IS NULL OR ${leadSourceSql} <> ?)`);
-    p.push(sourceCode(f.notSource));
-  }
-  if (f.recruiter) {
-    c.push("recruiter_name_snapshot = ?");
-    p.push(f.recruiter);
-  }
-  if (f.month && /^\d{4}-\d{2}$/.test(f.month)) {
-    c.push("DATE_FORMAT(activity_date,'%Y-%m') = ?");
-    p.push(f.month);
-  }
-  if (f.reason) {
-    c.push(
-      "COALESCE(NULLIF(hr_rejection_reason,''),NULLIF(recruiter_rejection_reason,''),NULLIF(ops_rejection_reason,'')) = ?",
-    );
-    p.push(f.reason);
-  }
-  const flag: Record<string, string> = {
-    contacted: "contacted_flag = 1",
-    walkin: "walkin_flag = 1",
-    selected: "final_selection_flag = 1",
-    joined: "joined_flag = 1",
-  };
+  const c = ['1=1'], p: unknown[] = [];
+  if (f.scope?.sql) { c.push(`(${f.scope.sql})`); p.push(...f.scope.params); }
+  if (f.source) { if (f.source === 'Unspecified') c.push("(hiring_source IS NULL OR hiring_source = '')"); else { c.push(`${leadSourceSql} = ?`); p.push(sourceCode(f.source)); } }
+  if (f.notSource) { c.push(`(hiring_source IS NULL OR ${leadSourceSql} <> ?)`); p.push(sourceCode(f.notSource)); }
+  if (f.recruiter) { c.push('recruiter_name_snapshot = ?'); p.push(f.recruiter); }
+  if (f.month && /^\d{4}-\d{2}$/.test(f.month)) { c.push("DATE_FORMAT(activity_date,'%Y-%m') = ?"); p.push(f.month); }
+  if (f.reason) { c.push("COALESCE(NULLIF(hr_rejection_reason,''),NULLIF(recruiter_rejection_reason,''),NULLIF(ops_rejection_reason,'')) = ?"); p.push(f.reason); }
+  const flag: Record<string, string> = { contacted: 'contacted_flag = 1', walkin: 'walkin_flag = 1', selected: 'final_selection_flag = 1', joined: 'joined_flag = 1' };
   if (f.stage && flag[f.stage]) c.push(flag[f.stage]);
   const limit = Math.min(Math.max(f.limit, 1), 100),
     offset = (Math.max(f.page, 1) - 1) * limit,

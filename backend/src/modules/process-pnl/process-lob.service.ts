@@ -14,6 +14,7 @@ import { bpoPnlAllocationOverlayService } from "./bpo-pnl-allocation-overlay.ser
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { peopleCostSqlForColumns } from "./pnl-people-cost.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 type LobStatus = "draft" | "approved" | "inactive";
 type PlanStatus = "draft" | "approved" | "locked";
@@ -634,8 +635,8 @@ async function loadPayrollCosts(
   // getPayrollPeople for the measured impact; 2026-03's two runs share no employees, so
   // whichever run lost the sort was simply dropped.
   const runs = await queryRows<RowDataPacket>(
-    `SELECT id FROM salary_prep_run WHERE run_month = ?`,
-    [period],
+    `SELECT id FROM salary_prep_run WHERE run_month = ? AND ${nonVoidRunSql()}`,
+    [period]
   );
   if (!runs.length)
     return {

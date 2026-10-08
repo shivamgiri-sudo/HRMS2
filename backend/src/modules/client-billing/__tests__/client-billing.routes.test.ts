@@ -16,8 +16,11 @@ vi.mock("../client-billing-approval.service.js", () => ({
   clientBillingApprovalService: { approveInvoice, rejectInvoice },
 }));
 
-const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
+// `query` as well as `execute`: the paginated list endpoints read their page through db.query
+// (mysql2 rejects LIMIT/OFFSET placeholders over the prepared-statement protocol on this server)
+// and their total through db.execute.
+const { execute, query } = vi.hoisted(() => ({ execute: vi.fn(), query: vi.fn() }));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute, query } }));
 
 const { createCreditNote, approveCreditNote } = vi.hoisted(() => ({
   createCreditNote: vi.fn(),
@@ -81,6 +84,7 @@ beforeAll(async () => {
 beforeEach(() => {
   createProforma.mockReset();
   execute.mockReset();
+  query.mockReset();
   generateInvoicePdf.mockReset();
 });
 
@@ -176,16 +180,16 @@ describe("POST /api/client-billing/proformas", () => {
 
 describe("GET /api/client-billing/proformas", () => {
   it("lists invoices", async () => {
-    execute.mockResolvedValueOnce([
-      [{ id: "inv-1", proforma_no: "PI/09/7971" }],
-      [],
-    ]);
+    query.mockResolvedValueOnce([[{ id: "inv-1", proforma_no: "PI/09/7971" }], []]); // the page
+    execute.mockResolvedValueOnce([[{ total: 1 }], []]);                              // the count
     const res = await request(app).get("/api/client-billing/proformas");
     expect(res.status).toBe(200);
+    // Server-side pagination (d03a00c7a): the list carries its total and the page it is.
     expect(res.body).toEqual({
-      success: true,
-      data: [{ id: "inv-1", proforma_no: "PI/09/7971" }],
+      success: true, data: [{ id: "inv-1", proforma_no: "PI/09/7971" }], total: 1, page: 1, limit: 50,
     });
+    // limit/offset are the server-clamped defaults, bound last.
+    expect(query.mock.calls[0][1].slice(-2)).toEqual([50, 0]);
   });
 });
 
@@ -263,7 +267,8 @@ describe("GET /api/client-billing/proformas/:id/pdf", () => {
       ? res.body
       : Buffer.from(res.text, "binary");
     expect(bodyBuffer.subarray(0, 5).toString("ascii")).toBe("%PDF-");
-    expect(generateInvoicePdf).toHaveBeenCalledWith("inv-1");
+    // Second argument: letterhead, on unless the caller passes ?letterhead=false.
+    expect(generateInvoicePdf).toHaveBeenCalledWith("inv-1", true);
   });
 });
 
@@ -439,7 +444,8 @@ describe("GET /api/client-billing/invoices/:id/pdf", () => {
       ? res.body
       : Buffer.from(res.text, "binary");
     expect(bodyBuffer.subarray(0, 5).toString("ascii")).toBe("%PDF-");
-    expect(generateInvoicePdf).toHaveBeenCalledWith("inv-1");
+    // Second argument: letterhead, on unless the caller passes ?letterhead=false.
+    expect(generateInvoicePdf).toHaveBeenCalledWith("inv-1", true);
   });
 });
 
@@ -531,16 +537,14 @@ describe("POST /api/client-billing/credit-notes/:id/approve", () => {
 
 describe("GET /api/client-billing/credit-notes", () => {
   it("lists credit notes", async () => {
-    execute.mockResolvedValueOnce([
-      [{ id: "cn-1", credit_no: "CN-09-01/26-27" }],
-      [],
-    ]);
+    query.mockResolvedValueOnce([[{ id: "cn-1", credit_no: "CN-09-01/26-27" }], []]); // the page
+    execute.mockResolvedValueOnce([[{ total: 1 }], []]);                               // the count
     const res = await request(app).get("/api/client-billing/credit-notes");
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      success: true,
-      data: [{ id: "cn-1", credit_no: "CN-09-01/26-27" }],
+      success: true, data: [{ id: "cn-1", credit_no: "CN-09-01/26-27" }], total: 1, page: 1, limit: 50,
     });
+    expect(query.mock.calls[0][1].slice(-2)).toEqual([50, 0]);
   });
 });
 

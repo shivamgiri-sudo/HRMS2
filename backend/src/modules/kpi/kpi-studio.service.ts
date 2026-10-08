@@ -19,10 +19,11 @@
  * took reimbursements down on the day it shipped.
  */
 
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket, ResultSetHeader } from "mysql2";
-import { validateFormula, listFormulaFunctions } from "./kpi-formula.engine.js";
-import { validateSheetCsvUrl } from "./kpi-studio.gsheet.js";
+import { db } from '../../db/mysql.js';
+import { linkDefinitionToCatalogue } from '../kpi-catalogue/kpi-catalogue.studio-sync.js';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { validateFormula, listFormulaFunctions } from './kpi-formula.engine.js';
+import { validateSheetCsvUrl } from './kpi-studio.gsheet.js';
 // The allowed date formats live with the query builder that interpolates them, so
 // there is one list rather than two that can drift apart.
 import { DATE_FORMATS, isSupportedDateFormat } from "./kpi-studio.sources.js";
@@ -1154,7 +1155,10 @@ export interface DefinitionFilters {
 }
 
 export async function listDefinitions(filters: DefinitionFilters = {}) {
-  if (!(await getStudioCapability()).tables) return [];
+  const listCap = await getStudioCapability();
+  if (!listCap.tables) return [];
+  // Whether the KPI is measured per person or per process. Selected only where the column exists (migration 1684).
+  const grainSelect = listCap.processGrain ? "COALESCE(d.grain, 'employee')" : "'employee'";
 
   const where: string[] = ["d.active_status = 1"];
   const params: unknown[] = [];
@@ -1203,7 +1207,10 @@ export async function listDefinitions(filters: DefinitionFilters = {}) {
        d.data_source_id, s.source_name, s.source_type,
        d.formula_expression, d.aggregation_method, d.scoring_type,
        d.target_value, d.min_threshold, d.max_achievement, d.weightage, d.target_source,
-       d.effective_from, d.effective_to, d.notes, d.created_at, d.updated_at
+       d.effective_from, d.effective_to, d.notes, d.created_at, d.updated_at,
+       (d.effective_from <= CURDATE() AND (d.effective_to IS NULL OR d.effective_to >= CURDATE())) AS in_force,
+       (d.effective_from > CURDATE()) AS starts_later,
+       ${grainSelect} AS grain
      FROM kpi_studio_definition d
      JOIN kpi_metric_master m ON m.id = d.metric_id
      LEFT JOIN branch_master b       ON b.id = d.branch_id
@@ -1489,6 +1496,11 @@ export async function saveDefinition(
     }
 
     await connection.commit();
+    // Mirror into the KPI catalogue so Studio and the catalogue cannot drift. Best effort: a catalogue problem
+    // must never fail a Studio save that has already committed.
+    await linkDefinitionToCatalogue(definitionId).catch((err) =>
+      console.warn('[kpi-studio] catalogue link skipped:', err instanceof Error ? err.message : String(err)),
+    );
     return {
       id: definitionId,
       effective_from: effectiveFrom,
@@ -1572,9 +1584,12 @@ export async function retireDefinition(id: string, effectiveTo?: string) {
   if (!ISO_DATE.test(endDate)) throw new Error("End date must be YYYY-MM-DD");
 
   const [result] = await db.execute<ResultSetHeader>(
+    // Ends the definition on a date; it is NOT switched off. active_status = 0 made compute skip it for every
+    // date, so a future-dated retire stopped the KPI at once and recomputing a past day silently dropped it.
+    // Effective dating alone decides whether a definition applies on a given day.
     `UPDATE kpi_studio_definition
-        SET effective_to = ?, active_status = 0, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?`,
+        SET effective_to = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND active_status = 1`,
     [endDate, id],
   );
   if (!result.affectedRows) throw new Error("Definition not found");
@@ -1852,22 +1867,22 @@ export async function findEmployeesForScope(filters: {
   branch_id?: string;
   process_id?: string;
   designation_id?: string;
-}) {
-  const where: string[] = ["e.active_status = 1"];
+}, viewer?: { orgWide: boolean; processIds: ReadonlySet<string> }) {
+  const where: string[] = ['e.active_status = 1'];
   const params: unknown[] = [];
 
-  if (filters.branch_id) {
-    where.push("e.branch_id = ?");
-    params.push(filters.branch_id);
+  // Branch / process scoping: a non-org-wide caller only sees people in the processes they can read
+  // (the same set that gates authoring). A client-supplied branch/process filter only narrows this.
+  if (viewer && !viewer.orgWide) {
+    const ids = [...viewer.processIds];
+    if (!ids.length) return [];
+    where.push(`e.process_id IN (${ids.map(() => '?').join(',')})`);
+    params.push(...ids);
   }
-  if (filters.process_id) {
-    where.push("e.process_id = ?");
-    params.push(filters.process_id);
-  }
-  if (filters.designation_id) {
-    where.push("e.designation_id = ?");
-    params.push(filters.designation_id);
-  }
+
+  if (filters.branch_id) { where.push('e.branch_id = ?'); params.push(filters.branch_id); }
+  if (filters.process_id) { where.push('e.process_id = ?'); params.push(filters.process_id); }
+  if (filters.designation_id) { where.push('e.designation_id = ?'); params.push(filters.designation_id); }
 
   const search = filters.search?.trim();
   if (search) {

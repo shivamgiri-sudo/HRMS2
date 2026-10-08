@@ -232,23 +232,20 @@ export const lmsService = {
     return { trainee, modules, contents, progress };
   },
 
-  async getNativeCoordinatorDashboard(access: any) {
+  async getNativeCoordinatorDashboard(access: any, opts: { orgWide?: boolean } = {}) {
     const role = access?.lmsRole ?? {};
     const conds = ["1=1"];
     const params: unknown[] = [];
-    if (!access?.access?.admin) {
-      if (role.branch) {
-        conds.push("branch = ?");
-        params.push(role.branch);
-      }
-      if (role.process) {
-        conds.push("process = ?");
-        params.push(role.process);
-      }
-      if (role.lob) {
-        conds.push("lob = ?");
-        params.push(role.lob);
-      }
+    // Owner ruling 2026-10-01: only the org-wide roles (ORG_WIDE_EXEMPT_ROLES) see every branch.
+    // `orgWide` is computed by the route from the caller's HRMS roles; when the caller does not
+    // say, the legacy LMS-admin behaviour applies. Anyone else is pinned to their LMS-assigned
+    // branch, else their own HRMS branch name, else sees nothing (never everything).
+    const orgWide = opts.orgWide ?? Boolean(access?.access?.admin);
+    if (!orgWide) {
+      const branch = role.branch || access?.user?.branch;
+      if (branch) { conds.push("branch = ?"); params.push(branch); } else { conds.push("1=0"); }
+      if (role.process) { conds.push("process = ?"); params.push(role.process); }
+      if (role.lob) { conds.push("lob = ?"); params.push(role.lob); }
     }
     const where = conds.join(" AND ");
     const batches = await lmsQuery<RowDataPacket[]>(
@@ -304,7 +301,19 @@ export const lmsService = {
     };
   },
 
-  async getNativeBatchPlanner() {
+  /**
+   * `scope.branchName`: undefined = org-wide (SQL unchanged); a string pins batches and candidates to
+   * that branch; null = the caller has no resolvable branch, so nothing is returned.
+   */
+  async getNativeBatchPlanner(scope?: { branchName: string | null }) {
+    const scoped = scope !== undefined;
+    const branchName = scope?.branchName ?? null;
+    const batchWhere = scoped ? (branchName ? "\n      WHERE b.branch = ?" : "\n      WHERE 1=0") : "";
+    const batchParams: unknown[] = scoped && branchName ? [branchName] : [];
+    const candBranch = scoped
+      ? (branchName ? "\n        AND COALESCE(b.branch_name, c.branch_display_name, c.branch_text, c.applied_for_branch) = ?" : "\n        AND 1=0")
+      : "";
+    const candParams: unknown[] = scoped && branchName ? [branchName] : [];
     const batchRows = await lmsQuery<RowDataPacket[]>(`
       SELECT
         b.batch_no,
@@ -325,10 +334,10 @@ export const lmsService = {
         b.handover_to_ops,
         b.created_at,
         b.last_updated_at
-      FROM batch_master b
+      FROM batch_master b${batchWhere}
       ORDER BY COALESCE(b.start_date, b.created_at) DESC, b.created_at DESC
       LIMIT 100
-    `);
+    `, batchParams);
 
     const batchNos = (batchRows as any[])
       .map((row) => String(row.batch_no ?? "").trim())
@@ -389,7 +398,7 @@ export const lmsService = {
       LEFT JOIN branch_master b ON b.id = c.applied_for_branch OR b.branch_name = c.applied_for_branch OR b.branch_code = c.applied_for_branch
       LEFT JOIN process_master p ON p.id = c.applied_for_process OR p.process_name = c.applied_for_process
       LEFT JOIN lms_employee_mapping lem ON lem.employee_id = e.id AND lem.is_active = 1
-      WHERE c.active_status = 1
+      WHERE c.active_status = 1${candBranch}
         AND (
           LOWER(COALESCE(c.current_stage, '')) IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted', 'joined', 'converted')
           OR LOWER(COALESCE(c.profile_status, '')) IN ('onboarding_sent', 'profile_submitted', 'onboarded')
@@ -398,7 +407,7 @@ export const lmsService = {
         )
       ORDER BY c.updated_at DESC, c.created_at DESC
       LIMIT 250
-    `);
+    `, candParams);
 
     const employeeCodes = uniqueNonEmpty([
       ...(candidateRows as any[]).map((row) => row.hrms_employee_code),
@@ -699,13 +708,14 @@ export const lmsService = {
     return rows as RowDataPacket[];
   },
 
-  async listMappings() {
+  async listMappings(scope?: { sql: string; params: unknown[] } | null) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT m.*, e.full_name, e.employee_code
        FROM lms_employee_mapping m
        LEFT JOIN employees e ON e.id = m.employee_id
-       WHERE m.is_active = 1
+       WHERE m.is_active = 1${scope ? ` AND ${scope.sql}` : ""}
        ORDER BY e.full_name`,
+      scope ? scope.params : undefined as any
     );
     return rows as RowDataPacket[];
   },

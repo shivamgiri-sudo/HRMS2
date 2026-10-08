@@ -43,7 +43,8 @@ export interface KpiMetricDef {
   label: string;
   family: KpiFamily;
   unit: KpiUnit;
-  target: number;
+  /** null = no business target supplied yet (set one in KPI Targets); the scorecard then shows the value with no RAG. */
+  target: number | null;
   direction: KpiDirection;
   lobLabel: string;
   /** Real metric_code in kpi_metric_master, or null if nothing measures this yet. */
@@ -443,6 +444,34 @@ export const PROCESS_KPI_REGISTRY: ProcessKpiSet[] = [
           NO_METRIC_CODE +
           " (no document-intake throughput metric exists; this process does have real ATTENDANCE_PCT and CONVERSION_RATE data, just not for PAN submissions).",
       },
+    ],
+  },
+  {
+    // SBI Card Collections: values are rolled up into process_metric_actual by the Dialer MIS / Agent MIS / Account File importers (sbi-card-kpi-sync.ts).
+    // Targets are placeholders to be confirmed with the client -- no SBI Card target sheet has been supplied.
+    processCode: "SBI_CARD",
+    billingName: "SBI Card Collections",
+    projectName: "SBI Card",
+    metrics: [
+      { metricKey: "sbi_contact_rate_pct", label: "Contact / Accounts Called %", family: "rate", unit: "percent", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_penetration", label: "Penetration (dials per scheduled account)", family: "volume", unit: "count", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_connect_rate_pct", label: "Connect Rate %", family: "rate", unit: "percent", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_ptp_rate_pct", label: "PTP Rate %", family: "rate", unit: "percent", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_amount_collected", label: "Amount Collected", family: "volume", unit: "currency", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_calls_per_agent", label: "Calls per Agent", family: "volume", unit: "count", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_leakage_sec", label: "Login Leakage (avg per agent per day)", family: "duration", unit: "seconds", target: null, direction: "lower_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_coverage_pct", label: "Account Coverage % (worked / loaded)", family: "rate", unit: "percent", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_untouched_accounts", label: "Untouched Accounts", family: "volume", unit: "count", target: null, direction: "lower_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_untouched_exposure", label: "Untouched Exposure (amount due)", family: "volume", unit: "currency", target: null, direction: "lower_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_attempts_per_account", label: "Attempts per Account", family: "volume", unit: "count", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_account_ptp_pct", label: "Account PTP % (of worked)", family: "rate", unit: "percent", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_overdue_ptp_accounts", label: "Overdue PTP Accounts (promise lapsed)", family: "volume", unit: "count", target: null, direction: "lower_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_exhausted_accounts", label: "Exhausted Accounts (4+ attempts, no PTP)", family: "volume", unit: "count", target: null, direction: "lower_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_utilisation_pct", label: "Agent Utilisation % (talk + wrap / login)", family: "rate", unit: "percent", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_occupancy_pct", label: "Agent Occupancy % (busy / busy + wait)", family: "rate", unit: "percent", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_pause_pct", label: "Pause % of Login Time", family: "rate", unit: "percent", target: null, direction: "lower_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_acht_sec", label: "ACHT (avg handle time)", family: "duration", unit: "seconds", target: null, direction: "lower_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_calls_per_login_hour", label: "Calls per Login Hour", family: "volume", unit: "count", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
     ],
   },
   {

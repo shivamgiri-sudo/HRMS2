@@ -51,6 +51,12 @@ import {
 import { DrillDownProvider, useDrillDown } from "@/components/analytics/drilldown/DrillDownProvider";
 import { EmployeeListPanel } from "@/components/analytics/drilldown/EmployeeListPanel";
 import { EmployeeDetailDrawer } from "@/components/analytics/drilldown/EmployeeDetailDrawer";
+import { DrillProvider } from "@/components/analytics/attrition/DrillContext";
+import HeadlineStrip from "@/components/analytics/attrition/HeadlineStrip";
+import AlertsTab from "@/components/analytics/attrition/AlertsTab";
+import PredictionTab from "@/components/analytics/attrition/PredictionTab";
+import InsightsTab from "@/components/analytics/attrition/InsightsTab";
+import type { PredictionFilters } from "@/components/analytics/attrition/api";
 
 /* ── Shared vocabulary ─────────────────────────────────────────────────────── */
 
@@ -152,20 +158,6 @@ export function useReport(code: string, params: Record<string, string>, enabled 
 }
 
 /* ── Small presentational helpers ──────────────────────────────────────────── */
-
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={[
-        "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-        active ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100",
-      ].join(" ")}
-    >
-      {children}
-    </button>
-  );
-}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -641,7 +633,7 @@ function Overview({ from, to, branchId, designationId, headlineRate }: { from: s
             : []),
           {
             label: "Exit reason",
-            detail: "Not captured in this system — under 1% of leavers have one recorded. Bulk reason-capture for pending exits would close this gap; see the Attrition Deep Dive tab's own reason-capture figure for the exact rate in your current date range. This view shows what kind of joiner leaves and when, never why.",
+            detail: "Taken from the exit record where one exists, otherwise from the legacy HRMS leaving reason (db_bill). See the Attrition Deep Dive tab for the exact rate in your current date range.",
           },
         ]}
       />
@@ -1148,8 +1140,8 @@ function DeepDive({ from, to, branchId, designationId }: { from: string; to: str
           {
             label: "Exit reason",
             detail: reasonCaptured
-              ? `${num(reasonCaptured.withReason)} of ${num(reasonCaptured.totalExits)} exits in this window have a reason recorded (${pct(reasonCaptured.pct ?? 0)}). Exit reason is not captured by any live workflow, so this view answers what kind of joiner leaves and when — not why.`
-              : "Exit reason is not captured by any live workflow.",
+              ? `${num(reasonCaptured.withReason)} of ${num(reasonCaptured.totalExits)} exits in this window have a reason recorded (${pct(reasonCaptured.pct ?? 0)}). Where an exit record has no reason, the legacy HRMS leaving reason (from db_bill) is used.`
+              : "Exit reason comes from the exit record, or the legacy HRMS leaving reason (db_bill) where there is none.",
           },
           ...(dimension === "process"
             ? [{ label: "Process coverage", detail: "process_id is populated on roughly 10% of exits, so most rows in this slice will read UNASSIGNED. Branch and cost centre are near-complete by comparison." }]
@@ -1237,7 +1229,10 @@ function isoLocal(d: Date) {
 
 export default function AonAnalyticsView() {
   const today = new Date();
-  const [tab, setTab] = useState<"overview" | "cohort" | "deep">("overview");
+  const [tab, setTab] = useState<"alerts" | "prediction" | "insights" | "overview" | "cohort" | "deep">("alerts");
+  const [predictionFilters, setPredictionFilters] = useState<PredictionFilters>({});
+  const openPrediction = (f: PredictionFilters) => { setPredictionFilters(f); setTab("prediction"); };
+  const legacyTab = tab === "overview" || tab === "cohort" || tab === "deep";
   const [from, setFrom] = useState(isoLocal(new Date(today.getFullYear() - 1, today.getMonth(), today.getDate())));
   const [to, setTo] = useState(isoLocal(today));
   const [branchId, setBranchId] = useState("");
@@ -1257,6 +1252,7 @@ export default function AonAnalyticsView() {
   });
 
   return (
+    <DrillProvider>
     <div className="space-y-4 p-6">
       <header className="space-y-1">
         <h2 className="text-lg font-bold text-slate-900">AON &amp; Attrition Analytics</h2>
@@ -1267,7 +1263,28 @@ export default function AonAnalyticsView() {
         </p>
       </header>
 
+      <HeadlineStrip />
+
+      <div role="tablist" aria-label="Attrition views" className="flex gap-1 overflow-x-auto rounded-lg bg-slate-50 p-1">
+        {([
+          ["alerts", "Alerts"], ["prediction", "Prediction"], ["insights", "Insights"],
+          ["overview", "Overview"], ["cohort", "Cohort Survival"], ["deep", "Attrition Deep Dive"],
+        ] as const).map(([k, label]) => (
+          <button
+            key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
+            className={[
+              "shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
+              tab === k ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100",
+            ].join(" ")}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {legacyTab && (
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <span className="basis-full text-[11px] text-slate-500">Filters below apply to the Overview, Cohort Survival and Attrition Deep Dive views only.</span>
         <Field label={tab === "cohort" ? "Joined from" : "From"}>
           <input type="date" className={inputCls} value={from} onChange={e => setFrom(e.target.value)} />
         </Field>
@@ -1290,16 +1307,16 @@ export default function AonAnalyticsView() {
             ))}
           </select>
         </Field>
-        <div className="ml-auto flex gap-1 rounded-lg bg-slate-50 p-1">
-          <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>Overview</TabButton>
-          <TabButton active={tab === "cohort"} onClick={() => setTab("cohort")}>Cohort Survival</TabButton>
-          <TabButton active={tab === "deep"} onClick={() => setTab("deep")}>Attrition Deep Dive</TabButton>
-        </div>
       </div>
+      )}
 
+      {tab === "alerts" && <AlertsTab onViewPeople={openPrediction} />}
+      {tab === "prediction" && <PredictionTab filters={predictionFilters} setFilters={setPredictionFilters} />}
+      {tab === "insights" && <InsightsTab />}
       {tab === "overview" && <Overview from={from} to={to} branchId={branchId} designationId={designationId} headlineRate={headline} />}
       {tab === "cohort" && <CohortSurvival from={from} to={to} branchId={branchId} designationId={designationId} />}
       {tab === "deep" && <DeepDive from={from} to={to} branchId={branchId} designationId={designationId} />}
     </div>
+    </DrillProvider>
   );
 }

@@ -66,11 +66,13 @@ function buildVendorWhere(filters: VendorListFilters): {
   // caller has to filter client-side.
   const term = String(filters.q ?? "").trim();
   if (term) {
-    conds.push(
-      "(vendor_name LIKE ? OR vendor_code LIKE ? OR gst_number LIKE ?)",
-    );
-    const like = `%${term.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
-    params.push(like, like, like);
+    // Every word must appear somewhere in name / code / GST, in any order, so "sai sachi" finds
+    // "SACHI SAI ..." and a stray double space does not return nothing.
+    for (const word of term.split(/\s+/).filter(Boolean)) {
+      conds.push("(vendor_name LIKE ? OR vendor_code LIKE ? OR gst_number LIKE ?)");
+      const like = `%${word.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
+      params.push(like, like, like);
+    }
   }
 
   return { where: conds.length ? `WHERE ${conds.join(" AND ")}` : "", params };
@@ -104,7 +106,7 @@ export const vendorService = {
       `SELECT * FROM (
          SELECT v.*, ROW_NUMBER() OVER (
            PARTITION BY UPPER(TRIM(v.vendor_name))
-           ORDER BY v.updated_at DESC, v.id ASC
+           ORDER BY (v.gst_number IS NULL OR TRIM(v.gst_number) = '') ASC, v.updated_at DESC, v.id ASC
          ) AS rn
          FROM vendor_master v
          ${where}
@@ -136,7 +138,7 @@ export const vendorService = {
       `SELECT COUNT(*) AS total FROM (
          SELECT ROW_NUMBER() OVER (
            PARTITION BY UPPER(TRIM(v.vendor_name))
-           ORDER BY v.updated_at DESC, v.id ASC
+           ORDER BY (v.gst_number IS NULL OR TRIM(v.gst_number) = '') ASC, v.updated_at DESC, v.id ASC
          ) AS rn
          FROM vendor_master v
          ${where}
@@ -425,21 +427,17 @@ export const expenseService = {
    * expense_type is therefore explicit. Callers wanting the vendor/imprest ledger
    * must ask for it; the default is the employee-claim view the UI presents.
    */
-  async list(filters: {
-    employee_id?: string;
-    status?: string;
-    expense_type?: string | string[];
-  }) {
+  async list(
+    filters: { employee_id?: string; status?: string; expense_type?: string | string[] },
+    scope?: { sql: string; params: unknown[] },
+  ) {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.employee_id) {
-      conds.push("e.employee_id = ?");
-      params.push(filters.employee_id);
-    }
-    if (filters.status) {
-      conds.push("e.status = ?");
-      params.push(filters.status);
-    }
+    // Branch scoping (owner ruling 2026-10-01): hr sees only claims of employees inside its branch / scope.
+    // `emp` is the employees join below; omitted for org-wide callers so their SQL is unchanged.
+    if (scope) { conds.push(`(${scope.sql})`); params.push(...scope.params); }
+    if (filters.employee_id) { conds.push("e.employee_id = ?"); params.push(filters.employee_id); }
+    if (filters.status)      { conds.push("e.status = ?");      params.push(filters.status); }
 
     // expense_type reaches here straight off req.query on the privileged path, so
     // validate against the ENUM rather than trusting the caller — qs can hand us
@@ -838,25 +836,17 @@ export const billingInvoiceService = {
 // ─── Procurement ─────────────────────────────────────────────────────────────
 
 export const procurementService = {
-  async list(filters: {
-    requested_by?: string;
-    status?: string;
-    department_id?: string;
-  }) {
+  async list(
+    filters: { requested_by?: string; status?: string; department_id?: string },
+    scope?: { sql: string; params: unknown[] },
+  ) {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.requested_by) {
-      conds.push("p.requested_by = ?");
-      params.push(filters.requested_by);
-    }
-    if (filters.status) {
-      conds.push("p.status = ?");
-      params.push(filters.status);
-    }
-    if (filters.department_id) {
-      conds.push("p.department_id = ?");
-      params.push(filters.department_id);
-    }
+    // Branch scoping: filter by the requester's branch / scope (emp join below). No-op for org-wide callers.
+    if (scope) { conds.push(`(${scope.sql})`); params.push(...scope.params); }
+    if (filters.requested_by)  { conds.push("p.requested_by = ?");  params.push(filters.requested_by); }
+    if (filters.status)        { conds.push("p.status = ?");        params.push(filters.status); }
+    if (filters.department_id) { conds.push("p.department_id = ?"); params.push(filters.department_id); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT p.*,

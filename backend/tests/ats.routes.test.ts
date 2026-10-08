@@ -37,6 +37,7 @@ vi.mock("../src/middleware/requireRole.js", () => ({
 vi.mock("../src/shared/scopeAccess.js", () => ({
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   hasAnyRole: vi.fn().mockResolvedValue(true),
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),
   getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
   getRosterPlanScope: vi
@@ -69,6 +70,8 @@ vi.mock("../src/modules/ats/candidate-access.js", () => ({
   resolveCandidateScope: vi.fn().mockResolvedValue({ sql: "1=1", params: [] }),
   canAccessCandidate: vi.fn().mockResolvedValue(true),
   assertCandidateInScope: vi.fn().mockResolvedValue(true),
+  // router.param guard: pass-through here (its own behaviour is covered by candidate-access-scope.test.ts)
+  candidateParamGuard: () => (_req: any, _res: any, next: any) => next(),
 }));
 vi.mock("../src/middleware/scopeMiddleware.js", () => ({
   requireScopedRole: () => (_req: any, _res: any, next: any) => next(),

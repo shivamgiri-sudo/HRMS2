@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -664,6 +665,15 @@ export default function NativeFullFinal() {
     void loadFF(req.id); void loadPreview(req.id);
   };
 
+  // Approval Center deep link (?approvalId=<exit request id>): ring the row and open its settlement.
+  const focusedId = useApprovalFocus(!loadingRequests && exitRequests.length > 0);
+  useEffect(() => {
+    if (!focusedId || loadingRequests || selectedRequest) return;
+    const target = exitRequests.find((r) => r.id === focusedId);
+    if (target) selectRequest(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusedId, loadingRequests, exitRequests]);
+
   useEffect(() => {
     if (loadingFF || loadingPreview || ffCalc || !preview) return;
     const computed = computedFieldsFromPreview(preview);
@@ -924,6 +934,7 @@ export default function NativeFullFinal() {
                   return (
                     <button
                       key={req.id}
+                      data-approval-id={req.id}
                       onClick={() => selectRequest(req)}
                       className={`w-full p-4 text-left transition-colors cursor-pointer ${rowBorderClass(req)} ${
                         isSelected ? "bg-slate-950 text-white" : "hover:bg-slate-50"

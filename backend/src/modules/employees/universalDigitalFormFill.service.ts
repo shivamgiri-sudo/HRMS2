@@ -1154,15 +1154,27 @@ async function resolveAttendanceSource(
   const departmentName = String(employee?.department_name ?? "");
   const designationName = String(employee?.designation_name ?? "");
   try {
+    if (employee?.id) {
+      try {
+        const [ov] = await db.query<RowDataPacket[]>(
+          `SELECT attendance_logic FROM employee_attendance_logic_override
+            WHERE employee_id = ? AND active_status = 1 LIMIT 1`, [employee.id]);
+        const o = (ov as RowDataPacket[])[0];
+        if (o) return o.attendance_logic === "cosec" ? "biometric" : "dialler";
+      } catch { /* override table not migrated yet: no override */ }
+    }
+    // Same ordering as the engine: most specific row wins, and at equal specificity a non-COSEC
+    // row beats a COSEC one. A matching COSEC row means biometric, not "eligible".
     const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT id FROM apr_eligibility_config
+      `SELECT attendance_logic FROM apr_eligibility_config
         WHERE active_status = 1
           AND (designation_id = ? OR designation_id IS NULL)
           AND (department_id  = ? OR department_id  IS NULL)
           AND (process_id     = ? OR process_id     IS NULL)
         ORDER BY (CASE WHEN process_id     IS NOT NULL THEN 4 ELSE 0 END +
                   CASE WHEN department_id  IS NOT NULL THEN 2 ELSE 0 END +
-                  CASE WHEN designation_id IS NOT NULL THEN 1 ELSE 0 END) DESC
+                  CASE WHEN designation_id IS NOT NULL THEN 1 ELSE 0 END) DESC,
+                 (attendance_logic = 'cosec') ASC, id ASC
         LIMIT 1`,
       [
         employee?.designation_id ?? null,
@@ -1170,7 +1182,9 @@ async function resolveAttendanceSource(
         employee?.process_id ?? null,
       ],
     );
-    if ((rows as RowDataPacket[]).length) return "dialler";
+    if ((rows as RowDataPacket[]).length) {
+      return (rows as RowDataPacket[])[0]!.attendance_logic === "cosec" ? "biometric" : "dialler";
+    }
     // An empty table means nothing is configured yet, so fall back to the rule
     // the engine falls back to rather than declaring everyone biometric.
     const [[{ total }]] = (await db.query<RowDataPacket[]>(
@@ -1409,21 +1423,6 @@ export async function buildSourceContext(
     )
     .catch(() => [[null] as unknown as RowDataPacket[], []]);
 
-  const [[salary]] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT ctc_offered, basic, hra, conveyance, da, special_allowance,
-            portfolio_allowance, medical_allowance, lta, mobile_allowance,
-            other_allowance, bonus, gross, net_in_hand,
-            epf_employee, epf_employer, esic_employee, esic_employer,
-            professional_tax, gratuity, admin_charges
-       FROM employee_salary_snapshot
-      WHERE employee_id = ?
-      ORDER BY snapshot_date DESC
-      LIMIT 1`,
-      [employeeId],
-    )
-    .catch(() => [[null] as unknown as RowDataPacket[], []]);
-
   // The EPF compliance screen writes its own nominee rows, keyed to the EPF
   // profile and carrying the fields Form 2 actually asks for — share, guardian
   // for a minor, and a full address. Nothing ever read them: the form took the
@@ -1614,54 +1613,14 @@ export async function buildSourceContext(
     const parsed = Number(value ?? 0);
     return Number.isFinite(parsed) ? parsed : 0;
   };
-  const componentSum = [
-    salary?.basic,
-    salary?.hra,
-    salary?.conveyance,
-    salary?.da,
-    salary?.portfolio_allowance,
-    salary?.medical_allowance,
-    salary?.lta,
-    salary?.mobile_allowance,
-    salary?.special_allowance,
-    salary?.other_allowance,
-  ].reduce<number>((total, part) => total + num(part), 0);
 
+  // Only the Payroll Head's approved package is ever printed (owner rule 2026-10-05: letters carry
+  // only figures the Payroll Head approved). There is deliberately NO fallback to the salary snapshot,
+  // a component sum or the offered CTC: those are unapproved numbers, and a plausible wrong figure on
+  // a document someone signs is worse than a blank. With no approved + accepted package the figure
+  // is null and the contract must not be issued (the joining kit is already blocked until approval).
   const packageGross = num(packageRow?.package_gross);
-  const snapshotGross = num(salary?.gross);
-
-  // Last resort, and the one that needs a guard. ctc_offered is monthly on
-  // 31,100 of the 31,142 rows that carry one — but five hold 110,000 to
-  // 625,000, which on this workforce can only be an annual CTC typed into a
-  // monthly column. With no components to corroborate the figure there is no
-  // way to tell the two apart, and printing an annual CTC as the monthly
-  // remuneration overstates it twelvefold on a document someone signs.
-  //
-  // So an uncorroborated figure at or above this ceiling is refused. It is not
-  // a cap on what may be printed: where the components agree, they are used
-  // and no ceiling applies, so a genuine senior salary is unaffected. The
-  // largest value that actually reaches this branch today is 32,966.
-  const UNCORROBORATED_MONTHLY_CEILING = 200_000;
-  const offered = num(salary?.ctc_offered);
-  const offeredMonthly =
-    offered > 0 && offered < UNCORROBORATED_MONTHLY_CEILING ? offered : 0;
-
-  // 595 rows carry no figure anywhere. A blank on the contract is honest; a
-  // fabricated one is not, so nothing is invented for them.
-  const grossRaw =
-    packageGross > 0
-      ? packageGross
-      : snapshotGross > 0
-        ? snapshotGross
-        : componentSum > 0
-          ? componentSum
-          : offeredMonthly > 0
-            ? offeredMonthly
-            : null;
-  const monthlyGross =
-    grossRaw == null || !Number.isFinite(grossRaw) || grossRaw <= 0
-      ? null
-      : grossRaw;
+  const monthlyGross = packageGross > 0 && Number.isFinite(packageGross) ? packageGross : null;
 
   // The Payroll HR who signs this candidate's joining documents. Resolved from
   // the employee's branch; null where no signatory is configured yet, or where
@@ -1856,23 +1815,10 @@ export async function buildSourceContext(
       bank_verified: Number(bank?.bank_verified ?? 0) === 1,
     },
     salary: {
-      ctc_annual: salary?.ctc_offered ?? null,
-      basic: salary?.basic ?? null,
-      hra: salary?.hra ?? null,
-      conveyance: salary?.conveyance ?? null,
-      da: salary?.da ?? null,
-      special_allowance: salary?.special_allowance ?? null,
-      other_allowance: salary?.other_allowance ?? null,
-      bonus: salary?.bonus ?? null,
-      gross: salary?.gross ?? null,
-      net_in_hand: salary?.net_in_hand ?? null,
-      epf_employee: salary?.epf_employee ?? null,
-      epf_employer: salary?.epf_employer ?? null,
-      esic_employee: salary?.esic_employee ?? null,
-      esic_employer: salary?.esic_employer ?? null,
-      professional_tax: salary?.professional_tax ?? null,
-      gratuity: salary?.gratuity ?? null,
-      admin_charges: salary?.admin_charges ?? null,
+      // Approved package only (monthly CTC x 12), never the snapshot's offered CTC.
+      ctc_annual: monthlyGross == null ? null : monthlyGross * 12,
+      // Components, gross, net and statutory amounts are NOT exposed: the only salary source here is the
+      // Payroll Head's approved package, and the appendix prints just its monthly figure.
       // The employment agreement's appendix prints the monthly figure and the
       // same amount in words, so both are derived from one source.
       monthly_gross: monthlyGross == null ? null : indianDigits(monthlyGross),

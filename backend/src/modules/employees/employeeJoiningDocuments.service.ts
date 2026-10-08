@@ -8,11 +8,7 @@ import { env } from "../../config/env.js";
 import { db } from "../../db/mysql.js";
 import { listSignedAppointmentLetters } from "./employeeSignedAppointmentLetter.service.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import {
-  hasAnyRole,
-  hasScopedAccess,
-  getUserRoleKeys,
-} from "../../shared/scopeAccess.js";
+import { hasAnyRole, hasScopedAccess, getUserRoleKeys, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import { analyzeEmployeeJoiningDocument } from "./employeeJoiningDocumentAnalysis.service.js";
 import {
   esignWithUrl,
@@ -125,19 +121,19 @@ const HR_SCOPE_ROLES = [
   "tl",
 ];
 const PAYROLL_SCOPE_ROLES = ["payroll_hr", "payroll"];
-const SECURE_DOWNLOAD_ROLES = new Set([
-  "admin",
-  "super_admin",
-  "hr",
-  "manager",
-  "payroll_hr",
-  "payroll",
-  "employee",
-]);
-const PAYROLL_DOCUMENT_CODES = new Set([
-  "EPF_DECLARATION",
-  "EMPLOYMENT_CONTRACT",
-]);
+// "employee" is deliberately absent: an employee (including the document's own owner) may upload what
+// is pending against their checklist but not open or download the stored files - HR / payroll do that.
+const SECURE_DOWNLOAD_ROLES = new Set(["admin", "super_admin", "hr", "manager", "payroll_hr", "payroll"]);
+
+export function mayDownloadJoiningDocuments(access: { isAdmin: boolean; isSelf?: boolean; roles: string[] }): boolean {
+  if (access.isAdmin) return true;
+  // HR / payroll open stored files, including their own record's.
+  if (access.roles.some((role) => SECURE_DOWNLOAD_ROLES.has(role) && role !== "manager")) return true;
+  // "manager" opens their team's files, but not their own: being a manager must not bypass the
+  // owner restriction on their own documents.
+  return !access.isSelf && access.roles.includes("manager");
+}
+const PAYROLL_DOCUMENT_CODES = new Set(["EPF_DECLARATION", "EMPLOYMENT_CONTRACT"]);
 
 /**
  * Every status this system actually writes to
@@ -407,7 +403,10 @@ export async function resolveEmployeeDocumentAccessContext(
   const isSelf = actorEmployee?.id === employeeId;
   const canPayroll = roles.includes("payroll_hr") || roles.includes("payroll");
 
-  let canManage = isAdmin || isSelf;
+  // Owner policy 2026-10-01: admin is branch-scoped like hr. Only super_admin (and an admin who ALSO holds an
+  // org-wide role) skips the scope check; a plain admin goes through hasScopedAccess (own branch only).
+  const isOrgWide = roles.includes("super_admin") || (isAdmin && roles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r)));
+  let canManage = isOrgWide || isSelf;
   if (!canManage) {
     const targetManagerId =
       target.reporting_manager_id ?? target.manager_id ?? null;
@@ -1268,14 +1267,13 @@ export async function getJoiningDocumentPack(
     },
     permissions: {
       can_manage: access.canManage,
-      can_download:
-        access.roles.some((role) => SECURE_DOWNLOAD_ROLES.has(role)) ||
-        access.isSelf ||
-        access.isAdmin,
+      can_download: mayDownloadJoiningDocuments(access),
       can_payroll_view: access.canPayroll,
       is_self: access.isSelf,
     },
-    checklist: checklistWithLinks,
+    checklist: mayDownloadJoiningDocuments(access)
+      ? checklistWithLinks
+      : checklistWithLinks.map((item) => (item.linked_doc ? { ...item, linked_doc: { ...item.linked_doc, file_url: "" } } : item)),
     audit: auditRows,
     signed_appointment_letters: signedAppointmentLetters,
   };
@@ -1889,15 +1887,10 @@ export async function getJoiningDocumentFileForAccess(params: {
   ipAddress?: string | null;
   userAgent?: string | null;
 }) {
-  const { file, access } = await fileAccessContext(
-    params.fileId,
-    params.actorUserId,
-  );
-  const canDownload =
-    access.isAdmin ||
-    access.isSelf ||
-    access.roles.some((role) => SECURE_DOWNLOAD_ROLES.has(role));
-  const canPreview = access.canManage;
+  const { file, access } = await fileAccessContext(params.fileId, params.actorUserId);
+  const canDownload = mayDownloadJoiningDocuments(access);
+  // The owner (employee) uploads; HR / payroll open. canManage includes self, so exclude a self-only caller.
+  const canPreview = access.canManage && !(access.isSelf && !mayDownloadJoiningDocuments(access));
 
   if (params.action === "preview" && !canPreview) {
     const err = new Error(

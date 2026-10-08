@@ -1,0 +1,66 @@
+name: Ops branch health preview (manual, read-only)
+
+# Builds one branch's Branch Health Report from live data and prints a summary. It never sends mail and
+# never writes. Runs on the production host because that is where the database credentials are.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch name exactly as in branch_master"
+        required: true
+        default: "NOIDA-2"
+        type: string
+      mode:
+        description: "attrition = attrition section preview; escalations = audit of the red banner vs the tables (all branches if branch is blank or ALL)"
+        required: true
+        default: "attrition"
+        type: choice
+        options:
+          - attrition
+          - escalations
+
+concurrency:
+  group: ops-branch-health-preview
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    name: Preview ${{ inputs.branch }} (read-only)
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Build the report (no email is sent)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          BRANCH: ${{ inputs.branch }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found - is this the prod host?"; exit 1; }
+          if [ "$MODE" = "escalations" ]; then
+            if [ "$BRANCH" = "ALL" ]; then BRANCH=""; fi
+            npx tsx scripts/audit-branch-health-escalations.ts "$BRANCH"
+          else
+            npx tsx scripts/preview-branch-health-attrition.ts "$BRANCH"
+          fi

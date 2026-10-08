@@ -115,7 +115,7 @@ CREATE TABLE designation_master (id TEXT PRIMARY KEY, designation_name TEXT);
 CREATE TABLE salary_prep_run (id TEXT PRIMARY KEY, run_month TEXT, status TEXT, created_at TEXT);
 CREATE TABLE salary_prep_line (id TEXT PRIMARY KEY, run_id TEXT, employee_id TEXT, gross_salary REAL,
   pf_employer REAL, esic_employer REAL, gratuity REAL, other_deductions REAL, loan_emi REAL,
-  advance_recovery REAL, lwp_deduction REAL, pf_employee REAL, professional_tax REAL, tds REAL);
+  advance_recovery REAL, lwp_deduction REAL, pf_employee REAL, professional_tax REAL, tds REAL, incentive_total REAL);
 CREATE TABLE pnl_employee_cost_centre_override (id TEXT PRIMARY KEY, employee_id TEXT UNIQUE,
   target_cost_centre_id TEXT, active_status INT);
 
@@ -134,7 +134,7 @@ INSERT INTO salary_prep_line (id, run_id, employee_id, gross_salary, pf_employer
   ('L2','R2','E2',40000,0,2000,NULL);
 INSERT INTO salary_prep_line (id, run_id, employee_id, gross_salary) VALUES ('L4','R1','E4',77777);
 INSERT INTO salary_prep_line VALUES
-  ('L3','R1','E3',96626,1800,0,4648,0,20000,0,0,1800,200,500);
+  ('L3','R1','E3',96626,1800,0,4648,0,20000,0,0,1800,200,500,NULL);
 `;
 
 const PEOPLE_COST_TOTAL = 225074;

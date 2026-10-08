@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { TrendingDown, TrendingUp, AlertTriangle, CheckCircle, Activity } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { isQualityServiceUnavailable, qualityRetry } from "@/hooks/useAgentQualityData";
 
 interface CqScoreData {
   cq_score_current: number | null;
@@ -23,9 +24,10 @@ export function LiveCallScoreStrip({ refetchInterval = 30_000, showLiveBadge = f
   const { data, isLoading, error } = useQuery<CqScoreData>({
     queryKey: ["live-cq-score", "7d"],
     queryFn: () => hrmsApi.get("/api/agent/cq-score?daysBack=7").then((r) => r.data?.data ?? r.data),
-    refetchInterval,
+    // While the quality service is down (503), stop polling it every 30s.
+    refetchInterval: (query) => (isQualityServiceUnavailable(query.state.error) ? false : refetchInterval),
     staleTime: 25_000,
-    retry: 1,
+    retry: qualityRetry(1),
   });
 
   if (isLoading) {

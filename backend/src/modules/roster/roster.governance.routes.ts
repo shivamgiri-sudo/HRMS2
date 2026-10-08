@@ -18,40 +18,43 @@ import { rtaSyncService } from "./rta-sync.service.js";
 import { weekoffAllocationService } from "./weekoff-allocation.service.js";
 import { weekOffPolicyConfigService } from "./week-off-policy-config.service.js";
 import { db } from "../../db/mysql.js";
+import { resolveDispute, isDisputeResolutionError, canOwnRosterForUser, DISPUTE_LOCKED_STATUSES } from "./dispute-resolution.service.js";
 import { validateAmendmentInput } from "../wfm/roster-audit.helpers.js";
 import { recordAmendmentInDecisionAudit } from "../wfm/roster-audit.amendment.js";
 import type { RowDataPacket } from "mysql2";
+import { onRosterRequestRaised } from "../roster-requests/roster-requests.raise.js";
+import { columnExists } from "../../shared/schema-object-cache.js";
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
+import { userCanAccessProcess, scopedProcessIdsForUser, getScope, canAccessProcess, allowedBranchIds } from "../wfm/branch-scope.js";
+
+// Owner ruling 2026-10-01: only ORG_WIDE_EXEMPT_ROLES bypass the process/branch scope. admin / hr / wfm
+// used to mean "every branch"; they must now be inside their own branch / assigned processes.
+const isOrgWideUser = (userId: string) => hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES);
+
+type WeekOffPolicyRowLike = { scope_type?: string | null; process_id?: string | null; branch_id?: string | null };
+async function canTouchWeekOffPolicy(req: AuthenticatedRequest, row: WeekOffPolicyRowLike, write: boolean): Promise<boolean> {
+  if (await isOrgWideUser(req.authUser!.id)) return true;
+  const scope = await getScope(req);
+  if (!scope) return false;
+  if (row.scope_type === "global" || !row.scope_type) return !write;
+  if (row.scope_type === "branch") return !!row.branch_id && (allowedBranchIds(scope) ?? []).includes(String(row.branch_id));
+  if (row.scope_type === "process") return canAccessProcess(scope, row.process_id ?? null, row.branch_id ?? null);
+  return false;
+}
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) =>
   fn(req, res).catch(next);
 
-const ROSTER_OWNERS = ["manager", "wfm"];
 const SCOPED_MONITORS = ["manager", "wfm", "assistant_manager", "tl"];
 
-// Dispute resolution legitimately happens after publish (a dispute is raised against an
-// already-published/acknowledged assignment, which bulkUpsertAssignments's narrower
-// EDITABLE_ASSIGNMENT_STATUSES — draft/submitted/reviewed only — would wrongly forbid).
-// What resolve-dispute must NOT be able to touch is a cycle whose attendance is already
-// locked or whose payroll has moved on: those three statuses are excluded here, matching
-// the concern bulkUpsertAssignments's own status gate exists for, without blocking the
-// normal published/acknowledged dispute flow this route is actually for.
-const DISPUTE_LOCKED_STATUSES = new Set([
-  "attendance_locked",
-  "payroll_input_ready",
-  "closed",
-]);
+// DISPUTE_LOCKED_STATUSES (attendance_locked / payroll_input_ready / closed) and ROSTER_OWNERS live in
+// dispute-resolution.service.ts, shared with the resolve-dispute decision.
 
 router.use(requireAuth);
 
-async function canOwnRoster(
-  req: AuthenticatedRequest,
-  processId: string,
-  branchId?: string | null,
-): Promise<boolean> {
-  const userId = req.authUser!.id;
-  if (await hasRole(userId, "admin")) return true;
-  return hasProcessScope(userId, processId, branchId, ...ROSTER_OWNERS);
+async function canOwnRoster(req: AuthenticatedRequest, processId: string, branchId?: string | null): Promise<boolean> {
+  return canOwnRosterForUser(req.authUser!.id, processId, branchId);
 }
 
 async function canMonitorRoster(
@@ -60,8 +63,9 @@ async function canMonitorRoster(
   branchId?: string | null,
 ): Promise<boolean> {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, "admin", "hr")) return true;
-  return hasProcessScope(userId, processId, branchId, ...SCOPED_MONITORS);
+  if (await isOrgWideUser(userId)) return true;
+  const roleOk = (await hasProcessScope(userId, processId, branchId, ...SCOPED_MONITORS)) || (await hasRole(userId, "hr"));
+  return roleOk && (await userCanAccessProcess(userId, processId, branchId));
 }
 
 async function requireCycleOwner(
@@ -102,139 +106,78 @@ async function requireCycleMonitor(
 // ── Shift Templates ───────────────────────────────────────────────────────────
 // Shift definition is maintained by Admin/WFM; Process Managers use approved
 // templates when planning their scoped weekly roster.
-router.get(
-  "/shifts/templates",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const processId = req.query.process_id as string | undefined;
-    if (await hasRole(req.authUser!.id, "admin", "hr")) {
-      return res.json({
-        data: await rosterGovernanceService.listShiftTemplates(
-          req.query as any,
-        ),
-      });
+router.get("/shifts/templates", h(async (req: AuthenticatedRequest, res: Response) => {
+  const processId = req.query.process_id as string | undefined;
+  if (await isOrgWideUser(req.authUser!.id)) {
+    return res.json({ data: await rosterGovernanceService.listShiftTemplates(req.query as any) });
+  }
+  const isHr = await hasRole(req.authUser!.id, "hr");
+  if (!processId && isHr) {
+    // hr without a process filter: templates of the processes inside its own branch / scope only.
+    const ids = await scopedProcessIdsForUser(req.authUser!.id);
+    const out: unknown[] = [];
+    for (const pid of (ids === "unrestricted" ? [] : ids).slice(0, 200)) {
+      out.push(...(await rosterGovernanceService.listShiftTemplates({ ...(req.query as any), process_id: pid })));
     }
-    if (
-      !processId ||
-      !(await hasProcessScope(
-        req.authUser!.id,
-        processId,
-        null,
-        ...SCOPED_MONITORS,
-      ))
-    ) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Forbidden: process scope is required",
-        });
-    }
-    return res.json({
-      data: await rosterGovernanceService.listShiftTemplates(req.query as any),
-    });
-  }),
-);
+    return res.json({ data: out });
+  }
+  if (!processId
+    || !((await hasProcessScope(req.authUser!.id, processId, null, ...SCOPED_MONITORS)) || isHr)
+    || !(await userCanAccessProcess(req.authUser!.id, processId, (req.query.branch_id as string | undefined) ?? null))) {
+    return res.status(403).json({ success: false, message: "Forbidden: process scope is required" });
+  }
+  return res.json({ data: await rosterGovernanceService.listShiftTemplates(req.query as any) });
+}));
 
-router.post(
-  "/shifts/templates",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const {
-      shift_code,
-      shift_name,
-      start_time,
-      end_time,
-      effective_from,
-      process_id,
-      branch_id,
-    } = req.body;
-    if (
-      !shift_code ||
-      !shift_name ||
-      !start_time ||
-      !end_time ||
-      !effective_from ||
-      !process_id
-    ) {
-      return res
-        .status(400)
-        .json({
-          error:
-            "shift_code, shift_name, start_time, end_time, effective_from and process_id are required",
-        });
-    }
-    const admin = await hasRole(req.authUser!.id, "admin");
-    const scopedWfm = await hasProcessScope(
-      req.authUser!.id,
-      process_id,
-      branch_id ?? null,
-      "wfm",
-    );
-    if (!admin && !scopedWfm) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message:
-            "Forbidden: shift templates require Admin or mapped WFM scope",
-        });
-    }
-    const data = await rosterGovernanceService.createShiftTemplate(
-      req.body,
-      req.authUser!.id,
-      req,
-    );
-    return res.status(201).json({ data });
-  }),
-);
+router.post("/shifts/templates", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { shift_code, shift_name, start_time, end_time, effective_from, process_id, branch_id } = req.body;
+  if (!shift_code || !shift_name || !start_time || !end_time || !effective_from || !process_id) {
+    return res.status(400).json({ error: "shift_code, shift_name, start_time, end_time, effective_from and process_id are required" });
+  }
+  const admin = await isOrgWideUser(req.authUser!.id);
+  const scopedWfm = (await hasProcessScope(req.authUser!.id, process_id, branch_id ?? null, "wfm"))
+    && (await userCanAccessProcess(req.authUser!.id, process_id, branch_id ?? null));
+  if (!admin && !scopedWfm) {
+    return res.status(403).json({ success: false, message: "Forbidden: shift templates require Admin or mapped WFM scope" });
+  }
+  const data = await rosterGovernanceService.createShiftTemplate(req.body, req.authUser!.id, req);
+  return res.status(201).json({ data });
+}));
 
 // ── Week-off Policy Default (tier 3-5 of Part A.1's hierarchy) ────────────────
 // Round 2 (2026-08-13), P1 gap: week_off_policy_default was deliberately
 // seeded with zero rows (never defaults to Sunday) and nothing could ever
 // populate it except direct SQL. Admin/WFM config, same posture as shift
 // templates directly above.
-router.get(
-  "/week-off-policy-default",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await weekOffPolicyConfigService.list({
-      scope_type: req.query.scope_type as string | undefined,
-      active_status: req.query.active_status as string | undefined,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/week-off-policy-default", h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await weekOffPolicyConfigService.list({
+    scope_type: req.query.scope_type as string | undefined,
+    active_status: req.query.active_status as string | undefined,
+  });
+  if (await isOrgWideUser(req.authUser!.id)) return res.json({ success: true, data });
+  const visible: typeof data = [];
+  for (const row of data) if (await canTouchWeekOffPolicy(req, row, false)) visible.push(row);
+  return res.json({ success: true, data: visible });
+}));
 
-router.get(
-  "/week-off-policy-default/:id",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await weekOffPolicyConfigService.get(req.params.id);
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/week-off-policy-default/:id", h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await weekOffPolicyConfigService.get(req.params.id);
+  if (!(await canTouchWeekOffPolicy(req, data as any, false))) {
+    return res.status(403).json({ success: false, message: "Forbidden: outside your branch / assigned scope" });
+  }
+  return res.json({ success: true, data });
+}));
 
-router.post(
-  "/week-off-policy-default",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { scope_type, process_id, branch_id } = req.body;
-    const admin = await hasRole(req.authUser!.id, "admin");
-    if (!admin) {
-      const scopedWfm =
-        scope_type === "process"
-          ? await hasProcessScope(
-              req.authUser!.id,
-              process_id,
-              branch_id ?? null,
-              "wfm",
-            )
-          : await hasRole(req.authUser!.id, "wfm");
-      if (!scopedWfm) {
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message:
-              "Forbidden: week-off policy defaults require Admin, or mapped WFM scope for a process-level policy",
-          });
-      }
+router.post("/week-off-policy-default", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { scope_type, process_id, branch_id } = req.body;
+  const admin = await isOrgWideUser(req.authUser!.id);
+  if (!admin) {
+    const scopedWfm = (scope_type === "process"
+      ? await hasProcessScope(req.authUser!.id, process_id, branch_id ?? null, "wfm")
+      : await hasRole(req.authUser!.id, "wfm"))
+      && (await canTouchWeekOffPolicy(req, { scope_type, process_id, branch_id }, true));
+    if (!scopedWfm) {
+      return res.status(403).json({ success: false, message: "Forbidden: week-off policy defaults require Admin, or mapped WFM scope for a process-level policy" });
     }
     const data = await weekOffPolicyConfigService.create(
       req.body,
@@ -245,43 +188,27 @@ router.post(
   }),
 );
 
-router.patch(
-  "/week-off-policy-default/:id",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!(await hasRole(req.authUser!.id, "admin", "wfm"))) {
-      return res
-        .status(403)
-        .json({ success: false, message: "Forbidden: Admin or WFM only" });
-    }
-    const data = await weekOffPolicyConfigService.update(
-      req.params.id,
-      req.body,
-      req.authUser!.id,
-      req,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+router.patch("/week-off-policy-default/:id", h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await hasRole(req.authUser!.id, "admin", "wfm"))) {
+    return res.status(403).json({ success: false, message: "Forbidden: Admin or WFM only" });
+  }
+  if (!(await canTouchWeekOffPolicy(req, (await weekOffPolicyConfigService.get(req.params.id)) as any, true))) {
+    return res.status(403).json({ success: false, message: "Forbidden: outside your branch / assigned scope" });
+  }
+  const data = await weekOffPolicyConfigService.update(req.params.id, req.body, req.authUser!.id, req);
+  return res.json({ success: true, data });
+}));
 
-router.delete(
-  "/week-off-policy-default/:id",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!(await hasRole(req.authUser!.id, "admin", "wfm"))) {
-      return res
-        .status(403)
-        .json({ success: false, message: "Forbidden: Admin or WFM only" });
-    }
-    await weekOffPolicyConfigService.deactivate(
-      req.params.id,
-      req.authUser!.id,
-      req,
-    );
-    return res.json({
-      success: true,
-      message: "Week-off policy default deactivated",
-    });
-  }),
-);
+router.delete("/week-off-policy-default/:id", h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await hasRole(req.authUser!.id, "admin", "wfm"))) {
+    return res.status(403).json({ success: false, message: "Forbidden: Admin or WFM only" });
+  }
+  if (!(await canTouchWeekOffPolicy(req, (await weekOffPolicyConfigService.get(req.params.id)) as any, true))) {
+    return res.status(403).json({ success: false, message: "Forbidden: outside your branch / assigned scope" });
+  }
+  await weekOffPolicyConfigService.deactivate(req.params.id, req.authUser!.id, req);
+  return res.json({ success: true, message: "Week-off policy default deactivated" });
+}));
 
 // ── Roster Cycles ─────────────────────────────────────────────────────────────
 
@@ -323,36 +250,19 @@ router.get(
   }),
 );
 
-router.get(
-  "/cycles",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const processId = req.query.process_id as string | undefined;
-    if (await hasRole(req.authUser!.id, "admin", "hr")) {
-      return res.json({
-        data: await rosterGovernanceService.listCycles(req.query as any),
-      });
-    }
-    if (
-      !processId ||
-      !(await hasProcessScope(
-        req.authUser!.id,
-        processId,
-        (req.query.branch_id as string | undefined) ?? null,
-        ...SCOPED_MONITORS,
-      ))
-    ) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Forbidden: mapped process scope is required",
-        });
-    }
-    return res.json({
-      data: await rosterGovernanceService.listCycles(req.query as any),
-    });
-  }),
-);
+router.get("/cycles", h(async (req: AuthenticatedRequest, res: Response) => {
+  const processId = req.query.process_id as string | undefined;
+  if (await isOrgWideUser(req.authUser!.id)) {
+    return res.json({ data: await rosterGovernanceService.listCycles(req.query as any) });
+  }
+  const branchQ = (req.query.branch_id as string | undefined) ?? null;
+  if (!processId
+    || !((await hasProcessScope(req.authUser!.id, processId, branchQ, ...SCOPED_MONITORS)) || (await hasRole(req.authUser!.id, "hr")))
+    || !(await userCanAccessProcess(req.authUser!.id, processId, branchQ))) {
+    return res.status(403).json({ success: false, message: "Forbidden: mapped process scope is required" });
+  }
+  return res.json({ data: await rosterGovernanceService.listCycles(req.query as any) });
+}));
 
 // Process Manager and WFM both own weekly roster planning in their mapped scope.
 router.post(
@@ -403,40 +313,20 @@ router.post(
 );
 
 // ── Daily Assignments ─────────────────────────────────────────────────────────
-router.get(
-  "/cycles/:id/assignments",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    if (await hasRole(userId, "admin", "hr")) {
-      return res.json({
-        data: await rosterGovernanceService.getAssignments(req.params.id),
-      });
-    }
-    const cycle = await rosterGovernanceService.getCycle(req.params.id);
-    if (
-      await hasProcessScope(
-        userId,
-        cycle.process_id,
-        cycle.branch_id,
-        ...SCOPED_MONITORS,
-      )
-    ) {
-      return res.json({
-        data: await rosterGovernanceService.getAssignments(req.params.id),
-      });
-    }
-    const emp = await getEmployeeForUser(userId);
-    if (!emp)
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
-    const data = await rosterGovernanceService.getAssignments(
-      req.params.id,
-      emp.id,
-    );
-    return res.json({ data });
-  }),
-);
+router.get("/cycles/:id/assignments", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  if (await isOrgWideUser(userId)) {
+    return res.json({ data: await rosterGovernanceService.getAssignments(req.params.id) });
+  }
+  const cycle = await rosterGovernanceService.getCycle(req.params.id);
+  if (await canMonitorRoster(req, cycle.process_id, cycle.branch_id)) {
+    return res.json({ data: await rosterGovernanceService.getAssignments(req.params.id) });
+  }
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+  const data = await rosterGovernanceService.getAssignments(req.params.id, emp.id);
+  return res.json({ data });
+}));
 
 router.post(
   "/cycles/:id/assignments/bulk",
@@ -680,38 +570,18 @@ router.post(
 // ── Portal Aggregate ──────────────────────────────────────────────────────────
 // Internal publishing read: actual external client delivery continues through
 // the Client Portal published-data/auth boundary, never employee-level rows.
-router.get(
-  "/portal-aggregate",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { process_id, week_start_date, branch_id } = req.query as {
-      process_id?: string;
-      week_start_date?: string;
-      branch_id?: string;
-    };
-    if (!process_id || !week_start_date) {
-      return res
-        .status(400)
-        .json({
-          error: "process_id and week_start_date query params are required",
-        });
-    }
-    const broad = await hasRole(req.authUser!.id, "admin", "hr");
-    const scoped = await hasProcessScope(
-      req.authUser!.id,
-      process_id,
-      branch_id ?? null,
-      "wfm",
-      "manager",
-    );
-    if (!broad && !scoped)
-      return res.status(403).json({ success: false, message: "Forbidden" });
-    const data = await rosterGovernanceService.getPortalAggregate({
-      process_id,
-      week_start_date,
-    });
-    return res.json({ data });
-  }),
-);
+router.get("/portal-aggregate", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { process_id, week_start_date, branch_id } = req.query as { process_id?: string; week_start_date?: string; branch_id?: string };
+  if (!process_id || !week_start_date) {
+    return res.status(400).json({ error: "process_id and week_start_date query params are required" });
+  }
+  const broad = await isOrgWideUser(req.authUser!.id);
+  const scoped = (await hasProcessScope(req.authUser!.id, process_id, branch_id ?? null, "wfm", "manager", "hr"))
+    && (await userCanAccessProcess(req.authUser!.id, process_id, branch_id ?? null));
+  if (!broad && !scoped) return res.status(403).json({ success: false, message: "Forbidden" });
+  const data = await rosterGovernanceService.getPortalAggregate({ process_id, week_start_date });
+  return res.json({ data });
+}));
 
 // ── Roster Auto-Generation ─────────────────────────────────────────────────────
 
@@ -742,26 +612,26 @@ router.get(
 );
 
 // GET /runs/:runId/decision-audit — paginated per-employee decision trace
-router.get(
-  "/runs/:runId/decision-audit",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    if (!(await hasRole(userId, "admin", "hr", "wfm", "manager"))) {
-      return res.status(403).json({ success: false, message: "Forbidden" });
+router.get("/runs/:runId/decision-audit", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  if (!(await hasRole(userId, "admin", "hr", "wfm", "manager"))) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
+  if (!(await isOrgWideUser(userId))) {
+    // The run's cycle must be inside the caller's own branch / scope (owner ruling 2026-10-01).
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      `SELECT c.process_id, c.branch_id FROM roster_generation_run r
+         JOIN weekly_roster_cycle c ON c.id = r.cycle_id WHERE r.id = ? LIMIT 1`, [req.params.runId]);
+    const owner = (runRows as RowDataPacket[])[0];
+    if (owner && !(await userCanAccessProcess(userId, owner.process_id, owner.branch_id))) {
+      return res.status(403).json({ success: false, message: "Forbidden: outside your branch / assigned scope" });
     }
-    const page = parseInt((req.query.page as string) || "1", 10);
-    const limit = Math.min(
-      parseInt((req.query.limit as string) || "100", 10),
-      500,
-    );
-    const data = await rosterGenerationService.getDecisionAudit(
-      req.params.runId,
-      page,
-      limit,
-    );
-    return res.json({ data });
-  }),
-);
+  }
+  const page = parseInt((req.query.page as string) || "1", 10);
+  const limit = Math.min(parseInt((req.query.limit as string) || "100", 10), 500);
+  const data = await rosterGenerationService.getDecisionAudit(req.params.runId, page, limit);
+  return res.json({ data });
+}));
 
 // ── Employee Acknowledgement & Dispute ─────────────────────────────────────────
 
@@ -874,19 +744,29 @@ router.post(
       success: true,
       message: "Dispute raised. Your manager has been notified.",
     });
-  }),
-);
+  }
+
+  // disputed_at (migration 2074) is when the dispute was raised: the Roster Requests hub ages the
+  // request from it. updated_at moves on any later write to the row. Guarded so a database the
+  // migration has not reached yet still records the dispute.
+  const stampRaisedAt = (await columnExists("roster_daily_assignment", "disputed_at")) ? ", disputed_at = NOW()" : "";
+  await db.execute(
+    `UPDATE roster_daily_assignment SET acknowledgement_status = 'disputed', dispute_reason = ?${stampRaisedAt} WHERE id = ?`,
+    [dispute_reason.trim(), req.params.id]
+  );
+  // Approver inbox items for the dispute (deferred, non-fatal). Disputes are never auto-approved.
+  onRosterRequestRaised({ kind: "dispute", sourceId: String(req.params.id), employeeId: String(emp.id), date: assignment.roster_date, summary: "Roster dispute raised" });
+  return res.json({ success: true, message: "Dispute raised. Your manager has been notified." });
+}));
 
 // ── Manager Dispute Review Queue ────────────────────────────────────────────────
 
 // GET /manager-review-queue — all disputed assignments across manager's processes
-router.get(
-  "/manager-review-queue",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const isAdmin = await hasRole(userId, "admin", "hr", "wfm");
-    let processFilter = "";
-    const params: unknown[] = [];
+router.get("/manager-review-queue", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const isAdmin = await isOrgWideUser(userId);
+  let processFilter = "";
+  const params: unknown[] = [];
 
     if (!isAdmin) {
       // Load processes where this user has manager/wfm scope
@@ -912,28 +792,31 @@ router.get(
           AND role_key IN ('process_manager','manager','wfm','assistant_manager','branch_head')
           AND active_status = 1
           AND process_id IS NOT NULL`,
-        [userId],
-      );
-      if (!scopeRows.length)
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message: "Forbidden: no manager scope found",
-          });
-      const pids = scopeRows.map((r: any) => r.process_id);
-      processFilter = `AND wrc.process_id IN (${pids.map(() => "?").join(",")})`;
-      params.push(...pids);
+      [userId]
+    );
+    const pidSet = new Set<string>(scopeRows.map((r: any) => String(r.process_id)));
+    // hr / wfm: every process inside their own branch / scope (no longer every process company-wide).
+    if (await hasRole(userId, "hr", "wfm")) {
+      const own = await scopedProcessIdsForUser(userId);
+      if (own !== "unrestricted") own.forEach((id) => pidSet.add(id));
     }
+    if (!pidSet.size) return res.status(403).json({ success: false, message: "Forbidden: no manager scope found" });
+    const pids = [...pidSet];
+    processFilter = `AND wrc.process_id IN (${pids.map(() => "?").join(",")})`;
+    params.push(...pids);
+  }
 
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    const lobSql = lobAnd(lob, "e");
-    params.push(...lobSql.params);
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT rda.id, rda.cycle_id, rda.employee_id, rda.roster_date,
+  const lob = readLobFilter(req, res);
+  if (!lob) return;
+  const lobSql = lobAnd(lob, "e");
+  params.push(...lobSql.params);
+  // disputed_at: when the dispute was raised (migration 2074); NULL for older rows and until the
+  // migration has run, and the hub then falls back to updated_at.
+  const disputedAt = (await columnExists("roster_daily_assignment", "disputed_at")) ? "rda.disputed_at" : "NULL AS disputed_at";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT rda.id, rda.cycle_id, rda.employee_id, rda.roster_date,
             rda.shift_template_id, rda.is_week_off, rda.acknowledgement_status,
-            rda.dispute_reason, rda.dispute_resolved_at, rda.dispute_resolution,
+            rda.dispute_reason, rda.dispute_resolved_at, rda.dispute_resolution, rda.updated_at, ${disputedAt},
             e.employee_code, e.first_name, e.last_name, e.lob_id,
             wrc.process_id, wrc.week_start_date, wrc.week_end_date,
             wst.shift_name, wst.start_time, wst.end_time
@@ -951,125 +834,63 @@ router.get(
   }),
 );
 
-// POST /assignments/:id/resolve-dispute — manager resolves dispute
-router.post(
-  "/assignments/:id/resolve-dispute",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { dispute_resolution, new_shift_template_id } = req.body;
-    if (!dispute_resolution?.trim()) {
-      return res.status(400).json({ error: "dispute_resolution is required" });
-    }
-    const userId = req.authUser!.id;
-
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT rda.*, wrc.process_id, wrc.branch_id, wrc.status AS cycle_status
-       FROM roster_daily_assignment rda
-       JOIN weekly_roster_cycle wrc ON wrc.id = rda.cycle_id
-      WHERE rda.id = ? LIMIT 1`,
-      [req.params.id],
-    );
-    const assignment = rows[0];
-    if (!assignment)
-      return res.status(404).json({ error: "Assignment not found" });
-
-    if (
-      !(await canOwnRoster(req, assignment.process_id, assignment.branch_id))
-    ) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Forbidden: roster ownership required to resolve disputes",
-        });
-    }
-
-    // Every other assignment-mutating path in this file checks cycle status before
-    // writing (see bulkUpsertAssignments's EDITABLE_ASSIGNMENT_STATUSES); this route
-    // never did, so a shift could be silently changed on an assignment whose cycle was
-    // already attendance-locked or payroll-closed.
-    if (DISPUTE_LOCKED_STATUSES.has(assignment.cycle_status)) {
-      return res.status(409).json({
-        error: `Cannot resolve a dispute on a ${assignment.cycle_status} cycle — attendance/payroll has already moved on`,
-      });
-    }
-
-    const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-    const setClause = new_shift_template_id
-      ? "acknowledgement_status = 'acknowledged', dispute_resolved_by = ?, dispute_resolved_at = ?, dispute_resolution = ?, shift_template_id = ?"
-      : "acknowledgement_status = 'acknowledged', dispute_resolved_by = ?, dispute_resolved_at = ?, dispute_resolution = ?";
-    const setParams = new_shift_template_id
-      ? [
-          userId,
-          now,
-          dispute_resolution.trim(),
-          new_shift_template_id,
-          req.params.id,
-        ]
-      : [userId, now, dispute_resolution.trim(), req.params.id];
-
-    await db.execute(
-      `UPDATE roster_daily_assignment SET ${setClause} WHERE id = ?`,
-      setParams,
-    );
-    return res.json({ success: true, message: "Dispute resolved" });
-  }),
-);
+// POST /assignments/:id/resolve-dispute — manager resolves dispute. The resolution itself lives in
+// dispute-resolution.service.ts (shared with the Roster Requests hub); a refusal carries the exact
+// status and JSON body this handler always sent and is replayed unchanged.
+router.post("/assignments/:id/resolve-dispute", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { dispute_resolution, new_shift_template_id, rest_override_reason } = req.body;
+  try {
+    // The service's { mirrored, rtaResynced, warnings } are deliberately NOT added to this
+    // response: the legacy contract stays { success: true, message: "Dispute resolved" }.
+    await resolveDispute({
+      assignmentId: req.params.id,
+      userId: req.authUser!.id,
+      resolution: dispute_resolution,
+      newShiftTemplateId: new_shift_template_id,
+      restOverrideReason: rest_override_reason,
+      req,
+      canOwn: (processId, branchId) => canOwnRoster(req, processId, branchId),
+    });
+  } catch (err) {
+    if (isDisputeResolutionError(err)) return res.status(err.statusCode).json(err.body);
+    throw err;
+  }
+  return res.json({ success: true, message: "Dispute resolved" });
+}));
 
 // ── Week-Off Capacity & FCFS Allocation ────────────────────────────────────────
 
 // GET /weekoff/capacity?processId=&weekStartDate= — capacity summary per day-of-week
-router.get(
-  "/weekoff/capacity",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { processId, weekStartDate } = req.query as {
-      processId?: string;
-      weekStartDate?: string;
-    };
-    if (!processId || !weekStartDate) {
-      return res
-        .status(400)
-        .json({ error: "processId and weekStartDate are required" });
-    }
-    const userId = req.authUser!.id;
-    if (
-      !(await hasRole(userId, "admin", "hr", "wfm", "manager")) &&
-      !(await hasProcessScope(userId, processId, null, "manager", "wfm"))
-    ) {
+router.get("/weekoff/capacity", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { processId, weekStartDate } = req.query as { processId?: string; weekStartDate?: string };
+  if (!processId || !weekStartDate) {
+    return res.status(400).json({ error: "processId and weekStartDate are required" });
+  }
+  const userId = req.authUser!.id;
+  if (!(await isOrgWideUser(userId))) {
+    const roleOk = (await hasRole(userId, "hr", "wfm", "manager")) || (await hasProcessScope(userId, processId, null, "manager", "wfm"));
+    if (!roleOk || !(await userCanAccessProcess(userId, processId, null))) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
-    const data = await weekoffAllocationService.getCapacitySummary(
-      processId,
-      weekStartDate,
-    );
-    return res.json({ data });
-  }),
-);
+  }
+  const data = await weekoffAllocationService.getCapacitySummary(processId, weekStartDate);
+  return res.json({ data });
+}));
 
 // POST /weekoff/run-allocation — trigger FCFS allocation engine for a cycle
 // Accepts either cycleId directly or weekStartDate (will look up the matching cycle)
-router.post(
-  "/weekoff/run-allocation",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { processId, cycleId, weekStartDate } = req.body;
-    if (!processId || (!cycleId && !weekStartDate)) {
-      return res
-        .status(400)
-        .json({
-          error: "processId and either cycleId or weekStartDate are required",
-        });
+router.post("/weekoff/run-allocation", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { processId, cycleId, weekStartDate } = req.body;
+  if (!processId || (!cycleId && !weekStartDate)) {
+    return res.status(400).json({ error: "processId and either cycleId or weekStartDate are required" });
+  }
+  const userId = req.authUser!.id;
+  if (!(await isOrgWideUser(userId))) {
+    const roleOk = (await hasRole(userId, "wfm")) || (await hasProcessScope(userId, processId, null, "wfm"));
+    if (!roleOk || !(await userCanAccessProcess(userId, processId, null))) {
+      return res.status(403).json({ success: false, message: "Forbidden: WFM or Admin role required" });
     }
-    const userId = req.authUser!.id;
-    if (
-      !(await hasRole(userId, "admin", "wfm")) &&
-      !(await hasProcessScope(userId, processId, null, "wfm"))
-    ) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Forbidden: WFM or Admin role required",
-        });
-    }
+  }
 
     let resolvedCycleId = cycleId;
     if (!resolvedCycleId && weekStartDate) {

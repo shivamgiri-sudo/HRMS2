@@ -41,6 +41,7 @@ export const SOURCE_CANONICAL: Readonly<Record<string, string>> = {
   whatsapp: "WHATSAPP",
   agency: "AGENCY",
   other: "OTHER",
+  "legacy import": "LEGACY_IMPORT",
 };
 
 /**
@@ -58,6 +59,7 @@ export const SOURCE_LABEL: Readonly<Record<string, string>> = {
   AGENCY: "Agency",
   OTHER: "Other",
   UNSPECIFIED: "Unspecified",
+  LEGACY_IMPORT: "Legacy import (source not recorded)",
 };
 
 /**

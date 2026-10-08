@@ -1,6 +1,9 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import { isEmployedOn, OUTSIDE_EMPLOYMENT_MESSAGE } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
+import type { UserBusinessScope } from "../../shared/enterpriseScope.js";
+import { scopePredicate } from "./branch-scope.js";
 import { queueAutoAwards } from "../engagement/badge.service.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { sendSMS } from "../communication/sms.helper.js";
@@ -410,33 +413,20 @@ export const wfmService = {
     return rec;
   },
 
-  async listSessions(
-    filters: AttendanceSessionFilters,
-  ): Promise<PaginatedResult<WfmAttendanceSession>> {
-    const { page, limit, employeeId, fromDate, toDate, status, processName } =
-      filters;
+  async listSessions(filters: AttendanceSessionFilters, scope?: UserBusinessScope): Promise<PaginatedResult<WfmAttendanceSession>> {
+    const { page, limit, employeeId, fromDate, toDate, status, processName } = filters;
     const offset = (page - 1) * limit;
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (employeeId) {
-      conds.push("employee_id = ?");
-      params.push(employeeId);
-    }
-    if (fromDate) {
-      conds.push("session_date >= ?");
-      params.push(fromDate);
-    }
-    if (toDate) {
-      conds.push("session_date <= ?");
-      params.push(toDate);
-    }
-    if (status) {
-      conds.push("current_status = ?");
-      params.push(status);
-    }
-    if (processName) {
-      conds.push("process_name = ?");
-      params.push(processName);
+    if (employeeId)  { conds.push("employee_id = ?");   params.push(employeeId); }
+    if (fromDate)    { conds.push("session_date >= ?");  params.push(fromDate); }
+    if (toDate)      { conds.push("session_date <= ?");  params.push(toDate); }
+    if (status)      { conds.push("current_status = ?"); params.push(status); }
+    if (processName) { conds.push("process_name = ?");   params.push(processName); }
+    if (scope) {
+      // Branch scoping (owner ruling 2026-10-01): only sessions of employees the caller may see.
+      const c = scopePredicate(scope, { employeeId: "e2.id", branchId: "e2.branch_id", processId: "e2.process_id", managerEmployeeId: "e2.reporting_manager_id" });
+      if (c.sql !== "1=1") { conds.push(`employee_id IN (SELECT e2.id FROM employees e2 WHERE ${c.sql})`); params.push(...c.params); }
     }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -745,6 +735,14 @@ export const wfmService = {
       (input.status === "approved" || input.status === "rejected")
     ) {
       return reg;
+    }
+
+    // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+    if (input.status === "approved"
+        && !(await isEmployedOn(String(reg.employee_id), String(reg.session_date).slice(0, 10)))) {
+      const e: any = new Error(OUTSIDE_EMPLOYMENT_MESSAGE);
+      e.statusCode = 409;
+      throw e;
     }
 
     const conn = await db.getConnection();

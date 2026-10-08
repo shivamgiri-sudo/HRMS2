@@ -1831,7 +1831,7 @@ function SignoffTab() {
     queryKey: ["payroll-signoff-runs"],
     queryFn: () =>
       hrmsApi
-        .get<{ success: boolean; data: any[] }>("/api/payroll/signoff/runs")
+        .get<{ success: boolean; data: any[] }>("/api/payroll/signoff/runs?include=pipeline")
         .then((r) => (r as any).data ?? []),
     staleTime: 30_000,
   });
@@ -1893,6 +1893,17 @@ function SignoffTab() {
     onSuccess: () => { toast({ title: "Finance approval revoked" }); invalidate(); },
     onError: (e: any) =>
       toast({ title: "Revoke failed", description: e?.message, variant: "destructive" }),
+  });
+
+  // The calculator leaves a run at 'processing'; finance/CEO sign-off only stamp columns and do
+  // not change status. This is the one step that moves processing -> approved, which Lock Run
+  // below requires. The backend refuses it if the actor created the run (PAYROLL_SELF_APPROVAL).
+  const approveRunMut = useMutation({
+    mutationFn: () =>
+      hrmsApi.patch(`/api/payroll/runs/${selectedRunId}/status`, { status: "approved" }),
+    onSuccess: () => { toast({ title: "Run approved" }); invalidate(); },
+    onError: (e: any) =>
+      toast({ title: "Approve failed", description: e?.response?.data?.message ?? e?.message, variant: "destructive" }),
   });
 
   const lockRunMut = useMutation({
@@ -2086,6 +2097,19 @@ function SignoffTab() {
                     {revokeMut.isPending ? "Revoking…" : "Revoke Finance Approval"}
                   </Button>
                 )}
+                {status.status === "processing" &&
+                  !!status.finance_approved_at &&
+                  (!status.ceo_required || !!status.ceo_acknowledged_at) &&
+                  roleKeys.some((r) => ["finance", "finance_head", "payroll", "payroll_head", "admin", "super_admin"].includes(r)) && (
+                    <Button
+                      size="sm"
+                      className="bg-violet-600 hover:bg-violet-700 text-white"
+                      onClick={() => approveRunMut.mutate()}
+                      disabled={approveRunMut.isPending}
+                    >
+                      {approveRunMut.isPending ? "Approving…" : "Approve Run"}
+                    </Button>
+                  )}
                 {status.status === "approved" &&
                   !!status.finance_approved_at &&
                   (!status.ceo_required || !!status.ceo_acknowledged_at) &&

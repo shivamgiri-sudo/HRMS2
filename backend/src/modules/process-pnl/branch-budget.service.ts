@@ -895,7 +895,7 @@ async function calculateBudgetLines(
 
 /** Replace a budget's entire line set, re-deriving cost-centre allocations for branch-common lines.
  *  The DELETE is a no-op for a freshly created budget, so both callers can share one path. */
-async function replaceBudgetLines(
+export async function replaceBudgetLines(
   connection: BudgetConnection,
   budgetId: string,
   branchId: string,
@@ -914,10 +914,25 @@ async function replaceBudgetLines(
   const lookupCache = createAllocationLookupCache();
   const usedLineIds = new Set<string>();
 
+  // A line id the screen sends can already belong to ANOTHER budget (a line copied from a previous
+  // month or another branch keeps its source id). The DELETE above only clears this budget's lines,
+  // so inserting such an id failed with "Duplicate entry '<id>' for key 'finance_budget_line.PRIMARY'"
+  // and the draft could not be saved. Those lines get a fresh id; ids that were this budget's own
+  // were just deleted and are kept, so lines other tables reference by id stay stable on re-save.
+  const sentIds = [...new Set(calculated.map((c) => c.line.id).filter((id): id is string => Boolean(id)))];
+  const foreignIds = new Set<string>();
+  if (sentIds.length) {
+    const [taken] = (await connection.execute(
+      `SELECT id FROM finance_budget_line WHERE id IN (${sentIds.map(() => "?").join(",")})`,
+      sentIds
+    )) as [Array<{ id: string }>, unknown];
+    for (const row of taken ?? []) foreignIds.add(String(row.id));
+  }
+
   for (const item of calculated) {
     const line = item.line;
     const value = item.values;
-    let lineId = line.id || randomUUID();
+    let lineId = line.id && !foreignIds.has(line.id) ? line.id : randomUUID();
     // Guard against frontend sending duplicate IDs (causes PRIMARY key collision)
     while (usedLineIds.has(lineId)) lineId = randomUUID();
     usedLineIds.add(lineId);

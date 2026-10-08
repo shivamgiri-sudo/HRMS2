@@ -787,6 +787,7 @@ const ALLOWED_FILTER_COLUMNS = new Set([
   "task_type",
   "analyst_email",
   "docupedia_document_name",
+  "document_name",
   "error_category",
   "error_breakdown",
   // has_error powers the "errors only" raw-table view (a real, standalone table
@@ -1682,6 +1683,36 @@ export function listAvailableTables() {
  * unioned with onfido_agent_daily_raw (the HR roster) so a TL/AM who only
  * shows up in one of the two sources still appears.
  */
+/**
+ * People who are TLs, not AMs, but appear in the raw files' am_name column. They are removed from
+ * every AM list / AM ranking (their rows stay under tl_name). The raw data cannot decide this by
+ * itself (the same name is present as both am_name and tl_name), hence the explicit list.
+ */
+export const NOT_AM_NAMES: readonly string[] = ["Vicky Kumar"];
+const NOT_AM_KEYS = new Set(NOT_AM_NAMES.map((n) => n.trim().toLowerCase()));
+export const isNotAm = (name: unknown): boolean =>
+  NOT_AM_KEYS.has(String(name ?? "").trim().toLowerCase());
+
+/** Attrition % for the stack ranking: on-floor attrition over mean daily on-floor HC. Blank when no valid denominator or the result is impossible (>100%). */
+export function stackRankingAttritionPct(
+  attrition: number,
+  onfloorHcDays: number,
+  onfloorDays: number,
+): number | null {
+  if (!(onfloorHcDays > 0) || !(onfloorDays > 0)) return null;
+  const avgHc = onfloorHcDays / onfloorDays;
+  if (!(avgHc > 0)) return null;
+  const pct = Math.round((attrition / avgHc) * 1000) / 10;
+  return Number.isFinite(pct) && pct >= 0 && pct <= 100 ? pct : null;
+}
+
+/** Shrinkage % for the stack ranking: UL over scheduled; blank when nothing was scheduled or the result is impossible (>100%). */
+export function stackRankingShrinkagePct(ul: number, scheduled: number): number | null {
+  if (!(scheduled > 0)) return null;
+  const pct = Math.round((ul / scheduled) * 1000) / 10;
+  return Number.isFinite(pct) && pct >= 0 && pct <= 100 ? pct : null;
+}
+
 export async function getFilterOptions(
   range: { from?: string; to?: string } = {},
 ): Promise<{
@@ -1722,8 +1753,10 @@ export async function getFilterOptions(
   );
   return {
     tlNames: tlRows.map((r) => r.name as string),
-    amNames: amRows.map((r) => r.name as string),
-    tlAmMapping,
+    amNames: amRows.map((r) => r.name as string).filter((n) => !isNotAm(n)),
+    tlAmMapping: Object.fromEntries(
+      Object.entries(tlAmMapping).filter(([am]) => !isNotAm(am)),
+    ),
     analysts,
   };
 }
@@ -4365,7 +4398,8 @@ export async function getDocRawTrend(
 }
 
 export type DocRawDimension =
-  "ims_client_name" | "tl_name" | "am_name" | "task_type" | "analyst_email";
+  | "ims_client_name" | "tl_name" | "am_name" | "task_type" | "analyst_email"
+  | "document_name";
 export interface DocRawBreakdownRow {
   label: string;
   taskCount: number;
@@ -4385,6 +4419,7 @@ const DOC_RAW_DIMENSION_EXPR: Record<DocRawDimension, string> = {
   am_name: "am_name",
   task_type: DOC_TASK_TYPE_LABEL_EXPR,
   analyst_email: "analyst_email",
+  document_name: "document_name",
 };
 
 export async function getDocRawBreakdown(
@@ -5689,144 +5724,6 @@ export async function getAnalystRanking(rawFilters: {
   }));
 }
 
-// ── Audit Sampling ────────────────────────────────────────────────────────────
-
-export interface AuditSamplingRow {
-  client: string;
-  documentType: string;
-  taskType: string;
-  totalAudited: number;
-  errors: number;
-  errPct: number | null;
-  avgAht: number | null;
-}
-
-export async function getAuditSampling(
-  rawFilters: {
-    from?: string;
-    to?: string;
-    tlName?: string;
-    amName?: string;
-    queue?: string;
-    clientName?: string;
-    documentType?: string;
-  },
-  granularity: TrendGranularity,
-): Promise<AuditSamplingRow[]> {
-  const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(
-    rawFilters.tlName,
-    rawFilters.amName,
-    undefined,
-  );
-  const pool = await getOnfidoPool();
-  const pct1 = (err: number, tot: number): number | null =>
-    tot > 0 ? Math.round((err / tot) * 1000) / 10 : null;
-
-  const extraClauses: string[] = [];
-  const extraParams: unknown[] = [];
-  if (rawFilters.clientName) {
-    extraClauses.push("AND ims_client_name = ?");
-    extraParams.push(rawFilters.clientName);
-  }
-  if (rawFilters.documentType) {
-    extraClauses.push("AND docupedia_document_name = ?");
-    extraParams.push(rawFilters.documentType);
-  }
-  const extra = extraClauses.join(" ");
-
-  const rows: AuditSamplingRow[] = [];
-
-  if (!rawFilters.queue || rawFilters.queue === "DOC") {
-    // Internal quality (DOC Check) — onfido_doc_quality_raw carries no client/document-type
-    // columns at all (see onfido-report-configs.ts's extract list for ONFIDO_DOC_QUALITY),
-    // so this source can only ever be a single "(unknown)" bucket for the period, and it
-    // cannot be filtered by client/document type at all.
-    if (!rawFilters.clientName && !rawFilters.documentType) {
-      const [intRows] = await pool.query<RowDataPacket[]>(
-        `SELECT COALESCE(SUM(total_audits),0) AS audited,
-                COALESCE(SUM(total_error),0) AS errors
-           FROM onfido_doc_quality_raw
-          WHERE task_complete_date BETWEEN ? AND ? ${clause}`,
-        [f.from, f.to, ...params],
-      );
-      for (const r of intRows) {
-        const audited = Number(r.audited);
-        if (audited === 0) continue;
-        rows.push({
-          client: "(unknown)",
-          documentType: "(unknown)",
-          taskType: "DOC Check",
-          totalAudited: audited,
-          errors: Number(r.errors),
-          errPct: pct1(Number(r.errors), audited),
-          avgAht: null,
-        });
-      }
-    }
-    // External quality (DOC) — has AHT via manual_processing_time_secs
-    const [extRows] = await pool.query<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(TRIM(ims_client_name),''), '(unknown)') AS client,
-              COALESCE(NULLIF(TRIM(docupedia_document_name),''), '(unknown)') AS doc_type,
-              'DOC External' AS task_type,
-              COUNT(*) AS audited,
-              COALESCE(SUM(has_error),0) AS errors,
-              AVG(manual_processing_time_secs) AS avg_aht
-         FROM onfido_doc_external_audit_raw
-        WHERE report_date BETWEEN ? AND ? ${clause} ${extra}
-        GROUP BY client, doc_type
-        ORDER BY audited DESC`,
-      [f.from, f.to, ...params, ...extraParams],
-    );
-    for (const r of extRows) {
-      const audited = Number(r.audited);
-      rows.push({
-        client: r.client,
-        documentType: r.doc_type,
-        taskType: r.task_type,
-        totalAudited: audited,
-        errors: Number(r.errors),
-        errPct: pct1(Number(r.errors), audited),
-        avgAht: r.avg_aht !== null ? Math.round(Number(r.avg_aht)) : null,
-      });
-    }
-  }
-
-  if (
-    (!rawFilters.queue || rawFilters.queue === "POA") &&
-    !rawFilters.clientName &&
-    !rawFilters.documentType
-  ) {
-    // POA quality — onfido_poa_quality_raw has no client/document-type or has_error/
-    // manual_processing_time_secs columns either (see onfido-report-configs.ts's extract
-    // list for ONFIDO_POA_QUALITY): its own error rate is SUM(error_count) /
-    // (SUM(error_count) + SUM(no_error_count)), and it carries no AHT at all.
-    const [poaRows] = await pool.query<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(error_count),0) AS errors,
-              COALESCE(SUM(error_count) + SUM(no_error_count),0) AS audited
-         FROM onfido_poa_quality_raw
-        WHERE report_completed_date BETWEEN ? AND ? ${clause}`,
-      [f.from, f.to, ...params],
-    );
-    for (const r of poaRows) {
-      const audited = Number(r.audited);
-      if (audited === 0) continue;
-      rows.push({
-        client: "(unknown)",
-        documentType: "(unknown)",
-        taskType: "POA",
-        totalAudited: audited,
-        errors: Number(r.errors),
-        errPct: pct1(Number(r.errors), audited),
-        avgAht: null,
-      });
-    }
-  }
-
-  void granularity; // granularity available for future period-based slicing
-  return rows;
-}
-
 // ── Stack Ranking ─────────────────────────────────────────────────────────────
 
 export interface StackRankingRow {
@@ -5893,6 +5790,23 @@ export async function getStackRanking(
          GROUP BY analyst_email`,
       [f.from, f.to, ...params],
     );
+    // AHT is the DOC raw overall AHT for the period (same rule as the Overview), not the audit sample's.
+    const [docAhtRows] = await pool.query<RowDataPacket[]>(
+      `SELECT analyst_email AS name, ${DOC_AHT_AVG} AS aht
+         FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ? ${clause}
+           AND analyst_email IS NOT NULL AND analyst_email <> ''
+         GROUP BY analyst_email`,
+      [f.from, f.to, ...params],
+    );
+    const docAhtMap = new Map(
+      docAhtRows.map((r) => [String(r.name).toLowerCase(), r.aht]),
+    );
+    const docAht = (key: string, fallback: unknown): number | null => {
+      const v = docAhtMap.get(key) ?? fallback;
+      return v !== null && v !== undefined && Number.isFinite(Number(v))
+        ? Math.round(Number(v))
+        : null;
+    };
     const intMap = new Map(
       intRows.map((r) => [String(r.name).toLowerCase(), r]),
     );
@@ -5917,7 +5831,7 @@ export async function getStackRanking(
         crePct: pct1(cre, totalTasks),
         attritionPct: null,
         shrinkagePct: null,
-        ahtSecs: r.avg_aht !== null ? Math.round(Number(r.avg_aht)) : null,
+        ahtSecs: docAht(key, r.avg_aht),
         score: 0,
         rank: 0,
       });
@@ -5967,16 +5881,37 @@ export async function getStackRanking(
          GROUP BY ${dimCol}`,
       [f.from, f.to],
     );
+    // Attrition counts on-floor rows only over mean daily on-floor HC (the reference's rule);
+    // a group with no on-floor presence ("Training") has no headcount, so its attrition is blank.
+    // Shrinkage = UL / scheduled across all states, blank when nothing was scheduled.
     const [attrRows] = await pool.query<RowDataPacket[]>(
-      `SELECT ${dimCol} AS name, COALESCE(SUM(attrition_flag),0) AS attrition,
+      `SELECT ${dimCol} AS name,
+              COALESCE(SUM(CASE WHEN ${ONFLOOR} THEN attrition_flag ELSE 0 END),0) AS attrition,
               COALESCE(SUM(actual_ul),0) AS ul, COALESCE(SUM(scheduled),0) AS scheduled,
-              COALESCE(SUM(hc),0) / GREATEST(COUNT(DISTINCT work_date),1) AS avg_hc
+              COALESCE(SUM(CASE WHEN ${ONFLOOR} THEN hc ELSE 0 END),0) AS onfloor_hc_days,
+              COUNT(DISTINCT CASE WHEN ${ONFLOOR} THEN work_date END) AS onfloor_days
          FROM onfido_agent_daily_raw WHERE work_date BETWEEN ? AND ?
            AND ${dimCol} IS NOT NULL AND TRIM(${dimCol}) <> ''
          GROUP BY ${dimCol}`,
       [f.from, f.to],
     );
 
+    const [docAhtRows] = await pool.query<RowDataPacket[]>(
+      `SELECT ${dimCol} AS name, ${DOC_AHT_AVG} AS aht
+         FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ?
+           AND ${dimCol} IS NOT NULL AND TRIM(${dimCol}) <> ''
+         GROUP BY ${dimCol}`,
+      [f.from, f.to],
+    );
+    const docAhtMap = new Map(
+      docAhtRows.map((r) => [String(r.name).toLowerCase(), r.aht]),
+    );
+    const docAht = (key: string, fallback: unknown): number | null => {
+      const v = docAhtMap.get(key) ?? fallback;
+      return v !== null && v !== undefined && Number.isFinite(Number(v))
+        ? Math.round(Number(v))
+        : null;
+    };
     const intMap = new Map(
       intRows.map((r) => [String(r.name).toLowerCase(), r]),
     );
@@ -5998,6 +5933,7 @@ export async function getStackRanking(
       const cre = creMap.get(key) ?? 0;
       const totalTasks = extAud > 0 ? extAud : 1;
       const scheduled = ar ? Number(ar.scheduled) : 0;
+      if (tier === "AM" && isNotAm(r.name)) continue;
       rows.push({
         name: r.name,
         tier: tier as "AM" | "TL",
@@ -6005,14 +5941,14 @@ export async function getStackRanking(
         extErrPct: pct1(extErr, extAud),
         crePct: pct1(cre, totalTasks),
         attritionPct: ar
-          ? pct1(
+          ? stackRankingAttritionPct(
               Number(ar.attrition),
-              Number(ar.avg_hc) > 0 ? Number(ar.avg_hc) : 1,
+              Number(ar.onfloor_hc_days),
+              Number(ar.onfloor_days),
             )
           : null,
-        shrinkagePct:
-          ar && scheduled > 0 ? pct1(Number(ar.ul), scheduled) : null,
-        ahtSecs: r.avg_aht !== null ? Math.round(Number(r.avg_aht)) : null,
+        shrinkagePct: ar ? stackRankingShrinkagePct(Number(ar.ul), scheduled) : null,
+        ahtSecs: docAht(key, r.avg_aht),
         score: 0,
         rank: 0,
       });

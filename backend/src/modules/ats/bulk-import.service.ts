@@ -687,8 +687,9 @@ async function importOneCandidate(
     `INSERT INTO ats_candidate
       (id, candidate_code, full_name, mobile, email, gender,
        applied_for_process, applied_for_branch, current_stage, remarks,
-       walk_in_date, created_at, updated_at, active_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1)`,
+       walk_in_date, created_at, updated_at, active_status,
+       created_by, sourcing_channel, recruiter_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1, ?, ?, ?)`,
     [
       candidateDbId,
       row.CandidateID?.trim() ??
@@ -703,8 +704,24 @@ async function importOneCandidate(
       row["Rejection VOC"] ?? row.Round1_VOC ?? null,
       parseHistoricalDate(row.CreatedDate) ?? null,
       createdAt,
-    ],
+      actorUserId,
+      // A bulk load that recorded no source left the column blank for every row of the file, which
+      // reports then showed as an unspecified channel (32k rows from the June 2026 load).
+      "Bulk Import",
+      row.RecruiterAssignedName?.trim() || null,
+    ]
   );
+
+  // Tag the row so reports can tell a bulk-loaded candidate from a real registration. Best effort: the
+  // tag table arrives with migration 1963, and a missing tag must not fail the import itself.
+  try {
+    await db.execute(
+      `INSERT IGNORE INTO ats_candidate_import_tag (candidate_id, batch) VALUES (?, ?)`,
+      [candidateDbId, importBatchId ?? "bulk-import"],
+    );
+  } catch {
+    // table not created yet — nothing to tag
+  }
 
   await db.execute(
     `INSERT INTO ats_candidate_stage_log (id, candidate_id, to_stage, stage_date, remarks, updated_by)

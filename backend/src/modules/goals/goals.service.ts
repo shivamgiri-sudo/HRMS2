@@ -71,12 +71,15 @@ export interface EmployeeSkill {
 // ─── Goals ────────────────────────────────────────────────────────────────────
 
 export const goalsService = {
-  async listGoals(filters: {
-    employeeId?: string;
-    period?: string;
-  }): Promise<Goal[]> {
+  async listGoals(filters: { employeeId?: string; period?: string; scope?: { sql: string; params: unknown[] } | null }): Promise<Goal[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
+
+    // Branch scoping (alias e = employees); null / undefined = org-wide, SQL unchanged.
+    if (filters.scope) {
+      conds.push(filters.scope.sql);
+      params.push(...filters.scope.params);
+    }
 
     if (filters.employeeId) {
       conds.push("g.employee_id = ?");
@@ -243,16 +246,16 @@ export const goalsService = {
 
   // ─── Appraisal Ratings ────────────────────────────────────────────────────
 
-  async listRatings(cycleId: string): Promise<AppraisalRating[]> {
+  async listRatings(cycleId: string, scope?: { sql: string; params: unknown[] } | null): Promise<AppraisalRating[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ar.*,
               CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
               e.employee_code
        FROM appraisal_rating ar
        LEFT JOIN employees e ON e.id = ar.employee_id
-       WHERE ar.cycle_id = ?
+       WHERE ar.cycle_id = ?${scope ? ` AND ${scope.sql}` : ""}
        ORDER BY employee_name ASC`,
-      [cycleId],
+      scope ? [cycleId, ...scope.params] : [cycleId]
     );
     return rows as AppraisalRating[];
   },
@@ -432,6 +435,16 @@ export const goalsService = {
       [employeeId, input.skill_id],
     );
     return (rows as EmployeeSkill[])[0];
+  },
+
+  async getGoalEmployeeId(id: string): Promise<string | null> {
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT employee_id FROM goal WHERE id = ? LIMIT 1", [id]);
+    return (rows as RowDataPacket[])[0]?.employee_id ? String((rows as RowDataPacket[])[0].employee_id) : null;
+  },
+
+  async getRatingEmployeeId(id: string): Promise<string | null> {
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT employee_id FROM appraisal_rating WHERE id = ? LIMIT 1", [id]);
+    return (rows as RowDataPacket[])[0]?.employee_id ? String((rows as RowDataPacket[])[0].employee_id) : null;
   },
 
   async deleteGoal(id: string, actorEmployeeId: string | null): Promise<void> {

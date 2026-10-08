@@ -18,6 +18,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 import { getBillPool } from "../db/billDb.js";
 import { env } from "../config/env.js";
+import { buildAppLink } from "../shared/appLink.js";
 
 const INTERVAL_MS = 72 * 60 * 60 * 1000; // 3 days
 const FIRST_DELAY_MS = 60 * 1000; // 1 minute after startup
@@ -792,6 +793,7 @@ async function sendReport(): Promise<void> {
         from onboarding, bank verification, address, nominee and salary data).</p>
         <p>Columns with no data in HRMS yet (bank details not submitted, etc.) are left blank —
         those employees need to complete their onboarding profile first.</p>
+        <p><a href="${buildAppLink("/migration-console")}">Open the Migration Console in HRMS</a></p>
         <hr/>
         <p style="color:#888;font-size:12px">Sent automatically every 3 days by MAS PeopleOS.<br/>
         Source: mas_hrms employees vs db_bill.masjclrentry</p>

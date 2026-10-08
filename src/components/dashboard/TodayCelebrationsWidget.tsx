@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { X } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { CelebrationPostCard } from "@/components/feed/CelebrationPostCard";
 import type { CompanyPost } from "@/hooks/useCompanyFeed";
@@ -55,6 +55,7 @@ function saveDismissedIds(userId: string | undefined, ids: Set<string>): void {
 export function TodayCelebrationsWidget() {
   const currentUserId = getCurrentUserId();
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => loadDismissedIds(currentUserId));
+  const [expanded, setExpanded] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["today-celebrations"],
@@ -66,17 +67,7 @@ export function TodayCelebrationsWidget() {
   const posts = data?.posts ?? [];
 
   if (isLoading) {
-    return (
-      <div className="space-y-3">
-        {[1, 2].map((i) => (
-          <div key={i} className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 animate-pulse">
-            <div className="h-16 rounded-xl bg-slate-200 mb-3" />
-            <div className="h-4 w-3/4 rounded bg-slate-200 mb-2" />
-            <div className="h-3 w-1/2 rounded bg-slate-200" />
-          </div>
-        ))}
-      </div>
-    );
+    return <div className="h-11 animate-pulse rounded-2xl border border-slate-200 bg-white" aria-hidden />;
   }
 
   if (posts.length === 0) return null;
@@ -114,32 +105,41 @@ export function TodayCelebrationsWidget() {
     </div>
   );
 
+  const nameOf = (p: CompanyPost) => (p.celebrated_employee_name ?? p.author_name ?? "").toString().trim();
+
+  // Compact by default: the full-width cards (one per celebrant) pushed the whole dashboard below the fold.
+  // The strip shows who is celebrating at a glance; the cards are one click away.
   return (
-    <div className="space-y-3">
-      {/* Section header */}
-      <div className="flex items-center justify-between px-0.5">
-        <div className="flex items-center gap-2">
-          <span className="text-lg" aria-hidden>🎉</span>
-          <h3 className="text-sm font-bold text-slate-700">
-            Today&rsquo;s Celebrations
-            <span className="ml-2 inline-flex items-center justify-center rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">
-              {visiblePosts.length}
-            </span>
-          </h3>
+    <div className="rounded-2xl border border-pink-100 bg-gradient-to-r from-pink-50 via-white to-amber-50 px-3.5 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h3 className="flex items-center gap-2 text-[13px] font-bold text-slate-700">
+          <span aria-hidden>🎉</span>
+          Today&rsquo;s celebrations
+          <span className="inline-flex items-center justify-center rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">{visiblePosts.length}</span>
+        </h3>
+        <ul className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+          {[...birthdays, ...anniversaries].slice(0, 5).map((p) => (
+            <li key={p.id} className="rounded-full border border-pink-100 bg-white px-2.5 py-0.5 text-[12px] font-medium text-slate-700">
+              <span aria-hidden>{p.post_type === "birthday" ? "🎂" : "🎉"}</span> {nameOf(p) || "Team member"}
+            </li>
+          ))}
+          {visiblePosts.length > 5 ? <li className="px-1 py-0.5 text-[12px] font-medium text-slate-500">+{visiblePosts.length - 5} more</li> : null}
+        </ul>
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded} className="inline-flex items-center gap-1 text-[12px] font-semibold text-slate-600 hover:text-slate-900">
+            {expanded ? "Hide cards" : "Show cards"}
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} />
+          </button>
+          <Link to="/engagement/company-feed" className="text-[12px] font-semibold text-blue-600 transition-colors hover:text-blue-800">View all →</Link>
         </div>
-        <Link
-          to="/engagement/company-feed"
-          className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 transition-colors"
-        >
-          View all →
-        </Link>
       </div>
 
-      {/* Birthday cards */}
-      {birthdays.map(renderDismissible)}
-
-      {/* Anniversary cards */}
-      {anniversaries.map(renderDismissible)}
+      {expanded ? (
+        <div className="mt-3 space-y-3">
+          {birthdays.map(renderDismissible)}
+          {anniversaries.map(renderDismissible)}
+        </div>
+      ) : null}
     </div>
   );
 }

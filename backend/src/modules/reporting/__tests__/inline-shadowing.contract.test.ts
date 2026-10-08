@@ -99,9 +99,11 @@ const SHADOWED_BACKLOG = new Set<string>([
   // sets: the inline block emitted the nine metrics the catalogue declares and the executor
   // emitted three of its own, so the downloaded workbook shared no metric column with the
   // screen. The executor now carries the inline SQL and the block is gone.
-  "employee-master",
+  // "employee-master" left this list on 2026-09-14 (30ba902d9) — the inline preview
+  // hardcoded active_status = 1 and selected 13 of the catalogue's 74 columns, so the screen
+  // showed a near-empty report while the download was correct.
   "employee-movement",
-
+  
   // "gratuity-liability-register" left this list on 2026-08-09 —
   // screen 175 rows, download 131 — the executor lacked the five-year qualifying filter.
   "grievance-register",

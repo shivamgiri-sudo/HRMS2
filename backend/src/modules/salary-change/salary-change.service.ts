@@ -11,6 +11,7 @@
  * which flow wrote it. employee_salary_change_log (migration 1611) is purely the who/why trail:
  * which assignment replaced which, who asked for it, who actually submitted it.
  */
+import { deriveSalaryEstimates } from "./salary-estimates.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
@@ -56,8 +57,16 @@ export async function getEmployeeSalaryProfile(employeeId: string) {
             COALESCE(sca.net_estimate, pm.net_in_hand,
               sca.gross - COALESCE(sca.pf_employee, 0) - COALESCE(sca.esic_employee, 0)
             ) AS net_in_hand,
-            pm.bonus, pm.lta, pm.portfolio, pm.medical, pm.pli,
-            pm.other_allowance, pm.professional_tax, pm.admin_charges,
+            -- The row's own component wins; the catalog package only fills what the row does not carry. Taking these
+            -- from the package alone dropped bonus, portfolio and the rest for every row with no package_id (the
+            -- db_bill rebuild and increment sync), so the page showed Basic + HRA + Conveyance against a larger gross.
+            CASE WHEN COALESCE(sca.bonus, 0)             > 0 THEN sca.bonus             ELSE COALESCE(pm.bonus, 0)           END AS bonus,
+            CASE WHEN COALESCE(sca.lta, 0)               > 0 THEN sca.lta               ELSE COALESCE(pm.lta, 0)             END AS lta,
+            CASE WHEN COALESCE(sca.portfolio, 0)         > 0 THEN sca.portfolio         ELSE COALESCE(pm.portfolio, 0)       END AS portfolio,
+            CASE WHEN COALESCE(sca.medical_allowance, 0) > 0 THEN sca.medical_allowance ELSE COALESCE(pm.medical, 0)         END AS medical,
+            CASE WHEN COALESCE(sca.pli, 0)               > 0 THEN sca.pli               ELSE COALESCE(pm.pli, 0)             END AS pli,
+            CASE WHEN COALESCE(sca.other_allowance, 0)   > 0 THEN sca.other_allowance   ELSE COALESCE(pm.other_allowance, 0) END AS other_allowance,
+            pm.professional_tax, pm.admin_charges,
             pm.band_code AS pkg_band_code
        FROM salary_component_assignments sca
        LEFT JOIN salary_package_master pm ON pm.id = sca.package_id
@@ -77,9 +86,31 @@ export async function getEmployeeSalaryProfile(employeeId: string) {
     )
     .catch(() => [[]] as unknown as [RowDataPacket[]]);
 
+  // A row linked to a catalog package keeps the catalog's exact figures. Any other row gets estimates derived from
+  // its own components and PF/ESIC flags instead of whatever was stored (see salary-estimates.ts).
+  let salaryComponents: RowDataPacket | null = scRows[0] ?? null;
+  if (salaryComponents && !salaryComponents.package_id) {
+    const est = deriveSalaryEstimates({
+      gross: salaryComponents.gross,
+      basic: salaryComponents.basic,
+      pf_applicable: salaryComponents.pf_applicable,
+      esi_applicable: salaryComponents.esi_applicable,
+    });
+    salaryComponents = {
+      ...salaryComponents,
+      pf_employee: est.pf_employee,
+      esic_employee: est.esic_employee,
+      employer_pf: est.employer_pf,
+      employer_esi: est.employer_esi,
+      admin_charges: est.admin_charges,
+      ctc: est.ctc,
+      net_in_hand: est.net_in_hand,
+    } as RowDataPacket;
+  }
+
   return {
     employee,
-    salary_components: scRows[0] ?? null,
+    salary_components: salaryComponents,
     change_history: historyRows,
   };
 }
@@ -159,9 +190,10 @@ export async function changeSalary(params: {
     await conn.execute(
       `INSERT INTO salary_component_assignments
          (id, employee_id, effective_date, package_id, basic, hra, conveyance,
-          special_allowance, gross, pf_applicable, esi_applicable, employer_pf,
-          employer_esi, ctc, net_estimate, assigned_by, assigned_at, approval_reference, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
+          special_allowance, bonus, portfolio, medical_allowance, lta, other_allowance, pli,
+          gross, pf_applicable, esi_applicable, employer_pf,
+          employer_esi, pf_employee, esic_employee, ctc, net_estimate, assigned_by, assigned_at, approval_reference, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
       [
         newAssignmentId,
         employeeId,
@@ -171,11 +203,22 @@ export async function changeSalary(params: {
         pkg.hra,
         pkg.conveyance,
         pkg.special_allowance,
+        // Every component the package carries. Before this, bonus, portfolio, medical, LTA, other allowance and PLI
+        // were not copied, so a package with a bonus produced a row whose parts fell short of its gross and
+        // payroll (which sums the parts) paid less than the approved gross. The catalog calls medical "medical".
+        pkg.bonus ?? 0,
+        pkg.portfolio ?? 0,
+        pkg.medical ?? 0,
+        pkg.lta ?? 0,
+        pkg.other_allowance ?? 0,
+        pkg.pli ?? 0,
         pkg.gross,
         Number(pkg.epf_employee) > 0 ? 1 : 0,
         Number(pkg.esic_employee) > 0 ? 1 : 0,
         pkg.epf_employer,
         pkg.esic_employer,
+        pkg.epf_employee ?? 0,
+        pkg.esic_employee ?? 0,
         pkg.ctc,
         pkg.net_in_hand,
         actorUserId,
@@ -322,11 +365,17 @@ export async function getSalaryTrend(params: {
   fy: string;
   costCentreId?: string;
   employeeCode?: string;
+  /** Server-resolved caller scope over alias `e` (omitted / "1=1" = org-wide). Browser filters only narrow it. */
+  scope?: { sql: string; params: unknown[] };
 }) {
   const months = fyMonths(params.fy);
 
   const where: string[] = ["e.active_status = 1"];
   const args: unknown[] = [];
+  if (params.scope && params.scope.sql !== "1=1") {
+    where.push(`(${params.scope.sql})`);
+    args.push(...params.scope.params);
+  }
   if (params.branchId) {
     where.push("e.branch_id = ?");
     args.push(params.branchId);

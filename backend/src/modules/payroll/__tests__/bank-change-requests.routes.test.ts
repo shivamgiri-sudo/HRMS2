@@ -27,6 +27,7 @@ const { dbExecute, encryptField, blindIndex, logSensitiveAction } = vi.hoisted(
   }),
 );
 
+vi.mock("../payroll-branch-scope.js", async () => (await import("./helpers/orgWideScopeMock.js")).orgWideScopeMock);
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 // bankAccountDuplicate.ts (the new cross-employee duplicate check) also imports
 // blindIndex from this module — must be mocked alongside encryptField or its

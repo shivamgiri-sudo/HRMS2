@@ -6,7 +6,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
-import { privacyService } from "./privacy.service.js";
+import { privacyService, buildPrincipalScope } from "./privacy.service.js";
 import { db } from "../../db/mysql.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { blankToNull } from "../../shared/sql-values.js";
@@ -40,10 +40,13 @@ privacyRouter.get(
   requireAuth,
   requireRole("admin", "hr", "dpo"),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    // hasRole("dpo") also passes admin / super_admin (accessGuard's admin-superset rule): they and the DPO
+    // stay org-wide. Everyone else on this route (hr) is limited to employees in their own branch.
+    const orgWide = await hasRole(req.authUser!.id, "dpo");
     const data = await privacyService.getAllConsents({
       purpose_code: req.query.purpose_code as string | undefined,
       principal_type: req.query.principal_type as string | undefined,
-    });
+    }, orgWide ? undefined : await buildPrincipalScope(req.authUser!));
     return res.json({ success: true, data });
   }),
 );
@@ -212,10 +215,11 @@ privacyRouter.get(
   requireAuth,
   requireRole("admin", "hr", "dpo"),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    const orgWide = await hasRole(req.authUser!.id, "dpo");
     const data = await privacyService.getAllRightsRequests({
       status: req.query.status as string | undefined,
       request_type: req.query.request_type as string | undefined,
-    });
+    }, orgWide ? undefined : await buildPrincipalScope(req.authUser!));
     return res.json({ success: true, data });
   }),
 );
@@ -250,6 +254,18 @@ privacyRouter.patch(
     );
     const existing = existingRows[0] as
       { request_type?: string; status?: string } | undefined;
+
+    // Branch scoping: an hr reviewer may only act on requests from employees inside their own branch.
+    if (existing && !(await hasRole(req.authUser!.id, "dpo"))) {
+      const scoped = await buildPrincipalScope(req.authUser!);
+      const [inScope] = await db.execute<RowDataPacket[]>(
+        `SELECT 1 FROM data_rights_request WHERE id = ? AND ${scoped.rightsSql} LIMIT 1`,
+        [req.params.id, ...scoped.params]
+      );
+      if (!(inScope as RowDataPacket[]).length) {
+        return res.status(403).json({ success: false, message: "Forbidden: this request is outside your branch / assigned scope" });
+      }
+    }
 
     if (existing?.request_type === "erasure" && status === "resolved") {
       // hasRole('dpo') also passes for admin/super_admin (accessGuard.ts's own

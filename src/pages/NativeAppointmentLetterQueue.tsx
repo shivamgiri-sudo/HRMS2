@@ -13,6 +13,7 @@ import {
   Loader2, Mail, RefreshCw, Search, ShieldAlert, Users, X, XCircle,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useBranches } from "@/hooks/useOrgMasters";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { ResendLetterDialog, type ResendOptions } from "@/components/letters/ResendLetterDialog";
@@ -73,6 +74,8 @@ export default function NativeAppointmentLetterQueue() {
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<"eligible" | "blocked" | "issued">("eligible");
   const [search, setSearch] = useState("");
+  const [branchId, setBranchId] = useState("");
+  const { data: branches = [] } = useBranches();
   const [appliedSearch, setAppliedSearch] = useState("");
   const [searching, setSearching] = useState(false);
 
@@ -174,7 +177,10 @@ export default function NativeAppointmentLetterQueue() {
   const load = useCallback(async () => {
     setSearching(true);
     setError(null);
-    const qs = appliedSearch ? `?search=${encodeURIComponent(appliedSearch)}` : "";
+    const qp = new URLSearchParams();
+    if (appliedSearch) qp.set("search", appliedSearch);
+    if (branchId) qp.set("branch_id", branchId);
+    const qs = qp.toString() ? `?${qp.toString()}` : "";
     // Fetched independently, not via Promise.all: the two calls used to fail
     // together, so an error on the issued-letters call (the smaller, less
     // important half) was blanking the eligible/blocked queue too, showing
@@ -198,7 +204,7 @@ export default function NativeAppointmentLetterQueue() {
     // on every keystroke would hide the result it was about to show.
     setLoading(false);
     setSearching(false);
-  }, [appliedSearch]);
+  }, [appliedSearch, branchId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -409,6 +415,20 @@ export default function NativeAppointmentLetterQueue() {
               <p className="text-xs font-medium text-slate-500">Letters issued</p>
             </div>
           </div>
+        </div>
+
+        {/* Branch filter — narrows within the user's assigned scope; the server enforces scope regardless. */}
+        <div className="rounded-2xl border border-blue-200 bg-white shadow-sm p-3">
+          <label htmlFor="appointment-letter-branch" className="mb-1 block text-xs font-semibold text-slate-600">Branch</label>
+          <select
+            id="appointment-letter-branch"
+            value={branchId}
+            onChange={(e) => setBranchId(e.target.value)}
+            className="min-h-[44px] w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+          >
+            <option value="">{queue?.scope === "branch" ? "All my branches" : "All branches"}</option>
+            {branches.map((b) => (<option key={b.id} value={b.id}>{b.branch_name ?? b.name}</option>))}
+          </select>
         </div>
 
         {/* Employee search */}

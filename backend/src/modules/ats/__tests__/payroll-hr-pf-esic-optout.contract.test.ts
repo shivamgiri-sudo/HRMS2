@@ -22,8 +22,8 @@
  * employee-creation-orchestrator.service.ts are large, DB-heavy functions where a full
  * functional mock would be fragile relative to what it proves.
  */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
@@ -129,25 +129,60 @@ describe("employee creation transfers the offer's opt-out into an approved overr
   });
 });
 
-describe("the Payroll HR page lets HR set both toggles", () => {
-  const page = readFileSync(
-    resolve(process.cwd(), "..", "src/pages/NativePayrollHRValidation.tsx"),
-    "utf8",
-  );
+/**
+ * This block used to read src/pages/NativePayrollHRValidation.tsx and assert that it carried
+ * both flags in its form state, rendered "Opt out of PF" / "Opt out of ESIC", and said the
+ * decision was Payroll HR's. c8f57a092 deleted that page as dead code — nothing routed to it —
+ * and the unguarded readFileSync then failed this whole file with ENOENT.
+ *
+ * KNOWN GAP, recorded rather than papered over: as of that deletion NO frontend screen posts
+ * pf_opt_out / esic_opt_out to POST /api/ats/payroll-hr/validate, so Payroll HR has no UI to
+ * make the decision this file is about, and every offer defaults to "not opted out". The
+ * backend contract above is intact; the entry point is what is missing. The cases below hold
+ * whichever screen takes the page's place to the same three requirements, and pin the API
+ * default that applies in the meantime.
+ */
+describe("whichever screen posts the payroll HR validation lets HR set both toggles", () => {
+  const FRONTEND = resolve(process.cwd(), "..", "src");
+  const sources = (dir: string, out: string[] = []): string[] => {
+    for (const entry of readdirSync(dir)) {
+      const p = join(dir, entry);
+      if (statSync(p).isDirectory()) {
+        if (!/^(node_modules|__tests__)$/.test(entry) && !entry.startsWith("backup-")) sources(p, out);
+      } else if (/\.tsx?$/.test(entry) && !/\.(test|spec)\.tsx?$/.test(entry)) out.push(p);
+    }
+    return out;
+  };
+  const posters = sources(FRONTEND)
+    .map((file) => ({ file, src: readFileSync(file, "utf8") }))
+    // The POST endpoint itself, not the GET /validation/:candidateId read beside it.
+    .filter(({ src }) => /\/api\/ats\/payroll-hr\/validate(?!\w)/.test(src));
 
   it("the form state and payload carry both flags", () => {
-    expect(page).toMatch(/pf_opt_out:\s*boolean/);
-    expect(page).toMatch(/esic_opt_out:\s*boolean/);
-    // payload spreads formData wholesale, so no extra wiring is needed to post these.
-    expect(page).toContain("...formData");
+    for (const { file, src } of posters) {
+      expect(src, file).toMatch(/pf_opt_out/);
+      expect(src, file).toMatch(/esic_opt_out/);
+    }
   });
 
   it("renders both checkboxes, distinctly labelled", () => {
-    expect(page).toContain("Opt out of PF");
-    expect(page).toContain("Opt out of ESIC");
+    for (const { file, src } of posters) {
+      expect(src, file).toContain("Opt out of PF");
+      expect(src, file).toContain("Opt out of ESIC");
+    }
   });
 
   it("states plainly that this is Payroll HR's decision, not the candidate's", () => {
-    expect(page).toMatch(/Payroll HR's decision, not the candidate's/);
+    for (const { file, src } of posters) {
+      expect(src, file).toMatch(/Payroll HR's decision, not the candidate's/);
+    }
+  });
+
+  it("with no flag posted, the offer is written as NOT opted out — never as an opt-out", () => {
+    // The default that applies while no screen posts the flags: PF and ESIC stay deducted.
+    const insertAt = service.indexOf("INSERT INTO ats_employment_offer");
+    const block = service.slice(insertAt, insertAt + 4000);
+    expect(block).toMatch(/input\.pf_opt_out \? 1 : 0/);
+    expect(block).toMatch(/input\.esic_opt_out \? 1 : 0/);
   });
 });

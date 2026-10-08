@@ -9,6 +9,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
 import { useIsAdminOrHR, useWorkforceAccess } from "@/hooks/useUserRole";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -232,6 +233,8 @@ function PendingInbox() {
     ? data
     : (data as { data: ApprovalRequest[] })?.data ?? [];
 
+  useApprovalFocus(!isLoading && requests.length > 0);
+
   const actMutation = useMutation({
     mutationFn: ({ id, form }: { id: string; form: ActForm }) =>
       hrmsApi.post(`/api/workflow/requests/${id}/act`, {
@@ -296,6 +299,7 @@ function PendingInbox() {
           {requests.map((req) => (
             <div
               key={req.id}
+              data-approval-id={req.id}
               className="rounded-3xl border bg-white p-5 shadow-sm hover:shadow-md transition-shadow"
             >
               <div className="flex flex-wrap items-start gap-3 justify-between">

@@ -18,6 +18,8 @@ vi.mock("../src/modules/engagement/badge.service.js", () => ({
 // responses, so the mocks the test lines up land on the wrong query.
 vi.mock("../src/modules/exit/exit.notifications.js", () => ({
   notifyFullFinalReady: vi.fn().mockResolvedValue(undefined),
+  // approveFF also notifies the employee of the approval, fire-and-forget like the one above.
+  notifyFFApproved: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { db } from "../src/db/mysql.js";
@@ -95,6 +97,11 @@ const fakeTaxDecl = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps queued mockResolvedValueOnce values, so a test that lines up more
+  // responses than the code consumes shifts every later test's queue by one. Reset the queue
+  // and restore the factory default instead.
+  exec.mockReset();
+  exec.mockResolvedValue([[], []]);
   auditMock.mockResolvedValue(undefined);
 });
 
@@ -242,10 +249,15 @@ describe("taxDeclarationService.get", () => {
 
 describe("ffService.createFF", () => {
   it("creates F&F linked to exit_request and logs FULL_FINAL_CREATED audit", async () => {
-    exec
-      .mockResolvedValueOnce([[fakeExit], []]) // SELECT exit_request
-      .mockResolvedValueOnce([{ affectedRows: 1 }, []]) // INSERT full_final_calculation
-      .mockResolvedValueOnce([[fakeFf], []]); // getFF re-fetch (JOIN employees)
+    // Routed by statement rather than queued in order: createFF now also runs the compute-preview
+    // deviation check and the gratuity audit between the exit_request read and the INSERT, each
+    // issuing its own reads (all non-fatal, all answered with "no rows" here).
+    exec.mockImplementation(async (sql: string) => {
+      if (/FROM exit_request WHERE id = \?/.test(sql)) return [[fakeExit], []];
+      if (/INSERT INTO full_final_calculation/.test(sql)) return [{ affectedRows: 1 }, []];
+      if (/FROM full_final_calculation ff/.test(sql)) return [[fakeFf], []]; // getFF re-fetch
+      return [[], []];
+    });
 
     const result = await ffService.createFF(
       "exit-1",
@@ -262,6 +274,7 @@ describe("ffService.createFF", () => {
 
     expect(result.exit_request_id).toBe("exit-1");
     expect(result.status).toBe("draft");
+    expect(exec.mock.calls.some(([sql]) => /INSERT INTO full_final_calculation/.test(String(sql)))).toBe(true);
     expect(auditMock).toHaveBeenCalledWith(
       expect.objectContaining({
         action_type: "FULL_FINAL_CREATED",

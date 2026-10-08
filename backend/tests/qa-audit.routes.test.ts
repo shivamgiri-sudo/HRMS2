@@ -205,6 +205,8 @@ describe("scoring is a QA function", () => {
 
   it("takes the auditor from the session, never the body", async () => {
     // Otherwise an auditor could file an audit under somebody else's name.
+    getUserRoleContext.mockResolvedValue({ primaryRole: "qa" });
+    execute.mockResolvedValueOnce([[{ id: "e1" }], []]); // target employee is inside the auditor's scope
     submitQaAudit.mockResolvedValue({ id: "a1", status: "submitted" });
     const res = await request(appAs("qa")).post("/api/qa/audits").send({
       formId: "f1",
@@ -283,6 +285,16 @@ describe("form definition is narrower than filing an audit", () => {
     expect(activateForm).toHaveBeenCalledWith("f2", "user-1");
   });
 
+  it("refuses to file an audit for an employee outside the auditor's branch scope", async () => {
+    getUserRoleContext.mockResolvedValue({ primaryRole: "qa" });
+    execute.mockResolvedValueOnce([[], []]); // scope check finds nobody
+    const res = await request(appAs("qa")).post("/api/qa/audits").send({
+      formId: "f1", employeeId: "emp-other-branch", auditDate: "2026-07-15", scores: [],
+    });
+    expect(res.status).toBe(403);
+    expect(submitQaAudit).not.toHaveBeenCalled();
+  });
+
   it("requires the fields a form cannot exist without", async () => {
     const res = await request(appAs("qa"))
       .post("/api/qa/audit-forms")
@@ -293,7 +305,9 @@ describe("form definition is narrower than filing an audit", () => {
 
 describe("an auditor files by agent code, not UUID", () => {
   it("resolves the code to an employee before filing", async () => {
-    execute.mockResolvedValueOnce([[{ id: "emp-9" }], []]);
+    getUserRoleContext.mockResolvedValue({ primaryRole: "qa" });
+    execute.mockResolvedValueOnce([[{ id: "emp-9" }], []]); // code lookup
+    execute.mockResolvedValueOnce([[{ id: "emp-9" }], []]); // branch-scope check on the resolved employee
     submitQaAudit.mockResolvedValue({ id: "a1", status: "submitted" });
 
     const res = await request(appAs("qa")).post("/api/qa/audits").send({
@@ -333,6 +347,8 @@ describe("an auditor files by agent code, not UUID", () => {
   });
 
   it("still accepts an explicit employeeId without a lookup", async () => {
+    getUserRoleContext.mockResolvedValue({ primaryRole: "qa" });
+    execute.mockResolvedValueOnce([[{ id: "emp-direct" }], []]); // branch-scope check only, no code lookup
     submitQaAudit.mockResolvedValue({ id: "a1", status: "submitted" });
     const res = await request(appAs("qa")).post("/api/qa/audits").send({
       formId: "f1",

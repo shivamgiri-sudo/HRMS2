@@ -1,5 +1,6 @@
 import sql from "mssql";
 import type { RowDataPacket } from "mysql2";
+import { isEmployedOn } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import { getNcosecPool } from "../../db/ncosecDb.js";
 import { attendanceEngineService } from "./attendance-engine.service.js";
@@ -633,6 +634,8 @@ async function writeMissingPunchRecord(
   processId: string | null,
   reason: string,
 ): Promise<void> {
+  // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+  if (!(await isEmployedOn(employeeId, date))) return;
   await db.execute(
     `INSERT INTO attendance_daily_record
        (id, employee_id, record_date, clock_in_time, clock_out_time,

@@ -1,14 +1,7 @@
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2/promise";
-import { getJoinedInfo, joinedIdSql } from "./dashboard.joined.js";
-import {
-  branchDisplay,
-  branchFilter,
-  processDisplay,
-  recruiterNamer,
-  reportingScope,
-  sourceDisplay,
-} from "./dashboard.scope.js";
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2/promise';
+import { getJoinedInfo, joinedIdSql } from './dashboard.joined.js';
+import { branchDisplay, branchFilter, processDisplay, recruiterNamer, recruiterLabelSql, sourceValueSql, refreshImportTag, reportingScope, sourceDisplay } from './dashboard.scope.js';
 
 /**
  * ATS dashboard overview — server-side aggregates for /ats/dashboard.
@@ -101,7 +94,12 @@ export async function safe<T>(
   }
 }
 
-export const BRANCH_EXPR = `COALESCE(NULLIF(branch_display_name,''),NULLIF(applied_for_branch,''),'Unspecified')`;
+// Some writers stored a branch_master.id in applied_for_branch (21 candidates, 2026-10), which then
+// surfaced as a raw UUID in every branch chart. The branch_master lookup resolves those to the
+// branch name; for every other value it matches nothing and falls through to applied_for_branch.
+// The alias is deliberately unusual so it cannot collide with a caller's own join, and the lookup is
+// on the primary key.
+export const BRANCH_EXPR = `COALESCE(NULLIF(branch_display_name,''),(SELECT _bid.branch_name FROM branch_master _bid WHERE _bid.id = applied_for_branch LIMIT 1),NULLIF(applied_for_branch,''),'Unspecified')`;
 
 export interface CubeRow {
   d: string;
@@ -197,48 +195,22 @@ async function compute(period: OverviewPeriod, branch: string) {
   const brSql = bf ? `AND ${bf.sql}` : "";
   const brArgs = bf ? bf.params : [];
 
+  await refreshImportTag();
   const joinedInfo = await getJoinedInfo();
-  const jsql = joinedIdSql("id", joinedInfo.ids);
-  const [rows, dims, heat, aging, tth, offers, bgv, queue, dup] =
-    await Promise.all([
-      getCube(),
-      // Recruiter / source / process / gender need columns the cube omits; engaged candidates only (~8k rows).
-      safe(
-        "dims",
-        () =>
-          q<{
-            ch: string;
-            pr: string;
-            rc: string;
-            g: string;
-            status: string;
-            stage: string;
-            jn: number;
-            n: number;
-          }>(
-            `SELECT sourcing_channel AS ch, applied_for_process AS pr,
-              COALESCE(NULLIF(recruiter_name,''),'Unassigned') AS rc, gender AS g, status, current_stage AS stage, (${jsql.sql}) AS jn, COUNT(*) AS n
-       FROM ats_candidate WHERE active_status = 1 AND ${reportingScope("ats_candidate")} AND status <> ? ${win} ${brSql}
-       GROUP BY ch, pr, rc, g, status, stage, jn`,
-            [...jsql.params, LEAD, ...brArgs],
-          ),
-        [],
-      ),
-      safe(
-        "heat",
-        () =>
-          q<{ dow: number; hr: number; n: number }>(
-            `SELECT DAYOFWEEK(created_at) AS dow, HOUR(created_at) AS hr, COUNT(*) AS n
-       FROM ats_candidate WHERE active_status = 1 AND ${reportingScope("ats_candidate")} AND status <> ? ${win} ${brSql} GROUP BY dow, hr`,
-            [LEAD, ...brArgs],
-          ),
-        [],
-      ),
-      safe(
-        "aging",
-        () =>
-          q<{ bucket: string; n: number }>(
-            `SELECT CASE WHEN d <= 1 THEN '0-1d' WHEN d <= 3 THEN '2-3d' WHEN d <= 7 THEN '4-7d' WHEN d <= 14 THEN '8-14d' ELSE '15d+' END AS bucket, COUNT(*) AS n
+  const jsql = joinedIdSql('id', joinedInfo.ids);
+  const [rows, dims, heat, aging, tth, offers, bgv, queue, dup] = await Promise.all([
+    getCube(),
+    // Recruiter / source / process / gender need columns the cube omits; engaged candidates only (~8k rows).
+    safe('dims', () => q<{ ch: string; pr: string; rc: string; g: string; status: string; stage: string; jn: number; n: number }>(
+      `SELECT ${sourceValueSql()} AS ch, applied_for_process AS pr,
+              COALESCE(${recruiterLabelSql()},'Unassigned') AS rc, gender AS g, status, current_stage AS stage, (${jsql.sql}) AS jn, COUNT(*) AS n
+       FROM ats_candidate WHERE active_status = 1 AND ${reportingScope('ats_candidate')} AND status <> ? ${win} ${brSql}
+       GROUP BY ch, pr, rc, g, status, stage, jn`, [...jsql.params, LEAD, ...brArgs]), []),
+    safe('heat', () => q<{ dow: number; hr: number; n: number }>(
+      `SELECT DAYOFWEEK(created_at) AS dow, HOUR(created_at) AS hr, COUNT(*) AS n
+       FROM ats_candidate WHERE active_status = 1 AND ${reportingScope('ats_candidate')} AND status <> ? ${win} ${brSql} GROUP BY dow, hr`, [LEAD, ...brArgs]), []),
+    safe('aging', () => q<{ bucket: string; n: number }>(
+      `SELECT CASE WHEN d <= 1 THEN '0-1d' WHEN d <= 3 THEN '2-3d' WHEN d <= 7 THEN '4-7d' WHEN d <= 14 THEN '8-14d' ELSE '15d+' END AS bucket, COUNT(*) AS n
        FROM (SELECT DATEDIFF(NOW(), updated_at) AS d FROM ats_candidate
              WHERE active_status = 1 AND ${reportingScope("ats_candidate")} AND status IN (${ph(OPEN_STATUSES)}) ${brSql}) t GROUP BY bucket`,
             [...OPEN_STATUSES, ...brArgs],
@@ -730,4 +702,17 @@ export function warmAtsOverview() {
   };
   void run();
   setInterval(() => void run(), 10 * 60_000).unref();
+}
+
+
+/**
+ * The branch breakdown and movers come from the organisation-wide cube, so they list every branch even when the request was pinned
+ * to one. A branch-limited caller (hr, manager, branch head ...) must only see their own branches there. Returns a copy: the cached
+ * overview object is shared and must not be mutated.
+ */
+export function limitOverviewToBranches<T extends { branches: { name: string }[]; movers: { up: { name: string }[]; down: { name: string }[]; all: { name: string }[] } }>(
+  ov: T, allow: (branchName: string) => boolean,
+): T {
+  const keep = <R extends { name: string }>(rows: R[]) => rows.filter((r) => allow(r.name));
+  return { ...ov, branches: keep(ov.branches), movers: { ...ov.movers, up: keep(ov.movers.up), down: keep(ov.movers.down), all: keep(ov.movers.all) } };
 }

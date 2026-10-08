@@ -124,6 +124,32 @@ describe("TeamRosterPage - states", () => {
   });
 });
 
+describe("TeamRosterPage - deep link from the Roster Requests hub", () => {
+  // 2026-10-07 is a Wednesday: the roster tab opens on Monday 05/10 - Sunday 11/10.
+  const week = { from: "2026-10-05", to: "2026-10-11" };
+  const seedWeek = (c: QueryClient) => {
+    seedManager(c);
+    c.setQueryData(gridKey({ from: week.from, to: week.to, search: "", offset: 0, limit: 50 }), { ...grid(), from: week.from, to: week.to });
+  };
+
+  it("opens the roster tab on the week containing ?date= and marks ?employee='s row", () => {
+    const html = render(me(), seedWeek, "/wfm/team-roster?tab=roster&date=2026-10-07&employee=e1");
+    expect(html).toContain('value="2026-10-05"');
+    expect(html).toContain('value="2026-10-11"');
+    expect(html).toContain("Asha Kulkarni");
+    const rowStart = html.indexOf('data-highlighted="true"');
+    expect(rowStart).toBeGreaterThan(-1);
+    expect(html.indexOf("Asha Kulkarni", rowStart)).toBeGreaterThan(rowStart);
+    expect(html.match(/data-highlighted="true"/g)).toHaveLength(1);
+  });
+
+  it("ignores an invalid date and keeps the default range", () => {
+    const html = render(me(), seedManager, "/wfm/team-roster?tab=roster&date=2026-02-30&employee=e1");
+    expect(html).toContain(`value="${range.from}"`);
+    expect(html).toContain("Asha Kulkarni");
+  });
+});
+
 describe("My Team Roster grid", () => {
   const html = () => render(me(), seedManager);
 
@@ -207,6 +233,7 @@ describe("submission drawer body", () => {
       { id: 1, employeeId: "e1", employeeCode: "MAS1", employeeName: "Asha K", date: "2026-10-02", kind: "CHANGE", old: { type: "SHIFT", label: "GEN 09:00-18:00" }, new: { type: "WEEK_OFF", label: null }, reason: "Asked for a day off", warnings: ["Off-day policy: Friday is a fixed weekly off"], status: "pending", skipReason: null, appliedAssignmentId: null },
       { id: 2, employeeId: "e2", employeeCode: "MAS2", employeeName: "Ravi S", date: "2026-10-03", kind: "FILL_BLANK", old: null, new: { type: "SHIFT", label: "GEN 09:00-18:00" }, reason: null, warnings: [], status: "skipped", skipReason: "date already rostered", appliedAssignmentId: null },
     ],
+    coverage: null,
     summary: { total: 2, applied: 0, skipped: 1, failed: 0, pending: 1, withWarnings: 1 },
     timeline: [{ action: "submitted", actorName: "Sam Sub", actorRole: "employee", remarks: null, at: "2026-10-01 09:05:00", meta: null }],
     permissions: { canCancel: false, canManagerDecide: false, canWfmDecide: true, canCopyToDraft: false, ...perms },

@@ -4,12 +4,8 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import {
-  getGncSaleDashboard,
-  getGncAgentDetail,
-  getGncCampaignDetail,
-} from "./gnc-sale-dashboard.service.js";
-import { getGncAbandonCartDashboard } from "./gnc-abandon-cart-dashboard.service.js";
+import { getGncSaleDashboard, getGncAgentDetail, getGncCampaignDetail } from "./gnc-sale-dashboard.service.js";
+import { getGncAbandonCartDashboard, getGncAbandonCartAgentWise } from "./gnc-abandon-cart-dashboard.service.js";
 import {
   resolveGncTargets,
   listGncTargets,
@@ -128,6 +124,13 @@ router.get(
     });
   }),
 );
+
+router.get("/gnc-abandon-cart-dashboard/agent-wise", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const from = String(req.query.from ?? "");
+  const to = String(req.query.to ?? "");
+  const data = await getGncAbandonCartAgentWise(from, to);
+  res.json({ success: true, data });
+}));
 
 /**
  * Editable LOB targets (Process Performance V2 > GNC > Targets). Reading is open to the dashboard

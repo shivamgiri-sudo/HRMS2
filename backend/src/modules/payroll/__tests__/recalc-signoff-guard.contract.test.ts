@@ -18,7 +18,14 @@ const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 const stripComments = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
-const ROUTES = read("src/modules/payroll/payroll.routes.ts");
+/**
+ * payroll.routes.ts is prettier-formatted since cd83825bc, so a registration reads
+ * `router.post(\n  "/runs",` rather than `router.post("/runs",`. Re-join the path onto the verb
+ * so the markers below keep locating the same handlers; nothing inside a handler is altered.
+ */
+const joinRouteRegistrations = (s: string) =>
+  s.replace(/(router\.(?:get|post|put|patch|delete))\(\s+"/g, '$1("');
+const ROUTES = joinRouteRegistrations(read("src/modules/payroll/payroll.routes.ts"));
 const CODE = stripComments(ROUTES);
 
 function slice(startMarker: string, endMarker: string): string {

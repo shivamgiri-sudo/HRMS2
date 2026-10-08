@@ -4,7 +4,8 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
-import { getEmployeeForUser } from "../../shared/accessGuard.js";
+import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { resolveDashboardScope } from "../../shared/dashboardScope.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordManagerChange } from "../management/manager-attribution.service.js";
 
@@ -16,6 +17,28 @@ const h =
     fn(req, res).catch(next);
 
 router.use(requireAuth);
+
+const APPROVER_ROLES = ["admin", "hr", "wfm", "payroll_hr", "branch_wfm", "branch_head"] as const;
+
+/**
+ * Branches whose RM-change requests the caller may see/action, or null for org-wide callers
+ * (admin/super_admin/hr). Everyone else is limited to their own employee branch plus any
+ * assigned branches (branch_wfm / branch_head carry these via assignment scope). Decided by
+ * role *membership*, not the primary role, so a multi-role user can never fall through to org-wide.
+ */
+async function approverBranchIds(userId: string, primaryRole: string): Promise<string[] | null> {
+  if (await hasRole(userId, "hr")) return null; // hasRole() is also true for admin/super_admin
+  const ids = new Set<string>();
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+    [userId]
+  );
+  if (empRows[0]?.branch_id) ids.add(String(empRows[0].branch_id));
+  const scope = await resolveDashboardScope(userId, primaryRole);
+  if (scope.level === "ORG_ALL") return null;
+  for (const b of scope.branchIds) ids.add(b);
+  return [...ids];
+}
 
 // GET /api/rm-change/search-managers - search for potential managers
 router.get(
@@ -73,25 +96,13 @@ router.get(
   }),
 );
 
-// GET /api/rm-change/pending - list pending requests for approval (WFM/HR/Admin/Payroll HR)
-router.get(
-  "/pending",
-  requireRole("admin", "hr", "wfm", "payroll_hr"),
-  h(async (req: any, res: any) => {
-    const role: string = req.authUser?.role ?? "";
-    const isBranchScoped = role === "wfm" || role === "payroll_hr";
-
-    let branchId: string | null = null;
-    if (isBranchScoped) {
-      const [empRows] = await db.execute<RowDataPacket[]>(
-        `SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
-        [req.authUser!.id],
-      );
-      branchId = empRows[0]?.branch_id ?? null;
-      if (!branchId) {
-        return res.json({ ok: true, data: [] });
-      }
-    }
+// GET /api/rm-change/pending - list pending requests for approval (WFM/Branch WFM/Branch Head/HR/Admin/Payroll HR)
+router.get("/pending", requireRole(...APPROVER_ROLES), h(async (req: any, res: any) => {
+  const branchIds = await approverBranchIds(req.authUser!.id, req.authUser?.role ?? "");
+  const isBranchScoped = branchIds !== null;
+  if (isBranchScoped && branchIds.length === 0) {
+    return res.json({ ok: true, data: [] });
+  }
 
     const query = `SELECT rm.*,
           e.employee_code,
@@ -105,13 +116,13 @@ router.get(
    LEFT JOIN employees nm ON nm.id = rm.requested_manager_id
    LEFT JOIN branch_master b ON b.id = rm.branch_id
    WHERE rm.status = 'pending'
-     ${isBranchScoped ? "AND rm.branch_id = ?" : ""}
+     ${isBranchScoped ? `AND rm.branch_id IN (${branchIds.map(() => "?").join(",")})` : ""}
    ORDER BY rm.created_at DESC`;
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      query,
-      isBranchScoped ? [branchId] : [],
-    );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    query,
+    isBranchScoped ? branchIds : []
+  );
 
     return res.json({ ok: true, data: rows });
   }),
@@ -197,33 +208,40 @@ router.post(
 );
 
 // POST /api/rm-change/:id/action - approve or reject a request
-router.post(
-  "/:id/action",
-  requireRole("admin", "hr", "wfm", "payroll_hr"),
-  h(async (req: any, res: any) => {
-    const { id } = req.params;
-    const { action, remarks } = req.body;
+router.post("/:id/action", requireRole(...APPROVER_ROLES), h(async (req: any, res: any) => {
+  const { id } = req.params;
+  const { action, remarks } = req.body;
 
-    if (!["approved", "rejected"].includes(action)) {
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          message: "action must be 'approved' or 'rejected'",
-        });
+  if (!["approved", "rejected"].includes(action)) {
+    return res.status(400).json({ ok: false, message: "action must be 'approved' or 'rejected'" });
+  }
+
+  // For branch-scoped roles, resolve actor's branches upfront
+  const actorBranchIds = await approverBranchIds(req.authUser!.id, req.authUser?.role ?? "");
+  const isBranchScoped = actorBranchIds !== null;
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // Get and lock the request details
+    const [rows] = await connection.execute<RowDataPacket[]>(
+      `SELECT * FROM rm_change_requests WHERE id = ? LIMIT 1 FOR UPDATE`,
+      [id]
+    );
+
+    if (rows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ ok: false, message: "Request not found" });
     }
 
     const role: string = req.authUser?.role ?? "";
     const isBranchScoped = role === "wfm" || role === "payroll_hr";
 
-    // For branch-scoped roles, resolve actor's branch upfront
-    let actorBranchId: string | null = null;
-    if (isBranchScoped) {
-      const [empRows] = await db.execute<RowDataPacket[]>(
-        `SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
-        [req.authUser!.id],
-      );
-      actorBranchId = empRows[0]?.branch_id ?? null;
+    // Branch-scoped roles can only action requests for their own branch
+    if (isBranchScoped && !actorBranchIds.includes(String(request.branch_id))) {
+      await connection.rollback();
+      return res.status(403).json({ ok: false, message: "Forbidden: this request belongs to a different branch" });
     }
 
     const connection = await db.getConnection();

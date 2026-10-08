@@ -73,7 +73,8 @@ describe("the calculator pays exactly the population readiness checked", () => {
   });
 
   it("branches on scope_kind rather than applying both filter styles at once", () => {
-    expect(calculator).toContain('scope_kind ?? "company") === "scoped"');
+    // \s* — prettier wraps the comparison after `===`.
+    expect(calculator).toMatch(/scope_kind \?\? "company"\) ===\s*"scoped"/);
   });
 
   it("keeps the name-based filters reachable only for company runs", () => {

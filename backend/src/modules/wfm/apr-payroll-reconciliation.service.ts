@@ -1,4 +1,5 @@
 import type { RowDataPacket } from "mysql2";
+import { isEmployedOn } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 
 export type AprIssueType =
@@ -170,6 +171,8 @@ async function repairAdrFromApr(row: any): Promise<"repaired" | "skipped"> {
     Boolean(row.regularization_id) ||
     Boolean(row.approved_regularization_id);
   if (hasProtectedAdr) return "skipped";
+  // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+  if (!(await isEmployedOn(String(row.employee_id), String(row.record_date).slice(0, 10)))) return "skipped";
 
   const classification = classifyAprMinutes(Number(row.apr_minutes ?? 0));
   await db.execute(

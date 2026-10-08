@@ -38,11 +38,17 @@ export default function OnfidoFreshnessStrip() {
   });
   const rows = query.data?.data ?? [];
   if (rows.length === 0) return null;
+  const isStale = (r: FreshnessRow) => r.latestDate === null || daysBehind(r.latestDate) >= STALE_AFTER_DAYS || r.gapMonths.length > 0;
+  const staleRows = rows.filter(isStale);
+  const allTitle = rows.map((r) => `${r.label}: ${r.latestDate ? ddmm(r.latestDate) : "no data"}`).join("\n");
+  // Compact: only sources that are behind are spelled out; the full list is in the tooltip.
+  if (staleRows.length === 0) {
+    return <span style={{ fontSize: 11, color: "var(--muted)" }} title={allTitle} data-testid="onfido-freshness">Data up to date</span>;
+  }
   return (
-    <div style={{ fontSize: 11, color: "var(--muted)", display: "flex", flexWrap: "wrap", gap: 12 }} data-testid="onfido-freshness">
-      <strong style={{ color: "var(--text)" }}>Data available up to:</strong>
-      {rows.map((r) => {
-        const stale = r.latestDate === null || daysBehind(r.latestDate) >= STALE_AFTER_DAYS || r.gapMonths.length > 0;
+    <div style={{ fontSize: 11, color: "var(--muted)", display: "flex", flexWrap: "wrap", gap: 10 }} title={allTitle} data-testid="onfido-freshness">
+      {staleRows.map((r) => {
+        const stale = true;
         return (
           <span key={r.key} title={r.latestDate ? `${r.label}: latest day ${r.latestDate}` : `${r.label}: no data`} style={{ color: stale ? "var(--orange, #b45309)" : undefined }}>
             {r.label} {r.latestDate ? ddmm(r.latestDate) : "no data"}

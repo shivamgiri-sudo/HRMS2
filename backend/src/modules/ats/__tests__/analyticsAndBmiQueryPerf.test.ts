@@ -18,11 +18,7 @@ import request from "supertest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute } }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    _req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => next(),
+  requireAuth: (req: any, _res: express.Response, next: express.NextFunction) => { req.authUser = { id: "u-admin" }; next(); },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole:
@@ -35,9 +31,14 @@ vi.mock("../../../middleware/requireRole.js", () => ({
       next(),
 }));
 
-function trackConcurrency(
-  handler: (sql: string, params: unknown[]) => unknown,
-) {
+// Branch scoping (2026-10-01) is covered by branchScoping.ats.test.ts; here the caller is org-wide so this
+// file keeps pinning the query round-trips only.
+vi.mock("../ats-branch-scope.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ats-branch-scope.js")>();
+  return { ...actual, resolveAtsBranchScope: async () => ({ orgWide: true, branchIds: [], branchSpellings: [], branchNames: [], processNames: [] }) };
+});
+
+function trackConcurrency(handler: (sql: string, params: unknown[]) => unknown) {
   let inFlight = 0;
   let maxInFlight = 0;
   execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
@@ -103,6 +104,40 @@ describe("analytics.unified.service", () => {
         avg_time_to_hire_days: 3.5,
       },
     ]);
+  });
+
+  it("getSourceChannelROI merges spelling variants and reports blanks as Unspecified, not Walk-in", async () => {
+    vi.resetModules();
+    const svc = await import("../analytics.unified.service.js");
+    svc.resetEmployeeMobileJoinMapCacheForTest();
+    trackConcurrency((sql) => {
+      if (sql.includes("FROM employees")) return [];
+      if (sql.includes("COUNT(*) as total_candidates")) {
+        return [
+          { source_channel: "WALKIN", total_candidates: 30, avg_time_to_hire_days: "2" },
+          { source_channel: "Walk-In", total_candidates: 10, avg_time_to_hire_days: "6" },
+          { source_channel: "", total_candidates: 50, avg_time_to_hire_days: "1" },
+          { source_channel: null, total_candidates: 5, avg_time_to_hire_days: "1" },
+          { source_channel: "Social Media", total_candidates: 4, avg_time_to_hire_days: "3" },
+        ];
+      }
+      if (sql.includes("current_stage, mobile, created_at")) {
+        return [
+          { source_channel: "WALKIN", current_stage: "onboarded", mobile: "9000000001", created_at: "2026-08-01" },
+          { source_channel: "Walk-In", current_stage: "onboarded", mobile: "9000000002", created_at: "2026-08-01" },
+        ];
+      }
+      return [];
+    });
+    const out = await svc.getSourceChannelROI();
+    const byName = Object.fromEntries(out.map((r) => [r.source_channel, r]));
+    // WALKIN + Walk-In are one channel: 40 candidates, both hires, weighted avg (30*2 + 10*6) / 40 = 3
+    expect(byName["Walk-in"]).toMatchObject({ total_candidates: 40, total_hired: 2, avg_time_to_hire_days: 3 });
+    // blank and NULL are the same bucket, and are not credited to walk-in
+    expect(byName["Unspecified"]).toMatchObject({ total_candidates: 55 });
+    // an unrecognised value stays visible under its own name rather than vanishing into Other
+    expect(byName["Social Media"]).toMatchObject({ total_candidates: 4 });
+    expect(out.map((r) => r.source_channel)).toEqual(["Unspecified", "Walk-in", "Social Media"]);
   });
 
   it("getSourceChannelROI does not leave an unhandled rejection if a query fails", async () => {

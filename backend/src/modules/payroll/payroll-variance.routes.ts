@@ -8,6 +8,7 @@ import { db } from "../../db/mysql.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { runRankSql } from "./run-status.js";
+import { employeeScopeFor, guardEmployee } from "./payroll-branch-scope.js";
 
 export const payrollVarianceRouter = Router();
 const h =
@@ -95,6 +96,9 @@ payrollVarianceRouter.get(
               : `${yr}-${String(mo - 1).padStart(2, "0")}`;
           })();
 
+    // Branch scoping (owner ruling 2026-10-01): only employees inside the caller's scope.
+    const varScope = await employeeScopeFor(req, "e");
+
     // Fetch current month lines
     const [currRows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -130,8 +134,9 @@ payrollVarianceRouter.get(
                   AND UPPER(r.status) NOT IN ('CANCELLED')
                 ORDER BY ${runRankSql("r")}, r.created_at DESC
                 LIMIT 1
-             )`,
-      [month],
+             )
+         AND (${varScope.sql})`,
+      [month, ...varScope.params]
     );
 
     // Fetch previous month lines — include employee JOINs so LEAVER rows have name/branch info
@@ -169,8 +174,9 @@ payrollVarianceRouter.get(
                   AND UPPER(r.status) NOT IN ('CANCELLED')
                 ORDER BY ${runRankSql("r")}, r.created_at DESC
                 LIMIT 1
-             )`,
-      [prevMonth],
+             )
+         AND (${varScope.sql})`,
+      [prevMonth, ...varScope.params]
     );
 
     const currMap = new Map<string, any>(
@@ -302,10 +308,8 @@ payrollVarianceRouter.get(
       compare_to?: string;
     };
 
-    if (!month)
-      return res
-        .status(400)
-        .json({ success: false, message: "month is required" });
+    if (!month) return res.status(400).json({ success: false, message: "month is required" });
+    if (!(await guardEmployee(req, res, employeeId))) return;
 
     const prevMonth =
       compare_to ??

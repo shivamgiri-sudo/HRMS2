@@ -240,9 +240,16 @@ export function HousingPremiumOutboundDashboard({
   const scopeLabel = agent !== "all" ? agent : tl !== "all" ? tl : "Overall";
 
   const effGran = dayCols.length === 0 ? "week" : gran;
+  // The trend charts below are a compact at-a-glance strip, not the historical record -- day
+  // view caps at the most recent 7 days (within whatever week is selected, if any) so the
+  // chart stays readable instead of cramming a whole month's points into one small panel.
+  // "View Details" (openGroup) opens its own dedicated full-range fetch regardless, so the
+  // complete month's data is never actually hidden, just not all plotted inline at once.
   const series = useMemo(() => {
     if (!values) return [];
-    const cols = effGran === "day" ? dayCols.filter((c) => !weekSel || (c.from >= weekSel.from && c.to <= weekSel.to)) : weekCols;
+    const cols = effGran === "day"
+      ? dayCols.filter((c) => !weekSel || (c.from >= weekSel.from && c.to <= weekSel.to)).slice(-7)
+      : weekCols;
     return cols.map((c) => ({ key: c.key, label: c.label, ...values[c.key] }));
   }, [values, effGran, columns, weekSel]); // eslint-disable-line react-hooks/exhaustive-deps
 

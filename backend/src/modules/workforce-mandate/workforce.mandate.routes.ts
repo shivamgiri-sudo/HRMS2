@@ -51,12 +51,19 @@ async function assertCanEditMandate(
   );
 }
 
+import { sumWfmMandate, syncProcessSeatsSafe } from "../process-pnl/seat-mandate-sync.service.js";
+import { branchScopeGuard } from "../wfm/branch-scope.js";
 const router = Router();
 
 // 30s in-memory cache of the (user-independent) capacity payload, per branch filter. Mandate
 // edits clear it so the editor sees their change immediately.
 const capacityCache = new Map<string, { at: number; body: unknown }>();
 const CAPACITY_TTL_MS = 30_000;
+
+/** Lets other modules (seat-mandate sync) drop the cached capacity payload after changing a mandate. */
+export function clearCapacityCache(): void {
+  capacityCache.clear();
+}
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   let t: NodeJS.Timeout;
@@ -100,29 +107,14 @@ router.post(
   requireRole(...MANDATE_EDIT_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const {
-      processId,
-      branchId,
-      roleGroup,
-      hcType,
-      mandatedHc,
-      bufferPct,
-      shrinkagePct,
-      attritionBufferPct,
-      trainingBufferPct,
-      effectiveFrom,
-      effectiveTo,
+      processId, branchId, roleGroup, hcType, mandatedHc,
+      bufferPct, shrinkagePct, attritionBufferPct, trainingBufferPct,
+      effectiveFrom, effectiveTo, reason,
     } = req.body as {
-      processId?: string;
-      branchId?: string;
-      roleGroup?: string;
-      hcType?: string;
-      mandatedHc?: number;
-      bufferPct?: number;
-      shrinkagePct?: number;
-      attritionBufferPct?: number;
-      trainingBufferPct?: number;
-      effectiveFrom?: string;
-      effectiveTo?: string;
+      processId?: string; branchId?: string; roleGroup?: string; hcType?: string;
+      mandatedHc?: number; bufferPct?: number; shrinkagePct?: number;
+      attritionBufferPct?: number; trainingBufferPct?: number;
+      effectiveFrom?: string; effectiveTo?: string; reason?: string;
     };
 
     if (
@@ -137,29 +129,66 @@ router.post(
           "processId, roleGroup, hcType, mandatedHc, and effectiveFrom are required",
       });
     }
+    const hc = Number(mandatedHc);
+    if (!Number.isInteger(hc) || hc < 0 || hc > 100000) {
+      return res.status(400).json({ error: "mandatedHc must be a whole number between 0 and 100000" });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom) || Number.isNaN(Date.parse(effectiveFrom))) {
+      return res.status(400).json({ error: "effectiveFrom must be a date (YYYY-MM-DD)" });
+    }
+    for (const [name, v] of [["shrinkagePct", shrinkagePct], ["attritionBufferPct", attritionBufferPct], ["trainingBufferPct", trainingBufferPct]] as const) {
+      if (v !== undefined && (!Number.isFinite(Number(v)) || Number(v) < 0 || Number(v) >= 50)) {
+        return res.status(400).json({ error: `${name} must be between 0 and 50` });
+      }
+    }
+    const reasonText = String(reason ?? "").trim();
+    if (reasonText.length < 3) return res.status(400).json({ error: "reason is required" });
 
-    await assertCanEditMandate(req.authUser!.id, {
-      branchId: branchId ?? null,
-      processId,
-    });
+    const { db } = await import("../../db/mysql.js");
+    const [proc] = await db.execute<any[]>("SELECT id, branch_id FROM process_master WHERE id = ? LIMIT 1", [processId]);
+    if (!proc[0]) return res.status(404).json({ error: "Process not found" });
+    // Default the branch to the process's own branch so a mandate is always per process + branch.
+    const effectiveBranchId = branchId ?? proc[0].branch_id ?? null;
+
+    await assertCanEditMandate(req.authUser!.id, { branchId: effectiveBranchId, processId });
+
+    // One live mandate per process + branch + role group. A second row with another effective_from would be
+    // SUMMED by the capacity dashboard (double-counting the headcount), so point the caller at the existing row.
+    const [existing] = await db.execute<any[]>(
+      `SELECT id, mandated_hc FROM workforce_mandate
+        WHERE process_id = ? AND (branch_id <=> ?) AND role_group = ? AND active_status = 1 LIMIT 1`,
+      [processId, effectiveBranchId, roleGroup],
+    );
+    if (existing[0]) {
+      return res.status(409).json({
+        error: `This process already has an active mandate (${existing[0].mandated_hc} HC). Update that row instead of adding another.`,
+        mandateId: existing[0].id,
+      });
+    }
     capacityCache.clear();
 
     const record = await workforceMandateService.upsertMandate(
       {
         processId,
-        branchId,
+        branchId: effectiveBranchId ?? undefined,
         roleGroup,
         hcType,
-        mandatedHc: Number(mandatedHc),
+        mandatedHc: hc,
         bufferPct: Number(bufferPct ?? 10),
         shrinkagePct: Number(shrinkagePct ?? 15),
         attritionBufferPct: Number(attritionBufferPct ?? 5),
         trainingBufferPct: Number(trainingBufferPct ?? 5),
         effectiveFrom,
         effectiveTo,
+        reason: reasonText,
       },
       req.authUser!.id,
     );
+
+    // Push the process total to the P&L revenue rule / monthly plan / cost centre.
+    void sumWfmMandate(processId).then((total) => {
+      if (total !== null) syncProcessSeatsSafe({ processId, seats: total, source: "wfm_mandate", actorId: req.authUser!.id });
+    }).catch(() => undefined);
 
     return res.json({ data: record });
   }),
@@ -255,6 +284,11 @@ router.patch(
     );
 
     capacityCache.clear();
+    if (next.mandated_hc !== undefined && Number(before.mandated_hc) !== next.mandated_hc) {
+      void sumWfmMandate(String(before.process_id)).then((total) => {
+        if (total !== null) syncProcessSeatsSafe({ processId: String(before.process_id), seats: total, source: "wfm_mandate", actorId: req.authUser!.id });
+      }).catch(() => undefined);
+    }
     await logSensitiveAction({
       actor_user_id: req.authUser!.id,
       action_type: "WORKFORCE_MANDATE_UPDATED",
@@ -382,6 +416,9 @@ router.get(
     // Designation-based audience that no existing role can express - see migration 1689.
     "capacity_viewer",
   ),
+  // Owner ruling 2026-10-01: branchId may only narrow; non-org-wide callers are pinned to their branch.
+  // The cache key below includes the (possibly injected) branchId, so users never share a scoped payload.
+  branchScopeGuard(),
   h(async (req: AuthenticatedRequest & Request, res: Response) => {
     const { branchId } = req.query as { branchId?: string };
     const cacheKey = branchId ?? "__all__";

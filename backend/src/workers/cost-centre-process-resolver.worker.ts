@@ -7,10 +7,8 @@ import {
 import { resolveCostCentreProcesses } from "../modules/process-pnl/cost-centre-process-resolver.service.js";
 import { bpoPnlService } from "../modules/process-pnl/bpo-pnl.service.js";
 import { processPnlService } from "../modules/process-pnl/process-pnl.service.js";
-import {
-  backfillProcessMasterForOrphanedCostCentres,
-  syncProcessActiveStatusWithCostCentres,
-} from "../shared/cost-centre-sync.js";
+import { ensureProcessDashboardConfig } from "../modules/process-dashboard/pd.config.service.js";
+import { backfillProcessMasterForOrphanedCostCentres, syncProcessActiveStatusWithCostCentres } from "../shared/cost-centre-sync.js";
 
 /**
  * Keeps cost_centre_master.process_id self-populating.
@@ -41,6 +39,8 @@ async function cycle(): Promise<void> {
       const { resolved, unresolved, excludedCount } =
         await resolveCostCentreProcesses({ apply: true });
       if (resolved.length > 0) {
+        // Every newly attributed process gets its (unconfigured) Process Dashboard row; ensureProcessDashboardConfig never throws.
+        for (const pid of new Set(resolved.map((r) => r.matchedProcessId).filter((x): x is string => !!x))) await ensureProcessDashboardConfig(pid);
         processPnlService.invalidateCaches();
         bpoPnlService.invalidateCaches();
       }

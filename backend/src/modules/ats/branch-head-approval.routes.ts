@@ -124,8 +124,24 @@ branchHeadApprovalRouter.post(
         message: getErrorMessage(error),
       });
     }
-  }),
-);
+
+    if (!['approved', 'rejected'].includes(input.approval_status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'approval_status must be approved or rejected',
+      });
+    }
+
+    const result = await processBranchHeadApproval(input);
+
+    return res.json(result);
+  } catch (error: unknown) {
+    return res.status((error as { statusCode?: number }).statusCode ?? 500).json({
+      success: false,
+      message: getErrorMessage(error),
+    });
+  }
+}));
 
 // ── 3. Get approval history for a candidate ───────────────────────────────────
 branchHeadApprovalRouter.get(
@@ -141,18 +157,17 @@ branchHeadApprovalRouter.get(
       );
       const history = await getApprovalHistory(candidateId);
 
-      return res.json({
-        success: true,
-        data: history,
-      });
-    } catch (error: unknown) {
-      return res.status(500).json({
-        success: false,
-        message: getErrorMessage(error),
-      });
-    }
-  }),
-);
+    return res.json({
+      success: true,
+      data: history,
+    });
+  } catch (error: unknown) {
+    return res.status((error as { statusCode?: number }).statusCode ?? 500).json({
+      success: false,
+      message: getErrorMessage(error),
+    });
+  }
+}));
 
 // ── 4. Get branch head statistics ─────────────────────────────────────────────
 branchHeadApprovalRouter.get(

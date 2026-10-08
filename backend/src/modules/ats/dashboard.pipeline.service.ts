@@ -1,32 +1,10 @@
-import type { RowDataPacket } from "mysql2/promise";
-import { db } from "../../db/mysql.js";
-import { createSwrCache } from "./dashboard.cache.js";
-import {
-  BRANCH_EXPR,
-  JOINED,
-  LEAD,
-  OFFERED,
-  num,
-  pct,
-  q,
-  safe,
-} from "./dashboard.overview.service.js";
-import { getJoinedInfo, joinedIdSql } from "./dashboard.joined.js";
-import {
-  branchDisplay,
-  branchFilter,
-  canonicalSourceSql,
-  processDisplay,
-  rawValues,
-  recruiterNamer,
-  reportingScope,
-  sourceCode,
-  sourceDisplay,
-} from "./dashboard.scope.js";
-import {
-  bucketEducation,
-  bucketExperience,
-} from "./dashboard.insights.service.js";
+import type { RowDataPacket } from 'mysql2/promise';
+import { db } from '../../db/mysql.js';
+import { createSwrCache } from './dashboard.cache.js';
+import { BRANCH_EXPR, JOINED, LEAD, OFFERED, num, pct, q, safe } from './dashboard.overview.service.js';
+import { getJoinedInfo, joinedIdSql } from './dashboard.joined.js';
+import { branchDisplay, branchFilter, canonicalSourceSql, recruiterNameSql, recruiterLabelSql, sourceValueSql, legacyImportSql, refreshImportTag, processDisplay, rawValues, recruiterNamer, reportingScope, sourceCode, sourceDisplay } from './dashboard.scope.js';
+import { bucketEducation, bucketExperience } from './dashboard.insights.service.js';
 
 /** Slim, server-paged candidate list + drilldown for the ATS pipeline dashboard. Never SELECT * on this table. */
 
@@ -57,25 +35,10 @@ export interface PipelineFilters {
   scope?: { sql: string; params: unknown[] };
 }
 
-const HOLD = ["Hold", "Client Round - Pending"];
-const OPEN_STATUSES = [
-  "Waiting",
-  "Hold",
-  "Client Round - Pending",
-  "profile_submitted",
-  "hr_approved",
-  "Pending",
-  "active",
-  "hr_pushback",
-];
-const IDLE: Record<string, [number, number]> = {
-  "0-1d": [0, 1],
-  "2-3d": [2, 3],
-  "4-7d": [4, 7],
-  "8-14d": [8, 14],
-  "15d+": [15, 100000],
-};
-const inSql = (xs: string[]) => xs.map(() => "?").join(",");
+const HOLD = ['Hold', 'Client Round - Pending'];
+export const OPEN_STATUSES = ['Waiting', 'Hold', 'Client Round - Pending', 'profile_submitted', 'hr_approved', 'Pending', 'active', 'hr_pushback'];
+const IDLE: Record<string, [number, number]> = { '0-1d': [0, 1], '2-3d': [2, 3], '4-7d': [4, 7], '8-14d': [8, 14], '15d+': [15, 100000] };
+const inSql = (xs: string[]) => xs.map(() => '?').join(',');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const cache = createSwrCache<Record<string, unknown>>({
@@ -83,15 +46,8 @@ const cache = createSwrCache<Record<string, unknown>>({
   staleMs: 5 * 60_000,
 });
 
-function where(
-  f: PipelineFilters,
-  opts: {
-    skipStatus?: boolean;
-    raw?: Awaited<ReturnType<typeof rawValues>>;
-    joinedIds?: readonly string[];
-  } = {},
-) {
-  const c = ["c.active_status = 1", reportingScope("c")];
+export function where(f: PipelineFilters, opts: { skipStatus?: boolean; raw?: Awaited<ReturnType<typeof rawValues>>; joinedIds?: readonly string[] } = {}) {
+  const c = ['c.active_status = 1', reportingScope('c')];
   const p: unknown[] = [];
   if (!f.includeLeads) {
     c.push("c.status <> ?");
@@ -138,27 +94,14 @@ function where(
     );
     p.push(s, s, s, s);
   }
-  if (f.source) {
-    c.push(`${canonicalSourceSql("c.sourcing_channel")} = ?`);
-    p.push(sourceCode(f.source));
-  }
+  if (f.source) { c.push(`${canonicalSourceSql(sourceValueSql('c'))} = ?`); p.push(sourceCode(f.source)); }
   if (f.recruiter && opts.raw) {
-    if (f.recruiter === "Unassigned")
-      c.push("(c.recruiter_name IS NULL OR c.recruiter_name = '')");
+    if (f.recruiter === 'Unassigned') c.push(`${recruiterNameSql('c')} IS NULL AND NOT ${legacyImportSql('c')}`);
+    else if (f.recruiter === 'Legacy import') c.push(`${recruiterNameSql('c')} IS NULL AND ${legacyImportSql('c')}`);
     else {
       const namer = recruiterNamer(opts.raw.recruiter);
       const vals = opts.raw.recruiter.filter((v) => namer(v) === f.recruiter);
-      if (vals.length) {
-        c.push(`c.recruiter_name IN (${inSql(vals)})`);
-        p.push(...vals);
-      } else c.push("1=0");
-    }
-  }
-  if (f.gender) {
-    if (f.gender === "Unknown") c.push("c.gender IS NULL");
-    else {
-      c.push("c.gender = ?");
-      p.push(f.gender);
+      if (vals.length) { c.push(`${recruiterNameSql('c')} IN (${inSql(vals)})`); p.push(...vals); } else c.push('1=0');
     }
   }
   if (f.outcome) {
@@ -264,37 +207,20 @@ function where(
 }
 
 async function compute(f: PipelineFilters) {
-  const raw =
-    f.experience || f.education || f.process || f.recruiter
-      ? await rawValues()
-      : undefined;
-  const joinedIds =
-    f.outcome === "joined" ? (await getJoinedInfo()).ids : undefined;
-  const w = where(f, { raw, joinedIds }),
-    wf = where(f, { skipStatus: true, raw, joinedIds });
-  const limit = Math.min(Math.max(f.limit, 1), 100),
-    offset = (Math.max(f.page, 1) - 1) * limit;
+  await refreshImportTag();
+  const raw = f.experience || f.education || f.process || f.recruiter ? await rawValues() : undefined;
+  const joinedIds = f.outcome === 'joined' ? (await getJoinedInfo()).ids : undefined;
+  const w = where(f, { raw, joinedIds }), wf = where(f, { skipStatus: true, raw, joinedIds });
+  const limit = Math.min(Math.max(f.limit, 1), 100), offset = (Math.max(f.page, 1) - 1) * limit;
   const [rows, total, facets] = await Promise.all([
     q<RowDataPacket>(
       `SELECT c.id, c.candidate_code, c.q_token, c.full_name, c.mobile, c.email, c.status, c.current_stage AS stage,
-              ${BRANCH_EXPR.replace(/\b(branch_display_name|applied_for_branch)\b/g, "c.$1")} AS branch, c.applied_for_process AS process,
-              c.sourcing_channel AS source, c.recruiter_name AS recruiter, c.experience, c.education, c.created_at, c.updated_at
-       FROM ats_candidate c WHERE ${w.sql} ORDER BY c.created_at DESC LIMIT ${limit} OFFSET ${offset}`,
-      w.params,
-    ),
-    q<{ n: number }>(
-      `SELECT COUNT(*) n FROM ats_candidate c WHERE ${w.sql}`,
-      w.params,
-    ),
-    safe(
-      "facets",
-      () =>
-        q<{ status: string; stage: string; n: number }>(
-          `SELECT c.status, c.current_stage AS stage, COUNT(*) n FROM ats_candidate c WHERE ${wf.sql} GROUP BY c.status, c.current_stage`,
-          wf.params,
-        ),
-      [],
-    ),
+              ${BRANCH_EXPR.replace(/\b(branch_display_name|applied_for_branch)\b/g, 'c.$1')} AS branch, c.applied_for_process AS process,
+              ${sourceValueSql('c')} AS source, ${recruiterLabelSql('c')} AS recruiter, c.experience, c.education, c.created_at, c.updated_at
+       FROM ats_candidate c WHERE ${w.sql} ORDER BY c.created_at DESC LIMIT ${limit} OFFSET ${offset}`, w.params),
+    q<{ n: number }>(`SELECT COUNT(*) n FROM ats_candidate c WHERE ${w.sql}`, w.params),
+    safe('facets', () => q<{ status: string; stage: string; n: number }>(
+      `SELECT c.status, c.current_stage AS stage, COUNT(*) n FROM ats_candidate c WHERE ${wf.sql} GROUP BY c.status, c.current_stage`, wf.params), []),
   ]);
   const byStatus = new Map<string, number>(),
     byStage = new Map<string, number>();
@@ -350,19 +276,15 @@ interface DrillRow {
 }
 
 async function computeDrill(f: PipelineFilters) {
-  const raw =
-    f.experience || f.education || f.process || f.recruiter
-      ? await rawValues()
-      : undefined;
+  await refreshImportTag();
+  const raw = f.experience || f.education || f.process || f.recruiter ? await rawValues() : undefined;
   const joinedIds = (await getJoinedInfo()).ids;
   const jsql = joinedIdSql("c.id", joinedIds);
   const w = where(f, { raw, joinedIds });
   const rows = await q<DrillRow>(
-    `SELECT DATE_FORMAT(c.created_at,'%Y-%m-%d') d, ${BRANCH_EXPR.replace(/\b(branch_display_name|applied_for_branch)\b/g, "c.$1")} branch, c.applied_for_process process,
-            c.sourcing_channel source, c.recruiter_name recruiter, c.status, c.current_stage stage, DAYOFWEEK(c.created_at) dow, (${jsql.sql}) jn, COUNT(*) n
-     FROM ats_candidate c WHERE ${w.sql} GROUP BY d, branch, process, source, recruiter, status, stage, dow, jn`,
-    [...jsql.params, ...w.params],
-  );
+    `SELECT DATE_FORMAT(c.created_at,'%Y-%m-%d') d, ${BRANCH_EXPR.replace(/\b(branch_display_name|applied_for_branch)\b/g, 'c.$1')} branch, c.applied_for_process process,
+            ${sourceValueSql('c')} source, ${recruiterLabelSql('c')} recruiter, c.status, c.current_stage stage, DAYOFWEEK(c.created_at) dow, (${jsql.sql}) jn, COUNT(*) n
+     FROM ats_candidate c WHERE ${w.sql} GROUP BY d, branch, process, source, recruiter, status, stage, dow, jn`, [...jsql.params, ...w.params]);
 
   const drillNamer = recruiterNamer(rows.map((r) => r.recruiter ?? ""));
   const selected = (r: DrillRow) =>
@@ -381,26 +303,14 @@ async function computeDrill(f: PipelineFilters) {
     { total: number; selected: number; rejected: number }
   >();
   const dow = new Map<number, { total: number; selected: number }>();
-  const dims: Record<
-    string,
-    Map<string, { total: number; selected: number; rejected: number }>
-  > = {
-    branch: new Map(),
-    process: new Map(),
-    source: new Map(),
-    recruiter: new Map(),
-    stage: new Map(),
-    status: new Map(),
-  };
-  const bump = (
-    m: Map<string, { total: number; selected: number; rejected: number }>,
-    k: string,
-    r: DrillRow,
-  ) => {
-    const x = m.get(k) ?? { total: 0, selected: 0, rejected: 0 };
-    x.total += num(r.n);
-    if (selected(r)) x.selected += num(r.n);
-    if (r.status === "Rejected") x.rejected += num(r.n);
+  type Split = { total: number; selected: number; rejected: number; noShow: number; hold: number; waiting: number; joined: number };
+  const dims: Record<string, Map<string, Split>> = { branch: new Map(), process: new Map(), source: new Map(), recruiter: new Map(), stage: new Map(), status: new Map() };
+  const bump = (m: Map<string, Split>, k: string, r: DrillRow) => {
+    const x = m.get(k) ?? { total: 0, selected: 0, rejected: 0, noShow: 0, hold: 0, waiting: 0, joined: 0 };
+    const n = num(r.n);
+    x.total += n; if (selected(r)) x.selected += n; if (r.status === 'Rejected') x.rejected += n;
+    if (r.status === 'No Show') x.noShow += n; if (HOLD.includes(r.status)) x.hold += n; if (r.status === 'Waiting') x.waiting += n;
+    if (r.jn || JOINED.includes(r.stage)) x.joined += n;
     m.set(k, x);
   };
   for (const r of rows) {
@@ -428,36 +338,24 @@ async function computeDrill(f: PipelineFilters) {
     bump(dims.stage, r.stage, r);
     bump(dims.status, r.status, r);
   }
-  const top = (
-    m: Map<string, { total: number; selected: number; rejected: number }>,
-  ) =>
-    [...m.entries()]
-      .map(([name, x]) => ({ name, ...x, selRate: pct(x.selected, x.total) }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 10);
+  const top = (m: Map<string, Split>) =>
+    [...m.entries()].map(([name, x]) => ({
+      name, ...x, selRate: pct(x.selected, x.total), rejRate: pct(x.rejected, x.total), noShowRate: pct(x.noShow, x.total), joinRate: pct(x.joined, x.selected),
+    })).sort((a, b) => b.total - a.total).slice(0, 25);
+  const hourDow = await safe('hourDow', () => q<{ dow: number; hour: number; total: number; selected: number }>(
+    `SELECT DAYOFWEEK(c.created_at) dow, HOUR(c.created_at) hour, COUNT(*) total,
+            SUM(c.status = 'Selected' OR c.current_stage IN (${inSql(OFFERED)})) selected
+     FROM ats_candidate c WHERE ${w.sql} GROUP BY dow, hour`, [...OFFERED, ...w.params]), []);
   const days = [...day.entries()].sort(([a], [b]) => a.localeCompare(b));
   // Long slices are shown by week so the chart stays readable.
   const bucketed =
     days.length > 75 ? weekly(days) : days.map(([date, x]) => ({ date, ...x }));
   return {
-    total: t.total,
-    kpis: {
-      ...t,
-      selRate: pct(t.selected, t.total),
-      rejRate: pct(t.rejected, t.total),
-      noShowRate: pct(t.noShow, t.total),
-      joinRate: pct(t.joined, t.selected),
-    },
-    trend: bucketed,
-    weekly: days.length > 75,
-    weekday: [1, 2, 3, 4, 5, 6, 7].map((d) => ({
-      dow: d,
-      total: dow.get(d)?.total ?? 0,
-      selRate: pct(dow.get(d)?.selected ?? 0, dow.get(d)?.total ?? 0),
-    })),
-    splits: Object.fromEntries(
-      Object.entries(dims).map(([k, m]) => [k, top(m)]),
-    ),
+    total: t.total, kpis: { ...t, selRate: pct(t.selected, t.total), rejRate: pct(t.rejected, t.total), noShowRate: pct(t.noShow, t.total), joinRate: pct(t.joined, t.selected) },
+    trend: bucketed, weekly: days.length > 75,
+    weekday: [1, 2, 3, 4, 5, 6, 7].map((d) => ({ dow: d, total: dow.get(d)?.total ?? 0, selRate: pct(dow.get(d)?.selected ?? 0, dow.get(d)?.total ?? 0) })),
+    splits: Object.fromEntries(Object.entries(dims).map(([k, m]) => [k, top(m)])),
+    hourDow: hourDow.map((r) => ({ dow: num(r.dow), hour: num(r.hour), total: num(r.total), selected: num(r.selected) })),
   };
 }
 
@@ -489,11 +387,11 @@ export const getDrill = (f: PipelineFilters) =>
 
 /** Everything the drilldown drawer needs, in one round trip. */
 export async function getCandidateJourney(id: string) {
-  const one = async <T = RowDataPacket>(sql: string) =>
-    (await safe("journey", () => q<T>(sql, [id]), []))[0] ?? null;
+  await refreshImportTag();
+  const one = async <T = RowDataPacket>(sql: string) => (await safe('journey', () => q<T>(sql, [id]), []))[0] ?? null;
   const [cand, logs, sub, offer, bgv, token] = await Promise.all([
     one(`SELECT id, candidate_code, q_token, full_name, mobile, email, gender, status, current_stage AS stage, applied_for_process AS process,
-                ${BRANCH_EXPR} AS branch, sourcing_channel AS source, recruiter_name AS recruiter, experience, education, created_at, updated_at
+                ${BRANCH_EXPR} AS branch, ${sourceValueSql()} AS source, ${recruiterLabelSql()} AS recruiter, experience, education, created_at, updated_at
          FROM ats_candidate WHERE id = ?`),
     safe(
       "logs",

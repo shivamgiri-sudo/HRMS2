@@ -4,9 +4,10 @@
  * Purpose: Express routes for formula-based predictive attrition risk scoring
  */
 
-import { Router } from "express";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
+import { Router } from 'express';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { attachEmployeeScope } from '../dashboards/branch-scope-guards.js';
+import { requireRole } from '../../middleware/requireRole.js';
 import {
   getAttritionRiskSummary,
   getAtRiskEmployees,
@@ -24,16 +25,18 @@ const router = Router();
 router.get(
   "/summary",
   requireAuth,
-  requireRole("hr", "wfm", "manager", "admin", "super_admin"),
-  getAttritionRiskSummary,
+  requireRole('hr', 'wfm', 'manager', 'admin', 'super_admin'),
+  attachEmployeeScope('e'),
+  getAttritionRiskSummary
 );
 
 // At-risk employee list — optional query params: branchId, processId, tier, limit
 router.get(
   "/at-risk",
   requireAuth,
-  requireRole("hr", "wfm", "manager", "admin", "super_admin"),
-  getAtRiskEmployees,
+  requireRole('hr', 'wfm', 'manager', 'admin', 'super_admin'),
+  attachEmployeeScope('e'),
+  getAtRiskEmployees
 );
 
 // Full score breakdown for a single employee — :employeeId is the numeric DB id

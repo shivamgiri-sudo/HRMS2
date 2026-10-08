@@ -23,6 +23,11 @@ vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole: () => (_req: any, _res: any, next: any) => next(),
 }));
 
+vi.mock("../branch-scope.js", () => {
+  const pass = () => (_q: any, _s: any, next: any) => next();
+  return { branchScopeGuard: pass, rosterOwnerGuard: pass, employeeFieldGuard: pass };
+});
+
 import { rosterBuilderRouter } from "../roster-builder.routes.js";
 
 function app() {

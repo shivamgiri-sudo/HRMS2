@@ -19,6 +19,13 @@ const { hasRole, hasProcessScope } = vi.hoisted(() => ({
   hasProcessScope: vi.fn(),
 }));
 vi.mock("../../../shared/accessGuard.js", () => ({ hasRole, hasProcessScope }));
+// The org-wide test is scopeAccess.hasAnyRole (accessGuard.hasRole is true for admin for ANY role, so it cannot be the
+// org-wide test - owner ruling 2026-10-01). These tests keep driving "privileged" through the same hasRole mock.
+vi.mock("../../../shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  hasAnyRole: (userId: string, ...roles: string[]) => hasRole(userId, ...roles),
+}));
+
 
 const {
   approveWeekOffPreference,
@@ -51,6 +58,28 @@ vi.mock("../roster-master.service.js", () => ({
     listWeekOffPreferences,
   },
 }));
+
+
+// Branch-scoping helpers delegate to the same hasRole / hasProcessScope / execute mocks these tests drive.
+vi.mock("../../../shared/enterpriseScope.js", () => ({
+  resolveUserBusinessScope: async (u: any) => ({ userId: typeof u === "string" ? u : u.id, roles: [], assignments: [] }),
+}));
+vi.mock("../../wfm/branch-scope.js", async () => {
+  const accessGuard = await import("../../../shared/accessGuard.js");
+  const { db } = await import("../../../db/mysql.js");
+  return {
+    canAccessProcess: async (scope: any, pid: string, b: any) => accessGuard.hasProcessScope(scope.userId, pid, b, "wfm", "process_manager"),
+    userCanAccessProcess: async (u: string, pid: string, b: any) => accessGuard.hasProcessScope(u, pid, b, "wfm", "process_manager"),
+    canAccessEmployee: async () => false,
+    scopedProcessIdsForUser: async (u: string) => {
+      if (await accessGuard.hasRole(u, "admin", "hr")) return "unrestricted";
+      const [rows] = await (db as any).execute("SELECT scope_type, process_id FROM user_assignment_scope", [u]);
+      const scopes = rows as { scope_type: string; process_id: string | null }[];
+      if (scopes.some((s) => s.scope_type === "all")) return "unrestricted";
+      return scopes.map((s) => s.process_id).filter((id): id is string => !!id);
+    },
+  };
+});
 
 import { rosterMasterController } from "../roster-master.controller.js";
 

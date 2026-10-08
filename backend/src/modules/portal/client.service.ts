@@ -67,23 +67,77 @@ export async function listClients(filters?: {
   subscription_status?: string;
   search?: string;
 }): Promise<Client[]> {
-  let query = "SELECT * FROM client_master WHERE 1=1";
+  // Counts come from the cost-centre / process links so the Client Master page shows what each
+  // client actually owns without the user reconciling it from another screen.
+  let query = `SELECT cl.*,
+      (SELECT COUNT(*) FROM cost_centre_master cc WHERE cc.client_id = cl.id AND cc.status = 'active' AND cc.active_status = 1) AS active_cost_centre_count,
+      (SELECT COUNT(*) FROM process_master pm WHERE pm.client_id = cl.id AND pm.active_status = 1) AS active_process_count
+    FROM client_master cl WHERE 1=1`;
   const params: any[] = [];
 
   if (filters?.active_only) {
-    query += " AND active_status = 1";
+    query += " AND cl.active_status = 1";
   }
 
   if (filters?.search) {
-    query += " AND (client_name LIKE ? OR client_code LIKE ?)";
+    query += " AND (cl.client_name LIKE ? OR cl.client_code LIKE ? OR cl.legal_entity_name LIKE ?)";
     const searchPattern = `%${filters.search}%`;
-    params.push(searchPattern, searchPattern);
+    params.push(searchPattern, searchPattern, searchPattern);
   }
 
-  query += " ORDER BY client_name";
+  query += " ORDER BY cl.client_name";
 
   const [rows] = await db.execute<RowDataPacket[]>(query, params);
   return rows as Client[];
+}
+
+export interface ClientHierarchy {
+  processes: Array<{
+    process_id: string | null;
+    process_name: string;
+    process_code: string | null;
+    cost_centres: Array<{
+      id: string; cost_centre_code: string; status: string; active_status: number;
+      cc_category: string | null; branch_name: string | null; billing_client_name: string | null;
+    }>;
+  }>;
+}
+
+/**
+ * Client -> Process -> Cost Centre tree for one client. Processes come from cost_centre_master.process_id
+ * (and process_master.client_id for processes that have no cost centre yet). Cost centres with no
+ * process appear under a null process so nothing linked to the client is hidden.
+ */
+export async function getClientHierarchy(clientId: string): Promise<ClientHierarchy> {
+  const [ccs] = await db.execute<RowDataPacket[]>(
+    `SELECT cc.id, cc.cost_centre_code, cc.status, cc.active_status, cc.cc_category, cc.billing_client_name,
+            cc.process_id, b.branch_name
+       FROM cost_centre_master cc
+       LEFT JOIN branch_master b ON b.id = cc.branch_id
+      WHERE cc.client_id = ?
+      ORDER BY cc.active_status DESC, cc.cost_centre_code`,
+    [clientId]
+  );
+  const [pms] = await db.execute<RowDataPacket[]>(
+    `SELECT id, process_name, process_code FROM process_master WHERE client_id = ? ORDER BY process_name`,
+    [clientId]
+  );
+  const byProcess = new Map<string | null, ClientHierarchy["processes"][number]>();
+  for (const p of pms) {
+    byProcess.set(String(p.id), { process_id: String(p.id), process_name: p.process_name, process_code: p.process_code, cost_centres: [] });
+  }
+  for (const cc of ccs) {
+    const key = cc.process_id ? String(cc.process_id) : null;
+    if (!byProcess.has(key)) {
+      // A cost centre linked to a process that belongs to another client (or none): still show it.
+      byProcess.set(key, { process_id: key, process_name: key ? "(process linked to another client)" : "(no process linked)", process_code: null, cost_centres: [] });
+    }
+    byProcess.get(key)!.cost_centres.push({
+      id: cc.id, cost_centre_code: cc.cost_centre_code, status: cc.status, active_status: Number(cc.active_status),
+      cc_category: cc.cc_category, branch_name: cc.branch_name, billing_client_name: cc.billing_client_name,
+    });
+  }
+  return { processes: [...byProcess.values()] };
 }
 
 export async function getClient(id: string): Promise<Client | null> {

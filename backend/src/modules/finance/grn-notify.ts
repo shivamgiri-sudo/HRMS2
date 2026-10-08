@@ -1,3 +1,5 @@
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 
 /**
@@ -73,5 +75,48 @@ export async function resolveGrnNotifications(grnId: string) {
     });
   } catch {
     // Non-fatal.
+  }
+}
+
+/**
+ * A Head Office GRN reached final approval and part of its cost landed on other branches: tell each
+ * receiving branch's Branch Head what they now carry, on which Back Office cost centre. An alert,
+ * not an approval step (owner ruling 2026-10-07: Head Office's chain approves; branches are told).
+ * One bell item per Branch Head per GRN (the inbox de-duplicates on user + type + entity + url).
+ * Non-fatal, like notifyGrnStage.
+ */
+export async function notifyBranchShares(grnId: string, grnNumber: string | null, vendorName: string | null) {
+  try {
+    const { inboxService } = await import("../inbox/inbox.service.js");
+    const [rows] = (await db.execute(
+      `SELECT a.branch_id, bm.branch_name,
+              SUM(a.amount_with_tax) AS amount,
+              GROUP_CONCAT(DISTINCT ccm.cost_centre_code ORDER BY ccm.cost_centre_code SEPARATOR ', ') AS cost_centres
+         FROM grn_cost_allocation a
+         JOIN grn_request g ON g.id = a.grn_request_id
+         LEFT JOIN branch_master bm ON bm.id = a.branch_id
+         LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
+        WHERE a.grn_request_id = ? AND a.branch_id <> g.branch_id
+        GROUP BY a.branch_id, bm.branch_name`,
+      [grnId],
+    )) as [RowDataPacket[], unknown];
+    for (const row of rows) {
+      const userIds = await resolveRoleHolderUserIds("branch_head", String(row.branch_id));
+      const amount = `₹${Number(row.amount).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+      for (const userId of userIds) {
+        await inboxService.createItem({
+          user_id: userId,
+          type: "grn_branch_share",
+          title: `Head Office bill charged to ${row.branch_name ?? "your branch"} — ${amount}`,
+          description: `GRN ${grnNumber ?? ""}${vendorName ? ` (${vendorName})` : ""}: ${amount} landed on ${row.cost_centres ?? "your Back Office cost centre"}. For information — Head Office's approval chain already approved it.`,
+          entity_type: "grn_request",
+          entity_id: grnId,
+          action_url: "/finance/grn",
+          priority: "medium",
+        });
+      }
+    }
+  } catch {
+    // Non-fatal — a notification failure must not block the GRN transition.
   }
 }

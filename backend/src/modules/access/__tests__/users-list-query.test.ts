@@ -33,7 +33,9 @@ describe("GET /api/access/users", () => {
   it("pages first, aggregates roles per page row, and counts without the roles join", async () => {
     execute.mockReset();
     execute.mockImplementation(async (sql: string) =>
-      /COUNT\(\*\) AS total/.test(sql)
+      /SELECT role_key FROM user_roles/.test(sql) ? [[{ role_key: "admin" }], []] // caller is org-wide: no branch filter
+      : /FROM user_assignment_scope/.test(sql) || /FROM employees\s+WHERE user_id/.test(sql) ? [[], []]
+      : /COUNT\(\*\) AS total/.test(sql)
         ? [[{ total: 7 }], []]
         : [
             [
@@ -55,12 +57,8 @@ describe("GET /api/access/users", () => {
     expect(res.body.total).toBe(7);
     expect(res.body.data[0].roles).toEqual(["hr", "employee"]);
 
-    const rowsSql = String(
-      execute.mock.calls.find((c) => !/COUNT\(\*\) AS total/.test(c[0]))![0],
-    );
-    const countSql = String(
-      execute.mock.calls.find((c) => /COUNT\(\*\) AS total/.test(c[0]))![0],
-    );
+    const rowsSql = String(execute.mock.calls.find((c) => /AS combined/.test(c[0]) && !/COUNT\(\*\) AS total/.test(c[0]))![0]);
+    const countSql = String(execute.mock.calls.find((c) => /COUNT\(\*\) AS total/.test(c[0]))![0]);
     expect(rowsSql).toMatch(/LIMIT 10 OFFSET 0\s*\)\s*AS combined/);
     expect(rowsSql).toMatch(/\(SELECT GROUP_CONCAT\(DISTINCT ur\.role_key/);
     expect(rowsSql).not.toMatch(/GROUP BY au\.id/);

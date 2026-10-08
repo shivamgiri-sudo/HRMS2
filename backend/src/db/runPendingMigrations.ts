@@ -1250,9 +1250,91 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1920_satya_retail_process.sql", // Registered 2026-09-30, at the owner's request. Adds one active "Satya Retail" process (code SATYA_RETAIL) when no process with that code or a "satya" name exists, so its existing dashboards' data can be selected on Process Operations and shown by Business datapoints. Additive and idempotent: one guarded INSERT, no ALTER, no DELETE.
   "migrations/1930_gnc_apr_kpi_source_own_table.sql", // Registered 2026-09-30, at the owner's request. Repoints the GNC_APR KPI data source from the stale db_masmis.gnc_apr mirror (no pause_seconds column) to our own gnc_apr_daily_actual. Data-only UPDATE, idempotent.
   "migrations/1940_bla_bli_blu_abandon_upload_template.sql", // Registered 2026-09-30, at the owner's request. Bulk Upload Hub template for the BLA/BLI/BLU abandon-cart Received Data sheet (target bla_dash_received). Template row only, idempotent.
+  "migrations/1950_analytics_catalogue.sql", // Registered 2026-09-30, at the owner's request. Analytics catalogue (datasets + fields) for Dashboard Studio / KPI Studio v2. New tables + idempotent seeds only.
+  "migrations/1951_analytics_dashboards.sql", // Registered 2026-09-30, at the owner's request. Dashboard Studio storage: analytics_dashboard, analytics_widget, analytics_dashboard_share. New tables only, no seeds, no ALTER.
+  "migrations/1960_upload_batch_retention.sql", // Registered 2026-09-30. upload_batch_snapshot + upload_batch_retention_policy (new tables only, no ALTER) for the upload_batch_row retention worker.
+  "migrations/1961_bbb_upload_rules.sql", // Registered 2026-09-30, at the owner's request (Today_Only_Data_Upload_Logic_Requirement). bla_dash_received gets soft-delete + source_data_type columns and lookup indexes; same-day duplicate numbers are trashed; adds the live-rows view and the sales history table. Idempotent, no unique index (enforced in code).
+  "migrations/1952_process_inbound_config.sql", // Registered 2026-09-30. process_inbound_config: dialer cdr_in_* source, pattern, campaigns and mandate of a support/inbound process so the inbound dashboard is data-driven. New table + INSERT IGNORE seeds of the static inbound projects, each only where a process_master row has the exact matching process_code.
+  "migrations/1964_bbb_received_summary.sql", // Registered 2026-09-30. Read model for BBB Received Data: bla_dash_received_daily (per date + LOB counts) and bbb_upload_batch (one row per uploaded file). New tables only, no data statements; the app backfills in the background after startup.
   "migrations/1921_capacity_mandate_editors.sql", // Registered 2026-09-30. Grants WFM_CAPACITY_DASHBOARD view to finance_head, finance, branch_admin, operations_manager. Additive INSERT IGNORE.
   "1931_bank_exception_email_template.sql", // Registered 2026-09-30. Adds branded HTML email template BANK_EXCEPTION_INVALID_ASSIGNED to communication_template and wires it into the bank_exception_invalid_assigned event_config (template_key was NULL since 1756, causing the fallback "no template configured" footer on every bank-exception notification).
-  "migrations/1932_satya_retracker_raw.sql", // Registered 2026-09-30. Creates db_masmis.satya_retracker_raw staging table (44-column daily field-sales dump) for the Satya Retail Retracker dashboard. Registers SATYA_RETRACKER_MASMIS upload type. Additive CREATE TABLE IF NOT EXISTS + INSERT IGNORE.
+  "1932_sbi_card_collections.sql", // Registered 2026-09-30. SBI Card Collections process (SBI_CARD): process_master row + sbi_card_dialer_mis / agent_mis / account_file / downtime / pen_estimation tables (upsert on natural keys) and their five SBI_CARD_* upload templates. Additive: new tables and template rows only.
+  "1941_process_dashboard_config.sql", // Registered 2026-09-30. Config-driven Process Dashboard: process_dashboard_config (APR table + column_map per process, category profile), page codes PROCESS_DASHBOARD / PROCESS_DASHBOARD_ADMIN with role access, and a DISABLED collections config row for SBI_CARD. Additive, idempotent; no backfill of existing processes.
+  "1962_budget_topup_cancel.sql", // Registered 2026-09-30. Lets the raiser withdraw a budget top-up request: widens finance_budget_topup_request.status ENUM with 'cancelled' and adds nullable cancelled_by/cancelled_at/cancellation_reason. Amount edits (allowed only while status=submitted) need no schema. Additive, information_schema-guarded, re-runnable.
+  "1963_ats_candidate_import_batch.sql", // Registered 2026-10-03. New ats_candidate_import_tag table + tags the 32,558 rows of the 2026-06-06/08 bulk load (no creator, source or recruiter) as legacy-2026-06 so dashboards label them instead of showing blank/Unassigned. Separate table because ats_candidate is at the InnoDB row-size limit (ADD COLUMN fails under strict mode). Idempotent.
+  "1964_salary_voucher_accounts_payroll_head.sql", // Registered 2026-10-05. Grants accounts_head + payroll_head the Salary Voucher page (view+export). Idempotent.
+  "1967_salary_voucher_tally_push_log.sql", // Registered 2026-10-05. Log of salary vouchers posted to Tally over the HTTP gateway; lets the push refuse a duplicate. Idempotent.
+  "1968_tally_export_lock.sql", // Registered 2026-10-05. Locks salary-voucher / bank-voucher / GST items once pulled out for Tally so they cannot be imported twice. Idempotent.
+  "1969_payroll_entity_rule_trainees.sql", // Registered 2026-10-05. Entity rule: MGMT. TRAINEE employees (codes like 54563C) belong to MAS so the salary voucher includes them. Idempotent.
+  "1971_payroll_entity_rule_c_suffix.sql", // Registered 2026-10-05. Entity rule: numeric codes ending in C (63107C) belong to MAS so the salary voucher includes them. Idempotent.
+  "1972_tally_payment_import.sql", // Registered 2026-10-06. Tally payment import: batches + one-row-per-Tally-voucher table with a UNIQUE key so a voucher is recorded once. Idempotent.
+  "1973_grn_bill_source_unique.sql", // Registered 2026-10-06. UNIQUE key on grn_request.bill_source_id (only if no duplicates exist) so a legacy db_bill GRN cannot be imported twice. Idempotent.
+  "1990_jv_line_bank_vendor_account_types.sql", // Registered 2026-10-06. Widens journal_voucher_line.account_type to also allow bank_account and vendor (additive ENUM widen; existing rows untouched).
+  "1991_tds_engine.sql", // Registered 2026-10-06. TDS advisory engine: tds_section_master, tds_sub_head_default and tds_assessment (what should have been deducted vs what was). Additive; changes no payment.
+  "1992_grn_tally_export.sql", // Registered 2026-10-07. Daily approved-GRN export for Tally: grn_tally_export_batch (one row per file) and grn_tally_export (one row per GRN exported, UNIQUE). Additive.
+  "migrations/1970_process_dashboard_alerts.sql", // Registered 2026-09-30. Process Dashboard alerts + digests: process_dashboard_alert_rule / _alert_event / _digest. Three new tables only, idempotent, no backfill.
+  "migrations/1971_process_sales_outbound_source_config.sql", // Registered 2026-09-30. process_sales_source_config + process_outbound_source_config (order/CDR source mapping for the data-driven Sales and Outbound dashboard tabs). Additive: two new tables only, no foreign key to process_master (avoids the metadata-lock wait that broke 1952/1970 at startup). Renumbered from 1961, which was already taken.
+  "migrations/1614_two_factor_challenge_pre_auth_binding.sql", // Registered 2026-10-01. Was never scheduled, so SEC-07 (bind each 2FA OTP challenge to the exact login attempt) ran on its ER_BAD_FIELD_ERROR fallback in production. One nullable column + index on auth_two_factor_challenge (small, not hot) behind an information_schema guard; no-op where it exists.
+  "migrations/1988_retire_duplicate_role_aliases.sql", // Registered 2026-10-01, at the owner's request. Deactivates grants + catalog rows of zero-user alias roles (tl, it_admin, quality_analyst, quality, accounts, payroll_admin) whose grants are subsets of their canonical role; backup table role_page_access_retired_1988; fixes two catalog labels. No effective access change.
+  "migrations/1997_process_manager_ats_dashboard_access.sql", // Registered 2026-10-02. Grants ATS_DASHBOARD view to process_manager so they can open the scoped ATS Command Center (data stays limited to their own branch/processes by the row-scoped endpoints). Additive INSERT IGNORE.
+  "migrations/1985_sbi_merge_duplicate_process.sql", // Registered 2026-10-01, at the owner's request. Retires the duplicate "SBI Card Collections" process (never deleted) and gives the real "SBI Credit Cards" process (cost centre + staff) the code SBI_CARD, so the dashboard, uploaders and KPI metrics follow it. Guarded, idempotent, reversible, tiny tables only.
+  "migrations/1986_branch_wfm_rm_change_approvals_page_access.sql", // Registered 2026-10-01. Grants branch_wfm WFM_ROSTER (RM Change Approvals, branch-scoped by the API). INSERT IGNORE, additive.
+  "migrations/1987_branch_wfm_head_wfm_alignment_page_access.sql", // Registered 2026-10-01. Grants branch_wfm and branch_head PROVISIONING_WFM_ALIGNMENT (branch-scoped by the API). INSERT IGNORE, additive.
+  "migrations/1988_branch_wfm_payroll_branch_holiday_work_page_access.sql", // Registered 2026-10-01. PAYROLL_HOLIDAY_WORK for branch_wfm + payroll_branch (branch-scoped by the API). INSERT IGNORE, additive.
+  "migrations/1989_pendency_reminder_log.sql", // Audit + cooldown for ESI-document / bank-account / DigiLocker pendency reminder emails. Additive, IF NOT EXISTS, no FK.
+  "migrations/1990_kpi_catalogue.sql", // Registered 2026-10-01. KPI Catalogue (kpi_catalogue, _role, _conflict, rating scale) + nullable kpi_studio_definition.catalogue_id. Additive, idempotent.
+  "migrations/1991_attrition_followup_and_model_snapshot.sql", // Registered 2026-10-01. attrition_followup + attrition_model_snapshot. CREATE TABLE IF NOT EXISTS, no FKs, additive.
+  "migrations/1992_kpi_performance_page.sql", // Registered 2026-10-01. Page code KPI_PERFORMANCE for /kpi/performance (page_catalog + role_page_access). INSERT IGNORE, additive.
+  "migrations/1993_kpi_upload_feed_metrics.sql", // Registered 2026-10-02. Metric codes for the SBI collections, Bellavita chat and Clovia email feeds into kpi_daily_actual. INSERT IGNORE, additive.
+  "migrations/1994_ops_nudge_log.sql", // Registered 2026-10-02. ops_nudge_log: per-attempt log for Ops Control Tower joiner WhatsApp nudges (manual + 24h auto); drives cooldown and last-nudged/count display.
+  "migrations/1995_roster_request_decision_log_auto_rule.sql", // Registered 2026-10-02. Roster Requests hub tables: roster_request_decision_log (decision audit; written INSIDE the week-off decision transaction, so without it every hub week-off decision rolls back with ER_NO_SUCH_TABLE), roster_request_auto_rule (per-process auto-approve rules; GET/PUT /api/roster-requests/auto-rules) and roster_request_escalation (once-only SLA escalation claim). Shipped with the hub but never listed here, so it ran nowhere. CREATE TABLE IF NOT EXISTS only, utf8mb4_unicode_ci; executed against a throwaway MySQL 8.0 together with the hub's real SQL.
+  "migrations/1998_kpi_upload_feed_metrics_2.sql", // Registered 2026-10-02. Metric codes for Satya, Appreciate Wealth, Clovia chat/outbound feeds. INSERT IGNORE, additive.
+  "migrations/1999_employee_date_of_exit_index.sql", // Registered 2026-10-02. Index on employees.date_of_exit: the HR and CEO dashboards group/filter on it for attrition and headcount movement; without it the scan over ~59k wide rows took 4-26s under load. Index-only and PREPARE-guarded, so a lock timeout defers to the next boot instead of blocking startup.
+  "migrations/2000_employee_candidate_id_index.sql", // Registered 2026-10-02. Index on employees.candidate_id: the correlated EXISTS / NOT EXISTS used by recruiter and ATS code scanned ~59k wide rows per probe (Recruiter offers query ~21s). Index-only and PREPARE-guarded, so a lock timeout defers to the next boot.
+  "migrations/2073_onfido_utilization_widen_import_columns.sql", // Registered 2026-10-03. Widens every numeric onfido_utilization_daily_input column to DECIMAL(18,4) so Utilization uploads are stored exactly as provided (INT columns rounded/rejected decimals). Widening only.
+  "migrations/2074_roster_request_raised_at.sql", // Registered 2026-10-03. Roster Requests hub SLA age: adds nullable roster_daily_assignment.disputed_at (set by the employee dispute-raise handler) and backfills it from updated_at for currently disputed rows; backfills wfm_roster_assignment.employee_ack_at (the employee response time, now also set on reject) from updated_at for rejected rows only, via idx_wra_ack_status. No DDL on wfm_roster_assignment. information_schema-guarded, fills NULLs only; applied twice against a throwaway MySQL 8.0.
+  "migrations/2075_sbi_collections_ops_and_apr.sql", // Registered 2026-10-03. SBI Card Collections: new sbi_card_agent_time table (dialer Agent Time Detail / APR export), nullable collections-ops columns on sbi_card_account_file (class / flags, DNC, callback date, 6 call attempts as time + disposition + dialer agent id, flow), unique key swapped to include flow in one ALTER (existing rows become flow = NEW), and the SBI_CARD_ACCOUNT_FILE / SBI_CARD_APR upload templates. No phone numbers or names stored. Idempotent behind information_schema guards.
+  "migrations/2076_sbi_card_outcome.sql", // Registered 2026-10-03. SBI Card Collections: sbi_card_outcome (cycle-to-date Resolution / Normalisation / Rollback counts, amounts and percentages per report date and segment) and the SBI_CARD_OUTCOME upload template; feeds the Payout tab. One new table, additive, idempotent.
+  "migrations/2077_sbi_card_roster.sql", // Registered 2026-10-03. SBI Card Collections: sbi_card_roster (dialer id -> person, team HIGHBAL / LOWBAL, team leader; upsert per dialer id) and the SBI_CARD_ROSTER upload template; names agents in the day-end export and drives the team-leader scorecards. One new table, additive, idempotent.
+  "migrations/2078_restore_upload_batch_row_columns.sql", // Registered 2026-10-03. The recreated upload_batch_row had only the 068 columns; adds back created_entity_type/id + discarded_by/at + discard_stage/reason and idx_upload_batch_row_entity + idx_ubr_batch_status (each guarded, NULLable, existing rows untouched), and sets every upload_batch_retention_policy row to 7 days (owner request). Verified twice-run on MySQL 8 against a copy of the live 8-column table.
+  "migrations/2079_employee_rejoin_v3.sql", // Registered 2026-10-03. Employee Rejoin v3: employment_stint (one row per stint, stint_no unique per employee), employee_rehire_control side table (HR disciplinary flag + super_admin block lift), employee_reactivation_requests.raised_by_role/eligibility_status/eligibility_snapshot/absconding_acknowledged. Hot-table ALTERs (employees, exit_request) deliberately avoided; eligibility is computed from live facts. Additive, information_schema-guarded; re-run is a no-op.
+  "migrations/2080_rejoin_notifications_reminders.sql", // Registered 2026-10-04. Rejoin v3 notifications + reminders: employee_reactivation_requests.reminder_count/last_reminder_at (information_schema-guarded; not a hot table), rejoin_request_escalation once-only claim table, worker_config row 'rejoin-pending-reminder', six notification_event_config events (rejoin_requested, rejoin_decided, rejoin_pending_reminder, rejoin_pending_escalation, rejoin_followup_attention, rejoin_blocked_at_joining; live) and six communication_template rows. Every insert is guarded by NOT EXISTS / INSERT IGNORE; re-run is a no-op.
+  "migrations/2081_rejoin_stint_payroll_flag.sql", // Registered 2026-10-04. Seeds payroll_config_flags 'rejoin_stint_payroll_enabled' = 'false' (global row, NOT EXISTS-guarded because NULL branch/process defeat the unique key). Stint-aware payroll for rejoiners stays OFF until the owner enables it.
+  "migrations/2082_increment_package_split_flag.sql", // Registered 2026-10-05. Seeds payroll_config_flags 'increment_package_split_enabled' = 'false' (global row, NOT EXISTS-guarded). Increment requests priced from their effective date, split by days mid-month; stays OFF until the owner enables it.
+  "migrations/2083_employee_attendance_logic_override.sql", // Registered 2026-10-05. employee_attendance_logic_override: one row per employee whose attendance source (APR / COSEC / APR+COSEC) is set personally on the Attendance Rules page; beats the process/designation rules. One new table, additive, idempotent; with no rows the engine is unchanged.
+  "migrations/2084_branch_health_signal_daily.sql", // Registered 2026-10-05. branch_health_signal_daily: red-signal history per branch per day for the Branch Health Report streaks. One new table, additive, idempotent; the report also creates it on first write.
+  "migrations/2100_hiring_engine_core.sql", // Registered 2026-10-05. Walk-in Hiring Engine phase 1 tables: he_lead (unified pool by mobile10), he_lead_event, he_consent, he_drive, he_match, he_message, he_location_ping, he_template. CREATE TABLE IF NOT EXISTS only, utf8mb4_unicode_ci, no FKs.
+  "migrations/2101_hiring_engine_signals.sql", // Registered 2026-10-05. Hiring Engine capture + analysis layer: he_message_event (delivery/engagement per message, WhatsApp + email), he_call (voice BRD checkpoints + structured outcome), he_signal (typed extracted datapoints with source + confidence), he_lead_insight (derived engagement/reliability/next action). CREATE TABLE IF NOT EXISTS only.
+  "migrations/2102_hiring_engine_page_access.sql", // Registered 2026-10-05. INSERT IGNORE grants for page ATS_HIRING_ENGINE (/ats/hiring-engine) to super_admin, admin, hr, hr_admin, recruitment_hr, ceo.
+  "migrations/2103_hiring_engine_template_seed.sql", // Registered 2026-10-05. Seeds he_template with the 22 follow-up templates (11 x Hinglish/English) in DRAFT; nothing sends until approval_state=approved. INSERT IGNORE.
+  "migrations/2104_hiring_engine_hr_alert.sql", // Registered 2026-10-05. he_hr_alert: one row per drive per 30-minute window so the branch arrival alert is sent once. CREATE TABLE IF NOT EXISTS.
+  "migrations/2105_hiring_engine_idempotency_keys.sql", // Registered 2026-10-05. UNIQUE (provider_message_id, direction) on he_message and UNIQUE provider_call_id on he_call: webhook/call idempotency becomes a DB guarantee (a burst of the same webhook stored 29 copies before). PREPARE-guarded, safe to re-run.
+  "migrations/2106_hiring_engine_bulk_calls.sql", // Registered 2026-10-05. he_call_batch + he_call_job: manual bulk voice-call uploads (phone,name,role,interview_date,interview_time,branch_address,reference_id), per-row state/retry/provider call id. CREATE TABLE IF NOT EXISTS only.
+  "migrations/2107_job_requisition_ad_required.sql", // Registered 2026-10-05. job_requisition.ad_required TINYINT(1) NOT NULL DEFAULT 1: persisted "run an ad?" decision read by the marketing brief subject. PREPARE-guarded, safe to re-run.
+  "migrations/2108_hiring_engine_master_history.sql", // Registered 2026-10-05. Recruitment master WITHOUT new attempt storage: indexed virtual mobile10 on ats_recruiter_hiring_activity, rollup/effort columns on he_lead, he_attempt_v union view. Guarded, additive, ALGORITHM=INPLACE.
+  "migrations/2109_hiring_engine_identity_profile_exemployee.sql", // Registered 2026-10-05. he_lead_identity (number+email unique), he_identity_clash, he_lead_profile, he_ex_employee side tables; requisition_id/drive_id on he_message/he_call; he_attempt_v carries requisition. Additive, guarded.
+  "migrations/2110_hiring_engine_model_params.sql", // Registered 2026-10-05. he_model_param (learned show-up rates, match lifts) + aadhaar_hash/pan_hash identity kinds. Guarded, additive.
+  "migrations/2111_hiring_engine_lead_list_index.sql", // Registered 2026-10-05. he_lead(updated_at) index: the lead pool list sorted all 38k leads per page (8 s live). Guarded, INPLACE.
+  "migrations/2112_hiring_engine_import_mapping.sql", // Registered 2026-10-05. he_import_mapping: remembered upload column mappings per header layout (WorkIndia/Naukri/Apna/...). CREATE TABLE IF NOT EXISTS only.
+  "migrations/2113_hiring_engine_profile_screening_fields.sql", // Registered 2026-10-06. he_lead_profile: education_status, stream, last_salary, prev_industry, state, address, dob (portal screening facts). Guarded, additive.
+  "migrations/2115_hiring_engine_requisition_jd.sql", // Registered 2026-10-06. he_requisition_jd (uploaded/parsed JD per requisition, BMS format) + he_lead_profile.skills_text. Additive.
+  "migrations/2116_hiring_engine_templates_approved.sql", // Registered 2026-10-06. Meta approved the 11 English follow-up templates as t1_..t11_ names: pinbot_name, param order, body, approval_state=approved. Hinglish stays draft. Re-runnable UPDATEs.
+  "migrations/2125_hiring_engine_secrets.sql", // Registered 2026-10-07. he_secret: application-encrypted settings (webhook token, Superbot credentials) for the Hiring Engine integrations. Additive.
+  "migrations/2126_hiring_engine_templates_meta_sync.sql", // Registered 2026-10-07. he_template: T1 name variable, T2 Meta name (..._confirmed), T6 three variables, per the Meta-approved texts. Data only.
+  "migrations/2130_hiring_engine_campaign_launch.sql", // Registered 2026-10-07. he_drive audience columns (source_kind/source_ids/max_lead_age_days/run_label/reinvite), he_lead_campaign, he_campaign_config, he_import_batch, he_lead_batch, T12 he_reinvite draft rows. Additive, re-runnable.
+  "migrations/2131_hiring_engine_call_ref.sql", // Registered 2026-10-07. he_call_ref: HRMS-001 style voice-bot references, one per match. Additive.
+  "migrations/2114_pnl_grn_allocation_view_accounting_month.sql", // Registered 2026-10-06. Owner rule: GRN counts in its accounting month. CREATE OR REPLACE of vw_process_pnl_grn_allocation, sql/1852 body with only period_code changed to grn_request.accounting_period first (multi-month GRNs keep the allocation recognition_period). Columns unchanged. Idempotent.
+  "migrations/2117_grn_allocation_budget_draw.sql", // Registered 2026-10-06. grn_allocation_budget_draw: the lines a Smart GRN allocation's reservation actually drew from when spread at Branch Head approval, so consume/release/reverse move money per draw. CREATE TABLE IF NOT EXISTS only.
+  "migrations/2118_revenue_forecast.sql", // Registered 2026-10-06. revenue_forecast + revenue_forecast_line (Branch Head monthly forecast, Finance Head + Payroll Head approval, close with actuals), finance_budget_cost_centre_closure, FINANCE_REVENUE_FORECAST page + grants. CREATE TABLE IF NOT EXISTS / upserts only.
+  "migrations/2119_revenue_forecast_payroll_head_view_only.sql", // Registered 2026-10-06. Owner ruling: Payroll Head views revenue forecasts, Finance Head alone approves. UPDATE of the 2118 payroll_head grant + page description. Idempotent.
+  "migrations/2120_process_pnl_branch_head_view.sql", // Registered 2026-10-07. FINANCE_PROCESS_PNL view grant for branch_head (route/nav/API already admit it; P&L reads audited branch-scoped). Idempotent upsert.
+  "migrations/2121_grn_branch_split.sql", // Registered 2026-10-07. grn_request.is_branch_split: marks a Head Office GRN whose cost is split across branches (each branch share on its Back Office cost centre, the branch carried in grn_cost_allocation.branch_id). PREPARE-guarded, additive.
+  "migrations/2122_payment_voucher_salary_source_type.sql", // Registered 2026-10-07. Adds 'salary' to payment_voucher.source_type ENUM (general-lane voucher with its own purpose). Idempotent MODIFY COLUMN.
+  "migrations/2132_approval_email_action.sql", // Registered 2026-10-07. approval_email_action: hashed single-use tokens behind the approve/decline buttons in approval emails.
+  "migrations/2133_qualified_followup.sql", // Registered 2026-10-07. qualified_followup (per mobile+requisition email/WhatsApp/call schedule and outcomes) and qualified_followup_call_batch. CREATE TABLE IF NOT EXISTS only, additive.
+  "migrations/2134_qualified_followup_attempts.sql", // Registered 2026-10-07. qualified_followup: per-channel attempts/errors, wa_message_id, missing_details, step_claimed_at, test row tag, idx_qfu_callfile. information_schema-guarded, re-runnable.
+  "migrations/2135_requisition_streams.sql", // Registered 2026-10-07. requisition_stream (+ _day, _event, _plan, _match), requisition_stream.version, created_at/updated_at DATETIME(6), requisition_stream_plan.idx_rsp_date and qualified_followup.owner. CREATE TABLE IF NOT EXISTS plus information_schema-guarded ALTERs, re-runnable.
+  "migrations/2136_he_match_outcome_reason.sql", // Registered 2026-10-08. he_match_outcome_reason (one no-show/decline reason per he_match, last tap wins). CREATE TABLE IF NOT EXISTS only, re-runnable.
 ];
 
 export type MigrationHealth = {
@@ -1563,24 +1645,20 @@ async function ensureDatabaseExists(
 ): Promise<void> {
   const conn = await mysql.createConnection({ host, port, user, password });
   try {
-    await conn.query(
-      `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
-    );
-    // ALTER DATABASE acquires a global MDL that blocks ALL concurrent DDL (CREATE TABLE, ALTER
-    // TABLE) for the database's full duration â€" including the workers' own ensureTable() calls.
-    // Skip it entirely if the charset is already correct; the DB has been utf8mb4_unicode_ci
-    // since initial setup and this idempotent ALTER is noise on an established production server.
-    const [charsetRows] = await conn.query<mysql.RowDataPacket[]>(
-      `SELECT DEFAULT_CHARACTER_SET_NAME cs, DEFAULT_COLLATION_NAME co
-         FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?`,
+    // A database-level DDL statement (CREATE DATABASE IF NOT EXISTS included, even as a no-op; ALTER DATABASE
+    // always) takes a schema metadata lock that queues behind ANY long-running query on the schema. Every new
+    // connection then queues behind it, the backend cannot start, and nginx returns 502 until the long query
+    // ends. This took production down on 2026-09-30 (twice, each time a deploy restarted the backend while a
+    // report query was running). So: look first with a plain read (information_schema needs no such lock) and
+    // issue NO database DDL when the database already exists. The default charset of an established schema is
+    // never altered at startup — tables carry their own collations.
+    const [existing] = await conn.query<mysql.RowDataPacket[]>(
+      "SELECT 1 AS present FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?",
       [dbName],
     );
-    const already =
-      charsetRows[0]?.cs === "utf8mb4" &&
-      charsetRows[0]?.co === "utf8mb4_unicode_ci";
-    if (!already) {
+    if (existing.length === 0) {
       await conn.query(
-        `ALTER DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+        `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
       );
     }
     console.log(`[migration] database '${dbName}' ensured`);
@@ -1831,9 +1909,55 @@ export async function findMissingDeclaredSchema(
  * - Runs 043_demo_data.sql only when SEED_DEMO_DATA=true.
  * - Production startup is blocked when any migration fails.
  */
+/**
+ * True for loopback / private-network hosts — a database a developer runs locally or on the LAN.
+ * Anything else (a public IP or hostname) is treated as a shared remote database.
+ */
+export function isLocalOrPrivateDbHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  if (h === "" || h === "localhost" || h === "::1" || h === "[::1]" || h.endsWith(".local")) return true;
+  if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
+  const m = /^172\.(\d{1,3})\./.exec(h);
+  return Boolean(m && Number(m[1]) >= 16 && Number(m[1]) <= 31);
+}
+
+/**
+ * Startup migrations and database DDL must run ONLY from the production deployment (or a local/private
+ * database, or when explicitly forced). A developer's `npm run dev` pointed at the shared production
+ * database otherwise issues CREATE/ALTER DATABASE and schema DDL on every restart; those queue behind any
+ * long-running query, block every new connection, and stall the whole site (recurring outage,
+ * 2026-09-30: several outside IPs each did this). Skipping is safe — the deployed server owns the schema.
+ */
+export function shouldSkipMigrationsForRemoteDb(
+  nodeEnv: string | undefined,
+  dbHost: string,
+  allowRemote: string | undefined,
+): boolean {
+  if (nodeEnv === "production" || nodeEnv === "test") return false;
+  if (allowRemote === "true") return false;
+  return !isLocalOrPrivateDbHost(dbHost);
+}
+
 export async function runPendingMigrations(
   attempt = 1,
 ): Promise<MigrationHealth> {
+  if (shouldSkipMigrationsForRemoteDb(env.NODE_ENV, env.DB_HOST, process.env.ALLOW_REMOTE_DB_MIGRATIONS)) {
+    console.warn(
+      `[migration] SKIPPED: NODE_ENV=${env.NODE_ENV} is pointed at a remote database (${env.DB_HOST}). ` +
+        "Startup migrations/DDL only run from the production deployment, because a dev process issuing DDL " +
+        "against the shared database blocks every other connection. Set ALLOW_REMOTE_DB_MIGRATIONS=true to override.",
+    );
+    migrationHealth = {
+      status: "ok",
+      applied: [],
+      skipped: [],
+      failed: [],
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    };
+    return migrationHealth;
+  }
+
   if (process.env.SKIP_MIGRATIONS === "true") {
     migrationHealth = {
       status: "ok",

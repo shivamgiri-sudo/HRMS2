@@ -15,13 +15,46 @@ export interface SalaryComponents {
   esic_employee: number;
   esic_employer: number;
   professional_tax: number;
+  /** Always 0. Kept because ats_employment_offer and its readers still carry the column. */
   gratuity: number;
   admin_charges: number;
   net_in_hand: number;
 }
 
+/*
+ * The offer calculator is the SAME calculation as the Salary Package admin page
+ * (/payroll/package-admin -> src/lib/salaryCalculator.ts calcFromCtc). The backend
+ * cannot import that file (it lives outside backend/), so it is ported here line for
+ * line; src/lib/__tests__/offerSalaryCalculatorParity.test.ts runs both over a grid
+ * of inputs and fails on any difference. Change both together or not at all.
+ *
+ * This replaced an older formula that disagreed with the package page for the same
+ * inputs (owner report, 2026-10-01):
+ *   - gross came from a rough "CTC x 0.88" estimate, so gross + employer PF/ESIC/admin
+ *     came to MORE than the CTC entered (20,000 -> 20,077);
+ *   - the 8.33% bonus was shown as a component but left out of gross and CTC, while
+ *     every catalog package carries it inside gross (owner ruling 2026-08-27);
+ *   - ESIC applicability was decided on that estimate rather than the real gross;
+ *   - a gratuity figure ((basic / 26 / 12) x 15) was returned and saved on the offer.
+ *     Gratuity is a statutory accrual handled by payroll/F&F, not part of the offer
+ *     package, so it is no longer computed here: the field is always 0.
+ */
+const r2 = (n: number) => Math.round(n * 100) / 100;
+const CONV = 1600;
+const PF_EMP_RATE = 0.12;
+const PF_EMPLR_RATE = 0.12;
+const ESIC_EMP_RATE = 0.0075;
+const ESIC_EMPLR_RATE = 0.0325;
+const ESIC_LIMIT = 21000;
+/** Payment of Bonus Act minimum: 8.33% of basic -- part of gross and CTC. */
+const BONUS_RATE = 0.0833;
+/** 1% of PF wages -- see ADMIN_RATE in src/lib/salaryCalculator.ts. */
+const ADMIN_RATE = 0.01;
+/** Full basic (statutory_config.pf_wage_limit = 999999). */
+const PF_WAGE_LIMIT = 999999;
+
 /**
- * All inputs are annual. All returned values are monthly (annual ÷ 12).
+ * All inputs are annual; all returned values are monthly.
  * basic_pct: % of gross (e.g. 40 for 40%)
  * hra_pct:   % of basic (e.g. 40 for 40%)
  */
@@ -30,105 +63,71 @@ export async function calculateSalary(
   basicPct: number,
   hraPct: number,
   _isMetro: boolean,
-  esicEmployerPct = 3.25,
+  _esicEmployerPct?: number, // kept for caller compatibility; the rate is fixed at 3.25% as on the package page
   pfEligible = true,
   esiEligible = true,
   stateCode?: string | null,
 ): Promise<SalaryComponents> {
-  // Single-pass: derive gross from CTC by subtracting employer-side costs.
-  // We don't know gross yet, so approximate employer PF/ESIC iteratively.
-  // Use CTC * 0.88 as starting estimate for gross to determine ESIC eligibility only.
-  const estimatedMonthlyGross = (annualCtc * 0.88) / 12;
-  const esicApplies = esiEligible && estimatedMonthlyGross <= 21000;
+  void stateCode; // Professional Tax removed company-wide 2026-09-11; kept for caller compatibility
+  const monthlyCtc = annualCtc / 12;
+  const bFrac = basicPct / 100;
 
-  // Employer-side annual costs (deducted from CTC to get gross)
-  // These are computed on gross which we don't know yet — use an iterative solve.
-  // In practice one pass is accurate enough for HRM purposes.
-  //
-  // Gratuity is NOT included here: it's a statutory accrual/provision the
-  // employer sets aside, never money the CTC offer is structured around --
-  // see PkgCalcOptions in src/lib/salaryCalculator.ts ("Gratuity is a
-  // statutory accrual shown as a P&L provision — NOT part of monthly CTC").
-  const estimatedGross = annualCtc * 0.88;
-  const estimatedBasic = estimatedGross * (basicPct / 100);
-  const pfEmployerAnnual = pfEligible ? estimatedBasic * 0.12 : 0;
-  const esicEmployerAnnual = esicApplies
-    ? estimatedGross * (esicEmployerPct / 100)
-    : 0;
-  // Admin charges are the PF administration charge — only applicable when PF
-  // is actually being deducted. Rate is 1% (0.50% admin + 0.50% EDLI); the
-  // EDLI administration charge component was abolished in 2018, so the old
-  // 1.36% here double-counted it -- see src/lib/salaryCalculator.ts ADMIN_RATE,
-  // matched to the live salary_package_master catalog and owner-ruled 2026-08-27.
-  const adminChargesAnnual = pfEligible ? estimatedBasic * 0.01 : 0;
+  // calcFromCtc: CTC = Gross x (1 + bFrac x (PF employer + admin) + ESIC employer)
+  const pfContribRate = pfEligible ? (PF_EMPLR_RATE + ADMIN_RATE) : 0;
+  const esicContribRate = esiEligible ? ESIC_EMPLR_RATE : 0;
+  let g = monthlyCtc / (1 + bFrac * pfContribRate + esicContribRate);
+  if (esiEligible && g > ESIC_LIMIT) {
+    g = monthlyCtc / (1 + bFrac * pfContribRate);
+  }
+  if (pfEligible && g * bFrac > PF_WAGE_LIMIT) {
+    const fixedEmployer = PF_WAGE_LIMIT * (PF_EMPLR_RATE + ADMIN_RATE);
+    const esicAmt = esiEligible && g <= ESIC_LIMIT ? g * ESIC_EMPLR_RATE : 0;
+    g = monthlyCtc - fixedEmployer - esicAmt;
+  }
+  const gross = r2(Math.max(0, g));
 
-  const gross =
-    annualCtc - pfEmployerAnnual - esicEmployerAnnual - adminChargesAnnual;
+  // deriveComponents (includeBonus defaults to true on the package page)
+  const basic = r2(gross * (basicPct / 100));
+  const hra = r2(basic * (hraPct / 100));
+  // Conveyance and bonus are carved out of the gross, never added on top of it. When basic and
+  // HRA already take the whole gross (a package split of basic = gross, HRA 0, as the band-package
+  // ratio can return for a low band) there is no room for them, so they are 0. Before this guard
+  // the Math.max(0, ...) below hid the overflow: 63694C's offer listed bonus 949.44 and
+  // conveyance 1,600 on top of a gross that was already all basic (components 13,947 vs gross 11,398).
+  const room = r2(gross - basic - hra);
+  const fits = room >= CONV + r2(basic * BONUS_RATE);
+  const conveyance = fits ? CONV : 0;
+  const bonus = fits ? r2(basic * BONUS_RATE) : 0;
+  const special = Math.max(0, r2(room - conveyance - bonus));
 
-  // Recompute all derived values on the actual gross
-  const basic = gross * (basicPct / 100);
-  const hra = basic * (hraPct / 100);
-  const conveyance = 19200; // ₹1,600/month × 12
-  const da = 0;
-  const special = gross - basic - hra - conveyance - da;
+  const pfBase = Math.min(basic, PF_WAGE_LIMIT);
+  const esicApplies = esiEligible && gross <= ESIC_LIMIT;
+  const pfEmployee = pfEligible ? r2(pfBase * PF_EMP_RATE) : 0;
+  const esicEmployee = esicApplies ? r2(gross * ESIC_EMP_RATE) : 0;
+  const netInHand = r2(gross - pfEmployee - esicEmployee);
 
-  // Statutory deductions (employee side) — zeroed out when the candidate was
-  // explicitly opted out at offer stage (offer.pf_eligible / offer.esi_eligible).
-  //
-  // No PF wage ceiling applied: MAS Callnet's statutory_config.pf_wage_limit
-  // is 999999 (full basic), matching what live payroll and the salary-review
-  // package builder (src/lib/salaryCalculator.ts DEFAULT_PF_WAGE_LIMIT) both
-  // use. The EPF Act statutory minimum ceiling is ₹15,000 basic, but the
-  // employer has elected to contribute on full basic — a ₹1,800/month cap
-  // here previously under-deducted PF against what payroll actually withholds
-  // once the employee is live.
-  const pfEmployee = pfEligible ? basic * 0.12 : 0;
-  const esicEmployee = esicApplies ? gross * 0.0075 : 0;
-
-  // Professional Tax removal (2026-09-11): PT has been explicitly approved
-  // for full removal from payroll company-wide, all states, go-forward only
-  // (stakeholder-confirmed, not a guess). This offer/appointment-letter
-  // calculator no longer looks up or deducts PT. The professional_tax field
-  // is kept at 0 (not deleted) because callers still persist it into
-  // ats_employment_offer / offer letters that expect the key to exist.
-  const professionalTax = 0;
-  void stateCode; // stateCode stays a parameter for backward compatibility with callers; no longer used
-
-  // Employer side (returned for display/records). Recomputed on the actual
-  // final basic, not the rough pre-gross estimate used only to derive gross
-  // above -- otherwise employer PF silently drifts from employee PF, which
-  // should be identical (both 12% of the same basic).
-  const pfEmployer = pfEligible ? basic * 0.12 : 0;
-  const esicEmployer = esicApplies ? gross * (esicEmployerPct / 100) : 0;
-  // Reported for cost-analysis/statutory-liability visibility only -- excluded
-  // from the CTC/gross derivation above.
-  const gratuity = (basic / 26 / 12) * 15;
-  const adminCharges = pfEligible ? basic * 0.01 : 0;
-  const bonus = basic * 0.0833;
-
-  // professionalTax is always 0 now (PT removed 2026-09-11) but kept in the
-  // expression so a future re-introduction only needs to change professionalTax above.
-  const netInHand = gross - pfEmployee - esicEmployee - professionalTax;
-
-  const m = (v: number) => Math.round((v / 12) * 100) / 100;
+  const pfEmployer = pfEligible ? r2(pfBase * PF_EMPLR_RATE) : 0;
+  const esicEmployer = esicApplies ? r2(gross * ESIC_EMPLR_RATE) : 0;
+  const adminCharges = pfEligible ? r2(pfBase * ADMIN_RATE) : 0;
+  const ctc = r2(gross + pfEmployer + esicEmployer + adminCharges);
 
   return {
-    offered_ctc: m(annualCtc),
-    gross: m(gross),
-    basic: m(basic),
-    hra: m(hra),
-    conveyance: m(conveyance),
-    da: m(da),
-    special_allowance: Math.max(0, m(special)),
-    other_allowance: 0,
-    bonus: m(bonus),
-    pf_employee: m(pfEmployee),
-    pf_employer: m(pfEmployer),
-    esic_employee: m(esicEmployee),
-    esic_employer: m(esicEmployer),
-    professional_tax: m(professionalTax),
-    gratuity: m(gratuity),
-    admin_charges: m(adminCharges),
-    net_in_hand: m(netInHand),
+    offered_ctc:       ctc,
+    gross,
+    basic,
+    hra,
+    conveyance,
+    da:                0,
+    special_allowance: special,
+    other_allowance:   0,
+    bonus,
+    pf_employee:       pfEmployee,
+    pf_employer:       pfEmployer,
+    esic_employee:     esicEmployee,
+    esic_employer:     esicEmployer,
+    professional_tax:  0,
+    gratuity:          0,
+    admin_charges:     adminCharges,
+    net_in_hand:       netInHand,
   };
 }

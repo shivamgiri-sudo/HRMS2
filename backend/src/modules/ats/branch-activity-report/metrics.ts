@@ -158,6 +158,17 @@ export interface TokenFact {
   negativeDuration: boolean;
   sinceArrivalMin: number;
   sinceCallMin: number | null;
+  /** Raw source values as read from the DB — carried so the emailed raw-data file can be validated in depth. */
+  raw: {
+    queueStatus: string | null;
+    hasQueueRow: boolean;
+    subId: string | null;
+    decisionText: string | null;
+    candStatus: string | null;
+    currentStage: string | null;
+    sourceChannel: string | null;
+    isEmployee: boolean;
+  };
 }
 
 export interface Summary {
@@ -531,6 +542,16 @@ export function toFact(
       row.since_call_min != null
         ? Math.max(0, Number(row.since_call_min))
         : null,
+    raw: {
+      queueStatus: row.queue_status ?? null,
+      hasQueueRow: Number(row.has_queue_row) === 1,
+      subId: row.sub_id ?? null,
+      decisionText: row.decision_text ?? null,
+      candStatus: row.cand_status ?? null,
+      currentStage: row.current_stage ?? null,
+      sourceChannel: row.source_channel ?? null,
+      isEmployee: Number(row.is_employee) === 1,
+    },
   };
 }
 

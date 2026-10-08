@@ -13,6 +13,7 @@ import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilte
 import { CloviaLobSlide } from "./CloviaLobSlide";
 import { CloviaInboundSlide } from "./CloviaInboundSlide";
 import { CloviaOverviewDashboard } from "./CloviaOverviewDashboard";
+import { ImportExcelIcon } from "./CloviaReportKit";
 
 // ── Types ────────────────────────────────────────────────────────────────
 interface InboundSummary {
@@ -461,7 +462,7 @@ function ChannelsSlide({ from, to, onData }: { from: string; to: string; onData?
           )}
         </SectionCard>
 
-        <SectionCard title="Email">
+        <SectionCard title="Email" action={<ImportExcelIcon templateCode="CL_EMAIL_RAW_MASMIS" label="Email" />}>
           <div className="grid grid-cols-3 gap-3 text-center">
             <div><p className="text-lg font-bold text-slate-800">{data.email.totalAssigned}</p><p className="text-[11px] text-slate-400">Assigned</p></div>
             <div><p className="text-lg font-bold text-slate-800">{data.email.closed}</p><p className="text-[11px] text-slate-400">Closed</p></div>
@@ -486,7 +487,7 @@ function ChannelsSlide({ from, to, onData }: { from: string; to: string; onData?
           )}
         </SectionCard>
 
-        <SectionCard title="Chat">
+        <SectionCard title="Chat" action={<ImportExcelIcon templateCode="CL_CHAT_MASMIS" label="Chat" />}>
           <div className="grid grid-cols-3 gap-3 text-center">
             <div><p className="text-lg font-bold text-slate-800">{data.chat.totalChats}</p><p className="text-[11px] text-slate-400">Chats</p></div>
             <div><p className="text-lg font-bold text-slate-800">{formatSecs(data.chat.avgChatDurationSec)}</p><p className="text-[11px] text-slate-400">Avg Duration</p></div>
@@ -519,7 +520,7 @@ function ChannelsSlide({ from, to, onData }: { from: string; to: string; onData?
           )}
         </SectionCard>
 
-        <SectionCard title="Quality Audit">
+        <SectionCard title="Quality Audit" action={<ImportExcelIcon templateCode="CL_QUALITY_MASMIS" label="Quality Audit" />}>
           <div className="grid grid-cols-3 gap-3 text-center">
             <div><p className="text-lg font-bold text-slate-800">{data.quality.auditsCount}</p><p className="text-[11px] text-slate-400">Audits</p></div>
             <div><p className="text-lg font-bold text-slate-800">{data.quality.avgScorePct}%</p><p className="text-[11px] text-slate-400">Avg Score</p></div>
@@ -541,7 +542,7 @@ function ChannelsSlide({ from, to, onData }: { from: string; to: string; onData?
           )}
         </SectionCard>
 
-        <SectionCard title="Disposition / FTR">
+        <SectionCard title="Disposition / FTR" action={<ImportExcelIcon templateCode="CL_DISPO_MASMIS" label="Disposition" />}>
           <div className="grid grid-cols-3 gap-3 text-center">
             <div><p className="text-lg font-bold text-slate-800">{data.disposition.totalTickets.toLocaleString("en-IN")}</p><p className="text-[11px] text-slate-400">Tickets</p></div>
             <div><p className="text-lg font-bold text-emerald-600">{data.disposition.ftrPct}%</p><p className="text-[11px] text-slate-400">FTR%</p></div>
@@ -559,7 +560,7 @@ function ChannelsSlide({ from, to, onData }: { from: string; to: string; onData?
           )}
         </SectionCard>
 
-        <SectionCard title="Rechurn Calls">
+        <SectionCard title="Rechurn Calls" action={<ImportExcelIcon templateCode="CL_RECHURN_CALL_MASMIS" label="Rechurn Call" />}>
           <div className="grid grid-cols-2 gap-3 text-center">
             <div><p className="text-lg font-bold text-slate-800">{data.rechurn.totalCalls}</p><p className="text-[11px] text-slate-400">Total Calls</p></div>
             <div><p className="text-lg font-bold text-amber-600">{data.rechurn.abandonedCount}</p><p className="text-[11px] text-slate-400">Abandoned</p></div>

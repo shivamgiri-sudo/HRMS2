@@ -7,16 +7,11 @@ import {
   getMyReportRequests,
   getMyReportRequestDetail,
   cancelReportRequest,
-} from "./report-request.service.js";
-import { REPORT_CATALOG } from "./report-catalog.js";
-import {
-  resolveRegisteredOfficialEmail,
-  maskEmail,
-} from "./report-email-resolver.js";
-import {
-  getReportingSchemaStatus,
-  ensureReportingSchemaAvailable,
-} from "./report-schema-availability.js";
+  resubmitReportRequest,
+} from './report-request.service.js';
+import { REPORT_CATALOG } from './report-catalog.js';
+import { resolveRegisteredOfficialEmail, maskEmail } from './report-email-resolver.js';
+import { getReportingSchemaStatus, ensureReportingSchemaAvailable } from './report-schema-availability.js';
 
 export const reportRequestRouter = Router();
 
@@ -120,16 +115,12 @@ reportRequestRouter.get(
     const page = Number(req.query.page ?? 1);
     const pageSize = Math.min(Number(req.query.pageSize ?? 20), 100);
 
-    const result = await getMyReportRequests(userId, page, pageSize);
-    return res.json({
-      success: true,
-      data: result.rows,
-      total: result.total,
-      page,
-      pageSize,
-    });
-  }),
-);
+  const result = await getMyReportRequests(userId, page, pageSize, {
+    status: typeof req.query.status === 'string' ? req.query.status : undefined,
+    q: typeof req.query.q === 'string' ? req.query.q : undefined,
+  });
+  return res.json({ success: true, data: result.rows, total: result.total, page, pageSize });
+}));
 
 // GET /api/reports/my-requests/:requestId — single request detail
 reportRequestRouter.get(
@@ -144,6 +135,25 @@ reportRequestRouter.get(
     return res.json({ success: true, data: detail });
   }),
 );
+
+// POST /api/reports/my-requests/:requestId/resubmit — run a finished/failed request again
+reportRequestRouter.post('/my-requests/:requestId/resubmit', requireAuth, h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
+  const userId = req.authUser!.id;
+  const result = await resubmitReportRequest(userId, String(req.params.requestId), {
+    ip: req.ip ?? '',
+    userAgent: String(req.headers['user-agent'] ?? ''),
+    correlationId: String(req.headers['x-request-id'] ?? ''),
+  });
+  return res.status(result.isDuplicate ? 200 : 202).json({
+    success: true,
+    requestReference: result.requestReference,
+    requestId: result.requestId,
+    status: result.status,
+    isDuplicate: result.isDuplicate,
+    message: result.message,
+  });
+}));
 
 // POST /api/reports/my-requests/:requestId/cancel — cancel if QUEUED
 reportRequestRouter.post(

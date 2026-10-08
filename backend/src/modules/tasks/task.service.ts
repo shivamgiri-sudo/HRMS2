@@ -251,10 +251,7 @@ export const taskService = {
   /**
    * Get tasks for a department
    */
-  async getDepartmentTasks(
-    department: string,
-    status?: string,
-  ): Promise<EmployeeTask[]> {
+  async getDepartmentTasks(department: string, status?: string, scope?: { sql: string; params: unknown[] }): Promise<EmployeeTask[]> {
     let query = `
       SELECT et.*, e.employee_code, e.full_name as employee_name
       FROM employee_task et
@@ -262,6 +259,8 @@ export const taskService = {
       WHERE et.department = ?
     `;
     const params: any[] = [department];
+    // Branch scoping: only tasks of employees inside the caller's scope (org-wide: all).
+    if (scope && scope.sql !== '1=1') { query += ` AND (${scope.sql})`; params.push(...scope.params); }
 
     if (status) {
       query += ` AND et.status = ?`;
@@ -438,14 +437,16 @@ export const taskService = {
   /**
    * Get overdue tasks
    */
-  async getOverdueTasks(): Promise<EmployeeTask[]> {
+  async getOverdueTasks(scope?: { sql: string; params: unknown[] }): Promise<EmployeeTask[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT et.*, e.employee_code, e.full_name as employee_name
        FROM employee_task et
        JOIN employees e ON e.id = et.employee_id
        WHERE et.status IN ('pending', 'in_progress')
        AND et.due_date < NOW()
+       ${scope && scope.sql !== '1=1' ? `AND (${scope.sql})` : ''}
        ORDER BY et.due_date ASC`,
+      scope && scope.sql !== '1=1' ? scope.params : []
     );
     return rows as EmployeeTask[];
   },

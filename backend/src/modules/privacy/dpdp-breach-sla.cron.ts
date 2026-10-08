@@ -15,6 +15,7 @@ import nodemailer from "nodemailer";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
+import { buildAppLink } from "../../shared/appLink.js";
 
 type BreachRow = RowDataPacket & {
   id: string;
@@ -73,7 +74,9 @@ async function sendAlert(
       from: `"MAS Callnet HRMS Compliance" <${process.env.SMTP_USER}>`,
       to: to.join(", "),
       subject,
-      html: `<pre style="font-family:sans-serif;white-space:pre-wrap;">${body}</pre>`,
+      html: `<pre style="font-family:sans-serif;white-space:pre-wrap;">${body}</pre>` +
+        `<p><a href="${buildAppLink("/compliance/dpdp")}" style="display:inline-block;background:#073f78;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600">Open DPDP compliance</a></p>` +
+        `<p style="font-size:12px;color:#64748b">Or copy this link: ${buildAppLink("/compliance/dpdp")}</p>`,
     });
     return true;
   } catch (err) {

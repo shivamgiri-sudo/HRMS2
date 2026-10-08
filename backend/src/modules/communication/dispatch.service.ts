@@ -505,25 +505,15 @@ class DispatchService {
     );
   }
 
-  async bulkSend(dto: BulkSendDTO): Promise<DispatchResult> {
-    let q = "SELECT id FROM employees WHERE 1=1";
+  async bulkSend(dto: BulkSendDTO, scope?: { sql: string; params: unknown[] }): Promise<DispatchResult> {
+    let q = 'SELECT e.id FROM employees e WHERE 1=1';
     const p: unknown[] = [];
-    if (dto.recipient_filter.department) {
-      q += " AND department = ?";
-      p.push(dto.recipient_filter.department);
-    }
-    if (dto.recipient_filter.process_id) {
-      q += " AND process_id = ?";
-      p.push(dto.recipient_filter.process_id);
-    }
-    if (dto.recipient_filter.designation) {
-      q += " AND designation = ?";
-      p.push(dto.recipient_filter.designation);
-    }
-    if (dto.recipient_filter.status) {
-      q += " AND status = ?";
-      p.push(dto.recipient_filter.status);
-    }
+    // Branch scoping: the filters below can only narrow the sender's own scope.
+    if (scope && scope.sql !== '1=1') { q += ` AND (${scope.sql})`; p.push(...scope.params); }
+    if (dto.recipient_filter.department)  { q += ' AND department = ?';  p.push(dto.recipient_filter.department); }
+    if (dto.recipient_filter.process_id)  { q += ' AND process_id = ?';  p.push(dto.recipient_filter.process_id); }
+    if (dto.recipient_filter.designation) { q += ' AND designation = ?'; p.push(dto.recipient_filter.designation); }
+    if (dto.recipient_filter.status)      { q += ' AND status = ?';      p.push(dto.recipient_filter.status); }
     const [rows] = await db.execute<EmployeeIdRow[]>(q, p);
     return this.send({
       template_id: dto.template_id,
@@ -601,32 +591,22 @@ class DispatchService {
     );
   }
 
-  async getLogs(filters: DispatchLogFilters): Promise<PaginatedDispatchLogs> {
-    const page = filters.page ?? 1;
+  async getLogs(filters: DispatchLogFilters, scope?: { sql: string; params: unknown[] }): Promise<PaginatedDispatchLogs> {
+    const page  = filters.page  ?? 1;
     const limit = filters.limit ?? 50;
     const offset = (page - 1) * limit;
     let q = "SELECT * FROM dispatch_log WHERE 1=1";
     const p: unknown[] = [];
-    if (filters.employee_id) {
-      q += " AND recipient_employee_id = ?";
-      p.push(filters.employee_id);
+    // Branch scoping: only dispatches addressed to employees inside the caller's scope (org-wide: all).
+    if (scope && scope.sql !== '1=1') {
+      q += ` AND recipient_employee_id IN (SELECT e.id FROM employees e WHERE ${scope.sql})`;
+      p.push(...scope.params);
     }
-    if (filters.channel) {
-      q += " AND channel = ?";
-      p.push(filters.channel);
-    }
-    if (filters.status) {
-      q += " AND status = ?";
-      p.push(filters.status);
-    }
-    if (filters.date_from) {
-      q += " AND sent_at >= ?";
-      p.push(filters.date_from);
-    }
-    if (filters.date_to) {
-      q += " AND sent_at <= ?";
-      p.push(filters.date_to);
-    }
+    if (filters.employee_id) { q += ' AND recipient_employee_id = ?'; p.push(filters.employee_id); }
+    if (filters.channel)     { q += ' AND channel = ?';               p.push(filters.channel); }
+    if (filters.status)      { q += ' AND status = ?';                p.push(filters.status); }
+    if (filters.date_from)   { q += ' AND sent_at >= ?';              p.push(filters.date_from); }
+    if (filters.date_to)     { q += ' AND sent_at <= ?';              p.push(filters.date_to); }
 
     const countQ = q.replace("SELECT *", "SELECT COUNT(*) AS total");
     const [countRows] = await db.execute<DispatchLogTotalRow[]>(countQ, p);
@@ -642,13 +622,12 @@ class DispatchService {
     };
   }
 
-  async getStats(): Promise<DispatchStats> {
-    const [todayRows] = await db.execute<DispatchCountRow[]>(
-      "SELECT COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE()",
-    );
-    const [delivRows] = await db.execute<DeliveryWindowRow[]>(
-      "SELECT COUNT(*) t, SUM(status = 'sent') d FROM dispatch_log WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)",
-    );
+  async getStats(scope?: { sql: string; params: unknown[] }): Promise<DispatchStats> {
+    const scoped = !!scope && scope.sql !== '1=1';
+    const SC = scoped ? ` AND recipient_employee_id IN (SELECT e.id FROM employees e WHERE ${scope!.sql})` : '';
+    const SP: unknown[] = scoped ? scope!.params : [];
+    const [todayRows]  = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE()" + SC, SP);
+    const [delivRows]  = await db.execute<DeliveryWindowRow[]>("SELECT COUNT(*) t, SUM(status = 'sent') d FROM dispatch_log WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)" + SC, SP);
     // `AND retry_count < 3` removed 2026-08-17. It asserted a three-attempt cap that NOTHING
     // implements: retry() increments retry_count with no ceiling, no backoff and no cooldown, and
     // there is no drainer or worker on this table at all. retry_count is 0 on all 2,770 rows, so
@@ -659,18 +638,10 @@ class DispatchService {
     // someone writing the first drainer would copy as "the existing rule", and doing so would
     // sweep up all 1,854 historic failures on the first tick — 919 SMS and 904 WhatsApp across
     // 7 contacts each. Any real cap belongs next to a cutover floor, not inferred from a stat.
-    const [failedRows] = await db.execute<DispatchCountRow[]>(
-      "SELECT COUNT(*) c FROM dispatch_log WHERE status = 'failed'",
-    );
-    const [retryRows] = await db.execute<DispatchCountRow[]>(
-      "SELECT COUNT(*) c FROM dispatch_log WHERE retry_count > 0 AND sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)",
-    );
-    const [bounceRows] = await db.execute<DispatchCountRow[]>(
-      "SELECT COUNT(*) c FROM dispatch_log WHERE status = 'bounced' AND sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)",
-    );
-    const [chRows] = await db.execute<ChannelCountRow[]>(
-      "SELECT channel, COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE() GROUP BY channel",
-    );
+    const [failedRows] = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE status = 'failed'" + SC, SP);
+    const [retryRows]  = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE retry_count > 0 AND sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)" + SC, SP);
+    const [bounceRows] = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE status = 'bounced' AND sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)" + SC, SP);
+    const [chRows]     = await db.execute<ChannelCountRow[]>("SELECT channel, COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE()" + SC + " GROUP BY channel", SP);
     const by_channel = { email: 0, sms: 0, whatsapp: 0 };
     for (const r of chRows) {
       by_channel[r.channel as keyof typeof by_channel] = Number(r.c);

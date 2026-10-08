@@ -14,6 +14,7 @@ import {
 } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
+import { employeeRowScope } from "../org/branchScope.js";
 
 export const policiesRouter = Router();
 policiesRouter.use(requireAuth);
@@ -120,13 +121,22 @@ policiesRouter.get(
       return res
         .status(403)
         .json({ success: false, message: "HR access required." });
+    // Branch scoping (owner ruling 2026-10-01): headcount and acknowledgement counts cover the caller's own branch /
+    // assigned scope (hr), not the whole company. Org-wide roles get 1=1.
+    const rowScope = await employeeRowScope(req.authUser, "e");
     const [[headcount]] = (await db.execute<RowDataPacket[]>(
-      "SELECT COUNT(*) AS n FROM employees WHERE active_status = 1",
+      `SELECT COUNT(*) AS n FROM employees e WHERE e.active_status = 1 AND (${rowScope.sql})`,
+      rowScope.params,
     )) as unknown as [RowDataPacket[]];
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ${POLICY_COLUMNS}, COUNT(a.id) AS acknowledged
-         FROM company_policy p LEFT JOIN company_policy_acknowledgement a ON a.policy_id = p.id
+         FROM company_policy p
+         LEFT JOIN (
+           SELECT a0.id, a0.policy_id FROM company_policy_acknowledgement a0
+             JOIN employees e ON e.id = a0.employee_id WHERE (${rowScope.sql})
+         ) a ON a.policy_id = p.id
         WHERE p.is_active = 1 GROUP BY p.id ORDER BY p.category, p.title`,
+      rowScope.params,
     );
     return res.json({
       success: true,

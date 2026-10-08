@@ -235,26 +235,31 @@ export const jobsService = {
 
   // ── Walk-in Queue ─────────────────────────────────────────────────────────
 
+  /** branch_id of a job_posting / walkin_queue row. undefined = row not found, null = row has no branch. */
+  async getBranchOf(table: "job_posting" | "walkin_queue", id: string): Promise<string | null | undefined> {
+    const [rows] = await db.execute<RowDataPacket[]>(`SELECT branch_id FROM ${table} WHERE id = ? LIMIT 1`, [id]);
+    return rows[0] ? ((rows[0].branch_id as string | null) ?? null) : undefined;
+  },
+
   async listWalkin(filters: {
     status?: string;
     branch_id?: string;
     date?: string;
+    /** Server-side scope: only these branch ids (empty = nothing). The browser's branch_id can only narrow. */
+    scopeBranchIds?: string[];
   }): Promise<WalkinEntry[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
 
-    if (filters.status) {
-      conds.push("status = ?");
-      params.push(filters.status);
+    if (filters.scopeBranchIds) {
+      if (filters.scopeBranchIds.length === 0) return [];
+      conds.push(`branch_id IN (${filters.scopeBranchIds.map(() => "?").join(",")})`);
+      params.push(...filters.scopeBranchIds);
     }
-    if (filters.branch_id) {
-      conds.push("branch_id = ?");
-      params.push(filters.branch_id);
-    }
-    if (filters.date) {
-      conds.push("DATE(registered_at) = ?");
-      params.push(filters.date);
-    }
+
+    if (filters.status)    { conds.push("status = ?");                params.push(filters.status); }
+    if (filters.branch_id) { conds.push("branch_id = ?");             params.push(filters.branch_id); }
+    if (filters.date)      { conds.push("DATE(registered_at) = ?");   params.push(filters.date); }
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(

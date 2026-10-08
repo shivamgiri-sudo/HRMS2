@@ -21,12 +21,16 @@ import {
 } from "./pnl-budget-source.js";
 import { cachedPnlRead } from "./pnl-read-cache.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
+import { snapshotUncoveredByRunSql } from "./pnl-payroll-coverage.js";
+import { getForecastRevenueByCostCentre } from "./revenue-forecast.service.js";
+import { readOpenBudgetReserve } from "./pnl-open-budget.js";
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
 export type PnlSourceStatus =
   "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
 /** Where a cost centre's recognised revenue came from. ESTIMATED = seat rate x seats. */
-export type PnlRevenueBasis = "INVOICE" | "ACCRUAL" | "ESTIMATED" | "NONE";
+export type PnlRevenueBasis = "FORECAST_CLOSED" | "FORECAST_OPEN" | "INVOICE" | "ACCRUAL" | "ESTIMATED" | "NONE";
 
 export interface PnlReconciliationFilters {
   branchIds?: string[];
@@ -67,6 +71,10 @@ export interface PnlReconciliationRow {
   revenueEstimated: number;
   recognisedRevenue: number;
   revenueBasis: PnlRevenueBasis;
+  /** Approved Branch Head forecast amount (open or closed), null when none — recognisedRevenue uses it. */
+  revenueForecast: number | null;
+  /** Unspent headroom of this cost centre's OPEN budget lines, counted as cost (pnl-open-budget.ts). */
+  openBudgetReserve: number;
   /** configured = P&L Configuration > Seat billing; invoice = the cost centre's last invoice. */
   estimateSource: "configured" | "invoice" | null;
   estimateSourcePeriod: string | null;
@@ -95,6 +103,7 @@ export interface PnlBranchRollup {
   revenue: number;
   grnActual: number;
   grnEstimated: number;
+  openBudgetReserve: number;
   allocatedBudget: number;
   branchBudget: number;
   payrollCost: number;
@@ -119,6 +128,11 @@ export interface PnlReconciliationTotals {
   perDayRevenue: number;
   grnActual: number;
   grnEstimated: number;
+  /** Open budget headroom counted as cost: rows plus branch-pooled lines with no cost-centre share. */
+  openBudgetReserve: number;
+  /** Sum of approved forecast amounts (open + closed) and how many cost centres the P&L reads from a forecast. */
+  revenueForecast: number;
+  forecastCostCentres: number;
   allocatedBudget: number;
   branchBudget: number;
   payrollCost: number;
@@ -508,22 +522,18 @@ async function readPayroll(
             COUNT(*) AS staff,
             SUM(${peopleCostSql("l")}) AS amount
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
        JOIN employees e ON e.id = l.employee_id
        ${ov.join}
       WHERE r.run_month = ?
       GROUP BY ${ov.effectiveCostCentreExpr}`,
     [period],
   );
-  for (const row of rows)
-    if (row.cost_centre_id)
-      out.set(String(row.cost_centre_id), {
-        cost: n(row.amount),
-        staff: n(row.staff),
-      });
-  if (out.size > 0 || !(await tableExists("pnl_running_salary_snapshot")))
-    return out;
+  for (const row of rows) if (row.cost_centre_id) out.set(String(row.cost_centre_id), { cost: n(row.amount), staff: n(row.staff) });
+  if (!(await tableExists("pnl_running_salary_snapshot"))) return out;
 
+  // Staff no valid run covers yet keep their accrual (per employee, not company-wide: a scoped run
+  // must not zero every other cost centre — pnl-payroll-coverage.ts).
   // Running-salary fallback stays CTC (earned till date): the snapshot has no other/loan/advance/
   // LWP deduction columns, so the People Cost rule (pnl-people-cost.ts) cannot be applied here.
   const ovSnapshot = await overrideJoinSql("s.employee_id", "s.cost_centre_id");
@@ -533,16 +543,15 @@ async function readPayroll(
             SUM(earned_salary_till_date) AS amount
        FROM pnl_running_salary_snapshot s
        ${ovSnapshot.join}
-      WHERE period_code = ?
+      WHERE s.period_code = ? AND ${await snapshotUncoveredByRunSql("s")}
       GROUP BY ${ovSnapshot.effectiveCostCentreExpr}`,
     [period],
   );
   for (const row of runningRows) {
-    if (row.cost_centre_id)
-      out.set(String(row.cost_centre_id), {
-        cost: n(row.amount),
-        staff: n(row.staff),
-      });
+    if (!row.cost_centre_id) continue;
+    const key = String(row.cost_centre_id);
+    const prev = out.get(key);
+    out.set(key, { cost: (prev?.cost ?? 0) + n(row.amount), staff: (prev?.staff ?? 0) + n(row.staff) });
   }
   return out;
 }
@@ -595,15 +604,13 @@ async function readUnallocatedPayroll(
   const [posted] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS line_count
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
       WHERE r.run_month = ?`,
     [period],
   );
-  if (n(posted[0]?.line_count) === 0)
-    return readUnallocatedRunningPayroll(period, branchIds, processIds);
-  const branchClause = branchIds?.length
-    ? `AND e.branch_id IN (${marks(branchIds)})`
-    : "";
+  const running = await readUnallocatedRunningPayroll(period, branchIds, processIds);
+  if (n(posted[0]?.line_count) === 0) return running;
+  const branchClause = branchIds?.length ? `AND e.branch_id IN (${marks(branchIds)})` : "";
   const proc = processClause("e.process_id", processIds);
   // A mapped override takes an employee out of "unallocated" too — that is a real use of this
   // feature (someone with no HR cost centre at all can still be pointed at one for P&L purposes).
@@ -613,7 +620,7 @@ async function readUnallocatedPayroll(
             COUNT(*) AS staff,
             SUM(${peopleCostSql("l")}) AS amount
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
        JOIN employees e ON e.id = l.employee_id
        LEFT JOIN branch_master bm ON bm.id = e.branch_id
        ${ov.join}
@@ -621,14 +628,16 @@ async function readUnallocatedPayroll(
       GROUP BY e.branch_id`,
     [period, ...(branchIds ?? []), ...proc.params],
   );
-  return rows
-    .map((r) => ({
-      branchId: r.branch_id ? String(r.branch_id) : null,
-      branchName: r.branch_name ? String(r.branch_name) : "Unassigned",
-      cost: n(r.amount),
-      staff: n(r.staff),
-    }))
-    .filter((r) => r.cost !== 0 || r.staff > 0);
+  const merged = new Map<string, { branchId: string | null; branchName: string; cost: number; staff: number }>();
+  for (const r of [
+    ...rows.map((r) => ({ branchId: r.branch_id ? String(r.branch_id) : null, branchName: r.branch_name ? String(r.branch_name) : "Unassigned", cost: n(r.amount), staff: n(r.staff) })),
+    ...running,
+  ]) {
+    const key = r.branchId ?? "";
+    const prev = merged.get(key);
+    merged.set(key, prev ? { ...prev, cost: prev.cost + r.cost, staff: prev.staff + r.staff } : { ...r });
+  }
+  return [...merged.values()].filter((r) => r.cost !== 0 || r.staff > 0);
 }
 
 /** readUnallocatedPayroll()'s running-salary leg: same population (effective cost centre IS NULL),
@@ -658,7 +667,7 @@ async function readUnallocatedRunningPayroll(
        FROM pnl_running_salary_snapshot s
        LEFT JOIN branch_master bm ON bm.id = s.branch_id
        ${ov.join}
-      WHERE s.period_code = ? AND ${ov.effectiveCostCentreExpr} IS NULL ${branchClause} ${proc.sql}
+      WHERE s.period_code = ? AND ${ov.effectiveCostCentreExpr} IS NULL AND ${await snapshotUncoveredByRunSql("s")} ${branchClause} ${proc.sql}
       GROUP BY s.branch_id`,
     [period, ...(branchIds ?? []), ...proc.params],
   );
@@ -711,7 +720,7 @@ async function payrollFreshness(period: string): Promise<PnlSourceFreshness> {
     `SELECT COUNT(l.id) AS \`rows\`, MAX(r.created_at) AS latest_synced_at
        FROM salary_prep_run r
        LEFT JOIN salary_prep_line l ON l.run_id = r.id
-      WHERE r.run_month = ?`,
+      WHERE r.run_month = ? AND ${nonVoidRunSql("r")}`,
     [period],
   );
   const first = rows[0] ?? {};
@@ -768,7 +777,7 @@ async function exceptions(
       `SELECT COUNT(*) AS count,
               SUM(${peopleCostSql("l")}) AS amount
          FROM salary_prep_line l
-         JOIN salary_prep_run r ON r.id = l.run_id
+         JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
          JOIN employees e ON e.id = l.employee_id
          ${ov.join}
         WHERE r.run_month = ? AND ${ov.effectiveCostCentreExpr} IS NULL`,
@@ -814,60 +823,28 @@ function sourceStatus(
  * page load runs them once instead of once per caller. The returned maps are shared: read-only.
  */
 function readPeriodSources(period: string) {
-  return cachedPnlRead(
-    "pnl-reconciliation:period-sources",
-    { period },
-    async () => {
-      const [
-        revenue,
-        grn,
-        grnCommitted,
-        budgets,
-        payroll,
-        belowTheLine,
-        freshness,
-        exceptionsOut,
-      ] = await Promise.all([
-        readRevenue(period),
-        readGrn(period),
-        readGrnCommitted(period),
-        readBudgets(period),
-        readPayroll(period),
-        readBelowTheLine(period),
-        Promise.all([
-          sourceFreshness(
-            "Invoice lines",
-            "billing_invoice_particular_snapshot",
-            period,
-          ),
-          sourceFreshness(
-            "Billing provision",
-            "billing_provision_snapshot",
-            period,
-          ),
-          sourceFreshness(
-            "Credit notes",
-            "billing_credit_note_snapshot",
-            period,
-          ),
-          sourceFreshness("GRN", "grn_entry_snapshot", period),
-          payrollFreshness(period),
-          runningSalaryFreshness(period),
-        ]),
-        exceptions(period),
-      ]);
-      return {
-        revenue,
-        grn,
-        grnCommitted,
-        budgets,
-        payroll,
-        belowTheLine,
-        freshness,
-        exceptionsOut,
-      };
-    },
-  );
+  return cachedPnlRead("pnl-reconciliation:period-sources", { period }, async () => {
+    const [revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, forecasts, openBudget] = await Promise.all([
+      readRevenue(period),
+      readGrn(period),
+      readGrnCommitted(period),
+      readBudgets(period),
+      readPayroll(period),
+      readBelowTheLine(period),
+      Promise.all([
+        sourceFreshness("Invoice lines", "billing_invoice_particular_snapshot", period),
+        sourceFreshness("Billing provision", "billing_provision_snapshot", period),
+        sourceFreshness("Credit notes", "billing_credit_note_snapshot", period),
+        sourceFreshness("GRN", "grn_entry_snapshot", period),
+        payrollFreshness(period),
+        runningSalaryFreshness(period),
+      ]),
+      exceptions(period),
+      getForecastRevenueByCostCentre(period),
+      readOpenBudgetReserve(period),
+    ]);
+    return { revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, forecasts, openBudget };
+  });
 }
 
 /**
@@ -913,27 +890,20 @@ async function buildPnlReconciliation(
   const asOfDate = filters.asOfDate ?? getCurrentDateIST();
   const estimateApplies = isEstimateWindow(period, asOfDate);
 
-  const [allCostCentres, sources, unallocated, seatBilling] = await Promise.all(
-    [
-      readCostCentres(filters),
-      readPeriodSources(period),
-      readUnallocatedPayroll(period, filters.branchIds, filters.processIds),
-      getSeatBillingEstimate(period, {
-        branchIds: filters.branchIds,
-        asOfDate,
-      }).catch(() => null),
-    ],
-  );
-  const {
-    revenue,
-    grn,
-    grnCommitted,
-    budgets,
-    payroll,
-    belowTheLine,
-    freshness,
-    exceptionsOut,
-  } = sources;
+  const [allCostCentres, sources, unallocated, seatBilling] = await Promise.all([
+    readCostCentres(filters),
+    readPeriodSources(period),
+    readUnallocatedPayroll(period, filters.branchIds, filters.processIds),
+    getSeatBillingEstimate(period, { branchIds: filters.branchIds, asOfDate }).catch(() => null),
+  ]);
+  const { revenue, grn, grnCommitted, budgets, payroll, freshness, forecasts, openBudget } = sources;
+  // Below-the-line (company-level depreciation / finance cost / tax) and the exceptions list are
+  // company-wide. A branch- or client-narrowed view must not carry them: it exposed the company's
+  // figures to a branch-scoped caller and subtracted the whole company's D&A/tax from one branch's
+  // operating profit in truePat.
+  const narrowed = Boolean(filters.branchIds?.length) || filters.processIds !== undefined;
+  const belowTheLine = narrowed ? { depreciation: 0, financeCost: 0, taxProvision: 0 } : sources.belowTheLine;
+  const exceptionsOut = narrowed ? [] : sources.exceptionsOut;
 
   const payrollPosted =
     (freshness.find((item) => item.source === "Payroll")?.rows ?? 0) > 0;
@@ -948,18 +918,13 @@ async function buildPnlReconciliation(
   // cost centres were deactivated that day) must keep that month's budget in allocatedBudget.
   const hasPeriodActivity = (id: string): boolean => {
     const rev = revenue.get(id);
-    const hasRevenue =
-      !!rev &&
-      (n(rev.invoice_amount) !== 0 ||
-        n(rev.provision_amount) !== 0 ||
-        n(rev.credit_note) !== 0);
-    return (
-      hasRevenue ||
-      (grn.get(id) ?? 0) !== 0 ||
-      (grnCommitted.get(id) ?? 0) !== 0 ||
-      (payroll.get(id)?.cost ?? 0) !== 0 ||
-      (budgets.byCostCentre.get(id) ?? 0) !== 0
-    );
+    const hasRevenue = !!rev && (n(rev.invoice_amount) !== 0 || n(rev.provision_amount) !== 0 || n(rev.credit_note) !== 0);
+    return hasRevenue
+      || (grn.get(id) ?? 0) !== 0
+      || (grnCommitted.get(id) ?? 0) !== 0
+      || (payroll.get(id)?.cost ?? 0) !== 0
+      || (budgets.byCostCentre.get(id) ?? 0) !== 0
+      || forecasts.has(id);
   };
   const costCentres = allCostCentres.filter(
     (cc) =>
@@ -976,24 +941,18 @@ async function buildPnlReconciliation(
     const revenueAccrual = n(rev?.accrual_amount);
     const creditNote = n(rev?.credit_note);
     const seat = seatByCc.get(String(cc.id));
+    // An approved Branch Head forecast IS the cost centre's revenue (owner accounting rule
+    // 2026-10-06): the forecast amount while OPEN, the closed amount once CLOSED. Invoice/accrual
+    // stay on the row for reference only. Without one, the earlier invoice/accrual/estimate rule.
+    const forecast = forecasts.get(String(cc.id));
     // A cost centre closed today gets no fresh seat-rate estimate — it keeps only its real money.
-    const useEstimate =
-      estimateApplies &&
-      currentlyActive &&
-      revenueInvoice === 0 &&
-      revenueAccrual === 0 &&
-      (seat?.toDate ?? 0) > 0;
+    const useEstimate = !forecast && estimateApplies && currentlyActive && revenueInvoice === 0 && revenueAccrual === 0 && (seat?.toDate ?? 0) > 0;
     const revenueEstimated = useEstimate ? seat!.toDate : 0;
-    const revenueBasis: PnlRevenueBasis =
-      revenueInvoice > 0
-        ? "INVOICE"
-        : revenueAccrual > 0
-          ? "ACCRUAL"
-          : useEstimate
-            ? "ESTIMATED"
-            : "NONE";
-    const recognisedRevenue =
-      revenueInvoice + revenueAccrual + revenueEstimated - creditNote;
+    const revenueBasis: PnlRevenueBasis = forecast
+      ? (forecast.state === "CLOSED" ? "FORECAST_CLOSED" : "FORECAST_OPEN")
+      : revenueInvoice > 0 ? "INVOICE" : revenueAccrual > 0 ? "ACCRUAL" : useEstimate ? "ESTIMATED" : "NONE";
+    const recognisedRevenue = forecast ? forecast.amount : revenueInvoice + revenueAccrual + revenueEstimated - creditNote;
+    const revenueForecast = forecast ? forecast.forecastAmount : null;
     const grnActual = grn.get(cc.id) ?? 0;
     // Committed-not-yet-consumed GRN ('reserved', ex-GST) for ANY period — owner rule 2026-09-24:
     // P&L GRN cost = Consumed + Reserved. Unlike revenueEstimated this is NOT gated by the estimate
@@ -1006,7 +965,10 @@ async function buildPnlReconciliation(
     const payrollCost = pay?.cost ?? 0;
     const staffPaid = pay?.staff ?? 0;
     const grnTotal = grnActual + grnEstimated;
-    const operatingProfit = recognisedRevenue - payrollCost - grnTotal;
+    // Unspent headroom of this cost centre's OPEN budget lines: an open line counts at its full
+    // budget, a closed one at actual (pnl-open-budget.ts).
+    const openBudgetReserve = openBudget.byCostCentre.get(String(cc.id)) ?? 0;
+    const operatingProfit = recognisedRevenue - payrollCost - grnTotal - openBudgetReserve;
     const issues: string[] = [];
     addIssue(
       issues,
@@ -1063,11 +1025,9 @@ async function buildPnlReconciliation(
       revenueEstimated,
       recognisedRevenue,
       revenueBasis,
-      estimateSource: useEstimate
-        ? seat!.source === "configured"
-          ? "configured"
-          : "invoice"
-        : null,
+      revenueForecast,
+      openBudgetReserve,
+      estimateSource: useEstimate ? (seat!.source === "configured" ? "configured" : "invoice") : null,
       estimateSourcePeriod: useEstimate ? seat!.sourcePeriod : null,
       perDayRevenue: seat?.perDay ?? 0,
       grnActual,
@@ -1105,6 +1065,7 @@ async function buildPnlReconciliation(
       revenue: 0,
       grnActual: 0,
       grnEstimated: 0,
+      openBudgetReserve: 0,
       allocatedBudget: 0,
       branchBudget: row.branchBudget,
       payrollCost: 0,
@@ -1117,6 +1078,7 @@ async function buildPnlReconciliation(
     current.revenue += row.recognisedRevenue;
     current.grnActual += row.grnActual;
     current.grnEstimated += row.grnEstimated;
+    current.openBudgetReserve += row.openBudgetReserve;
     current.allocatedBudget += row.allocatedBudget;
     current.branchBudget = Math.max(current.branchBudget, row.branchBudget);
     current.payrollCost += row.payrollCost;
@@ -1135,20 +1097,9 @@ async function buildPnlReconciliation(
   for (const u of unallocatedPayroll) {
     const key = u.branchId ?? "unassigned";
     const current = branchMap.get(key) ?? {
-      branchId: u.branchId,
-      branchName: u.branchName,
-      costCentres: 0,
-      unallocatedPayroll: 0,
-      revenue: 0,
-      grnActual: 0,
-      grnEstimated: 0,
-      allocatedBudget: 0,
-      branchBudget: 0,
-      payrollCost: 0,
-      staffPaid: 0,
-      operatingProfit: 0,
-      marginPct: null,
-      issues: [],
+      branchId: u.branchId, branchName: u.branchName, costCentres: 0, unallocatedPayroll: 0, revenue: 0,
+      grnActual: 0, grnEstimated: 0, openBudgetReserve: 0, allocatedBudget: 0, branchBudget: 0, payrollCost: 0, staffPaid: 0,
+      operatingProfit: 0, marginPct: null, issues: [],
     };
     current.unallocatedPayroll += u.cost;
     current.payrollCost += u.cost;
@@ -1158,6 +1109,20 @@ async function buildPnlReconciliation(
       current.issues.push("PAYROLL_WITHOUT_COST_CENTRE");
     current.marginPct = pct(current.operatingProfit, current.revenue);
     branchMap.set(key, current);
+  }
+  // Open headroom of branch-pooled budget lines with no cost-centre allocation: branch and company
+  // cost, never a row — same treatment as unallocated payroll. Only branches in this view.
+  const viewBranches = filters.branchIds ? new Set(filters.branchIds) : null;
+  let unallocatedBudgetReserve = 0;
+  for (const [branchId, amount] of openBudget.unallocatedByBranch) {
+    if (viewBranches && !viewBranches.has(branchId)) continue;
+    if (filters.processIds) continue; // a client/process view has no branch-pool share to claim
+    const current = branchMap.get(branchId);
+    if (!current) continue;
+    current.openBudgetReserve += amount;
+    current.operatingProfit -= amount;
+    current.marginPct = pct(current.operatingProfit, current.revenue);
+    unallocatedBudgetReserve += amount;
   }
   const unallocatedCost = unallocatedPayroll.reduce((t, u) => t + u.cost, 0);
   const unallocatedStaff = unallocatedPayroll.reduce((t, u) => t + u.staff, 0);
@@ -1178,6 +1143,9 @@ async function buildPnlReconciliation(
     perDayRevenue: sum((row) => row.perDayRevenue),
     grnActual: sum((row) => row.grnActual),
     grnEstimated: sum((row) => row.grnEstimated),
+    openBudgetReserve: sum((row) => row.openBudgetReserve) + unallocatedBudgetReserve,
+    revenueForecast: sum((row) => row.revenueForecast ?? 0),
+    forecastCostCentres: rows.filter((row) => row.revenueBasis === "FORECAST_OPEN" || row.revenueBasis === "FORECAST_CLOSED").length,
     allocatedBudget: sum((row) => row.allocatedBudget),
     branchBudget: Array.from(branchMap.values()).reduce(
       (total, row) => total + row.branchBudget,
@@ -1185,7 +1153,7 @@ async function buildPnlReconciliation(
     ),
     payrollCost: sum((row) => row.payrollCost) + unallocatedCost,
     staffPaid: sum((row) => row.staffPaid) + unallocatedStaff,
-    operatingProfit: sum((row) => row.operatingProfit) - unallocatedCost,
+    operatingProfit: sum((row) => row.operatingProfit) - unallocatedCost - unallocatedBudgetReserve,
     marginPct: null,
     depreciation: belowTheLine.depreciation,
     financeCost: belowTheLine.financeCost,

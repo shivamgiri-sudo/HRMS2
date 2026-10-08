@@ -1,0 +1,1961 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`follow-up step selects before best-offer holds > empty queue, HE_BEST_OFFER="  " > empty queue 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+  },
+  "sends": {
+    "email": 0,
+    "wa": 0,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > empty queue, HE_BEST_OFFER="" > empty queue 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+  },
+  "sends": {
+    "email": 0,
+    "wa": 0,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > empty queue, HE_BEST_OFFER="1" > empty queue 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+  },
+  "sends": {
+    "email": 0,
+    "wa": 0,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > empty queue, HE_BEST_OFFER="false" > empty queue 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+  },
+  "sends": {
+    "email": 0,
+    "wa": 0,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > empty queue, HE_BEST_OFFER="on" > empty queue 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+  },
+  "sends": {
+    "email": 0,
+    "wa": 0,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > empty queue, HE_BEST_OFFER="yes" > empty queue 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+  },
+  "sends": {
+    "email": 0,
+    "wa": 0,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > empty queue, HE_BEST_OFFER=undefined > empty queue 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 0,
+      "sent": 0,
+    },
+  },
+  "sends": {
+    "email": 0,
+    "wa": 0,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > one due row per step, HE_BEST_OFFER="  " > one row per step 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+  },
+  "sends": {
+    "email": 1,
+    "wa": 1,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND email_status IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-e",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+        "req-e",
+        "he_walkin_invite_email",
+      ],
+      "sql": "SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = ? AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "<uuid>",
+        "lead-1",
+        "9876543210",
+        "out",
+        "email",
+        "he_walkin_invite_email",
+        "Walk-in interview: Thu 15 Oct 2026, 10:30 AM - Customer Support, MAS Callnet",
+        "mail-1",
+        "sent",
+        "req-e",
+        null,
+      ],
+      "sql": "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        "2026-10-14T06:00:00.000Z",
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = ?, email_error = ?, email_sent_at = NOW(), wa_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "9876543210",
+        "req-w",
+      ],
+      "sql": "SELECT 1 AS hit FROM he_message WHERE mobile10 = ? AND requisition_id = ? AND direction = 'out'
+            AND (template_key LIKE 'he_walkin_invite:%' OR template_key LIKE 'he_winback:%') AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-w",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND wa_status IS NULL AND wa_sent_at IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        null,
+        "msg-1",
+        "he_walkin_invite",
+        "2026-10-14T06:00:00.000Z",
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = ?, wa_error = ?, missing_details = ?, wa_sent_at = NOW(), wa_message_id = ?, wa_template_key = ?, call_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        null,
+        "c0000000-0000-0000-0000-000000000003",
+      ],
+      "sql": "UPDATE qualified_followup SET call_state = 'in_file', call_error = ? WHERE id = ? AND call_state IN ('pending','queued') AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > one due row per step, HE_BEST_OFFER="" > one row per step 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+  },
+  "sends": {
+    "email": 1,
+    "wa": 1,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND email_status IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-e",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+        "req-e",
+        "he_walkin_invite_email",
+      ],
+      "sql": "SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = ? AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "<uuid>",
+        "lead-1",
+        "9876543210",
+        "out",
+        "email",
+        "he_walkin_invite_email",
+        "Walk-in interview: Thu 15 Oct 2026, 10:30 AM - Customer Support, MAS Callnet",
+        "mail-1",
+        "sent",
+        "req-e",
+        null,
+      ],
+      "sql": "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        "2026-10-14T06:00:00.000Z",
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = ?, email_error = ?, email_sent_at = NOW(), wa_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "9876543210",
+        "req-w",
+      ],
+      "sql": "SELECT 1 AS hit FROM he_message WHERE mobile10 = ? AND requisition_id = ? AND direction = 'out'
+            AND (template_key LIKE 'he_walkin_invite:%' OR template_key LIKE 'he_winback:%') AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-w",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND wa_status IS NULL AND wa_sent_at IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        null,
+        "msg-1",
+        "he_walkin_invite",
+        "2026-10-14T06:00:00.000Z",
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = ?, wa_error = ?, missing_details = ?, wa_sent_at = NOW(), wa_message_id = ?, wa_template_key = ?, call_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        null,
+        "c0000000-0000-0000-0000-000000000003",
+      ],
+      "sql": "UPDATE qualified_followup SET call_state = 'in_file', call_error = ? WHERE id = ? AND call_state IN ('pending','queued') AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > one due row per step, HE_BEST_OFFER="1" > one row per step 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+  },
+  "sends": {
+    "email": 1,
+    "wa": 1,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND email_status IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-e",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+        "req-e",
+        "he_walkin_invite_email",
+      ],
+      "sql": "SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = ? AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "<uuid>",
+        "lead-1",
+        "9876543210",
+        "out",
+        "email",
+        "he_walkin_invite_email",
+        "Walk-in interview: Thu 15 Oct 2026, 10:30 AM - Customer Support, MAS Callnet",
+        "mail-1",
+        "sent",
+        "req-e",
+        null,
+      ],
+      "sql": "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        "2026-10-14T06:00:00.000Z",
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = ?, email_error = ?, email_sent_at = NOW(), wa_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "9876543210",
+        "req-w",
+      ],
+      "sql": "SELECT 1 AS hit FROM he_message WHERE mobile10 = ? AND requisition_id = ? AND direction = 'out'
+            AND (template_key LIKE 'he_walkin_invite:%' OR template_key LIKE 'he_winback:%') AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-w",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND wa_status IS NULL AND wa_sent_at IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        null,
+        "msg-1",
+        "he_walkin_invite",
+        "2026-10-14T06:00:00.000Z",
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = ?, wa_error = ?, missing_details = ?, wa_sent_at = NOW(), wa_message_id = ?, wa_template_key = ?, call_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        null,
+        "c0000000-0000-0000-0000-000000000003",
+      ],
+      "sql": "UPDATE qualified_followup SET call_state = 'in_file', call_error = ? WHERE id = ? AND call_state IN ('pending','queued') AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > one due row per step, HE_BEST_OFFER="false" > one row per step 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+  },
+  "sends": {
+    "email": 1,
+    "wa": 1,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND email_status IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-e",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+        "req-e",
+        "he_walkin_invite_email",
+      ],
+      "sql": "SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = ? AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "<uuid>",
+        "lead-1",
+        "9876543210",
+        "out",
+        "email",
+        "he_walkin_invite_email",
+        "Walk-in interview: Thu 15 Oct 2026, 10:30 AM - Customer Support, MAS Callnet",
+        "mail-1",
+        "sent",
+        "req-e",
+        null,
+      ],
+      "sql": "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        "2026-10-14T06:00:00.000Z",
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = ?, email_error = ?, email_sent_at = NOW(), wa_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "9876543210",
+        "req-w",
+      ],
+      "sql": "SELECT 1 AS hit FROM he_message WHERE mobile10 = ? AND requisition_id = ? AND direction = 'out'
+            AND (template_key LIKE 'he_walkin_invite:%' OR template_key LIKE 'he_winback:%') AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-w",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND wa_status IS NULL AND wa_sent_at IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        null,
+        "msg-1",
+        "he_walkin_invite",
+        "2026-10-14T06:00:00.000Z",
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = ?, wa_error = ?, missing_details = ?, wa_sent_at = NOW(), wa_message_id = ?, wa_template_key = ?, call_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        null,
+        "c0000000-0000-0000-0000-000000000003",
+      ],
+      "sql": "UPDATE qualified_followup SET call_state = 'in_file', call_error = ? WHERE id = ? AND call_state IN ('pending','queued') AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > one due row per step, HE_BEST_OFFER="on" > one row per step 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+  },
+  "sends": {
+    "email": 1,
+    "wa": 1,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND email_status IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-e",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+        "req-e",
+        "he_walkin_invite_email",
+      ],
+      "sql": "SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = ? AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "<uuid>",
+        "lead-1",
+        "9876543210",
+        "out",
+        "email",
+        "he_walkin_invite_email",
+        "Walk-in interview: Thu 15 Oct 2026, 10:30 AM - Customer Support, MAS Callnet",
+        "mail-1",
+        "sent",
+        "req-e",
+        null,
+      ],
+      "sql": "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        "2026-10-14T06:00:00.000Z",
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = ?, email_error = ?, email_sent_at = NOW(), wa_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "9876543210",
+        "req-w",
+      ],
+      "sql": "SELECT 1 AS hit FROM he_message WHERE mobile10 = ? AND requisition_id = ? AND direction = 'out'
+            AND (template_key LIKE 'he_walkin_invite:%' OR template_key LIKE 'he_winback:%') AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-w",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND wa_status IS NULL AND wa_sent_at IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        null,
+        "msg-1",
+        "he_walkin_invite",
+        "2026-10-14T06:00:00.000Z",
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = ?, wa_error = ?, missing_details = ?, wa_sent_at = NOW(), wa_message_id = ?, wa_template_key = ?, call_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        null,
+        "c0000000-0000-0000-0000-000000000003",
+      ],
+      "sql": "UPDATE qualified_followup SET call_state = 'in_file', call_error = ? WHERE id = ? AND call_state IN ('pending','queued') AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > one due row per step, HE_BEST_OFFER="yes" > one row per step 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+  },
+  "sends": {
+    "email": 1,
+    "wa": 1,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND email_status IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-e",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+        "req-e",
+        "he_walkin_invite_email",
+      ],
+      "sql": "SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = ? AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "<uuid>",
+        "lead-1",
+        "9876543210",
+        "out",
+        "email",
+        "he_walkin_invite_email",
+        "Walk-in interview: Thu 15 Oct 2026, 10:30 AM - Customer Support, MAS Callnet",
+        "mail-1",
+        "sent",
+        "req-e",
+        null,
+      ],
+      "sql": "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        "2026-10-14T06:00:00.000Z",
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = ?, email_error = ?, email_sent_at = NOW(), wa_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "9876543210",
+        "req-w",
+      ],
+      "sql": "SELECT 1 AS hit FROM he_message WHERE mobile10 = ? AND requisition_id = ? AND direction = 'out'
+            AND (template_key LIKE 'he_walkin_invite:%' OR template_key LIKE 'he_winback:%') AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-w",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND wa_status IS NULL AND wa_sent_at IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        null,
+        "msg-1",
+        "he_walkin_invite",
+        "2026-10-14T06:00:00.000Z",
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = ?, wa_error = ?, missing_details = ?, wa_sent_at = NOW(), wa_message_id = ?, wa_template_key = ?, call_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        null,
+        "c0000000-0000-0000-0000-000000000003",
+      ],
+      "sql": "UPDATE qualified_followup SET call_state = 'in_file', call_error = ? WHERE id = ? AND call_state IN ('pending','queued') AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+  ],
+}
+`;
+
+exports[`follow-up step selects before best-offer holds > one due row per step, HE_BEST_OFFER=undefined > one row per step 1`] = `
+{
+  "counts": {
+    "call": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 0,
+    },
+    "email": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+    "wa": {
+      "blocked": 0,
+      "dryRun": 0,
+      "failed": 0,
+      "held": 0,
+      "processed": 1,
+      "sent": 1,
+    },
+  },
+  "sends": {
+    "email": 1,
+    "wa": 1,
+  },
+  "statements": [
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.email_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND email_status IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-e",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+        "req-e",
+        "he_walkin_invite_email",
+      ],
+      "sql": "SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = ? AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "<uuid>",
+        "lead-1",
+        "9876543210",
+        "out",
+        "email",
+        "he_walkin_invite_email",
+        "Walk-in interview: Thu 15 Oct 2026, 10:30 AM - Customer Support, MAS Callnet",
+        "mail-1",
+        "sent",
+        "req-e",
+        null,
+      ],
+      "sql": "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        "2026-10-14T06:00:00.000Z",
+        "e0000000-0000-0000-0000-000000000001",
+      ],
+      "sql": "UPDATE qualified_followup SET email_status = ?, email_error = ?, email_sent_at = NOW(), wa_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        
+      ORDER BY qf.wa_due_at LIMIT 10",
+    },
+    {
+      "params": [
+        "9876543210",
+        "req-w",
+      ],
+      "sql": "SELECT 1 AS hit FROM he_message WHERE mobile10 = ? AND requisition_id = ? AND direction = 'out'
+            AND (template_key LIKE 'he_walkin_invite:%' OR template_key LIKE 'he_winback:%') AND delivery_status <> 'failed' LIMIT 1",
+    },
+    {
+      "params": [
+        "lead-1",
+      ],
+      "sql": "SELECT status FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "Noida",
+      ],
+      "sql": "SELECT address, latitude, longitude FROM branch_master WHERE branch_name = ? AND active_status = 1 LIMIT 1",
+    },
+    {
+      "params": [
+        "req-w",
+      ],
+      "sql": "SELECT bmi_assessment_url FROM job_requisition WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "m1",
+      ],
+      "sql": "SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1",
+    },
+    {
+      "params": [
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND wa_status IS NULL AND wa_sent_at IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+    {
+      "params": [
+        "sent",
+        null,
+        null,
+        "msg-1",
+        "he_walkin_invite",
+        "2026-10-14T06:00:00.000Z",
+        "w0000000-0000-0000-0000-000000000002",
+      ],
+      "sql": "UPDATE qualified_followup SET wa_status = ?, wa_error = ?, missing_details = ?, wa_sent_at = NOW(), wa_message_id = ?, wa_template_key = ?, call_due_at = ?, step_claimed_at = NULL WHERE id = ?",
+    },
+    {
+      "params": [
+        "live",
+        "2026-10-14T05:00:00.000Z",
+      ],
+      "sql": "SELECT qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
+  qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
+  qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
+  qf.call_due_at, qf.call_state, qf.call_attempts FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
+        AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
+        
+      ORDER BY qf.call_due_at LIMIT 200",
+    },
+    {
+      "params": [
+        null,
+        "c0000000-0000-0000-0000-000000000003",
+      ],
+      "sql": "UPDATE qualified_followup SET call_state = 'in_file', call_error = ? WHERE id = ? AND call_state IN ('pending','queued') AND stopped_reason IS NULL AND owner = 'pipeline'",
+    },
+  ],
+}
+`;

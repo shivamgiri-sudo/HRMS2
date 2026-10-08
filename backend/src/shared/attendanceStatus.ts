@@ -136,7 +136,7 @@ export const LATEST_COMPLETE_ATTENDANCE_DATE_SQL = `(
          GROUP BY record_date
       ) x
     ) m
-   WHERE d.n >= m.mx * 0.5
+   WHERE d.n >= m.mx * 0.9
    ORDER BY d.record_date DESC
    LIMIT 1
 )`;

@@ -7,6 +7,7 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import { listSalaryStartDateMismatches } from "../payroll/salary-start-date.service.js";
 import * as svc from "./payroll-head-review.service.js";
+import { guardEmployee } from "../payroll/payroll-branch-scope.js";
 
 const router = Router();
 type AsyncHandler = (
@@ -102,15 +103,11 @@ router.get(
   }),
 );
 
-router.get(
-  "/:employeeId",
-  requireAuth,
-  requireRole(...VIEWER_ROLES),
-  h(async (req, res) => {
-    const data = await svc.getEmployeeJourney(req.params.employeeId);
-    res.json({ success: true, data });
-  }),
-);
+router.get("/:employeeId", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
+  const data = await svc.getEmployeeJourney(req.params.employeeId);
+  res.json({ success: true, data });
+}));
 
 // Optional free-text reason. Mandatory (>= 5 chars) only when the date goes before joining or before
 // today - the service decides that, so a normal on-time assignment needs none.
@@ -257,16 +254,11 @@ router.post(
   }),
 );
 
-router.post(
-  "/:employeeId/resubmit",
-  requireAuth,
-  requireWriteAccess,
-  requireRole(...FIXER_ROLES),
-  h(async (req, res) => {
-    const data = await svc.resubmit(req.params.employeeId, req.authUser!.id);
-    res.json({ success: true, data });
-  }),
-);
+router.post("/:employeeId/resubmit", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES), h(async (req, res) => {
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
+  const data = await svc.resubmit(req.params.employeeId, req.authUser!.id);
+  res.json({ success: true, data });
+}));
 
 // Correction path after approval — see reopen()'s own doc comment for why
 // this never touches an already-run payroll calculation.

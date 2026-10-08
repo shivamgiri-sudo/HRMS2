@@ -126,6 +126,20 @@ const employeeRow = {
   salary_start_date: "2026-01-01",
 };
 
+/**
+ * Positions in the salary_prep_line INSERT's value array. Every index moved up by two when
+ * branch_id and cost_centre_id were inserted after employee_code (1dfd5fcb1); the column-list /
+ * placeholder / value-array agreement itself is pinned by salary-line-scope-stamp.test.ts.
+ */
+const COL = {
+  paid_working_days: 29,
+  eligible_weekoff_days: 30,
+  eligible_holiday_days: 31,
+  final_payable_days: 32,
+  active_calendar_days: 33,
+  attendance_data_source: 36,
+} as const;
+
 function setupDbMocks() {
   dbExecute.mockImplementation(async (sql: string, params?: unknown[]) => {
     if (sql.includes("SELECT * FROM salary_prep_run")) {
@@ -153,8 +167,10 @@ function setupDbMocks() {
     if (sql.includes("FROM attendance_feature_config")) {
       return [[{ config_value: "0" }], []];
     }
-    if (sql.includes("COUNT(*) AS cnt FROM attendance_daily_record")) {
-      return [[{ cnt: 3 }], []];
+    // The per-employee attendance reads were pre-batched (562219388): one query for all
+    // employees, grouped by employee_id, so every row must carry the id it belongs to.
+    if (/COUNT\(\*\) AS cnt\s+FROM attendance_daily_record/.test(sql)) {
+      return [[{ employee_id: "emp-1", cnt: 3 }], []];
     }
     if (sql.includes("COUNT(CASE WHEN adr.attendance_status = 'present'")) {
       return [
@@ -173,7 +189,7 @@ function setupDbMocks() {
       ];
     }
     if (sql.includes("SUM(") && sql.includes("AS paid_base")) {
-      return [[{ paid_base: 1.5 }], []];
+      return [[{ employee_id: "emp-1", paid_base: 1.5 }], []];
     }
     if (sql.includes("FROM employee_loans")) {
       return [[{ loan_emi: 0 }], []];
@@ -294,11 +310,11 @@ describe("calculatePayrollRun ADR payable-day batch logic", () => {
     );
     expect(prepInsert).toBeTruthy();
     const prepParams = prepInsert?.[1] as unknown[];
-    expect(prepParams[27]).toBe(1.5);
-    expect(prepParams[28]).toBe(1);
-    expect(prepParams[29]).toBe(1);
-    expect(prepParams[30]).toBe(3.5);
-    expect(prepParams[34]).toBe("ADR");
+    expect(prepParams[COL.paid_working_days]).toBe(1.5);
+    expect(prepParams[COL.eligible_weekoff_days]).toBe(1);
+    expect(prepParams[COL.eligible_holiday_days]).toBe(1);
+    expect(prepParams[COL.final_payable_days]).toBe(3.5);
+    expect(prepParams[COL.attendance_data_source]).toBe("ADR");
     expect(result.employees_processed).toBe(1);
   });
 
@@ -318,27 +334,19 @@ describe("calculatePayrollRun ADR payable-day batch logic", () => {
 
     await calculatePayrollRun("run-1", "user-1");
 
-    expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(
-      1,
-      "emp-1",
-      1.5,
-      "2026-07",
-    );
-    expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(
-      2,
-      "emp-1",
-      1,
-      "2026-07",
-    );
+    // Fourth argument: the employee's eligible holiday count, passed since e1f94107b so a
+    // company holiday does not count against full-attendance week-off eligibility.
+    expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(1, "emp-1", 1.5, "2026-07", 1);
+    expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(2, "emp-1", 1, "2026-07", 1);
 
     const prepInsert = connExecute.mock.calls.find(([sql]: [string]) =>
       sql.includes("INSERT INTO salary_prep_line"),
     );
     const prepParams = prepInsert?.[1] as unknown[];
-    expect(prepParams[27]).toBe(1);
-    expect(prepParams[28]).toBe(0);
-    expect(prepParams[29]).toBe(1);
-    expect(prepParams[30]).toBe(2);
+    expect(prepParams[COL.paid_working_days]).toBe(1);
+    expect(prepParams[COL.eligible_weekoff_days]).toBe(0);
+    expect(prepParams[COL.eligible_holiday_days]).toBe(1);
+    expect(prepParams[COL.final_payable_days]).toBe(2);
   });
 
   it("caps final payable days at the employee's active window, not the full month, for a mid-month joiner", async () => {
@@ -377,10 +385,8 @@ describe("calculatePayrollRun ADR payable-day batch logic", () => {
           [],
         ];
       }
-      if (sql.includes("FROM attendance_feature_config"))
-        return [[{ config_value: "0" }], []];
-      if (sql.includes("COUNT(*) AS cnt FROM attendance_daily_record"))
-        return [[{ cnt: 3 }], []];
+      if (sql.includes("FROM attendance_feature_config")) return [[{ config_value: "0" }], []];
+      if (/COUNT\(\*\) AS cnt\s+FROM attendance_daily_record/.test(sql)) return [[{ employee_id: "emp-1", cnt: 3 }], []];
       if (sql.includes("COUNT(CASE WHEN adr.attendance_status = 'present'")) {
         return [
           [
@@ -399,8 +405,7 @@ describe("calculatePayrollRun ADR payable-day batch logic", () => {
       }
       // Deliberately larger than the 7-day active window, but still <= daysInMonth(31),
       // so only the active-days cap (not the old full-month cap) can catch this.
-      if (sql.includes("SUM(") && sql.includes("AS paid_base"))
-        return [[{ paid_base: 10 }], []];
+      if (sql.includes("SUM(") && sql.includes("AS paid_base")) return [[{ employee_id: "emp-1", paid_base: 10 }], []];
       if (sql.includes("FROM employee_loans")) return [[{ loan_emi: 0 }], []];
       if (sql.includes("FROM employee_deduction_entries")) return [[], []];
       if (sql.includes("FROM attendance_billing_config")) return [[], []];
@@ -433,8 +438,8 @@ describe("calculatePayrollRun ADR payable-day batch logic", () => {
       sql.includes("INSERT INTO salary_prep_line"),
     );
     const prepParams = prepInsert?.[1] as unknown[];
-    expect(prepParams[27]).toBe(10); // paid base, uncapped
-    expect(prepParams[30]).toBe(expectedActiveDays); // finalPayableDays: capped at active days, NOT 10 and NOT 31
-    expect(prepParams[31]).toBe(expectedActiveDays); // activeCals column matches
+    expect(prepParams[COL.paid_working_days]).toBe(10);              // paid base, uncapped
+    expect(prepParams[COL.final_payable_days]).toBe(expectedActiveDays); // finalPayableDays: capped at active days, NOT 10 and NOT 31
+    expect(prepParams[COL.active_calendar_days]).toBe(expectedActiveDays); // activeCals column matches
   });
 });

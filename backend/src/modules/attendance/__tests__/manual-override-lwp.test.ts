@@ -37,18 +37,14 @@ vi.mock("../../../middleware/authMiddleware.js", () => ({
   ) => next(),
 }));
 
-const mocks = vi.hoisted(() => ({
-  execute: vi.fn(),
-  hasAnyRole: vi.fn(),
-  logSensitiveAction: vi.fn(),
+const mocks = vi.hoisted(() => ({ execute: vi.fn(), hasAnyRole: vi.fn(), logSensitiveAction: vi.fn() }));
+vi.mock('../../../db/mysql.js', () => ({ db: { execute: mocks.execute } }));
+vi.mock('../../../shared/scopeAccess.js', () => ({ hasAnyRole: mocks.hasAnyRole }));
+// payroll_head is org-wide: no admin branch limit applies (branch scoping is covered in manual-override-branch-scope.test.ts)
+vi.mock('../../wfm/branch-scope.js', () => ({
+  branchAdminScope: async () => null, canAccessEmployee: async () => true, scopePredicate: () => ({ sql: '1=1', params: [] }), OUT_OF_SCOPE_MSG: 'x',
 }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: mocks.execute } }));
-vi.mock("../../../shared/scopeAccess.js", () => ({
-  hasAnyRole: mocks.hasAnyRole,
-}));
-vi.mock("../../../shared/auditLog.js", () => ({
-  logSensitiveAction: mocks.logSensitiveAction,
-}));
+vi.mock('../../../shared/auditLog.js', () => ({ logSensitiveAction: mocks.logSensitiveAction }));
 
 /** The pending override under approval, plus the attendance row it targets. */
 function wireDb(newStatus: string, currentLwp: string | null = "0.00") {

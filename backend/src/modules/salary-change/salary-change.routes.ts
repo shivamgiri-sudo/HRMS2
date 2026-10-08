@@ -6,6 +6,7 @@ import {
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./salary-change.service.js";
+import { employeeScopeFor, guardEmployee } from "../payroll/payroll-branch-scope.js";
 
 const router = Router();
 type AsyncHandler = (
@@ -23,72 +24,43 @@ const h =
 // confirmation), fully audited via employee_salary_change_log + logSensitiveAction.
 const REVIEWER_ROLES = ["payroll_head", "admin", "super_admin"] as const;
 
-router.get(
-  "/trend",
-  requireAuth,
-  requireRole(...REVIEWER_ROLES, "payroll_hr", "hr", "admin"),
-  h(async (req, res) => {
-    const { fy, branch_id, cost_centre_id, employee_code } =
-      req.query as Record<string, string | undefined>;
-    if (!fy)
-      return res
-        .status(400)
-        .json({ success: false, message: "fy is required (e.g. 2025-26)" });
-    const data = await svc.getSalaryTrend({
-      fy,
-      branchId: branch_id || undefined,
-      costCentreId: cost_centre_id || undefined,
-      employeeCode: employee_code || undefined,
-    });
-    res.json({ success: true, data });
-  }),
-);
+router.get("/trend", requireAuth, requireRole(...REVIEWER_ROLES, "payroll_hr", "hr", "admin"), h(async (req, res) => {
+  const { fy, branch_id, cost_centre_id, employee_code } = req.query as Record<string, string | undefined>;
+  if (!fy) return res.status(400).json({ success: false, message: "fy is required (e.g. 2025-26)" });
+  const data = await svc.getSalaryTrend({
+    fy,
+    branchId:      branch_id      || undefined,
+    costCentreId:  cost_centre_id || undefined,
+    employeeCode:  employee_code  || undefined,
+    scope:         await employeeScopeFor(req, "e"),
+  });
+  res.json({ success: true, data });
+}));
 
-router.get(
-  "/employee/:employeeId",
-  requireAuth,
-  requireRole(...REVIEWER_ROLES),
-  h(async (req, res) => {
-    const data = await svc.getEmployeeSalaryProfile(req.params.employeeId);
-    res.json({ success: true, data });
-  }),
-);
+router.get("/employee/:employeeId", requireAuth, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
+  const data = await svc.getEmployeeSalaryProfile(req.params.employeeId);
+  res.json({ success: true, data });
+}));
 
-router.post(
-  "/:employeeId",
-  requireAuth,
-  requireWriteAccess,
-  requireRole(...REVIEWER_ROLES),
-  h(async (req, res) => {
-    const {
-      package_id,
-      effective_date,
-      reason,
-      requested_by_user_id,
-      requested_by_name,
-    } = req.body as Record<string, unknown>;
-    if (!package_id || !effective_date || !reason) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "package_id, effective_date, and reason are required.",
-        });
-    }
-    const data = await svc.changeSalary({
-      employeeId: req.params.employeeId,
-      packageId: String(package_id),
-      effectiveDate: String(effective_date),
-      reason: String(reason),
-      requestedByUserId:
-        typeof requested_by_user_id === "string" ? requested_by_user_id : null,
-      requestedByName:
-        typeof requested_by_name === "string" ? requested_by_name : null,
-      actorUserId: req.authUser!.id,
-      actorRoles: req.authUser!.roles,
-    });
-    res.json({ success: true, data });
-  }),
-);
+router.post("/:employeeId", requireAuth, requireWriteAccess, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
+  const { package_id, effective_date, reason, requested_by_user_id, requested_by_name } =
+    req.body as Record<string, unknown>;
+  if (!package_id || !effective_date || !reason) {
+    return res.status(400).json({ success: false, message: "package_id, effective_date, and reason are required." });
+  }
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
+  const data = await svc.changeSalary({
+    employeeId: req.params.employeeId,
+    packageId: String(package_id),
+    effectiveDate: String(effective_date),
+    reason: String(reason),
+    requestedByUserId: typeof requested_by_user_id === "string" ? requested_by_user_id : null,
+    requestedByName: typeof requested_by_name === "string" ? requested_by_name : null,
+    actorUserId: req.authUser!.id,
+    actorRoles: req.authUser!.roles,
+  });
+  res.json({ success: true, data });
+}));
 
 export const salaryChangeRouter = router;

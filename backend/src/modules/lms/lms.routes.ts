@@ -6,6 +6,8 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { canAccessEmployeeRecord, employeeIdInScope, employeeListScope } from "../dashboards/branch-scope-guards.js";
 import { db } from "../../db/mysql.js";
 import { getLmsPool, lmsService } from "./lms.service.js";
 import { runFullSync } from "./lms.sync.service.js";
@@ -63,6 +65,25 @@ async function currentLmsContext(req: AuthenticatedRequest, res: Response) {
   const roles = await currentHrmsRoles(req.authUser!.id);
   const access = await lmsService.getAccessForEmployee(employee, roles);
   return { employee, roles, access };
+}
+
+const OUT_OF_SCOPE = { success: false, message: "Forbidden: this employee is outside your branch / assigned scope" };
+
+/** Org-wide roles (ORG_WIDE_EXEMPT_ROLES) are never narrowed; everyone else is branch / assigned-scope limited. */
+async function isOrgWideCaller(userId: string): Promise<boolean> {
+  const roles = await currentHrmsRoles(userId);
+  return roles.some((r) => (ORG_WIDE_EXEMPT_ROLES as string[]).includes(r));
+}
+
+/**
+ * Per-employee LMS read. A privileged role says who may open the page; the employee must still be
+ * inside the caller's branch / assigned scope (owner ruling 2026-10-01). Others: self only.
+ */
+async function mayReadEmployeeLms(req: AuthenticatedRequest, employeeId: string, ...privilegedRoles: string[]): Promise<boolean> {
+  const userId = req.authUser!.id;
+  if (await hasRole(userId, ...privilegedRoles)) return canAccessEmployeeRecord(req.authUser!, employeeId);
+  const emp = await getEmployeeForUser(userId);
+  return !!emp && emp.id === employeeId;
 }
 
 async function resolveOwnEmployeeId(req: AuthenticatedRequest, res: Response) {
@@ -319,31 +340,44 @@ async function buildLmsSession(
 }
 
 // Native HRMS-integrated LMS access. No external link or LMS re-login required.
-router.get(
-  "/native/access",
-  h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/native/access", h(async (req: AuthenticatedRequest, res: Response) => {
+  const ctx = await currentLmsContext(req, res);
+  if (!ctx) return;
+  res.json({ success: true, data: ctx.access });
+}));
+
+router.get("/native/employee", h(async (req: AuthenticatedRequest, res: Response) => {
+  const ctx = await currentLmsContext(req, res);
+  if (!ctx) return;
+  if (!ctx.access.access.employee) return res.status(403).json({ success: false, message: "LMS employee access is not mapped" });
+  const data = await lmsService.getNativeEmployeeDashboard(ctx.access.employeeCode, ctx.access.user.email);
+  res.json({ success: true, data: { ...data, access: ctx.access } });
+}));
+
+router.get("/native/coordinator", h(async (req: AuthenticatedRequest, res: Response) => {
+  const ctx = await currentLmsContext(req, res);
+  if (!ctx) return;
+  if (!ctx.access.access.coordinator) return res.status(403).json({ success: false, message: "Coordinator LMS access is not assigned to this HRMS user" });
+  res.json({ success: true, data: { ...(await lmsService.getNativeCoordinatorDashboard(ctx.access, { orgWide: ctx.roles.some((r) => (ORG_WIDE_EXEMPT_ROLES as string[]).includes(r)) })), access: ctx.access } });
+}));
+
+router.get("/native/admin", h(async (req: AuthenticatedRequest, res: Response) => {
+  try {
     const ctx = await currentLmsContext(req, res);
     if (!ctx) return;
     res.json({ success: true, data: ctx.access });
   }),
 );
 
-router.get(
-  "/native/employee",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const ctx = await currentLmsContext(req, res);
-    if (!ctx) return;
-    if (!ctx.access.access.employee)
-      return res
-        .status(403)
-        .json({ success: false, message: "LMS employee access is not mapped" });
-    const data = await lmsService.getNativeEmployeeDashboard(
-      ctx.access.employeeCode,
-      ctx.access.user.email,
-    );
-    res.json({ success: true, data: { ...data, access: ctx.access } });
-  }),
-);
+router.get("/batch-planner", requireRole("admin", "hr", "super_admin", "operations_head", "trainer"), h(async (req: AuthenticatedRequest, res: Response) => {
+  let scope: { branchName: string | null } | undefined;
+  if (!(await isOrgWideCaller(req.authUser!.id))) {
+    const emp = await currentEmployee(req.authUser!.id);
+    scope = { branchName: emp?.branch_name ? String(emp.branch_name) : null };
+  }
+  const data = await lmsService.getNativeBatchPlanner(scope);
+  res.json({ success: true, data });
+}));
 
 router.get(
   "/native/coordinator",
@@ -672,26 +706,10 @@ router.get(
   }),
 );
 
-router.get(
-  "/launch-urls/:employeeId",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const isAdminHr = await hasRole(userId, "admin", "hr");
-    if (!isAdminHr) {
-      const emp = await getEmployeeForUser(userId);
-      if (!emp || emp.id !== req.params.employeeId)
-        return res.status(403).json({ success: false, message: "Forbidden" });
-    }
-    res.json({
-      success: true,
-      data: {
-        learner_url: "/lms/my-learning",
-        coordinator_url: "/lms/coordinator",
-        admin_url: "/lms/integration",
-      },
-    });
-  }),
-);
+router.get("/launch-urls/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await mayReadEmployeeLms(req, req.params.employeeId, "admin", "hr"))) return res.status(403).json(OUT_OF_SCOPE);
+  res.json({ success: true, data: { learner_url: "/lms/my-learning", coordinator_url: "/lms/coordinator", admin_url: "/lms/integration" } });
+}));
 
 router.get(
   "/progress/me",
@@ -702,22 +720,10 @@ router.get(
   }),
 );
 
-router.get(
-  "/progress/:employeeId",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const isAdminHr = await hasRole(userId, "admin", "hr");
-    if (!isAdminHr) {
-      const emp = await getEmployeeForUser(userId);
-      if (!emp || emp.id !== req.params.employeeId)
-        return res.status(403).json({ success: false, message: "Forbidden" });
-    }
-    res.json({
-      success: true,
-      data: await lmsService.getProgress(req.params.employeeId),
-    });
-  }),
-);
+router.get("/progress/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await mayReadEmployeeLms(req, req.params.employeeId, "admin", "hr"))) return res.status(403).json(OUT_OF_SCOPE);
+  res.json({ success: true, data: await lmsService.getProgress(req.params.employeeId) });
+}));
 
 router.get(
   "/certifications/me",
@@ -731,30 +737,15 @@ router.get(
   }),
 );
 
-router.get(
-  "/certifications/:employeeId",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const isAdminHr = await hasRole(userId, "admin", "hr");
-    if (!isAdminHr) {
-      const emp = await getEmployeeForUser(userId);
-      if (!emp || emp.id !== req.params.employeeId)
-        return res.status(403).json({ success: false, message: "Forbidden" });
-    }
-    res.json({
-      success: true,
-      data: await lmsService.getCertifications(req.params.employeeId),
-    });
-  }),
-);
+router.get("/certifications/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await mayReadEmployeeLms(req, req.params.employeeId, "admin", "hr"))) return res.status(403).json(OUT_OF_SCOPE);
+  res.json({ success: true, data: await lmsService.getCertifications(req.params.employeeId) });
+}));
 
-router.get(
-  "/mapping",
-  requireRole("admin", "hr", "trainer"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    res.json({ success: true, data: await lmsService.listMappings() });
-  }),
-);
+router.get("/mapping", requireRole("admin", "hr", "trainer"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scope = await employeeListScope(req.authUser!, "e");
+  res.json({ success: true, data: await (scope ? lmsService.listMappings(scope) : lmsService.listMappings()) });
+}));
 
 router.post(
   "/mapping",
@@ -854,11 +845,13 @@ router.get(
 );
 
 // GET /api/lms/progress-summary
-router.get(
-  "/progress-summary",
-  requireRole("admin", "hr", "super_admin", "operations_head", "branch_head"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const [summaryRows] = await db.execute<RowDataPacket[]>(`
+router.get("/progress-summary", requireRole("admin", "hr", "super_admin", "operations_head", "branch_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // Owner ruling 2026-10-01: org-wide roles keep the company roll-up; hr / branch_head / operations_head
+  // only see learners inside their own branch / assigned scope (null predicate = SQL unchanged).
+  const mScope = await employeeIdInScope(req.authUser!, "m.employee_id");
+  const lpScope = await employeeIdInScope(req.authUser!, "lp.employee_id");
+  const eScope = await employeeListScope(req.authUser!, "e");
+  const [summaryRows] = await db.execute<RowDataPacket[]>(`
     SELECT
       COUNT(DISTINCT m.employee_id) AS totalLearners,
       COUNT(DISTINCT CASE WHEN m.is_active = 1 THEN m.employee_id END) AS mappedLearners,
@@ -868,9 +861,10 @@ router.get(
       MAX(p.synced_at) AS lastSyncAt
     FROM lms_employee_mapping m
     LEFT JOIN lms_learning_progress_snapshot p ON p.employee_id = m.employee_id
-    LEFT JOIN lms_certification_snapshot c ON c.employee_id = m.employee_id
-  `);
-    const summary = (summaryRows as any[])[0] ?? {};
+    LEFT JOIN lms_certification_snapshot c ON c.employee_id = m.employee_id${mScope ? `
+    WHERE ${mScope.sql}` : ""}
+  `, mScope ? mScope.params : undefined as any);
+  const summary = (summaryRows as any[])[0] ?? {};
 
     const [atRiskRows] = await db
       .execute<RowDataPacket[]>(
@@ -879,12 +873,10 @@ router.get(
            lp.readiness_score, lp.attrition_risk_signal, lp.batch_no, lp.synced_at
     FROM lms_learner_progress lp
     LEFT JOIN employees e ON e.id = lp.employee_id
-    WHERE lp.attrition_risk_signal = 'red'
+    WHERE lp.attrition_risk_signal = 'red'${lpScope ? ` AND ${lpScope.sql}` : ""}
     ORDER BY lp.readiness_score ASC
     LIMIT 20
-  `,
-      )
-      .catch(() => [[] as RowDataPacket[], []] as const);
+  `, lpScope ? lpScope.params : undefined as any).catch(() => [[] as RowDataPacket[], []] as const);
 
     const [byBatchRows] = await db
       .execute<RowDataPacket[]>(
@@ -895,13 +887,11 @@ router.get(
            SUM(CASE WHEN lp.ops_handover_ready = 1 THEN 1 ELSE 0 END) AS ready_count,
            SUM(CASE WHEN lp.attrition_risk_signal = 'red' THEN 1 ELSE 0 END) AS at_risk_count
     FROM lms_learner_progress lp
-    WHERE lp.batch_no IS NOT NULL
+    WHERE lp.batch_no IS NOT NULL${lpScope ? ` AND ${lpScope.sql}` : ""}
     GROUP BY lp.batch_no
     ORDER BY lp.batch_no DESC
     LIMIT 20
-  `,
-      )
-      .catch(() => [[] as RowDataPacket[], []] as const);
+  `, lpScope ? lpScope.params : undefined as any).catch(() => [[] as RowDataPacket[], []] as const);
 
     const [perEmpRows] = await db.execute<RowDataPacket[]>(`
     SELECT
@@ -917,11 +907,11 @@ router.get(
     JOIN lms_employee_mapping m ON m.employee_id = e.id AND m.is_active = 1
     LEFT JOIN lms_learning_progress_snapshot p ON p.employee_id = e.id
     LEFT JOIN lms_certification_snapshot c ON c.employee_id = e.id AND c.status = 'active'
-    WHERE e.active_status = 1
+    WHERE e.active_status = 1${eScope ? ` AND ${eScope.sql}` : ""}
     GROUP BY e.id, e.employee_code, e.full_name
     ORDER BY completion_percent DESC
     LIMIT 200
-  `);
+  `, eScope ? eScope.params : undefined as any);
 
     const [syncStatusRows] = await db.execute<RowDataPacket[]>(
       `SELECT sync_type, status, records_synced, errors_count, created_at
@@ -1091,76 +1081,38 @@ router.get(
 );
 
 // Absorbed from lms-dashboard.routes.ts
-router.get(
-  "/learner-progress/:employee_id",
-  h(async (req: any, res: Response) => {
-    const userId = req.authUser!.id;
-    const isPrivileged = await hasRole(
-      userId,
-      "admin",
-      "hr",
-      "trainer",
-      "operations_head",
-      "ceo",
-      "manager",
-    );
-    if (!isPrivileged) {
-      // Allow employees to access only their own record
-      const emp = await getEmployeeForUser(userId);
-      if (!emp || emp.id !== req.params.employee_id) {
-        return res.status(403).json({ success: false, message: "Forbidden" });
-      }
-    }
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM lms_learner_progress WHERE employee_id = ? LIMIT 1`,
-      [req.params.employee_id],
-    );
-    if (!rows.length)
-      return res
-        .status(404)
-        .json({ success: false, error: "No LMS record found" });
-    // generatedAt feeds the dashboard Source Freshness panel, which otherwise reads
-    // "Timestamp unavailable" (CEO UAT).
-    res.json({
-      success: true,
-      data: rows[0],
-      generatedAt: new Date().toISOString(),
-    });
-  }),
-);
+router.get("/learner-progress/:employee_id", h(async (req: any, res: Response) => {
+  // Privileged roles still need the employee inside their branch / assigned scope; others: self only.
+  if (!(await mayReadEmployeeLms(req, req.params.employee_id, "admin", "hr", "trainer", "operations_head", "ceo", "manager"))) {
+    return res.status(403).json(OUT_OF_SCOPE);
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM lms_learner_progress WHERE employee_id = ? LIMIT 1`,
+    [req.params.employee_id]
+  );
+  if (!rows.length) return res.status(404).json({ success: false, error: "No LMS record found" });
+  // generatedAt feeds the dashboard Source Freshness panel, which otherwise reads
+  // "Timestamp unavailable" (CEO UAT).
+  res.json({ success: true, data: rows[0], generatedAt: new Date().toISOString() });
+}));
 
-router.get(
-  "/batch-progress/:batch_no",
-  requireRole("admin", "hr", "trainer", "operations_head"),
-  h(async (req: any, res: Response) => {
-    const [summary] = await db.execute<RowDataPacket[]>(
-      `
+router.get("/batch-progress/:batch_no", requireRole("admin", "hr", "trainer", "operations_head"), h(async (req: any, res: Response) => {
+  const bScope = await employeeIdInScope(req.authUser!, "employee_id");
+  const [summary] = await db.execute<RowDataPacket[]>(`
     SELECT batch_no,
            COUNT(DISTINCT employee_id) AS total_learners,
            AVG(mcq_best_score) AS avg_score,
            AVG(readiness_score) AS avg_readiness,
            SUM(CASE WHEN ops_handover_ready = 1 THEN 1 ELSE 0 END) AS ready_count,
            SUM(CASE WHEN attrition_risk_signal = 'red' THEN 1 ELSE 0 END) AS high_risk_count
-    FROM lms_learner_progress WHERE batch_no = ? GROUP BY batch_no
-  `,
-      [req.params.batch_no],
-    );
-    res.json({ success: true, data: (summary as any[])[0] || {} });
-  }),
-);
+    FROM lms_learner_progress WHERE batch_no = ?${bScope ? ` AND ${bScope.sql}` : ""} GROUP BY batch_no
+  `, bScope ? [req.params.batch_no, ...bScope.params] : [req.params.batch_no]);
+  res.json({ success: true, data: (summary as any[])[0] || {} });
+}));
 
-router.get(
-  "/assessment-history/:employee_id",
-  h(async (req: any, res: Response) => {
-    const userId = req.authUser!.id;
-    const isAdminHr = await hasRole(userId, "admin", "hr");
-    if (!isAdminHr) {
-      const emp = await getEmployeeForUser(userId);
-      if (!emp || emp.id !== req.params.employee_id)
-        return res.status(403).json({ success: false, message: "Forbidden" });
-    }
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `
+router.get("/assessment-history/:employee_id", h(async (req: any, res: Response) => {
+  if (!(await mayReadEmployeeLms(req, req.params.employee_id, "admin", "hr"))) return res.status(403).json(OUT_OF_SCOPE);
+  const [rows] = await db.execute<RowDataPacket[]>(`
     SELECT id, employee_id, employee_code, assessment_name, attempt_no,
            score, percentage, result, time_taken_seconds, attempted_at, synced_at
     FROM lms_assessment_scores WHERE employee_id = ? ORDER BY attempted_at DESC LIMIT 50

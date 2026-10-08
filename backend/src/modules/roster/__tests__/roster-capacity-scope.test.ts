@@ -20,22 +20,20 @@ const { hasRole, hasProcessScope, getEmployeeForUser } = vi.hoisted(() => ({
   hasProcessScope: vi.fn(),
   getEmployeeForUser: vi.fn(),
 }));
-vi.mock("../../../shared/accessGuard.js", () => ({
-  hasRole,
-  hasProcessScope,
-  getEmployeeForUser,
+vi.mock("../../../shared/accessGuard.js", () => ({ hasRole, hasProcessScope, getEmployeeForUser }));
+// The org-wide test is scopeAccess.hasAnyRole (accessGuard.hasRole is true for admin for ANY role, so it cannot be the
+// org-wide test - owner ruling 2026-10-01). These tests keep driving "privileged" through the same hasRole mock.
+vi.mock("../../../shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  hasAnyRole: (userId: string, ...roles: string[]) => hasRole(userId, ...roles),
 }));
 
+
 const {
-  updateCapacityConfig,
-  allocateWeekOff,
-  submitWeekOffPreference,
-  getNotifications,
-  markNotificationRead,
-  getCapacityConfig,
-  checkCapacity,
-  getAllocations,
+  updateCapacityConfig, allocateWeekOff, submitWeekOffPreference, getNotifications, markNotificationRead,
+  getCapacityConfig, checkCapacity, getAllocations, listCapacityConfigs,
 } = vi.hoisted(() => ({
+  listCapacityConfigs: vi.fn().mockResolvedValue([{ id: "cfg-1", day_of_week: 1 }]),
   updateCapacityConfig: vi.fn().mockResolvedValue({ id: "cfg-1" }),
   allocateWeekOff: vi.fn().mockResolvedValue({ id: "alloc-1" }),
   submitWeekOffPreference: vi
@@ -53,16 +51,32 @@ const {
 }));
 vi.mock("../roster-capacity.service.js", () => ({
   rosterCapacityService: {
-    updateCapacityConfig,
-    allocateWeekOff,
-    submitWeekOffPreference,
-    getNotifications,
-    markNotificationRead,
-    getCapacityConfig,
-    checkCapacity,
-    getAllocations,
+    updateCapacityConfig, allocateWeekOff, submitWeekOffPreference, getNotifications, markNotificationRead,
+    getCapacityConfig, checkCapacity, getAllocations, listCapacityConfigs,
   },
 }));
+
+
+// Branch-scoping helpers delegate to the same hasRole / hasProcessScope / execute mocks these tests drive.
+vi.mock("../../../shared/enterpriseScope.js", () => ({
+  resolveUserBusinessScope: async (u: any) => ({ userId: typeof u === "string" ? u : u.id, roles: [], assignments: [] }),
+}));
+vi.mock("../../wfm/branch-scope.js", async () => {
+  const accessGuard = await import("../../../shared/accessGuard.js");
+  const { db } = await import("../../../db/mysql.js");
+  return {
+    canAccessProcess: async (scope: any, pid: string, b: any) => accessGuard.hasProcessScope(scope.userId, pid, b, "wfm", "process_manager"),
+    userCanAccessProcess: async (u: string, pid: string, b: any) => accessGuard.hasProcessScope(u, pid, b, "wfm", "process_manager"),
+    canAccessEmployee: async () => false,
+    scopedProcessIdsForUser: async (u: string) => {
+      if (await accessGuard.hasRole(u, "admin", "hr")) return "unrestricted";
+      const [rows] = await (db as any).execute("SELECT scope_type, process_id FROM user_assignment_scope", [u]);
+      const scopes = rows as { scope_type: string; process_id: string | null }[];
+      if (scopes.some((s) => s.scope_type === "all")) return "unrestricted";
+      return scopes.map((s) => s.process_id).filter((id): id is string => !!id);
+    },
+  };
+});
 
 import { rosterCapacityController } from "../roster-capacity.controller.js";
 
@@ -138,6 +152,35 @@ describe("roster-capacity.controller scope enforcement", () => {
 
     expect(res.status).toHaveBeenCalledWith(409);
     expect(submitWeekOffPreference).not.toHaveBeenCalled();
+  });
+
+  it("returns 200 null (not 404) for an unconfigured day", async () => {
+    hasRole.mockResolvedValue(false);
+    hasProcessScope.mockResolvedValue(true);
+    getCapacityConfig.mockResolvedValue(null);
+    const res = mockRes();
+    await rosterCapacityController.getCapacityConfig(mockReq({ params: { processId: "mine", dayOfWeek: "3" } }), res);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(null);
+  });
+
+  it("lists every configured day of an in-scope process in one call", async () => {
+    hasRole.mockResolvedValue(false);
+    hasProcessScope.mockResolvedValue(true);
+    const res = mockRes();
+    await rosterCapacityController.listCapacityConfigs(mockReq({ params: { processId: "mine" } }), res);
+    expect(listCapacityConfigs).toHaveBeenCalledWith("mine");
+    expect(res.json).toHaveBeenCalledWith({ success: true, data: [{ id: "cfg-1", day_of_week: 1 }] });
+  });
+
+  it("refuses to list capacity config for a process outside the caller's scope", async () => {
+    hasRole.mockResolvedValue(false);
+    hasProcessScope.mockResolvedValue(false);
+    listCapacityConfigs.mockClear();
+    const res = mockRes();
+    await rosterCapacityController.listCapacityConfigs(mockReq({ params: { processId: "not-mine" } }), res);
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(listCapacityConfigs).not.toHaveBeenCalled();
   });
 
   it("refuses to update capacity config for a process outside the caller's scope", async () => {

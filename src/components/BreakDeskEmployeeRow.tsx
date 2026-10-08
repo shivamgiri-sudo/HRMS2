@@ -38,6 +38,9 @@ export type DeskEmployee = {
   attendance_source_system: string | null;
   shift_name: string | null;
   shift_start_time: string | null;
+  shift_source?: "punch" | "roster" | null;
+  rostered_shift_name?: string | null;
+  shift_mismatch?: boolean;
   shift_end_time: string | null;
   shift_duration_minutes: number;
   total_break_count: number;

@@ -38,19 +38,18 @@ describe("team-month grid is scoped and gated", () => {
     const at = SOURCE.indexOf("const isWide");
     expect(at).toBeGreaterThan(-1);
     const block = SOURCE.slice(at, at + 200);
-    expect(block).toMatch(/hasRole\(/);
-    for (const role of ["admin", "hr", "wfm", "ceo", "super_admin"]) {
-      expect(block).toContain(`"${role}"`);
-    }
-    expect(block, "manager must not be treated as org-wide").not.toMatch(
-      /"manager"/,
-    );
+    // Owner ruling 2026-10-01: only ORG_WIDE_EXEMPT_ROLES escape; hr / wfm are branch-scoped.
+    // hasRole() is true for admin for any role, so the org-wide test is hasAnyRole (super_admin-only shortcut).
+    expect(block).toMatch(/hasAnyRole\(userId, \.\.\.ORG_WIDE_EXEMPT_ROLES\)/);
+    expect(block).not.toMatch(/hasRole\(userId, \.\.\.ORG_WIDE_EXEMPT_ROLES\)/);
+    expect(block, "hr/wfm must no longer be org-wide").not.toMatch(/"hr"|"wfm"/);
+    expect(block, "manager must not be treated as org-wide").not.toMatch(/"manager"/);
   });
 
   it("refuses a caller with no employee record rather than falling through unscoped", () => {
     const at = SOURCE.indexOf("if (!isWide)");
     const block = SOURCE.slice(at, at + 400);
-    expect(block).toMatch(/callerEmp\?\.id/);
+    expect(block).toMatch(/teamVisibility\(userId, callerEmp\?\.id\)/);
     expect(block).toMatch(/403/);
   });
 
@@ -128,9 +127,7 @@ describe("team-month grid is scoped and gated", () => {
     const at = SOURCE.indexOf('"/team-month/flag"');
     expect(at).toBeGreaterThan(-1);
     const block = SOURCE.slice(at);
-    expect(block).toMatch(
-      /e\.reporting_manager_id = \? OR e\.manager_id = \? OR e\.id = \?/,
-    );
+    expect(block).toMatch(/teamVisibility\(/);
     expect(block).toMatch(/skippedOutOfScope/);
   });
 

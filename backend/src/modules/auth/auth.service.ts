@@ -366,12 +366,12 @@ export const authService = {
         user.password_hash as string,
       );
       if (!valid) {
-        // Increment failed attempts; lock for 15 minutes after 5 consecutive failures
+        // Increment failed attempts; lock for 10 minutes after 5 consecutive failures
         const [updateResult] = await db.execute<any>(
           `UPDATE auth_user
               SET failed_login_attempts = failed_login_attempts + 1,
                   locked_until = IF(failed_login_attempts + 1 >= 5,
-                                    DATE_ADD(NOW(), INTERVAL 15 MINUTE),
+                                    DATE_ADD(NOW(), INTERVAL 10 MINUTE),
                                     locked_until)
             WHERE id = ?`,
           [user.id],
@@ -1078,9 +1078,26 @@ export const authService = {
     return { accessToken, refreshToken: rawRefresh };
   },
 
-  verifyAccessToken(
-    token: string,
-  ): { id: string; email: string; scope?: string } | null {
+  /**
+   * Short-lived access token to carry out ONE approval decision as `userId` (approval e-mail links).
+   * Same claims as a login token, so every route's own role / scope / read-only check applies unchanged.
+   */
+  async mintScopedAccessToken(userId: string, ttlSeconds = 120): Promise<string | null> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      'SELECT id, email, COALESCE(is_read_only, 0) AS is_read_only, COALESCE(is_blocked, 0) AS is_blocked FROM auth_user WHERE id = ? LIMIT 1',
+      [userId],
+    );
+    const u = rows[0] as any;
+    if (!u || Number(u.is_blocked) === 1) return null;
+    const role = await getUserPrimaryRole(userId);
+    return jwt.sign(
+      { sub: u.id, email: u.email, is_read_only: Boolean(u.is_read_only), role },
+      JWT_SECRET,
+      { expiresIn: ttlSeconds },
+    );
+  },
+
+  verifyAccessToken(token: string): { id: string; email: string; scope?: string } | null {
     try {
       const payload = jwt.verify(token, JWT_SECRET) as {
         sub?: unknown;
@@ -1351,16 +1368,20 @@ export const authService = {
         statusCode: 400,
       });
     const hash = await bcrypt.hash(newPassword, 10);
+    // Completing a reset proves control of the account's email, which is stronger evidence than the
+    // password the failed attempts were guessing — so a temporary lockout is cleared with it. Without
+    // this the user resets successfully and is then told "temporarily locked" on the new password.
+    // is_blocked is a deliberate admin action and is never touched here.
     await db.execute(
-      "UPDATE auth_user SET password_hash = ?, must_change_password = 0 WHERE id = ?",
-      [hash, rows[0].user_id],
+      'UPDATE auth_user SET password_hash = ?, must_change_password = 0, failed_login_attempts = 0, locked_until = NULL WHERE id = ?',
+      [hash, rows[0].user_id]
     );
     await this.invalidateSessionsAfterPasswordChange(rows[0].user_id);
     writeSecurityEvent({
       event_type: "PASSWORD_RESET",
       severity: "info",
       actor_user_id: rows[0].user_id,
-      title: "Password reset via token",
+      title: 'Password reset via token (temporary lockout cleared)',
     });
   },
 
@@ -1562,10 +1583,17 @@ export const authService = {
 
     // Hash new password and update
     const newHash = await bcrypt.hash(newPassword, 12);
+    // Same rule as resetPassword(): a verified OTP clears the temporary lockout. is_blocked stays.
     await db.execute(
-      "UPDATE auth_user SET password_hash = ?, updated_at = NOW() WHERE id = ?",
-      [newHash, userId],
+      'UPDATE auth_user SET password_hash = ?, failed_login_attempts = 0, locked_until = NULL, updated_at = NOW() WHERE id = ?',
+      [newHash, userId]
     );
     await this.invalidateSessionsAfterPasswordChange(userId);
+    writeSecurityEvent({
+      event_type: 'PASSWORD_RESET',
+      severity: 'info',
+      actor_user_id: userId,
+      title: 'Password reset via OTP (temporary lockout cleared)',
+    });
   },
 };

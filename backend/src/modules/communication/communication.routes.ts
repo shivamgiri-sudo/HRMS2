@@ -5,7 +5,12 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { templateService } from "./template.service.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 import { dispatchService } from "./dispatch.service.js";
+import { reportingSpanClause } from "../../shared/reportingSpan.js";
+import { canViewEmployee } from "../../shared/enterpriseScope.js";
+import { employeeRowScope } from "../org/branchScope.js";
 import { notificationPreferencesService } from "./notification-preferences.service.js";
 import { providerConfigService } from "./provider-config.service.js";
 import { providerFactory } from "./providers/provider.factory.js";
@@ -334,63 +339,76 @@ router.get(
 
 // ─── Dispatch ────────────────────────────────────────────────────────────────
 
+// Branch scoping (owner ruling 2026-10-01): admin/hr/manager used to be able to message ANY employee and read
+// every branch's dispatch log. A sender is limited to employees inside their own branch / assigned scope
+// (plus, for people managers, their reporting span); org-wide roles are unaffected.
+async function senderRecipientScope(req: AuthenticatedRequest): Promise<{ sql: string; params: unknown[] }> {
+  const base = await employeeRowScope(req.authUser!, "e");
+  if (base.sql === "1=1") return base;
+  const span = await reportingSpanClause(req.authUser!.id, "e");
+  return span ? { sql: `(${base.sql}) OR ${span.sql}`, params: [...base.params, ...span.params] } : base;
+}
+
 // POST /api/communication/dispatch/send
-router.post(
-  "/dispatch/send",
-  requireRole("admin", "hr", "super_admin", "process_manager", "manager"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const result = await dispatchService.send(req.body);
-    return res.json({ success: true, data: result });
-  }),
-);
+router.post("/dispatch/send", requireRole("admin", "hr", "super_admin", "process_manager", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const recipients: unknown = req.body?.recipient_employee_ids;
+  if (Array.isArray(recipients) && recipients.length > 0) {
+    const scope = await senderRecipientScope(req);
+    if (scope.sql !== "1=1") {
+      const ids = [...new Set(recipients.map(String))];
+      const [ok] = await db.execute<RowDataPacket[]>(
+        `SELECT e.id FROM employees e WHERE e.id IN (${ids.map(() => "?").join(",")}) AND (${scope.sql})`,
+        [...ids, ...scope.params],
+      );
+      if ((ok as RowDataPacket[]).length < ids.length) {
+        return res.status(403).json({ success: false, message: "Forbidden: one or more recipients are outside your branch / assigned scope" });
+      }
+    }
+  }
+  const result = await dispatchService.send(req.body);
+  return res.json({ success: true, data: result });
+}));
 
 // POST /api/communication/dispatch/bulk-send
-router.post(
-  "/dispatch/bulk-send",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const result = await dispatchService.bulkSend(req.body);
-    return res.json({ success: true, data: result });
-  }),
-);
+router.post("/dispatch/bulk-send", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const result = await dispatchService.bulkSend(req.body, await senderRecipientScope(req));
+  return res.json({ success: true, data: result });
+}));
 
 // POST /api/communication/dispatch/retry/:id
-router.post(
-  "/dispatch/retry/:id",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    await dispatchService.retry(req.params.id);
-    return res.json({ success: true });
-  }),
-);
+router.post("/dispatch/retry/:id", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [logRows] = await db.execute<RowDataPacket[]>("SELECT recipient_employee_id FROM dispatch_log WHERE id = ? LIMIT 1", [req.params.id]);
+  if ((logRows as RowDataPacket[]).length) {
+    const target = (logRows as RowDataPacket[])[0].recipient_employee_id;
+    const scope = await employeeRowScope(req.authUser!, "e");
+    // A log with no employee recipient is only retryable by org-wide roles (fail closed).
+    if (scope.sql !== "1=1" && (!target || !(await canViewEmployee(req.authUser!, String(target))))) {
+      return res.status(403).json({ success: false, message: "Forbidden: this dispatch is outside your branch / assigned scope" });
+    }
+  }
+  await dispatchService.retry(req.params.id);
+  return res.json({ success: true });
+}));
 
 // GET /api/communication/dispatch/logs
-router.get(
-  "/dispatch/logs",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const filters: DispatchLogFilters = {
-      employee_id: req.query.employee_id as string | undefined,
-      channel: req.query.channel as Channel | undefined,
-      status: req.query.status as DispatchStatus | undefined,
-      date_from: req.query.from_date as string | undefined,
-      date_to: req.query.to_date as string | undefined,
-      page: req.query.page ? Number(req.query.page) : 1,
-      limit: req.query.limit ? Number(req.query.limit) : 25,
-    };
-    const result = await dispatchService.getLogs(filters);
-    return res.json({ success: true, ...result });
-  }),
-);
+router.get("/dispatch/logs", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const filters: DispatchLogFilters = {
+    employee_id: req.query.employee_id as string | undefined,
+    channel: req.query.channel as Channel | undefined,
+    status: req.query.status as DispatchStatus | undefined,
+    date_from: req.query.from_date as string | undefined,
+    date_to: req.query.to_date as string | undefined,
+    page: req.query.page ? Number(req.query.page) : 1,
+    limit: req.query.limit ? Number(req.query.limit) : 25,
+  };
+  const result = await dispatchService.getLogs(filters, await employeeRowScope(req.authUser!, "e"));
+  return res.json({ success: true, ...result });
+}));
 
 // GET /api/communication/dispatch/stats
-router.get(
-  "/dispatch/stats",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const stats = await dispatchService.getStats();
-    return res.json({ success: true, data: stats });
-  }),
-);
+router.get("/dispatch/stats", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const stats = await dispatchService.getStats(await employeeRowScope(req.authUser!, "e"));
+  return res.json({ success: true, data: stats });
+}));
 
 export const communicationRouter = router;

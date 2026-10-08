@@ -32,6 +32,7 @@ vi.mock("../src/middleware/requireRole.js", () => ({
       next(),
 }));
 vi.mock("../src/shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   hasAnyRole: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),

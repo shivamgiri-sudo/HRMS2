@@ -17,13 +17,13 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  getUserRoleKeys,
-  getUserAssignmentScopes,
-} from "../../shared/scopeAccess.js";
+import { getUserRoleKeys, getUserAssignmentScopes, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 
-/** Roles that see every branch. */
-const UNRESTRICTED_ROLES = ["super_admin", "admin", "hr"];
+/**
+ * Roles that see every branch. Owner ruling 2026-10-01: hr is NO LONGER here - hr is limited to its own
+ * branch / assigned scope (see the own-branch fallback in resolveBranchHeadScope).
+ */
+const UNRESTRICTED_ROLES: readonly string[] = ORG_WIDE_EXEMPT_ROLES;
 
 export type BranchHeadScope = {
   unrestricted: boolean;
@@ -79,17 +79,20 @@ export async function resolveBranchHeadScope(
     .map((s) => String(s.branch_id ?? ""))
     .filter(Boolean);
 
-  // Grant unrestricted access only when the user has an admin/hr role AND has
-  // no branch_head scope entries. A user who is both `hr` and `branch_head`
-  // (e.g. a branch head who was also given HR access) should be scoped to their
-  // branches, not shown all decisions in the system — which caused 30+ second
-  // DB hangs via the COUNT query in listBranchHeadDecisions.
-  if (
-    branchNames.length === 0 &&
-    branchIds.length === 0 &&
-    roles.some((r) => UNRESTRICTED_ROLES.includes(r))
-  ) {
+  // Org-wide roles (ORG_WIDE_EXEMPT_ROLES) are never restricted. Everyone else - hr, payroll_hr, manager,
+  // branch_head - is limited to the branches they are assigned to; a user with no assignment at all falls
+  // back to their OWN employees.branch_id, and with no resolvable branch sees nothing (fail closed).
+  if (roles.some((r) => UNRESTRICTED_ROLES.includes(r))) {
     return { unrestricted: true, employeeId, branchNames: [], branchIds: [] };
+  }
+
+  if (branchNames.length === 0 && branchIds.length === 0) {
+    const [own] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+      [authUserId],
+    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+    const ownBranch = own[0]?.branch_id ? String(own[0].branch_id) : "";
+    if (ownBranch) branchIds.push(ownBranch);
   }
 
   return { unrestricted: false, employeeId, branchNames, branchIds };

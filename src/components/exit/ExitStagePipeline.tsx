@@ -56,7 +56,7 @@ export const EXIT_STAGES: StageDef[] = [
     key: "exit",
     label: "Exit",
     owner: "HR",
-    rule: "Employee marked exited on the last working day. Access is revoked.",
+    rule: "Employee left on the last working day. Access is revoked. Clearance is complete.",
     statuses: ["exited", "exit_confirmed"],
     icon: <LogOut className="h-4 w-4" />,
     tone: "from-amber-500 to-orange-600",
@@ -65,7 +65,7 @@ export const EXIT_STAGES: StageDef[] = [
     key: "settle",
     label: "Settle",
     owner: "Payroll, Finance",
-    rule: "F&F needs clearance done. Payout, bank batch and relieving letter need NOC done.",
+    rule: "Left the company, settlement pending: open clearance tasks, then F&F verify, approve and pay.",
     statuses: ["clearance_pending", "fnf_pending", "closed"],
     icon: <Wallet className="h-4 w-4" />,
     tone: "from-emerald-500 to-green-600",
@@ -85,7 +85,42 @@ type PipelineRow = {
   status: string;
   clearance_total?: number;
   clearance_cleared?: number;
+  exit_type?: string | null;
+  exit_sub_type?: string | null;
+  submitted_at?: string | null;
+  last_working_day_proposed?: string | null;
+  last_working_day_confirmed?: string | null;
 };
+
+/**
+ * Stage of a row, not just of its status. Nothing in the app ever sets clearance_pending /
+ * fnf_pending / closed (there is no screen for it), so the Settle stage always read 0 while
+ * 158 exited employees were waiting on clearance and F&F. An exited employee with open
+ * clearance work is therefore shown in Settle; the database status is untouched.
+ */
+export function exitStageOfRow(row: PipelineRow): ExitStageKey | "stopped" {
+  const base = exitStageOf(row.status);
+  if (base === "exit" && Number(row.clearance_total ?? 0) > Number(row.clearance_cleared ?? 0)) {
+    return "settle";
+  }
+  return base;
+}
+
+const day = (v?: string | null) => (v ? String(v).slice(0, 10) : "");
+
+/**
+ * A resignation whose last working day is before the day it was filed is a backdated entry.
+ * The automatic flow never moves it past Manager Review: the date drives payroll and F&F, so
+ * HR confirms it first.
+ */
+export function isHeldForHr(row: PipelineRow): boolean {
+  if (row.status !== "manager_review") return false;
+  if ((row.exit_type ?? "voluntary") !== "voluntary") return false;
+  if ((row.exit_sub_type ?? "resignation") !== "resignation") return false;
+  const lwd = day(row.last_working_day_confirmed) || day(row.last_working_day_proposed);
+  const filed = day(row.submitted_at);
+  return !!lwd && !!filed && lwd < filed;
+}
 
 /** Open clearance work on an employee who has already left: it now gates F&F only. */
 export function isPendingAtExit(row: PipelineRow): boolean {
@@ -106,10 +141,11 @@ type Props = {
 export function ExitStagePipeline({ rows, active, onSelect }: Props) {
   const counts = new Map<ExitStageKey, number>();
   for (const r of rows) {
-    const stage = exitStageOf(r.status);
+    const stage = exitStageOfRow(r);
     if (stage !== "stopped") counts.set(stage, (counts.get(stage) ?? 0) + 1);
   }
   const pendingAtExit = rows.filter(isPendingAtExit).length;
+  const heldForHr = rows.filter(isHeldForHr).length;
 
   return (
     <section
@@ -175,6 +211,18 @@ export function ExitStagePipeline({ rows, active, onSelect }: Props) {
         })}
       </ol>
 
+      {heldForHr > 0 && (
+        <div
+          role="status"
+          className="mt-3 flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs font-semibold text-sky-800"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          {heldForHr} resignation(s) are held for HR: the last working day is
+          earlier than the day it was filed. Confirm the date and accept; notice
+          and exit then follow automatically.
+        </div>
+      )}
+
       {pendingAtExit > 0 && (
         <div
           role="status"
@@ -182,7 +230,8 @@ export function ExitStagePipeline({ rows, active, onSelect }: Props) {
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           {pendingAtExit} exited employee(s) still have open clearance. Exit is
-          not blocked, but F&F approval waits until it is cleared.
+          not blocked, but F&F approval waits until it is cleared (shown in
+          Settle).
         </div>
       )}
     </section>

@@ -54,6 +54,9 @@ import {
 const APPLY = process.argv.includes("--apply");
 const DO_GRN = process.argv.includes("--grn");
 const DO_VOUCHERS = process.argv.includes("--vouchers");
+// Only vendor GRNs that name a vendor: the ones the vendor ledger and Trial Balance need. Without it
+// every consumed GRN with no entry is a candidate, imprest GRNs included (~39,000 at last count).
+const VENDOR_ONLY = process.argv.includes("--vendor-only");
 
 const CONSUMED_GRN_STATUSES = [
   "pending_accounts_payment",
@@ -84,6 +87,7 @@ async function backfillGrns(pool: mysql.Pool) {
   const [grns] = await pool.query<any[]>(
     `SELECT g.* FROM grn_request g
       WHERE g.status IN (${CONSUMED_GRN_STATUSES.map(() => "?").join(",")})
+        ${VENDOR_ONLY ? "AND g.grn_type = 'vendor' AND g.vendor_id IS NOT NULL" : ""}
         AND NOT EXISTS (SELECT 1 FROM journal_entry je WHERE je.source_type = 'grn' AND je.source_id = g.id)`,
     CONSUMED_GRN_STATUSES,
   );

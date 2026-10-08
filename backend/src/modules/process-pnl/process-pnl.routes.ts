@@ -541,6 +541,8 @@ router.get(
   requireAuth,
   requireRole(...PNL_READ_ROLES),
   h(async (req, res) => {
+    // Branch scoping: branch_head/process_manager may only read amendments of a budget in their branch.
+    await asForbidden(assertBranchOf(req, await branchBudgetService.get(req.params.budgetId).then((b: any) => b?.branch_id)));
     const data = await branchBudgetService.getTaxAmendmentPreflight(
       req.params.budgetId,
       req.params.lineId,
@@ -606,10 +608,8 @@ router.get(
   requireRole(...PNL_READ_ROLES),
   h(async (req, res) => {
     const budgetId = String(req.query.budgetId ?? "").trim();
-    if (!budgetId)
-      throw Object.assign(new Error("budgetId query param is required"), {
-        statusCode: 400,
-      });
+    if (!budgetId) throw Object.assign(new Error("budgetId query param is required"), { statusCode: 400 });
+    await asForbidden(assertBranchOf(req, await branchBudgetService.get(budgetId).then((b: any) => b?.branch_id)));
     const data = await branchBudgetService.listTaxAmendments(budgetId);
     res.json({ success: true, data });
   }),
@@ -988,6 +988,57 @@ router.post(
   }),
 );
 
+// The raiser's (or a super_admin's) two ways to change a submitted request: correct its amount or
+// withdraw it — both only until Branch Head approves. Ownership and stage are enforced in the
+// service; the role gate is the same one that let them raise it.
+router.patch(
+  "/pnl/budget-topups/:id",
+  requireWriteAccess,
+  requireRole(...TOPUP_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const request = await budgetTopupService.get(req.params.id);
+    await assertFinanceRecordBranch({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      recordBranchId: String((request as any).branch_id),
+    });
+    const data = await budgetTopupService.updateAmount(
+      req.params.id,
+      Number(req.body?.requestedAmount ?? 0),
+      user.id,
+      user.role,
+      user.roles.includes("super_admin")
+    );
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/budget-topups/:id/cancel",
+  requireWriteAccess,
+  requireRole(...TOPUP_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const request = await budgetTopupService.get(req.params.id);
+    await assertFinanceRecordBranch({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      recordBranchId: String((request as any).branch_id),
+    });
+    const data = await budgetTopupService.cancel(
+      req.params.id,
+      user.id,
+      user.role,
+      user.roles.includes("super_admin"),
+      req.body?.reason ? String(req.body.reason) : undefined
+    );
+    res.json({ success: true, data });
+  })
+);
+
 // Finance Head direct budget increase (owner decision, 2026-08-21): bypasses the 2-stage
 // branch_head -> finance_head top-up request/review chain above. finance_head + super_admin
 // only — deliberately excludes branch_admin/branch_head/accounts_head, unlike TOPUP_REVIEW_ROLES.
@@ -1046,6 +1097,27 @@ const CLOSURE_REOPEN_REQUEST_ROLES = [
   "finance_head",
 ] as const;
 const CLOSURE_REVIEW_ROLES = ["super_admin", "finance_head"] as const;
+/**
+ * The branches a P&L read covers, for views that take a list: undefined = every branch (a global
+ * user who asked for none); otherwise a validated list — the one requested branch (must be in the
+ * caller's scope, else 403), or the caller's whole entitlement (one branch or several).
+ */
+async function scopedBranchList(req: AuthenticatedRequest, requestedBranchId?: string): Promise<string[] | undefined> {
+  const user = actor(req);
+  const scope = await asForbidden(resolveFinanceBranchScopeSet({
+    userId: user.id, primaryRole: user.role, userRoles: user.roles,
+    requestedBranchId: requestedBranchId || undefined,
+  }));
+  return scope.mode === "all" ? undefined : scope.branchIds;
+}
+
+/** The role a closure action runs under: the strongest closure role the user holds (primary role
+ *  first), so a Finance Head whose primary role is something else is not refused. */
+function closureRole(user: { role: string; roles: string[] }) {
+  const held = new Set([user.role, ...user.roles].map((r) => String(r).toLowerCase()));
+  for (const r of ["super_admin", "finance_head", "branch_admin"]) if (held.has(r)) return r;
+  return user.role;
+}
 
 router.get(
   "/pnl/budgets/:budgetId/subhead-closure",
@@ -1074,6 +1146,42 @@ router.post(
     );
     res.json({ success: true });
   }),
+);
+
+router.get(
+  "/pnl/budgets/:budgetId/cost-centre-closure",
+  requireRole(...CLOSURE_READ_ROLES),
+  h(async (req, res) => {
+    await scopedBudget(req, req.params.budgetId);
+    res.json({ success: true, data: await budgetClosureService.getCostCentreStatus(req.params.budgetId) });
+  })
+);
+
+router.post(
+  "/pnl/budgets/:budgetId/cost-centre-closure/close",
+  requireWriteAccess,
+  requireRole(...CLOSURE_CLOSE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    await scopedBudget(req, req.params.budgetId);
+    await budgetClosureService.closeCostCentre(
+      req.params.budgetId, String(req.body?.costCentreId ?? ""),
+      req.body?.reason ? String(req.body.reason) : null, user.id, closureRole(user)
+    );
+    res.json({ success: true });
+  })
+);
+
+router.post(
+  "/pnl/budgets/:budgetId/cost-centre-closure/reopen",
+  requireWriteAccess,
+  requireRole(...CLOSURE_REVIEW_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    await scopedBudget(req, req.params.budgetId);
+    await budgetClosureService.reopenCostCentre(req.params.budgetId, String(req.body?.costCentreId ?? ""), user.id, closureRole(user));
+    res.json({ success: true });
+  })
 );
 
 router.post(
@@ -1693,19 +1801,11 @@ router.get(
     // resolvers treat undefined and [] alike, so this is the same set as before. Read through
     // actor() like /pnl/ytd-summary and /pnl/reconciliation so one page load can never be scoped
     // from two differently-named sources (audit item 26).
-    const branchId = await resolveFinanceBranchScope({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-      requestedBranchId: req.query.branchId
-        ? String(req.query.branchId)
-        : undefined,
-    });
-    const confinedBranch = await resolveFinanceBranchScope({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-    });
+    // Lists, so a user entitled to several branches is served all of them (this used to throw).
+    const requestedBranch = req.query.branchId ? String(req.query.branchId) : undefined;
+    const branchId = requestedBranch ? (await scopedBranchList(req, requestedBranch))?.[0] ?? requestedBranch : undefined;
+    const confinedBranches = await scopedBranchList(req);
+    const confinedBranch = confinedBranches?.length ? confinedBranches : undefined;
     const period = req.query.period ? String(req.query.period) : "";
     const processId = await resolveFinanceProcessScope({
       userId: user.id,
@@ -1726,18 +1826,30 @@ router.get(
       clientId: req.query.clientId ? String(req.query.clientId) : null,
       search: req.query.search ? String(req.query.search) : null,
     });
-    const baseProcessIds = confinedProcess
-      ? [confinedProcess]
-      : requestedProcessIds;
+    const baseProcessIds = confinedProcess ? [confinedProcess] : requestedProcessIds;
+    // A branch-confined caller may only name processes / cost centres of their own branch: the
+    // focus panel would otherwise describe another branch's process or cost centre (its budget).
+    const requestedCostCentreIds = [
+      ...(req.query.costCentreId ? [String(req.query.costCentreId)] : []),
+      ...csv(req.query.costCentreIds),
+    ];
+    if (confinedBranch) {
+      for (const pid of [...requestedProcessIds, ...(processId ? [processId] : [])]) {
+        await asForbidden(assertProcessInScope(req, pid));
+      }
+      for (const ccId of requestedCostCentreIds) {
+        await asForbidden(assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(ccId)));
+      }
+    }
     const data = await getCeoOverview(period, {
       branchId: branchId ?? undefined,
       // Folded into processIds when a client/search filter applies: scopeOf() UNIONS the singular
       // with the list, which would otherwise re-widen past the intersection.
-      processId: clientSearch ? undefined : (processId ?? undefined),
-      costCentreId: req.query.costCentreId
-        ? String(req.query.costCentreId)
-        : undefined,
-      branchIds: confinedBranch ? [confinedBranch] : requestedBranchIds,
+      processId: clientSearch ? undefined : processId ?? undefined,
+      costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+      branchIds: confinedBranch
+        ? (requestedBranchIds.length ? requestedBranchIds.filter((b) => confinedBranch.includes(b)) : confinedBranch)
+        : requestedBranchIds,
       processIds: clientSearch
         ? narrowProcessScope(
             [
@@ -1748,6 +1860,7 @@ router.get(
           )
         : baseProcessIds,
       costCentreIds: csv(req.query.costCentreIds),
+      visibleBranchIds: confinedBranch,
     });
     res.json({ success: true, data });
   }),
@@ -1803,22 +1916,15 @@ router.get(
     // which returns it only when the caller may read it and THROWS for anyone else's — so a
     // request can narrow a scoped user's view, never widen it. With no request, the user's own
     // confinement applies exactly as before.
-    const requestedBranchId = req.query.branchId
-      ? String(req.query.branchId).trim()
-      : "";
-    const branchFilter = await resolveFinanceBranchScope({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-      requestedBranchId: requestedBranchId || undefined,
-    });
+    const requestedBranchId = req.query.branchId ? String(req.query.branchId).trim() : "";
+    const branchList = await scopedBranchList(req, requestedBranchId || undefined);
     const confinedProcess = await resolveFinanceProcessScope({
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
     });
     const filters: CeoFilters = {};
-    if (branchFilter !== undefined) filters.branchId = branchFilter;
+    if (branchList) filters.branchIds = branchList;
     // Client / Search, as process ids, intersected with any process confinement (audit item 19).
     const clientSearch = await resolveClientSearchProcessIds({
       clientId: req.query.clientId ? String(req.query.clientId) : null,
@@ -1844,25 +1950,15 @@ router.get(
     const period = req.query.period ? String(req.query.period) : "";
     const requestedBranchIds = csv(req.query.branchIds);
     const user = actor(req);
-    const requestedBranchId = req.query.branchId
-      ? String(req.query.branchId)
-      : undefined;
-    const confinedRequestedBranch = await resolveFinanceBranchScope({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-      requestedBranchId,
-    });
-    const hardBranchScope = await resolveFinanceBranchScope({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-    });
-    const branchIds = hardBranchScope
-      ? [hardBranchScope]
-      : confinedRequestedBranch
-        ? [confinedRequestedBranch]
-        : requestedBranchIds;
+    const requestedBranchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    void user;
+    // A list, so a user entitled to several branches sees all of them (it used to throw).
+    const requested = requestedBranchId ? await scopedBranchList(req, requestedBranchId) : undefined;
+    const entitled = await scopedBranchList(req);
+    const branchIds = requested
+      ?? (entitled
+        ? (requestedBranchIds.length ? requestedBranchIds.filter((b) => entitled.includes(b)) : entitled)
+        : requestedBranchIds);
     // Client / Search, as the process ids they match (audit item 19). Live P&L's grain is the cost
     // centre, so it narrows to the cost centres those processes' staff are posted to — the same
     // rule CEO Overview uses for a process filter.
@@ -1960,6 +2056,9 @@ router.get(
           requestedProcessId,
         })
       : undefined;
+    // resolveFinanceProcessScope only confines process-scoped roles; a branch head passing another
+    // branch's process must be refused on that process's own branch too.
+    if (processId) await asForbidden(assertProcessInScope(req, processId));
 
     // A cost centre carries no scope resolver of its own, so confine it the way every other
     // cost-centre read in this file does — assertBranchOf treats an unmapped cost centre as a
@@ -2243,8 +2342,12 @@ router.post(
 router.get(
   "/pnl/cost-centre-overrides",
   requireRole(...PNL_READ_ROLES),
-  h(async (_req, res) => {
-    const data = await listCostCentreOverrides();
+  h(async (req, res) => {
+    const user = actor(req);
+    const scope = await asForbidden(resolveFinanceBranchScopeSet({
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+    }));
+    const data = await listCostCentreOverrides(scope);
     res.json({ success: true, data });
   }),
 );
@@ -2253,8 +2356,13 @@ router.get(
   "/pnl/cost-centre-overrides/cost-centres",
   requireRole(...PNL_READ_ROLES),
   h(async (req, res) => {
-    const branchId = req.query.branchId ? String(req.query.branchId) : null;
-    const data = await listOverrideCostCentreOptions(branchId);
+    const user = actor(req);
+    // A requested branch may only narrow what the caller is allowed; outside it -> 403.
+    const scope = await asForbidden(resolveFinanceBranchScopeSet({
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    }));
+    const data = await listOverrideCostCentreOptions(null, scope);
     res.json({ success: true, data });
   }),
 );

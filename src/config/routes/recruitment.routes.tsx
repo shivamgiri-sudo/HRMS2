@@ -9,7 +9,7 @@ const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactN
 
 const NativeATSDashboardReplica        = lazy(() => import("@/pages/NativeATSDashboardReplica"));
 const NativeATSDashboardV2             = lazy(() => import("@/pages/NativeATSDashboardV2"));
-const NativeATSFullParityCommandCenter = lazy(() => import("@/pages/NativeATSFullParityCommandCenter"));
+const NativeATSFullParityCommandCenter = lazy(() => import("@/pages/NativeATSCommandCenterV2"));
 const ATSCommandCentre                 = lazy(() => import("@/pages/ATSCommandCentre"));
 const NativeATSRegistrationEnhanced   = lazy(() => import("@/pages/NativeATSRegistrationEnhanced"));
 const NativeATSOnboardingBridge        = lazy(() => import("@/pages/NativeATSOnboardingBridge"));
@@ -42,6 +42,7 @@ const NativeJobRequisition             = lazy(() => import("@/pages/NativeJobReq
 const IjpAdminPage                     = lazy(() => import("@/pages/recruitment/IjpAdminPage"));
 const MetaCampaignDashboard            = lazy(() => import("@/pages/ats/MetaCampaignDashboard"));
 const MetaLeadsPage                    = lazy(() => import("@/pages/ats/MetaLeadsPage"));
+const HiringEnginePage                 = lazy(() => import("@/pages/hiring-engine/HiringEnginePage"));
 const MetaShortlistReport              = lazy(() => import("@/pages/ats/MetaShortlistReport"));
 const MetaWhatsAppInbox                = lazy(() => import("@/pages/ats/MetaWhatsAppInbox"));
 
@@ -97,6 +98,8 @@ export const recruitmentRouteElements = (
       {/* All-leads flat view — same page code as the campaign dashboard, so anyone who can see
           campaigns can see the leads they produced without a separate grant. */}
       <Route path="/ats/meta-leads" element={<ProtectedRoute><Gate pageCode="ATS_META_CAMPAIGNS"><MetaLeadsPage /></Gate></ProtectedRoute>} />
+      {/* Walk-in Hiring Engine hub. Own page code (migration 2102). */}
+      <Route path="/ats/hiring-engine" element={<ProtectedRoute><Gate pageCode="ATS_HIRING_ENGINE"><HiringEnginePage /></Gate></ProtectedRoute>} />
       <Route path="/ats/meta-shortlist" element={<ProtectedRoute><Gate pageCode="ATS_META_CAMPAIGNS"><MetaShortlistReport /></Gate></ProtectedRoute>} />
       {/* WhatsApp Inbox — same gate as meta campaigns. Branch HR sees their branch only. */}
       <Route path="/ats/whatsapp-inbox" element={<ProtectedRoute><Gate pageCode="ATS_META_CAMPAIGNS"><MetaWhatsAppInbox /></Gate></ProtectedRoute>} />
@@ -104,7 +107,7 @@ export const recruitmentRouteElements = (
       {/* Onboarding bridge */}
       <Route path="/ats/onboarding-bridge"    element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeATSOnboardingBridge /></Gate></ProtectedRoute>} />
       {/* Unified onboarding hub — /ats/onboarding dispatches to the active tab */}
-      <Route path="/ats/onboarding" element={<ProtectedRoute><NativeHROnboardingHub /></ProtectedRoute>} />
+      <Route path="/ats/onboarding" element={<ProtectedRoute><DashboardLayout><NativeHROnboardingHub /></DashboardLayout></ProtectedRoute>} />
       {/* CANONICAL onboarding requests: /ats/onboarding-requests */}
       <Route path="/ats/onboarding-requests"  element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_REQUESTS"><NativeHROnboardingRequests /></Gate></ProtectedRoute>} />
       {/* Duplicate eliminated — redirect to canonical */}
@@ -139,8 +142,8 @@ export const recruitmentRouteElements = (
       <Route path="/ats/bgv-enhanced" element={<Navigate to="/ats/bgv" replace />} />
       {/* /ats/bgv-report removed — NativeBGVReport was a redirect stub; canonical page is /ats/bgv */}
       <Route path="/ats/bgv-report"   element={<Navigate to="/ats/bgv" replace />} />
-      <Route path="/bgv-report-view/:candidateId" element={<ProtectedRoute roles={['admin','hr','branch_hr','branch_head','branch_manager']}><NativeBGVReportView /></ProtectedRoute>} />
-      <Route path="/ats/bgv-api-monitor" element={<ProtectedRoute roles={['admin','hr','super_admin']}><NativeBGVAPIMonitor /></ProtectedRoute>} />
+      <Route path="/bgv-report-view/:candidateId" element={<ProtectedRoute roles={['admin','hr','branch_hr','branch_head','branch_manager']}><DashboardLayout><NativeBGVReportView /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/ats/bgv-api-monitor" element={<ProtectedRoute roles={['admin','hr','super_admin']}><DashboardLayout><NativeBGVAPIMonitor /></DashboardLayout></ProtectedRoute>} />
       <Route path="/ats/reconciliation" element={<ProtectedRoute roles={['admin','super_admin','hr']}><DashboardLayout><NativeReconciliationDashboard /></DashboardLayout></ProtectedRoute>} />
 
       {/* Misc ATS */}

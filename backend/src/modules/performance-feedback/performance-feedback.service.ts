@@ -216,6 +216,7 @@ export class PerformanceFeedbackService {
     manager_id?: string;
     employee_id?: string;
     reviewer_id?: string;
+    scope?: { sql: string; params: unknown[] } | null;
   }): Promise<PerformanceFeedbackRequest[]> {
     let query = "SELECT * FROM performance_feedback_request WHERE 1=1";
     const params: any[] = [];
@@ -245,7 +246,15 @@ export class PerformanceFeedbackService {
       params.push(filters.reviewer_id);
     }
 
-    query += " ORDER BY created_at DESC";
+    // Branch scoping: hr / non-org-wide callers only see requests for employees inside their scope.
+    if (filters.scope) {
+      query += ` AND ${filters.scope.sql}`;
+      params.push(...filters.scope.params);
+    }
+
+    // performance_feedback_request has no created_at; requested_at is its creation time. Ordering by
+    // created_at failed every call with ER_BAD_FIELD_ERROR (500 on /performance-feedback/assignments).
+    query += " ORDER BY requested_at DESC";
 
     const [rows] = await db.execute<RowDataPacket[]>(query, params);
     return rows as PerformanceFeedbackRequest[];
@@ -706,6 +715,7 @@ export class PerformanceFeedbackService {
     cycle_id?: string;
     employee_id?: string;
     manager_id?: string;
+    scope?: { sql: string; params: unknown[] } | null;
   }): Promise<ReportResponseDto[]> {
     let query = `
       SELECT
@@ -725,7 +735,7 @@ export class PerformanceFeedbackService {
       JOIN performance_feedback_cycle pfc ON pfc.cycle_id = pfr.cycle_id
       JOIN employees e ON e.id = pfr.employee_id
       WHERE 1=1`;
-    const params: string[] = [];
+    const params: any[] = [];
 
     if (filters.cycle_id) {
       query += " AND pfr.cycle_id = ?";
@@ -739,6 +749,10 @@ export class PerformanceFeedbackService {
       query += " AND e.reporting_manager_id = ?";
       params.push(filters.manager_id);
     }
+    if (filters.scope) {
+      query += ` AND ${filters.scope.sql}`;
+      params.push(...filters.scope.params);
+    }
 
     query += " ORDER BY pfr.report_generated_at DESC";
     const [rows] = await db.execute<RowDataPacket[]>(query, params);
@@ -750,7 +764,7 @@ export class PerformanceFeedbackService {
    */
   async getReportById(
     reportId: string,
-    scope: { employee_id?: string; manager_id?: string },
+    scope: { employee_id?: string; manager_id?: string; scope?: { sql: string; params: unknown[] } | null },
   ): Promise<ReportResponseDto | null> {
     let query = `
       SELECT
@@ -770,8 +784,12 @@ export class PerformanceFeedbackService {
       JOIN performance_feedback_cycle pfc ON pfc.cycle_id = pfr.cycle_id
       JOIN employees e ON e.id = pfr.employee_id
       WHERE pfr.report_id = ?`;
-    const params = [reportId];
+    const params: any[] = [reportId];
 
+    if (scope.scope) {
+      query += ` AND ${scope.scope.sql}`;
+      params.push(...scope.scope.params);
+    }
     if (scope.employee_id && scope.manager_id) {
       query += " AND (pfr.employee_id = ? OR e.reporting_manager_id = ?)";
       params.push(scope.employee_id, scope.manager_id);
@@ -908,6 +926,7 @@ export class PerformanceFeedbackService {
   async getDevelopmentPlans(filters: {
     employee_id?: string;
     status?: string;
+    scope?: { sql: string; params: unknown[] } | null;
   }): Promise<DevelopmentPlan[]> {
     let query = "SELECT * FROM development_plan WHERE 1=1";
     const params: any[] = [];
@@ -922,10 +941,36 @@ export class PerformanceFeedbackService {
       params.push(filters.status);
     }
 
+    if (filters.scope) {
+      query += ` AND ${filters.scope.sql}`;
+      params.push(...filters.scope.params);
+    }
+
     query += " ORDER BY created_at DESC";
 
     const [rows] = await db.execute<RowDataPacket[]>(query, params);
     return rows as DevelopmentPlan[];
+  }
+
+  /** Owning employee of a development plan (null when the plan does not exist). */
+  async getPlanEmployeeId(planId: string): Promise<string | null> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT employee_id FROM development_plan WHERE plan_id = ? LIMIT 1",
+      [planId],
+    );
+    return rows[0]?.employee_id ? String(rows[0].employee_id) : null;
+  }
+
+  /** Owning employee of a development plan goal (null when the goal does not exist). */
+  async getGoalEmployeeId(goalId: string): Promise<string | null> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT dp.employee_id
+         FROM development_plan_goal g
+         JOIN development_plan dp ON dp.plan_id = g.plan_id
+        WHERE g.goal_id = ? LIMIT 1`,
+      [goalId],
+    );
+    return rows[0]?.employee_id ? String(rows[0].employee_id) : null;
   }
 
   /**

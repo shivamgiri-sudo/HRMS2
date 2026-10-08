@@ -13,6 +13,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { jobRequisitionService } from "./job-requisition.service.js";
+import { branchInScope } from "./job-requisition-hr-scope.js";
 import { db } from "../../db/mysql.js";
 import type {
   CreateRequisitionInput,
@@ -106,6 +107,19 @@ const inScope =
       .catch(next);
   };
 
+/**
+ * A branch taken from the URL / query is NOT scope: non-org-wide callers may only name a branch that is
+ * inside their own scope (assigned branches + home branch); anything else is 403.
+ */
+async function branchParamAllowed(req: AuthenticatedRequest, branchName: string | undefined): Promise<boolean> {
+  const scope = await jobRequisitionService.getBranchScope(req.authUser!);
+  if (scope.orgWide) return true;
+  if (!branchName) return false;
+  const wanted = branchName.trim().toLowerCase();
+  return scope.branchNames.some((n) => n.trim().toLowerCase() === wanted) || branchInScope(scope, null, branchName);
+}
+const BRANCH_FORBIDDEN = { success: false, message: "Forbidden: branch is outside your branch / assigned scope" };
+
 // ─── Dashboard Metrics ───────────────────────────────────────────────────────
 jobRequisitionRouter.get(
   "/dashboard",
@@ -193,9 +207,14 @@ jobRequisitionRouter.get(
   requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { branch, process } = req.query;
+    const scope = await jobRequisitionService.getBranchScope(req.authUser!);
+    if (!scope.orgWide && branch && !(await branchParamAllowed(req, branch as string))) {
+      return res.status(403).json(BRANCH_FORBIDDEN);
+    }
     const data = await jobRequisitionService.getAvailableBatches({
       branch: branch as string | undefined,
       process: process as string | undefined,
+      branchIn: scope.orgWide ? undefined : scope.branchNames,
     });
     return res.json({ success: true, data });
   }),
@@ -217,9 +236,8 @@ jobRequisitionRouter.get(
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { branchName } = req.params;
-    const data = await jobRequisitionService.getProcessesForBranch(
-      decodeURIComponent(branchName),
-    );
+    if (!(await branchParamAllowed(req, decodeURIComponent(branchName)))) return res.status(403).json(BRANCH_FORBIDDEN);
+    const data = await jobRequisitionService.getProcessesForBranch(decodeURIComponent(branchName));
     return res.json({ success: true, data });
   }),
 );
@@ -240,6 +258,7 @@ jobRequisitionRouter.get(
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { branchName } = req.params;
+    if (!(await branchParamAllowed(req, decodeURIComponent(branchName)))) return res.status(403).json(BRANCH_FORBIDDEN);
     const processId = req.query.processId as string | undefined;
     const processName = req.query.processName as string | undefined;
     const data = await jobRequisitionService.getOpenRequisitionsForBranch(
@@ -280,11 +299,8 @@ jobRequisitionRouter.get(
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await jobRequisitionService.getHandoverRecipientOptions([
-      "operations_manager",
-      "trainer",
-      "branch_head",
-      "process_manager",
-    ]);
+      "operations_manager", "trainer", "branch_head", "process_manager",
+    ], await jobRequisitionService.getBranchScope(req.authUser!));
     return res.json({ success: true, data });
   }),
 );
@@ -443,6 +459,9 @@ jobRequisitionRouter.patch(
       return res
         .status(401)
         .json({ success: false, message: "User not authenticated" });
+    }
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      return res.status(400).json({ success: false, message: "Request body must be a JSON object" });
     }
 
     const data = await jobRequisitionService.updateRequisition(
@@ -606,6 +625,27 @@ jobRequisitionRouter.post(
     );
     return res.json({ success: true, data, message: "Requisition closed" });
   }),
+);
+
+// ─── Reopen ──────────────────────────────────────────────────────────────────
+// Branch head / super admin: reopen a closed or filled requisition with a new required count and validity.
+jobRequisitionRouter.post(
+  "/:id/reopen",
+  requireAuth,
+  requireRole("super_admin", "branch_head"),
+  inScope("id"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const userId = req.authUser?.id;
+    if (!userId) return res.status(401).json({ success: false, message: "User not authenticated" });
+    const b = (req.body ?? {}) as { requestedHeadcount?: unknown; validity?: unknown; reason?: unknown };
+    const reason = typeof b.reason === "string" ? b.reason.trim() : "";
+    if (reason.length < 5) return res.status(400).json({ success: false, message: "A reopen reason is required (min 5 characters)" });
+    const data = await jobRequisitionService.reopenRequisition(id, userId, {
+      requestedHeadcount: Number(b.requestedHeadcount), validity: String(b.validity ?? ""), reason,
+    });
+    return res.json({ success: true, data, message: "Requisition reopened" });
+  })
 );
 
 // ─── Request Close ───────────────────────────────────────────────────────────

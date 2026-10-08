@@ -139,31 +139,25 @@ const OUT_OF_SCOPE =
   "Forbidden: this employee is outside your assigned branch scope";
 
 /** The work list: who can be issued to, and why the rest cannot. */
-router.get(
-  "/appointment-letters/queue",
-  requireRole(...VIEW_ROLES),
-  h(async (req, res) => {
-    const limit = Math.min(Number(req.query.limit ?? 200) || 200, 500);
-    const scope = await branchScope(req, "e.branch_id");
-    const rows = await listAppointmentLetterQueue(limit, {
-      scopeSql: scope.sql,
-      scopeParams: scope.params,
-      search: typeof req.query.search === "string" ? req.query.search : null,
-    });
-    return res.json({
-      success: true,
-      data: {
-        eligible: rows.filter((r) => r.eligible),
-        blocked: rows.filter((r) => !r.eligible),
-        counts: {
-          eligible: rows.filter((r) => r.eligible).length,
-          blocked: rows.filter((r) => !r.eligible).length,
-        },
-        scope: scope.sql === "1=1" ? "all" : "branch",
-      },
-    });
-  }),
-);
+router.get("/appointment-letters/queue", requireRole(...VIEW_ROLES), h(async (req, res) => {
+  const limit = Math.min(Number(req.query.limit ?? 200) || 200, 500);
+  const scope = await branchScope(req, "e.branch_id");
+  const rows = await listAppointmentLetterQueue(limit, {
+    scopeSql: scope.sql,
+    scopeParams: scope.params,
+    search: typeof req.query.search === "string" ? req.query.search : null,
+    branchId: typeof req.query.branch_id === "string" && req.query.branch_id ? req.query.branch_id : null,
+  });
+  return res.json({
+    success: true,
+    data: {
+      eligible: rows.filter((r) => r.eligible),
+      blocked: rows.filter((r) => !r.eligible),
+      counts: { eligible: rows.filter((r) => r.eligible).length, blocked: rows.filter((r) => !r.eligible).length },
+      scope: scope.sql === "1=1" ? "all" : "branch",
+    },
+  });
+}));
 
 router.get(
   "/appointment-letters/eligibility/:employeeId",
@@ -210,14 +204,18 @@ router.get(
     const conds = [`(${scope.sql})`];
     const params: unknown[] = [...scope.params];
 
-    const search = String(req.query.search ?? "").trim();
-    if (search) {
-      conds.push(
-        "(i.employee_name LIKE ? OR i.employee_code LIKE ? OR i.letter_number LIKE ?)",
-      );
-      const term = appointmentLetterSearchTerm(search);
-      params.push(term, term, term);
-    }
+  const branchFilter = typeof req.query.branch_id === "string" ? req.query.branch_id.trim() : "";
+  if (branchFilter) {
+    conds.push("COALESCE(e.branch_id, i.branch_id) = ?");
+    params.push(branchFilter);
+  }
+
+  const search = String(req.query.search ?? "").trim();
+  if (search) {
+    conds.push("(i.employee_name LIKE ? OR i.employee_code LIKE ? OR i.letter_number LIKE ?)");
+    const term = appointmentLetterSearchTerm(search);
+    params.push(term, term, term);
+  }
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT i.id, i.letter_number, i.employee_id, i.employee_code, i.employee_name, i.designation,

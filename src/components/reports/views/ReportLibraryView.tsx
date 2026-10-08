@@ -989,6 +989,25 @@ function resolveColLabel(
   return `${String(d).padStart(2, "0")}-${SHORT_MONTHS_UI[mo - 1]}`;
 }
 
+// attendance-register-monthly declares day_1..day_31 statically; a month with fewer days must not
+// show the extra columns (there is no 31-Sep). Other reports and unset/odd months pass through.
+function columnsForMonth<T extends { key: string }>(
+  columns: T[],
+  reportCode: string,
+  activeMonth: string | undefined
+): T[] {
+  if (reportCode !== "attendance-register-monthly" || !activeMonth) return columns;
+  const parts = activeMonth.split("-");
+  const yr = Number(parts[0]);
+  const mo = Number(parts[1]);
+  if (!Number.isFinite(yr) || !Number.isFinite(mo) || mo < 1 || mo > 12) return columns;
+  const dim = new Date(yr, mo, 0).getDate();
+  return columns.filter((c) => {
+    const m = c.key.match(/^day_(\d+)$/);
+    return !m || Number(m[1]) <= dim;
+  });
+}
+
 export default function NativeReportsCenterV2({ preselectedReport }: { preselectedReport?: string } = {}) {
   const { roleKeys, isLoading: rolesLoading } = useWorkforceAccess();
   const userRoles = roleKeys;
@@ -1537,7 +1556,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                             selectedReport.headerGroups ? "top-[33px]" : "top-0"
                           }`}
                         >
-                          {selectedReport.columns.map(col => (
+                          {columnsForMonth(selectedReport.columns, selectedReport.code, filterValues.month).map(col => (
                             <th
                               key={col.key}
                               className={`px-3 py-2.5 font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap ${
@@ -1561,7 +1580,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                             : String(i);
                           return (
                           <tr key={rowKey} className={`hover:bg-blue-50/50 ${i % 2 === 0 ? "" : "bg-gray-50/50"}`}>
-                            {selectedReport.columns.map(col => (
+                            {columnsForMonth(selectedReport.columns, selectedReport.code, filterValues.month).map(col => (
                               <td
                                 key={col.key}
                                 className={`px-3 py-2 text-gray-700 whitespace-nowrap max-w-[220px] truncate ${

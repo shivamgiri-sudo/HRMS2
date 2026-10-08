@@ -23,7 +23,7 @@
  * returned documents.
  */
 import { describe, it, expect } from "vitest";
-import { digilockerVerifiedCheckTypes } from "../digilocker-evidence.js";
+import { digilockerVerifiedCheckTypes, documentTypesFromStatusPayload } from "../digilocker-evidence.js";
 
 describe("digilockerVerifiedCheckTypes", () => {
   it("credits Aadhaar on completion, because the session is Aadhaar-authenticated", () => {
@@ -87,5 +87,24 @@ describe("digilockerVerifiedCheckTypes", () => {
     });
     expect(types).toContain("aadhaar");
     expect(types).not.toContain("pan");
+  });
+});
+
+describe("documentTypesFromStatusPayload", () => {
+  it("reads provider-reported types, so a PAN entry counts even when the Aadhaar PDF was downloaded", () => {
+    const payload = { data: { documentList: [{ document_type: "AADHAAR" }, { document_type: "PAN" }] } };
+    const types = documentTypesFromStatusPayload(payload);
+    expect(types).toEqual(["AADHAAR", "PAN"]);
+    expect(digilockerVerifiedCheckTypes({ fileName: "aadhaar.pdf", documentTypes: types })).toContain("pan");
+  });
+
+  it("does not credit PAN when the provider lists only Aadhaar", () => {
+    const types = documentTypesFromStatusPayload({ documentList: [{ document_type: "AADHAAR" }] });
+    expect(digilockerVerifiedCheckTypes({ fileName: "aadhaar.pdf", documentTypes: types })).not.toContain("pan");
+  });
+
+  it("tolerates missing or malformed payloads", () => {
+    expect(documentTypesFromStatusPayload(null)).toEqual([]);
+    expect(documentTypesFromStatusPayload({ data: { documentList: "x" } })).toEqual([]);
   });
 });

@@ -1,0 +1,103 @@
+# Flips MIS_EMAIL_SCHEDULER_ENABLED on the production host and restarts the API process.
+#
+# The scheduler (backend/src/modules/process-performance/mis-schedule.worker.ts) is started from
+# server.ts, i.e. inside hrms2-backend, not hrms2-workers. It reads the flag once at startup.
+# Once on, it ticks every 60s and EMAILS any active schedule whose next_run_at has passed, so the
+# first step prints what is active/due before anything changes. Disable reverses it.
+#
+# Runs on the self-hosted runner because backend/.env and pm2 exist only on 192.168.11.225.
+
+name: MIS email scheduler (enable/disable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      state:
+        description: "enable or disable the scheduled MIS email worker"
+        required: true
+        type: choice
+        default: enable
+        options:
+          - enable
+          - disable
+
+concurrency:
+  group: mis-scheduler-flag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  flag:
+    name: Set MIS_EMAIL_SCHEDULER_ENABLED on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - name: Preview schedules (read only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /var/www/HRMS2/backend
+          node --input-type=module -e '
+            import "dotenv/config";
+            import mysql from "mysql2/promise";
+            const c = await mysql.createConnection({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT) || 3306, user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME });
+            await c.query("SET SESSION TRANSACTION READ ONLY");
+            const [[r]] = await c.query("SELECT COUNT(*) total, SUM(status=\"active\") active, SUM(status=\"active\" AND next_run_at IS NOT NULL AND next_run_at <= DATE_FORMAT(NOW(), \"%Y-%m-%d %H:%i:%s\")) due_now FROM mis_email_schedule");
+            console.log("mis_email_schedule: total=" + r.total + " active=" + (r.active ?? 0) + " due_now=" + (r.due_now ?? 0));
+            await c.end();
+          '
+
+      - name: Set the flag in backend/.env
+        id: env
+        shell: bash
+        env:
+          STATE: ${{ inputs.state }}
+        run: |
+          set -euo pipefail
+          ENV_FILE="/var/www/HRMS2/backend/.env"
+          KEY="MIS_EMAIL_SCHEDULER_ENABLED"
+          test -f "$ENV_FILE" || { echo "::error::$ENV_FILE not found."; exit 1; }
+          if [[ "$STATE" == "enable" ]]; then VALUE=true; else VALUE=false; fi
+          BACKUP="${ENV_FILE}.bak-mis-flag-$(date -u +%Y%m%dT%H%M%SZ)"
+          cp -a "$ENV_FILE" "$BACKUP"
+          echo "Backed up to $BACKUP"
+          if [[ -s "$ENV_FILE" && -n "$(tail -c 1 "$ENV_FILE")" ]]; then printf '\n' >> "$ENV_FILE"; fi
+          sed -i -E "/^${KEY}=/d" "$ENV_FILE"
+          printf '%s=%s\n' "$KEY" "$VALUE" >> "$ENV_FILE"
+          COUNT="$(grep -cE "^${KEY}=" "$ENV_FILE" || true)"
+          if [[ "$COUNT" != "1" ]]; then
+            echo "::error::Expected exactly one ${KEY} line, found ${COUNT}. Restoring the backup."
+            cp -a "$BACKUP" "$ENV_FILE"
+            exit 1
+          fi
+          echo "$ENV_FILE now sets: $(grep -E "^${KEY}=" "$ENV_FILE")"
+          echo "value=${VALUE}" >> "$GITHUB_OUTPUT"
+          echo "backup=${BACKUP}" >> "$GITHUB_OUTPUT"
+
+      - name: Restart the API process
+        shell: bash
+        run: |
+          set -euo pipefail
+          # hrms2-backend: server.ts is where the scheduler is started. --update-env makes pm2 take the new .env value.
+          pm2 restart hrms2-backend --update-env --no-color
+          pm2 save --no-color
+          pm2 status hrms2-backend --no-color
+
+      - name: Confirm
+        shell: bash
+        env:
+          EXPECTED: ${{ steps.env.outputs.value }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            if pm2 logs hrms2-backend --lines 300 --nostream --no-color 2>/dev/null | grep -F '[mis-schedule]' | tail -n 3; then break; fi
+            echo "No [mis-schedule] line yet (${attempt}/12) - waiting 5s"; sleep 5
+          done
+          if [[ "$EXPECTED" == "true" ]]; then
+            pm2 logs hrms2-backend --lines 300 --nostream --no-color 2>/dev/null | grep -qF '[mis-schedule] scheduler started' \
+              || echo "::warning::No 'scheduler started' line seen in the last 300 log lines; check pm2 logs."
+          fi

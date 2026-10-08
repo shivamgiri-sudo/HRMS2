@@ -17,10 +17,11 @@ describe("dispute creation — cycle status gate", () => {
   });
 
   it("DISPUTE_LOCKED_STATUSES constant covers all three locked states", () => {
-    const src = readFileSync(
-      resolve("src/modules/roster/roster.governance.routes.ts"),
-      "utf8",
-    );
+    // Defined in dispute-resolution.service.ts (shared with resolve-dispute) and imported by the routes.
+    const src =
+      readFileSync(resolve("src/modules/roster/roster.governance.routes.ts"), "utf8") +
+      "\n" +
+      readFileSync(resolve("src/modules/roster/dispute-resolution.service.ts"), "utf8");
     expect(src).toMatch(/DISPUTE_LOCKED_STATUSES/);
     expect(src).toMatch(/"attendance_locked"/);
     expect(src).toMatch(/"payroll_input_ready"/);

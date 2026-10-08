@@ -11,12 +11,22 @@ function getCiPool() {
 }
 
 /**
+ * Branch scoping: `codes` = the agent employee codes the caller may see (null / undefined = org-wide, SQL unchanged,
+ * [] = nothing). Returns the extra predicate for the given User column and its parameters.
+ */
+function agentScope(col: string, codes?: string[] | null): { sql: string; params: string[] } {
+  if (codes === null || codes === undefined) return { sql: '', params: [] };
+  if (codes.length === 0) return { sql: ' AND 1=0', params: [] };
+  return { sql: ` AND ${col} IN (${codes.map(() => '?').join(',')})`, params: codes };
+}
+
+/**
  * Get hour-of-day quality heatmap data
  */
-export async function getQualityHeatmap(from: string, to: string) {
+export async function getQualityHeatmap(from: string, to: string, codes?: string[] | null) {
   const pool = getCiPool();
-  const [rows] = await pool.execute<RowDataPacket[]>(
-    `
+  const sc = agentScope("User", codes);
+  const [rows] = await pool.execute<RowDataPacket[]>(`
     SELECT
       DAYNAME(CallDate) as day_name,
       DAYOFWEEK(CallDate) as dow,
@@ -25,12 +35,10 @@ export async function getQualityHeatmap(from: string, to: string) {
       ROUND(AVG(quality_percentage), 1) as avg_score,
       COUNT(CASE WHEN quality_percentage < 50 THEN 1 END) as critical_calls
     FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ?
+    WHERE CallDate BETWEEN ? AND ?${sc.sql}
     GROUP BY DAYOFWEEK(CallDate), HOUR(CallDate)
     ORDER BY dow, hour
-  `,
-    [from, to],
-  );
+  `, [from, to, ...sc.params]);
 
   // Transform to heatmap structure
   const heatmap: Record<
@@ -122,8 +130,10 @@ export async function predictAgentRisk(from: string, to: string) {
 /**
  * Generate automated insights based on current data patterns
  */
-export async function generateInsights(from: string, to: string) {
+export async function generateInsights(from: string, to: string, codes?: string[] | null) {
   const pool = getCiPool();
+  const sc = agentScope("User", codes);
+  const scQ = agentScope("cqa.User", codes);
   const insights: Array<{
     type: "success" | "warning" | "critical" | "opportunity";
     title: string;
@@ -150,61 +160,47 @@ export async function generateInsights(from: string, to: string) {
           AVG(CASE WHEN CallDate >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN quality_percentage END) as week_avg,
           AVG(CASE WHEN CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN quality_percentage END) as month_avg
         FROM db_audit.call_quality_assessment
-        WHERE CallDate BETWEEN ? AND ?
-      `,
-      [from, to],
-    ),
-    pool.execute<RowDataPacket[]>(
-      `
+        WHERE CallDate BETWEEN ? AND ?${sc.sql}
+      `, [from, to, ...sc.params]),
+    pool.execute<RowDataPacket[]>(`
         SELECT cqa.User, COUNT(*) as poor_calls,
                COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), cqa.User) AS display_name
         FROM db_audit.call_quality_assessment cqa
         LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
-          AND cqa.quality_percentage < 50
+          AND cqa.quality_percentage < 50${scQ.sql}
         GROUP BY cqa.User, e.full_name, e.first_name, e.last_name
         HAVING COUNT(*) >= 3
         ORDER BY poor_calls DESC
         LIMIT 3
-      `,
-      [],
-    ),
-    pool.execute<RowDataPacket[]>(
-      `
+      `, [...scQ.params]),
+    pool.execute<RowDataPacket[]>(`
         SELECT
           COUNT(DISTINCT User) as top_count,
           AVG(quality_percentage) as top_avg
         FROM db_audit.call_quality_assessment
         WHERE CallDate BETWEEN ? AND ?
-          AND quality_percentage >= 90
-      `,
-      [from, to],
-    ),
-    pool.execute<RowDataPacket[]>(
-      `
+          AND quality_percentage >= 90${sc.sql}
+      `, [from, to, ...sc.params]),
+    pool.execute<RowDataPacket[]>(`
         SELECT
           COUNT(DISTINCT User) as bottom_count,
           AVG(quality_percentage) as bottom_avg
         FROM db_audit.call_quality_assessment
         WHERE CallDate BETWEEN ? AND ?
-          AND quality_percentage < 70
-      `,
-      [from, to],
-    ),
-    pool.execute<RowDataPacket[]>(
-      `
+          AND quality_percentage < 70${sc.sql}
+      `, [from, to, ...sc.params]),
+    pool.execute<RowDataPacket[]>(`
         SELECT
           HOUR(CallDate) as hour,
           AVG(quality_percentage) as avg_score,
           COUNT(*) as call_volume
         FROM db_audit.call_quality_assessment
-        WHERE CallDate BETWEEN ? AND ?
+        WHERE CallDate BETWEEN ? AND ?${sc.sql}
         GROUP BY HOUR(CallDate)
         ORDER BY avg_score ASC
         LIMIT 1
-      `,
-      [from, to],
-    ),
+      `, [from, to, ...sc.params]),
   ]);
 
   // Insight 1: Quality trend
@@ -272,8 +268,9 @@ export async function generateInsights(from: string, to: string) {
 /**
  * Calculate ROI of quality improvements
  */
-export async function calculateQualityROI(from: string, to: string) {
+export async function calculateQualityROI(from: string, to: string, codes?: string[] | null) {
   const pool = getCiPool();
+  const sc = agentScope("qc.User", codes);
 
   // Get quality and sales correlation
   const [data] = await pool.execute<RowDataPacket[]>(
@@ -286,10 +283,8 @@ export async function calculateQualityROI(from: string, to: string) {
     FROM db_audit.call_quality_assessment qc
     LEFT JOIN db_external.CallDetails cd ON cd.CallDate = qc.CallDate
       AND cd.AgentName = qc.User COLLATE utf8mb4_unicode_ci
-    WHERE qc.CallDate BETWEEN ? AND ?
-  `,
-    [from, to],
-  );
+    WHERE qc.CallDate BETWEEN ? AND ?${sc.sql}
+  `, [from, to, ...sc.params]);
 
   const current = data[0];
   // current.avg_quality is a MySQL DECIMAL, which mysql2 returns as a string. Left as a

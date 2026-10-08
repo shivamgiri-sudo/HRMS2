@@ -41,10 +41,17 @@ import {
 } from "./roster-analytics.calc.js";
 import { rosterAnalyticsDetailRouter } from "./roster-analytics-detail.routes.js";
 import { rosterTrendsRouter } from "./roster-trends.routes.js";
+import { consoleScopeGuard, branchParamGuard, employeeParamGuard } from "./console-scope.js";
 
 const router = Router();
 
 router.use(requireAuth);
+// Branch / process scoping for the whole console (see console-scope.ts): validates the branchId / processId the
+// caller named, injects their single branch when they named none, and checks :branchId / :employeeId path params.
+// Entity routes carry the employee id in the path, which employeeParamGuard validates, so they need no branch selection.
+router.use(consoleScopeGuard({ entityPaths: /^\/(employee-profile|break-compliance\/employee|process-roster\/member|employee)\/[^/]+/ }));
+router.param("branchId", branchParamGuard());
+router.param("employeeId", employeeParamGuard());
 // Drill-down endpoints for the Analytics panel (own file; same auth + role set).
 router.use(rosterAnalyticsDetailRouter);
 router.use("/trends", rosterTrendsRouter);

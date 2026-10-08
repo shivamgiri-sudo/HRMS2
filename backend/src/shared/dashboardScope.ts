@@ -1,3 +1,4 @@
+import { ORG_WIDE_EXEMPT_ROLES } from "./scopeAccess.js";
 import { db } from "../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { getUserRoleContext } from "./roleResolver.js";
@@ -49,7 +50,8 @@ type AssignmentScopeRow = RowDataPacket & {
  * Kept deliberately tiny. Narrowing these by a stray user_assignment_scope row could
  * lock an administrator out of the system, so they short-circuit before scopes load.
  */
-const SYSTEM_WIDE_ROLES = new Set(["super_admin", "admin"]);
+// Owner ruling 2026-10-01: `admin` is branch-scoped like hr, so only super_admin short-circuits here.
+const SYSTEM_WIDE_ROLES = new Set(["super_admin"]);
 
 /**
  * Roles that exist only at head office, and therefore stay org-wide even when an
@@ -184,6 +186,7 @@ const SELF_ONLY_ROLES = new Set(["employee", "agent", "trainee"]);
  */
 export const SCOPE_BEARING_ROLES: ReadonlySet<string> = new Set<string>([
   ...SYSTEM_WIDE_ROLES,
+  "admin",
   ...HEAD_OFFICE_ROLES,
   ...ORG_ALL_ROLES,
   ...BRANCH_ALL_ROLES,
@@ -400,10 +403,22 @@ export async function resolveDashboardScopeForRequest(
   return resolveDashboardScope(user.id, primaryRole);
 }
 
-export async function resolveDashboardScope(
-  userId: string,
-  _role: string,
-): Promise<DashboardScope> {
+/**
+ * Own-branch clamp (owner ruling 2026-10-01): outside super_admin, the org-wide exempt roles and the
+ * head-office titles, a branch-bearing scope never reaches past the branch on the caller's own
+ * employee record. Assignment rows can narrow within it, never widen. A caller with no own branch keeps
+ * the scope their assignment rows gave them.
+ */
+export async function resolveDashboardScope(userId: string, role: string): Promise<DashboardScope> {
+  const scope = await resolveDashboardScopeUnclamped(userId, role);
+  if (scope.level !== "BRANCH_ALL" && scope.level !== "PROCESS_ALL") return scope;
+  const context = await getUserRoleContext(userId);
+  if (context.roleKeys.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r) || HEAD_OFFICE_ROLES.has(r))) return scope;
+  const own = (await resolveEmployeeScope(userId)).branchIds[0];
+  return own ? { ...scope, branchIds: [own] } : scope;
+}
+
+async function resolveDashboardScopeUnclamped(userId: string, _role: string): Promise<DashboardScope> {
   const context = await getUserRoleContext(userId);
   const effectiveRole = context.primaryRole;
 
@@ -475,15 +490,13 @@ export async function resolveDashboardScope(
             .trim()
             .toLowerCase() === "all",
       );
-      if (hasAllGrant) {
-        return {
-          level: "ORG_ALL",
-          branchIds: [],
-          processIds: [],
-          employeeIds: [],
-          userId,
-          role: effectiveRole,
-        };
+      // HR function roles must be branch-scoped even when they carry scope_type='all'.
+      // A scope_type='all' grant was historically used to give HR org-wide access but the
+      // business rule is: HR sees only their own branch. super_admin / admin / ceo / HO
+      // roles bypass before reaching this block and are unaffected.
+      const isBranchMandatoryRole = !ORG_WIDE_EXEMPT_ROLES.includes(effectiveRole);
+      if (hasAllGrant && !isBranchMandatoryRole) {
+        return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
       }
       // Fail closed to the employee's own branch rather than opening the whole org.
       if (employee.branchIds.length > 0) {

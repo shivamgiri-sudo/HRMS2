@@ -31,35 +31,56 @@ const QUERY = (() => {
   return fn.slice(open + 1, fn.indexOf("`", open + 1));
 })();
 
+/**
+ * listPendingApprovals was reshaped by ff58d4d67 (perf: eliminate N+1 on the
+ * offer-approvals page). The two Payroll HR dates are no longer correlated
+ * subqueries inside the main SELECT; they come from ONE batched query over
+ * ats_payroll_hr_validation and are attached per candidate in JS. The contract
+ * is unchanged — both dates, from the validation table, one row per candidate —
+ * so the assertions follow the new shape rather than the old SQL text.
+ */
+const FN = (() => {
+  const at = SERVICE.indexOf("export async function listPendingApprovals");
+  const next = SERVICE.indexOf("export async function", at + 10);
+  return SERVICE.slice(at, next === -1 ? undefined : next);
+})();
+const PV_QUERY = (() => {
+  const from = FN.indexOf("FROM ats_payroll_hr_validation");
+  return FN.slice(FN.lastIndexOf("`SELECT", from), FN.indexOf("`", from));
+})();
+
 describe("Offer approvals — Payroll HR joining dates", () => {
   it("selects both Payroll HR dates", () => {
-    expect(QUERY).toContain("AS payroll_joining_date");
-    expect(QUERY).toContain("AS payroll_salary_start_date");
+    expect(PV_QUERY).toContain("AS latest_joining_date");
+    expect(PV_QUERY).toContain("AS latest_salary_start_date");
+    expect(FN).toMatch(/payroll_joining_date:\s*pv\?\.joiningDate\s*\?\?\s*null/);
+    expect(FN).toMatch(/payroll_salary_start_date:\s*pv\?\.salaryStartDate\s*\?\?\s*null/);
   });
 
   it("reads them from ats_payroll_hr_validation, not from the offer row", () => {
     // ats_employment_offer has its own date_of_joining/date_of_salary pair. They
     // are a different thing -- sourcing from those would just relabel the same
     // walk-in date twice.
-    const joining = QUERY.slice(
-      QUERY.indexOf("AS payroll_joining_date") - 320,
-      QUERY.indexOf("AS payroll_joining_date"),
-    );
-    expect(joining).toContain("ats_payroll_hr_validation");
+    expect(PV_QUERY).toContain("FROM ats_payroll_hr_validation");
+    expect(PV_QUERY).toMatch(/pv\.joining_date[\s\S]{0,60}AS latest_joining_date/);
+    expect(PV_QUERY).toMatch(/pv\.salary_start_date[\s\S]{0,60}AS latest_salary_start_date/);
+    expect(PV_QUERY).not.toContain("ats_employment_offer");
+    expect(FN).toMatch(/joiningDate:\s*\(r\.latest_joining_date/);
+    expect(FN).toMatch(/salaryStartDate:\s*\(r\.latest_salary_start_date/);
   });
 
-  it("uses scalar subqueries so a second validation row cannot duplicate a candidate", () => {
+  it("takes one validation row per candidate so a second row cannot duplicate a candidate", () => {
     // candidate_id carries only INDEX idx_candidate -- no unique constraint --
-    // so a LEFT JOIN would list the candidate once per validation row.
-    for (const alias of ["pv2", "pv3"]) {
-      const sub = QUERY.slice(
-        QUERY.indexOf(`(SELECT ${alias}.`),
-        QUERY.indexOf(`(SELECT ${alias}.`) + 260,
-      );
-      expect(sub).toContain("LIMIT 1");
-      expect(sub).toContain("ORDER BY");
-    }
-    expect(QUERY).not.toMatch(/JOIN\s+ats_payroll_hr_validation/i);
+    // so a LEFT JOIN would list the candidate once per validation row. The
+    // batch picks the newest row per candidate and collapses to one row each;
+    // the main query never joins the table at all.
+    expect(PV_QUERY).toMatch(/ROW_NUMBER\(\) OVER \(\s*PARTITION BY candidate_id\s*ORDER BY/);
+    expect(PV_QUERY).toContain("pv.rn = 1 THEN pv.joining_date");
+    expect(PV_QUERY).toContain("pv.rn = 1 THEN pv.salary_start_date");
+    expect(PV_QUERY).toContain("GROUP BY pv.candidate_id");
+    expect(QUERY).toContain("FROM ats_employment_offer o");
+    expect(QUERY).not.toContain("ats_payroll_hr_validation");
+    expect(FN).not.toMatch(/JOIN\s+ats_payroll_hr_validation/i);
   });
 
   it("labels the offer's own date as ATS Walkin, not Joining", () => {

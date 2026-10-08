@@ -1,0 +1,34 @@
+name: Ops Leave Cap Rejections (manual, read-only)
+
+# Counts how many leave applications were refused with "Monthly leave limit reached"
+# in the backend error logs (refusals are thrown before any DB insert, so no table holds
+# them). Reads logs only; writes nothing. Log rotation bounds how far back this sees.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-leave-cap-rejections
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  count:
+    name: Count monthly-cap refusals in logs
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Count
+        shell: bash
+        run: |
+          set +e
+          pm2 jlist | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{for(const p of JSON.parse(d))console.log(p.name,p.pm2_env.pm_err_log_path,p.pm2_env.pm_out_log_path)})"
+          for f in $(pm2 jlist | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{for(const p of JSON.parse(d))console.log(p.pm2_env.pm_err_log_path,p.pm2_env.pm_out_log_path)})" | tr ' ' '\n' | sort -u) /var/www/HRMS2/backend/logs/backend-err.log /var/www/HRMS2/backend/logs/backend-out.log; do
+            [ -f "$f" ] || continue
+            echo "== $f ($(stat -c %y "$f")) =="
+            grep -c "Monthly leave limit reached" "$f"
+            grep "Monthly leave limit reached" "$f" | tr -d '\r' | sed -E 's/^[^M]*//' | sort | uniq -c | sort -rn | head -40
+          done

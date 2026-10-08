@@ -17,6 +17,7 @@ import { fetchDemand, fetchRawFacts } from "./query.js";
 import {
   addDays,
   buildReport,
+  weekStartOf,
   monthStartOf,
   toFact,
   type ReportData,
@@ -34,6 +35,8 @@ export interface BranchActivityReport {
   subject: string;
   html: string;
   data: ReportData;
+  /** Token-level raw data behind every number in the email (CSV), attached to the mail. */
+  rawCsv: string;
 }
 
 function dateLabel(iso: string): string {
@@ -66,6 +69,20 @@ export async function getBranchActivityReportData(
   reportDate: string = getCurrentDateIST(),
 ): Promise<ReportData> {
   const facts = await loadFacts(reportDate);
+  return buildReport({ facts, reportDate });
+}
+
+/**
+ * Branch-scoped variant of getBranchActivityReportData (owner ruling 2026-10-01): hr / manager / branch_head /
+ * recruiter see only the facts of their own branch(es), so the summary AND the per-branch blocks cover just
+ * those. `allowedBranches` is every spelling of the caller's branches; an empty list yields an empty report.
+ */
+export async function getBranchActivityReportDataForBranches(
+  reportDate: string,
+  allowedBranches: readonly string[],
+): Promise<ReportData> {
+  const ok = new Set(allowedBranches.flatMap((n) => [n, canonicalBranch(n)]).map((n) => n.toLowerCase()));
+  const facts = (await loadFacts(reportDate)).filter((f) => ok.has(f.branch.toLowerCase()));
   return buildReport({ facts, reportDate });
 }
 
@@ -147,8 +164,12 @@ export interface ExportRow {
 export async function getBranchActivityExportData(
   reportDate: string = getCurrentDateIST(),
   branchFilter?: string,
+  allowedBranches?: readonly string[],
 ): Promise<{ rows: ExportRow[]; csv: string }> {
-  const facts = await loadFacts(reportDate);
+  const allowed = allowedBranches
+    ? new Set(allowedBranches.flatMap((n) => [n, canonicalBranch(n)]).map((n) => n.toLowerCase()))
+    : null;
+  const facts = (await loadFacts(reportDate)).filter((f) => !allowed || allowed.has(f.branch.toLowerCase()));
   const filtered = branchFilter
     ? facts.filter((f) => f.branch.toLowerCase() === branchFilter.toLowerCase())
     : facts;
@@ -203,6 +224,45 @@ export async function getBranchActivityExportData(
   return { rows: exportRows, csv: csvLines.join("\r\n") };
 }
 
+const RAW_HEADERS = [
+  "Counted In", "Branch", "Token Number", "Token Id", "Candidate Id", "Candidate Name", "Process", "Recruiter",
+  "Arrival Date", "Arrival Time", "Has Queue Row", "Queue Status", "Interview Form Filed", "Form Date",
+  "Raw Decision Text", "Raw Candidate Status", "Raw Current Stage", "Sourcing Channel",
+  "Classified Outcome", "Token Generated", "Called", "Closed", "Joined", "Is Employee",
+  "Wait (min)", "Handle (min)", "Negative Duration", "Minutes Since Arrival",
+];
+const yn = (b: boolean) => (b ? "Y" : "N");
+
+/**
+ * Token-level raw data for one branch: every token behind the email's numbers, with the raw DB values and how
+ * each was classified, so the team can validate counts in depth. "Counted In" says which email periods use the row.
+ */
+export function buildRawDataCsv(facts: TokenFact[], reportDate: string): string {
+  const weekStart = weekStartOf(reportDate);
+  const monthStart = monthStartOf(reportDate);
+  const lines = [RAW_HEADERS.join(",")];
+  const sorted = facts
+    .filter((f) => f.arrivalDate <= reportDate)
+    .sort((a, b) => b.arrivalDate.localeCompare(a.arrivalDate) || a.arrivalHhmm.localeCompare(b.arrivalHhmm));
+  for (const f of sorted) {
+    const periods = [
+      f.arrivalDate === reportDate ? "FTD" : "",
+      f.arrivalDate >= weekStart ? "WTD" : "",
+      f.arrivalDate >= monthStart ? "MTD" : "",
+    ].filter(Boolean).join("+") || "Older (open-token check only)";
+    lines.push(
+      [
+        periods, f.branch, f.tokenNumber, f.tokenId, f.candidateId, f.candidateName, f.process, f.recruiter,
+        f.arrivalDate, f.arrivalHhmm, yn(f.raw.hasQueueRow), f.raw.queueStatus ?? "", f.raw.subId ? "Y" : "N", f.formDate ?? "",
+        f.raw.decisionText ?? "", f.raw.candStatus ?? "", f.raw.currentStage ?? "", f.raw.sourceChannel ?? "",
+        outcomeLabel(f.outcome), yn(f.tokenGenerated), yn(f.called), yn(f.closed), yn(f.joined), yn(f.raw.isEmployee),
+        f.waitMin ?? "", f.handleMin ?? "", yn(f.negativeDuration), Math.round(f.sinceArrivalMin),
+      ].map(escapeCsv).join(","),
+    );
+  }
+  return "\uFEFF" + lines.join("\r\n");
+}
+
 /** One report per branch, each computed from that branch's tokens only. */
 export async function buildBranchActivityReports(
   reportDate: string = getCurrentDateIST(),
@@ -214,11 +274,8 @@ export async function buildBranchActivityReports(
   const demand = await fetchDemand(branches, reportDate);
 
   return branches.map((branch) => {
-    const data = buildReport({
-      facts: facts.filter((f) => f.branch === branch),
-      reportDate,
-      demand,
-    });
+    const branchFacts = facts.filter((f) => f.branch === branch);
+    const data = buildReport({ facts: branchFacts, reportDate, demand });
     const html = renderEmail(data, {
       generatedAt,
       dashboardUrl,
@@ -231,6 +288,7 @@ export async function buildBranchActivityReports(
       subject: subjectLine(data, branch),
       html,
       data,
+      rawCsv: buildRawDataCsv(branchFacts, reportDate),
     };
   });
 }
@@ -242,6 +300,8 @@ export interface SendOptions {
   branches?: string[];
   /** Default true: build reports and resolve recipients, but send nothing. */
   dryRun?: boolean;
+  /** Prepended to every subject, e.g. "[REVISED] " when re-sending a corrected report. */
+  subjectPrefix?: string;
   /** Testing: deliver every branch's email to these addresses instead (no branch head / HR / COO mailed). */
   redirectTo?: string[];
   /** Idempotency hooks: skip a branch already sent for this date (restart / double-registration safe). */
@@ -302,9 +362,10 @@ export async function sendBranchActivityReports(
       const redirected = !!opts.redirectTo?.length;
       const to = redirected ? opts.redirectTo! : resolved.to;
       const cc = redirected ? [] : resolved.cc;
+      const baseSubject = `${opts.subjectPrefix ?? ""}${r.subject}`;
       const subject = redirected
-        ? `[TEST → ${resolved.to.join(", ") || "no branch head"}] ${r.subject}`
-        : r.subject;
+        ? `[TEST → ${resolved.to.join(", ") || "no branch head"}] ${baseSubject}`
+        : baseSubject;
       if (!to.length) {
         results.push({
           ...base,
@@ -348,6 +409,13 @@ export async function sendBranchActivityReports(
         cc: cc.length ? cc : undefined,
         subject,
         html: r.html,
+        attachments: [
+          {
+            filename: `recruitment-activity-raw-${r.branch.replace(/[^A-Za-z0-9]+/g, "-")}-${r.reportDate}.csv`,
+            content: r.rawCsv,
+            contentType: "text/csv; charset=utf-8",
+          },
+        ],
       });
       await opts.onSent?.(r.branch, r.reportDate);
       results.push({

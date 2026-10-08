@@ -785,6 +785,8 @@ export type AppointmentLetterQueueFilters = {
    */
   scopeSql?: string;
   scopeParams?: unknown[];
+  /** Optional UI branch filter; applied IN ADDITION to the RBAC scope above, never instead of it. */
+  branchId?: string | null;
   /** Employee name or code. Applied in SQL, i.e. before the LIMIT. */
   search?: string | null;
 };
@@ -829,6 +831,11 @@ export async function listAppointmentLetterQueue(
   // The search runs in SQL, not over the returned page: the queue is capped at
   // `limit` rows ordered by joining date, so a client-side filter could never
   // find anyone past that cap.
+  if (filters.branchId) {
+    conds.push("e.branch_id = ?");
+    params.push(filters.branchId);
+  }
+
   const search = String(filters.search ?? "").trim();
   if (search) {
     conds.push(

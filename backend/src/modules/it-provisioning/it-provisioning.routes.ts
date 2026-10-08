@@ -1,20 +1,20 @@
-import { Router } from "express";
-import type { Response } from "express";
-import type { RowDataPacket } from "mysql2";
-import path from "path";
-import { mkdirSync } from "fs";
-import { randomUUID } from "crypto";
-import multer from "multer";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { hasRole, getEmployeeForUser } from "../../shared/accessGuard.js";
-import {
-  narrowDashboardScope,
-  resolveDashboardScope,
-} from "../../shared/dashboardScope.js";
-import { getUserRoleContext } from "../../shared/roleResolver.js";
-import { db } from "../../db/mysql.js";
+import { Router } from 'express';
+import type { Response } from 'express';
+import type { RowDataPacket } from 'mysql2';
+import path from 'path';
+import { mkdirSync } from 'fs';
+import { randomUUID } from 'crypto';
+import multer from 'multer';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { hasRole, getEmployeeForUser } from '../../shared/accessGuard.js';
+import { hasAnyRole } from '../../shared/scopeAccess.js';
+import { narrowDashboardScope, resolveDashboardScope } from '../../shared/dashboardScope.js';
+import { dashboardRowScopeSql } from '../exit/exitScope.js';
+import { branchPredicate, resolveCallerBranchScope } from '../org/branchScope.js';
+import { getUserRoleContext } from '../../shared/roleResolver.js';
+import { db } from '../../db/mysql.js';
 import {
   listProvisioningRequests,
   getProvisioningRequest,
@@ -38,13 +38,71 @@ const h = (fn: Function) => (req: any, res: any, next: any) =>
 // this is one of only two endpoints that dashboard calls — so both IT head accounts saw a
 // page with nothing on it at all. wfm/hr/branch_admin stay: they use provisioning outside
 // the dashboard.
-const PROVISIONING_ROLES = [
-  "admin",
-  "wfm",
-  "hr",
-  "branch_admin",
-  ...dashboardConsumerRoles("IT_MANAGER_DASHBOARD"),
-];
+// branch_wfm / branch_head open the WFM Alignment queue; they are BRANCH_ALL roles, so the list
+// endpoints and assertTaskInScope() below confine them to their own branch(es).
+/**
+ * Row-scope bypass. admin is BRANCH-SCOPED like hr (owner ruling 2026-10-01), so only super_admin skips
+ * the scope (hasAnyRole matches super_admin exactly, unlike accessGuard.hasRole which also passes admin).
+ * Org-wide roles (ceo, department heads ...) are handled by resolveDashboardScope -> ORG_ALL.
+ */
+async function isUnscopedCaller(userId: string): Promise<boolean> {
+  return hasAnyRole(userId, 'super_admin');
+}
+
+const PROVISIONING_ROLES = ['admin', 'wfm', 'hr', 'branch_admin', 'branch_wfm', 'branch_head', ...dashboardConsumerRoles('IT_MANAGER_DASHBOARD')];
+
+/**
+ * Write/read-by-id guard. List endpoints already narrow by scope; the by-id endpoints did not,
+ * so any caller admitted by PROVISIONING_ROLES could act on a task in any branch by id.
+ * Admin/super_admin and ORG_ALL callers pass; everyone else must own the task employee's
+ * branch (and process, when the scope carries process ids) — same AND rule as the list query.
+ */
+async function assertTaskInScope(req: AuthenticatedRequest, taskId: string): Promise<void> {
+  const userId = req.authUser!.id;
+  if (await isUnscopedCaller(userId)) return;
+  const forbidden = () => Object.assign(new Error('Provisioning request is outside your branch scope'), { statusCode: 403 });
+  let scope;
+  try {
+    const roleContext = await getUserRoleContext(userId);
+    scope = await resolveDashboardScope(userId, roleContext.primaryRole);
+  } catch {
+    throw forbidden();
+  }
+  if (scope.level === 'ORG_ALL') return;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.branch_id, e.process_id FROM it_provisioning_request ipr
+       JOIN employees e ON e.id = ipr.employee_id WHERE ipr.id = ? LIMIT 1`,
+    [taskId],
+  );
+  const emp = (rows as RowDataPacket[])[0];
+  if (!emp) throw Object.assign(new Error('Provisioning request not found'), { statusCode: 404 });
+  if (scope.branchIds.length && !scope.branchIds.includes(String(emp.branch_id))) throw forbidden();
+  if (scope.processIds.length && !scope.processIds.includes(String(emp.process_id))) throw forbidden();
+  if (!scope.branchIds.length && !scope.processIds.length) throw forbidden();
+}
+
+/**
+ * Branch scoping (owner ruling 2026-10-01). Employee-row predicate for the caller: 1=1 for admin /
+ * super_admin / ORG_ALL; otherwise the dashboard scope, which FAILS CLOSED (empty scope => 1=0). hr is
+ * no longer an unrestricted shortcut here.
+ */
+async function callerEmployeeScope(userId: string, alias = 'e'): Promise<{ sql: string; params: unknown[] }> {
+  if (await isUnscopedCaller(userId)) return { sql: '1=1', params: [] };
+  return dashboardRowScopeSql(userId, alias);
+}
+
+/** Branch ids for the SLA endpoints: undefined = unrestricted; [] = nothing (fail closed). */
+async function callerSlaBranchIds(userId: string): Promise<string[] | undefined> {
+  if (await isUnscopedCaller(userId)) return undefined;
+  try {
+    const roleContext = await getUserRoleContext(userId);
+    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
+    if (baseScope.level === 'ORG_ALL') return undefined;
+    return baseScope.branchIds ?? [];
+  } catch {
+    return [];
+  }
+}
 
 // Multer for AD log evidence uploads — stored under uploads/provisioning-evidence/
 const EVIDENCE_UPLOAD_DIR = path.resolve(
@@ -198,6 +256,18 @@ async function changeAppointmentStatus(
   action: AppointmentAction,
 ) {
   const requestId = req.params.id;
+  {
+    const rowScope = await callerEmployeeScope(req.authUser!.id, 'e');
+    if (rowScope.sql !== '1=1') {
+      const [ok] = await db.execute<RowDataPacket[]>(
+        `SELECT 1 AS ok FROM appointment_letter_request alr JOIN employees e ON e.id = alr.employee_id WHERE alr.id = ? AND (${rowScope.sql}) LIMIT 1`,
+        [requestId, ...rowScope.params],
+      );
+      if (!(ok as RowDataPacket[]).length) {
+        return res.status(403).json({ success: false, message: 'Forbidden: this appointment letter is outside your branch / assigned scope' });
+      }
+    }
+  }
   const body = req.body as Record<string, unknown>;
   const evidenceUrl = firstEvidence(body, [
     "evidence_url",
@@ -417,44 +487,100 @@ router.get(
 
 // ── GET /api/it-provisioning/requests ─────────────────────────────────────────
 // Functional teams default to their own queue; admin/hr/super_admin can inspect all.
-router.get(
-  "/stats",
-  requireRole(...PROVISIONING_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    // 'hr' deliberately excluded: it is not an unrestricted-viewer role, it is a scoped
-    // role like any other (see resolveDashboardScope's ORG_ALL_ROLES handling, which
-    // already gives real head-office HR an ORG_ALL scope via their scope_type='all' grant
-    // and fails closed to their own branch otherwise). Including it here made anyone who
-    // also held 'hr' — e.g. a branch admin who is also branch HR — bypass branch scoping
-    // entirely and see every branch's unassigned queue instead of their own.
-    const isAdmin = await hasRole(userId, "admin", "super_admin");
-    const filters: {
-      assignedRole?: string;
-      branchIds?: string[];
-      processIds?: string[];
-    } = {
-      assignedRole: isAdmin ? String(req.query.assigned_role ?? "it") : "it",
-    };
+router.get('/stats', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  // 'hr' deliberately excluded: it is not an unrestricted-viewer role, it is a scoped
+  // role like any other (see resolveDashboardScope's ORG_ALL_ROLES handling, which
+  // already gives real head-office HR an ORG_ALL scope via their scope_type='all' grant
+  // and fails closed to their own branch otherwise). Including it here made anyone who
+  // also held 'hr' — e.g. a branch admin who is also branch HR — bypass branch scoping
+  // entirely and see every branch's unassigned queue instead of their own.
+  const isAdminRole = await hasRole(userId, 'admin', 'super_admin'); // may pick the queue (assigned_role)
+  const isAdmin = await isUnscopedCaller(userId);                    // may skip the row scope: super_admin only
+  const filters: { assignedRole?: string; branchIds?: string[]; processIds?: string[] } = {
+    assignedRole: isAdminRole ? String(req.query.assigned_role ?? 'it') : 'it',
+  };
 
-    if (isAdmin) {
-      if (req.query.branch_id)
-        filters.branchIds = [String(req.query.branch_id)];
-      if (req.query.process_id)
-        filters.processIds = [String(req.query.process_id)];
-    } else {
-      const roleContext = await getUserRoleContext(userId);
-      const baseScope = await resolveDashboardScope(
-        userId,
-        roleContext.primaryRole,
-      );
-      const scoped = await narrowDashboardScope(
-        baseScope,
-        String(req.query.branch_id ?? ""),
-        String(req.query.process_id ?? ""),
-      );
-      filters.branchIds = scoped.branchIds;
-      filters.processIds = scoped.processIds;
+  if (isAdmin) {
+    if (req.query.branch_id) filters.branchIds = [String(req.query.branch_id)];
+    if (req.query.process_id) filters.processIds = [String(req.query.process_id)];
+  } else {
+    const roleContext = await getUserRoleContext(userId);
+    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
+    const scoped = await narrowDashboardScope(
+      baseScope,
+      String(req.query.branch_id ?? ''),
+      String(req.query.process_id ?? ''),
+    );
+    filters.branchIds = scoped.branchIds;
+    filters.processIds = scoped.processIds;
+  }
+
+  return res.json({ success: true, data: await getProvisioningStats(filters) });
+}));
+
+router.get('/requests', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  // See the /stats handler above for why 'hr' is not in this bypass list.
+  const isAdminRole = await hasRole(userId, 'admin', 'super_admin'); // may pick the queue (assigned_role)
+  const isAdmin = await isUnscopedCaller(userId);                    // may skip the row scope: super_admin only
+
+  const filters: Record<string, any> = {
+    status:      req.query.status as string | undefined,
+    requestType: req.query.request_type as string | undefined,
+    page:        req.query.page   ? Number(req.query.page)  : 1,
+    limit:       req.query.limit  ? Number(req.query.limit) : 50,
+  };
+
+  if (!isAdmin) {
+    // Scoped: functional roles see their own assigned queue by default.
+    const isIT       = await hasRole(userId, 'it');
+    const isWFM      = await hasRole(userId, 'wfm', 'branch_wfm');
+    const isBranchAdmin = await hasRole(userId, 'branch_admin');
+
+    if (isIT) filters.assignedRole = 'it';
+    else if (isWFM) filters.assignedRole = 'wfm';
+    else if (isBranchAdmin) filters.assignedRole = 'admin';
+    // admin keeps the queue picker, but stays inside its own branch scope (below).
+    if (isAdminRole && req.query.assigned_role) filters.assignedRole = req.query.assigned_role as string;
+
+    const roleContext = await getUserRoleContext(userId);
+    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
+    const scoped = await narrowDashboardScope(
+      baseScope,
+      String(req.query.branch_id ?? ''),
+      String(req.query.process_id ?? ''),
+    );
+    filters.branchIds = scoped.branchIds;
+    filters.processIds = scoped.processIds;
+  } else {
+    if (req.query.branch_id)      filters.branchId     = req.query.branch_id as string;
+    if (req.query.assigned_role)  filters.assignedRole = req.query.assigned_role as string;
+  }
+
+  const result = await listProvisioningRequests(filters);
+  return res.json({ success: true, ...result });
+}));
+
+router.get(['/tasks', '/tasks/my'], requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  // See the /stats handler above for why 'hr' is not in this bypass list.
+  const isAdmin = await isUnscopedCaller(userId); // row-scope bypass: super_admin only (admin is branch-scoped)
+  const filters: Record<string, any> = {
+    status: req.query.status as string | undefined,
+    requestType: req.query.request_type as string | undefined,
+    assignedRole: req.query.assigned_role as string | undefined,
+    taskCode: req.query.task_code as string | undefined,
+    createdFrom: req.query.created_from as string | undefined,
+    page: req.query.page ? Number(req.query.page) : 1,
+    limit: req.query.limit ? Number(req.query.limit) : 50,
+  };
+  if (req.path.endsWith('/my')) filters.assignedUserId = userId;
+  if (!isAdmin) {
+    if (!filters.assignedRole) {
+      if (await hasRole(userId, 'it')) filters.assignedRole = 'it';
+      else if (await hasRole(userId, 'wfm', 'branch_wfm')) filters.assignedRole = 'wfm';
+      else if (await hasRole(userId, 'branch_admin')) filters.assignedRole = 'admin';
     }
 
     return res.json({
@@ -558,57 +684,42 @@ router.get(
 );
 
 // ── GET /api/it-provisioning/requests/:id ─────────────────────────────────────
-router.get(
-  "/requests/:id",
-  requireRole(...PROVISIONING_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await getProvisioningRequest(req.params.id);
-    return res.json({ success: true, data });
-  }),
-);
+router.get('/requests/:id', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
+  const data = await getProvisioningRequest(req.params.id);
+  return res.json({ success: true, data });
+}));
 
 // ── PATCH /api/it-provisioning/requests/:id/action ───────────────────────────
-router.patch(
-  "/requests/:id/action",
-  requireRole(...PROVISIONING_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { evidence_note } = req.body as { evidence_note?: string };
-    await actionProvisioningRequest({
-      requestId: req.params.id,
-      actionedBy: req.authUser!.id,
-      evidenceNote: evidence_note,
-    });
-    const data = await getProvisioningRequest(req.params.id);
-    return res.json({ success: true, data });
-  }),
-);
+router.patch('/requests/:id/action', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
+  const { evidence_note } = req.body as { evidence_note?: string };
+  await actionProvisioningRequest({
+    requestId:    req.params.id,
+    actionedBy:   req.authUser!.id,
+    evidenceNote: evidence_note,
+  });
+  const data = await getProvisioningRequest(req.params.id);
+  return res.json({ success: true, data });
+}));
 
-router.patch(
-  "/tasks/:id",
-  requireRole(...PROVISIONING_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const note = req.body.evidence_note ?? req.body.remarks ?? null;
-    if (note) {
-      await actionProvisioningRequest({
-        requestId: req.params.id,
-        actionedBy: req.authUser!.id,
-        evidenceNote: String(note),
-      });
-    }
-    // Persist structured IT/Admin fields if provided
-    await persistStructuredFields(req.params.id, req.body);
-    const data = await getProvisioningRequest(req.params.id);
-    return res.json({ success: true, data });
-  }),
-);
+router.patch('/tasks/:id', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
+  const note = req.body.evidence_note ?? req.body.remarks ?? null;
+  if (note) {
+    await actionProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: String(note) });
+  }
+  // Persist structured IT/Admin fields if provided
+  await persistStructuredFields(req.params.id, req.body);
+  const data = await getProvisioningRequest(req.params.id);
+  return res.json({ success: true, data });
+}));
 
-router.post(
-  "/tasks/:id/complete",
-  requireRole(...PROVISIONING_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const taskId = req.params.id;
-    const actorUserId = req.authUser!.id;
-    const body = req.body as Record<string, unknown>;
+router.post('/tasks/:id/complete', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
+  const taskId = req.params.id;
+  const actorUserId = req.authUser!.id;
+  const body = req.body as Record<string, unknown>;
 
     /*
      * Read status BEFORE dispatching, because a task can legitimately be submitted more than
@@ -740,56 +851,36 @@ router.patch(
   }),
 );
 
-router.post(
-  "/tasks/:id/waive",
-  requireRole(...PROVISIONING_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    await waiveProvisioningRequest({
-      requestId: req.params.id,
-      actionedBy: req.authUser!.id,
-      evidenceNote: req.body.evidence_note ?? req.body.reason ?? "",
-    });
-    const data = await getProvisioningRequest(req.params.id);
-    return res.json({ success: true, data });
-  }),
-);
+router.post('/tasks/:id/waive', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
+  await waiveProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: req.body.evidence_note ?? req.body.reason ?? '' });
+  const data = await getProvisioningRequest(req.params.id);
+  return res.json({ success: true, data });
+}));
 
-router.post(
-  "/tasks/:id/block",
-  requireRole(...PROVISIONING_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const reason = String(
-      req.body.reason ?? req.body.evidence_note ?? "",
-    ).trim();
-    if (!reason)
-      return res
-        .status(400)
-        .json({ success: false, message: "reason required" });
-    await actionProvisioningRequest({
-      requestId: req.params.id,
-      actionedBy: req.authUser!.id,
-      evidenceNote: `BLOCKED: ${reason}`,
-    });
-    const data = await getProvisioningRequest(req.params.id);
-    return res.json({ success: true, data });
-  }),
-);
+router.post('/tasks/:id/block', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
+  const reason = String(req.body.reason ?? req.body.evidence_note ?? '').trim();
+  if (!reason) return res.status(400).json({ success: false, message: 'reason required' });
+  await actionProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: `BLOCKED: ${reason}` });
+  const data = await getProvisioningRequest(req.params.id);
+  return res.json({ success: true, data });
+}));
 
-router.get(
-  "/appointment-letters",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT alr.*, e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name, c.candidate_code, c.full_name AS candidate_name
+router.get('/appointment-letters', requireRole('admin', 'hr', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const rowScope = await callerEmployeeScope(req.authUser!.id, 'e');
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT alr.*, e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name, c.candidate_code, c.full_name AS candidate_name
        FROM appointment_letter_request alr
        LEFT JOIN employees e ON e.id = alr.employee_id
        LEFT JOIN ats_candidate c ON c.id = alr.candidate_id
+      WHERE (${rowScope.sql})
       ORDER BY alr.updated_at DESC
       LIMIT 100`,
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    rowScope.params,
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 router.post(
   "/appointment-letters/:id/send",
@@ -825,23 +916,18 @@ router.post(
 
 // ── POST /api/it-provisioning/requests/:id/confirm ───────────────────────────
 // Admin-only: manually lock a request immediately
-router.post(
-  "/requests/:id/confirm",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    await confirmAndLockRequest(req.params.id, req.authUser!.id);
-    const data = await getProvisioningRequest(req.params.id);
-    return res.json({ success: true, data });
-  }),
-);
+router.post('/requests/:id/confirm', requireRole('admin', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
+  await confirmAndLockRequest(req.params.id, req.authUser!.id);
+  const data = await getProvisioningRequest(req.params.id);
+  return res.json({ success: true, data });
+}));
 
 // ── GET /api/it-provisioning/tasks/:id/candidate-report ──────────────────────
-router.get(
-  "/tasks/:id/candidate-report",
-  requireRole(...PROVISIONING_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
+router.get('/tasks/:id/candidate-report', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
        ipr.id AS task_id, ipr.task_code, ipr.status, ipr.locked,
        ipr.official_email, ipr.domain_account, ipr.asset_tag,
        ipr.biometric_enrolled, ipr.id_card_printed, ipr.evidence_note,
@@ -873,26 +959,13 @@ router.get(
 );
 
 // ── POST /api/it-provisioning/tasks/bulk-complete ────────────────────────────
-router.post(
-  "/tasks/bulk-complete",
-  requireRole("it", "admin", "super_admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const rows = req.body.rows as Array<{
-      employee_code: string;
-      official_email?: string;
-      domain_account?: string;
-      asset_tag?: string;
-    }>;
-    if (!Array.isArray(rows) || !rows.length) {
-      return res
-        .status(400)
-        .json({ success: false, message: "rows array required" });
-    }
-    const results: {
-      employee_code: string;
-      status: "ok" | "error";
-      message?: string;
-    }[] = [];
+router.post('/tasks/bulk-complete', requireRole('it', 'admin', 'super_admin', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const rows = req.body.rows as Array<{ employee_code: string; official_email?: string; domain_account?: string; asset_tag?: string }>;
+  if (!Array.isArray(rows) || !rows.length) {
+    return res.status(400).json({ success: false, message: 'rows array required' });
+  }
+  const results: { employee_code: string; status: 'ok' | 'error'; message?: string }[] = [];
+  const bulkScope = await callerEmployeeScope(req.authUser!.id, 'e');
 
     for (const row of rows) {
       try {
@@ -908,18 +981,12 @@ router.post(
           `SELECT ipr.id, ipr.task_code FROM it_provisioning_request ipr
            JOIN employees e ON e.id = ipr.employee_id
           WHERE e.employee_code = ? AND ipr.task_code = 'IT_EMAIL_DOMAIN_ASSET' AND ipr.status = 'pending'
+            AND (${bulkScope.sql})
           LIMIT 1`,
-          [row.employee_code.trim()],
-        );
-        const task = (taskRows as RowDataPacket[])[0];
-        if (!task) {
-          results.push({
-            employee_code: row.employee_code,
-            status: "error",
-            message: "No pending IT task found",
-          });
-          continue;
-        }
+        [row.employee_code.trim(), ...bulkScope.params],
+      );
+      const task = (taskRows as RowDataPacket[])[0];
+      if (!task) { results.push({ employee_code: row.employee_code, status: 'error', message: 'No pending IT task found' }); continue; }
 
         // official_email is optional (owner decision) — domain_account is the only hard
         // requirement, matching completeItProvisioningTask's single-task path.
@@ -985,6 +1052,7 @@ router.post(
     }),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const taskId = req.params.id;
+    await assertTaskInScope(req, taskId);
     if (!(req as any).file) {
       return res
         .status(400)
@@ -1069,34 +1137,15 @@ router.post(
 );
 
 // ── SLA Violations Dashboard ──────────────────────────────────────────────────
-router.get(
-  "/sla/violations",
-  requireRole("admin", "super_admin", "hr", "it", "wfm", "branch_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { findSlaViolations } =
-      await import("../employees/employee-activation.service.js");
-    const taskCode = req.query.task_code
-      ? String(req.query.task_code)
-      : undefined;
-    const userId = req.authUser!.id;
-    const isAdmin = await hasRole(userId, "admin", "super_admin");
-    let branchIds: string[] | undefined;
-    if (!isAdmin) {
-      const roleContext = await getUserRoleContext(userId);
-      const baseScope = await resolveDashboardScope(
-        userId,
-        roleContext.primaryRole,
-      );
-      if (baseScope.branchIds?.length) branchIds = baseScope.branchIds;
-    }
-    const violations = await findSlaViolations(taskCode, branchIds);
-    return res.json({
-      success: true,
-      data: violations,
-      count: violations.length,
-    });
-  }),
-);
+router.get('/sla/violations', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm', 'branch_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { findSlaViolations } = await import('../employees/employee-activation.service.js');
+  const taskCode = req.query.task_code ? String(req.query.task_code) : undefined;
+  const userId = req.authUser!.id;
+  const branchIds = await callerSlaBranchIds(userId);
+  if (branchIds && branchIds.length === 0) return res.json({ success: true, data: [], count: 0 });
+  const violations = await findSlaViolations(taskCode, branchIds);
+  return res.json({ success: true, data: violations, count: violations.length });
+}));
 
 // ── POST /api/it-provisioning/sla/bulk-waive ─────────────────────────────────
 // Bulk-waive all current SLA violations (or a filtered subset) with an audit reason.
@@ -1112,23 +1161,31 @@ router.post(
       (reason ?? "").trim() ||
       "Bulk-resolved: employee already onboarded, task missed in system";
 
-    // If specific task IDs provided, waive those; otherwise waive all current violations
-    let idsToWaive: string[] = [];
-    if (Array.isArray(task_ids) && task_ids.length > 0) {
-      idsToWaive = task_ids;
-    } else {
-      const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT r.id
+  // If specific task IDs provided, waive those; otherwise waive all current violations
+  let idsToWaive: string[] = [];
+  const waiveScope = await callerEmployeeScope(req.authUser!.id, 'e');
+  if (Array.isArray(task_ids) && task_ids.length > 0) {
+    // Only requests of employees inside the caller's scope may be waived.
+    const [okRows] = await db.execute<RowDataPacket[]>(
+      `SELECT r.id FROM it_provisioning_request r JOIN employees e ON e.id = r.employee_id
+        WHERE r.id IN (${task_ids.map(() => '?').join(',')}) AND (${waiveScope.sql})`,
+      [...task_ids, ...waiveScope.params],
+    );
+    idsToWaive = (okRows as any[]).map(r => String(r.id));
+  } else {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT r.id
        FROM it_provisioning_request r
        JOIN employees e ON e.id = r.employee_id
        WHERE r.sla_due_at IS NOT NULL
          AND r.sla_due_at < NOW()
          AND r.status IN ('pending', 'pending_unassigned', 'assigned', 'in_progress')
-         AND e.active_status = 1`,
-        [],
-      );
-      idsToWaive = (rows as any[]).map((r) => r.id);
-    }
+         AND e.active_status = 1
+         AND (${waiveScope.sql})`,
+      [...waiveScope.params]
+    );
+    idsToWaive = (rows as any[]).map(r => r.id);
+  }
 
     if (idsToWaive.length === 0) {
       return res.json({
@@ -1173,27 +1230,16 @@ router.post(
   }),
 );
 
-router.get(
-  "/sla/summary",
-  requireRole("admin", "super_admin", "hr", "it", "wfm", "branch_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const taskCode = req.query.task_code ? String(req.query.task_code) : null;
-    const userId = req.authUser!.id;
-    const isAdmin = await hasRole(userId, "admin", "super_admin");
-    let branchIds: string[] | undefined;
-    if (!isAdmin) {
-      const roleContext = await getUserRoleContext(userId);
-      const baseScope = await resolveDashboardScope(
-        userId,
-        roleContext.primaryRole,
-      );
-      if (baseScope.branchIds?.length) branchIds = baseScope.branchIds;
-    }
-    const branchClause = branchIds?.length
-      ? `AND r.employee_id IN (SELECT id FROM employees WHERE branch_id IN (${branchIds.map(() => "?").join(",")}))`
-      : "";
-    const [summary] = await db.execute<RowDataPacket[]>(
-      `SELECT
+router.get('/sla/summary', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm', 'branch_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const taskCode = req.query.task_code ? String(req.query.task_code) : null;
+  const userId = req.authUser!.id;
+  const branchIds = await callerSlaBranchIds(userId);
+  if (branchIds && branchIds.length === 0) return res.json({ success: true, data: [] });
+  const branchClause = branchIds?.length
+    ? `AND r.employee_id IN (SELECT id FROM employees WHERE branch_id IN (${branchIds.map(() => '?').join(',')}))`
+    : '';
+  const [summary] = await db.execute<RowDataPacket[]>(
+    `SELECT
        r.task_code,
        COUNT(*) AS total,
        SUM(CASE WHEN r.status IN ('actioned','verified','waived') THEN 1 ELSE 0 END) AS completed,
@@ -1240,13 +1286,14 @@ router.post(
         .json({ success: false, message: "rows array required" });
     }
 
-    const results: {
-      employee_code: string;
-      employee_name?: string;
-      status: "updated" | "task_completed" | "skipped" | "error";
-      actions: string[];
-      message?: string;
-    }[] = [];
+  const syncScope = await callerEmployeeScope(req.authUser!.id, 'e');
+  const results: {
+    employee_code: string;
+    employee_name?: string;
+    status: 'updated' | 'task_completed' | 'skipped' | 'error';
+    actions: string[];
+    message?: string;
+  }[] = [];
 
     for (const row of rows) {
       const empCode = String(row.employee_code ?? "").trim();
@@ -1266,8 +1313,26 @@ router.post(
         const [empRows] = await db.execute<RowDataPacket[]>(
           `SELECT e.id, e.official_email,
                 CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name
-           FROM employees e WHERE e.employee_code = ? AND e.active_status = 1 LIMIT 1`,
-          [empCode],
+           FROM employees e WHERE e.employee_code = ? AND e.active_status = 1 AND (${syncScope.sql}) LIMIT 1`,
+        [empCode, ...syncScope.params],
+      );
+      const emp = (empRows as any[])[0];
+      if (!emp) {
+        results.push({ employee_code: empCode, status: 'error', actions, message: 'Employee not found, inactive or outside your branch / assigned scope' });
+        continue;
+      }
+
+      const officialEmail  = String(row.official_email  ?? '').trim() || null;
+      const domainAccount  = String(row.domain_account  ?? '').trim() || null;
+      const assetTag       = String(row.asset_tag       ?? '').trim() || null;
+      const bioEnrolled    = String(row.biometric_enrolled ?? '').trim().toLowerCase();
+      const idCardPrinted  = String(row.id_card_printed  ?? '').trim().toLowerCase();
+
+      // 1. Update employees.official_email if provided and different
+      if (officialEmail && officialEmail !== emp.official_email) {
+        await db.execute(
+          `UPDATE employees SET official_email = ?, updated_at = NOW() WHERE id = ?`,
+          [officialEmail, emp.id],
         );
         const emp = (empRows as any[])[0];
         if (!emp) {
@@ -1438,12 +1503,13 @@ router.post(
 // ── IT Dashboard Summary (comprehensive) ─────────────────────────────────────
 // Same gap as /stats above: `it_head` was missing, which is the role the IT Manager
 // dashboard is named for.
-router.get(
-  "/it-dashboard-summary",
-  requireRole("admin", "hr", ...dashboardConsumerRoles("IT_MANAGER_DASHBOARD")),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const isAdmin = await hasRole(userId, "admin", "hr", "super_admin");
+router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsumerRoles('IT_MANAGER_DASHBOARD')), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  // hr is no longer an unrestricted shortcut (owner ruling 2026-10-01): it goes through the scoped branch below.
+  const isAdmin = await isUnscopedCaller(userId); // admin is branch-scoped (owner ruling 2026-10-01)
+  const dashEmpScope = await callerEmployeeScope(userId, 'e');
+  const dashCaller = await resolveCallerBranchScope({ id: userId });
+  const dashAssetScope = branchPredicate(dashCaller, 'branch_id');
 
     const provFilters: {
       assignedRole?: string;
@@ -1490,11 +1556,13 @@ router.get(
          SUM(sla_breached = 1 AND status NOT IN ('resolved','closed','cancelled'))    AS sla_breached_open,
          ROUND(AVG(CASE WHEN resolved_at IS NOT NULL
            THEN TIMESTAMPDIFF(MINUTE, created_at, resolved_at) END), 0)               AS avg_resolution_minutes,
-         SUM(status IN ('resolved','closed') AND sla_breached = 0)                   AS resolved_on_time
+         SUM(status IN ('resolved','closed') AND sla_breached = 0)                   AS resolved_on_time,
+         SUM(status IN ('resolved','closed'))                                         AS resolved_total
        FROM helpdesk_ticket
-       WHERE category = 'it'`,
-        [],
-      ),
+       WHERE category = 'it'
+         AND employee_id IN (SELECT e.id FROM employees e WHERE ${dashEmpScope.sql})`,
+      [...dashEmpScope.params],
+    ),
 
       db.execute<RowDataPacket[]>(
         `SELECT t.id, t.ticket_code AS ticket_number, t.subject, t.status, t.priority,
@@ -1519,10 +1587,11 @@ router.get(
          LEFT JOIN auth_user au ON au.id = t.assigned_to
          LEFT JOIN employees assignee ON assignee.auth_user_id = au.id AND assignee.active_status = 1
         WHERE t.category = 'it'
+          AND (${dashEmpScope.sql})
         ORDER BY t.created_at DESC
         LIMIT 50`,
-        [],
-      ),
+      [...dashEmpScope.params],
+    ),
 
       db.execute<RowDataPacket[]>(
         `SELECT
@@ -1533,9 +1602,9 @@ router.get(
          SUM(warranty_expiry IS NOT NULL AND warranty_expiry BETWEEN NOW()
              AND DATE_ADD(NOW(), INTERVAL 90 DAY))                                            AS expiring_soon
        FROM asset_master
-       WHERE active_status = 1`,
-        [],
-      ),
+       WHERE active_status = 1 AND (${dashAssetScope.sql})`,
+      [...dashAssetScope.params],
+    ),
 
       db.execute<RowDataPacket[]>(
         `SELECT e.id, e.employee_code,
@@ -1559,11 +1628,12 @@ router.get(
          LEFT JOIN asset_assignment aa ON aa.employee_id = e.id AND aa.returned_date IS NULL
          LEFT JOIN asset_master am ON am.id = aa.asset_id
         WHERE e.active_status = 1
+          AND (${dashEmpScope.sql})
         ORDER BY e.employee_code
         LIMIT 200`,
-        [],
-      ),
-    ]);
+      [...dashEmpScope.params],
+    ),
+  ]);
 
     return res.json({
       success: true,
@@ -1594,29 +1664,18 @@ router.post(
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id, e.employee_code, e.full_name, e.branch_id, e.date_of_joining, e.legacy_emp_id
        FROM employees e WHERE e.id = ? LIMIT 1`,
-      [employeeId],
-    );
-    const emp = (empRows as RowDataPacket[])[0];
-    if (!emp)
-      return res
-        .status(404)
-        .json({ success: false, message: "Employee not found" });
-    if (emp.legacy_emp_id)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "Cannot dispatch IT provisioning for a legacy (pre-HRMS) employee",
-        });
-    if (!emp.employee_code)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "Employee has no employee_code — cannot dispatch provisioning",
-        });
+    [employeeId],
+  );
+  const emp = (empRows as RowDataPacket[])[0];
+  if (!emp) return res.status(404).json({ success: false, message: 'Employee not found' });
+  {
+    const { canViewEmployee } = await import('../../shared/enterpriseScope.js');
+    if (!(await canViewEmployee(req.authUser!, String(employeeId)))) {
+      return res.status(403).json({ success: false, message: 'Forbidden: this employee is outside your branch / assigned scope' });
+    }
+  }
+  if (emp.legacy_emp_id) return res.status(400).json({ success: false, message: 'Cannot dispatch IT provisioning for a legacy (pre-HRMS) employee' });
+  if (!emp.employee_code) return res.status(400).json({ success: false, message: 'Employee has no employee_code — cannot dispatch provisioning' });
 
     // Find which task codes already exist so we skip them
     const [existingRows] = await db.execute<RowDataPacket[]>(

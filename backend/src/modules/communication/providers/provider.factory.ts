@@ -1,24 +1,19 @@
-import type {
-  CommunicationProvider,
-  Attachment,
-} from "./provider.interface.js";
-import type { Channel } from "../communication.types.js";
-import type {
-  ProviderResponse,
-  DeliveryStatus,
-} from "../communication.types.js";
-import { isBlocked, isBlockedSync } from "./send-block.js";
-import { NodemailerProvider } from "./email/nodemailer.provider.js";
-import { LocalEmailProvider } from "./email/local-email.provider.js";
-import { SendGridProvider } from "./email/sendgrid.provider.js";
-import { MailgunProvider } from "./email/mailgun.provider.js";
-import { TwilioSMSProvider } from "./sms/twilio-sms.provider.js";
-import { LocalSMSProvider } from "./sms/local-sms.provider.js";
-import { MSG91Provider } from "./sms/msg91.provider.js";
-import { SmartPingProvider } from "./sms/smartping.provider.js";
-import { TwilioWhatsAppProvider } from "./whatsapp/twilio-whatsapp.provider.js";
-import { LocalWhatsAppProvider } from "./whatsapp/local-whatsapp.provider.js";
-import { MetaWhatsAppProvider } from "./whatsapp/meta.provider.js";
+import type { CommunicationProvider, Attachment } from './provider.interface.js';
+import type { Channel } from '../communication.types.js';
+import type { ProviderResponse, DeliveryStatus } from '../communication.types.js';
+import { isBlocked, isBlockedSync } from './send-block.js';
+import { NodemailerProvider } from './email/nodemailer.provider.js';
+import { LocalEmailProvider } from './email/local-email.provider.js';
+import { SendGridProvider } from './email/sendgrid.provider.js';
+import { MailgunProvider } from './email/mailgun.provider.js';
+import { TwilioSMSProvider } from './sms/twilio-sms.provider.js';
+import { LocalSMSProvider } from './sms/local-sms.provider.js';
+import { MSG91Provider } from './sms/msg91.provider.js';
+import { SmartPingProvider } from './sms/smartping.provider.js';
+import { TwilioWhatsAppProvider } from './whatsapp/twilio-whatsapp.provider.js';
+import { LocalWhatsAppProvider } from './whatsapp/local-whatsapp.provider.js';
+import { MetaWhatsAppProvider } from './whatsapp/meta.provider.js';
+import { PinbotWhatsAppProvider } from './whatsapp/pinbot.provider.js';
 
 type DbConfig = {
   provider_type: string;
@@ -158,8 +153,9 @@ class ProviderFactory {
       );
     }
 
-    if (channel === "whatsapp") {
-      if (provider_type === "meta")
+    if (channel === 'whatsapp') {
+      if (provider_type === 'pinbot') return new PinbotWhatsAppProvider();
+      if (provider_type === 'meta')
         return new MetaWhatsAppProvider(
           secrets.meta_access_token ?? "",
           (config.meta_phone_number_id as string) ?? "",
@@ -210,9 +206,10 @@ class ProviderFactory {
       return new TwilioSMSProvider();
     }
 
-    if (channel === "whatsapp") {
-      const type = process.env.WHATSAPP_PROVIDER ?? "twilio";
-      if (type === "meta")
+    if (channel === 'whatsapp') {
+      const type = process.env.WHATSAPP_PROVIDER ?? 'twilio';
+      if (type === 'pinbot') return new PinbotWhatsAppProvider();
+      if (type === 'meta')
         return new MetaWhatsAppProvider(
           process.env.META_WA_ACCESS_TOKEN ?? "",
           process.env.META_WA_PHONE_NUMBER_ID ?? "",

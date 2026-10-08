@@ -13,7 +13,9 @@ import {
 
 const WORKER_NAME = "report-stale-recovery";
 const INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
-const STALE_PROCESSING_MINUTES = 10;
+// Must exceed the generation job timeout (REPORT_JOB_TIMEOUT_MINUTES, default 12) so a report that is
+// still legitimately running is never requeued underneath itself.
+const STALE_PROCESSING_MINUTES = Number(process.env.REPORT_STALE_PROCESSING_MINUTES ?? 20);
 const STALE_SENDING_MINUTES = 5;
 
 let intervalTimer: NodeJS.Timeout | null = null;

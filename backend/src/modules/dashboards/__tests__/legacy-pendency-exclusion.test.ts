@@ -115,12 +115,11 @@ describe("BGV pendency is counted in candidates, not checks", () => {
     // Precedence breached > flagged > pending > cleared. Without the guards a candidate
     // with one failed and three queued checks would be counted in two buckets at once.
     expect(bgv).toContain("WHEN c.breached = 0 AND c.flagged > 0 THEN 1");
-    expect(bgv).toContain(
-      "WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding > 0 THEN 1",
-    );
-    expect(bgv).toContain(
-      "WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding = 0 THEN 1",
-    );
+    expect(bgv).toContain("WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding > 0 THEN 1");
+    // cleared must exclude candidates whose only outstanding checks pre-date the cutoff: those are
+    // pendingBeforeCutoff. 79 of the 96 "cleared" candidates on 2026-10-02 were stale pending.
+    expect(bgv).toContain("WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding = 0 AND c.outstandingOld = 0 THEN 1 ELSE 0 END) AS cleared");
+    expect(bgv).toContain("AND c.outstandingOld > 0 THEN 1 ELSE 0 END) AS pendingBeforeCutoff");
   });
 
   it("emits one row per candidate in the drilldown too", () => {

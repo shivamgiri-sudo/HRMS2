@@ -100,9 +100,13 @@ describe("attendance source sheet workbook", () => {
           employeeCode: "MAS10000",
           employeeName: "XYZ",
           branch: "Noida",
+          department: "Operations",
+          designation: "Executive",
+          profile: "Voice",
           costCentre: "CC1",
           process: "Proc",
           lob: "LOB",
+          dateOfLeaving: null,
           attendanceSource: "APR",
           days: {
             "2026-09-01": day({}),
@@ -117,28 +121,46 @@ describe("attendance source sheet workbook", () => {
       ],
     );
     const ws = wb.getWorksheet("Attendance Source Sheet")!;
-    expect(ws.getCell(1, 9).value).toBe("01-Sep-26");
-    expect(ws.getCell(1, 12).value).toBe("02-Sep-26");
-    expect([9, 10, 11].map((c) => ws.getCell(2, c).value)).toEqual([
+    // Twelve identity columns since e28af0f84 added Department, Designation, Profile and Date
+    // of Leaving (and renamed LOB to Process LOB), so the first day's triplet starts at 13.
+    expect([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((c) => ws.getCell(2, c).value)).toEqual([
+      "Month",
+      "Employee name",
+      "Emp Code",
+      "Branch",
+      "Department",
+      "Designation",
+      "Profile",
+      "Cost Center",
+      "Process Name",
+      "Process LOB",
+      "Attendance Source",
+      "Date of Leaving",
+    ]);
+    expect(ws.getCell(1, 13).value).toBe("01-Sep-26");
+    expect(ws.getCell(1, 16).value).toBe("02-Sep-26");
+    expect([13, 14, 15].map((c) => ws.getCell(2, c).value)).toEqual([
       "Status",
       "Cosec",
       "APR",
     ]);
     expect(ws.getCell(3, 1).value).toBe("Sep'26");
-    expect(ws.getCell(3, 8).value).toBe("APR");
-    expect([9, 10, 11].map((c) => ws.getCell(3, c).value)).toEqual([
+    expect([5, 6, 7].map((c) => ws.getCell(3, c).value)).toEqual(["Operations", "Executive", "Voice"]);
+    expect(ws.getCell(3, 11).value).toBe("APR");
+    expect(ws.getCell(3, 12).value).toBe("");
+    expect([13, 14, 15].map((c) => ws.getCell(3, c).value)).toEqual([
       "P",
       "9:00 Hrs",
       "8:05 Hrs",
     ]);
-    expect([12, 13, 14].map((c) => ws.getCell(3, c).value)).toEqual([
+    expect([16, 17, 18].map((c) => ws.getCell(3, c).value)).toEqual([
       "HD",
       "8:40 Hrs",
       "7:05 Hrs",
     ]);
     // The payroll source (APR here) is the bold duration.
-    expect(ws.getCell(3, 11).font?.bold).toBe(true);
-    expect(ws.getCell(3, 10).font?.bold).not.toBe(true);
+    expect(ws.getCell(3, 15).font?.bold).toBe(true);
+    expect(ws.getCell(3, 14).font?.bold).not.toBe(true);
   });
 
   it("formats month and day labels like the requested sheet", () => {

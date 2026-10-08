@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import {
   ATTENDANCE_STATUS_OPTIONS, MIN_CORRECTION_REASON, useApproveOverride,
   useEmployeeOverrides, useIsSuperAdmin, useRejectOverride, type ManualOverrideRow,
@@ -53,6 +54,7 @@ export function PendingOverridesPanel({ employeeId, enabled }: Props) {
   const [reason, setReason] = useState("");
 
   const pending = overrides.filter((o: ManualOverrideRow) => o.approval_status === "pending");
+  useApprovalFocus(pending.length > 0);
   if (!enabled || pending.length === 0) return null;
 
   async function handleApprove(row: ManualOverrideRow) {
@@ -90,7 +92,7 @@ export function PendingOverridesPanel({ employeeId, enabled }: Props) {
         const needsSuperAdmin = Boolean(row.higher_approval_required || row.is_payroll_month_locked);
         const blocked = needsSuperAdmin && !isSuperAdmin;
         return (
-          <div key={row.id} className="rounded-xl border border-amber-200 bg-white p-2.5">
+          <div key={row.id} data-approval-id={row.id} className="rounded-xl border border-amber-200 bg-white p-2.5">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-xs font-semibold text-slate-700">{dayOf(row.attendance_date)}</span>
               <span className="flex items-center gap-1 text-xs text-slate-600">

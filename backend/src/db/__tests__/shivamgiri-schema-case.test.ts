@@ -1,7 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { resolve, dirname, join } from "node:path";
+import { resolve, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// The call-master shim imports the real source pool; only its pure adaptSql is exercised here.
+vi.mock("../sourceDb.js", () => ({ getSourcePool: () => { throw new Error("no DB in this test"); } }));
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -38,8 +41,19 @@ function tsFilesUnder(dir: string): string[] {
   return out;
 }
 
+/**
+ * Call Master code vendored verbatim from tausifansari-mcn/Mydashboards (c0221e89b). The upstream files are
+ * overwritten by scripts/sync-mydashboards.mjs, so their SQL keeps upstream's `shivamgiri.md_clients` spelling and
+ * the HRMS shim beside them translates it at query time. The blanket sweeps skip both directories; the
+ * "vendored Call Master" block below proves instead that nothing untranslated is reachable from an HRMS route.
+ */
+const CALL_MASTER_DIR = join(SRC_DIR, "modules", "call-master");
+const VENDORED_DIR = join(CALL_MASTER_DIR, "upstream");
+const SHIM_DIR = join(CALL_MASTER_DIR, "upstream-shim");
+const isVendored = (file: string) => [VENDORED_DIR, SHIM_DIR].some((d) => file.startsWith(d + sep));
+
 /** Walked once — both source sweeps below reuse it. */
-const BACKEND_TS_FILES = tsFilesUnder(SRC_DIR);
+const BACKEND_TS_FILES = tsFilesUnder(SRC_DIR).filter((f) => !isVendored(f));
 
 /** Schema-qualified SQL references, ignoring identifiers like shivamgiriDb / shivamgiri_quality. */
 export function lowercaseSchemaRefs(source: string): string[] {
@@ -93,5 +107,47 @@ describe("Shivamgiri schema references", () => {
       if (hits.length) offenders.push(`${file}: ${hits.length} ref(s)`);
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("vendored Call Master SQL", async () => {
+  const { adaptSql } = await import("../../modules/call-master/upstream-shim/sourceDb.js");
+  const adapter = readFileSync(join(CALL_MASTER_DIR, "mydashboards.routes.ts"), "utf8");
+  // `import * as svc from "./upstream/call-master.service.js"` -> call-master.service.ts is reached as svc.*
+  const aliasOf = new Map(
+    [...adapter.matchAll(/import \* as (\w+) from "\.\/upstream\/([\w.-]+)\.js"/g)].map((m) => [`${m[2]}.ts`, m[1]]),
+  );
+
+  /** Name of the top-level function enclosing `index`, by the nearest preceding declaration. */
+  const enclosingFn = (source: string, index: number) => {
+    let name = "<module>";
+    for (const m of source.matchAll(/^export (?:async )?function (\w+)/gm)) {
+      if (m.index! > index) break;
+      name = m[1];
+    }
+    return name;
+  };
+
+  it("the shim rewrites the lowercase md_clients join onto the real client master", () => {
+    const out = adaptSql("LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = d.client_id");
+    expect(lowercaseSchemaRefs(out)).toEqual([]);
+    expect(mdClientsRefs(out)).toEqual([]);
+    expect(out).toContain("FROM Shivamgiri.portal_client_config");
+  });
+
+  it("every schema or md_clients reference the shim does not translate sits in a function no HRMS route calls", () => {
+    const reachable: string[] = [];
+    for (const file of readdirSync(VENDORED_DIR).filter((f) => f.endsWith(".ts"))) {
+      const alias = aliasOf.get(file);
+      const adapted = adaptSql(readFileSync(join(VENDORED_DIR, file), "utf8"));
+      // prisma.md_clients.count is the one prisma call the shim serves (from portal_client_config).
+      for (const m of adapted.matchAll(/\bshivamgiri\.\w+|(?:prisma\.)?md_clients(?:\.\w+)?/g)) {
+        if (m[0] === "prisma.md_clients.count") continue;
+        const fn = enclosingFn(adapted, m.index!);
+        // A file the adapter does not import is unreachable; otherwise the enclosing function must not be called.
+        if (alias && new RegExp(`\\b${alias}\\.${fn}\\(`).test(adapter)) reachable.push(`${file} ${fn}: ${m[0]}`);
+      }
+    }
+    expect(reachable).toEqual([]);
   });
 });

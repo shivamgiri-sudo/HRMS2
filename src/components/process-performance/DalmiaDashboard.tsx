@@ -4,11 +4,11 @@ import {
 } from "recharts";
 import {
   PhoneIncoming, PhoneCall, Users, Repeat, Percent, Headphones, PhoneMissed, Timer, ShieldCheck, Tag, Loader2, Info,
-  MessageSquare, PhoneOutgoing, BarChart3, Layers, Target, Gauge, ClipboardList, Languages, TrendingUp, ListFilter,
+  MessageSquare, PhoneOutgoing, BarChart3, Layers, Target, Gauge, ClipboardList, Languages, TrendingUp, ListFilter, LogIn,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { PeriodSection, type PeriodWeek, type PeriodRow } from "./DashboardKit";
+import { PeriodSection, type PeriodWeek, type PeriodRow, DrawerExcelButton, type DrawerSheet } from "./DashboardKit";
 import { TOOLTIP_PROPS, fmtN, fmtDate, fmtShortDay } from "./lpCallShared";
 import { useSortableRows } from "./useSortableRows";
 import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
@@ -39,6 +39,12 @@ interface LeadsSummary {
 }
 interface LeadDay { date: string; source: string; dataReceived: number; connected: number; qualified: number }
 interface BucketInfo { key: BucketKey; label: string; from: string; to: string; days: number }
+interface DalmiaAgentRow {
+  empId: string; empName: string; lob: string | null;
+  callsChats: number; loginSec: number; talkSec: number; dispoSec: number; breakSec: number;
+  avgAchtSec: number | null; avgUtilizationPct: number | null; attendanceDays: number; daysReported: number;
+}
+interface DalmiaAgentWiseData { from: string; to: string; agents: DalmiaAgentRow[] }
 interface DalmiaData {
   month: string; from: string; to: string; buckets: BucketInfo[];
   inbound: { daily: DayInbound[]; byBucket: Record<BucketKey, InboundTotals> };
@@ -198,6 +204,7 @@ export function DalmiaDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [drawer, setDrawer] = useState<AnyDrawer | null>(null);
+  const [agentData, setAgentData] = useState<DalmiaAgentWiseData | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -217,6 +224,52 @@ export function DalmiaDashboard() {
 
   // The chosen view must exist in the loaded range (e.g. W-4 is absent for a range ending on the 20th).
   useEffect(() => { if (data && !data.buckets.some((b) => b.key === view)) setView("MTD"); }, [data, view]);
+
+  useEffect(() => {
+    let cancelled = false;
+    hrmsApi
+      .get<{ success: boolean; data: DalmiaAgentWiseData }>(`${API}/agent-wise?from=${from}&to=${to}`)
+      .then((res) => { if (!cancelled) setAgentData(res.data); })
+      .catch(() => { if (!cancelled) setAgentData(null); });
+    return () => { cancelled = true; };
+  }, [from, to]);
+
+  // a.loginSec/a.talkSec from the API are SUMMED across every day in the selected range (backend
+  // GROUP BY emp_id) -- shown as-is, an agent working most of a month shows a ~240-hour "Login",
+  // which reads as broken even though the number is technically correct. Per-agent-per-day
+  // figures are what the table (and the KPI tiles above it) actually mean to show.
+  const dailyLoginSec = (a: DalmiaAgentRow) => (a.daysReported > 0 ? a.loginSec / a.daysReported : 0);
+  const dailyTalkSec = (a: DalmiaAgentRow) => (a.daysReported > 0 ? a.talkSec / a.daysReported : 0);
+
+  // Excel-style sort + filter for the Agent Wise Performance table -- hooks must run every
+  // render, so this is computed before the `!data` early return further down.
+  const AGENT_FILTER_COLS: Array<FilterColumn<DalmiaAgentRow>> = [
+    { key: "empName", get: (a) => a.empName }, { key: "lob", get: (a) => a.lob },
+    { key: "callsChats", get: (a) => a.callsChats }, { key: "loginSec", get: dailyLoginSec },
+    { key: "talkSec", get: dailyTalkSec }, { key: "dispoSec", get: (a) => a.dispoSec },
+    { key: "avgAchtSec", get: (a) => a.avgAchtSec }, { key: "avgUtilizationPct", get: (a) => a.avgUtilizationPct },
+    { key: "attendanceDays", get: (a) => a.attendanceDays },
+  ];
+  const agentColGetter = (a: DalmiaAgentRow, key: string) => AGENT_FILTER_COLS.find((c) => c.key === key)?.get(a);
+  const agentFilters = useColumnFilters(agentData?.agents ?? [], AGENT_FILTER_COLS);
+  const { sorted: sortedAgents, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: toggleAgentSort } = useSortableRows(agentFilters.filtered, agentColGetter);
+  // True daily average across whatever the table currently shows -- respects the active column
+  // filters (e.g. LOB = Dalmia only), same "what you're looking at" scoping the table itself
+  // uses. a.loginSec/a.talkSec are already SUMMED across every day in the selected range
+  // (backend GROUP BY emp_id), so dividing only by agent count -- the previous bug -- produced
+  // each agent's whole-range TOTAL averaged across agents (e.g. ~236 hours), not a daily figure.
+  // Dividing by total days reported instead gives the real average login/talk per agent per day.
+  const totalDaysReported = sortedAgents.reduce((s, a) => s + a.daysReported, 0);
+  const avgLoginSec = totalDaysReported > 0 ? sortedAgents.reduce((s, a) => s + a.loginSec, 0) / totalDaysReported : 0;
+  const avgTalkSec = totalDaysReported > 0 ? sortedAgents.reduce((s, a) => s + a.talkSec, 0) / totalDaysReported : 0;
+  const agentSheets = (): DrawerSheet[] => [{
+    name: "Agent Wise Performance",
+    columns: ["Agent", "Emp ID", "LOB", "Calls/Chats", "Avg Login/Day", "Avg Talk/Day", "Dispo", "Avg ACHT", "Avg Utilization %", "Attendance Days"],
+    rows: (agentData?.agents ?? []).map((a) => [
+      a.empName, a.empId, a.lob ?? "—", a.callsChats, hms(dailyLoginSec(a)), hms(dailyTalkSec(a)), hms(a.dispoSec),
+      a.avgAchtSec === null ? "—" : `${a.avgAchtSec}s`, a.avgUtilizationPct === null ? "—" : `${a.avgUtilizationPct}%`, a.attendanceDays,
+    ]),
+  }];
 
   // Excel-style sort + filter for the Language Wise, Lead Source and Leads-by-Type tables -- hooks must run every
   // render, so these are computed before the `!data` early return further down.
@@ -331,7 +384,11 @@ export function DalmiaDashboard() {
     setDrawer({ title: source ? `Leads — ${source}` : "Leads — all sources", subtitle: range, rows, columns: cols as Array<DrawerColumn<{ date: string }>> });
   };
 
-  const trend = days.map((d) => ({ date: d.date, offered: d.offered, answered: d.answered, al: Math.round(d.alPct * 1000) / 10, sl: Math.round(d.slPct * 1000) / 10 }));
+  // Last 7 days only -- this chart is a compact at-a-glance strip, not the historical record
+  // (same convention as Housing Premium's own trend charts). "View Details" (openInbound)
+  // opens its own drawer off inboundRows, which is never sliced, so the full month is always
+  // one click away.
+  const trend = days.slice(-7).map((d) => ({ date: d.date, offered: d.offered, answered: d.answered, al: Math.round(d.alPct * 1000) / 10, sl: Math.round(d.slPct * 1000) / 10 }));
   const weekly = bucketList.filter((b) => b.key === "MTD" || weekBuckets.some((w) => w.key === b.key)).map((b) => {
     const t = data.inbound.byBucket[b.key];
     return { name: b.label, Offered: t.offered, Answered: t.answered, Unique: t.unique, Repeat: t.repeat };
@@ -722,6 +779,61 @@ export function DalmiaDashboard() {
           </div>
         </div>
       </div>
+
+      {/* --------------------------- agent wise performance --------------------------- */}
+      <Panel
+        icon={Users} title="Agent Wise Performance"
+        action={(
+          <div className="flex items-center gap-2">
+            {agentFilters.activeCount > 0 && (
+              <button type="button" onClick={agentFilters.clearAll} className="rounded-full border border-white/30 bg-white/10 px-2.5 py-0.5 text-[10px] font-semibold text-white hover:bg-white/25">
+                Clear {agentFilters.activeCount} filter{agentFilters.activeCount > 1 ? "s" : ""}
+              </button>
+            )}
+            <DrawerExcelButton fileBase="Dalmia_Agent_Wise_Performance" getSheets={agentSheets} disabled={!agentData || agentData.agents.length === 0} />
+          </div>
+        )}
+      >
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Kpi icon={LogIn} label="Avg Login" value={hms(avgLoginSec)} tone="bg-indigo-500" />
+          <Kpi icon={Timer} label="Avg Talk" value={hms(avgTalkSec)} tone="bg-violet-600" />
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <FilterSortTh label="Agent" columnKey="empName" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className={TH} />
+                <FilterSortTh label="LOB" columnKey="lob" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className={TH} />
+                <FilterSortTh label="Calls/Chats" columnKey="callsChats" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className={TH} />
+                <FilterSortTh label="Avg Login/Day" columnKey="loginSec" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className={TH} />
+                <FilterSortTh label="Avg Talk/Day" columnKey="talkSec" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className={TH} />
+                <FilterSortTh label="Dispo" columnKey="dispoSec" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className={TH} />
+                <FilterSortTh label="Avg ACHT" columnKey="avgAchtSec" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className={TH} />
+                <FilterSortTh label="Avg Util %" columnKey="avgUtilizationPct" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className={TH} />
+                <FilterSortTh label="Attendance" columnKey="attendanceDays" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className={TH} />
+              </tr>
+            </thead>
+            <tbody>
+              {sortedAgents.map((a) => (
+                <tr key={a.empId}>
+                  <td className={`${TD} text-left font-semibold`}>{a.empName}<div className="text-[9px] font-normal text-slate-400">{a.empId}</div></td>
+                  <td className={TD}>{a.lob ?? "—"}</td>
+                  <td className={TD}>{fmtN(a.callsChats)}</td>
+                  <td className={TD}>{hms(dailyLoginSec(a))}</td>
+                  <td className={TD}>{hms(dailyTalkSec(a))}</td>
+                  <td className={TD}>{hms(a.dispoSec)}</td>
+                  <td className={TD}>{a.avgAchtSec === null ? "—" : `${a.avgAchtSec}s`}</td>
+                  <td className={TD}>{a.avgUtilizationPct === null ? "—" : `${a.avgUtilizationPct}%`}</td>
+                  <td className={TD}>{a.attendanceDays}</td>
+                </tr>
+              ))}
+              {sortedAgents.length === 0 && (
+                <tr><td colSpan={9} className={`${TD} py-6 text-slate-400`}>{(agentData?.agents.length ?? 0) === 0 ? "No APR data uploaded for this period." : "No agents match the current filters."}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
 
       <DetailDrawer spec={drawer} onClose={() => setDrawer(null)} />
     </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,6 +51,9 @@ const REQUIRED_DOCS: Array<{ type: string; label: string; required: boolean }> =
   { type: "Driving License", label: "Driving License", required: false },
   { type: "Voter ID", label: "Voter ID", required: false },
 ];
+
+// Steps whose write routes accept payroll_hr (payrollProfileGate in employee.routes.ts).
+const PAYROLL_STEP_IDS = new Set(["bank", "statutory"]);
 
 const STEPS: Array<{ id: string; label: string }> = [
   { id: "personal", label: "1. Personal / KYC" },
@@ -1175,7 +1179,15 @@ function StepBgv({ employeeId }: { employeeId: string }) {
 
 export default function EmployeeProfileCompletion() {
   const { employeeId } = useParams<{ employeeId: string }>();
-  const [activeStep, setActiveStep] = useState("personal");
+  const [searchParams] = useSearchParams();
+  const { hasAnyRole } = useWorkforceAccess();
+  // Branch payroll HR corrects payment data only; the server enforces this too (hrProfileGate).
+  const payrollOnly = hasAnyRole("payroll_hr") && !hasAnyRole("super_admin", "admin", "hr");
+  const steps = payrollOnly ? STEPS.filter((s) => PAYROLL_STEP_IDS.has(s.id)) : STEPS;
+  const requestedStep = searchParams.get("step");
+  const [activeStep, setActiveStep] = useState(
+    steps.some((s) => s.id === requestedStep) ? (requestedStep as string) : steps[0].id,
+  );
 
   const { data: employee, isLoading: headerLoading } = useQuery({
     queryKey: ["epc-header", employeeId],
@@ -1219,7 +1231,7 @@ export default function EmployeeProfileCompletion() {
 
         <Tabs value={activeStep} onValueChange={setActiveStep}>
           <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 p-1">
-            {STEPS.map((s) => (
+            {steps.map((s) => (
               <TabsTrigger key={s.id} value={s.id} className="text-xs sm:text-sm">
                 {s.label}
               </TabsTrigger>

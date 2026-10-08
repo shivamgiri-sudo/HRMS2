@@ -84,9 +84,9 @@ export async function classifyLeaveDays(
        FROM leave_holiday_master lhm
       WHERE lhm.holiday_date BETWEEN ? AND ?
         AND lhm.active_status = 1
-        AND (lhm.branch_id IS NULL OR lhm.branch_id = ?)
         AND (
-          NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
+          (NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
+            AND (lhm.branch_id IS NULL OR lhm.branch_id = ?))
           OR EXISTS (
             SELECT 1 FROM holiday_cost_centre_mapping hccm
             WHERE hccm.holiday_id = lhm.id AND hccm.cost_centre_id = ?

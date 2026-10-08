@@ -77,13 +77,18 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
  * untouched. Recording only the manager would leave those moves invisible and keep charging
  * the old process for somebody who has left it.
  *
+ * The column must sit in the SET list — between SET and the statement's WHERE. wfm's
+ * `UPDATE employees SET lob_id = ? WHERE id IN (...) AND process_id = ? AND lob_id IS NULL`
+ * names process_id only as a filter; it moves nobody between processes, so there is no
+ * supervisory change to record. Same read-is-not-a-write rule as point 1 above.
+ *
  * KNOWN GAP: this covers UPDATE only. Employee CREATION also establishes a first manager
  * (employee-creation-orchestrator, ATS conversion), which should open the first period rather
  * than wait for the first change. Deliberately out of scope here and stated rather than
  * silently missing.
  */
 const WRITES_MANAGER =
-  /(UPDATE\s+employees\b[^;`]{0,400}?(reporting_manager_id|process_id|branch_id)\s*=)|(push\(\s*["`']reporting_manager_id\s*=)/is;
+  /(UPDATE\s+employees\b[^;`]{0,400}?\bSET\b(?:(?!\bWHERE\b)[^;`]){0,400}?(reporting_manager_id|process_id|branch_id)\s*=)|(push\(\s*["`']reporting_manager_id\s*=)/is;
 
 /** The file records history, or is the module that implements it. */
 const RECORDS_HISTORY = /recordManagerChange|manager-attribution\.service/;

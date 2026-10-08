@@ -203,7 +203,8 @@ describe("ATS PII masking: GET /api/ats-ext/duplicates", () => {
 
 describe("ATS audit: POST /api/ats-ext/duplicates/:id/resolve", () => {
   it("writes a sensitive_action_log entry when resolving a duplicate", async () => {
-    mockAdmin();
+    // The route now resolves the duplicate's candidate first (branch scope); admin is org-wide.
+    mockAdmin([{ candidate_id: "cand-1", 1: 1 }]);
 
     const r = await request(app)
       .post("/api/ats-ext/duplicates/dup-1/resolve")
@@ -275,11 +276,14 @@ describe("WFM audit: POST /api/wfm-ext/roster/swaps/:id/review", () => {
 
 describe("WFM audit: POST /api/wfm-ext/roster/conflicts/:id/resolve", () => {
   it("writes a sensitive_action_log entry when resolving a conflict", async () => {
-    mockAdmin();
+    // The service reads the conflict first and 404s on an unknown id.
+    mockAdmin([{ id: "cf-1", employee_id: "emp-1", resolved: 0 }]);
 
     const r = await request(app)
       .post("/api/wfm-ext/roster/conflicts/cf-1/resolve")
-      .set(ADMIN);
+      .set(ADMIN)
+      // The route now refuses a resolve that does not say what was done.
+      .send({ resolution_action: "reassigned", remarks: "moved to the other shift" });
 
     expect(r.status).toBe(200);
     const auditCall = mockExecute.mock.calls.find(
@@ -295,7 +299,9 @@ describe("WFM audit: POST /api/wfm-ext/roster/conflicts/:id/resolve", () => {
 
 describe("WFM audit: POST /api/wfm-ext/coverage/snapshot", () => {
   it("writes a sensitive_action_log entry when upserting a coverage snapshot", async () => {
-    mockAdmin();
+    // Manual (planned_headcount) snapshots with no process/branch are org-wide only; plain admin is
+    // branch-scoped (owner policy 2026-10-01), so the caller here is super_admin.
+    mockDb([], "super_admin");
 
     const r = await request(app)
       .post("/api/wfm-ext/coverage/snapshot")

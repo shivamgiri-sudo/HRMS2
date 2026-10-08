@@ -222,7 +222,11 @@ export async function getManagerRiskLeaderboard(req: Request, res: Response) {
       params.push(callerId);
     }
 
-    const extraWhere = whereParts.join(" ");
+    // Branch scoping (owner ruling 2026-10-01): the caller's employee scope on the manager row (alias mgr).
+    const mgrScope = (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope;
+    if (mgrScope) { whereParts.push(`AND ${mgrScope.sql}`); params.push(...mgrScope.params); }
+
+    const extraWhere = whereParts.join(' ');
     params.push(parseInt(limit as string) || 50);
 
     const query =
@@ -275,8 +279,9 @@ export async function getManagerRiskLeaderboard(req: Request, res: Response) {
  */
 export async function getCriticalManagers(req: Request, res: Response) {
   try {
+    const critScope = (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope;
     const query =
-      buildManagerMetricsCTE("") +
+      buildManagerMetricsCTE(critScope ? `AND ${critScope.sql}` : '') +
       `SELECT
          manager_id,
          employee_code,
@@ -295,7 +300,7 @@ export async function getCriticalManagers(req: Request, res: Response) {
        HAVING risk_level IN ('CRITICAL', 'HIGH')
        ORDER BY manager_risk_score DESC`;
 
-    const [rows] = await pool.query<RowDataPacket[]>(query);
+    const [rows] = await pool.query<RowDataPacket[]>(query, critScope ? critScope.params : undefined);
 
     res.json({
       success: true,

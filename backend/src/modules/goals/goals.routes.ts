@@ -5,6 +5,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { goalsService } from "./goals.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { canAccessEmployeeRecord, employeeListScope } from "../dashboards/branch-scope-guards.js";
 
 export const goalsRouter = Router();
 goalsRouter.use(requireAuth);
@@ -13,6 +14,17 @@ const h =
   (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void) =>
     fn(req, res).catch(next);
+
+/**
+ * Owner ruling 2026-10-01: admin/hr/manager role gates say who may use the page, not whose records.
+ * Org-wide roles pass; hr / manager etc. need the employee inside their branch / assigned scope.
+ * Sends the 403 itself and returns false when refused.
+ */
+async function guardEmployee(req: AuthenticatedRequest, res: Response, employeeId: string): Promise<boolean> {
+  if (await canAccessEmployeeRecord(req.authUser!, employeeId)) return true;
+  res.status(403).json({ success: false, error: "Forbidden: this employee is outside your branch / assigned scope" });
+  return false;
+}
 
 // ─── Goals ────────────────────────────────────────────────────────────────────
 
@@ -29,9 +41,12 @@ goalsRouter.get(
     const privileged = await hasRole(userId, "admin", "hr");
 
     if (privileged) {
+      const scope = await employeeListScope(req.authUser!, "e");
+      if (scope && employee_id && !(await guardEmployee(req, res, employee_id))) return;
       const goals = await goalsService.listGoals({
         employeeId: employee_id,
         period,
+        ...(scope ? { scope } : {}),
       });
       return res.json({ success: true, data: goals });
     }
@@ -92,6 +107,7 @@ goalsRouter.post(
           .json({ success: false, error: "employee_id is required" });
       }
       resolvedEmployeeId = employee_id.trim();
+      if (!(await guardEmployee(req, res, resolvedEmployeeId))) return;
     } else {
       const emp = await getEmployeeForUser(userId);
       if (!emp) {
@@ -130,6 +146,11 @@ goalsRouter.patch(
     };
 
     const privileged = await hasRole(userId, "admin", "hr");
+
+    if (privileged) {
+      const goalEmployeeId = await goalsService.getGoalEmployeeId(id);
+      if (goalEmployeeId && !(await guardEmployee(req, res, goalEmployeeId))) return;
+    }
 
     if (!privileged) {
       const emp = await getEmployeeForUser(userId);
@@ -256,7 +277,8 @@ goalsRouter.get(
         .status(400)
         .json({ success: false, error: "cycle_id query param is required" });
     }
-    const ratings = await goalsService.listRatings(cycle_id);
+    const scope = await employeeListScope(req.authUser!, "e");
+    const ratings = scope ? await goalsService.listRatings(cycle_id, scope) : await goalsService.listRatings(cycle_id);
     return res.json({ success: true, data: ratings });
   }),
 );
@@ -291,7 +313,7 @@ goalsRouter.post(
       if (!emp || emp.id !== employeeId) {
         return res.status(403).json({ success: false, error: "Forbidden" });
       }
-    }
+    } else if (!(await guardEmployee(req, res, employeeId))) return;
 
     const record = await goalsService.submitSelfRating(cycleId, employeeId, {
       self_rating: rating,
@@ -337,16 +359,13 @@ goalsRouter.post(
       }
     }
 
-    const record = await goalsService.submitManagerRating(
-      cycleId,
-      employeeId,
-      userId,
-      {
-        manager_rating: mRating,
-        final_rating: final_rating != null ? Number(final_rating) : null,
-        manager_comments: manager_comments ?? null,
-      },
-    );
+    if (!(await guardEmployee(req, res, employeeId))) return;
+
+    const record = await goalsService.submitManagerRating(cycleId, employeeId, userId, {
+      manager_rating: mRating,
+      final_rating: final_rating != null ? Number(final_rating) : null,
+      manager_comments: manager_comments ?? null,
+    });
     return res.json({ success: true, data: record });
   }),
 );
@@ -402,7 +421,7 @@ goalsRouter.get(
       if (!emp || emp.id !== employeeId) {
         return res.status(403).json({ success: false, error: "Forbidden" });
       }
-    }
+    } else if (!(await guardEmployee(req, res, employeeId))) return;
 
     const skills = await goalsService.listEmployeeSkills(employeeId);
     return res.json({ success: true, data: skills });
@@ -443,6 +462,8 @@ goalsRouter.post(
       });
     }
 
+    if (!(await guardEmployee(req, res, employeeId))) return;
+
     const empSkill = await goalsService.upsertEmployeeSkill(employeeId, {
       skill_id: skill_id.trim(),
       proficiency,
@@ -462,6 +483,10 @@ goalsRouter.delete(
     const userId = req.authUser!.id;
     const { id } = req.params;
     const privileged = await hasRole(userId, "admin", "hr");
+    if (privileged) {
+      const goalEmployeeId = await goalsService.getGoalEmployeeId(id);
+      if (goalEmployeeId && !(await guardEmployee(req, res, goalEmployeeId))) return;
+    }
     if (!privileged) {
       const emp = await getEmployeeForUser(userId);
       const [rows] = await import("../../db/mysql.js").then((m) =>
@@ -490,6 +515,8 @@ goalsRouter.delete(
   "/appraisal/ratings/:id",
   requireRole("admin", "hr"),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    const ratingEmployeeId = await goalsService.getRatingEmployeeId(req.params.id);
+    if (ratingEmployeeId && !(await guardEmployee(req, res, ratingEmployeeId))) return;
     await goalsService.deleteAppraisalRating(req.params.id);
     return res.json({ success: true });
   }),
@@ -507,7 +534,7 @@ goalsRouter.delete(
       if (!emp || emp.id !== employeeId) {
         return res.status(403).json({ success: false, error: "Forbidden" });
       }
-    }
+    } else if (!(await guardEmployee(req, res, employeeId))) return;
     await goalsService.deleteEmployeeSkill(employeeId, skillId);
     return res.json({ success: true });
   }),

@@ -82,6 +82,7 @@ vi.mock("../exit-intelligence.service.js", () => ({
 vi.mock("../exit.notifications.js", () => ({
   notifyResignationSubmitted: vi.fn(async () => true),
   notifyResignationDecision: vi.fn(async () => undefined),
+  notifyAutoExited: vi.fn(async () => undefined),
 }));
 vi.mock("../../work-inbox/work-inbox.triggers.js", () => ({
   triggerResignationPendingReview: vi.fn(async () => undefined),

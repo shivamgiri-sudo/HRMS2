@@ -120,6 +120,17 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      # The service container creates mas_hrms with the server default collation
+      # (utf8mb4_0900_ai_ci on MySQL 8). The early migrations mix tables that name
+      # utf8mb4_unicode_ci with tables that name none, so on that default the first
+      # cross-table foreign key (053_password_reset.sql) is rejected. The backend no
+      # longer issues database-level DDL at startup (2026-09-30 outage: it queued every
+      # connection behind a long query), so the empty database is normalised here.
+      - name: Set database default collation
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -prootpass \
+            -e "ALTER DATABASE mas_hrms CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+
       - name: Start backend and run migrations
         working-directory: backend
         run: |

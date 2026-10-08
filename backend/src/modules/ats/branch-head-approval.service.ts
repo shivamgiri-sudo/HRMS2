@@ -1,6 +1,7 @@
 import { db } from "../../db/mysql.js";
 import {
   resolveBranchHeadScope,
+  assertBranchHeadCanSeeCandidate,
   buildCandidateBranchPredicate,
 } from "./branch-head-scope.js";
 import { getUserAssignmentScopes } from "../../shared/scopeAccess.js";
@@ -8,7 +9,7 @@ import { RowDataPacket } from "mysql2/promise";
 import { sendSelectedEmail, sendRejectedEmail } from "./ats.email.service.js";
 import { approveOffer, rejectOffer } from "./ats.onboarding.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
-import { initiateAddressBgvForCandidate } from "./bgv-address-verification.routes.js";
+import { autoSendAddressBgvLink } from "./bgv-address-verification.routes.js";
 
 /**
  * Branch Head Approval Service
@@ -227,6 +228,10 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
 
   const approval = approvals[0];
 
+  // Branch scoping (owner ruling 2026-10-01): decide BEFORE any row is written. Throws 403 when the
+  // candidate is outside the caller's branch / assigned scope.
+  await assertBranchHeadCanSeeCandidate(actorUserId, String(approval.candidate_id));
+
   // Start transaction
   const connection = await db.getConnection();
   await connection.beginTransaction();
@@ -273,9 +278,7 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
         : null;
 
       // Auto-send BGV address verification link to candidate
-      void initiateAddressBgvForCandidate(
-        approval.candidate_id as string,
-      ).catch(() => {});
+      void autoSendAddressBgvLink(approval.candidate_id as string, "branch-head-approval");
 
       // Fire-and-forget: send approval email after transaction commits
       if (!approval.offer_id && approval.email) {

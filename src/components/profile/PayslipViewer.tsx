@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGeneratorV2";
 import { downloadMasCallnetPayslipV2Format } from "@/lib/masCallnetPayslipGeneratorV2Format";
+import { payslipDays } from "@/lib/payslipDays";
 import { numberToWords } from "@/lib/numberToWords";
 import { RunningMonthCard, getIstRunMonth } from "@/components/payroll/RunningMonthCard";
 import { TaxCertificateCard } from "@/components/profile/TaxCertificateCard";
@@ -101,6 +102,12 @@ interface PayslipRecord {
   short_collection?: number | string;
   asset_recovery?: number | string;
   leave_deduction?: number | string;
+  // legacy_payroll_snapshot columns returned by GET /api/payroll/payslip/my
+  epf_employee?: number | string;
+  other_deduction?: number | string;
+  other_deductions?: number | string;
+  // present on both modern (salary_payroll_lines) and legacy rows
+  professional_tax?: number | string;
   ctc_monthly?: number | string;
   earned_days?: number | string;
   gross_salary: number | string;
@@ -143,6 +150,8 @@ interface PayslipRecord {
    *  via GET /api/payroll/payslip/:runId/:employeeId — the list endpoint this
    *  component normally reads from does not compute it for every row. */
   ytd?: Record<string, number>;
+  /** Same totals split by side (earning / deduction / employer_cost). */
+  ytd_by_type?: Record<string, Record<string, number>>;
   /** Reliable only via GET /api/payroll/payslip/:runId/:employeeId, which
    *  applies payslip.service.ts's zero-fallback derivation. The /payslip/my
    *  list this component normally reads from returns the raw, always-0 column. */
@@ -483,9 +492,9 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       location: record.branch_name || record.location_name || "N/A",
       esiNo: record.esi_number || "",
       wDays: Number(record.working_days ?? 30),
-      earnedDays: Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
+      earnedDays: payslipDays(record as never).paidDays || Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
       lwpDays: Number(record.lwp_days ?? 0),
-      totalDaysInMonth: Number(record.working_days ?? 30),
+      totalDaysInMonth: payslipDays(record as never).daysInMonth || Number(record.working_days ?? 30),
       basic, hra, bonus, conv, pa, ma, sa, oa: otherEarnings, arrear, incentive,
       pf, esic, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
       employerPf: Number(record.pf_employer ?? 0),
@@ -563,6 +572,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     // than fabricating either.
     let bankName = "";
     let ytdMap: Record<string, number> | undefined;
+    let legacyYtdByType: Record<string, Record<string, number>> | undefined;
     let weekOffDays = 0;
     let paidHolidays = 0;
     let detail: PayslipRecord | undefined;
@@ -571,7 +581,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
         const res = await hrmsApi.get<{ success: boolean; data: PayslipRecord }>(
           `/api/payroll/payslip/${record.run_id}/${employeeId}`,
         );
-        detail = res.data?.data;
+        detail = res.data;
         bankName = detail?.bank_name || "";
         ytdMap = detail?.ytd;
         weekOffDays = Number(detail?.eligible_weekoff_days ?? 0);
@@ -579,14 +589,29 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       } catch {
         // Non-fatal — download proceeds without YTD/bank name/leave breakdown.
       }
+    } else if (record.run_month) {
+      // Legacy payslips (pre-run-engine months) have no run_id, so the per-run detail endpoint cannot serve
+      // them. Their financial-year-to-date comes from the caller's own YTD endpoint instead.
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: { ytd: Record<string, number>; ytd_by_type: Record<string, Record<string, number>> } }>(
+          `/api/payroll/payslip/my/ytd?month=${encodeURIComponent(String(record.run_month).slice(0, 7))}`,
+        );
+        ytdMap = res.data?.ytd;
+        legacyYtdByType = res.data?.ytd_by_type;
+      } catch {
+        // Non-fatal — the slip still downloads, with "-" in the YTD column.
+      }
     }
     const ytdFor = (...codes: string[]) => codes.reduce((t, c) => t + Number(ytdMap?.[c.toUpperCase()] ?? 0), 0);
-    const ytdUnslottedEarnings = ytdMap
-      ? Object.entries(ytdMap).filter(([code]) => !SLOTTED_EARNINGS.has(code.toUpperCase())).reduce((t, [, v]) => t + Number(v || 0), 0)
-      : 0;
-    const ytdUnslottedDeductions = ytdMap
-      ? Object.entries(ytdMap).filter(([code]) => !SLOTTED_DEDUCTIONS.has(code.toUpperCase())).reduce((t, [, v]) => t + Number(v || 0), 0)
-      : 0;
+    // The flat ytd map mixes earnings, deductions and employer costs, so "not in a
+    // named slot" has to be taken per side or each Other row sums the opposite side.
+    const ytdByType = detail?.ytd_by_type ?? legacyYtdByType;
+    const ytdUnslotted = (side: "earning" | "deduction", slotted: Set<string>) =>
+      Object.entries(ytdByType?.[side] ?? {})
+        .filter(([code]) => !slotted.has(code.toUpperCase()))
+        .reduce((t, [, v]) => t + Number(v || 0), 0);
+    const ytdUnslottedEarnings = ytdUnslotted("earning", SLOTTED_EARNINGS);
+    const ytdUnslottedDeductions = ytdUnslotted("deduction", SLOTTED_DEDUCTIONS);
     const ytd = ytdMap ? {
       basic: ytdFor("BASIC"), hra: ytdFor("HRA"), bonus: ytdFor("BONUS"),
       conv: ytdFor("CONVEYANCE", "CONV"), pa: ytdFor("PA", "PERSONAL_ALLOWANCE", "PORTFOLIO"),
@@ -619,7 +644,8 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       employerPf: Number(record.pf_employer ?? 0),
       employerEsic: Number(record.esic_employer ?? 0),
       wDays: Number(record.working_days ?? 30),
-      earnedDays: Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
+      earnedDays: payslipDays({ ...(record as object), ...(detail ?? {}) } as never).paidDays || Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
+      calendarDays: payslipDays({ ...(record as object), ...(detail ?? {}) } as never).daysInMonth || undefined,
       weekOffDays, paidHolidays,
       basic, hra, conv, pa, ma, sa, oa: otherEarnings, arrear, bonus, incentive,
       pf, esic, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,

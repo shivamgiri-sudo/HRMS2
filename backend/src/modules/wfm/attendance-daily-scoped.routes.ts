@@ -7,6 +7,7 @@ import {
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { toIST } from "../../shared/timezone.js";
+import { getScope, isOrgWide, scopePredicate } from "./branch-scope.js";
 import { composeIstDateTime } from "./apr-attendance.service.js";
 
 /**
@@ -103,11 +104,27 @@ export async function scopedAttendanceDailyHandler(
       where.push("adr.employee_id = ?");
       params.push(callerEmp.id);
     }
-  } else if (req.query.employeeId) {
-    const qEmpId = safeId(req.query.employeeId, "employeeId");
-    if (qEmpId) {
-      where.push("adr.employee_id = ?");
-      params.push(qEmpId);
+  } else {
+    // admin / hr / wfm are branch-scoped (owner ruling 2026-10-01); only org-wide roles (super_admin, ceo, ...)
+    // keep the unfiltered query. Everyone else is limited to their own branch / assigned scope, fail closed.
+    const callerScope = await getScope(req);
+    if (!callerScope) return res.status(401).json({ success: false, error: "Unauthorized" });
+    if (!isOrgWide(callerScope)) {
+      const pred = scopePredicate(callerScope, {
+        employeeId: "e.id",
+        branchId: "COALESCE(adr.branch_id, e.branch_id)",
+        processId: "COALESCE(adr.process_id, e.process_id)",
+        managerEmployeeId: "e.reporting_manager_id",
+      });
+      where.push(`(${pred.sql})`);
+      params.push(...pred.params);
+    }
+    if (req.query.employeeId) {
+      const qEmpId = safeId(req.query.employeeId, "employeeId");
+      if (qEmpId) {
+        where.push("adr.employee_id = ?");
+        params.push(qEmpId);
+      }
     }
   }
 

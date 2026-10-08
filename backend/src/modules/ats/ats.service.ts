@@ -11,11 +11,8 @@ import { sendOnboardingToken } from "./ats.onboarding.service.js";
 import { transitionCandidateState } from "./ats.status-machine.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { excludeEmployeeShapedCandidatesSql } from "./ats-reporting-scope.js";
-import {
-  JOINED_STAGE_PREDICATE,
-  candidateBecameEmployee,
-  getEmployeeMobileJoinMap,
-} from "./analytics.unified.service.js";
+import { branchNameVariants } from "./ats-vocabulary.js";
+import { JOINED_STAGE_PREDICATE, candidateBecameEmployee, getEmployeeMobileJoinMap } from "./analytics.unified.service.js";
 import { toStoredNameRequired } from "../../shared/nameFormat.js";
 import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
@@ -847,15 +844,24 @@ export const atsService = {
     // Previously counted DISTINCT applied_for_process from ats_candidate (pipeline proxy), which
     // returned the number of processes that had any active candidate — not the actual open
     // headcount demand.
-    const openPosQuery = db
-      .execute<RowDataPacket[]>(
-        `SELECT COALESCE(SUM(GREATEST(requested_headcount - fulfilled_headcount, 0)), 0) AS count
+    // Two corrections (recruiter dashboard audit): TEST-* requisitions (seed data, 8 phantom seats live)
+    // were counted as demand, and the query ignored the caller's branch/process entirely, so a
+    // branch-scoped viewer saw org-wide open seats beside branch-scoped candidate counts.
+    // A failed read is null, never a confident 0.
+    const reqScopeSql = [
+      branchNames.length ? inClause("branch_name", branchNames.flatMap((n) => branchNameVariants(n))) : "",
+      processNames.length ? inClause("process_name", processNames) : "",
+    ].filter(Boolean).map((c) => ` AND ${c}`).join("");
+    const reqScopeParams = [...(branchNames.length ? branchNames.flatMap((n) => branchNameVariants(n)) : []), ...processNames];
+    const openPosQuery = db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(GREATEST(requested_headcount - fulfilled_headcount, 0)), 0) AS count
        FROM job_requisition
        WHERE approval_status = 'approved'
          AND active_status = 1
-         AND closed_at IS NULL`,
-      )
-      .catch(() => [[{ count: 0 }]] as any);
+         AND closed_at IS NULL
+         AND requisition_code NOT LIKE 'TEST-%'${reqScopeSql}`,
+      reqScopeParams
+    ).catch(() => [[{ count: null }]] as any);
 
     // Previous 30 days for trend comparison (selected)
     const prevQuery = db
@@ -915,14 +921,13 @@ export const atsService = {
     // that read it, so the row was a permanent em dash.
     //
     // job_requisition.approval_status holds draft / approved / closed. "Pending" is a
-    // requisition still awaiting approval: raised but neither approved nor closed.
+    // requisition in 'pending_approval'. Drafts and cancelled ones are not waiting on anyone.
     // null on failure, so a broken lookup cannot read as an empty queue.
-    const pendingReqQuery = db
-      .execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS cnt FROM job_requisition
-        WHERE LOWER(COALESCE(approval_status, 'draft')) NOT IN ('approved', 'closed', 'rejected')`,
-      )
-      .catch(() => [[{ cnt: null }]] as any);
+    const pendingReqQuery = db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM job_requisition
+        WHERE LOWER(COALESCE(approval_status, '')) = 'pending_approval'`
+    ).catch(() => [[{ cnt: null }]] as any);
+
 
     // All nine reads are independent of one another (each carries its own .catch where it
     // needs one), so they run as one batch rather than nine sequential round trips. The
@@ -985,7 +990,7 @@ export const atsService = {
       by_source[key] = Number(row.count);
     }
 
-    const openPositions = Number(openPosRows[0]?.count ?? 0);
+    const openPositions = openPosRows[0]?.count == null ? null : Number(openPosRows[0].count);
 
     // Selected candidates (last 30 days)
     const selectedCount =

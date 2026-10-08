@@ -210,24 +210,30 @@ interface ListFilters {
   limit?: number;
 }
 
-export async function listMeetings(filters: ListFilters = {}) {
+export async function listMeetings(filters: ListFilters = {}, scope?: { sql: string; params: unknown[] }) {
   const conditions: string[] = [];
   const params: any[] = [];
 
+  // Branch scoping (owner ruling 2026-10-01): the filters below can only narrow what the scope allows.
+  if (scope && scope.sql !== '1=1') {
+    conditions.push(`(${scope.sql})`);
+    params.push(...scope.params);
+  }
+
   if (filters.status) {
-    conditions.push("status = ?");
+    conditions.push('m.status = ?');
     params.push(filters.status);
   }
   if (filters.type) {
-    conditions.push("meeting_type = ?");
+    conditions.push('m.meeting_type = ?');
     params.push(filters.type);
   }
   if (filters.from) {
-    conditions.push("start_at >= ?");
+    conditions.push('m.start_at >= ?');
     params.push(filters.from);
   }
   if (filters.to) {
-    conditions.push("start_at <= ?");
+    conditions.push('m.start_at <= ?');
     params.push(filters.to);
   }
 
@@ -237,12 +243,12 @@ export async function listMeetings(filters: ListFilters = {}) {
 
   const [[meetings], [countResult]] = await Promise.all([
     db.execute<MeetingRow[]>(
-      `SELECT * FROM mcnmeet_meeting ${where} ORDER BY start_at DESC ${sqlLimitOffset(limit, offset)}`,
-      params,
+      `SELECT m.* FROM mcnmeet_meeting m ${where} ORDER BY m.start_at DESC ${sqlLimitOffset(limit, offset)}`,
+      params
     ),
     db.execute<CountRow[]>(
-      `SELECT COUNT(*) as cnt FROM mcnmeet_meeting ${where}`,
-      params,
+      `SELECT COUNT(*) as cnt FROM mcnmeet_meeting m ${where}`,
+      params
     ),
   ]);
 
@@ -380,10 +386,7 @@ export async function cancelMeeting(
   return result.affectedRows > 0;
 }
 
-export async function resolveInvitees(
-  meetingId: string,
-  resolvedBy: string,
-): Promise<number> {
+export async function resolveInvitees(meetingId: string, resolvedBy: string, employeeScope?: { sql: string; params: unknown[] }): Promise<number> {
   const [audience] = await db.execute<AudienceDbRow[]>(
     `SELECT * FROM mcnmeet_meeting_audience WHERE meeting_id = ?`,
     [meetingId],
@@ -458,6 +461,18 @@ export async function resolveInvitees(
     }
 
     ids.forEach((id) => employeeIds.add(id));
+  }
+
+  // Branch scoping: a non-org-wide host can only invite employees inside its own branch / assigned scope
+  // (an "all_company" audience used to invite everyone in every branch).
+  if (employeeScope && employeeScope.sql !== '1=1' && employeeIds.size > 0) {
+    const idList = [...employeeIds];
+    const [allowed] = await db.execute<IdRow[]>(
+      `SELECT e.id FROM employees e WHERE e.id IN (${idList.map(() => '?').join(',')}) AND (${employeeScope.sql})`,
+      [...idList, ...employeeScope.params]
+    );
+    const ok = new Set(allowed.map(r => r.id));
+    for (const id of idList) if (!ok.has(id)) employeeIds.delete(id);
   }
 
   let added = 0;
@@ -564,39 +579,33 @@ interface JoinedStatusCountRow extends RowDataPacket {
   cnt: number;
 }
 
-export async function getSummaryReport(from?: string, to?: string) {
+export async function getSummaryReport(from?: string, to?: string, scope?: { sql: string; params: unknown[] }) {
   const conditions: string[] = [];
   const params: any[] = [];
 
-  if (from) {
-    conditions.push("start_at >= ?");
-    params.push(from);
-  }
-  if (to) {
-    conditions.push("start_at <= ?");
-    params.push(to);
-  }
+  if (scope && scope.sql !== '1=1') { conditions.push(`(${scope.sql})`); params.push(...scope.params); }
+  if (from) { conditions.push('m.start_at >= ?'); params.push(from); }
+  if (to) { conditions.push('m.start_at <= ?'); params.push(to); }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  const [[statusCounts], [typeCounts], [totalInvitees], [attendanceStats]] =
-    await Promise.all([
-      db.execute<StatusCountRow[]>(
-        `SELECT status, COUNT(*) as cnt FROM mcnmeet_meeting ${where} GROUP BY status`,
-        params,
-      ),
-      db.execute<TypeCountRow[]>(
-        `SELECT meeting_type, COUNT(*) as cnt FROM mcnmeet_meeting ${where} GROUP BY meeting_type`,
-        params,
-      ),
-      db.execute<CountRow[]>(
-        `SELECT COUNT(*) as cnt FROM mcnmeet_meeting_invitee i
-       INNER JOIN mcnmeet_meeting m ON i.meeting_id = m.id ${where ? where : ""}`,
-        params,
-      ),
-      db.execute<JoinedStatusCountRow[]>(
-        `SELECT i.joined_status, COUNT(*) as cnt FROM mcnmeet_meeting_invitee i
-       INNER JOIN mcnmeet_meeting m ON i.meeting_id = m.id ${where ? where : ""}
+  const [[statusCounts], [typeCounts], [totalInvitees], [attendanceStats]] = await Promise.all([
+    db.execute<StatusCountRow[]>(
+      `SELECT m.status, COUNT(*) as cnt FROM mcnmeet_meeting m ${where} GROUP BY m.status`,
+      params
+    ),
+    db.execute<TypeCountRow[]>(
+      `SELECT m.meeting_type, COUNT(*) as cnt FROM mcnmeet_meeting m ${where} GROUP BY m.meeting_type`,
+      params
+    ),
+    db.execute<CountRow[]>(
+      `SELECT COUNT(*) as cnt FROM mcnmeet_meeting_invitee i
+       INNER JOIN mcnmeet_meeting m ON i.meeting_id = m.id ${where ? where : ''}`,
+      params
+    ),
+    db.execute<JoinedStatusCountRow[]>(
+      `SELECT i.joined_status, COUNT(*) as cnt FROM mcnmeet_meeting_invitee i
+       INNER JOIN mcnmeet_meeting m ON i.meeting_id = m.id ${where ? where : ''}
        GROUP BY i.joined_status`,
         params,
       ),

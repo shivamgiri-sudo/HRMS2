@@ -9,7 +9,8 @@ import { emailService } from "../communication/email.service.js";
 import {
   evaluateMinimumWageForBranchId,
   evaluateMinimumWageForBranchName,
-} from "../payroll-masters/minimum-wage-gate.service.js";
+} from '../payroll-masters/minimum-wage-gate.service.js';
+import { buildAppLink } from '../../shared/appLink.js';
 
 /**
  * Offer Letter Generation Service
@@ -470,6 +471,8 @@ export async function sendOfferLetter(offerId: string): Promise<{
     <tr><td style="padding:8px; border:1px solid #ddd;"><strong>Gross Salary</strong></td><td style="padding:8px; border:1px solid #ddd;">₹${Number(offer.salary_gross).toLocaleString("en-IN")} per month</td></tr>
   </table>
   <p>Please report to HR to collect your official offer letter document and complete joining formalities.</p>
+  <p><a href="${buildAppLink('/candidate-portal/login')}" style="display:inline-block;background:#1a3c5e;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600">Open the candidate portal</a></p>
+  <p style="font-size:12px;color:#666;">Or copy this link: ${buildAppLink('/candidate-portal/login')}</p>
   <p style="color: #666; font-size: 12px;">This is an automated notification. Please do not reply to this email.</p>
 </div>`;
 

@@ -2,6 +2,7 @@ import { Route, Navigate } from "react-router-dom";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactNode }) =>
   <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
@@ -16,6 +17,7 @@ const JoiningDocumentsTrackerPage   = lazy(() => import("@/pages/JoiningDocument
 const JoiningDocumentTemplateAdmin  = lazy(() => import("@/pages/JoiningDocumentTemplateAdmin"));
 const EmployeeEpfCompliancePage     = lazy(() => import("@/pages/EmployeeEpfCompliancePage"));
 const NativeEmployeeReactivation    = lazy(() => import("@/pages/NativeEmployeeReactivation"));
+const RejoinReview                  = lazy(() => import("@/pages/RejoinReview"));
 const NativeEmployeeBGVStatus       = lazy(() => import("@/pages/NativeEmployeeBGVStatus"));
 const EmployeeProfileCompletion     = lazy(() => import("@/pages/EmployeeProfileCompletion"));
 const NativeLifecycle               = lazy(() => import("@/pages/NativeLifecycle"));
@@ -67,24 +69,31 @@ export const peopleRouteElements = (
       } />
 
       {/* Reactivation */}
+      {/* manager: /reactivation/initiate admits a reporting manager raising for a former report. */}
       <Route path="/employees/reactivation" element={
-        <ProtectedRoute roles={['hr','admin','super_admin','branch_head','payroll_head']}>
+        <ProtectedRoute roles={['hr','admin','super_admin','branch_head','payroll_head','manager']}>
           <NativeEmployeeReactivation />
+        </ProtectedRoute>
+      } />
+      {/* Roles are the dossier API's requireRole exactly (rejoin-dossier.routes.ts); payroll_head would only get a 403. */}
+      <Route path="/employees/reactivation/:id/review" element={
+        <ProtectedRoute roles={['branch_head','hr','admin','super_admin']}>
+          <Gate pageCode="EMPLOYEE_REACTIVATION"><RejoinReview /></Gate>
         </ProtectedRoute>
       } />
 
       {/* BGV status */}
-      <Route path="/employees/bgv-status" element={<ProtectedRoute><NativeEmployeeBGVStatus /></ProtectedRoute>} />
+      <Route path="/employees/bgv-status" element={<ProtectedRoute><DashboardLayout><NativeEmployeeBGVStatus /></DashboardLayout></ProtectedRoute>} />
       <Route path="/employees/bgv-status/:employeeId" element={
         <ProtectedRoute roles={['admin','hr','payroll','super_admin']}>
-          <NativeEmployeeBGVStatus />
+          <DashboardLayout><NativeEmployeeBGVStatus /></DashboardLayout>
         </ProtectedRoute>
       } />
 
       {/* Profile completion — manual HR onboarding only captures a handful of fields;
           this guided flow closes the gap against the 10-step candidate journey */}
       <Route path="/employees/:employeeId/complete-profile" element={
-        <ProtectedRoute roles={['admin','super_admin','hr']}>
+        <ProtectedRoute roles={['admin','super_admin','hr','payroll_hr']}>
           <EmployeeProfileCompletion />
         </ProtectedRoute>
       } />

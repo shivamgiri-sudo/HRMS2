@@ -459,17 +459,7 @@ export async function listVisits(scope: ActorScope, filters: VisitListFilters) {
   const where: string[] = ["1=1"];
   const params: unknown[] = [];
   if (!scope.unrestricted) {
-    if (
-      scope.roles.some((role) =>
-        [
-          "visitor_security",
-          "visitor_reception",
-          "branch_head",
-          "branch_hr",
-          "hr_branch",
-        ].includes(role),
-      )
-    ) {
+    if (scope.roles.some((role) => ["visitor_security", "visitor_reception", "branch_head", "branch_hr", "hr_branch", "ho_hr", "hr_admin", "security_head", "hr"].includes(role))) {
       if (!scope.branchId) return [];
       where.push("vv.branch_id = ?");
       params.push(scope.branchId);

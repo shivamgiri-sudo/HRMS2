@@ -71,32 +71,26 @@ router.get(
   }),
 );
 
-router.get(
-  "/:key",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const isAdmin =
-      (req.authUser?.role === "admin" ||
-        req.authUser?.role === "super_admin" ||
-        req.authUser?.roles?.includes("admin") ||
-        req.authUser?.roles?.includes("super_admin")) ??
-      false;
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM org_settings WHERE setting_key = ? LIMIT 1",
-      [req.params.key],
-    );
-    const row = (rows as RowDataPacket[])[0];
-    if (!row) return res.status(404).json({ error: "Setting not found" });
-    if (isSecretKey(String(row.setting_key ?? "")) && !isAdmin) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "This setting is restricted to administrators",
-        });
-    }
-    res.json({ success: true, data: maskRow(row, isAdmin) });
-  }),
-);
+router.get("/:key", h(async (req: AuthenticatedRequest, res: Response) => {
+  const isAdmin = (req.authUser?.role === "admin" || req.authUser?.role === "super_admin" || req.authUser?.roles?.includes("admin") || req.authUser?.roles?.includes("super_admin")) ?? false;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT * FROM org_settings WHERE setting_key = ? LIMIT 1", [req.params.key]
+  );
+  const row = (rows as RowDataPacket[])[0];
+  if (!row) {
+    // Opt-in "not configured" answer for callers that have a built-in default (e.g. the
+    // employee-code pattern on /onboarding). Without it every page view of an unset key logged
+    // a 404 as an error. Opt-in rather than the default so callers that rely on the 404
+    // (e.g. Settings' two-factor toggle, which treats an errored query as "unknown") keep
+    // their current behaviour.
+    if (req.query.optional === "1") return res.json({ success: true, data: null });
+    return res.status(404).json({ error: "Setting not found" });
+  }
+  if (isSecretKey(String(row.setting_key ?? "")) && !isAdmin) {
+    return res.status(403).json({ success: false, error: "This setting is restricted to administrators" });
+  }
+  res.json({ success: true, data: maskRow(row, isAdmin) });
+}));
 
 router.put(
   "/:key",

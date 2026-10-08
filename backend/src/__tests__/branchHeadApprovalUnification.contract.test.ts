@@ -160,11 +160,17 @@ describe("history is sourced from the offers trail", () => {
     expect(body).not.toContain("SELECT DISTINCT");
   });
 
-  it("counts with COUNT(DISTINCT o.id) so total and rows agree", () => {
-    const fnAt = service.indexOf(
-      "export async function listBranchHeadDecisions",
-    );
-    expect(service.slice(fnAt)).toContain("COUNT(DISTINCT o.id)");
+  it("reports total from the grouped rows, so total and rows cannot disagree", () => {
+    // This used to be a second COUNT(DISTINCT o.id) query. 52e9a8c4e removed it:
+    // run over the full join with no LIMIT it hung for 30+ seconds in production
+    // and the page never read `total`. The guarantee it gave — total agrees with
+    // the rows, one per offer — now holds by construction, and must not be
+    // re-broken by reintroducing a count over the un-grouped join.
+    const fnAt = service.indexOf("export async function listBranchHeadDecisions");
+    const body = service.slice(fnAt).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+    expect(body).toContain("total: rows.length");
+    expect(body).not.toMatch(/COUNT\(\s*\*\s*\)/);
+    expect(body).not.toMatch(/COUNT\((?!DISTINCT o\.id\))/);
   });
 
   it("orders pending rows by a column that is not null", () => {
@@ -220,17 +226,28 @@ describe("the journey never queries columns that do not exist", () => {
   });
 });
 
+/**
+ * saveOffer has two `if (submit) {` blocks: a CTC guard that runs before the
+ * offer is written (added later, and the first one in the file), and the
+ * post-save block these tests are about. Anchor on the post-save one — the last
+ * inside saveOffer — instead of whichever happens to come first.
+ */
+function submitBlock(): string {
+  const fnAt = onboarding.indexOf("export async function saveOffer");
+  expect(fnAt).toBeGreaterThan(-1);
+  const fnEnd = onboarding.indexOf("export async function", fnAt + 10);
+  const submitAt = onboarding.lastIndexOf("if (submit) {", fnEnd);
+  expect(submitAt).toBeGreaterThan(fnAt);
+  return onboarding.slice(submitAt, submitAt + 1200);
+}
+
 describe("submitting the offer is the payroll validation", () => {
   it("derives the validation record when the offer is submitted", () => {
     // Payroll HR enters the salary once, on the offer. validateSalaryLock reads
     // a different table; nothing on the offer path used to write it, and the
     // page that did was deprecated without replacing the record it produced.
     expect(onboarding).toContain("deriveSalaryValidationFromOffer");
-    const submitAt = onboarding.indexOf("if (submit) {");
-    expect(submitAt).toBeGreaterThan(-1);
-    expect(onboarding.slice(submitAt, submitAt + 1200)).toContain(
-      "deriveSalaryValidationFromOffer",
-    );
+    expect(submitBlock()).toContain("deriveSalaryValidationFromOffer");
   });
 
   it("copies the figures from the offer rather than inventing them", () => {
@@ -265,10 +282,7 @@ describe("submitting the offer is the payroll validation", () => {
 
   it("does not block the offer when derivation fails", () => {
     // The offer must still reach the branch head; the queue flags the gap.
-    const submitAt = onboarding.indexOf("if (submit) {");
-    expect(onboarding.slice(submitAt, submitAt + 900)).toMatch(
-      /deriveSalaryValidationFromOffer[\s\S]{0,200}\.catch\(/,
-    );
+    expect(submitBlock().slice(0, 900)).toMatch(/deriveSalaryValidationFromOffer[\s\S]{0,200}\.catch\(/);
   });
 });
 
@@ -300,8 +314,11 @@ describe("offers submitted before the fix still approve", () => {
     const at = onboarding.indexOf("export async function listPendingApprovals");
     const nextFn = onboarding.indexOf("export async function", at + 10);
     const body = onboarding.slice(at, nextFn === -1 ? undefined : nextFn);
-    expect(body).toContain(
-      "o.gross IS NOT NULL AND o.date_of_joining IS NOT NULL",
+    // ff58d4d67 moved the flag out of SQL (a correlated subquery per row) into
+    // the JS enrichment step; the rule is the same two-part one.
+    expect(body).toMatch(
+      /payrollValidated =\s*\(pv\?\.hasValidated === true\) \|\|\s*\(row\.gross != null && row\.date_of_joining != null\)/,
     );
+    expect(body).toMatch(/payroll_validated:\s*payrollValidated \? 1 : 0/);
   });
 });

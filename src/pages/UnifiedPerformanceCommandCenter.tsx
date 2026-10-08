@@ -57,7 +57,7 @@ export default function UnifiedPerformanceCommandCenter() {
   const [atsSubmissions, setAtsSubmissions] = useState<Row[]>([]);
   const [lmsProgress, setLmsProgress] = useState<Row[]>([]);
   const [wfmRoster, setWfmRoster] = useState<Row[]>([]);
-  const [wfmSessions, setWfmSessions] = useState<Row[]>([]);
+  const [sessionCounts, setSessionCounts] = useState<{ total: number; onShift: number }>({ total: 0, onShift: 0 });
   const [qualityRows, setQualityRows] = useState<Row[]>([]);
   const [opsRows, setOpsRows] = useState<Row[]>([]);
   /**
@@ -94,12 +94,50 @@ export default function UnifiedPerformanceCommandCenter() {
         }
       };
 
+      // ATS candidates: GET /api/ats/candidates caps limit at 500 and filters on
+      // fromDate/toDate (walk_in_date). It was sent limit=1000 (400) and from/to (ignored).
+      // Paged so a busy month is not silently truncated at 500.
+      const fetchCandidates = async (): Promise<Row[]> => {
+        const out: Row[] = [];
+        for (let page = 1; page <= 20; page++) {
+          const r: any = await hrmsApi.get(`/api/ats/candidates?fromDate=${fromDate}&toDate=${toDate}&limit=500&page=${page}`);
+          const rows: Row[] = Array.isArray(r?.data) ? r.data : [];
+          out.push(...rows);
+          if (rows.length < 500 || out.length >= Number(r?.total ?? 0)) break;
+        }
+        // ats_candidate carries applied_for_branch / applied_for_process, not the
+        // branch_name / role_applied the filters and branch table read.
+        return out.map((c) => ({
+          ...c,
+          branch_name: c.branch_name ?? c.applied_for_branch,
+          role_applied: c.role_applied ?? c.applied_for_process,
+        }));
+      };
+
+      // Live sessions: the page only needs counts, and /api/wfm/sessions caps limit at 100
+      // (it was sent limit=1000 → 400). Its paged response carries `total`, so ask for one
+      // row per status. "On Shift" is not a value current_status ever holds — the live
+      // values are Logged In / Partial / Logged Out (backend/src/shared/attendanceStatus.ts,
+      // PRESENT_SESSION_STATUSES) — so the tile was 0 even when the call worked.
+      const fetchSessionCounts = async () => {
+        const count = async (status?: string) => {
+          const qs = new URLSearchParams({ fromDate, toDate, limit: "1" });
+          if (status) qs.set("status", status);
+          const r: any = await hrmsApi.get(`/api/wfm/sessions?${qs.toString()}`);
+          return Number(r?.total ?? 0) || 0;
+        };
+        const [total, loggedIn, partial] = await Promise.all([count(), count("Logged In"), count("Partial")]);
+        return [{ total, onShift: loggedIn + partial }];
+      };
+
       const [atsC, atsS, lms, roster, sessions, qa, ops] = await Promise.all([
-        safe("ATS candidates", () => hrmsApi.get(`/api/ats/candidates?from=${fromDate}&to=${toDate}&limit=1000`)),
+        safe("ATS candidates", fetchCandidates),
         safe("ATS submissions", () => hrmsApi.get(`/api/ats-full-parity/submissions?from=${fromDate}&to=${toDate}&limit=1000`)),
         safe("Learning progress", () => hrmsApi.get(`/api/lms/progress-summary`)),
-        safe("Roster", () => hrmsApi.get(`/api/wfm/roster?from=${fromDate}&to=${toDate}&limit=1000`)),
-        safe("Live sessions", () => hrmsApi.get(`/api/wfm/sessions?from=${fromDate}&to=${toDate}&limit=1000`)),
+        // There is no GET /api/wfm/roster. Rostered rows (with branch_name/process_name) come
+        // from /api/wfm/roster/actual-assignments, row-scoped to the caller, max limit 1000.
+        safe("Roster", () => hrmsApi.get(`/api/wfm/roster/actual-assignments?fromDate=${fromDate}&toDate=${toDate}&limit=1000`)),
+        safe("Live sessions", fetchSessionCounts),
         safe("Quality scores", () => hrmsApi.get(`/api/quality-dashboard/scores?from=${fromDate}&to=${toDate}&limit=1000`)),
         safe("Operations performance", () => hrmsApi.get(`/api/performance-dashboard/ops?from=${fromDate}&to=${toDate}&limit=1000`)),
       ]);
@@ -110,7 +148,7 @@ export default function UnifiedPerformanceCommandCenter() {
       setAtsSubmissions(Array.isArray(atsS) ? atsS : []);
       setLmsProgress(Array.isArray(lms) ? lms : []);
       setWfmRoster(Array.isArray(roster) ? roster : []);
-      setWfmSessions(Array.isArray(sessions) ? sessions : []);
+      setSessionCounts(Array.isArray(sessions) && sessions[0] ? { total: Number(sessions[0].total) || 0, onShift: Number(sessions[0].onShift) || 0 } : { total: 0, onShift: 0 });
       setQualityRows(Array.isArray(qa) ? qa : []);
       setOpsRows(Array.isArray(ops) ? ops : []);
     } catch (err: any) {
@@ -155,7 +193,7 @@ export default function UnifiedPerformanceCommandCenter() {
     const selected = scopedAtsSubmissions.filter((r) => r.final_decision === "Selected").length;
     const clientPending = scopedAtsSubmissions.filter((r) => r.final_decision === "Client Round - Pending").length;
     const completedLearning = lmsProgress.filter((r) => r.completed || Number(r.progress_percent || 0) >= 100).length;
-    const onShift = wfmSessions.filter((r) => r.current_status === "On Shift").length;
+    const onShift = sessionCounts.onShift;
     const avgQuality = scopedQuality.length ? Math.round((scopedQuality.reduce((a, r) => a + Number(r.quality_score || 0), 0) / scopedQuality.length) * 10) / 10 : 0;
     const opsVolume = scopedOps.reduce((a, r) => a + Number(r.handled_volume || 0), 0);
     const opsTarget = scopedOps.reduce((a, r) => a + Number(r.target_volume || 0), 0);
@@ -163,7 +201,7 @@ export default function UnifiedPerformanceCommandCenter() {
     const login = scopedOps.reduce((a, r) => a + Number(r.login_minutes || 0), 0);
     const critical = scopedQuality.reduce((a, r) => a + Number(r.fatal_count || 0), 0);
     return { activeEmployees, selected, clientPending, completedLearning, onShift, avgQuality, opsVolume, opsTarget, opsAchievement: pct(opsVolume, opsTarget), shrinkagePct: pct(shrinkage, login), critical };
-  }, [employees, scopedAtsSubmissions, lmsProgress, wfmSessions, scopedQuality, scopedOps]);
+  }, [employees, scopedAtsSubmissions, lmsProgress, sessionCounts, scopedQuality, scopedOps]);
 
   const branchRows = useMemo(() => {
     const map = new Map<string, Row>();
@@ -257,7 +295,7 @@ export default function UnifiedPerformanceCommandCenter() {
           <Stat title="Employees" value={metrics.activeEmployees} sub="active/onboarding" icon={<Users className="h-5 w-5" />} tone="bg-blue-50 text-blue-700" />
           <Stat title="ATS Walk-ins" value={scopedAtsCandidates.length} sub={`${metrics.selected} selected`} icon={<Briefcase className="h-5 w-5" />} tone="bg-violet-50 text-violet-700" />
           <Stat title="LMS Completed" value={metrics.completedLearning} sub={`${lmsProgress.length} progress rows`} icon={<BookOpen className="h-5 w-5" />} tone="bg-green-50 text-green-700" />
-          <Stat title="On Shift" value={metrics.onShift} sub={`${wfmSessions.length} sessions`} icon={<Clock className="h-5 w-5" />} tone="bg-amber-50 text-amber-700" />
+          <Stat title="On Shift" value={metrics.onShift} sub={`${sessionCounts.total} sessions`} icon={<Clock className="h-5 w-5" />} tone="bg-amber-50 text-amber-700" />
           {/* A dash, not 0%. These are computed from feeds that may not have answered, and a
               zero here reads as a measured result — a perfect shrinkage figure, a quality score
               of nothing — rather than an absent one. */}
@@ -305,7 +343,7 @@ export default function UnifiedPerformanceCommandCenter() {
             ['HRMS', employees.length, `${metrics.activeEmployees} active employees`, false],
             ['ATS', scopedAtsCandidates.length + scopedAtsSubmissions.length, `${metrics.selected} selected / ${metrics.clientPending} client pending`, unavailable.includes("ATS submissions")],
             ['LMS', lmsProgress.length, `${metrics.completedLearning} completed rows`, unavailable.includes("Learning progress")],
-            ['WFM', scopedWfmRoster.length + wfmSessions.length, `${metrics.onShift} on shift`, unavailable.includes("Roster")],
+            ['WFM', scopedWfmRoster.length + sessionCounts.total, `${metrics.onShift} on shift`, unavailable.includes("Roster")],
             ['Quality', scopedQuality.length, qualityUnavailable ? "no data received" : `${metrics.avgQuality}% avg score`, qualityUnavailable],
             ['Operations', scopedOps.length, opsUnavailable ? "no data received" : `${metrics.opsVolume} volume`, opsUnavailable],
           ].map((r) => <tr key={String(r[0])} className="border-t"><td className="p-4 font-black">{r[0]}</td><td className="p-4">{r[1]}</td><td className="p-4">{r[2]}</td><td className="p-4">{r[3] ? <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-black text-amber-700">Unavailable</span> : <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">Active</span>}</td></tr>)}</tbody></table></div></div>

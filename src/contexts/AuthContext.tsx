@@ -427,6 +427,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
       }).catch(() => { /* best-effort */ });
     } finally {
+      try { sessionStorage.removeItem('approval_popup_shown'); } catch { /* storage blocked */ }
       localStorage.removeItem('hrms_demo_session');
       localStorage.removeItem('hrms_access_token');
       localStorage.removeItem('hrms_refresh_token');

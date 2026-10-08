@@ -1,3 +1,5 @@
+import { assertNoPaidTwin } from "./grn-duplicate-guard.js";
+import { recordTdsAssessmentSafely } from "./tds-assessment.service.js";
 import { createHash, randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
@@ -49,6 +51,8 @@ const BANK_MODES = new Set([
 ]);
 
 export interface DispatchPaymentPayload {
+  /** A finance head / super admin confirming this GRN is NOT a duplicate of one already paid. */
+  allowPossibleDuplicate?: boolean;
   paymentMode: (typeof PAYMENT_MODES)[number];
   paymentDate: string;
   bankId?: string | null;
@@ -232,6 +236,13 @@ export const vendorPaymentLedgerService = {
         );
       }
 
+      // A bill whose twin is already paid (or being paid) must not be paid again — see grn-duplicate-guard.
+      await assertNoPaidTwin(
+        connection, paymentId, `GRN ${payment.grn_number ?? paymentId}`,
+        { allow: payload.allowPossibleDuplicate === true, actorRole },
+        (m) => requestError(409, m),
+      );
+
       const currentPaid = roundMoney(Number(payment.paid_amount ?? 0));
       const dueAmount = roundMoney(Number(payment.due_amount ?? 0));
       const balanceBefore = roundMoney(
@@ -382,6 +393,15 @@ export const vendorPaymentLedgerService = {
           actorUserId,
         ],
       );
+
+      // Advisory only: record what the TDS rules say should have been deducted next to what was.
+      await recordTdsAssessmentSafely(connection, {
+        trackingId: paymentId,
+        transactionRowId,
+        paymentAmount: amount,
+        deductedTds: tdsAmount,
+        paymentDate: payload.paymentDate,
+      });
 
       const paidAfter = roundMoney(currentPaid + amount);
       const balanceAfter = roundMoney(Math.max(0, dueAmount - paidAfter));

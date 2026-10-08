@@ -2,7 +2,9 @@ import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
-import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasAnyRole, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
+import { scopePredicate } from "./branch-scope.js";
 
 export const rosterActualSecureRouter = Router();
 rosterActualSecureRouter.use(requireAuth);
@@ -29,9 +31,13 @@ const ROSTER_SCOPE_ROLES = [
 ];
 
 async function actualRosterScope(userId: string) {
-  if (await hasAnyRole(userId, "admin", "hr", "ceo"))
-    return { sql: "1=1", params: [] as unknown[] };
-  return buildScopeWhereClause(
+  // Org-wide roles only (owner ruling 2026-10-01): hr no longer sees every branch.
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return { sql: "1=1", params: [] as unknown[] };
+  const own = scopePredicate(await resolveUserBusinessScope(userId), {
+    branchId: "e.branch_id", processId: "e.process_id", employeeId: "e.id",
+    managerEmployeeId: "COALESCE(a.manager_employee_id, e.reporting_manager_id)",
+  });
+  const assigned = await buildScopeWhereClause(
     userId,
     ROSTER_SCOPE_ROLES,
     {
@@ -44,6 +50,9 @@ async function actualRosterScope(userId: string) {
     },
     { allowAdminBypass: true, allowCeoAllRead: true },
   );
+  if (assigned.sql === "1=0") return own;
+  if (own.sql === "1=0") return assigned;
+  return { sql: `(${own.sql}) OR (${assigned.sql})`, params: [...own.params, ...assigned.params] };
 }
 
 rosterActualSecureRouter.get(

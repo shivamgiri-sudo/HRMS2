@@ -7,6 +7,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
+import { employeeScopeFor, scopeFor } from "./payroll-branch-scope.js";
 
 export const payrollAuditTrailRouter = Router();
 const h =
@@ -62,9 +63,11 @@ payrollAuditTrailRouter.get(
       calcParams.push(date_to + " 23:59:59");
     }
 
-    const calcWhere = calcConds.length
-      ? `WHERE ${calcConds.join(" AND ")}`
-      : "";
+    // Branch scoping (owner ruling 2026-10-01): calculation events only for employees in scope.
+    const auditScope = await employeeScopeFor(req, "e");
+    calcConds.push(`(${auditScope.sql})`);
+    calcParams.push(...auditScope.params);
+    const calcWhere = calcConds.length ? `WHERE ${calcConds.join(" AND ")}` : "";
 
     // --- sensitive action log ----------------------------------------------
     // module_key IN (...) added 2026-08-25: this page's own header claims "full forensic
@@ -104,6 +107,13 @@ payrollAuditTrailRouter.get(
       salParams.push(date_to + " 23:59:59");
     }
 
+    // The action log is org-wide: scoped callers only see their own actions and actions on
+    // employees inside their scope.
+    if (auditScope.sql !== "1=1") {
+      const empScope = await employeeScopeFor(req, "se");
+      salConds.push(`(sal.actor_user_id = ? OR JSON_UNQUOTE(JSON_EXTRACT(sal.change_summary, '$.employee_id')) IN (SELECT se.id FROM employees se WHERE ${empScope.sql}))`);
+      salParams.push(req.authUser!.id, ...empScope.params);
+    }
     const salWhere = `WHERE ${salConds.join(" AND ")}`;
 
     let calcRows: any[] = [];
@@ -142,8 +152,8 @@ payrollAuditTrailRouter.get(
         calcRows = cr as any[];
 
         const [ct] = await db.execute<RowDataPacket[]>(
-          `SELECT COUNT(*) AS cnt FROM payroll_calculation_audit pca ${calcWhere}`,
-          calcParams,
+          `SELECT COUNT(*) AS cnt FROM payroll_calculation_audit pca LEFT JOIN employees e ON e.id = pca.employee_id ${calcWhere}`,
+          calcParams
         );
         calcTotal = Number((ct as any[])[0]?.cnt ?? 0);
       } catch {
@@ -240,12 +250,15 @@ payrollAuditTrailRouter.get(
 payrollAuditTrailRouter.get(
   "/runs",
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const runScope = await scopeFor(req, { branchId: "spr.branch_id", processId: "spr.process_id" });
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, run_month, status, created_at
-         FROM salary_prep_run
-         ORDER BY run_month DESC
+      `SELECT spr.id, spr.run_month, spr.status, spr.created_at
+         FROM salary_prep_run spr
+        WHERE (${runScope.sql})
+         ORDER BY spr.run_month DESC
          LIMIT 36`,
+      runScope.params
     );
     return res.json({ success: true, data: rows });
   }),

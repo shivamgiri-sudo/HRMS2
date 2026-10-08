@@ -1,0 +1,65 @@
+name: Sync Call Master from Mydashboards
+
+# Keeps the Call Master dashboards in step with github.com/tausifansari-mcn/Mydashboards.
+# Pull-based on purpose: the upstream repo is public, so this needs no cross-repo token.
+# Upstream can also trigger it at once with a repository_dispatch of type `mydashboards-updated`.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    types: [mydashboards-updated]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-mydashboards
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Pull upstream and rewrite
+        id: sync
+        run: |
+          set +e
+          node scripts/sync-mydashboards.mjs 2>&1 | tee sync.log
+          code=${PIPESTATUS[0]}
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          # 0 = synced, 3 = synced but upstream added a route the adapter lacks (reported in the PR); anything else fails the job
+          [ "$code" = 0 ] || [ "$code" = 3 ]
+
+      - name: Anything changed?
+        id: diff
+        run: |
+          git add -A src/features/call-master-sync backend/src/modules/call-master/upstream .mydashboards-sync.json
+          if git diff --cached --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Typecheck synced code
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          npm ci
+          npx tsc --noEmit -p tsconfig.app.json
+          cd backend && npm ci && npx tsc --noEmit
+
+      - name: Open sync PR
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: auto/sync-mydashboards
+          commit-message: "chore(call-master): sync from Mydashboards"
+          title: "Sync Call Master from Mydashboards"
+          body-path: sync.log
+          labels: automated

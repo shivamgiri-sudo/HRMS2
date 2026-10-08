@@ -45,11 +45,8 @@ import {
   type SalaryDateSource,
 } from "../payroll/salary-start-date.service.js";
 import { getEmployeeBgvStatus } from "../employees/employee-bgv.service.js";
-import { buildBankReadinessReport } from "../payroll/bank-payment-readiness.service.js";
-import {
-  createPackage,
-  getPackageById,
-} from "../payroll-masters/payrollMasters.service.js";
+import { buildBankReadinessForEmployees } from "../payroll/bank-payment-readiness.service.js";
+import { createPackage, getPackageById } from "../payroll-masters/payrollMasters.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
 
@@ -228,6 +225,16 @@ async function writeHistory(params: {
     );
 }
 
+/**
+ * One line in the server log when a read on this page is slow, so the next bottleneck shows up
+ * with numbers instead of a "the page is slow" report.
+ */
+const SLOW_MS = 1500;
+function logIfSlow(what: string, startedAt: number, detail: Record<string, unknown>) {
+  const ms = Date.now() - startedAt;
+  if (ms >= SLOW_MS) console.warn(`[payroll-head-review] slow ${what}: ${ms}ms`, detail);
+}
+
 // ── Queue ────────────────────────────────────────────────────────────────────
 
 /**
@@ -241,6 +248,7 @@ export async function getQueue(
   filters: { status?: string; q?: string; branch?: string },
   callerUserId: string,
 ) {
+  const startedAt = Date.now();
   const status = filters.status || "pending_review";
   const conds: string[] = ["r.status = ?"];
   const params: unknown[] = [status];
@@ -252,22 +260,20 @@ export async function getQueue(
     conds.push("b.branch_name = ?");
     params.push(filters.branch);
   }
-  // payroll_head/admin/super_admin see the whole queue as before — bypassed explicitly rather
+  // payroll_head/super_admin see the whole queue as before (admin: own branch only, below) — bypassed explicitly rather
   // than relying on buildScopeWhereClause resolving them to an 'all' scope row (both live
   // payroll_head users happen to have one today, but that's data, not a guarantee for the next
   // one). payroll_hr/branch_head — newly allowed onto this route — are branch/process-scoped,
   // the same helper every other row-scoped query in this codebase uses.
-  const isFullAccess = await hasAnyRole(
-    callerUserId,
-    "payroll_head",
-    "admin",
-    "super_admin",
-  );
+  const isFullAccess = await hasAnyRole(callerUserId, "payroll_head", "super_admin");
   if (!isFullAccess) {
-    const scope = await buildScopeWhereClause(callerUserId, [...VIEWER_ROLES], {
-      branchId: "e.branch_id",
-      processId: "e.process_id",
-    });
+    const scope = await buildScopeWhereClause(
+      callerUserId,
+      [...VIEWER_ROLES],
+      { branchId: "e.branch_id", processId: "e.process_id" },
+      // admin is branch-scoped (owner policy 2026-10-01): own branch only; org-wide roles stay 1=1.
+      { allowAdminBypass: true }
+    );
     conds.push(scope.sql);
     params.push(...scope.params);
   }
@@ -363,17 +369,18 @@ export async function getQueue(
   // BGV reuses the real per-employee resolver as-is (candidate_id, with the
   // ats_onboarding_bridge fallback) rather than a second, drift-prone implementation. Bank calls
   // the org-wide report exactly ONCE for the whole batch, not once per row.
+  const listedAt = Date.now();
   const enrichRows = rows.slice(0, ENRICH_ROW_CAP);
   if (enrichRows.length > 0) {
     const [bgvResults, bankReport, pennyDrop] = await Promise.all([
-      Promise.all(
-        enrichRows.map((r) =>
-          getEmployeeBgvStatus(r.employee_id as string).catch((e: unknown) => ({
-            error: e instanceof Error ? e.message : String(e),
-          })),
-        ),
-      ),
-      buildBankReadinessReport(null).catch((e: unknown) => ({
+      Promise.all(enrichRows.map((r) =>
+        getEmployeeBgvStatus(r.employee_id as string).catch((e: unknown) => ({
+          error: e instanceof Error ? e.message : String(e),
+        }))
+      )),
+      // Only the rows on screen. This used to build the org-wide report — every active
+      // employee plus two full scans of db_bill's salary history — on every load.
+      buildBankReadinessForEmployees(enrichRows.map((r) => r.employee_id as string)).catch((e: unknown) => ({
         error: e instanceof Error ? e.message : String(e),
       })),
       fetchPennyDropByEmployee(enrichRows.map((r) => r.employee_id as string)),
@@ -406,23 +413,22 @@ export async function getQueue(
     });
   }
 
+  logIfSlow("queue", startedAt, { status, rows: rows.length, list_ms: listedAt - startedAt, enrich_ms: Date.now() - listedAt });
   return rows;
 }
 
 export async function listQueueBranches(callerUserId: string) {
   const conds = ["b.branch_name IS NOT NULL"];
   const params: unknown[] = [];
-  const isFullAccess = await hasAnyRole(
-    callerUserId,
-    "payroll_head",
-    "admin",
-    "super_admin",
-  );
+  const isFullAccess = await hasAnyRole(callerUserId, "payroll_head", "super_admin");
   if (!isFullAccess) {
-    const scope = await buildScopeWhereClause(callerUserId, [...VIEWER_ROLES], {
-      branchId: "e.branch_id",
-      processId: "e.process_id",
-    });
+    const scope = await buildScopeWhereClause(
+      callerUserId,
+      [...VIEWER_ROLES],
+      { branchId: "e.branch_id", processId: "e.process_id" },
+      // admin is branch-scoped (owner policy 2026-10-01): own branch only; org-wide roles stay 1=1.
+      { allowAdminBypass: true }
+    );
     conds.push(scope.sql);
     params.push(...scope.params);
   }
@@ -441,6 +447,7 @@ export async function listQueueBranches(callerUserId: string) {
 // ── Single-employee journey aggregation ─────────────────────────────────────
 
 export async function getEmployeeJourney(employeeId: string) {
+  const startedAt = Date.now();
   const review = await getReviewRow(employeeId);
   if (!review)
     throw httpError(
@@ -463,10 +470,9 @@ export async function getEmployeeJourney(employeeId: string) {
     payrollHrValidationRows,
     exceptionProposalRows,
   ] = await Promise.all([
-    db
-      .execute<RowDataPacket[]>(
-        `SELECT e.*, b.branch_name, b.state AS branch_state, dm.designation_name,
-              cc.cost_centre_name, pm.process_name
+    db.execute<RowDataPacket[]>(
+      `SELECT e.*, b.branch_name, b.state AS branch_state, dm.designation_name,
+              cc.cost_centre_name, cc.cost_centre_code, pm.process_name
          FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN designation_master dm ON dm.id = e.designation_id
@@ -479,9 +485,8 @@ export async function getEmployeeJourney(employeeId: string) {
     getEmployeeBgvStatus(employeeId).catch((e: unknown) => ({
       error: e instanceof Error ? e.message : String(e),
     })),
-    // Org-wide report, filtered to this employee — reuses the real classifier
-    // rather than duplicating its input-assembly logic for a single row.
-    buildBankReadinessReport(null).catch((e: unknown) => ({
+    // This employee only, through the same classifier the org-wide report runs.
+    buildBankReadinessForEmployees([employeeId]).catch((e: unknown) => ({
       error: e instanceof Error ? e.message : String(e),
     })),
     db
@@ -628,6 +633,7 @@ export async function getEmployeeJourney(employeeId: string) {
       : null;
 
   const journeyPennyDrop = await fetchPennyDropByEmployee([employeeId]);
+  logIfSlow("journey", startedAt, { employee_id: employeeId });
 
   return {
     review,
@@ -1405,6 +1411,75 @@ async function resolveRejectionNotifyTargets(employeeId: string): Promise<{
 
 // ── Overall decision ─────────────────────────────────────────────────────────
 
+/** Approval notifications (Branch Head, Payroll HR, the employee). Never throws. */
+async function notifyApproval(employeeId: string): Promise<void> {
+  try {
+    const targets = await resolveRejectionNotifyTargets(employeeId).catch(() => ({
+      payrollHrUserId: null, branchHeadUserId: null,
+    }));
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.full_name, e.employee_code, e.user_id, phr.salary_package_id,
+              sa.ctc_annual,
+              sca.basic, sca.hra, sca.conveyance, sca.special_allowance, sca.gross,
+              sca.pf_applicable, sca.employer_pf AS pf_employee_note, sca.esi_applicable,
+              sca.ctc, sca.net_estimate AS net_in_hand
+         FROM employees e
+         JOIN employee_payroll_head_review phr ON phr.employee_id = e.id
+         LEFT JOIN employee_salary_assignment sa ON sa.employee_id = e.id
+         LEFT JOIN salary_component_assignments sca
+                ON sca.employee_id = e.id AND sca.status = 'active'
+         WHERE e.id = ?
+         ORDER BY sca.effective_date DESC LIMIT 1`,
+      [employeeId]
+    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+    const emp = empRows[0];
+    const name = emp?.full_name ?? 'employee';
+    const code = emp?.employee_code ?? '';
+    const empUserId = emp?.user_id ? String(emp.user_id) : null;
+    const ctcMonthly = emp?.ctc_annual ? Math.round(Number(emp.ctc_annual) / 12).toLocaleString('en-IN') : '—';
+
+    const inr = (n: unknown) => n == null ? null : `₹${Math.round(Number(n)).toLocaleString('en-IN')}`;
+    const breakupLine = (label: string, v: unknown) => { const f = inr(v); return f ? `${label}: ${f}` : null; };
+    const breakup = emp ? [
+      breakupLine('Basic', emp.basic), breakupLine('HRA', emp.hra), breakupLine('Conveyance', emp.conveyance),
+      breakupLine('Special Allowance', emp.special_allowance), breakupLine('Gross', emp.gross),
+      breakupLine('Net in Hand', emp.net_in_hand), breakupLine('CTC (monthly)', emp.ctc),
+    ].filter(Boolean).join(' · ') : '';
+
+    const notifyTargets = [targets.branchHeadUserId, targets.payrollHrUserId].filter(Boolean) as string[];
+    await Promise.allSettled([
+      ...notifyTargets.map((userId) =>
+        inboxService.createItem({
+          user_id: userId,
+          type: 'payroll_head_review_approved',
+          title: `Salary approved for ${name} (${code})`,
+          description: breakup
+            ? `Payroll Head has reviewed and approved the salary for ${name}. ${breakup}. This employee is now payroll-eligible. No action required — this is for your records.`
+            : `Payroll Head has reviewed and approved the salary for ${name}. Monthly CTC: ₹${ctcMonthly}. This employee is now payroll-eligible. No action required — this is for your records.`,
+          entity_type: 'employee',
+          entity_id: employeeId,
+          action_url: `/payroll/salary-review/${employeeId}`,
+          priority: 'low',
+        }).catch((e) => console.warn('[payroll-head-review] approve notify failed:', e))
+      ),
+      ...(empUserId ? [inboxService.createItem({
+        user_id: empUserId,
+        type: 'payroll_head_review_approved_employee',
+        title: 'Your salary has been assigned',
+        description: breakup
+          ? `Your salary has been reviewed and approved. ${breakup}.`
+          : `Your salary has been reviewed and approved. Monthly CTC: ₹${ctcMonthly}.`,
+        entity_type: 'employee',
+        entity_id: employeeId,
+        priority: 'normal',
+      }).catch((e) => console.warn('[payroll-head-review] approve notify employee failed:', e))] : []),
+    ]);
+  } catch (e) {
+    console.warn("[payroll-head-review] approve notifications failed:", e);
+  }
+}
+
 export async function approve(employeeId: string, actorUserId: string) {
   const review = await getReviewRow(employeeId);
   if (!review)
@@ -1468,103 +1543,13 @@ export async function approve(employeeId: string, actorUserId: string) {
   // no action required — Payroll Head is the FINAL salary approver, they don't re-approve),
   // AND the employee themselves — previously the employee was never notified at all, and
   // everyone only saw "Monthly CTC: ₹X", not the actual breakup.
-  const targets = await resolveRejectionNotifyTargets(employeeId).catch(() => ({
-    payrollHrUserId: null,
-    branchHeadUserId: null,
-  }));
+  //
+  // Runs after the response, like the contract/kit step below: the approval is committed above
+  // and every notification already swallowed its own failure, so the reviewer was only ever
+  // waiting on inbox writes that could not change the outcome.
+  void notifyApproval(employeeId);
 
-  const [empRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT e.full_name, e.employee_code, e.user_id, phr.salary_package_id,
-            sa.ctc_annual,
-            sca.basic, sca.hra, sca.conveyance, sca.special_allowance, sca.gross,
-            sca.pf_applicable, sca.employer_pf AS pf_employee_note, sca.esi_applicable,
-            sca.ctc, sca.net_estimate AS net_in_hand
-       FROM employees e
-       JOIN employee_payroll_head_review phr ON phr.employee_id = e.id
-       LEFT JOIN employee_salary_assignment sa ON sa.employee_id = e.id
-       LEFT JOIN salary_component_assignments sca
-              ON sca.employee_id = e.id AND sca.status = 'active'
-       WHERE e.id = ?
-       ORDER BY sca.effective_date DESC LIMIT 1`,
-      [employeeId],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
-  const emp = empRows[0];
-  const name = emp?.full_name ?? "employee";
-  const code = emp?.employee_code ?? "";
-  const empUserId = emp?.user_id ? String(emp.user_id) : null;
-  const ctcMonthly = emp?.ctc_annual
-    ? Math.round(Number(emp.ctc_annual) / 12).toLocaleString("en-IN")
-    : "—";
-
-  const inr = (n: unknown) =>
-    n == null ? null : `₹${Math.round(Number(n)).toLocaleString("en-IN")}`;
-  const breakupLine = (label: string, v: unknown) => {
-    const f = inr(v);
-    return f ? `${label}: ${f}` : null;
-  };
-  const breakup = emp
-    ? [
-        breakupLine("Basic", emp.basic),
-        breakupLine("HRA", emp.hra),
-        breakupLine("Conveyance", emp.conveyance),
-        breakupLine("Special Allowance", emp.special_allowance),
-        breakupLine("Gross", emp.gross),
-        breakupLine("Net in Hand", emp.net_in_hand),
-        breakupLine("CTC (monthly)", emp.ctc),
-      ]
-        .filter(Boolean)
-        .join(" · ")
-    : "";
-
-  const notifyTargets = [
-    targets.branchHeadUserId,
-    targets.payrollHrUserId,
-  ].filter(Boolean) as string[];
-  await Promise.allSettled([
-    ...notifyTargets.map((userId) =>
-      inboxService
-        .createItem({
-          user_id: userId,
-          type: "payroll_head_review_approved",
-          title: `Salary approved for ${name} (${code})`,
-          description: breakup
-            ? `Payroll Head has reviewed and approved the salary for ${name}. ${breakup}. This employee is now payroll-eligible. No action required — this is for your records.`
-            : `Payroll Head has reviewed and approved the salary for ${name}. Monthly CTC: ₹${ctcMonthly}. This employee is now payroll-eligible. No action required — this is for your records.`,
-          entity_type: "employee",
-          entity_id: employeeId,
-          action_url: `/payroll/salary-review/${employeeId}`,
-          priority: "low",
-        })
-        .catch((e) =>
-          console.warn("[payroll-head-review] approve notify failed:", e),
-        ),
-    ),
-    ...(empUserId
-      ? [
-          inboxService
-            .createItem({
-              user_id: empUserId,
-              type: "payroll_head_review_approved_employee",
-              title: "Your salary has been assigned",
-              description: breakup
-                ? `Your salary has been reviewed and approved. ${breakup}.`
-                : `Your salary has been reviewed and approved. Monthly CTC: ₹${ctcMonthly}.`,
-              entity_type: "employee",
-              entity_id: employeeId,
-              priority: "normal",
-            })
-            .catch((e) =>
-              console.warn(
-                "[payroll-head-review] approve notify employee failed:",
-                e,
-              ),
-            ),
-        ]
-      : []),
-  ]);
-
+  // Generate EMPLOYMENT_CONTRACT and release joining kit after approval (2026-09-21).
   // Generate EMPLOYMENT_CONTRACT and release joining kit after approval (2026-09-21).
   //
   // autoGenerateJoiningDocuments deliberately skips EMPLOYMENT_CONTRACT at employee creation
@@ -1729,7 +1714,7 @@ export async function reject(
   const empName = empRows[0]?.full_name ?? "the employee";
   const empUserId = empRows[0]?.user_id ? String(empRows[0].user_id) : null;
 
-  let targets = await resolveRejectionNotifyTargets(employeeId);
+  const targets = await resolveRejectionNotifyTargets(employeeId);
   let usedFallback = false;
   let fallbackUserIds: string[] = [];
   if (!targets.payrollHrUserId && !targets.branchHeadUserId) {

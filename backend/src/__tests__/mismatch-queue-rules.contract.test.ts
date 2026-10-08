@@ -131,9 +131,7 @@ describe("queue definition", () => {
     stubDb({ closedMonths: ["2026-08"] });
     const res = await request(appFor("wfm")).get("/api/wfm/mismatches");
     expect(res.status).toBe(200);
-    const listCall = execute.mock.calls.find(([sql]) =>
-      /COUNT\(\*\) AS total/.test(sql),
-    )!;
+    const listCall = execute.mock.calls.find(([sql]) => /COUNT\(\*\) OVER\(\) AS total_count/.test(sql))!;
     expect(listCall[0]).toMatch(/adr\.is_locked = 0/);
     expect(listCall[0]).toMatch(/adr\.mismatch_resolved_at IS NULL/);
     // August's bounds, with the real last day (not a fixed -31).
@@ -145,9 +143,7 @@ describe("queue definition", () => {
   it("only compares sources that both have data, and drops the missing_punch arm", async () => {
     const res = await request(appFor("wfm")).get("/api/wfm/mismatches");
     expect(res.status).toBe(200);
-    const sql = execute.mock.calls.find(([s]) =>
-      /COUNT\(\*\) AS total/.test(s),
-    )![0] as string;
+    const sql = execute.mock.calls.find(([s]) => /COUNT\(\*\) OVER\(\) AS total_count/.test(s))![0] as string;
     expect(sql).toMatch(/adr\.biometric_status IS NOT NULL/);
     expect(sql).toMatch(/adr\.apr_status IS NOT NULL/);
     expect(sql).toMatch(/adr\.biometric_status <> adr\.apr_status/);
@@ -162,9 +158,7 @@ describe("queue query shape (speed)", () => {
   it("UNIONs the two arms instead of OR-ing them, so each arm can use its own index", async () => {
     const res = await request(appFor("wfm")).get("/api/wfm/mismatches");
     expect(res.status).toBe(200);
-    const sql = execute.mock.calls.find(([s]) =>
-      /COUNT\(\*\) AS total/.test(s),
-    )![0] as string;
+    const sql = execute.mock.calls.find(([s]) => /COUNT\(\*\) OVER\(\) AS total_count/.test(s))![0] as string;
     // Measured live 2026-09-21: a single WHERE with an OR took 17s (full scan on idx_adr_locked);
     // the UNION of the two arms takes ~1.7s. A reintroduced OR would silently bring the 17s back.
     expect(sql).toMatch(/UNION/);
@@ -179,9 +173,7 @@ describe("queue query shape (speed)", () => {
       "/api/wfm/mismatches?fromDate=2026-09-01&toDate=2026-09-15&employeeId=emp-9",
     );
     expect(res.status).toBe(200);
-    const call = execute.mock.calls.find(([s]) =>
-      /COUNT\(\*\) AS total/.test(s),
-    )!;
+    const call = execute.mock.calls.find(([s]) => /COUNT\(\*\) OVER\(\) AS total_count/.test(s))!;
     const params = call[1] as unknown[];
     expect(params.slice(0, 4)).toEqual([
       "2026-09-01",

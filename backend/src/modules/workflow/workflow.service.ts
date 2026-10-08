@@ -16,6 +16,18 @@ export interface ApprovalRequest {
   updated_at: string;
 }
 
+export type RequesterScope = { sql: string; params: unknown[]; userId: string };
+
+/**
+ * Branch scoping (owner ruling 2026-10-01): a request is visible to an approver only when its requester is the
+ * caller or an employee inside the caller's branch / assigned scope (`e` = requester's employee row).
+ * Org-wide callers pass sql "1=1".
+ */
+function requesterPredicate(scope?: RequesterScope): { sql: string; params: unknown[] } {
+  if (!scope || scope.sql === "1=1") return { sql: "1=1", params: [] };
+  return { sql: `(r.requested_by = ? OR (${scope.sql}))`, params: [scope.userId, ...scope.params] };
+}
+
 export const workflowService = {
   async listWorkflows() {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -78,19 +90,22 @@ export const workflowService = {
     return (rows as RowDataPacket[])[0] as ApprovalRequest;
   },
 
-  async listRequestsForEntity(entityType: string, entityId: string) {
+  async listRequestsForEntity(entityType: string, entityId: string, scope?: RequesterScope) {
+    const pred = requesterPredicate(scope);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT r.*, w.workflow_name, w.workflow_code
        FROM approval_request r
        JOIN approval_workflow_master w ON w.id = r.workflow_id
-       WHERE r.entity_type = ? AND r.entity_id = ?
+       LEFT JOIN employees e ON e.user_id = r.requested_by AND e.active_status = 1
+       WHERE r.entity_type = ? AND r.entity_id = ? AND ${pred.sql}
        ORDER BY r.created_at DESC`,
-      [entityType, entityId],
+      [entityType, entityId, ...pred.params]
     );
     return rows as RowDataPacket[];
   },
 
-  async listPendingForRole(roleKey: string) {
+  async listPendingForRole(roleKey: string, scope?: RequesterScope) {
+    const pred = requesterPredicate(scope);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT r.*, r.summary_text AS summary, w.workflow_name, w.workflow_code, s.step_name, s.approver_role, s.sla_hours,
               COALESCE(
@@ -103,9 +118,9 @@ export const workflowService = {
        JOIN approval_workflow_step s ON s.workflow_id = w.id AND s.step_order = r.current_step AND s.active_status = 1
        LEFT JOIN auth_user au ON au.id = r.requested_by
        LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
-       WHERE r.status = 'pending' AND s.approver_role = ?
+       WHERE r.status = 'pending' AND s.approver_role = ? AND ${pred.sql}
        ORDER BY r.created_at ASC`,
-      [roleKey],
+      [roleKey, ...pred.params]
     );
     return rows as RowDataPacket[];
   },
@@ -136,31 +151,18 @@ export const workflowService = {
     return rows as RowDataPacket[];
   },
 
-  async listAllRequests(filters?: {
-    status?: string;
-    entity_type?: string;
-    requested_by?: string;
-    page?: number;
-    limit?: number;
-  }) {
+  async listAllRequests(filters?: { status?: string; entity_type?: string; requested_by?: string; page?: number; limit?: number }, scope?: RequesterScope) {
     const page = filters?.page ?? 1;
     const limit = filters?.limit ?? 25;
     const offset = (page - 1) * limit;
     const conditions: string[] = [];
     const params: unknown[] = [];
-    if (filters?.status) {
-      conditions.push("r.status = ?");
-      params.push(filters.status);
-    }
-    if (filters?.entity_type) {
-      conditions.push("r.entity_type = ?");
-      params.push(filters.entity_type);
-    }
-    if (filters?.requested_by) {
-      conditions.push("r.requested_by = ?");
-      params.push(filters.requested_by);
-    }
-    const where = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
+    if (filters?.status) { conditions.push('r.status = ?'); params.push(filters.status); }
+    if (filters?.entity_type) { conditions.push('r.entity_type = ?'); params.push(filters.entity_type); }
+    if (filters?.requested_by) { conditions.push('r.requested_by = ?'); params.push(filters.requested_by); }
+    const pred = requesterPredicate(scope);
+    if (pred.sql !== '1=1') { conditions.push(pred.sql); params.push(...pred.params); }
+    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT r.*, r.summary_text AS summary, w.workflow_name, w.workflow_code,
               COALESCE(
@@ -178,6 +180,20 @@ export const workflowService = {
       params,
     );
     return rows as RowDataPacket[];
+  },
+
+  /** True when the request exists and its requester is inside the scope (or is the caller). Unknown ids: null. */
+  async requestInScope(requestId: string, scope?: RequesterScope): Promise<boolean | null> {
+    const [exists] = await db.execute<RowDataPacket[]>("SELECT id FROM approval_request WHERE id = ? LIMIT 1", [requestId]);
+    if (!(exists as RowDataPacket[]).length) return null;
+    const pred = requesterPredicate(scope);
+    if (pred.sql === "1=1") return true;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 AS ok FROM approval_request r LEFT JOIN employees e ON e.user_id = r.requested_by AND e.active_status = 1
+        WHERE r.id = ? AND ${pred.sql} LIMIT 1`,
+      [requestId, ...pred.params]
+    );
+    return (rows as RowDataPacket[]).length > 0;
   },
 
   async getRequestActions(requestId: string) {

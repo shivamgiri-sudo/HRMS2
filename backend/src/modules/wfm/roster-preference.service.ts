@@ -1,5 +1,7 @@
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import type { UserBusinessScope } from '../../shared/enterpriseScope.js';
+import { scopePredicate } from './branch-scope.js';
 
 export const rosterPreferenceService = {
   async submit(
@@ -45,14 +47,18 @@ export const rosterPreferenceService = {
     return rows;
   },
 
-  async getPending(): Promise<RowDataPacket[]> {
+  async getPending(scope?: UserBusinessScope): Promise<RowDataPacket[]> {
+    // Branch scoping (owner ruling 2026-10-01). Unfiltered SQL kept byte-identical for org-wide callers.
+    const c = scope ? scopePredicate(scope, { employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id" }) : null;
+    const scoped = c && c.sql !== "1=1";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT erp.*, e.first_name, e.last_name, e.employee_code, wst.shift_name
          FROM employee_roster_preference erp
          JOIN employees e ON e.id = erp.employee_id
          LEFT JOIN wfm_shift_template wst ON wst.id = erp.preferred_shift_id
-        WHERE erp.status = 'pending'
+        WHERE erp.status = 'pending'${scoped ? ` AND (${c!.sql})` : ""}
         ORDER BY erp.created_at ASC`,
+      scoped ? (c!.params as any[]) : []
     );
     return rows;
   },

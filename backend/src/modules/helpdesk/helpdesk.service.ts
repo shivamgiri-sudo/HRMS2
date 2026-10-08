@@ -555,37 +555,19 @@ export const helpdeskService = {
     from?: string;
     to?: string;
     q?: string;
-  }) {
+  }, scope?: { sql: string; params: unknown[] }) {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.status) {
-      conds.push("status = ?");
-      params.push(filters.status);
-    }
-    if (filters.assigned_to) {
-      conds.push("assigned_to = ?");
-      params.push(filters.assigned_to);
-    }
-    if (filters.employee_id) {
-      conds.push("employee_id = ?");
-      params.push(filters.employee_id);
-    }
-    if (filters.severity) {
-      conds.push("severity = ?");
-      params.push(filters.severity);
-    }
-    if (filters.from) {
-      conds.push("created_at >= ?");
-      params.push(filters.from + " 00:00:00");
-    }
-    if (filters.to) {
-      conds.push("created_at <= ?");
-      params.push(filters.to + " 23:59:59");
-    }
-    if (filters.q?.trim()) {
-      conds.push(
-        "(grievance_code LIKE ? OR employee_id IN (SELECT id FROM employees WHERE full_name LIKE ?))",
-      );
+    // Branch scoping: only grievances raised by employees inside the caller's branch / assignments.
+    if (scope && scope.sql !== "1=1") { conds.push(`employee_id IN (SELECT e.id FROM employees e WHERE (${scope.sql}))`); params.push(...scope.params); }
+    if (filters.status)      { conds.push("status = ?");      params.push(filters.status); }
+    if (filters.assigned_to) { conds.push("assigned_to = ?"); params.push(filters.assigned_to); }
+    if (filters.employee_id) { conds.push("employee_id = ?"); params.push(filters.employee_id); }
+    if (filters.severity)    { conds.push("severity = ?");    params.push(filters.severity); }
+    if (filters.from)        { conds.push("created_at >= ?"); params.push(filters.from + " 00:00:00"); }
+    if (filters.to)          { conds.push("created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
+    if (filters.q?.trim())   {
+      conds.push("(grievance_code LIKE ? OR employee_id IN (SELECT id FROM employees WHERE full_name LIKE ?))");
       params.push(`%${filters.q.trim()}%`, `%${filters.q.trim()}%`);
     }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
@@ -929,7 +911,7 @@ export const helpdeskService = {
 
   // ── Agents list (for assign dropdown) ─────────────────────────────────────
 
-  async listAgents(filters: { branch_id?: string } = {}) {
+  async listAgents(filters: { branch_id?: string } = {}, scope?: { sql: string; params: unknown[] }) {
     const conds: string[] = [
       "ur.active_status = 1",
       "ur.role_key IN ('admin','hr','super_admin','it','branch_it','it_admin')",
@@ -945,6 +927,14 @@ export const helpdeskService = {
           " (ur.role_key IN ('it','branch_it') AND e.branch_id = ?))",
       );
       params.push(filters.branch_id);
+    }
+
+    // Branch scoping (owner ruling 2026-10-01): a branch-scoped caller (hr / it ...) sees admin and
+    // super_admin agents plus agents whose own employee record sits inside the caller's scope.
+    // A client branch_id above can only narrow further. org-wide callers pass 1=1 / nothing.
+    if (scope && scope.sql !== "1=1") {
+      conds.push(`(ur.role_key IN ('admin','super_admin') OR (${scope.sql}))`);
+      params.push(...scope.params);
     }
 
     // GROUP BY au.id collapses an agent who holds several helpdesk roles into one dropdown entry.

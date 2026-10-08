@@ -199,7 +199,7 @@ describe("migration manifest — files and entries agree", () => {
   it("a released migration file has not been renamed or deleted from disk", () => {
     // Renaming an applied migration makes schema_migrations miss it, so it
     // re-runs on every environment that already had it.
-    const files = new Set(sqlFiles());
+    const files = new Set(sqlFilesIncludingSubdirs());
     const lock = readLock();
     const knownDangling = new Set(lock.knownDangling);
     const gone = lock.released.filter(

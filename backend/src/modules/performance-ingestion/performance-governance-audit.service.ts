@@ -57,7 +57,8 @@ export const performanceGovernanceAuditService = {
       params.push(input.actionCode);
     }
 
-    const where = conditions.join(" AND ");
+    // An org-wide caller with no filters has no conditions; an empty WHERE was a SQL syntax error (500).
+    const where = conditions.length ? conditions.join(" AND ") : "1=1";
     const [[countRows], [rows], [actions]] = await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total

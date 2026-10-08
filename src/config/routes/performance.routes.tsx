@@ -18,18 +18,25 @@ const TeamCoachingPage              = lazy(() => import("@/pages/team/TeamCoachi
 const MyKpiDashboard                 = lazy(() => import("@/pages/MyKpiDashboard"));
 const NativeAgentPerformanceDashboard = lazy(() => import("@/pages/NativeAgentPerformanceDashboard"));
 const NativeProcessMetricConfig = lazy(() => import("@/pages/NativeProcessMetricConfig"));
+const KpiCataloguePage = lazy(() => import("@/pages/KpiCataloguePage"));
+const KpiPerformancePage = lazy(() => import("@/pages/KpiPerformancePage"));
 const ProcessPerformancePage = lazy(() => import("@/pages/ProcessPerformancePage"));
 const ProcessKpiDashboardPage = lazy(() => import("@/pages/ProcessKpiDashboardPage"));
 const ProcessDataSourcePage = lazy(() => import("@/pages/ProcessDataSourcePage"));
+const ProcessDashboardPage = lazy(() => import("@/pages/ProcessDashboardPage"));
+const ProcessDashboardAdminPage = lazy(() => import("@/pages/ProcessDashboardAdminPage"));
 const KpiStudioPage = lazy(() => import("@/pages/KpiStudioPage"));
-const DashboardBuilderPage = lazy(() => import("@/pages/DashboardBuilderPage"));
+const DashboardStudioPage = lazy(() => import("@/pages/DashboardStudioPage"));
 const ProcessOperationsPage = lazy(() => import("@/pages/ProcessOperationsPage"));
 const OpsControlTowerPage = lazy(() => import("@/pages/ops/OpsControlTowerPage"));
 const ProcessPerformanceV2Page = lazy(() => import("@/pages/ProcessPerformanceV2Page"));
 const ProcessOperationsDemoPage = lazy(() => import("@/pages/ProcessOperationsDemoPage"));
 const NativeQAFileAudit = lazy(() => import("@/pages/NativeQAFileAudit"));
 const NativeQAFormBuilder = lazy(() => import("@/pages/NativeQAFormBuilder"));
-const NativeCallMasterDashboard      = lazy(() => import("@/pages/NativeCallMasterDashboard"));
+const CallMasterPage                = lazy(() => import("@/features/call-master-sync/pages").then((m) => ({ default: m.CallMasterPage })));
+const OpeningIntelligencePage       = lazy(() => import("@/features/call-master-sync/pages").then((m) => ({ default: m.OpeningIntelligencePage })));
+const CustomerIntelligencePage      = lazy(() => import("@/features/call-master-sync/pages").then((m) => ({ default: m.CustomerIntelligencePage })));
+const OutboundSalesPage             = lazy(() => import("@/features/call-master-sync/pages").then((m) => ({ default: m.OutboundSalesPage })));
 const NativeOpsCommandCenter         = lazy(() => import("@/pages/NativeOpsCommandCenter"));
 const NativeInboundDashboard         = lazy(() => import("@/pages/NativeInboundDashboard"));
 const NativeTATMatrix                = lazy(() => import("@/pages/NativeTATMatrix"));
@@ -62,18 +69,18 @@ export const performanceRouteElements = (
       <Route path="/performance/command-center" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><UnifiedPerformanceCommandCenter /></Gate></ProtectedRoute>} />
 
       {/* Performance feedback */}
-      <Route path="/performance-feedback/my-reports"      element={<ProtectedRoute><NativePerformanceFeedbackMyReports /></ProtectedRoute>} />
-      <Route path="/performance-feedback/reports/:id"     element={<ProtectedRoute><NativePerformanceFeedbackReportDetail /></ProtectedRoute>} />
-      <Route path="/performance-feedback/development-plan" element={<ProtectedRoute><NativePerformanceFeedbackDevelopmentPlan /></ProtectedRoute>} />
-      <Route path="/performance-feedback/assignments"     element={<ProtectedRoute><NativePerformanceFeedbackAssignments /></ProtectedRoute>} />
-      <Route path="/performance-feedback/form/:id"        element={<ProtectedRoute><NativePerformanceFeedbackForm /></ProtectedRoute>} />
-      <Route path="/performance-feedback/team-reports"    element={<ProtectedRoute><NativePerformanceFeedbackTeamReports /></ProtectedRoute>} />
+      <Route path="/performance-feedback/my-reports"      element={<ProtectedRoute><DashboardLayout><NativePerformanceFeedbackMyReports /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/performance-feedback/reports/:id"     element={<ProtectedRoute><DashboardLayout><NativePerformanceFeedbackReportDetail /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/performance-feedback/development-plan" element={<ProtectedRoute><DashboardLayout><NativePerformanceFeedbackDevelopmentPlan /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/performance-feedback/assignments"     element={<ProtectedRoute><DashboardLayout><NativePerformanceFeedbackAssignments /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/performance-feedback/form/:id"        element={<ProtectedRoute><DashboardLayout><NativePerformanceFeedbackForm /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/performance-feedback/team-reports"    element={<ProtectedRoute><DashboardLayout><NativePerformanceFeedbackTeamReports /></DashboardLayout></ProtectedRoute>} />
 
       {/* Performance Hub */}
       <Route path="/performance-hub" element={<ProtectedRoute><Gate pageCode="PERFORMANCE_HUB"><PerformanceHub /></Gate></ProtectedRoute>} />
 
       {/* Performance Scorecard Command Center */}
-      <Route path="/performance-command-center" element={<ProtectedRoute><Gate pageCode="PERFORMANCE_SCORECARD_COMMAND_CENTER"><PerformanceCommandCenter /></Gate></ProtectedRoute>} />
+      <Route path="/performance-command-center" element={<ProtectedRoute><Gate pageCode="PERFORMANCE_SCORECARD_COMMAND_CENTER"><DashboardLayout><PerformanceCommandCenter /></DashboardLayout></Gate></ProtectedRoute>} />
 
       {/* Retired URLs kept resolvable.
           Both were removed from the ceo role on 31-Jul (rbacPageMatrix.ts) and deactivated
@@ -127,22 +134,32 @@ export const performanceRouteElements = (
           above; same viewer set, separate page_catalog code (migration 1676). */}
       <Route path="/performance/process-kpi-dashboard" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','wfm','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_KPI_DASHBOARD"><ProcessKpiDashboardPage /></Gate></ProtectedRoute>} />
       <Route path="/performance/process-data-sources" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','wfm','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_DATA_SOURCE"><ProcessDataSourcePage /></Gate></ProtectedRoute>} />
+      {/* Config-driven Process Dashboard: any process an admin has registered (APR table + column mapping) gets this, no per-client code. Setup page is admin-only. */}
+      <Route path="/performance/process-dashboard/:processId" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','wfm','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_DASHBOARD"><ProcessDashboardPage /></Gate></ProtectedRoute>} />
+      <Route path="/performance/process-dashboard-admin" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','process_manager','operations_manager']}><Gate pageCode="PROCESS_DASHBOARD_ADMIN"><ProcessDashboardAdminPage /></Gate></ProtectedRoute>} />
       {/* Roles mirror kpi-studio.routes.ts's VIEW_ROLES; the router re-checks server-side. */}
       <Route path="/kpi-studio" element={<ProtectedRoute roles={['super_admin','admin','hr','process_manager','qa','tq_head','manager','branch_head','ceo','team_leader']}><Gate pageCode="KPI_STUDIO"><KpiStudioPage /></Gate></ProtectedRoute>} />
-      <Route path="/dashboard-builder" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader']}><Gate pageCode="DASHBOARD_BUILDER"><DashboardBuilderPage /></Gate></ProtectedRoute>} />
+      {/* Dashboard Studio (v2). The server re-checks roles and applies each viewer's branch/process scope to every number. */}
+      <Route path="/dashboard-builder" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader']}><Gate pageCode="DASHBOARD_BUILDER"><DashboardStudioPage /></Gate></ProtectedRoute>} />
+      <Route path="/dashboard-builder/:id" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader']}><Gate pageCode="DASHBOARD_BUILDER"><DashboardStudioPage /></Gate></ProtectedRoute>} />
       <Route path="/process-operations" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader','wfm','branch_wfm']}><Gate pageCode="PROCESS_OPERATIONS"><ProcessOperationsPage /></Gate></ProtectedRoute>} />
-      <Route path="/ops/control-tower" element={<ProtectedRoute roles={['super_admin','admin','ceo','hr','hr_admin','branch_head','operations_manager','wfm','payroll_head']}><Gate pageCode="OPS_CONTROL_TOWER"><OpsControlTowerPage /></Gate></ProtectedRoute>} />
+      <Route path="/ops/control-tower" element={<ProtectedRoute roles={['super_admin','admin','ceo','hr','hr_admin','branch_head','operations_manager','wfm','payroll_head','payroll_hr']}><Gate pageCode="OPS_CONTROL_TOWER"><OpsControlTowerPage /></Gate></ProtectedRoute>} />
       <Route path="/performance/process-performance-v2" element={<TpzRoute><ProcessPerformanceV2Page /></TpzRoute>} />
       <Route path="/process-performance-v2" element={<Navigate to="/performance/process-performance-v2" replace />} />
       <Route path="/process-operations-demo" element={<ProcessOperationsDemoPage />} />
-      <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager','manager']}><Gate pageCode="KPI_CONFIG"><NativeProcessMetricConfig /></Gate></ProtectedRoute>} />
-      <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head','branch_head','branch_qa','ceo','coo','manager']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQAFileAudit /></Gate></ProtectedRoute>} />
-      <Route path="/quality/audit-forms" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><NativeQAFormBuilder /></Gate></ProtectedRoute>} />
+      <Route path="/kpi/performance" element={<ProtectedRoute><Gate pageCode="KPI_PERFORMANCE"><KpiPerformancePage /></Gate></ProtectedRoute>} />
+      <Route path="/kpi/catalogue" element={<ProtectedRoute roles={['super_admin','admin','hr','qa','tq_head','process_manager','operations_manager','manager','branch_head','ceo','coo','wfm','branch_wfm']}><Gate pageCode="KPI_CONFIG"><KpiCataloguePage /></Gate></ProtectedRoute>} />
+      <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager','manager']}><Gate pageCode="KPI_CONFIG"><DashboardLayout><NativeProcessMetricConfig /></DashboardLayout></Gate></ProtectedRoute>} />
+      <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head','branch_head','branch_qa','ceo','coo','manager']}><Gate pageCode="QUALITY_DASHBOARD"><DashboardLayout><NativeQAFileAudit /></DashboardLayout></Gate></ProtectedRoute>} />
+      <Route path="/quality/audit-forms" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><DashboardLayout><NativeQAFormBuilder /></DashboardLayout></Gate></ProtectedRoute>} />
 
       {/* Operations — consolidated into one role-based drill-down page at /operations-dashboard. */}
       <Route path="/operations/dashboard" element={<Navigate to="/operations-dashboard" replace />} />
       <Route path="/ops/command-center"  element={<ProtectedRoute roles={['super_admin','admin','ceo','operations_manager','process_manager','branch_head','coo','manager','qa','quality_analyst','tq_head']}><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOpsCommandCenter /></Gate></ProtectedRoute>} />
-      <Route path="/call-master" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER"><NativeCallMasterDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/call-master" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER"><CallMasterPage /></Gate></ProtectedRoute>} />
+      <Route path="/call-master/opening-intelligence" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER"><OpeningIntelligencePage /></Gate></ProtectedRoute>} />
+      <Route path="/call-master/customer-intelligence" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER"><CustomerIntelligencePage /></Gate></ProtectedRoute>} />
+      <Route path="/call-master/outbound-sales" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER"><OutboundSalesPage /></Gate></ProtectedRoute>} />
       <Route path="/call-master/inbound" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER_INBOUND"><NativeInboundDashboard /></Gate></ProtectedRoute>} />
       {/* The live dialler dashboards live inside Process Operations (Live Dashboard view);
           this older standalone copy is no longer served. */}

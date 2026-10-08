@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { getScope, scopePredicate } from "../wfm/branch-scope.js";
 
 const router = Router();
 
@@ -27,6 +28,12 @@ router.get(
         .json({ error: "month parameter required in YYYY-MM format" });
     }
     const monthStart = `${month}-01`;
+    // Branch scoping (owner ruling 2026-10-01): non-org-wide callers only see their own branch / scope.
+    const callerScope = await getScope(req as any);
+    if (!callerScope) return res.status(401).json({ error: "Unauthorized" });
+    const sc = scopePredicate(callerScope, { employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id" });
+    const scopeSql = sc.sql === "1=1" ? "" : ` AND (${sc.sql})`;
+    const scopeParams = sc.sql === "1=1" ? [] : sc.params;
 
     // Generate a series of dates for the target month using a cross-join of
     // information_schema.COLUMNS as a numbers table (safe, always >= 100 rows).
@@ -64,11 +71,9 @@ router.get(
           'leave','leave_approved','approved_leave','on_leave','cl','el','sl','pl',
           'casual_leave','earned_leave','sick_leave','privilege_leave'
         )
-      )
+      )${scopeSql}
       ORDER BY cal.d, e.employee_code
-    `,
-      [monthStart, monthStart],
-    );
+    `, [monthStart, monthStart, ...scopeParams]);
 
     return res.json({
       mismatches: rows,

@@ -70,6 +70,14 @@ vi.mock("../career.service.js", () => ({
   },
 }));
 
+// Branch scoping (2026-10-01): admin/hr still pass the role gate, then canViewEmployee / the employee scope
+// condition decide which rows. Mocked permissive here; career-branch-scope.test.ts pins the refusals.
+vi.mock("../../../shared/enterpriseScope.js", () => ({
+  canViewEmployee: vi.fn(async () => true),
+  resolveUserBusinessScope: vi.fn(async () => ({})),
+  buildEmployeeScopeCondition: vi.fn(() => ({ sql: "1=1", params: [] })),
+}));
+
 const actor = { id: "u-caller-1", role: "employee", roles: ["employee"] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
   const original =
@@ -139,7 +147,7 @@ describe("GET /api/career/pip — row scope for non-privileged callers", () => {
     expect(listPips).not.toHaveBeenCalled();
   });
 
-  it("admin/hr still see everything regardless of employee_id", async () => {
+  it("admin/hr still pass the role gate and list through the scope condition", async () => {
     hasRole.mockResolvedValueOnce(true);
     const res = await request(app()).get(
       "/api/career/pip?employee_id=anyone-at-all",
@@ -147,6 +155,7 @@ describe("GET /api/career/pip — row scope for non-privileged callers", () => {
     expect(res.status).toBe(200);
     expect(listPips).toHaveBeenCalledWith(
       expect.objectContaining({ employeeId: "anyone-at-all" }),
+      expect.objectContaining({ sql: "1=1" })
     );
   });
 });

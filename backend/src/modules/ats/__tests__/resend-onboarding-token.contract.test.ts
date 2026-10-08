@@ -106,23 +106,15 @@ describe("resend onboarding link — every HR-department designation can use it,
     }
   });
 
-  it("every HR-department designation bypasses the branch/process scope check entirely", () => {
-    // Real incident, 2026-08-24: sofiya.sultan@teammas.co.in (role 'hr', correctly scoped to
-    // her own branch) could only resend for the ~15% of candidates in that one branch — the
-    // other ~85% span 6+ branches she has no scope row for. HR resending an onboarding link is
-    // an org-wide function, not a branch one, so this must be an unconditional bypass (like
-    // super_admin/admin already get), never routed through the branch-scoped hasScopedAccess
-    // check at all.
-    const start = onboardingRoutes.indexOf(
-      "const isHrDepartment = await hasAnyRole(",
-    );
-    const handler = onboardingRoutes.slice(start, start + 250);
-    for (const role of hrDesignations) {
-      expect(handler).toContain(`'${role}'`);
-    }
-    expect(onboardingRoutes).toContain(
-      "const allowed = isHrDepartment || await hasScopedAccess(",
-    );
+  it("no HR-department designation bypasses the branch scope check any more", () => {
+    // Owner ruling 2026-10-01 REVERSES the 2026-08-24 "HR resend is org-wide" decision: hr / hr_admin /
+    // hr_branch / hr_head / ho_hr / recruitment_hr are branch-scoped like every other non-org-wide role.
+    // The route now asks canAccessCandidate (the single candidate row-scope rule); only the org-wide
+    // roles (super_admin, admin, ceo, payroll_head ...) see every branch.
+    const start = onboardingRoutes.indexOf("const isHrDepartment = await canAccessCandidate(");
+    expect(start).toBeGreaterThan(-1);
+    expect(onboardingRoutes).not.toContain("hasAnyRole(\n      userId, 'hr', 'hr_admin'");
+    expect(onboardingRoutes).toContain("const allowed = isHrDepartment || await hasScopedAccess(");
   });
 
   it("non-HR-department roles stay properly branch/process-scoped", () => {

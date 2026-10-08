@@ -21,14 +21,11 @@ setSessionMaxExecutionTime(
 const MIGRATIONS_VERIFY_ONLY = process.env.MIGRATIONS_VERIFY_ONLY === "true";
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
 import { startEmployeeMasterSnapshotScheduler } from "./cron/employee-master-snapshot.cron.js";
-import {
-  startExitAutoAdvanceScheduler,
-  stopExitAutoAdvanceScheduler,
-} from "./cron/exitAutoAdvance.cron.js";
-import {
-  startMetaLeadSyncScheduler,
-  stopMetaLeadSyncScheduler,
-} from "./cron/metaLeadSync.cron.js";
+import { startExitAutoAdvanceScheduler, stopExitAutoAdvanceScheduler } from "./cron/exitAutoAdvance.cron.js";
+import { startPipelineHealthAlerts, stopPipelineHealthAlerts } from "./modules/hiring-engine/pipeline-health.cron.js";
+import { startQualifiedFollowupWorker, stopQualifiedFollowupWorker } from "./modules/hiring-engine/qualified-followup.worker.js";
+import { startMetaLeadSyncScheduler, stopMetaLeadSyncScheduler } from "./cron/metaLeadSync.cron.js";
+import { startApprovalDigestScheduler } from "./modules/approval-center/approval-digest.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { startCelebrationScheduler } from "./modules/engagement/celebration.cron.js";
@@ -52,6 +49,7 @@ import {
   stopPerformanceIngestionScheduler,
 } from "./modules/performance-ingestion/performance-scheduler.service.js";
 import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.cron.js";
+import { startAttendanceHealWorker } from "./modules/wfm/attendance-heal.worker.js";
 import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-reconciliation.worker.js";
 // D-1 Daily Manager Intelligence Briefing Engine — dual-registered here AND in
 // workers/all-workers.ts, same convention as every other scheduler in this file
@@ -60,10 +58,12 @@ import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-re
 // Off by default: MANAGER_DAILY_BRIEF_ENABLED must be explicitly "true".
 import { startManagerDailyBriefScheduler } from "./modules/management/daily-brief/daily-brief.cron.js";
 import { startRosterUploadEscalationScheduler } from "./modules/wfm/roster-upload-escalation.cron.js";
+import { startRosterRequestsScheduler } from "./modules/roster-requests/roster-requests.cron.js";
 // Off by default: INTERVENTION_RECOMMENDATIONS_ENABLED must be explicitly "true" —
 // see intervention-recommendation.cron.ts's header for why this engine existed
 // but never ran before this scheduler was added.
 import { startInterventionRecommendationScheduler } from "./modules/analytics/intervention-recommendation.cron.js";
+import { startMisEmailScheduler } from "./modules/process-performance/mis-schedule.worker.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
 import { isModelAvailable as warmUpFaceDetectionModels } from "./modules/ats/face-match.service.js";
 import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
@@ -95,17 +95,22 @@ import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
 // block at its former start site below for what is missing and how to restore it.
 import { startMiraTriageScheduler } from "./modules/ai/mira-triage-scheduler.js";
 import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
+import { startWithdrawalSlaCron } from "./modules/privacy/dpdp-withdrawal-sla.cron.js";
 import { startHelpdeskSlaCron } from "./modules/helpdesk/helpdesk-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
+import { startOpsNudgeScheduler } from "./modules/ops-control-tower/ops-nudge.cron.js";
+import { startHiringEngineScheduler } from "./modules/hiring-engine/he-engine.cron.js";
 import { startAtsDailyReportScheduler } from "./modules/ats/ats-daily-report.cron.js";
 import { startBranchActivityReportScheduler } from "./modules/ats/branch-activity-report/scheduler.js";
 import { startBranchHealthReportScheduler } from "./modules/branch-health-report/scheduler.js";
 import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
 import { startTatEscalationWorker } from "./workers/tat-escalation.worker.js";
 import { startQualityGapDetectorWorker } from "./workers/quality-gap-detector.worker.js";
+import { startProcessDashboardAlertsWorker } from "./modules/process-dashboard/alerts/alerts.worker.js";
 import { startReportSubscriptionWorker } from "./workers/report-subscription.worker.js";
 import { startLeaveApprovalReminderWorker } from "./workers/leave-approval-reminder.worker.js";
+import { startRejoinPendingReminderWorker } from "./workers/rejoin-pending-reminder.worker.js";
 import { startGrnApprovalReminderWorker } from "./workers/grn-approval-reminder.worker.js";
 import { registerNotificationDeliverer } from "./modules/communication/notification.deliverer.js";
 import { clearAllTimers } from "./workers/worker-utils.js";
@@ -156,6 +161,8 @@ async function gracefulShutdown(signal: string): Promise<void> {
     stopDailyGamesScheduler();
     stopExitAutoAdvanceScheduler();
     stopMetaLeadSyncScheduler();
+    stopPipelineHealthAlerts();
+    stopQualifiedFollowupWorker();
 
     // Clear all registered timers
     clearAllTimers();
@@ -207,11 +214,9 @@ function startServer() {
     httpServer!.setTimeout(0);
     // The P&L Trend reads years of payroll; fill its cache shortly after boot so the first user
     // request doesn't wait 90+ seconds on the cold 130K-row salary scan.
-    setTimeout(() => {
-      void import("./modules/process-pnl/pnl-trend.service.js").then((m) =>
-        m.warmPnlTrendCache(),
-      );
-    }, 20_000).unref();
+    setTimeout(() => { void import("./modules/process-pnl/pnl-trend.service.js").then((m) => m.warmPnlTrendCache()); }, 20_000).unref();
+    // P&L allocation summary (Statement / Process Matrix) is ~30-90 s cold; keep it warm so no one waits after a deploy (PNL_SUMMARY_WARM=false disables).
+    void import("./modules/process-pnl/pnl-summary-warmer.js").then((m) => m.startPnlSummaryWarmer());
     // Process Operations /feeds counts ~36 source tables; keep those counts warm so the page never waits on them.
     setTimeout(() => {
       void import("./modules/process-operations/feed-health.service.js").then(
@@ -219,17 +224,26 @@ function startServer() {
       );
     }, 200_000).unref();
     // The Onfido Overview and Analyst reports take 20-26s cold; keep them in the response cache so the dashboard's first load is instant.
-    setTimeout(() => {
-      void import("./modules/onfido-process/onfido-cache-warmer.js").then((m) =>
-        m.startOnfidoCacheWarmer(),
-      );
-    }, 240_000).unref();
+    setTimeout(() => { void import("./modules/onfido-process/onfido-cache-warmer.js").then((m) => m.startOnfidoCacheWarmer()); }, 240_000).unref();
+    // Ops Control Tower summary takes 12-40s cold; keep the API's own cache warm so the page opens instantly (OPS_SUMMARY_WARM=false disables).
+    setTimeout(() => { void import("./modules/ops-control-tower/ops-summary-warmer.js").then((m) => m.startOpsSummaryWarmer()); }, 30_000).unref();
     // ATS dashboards aggregate ~40k wide rows (15-20s cold); warm the cache after boot so the first visit is instant.
+    setTimeout(() => { void import("./modules/ats/dashboard.warm.js").then((m) => m.warmAtsDashboards()); }, 260_000).unref();
+    // Role dashboards: compute the org-wide insights once after the other warmers, one dashboard at a time,
+    // so the first CEO / HR / Ops visit after a deploy is served from memory instead of a cold 8-12s load.
     setTimeout(() => {
-      void import("./modules/ats/dashboard.warm.js").then((m) =>
-        m.warmAtsDashboards(),
-      );
-    }, 260_000).unref();
+      void import("./modules/dashboards/role-insights/index.js").then(async (m) => {
+        await m.warmRoleInsights(["CEO_DASHBOARD", "SUPER_ADMIN_DASHBOARD", "OPERATIONS_DASHBOARD"], { canSeeFinance: true, spacingMs: 8_000 });
+        await m.warmRoleInsights(["HR_DASHBOARD", "WFM_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "PAYROLL_HR_DASHBOARD", "QUALITY_DASHBOARD", "RECRUITER_DASHBOARD", "IT_MANAGER_DASHBOARD"], { canSeeFinance: false, spacingMs: 8_000 });
+        // The older org-wide feeds the dashboards still read (14s / 7s cold) - same cache keys the routes use.
+        const [routes, svc] = await Promise.all([import("./modules/management/management.routes.js"), import("./modules/management/management.service.js")]);
+        await routes.workforceDashboardCache.getOrCompute("workforce:ORG_ALL::", () => svc.managementService.getWorkforceDashboard([], [], "ORG_ALL"));
+        await svc.managementService.getSystemDashboard();
+        await (await import("./modules/dashboards/dashboard.routes.js")).warmPayrollOperationalSummary();
+        const [ats, atsSvc] = await Promise.all([import("./modules/ats/ats.controller.js"), import("./modules/ats/ats.service.js")]);
+        await ats.atsStatsCache.getOrCompute("ats-stats:null:null:[]:[]", () => atsSvc.atsService.getDashboardStats({ branch: [], process: [] }));
+      }).catch((err) => console.error("[warm] role dashboards:", err instanceof Error ? err.message : err));
+    }, 300_000).unref();
     // Keep connections alive slightly longer than nginx's keepalive_timeout (60s) to
     // avoid the race where nginx sends a request on a reused connection at the exact
     // moment Node is closing it (produces a spurious 502).
@@ -293,19 +307,30 @@ function startServer() {
       );
     }
 
+    // Scheduled MIS emails. Its own switch, deliberately outside ENABLE_SCHEDULERS: that flag
+    // starts every other scheduler on this backend. Enable on one backend only.
+    if (process.env.MIS_EMAIL_SCHEDULER_ENABLED === "true") {
+      startMisEmailScheduler();
+    }
+
     if (env.ENABLE_SCHEDULERS) {
       if (!WORKERS_EXTERNAL) {
         // Start all schedulers in API process
         startTenureBadgeScheduler();
         startCelebrationScheduler(); // birthday + work-anniversary posts & emails daily at 8 AM
         startCommunicationCleanup();
+        startApprovalDigestScheduler(); // no-op unless APPROVAL_DIGEST_EMAIL_ENABLED=true
         startAttendanceEngineScheduler();
+        // Fills missing attendance records after every restart and every 6 h, so a deploy cannot leave a hole.
+        startAttendanceHealWorker();
         startAttendanceReconciliationWorker();
         // No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true — see daily-brief.cron.ts's
         // header for the dependency-timing evidence behind its default run time.
         startManagerDailyBriefScheduler();
         // No-op unless ROSTER_UPLOAD_ESCALATION_ENABLED=true (dry-run unless ..._DRY_RUN=false).
         startRosterUploadEscalationScheduler();
+        // On unless ROSTER_REQUESTS_CRON_ENABLED=false/0/off — see roster-requests.cron.ts.
+        startRosterRequestsScheduler();
         // No-op unless INTERVENTION_RECOMMENDATIONS_ENABLED=true.
         startInterventionRecommendationScheduler();
         // Pulls biometric punches from the NCOSEC SQL Server — the only feed that
@@ -348,7 +373,11 @@ function startServer() {
         // Hourly pull of new Meta Lead Ads leads + campaign metrics.
         // Idempotent safety net — skips already-imported leads, no-ops if META_MARKETING_ACCESS_TOKEN unset.
         startMetaLeadSyncScheduler();
+        startPipelineHealthAlerts();
+        startQualifiedFollowupWorker();
         startBreachSlaCron();
+        // Escalates DPDP withdrawal requests that passed their decision deadline.
+        startWithdrawalSlaCron();
         startRetentionCron();
         // D-SLA-01: replaces the inline refreshSlaBreachFlags() call removed from
         // GET /helpdesk/dashboard in 4829f0a6 — without this, sla_breached flags
@@ -379,6 +408,10 @@ function startServer() {
         if (process.env.ATS_DAILY_REPORT_ENABLED === "true") {
           startAtsDailyReportScheduler();
         }
+        // No-op unless OPS_AUTO_NUDGE_ENABLED=true; also a no-op per run until WhatsApp is configured.
+        startOpsNudgeScheduler();
+        // No-op unless HE_ENGINE_ENABLED=true; a dry run unless HE_ENGINE_LIVE=true.
+        startHiringEngineScheduler();
         // No-op unless ATS_BRANCH_ACTIVITY_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).
         startBranchActivityReportScheduler();
         // No-op unless BRANCH_HEALTH_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).
@@ -398,6 +431,7 @@ function startServer() {
         // QA skill gaps; tat-escalation above drives TAT/escalation for the task_type it
         // creates, so this worker sends no notification of its own.
         startQualityGapDetectorWorker();
+        startProcessDashboardAlertsWorker(); // Process Dashboard alerts + digests (dual registration, see all-workers.ts)
         // Same dual registration. This one was in NEITHER file: the worker was written
         // and the report_subscription table shipped, but nothing ever imported it, so a
         // scheduled report could never have run however it was configured. Gated by
@@ -410,6 +444,8 @@ function startServer() {
         // 1698_noc_worker_and_release_gate_flag.sql. Registering this one in BOTH files from
         // the start, not as a follow-up fix.
         startLeaveApprovalReminderWorker();
+        // Same dual registration (rejoin v3 reminders/escalation).
+        startRejoinPendingReminderWorker();
         // Same dual registration, same reasoning.
         startGrnApprovalReminderWorker();
         console.log(
@@ -504,11 +540,20 @@ function startServer() {
         // Meta lead sync is a lightweight external API call — safe to run in the API process
         // even when WORKERS_PROCESS=external. No DB-intensive workers here.
         startMetaLeadSyncScheduler();
+        startPipelineHealthAlerts();
+        startQualifiedFollowupWorker();
       }
     } else {
-      console.log(
-        "[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)",
-      );
+      console.log("[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)");
+      // deploy.yml starts the API with WORKERS_PROCESS=external ENABLE_SCHEDULERS=false, and the
+      // workers process does not own the Meta lead sync (outreach would run twice). Gating it behind
+      // ENABLE_SCHEDULERS meant it never started in production: no lead arrived after 2026-09-30.
+      // Idempotent: the scheduler ignores a second start.
+      if (WORKERS_EXTERNAL) {
+        startMetaLeadSyncScheduler();
+        startPipelineHealthAlerts();
+        startQualifiedFollowupWorker();
+      }
     }
     console.log(`MCN HRMS backend running on http://localhost:${env.PORT}`);
   });

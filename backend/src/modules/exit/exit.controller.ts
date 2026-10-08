@@ -8,6 +8,7 @@ import {
   updateExitStatusSchema,
 } from "./exit.validation.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { employeeScopeSql } from "./exitScope.js";
 
 export const exitController = {
   async listExitRequests(req: AuthenticatedRequest, res: Response) {
@@ -33,7 +34,10 @@ export const exitController = {
       }
     }
 
-    const result = await exitService.listExitRequests(baseFilters);
+    // Branch scoping (owner ruling 2026-10-01): hr / payroll are limited to their own branch / assigned
+    // scope; org-wide roles get 1=1. ?branchId= can only narrow this.
+    const scope = isAdminHr || isFinancePayroll ? await employeeScopeSql(req.authUser!, "e") : undefined;
+    const result = await exitService.listExitRequests(baseFilters, scope);
     return res.json({ success: true, ...result });
   },
 
@@ -102,8 +106,8 @@ export const exitController = {
     });
   },
 
-  async getExitStats(_req: AuthenticatedRequest, res: Response) {
-    const data = await exitService.getExitStats();
+  async getExitStats(req: AuthenticatedRequest, res: Response) {
+    const data = await exitService.getExitStats(await employeeScopeSql(req.authUser!, "e"));
     return res.json({ success: true, data });
   },
 };

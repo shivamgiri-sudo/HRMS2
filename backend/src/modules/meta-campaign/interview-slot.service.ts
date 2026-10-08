@@ -12,8 +12,12 @@
  * shortlist email and WhatsApp message.
  */
 
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { valueAddOn } from '../hiring-engine/he-valueadd-switches.js';
+import { chooseSlot, metaDay, slotLabels } from '../hiring-engine/he-smart-slots.js';
+import { readMetaLeadPrefs } from '../hiring-engine/he-smart-slots.service.js';
+import { nowIst as istNow } from '../hiring-engine/he-slots.js';
 
 export interface InterviewSlot {
   date: string; // YYYY-MM-DD for DB storage
@@ -111,6 +115,30 @@ async function getBookedSlots(branchName: string): Promise<Set<string>> {
   return booked;
 }
 
+/** HE_SMART_SLOTS: first day with room, then the slot that suits the candidate's best hour. null falls back to the walk below. */
+async function assignSmart(leadId: string, booked: Set<string>): Promise<InterviewSlot | null> {
+  const now = istNow();
+  const day = metaDay(now, booked);
+  if (!day) return null;
+  const prefs = await readMetaLeadPrefs(leadId);
+  const bookedMap: Record<string, number> = {};
+  for (const s of day.slots) if (booked.has(`${day.date}|${s.slice(11, 16)}`)) bookedMap[s] = 1;
+  const chosen = chooseSlot({ slots: day.slots, capacity: 1, booked: bookedMap, nowIst: now, leadMinutes: 0, prefs });
+  if (!chosen) return null;
+  booked.add(`${day.date}|${chosen.slice(11, 16)}`);
+  const time = chosen.slice(11, 19);
+  const slot: InterviewSlot = { date: day.date, time, ...slotLabels(day.date, time) };
+  await db.execute(
+    `UPDATE meta_lead_raw
+            SET interview_date = ?, interview_time = ?, interview_slot_assigned_at = NOW()
+          WHERE id = ?`,
+    [slot.date, slot.time, leadId]
+  ).catch((e: unknown) =>
+    console.warn('[meta] assignInterviewSlot write failed', e instanceof Error ? e.message : e)
+  );
+  return slot;
+}
+
 /**
  * Assign the next available interview slot for the given branch.
  * Writes the slot back to meta_lead_raw immediately so concurrent calls
@@ -121,6 +149,11 @@ export async function assignInterviewSlot(
   branchName: string,
 ): Promise<InterviewSlot> {
   const booked = await getBookedSlots(branchName);
+
+  if (valueAddOn('smart_slots')) {
+    const r = await assignSmart(leadId, booked);
+    if (r) return r;
+  }
 
   // Start from tomorrow IST
   const nowUtc = new Date();

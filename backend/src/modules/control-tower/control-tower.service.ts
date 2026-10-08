@@ -3,10 +3,15 @@ import { sqlLimit } from "../../db/pagination.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import {
-  getUserRoleKeys,
-  getUserAssignmentScopes,
-} from "../../shared/scopeAccess.js";
+import { getUserRoleKeys, getUserAssignmentScopes, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { employeeBranchId } from "../org/branchScope.js";
+
+/**
+ * Owner ruling 2026-10-01: only the org-wide roles (super_admin, admin, ceo, coo, cfo, payroll_head,
+ * finance_head, accounts_head, finance) skip scoping. hr used to be waved through here; it is now limited to
+ * its own branch / assignments like every other branch role.
+ */
+const isOrgWide = (roles: string[]) => roles.some((r) => (ORG_WIDE_EXEMPT_ROLES as readonly string[]).includes(r));
 import { tableExists } from "../../shared/dbHelpers.js";
 
 async function columnsFor(tableName: string): Promise<Set<string>> {
@@ -32,31 +37,28 @@ async function scopedWhereForUser(
   alias = "e",
 ): Promise<{ where: string; params: unknown[]; roles: string[] }> {
   const roles = await getUserRoleKeys(userId);
-  if (
-    roles.includes("admin") ||
-    roles.includes("hr") ||
-    roles.includes("ceo")
-  ) {
+  if (isOrgWide(roles)) {
     return { where: "1=1", params: [], roles };
   }
 
   const emp = await getEmployeeForUser(userId);
   if (!emp) return { where: "1=0", params: [], roles };
 
-  if (roles.includes("employee")) {
+  if (roles.includes("employee") && !roles.includes("hr")) {
     return { where: `${alias}.id = ?`, params: [emp.id], roles };
   }
 
   const scopes = await getUserAssignmentScopes(userId);
-  if (scopes.some((s: any) => String(s.scope_type).toLowerCase() === "all")) {
-    return { where: "1=1", params: [], roles };
-  }
+  const ownBranch = await employeeBranchId(emp.id);
 
   const ors: string[] = [];
   const params: unknown[] = [];
   for (const scope of scopes) {
     const type = String(scope.scope_type ?? "").toLowerCase();
-    if (type === "branch" && scope.branch_id) {
+    if (type === "all") {
+      // An 'all' grant is only honoured for the org-wide roles (handled above): everyone else means "my branch".
+      if (ownBranch) { ors.push(`${alias}.branch_id = ?`); params.push(ownBranch); }
+    } else if (type === "branch" && scope.branch_id) {
       ors.push(`${alias}.branch_id = ?`);
       params.push(scope.branch_id);
     } else if (type === "process" && scope.process_id) {
@@ -85,8 +87,11 @@ async function scopedWhereForUser(
     }
   }
 
-  if (ors.length === 0)
+  if (ors.length === 0) {
+    // hr with no assignment row still sees its own branch (the policy default); other roles see themselves.
+    if (roles.includes("hr") && ownBranch) return { where: `${alias}.branch_id = ?`, params: [ownBranch], roles };
     return { where: `${alias}.id = ?`, params: [emp.id], roles };
+  }
   return { where: `(${ors.join(" OR ")})`, params, roles };
 }
 
@@ -129,8 +134,7 @@ export async function canSeeScope(
     return p;
   };
   const roles = await loadRoles();
-  if (roles.includes("admin") || roles.includes("hr") || roles.includes("ceo"))
-    return true;
+  if (isOrgWide(roles)) return true;
   const emp = await loadEmp();
   if (scope.assigned_user_id && scope.assigned_user_id === userId) return true;
   if (scope.target_user_id && scope.target_user_id === userId) return true;
@@ -146,28 +150,36 @@ export async function canSeeScope(
   // If item has assigned_role but user doesn't have that role, deny (unless already matched above)
   if (targetRole && !roles.includes(targetRole)) return false;
 
-  // If item has assigned_role but no specific user/employee, allow users with that role
-  if (
-    targetRole &&
-    roles.includes(targetRole) &&
-    !scope.assigned_user_id &&
-    !scope.assigned_employee_id
-  )
-    return true;
+  // Branch the caller may act for: own employee branch (an 'all' grant means exactly this for non-org-wide roles)
+  // plus explicit branch / branch_process assignments. Resolved lazily - only items that carry a branch need it.
+  const callerBranches = async (scopes: any[]) => {
+    const ids = new Set<string>();
+    for (const s of scopes) {
+      const t = String(s.scope_type ?? "").toLowerCase();
+      if ((t === "branch" || t === "branch_process") && s.branch_id) ids.add(String(s.branch_id));
+    }
+    if (emp?.id) { const own = await employeeBranchId(emp.id); if (own) ids.add(own); }
+    return ids;
+  };
+
+  // If item has assigned_role but no specific user/employee, allow users with that role - inside their own
+  // branch. A role-queue item filed under another branch is no longer visible to every holder of the role.
+  if (targetRole && roles.includes(targetRole) && !scope.assigned_user_id && !scope.assigned_employee_id) {
+    if (!scope.branch_id) return true;
+    return (await callerBranches(await loadScopes([targetRole]))).has(String(scope.branch_id));
+  }
 
   const scopes = await loadScopes(targetRole ? [targetRole] : roles);
+  const branchSet = scope.branch_id && scopes.some((s: any) => String(s.scope_type ?? "").toLowerCase() === "all")
+    ? await callerBranches(scopes)
+    : null;
   // Scope record matching: "all", "branch", "process", "branch_process", "team", "department"
   return scopes.some((s: any) => {
     const type = String(s.scope_type ?? "").toLowerCase();
-    if (type === "all") return true;
-    if (type === "branch" && s.branch_id && scope.branch_id)
-      return s.branch_id === scope.branch_id;
-    if (type === "process" && s.process_id && scope.process_id)
-      return s.process_id === scope.process_id;
-    if (type === "branch_process" && s.branch_id && s.process_id)
-      return (
-        s.branch_id === scope.branch_id && s.process_id === scope.process_id
-      );
+    if (type === "all") return Boolean(scope.branch_id && branchSet?.has(String(scope.branch_id)));
+    if (type === "branch" && s.branch_id && scope.branch_id) return s.branch_id === scope.branch_id;
+    if (type === "process" && s.process_id && scope.process_id) return s.process_id === scope.process_id;
+    if (type === "branch_process" && s.branch_id && s.process_id) return s.branch_id === scope.branch_id && s.process_id === scope.process_id;
     // Team and department scopes require employee context (safely check with optional chaining)
     if (emp && type === "team" && s.team_id && (emp as any).team_id)
       return s.team_id === (emp as any).team_id;
@@ -544,6 +556,16 @@ export const controlTowerService = {
     // Determine which manager's team to show
     const managerId = targetManagerId || requestingEmp.id;
 
+    // Branch scoping (owner ruling 2026-10-01): another manager's team can only be opened when that manager
+    // sits inside the caller's branch / assigned scope (hr / branch_head used to open any manager's team).
+    if (managerId !== requestingEmp.id) {
+      const [mgrScope] = await db.execute<RowDataPacket[]>("SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1", [managerId]);
+      const m = (mgrScope as any[])[0];
+      if (m && !(await canSeeScope(userId, { branch_id: m.branch_id, process_id: m.process_id, assigned_employee_id: managerId }))) {
+        throw Object.assign(new Error("Forbidden: this manager is outside your branch / assigned scope"), { statusCode: 403 });
+      }
+    }
+
     // Get manager details
     const [managerRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id, e.employee_code, e.first_name, e.last_name,
@@ -574,7 +596,7 @@ export const controlTowerService = {
     const [teamRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id, e.employee_code, e.first_name, e.last_name,
               CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS full_name,
-              e.email, e.official_email, e.mobile, e.phone,
+              e.email, e.official_email, e.mobile, e.mobile AS phone,
               e.designation_id, d.designation_name,
               e.department_id, dept.dept_name,
               e.branch_id, b.branch_name,
@@ -641,10 +663,9 @@ export const controlTowerService = {
           if (await canSeeScope(userId, row, ctx)) out.open_risks.push(row);
       }
     }
-    if (await tableExists("wfm_roster_conflict_log")) {
-      const [rows] = await db.execute<RowDataPacket[]>(
-        "SELECT severity, COUNT(*) AS c FROM wfm_roster_conflict_log WHERE resolution_status = 'open' GROUP BY severity",
-      );
+    // The roster-conflict totals carry no branch, so they are shown to the org-wide roles only (fail closed).
+    if ((await tableExists("wfm_roster_conflict_log")) && isOrgWide(await getUserRoleKeys(userId))) {
+      const [rows] = await db.execute<RowDataPacket[]>("SELECT severity, COUNT(*) AS c FROM wfm_roster_conflict_log WHERE resolution_status = 'open' GROUP BY severity");
       out.counts.roster_conflicts = rows;
     }
     const masterHealth = await this.getMasterDataHealth(userId);

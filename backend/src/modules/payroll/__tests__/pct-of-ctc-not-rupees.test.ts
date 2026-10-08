@@ -36,12 +36,13 @@ function dictionaryLoop(): string {
 describe("only `fixed` components carry a rupee amount", () => {
   it("does not treat pct_of_ctc as money", () => {
     // The exact defect: a percentage assigned straight into the rupee dictionary.
-    expect(dictionaryLoop()).not.toMatch(/calc_type\s*===\s*'pct_of_ctc'/);
+    // Either quote style — the file is prettier-formatted (double quotes) since cd83825bc.
+    expect(dictionaryLoop()).not.toMatch(/calc_type\s*===\s*['"]pct_of_ctc['"]/);
   });
 
   it("still reads genuinely fixed components", () => {
     // 14,455 per-employee structures define BASIC as a real rupee amount. They must keep working.
-    expect(dictionaryLoop()).toMatch(/calc_type\s*===\s*'fixed'/);
+    expect(dictionaryLoop()).toMatch(/calc_type\s*===\s*['"]fixed['"]/);
   });
 
   it("assigns from the row's own value, not a derived figure", () => {
@@ -55,9 +56,8 @@ describe("percentages are still honoured, via the CTC path", () => {
   it("keeps ctc_annual / 12 as the base when no fixed components exist", () => {
     // With BASIC absent from the dictionary, hasFixedComponents is false and this line is what
     // pays the employee — the structure's percentage applied to their real CTC.
-    expect(src).toMatch(
-      /monthlyGrossBase\s*=\s*hasFixedComponents\s*\?\s*fixedGross\s*:\s*\(emp\.ctc_annual\s*\/\s*12\)/,
-    );
+    // The parentheses around the division are optional: prettier dropped the redundant pair.
+    expect(src).toMatch(/monthlyGrossBase\s*=\s*hasFixedComponents\s*\?\s*fixedGross\s*:\s*\(?emp\.ctc_annual\s*\/\s*12\)?;/);
   });
 
   it("keeps basic_pct / hra_pct as the percentage source", () => {

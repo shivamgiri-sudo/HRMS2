@@ -203,6 +203,7 @@ export async function importDomesticBillingApprovedHcBatch(
       rowNo: row.row_no,
       values: [
         randomUUID(),
+        batchId,
         month,
         process,
         lob,
@@ -210,23 +211,25 @@ export async function importDomesticBillingApprovedHcBatch(
         fteRate ?? null,
         planningRule,
         active,
-        batchId,
         importedByUserId,
       ],
     });
   }
 
   const inserted = await chunkedMasmisInsert({
+    // Production's table (created before 1770 was registered) has upload_batch_id and no
+    // data_source / source_reference / updated_at, so the batch id goes in upload_batch_id
+    // and a re-upload records which batch last set the row.
     insertPrefix: `INSERT INTO domestic_billing_approved_hc
-       (id, month, process, lob, approved_headcount, fte_rate, planning_rule, active,
-        data_source, source_reference, created_by)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+       (id, upload_batch_id, month, process, lob, approved_headcount, fte_rate, planning_rule,
+        active, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     insertSuffix: `ON DUPLICATE KEY UPDATE
       approved_headcount = VALUES(approved_headcount),
       fte_rate           = VALUES(fte_rate),
       planning_rule      = VALUES(planning_rule),
       active             = VALUES(active),
-      updated_at         = NOW()`,
+      upload_batch_id    = VALUES(upload_batch_id)`,
     rows: toInsert,
   });
   errorUpdates.push(...inserted.errorUpdates);

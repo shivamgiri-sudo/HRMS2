@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarCheck2, CalendarClock, Loader2 } from "lucide-react";
+import { CalendarCheck2, CalendarClock, Loader2, Radio } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { liveSourceNoticeFor } from "@/lib/liveSourcedUploadTypes";
 
 /** What data an upload type already holds (GET /api/bulk-upload/coverage) -- so the uploader knows where to continue from. */
 export interface UploadCoverage {
@@ -82,6 +83,21 @@ export function UploadCoverageLine({ coverage, loading }: { coverage?: UploadCov
     return <span className="inline-flex items-center gap-1 text-[11px] text-slate-500"><CalendarClock className="h-3 w-3" />Last uploaded {fmtWhen(coverage.lastUploadedAt)}</span>;
   }
   return <span className="inline-flex items-center gap-1 text-[11px] text-slate-400"><CalendarClock className="h-3 w-3" />No data uploaded yet</span>;
+}
+
+/** Shown instead of (or above) the usual coverage banner when this upload type's data now comes
+ * live from somewhere else -- see src/lib/liveSourcedUploadTypes.ts for the registry and how an
+ * entry gets confirmed. Still lets the upload go through (the table and its history stay valid),
+ * just says plainly that nothing on screen will change because of it. */
+export function LiveSourceBanner({ uploadTypeCode }: { uploadTypeCode: string | null | undefined }) {
+  const notice = liveSourceNoticeFor(uploadTypeCode);
+  if (!notice) return null;
+  return (
+    <div className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-900">
+      <Radio className="mt-0.5 h-4 w-4 shrink-0 text-sky-500" />
+      <span><b>This file is not required.</b> {notice.note}</span>
+    </div>
+  );
 }
 
 /** The banner above the upload box: what is already there, and the date to upload from. */

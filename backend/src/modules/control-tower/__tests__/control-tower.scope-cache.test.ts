@@ -7,16 +7,9 @@ const m = vi.hoisted(() => ({
   scopes: vi.fn(),
 }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: m.execute } }));
-vi.mock("../../../shared/accessGuard.js", () => ({
-  getEmployeeForUser: m.emp,
-}));
-vi.mock("../../../shared/scopeAccess.js", () => ({
-  getUserRoleKeys: m.roles,
-  getUserAssignmentScopes: m.scopes,
-}));
-vi.mock("../../../shared/dbHelpers.js", () => ({
-  tableExists: vi.fn(async () => true),
-}));
+vi.mock("../../../shared/accessGuard.js", () => ({ getEmployeeForUser: m.emp }));
+vi.mock("../../../shared/scopeAccess.js", () => ({ getUserRoleKeys: m.roles, getUserAssignmentScopes: m.scopes, ORG_WIDE_EXEMPT_ROLES: ["super_admin", "admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"] }));
+vi.mock("../../../shared/dbHelpers.js", () => ({ tableExists: vi.fn(async () => true) }));
 
 import {
   canSeeScope,

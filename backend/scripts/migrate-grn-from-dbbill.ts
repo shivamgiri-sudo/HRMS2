@@ -341,10 +341,17 @@ async function main() {
 
     while (true) {
       const [rows] = await bill.query<any[]>(
-        `SELECT * FROM expense_entry_master
-         WHERE ExpenseEntryType IN ('Vendor','Imprest','Salary') ${fyClause}
-         ORDER BY Id
-         LIMIT ${BATCH_SIZE} OFFSET ${offset}`,
+        // line_taxable / line_tax: db_bill keeps the taxable value and the GST on the LINES
+        // (expense_entry_particular.Amount / .Tax); the header CGST/SGST/IGST are empty on most rows and
+        // header Amount is the GROSS. Reading the header made every migrated GST bill look tax-free, so
+        // amount_without_tax held the GST-inclusive figure (661 GRNs in FY 2026-27, ~10 lakh/month on the P&L).
+        `SELECT m.*,
+                (SELECT SUM(CAST(p.Amount AS DECIMAL(16,2))) FROM expense_entry_particular p WHERE CAST(p.ExpenseEntry AS UNSIGNED) = m.Id) AS line_taxable,
+                (SELECT SUM(CAST(p.Tax AS DECIMAL(16,2)))    FROM expense_entry_particular p WHERE CAST(p.ExpenseEntry AS UNSIGNED) = m.Id) AS line_tax
+           FROM expense_entry_master m
+         WHERE m.ExpenseEntryType IN ('Vendor','Imprest','Salary') ${fyClause.replace(/\bFinanceYear\b/g, 'm.FinanceYear')}
+         ORDER BY m.Id
+         LIMIT ${BATCH_SIZE} OFFSET ${offset}`
       );
 
       if (rows.length === 0) break;
@@ -390,18 +397,20 @@ async function main() {
           : "";
         if (headId && !headMap.has(headId)) headMissCount++;
 
-        const amount = safeDecimal(row.Amount);
-        const cgst = safeDecimal(row.CGST);
-        const sgst = safeDecimal(row.SGST);
-        const igst = safeDecimal(row.IGST);
-        const taxAmount = cgst + sgst + igst;
-        const amountWithTax = amount + taxAmount;
-        const gstType: string =
-          igst > 0 ? "igst" : cgst > 0 || sgst > 0 ? "cgst_sgst" : "none";
-        const gstRate: number =
-          amount > 0 && taxAmount > 0
-            ? parseFloat(((taxAmount / amount) * 100).toFixed(4))
-            : 0;
+        const cgst          = safeDecimal(row.CGST);
+        const sgst          = safeDecimal(row.SGST);
+        const igst          = safeDecimal(row.IGST);
+        const headerTax     = cgst + sgst + igst;
+        const lineTaxable   = safeDecimal(row.line_taxable);
+        const lineTax       = safeDecimal(row.line_tax);
+        // Lines are the truth when they carry the tax (header GST empty); otherwise fall back to the header.
+        const useLines      = headerTax === 0 && lineTax > 0 && lineTaxable > 0;
+        const amount        = useLines ? lineTaxable + lineTax : safeDecimal(row.Amount);
+        const taxAmount     = useLines ? lineTax : headerTax;
+        const amountWithTax = useLines ? amount : amount + taxAmount;
+        const gstType: string = (igst > 0) ? 'igst' : (cgst > 0 || sgst > 0) ? 'cgst_sgst' : 'none';
+        const gstRate: number = amount > 0 && taxAmount > 0
+          ? parseFloat(((taxAmount / amount) * 100).toFixed(4)) : 0;
 
         const billDate = safeDate(row.bill_date ?? row.ExpenseDate);
         const dueDate = safeDate(row.due_date);

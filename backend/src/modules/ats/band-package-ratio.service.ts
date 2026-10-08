@@ -63,3 +63,38 @@ export async function resolveBandPct(
     source: "package_master",
   };
 }
+
+/**
+ * The one active catalog package that IS this offer: same band, package_amount equal to the
+ * monthly CTC (to the paisa), and - when several branch/cost-centre copies exist - all of them
+ * carrying identical components. Returns its id, or null when there is no such package or it is
+ * ambiguous (different components under the same band and CTC).
+ *
+ * Why: typing a CTC and pressing Calculate used to borrow only this package's basic/HRA ratio and
+ * then re-derive everything else, so a package that deliberately has no PF, ESIC, bonus,
+ * conveyance or admin charges (band F, CTC 13,250: gross = basic = CTC) came back with all of
+ * them switched on and a smaller gross (63694C: gross 11,397.85, net 9,944.63 instead of 13,250).
+ * An exact catalog match is saved exactly as the catalog stores it, like a package picked by hand.
+ */
+export async function findExactCatalogPackageId(
+  bandCode: string | null | undefined,
+  monthlyCtc: number,
+): Promise<string | null> {
+  if (!bandCode || !Number.isFinite(monthlyCtc) || monthlyCtc <= 0) return null;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, gross, basic, hra, conveyance, bonus, special_allowance, epf_employee, esic_employee,
+            epf_employer, esic_employer, admin_charges, net_in_hand
+       FROM salary_package_master
+      WHERE band_code = ? AND active_status = 1 AND ABS(package_amount - ?) <= 0.01
+      ORDER BY created_at ASC, id ASC`,
+    [bandCode, monthlyCtc],
+  ).catch(() => [[] as RowDataPacket[]]);
+  const list = rows as RowDataPacket[];
+  if (!list.length) return null;
+  const sig = (r: RowDataPacket) =>
+    ['gross', 'basic', 'hra', 'conveyance', 'bonus', 'special_allowance', 'epf_employee', 'esic_employee',
+      'epf_employer', 'esic_employer', 'admin_charges', 'net_in_hand']
+      .map((k) => Math.round(Number(r[k] ?? 0) * 100)).join('|');
+  const first = sig(list[0]);
+  return list.every((r) => sig(r) === first) ? String(list[0].id) : null;
+}

@@ -451,21 +451,17 @@ export interface AttritionRiskSignal {
   intervention_flags: InterventionFlag[];
 }
 
-export async function getAttritionRiskSignal(
-  branchId?: string,
-  processId?: string,
-): Promise<AttritionRiskSignal> {
-  const whereParts: string[] = ["e.active_status = 1"];
+/**
+ * `scope` = the caller's employee scope predicate on alias `e` (null/undefined = org-wide, SQL unchanged). A
+ * client-supplied branchId/processId only narrows it (they are ANDed on top).
+ */
+export async function getAttritionRiskSignal(branchId?: string, processId?: string, scope?: { sql: string; params: unknown[] } | null): Promise<AttritionRiskSignal> {
+  const whereParts: string[] = ['e.active_status = 1'];
   const params: unknown[] = [];
-  if (branchId) {
-    whereParts.push("e.branch_id = ?");
-    params.push(branchId);
-  }
-  if (processId) {
-    whereParts.push("e.process_id = ?");
-    params.push(processId);
-  }
-  const empWhere = whereParts.join(" AND ");
+  if (branchId) { whereParts.push('e.branch_id = ?'); params.push(branchId); }
+  if (processId) { whereParts.push('e.process_id = ?'); params.push(processId); }
+  if (scope) { whereParts.push(scope.sql); params.push(...scope.params); }
+  const empWhere = whereParts.join(' AND ');
 
   const fromDate = getIstDateString(30);
   const toDate = getIstDateString(0);
@@ -731,21 +727,13 @@ export interface TrainingReadinessPulse {
   intervention_flags: InterventionFlag[];
 }
 
-export async function getTrainingReadinessPulse(
-  branchId?: string,
-  processId?: string,
-): Promise<TrainingReadinessPulse> {
-  const whereParts: string[] = ["e.active_status = 1"];
+export async function getTrainingReadinessPulse(branchId?: string, processId?: string, scope?: { sql: string; params: unknown[] } | null): Promise<TrainingReadinessPulse> {
+  const whereParts: string[] = ['e.active_status = 1'];
   const params: unknown[] = [];
-  if (branchId) {
-    whereParts.push("e.branch_id = ?");
-    params.push(branchId);
-  }
-  if (processId) {
-    whereParts.push("e.process_id = ?");
-    params.push(processId);
-  }
-  const empWhere = whereParts.join(" AND ");
+  if (branchId) { whereParts.push('e.branch_id = ?'); params.push(branchId); }
+  if (processId) { whereParts.push('e.process_id = ?'); params.push(processId); }
+  if (scope) { whereParts.push(scope.sql); params.push(...scope.params); }
+  const empWhere = whereParts.join(' AND ');
 
   const [summaryRows] = await db
     .execute<RowDataPacket[]>(
@@ -1017,21 +1005,27 @@ function auditRag(score: number): "red" | "amber" | "green" {
   return "red";
 }
 
-export async function getQualityIntervention(
-  branchId?: string,
-  processId?: string,
-): Promise<QualityIntervention> {
+export async function getQualityIntervention(branchId?: string, processId?: string, codes?: string[] | null): Promise<QualityIntervention> {
   // branchId/processId are accepted for API symmetry but the audit table carries neither, so
   // they do not change the result; the key still includes them so a future scoped version
   // cannot be served another scope's cached payload.
-  const key = `quality-intervention:${getIstDateString(0)}:${branchId ?? ""}:${processId ?? ""}`;
-  const { value } = await biCache.getOrCompute(key, () =>
-    computeQualityIntervention(),
-  );
+  // `codes` = agent employee codes the caller may see (null/undefined = org-wide). The cache key carries the scope so a
+  // narrower caller can never be served a wider payload (or the reverse).
+  const scopeKey = codes == null ? 'all' : `s${codes.length}:${[...codes].sort().join(',')}`;
+  const key = `quality-intervention:${getIstDateString(0)}:${branchId ?? ''}:${processId ?? ''}:${scopeKey}`;
+  const { value } = await biCache.getOrCompute(key, () => computeQualityIntervention(codes));
   return value as QualityIntervention;
 }
 
-async function computeQualityIntervention(): Promise<QualityIntervention> {
+function auditAgentScope(col: string, codes?: string[] | null): { sql: string; params: string[] } {
+  if (codes === null || codes === undefined) return { sql: '', params: [] };
+  if (codes.length === 0) return { sql: ' AND 1=0', params: [] };
+  return { sql: ` AND ${col} IN (${codes.map(() => '?').join(',')})`, params: codes };
+}
+
+async function computeQualityIntervention(codes?: string[] | null): Promise<QualityIntervention> {
+  const scU = auditAgentScope('User', codes);
+  const scQ = auditAgentScope('q.User', codes);
   const fromDate = getIstDateString(7);
   const toDate = getIstDateString(0);
   const prevFromDate = getIstDateString(14);
@@ -1067,7 +1061,7 @@ async function computeQualityIntervention(): Promise<QualityIntervention> {
       SELECT User AS agent, ROUND(AVG(quality_percentage), 1) AS avg_per_agent
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?
-        AND quality_percentage IS NOT NULL
+        AND quality_percentage IS NOT NULL${scU.sql}
       GROUP BY User
       HAVING COUNT(*) >= 2
     ) t
@@ -1075,15 +1069,10 @@ async function computeQualityIntervention(): Promise<QualityIntervention> {
       SELECT ROUND(AVG(quality_percentage), 1) AS avg_score
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?
-        AND quality_percentage IS NOT NULL
+        AND quality_percentage IS NOT NULL${scU.sql}
     ) g
-  `,
-    [fromDate, toDate, fromDate, toDate],
-  ).catch((err) => {
-    logger.error(
-      { err, fromDate, toDate },
-      "[bi.service] getQualityIntervention summary query failed",
-    );
+  `, [fromDate, toDate, ...scU.params, fromDate, toDate, ...scU.params]).catch((err) => {
+    logger.error({ err, fromDate, toDate }, "[bi.service] getQualityIntervention summary query failed");
     return [] as SummaryRow[];
   });
 
@@ -1107,14 +1096,12 @@ async function computeQualityIntervention(): Promise<QualityIntervention> {
     LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
     WHERE q.CallDate BETWEEN ? AND ?
       AND q.quality_percentage IS NOT NULL
-      AND q.User IS NOT NULL AND TRIM(q.User) != ''
+      AND q.User IS NOT NULL AND TRIM(q.User) != ''${scQ.sql}
     GROUP BY q.User, am.AgentName, q.ClientId
     HAVING call_count >= 3
     ORDER BY avg_score ASC
     LIMIT 10
-  `,
-    [fromDate, toDate],
-  ).catch(() => [] as AgentRow[]);
+  `, [fromDate, toDate, ...scQ.params]).catch(() => [] as AgentRow[]);
 
   // ── Per-client/process RAG with WoW change ────────────────────────────────
   interface ProcRow {
@@ -1129,27 +1116,22 @@ async function computeQualityIntervention(): Promise<QualityIntervention> {
         ROUND(AVG(q.quality_percentage), 1)  AS avg_score
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL
+        AND q.quality_percentage IS NOT NULL${scQ.sql}
       GROUP BY q.ClientId
       ORDER BY avg_score ASC
       LIMIT 15
-    `,
-      [fromDate, toDate],
-    ).catch(() => [] as ProcRow[]),
-    querySource<ProcRow>(
-      `
+    `, [fromDate, toDate, ...scQ.params]).catch(() => [] as ProcRow[]),
+    querySource<ProcRow>(`
       SELECT
         q.ClientId                           AS process,
         ROUND(AVG(q.quality_percentage), 1)  AS avg_score
       FROM db_audit.call_quality_assessment q
       WHERE q.CallDate BETWEEN ? AND ?
-        AND q.quality_percentage IS NOT NULL
+        AND q.quality_percentage IS NOT NULL${scQ.sql}
       GROUP BY q.ClientId
       ORDER BY avg_score ASC
       LIMIT 15
-    `,
-      [prevFromDate, prevToDate],
-    ).catch(() => [] as ProcRow[]),
+    `, [prevFromDate, prevToDate, ...scQ.params]).catch(() => [] as ProcRow[]),
   ]);
 
   // The four audit-table aggregates are independent of each other; they used to be awaited

@@ -33,8 +33,14 @@ BEGIN
       AND TABLE_NAME   = 'ats_candidate'
       AND INDEX_NAME   = 'idx_ats_candidate_created_status'
   ) THEN
-    ALTER TABLE ats_candidate
-      ADD INDEX idx_ats_candidate_created_status (created_at, status);
+    -- ats_candidate has `candidate_status` on a rebuilt database; `status` exists only where it was
+    -- added out of band (production). Index whichever is there rather than failing the replay.
+    IF EXISTS (SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+                 AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'status') THEN
+      ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_created_status (created_at, status);
+    ELSE
+      ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_created_status (created_at, candidate_status);
+    END IF;
   END IF;
 END;;
 DELIMITER ;

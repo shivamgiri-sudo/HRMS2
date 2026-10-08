@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 
 export type PeopleExperienceScopeKind =
   "global" | "branch" | "process" | "team" | "self";
@@ -14,15 +15,13 @@ export interface PeopleExperienceScope {
   roles: string[];
   canSeeConfidentialGrievanceIdentity: boolean;
   canManageGrievances: boolean;
+  /** The caller's own employee branch - hr is limited to it (owner ruling 2026-10-01). */
+  ownBranchId?: string | null;
 }
 
-const GLOBAL_ROLES = new Set(["super_admin", "admin", "hr", "ceo"]);
-const GRIEVANCE_MANAGER_ROLES = new Set([
-  "super_admin",
-  "admin",
-  "hr",
-  "grievance_officer",
-]);
+// Owner ruling 2026-10-01: hr is branch-scoped, so it is no longer a "global" role here.
+const GLOBAL_ROLES = new Set<string>(ORG_WIDE_EXEMPT_ROLES);
+const GRIEVANCE_MANAGER_ROLES = new Set(["super_admin", "admin", "hr", "grievance_officer"]);
 
 async function getUserRoles(userId: string): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -60,9 +59,15 @@ export async function resolvePeopleExperienceScope(
     };
   }
 
-  if (roles.includes("branch_head")) {
+  if (roles.includes("branch_head") || roles.includes("hr") || roles.includes("admin")) {
+    let ownBranchId: string | null = null;
+    if (employee?.id) {
+      const [rows] = await db.execute<RowDataPacket[]>("SELECT branch_id FROM employees WHERE id = ? LIMIT 1", [employee.id]);
+      ownBranchId = (rows as RowDataPacket[])[0]?.branch_id ? String((rows as RowDataPacket[])[0].branch_id) : null;
+    }
     return {
       kind: "branch",
+      ownBranchId,
       label: "Branch Scoped",
       userId,
       employeeId: employee?.id ?? null,
@@ -124,6 +129,12 @@ export function buildEmployeeScopeCondition(
   if (scope.employeeId && (scope.kind === "team" || scope.kind === "process")) {
     clauses.push(`${alias}.reporting_manager_id = ?`);
     params.push(scope.employeeId);
+  }
+
+  // hr / admin: its own branch (fails closed with no branch).
+  if (scope.kind === "branch" && (scope.roles.includes("hr") || scope.roles.includes("admin")) && scope.ownBranchId) {
+    clauses.push(`${alias}.branch_id = ?`);
+    params.push(scope.ownBranchId);
   }
 
   if (scope.kind === "branch") {
@@ -193,7 +204,16 @@ export async function canViewGrievance(
   grievanceId: string,
 ): Promise<boolean> {
   const scope = await resolvePeopleExperienceScope(req);
-  if (scope.canManageGrievances) return true;
+  if (scope.canManageGrievances && scope.kind === "global") return true;
+  if (scope.canManageGrievances) {
+    // grievance officers / hr: only grievances raised by employees inside their branch / scope (or their own)
+    const scoped = buildEmployeeScopeCondition(scope, "e");
+    const [gr] = await db.execute<RowDataPacket[]>(
+      `SELECT g.employee_id FROM grievance g JOIN employees e ON e.id = g.employee_id WHERE g.id = ? AND (${scoped.sql}) LIMIT 1`,
+      [grievanceId, ...scoped.params]
+    );
+    if ((gr as RowDataPacket[]).length > 0) return true;
+  }
   if (!scope.employeeId) return false;
 
   const [rows] = await db.execute<RowDataPacket[]>(

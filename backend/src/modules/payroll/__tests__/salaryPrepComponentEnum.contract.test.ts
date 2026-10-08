@@ -55,20 +55,24 @@ describe("salary_prep_line_component writers respect the live enums", () => {
   it.each(WRITERS)("%s uses no retired non-member value", (file) => {
     const src = code(read(file));
     for (const bad of KNOWN_BAD) {
-      expect(src, `${file} still writes source='${bad}'`).not.toContain(
-        `'${bad}'`,
-      );
+      // Both quote styles: the engine is prettier-formatted (double quotes) since cd83825bc,
+      // and a single-quote-only check would pass vacuously against it.
+      expect(src, `${file} still writes source='${bad}'`).not.toContain(`'${bad}'`);
+      expect(src, `${file} still writes source="${bad}"`).not.toContain(`"${bad}"`);
     }
   });
 
   it("the engine's batchComponents rows all carry a member component_type and source", () => {
     const src = code(read(WRITERS[0]));
+    // Each push is now a multi-line array literal (prettier, cd83825bc), so take the whole
+    // statement up to its closing `]);` rather than the single line it used to fit on.
     const pushes = src
-      .split("\n")
-      .filter((l) => l.includes("batchComponents.push("));
+      .split("batchComponents.push(")
+      .slice(1)
+      .map((rest) => "batchComponents.push(" + rest.slice(0, rest.indexOf("]);") + 3));
     expect(pushes.length).toBeGreaterThanOrEqual(5);
     for (const line of pushes) {
-      const literals = [...line.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+      const literals = [...line.matchAll(/['"]([a-z_]+)['"]/g)].map((m) => m[1]);
       const type = literals.find((v) => COMPONENT_TYPES.includes(v));
       const source = literals.find((v) => SOURCES.includes(v));
       expect(type, `no member component_type in: ${line.trim()}`).toBeDefined();

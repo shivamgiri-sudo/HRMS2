@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useSearchParams } from "react-router-dom";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 
 // ── shared constants ─────────────────────────────────────────────────────────
 
@@ -36,7 +38,7 @@ const STAGE_LABELS: Record<string, string> = {
   pending: "Pending", approved: "Approved",
 };
 
-const REQUEST_ROLES = ["wfm", "admin", "super_admin", "payroll_head", "payroll_branch"];
+const REQUEST_ROLES = ["wfm", "branch_wfm", "admin", "super_admin", "payroll_head", "payroll_branch"];
 const APPROVAL_ROLES = ["wfm", "payroll_head", "payroll_branch", "admin", "super_admin"];
 
 // ── Submit Request Tab ────────────────────────────────────────────────────────
@@ -62,10 +64,19 @@ function SubmitTab() {
     queryKey: ["holiday-work-policies"],
     queryFn: () => hrmsApi.get<any>("/api/payroll/holiday-work/policies").then((d: any) => Array.isArray(d) ? d : d.data ?? []),
   });
-  const { data: branches = [] } = useQuery({
+  // Branches the caller may raise requests for (null = all). Server enforces the same rule on POST.
+  const { data: allowedBranchIds } = useQuery<string[] | null>({
+    queryKey: ["holiday-work-my-branches"],
+    queryFn: () => hrmsApi.get<any>("/api/payroll/holiday-work/my-branches").then((d: any) => (d?.data ?? null)),
+  });
+  const { data: allBranches = [] } = useQuery({
     queryKey: ["org-branches"],
     queryFn: () => hrmsApi.get<any>("/api/org/branches").then((d: any) => Array.isArray(d) ? d : d.data ?? []),
   });
+  const branchesLimited = Array.isArray(allowedBranchIds);
+  const branches = branchesLimited
+    ? (allBranches as any[]).filter((b: any) => allowedBranchIds!.includes(b.id))
+    : (allBranches as any[]);
   const { data: processes = [] } = useQuery({
     queryKey: ["org-processes"],
     queryFn: () => hrmsApi.get<any>("/api/org/processes").then((d: any) => Array.isArray(d) ? d : d.data ?? []),
@@ -120,7 +131,7 @@ function SubmitTab() {
           <div className="space-y-1">
             <label className="text-sm font-medium">Branch</label>
             <select className="w-full border rounded-lg px-3 py-2 text-sm bg-background" value={form.branch_id} onChange={e => sel("branch_id", e.target.value)}>
-              <option value="">All branches</option>
+              <option value="">{branchesLimited ? "Select branch" : "All branches"}</option>
               {(branches as any[]).map((b: any) => <option key={b.id} value={b.id}>{b.branch_name ?? b.name}</option>)}
             </select>
           </div>
@@ -249,6 +260,7 @@ function ApprovalsTab() {
   }, [statusFilter, monthFilter]);
 
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
+  useApprovalFocus(!loading && requests.length > 0);
 
   const submitAction = async (action: "approve" | "reject") => {
     if (!selectedId) return;
@@ -287,6 +299,7 @@ function ApprovalsTab() {
             {!loading && requests.map(req => (
               <tr
                 key={req.id}
+                data-approval-id={req.id}
                 className="border-t hover:bg-muted/30 cursor-pointer"
                 onClick={() => { setSelectedId(String(req.id)); setRemarks(""); setActionError(null); setActionSuccess(null); }}
               >
@@ -391,6 +404,9 @@ function ApprovalsTab() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function HolidayWork() {
+  const { roleKeys } = useWorkforceAccess();
+  const [searchParams] = useSearchParams();
+  const wantsApprovals = searchParams.get("tab") === "approvals" || !!searchParams.get("approvalId");
   return (
     <DashboardLayout>
       <div className="p-6 max-w-7xl mx-auto space-y-5">
@@ -398,10 +414,10 @@ export default function HolidayWork() {
           <h1 className="text-2xl font-semibold text-slate-900">Holiday Work</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Submit requests for staff working on designated holidays and manage the multi-stage approval workflow.</p>
         </div>
-        <Tabs defaultValue="submit">
+        <Tabs defaultValue={wantsApprovals && APPROVAL_ROLES.some(r => roleKeys.includes(r)) ? "approvals" : "submit"}>
           <TabsList className="mb-4">
             <TabsTrigger value="submit">Submit Request</TabsTrigger>
-            <TabsTrigger value="approvals">Approvals Queue</TabsTrigger>
+            {APPROVAL_ROLES.some(r => roleKeys.includes(r)) && <TabsTrigger value="approvals">Approvals Queue</TabsTrigger>}
           </TabsList>
           <TabsContent value="submit"><SubmitTab /></TabsContent>
           <TabsContent value="approvals"><ApprovalsTab /></TabsContent>

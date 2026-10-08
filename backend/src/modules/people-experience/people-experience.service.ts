@@ -180,8 +180,8 @@ async function calculateEmployeeSnapshot(employee: any) {
       [employeeId],
     ),
     scalar(
-      "SELECT COUNT(DISTINCT survey_id) AS cnt FROM survey_response WHERE employee_id = ? AND submitted_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
-      [employeeId],
+      "SELECT COUNT(DISTINCT survey_id) AS cnt FROM survey_response WHERE employee_id = ? AND COALESCE(response_date, created_at) >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
+      [employeeId]
     ),
     scalar(
       "SELECT COUNT(*) AS cnt FROM helpdesk_ticket WHERE employee_id = ? AND status NOT IN ('resolved','closed','cancelled')",
@@ -803,7 +803,8 @@ async function calculateEnps(employeeIds: string[]) {
        COUNT(*) AS total
      FROM survey_response
      WHERE employee_id IN (${placeholders})
-       AND submitted_at >= DATE_SUB(NOW(), INTERVAL 180 DAY)
+       -- survey_response has no submitted_at (response_date / created_at); this was a 500 on every call.
+       AND COALESCE(response_date, created_at) >= DATE_SUB(NOW(), INTERVAL 180 DAY)
        AND response_value IS NOT NULL`,
     employeeIds,
   );

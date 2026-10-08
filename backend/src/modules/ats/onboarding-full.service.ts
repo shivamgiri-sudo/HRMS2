@@ -12,6 +12,7 @@ import {
   sanitizeProviderPayload,
 } from "../integrations/luckpay/luckpay.client.js";
 import { withProviderFailureLogged } from "./bgv-api-log.service.js";
+import { syncBridgePennyDropStatus } from "./onboarding-bridge-status.js";
 import { getConfiguredBgvProviderAdapter } from "./bgv-provider.adapter.js";
 import { encrypt, decrypt } from "../../utils/encryption.js";
 // Reads go through the format-aware resolver, not utils/encryption.decrypt directly.
@@ -952,6 +953,44 @@ async function resolveEsignSource(candidateId: string) {
 // provider_key and a provider_reference_id.
 
 /**
+ * The submit-time penny drop used to land only in candidate_bgv_check. Employee creation, the
+ * verified-bank copy and Ops Control Tower read candidate_bank_verification / the onboarding
+ * bridge, so a verified account looked "pending" and never reached employee_bank_detail. Writes
+ * the same stores the verify button does, then copies the account onto the employee if one already
+ * exists. A failure here must not lose the check result already stored, so it is logged, not thrown.
+ */
+async function recordBankVerificationOutcome(
+  candidateId: string,
+  args: {
+    accountNo: string;
+    ifscCode: string;
+    accountHolderName: string | null;
+    result: Awaited<ReturnType<Awaited<ReturnType<typeof getConfiguredBgvProviderAdapter>>["verifyBank"]>>;
+  },
+): Promise<void> {
+  try {
+    const { persistBankVerificationOutcome } = await import("./bgv-verification.service.js");
+    const [dupe] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM candidate_bank_verification WHERE candidate_id = ? AND provider_reference_id = ? LIMIT 1`,
+      [candidateId, args.result.providerReferenceId],
+    );
+    if ((dupe as RowDataPacket[]).length === 0) {
+      await persistBankVerificationOutcome(candidateId, args, args.result);
+    }
+    await syncBridgePennyDropStatus(db, candidateId, args.result.status, args.result.riskFlags);
+    if (args.result.status === "verified") {
+      const { copyVerifiedBankToEmployee } = await import("../payroll/bank-manual-review.service.js");
+      await copyVerifiedBankToEmployee(candidateId);
+    }
+  } catch (err) {
+    console.error(
+      `[BGV] could not record bank verification outcome for candidate ${candidateId}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+/**
  * Trigger real BGV checks asynchronously after onboarding submission
  *
  * Uses the configured BGV provider (befisc_luckpay / infinity_ai / digio)
@@ -1053,12 +1092,13 @@ async function triggerRealBgvChecksAsync(
         accountHolderName: bank.accountHolderName ?? cand.full_name ?? null,
         candidateName: cand.full_name ?? null,
       });
-      await storeBgvCheckResult(
-        candidateId,
-        "bank",
+      await storeBgvCheckResult(candidateId, 'bank', result, adapter.providerKey);
+      await recordBankVerificationOutcome(candidateId, {
+        accountNo,
+        ifscCode,
+        accountHolderName: bank.accountHolderName ?? cand.full_name ?? null,
         result,
-        adapter.providerKey,
-      );
+      });
       console.log(`[BGV] Bank check for ${candidateId}: ${result.status}`);
     } catch (err) {
       await storeBgvCheckError(candidateId, "bank", adapter.providerKey, err);
@@ -1116,6 +1156,44 @@ async function triggerRealBgvChecksAsync(
         err,
       );
     }
+  }
+
+  // Education verification. Previously never run automatically: no 'education_doc' check row was
+  // ever written at submit, so education sat at 'not_run' until HR marked it by hand and kept the
+  // overall BGV at in_progress. Run it from the qualification the candidate entered. Providers with
+  // no live education API (Befisc/Luckpay) return manual_review, which is recorded and never counted
+  // as a pass; only a provider-confirmed 'verified' clears it.
+  try {
+    const [quals] = await db.execute<RowDataPacket[]>(
+      `SELECT qualification, institution_name, roll_number, board_type, passed_out_year
+         FROM candidate_onboarding_qualification
+        WHERE candidate_id = ? AND NULLIF(TRIM(roll_number), '') IS NOT NULL AND passed_out_year IS NOT NULL
+        ORDER BY passed_out_year DESC LIMIT 1`,
+      [candidateId],
+    );
+    const q = (quals as RowDataPacket[])[0];
+    if (q) {
+      const board = String(q.board_type ?? '').toLowerCase();
+      const boardType = (['cbse_10', 'cbse_12', 'university'].includes(board) ? board : 'other') as 'cbse_10' | 'cbse_12' | 'university' | 'other';
+      const result = await adapter.verifyEducation({
+        boardType,
+        rollNumber: String(q.roll_number).trim(),
+        yearOfPassing: Number(q.passed_out_year),
+        candidateName: cand.full_name ?? null,
+        institutionName: q.institution_name ?? null,
+      });
+      // Persist only a definite answer. syncBgvReport below maps any manual_review row to overall
+      // 'refer' (a hard, non-forceable letter blocker), so recording the "provider has no live
+      // education API" fallback would make things worse than leaving education unrun.
+      if (result.status === 'verified' || result.status === 'failed' || result.status === 'mismatch') {
+        await storeBgvCheckResult(candidateId, 'education_doc', result, adapter.providerKey);
+      }
+      console.log(`[BGV] Education check for ${candidateId}: ${result.status}`);
+    } else {
+      console.warn(`[BGV] Education check for ${candidateId} skipped — no qualification with roll number and year`);
+    }
+  } catch (err) {
+    await storeBgvCheckError(candidateId, 'education_doc', adapter.providerKey, err);
   }
 
   // Sync all checks to overall BGV report
@@ -1493,40 +1571,25 @@ async function syncBgvReport(
     `SELECT status FROM candidate_bgv_check WHERE candidate_id = ?`,
     [candidateId],
   );
+  const statuses = (checks as any[]).map(c => c.status);
 
-  const statuses = (checks as any[]).map((c) => c.status);
-  const allVerified =
-    statuses.length > 0 && statuses.every((s) => s === "verified");
-  const anyFailed = statuses.some((s) => s === "failed");
-  const anyManualReview = statuses.some((s) => s === "manual_review");
-
-  const overallStatus = allVerified
-    ? "clear"
-    : anyFailed
-      ? "negative"
-      : anyManualReview
-        ? "refer"
-        : "in_progress";
-
-  const score = allVerified ? 100 : anyFailed ? 0 : 50;
-
+  // Only the bookkeeping fields are written here. overall_status / bgv_score used to be set from a
+  // crude rule (any manual_review => 'refer', any failed => 'negative'), which put every candidate
+  // whose masked PAN went to manual review into 'refer' — a hard, non-forceable appointment-letter
+  // blocker — and disagreed with the per-category verdict computeAndSaveScore maintains on every
+  // later check update. The verdict now comes from computeAndSaveScore alone, so manual_review
+  // counts as "in progress" and only a real mismatch/failure is adverse.
   await db.execute(
     `INSERT INTO candidate_bgv_report (id, candidate_id, overall_status, bgv_score, is_auto_approved, hr_remarks)
-     VALUES (?, ?, ?, ?, 0, ?)
+     VALUES (?, ?, 'pending', 0, 0, ?)
      ON DUPLICATE KEY UPDATE
-       overall_status = VALUES(overall_status),
-       bgv_score = VALUES(bgv_score),
        is_auto_approved = 0,
        hr_remarks = VALUES(hr_remarks),
        updated_at = NOW()`,
-    [
-      randomUUID(),
-      candidateId,
-      overallStatus,
-      score,
-      `BGV checks via ${providerKey} — ${statuses.join(", ")}`,
-    ],
+    [randomUUID(), candidateId, `BGV checks via ${providerKey} — ${statuses.join(', ')}`]
   );
+  const { computeAndSaveScore } = await import("./bgv-verification.service.js");
+  await computeAndSaveScore(candidateId);
 }
 
 export async function validateOnboardingToken(token: string) {
@@ -1535,7 +1598,7 @@ export async function validateOnboardingToken(token: string) {
             c.id, c.candidate_code, c.full_name, c.mobile, c.email,
             c.gender, c.date_of_birth, c.applied_for_branch, c.applied_for_process,
             c.sourcing_channel, c.source_details, c.resume_url, c.selfie_url,
-            c.profile_status, c.is_minor, br.branch_name, pm.process_name
+            c.profile_status, c.is_minor, br.branch_name, br.city AS branch_city, pm.process_name
        FROM ats_onboarding_bridge b
        JOIN ats_candidate c ON c.id = b.candidate_id
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
@@ -1575,6 +1638,8 @@ export async function validateOnboardingToken(token: string) {
     date_of_birth: row.date_of_birth,
     branch_id: row.applied_for_branch,
     branch_name: row.branch_name ?? row.applied_for_branch ?? null,
+    // Lets the address step warn when the current address is in a different city than the branch.
+    branch_city: row.branch_city ?? null,
     process_id: row.applied_for_process,
     process_name: row.process_name ?? row.applied_for_process ?? null,
     source_type: row.sourcing_channel ?? null,
@@ -2651,6 +2716,11 @@ export async function submitFullOnboarding(
      VALUES (UUID(), ?, 'Onboarding Link Sent', 'Profile Submitted', 'Candidate completed onboarding profile', NULL)`,
     [candidateId],
   );
+
+  // Address is now on file: send the address-BGV link if approval-time send skipped for lack of one.
+  import("./bgv-address-verification.routes.js")
+    .then(({ autoSendAddressBgvLink }) => autoSendAddressBgvLink(candidateId, "profile-submitted"))
+    .catch(() => undefined);
 
   // Trigger real BGV checks asynchronously — fire-and-forget after submission commits
   // Uses configured provider (befisc_luckpay / infinity_ai / digio) from org_settings

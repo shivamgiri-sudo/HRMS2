@@ -14,6 +14,7 @@
 // 2026-09-22 — and the eSign figure independently matches appointmentLetterEligibility.
 // service.ts's own `idCreationSlaBreached: daysSinceIdCreated > 3`, the same employees.created_at
 // clock used there.
+import { DIGILOCKER_EVIDENCE_SQL } from "../ats/onboarding-bridge-heal.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
@@ -43,13 +44,32 @@ function isMissingObject(err: unknown): boolean {
   );
 }
 
+/** A query slower than this is logged by name. */
+const SLOW_QUERY_MS = 2_000;
+
+/**
+ * Who the Ops Control Tower counts. People who have LEFT are not chased for onboarding paperwork and do not
+ * inflate branch totals:
+ *   - STILL_WITH_US: current staff plus pre-joiners (not active yet, employment_status 'preboarding'), so the
+ *     joiner-journey sections keep the very people they exist for while dropping anyone who has since exited.
+ *   - ACTIVE_STAFF_ONLY: current staff only, for attendance (a pre-joiner has none, and a leaver's old
+ *     mismatches are no longer something the branch can act on).
+ * F&F and NOC are exit trackers and deliberately still list people who have left.
+ */
+export const STILL_WITH_US = "(e.active_status = 1 OR LOWER(COALESCE(e.employment_status, '')) = 'preboarding')";
+export const ACTIVE_STAFF_ONLY = "e.active_status = 1";
+
 async function query<T extends RowDataPacket>(
   label: string,
   sql: string,
   params: unknown[] = [],
 ): Promise<T[]> {
+  const startedAt = Date.now();
   try {
     const [rows] = await db.execute<RowDataPacket[]>(sql, params as never[]);
+    // The summary ran 12-41 s on production; naming the slow query is the first step to fixing it.
+    const ms = Date.now() - startedAt;
+    if (ms >= SLOW_QUERY_MS) logger.warn({ block: label, ms }, "[ops-control-tower] slow query");
     return rows as T[];
   } catch (err) {
     if (!isMissingObject(err)) throw err;
@@ -93,7 +113,7 @@ export interface JoiningBlock {
   grandBuckets: Record<JoinBucket, number>;
 }
 
-async function allBranches(): Promise<BranchRef[]> {
+export async function allBranches(): Promise<BranchRef[]> {
   const rows = await query<RowDataPacket>(
     "branches",
     `SELECT id, branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name`,
@@ -127,6 +147,7 @@ export async function getAttendanceMismatchBlock(): Promise<MismatchBlock> {
     `SELECT e.branch_id, SUM(ari.resolved_at IS NULL) AS open_count, MAX(ari.resolved_at) AS last_resolved
        FROM attendance_reconciliation_issue ari
        JOIN employees e ON e.id = ari.employee_id
+      WHERE ${ACTIVE_STAFF_ONLY}
       GROUP BY e.branch_id`,
   );
   const byBranch = new Map(rows.map((r) => [String(r.branch_id), r]));
@@ -167,7 +188,7 @@ export async function getAttendanceMismatchDetail(
             DATEDIFF(CURDATE(), ari.issue_date) AS days_open
        FROM attendance_reconciliation_issue ari
        JOIN employees e ON e.id = ari.employee_id
-      WHERE e.branch_id = ? AND ari.resolved_at IS NULL
+      WHERE e.branch_id = ? AND ari.resolved_at IS NULL AND ${ACTIVE_STAFF_ONLY}
       ORDER BY ari.issue_date ASC
       LIMIT 200`,
     [branchId],
@@ -368,8 +389,9 @@ export async function getDigilockerPendingBlock(): Promise<CountBlock> {
     `SELECT e.branch_id, COUNT(*) AS n
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
-      WHERE e.created_at >= NOW() - INTERVAL ? DAY
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (b.digilocker_status IS NULL OR b.digilocker_status NOT IN (${DIGILOCKER_DONE.map(() => "?").join(",")}))
+        AND NOT ${DIGILOCKER_EVIDENCE_SQL}
       GROUP BY e.branch_id`,
     [NEW_JOINER_WINDOW_DAYS, ...DIGILOCKER_DONE],
   );
@@ -396,8 +418,9 @@ export async function getDigilockerPendingDetail(
             DATEDIFF(CURDATE(), e.created_at) AS days_open
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
-      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (b.digilocker_status IS NULL OR b.digilocker_status NOT IN (${DIGILOCKER_DONE.map(() => "?").join(",")}))
+        AND NOT ${DIGILOCKER_EVIDENCE_SQL}
       ORDER BY e.created_at ASC
       LIMIT 200`,
     [branchId, NEW_JOINER_WINDOW_DAYS, ...DIGILOCKER_DONE],
@@ -504,10 +527,11 @@ function esignSql(scoped: boolean): string {
   const doneClause = `LOWER(COALESCE(b.joining_document_status, '')) IN (${JOINING_DOC_DONE_STATUS_VALUES.map(() => "?").join(",")})`;
   return `SELECT e.branch_id, e.id AS employee_id, e.employee_code, e.full_name, e.created_at,
                  CASE WHEN COALESCE(b.joining_document_completion_pct, 0) >= 100 OR ${doneClause}
+                           OR EXISTS (SELECT 1 FROM employee_joining_esign_kit ek WHERE ek.employee_id = e.id AND ek.status = 'signed')
                       THEN e.created_at ELSE NULL END AS done_at
             FROM ats_onboarding_bridge b
             JOIN employees e ON e.id = b.employee_id
-           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY`;
+           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}`;
 }
 
 export async function getEsignPendingBlock(
@@ -543,13 +567,24 @@ export async function getEsignPendingDetail(
 // guess from the migration's own naming and should be checked against real data.
 const APPOINTMENT_ESIGN_DONE_VALUES = ["signed", "esigned", "completed"];
 
+/**
+ * HR's APPOINTMENT_LETTER_ESIGN provisioning task is the owner of "does this person need a letter chased".
+ * 'waived' is a deliberate exemption (the same convention the document checklist and provisioning blocks use);
+ * live 2026-10-05: 139 of the 143 employees listed as overdue had that task waived by HR. 'confirmed' / 'actioned'
+ * mean HR closed it too.
+ */
+const APPOINTMENT_TASK_CLOSED_SQL = `NOT EXISTS (SELECT 1 FROM it_provisioning_request wt
+                      WHERE wt.employee_id = e.id AND wt.request_type = 'join'
+                        AND wt.task_code = 'APPOINTMENT_LETTER_ESIGN' AND wt.status IN ('waived', 'confirmed', 'actioned'))`;
+
 function appointmentLetterSql(scoped: boolean): string {
   const doneClause = `LOWER(COALESCE(al.employee_esign_status, '')) IN (${APPOINTMENT_ESIGN_DONE_VALUES.map(() => "?").join(",")})`;
   return `SELECT e.branch_id, e.id AS employee_id, e.employee_code, e.full_name, e.created_at,
                  CASE WHEN ${doneClause} THEN al.employee_esign_at ELSE NULL END AS done_at
             FROM employees e
             LEFT JOIN appointment_letter_issue al ON al.employee_id = e.id
-           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY`;
+           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+             AND ${APPOINTMENT_TASK_CLOSED_SQL}`;
 }
 
 export async function getAppointmentLetterBlock(
@@ -589,23 +624,46 @@ export async function getAppointmentLetterDetail(
 // data (2026-09-25): only 'initiated' and 'skipped' rows exist so far, no 'success'/'failed' yet.
 const PENNY_DROP_DONE = ["success", "skipped"];
 
+/**
+ * Penny drop done, from every place the verification is actually recorded. bank_penny_drop_log is only
+ * written by the post-joining bank-detail flow (7 rows ever on production); the onboarding journey verifies the
+ * account earlier, on the candidate, and records it in ats_onboarding_bridge.penny_drop_status and
+ * candidate_bank_verification (live 2026-10-05: 174 of 208 recent joiners 'verified' on the bridge, 175 with any
+ * verified evidence, yet all 208 showed as pending). Checking the log alone listed people who had verified
+ * (e.g. Suhail Khan, MAS63672) under pending. Mock-provider rows are test data and do not count.
+ */
+const PENNY_DROP_EVIDENCE_SQL = `(
+          (latest.penny_drop_status IS NOT NULL AND latest.penny_drop_status IN (${PENNY_DROP_DONE.map((v) => `'${v}'`).join(",")}))
+          OR EXISTS (SELECT 1 FROM ats_onboarding_bridge pb
+                      WHERE pb.employee_id = e.id
+                        AND (LOWER(COALESCE(pb.penny_drop_status, '')) = 'verified' OR pb.penny_drop_verified_at IS NOT NULL))
+          OR EXISTS (SELECT 1 FROM employee_bank_detail pd WHERE pd.employee_id = e.id AND pd.verified = 1)
+          OR EXISTS (SELECT 1 FROM ats_onboarding_bridge pb2
+                       JOIN candidate_bank_verification pv ON pv.candidate_id = pb2.candidate_id
+                      WHERE pb2.employee_id = e.id
+                        AND LOWER(COALESCE(pv.verification_status, '')) = 'verified'
+                        AND LOWER(COALESCE(pv.verification_method, '')) <> 'mock')
+        )`;
+
+const PENNY_DROP_LATEST_JOIN = `LEFT JOIN (
+         SELECT bpdl1.employee_id, bpdl1.penny_drop_status
+           FROM bank_penny_drop_log bpdl1
+          WHERE bpdl1.initiated_at = (
+                  SELECT MAX(bpdl2.initiated_at) FROM bank_penny_drop_log bpdl2 WHERE bpdl2.employee_id = bpdl1.employee_id
+                )
+       ) latest ON latest.employee_id = e.id`;
+
 export async function getPennyDropMissingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
   const rows = await query<RowDataPacket>(
     "penny-drop-missing",
     `SELECT e.branch_id, COUNT(*) AS n
        FROM employees e
-       LEFT JOIN (
-         SELECT bpdl1.employee_id, bpdl1.penny_drop_status
-           FROM bank_penny_drop_log bpdl1
-          WHERE bpdl1.initiated_at = (
-                  SELECT MAX(bpdl2.initiated_at) FROM bank_penny_drop_log bpdl2 WHERE bpdl2.employee_id = bpdl1.employee_id
-                )
-       ) latest ON latest.employee_id = e.id
-      WHERE e.created_at >= NOW() - INTERVAL ? DAY
-        AND (latest.penny_drop_status IS NULL OR latest.penny_drop_status NOT IN (${PENNY_DROP_DONE.map(() => "?").join(",")}))
+       ${PENNY_DROP_LATEST_JOIN}
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+        AND NOT ${PENNY_DROP_EVIDENCE_SQL}
       GROUP BY e.branch_id`,
-    [NEW_JOINER_WINDOW_DAYS, ...PENNY_DROP_DONE],
+    [NEW_JOINER_WINDOW_DAYS],
   );
   return rollupCounts(
     branches,
@@ -618,21 +676,18 @@ export async function getPennyDropMissingDetail(
 ): Promise<OnboardingDetailRow[]> {
   const rows = await query<RowDataPacket>(
     "penny-drop-missing-detail",
-    `SELECT e.id AS employee_id, e.employee_code, e.full_name, COALESCE(latest.penny_drop_status, 'not_started') AS status,
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name,
+            COALESCE(latest.penny_drop_status,
+                     (SELECT NULLIF(pb3.penny_drop_status, '') FROM ats_onboarding_bridge pb3 WHERE pb3.employee_id = e.id LIMIT 1),
+                     'not_started') AS status,
             DATEDIFF(CURDATE(), e.created_at) AS days_open
        FROM employees e
-       LEFT JOIN (
-         SELECT bpdl1.employee_id, bpdl1.penny_drop_status
-           FROM bank_penny_drop_log bpdl1
-          WHERE bpdl1.initiated_at = (
-                  SELECT MAX(bpdl2.initiated_at) FROM bank_penny_drop_log bpdl2 WHERE bpdl2.employee_id = bpdl1.employee_id
-                )
-       ) latest ON latest.employee_id = e.id
-      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
-        AND (latest.penny_drop_status IS NULL OR latest.penny_drop_status NOT IN (${PENNY_DROP_DONE.map(() => "?").join(",")}))
+       ${PENNY_DROP_LATEST_JOIN}
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+        AND NOT ${PENNY_DROP_EVIDENCE_SQL}
       ORDER BY e.created_at ASC
       LIMIT 200`,
-    [branchId, NEW_JOINER_WINDOW_DAYS, ...PENNY_DROP_DONE],
+    [branchId, NEW_JOINER_WINDOW_DAYS],
   );
   return rows.map((r) => ({
     employeeId: String(r.employee_id),
@@ -643,10 +698,83 @@ export async function getPennyDropMissingDetail(
   }));
 }
 
+// ── 10b. Mandatory joining documents pending ───────────────────────────────────────────────
+// Source: employee_joining_document_checklist, the same table the Joining Documents Tracker reads.
+// A row is pending while it is mandatory and its status is not one of the closed values below
+// (the done list mirrors recalculateDocumentProgress in employeeJoiningDocuments.service.ts;
+// waived / not_applicable rows are deliberate exemptions, not open items).
+const CHECKLIST_CLOSED_STATUSES = [
+  "verified", "signed_verified", "completed", "esign_completed", "wet_signed_uploaded",
+  "waived", "not_applicable",
+];
+
+/**
+ * Owner directive 2026-09-18 (COMPLETION_EXCLUDED_DOCUMENT_CODES in employeeJoiningDocuments.service.ts): the two EPF
+ * forms are reviewed by the employee on a separate track and do not count toward joining-document completion.
+ * This block must follow the same rule — live 2026-10-05 it listed 206 joiners, 75 of them only because these two
+ * forms sat at 'employee_review_pending'. Kept as a local copy: that service pulls in the mailer and storage layers.
+ */
+const DOCS_COMPLETION_EXCLUDED_CODES = ["EPF_DECLARATION", "EPF_NOMINATION_FORM2"];
+
+export async function getDocsPendingBlock(): Promise<CountBlock> {
+  const branches = await allBranches();
+  const rows = await query<RowDataPacket>(
+    "docs-pending",
+    `SELECT e.branch_id, COUNT(DISTINCT e.id) AS n
+       FROM employees e
+       JOIN employee_joining_document_checklist c ON c.employee_id = e.id
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+        AND c.mandatory = 1
+        AND UPPER(COALESCE(c.document_code, '')) NOT IN (${DOCS_COMPLETION_EXCLUDED_CODES.map(() => "?").join(",")})
+        AND LOWER(COALESCE(c.status, '')) NOT IN (${CHECKLIST_CLOSED_STATUSES.map(() => "?").join(",")})
+      GROUP BY e.branch_id`,
+    [NEW_JOINER_WINDOW_DAYS, ...DOCS_COMPLETION_EXCLUDED_CODES, ...CHECKLIST_CLOSED_STATUSES],
+  );
+  return rollupCounts(
+    branches,
+    new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])),
+  );
+}
+
+/** Per-employee pending document names, newest-joiner last; status carries "N pending: A, B". */
+export async function getDocsPendingDetail(
+  branchId: string,
+): Promise<OnboardingDetailRow[]> {
+  const rows = await query<RowDataPacket>(
+    "docs-pending-detail",
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name,
+            COUNT(*) AS pending_count,
+            GROUP_CONCAT(c.document_name ORDER BY c.document_name SEPARATOR ', ') AS pending_names,
+            DATEDIFF(CURDATE(), e.created_at) AS days_open
+       FROM employees e
+       JOIN employee_joining_document_checklist c ON c.employee_id = e.id
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+        AND c.mandatory = 1
+        AND UPPER(COALESCE(c.document_code, '')) NOT IN (${DOCS_COMPLETION_EXCLUDED_CODES.map(() => "?").join(",")})
+        AND LOWER(COALESCE(c.status, '')) NOT IN (${CHECKLIST_CLOSED_STATUSES.map(() => "?").join(",")})
+      GROUP BY e.id, e.employee_code, e.full_name, e.created_at
+      ORDER BY e.created_at ASC
+      LIMIT 200`,
+    [branchId, NEW_JOINER_WINDOW_DAYS, ...DOCS_COMPLETION_EXCLUDED_CODES, ...CHECKLIST_CLOSED_STATUSES],
+  );
+  return rows.map((r) => ({
+    employeeId: String(r.employee_id),
+    employeeCode: String(r.employee_code ?? ""),
+    employeeName: String(r.full_name ?? ""),
+    status: `${Number(r.pending_count)} pending: ${String(r.pending_names ?? "").slice(0, 160)}`,
+    daysOpen: Number(r.days_open ?? 0),
+  }));
+}
+
 // ── 10. Account details missing ─────────────────────────────────────────────────────────────
 // employee_bank_detail has no status column — the row's mere existence is the signal. Pending =
 // no bank-detail row for the employee at all (NOT the `verified` flag, which is a separate,
-// later step — this block only answers "has HRMS captured account details yet").
+// later step — this block only answers "has HRMS captured account details yet"). Account details the
+// candidate already entered during onboarding (candidate_onboarding_bank_detail, a real account hash) count as
+// captured: they reach employee_bank_detail later, and 20 of the 35 listed on 2026-10-05 already had them.
+const CANDIDATE_BANK_CAPTURED_SQL = `EXISTS (SELECT 1 FROM ats_onboarding_bridge cb
+                      JOIN candidate_onboarding_bank_detail cob ON cob.candidate_id = cb.candidate_id
+                     WHERE cb.employee_id = e.id AND cob.account_no_hash IS NOT NULL AND cob.account_no_hash <> '')`;
 export async function getAccountDetailsMissingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
   const rows = await query<RowDataPacket>(
@@ -654,7 +782,7 @@ export async function getAccountDetailsMissingBlock(): Promise<CountBlock> {
     `SELECT e.branch_id, COUNT(*) AS n
        FROM employees e
        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id
-      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ebd.id IS NULL
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US} AND ebd.id IS NULL AND NOT ${CANDIDATE_BANK_CAPTURED_SQL}
       GROUP BY e.branch_id`,
     [NEW_JOINER_WINDOW_DAYS],
   );
@@ -673,7 +801,7 @@ export async function getAccountDetailsMissingDetail(
             DATEDIFF(CURDATE(), e.created_at) AS days_open
        FROM employees e
        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id
-      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ebd.id IS NULL
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US} AND ebd.id IS NULL AND NOT ${CANDIDATE_BANK_CAPTURED_SQL}
       ORDER BY e.created_at ASC
       LIMIT 200`,
     [branchId, NEW_JOINER_WINDOW_DAYS],
@@ -693,6 +821,10 @@ export async function getAccountDetailsMissingDetail(
 // report exists and overall_status = 'clear'; anything else (pending/in_progress/refer/negative,
 // or no report row yet) counts as pending.
 const BGV_DONE = ["clear"];
+/** HR waived BGV initiation for this joiner (live 2026-10-05: 61 of the pending list) — a deliberate exemption, not an open item. */
+const BGV_WAIVED_SQL = `NOT EXISTS (SELECT 1 FROM it_provisioning_request wb
+                      WHERE wb.employee_id = e.id AND wb.request_type = 'join'
+                        AND wb.task_code = 'HR_BGV_INITIATION' AND wb.status = 'waived')`;
 
 export async function getBgvPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
@@ -702,8 +834,9 @@ export async function getBgvPendingBlock(): Promise<CountBlock> {
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
        LEFT JOIN candidate_bgv_report r ON r.candidate_id = b.candidate_id
-      WHERE e.created_at >= NOW() - INTERVAL ? DAY
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (r.overall_status IS NULL OR r.overall_status NOT IN (${BGV_DONE.map(() => "?").join(",")}))
+        AND ${BGV_WAIVED_SQL}
       GROUP BY e.branch_id`,
     [NEW_JOINER_WINDOW_DAYS, ...BGV_DONE],
   );
@@ -723,8 +856,9 @@ export async function getBgvPendingDetail(
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
        LEFT JOIN candidate_bgv_report r ON r.candidate_id = b.candidate_id
-      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (r.overall_status IS NULL OR r.overall_status NOT IN (${BGV_DONE.map(() => "?").join(",")}))
+        AND ${BGV_WAIVED_SQL}
       ORDER BY e.created_at ASC
       LIMIT 200`,
     [branchId, NEW_JOINER_WINDOW_DAYS, ...BGV_DONE],
@@ -736,6 +870,72 @@ export async function getBgvPendingDetail(
     status: String(r.status),
     daysOpen: Number(r.days_open ?? 0),
   }));
+}
+
+
+// ── 11b. Address verification awaiting HR review ────────────────────────────────────────────
+// candidate_bgv_address_verification: the candidate submits a geo-tagged selfie; it auto-passes only within 50 m of the
+// declared address' reference point (a pincode centre, so it practically never does) and otherwise sits at
+// status 'submitted' until HR decides pass / fail / review on that candidate's BGV report page. There was no list of
+// those waiting cases anywhere: live 2026-10-05, 33 submissions (up to 17 days old), 0 ever decided. This block is
+// that list. Not nudgeable: the open action is HR's, not the joiner's. A candidate with a verified attempt is done.
+const ADDRESS_REVIEW_WHERE = `v.status = 'submitted' AND (v.hr_decision IS NULL OR v.hr_decision = 'review')
+        AND NOT EXISTS (SELECT 1 FROM candidate_bgv_address_verification vv WHERE vv.candidate_id = v.candidate_id AND vv.status = 'verified')`;
+
+export async function getAddressReviewPendingBlock(): Promise<CountBlock> {
+  const branches = await allBranches();
+  const rows = await query<RowDataPacket>(
+    "address-review-pending",
+    `SELECT e.branch_id, COUNT(DISTINCT e.id) AS n
+       FROM candidate_bgv_address_verification v
+       JOIN ats_onboarding_bridge b ON b.candidate_id = v.candidate_id
+       JOIN employees e ON e.id = b.employee_id
+      WHERE ${ADDRESS_REVIEW_WHERE}
+        AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+      GROUP BY e.branch_id`,
+    [NEW_JOINER_WINDOW_DAYS],
+  );
+  return rollupCounts(
+    branches,
+    new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])),
+  );
+}
+
+export async function getAddressReviewPendingDetail(
+  branchId: string,
+): Promise<OnboardingDetailRow[]> {
+  const rows = await query<RowDataPacket>(
+    "address-review-pending-detail",
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name, v.submitted_at,
+            CASE WHEN v.gps_distance_m IS NULL THEN 'No GPS captured'
+                 WHEN v.gps_distance_m < 1000 THEN CONCAT(ROUND(v.gps_distance_m), ' m from declared address')
+                 WHEN v.gps_distance_m < 100000 THEN CONCAT(ROUND(v.gps_distance_m / 1000, 1), ' km from declared address')
+                 ELSE CONCAT(ROUND(v.gps_distance_m / 1000), ' km away - different city') END AS status,
+            DATEDIFF(CURDATE(), DATE(v.submitted_at)) AS days_open
+       FROM candidate_bgv_address_verification v
+       JOIN ats_onboarding_bridge b ON b.candidate_id = v.candidate_id
+       JOIN employees e ON e.id = b.employee_id
+      WHERE e.branch_id = ? AND ${ADDRESS_REVIEW_WHERE}
+        AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+      ORDER BY v.submitted_at DESC
+      LIMIT 400`,
+    [branchId, NEW_JOINER_WINDOW_DAYS],
+  );
+  const seen = new Set<string>();
+  const out: OnboardingDetailRow[] = [];
+  for (const r of rows) {
+    const id = String(r.employee_id);
+    if (seen.has(id)) continue; // newest attempt per employee
+    seen.add(id);
+    out.push({
+      employeeId: id,
+      employeeCode: String(r.employee_code ?? ""),
+      employeeName: String(r.full_name ?? ""),
+      status: String(r.status),
+      daysOpen: Number(r.days_open ?? 0),
+    });
+  }
+  return out.sort((a, b) => b.daysOpen - a.daysOpen).slice(0, 200);
 }
 
 // ── 12-14. IT / Admin / WFM Provisioning pending ────────────────────────────────────────────
@@ -767,7 +967,7 @@ async function provisioningPendingBlock(
       WHERE ipr.request_type = 'join'
         AND ipr.assigned_role IN (${roles.map(() => "?").join(",")})
         AND ipr.status IN (${PROVISIONING_PENDING_STATUSES.map(() => "?").join(",")})
-        AND e.created_at >= NOW() - INTERVAL ? DAY
+        AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
       GROUP BY e.branch_id`,
     [...roles, ...PROVISIONING_PENDING_STATUSES, NEW_JOINER_WINDOW_DAYS],
   );
@@ -791,7 +991,7 @@ async function provisioningPendingDetail(
       WHERE e.branch_id = ? AND ipr.request_type = 'join'
         AND ipr.assigned_role IN (${roles.map(() => "?").join(",")})
         AND ipr.status IN (${PROVISIONING_PENDING_STATUSES.map(() => "?").join(",")})
-        AND e.created_at >= NOW() - INTERVAL ? DAY
+        AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
       ORDER BY e.created_at ASC
       LIMIT 200`,
     [
@@ -837,7 +1037,9 @@ export interface OpsControlTowerSummary {
   appointmentLetter: CountBlock;
   pennyDropMissing: CountBlock;
   accountDetailsMissing: CountBlock;
+  docsPending: CountBlock;
   bgvPending: CountBlock;
+  addressReviewPending: CountBlock;
   itProvisioningPending: CountBlock;
   adminProvisioningPending: CountBlock;
   wfmProvisioningPending: CountBlock;
@@ -858,7 +1060,9 @@ export async function getOpsControlTowerSummary(
     appointmentLetter,
     pennyDropMissing,
     accountDetailsMissing,
+    docsPending,
     bgvPending,
+    addressReviewPending,
     itProvisioningPending,
     adminProvisioningPending,
     wfmProvisioningPending,
@@ -873,7 +1077,9 @@ export async function getOpsControlTowerSummary(
     getAppointmentLetterBlock(nowMs),
     getPennyDropMissingBlock(),
     getAccountDetailsMissingBlock(),
+    getDocsPendingBlock(),
     getBgvPendingBlock(),
+    getAddressReviewPendingBlock(),
     getItProvisioningPendingBlock(),
     getAdminProvisioningPendingBlock(),
     getWfmProvisioningPendingBlock(),
@@ -892,7 +1098,9 @@ export async function getOpsControlTowerSummary(
     appointmentLetter,
     pennyDropMissing,
     accountDetailsMissing,
+    docsPending,
     bgvPending,
+    addressReviewPending,
     itProvisioningPending,
     adminProvisioningPending,
     wfmProvisioningPending,

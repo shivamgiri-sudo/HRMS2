@@ -113,12 +113,64 @@ describe("PATCH /api/employees/me", () => {
     expect(paramsStr).toContain("9999999999");
   });
 
-  it("still 403s official_email with no audit log written (unchanged behaviour)", async () => {
-    const res = await request(app())
-      .patch("/api/employees/me")
-      .send({ official_email: "x@y.com" });
+  // official_email was refused outright until 41311c0f5 (2026-09-28). It is now set-once:
+  // allowed only while the stored value is empty, only for a company-domain address no other
+  // account holds; once set it locks and the 403 is back. Every refusal writes nothing.
+  const writes = () =>
+    dbExecute.mock.calls.filter(([sql]) => /^\s*UPDATE\b/i.test(String(sql)));
+
+  /** PATCH /me flow with a given stored official_email and auth_user conflict state. */
+  function stubOfficialEmail(stored: string | null, conflict = false) {
+    dbExecute.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (/FROM employees WHERE user_id = \?/i.test(text)) return [[{ id: EMP_ID }], []];
+      if (/^SELECT official_email FROM employees WHERE id = \?/i.test(text)) return [[{ official_email: stored }], []];
+      if (/FROM auth_user WHERE email = \? AND id != \?/i.test(text)) return [conflict ? [{ id: "someone-else" }] : [], []];
+      if (/^SELECT `official_email` FROM employees/i.test(text)) return [[{ official_email: stored }], []];
+      return [{ affectedRows: 1 }, []];
+    });
+  }
+
+  it("403s official_email once one is already stored — no write, no audit log", async () => {
+    stubOfficialEmail("ravi@teammas.in");
+    const res = await request(app()).patch("/api/employees/me").send({ official_email: "someone.else@teammas.in" });
     expect(res.status).toBe(403);
+    expect(writes()).toHaveLength(0);
     expect(auditInserts()).toHaveLength(0);
+  });
+
+  it("400s an address outside the company domains before reading anything else — no write, no audit log", async () => {
+    stubOfficialEmail(null);
+    const res = await request(app()).patch("/api/employees/me").send({ official_email: "x@y.com" });
+    expect(res.status).toBe(400);
+    expect(writes()).toHaveLength(0);
+    expect(auditInserts()).toHaveLength(0);
+  });
+
+  it("409s an address another account already signs in with — no write, no audit log", async () => {
+    stubOfficialEmail(null, true);
+    const res = await request(app()).patch("/api/employees/me").send({ official_email: "taken@teammas.in" });
+    expect(res.status).toBe(409);
+    expect(writes()).toHaveLength(0);
+    expect(auditInserts()).toHaveLength(0);
+  });
+
+  it("sets it once while empty: normalised, synced to the login identity, and audited", async () => {
+    stubOfficialEmail(null);
+    const res = await request(app()).patch("/api/employees/me").send({ official_email: "  Ravi.Kumar@TeamMAS.in " });
+    expect(res.status).toBe(200);
+
+    const employeeUpdate = writes().find(([sql]) => /^UPDATE employees SET/i.test(String(sql)));
+    expect(employeeUpdate![0]).toBe("UPDATE employees SET `official_email` = ? WHERE id = ?");
+    expect(employeeUpdate![1]).toEqual(["ravi.kumar@teammas.in", EMP_ID]);
+    const authUpdate = writes().find(([sql]) => /^UPDATE auth_user SET email = \?/i.test(String(sql)));
+    expect(authUpdate![1]).toEqual(["ravi.kumar@teammas.in", USER_ID]);
+
+    const inserts = auditInserts();
+    expect(inserts).toHaveLength(1);
+    const paramsStr = JSON.stringify(inserts[0][1]);
+    expect(paramsStr).toContain("EMPLOYEE_SELF_OFFICIAL_EMAIL_SET");
+    expect(paramsStr).toContain("ravi.kumar@teammas.in");
   });
 });
 

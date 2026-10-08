@@ -2,15 +2,18 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { HeadcountShortagePanel } from '@/components/workforce/HeadcountShortagePanel';
 import RequisitionMetaPanel from '@/components/ats/RequisitionMetaPanel';
+import AssessmentLinkEditor from '@/components/requisition/AssessmentLinkEditor';
+import { canEditAssessmentLink } from '@/components/requisition/assessmentLink.model';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { formatISTDate } from '@/lib/utils';
+import { useApprovalFocus } from '@/hooks/useApprovalFocus';
 import {
   Users, Target, Clock, CheckCircle, AlertCircle,
   Plus, Search, Briefcase, Calendar,
   ChevronRight, Eye, Edit, Send, ThumbsUp, ThumbsDown,
   GraduationCap, FileText, TrendingUp, X,
   Trash2, Download, Mail, Bell, UserPlus, Phone, ArrowUpDown,
-  UserCheck
+  UserCheck, RotateCcw
 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -19,6 +22,16 @@ type ApprovalStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected' | '
 type RequisitionPriority = 'low' | 'normal' | 'high' | 'urgent';
 type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'intern' | 'trainee';
 type SortKey = 'deadline_asc' | 'deadline_desc' | 'priority' | 'aging_desc' | 'created_desc' | 'fill_rate';
+
+interface MetaScreeningConfig {
+  auto_notify?: boolean;
+  gender?: 'any' | 'male' | 'female';
+  certifications?: string[];
+  language_requirements?: Array<{ language: string; skills: Array<'speak' | 'read' | 'write'> }>;
+  min_typing_speed_wpm?: number | null;
+  written_english_level?: 'basic' | 'intermediate' | 'advanced' | null;
+  custom_field_rules?: Array<{ field: string; op: string; value: string; label?: string }>;
+}
 
 interface JobRequisition {
   id: string;
@@ -61,6 +74,15 @@ interface JobRequisition {
   process_id?: string | null;
   planned_batch_no?: string | null;
   training_start_date?: string | null;
+  // META campaign targeting — job_requisition columns returned via `jr.*`
+  // (mirrors backend/src/modules/job-requisition/job-requisition.types.ts).
+  bmi_assessment_url?: string | null;
+  meta_target_age_min?: number | null;
+  meta_target_age_max?: number | null;
+  meta_target_locations?: string[] | null;
+  meta_target_radius_km?: number | null;
+  ad_required?: number | boolean | null;
+  meta_screening_config?: MetaScreeningConfig | null;
 }
 
 interface DashboardMetrics {
@@ -186,7 +208,7 @@ const emptyForm = {
   // marketing on approval, and the age band is also what lead-screener.service.ts screens incoming
   // Lead Gen leads against — so leaving the band blank means age is not screened at all, not that
   // every age is rejected.
-  meta_campaign_enabled: false,   // if false, all META fields are hidden and marketing is not notified
+  meta_campaign_enabled: true,   // saved as ad_required; if false, META fields are hidden and the marketing brief says NO AD NEEDED
   bmi_assessment_url: '',
   meta_target_age_min: '',
   meta_target_age_max: '',
@@ -221,7 +243,10 @@ export default function NativeJobRequisition() {
   const [priorityFilter, setPriorityFilter] = useState<string>('');
   const [branchFilter, setBranchFilter] = useState<string>('');
   const [processFilter, setProcessFilter] = useState<string>('');
-  const [quickFilter, setQuickFilter] = useState<string>('');
+  // Approval Center deep link (?approvalId=) lands on the pending-approval quick filter so the row is visible.
+  const [quickFilter, setQuickFilter] = useState<string>(
+    new URLSearchParams(window.location.search).get('approvalId') ? 'pending_approval' : '',
+  );
   const [sortBy, setSortBy] = useState<SortKey>('deadline_asc');
 
   // Masters
@@ -241,11 +266,13 @@ export default function NativeJobRequisition() {
 
   // Inline confirmation state
   const [confirmAction, setConfirmAction] = useState<{
-    type: 'submit' | 'approve' | 'reject' | 'handover' | 'delete' | 'close' | 'request-close';
+    type: 'submit' | 'approve' | 'reject' | 'handover' | 'delete' | 'close' | 'request-close' | 'reopen';
     id: string;
     code: string;
   } | null>(null);
   const [confirmInput, setConfirmInput] = useState('');
+  const [reopenCount, setReopenCount] = useState('');
+  const [reopenValidity, setReopenValidity] = useState('');
 
   // View detail and funnel
   const [selectedRequisition, setSelectedRequisition] = useState<JobRequisition | null>(null);
@@ -408,6 +435,7 @@ export default function NativeJobRequisition() {
         // META campaign targeting. Locations are sent as a real array — the column is JSON, and
         // the backend stringifies it; sending the raw comma string would store a JSON string
         // rather than a JSON array and every reader that expects to iterate it would get characters.
+        ad_required: formData.meta_campaign_enabled,
         bmi_assessment_url: formData.bmi_assessment_url || null,
         meta_target_age_min: formData.meta_target_age_min ? Number(formData.meta_target_age_min) : null,
         meta_target_age_max: formData.meta_target_age_max ? Number(formData.meta_target_age_max) : null,
@@ -488,6 +516,12 @@ export default function NativeJobRequisition() {
           return;
         }
         await hrmsApi.post(`/api/job-requisition/${id}/close`, { reason: confirmInput.trim() });
+      } else if (type === 'reopen') {
+        if (!confirmInput || confirmInput.trim().length < 5) {
+          alert('Reopen reason must be at least 5 characters');
+          return;
+        }
+        await hrmsApi.post(`/api/job-requisition/${id}/reopen`, { requestedHeadcount: Number(reopenCount), validity: reopenValidity, reason: confirmInput.trim() });
       } else if (type === 'request-close') {
         if (!confirmInput || confirmInput.trim().length < 5) {
           alert('Close request reason must be at least 5 characters');
@@ -664,7 +698,7 @@ export default function NativeJobRequisition() {
       meta_target_age_max: req.meta_target_age_max?.toString() || '',
       meta_target_locations: Array.isArray(req.meta_target_locations) ? req.meta_target_locations.join(', ') : '',
       meta_target_radius_km: req.meta_target_radius_km?.toString() || '',
-      meta_campaign_enabled: !!(req.meta_target_age_min || req.meta_target_age_max || req.bmi_assessment_url || req.meta_screening_config),
+      meta_campaign_enabled: req.ad_required != null ? Number(req.ad_required) !== 0 : !!(req.meta_target_age_min || req.meta_target_age_max || req.bmi_assessment_url || req.meta_screening_config),
       meta_screening_auto_notify: req.meta_screening_config?.auto_notify !== false,
       meta_screening_gender: (req.meta_screening_config?.gender as 'any' | 'male' | 'female') || 'any',
       meta_screening_certifications: req.meta_screening_config?.certifications ?? [],
@@ -768,6 +802,8 @@ export default function NativeJobRequisition() {
   const nearDeadlineCount = requisitions.filter(r => r.requisition_validity && new Date(r.requisition_validity) >= today && new Date(r.requisition_validity) <= in3Days && r.approval_status === 'approved' && r.fulfilled_headcount < r.requested_headcount).length;
   const staleDraftCount = requisitions.filter(r => r.approval_status === 'draft' && r.aging_days >= 7).length;
   const readyHandoverCount = requisitions.filter(r => r.approval_status === 'approved' && r.fulfilled_headcount >= r.requested_headcount && r.handover_status !== 'handed_over').length;
+
+  useApprovalFocus(!loading && pageTab === 'requisitions');
 
   // ── Render ─────────────────────────────────────────────────────────────────────
 
@@ -987,7 +1023,7 @@ export default function NativeJobRequisition() {
 
                   return (
                     <React.Fragment key={req.id}>
-                      <tr className={rowClass}>
+                      <tr className={rowClass} data-approval-id={req.id}>
                         <td className="px-4 py-3 text-sm font-medium text-blue-600">
                           {req.requisition_code}
                           {isOverdue && <span className="ml-1 text-red-500 text-xs">⚠</span>}
@@ -1104,6 +1140,19 @@ export default function NativeJobRequisition() {
                                 <Download className="w-4 h-4" />
                               </button>
                             )}
+                            {(currentUserRole === 'super_admin' || currentUserRole === 'branch_head')
+                              && (req.approval_status === 'closed' || (req.approval_status === 'approved' && Number(req.fulfilled_headcount ?? 0) >= Number(req.requested_headcount))) && (
+                              <button
+                                onClick={() => {
+                                  setReopenCount(String(Math.max(Number(req.requested_headcount) + 1, Number(req.fulfilled_headcount ?? 0) + 1)));
+                                  setReopenValidity(new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10));
+                                  setConfirmAction({ type: 'reopen', id: req.id, code: req.requisition_code });
+                                }}
+                                className="p-1.5 text-gray-500 hover:text-green-700 hover:bg-green-50 rounded" title="Reopen Requisition" aria-label="Reopen Requisition"
+                              >
+                                <RotateCcw className="w-4 h-4" />
+                              </button>
+                            )}
                             {req.approval_status !== 'closed' && (
                               canDirectlyClose(req) ? (
                                 <button
@@ -1144,8 +1193,19 @@ export default function NativeJobRequisition() {
                                 {confirmAction.type === 'delete' && `Permanently delete ${confirmAction.code}? This cannot be undone.`}
                                 {confirmAction.type === 'close' && `Close ${confirmAction.code}? This ends the requisition.`}
                                 {confirmAction.type === 'request-close' && `Ask the creator/branch head/super admin to close ${confirmAction.code}?`}
+                                {confirmAction.type === 'reopen' && `Reopen ${confirmAction.code}:`}
                               </span>
-                              {(confirmAction.type === 'approve' || confirmAction.type === 'reject' || confirmAction.type === 'close' || confirmAction.type === 'request-close') && (
+                              {confirmAction.type === 'reopen' && (
+                                <>
+                                  <label className="flex items-center gap-1 text-sm text-gray-700">Required count
+                                    <input type="number" min={1} value={reopenCount} onChange={e => setReopenCount(e.target.value)} aria-label="New required count" className="w-20 px-2 py-1.5 text-sm border rounded focus:ring-2 focus:ring-yellow-400" />
+                                  </label>
+                                  <label className="flex items-center gap-1 text-sm text-gray-700">Valid till
+                                    <input type="date" value={reopenValidity} onChange={e => setReopenValidity(e.target.value)} aria-label="Valid till" className="px-2 py-1.5 text-sm border rounded focus:ring-2 focus:ring-yellow-400" />
+                                  </label>
+                                </>
+                              )}
+                              {(confirmAction.type === 'approve' || confirmAction.type === 'reject' || confirmAction.type === 'close' || confirmAction.type === 'request-close' || confirmAction.type === 'reopen') && (
                                 <input
                                   autoFocus
                                   type="text"
@@ -1155,6 +1215,7 @@ export default function NativeJobRequisition() {
                                     confirmAction.type === 'reject' ? 'Rejection reason (required, min 5 chars)' :
                                     confirmAction.type === 'close' ? 'Close reason (required, min 5 chars)' :
                                     confirmAction.type === 'request-close' ? 'Reason for requesting close (required, min 5 chars)' :
+                                    confirmAction.type === 'reopen' ? 'Reason for reopening (required, min 5 chars)' :
                                     'Remarks (optional)'
                                   }
                                   className="flex-1 min-w-[240px] px-3 py-1.5 text-sm border rounded focus:ring-2 focus:ring-yellow-400"
@@ -1169,6 +1230,7 @@ export default function NativeJobRequisition() {
                                  confirmAction.type === 'delete' ? 'Yes, Delete' :
                                  confirmAction.type === 'close' ? 'Confirm Close' :
                                  confirmAction.type === 'request-close' ? 'Send Request' :
+                                 confirmAction.type === 'reopen' ? 'Confirm Reopen' :
                                  'Confirm Reject'}
                               </button>
                               <button onClick={() => { setConfirmAction(null); setConfirmInput(''); }} className="px-3 py-1.5 text-sm text-gray-600 border rounded hover:bg-gray-100">
@@ -1431,7 +1493,7 @@ export default function NativeJobRequisition() {
                 <div className="border-t pt-4">
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="text-xs font-bold uppercase tracking-wide text-gray-400">
-                      META Campaign
+                      Run Ad? (META Campaign)
                     </h3>
                     <label className="flex items-center gap-2 cursor-pointer select-none">
                       <span className="text-xs text-gray-500">{formData.meta_campaign_enabled ? 'Enabled' : 'Disabled'}</span>
@@ -1448,7 +1510,7 @@ export default function NativeJobRequisition() {
                   </div>
                   {!formData.meta_campaign_enabled && (
                     <p className="text-xs text-gray-400 mb-3 italic">
-                      META campaign is OFF — marketing will not be notified, and lead screening is disabled for this requisition.
+                      Ad is OFF — marketing is told "NO AD NEEDED" for this requisition, and lead screening is disabled.
                       Hiring will proceed through the standard ATS pipeline only.
                     </p>
                   )}
@@ -1457,6 +1519,20 @@ export default function NativeJobRequisition() {
                     When approved, a campaign brief with these targeting parameters is sent to the marketing team.
                     The age band and screening rules below auto-screen incoming META leads.
                   </p>
+                  )}
+                  {!formData.meta_campaign_enabled && (
+                    <div className="mb-3">
+                      <label htmlFor="req-bmi-link-off" className="block text-sm font-medium text-gray-700 mb-1">BMI / Assessment Link</label>
+                      <input
+                        id="req-bmi-link-off"
+                        type="url"
+                        value={formData.bmi_assessment_url}
+                        onChange={(e) => field('bmi_assessment_url', e.target.value)}
+                        className="w-full min-h-11 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="https://…"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Used in candidate invites even when no ad is run.</p>
+                    </div>
                   )}
                   {formData.meta_campaign_enabled && <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="md:col-span-2">
@@ -1883,6 +1959,20 @@ export default function NativeJobRequisition() {
                       <div><span className="text-gray-500">Target Joining:</span> <span className="ml-2 font-medium">{selectedRequisition.target_joining_date ? formatISTDate(selectedRequisition.target_joining_date) : '—'}</span></div>
                     </div>
                   </div>
+                )}
+
+                {/* Per-requisition assessment link: editable on approved requisitions at any time (read per invite send). */}
+                {(selectedRequisition.approval_status === 'approved' || selectedRequisition.bmi_assessment_url) && (
+                  <AssessmentLinkEditor
+                    key={selectedRequisition.id}
+                    requisitionId={selectedRequisition.id}
+                    initialValue={selectedRequisition.bmi_assessment_url ?? null}
+                    canEdit={canEditAssessmentLink(currentUserRole, selectedRequisition.approval_status)}
+                    onSaved={(v) => {
+                      setSelectedRequisition((cur) => (cur ? { ...cur, bmi_assessment_url: v } : cur));
+                      loadRequisitions();
+                    }}
+                  />
                 )}
 
                 {/* META campaign link — the manual step that lets the Lead Gen webhook route an

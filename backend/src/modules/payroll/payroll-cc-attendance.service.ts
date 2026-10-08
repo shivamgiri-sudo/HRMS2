@@ -383,6 +383,36 @@ export async function branchSummary(month: string, branchId: string) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Active Payroll Head payable-days overrides (migration 1653) for these employees in one month,
+ * keyed by employee_id. payrollCalculate.service.ts pays the override instead of the computed
+ * figure, so every screen that prints "SalDays" has to read it or it contradicts the payslip.
+ * A missing table means the migration has not run here and nobody has overridden anything.
+ */
+export async function getPayableDaysOverrides(
+  month: string,
+  employeeIds: string[]
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (employeeIds.length === 0) return out;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id, payable_days
+         FROM payroll_payable_days_override
+        WHERE run_month = ? AND active_status = 1
+          AND employee_id IN (${employeeIds.map(() => "?").join(",")})`,
+      [month, ...employeeIds]
+    );
+    for (const r of rows) {
+      const days = Number(r.payable_days);
+      if (Number.isFinite(days)) out.set(String(r.employee_id), days);
+    }
+  } catch (err: any) {
+    if (!(err?.code === "ER_NO_SUCH_TABLE" || err?.errno === 1146)) throw err;
+  }
+  return out;
+}
+
+/**
  * The live grid for one cost centre, derived from attendance_daily_record.
  *
  * Employee population mirrors the Attendance Register's two-population rule: every currently
@@ -463,6 +493,10 @@ export async function getLiveEmployeeGrid(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  // The Payroll Head's month-level payable days (migration 1653) — payroll pays these, so the
+  // sign-off grid has to show them too.
+  const overrides = await getPayableDaysOverrides(m, Array.from(empMap.keys()));
+
   return Promise.all(
     Array.from(empMap.values()).map(async (emp): Promise<EmployeeDayRow> => {
       for (let d = 1; d <= daysInMonth; d++) {
@@ -497,12 +531,10 @@ export async function getLiveEmployeeGrid(
         leave_days: counts.leave,
         holiday_days: counts.holiday,
         weekoff_days: eligibleWO,
-        sal_days: computeSalDays(
-          paidBase,
-          eligibleWO,
-          counts.holiday,
-          daysInMonth,
-        ),
+        // Same cap as payroll: an override can never exceed the days that exist in the month.
+        sal_days: overrides.has(emp.employee_id)
+          ? Math.round(Math.min(overrides.get(emp.employee_id)!, daysInMonth) * 100) / 100
+          : computeSalDays(paidBase, eligibleWO, counts.holiday, daysInMonth),
       };
     }),
   );

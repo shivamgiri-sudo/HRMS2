@@ -6,57 +6,17 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
-import {
-  getEmployeeForUser,
-  hasProcessScope,
-  hasRole,
-} from "../../shared/accessGuard.js";
-import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
-import {
-  rosterSwapService,
-  rosterConflictService,
-  coverageService,
-  attritionService,
-} from "./wfm-ext.service.js";
+import { getEmployeeForUser, hasProcessScope, hasRole } from "../../shared/accessGuard.js";
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
+import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
+import { canAccessEmployee, employeeOwnerGuard, OUT_OF_SCOPE_MSG } from "../wfm/branch-scope.js";
+import { employeeScope, WFM_SCOPE_ROLES } from "./employee-scope.js";
+import { rosterSwapService, rosterConflictService, coverageService, attritionService } from "./wfm-ext.service.js";
 
 const router = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
-const WFM_SCOPE_ROLES = [
-  "wfm",
-  "process_manager",
-  "branch_head",
-  "manager",
-  "assistant_manager",
-  "tl",
-  "hr",
-  "operations_manager",
-];
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
-
-async function employeeScope(
-  userId: string,
-  aliases: { employee?: string } = {},
-) {
-  const e = aliases.employee ?? "e";
-  if (await hasRole(userId, "admin", "hr", "wfm", "ceo"))
-    return { sql: "1=1", params: [] as unknown[] };
-  return buildScopeWhereClause(
-    userId,
-    WFM_SCOPE_ROLES,
-    {
-      branchId: `${e}.branch_id`,
-      processId: `${e}.process_id`,
-      departmentId: `${e}.department_id`,
-      managerEmployeeId: `${e}.reporting_manager_id`,
-      employeeId: `${e}.id`,
-    },
-    { allowAdminBypass: true, allowCeoAllRead: true },
-  );
-}
 
 async function computedCoverageSnapshot(input: any, userId: string) {
   const snapshotDate = String(input.snapshot_date ?? input.date ?? "").slice(
@@ -75,7 +35,7 @@ async function computedCoverageSnapshot(input: any, userId: string) {
     // could write a fabricated headcount/shrinkage snapshot for any other branch
     // or process, feeding downstream coverage reporting with numbers nobody who
     // actually owns that scope produced.
-    if (!(await hasRole(userId, "admin", "hr"))) {
+    if (!(await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES))) {
       const processId = input.process_id ? String(input.process_id) : null;
       const branchId = input.branch_id ? String(input.branch_id) : null;
       // hasProcessScope requires a process id to evaluate against — it has no
@@ -195,34 +155,36 @@ router.get(
   }),
 );
 
-router.post(
-  "/roster/swaps",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const callerEmp = await getEmployeeForUser(userId);
-    const privileged = await hasRole(userId, "admin", "hr", "wfm", "manager");
-    const requester = privileged
-      ? (req.body.requester_employee_id ??
-        req.body.requester_emp_id ??
-        callerEmp?.id)
-      : callerEmp?.id;
-    const target = req.body.swap_with_emp_id ?? req.body.target_employee_id;
-    const swapDate = req.body.swap_date;
-    if (!requester || !target || !swapDate)
-      return res
-        .status(400)
-        .json({
-          error: "requester/target employee and swap_date are required",
-        });
-    const data = await rosterSwapService.create({
-      requester_emp_id: requester,
-      swap_with_emp_id: target,
-      swap_date: swapDate,
-      reason: req.body.reason,
-    });
-    res.status(201).json({ success: true, data });
-  }),
-);
+router.post("/roster/swaps", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const callerEmp = await getEmployeeForUser(userId);
+  const privileged = await hasRole(userId, "admin", "hr", "wfm", "manager");
+  const requester = privileged ? (req.body.requester_employee_id ?? req.body.requester_emp_id ?? callerEmp?.id) : callerEmp?.id;
+  const target = req.body.swap_with_emp_id ?? req.body.target_employee_id;
+  const swapDate = req.body.swap_date;
+  if (!requester || !target || !swapDate) return res.status(400).json({ error: "requester/target employee and swap_date are required" });
+  if (!(await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES))) {
+    // Owner ruling 2026-10-01: both employees of a swap must be inside the caller's branch / scope.
+    const callerScope = await resolveUserBusinessScope(userId);
+    if (!(await canAccessEmployee(callerScope, String(requester)))) {
+      return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
+    }
+    // The counterpart must be in scope too. A plain employee's scope is only themselves, so an employee
+    // swapping their OWN shift with a colleague (the counterpart still has to accept) is allowed when the
+    // colleague works in the same branch; a colleague from another branch is refused.
+    let targetOk = await canAccessEmployee(callerScope, String(target));
+    if (!targetOk && callerScope.employeeId && String(requester) === callerScope.employeeId && callerScope.branchId) {
+      const [peer] = await db.execute<import("mysql2").RowDataPacket[]>(
+        "SELECT 1 FROM employees WHERE id = ? AND branch_id = ? AND active_status = 1 LIMIT 1",
+        [String(target), callerScope.branchId],
+      );
+      targetOk = (peer as import("mysql2").RowDataPacket[]).length > 0;
+    }
+    if (!targetOk) return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
+  }
+  const data = await rosterSwapService.create({ requester_emp_id: requester, swap_with_emp_id: target, swap_date: swapDate, reason: req.body.reason });
+  res.status(201).json({ success: true, data });
+}));
 
 // Counterpart (swap_with_emp_id) accepts/declines — must precede manager
 // approval; see rosterSwapService.respond()'s docstring for why this step
@@ -245,45 +207,21 @@ router.post(
   }),
 );
 
-router.post(
-  "/roster/swaps/:id/review",
-  requireRole(
-    "admin",
-    "hr",
-    "wfm",
-    "manager",
-    "assistant_manager",
-    "team_leader",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const status = String(req.body.status ?? req.body.action ?? "");
-    if (!["approved", "rejected"].includes(status))
-      return res
-        .status(400)
-        .json({ error: "status/action must be approved or rejected" });
-    const userId = req.authUser!.id;
-    // forceWithoutCounterpartAcceptance is restricted to admin/hr even though
-    // the service itself would also refuse a non-privileged caller further
-    // down (defense in depth — reject the intent at the route layer too).
-    const wantsForce = req.body.forceWithoutCounterpartAcceptance === true;
-    const forceWithoutCounterpartAcceptance =
-      wantsForce && (await hasRole(userId, "admin", "hr"));
-    const result = await rosterSwapService.review(
-      req.params.id,
-      status as "approved" | "rejected",
-      userId,
-      req,
-      {
-        forceWithoutCounterpartAcceptance,
-        restOverrideReason:
-          typeof req.body.restOverrideReason === "string"
-            ? req.body.restOverrideReason
-            : undefined,
-      },
-    );
-    res.json({ success: true, data: result, ok: true });
-  }),
-);
+router.post("/roster/swaps/:id/review", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader"), employeeOwnerGuard("wfm_roster_swap_request", "id", "requester_emp_id"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const status = String(req.body.status ?? req.body.action ?? "");
+  if (!["approved", "rejected"].includes(status)) return res.status(400).json({ error: "status/action must be approved or rejected" });
+  const userId = req.authUser!.id;
+  // forceWithoutCounterpartAcceptance is restricted to admin/hr even though
+  // the service itself would also refuse a non-privileged caller further
+  // down (defense in depth — reject the intent at the route layer too).
+  const wantsForce = req.body.forceWithoutCounterpartAcceptance === true;
+  const forceWithoutCounterpartAcceptance = wantsForce && (await hasRole(userId, "admin", "hr"));
+  const result = await rosterSwapService.review(req.params.id, status as "approved" | "rejected", userId, req, {
+    forceWithoutCounterpartAcceptance,
+    restOverrideReason: typeof req.body.restOverrideReason === "string" ? req.body.restOverrideReason : undefined,
+  });
+  res.json({ success: true, data: result, ok: true });
+}));
 
 // ── Roster Conflicts ──────────────────────────────────────────────────────────
 router.get(
@@ -316,21 +254,26 @@ router.get(
   }),
 );
 
-router.post(
-  "/roster/conflicts/:id/resolve",
-  requireRole(
-    "admin",
-    "hr",
-    "wfm",
-    "manager",
-    "assistant_manager",
-    "team_leader",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    await rosterConflictService.resolve(req.params.id, req.authUser!.id, req);
-    res.json({ success: true, ok: true });
-  }),
-);
+router.post("/roster/conflicts/:id/resolve", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const resolutionAction = typeof req.body?.resolution_action === "string" ? req.body.resolution_action.trim() : "";
+  if (!resolutionAction) {
+    res.status(400).json({ success: false, error: "resolution_action is required" });
+    return;
+  }
+  const remarks = req.body?.resolution_remarks ?? req.body?.remarks;
+  const scope = await employeeScope(req.authUser!.id);
+  await rosterConflictService.resolve(
+    req.params.id,
+    req.authUser!.id,
+    {
+      resolution_action: resolutionAction,
+      resolution_remarks: typeof remarks === "string" ? remarks : null,
+      scope,
+    },
+    req,
+  );
+  res.json({ success: true, ok: true });
+}));
 
 // ── Coverage / Shrinkage Snapshots ────────────────────────────────────────────
 router.get(
@@ -384,21 +327,17 @@ router.get(
   }),
 );
 
-router.post(
-  "/attrition/record",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { employee_id, exit_date } = req.body;
-    if (!employee_id || !exit_date)
-      return res
-        .status(400)
-        .json({ error: "employee_id and exit_date required" });
-    const id = await attritionService.recordExit(
-      { ...req.body, recorded_by: req.authUser!.id },
-      req,
-    );
-    res.status(201).json({ success: true, data: { id } });
-  }),
-);
+router.post("/attrition/record", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employee_id, exit_date } = req.body;
+  if (!employee_id || !exit_date) return res.status(400).json({ error: "employee_id and exit_date required" });
+  if (!(await hasAnyRole(req.authUser!.id, ...ORG_WIDE_EXEMPT_ROLES))) {
+    const callerScope = await resolveUserBusinessScope(req.authUser!.id);
+    if (!(await canAccessEmployee(callerScope, String(employee_id)))) {
+      return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
+    }
+  }
+  const id = await attritionService.recordExit({ ...req.body, recorded_by: req.authUser!.id }, req);
+  res.status(201).json({ success: true, data: { id } });
+}));
 
 export { router as wfmExtRouter };

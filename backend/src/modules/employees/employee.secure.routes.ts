@@ -3,11 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import {
-  buildScopeWhereClause,
-  hasAnyRole,
-  hasScopedAccess,
-} from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasAnyRole, hasScopedAccess, getUserRoleKeys, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import { listComprehensiveJourney } from "./journeyLog.service.js";
 import { getBillPool } from "../../db/billDb.js";
 
@@ -120,12 +116,11 @@ async function getFixedSalaryComponents(
   };
 }
 
-async function canAccessEmployee(
-  userId: string,
-  target: EmployeeAccessTarget,
-  scopedRoles: string[],
-): Promise<boolean> {
-  if (await hasAnyRole(userId, "admin", "ceo")) return true;
+async function canAccessEmployee(userId: string, target: EmployeeAccessTarget, scopedRoles: string[]): Promise<boolean> {
+  if (await hasAnyRole(userId, "ceo")) return true;
+  // admin is branch-scoped (owner policy 2026-10-01): only an admin who also holds an org-wide role skips scope.
+  const heldRoles = await getUserRoleKeys(userId);
+  if (heldRoles.includes("admin") && heldRoles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r))) return true;
 
   const self = await getEmployeeForUser(userId);
   if (self?.id === target.id) return true;
@@ -183,7 +178,7 @@ async function employeeScopeWhere(userId: string) {
       managerEmployeeId: "e.reporting_manager_id",
       employeeId: "e.id",
     },
-    { allowAdminBypass: true, allowCeoAllRead: true },
+    { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
   );
 }
 

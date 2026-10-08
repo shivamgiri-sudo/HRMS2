@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
+import { sumApprovedRuleSeats, syncProcessSeatsSafe } from "./seat-mandate-sync.service.js";
 import {
   allocatePoolAmount,
   calculateBpoCostWaterfall,
@@ -25,18 +26,16 @@ import {
 } from "./pnl-statement.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
+import { ownCompanyBranchSql, ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 import { peopleCostSqlForColumns } from "./pnl-people-cost.js";
-import type {
-  PeopleCostByKey,
-  PnlPeopleBucket,
-} from "./pnl-running-salary.service.js";
-import {
-  processPnlService,
-  getClosedBranchIds,
-} from "./process-pnl.service.js";
+import { grnAccountingMonthSql, vendorAccountingMonthSql } from "./pnl-grn-month.js";
+import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
+import { processPnlService, getClosedBranchIds } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
+import { getForecastRevenueActuals, withoutCostCentres } from "./pnl-forecast-overlay.js";
 
 type NumericMap = Map<string, number>;
 type AllocationDriver =
@@ -674,8 +673,8 @@ async function getPayrollRunAsOfDate(period: string): Promise<string | null> {
   const rows = await safeRows<RowDataPacket>(
     `SELECT MAX(COALESCE(disbursed_at, auto_closed_at, finance_approved_at, updated_at, created_at)) AS as_of
        FROM salary_prep_run
-      WHERE run_month = ?`,
-    [period],
+      WHERE run_month = ? AND ${nonVoidRunSql()}`,
+    [period]
   );
   const asOf = rows[0]?.as_of;
   return asOf ? new Date(asOf).toISOString() : null;
@@ -754,8 +753,8 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
   const runs = await safeRows<RowDataPacket>(
     `SELECT id
        FROM salary_prep_run
-      WHERE run_month = ?`,
-    [period],
+      WHERE run_month = ? AND ${nonVoidRunSql()}`,
+    [period]
   );
   if (!runs.length) return [];
   const runIds = runs.map((row) => String(row.id));
@@ -1232,14 +1231,22 @@ async function getPeopleCosts(
       dscHeadcount: 0,
       unclassifiedPeopleCost: 0,
     };
-    const classified = current.agentSalary + current.dscPeople;
-    const residual = Math.max(0, toNumber(row.directPeopleCost) - classified);
-    if (classified <= 0 && row.directPeopleCost > 0) {
-      current.agentSalary = row.directPeopleCost;
-      current.agentHeadcount = Math.max(1, row.activeHc);
-    } else if (residual > 0.5) {
-      current.dscPeople += residual;
-      current.unclassifiedPeopleCost += residual;
+    // directPeopleCost is the cost-centre-attributed payroll of the process engine. When real payroll
+    // lines exist (people.length > 0) every person is already bucketed above (agent / DSC to their
+    // process, BMC into the branch pool), so topping a process up to directPeopleCost counted the
+    // BMC-class people a second time (live May 2026: BACK OFFICE DSC 16.64L vs 12.38L payroll,
+    // Onfido +2.16L, MGT / BO-AHMH / BSS-OTHERS likewise; about +6.8L a month in total).
+    // The top-up is only a fallback for a period with no payroll at all.
+    if (people.length === 0) {
+      const classified = current.agentSalary + current.dscPeople;
+      const residual = Math.max(0, toNumber(row.directPeopleCost) - classified);
+      if (classified <= 0 && row.directPeopleCost > 0) {
+        current.agentSalary = row.directPeopleCost;
+        current.agentHeadcount = Math.max(1, row.activeHc);
+      } else if (residual > 0.5) {
+        current.dscPeople += residual;
+        current.unclassifiedPeopleCost += residual;
+      }
     }
     processMap.set(row.processId, current);
   }
@@ -1497,6 +1504,58 @@ function actualVendorStatusExpr(columns: Set<string>) {
   )`;
 }
 
+/**
+ * Processes that carry MAS vendor / GRN spend in a closed month, so the process row exists to receive it.
+ * getGrnVendorActuals builds its result per base row: spend attributed to a process that is not a base row
+ * (an inactive or head-office function) was silently dropped, which is how Head Office lost its whole
+ * August pool (VPT 25.3L, P&L 0). Own-company only (cost centre AND branch), so DialDesk / IDC spend can
+ * never pull a process in.
+ */
+async function getSpendProcessIds(period: string): Promise<string[]> {
+  if (!/^\d{4}-\d{2}$/.test(period)) return [];
+  const ids = new Set<string>();
+  const own = `${ownCompanyBranchSql("bm")} AND (ccm.id IS NULL OR ${ownCompanyCostCentreSql("ccm")})`;
+  if (await tableExists("vendor_payment_tracking")) {
+    const columns = await listColumns("vendor_payment_tracking");
+    const recognition = vendorAccountingMonthSql("vpt");
+    const rows = await safeRows<RowDataPacket>(
+      `SELECT DISTINCT COALESCE(vpt.process_id, ccm.process_id) AS process_id
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+         LEFT JOIN branch_master bm ON bm.id = vpt.branch_id
+        WHERE ${recognition} = ? AND ${actualVendorStatusExpr(columns)} AND ${own}`,
+      [period]
+    );
+    for (const r of rows) if (r.process_id) ids.add(String(r.process_id));
+  }
+  if (await tableExists("grn_request")) {
+    const rows = await safeRows<RowDataPacket>(
+      `SELECT DISTINCT COALESCE(g.process_id, ccm.process_id) AS process_id
+         FROM grn_request g
+         LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
+         LEFT JOIN branch_master bm ON bm.id = g.branch_id
+        WHERE g.accounting_period = ?
+          AND LOWER(REPLACE(COALESCE(g.status, ''), '_', ' ')) IN ('approved','finance head approved','pending accounts payment','payment scheduled','partially paid','paid','posted')
+          AND ${own}`,
+      [period]
+    );
+    for (const r of rows) if (r.process_id) ids.add(String(r.process_id));
+  }
+  // Smart-GRN allocations (the allocation view the overlay adds per process): a consumed allocation to a process
+  // that is not a row is lost the same way, and the overlay has already removed the matching legacy amount.
+  if (await tableExists("vw_process_pnl_grn_allocation")) {
+    const rows = await safeRows<RowDataPacket>(
+      `SELECT DISTINCT v.process_id AS process_id
+         FROM vw_process_pnl_grn_allocation v
+         LEFT JOIN branch_master bm ON bm.id = v.branch_id
+        WHERE v.period_code COLLATE utf8mb4_unicode_ci = ? AND v.process_id IS NOT NULL AND ${ownCompanyBranchSql("bm")}`,
+      [period]
+    );
+    for (const r of rows) if (r.process_id) ids.add(String(r.process_id));
+  }
+  return Array.from(ids);
+}
+
 async function getGrnVendorActuals(
   baseRows: ProcessPnlRecord[],
   period: string,
@@ -1523,9 +1582,7 @@ async function getGrnVendorActuals(
       : columns.has("pnl_cost_amount")
         ? "COALESCE(vpt.pnl_cost_amount, vpt.due_amount, 0)"
         : "COALESCE(vpt.due_amount, 0)";
-    const recognitionExpr = columns.has("recognition_period")
-      ? "COALESCE(vpt.recognition_period, DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m'))"
-      : "DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m')";
+    const recognitionExpr = vendorAccountingMonthSql("vpt");
     const bucketExpr = columns.has("pnl_bucket")
       ? "COALESCE(vpt.pnl_bucket, CASE WHEN vpt.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END)"
       : "CASE WHEN vpt.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END";
@@ -1584,9 +1641,7 @@ async function getGrnVendorActuals(
       : columns.has("pnl_cost_amount")
         ? "COALESCE(g.pnl_cost_amount, g.amount, 0)"
         : "COALESCE(g.amount, 0)";
-    const recognitionExpr = columns.has("recognition_period")
-      ? "COALESCE(g.recognition_period, DATE_FORMAT(COALESCE(g.bill_date, g.reviewed_at, g.created_at), '%Y-%m'))"
-      : "DATE_FORMAT(COALESCE(g.bill_date, g.reviewed_at, g.created_at), '%Y-%m')";
+    const recognitionExpr = grnAccountingMonthSql("g");
     const bucketExpr = columns.has("pnl_bucket")
       ? "COALESCE(g.pnl_bucket, CASE WHEN g.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END)"
       : "CASE WHEN g.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END";
@@ -1799,7 +1854,18 @@ async function dropDormantClosedBranchRows(
 }
 
 async function computeBranchRows(scope: PnlQueryFilters) {
-  const baseRows = await processPnlService.listProcesses(scope);
+  // Billed revenue first: its process ids widen the base row set (see PnlQueryFilters.includeProcessIds)
+  // so revenue attached to an inactive process is not silently dropped. Reused below, not re-read.
+  const invoicedActuals = await getInvoicedRevenueActuals(scope.period ?? "");
+  // Also keep processes whose employees were paid in the month: their payroll is bucketed by the
+  // employee's own process, and a process that is inactive was dropped, taking its payroll with it
+  // (May 2026: about 13L across Finnable, Captureatrip, corporate functions, EBC Bridge, Adani, Aspeya).
+  const payrollProcessIds = isOpenPeriod(scope.period ?? "") ? [] : Array.from((await getActualPeopleCost(scope.period ?? "")).byProcess.keys());
+  const spendProcessIds = isOpenPeriod(scope.period ?? "") ? [] : await getSpendProcessIds(scope.period ?? "");
+  const includeProcessIds = isOpenPeriod(scope.period ?? "")
+    ? []
+    : Array.from(new Set([...invoicedActuals.byProcess.keys(), ...payrollProcessIds, ...spendProcessIds]));
+  const baseRows = await processPnlService.listProcesses(includeProcessIds.length ? { ...scope, includeProcessIds } : scope);
   const processIds = baseRows.map((row) => row.processId);
   const policies = await getAllocationPolicies(scope.period);
   const warnings: ManualAllocationWarning[] = [];
@@ -1835,7 +1901,7 @@ async function computeBranchRows(scope: PnlQueryFilters) {
     getBudgets(baseRows, scope.period, policies, warnings),
     getGrnVendorActuals(baseRows, scope.period, policies, warnings),
     getCostCentres(processIds),
-    getInvoicedRevenueActuals(scope.period ?? ""),
+    Promise.resolve(invoicedActuals),
     getRewardPenaltyForPeriod(scope.period ?? ""),
     /*
      * Direct salary_prep_line read as a safety net for the canonical engine.
@@ -1860,11 +1926,15 @@ async function computeBranchRows(scope: PnlQueryFilters) {
   // Live P&L's seat-rate estimate for not-yet-billed cost centres — only for the month just
   // closed (closed per isOpenPeriod, still inside isEstimateWindow). Same figure the Statement,
   // Live P&L and CEO Overview add; see pnl-statement.service.ts enrichColumn. Degrades to none.
-  const lastMonthEstimate =
-    !isOpenPeriod(scope.period ?? "") &&
-    isEstimateWindow(scope.period ?? "", getCurrentDateIST())
-      ? await getLiveRevenueEstimate(scope.period ?? "").catch(() => null)
-      : null;
+  const lastMonthEstimateAll = !isOpenPeriod(scope.period ?? "") && isEstimateWindow(scope.period ?? "", getCurrentDateIST())
+    ? await getLiveRevenueEstimate(scope.period ?? "").catch(() => null)
+    : null;
+  // Approved revenue forecasts (owner rule 2026-10-06, same as Live P&L and the Statement): their
+  // cost centres' invoiced / estimated revenue is taken out and the forecast added per process.
+  const forecast = await getForecastRevenueActuals(scope.period ?? "").catch(() => null);
+  const forecastCcs = forecast ? [...forecast.byCostCentre.keys()] : [];
+  const invoicedNet = forecastCcs.length ? withoutCostCentres(invoiced, forecastCcs) : invoiced;
+  const lastMonthEstimate = lastMonthEstimateAll && forecastCcs.length ? withoutCostCentres(lastMonthEstimateAll, forecastCcs) : lastMonthEstimateAll;
 
   const rows: BpoPnlRow[] = baseRows.map((base) => {
     const configuredRules = rulesMap.get(base.processId) ?? [];
@@ -1998,18 +2068,17 @@ async function computeBranchRows(scope: PnlQueryFilters) {
      */
     // + last month's seat estimate for this process's unbilled cost centres (zero otherwise), so
     // header KPIs / Full Waterfall agree with the Statement and Live P&L for the default month.
-    const invoicedForProcess =
-      (invoiced.byProcess.get(base.processId) ?? 0) +
-      (lastMonthEstimate?.byProcess.get(base.processId) ?? 0);
-    const ruleRevenue =
-      toNumber(base.revenueMtd) > 0
-        ? toNumber(base.revenueMtd)
-        : revenue.earnedRevenue;
+    const invoicedForProcess = (invoicedNet.byProcess.get(base.processId) ?? 0)
+      + (lastMonthEstimate?.byProcess.get(base.processId) ?? 0);
+    const forecastForProcess = forecast?.byProcess.get(base.processId);
+    // The rule/plan figure is a whole-process number that already contains the forecast cost
+    // centres, so a process with any forecast does not fall back to it (forecast + billed only).
+    const ruleRevenue = forecastForProcess !== undefined
+      ? 0
+      : toNumber(base.revenueMtd) > 0 ? toNumber(base.revenueMtd) : revenue.earnedRevenue;
     const periodOpen = isOpenPeriod(scope.period ?? "");
     const usedInvoicedFallback = !periodOpen && invoicedForProcess > 0;
-    const recognizedRevenue = usedInvoicedFallback
-      ? invoicedForProcess
-      : ruleRevenue;
+    const recognizedRevenue = (usedInvoicedFallback ? invoicedForProcess : ruleRevenue) + (forecastForProcess ?? 0);
     const cost = calculateBpoCostWaterfall({
       revenue: recognizedRevenue,
       agentSalary: peopleMeta.agentSalary,
@@ -2521,7 +2590,7 @@ export const bpoPnlService = {
     const period = bundle.filters.period ?? "";
     if (period >= "2026-08") {
       const [payrollRuns] = await db.execute<RowDataPacket[]>(
-        `SELECT status FROM salary_prep_run WHERE run_month = ?`,
+        `SELECT status FROM salary_prep_run WHERE run_month = ? AND ${nonVoidRunSql()}`,
         [period],
       );
       if (payrollRuns.length > 0) {
@@ -2862,6 +2931,17 @@ export const bpoPnlService = {
       payload,
       userId,
     );
+    await auditConfigSave("revenue_rule_saved", "process_revenue_rule", id, before, payload, userId);
+
+    // Seats changed on an approved rule: bring WFM mandate / monthly plan / cost centre in line.
+    // Only on an actual change, so re-saving a rule's rate cannot overwrite a newer WFM number.
+    if (status === "approved" && payload.mandatedSeats !== null && payload.mandatedSeats !== undefined
+        && toNumber(before?.mandated_seats, NaN) !== toNumber(payload.mandatedSeats) && payload.processId) {
+      const processId = String(payload.processId);
+      void sumApprovedRuleSeats(processId).then((total) => {
+        if (total !== null) syncProcessSeatsSafe({ processId, seats: total, source: "revenue_rule", actorId: userId });
+      }).catch(() => undefined);
+    }
     return { id };
   },
 

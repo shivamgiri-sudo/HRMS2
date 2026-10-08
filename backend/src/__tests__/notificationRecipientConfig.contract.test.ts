@@ -69,7 +69,7 @@ describe("recipients that are not employees", () => {
 
   it("skips the inbox item for a mailbox with no login", () => {
     // inboxService.createItem with an empty user_id would write a junk row.
-    expect(prov).toMatch(/if \(user\.userId\) try \{/);
+    expect(prov).toMatch(/if \(user\.userId\)\s*\{?\s*try \{\s*await inboxService\.createItem\(/);
   });
 });
 

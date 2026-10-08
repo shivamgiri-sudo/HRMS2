@@ -43,6 +43,8 @@ const NON_WORKING_SQL = NON_WORKING_STATUSES.map((x) => `'${x}'`).join(",");
 export function buildInterventionEmployeeFilter(
   q: { branchId?: unknown; processId?: unknown },
   lob: Parameters<typeof lobWhere>[0],
+  /** The caller's own employee scope (alias e); null/undefined = org-wide. q.branchId/processId only narrow it. */
+  scope?: { sql: string; params: unknown[] } | null
 ): { sql: string; params: string[] } {
   const parts: string[] = [];
   const params: string[] = [];
@@ -57,11 +59,9 @@ export function buildInterventionEmployeeFilter(
     params.push(processId);
   }
   const l = lobWhere(lob);
-  if (l.sql) {
-    parts.push(l.sql);
-    params.push(...l.params);
-  }
-  return { sql: parts.join(" "), params };
+  if (l.sql) { parts.push(l.sql); params.push(...l.params); }
+  if (scope) { parts.push(`AND ${scope.sql}`); params.push(...(scope.params as string[])); }
+  return { sql: parts.join(' '), params };
 }
 
 // ---------------------------------------------------------------------------
@@ -704,7 +704,7 @@ export async function getPendingInterventions(req: Request, res: Response) {
     const limit = clampLimit(req.query.limit);
     const lob = readLobFilter(req, res);
     if (!lob) return;
-    const empFilter = buildInterventionEmployeeFilter(req.query, lob);
+    const empFilter = buildInterventionEmployeeFilter(req.query, lob, (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope);
 
     // Open cases only: newest case per employee, employee still active (see bucketWhere).
     const { sql, params } = buildCasesQuery({
@@ -886,7 +886,7 @@ export async function getInterventionOutcomes(req: Request, res: Response) {
   try {
     const lob = readLobFilter(req, res);
     if (!lob) return;
-    const empFilter = buildInterventionEmployeeFilter(req.query, lob);
+    const empFilter = buildInterventionEmployeeFilter(req.query, lob, (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope);
     // The table is employee-keyed but has no branch/process/LOB columns; narrow via a subquery so the
     // unfiltered statement stays exactly as it was and no column names can become ambiguous.
     const employeeScope = empFilter.sql

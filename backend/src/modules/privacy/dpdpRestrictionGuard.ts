@@ -57,6 +57,10 @@ export async function checkDpdpRestriction(
        FROM dpdp_consent_withdrawal dcw
        WHERE dcw.data_restriction_applied = 1
          AND dcw.status = 'approved'
+         -- A CURRENT employee is not blocked as a whole: employment-essential processing (payroll, tax,
+         -- attendance for wages, statutory records) continues, and their chosen categories are restricted
+         -- through the module tasks created on approval. Former employees and candidates are blocked.
+         AND NOT EXISTS (SELECT 1 FROM employees ae WHERE ae.user_id = dcw.requester_id AND ae.active_status = 1)
          AND (
            dcw.requester_id = ?
            OR dcw.requester_id IN (

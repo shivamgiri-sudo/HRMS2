@@ -223,10 +223,7 @@ export const salaryVoucherService = {
    * salary into MasCallnet's books because it was the first rule in the table is exactly the
    * failure 1098 refused to risk by shipping empty.
    */
-  async generate(
-    runId: string,
-    options: { companyCode?: string; serialFrom?: number } = {},
-  ) {
+  async generate(runId: string, options: { companyCode?: string; serialFrom?: number; skipBuckets?: Set<string> } = {}) {
     const [runRows] = await db.execute<RowDataPacket[]>(
       // run_month is already 'YYYY-MM'; the run table has no separate month/year columns.
       `SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1`,
@@ -307,22 +304,24 @@ async function buildVouchersFromLines(
   period: string,
   lines: PrepLine[],
   entityRules: RowDataPacket[],
-  options: { companyCode?: string; serialFrom?: number },
-): Promise<{
-  period: string;
-  vouchers: Voucher[];
-  unassigned: string[];
-  unpaid: string[];
-}> {
-  const entityOf = (code: string): string | null => {
+  options: { companyCode?: string; serialFrom?: number; skipBuckets?: Set<string> },
+): Promise<{ period: string; vouchers: Voucher[]; unassigned: string[]; unpaid: string[] }> {
+  // Rules are in priority order. A code-prefix rule matches on the employee code; a rule with no
+  // prefix but an employment type matches on that (management trainees carry codes like 54563C).
+  const entityOf = (code: string, employmentType?: string | null): string | null => {
     for (const rule of entityRules) {
       const prefix = String(rule.employee_code_prefix ?? "");
-      if (!prefix) continue;
-      if (
-        String(code ?? "")
-          .toUpperCase()
-          .startsWith(prefix.toUpperCase())
-      ) {
+      if (prefix) {
+        const upper = String(code ?? "").toUpperCase();
+        // "*C" means a numeric code with that suffix (63107C); anything else is a plain prefix.
+        const hit = prefix.startsWith("*")
+          ? new RegExp(`^\\d+${prefix.slice(1).toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`).test(upper)
+          : upper.startsWith(prefix.toUpperCase());
+        if (hit) return String(rule.company_code);
+        continue;
+      }
+      const type = String(rule.employment_type ?? "").trim();
+      if (type && !rule.branch_id && String(employmentType ?? "").trim().toUpperCase() === type.toUpperCase()) {
         return String(rule.company_code);
       }
     }
@@ -338,7 +337,7 @@ async function buildVouchersFromLines(
   const unpaid: string[] = [];
 
   for (const raw of lines) {
-    const company = entityOf(raw.employee_code);
+    const company = entityOf(raw.employee_code, raw.employment_type);
     if (!company || (options.companyCode && company !== options.companyCode)) {
       if (!company) unassigned.push(raw.employee_code);
       continue;
@@ -368,6 +367,9 @@ async function buildVouchersFromLines(
     // branch_id — the thing the API scopes on — is then whichever row sorted first. See
     // docs/finance/OPEN-QUESTIONS.md.
     const key = `${company}|${branchId}`;
+    // Buckets whose voucher was already pulled out for Tally are left out BEFORE numbering, so the
+    // vouchers that remain take consecutive numbers from the serial the caller supplied.
+    if (options.skipBuckets?.has(key)) continue;
     if (!buckets.has(key)) {
       buckets.set(key, { company, branchId, branchName, rows: [] });
     }

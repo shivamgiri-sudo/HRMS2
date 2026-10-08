@@ -19,12 +19,18 @@ import {
   type EnterpriseUser,
   type ScopeCondition,
 } from "../../shared/enterpriseScope.js";
+import { normalizeBmiLink } from "./job-requisition-bmi-link.rules.js";
+import { resolveHrBranchScope, branchInScope, requisitionBranchCondition, type HrBranchScope } from "./job-requisition-hr-scope.js";
+
+function userIdOf(actor: EnterpriseUser): string {
+  return typeof actor === "string" ? actor : String((actor as { id: string }).id);
+}
 
 /**
  * Row scope for requisition reads.
  *
- * buildProcessScopeCondition returns "1=1" for super_admin / admin / hr / ceo, so HR keeps
- * the org-wide view recruitment needs.
+ * buildProcessScopeCondition returns "1=1" only for the org-wide exempt roles (owner policy
+ * 2026-10-01); hr is limited to its own branch like every other non-exempt role.
  *
  * `alias` is "jr" for listRequisitions and "" for getDashboardMetrics, which queries the
  * table without an alias. Both must be scoped or the KPI counts would contradict the rows
@@ -84,7 +90,15 @@ async function requisitionScope(
     processId: `${table}.process_id`,
   });
 
-  if (opts.includeOwnRequisitions === false || base.sql === "1=1") return base;
+  if (base.sql === "1=1") return base;
+  // A non-org-wide caller with no assignment rows at all still has a home branch: show that branch's
+  // requisitions rather than nothing. Callers WITH assignments keep exactly their assigned slice.
+  if (scope.assignments.length === 0 && scope.branchId) {
+    const homeCond = `${table}.branch_name IN (SELECT bm2.branch_name FROM branch_master bm2 WHERE bm2.id = ?)`;
+    base.sql = base.sql === "1=0" ? homeCond : `(${base.sql}) OR ${homeCond}`;
+    base.params = [...base.params, scope.branchId];
+  }
+  if (opts.includeOwnRequisitions === false) return base;
   return {
     sql: `(${base.sql}) OR ${table}.requested_by = ?`,
     params: [...base.params, scope.userId],
@@ -326,33 +340,17 @@ export const jobRequisitionService = {
    * Returns true = allowed. Caller answers a refusal with 403, not 404: the branch is
    * something the user supplied, so there is no existence to conceal.
    */
-  async canCreateForBranch(
-    actor: EnterpriseUser,
-    branchName: string,
-  ): Promise<boolean> {
-    const scope = await resolveUserBusinessScope(actor);
-    if (
-      scope.isSuperAdmin ||
-      scope.isAdmin ||
-      scope.isHr ||
-      scope.roles.includes("ceo")
-    )
-      return true;
-    if (scope.assignments.some((a) => a.scopeType === "all")) return true;
+  async canCreateForBranch(actor: EnterpriseUser, branchName: string): Promise<boolean> {
+    // Owner policy 2026-10-01: hr and every non-org-wide role may raise a requisition only for their
+    // own branch (assigned branches + home branch). No resolvable branch => refused (fail closed).
+    const hrScope = await resolveHrBranchScope(userIdOf(actor));
+    if (hrScope.orgWide) return true;
+    return branchInScope(hrScope, null, branchName);
+  },
 
-    const branchIds = scope.assignments
-      .map((a) => a.branchId)
-      .filter((b): b is string => Boolean(b));
-    if (branchIds.length === 0) return true;
-
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT 1 FROM branch_master
-        WHERE branch_name = ?
-          AND id IN (${branchIds.map(() => "?").join(",")})
-        LIMIT 1`,
-      [branchName, ...branchIds],
-    );
-    return (rows as RowDataPacket[]).length > 0;
+  /** Caller's branch scope (org-wide flag + branch ids/names), shared by the :branch-param endpoints. */
+  async getBranchScope(actor: EnterpriseUser): Promise<HrBranchScope> {
+    return resolveHrBranchScope(userIdOf(actor));
   },
 
   async isRequisitionVisible(
@@ -607,8 +605,8 @@ export const jobRequisitionService = {
         target_joining_date, requisition_validity, priority, requisition_type, business_justification,
         preferred_sources, internal_posting, requested_by, requested_by_name,
         bmi_assessment_url, meta_target_age_min, meta_target_age_max, meta_target_locations,
-        meta_target_radius_km, meta_screening_config, approval_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        meta_target_radius_km, meta_screening_config, ad_required, approval_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         id,
         code,
@@ -648,10 +646,9 @@ export const jobRequisitionService = {
           ? JSON.stringify(input.meta_target_locations)
           : null,
         input.meta_target_radius_km ?? null,
-        input.meta_screening_config
-          ? JSON.stringify(input.meta_screening_config)
-          : null,
-      ],
+        input.meta_screening_config ? JSON.stringify(input.meta_screening_config) : null,
+        input.ad_required === false ? 0 : 1,
+      ]
     );
 
     await this.logApprovalAction(
@@ -686,11 +683,12 @@ export const jobRequisitionService = {
       });
     }
 
-    if (
-      existing.approval_status === "approved" ||
-      existing.approval_status === "closed"
-    ) {
-      const allowedFields = ["owner_recruiter_id"];
+    if (existing.approval_status === "approved" || existing.approval_status === "closed") {
+      // The assessment link is read per invite send, so it stays editable while the requisition is live
+      // (approved) but not once closed.
+      const allowedFields = existing.approval_status === "approved"
+        ? ["owner_recruiter_id", "bmi_assessment_url"]
+        : ["owner_recruiter_id"];
       const attemptedFields = Object.keys(input);
       const disallowedChanges = attemptedFields.filter(
         (f) => !allowedFields.includes(f),
@@ -698,10 +696,25 @@ export const jobRequisitionService = {
       if (disallowedChanges.length > 0) {
         throw Object.assign(
           new Error(
-            `Cannot modify approved/closed requisition. Only recruiter assignment is allowed.`,
+            existing.approval_status === "approved"
+              ? "Cannot modify approved requisition. Only recruiter assignment and the assessment link can be changed."
+              : "Cannot modify closed requisition. Only recruiter assignment is allowed."
           ),
-          { statusCode: 409 },
+          { statusCode: 409 }
         );
+      }
+    }
+
+    if ("bmi_assessment_url" in input) {
+      // The form resends the stored link on every save: an unchanged legacy (e.g. http) link must not block it.
+      const incoming = typeof input.bmi_assessment_url === "string" ? input.bmi_assessment_url.trim() : input.bmi_assessment_url;
+      const stored = String((existing as { bmi_assessment_url?: string | null }).bmi_assessment_url ?? "").trim();
+      if (typeof incoming === "string" && incoming !== "" && incoming === stored) {
+        input = { ...input, bmi_assessment_url: incoming };
+      } else {
+        const link = normalizeBmiLink(input.bmi_assessment_url);
+        if (!link.ok) throw Object.assign(new Error(link.message), { statusCode: 400 });
+        input = { ...input, bmi_assessment_url: link.value };
       }
     }
 
@@ -745,6 +758,8 @@ export const jobRequisitionService = {
       "meta_target_radius_km",
       // META screening config (migration 1829).
       "meta_screening_config",
+      // Run-an-ad decision (migration 2107).
+      "ad_required",
     ];
 
     for (const field of allowedFields) {
@@ -767,11 +782,7 @@ export const jobRequisitionService = {
         ) {
           sets.push(`${field} = ?`);
           params.push(JSON.stringify(value));
-        } else if (
-          field === "rotational_shift" ||
-          field === "night_shift_required" ||
-          field === "internal_posting"
-        ) {
+        } else if (field === "rotational_shift" || field === "night_shift_required" || field === "internal_posting" || field === "ad_required") {
           sets.push(`${field} = ?`);
           params.push(value ? 1 : 0);
         } else {
@@ -792,6 +803,11 @@ export const jobRequisitionService = {
       `UPDATE job_requisition SET ${sets.join(", ")} WHERE id = ?`,
       params,
     );
+
+    // Audit line only: the approval log's action enum has no value for this and the URL may carry a token.
+    if ("bmi_assessment_url" in input) {
+      console.info(`[JobRequisition] assessment link ${input.bmi_assessment_url ? "changed" : "cleared"} requisition=${id} actor=${actorId}`);
+    }
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
@@ -1103,6 +1119,45 @@ export const jobRequisitionService = {
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
       [id],
     );
+    return rows[0] as JobRequisition;
+  },
+
+  /**
+   * Reopen a closed (or filled) requisition with a new required headcount and validity. Branch head or super admin
+   * only, reason required. Logged in the approval history as a re-approval ('approved' with a "Reopened" remark) so the
+   * entry fits every database's action list. Fulfilled count is kept; the new requested count must exceed it.
+   */
+  async reopenRequisition(
+    id: string,
+    actorId: string,
+    input: { requestedHeadcount: number; validity: string; reason: string }
+  ): Promise<JobRequisition> {
+    const existing = await this.getRequisition(id);
+    if (!existing) throw Object.assign(new Error("Requisition not found"), { statusCode: 404 });
+    const scope = await resolveUserBusinessScope(actorId);
+    if (!scope.isSuperAdmin && !scope.roles.includes("branch_head")) {
+      throw Object.assign(new Error("Only a branch head or a super admin can reopen a requisition."), { statusCode: 403 });
+    }
+    const fulfilled = Number(existing.fulfilled_headcount ?? 0);
+    const isOpen = existing.approval_status === "approved" && Number(existing.active_status ?? 1) === 1 && fulfilled < Number(existing.requested_headcount);
+    if (isOpen) throw Object.assign(new Error("This requisition is already open"), { statusCode: 409 });
+    if (!Number.isInteger(input.requestedHeadcount) || input.requestedHeadcount <= fulfilled || input.requestedHeadcount > 5000) {
+      throw Object.assign(new Error(`Required count must be a whole number above the ${fulfilled} already filled`), { statusCode: 400 });
+    }
+    const today = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.validity) || input.validity < today) {
+      throw Object.assign(new Error("Valid-till date must be today or later (YYYY-MM-DD)"), { statusCode: 400 });
+    }
+    await db.execute(
+      `UPDATE job_requisition
+          SET approval_status = 'approved', active_status = 1, closed_at = NULL, closed_reason = NULL,
+              requested_headcount = ?, requisition_validity = ?, updated_at = NOW()
+        WHERE id = ?`,
+      [input.requestedHeadcount, input.validity, id]
+    );
+    await this.logApprovalAction(id, 0, "approved", actorId, null, null,
+      `Reopened: required ${existing.requested_headcount} -> ${input.requestedHeadcount} (${fulfilled} already filled), valid till ${input.validity}. Was ${existing.approval_status}${existing.closed_reason ? ` (${existing.closed_reason})` : ""}. Reason: ${input.reason}`);
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM job_requisition WHERE id = ? LIMIT 1", [id]);
     return rows[0] as JobRequisition;
   },
 
@@ -1678,12 +1733,35 @@ export const jobRequisitionService = {
         },
       });
 
+      const raisedSubject = rendered.subject ?? `Requisition Raised: ${requisition.requisition_code}`;
+      // Approvers with a login get their own copy carrying the full request + one-click Approve / Decline.
+      const { buildApprovalBlock } = await import("../approval-center/approval-email.service.js");
+      let sharedTo = recipients.to;
+      const personal: typeof recipients.to = [];
+      for (const r of recipients.to) {
+        const block = r.userId
+          ? await buildApprovalBlock(r.userId, { kinds: ["job_requisition"], entityId: String(requisition.id) })
+          : null;
+        if (!block) continue;
+        try {
+          await emailService.send({
+            to: r.email,
+            subject: raisedSubject,
+            html: (rendered.html ?? "") + block.html,
+            text: (rendered.text ?? "") + block.text,
+          });
+          personal.push(r);
+        } catch (e: unknown) {
+          console.warn("[JobRequisition notifyRequisitionRaised] personalised send failed:", e instanceof Error ? e.message : e);
+        }
+      }
+      sharedTo = recipients.to.filter((r) => !personal.includes(r));
+      const sharedCc = recipients.cc;
+      if (sharedTo.length === 0 && sharedCc.length === 0) return;
       await emailService.send({
-        to: recipients.to.map((r) => r.email).join(", "),
-        ...(recipients.cc.length ? { cc: recipients.cc.join(", ") } : {}),
-        subject:
-          rendered.subject ??
-          `Requisition Raised: ${requisition.requisition_code}`,
+        to: (sharedTo.length ? sharedTo.map((r) => r.email) : sharedCc).join(", "),
+        ...(sharedTo.length && sharedCc.length ? { cc: sharedCc.join(", ") } : {}),
+        subject: raisedSubject,
         html: rendered.html,
         text: rendered.text,
       });
@@ -1806,7 +1884,13 @@ export const jobRequisitionService = {
 <p><a href="${escapeHtml(bmiUrl)}" style="background:#1e40af;color:#fff;padding:8px 16px;text-decoration:none;border-radius:4px;display:inline-block">${escapeHtml(bmiUrl)}</a></p>`
         : `<p style="margin-top:22px;color:#b45309"><strong>No assessment / BMI link was set on this requisition.</strong> Ask the raiser to add one before the ad goes live if the campaign needs it.</p>`;
 
+      const adRequired = Number(req.ad_required ?? 1) !== 0;
+      const adBanner = adRequired
+        ? `<p style="margin:0 0 12px;padding:8px 12px;background:#dcfce7;color:#166534;border-radius:4px"><strong>AD REQUIRED — please run the ad for this requisition.</strong></p>`
+        : `<p style="margin:0 0 12px;padding:8px 12px;background:#fee2e2;color:#991b1b;border-radius:4px"><strong>NO AD NEEDED — the requester does not want an ad run for this requisition.</strong> Do not create a campaign. Details are below for reference only.</p>`;
+
       const html = `<html><body style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.5">
+${adBanner}
 <h2 style="color:#1e40af;margin-bottom:4px">New Recruitment Campaign Brief</h2>
 <p style="margin-top:0;color:#64748b">Requisition ${escapeHtml(req.requisition_code)} has been approved. Details below are ready for a META Lead Gen campaign.</p>
 <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:14px">
@@ -1827,7 +1911,7 @@ ${bmiBlock}
       await emailService.send({
         to: recipients.join(", "),
         ...(ccList.length ? { cc: ccList.join(", ") } : {}),
-        subject: `[Campaign Brief] ${req.designation_name} — ${req.branch_name} — ${req.requisition_code}`,
+        subject: `[Campaign Brief — ${adRequired ? "RUN AD" : "NO AD NEEDED"}] ${req.designation_name} — ${req.branch_name} — ${req.requisition_code}`,
         html,
       });
     } catch (e: unknown) {
@@ -2096,9 +2180,7 @@ ${bmiBlock}
   /**
    * Get available batches from external LMS for dropdown
    */
-  async getAvailableBatches(
-    filters: { branch?: string; process?: string } = {},
-  ): Promise<LmsBatchOption[]> {
+  async getAvailableBatches(filters: { branch?: string; process?: string; branchIn?: string[] } = {}): Promise<LmsBatchOption[]> {
     try {
       const { lmsQuery } = await import("../lms/lms.service.js");
 
@@ -2106,6 +2188,13 @@ ${bmiBlock}
         "batch_status IN ('Planned', 'Active', 'In Progress')",
       ];
       const params: unknown[] = [];
+
+      // Server-side branch scope (non-org-wide callers); the browser's `branch` only narrows within it.
+      if (filters.branchIn) {
+        if (filters.branchIn.length === 0) return [];
+        conditions.push(`branch IN (${filters.branchIn.map(() => "?").join(",")})`);
+        params.push(...filters.branchIn);
+      }
 
       if (filters.branch) {
         conditions.push("branch = ?");
@@ -2500,18 +2589,28 @@ ${bmiBlock}
   /**
    * Get list of users with a given role (for handover email recipient picker)
    */
-  async getHandoverRecipientOptions(
-    roles: string[],
-  ): Promise<Array<{ user_id: string; email: string; role_key: string }>> {
+  async getHandoverRecipientOptions(roles: string[], scope?: HrBranchScope): Promise<Array<{ user_id: string; email: string; role_key: string }>> {
     if (roles.length === 0) return [];
     const placeholders = roles.map(() => "?").join(",");
+    // Non-org-wide callers only see recipients who work in their own branch(es).
+    let branchJoin = "";
+    let branchCond = "";
+    const branchParams: string[] = [];
+    if (scope && !scope.orgWide) {
+      if (scope.branchIds.length === 0) return [];
+      branchJoin = "JOIN employees emp ON emp.user_id = ur.user_id AND emp.active_status = 1";
+      branchCond = `AND emp.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`;
+      branchParams.push(...scope.branchIds);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT ur.user_id, ur.role_key, au.email
        FROM user_roles ur
        JOIN auth_user au ON au.id = ur.user_id
+       ${branchJoin}
        WHERE ur.role_key IN (${placeholders}) AND ur.active_status = 1 AND au.email IS NOT NULL
+       ${branchCond}
        ORDER BY ur.role_key, au.email`,
-      roles,
+      [...roles, ...branchParams]
     );
     return (rows as RowDataPacket[]).map((r) => ({
       user_id: r.user_id as string,

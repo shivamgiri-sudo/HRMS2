@@ -2,6 +2,7 @@ import { Router, type NextFunction, type Response } from "express";
 import multer from "multer";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireProcessCodesInScope } from "../dashboards/process-scope-guards.js";
 import * as svc from "./bla-bli-blu-dashboard.service.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -15,7 +16,21 @@ const VIEWER_ROLES = ["super_admin", "admin", "ceo", "coo", "management", "manag
 const UPLOAD_ROLES = ["super_admin", "admin", "sales", "operations_manager"];
 const TARGET_ROLES = ["super_admin", "admin", "ceo", "coo", "management"];
 
+/** For actions whose failures are the user's to read ("that upload was not found"): a 400 with the sentence, not a 500. */
+const hu = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    void fn(req, res).catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg && !/^ER_|sql|syntax|connect/i.test(msg)) return res.status(400).json({ success: false, message: msg });
+      return next(e);
+    });
+  };
+
 blaBliBluDashboardRouter.use(requireAuth);
+// Owner ruling 2026-10-01: dashboard data only for callers whose scope includes the process (org-wide roles pass).
+// BLA BLI BLU is its own process (BLA_BLI_BLU, NOIDA-2), not Bellavita (BELLA_VITA, NOIDA): checking Bellavita
+// refused the BLA BLI BLU process managers themselves (Bhavesh Dayal, 2026-10-06).
+blaBliBluDashboardRouter.use(requireProcessCodesInScope(["BLA_BLI_BLU"]));
 
 const q = (req: AuthenticatedRequest, k: string) => (typeof req.query[k] === "string" ? (req.query[k] as string) : undefined);
 
@@ -50,7 +65,25 @@ blaBliBluDashboardRouter.put("/targets", requireRole(...TARGET_ROLES), h(async (
   return res.json({ success: true, data: await svc.getTargets() });
 }));
 
-blaBliBluDashboardRouter.post("/upload/received-data", requireRole(...UPLOAD_ROLES), upload.single("file"), h(async (req, res) => {
+// ── Uploaded files: see what was loaded, and remove a wrong upload as a whole ──
+blaBliBluDashboardRouter.get("/uploads", requireRole(...UPLOAD_ROLES), h(async (_req, res) => {
+  const { listUploadBatches } = await import("./bbb-uploads.service.js");
+  res.json({ success: true, data: await listUploadBatches() });
+}));
+blaBliBluDashboardRouter.post("/uploads/received/:batchId/trash", requireRole(...UPLOAD_ROLES), hu(async (req, res) => {
+  const { trashReceivedBatch } = await import("./bbb-uploads.service.js");
+  res.json({ success: true, data: await trashReceivedBatch(String(req.params.batchId), req.authUser?.id ?? null) });
+}));
+blaBliBluDashboardRouter.post("/uploads/received/:batchId/restore", requireRole(...UPLOAD_ROLES), hu(async (req, res) => {
+  const { restoreReceivedBatch } = await import("./bbb-uploads.service.js");
+  res.json({ success: true, data: await restoreReceivedBatch(String(req.params.batchId)) });
+}));
+blaBliBluDashboardRouter.delete("/uploads/sales/:batchId", requireRole(...UPLOAD_ROLES), hu(async (req, res) => {
+  const { deleteSalesBatch } = await import("./bbb-uploads.service.js");
+  res.json({ success: true, data: await deleteSalesBatch(String(req.params.batchId), req.authUser?.id ?? null) });
+}));
+
+blaBliBluDashboardRouter.post("/upload/received-data", requireRole(...UPLOAD_ROLES), upload.single("file"), hu(async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded" });
   return res.json({ success: true, data: await svc.uploadReceivedData(req.file.buffer, req.authUser?.id ?? "system") });
 }));

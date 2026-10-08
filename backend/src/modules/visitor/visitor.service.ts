@@ -18,20 +18,10 @@ import {
 } from "./visitor.types.js";
 import { inboxService } from "../inbox/inbox.service.js";
 
-const UNRESTRICTED_ROLES = new Set([
-  "super_admin",
-  "admin",
-  "ho_hr",
-  "hr_admin",
-  "security_head",
-]);
-const BRANCH_SECURITY_ROLES = new Set([
-  "visitor_security",
-  "visitor_reception",
-  "branch_head",
-  "branch_hr",
-  "hr_branch",
-]);
+// Owner ruling 2026-10-01: ho_hr, hr_admin and security_head are NOT org-wide roles - they are limited to
+// their own branch like the other branch roles. Only the org-wide roles stay unrestricted.
+const UNRESTRICTED_ROLES = new Set(["super_admin", "admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"]);
+const BRANCH_SECURITY_ROLES = new Set(["visitor_security", "visitor_reception", "branch_head", "branch_hr", "hr_branch", "ho_hr", "hr_admin", "security_head", "hr"]);
 
 function tokenHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -404,15 +394,9 @@ export const visitorService = {
       if (!visit)
         throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
 
-      const globalOverride = scope.roles.some((role) =>
-        ["super_admin", "admin", "security_head"].includes(role),
-      );
-      const branchOverride =
-        scope.roles.includes("branch_head") &&
-        scope.branchId === visit.branch_id;
-      const assignedHost = Boolean(
-        scope.employeeId && visit.host_employee_id === scope.employeeId,
-      );
+      const globalOverride = scope.roles.some((role) => ["super_admin", "admin"].includes(role));
+      const branchOverride = scope.roles.some((r) => ["branch_head", "security_head", "ho_hr", "hr_admin"].includes(r)) && scope.branchId === visit.branch_id;
+      const assignedHost = Boolean(scope.employeeId && visit.host_employee_id === scope.employeeId);
       if (!globalOverride && !branchOverride && !assignedHost) {
         throw Object.assign(
           new Error(

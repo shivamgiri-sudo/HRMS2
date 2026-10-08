@@ -127,18 +127,23 @@ export async function calculateWeekoffEligibility(
   paidBase: number,
   runMonth: string,
   holidayCount: number,
+  // Rejoin v3: when given, the month is measured over the days the employee was actually employed
+  // (stint-aware) instead of the whole calendar month. Undefined = exactly the original behaviour.
+  employment?: { employedDays: number; sundays: number }
 ): Promise<number> {
-  const actualCount = await resolveActualWeekoffCount(employeeId, runMonth);
+  const actualCount = employment
+    ? employment.sundays
+    : await resolveActualWeekoffCount(employeeId, runMonth);
 
   const [year, month] = runMonth.split("-").map(Number);
-  const daysInMonth = new Date(year, month, 0).getDate();
+  const daysInMonth = employment ? employment.employedDays : new Date(year, month, 0).getDate();
 
   // Validate, do not clamp. Clamping an absurd count DOWN to workingDays still drives
   // availableWorkingDays to zero, and `paidBase >= 0` is true for everyone — which would grant a
   // full week-off entitlement to an employee who worked three days. An unusable holiday count
   // therefore falls back to 0, reverting to the pre-existing behaviour: conservative, never free
   // pay. Only a count that is finite and strictly inside the month's working days is applied.
-  const workingDays = daysInMonth - actualCount;
+  const workingDays = Math.max(0, daysInMonth - actualCount);
   const holidaysAreUsable =
     Number.isFinite(holidayCount) &&
     holidayCount >= 0 &&

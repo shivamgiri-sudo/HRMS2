@@ -166,12 +166,19 @@ describe("renderers no longer hardcode an address", () => {
     expect(src).not.toContain("${letterHeader(logoUrl)}");
   });
 
-  it("keeps the registered office on the experience letter", () => {
-    // Registered office is a legal fact and is NOT the issuing branch; the
-    // branch is added beneath it rather than replacing it.
-    const src = read("modules/letters/letters-render.service.ts");
-    expect(src).toContain("Karampura Commercial Complex");
-    expect(src).toContain("Issuing Branch");
+  it("prints the issuing branch on the experience letter", async () => {
+    // The experience letter used to carry its own two-column header with the
+    // Karampura registered office and the branch appended as "Issuing Branch".
+    // 2ebbc93cd moved it onto the standard appointment-letter frame on purpose,
+    // so the branch now comes from letterHeader/footer like every other letter.
+    const { renderExperienceLetter } = await import("../../letters/letters-render.service.js");
+    const html = renderExperienceLetter(
+      { full_name: "T", employee_code: "MAS1", branch_name: "NOIDA-2", branch_address: "A-45, Sector 63\nNoida 201301" },
+      "https://x.test/logo.png",
+    );
+    expect(html).toContain("NOIDA-2");
+    expect(html).toContain("A-45, Sector 63<br>Noida 201301");
+    expect(html).toContain("A-45, Sector 63, Noida 201301");
   });
 
   it("the joining-document letterhead accepts a branch", () => {

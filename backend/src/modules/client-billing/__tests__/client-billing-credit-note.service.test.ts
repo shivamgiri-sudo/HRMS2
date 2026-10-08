@@ -178,11 +178,9 @@ describe("createCreditNote", () => {
       userId: "u-1",
     });
 
-    expect(mintCreditNoteNumber).toHaveBeenCalledWith(
-      "09",
-      "Mas Callnet India Pvt Ltd",
-      "2026-27",
-    );
+    // The open transaction's connection is passed through, so the number is minted inside the
+    // same transaction instead of taking a second pooled connection while this one is held.
+    expect(mintCreditNoteNumber).toHaveBeenCalledWith("09", "Mas Callnet India Pvt Ltd", "2026-27", conn);
     expect(result).toEqual({
       id: expect.any(String),
       creditNo: "CN-09-01/26-27",

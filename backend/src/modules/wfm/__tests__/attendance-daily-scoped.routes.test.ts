@@ -28,15 +28,20 @@ vi.mock("../../../shared/accessGuard.js", () => ({
   getEmployeeForUser: vi.fn(),
 }));
 
-const mocks = vi.hoisted(() => ({ execute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: mocks.execute } }));
+const mocks = vi.hoisted(() => ({ execute: vi.fn(), getScope: vi.fn() }));
+vi.mock('../../../db/mysql.js', () => ({ db: { execute: mocks.execute } }));
 
-vi.mock("../../../shared/timezone.js", () => ({
-  toIST: (v: unknown) => v ?? null,
-}));
-vi.mock("../apr-attendance.service.js", () => ({
-  composeIstDateTime: () => null,
-}));
+// Branch scoping (owner ruling 2026-10-01): only the caller's resolved business scope is faked; isOrgWide /
+// scopePredicate stay the real implementations.
+vi.mock('../branch-scope.js', async (orig) => ({ ...(await orig<typeof import('../branch-scope.js')>()), getScope: mocks.getScope }));
+const scopeOf = (roles: string[], over: Record<string, unknown> = {}) => ({
+  userId: 'test-user-id', roles, employeeId: 'emp-x', employeeCode: 'C', branchId: 'branch-a', processId: null, lobId: null,
+  departmentId: null, isSuperAdmin: roles.includes('super_admin'), isAdmin: roles.includes('admin'), isHr: roles.includes('hr'),
+  isPayroll: false, isFinance: false, assignments: [], ...over,
+});
+
+vi.mock('../../../shared/timezone.js', () => ({ toIST: (v: unknown) => v ?? null }));
+vi.mock('../apr-attendance.service.js', () => ({ composeIstDateTime: () => null }));
 
 import { hasRole, getEmployeeForUser } from "../../../shared/accessGuard.js";
 
@@ -120,7 +125,8 @@ describe("scopedAttendanceDailyHandler", () => {
 
   it("lets a privileged caller (admin/hr/wfm/ceo) filter by an explicit employeeId", async () => {
     vi.mocked(hasRole).mockResolvedValue(true);
-    vi.mocked(getEmployeeForUser).mockResolvedValue({ id: "admin-emp" } as any);
+    mocks.getScope.mockResolvedValue(scopeOf(['super_admin']));
+    vi.mocked(getEmployeeForUser).mockResolvedValue({ id: 'admin-emp' } as any);
     mockExecuteByQuery({ countTotal: 1, mainRows: [] });
 
     const res = await request(app).get(
@@ -137,9 +143,10 @@ describe("scopedAttendanceDailyHandler", () => {
     expect(mainCall![1]).toContain("target-emp");
   });
 
-  it("lets a privileged caller with no employeeId see the whole scope (org-wide, no employee filter)", async () => {
+  it('lets an org-wide caller with no employeeId see every branch (no employee / branch filter)', async () => {
     vi.mocked(hasRole).mockResolvedValue(true);
-    vi.mocked(getEmployeeForUser).mockResolvedValue({ id: "admin-emp" } as any);
+    mocks.getScope.mockResolvedValue(scopeOf(['super_admin']));
+    vi.mocked(getEmployeeForUser).mockResolvedValue({ id: 'admin-emp' } as any);
     mockExecuteByQuery({ countTotal: 500, mainRows: [] });
 
     const res = await request(app).get(
@@ -147,12 +154,49 @@ describe("scopedAttendanceDailyHandler", () => {
     );
     expect(res.status).toBe(200);
 
-    const mainCall = mocks.execute.mock.calls.find(
-      ([sql]) =>
-        !sql.includes("INFORMATION_SCHEMA") &&
-        !sql.trim().startsWith("SELECT COUNT"),
-    );
-    expect(mainCall![0]).not.toContain("adr.employee_id = ?");
+    const mainCall = mocks.execute.mock.calls.find(([sql]) => !sql.includes('INFORMATION_SCHEMA') && !sql.trim().startsWith('SELECT COUNT'));
+    expect(mainCall![0]).not.toContain('adr.employee_id = ?');
+    expect(mainCall![0]).not.toContain('COALESCE(adr.branch_id, e.branch_id) = ?');
+  });
+
+  it('admin is branch-scoped like hr: the query is limited to their own branch', async () => {
+    vi.mocked(hasRole).mockResolvedValue(true);
+    vi.mocked(getEmployeeForUser).mockResolvedValue({ id: 'admin-emp' } as any);
+    mocks.getScope.mockResolvedValue(scopeOf(['admin'], {
+      assignments: [{ roleKey: 'admin', scopeType: 'branch', branchId: 'branch-a', processId: null, lobId: null, departmentId: null, managerEmployeeId: null, clientId: null }],
+    }));
+    mockExecuteByQuery({ countTotal: 1, mainRows: [] });
+
+    const res = await request(app).get('/api/wfm/attendance/daily?date=2026-08-06');
+    expect(res.status).toBe(200);
+    const mainCall = mocks.execute.mock.calls.find(([sql]) => !sql.includes('INFORMATION_SCHEMA') && !sql.trim().startsWith('SELECT COUNT'));
+    expect(mainCall![0]).toContain('COALESCE(adr.branch_id, e.branch_id) = ?');
+    expect(mainCall![1]).toContain('branch-a');
+  });
+
+  it('an admin with no branch (no resolvable scope) sees nothing', async () => {
+    vi.mocked(hasRole).mockResolvedValue(true);
+    vi.mocked(getEmployeeForUser).mockResolvedValue({ id: 'admin-emp' } as any);
+    mocks.getScope.mockResolvedValue(scopeOf(['admin'], { branchId: null, employeeId: null }));
+    mockExecuteByQuery({ countTotal: 0, mainRows: [] });
+
+    const res = await request(app).get('/api/wfm/attendance/daily?date=2026-08-06');
+    expect(res.status).toBe(200);
+    const mainCall = mocks.execute.mock.calls.find(([sql]) => !sql.includes('INFORMATION_SCHEMA') && !sql.trim().startsWith('SELECT COUNT'));
+    expect(mainCall![0]).toContain('(1=0)');
+  });
+
+  it('hr is limited to their own branch too, and a foreign ?branchId= can only narrow (ANDed)', async () => {
+    vi.mocked(hasRole).mockResolvedValue(true);
+    vi.mocked(getEmployeeForUser).mockResolvedValue({ id: 'hr-emp' } as any);
+    mocks.getScope.mockResolvedValue(scopeOf(['hr']));
+    mockExecuteByQuery({ countTotal: 0, mainRows: [] });
+
+    const res = await request(app).get('/api/wfm/attendance/daily?branchId=branch-z');
+    expect(res.status).toBe(200);
+    const mainCall = mocks.execute.mock.calls.find(([sql]) => !sql.includes('INFORMATION_SCHEMA') && !sql.trim().startsWith('SELECT COUNT'));
+    expect(mainCall![1]).toEqual(expect.arrayContaining(['branch-a', 'branch-z']));
+    expect(mainCall![0]).toContain('COALESCE(adr.branch_id, e.branch_id) = ?');
   });
 
   it("returns pagination fields (page, limit, total)", async () => {
@@ -171,7 +215,8 @@ describe("scopedAttendanceDailyHandler", () => {
 
   it("rejects a malformed branchId/processId query param rather than passing it through to SQL", async () => {
     vi.mocked(hasRole).mockResolvedValue(true);
-    vi.mocked(getEmployeeForUser).mockResolvedValue({ id: "admin-emp" } as any);
+    mocks.getScope.mockResolvedValue(scopeOf(['super_admin']));
+    vi.mocked(getEmployeeForUser).mockResolvedValue({ id: 'admin-emp' } as any);
 
     const res = await request(app).get(
       `/api/wfm/attendance/daily?branchId=${encodeURIComponent("'; DROP TABLE x --")}`,

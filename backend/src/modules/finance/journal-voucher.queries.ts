@@ -167,6 +167,28 @@ export async function resolveJvAccountNames(
       });
     }
   }
+
+  const bankIds = idsOf("bank_account");
+  if (bankIds.length) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, account_name, account_number_last4 FROM company_bank_account WHERE id IN (${bankIds.map(() => "?").join(",")})`,
+      bankIds,
+    );
+    for (const r of rows as RowDataPacket[]) {
+      names.set(`bank_account:${r.id}`, { label: String(r.account_name), hint: r.account_number_last4 ? `Bank · ••${r.account_number_last4}` : "Bank account" });
+    }
+  }
+
+  const vendorIds = idsOf("vendor");
+  if (vendorIds.length) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, vendor_name, vendor_code FROM vendor_master WHERE id IN (${vendorIds.map(() => "?").join(",")})`,
+      vendorIds,
+    );
+    for (const r of rows as RowDataPacket[]) {
+      names.set(`vendor:${r.id}`, { label: String(r.vendor_name), hint: r.vendor_code ? `Vendor · ${r.vendor_code}` : "Vendor" });
+    }
+  }
   return names;
 }
 
@@ -607,6 +629,19 @@ export async function journalVoucherOptions() {
       ORDER BY account_name`,
     blocked,
   );
+  const [banks] = await db.execute<RowDataPacket[]>(
+    `SELECT id, account_name, account_number_last4 FROM company_bank_account WHERE active_status = 1 ORDER BY account_name`,
+  );
+  // One canonical row per vendor name (same rule as the vendor list API: GSTIN-bearing row first).
+  const [vendors] = await db.execute<RowDataPacket[]>(
+    `SELECT id, vendor_name, vendor_code FROM (
+       SELECT v.id, v.vendor_name, v.vendor_code, ROW_NUMBER() OVER (
+         PARTITION BY UPPER(TRIM(v.vendor_name))
+         ORDER BY (v.gst_number IS NULL OR TRIM(v.gst_number) = '') ASC, v.updated_at DESC, v.id ASC
+       ) AS rn
+       FROM vendor_master v WHERE v.is_active = 1
+     ) x WHERE x.rn = 1 ORDER BY vendor_name`,
+  );
   const [branches] = await db.execute<RowDataPacket[]>(
     `SELECT id, branch_name, branch_code FROM branch_master WHERE active_status = 1 ORDER BY branch_name`,
   );
@@ -634,6 +669,14 @@ export async function journalVoucherOptions() {
       name: String(r.branch_name),
       code: r.branch_code ?? null,
     })),
+    bankAccounts: (banks as RowDataPacket[]).map((r) => ({
+      accountType: "bank_account" as const, id: String(r.id), label: String(r.account_name),
+      group: r.account_number_last4 ? `Bank · ••${r.account_number_last4}` : "Bank account",
+    })),
+    vendors: (vendors as RowDataPacket[]).map((r) => ({
+      accountType: "vendor" as const, id: String(r.id), label: String(r.vendor_name), group: r.vendor_code ? `Vendor · ${r.vendor_code}` : "Vendor",
+    })),
+    branches: (branches as RowDataPacket[]).map((r) => ({ id: String(r.id), name: String(r.branch_name), code: r.branch_code ?? null })),
     costCentres: (costCentres as RowDataPacket[]).map((r) => ({
       id: String(r.id),
       name: String(r.cost_centre_name),

@@ -8,6 +8,8 @@
  * row (created_by 00000000-…, e.g. the "db_bill backfill 2026-27" load) — no legacy or migrated data.
  * Shrinkage is roster-based (wfm_roster_assignment shift timings vs attendance_daily_record).
  */
+import { fetchBranchAttrition, type BranchAttrition } from "./branch-attrition.js";
+import { fetchPayrollReadiness, type PayrollReadiness } from "./payroll-readiness.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getPnlReconciliation } from "../process-pnl/pnl-reconciliation.service.js";
@@ -78,6 +80,37 @@ export async function fetchBudgetSummary(
     available: Math.max(0, total - consumed - reserved),
     utilizationPct: total > 0 ? Math.round((consumed / total) * 100) : 0,
   };
+}
+
+/**
+ * State of this month's budget header. 'active' is the only status a GRN can draw against (branch-budget
+ * headroom gate) and the end of the approval chain: draft -> submitted -> branch_head_approved -> active.
+ * 'closed' is a superseded budget, so it never counts as the current one.
+ */
+export interface BudgetHeaderState {
+  /** No header at all exists for the month. */
+  missing: boolean;
+  /** Most advanced status among the month's headers (active beats everything); null when missing. */
+  status: string | null;
+}
+
+export async function fetchBudgetHeaderState(
+  branchId: string,
+  today: string,
+): Promise<BudgetHeaderState> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT status FROM finance_budget_header
+      WHERE branch_id = ? AND period_code = ?
+      ORDER BY CASE status
+                 WHEN 'active' THEN 0 WHEN 'finance_head_approved' THEN 1 WHEN 'accounts_head_approved' THEN 1
+                 WHEN 'branch_head_approved' THEN 2 WHEN 'submitted' THEN 3 WHEN 'revision_required' THEN 4
+                 WHEN 'draft' THEN 5 WHEN 'rejected' THEN 6 WHEN 'closed' THEN 7 ELSE 8 END,
+               created_at DESC
+      LIMIT 1`,
+    [branchId, today.slice(0, 7)],
+  );
+  const status = (rows[0] as any)?.status ?? null;
+  return { missing: status == null, status };
 }
 
 // ─── 2. GRN Stats (HRMS-raised only) ──────────────────────────────────────────
@@ -598,6 +631,8 @@ export async function fetchLateStats(
       WHERE ra.roster_date = ?
         AND UPPER(COALESCE(ra.assignment_type, '')) NOT IN ('WEEK_OFF','LEAVE','HOLIDAY')
         AND ra.is_week_off = 0
+        AND NOT ${holidayAppliesSql("ra.roster_date")}
+        AND adr.attendance_status <> 'holiday'
         AND adr.clock_in_time IS NOT NULL
         AND COALESCE(ra.shift_start_time, wsm.start_time) IS NOT NULL
         AND TIME(adr.clock_in_time) > COALESCE(ra.shift_start_time, wsm.start_time)
@@ -716,6 +751,25 @@ const LEAVE_STATUSES = new Set([
 ]);
 const NON_WORKING_ASSIGNMENTS = new Set(["WEEK_OFF", "LEAVE", "HOLIDAY"]);
 
+/**
+ * SQL predicate: the company holiday applies to employee `e` on date `dateCol`. Same rule as
+ * attendance-engine resolveOverridePriority (branch, cost-centre and designation scope), so a
+ * holiday that attendance grades 'holiday' is also a non-working day here. The roster is not
+ * enough: a roster row can carry a working shift on a date that is a holiday for that employee,
+ * which used to inflate "planned" and shrinkage on holidays.
+ */
+const holidayAppliesSql = (dateCol: string): string => `EXISTS (
+  SELECT 1 FROM leave_holiday_master lhm
+   WHERE lhm.holiday_date = ${dateCol} AND lhm.active_status = 1
+     AND ((NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
+           AND (lhm.branch_id IS NULL OR lhm.branch_id = e.branch_id))
+          OR EXISTS (SELECT 1 FROM holiday_cost_centre_mapping hccm
+                      WHERE hccm.holiday_id = lhm.id AND hccm.cost_centre_id = e.cost_centre_id))
+     AND (NOT EXISTS (SELECT 1 FROM holiday_designation_mapping WHERE holiday_id = lhm.id)
+          OR EXISTS (SELECT 1 FROM holiday_designation_mapping hdm
+                      WHERE hdm.holiday_id = lhm.id AND hdm.designation_id = e.designation_id))
+)`;
+
 const hhmm = (t: unknown): string => String(t ?? "").slice(0, 5);
 
 /**
@@ -738,6 +792,7 @@ export async function fetchShrinkage(
             COALESCE(ra.shift_start_time, st.start_time) AS shift_start,
             COALESCE(ra.shift_end_time, st.end_time)     AS shift_end,
             adr.clock_in_time, adr.attendance_status, adr.late_mark,
+            ${holidayAppliesSql("ra.roster_date")}       AS is_holiday,
             COALESCE(pm.process_name, 'Unassigned')      AS process_name
        FROM wfm_roster_assignment ra
        JOIN employees e ON e.id = ra.employee_id AND e.branch_id = ? AND e.active_status = 1
@@ -770,7 +825,12 @@ export async function fetchShrinkage(
   for (const r of rows as any[]) {
     const type = String(r.assignment_type ?? "").toUpperCase();
     const punched = r.clock_in_time != null;
-    if (NON_WORKING_ASSIGNMENTS.has(type) || Number(r.is_week_off) === 1) {
+    if (
+      NON_WORKING_ASSIGNMENTS.has(type) ||
+      Number(r.is_week_off) === 1 ||
+      Number(r.is_holiday) === 1 ||
+      String(r.attendance_status ?? "") === "holiday"
+    ) {
       if (punched && type !== "LEAVE") weekOffWorked += 1;
       if (type === "LEAVE") onLeave += 1;
       continue;
@@ -1290,6 +1350,8 @@ export async function fetchConsecutiveAbsence(
       WHERE ra.roster_date BETWEEN ? AND ?
         AND ra.is_week_off = 0
         AND UPPER(COALESCE(ra.assignment_type, '')) NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY')
+        AND NOT ${holidayAppliesSql("ra.roster_date")}
+        AND COALESCE(a.attendance_status, '') <> 'holiday'
         AND a.clock_in_time IS NULL
         AND COALESCE(a.attendance_status, '') NOT IN ('leave_approved', 'approved_leave', 'half_day_leave', 'leave')
       GROUP BY e.id, e.employee_code, e.full_name, e.first_name, pm.process_name, m.full_name
@@ -1565,6 +1627,7 @@ export async function fetchPendingActions(
 export interface BranchHealthRawData {
   branchId: string | null;
   budget: BudgetSummary;
+  budgetHeader: BudgetHeaderState;
   grnStats: GrnStats;
   recentGrns: GrnRow[];
   ats: AtsStats;
@@ -1582,6 +1645,10 @@ export interface BranchHealthRawData {
   regularization: Awaited<ReturnType<typeof fetchRegularizationBacklog>>;
   offers: OfferConversion;
   pnlGrnTieOut: PnlGrnTieOut;
+  /** Payroll readiness for the cycle month; absent on older callers. */
+  payrollReadiness?: PayrollReadiness;
+  /** Attrition & retention risk; absent when the analytics sources are unavailable. */
+  attrition?: BranchAttrition | null;
 }
 
 const previousDay = (date: string): string => {
@@ -1606,6 +1673,7 @@ export async function fetchAllBranchHealthData(
         available: 0,
         utilizationPct: 0,
       },
+      budgetHeader: { missing: true, status: null },
       grnStats: {
         raised: 0,
         approved: 0,
@@ -1724,6 +1792,7 @@ export async function fetchAllBranchHealthData(
 
   const [
     budget,
+    budgetHeader,
     grnStats,
     recentGrns,
     ats,
@@ -1742,6 +1811,7 @@ export async function fetchAllBranchHealthData(
     pnlGrnTieOut,
   ] = await Promise.all([
     fetchBudgetSummary(branchId, today),
+    fetchBudgetHeaderState(branchId, today),
     fetchGrnStats(branchId, today),
     fetchRecentGrns(branchId),
     fetchAtsStats(branchName, today),
@@ -1763,6 +1833,7 @@ export async function fetchAllBranchHealthData(
   return {
     branchId,
     budget,
+    budgetHeader,
     grnStats,
     recentGrns,
     ats,
@@ -1779,5 +1850,7 @@ export async function fetchAllBranchHealthData(
     regularization,
     offers,
     pnlGrnTieOut,
+    payrollReadiness: await fetchPayrollReadiness(branchId, today),
+    attrition: await fetchBranchAttrition(branchId, today),
   };
 }

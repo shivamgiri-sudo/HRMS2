@@ -397,113 +397,70 @@ const METRICS: Readonly<Record<MetricKey, MetricDefinition>> = {
  * absent everywhere it was not already present: task_tat_instance is empty in
  * production, so adding it would ship more blank tiles.
  */
-const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
-  {
-    // Fixes 4 blank KPI cards + the attendance donut with no layout change.
-    // attException + docCompliance give the org-wide blocker roll-up: the exceptions that
-    // stop a payroll run, and the active employees with no document on file.
-    SUPER_ADMIN_DASHBOARD: [
-      "hc",
-      "att",
-      "onb",
-      "resign",
-      "payroll",
-      "attException",
-      "docCompliance",
-      "hiringAlert",
-    ],
-    // `bgv` added 31-Jul-2026 (CEO UAT): the layout renders a BGV Pending tile but the
-    // bundle never requested the metric, so it was a permanent em-dash.
-    //
-    // `nm`, `incentive` and `tat` are deliberately NOT added, even though the layout
-    // has tiles for them and builders exist. Their source tables are empty in
-    // production — candidate_name_match_summary 0 rows, incentive_upload_batch 0,
-    // task_tat_instance 0 — so requesting them would render a confident "0" that
-    // asserts "no name mismatches" and "no TAT breaches" when neither pipeline is
-    // running. A false zero on an executive dashboard is worse than a blank. Those
-    // three tiles are removed from CeoReferenceLayout instead; re-add the keys here
-    // once the pipelines feed data.
-    CEO_DASHBOARD: [
-      "hc",
-      "att",
-      "payroll",
-      "onb",
-      "resign",
-      "attException",
-      "docCompliance",
-      "bgv",
-    ],
-    // `tat` and `dpdp` removed 2026-08-28, on exactly the reasoning already written into the
-    // CEO bundle below: task_tat_instance and dpdp_consent_withdrawal hold 0 rows on a
-    // COUNT(*), so requesting them asserted "no open TAT items" and "no pending DPDP
-    // requests" about pipelines that are not running. Neither had a consumer either — no
-    // layout in src/pages/dashboards reads metrics.tat or metrics.dpdp — so this removes a
-    // query per request as well as a false zero. `nm` stays: candidate_name_match_summary
-    // holds real rows (7), just few. Re-add the day their sources start writing.
-    HR_DASHBOARD: [
-      "onb",
-      "resign",
-      "appointmentEsign",
-      "bgv",
-      "nm",
-      "joiningDocEsign",
-      "hc",
-      "att",
-      "docCompliance",
-      "training",
-      "leaveApprovals",
-      "hiringAlert",
-    ],
-    WFM_DASHBOARD: ["hc", "att", "attException", "biometric"],
-    // "hc" added — WfmAttendanceReferenceLayout.tsx's first tile, "Total Employees",
-    // reads metricDetail(m, "hc", "active") but this bundle never requested it, so
-    // it rendered a permanent blank. getHeadcountMetrics is cheap post-fix (already
-    // parallelized this session), so there's no cost concern to adding it here.
-    WFM_ATTENDANCE_DASHBOARD: ["hc", "att", "attException", "biometric"],
-    // `incentive` KEPT. information_schema.table_rows reported incentive_upload_batch as
-    // empty, but that column is an InnoDB estimate — COUNT(*) is 1 (a rejected batch), so
-    // the metric is measuring something real and PayrollReferenceLayout already renders
-    // metricUnavailableReason() for it if that ever changes.
-    PAYROLL_HR_DASHBOARD: [
-      "payroll",
-      "incentive",
-      "salaryComponents",
-      "attException",
-    ],
-    // Scoped headcount and attendance context for QA; audit scores stay on /api/quality-dashboard/*.
-    QUALITY_DASHBOARD: ["hc", "att"],
-    OPERATIONS_DASHBOARD: ["hc", "att"],
-    // `tat` removed — same empty source as HR above.
-    RECRUITER_DASHBOARD: ["onb", "recruiterActivity"],
-    // Incoming joiners are provisioning demand; exits are deprovisioning and asset recovery.
-    IT_MANAGER_DASHBOARD: ["hc", "onb", "resign"],
-    // `tat` removed — same empty source as HR above. `onb` ADDED: ManagerReferenceLayout's
-    // "New Joiners (This Month)" tile falls back to metricDetail(m, "onb", …) when the
-    // workforce summary has no new_joiners_30d, and the bundle never requested it, so the
-    // fallback was dead code.
-    // hiringAlert added for branch heads: dashboardAccessRegistry maps branch_head to this
-    // dashboard (variant "manager"), and resolveDashboardScope narrows them to their own branch
-    // and processes, so the tile answers "how short am I" for their scope only.
-    MANAGEMENT_DASHBOARD: [
-      "hc",
-      "att",
-      "onb",
-      "training",
-      "leaveApprovals",
-      "hiringAlert",
-    ],
-    EMPLOYEE_SELF_DASHBOARD: ["att", "leaveApprovals"],
-    PERFORMANCE_SCORECARD: [
-      "attendanceStatus",
-      "latecoming",
-      "unplannedLeave",
-      "pipStatus",
-      "qualityBaseline",
-      "attrition",
-      "shrinkage",
-      "revenue",
-    ],
-  };
+const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> = {
+  // Fixes 4 blank KPI cards + the attendance donut with no layout change.
+  // attException + docCompliance give the org-wide blocker roll-up: the exceptions that
+  // stop a payroll run, and the active employees with no document on file.
+  SUPER_ADMIN_DASHBOARD: ["hc", "att", "onb", "resign", "payroll", "attException", "docCompliance", "hiringAlert"],
+  // `bgv` added 31-Jul-2026 (CEO UAT): the layout renders a BGV Pending tile but the
+  // bundle never requested the metric, so it was a permanent em-dash.
+  //
+  // `nm`, `incentive` and `tat` are deliberately NOT added, even though the layout
+  // has tiles for them and builders exist. Their source tables are empty in
+  // production — candidate_name_match_summary 0 rows, incentive_upload_batch 0,
+  // task_tat_instance 0 — so requesting them would render a confident "0" that
+  // asserts "no name mismatches" and "no TAT breaches" when neither pipeline is
+  // running. A false zero on an executive dashboard is worse than a blank. Those
+  // three tiles are removed from CeoReferenceLayout instead; re-add the keys here
+  // once the pipelines feed data.
+  // `hiringAlert` added: the CEO hiring-gap tile drills into the per-process shortage list
+  // (workforce_mandate holds 22 live rows, so this is a real figure, not a false zero).
+  // `training` added: the Certified Learners tile had no drilldown and no CEO-openable page behind it;
+  // lms_learning_progress_snapshot holds 1,622 rows, so completion is a real figure, not a false zero.
+  CEO_DASHBOARD: ["hc", "att", "payroll", "onb", "resign", "attException", "docCompliance", "bgv", "hiringAlert", "training"],
+  // `tat` and `dpdp` removed 2026-08-28, on exactly the reasoning already written into the
+  // CEO bundle below: task_tat_instance and dpdp_consent_withdrawal hold 0 rows on a
+  // COUNT(*), so requesting them asserted "no open TAT items" and "no pending DPDP
+  // requests" about pipelines that are not running. Neither had a consumer either — no
+  // layout in src/pages/dashboards reads metrics.tat or metrics.dpdp — so this removes a
+  // query per request as well as a false zero. `nm` stays: candidate_name_match_summary
+  // holds real rows (7), just few. Re-add the day their sources start writing.
+  HR_DASHBOARD: [
+    "onb", "resign", "appointmentEsign", "bgv", "nm", "joiningDocEsign",
+    "hc", "att", "docCompliance", "training", "leaveApprovals", "hiringAlert",
+  ],
+  WFM_DASHBOARD: ["hc", "att", "attException", "biometric"],
+  // "hc" added — WfmAttendanceReferenceLayout.tsx's first tile, "Total Employees",
+  // reads metricDetail(m, "hc", "active") but this bundle never requested it, so
+  // it rendered a permanent blank. getHeadcountMetrics is cheap post-fix (already
+  // parallelized this session), so there's no cost concern to adding it here.
+  WFM_ATTENDANCE_DASHBOARD: ["hc", "att", "attException", "biometric"],
+  // `incentive` KEPT. information_schema.table_rows reported incentive_upload_batch as
+  // empty, but that column is an InnoDB estimate — COUNT(*) is 1 (a rejected batch), so
+  // the metric is measuring something real and PayrollReferenceLayout already renders
+  // metricUnavailableReason() for it if that ever changes.
+  PAYROLL_HR_DASHBOARD: ["payroll", "incentive", "salaryComponents", "attException"],
+  // Scoped headcount and attendance context for QA; audit scores stay on /api/quality-dashboard/*.
+  QUALITY_DASHBOARD: ["hc", "att"],
+  OPERATIONS_DASHBOARD: ["hc", "att"],
+  // `tat` removed — same empty source as HR above.
+  RECRUITER_DASHBOARD: ["onb", "recruiterActivity"],
+  // Incoming joiners are provisioning demand; exits are deprovisioning and asset recovery.
+  IT_MANAGER_DASHBOARD: ["hc", "onb", "resign"],
+  // `tat` removed — same empty source as HR above. `onb` ADDED: ManagerReferenceLayout's
+  // "New Joiners (This Month)" tile falls back to metricDetail(m, "onb", …) when the
+  // workforce summary has no new_joiners_30d, and the bundle never requested it, so the
+  // fallback was dead code.
+  // hiringAlert added for branch heads: dashboardAccessRegistry maps branch_head to this
+  // dashboard (variant "manager"), and resolveDashboardScope narrows them to their own branch
+  // and processes, so the tile answers "how short am I" for their scope only.
+  MANAGEMENT_DASHBOARD: ["hc", "att", "onb", "training", "leaveApprovals", "hiringAlert"],
+  EMPLOYEE_SELF_DASHBOARD: ["att", "leaveApprovals"],
+  PERFORMANCE_SCORECARD: [
+    "attendanceStatus", "latecoming", "unplannedLeave", "pipStatus",
+    "qualityBaseline", "attrition", "shrinkage", "revenue",
+  ],
+};
 
 function numberFromDetail(result: MetricResult, key?: string): number | null {
   if (!key) return null;

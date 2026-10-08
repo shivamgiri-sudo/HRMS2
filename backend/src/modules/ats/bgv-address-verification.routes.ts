@@ -15,6 +15,11 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { canAccessCandidate, resolveCandidateScope } from "./candidate-access.js";
+
+// Branch scoping (owner ruling 2026-10-01): HR-facing address-verification actions are limited to candidates
+// inside the caller's own branch / assigned scope (org-wide roles unaffected).
+const OUT_OF_SCOPE = { success: false, message: "Forbidden: this candidate is outside your branch / assigned scope" };
 
 const router = Router();
 const h =
@@ -22,9 +27,9 @@ const h =
   (req: Request, res: Response, next: NextFunction) =>
     fn(req, res).catch(next);
 
-const MAX_ATTEMPTS = 3;
+export const MAX_ATTEMPTS = 3;
 const GPS_PASS_THRESHOLD_M = 50;
-const EXPIRY_HOURS = 72;
+const EXPIRY_HOURS = 168; // 7 days
 
 const SELFIE_DIR = path.resolve("uploads/bgv-selfies");
 if (!fs.existsSync(SELFIE_DIR)) fs.mkdirSync(SELFIE_DIR, { recursive: true });
@@ -118,9 +123,11 @@ async function geocodeAddress(
 }
 
 // Returns ONLY the present address — permanent address is not used for GPS verification.
-function buildPresentAddress(profile: RowDataPacket | null): string {
+export function buildPresentAddress(profile: RowDataPacket | null): string {
   if (!profile) return "";
-  return [
+  // Always the CURRENT residential address — never the permanent one. Falls back to the profile's
+  // single-field current_address only when the structured present_* columns are all empty.
+  const structured = [
     profile.present_address_line1,
     profile.present_address_line2,
     profile.present_address,
@@ -128,9 +135,16 @@ function buildPresentAddress(profile: RowDataPacket | null): string {
     profile.present_state,
     profile.present_pincode,
   ]
-    .map((v) => (v ? String(v).trim() : ""))
+    .map((v) => (v ? String(v).trim().replace(/[\s,]+$/, "") : ""))
     .filter(Boolean)
+    // Candidates routinely type the city / state / pincode into the street line as well as its own
+    // field, which printed "..., New Delhi, Delhi, 110095" with the pincode twice. Drop a part that
+    // the text so far already contains.
+    .reduce<string[]>((acc, part) => (
+      acc.join(", ").toLowerCase().includes(part.toLowerCase()) ? acc : [...acc, part]
+    ), [])
     .join(", ");
+  return structured || (profile.current_address ? String(profile.current_address).trim() : "");
 }
 
 function extractAddressHints(profile: RowDataPacket | null) {
@@ -193,13 +207,28 @@ async function syncAddressBgvCheck(
         WHERE candidate_id = ? AND (locked = 0 OR locked IS NULL)`,
       [addressStatus, addressRemarks, candidateId],
     );
+
+    // Roll the new address result into the overall BGV verdict (score + overall_status), the same
+    // way every other check update does. Without this the Joining Control Room and the
+    // appointment-letter gate kept reading a stale 'in_progress' even with all categories done.
+    // Only when a report already exists (computeAndSaveScore would otherwise insert a bare one);
+    // a locked report is left alone inside computeAndSaveScore. Reaching 'clear' also triggers
+    // the appointment-letter auto-issue there.
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM candidate_bgv_report WHERE candidate_id = ? LIMIT 1`,
+      [candidateId],
+    );
+    if (existing.length) {
+      const { computeAndSaveScore } = await import("./bgv-verification.service.js");
+      await computeAndSaveScore(candidateId);
+    }
   }
 }
 
 // ── Core initiation logic (used by HR route and auto-send) ───────────────────
 export interface AddressBgvInitResult {
   sent: boolean;
-  skippedReason?: "max_attempts" | "no_address" | "no_email";
+  skippedReason?: "max_attempts" | "no_address" | "no_email" | "already_sent";
   token?: string;
   link?: string;
   expiresAt?: Date;
@@ -210,13 +239,18 @@ export interface AddressBgvInitResult {
 
 export async function initiateAddressBgvForCandidate(
   candidateId: string,
-  opts: { forceUnblock?: boolean; unblockerId?: string | null } = {},
+  opts: { forceUnblock?: boolean; unblockerId?: string | null; onlyIfNone?: boolean } = {},
 ): Promise<AddressBgvInitResult> {
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM candidate_bgv_address_verification WHERE candidate_id = ?`,
     [candidateId],
   );
   const attemptCount = Number((countRows[0] as RowDataPacket).cnt);
+
+  // Idempotent auto paths (approval, profile submit, sweep) must never mint a second link.
+  if (opts.onlyIfNone && attemptCount > 0) {
+    return { sent: false, skippedReason: "already_sent" };
+  }
 
   if (attemptCount >= MAX_ATTEMPTS && !opts.forceUnblock) {
     return { sent: false, skippedReason: "max_attempts" };
@@ -228,7 +262,7 @@ export async function initiateAddressBgvForCandidate(
   );
 
   const [profiles] = await db.execute<RowDataPacket[]>(
-    `SELECT present_address_line1, present_address_line2, present_address,
+    `SELECT current_address, present_address_line1, present_address_line2, present_address,
             present_city, present_state, present_pincode,
             permanent_address_line1, permanent_address_line2, permanent_address,
             permanent_city, permanent_state, permanent_pincode
@@ -294,6 +328,47 @@ export async function initiateAddressBgvForCandidate(
   };
 }
 
+/**
+ * Auto-send, with the outcome logged. The approval-time trigger used to be
+ * `void initiate(...).catch(() => {})`, so a skip (no address yet, no email) or a failure left no
+ * trace and nothing ever retried it. Safe to call repeatedly: onlyIfNone makes it a no-op once a
+ * link exists. Never throws.
+ */
+export async function autoSendAddressBgvLink(candidateId: string, trigger: string): Promise<void> {
+  try {
+    const r = await initiateAddressBgvForCandidate(candidateId, { onlyIfNone: true });
+    if (r.sent) console.log(`[address-bgv] link sent candidate=${candidateId} trigger=${trigger}`);
+    else if (r.skippedReason !== "already_sent") {
+      console.warn(`[address-bgv] link NOT sent candidate=${candidateId} trigger=${trigger} reason=${r.skippedReason}`);
+    }
+  } catch (err) {
+    console.error(`[address-bgv] auto-send failed candidate=${candidateId} trigger=${trigger}:`, err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * Catch-up for candidates who passed approval (or submitted their profile) but never got a link —
+ * typically because the address was not filled in yet when approval fired. Only rows that can
+ * actually be sent (address + email present) and are recent are selected, so permanently
+ * unsendable rows cannot starve the batch and old candidates are never emailed out of the blue.
+ */
+export async function sweepMissingAddressBgvLinks(limit = 5): Promise<number> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.id
+       FROM ats_candidate c
+       JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+      WHERE (c.current_stage = 'offer_approved' OR c.profile_submitted_at IS NOT NULL)
+        AND COALESCE(c.profile_submitted_at, c.updated_at) >= NOW() - INTERVAL 14 DAY
+        AND c.email IS NOT NULL AND TRIM(c.email) <> ''
+        AND COALESCE(NULLIF(TRIM(p.present_address), ''), NULLIF(TRIM(p.present_address_line1), ''), NULLIF(TRIM(p.current_address), '')) IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM candidate_bgv_address_verification v WHERE v.candidate_id = c.id)
+      ORDER BY c.updated_at DESC
+      LIMIT ${Math.max(1, Math.min(50, Math.trunc(limit)))}`,
+  );
+  for (const row of rows) await autoSendAddressBgvLink(String(row.id), "sweep");
+  return rows.length;
+}
+
 // ── HR: initiate ──────────────────────────────────────────────────────────────
 router.post(
   "/initiate",
@@ -316,6 +391,7 @@ router.post(
       return res
         .status(400)
         .json({ success: false, message: "candidateId required" });
+    if (!(await canAccessCandidate(req.authUser!.id, candidateId))) return res.status(403).json(OUT_OF_SCOPE);
 
     let unblockerId: string | null = null;
     if (forceUnblock) {
@@ -360,14 +436,17 @@ router.post(
   "/backfill-offer-approved",
   requireAuth,
   requireRole("admin", "hr_admin", "ho_hr"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const scope = await resolveCandidateScope(req.authUser!.id, "c");
     const [candidates] = await db.execute<RowDataPacket[]>(
       `SELECT c.id
          FROM ats_candidate c
         WHERE c.current_stage = 'offer_approved'
+          AND (${scope.sql})
           AND NOT EXISTS (
             SELECT 1 FROM candidate_bgv_address_verification v WHERE v.candidate_id = c.id
           )`,
+      scope.params as any[],
     );
 
     let sent = 0;
@@ -591,6 +670,7 @@ router.get(
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { candidateId } = req.params;
+    if (!(await canAccessCandidate(req.authUser!.id, candidateId))) return res.status(403).json(OUT_OF_SCOPE);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT v.*, e.full_name AS decided_by_name
          FROM candidate_bgv_address_verification v
@@ -649,6 +729,7 @@ router.patch(
     if (!verRows[0])
       return res.status(404).json({ success: false, message: "Not found" });
     const candidateId = verRows[0].candidate_id as string;
+    if (!(await canAccessCandidate(req.authUser!.id, candidateId))) return res.status(403).json(OUT_OF_SCOPE);
 
     const newStatus =
       decision === "pass"

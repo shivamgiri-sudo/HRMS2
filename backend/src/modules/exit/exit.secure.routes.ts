@@ -12,6 +12,8 @@ import {
   hasAnyRole,
   hasScopedAccess,
 } from "../../shared/scopeAccess.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { canViewEmployee } from "../../shared/enterpriseScope.js";
 import { exitService } from "./exit.service.js";
 
 export const exitSecureRouter = Router();
@@ -133,22 +135,16 @@ function normalizeExitStatus(status: unknown): string {
   return value === "exit_confirmed" ? "exited" : value;
 }
 
+// Branch scoping (owner ruling 2026-10-01): only the org-wide roles see every branch's exits. hr,
+// payroll and payroll_hr used to be waved through as 1=1 here.
+const EXIT_LIST_SCOPE_ROLES = [...EXIT_SCOPE_ROLES, "payroll", "payroll_hr", "hr_admin", "branch_hr", "branch_admin"];
+
 async function exitListScope(userId: string) {
-  if (
-    await hasAnyRole(
-      userId,
-      "admin",
-      "super_admin",
-      "hr",
-      "finance",
-      "payroll",
-      "ceo",
-    )
-  )
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES))
     return { sql: "1=1", params: [] as unknown[] };
   const scoped = await buildScopeWhereClause(
     userId,
-    EXIT_SCOPE_ROLES,
+    EXIT_LIST_SCOPE_ROLES,
     {
       branchId: "e.branch_id",
       processId: "e.process_id",
@@ -156,7 +152,7 @@ async function exitListScope(userId: string) {
       managerEmployeeId: "e.reporting_manager_id",
       employeeId: "e.id",
     },
-    { allowAdminBypass: true, allowCeoAllRead: true },
+    { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin", "payroll", "payroll_hr", "branch_hr", "branch_admin"] },
   );
   // A TL sees the team and an AM sees each TL's team, from the day a resignation is submitted (UAT
   // 2026-09-25). View only: canActOnExit below still requires the direct manager.
@@ -182,7 +178,8 @@ async function exitListScope(userId: string) {
 }
 
 async function canActOnExit(userId: string, exitRequestId: string) {
-  if (await hasAnyRole(userId, "admin", "super_admin", "hr", "ceo"))
+  // hr is branch-scoped: it is no longer in this bypass, it goes through the scope check below.
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES))
     return true;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT er.employee_id,
@@ -202,19 +199,22 @@ async function canActOnExit(userId: string, exitRequestId: string) {
   if (!target) return false;
   const callerEmp = await getEmployeeForUser(userId);
   if (callerEmp?.id === target.employee_id) return false;
-  return hasScopedAccess(
-    userId,
-    EXIT_SCOPE_ROLES,
-    {
-      branchId: target.branch_id,
-      processId: target.process_id,
-      lobId: target.lob_id,
-      departmentId: target.department_id,
-      managerEmployeeId: target.reporting_manager_id ?? target.manager_id,
-      employeeId: target.employee_id,
-    },
-    { allowAdminBypass: true, requireScopeForNonAdmin: true },
-  );
+  if (
+    await hasScopedAccess(
+      userId,
+      EXIT_SCOPE_ROLES,
+      {
+        branchId: target.branch_id,
+        processId: target.process_id,
+        lobId: target.lob_id,
+        departmentId: target.department_id,
+        managerEmployeeId: target.reporting_manager_id ?? target.manager_id,
+        employeeId: target.employee_id,
+      },
+      { allowAdminBypass: true, requireScopeForNonAdmin: true },
+    )
+  ) return true;
+  return canViewEmployee({ id: userId }, String(target.employee_id));
 }
 
 exitSecureRouter.get(
@@ -430,9 +430,11 @@ async function handleExitStatusUpdate(req: any, res: any) {
   const isPureAdminSuperCeo =
     isSuperAdmin || ["admin", "ceo"].some((r) => userRoles.includes(r));
 
-  // Scope check: admin/hr/super_admin always have access; others need in-scope access.
-  if (!isAdminOrHr) {
-    const scopeOk = await hasScopedAccess(
+  // Scope check: only the org-wide roles skip it. hr / branch_admin are branch-scoped (owner ruling
+  // 2026-10-01), so they must be inside their own branch / assigned scope like everybody else.
+  const isOrgWide = userRoles.some((r) => (ORG_WIDE_EXEMPT_ROLES as readonly string[]).includes(r));
+  if (!isOrgWide) {
+    const scopeOk = (await hasScopedAccess(
       userId,
       EXIT_SCOPE_ROLES,
       {
@@ -444,7 +446,7 @@ async function handleExitStatusUpdate(req: any, res: any) {
         employeeId: prefetch.employee_id,
       },
       { allowAdminBypass: true, requireScopeForNonAdmin: true },
-    );
+    )) || (await canViewEmployee({ id: userId }, String(prefetch.employee_id)));
     if (!scopeOk)
       return res.status(403).json({
         success: false,
@@ -614,6 +616,77 @@ async function handleExitStatusUpdate(req: any, res: any) {
         : `Exit request status updated to ${nextStatus}`,
   });
 }
+
+/**
+ * POST /bulk-status — apply one status to many exit requests in a single round-trip.
+ *
+ * The Bulk Actions tab used to loop over the selection and PATCH /:id/status once per employee,
+ * sequentially, swallowing every error. Ten people meant ten serial round-trips, and a row that
+ * failed (wrong current status, not the reporting manager, no remarks) was just counted as
+ * "failed" with no reason, so nothing appeared to change.
+ *
+ * Every id still goes through handleExitStatusUpdate itself, so the FSM, role gate, scope check,
+ * row lock and audit log are exactly the single-item ones; this only removes the network hops and
+ * reports why each failure failed. A small worker pool keeps the DB pool from being flooded.
+ */
+const BULK_EXIT_MAX = 500;
+const BULK_EXIT_CONCURRENCY = 8;
+
+exitSecureRouter.post(
+  "/bulk-status",
+  h(async (req: any, res: any) => {
+    const ids: string[] = Array.isArray(req.body?.ids)
+      ? [...new Set(req.body.ids.map((x: unknown) => String(x)))].filter(Boolean) as string[]
+      : [];
+    if (ids.length === 0) {
+      return res.status(400).json({ success: false, message: "ids is required" });
+    }
+    if (ids.length > BULK_EXIT_MAX) {
+      return res
+        .status(400)
+        .json({ success: false, message: `At most ${BULK_EXIT_MAX} exit requests per bulk action` });
+    }
+
+    type Result = { id: string; ok: boolean; status: number; message: string };
+    const results: Result[] = new Array(ids.length);
+    let next = 0;
+
+    const runOne = async (id: string): Promise<Result> => {
+      let code = 200;
+      let payload: any = null;
+      const capture = {
+        status(c: number) { code = c; return capture; },
+        json(body: unknown) { payload = body; return capture; },
+      };
+      try {
+        await handleExitStatusUpdate(
+          {
+            authUser: req.authUser,
+            params: { id },
+            body: { status: req.body?.status, remarks: req.body?.remarks },
+            query: {},
+          },
+          capture,
+        );
+      } catch (err: any) {
+        return { id, ok: false, status: Number(err?.statusCode ?? 500), message: String(err?.message ?? "Failed") };
+      }
+      const ok = code >= 200 && code < 300 && payload?.success !== false;
+      return { id, ok, status: code, message: String(payload?.message ?? (ok ? "Updated" : "Failed")) };
+    };
+
+    const worker = async () => {
+      while (next < ids.length) {
+        const i = next++;
+        results[i] = await runOne(ids[i]);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(BULK_EXIT_CONCURRENCY, ids.length) }, worker));
+
+    const succeeded = results.filter((r) => r.ok).length;
+    return res.json({ success: true, total: ids.length, succeeded, failed: ids.length - succeeded, results });
+  }),
+);
 
 exitSecureRouter.patch("/:id/status", h(handleExitStatusUpdate));
 exitSecureRouter.post("/:id/status", h(handleExitStatusUpdate));

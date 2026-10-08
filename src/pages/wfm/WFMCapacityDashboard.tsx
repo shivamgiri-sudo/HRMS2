@@ -22,6 +22,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { todayIst } from "@/hooks/useDateLockMin";
 import { EmbeddableLayout as DashboardLayout } from "@/components/wfm/console/EmbeddableLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -408,18 +410,18 @@ function ProcessCapacityRow({ process, onEdit }: { process: CapacitySummary["byP
 
   return (
     <div className="p-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <div className="flex min-w-0 items-center gap-3">
           <div
-            className="flex h-8 w-8 items-center justify-center rounded-lg"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
             style={{ backgroundColor: colors.iconBg }}
           >
             <Building2 className="h-4 w-4" style={{ color: colors.value }} />
           </div>
-          <div>
+          <div className="min-w-0">
             <span className="font-semibold text-slate-800">{process.processName}</span>
             {process.branchName && <span className="ml-2 text-xs text-slate-400">{process.branchName}</span>}
-            <div className="flex items-center gap-2 text-xs text-slate-500">
+            <div className="flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
               <span>Mandated: {process.mandatedHC}</span>
               <span>•</span>
               <span>Required: {process.requiredHC}</span>
@@ -430,7 +432,7 @@ function ProcessCapacityRow({ process, onEdit }: { process: CapacitySummary["byP
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="text-right">
             <Badge style={{ backgroundColor: colors.iconBg, color: colors.value }}>
               {process.coveragePct}%
@@ -608,11 +610,103 @@ function EditMandateDialog({
   );
 }
 
+function AddMandateDialog({
+  open, branches, onClose, onSaved,
+}: { open: boolean; branches: Array<{ id: string; branch_name: string }>; onClose: () => void; onSaved: () => void }) {
+  const { toast } = useToast();
+  const [processId, setProcessId] = useState("");
+  const [hc, setHc] = useState("");
+  const [shrink, setShrink] = useState("15");
+  const [attr, setAttr] = useState("5");
+  const [train, setTrain] = useState("5");
+  const [from, setFrom] = useState(todayIst());
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const { data: procData, isLoading } = useQuery({
+    queryKey: ["capacity", "processes"],
+    queryFn: () => hrmsApi.get<{ data?: Array<{ id: string; process_name: string; process_code?: string; branch_id?: string | null }> }>("/api/org/processes"),
+    enabled: open,
+    staleTime: 10 * 60 * 1000,
+  });
+  const processes = procData?.data ?? [];
+  const picked = processes.find((p) => p.id === processId);
+  const branchName = picked?.branch_id ? (branches.find((b) => b.id === picked.branch_id)?.branch_name ?? "—") : "—";
+  const options = processes.map((p) => ({ value: p.id, label: p.process_name, hint: p.process_code }));
+
+  const reset = () => { setProcessId(""); setHc(""); setShrink("15"); setAttr("5"); setTrain("5"); setFrom(todayIst()); setReason(""); };
+  const close = () => { reset(); onClose(); };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      // role_group "all" + hc_type "production" is the seat count the capacity formula reads.
+      await hrmsApi.post("/api/workforce-mandate", {
+        processId, roleGroup: "all", hcType: "production", mandatedHc: Number(hc),
+        shrinkagePct: Number(shrink), attritionBufferPct: Number(attr), trainingBufferPct: Number(train),
+        effectiveFrom: from, reason,
+      });
+      toast({ title: "Mandate added" });
+      onSaved();
+      close();
+    } catch (e: any) {
+      toast({ title: "Could not add mandate", description: e?.message ?? "Request failed", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const valid = processId && hc !== "" && Number.isInteger(Number(hc)) && Number(hc) >= 0 && /^\d{4}-\d{2}-\d{2}$/.test(from) && reason.trim().length >= 3;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && close()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Add mandate</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500">
+            For a process that has no mandate yet, so it shows up here and can be tracked against headcount.
+          </p>
+          <div>
+            <Label>Process</Label>
+            <SearchableSelect options={options} value={processId} onChange={setProcessId} loading={isLoading}
+              placeholder="Select a process…" searchPlaceholder="Type a process name…" aria-label="Process" />
+            {picked && <p className="mt-1 text-xs text-slate-500">Branch: {branchName}</p>}
+          </div>
+          <div>
+            <Label>Mandated HC (client requirement)</Label>
+            <Input type="number" min={0} value={hc} onChange={(e) => setHc(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div><Label>Shrinkage %</Label><Input type="number" min={0} max={49} value={shrink} onChange={(e) => setShrink(e.target.value)} /></div>
+            <div><Label>Attrition %</Label><Input type="number" min={0} max={49} value={attr} onChange={(e) => setAttr(e.target.value)} /></div>
+            <div><Label>Training %</Label><Input type="number" min={0} max={49} value={train} onChange={(e) => setTrain(e.target.value)} /></div>
+          </div>
+          <div>
+            <Label>Effective from</Label>
+            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          </div>
+          <div>
+            <Label>Reason</Label>
+            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Client mandate of 60 seats confirmed by email 30/09" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={close}>Cancel</Button>
+          <Button onClick={save} disabled={!valid || saving}>{saving ? "Saving…" : "Add mandate"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function WFMCapacityDashboard() {
   const [branchFilter, setBranchFilter] = useState(ALL);
   const [editing, setEditing] = useState<CapacitySummary["byProcess"][0] | null>(null);
+  const [adding, setAdding] = useState(false);
   const queryClient = useQueryClient();
   const { hasAnyRole, isResolved } = useWorkforceAccess();
   const canEditMandate = isResolved && hasAnyRole(...MANDATE_EDIT_ROLES);
@@ -877,10 +971,15 @@ export default function WFMCapacityDashboard() {
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100">
                     <Building2 className="h-5 w-5 text-blue-600" />
                   </div>
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <h3 className="font-semibold text-slate-800">Capacity by Process</h3>
-                    <p className="text-xs text-slate-500">Coverage and gap analysis per process</p>
+                    <p className="text-xs text-slate-500">Coverage and gap analysis per process. A process with no mandate is not listed — add one.</p>
                   </div>
+                  {canEditMandate && (
+                    <Button size="sm" onClick={() => setAdding(true)}>
+                      <PlusCircle className="h-4 w-4 mr-1" /> Add mandate
+                    </Button>
+                  )}
                 </div>
               </div>
               {capacity.byProcess.length === 0 ? (
@@ -912,6 +1011,12 @@ export default function WFMCapacityDashboard() {
               )}
             </GlassCard>
 
+            <AddMandateDialog
+              open={adding}
+              branches={branchData?.data ?? []}
+              onClose={() => setAdding(false)}
+              onSaved={() => queryClient.invalidateQueries({ queryKey: ["capacity", "summary"] })}
+            />
             <EditMandateDialog
               process={editing}
               onClose={() => setEditing(null)}

@@ -34,6 +34,7 @@ import {
 } from "@/hooks/useCompanyFeed";
 import { useToast } from "@/hooks/use-toast";
 import { formatRelativeTime } from "@/lib/companyFeedUtils";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 
 export default function NativeCompanyPostApproval() {
   const { toast } = useToast();
@@ -57,6 +58,11 @@ export default function NativeCompanyPostApproval() {
         .some((v) => v.toLowerCase().includes(needle)),
     );
   }, [posts, search]);
+
+  const focusId = useApprovalFocus(!queueQuery.isLoading && posts.length > 0);
+  useEffect(() => {
+    if (focusId && posts.some((p) => p.id === focusId)) setSelectedPostId(focusId);
+  }, [focusId, posts]);
 
   const selectedPost = filteredPosts.find((p) => p.id === selectedPostId) ?? filteredPosts[0] ?? null;
   const busy = approveMutation.isPending || rejectMutation.isPending;
@@ -165,6 +171,7 @@ export default function NativeCompanyPostApproval() {
                 return (
                   <button
                     key={post.id}
+                    data-approval-id={post.id}
                     type="button"
                     onClick={() => setSelectedPostId(post.id)}
                     className={`w-full rounded-xl border p-3 text-left transition ${

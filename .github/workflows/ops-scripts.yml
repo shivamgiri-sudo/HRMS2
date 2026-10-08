@@ -49,6 +49,109 @@ on:
           - ats-candidate-future-date-repair
           - privacy-encryption-verify
           - bank-account-encrypt-backfill
+          - resend-address-bgv-links
+          - roster-requests-verify
+          - bla-uploader-diagnose
+          - report-requests-diagnose
+          - payment-voucher-salary-verify
+          - sbi-card-verify
+          - sbi-card-demo-seed
+          - sbi-card-demo-remove
+          - holiday-mapping-audit
+          - exception-control-audit
+          - payable-days-check
+          - repair-bucket-regrade
+          - meta-outreach-audit
+          - apr-source-audit
+          - branch-activity-audit
+          - ats-candidate-created-date-repair
+          - branch-activity-resend-noida2
+          - master-duplicate-audit
+          - master-duplicate-merge
+          - kit-esign-diagnose
+          - bank-verify-diagnose
+          - bank-verify-rejudge
+          - bank-verified-copy
+          - process-scope-diagnose
+          - process-code-search
+          - ops-nudge-stats
+          - ops-pending-audit
+          - ops-pending-evidence
+          - ops-pending-person
+          - esi-person-check
+          - bank-manual-approve
+          - digilocker-pending-diagnose
+          - digilocker-sync-pending
+          - digilocker-bridge-backfill
+          - alt-rx-apply
+          - ahm-apply
+          - running-salary-diagnose
+          - loan-backfill-duplicate-cancel
+          - deduction-duplicates-scan
+          - salary-rows-review
+          - dbbill-validate-flagged
+          - salary-assignment-deactivate-mas63386
+          - sal-diff-investigate
+          - saldiff-topup-duplicate-reject
+          - case-duplicates-scan
+          - salary-assignment-dedupe-identical
+          - rejoin-stale-exit-audit
+          - attendance-register-exited-verify
+          - reconcile-aug-incentives
+          - zero-day-gross-audit
+          - aug-payroll-vs-dbbill-gap
+          - match-month-to-dbbill
+          - vendor-ledger-gap-audit
+          - vendor-ledger-tally-audit
+          - trial-balance-timing
+          - tally-reports-validate
+          - tally-gaps-detail
+          - unposted-grn-diagnose
+          - fix-gst-credit-note-roundoff
+          - backfill-grn-journal
+          - voucher-unassigned-detail
+          - unposted-grn-forensics
+          - duplicate-grn-forensics
+          - grn-pair-deepdive
+          - grn-false-paid-audit
+          - grn-split-children-check
+          - fix-legacy-false-paid-grns
+          - grn-status-check
+          - fix-grn-status-from-tracking
+          - grn-status-mismatch-detail
+          - vendor-bills-journal-vs-tracking
+          - heal-zero-day-lines
+          - recruiter-list-diagnose
+          - budget-driver-diagnose
+          - payslip-diagnose
+          - meta-whatsapp-diagnose
+          - he-inbox-timing
+          - backend-log-grep
+          - apply-aug-increments-from-dbbill
+          - salary-package-sources-audit
+          - create-missing-esa-for-run-lines
+          - employee-components-audit
+          - fix-63694c-package
+          - align-offers-to-catalog
+          - fix-offer-followups
+          - salary-change-flow-audit
+          - package-in-force-diff
+          - increment-split-what-if
+          - increment-requests-audit
+          - dbbill-increments-audit
+          - sca-estimates-audit
+          - repair-sca-estimates
+          - du-mis-apply
+          - mis-schedule-run-now
+          - mis-report-schedules-setup
+          - backfill-vendor-recognition-period
+          - backfill-grn-recognition-period
+          - fix-process-branches
+          - db-bill-snapshot-refresh
+          - grn-migrate-2026-27
+          - book-nk-to-bluevine
+          - repair-migrated-grn-ex-gst
+
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -57,6 +160,15 @@ on:
         options:
           - dry-run
           - apply
+      merge_masters:
+        description: "master-duplicate-merge apply only: comma list of department,designation,branch,process,cost_centre"
+        required: false
+        type: string
+      employee_codes:
+        description: "employee-components-audit only: space-separated employee codes (default 63694C)"
+        required: false
+        default: ""
+        type: string
       confirm:
         description: "To APPLY, type the script name exactly. Ignored for a dry run."
         required: false
@@ -123,6 +235,7 @@ jobs:
           # into the runner workspace.
           DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
           NODE_ENV: production
+          INPUT_EMPLOYEE_CODES: ${{ inputs.employee_codes }}
         run: |
           set -euo pipefail
           MODE="${{ inputs.mode }}"
@@ -156,12 +269,414 @@ jobs:
               FLAG=""; [ "$MODE" = "dry-run" ] && FLAG="--dry-run"
               npx tsx scripts/bank-account-encrypt-backfill.ts $FLAG
               ;;
+            resend-address-bgv-links)
+              # Dry-runs unless given --apply. APPLY EMAILS CANDIDATES, so it refuses to run on a
+              # host without SMTP credentials (the mailer would otherwise skip silently).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/resend-address-bgv-links.ts $FLAG
+              ;;
             privacy-encryption-verify)
               # Read-only in both modes — it decrypts and compares, it never writes. Listed here
               # because it needs the production key, and it is the gate on the reader migration:
               # a column whose ciphertext does not match its plaintext must not have its
               # plaintext retired.
               npx tsx scripts/privacy-encryption-verify.ts
+              ;;
+            payment-voucher-salary-verify)
+              # Read-only by default; apply only adds 'salary' to payment_voucher.source_type if missing (idempotent ALTER).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/payment-voucher-salary-verify.mjs $FLAG
+              ;;
+            report-requests-diagnose)
+              # Read-only: SELECTs only, in a READ ONLY session. Emailed-report queue health. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::report-requests-diagnose is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              node scripts/report-requests-diagnose.mjs
+              ;;
+            bla-uploader-diagnose) node scripts/bla-uploader-diagnose.mjs ;; # read-only (SELECTs in a READ ONLY session)
+            roster-requests-verify)
+              # Read-only: SELECTs only, in a READ ONLY session. Checks the Roster Requests hub
+              # tables (migration 1995), their schema_migrations row, row counts, collations and
+              # counterpart_status. It has no apply mode, so apply is refused here and by the script.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::roster-requests-verify is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              node scripts/roster-requests-verify.mjs
+              ;;
+            attendance-register-exited-verify)
+              # Read-only: SELECTs plus the register executor. Lists inactive employees who exited in the month and
+              # checks each appears in the Attendance Register. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::attendance-register-exited-verify is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/attendance-register-exited-verify.ts
+              ;;
+            sbi-card-verify)
+              # Read-only: SELECTs only, in a READ ONLY session. Checks the SBI Card collections-ops migration (2075): the agent-time
+              # table, the account-file columns and flow key, the schema_migrations row and the upload templates. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::sbi-card-verify is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              node scripts/sbi-card-verify.mjs
+              ;;
+            sbi-card-demo-seed|sbi-card-demo-remove)
+              # Synthetic SBI Card dashboard data, tagged data_source='DEMO_SEED' so it can be removed exactly. dry-run reports only;
+              # apply writes (seed) or deletes the tagged rows (remove). Refuses to seed over real rows for the demo's dates.
+              SUB="seed"; [ "${{ inputs.script }}" = "sbi-card-demo-remove" ] && SUB="remove"
+              if [ "$MODE" = "dry-run" ]; then SUB="dry-run"; fi
+              npx tsx scripts/sbi-card-demo-seed.ts --mode=$SUB
+              ;;
+            apr-source-audit)
+              # Read-only in both modes.
+              npx tsx scripts/apr-source-audit.ts
+              ;;
+            meta-outreach-audit)
+              # Read-only in both modes.
+              npx tsx scripts/meta-outreach-audit.ts 7
+              ;;
+            backfill-vendor-recognition-period)
+              # Dry-runs unless given --apply. Apply sets vendor_payment_tracking.recognition_period (NULL rows only) from the db_bill finance month.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/backfill-vendor-recognition-period.ts $FLAG
+              ;;
+            backfill-grn-recognition-period)
+              # Dry-runs unless given --apply. Apply sets recognition_period on db_bill-imported grn_request / grn_cost_allocation rows (NULL only).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/backfill-grn-recognition-period.ts $FLAG
+              ;;
+            fix-process-branches)
+              # Dry-runs unless given --apply. Apply sets process_master.branch_id for Raritiq (-> NOIDA-2) and EBC Bridge (-> NOIDA).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/fix-process-branches.ts $FLAG
+              ;;
+            db-bill-snapshot-refresh)
+              # Dry-run = reconcile only (read-only: compares the mirror with db_bill). Apply = sync (idempotent upserts) then reconcile.
+              # These .mjs scripts read DB_USER / DB_PASSWORD / hosts from process.env or from backend/.env next to them; the
+              # runner checkout has no .env, so lift just those values from the deployed one (never echoed).
+              envv() { grep -m1 "^$1=" /var/www/HRMS2/backend/.env | cut -d= -f2- | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//'; }
+              export DB_USER="$(envv DB_USER)" DB_PASSWORD="$(envv DB_PASSWORD)" HRMS_DB_HOST="$(envv DB_HOST)" BILL_DB_HOST="$(envv BILL_DB_HOST)"
+              if [ "$MODE" = "apply" ]; then node scripts/sync-db-bill-snapshot.mjs; fi
+              node scripts/reconcile-db-bill-snapshot.mjs --hrms-host="$HRMS_DB_HOST" --bill-host="$BILL_DB_HOST"
+              ;;
+            repair-migrated-grn-ex-gst)
+              # Dry-runs unless given --apply. Apply moves GST out of amount_without_tax on FY 2026-27 migrated GRNs (old values logged).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/repair-migrated-grn-ex-gst.ts $FLAG
+              ;;
+            book-nk-to-bluevine)
+              # Dry-runs unless given --apply. Apply books FY 2026-27 Ahmedabad NK spend to the Bluevine (Finfort) process (old values logged).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/book-nk-to-bluevine.ts $FLAG
+              ;;
+            grn-migrate-2026-27)
+              # Dry-runs unless given --apply. Apply adds db_bill GRNs missing from grn_request / vendor_payment_tracking for FY 2026-27 (idempotent).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/migrate-grn-from-dbbill.ts --fy=2026-27 $FLAG
+              ;;
+            holiday-mapping-audit)
+              # Read-only in both modes.
+              npx tsx scripts/holiday-mapping-audit.ts 2026-10-02
+              ;;
+            bank-manual-approve)
+              # Dry-runs unless given --apply. employee_codes = codes the owner approved.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/bank-manual-approve.ts ${INPUT_EMPLOYEE_CODES} $FLAG
+              ;;
+            digilocker-sync-pending)
+              # Dry-runs unless given --apply. Apply makes one Luckpay status check per open session.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              # employee_codes may carry --days=N to reach older sessions (default 15).
+              npx tsx scripts/digilocker-sync-pending.ts $FLAG ${INPUT_EMPLOYEE_CODES}
+              ;;
+            digilocker-bridge-backfill)
+              # Dry-runs unless given --apply. Apply only moves bridge rows with completion evidence forward.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/digilocker-bridge-backfill.ts $FLAG
+              ;;
+            digilocker-pending-diagnose)
+              # Read-only in both modes: SELECTs only, codes and counts.
+              npx tsx scripts/digilocker-pending-diagnose.ts
+              ;;
+            esi-person-check) npx tsx scripts/esi-person-check.ts "${INPUT_EMPLOYEE_CODES}" ;;
+            ops-pending-person)
+              # Read-only: employee_codes carries names or codes, comma-separated.
+              npx tsx scripts/ops-pending-person.ts "${INPUT_EMPLOYEE_CODES}"
+              ;;
+            ops-pending-evidence)
+              # Read-only: per tower list, who is listed although other tables show the step done.
+              npx tsx scripts/ops-pending-evidence.ts
+              ;;
+            ops-pending-audit)
+              # Read-only: status distributions behind the Ops Control Tower joiner lists.
+              npx tsx scripts/ops-pending-audit.ts
+              ;;
+            ops-nudge-stats)
+              # Read-only: nudge send counts and errors.
+              npx tsx scripts/ops-nudge-stats.ts
+              ;;
+            process-code-search)
+              # Read-only. employee_codes = pattern matched against process code and name.
+              npx tsx scripts/process-code-search.ts "${INPUT_EMPLOYEE_CODES}"
+              ;;
+            process-scope-diagnose)
+              # Read-only. employee_codes = "<name or email>" [company key, default bellavita].
+              npx tsx scripts/process-scope-diagnose.ts ${INPUT_EMPLOYEE_CODES}
+              ;;
+            bank-verified-copy)
+              # Dry-runs unless given --apply. Apply copies verified onboarding accounts to employee_bank_detail.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/bank-verified-copy.ts $FLAG
+              ;;
+            bank-verify-rejudge)
+              # Dry-runs unless given --apply. Apply replays stored bank answers (no new penny drop).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/bank-verify-rejudge.ts $FLAG
+              ;;
+            bank-verify-diagnose)
+              # Read-only in both modes: SELECTs only, no account numbers printed.
+              npx tsx scripts/bank-verify-diagnose.ts ${INPUT_EMPLOYEE_CODES:-MAS63576 MAS63671 MAS63527 MAS63523}
+              ;;
+            kit-esign-diagnose)
+              # Read-only in both modes: SELECTs only.
+              for C in ${INPUT_EMPLOYEE_CODES:-MAS63661}; do npx tsx scripts/kit-esign-diagnose.ts "${C//,/}"; done
+              ;;
+            running-salary-diagnose)
+              # Read-only in both modes: SELECTs and a pure calculation, no writes.
+              npx tsx scripts/running-salary-diagnose.ts MAS47814
+              ;;
+            loan-backfill-duplicate-cancel)
+              # Dry-runs unless given --apply. Apply cancels (soft) only exact duplicates of a synced loan.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/loan-backfill-duplicate-cancel.ts $FLAG
+              ;;
+            deduction-duplicates-scan)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/deduction-duplicates-scan.ts
+              ;;
+            salary-rows-review)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/salary-rows-review.ts
+              ;;
+            dbbill-validate-flagged)
+              # Read-only in both modes: SELECTs against HRMS and db_bill only.
+              npx tsx scripts/dbbill-validate-flagged.ts
+              ;;
+            salary-assignment-deactivate-mas63386)
+              # Dry-runs unless given --apply. Apply deactivates ONE guarded row (active_status 1 -> 0).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/salary-assignment-deactivate-mas63386.ts $FLAG
+              ;;
+            sal-diff-investigate)
+              # Read-only in both modes: SELECTs against HRMS and db_bill only.
+              npx tsx scripts/sal-diff-investigate.ts
+              ;;
+            repair-sca-estimates)
+              # Dry-runs unless given --apply. Apply fixes display estimates (net, PF, ESIC, employer cost) on the db_bill increment sync rows only.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/repair-sca-estimates.ts $FLAG
+              ;;
+            sca-estimates-audit)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/sca-estimates-audit.ts
+              ;;
+            dbbill-increments-audit)
+              # Read-only in both modes: SELECTs on db_bill and HRMS only.
+              npx tsx scripts/dbbill-increments-audit.ts
+              ;;
+            increment-requests-audit)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/increment-requests-audit.ts
+              ;;
+            increment-split-what-if)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/increment-split-what-if.ts
+              ;;
+            package-in-force-diff)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/package-in-force-diff.ts
+              ;;
+            salary-change-flow-audit)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/salary-change-flow-audit.ts
+              ;;
+            fix-offer-followups)
+              # Dry-runs unless given --apply. Apply inserts/supersedes/corrects package rows for approved offers that match one catalog package.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/fix-offer-followups.ts $FLAG
+              ;;
+            align-offers-to-catalog)
+              # Dry-runs unless given --apply. Apply repairs only offers with no salary line yet; the rest are listed.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/align-offers-to-catalog.ts $FLAG
+              ;;
+            fix-63694c-package)
+              # Dry-runs unless given --apply. Apply corrects one employee's package row, offer and joining validation in one transaction.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/fix-63694c-package.ts $FLAG
+              ;;
+            employee-components-audit)
+              # Read-only in both modes: SELECTs only. Fixed employee: 63694C.
+              npx tsx scripts/employee-components-audit.ts ${INPUT_EMPLOYEE_CODES:-63694C}
+              ;;
+            create-missing-esa-for-run-lines)
+              # Dry-runs unless given --apply. Apply inserts the esa row the engine needs; no existing line is changed.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/create-missing-esa-for-run-lines.ts $FLAG
+              ;;
+            salary-package-sources-audit)
+              # Read-only in both modes: SELECTs only. Fixed list of the 10 employees whose package was written on 2026-10-04.
+              npx tsx scripts/salary-package-sources-audit.ts MAS63686 MAS63665 MAS63653 MAS63460 MAS63650 MAS63649 MAS63652 MAS63314 MAS63432 MAS63085
+              ;;
+            apply-aug-increments-from-dbbill)
+              # Dry-runs unless given --apply. Apply supersedes + inserts the db_bill package for employees whose
+              # latest db_bill row is in the month and differs, then recalculates exactly those lines.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/apply-aug-increments-from-dbbill.ts $FLAG
+              ;;
+            heal-zero-day-lines)
+              # Dry-runs unless given --apply. Apply removes not-yet-joined zero-net lines and recalculates the rest, scoped.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/heal-zero-day-lines.ts $FLAG
+              ;;
+            backend-log-grep)
+              # Read-only: greps backend logs for the phrase given in employee_codes.
+              npx tsx scripts/backend-log-grep.ts "${INPUT_EMPLOYEE_CODES}"
+              ;;
+            he-inbox-timing)
+              # Read-only in both modes: counts and timings of the HE inbox query.
+              npx tsx scripts/he-inbox-timing.ts
+              ;;
+            meta-whatsapp-diagnose)
+              # Read-only in both modes: SELECTs and GET probes only; prints booleans and counts, never secrets.
+              npx tsx scripts/meta-whatsapp-diagnose.ts
+              ;;
+            payslip-diagnose)
+              # Read-only in both modes: SELECTs only. Name or code comes from the employee_codes input.
+              npx tsx scripts/payslip-diagnose.ts "${INPUT_EMPLOYEE_CODES:-abbir}" 2026-08
+              ;;
+            budget-driver-diagnose)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/budget-driver-diagnose.ts
+              ;;
+            recruiter-list-diagnose)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/recruiter-list-diagnose.ts
+              ;;
+            aug-payroll-vs-dbbill-gap|vendor-ledger-gap-audit|trial-balance-timing|tally-reports-validate|tally-gaps-detail|unposted-grn-diagnose|voucher-unassigned-detail|unposted-grn-forensics|duplicate-grn-forensics|grn-pair-deepdive|grn-false-paid-audit|grn-split-children-check|grn-status-check|grn-status-mismatch-detail|vendor-bills-journal-vs-tracking)
+              # Read-only diagnostics: SELECTs only. The script file is named after the option.
+              npx tsx scripts/${{ inputs.script }}.ts
+              ;;
+            fix-gst-credit-note-roundoff|fix-legacy-false-paid-grns|fix-grn-status-from-tracking)
+              # Dry-run unless given --apply; each script saves before-images / is idempotent. File named after the option.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/${{ inputs.script }}.ts $FLAG
+              ;;
+            backfill-grn-journal)
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/backfill-journal-entries.ts --grn --vendor-only $FLAG
+              ;;
+            vendor-ledger-tally-audit)
+              npx tsx scripts/vendor-ledger-tally-audit.ts sanchia sachi "sai sa"
+              ;;
+            match-month-to-dbbill)
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/match-month-to-dbbill.ts 2026-08 $FLAG
+              ;;
+            zero-day-gross-audit)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/zero-day-gross-audit.ts
+              ;;
+            reconcile-aug-incentives)
+              # Dry-runs unless given --apply. Apply rejects the duplicate AHMJD batch and adds top-up lines (one transaction).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/reconcile-aug-incentives.ts $FLAG
+              ;;
+            saldiff-topup-duplicate-reject)
+              # Dry-runs unless given --apply. Apply MOVES 3 guarded lines into a rejected batch (nothing deleted).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/saldiff-topup-duplicate-reject.ts $FLAG
+              ;;
+            master-duplicate-merge)
+              # Transactional. dry-run rolls back after running the real statements; apply is
+              # limited to the masters named in MASTERS below and commits only with zero errors.
+              if [ "$MODE" = "apply" ]; then
+                npx tsx scripts/master-duplicate-merge.ts --masters="${{ inputs.merge_masters }}" --apply
+              else
+                npx tsx scripts/master-duplicate-merge.ts
+              fi
+              ;;
+            master-duplicate-audit)
+              # Read-only in both modes.
+              npx tsx scripts/master-duplicate-audit.ts
+              ;;
+            case-duplicates-scan)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/case-duplicates-scan.ts
+              ;;
+            salary-assignment-dedupe-identical)
+              # Dry-runs unless given --apply. Apply deactivates the later of two IDENTICAL active rows (soft).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/salary-assignment-dedupe-identical.ts $FLAG
+              ;;
+            rejoin-stale-exit-audit)
+              # Read-only in both modes: SELECTs only, employee_code only in the output.
+              npx tsx scripts/rejoin-stale-exit-audit.ts
+              ;;
+            branch-activity-audit)
+              # Read-only in both modes.
+              npx tsx scripts/branch-activity-audit.ts 2026-10-03 NOIDA-2
+              ;;
+            ats-candidate-created-date-repair)
+              # dry-runs unless given --apply.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/ats-candidate-created-date-repair.mjs $FLAG
+              ;;
+            branch-activity-resend-noida2)
+              # Dry-run lists recipients and subject; apply EMAILS the branch head / HR / COO the corrected 2026-10-03 report.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--send"
+              npx tsx scripts/branch-activity-resend.ts 2026-10-03 NOIDA-2 $FLAG
+              ;;
+            alt-rx-apply)
+              # dry-run reports db_masmis.altdump + template (READ ONLY). apply registers the template and tries the CREATE.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/alt-rx-apply.mjs $FLAG
+              ;;
+            ahm-apply) F=""; [ "$MODE" = "apply" ] && F="--apply"; node scripts/ahm-apply.mjs $F ;;
+            du-mis-apply)
+              # dry-run reports table/template state (READ ONLY session). apply runs sql/1965 + sql/1966 (additive, idempotent).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/du-mis-apply.mjs $FLAG
+              ;;
+            mis-schedule-run-now)
+              # dry-run lists the schedule (recipients, subject, range). apply EMAILS it now to its recipients.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--send"
+              npx tsx scripts/mis-schedule-run-now.ts $FLAG
+              ;;
+            mis-report-schedules-setup)
+              # dry-run lists each MIS-tab process and whether its daily 10:00 MTD schedule exists. apply creates the
+              # missing schedules and EMAILS each MIS report now (test send) to tausif.ansari / harsh.singh.
+              # Optional: company keys in employee_codes (comma/space list) limit it to those processes.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--send"
+              ONLY=""; [ -n "${INPUT_EMPLOYEE_CODES}" ] && ONLY="--only=${INPUT_EMPLOYEE_CODES// /,}"
+              npx tsx scripts/mis-report-schedules-setup.ts $FLAG $ONLY
+              ;;
+            repair-bucket-regrade)
+              # Dry-runs unless given --apply. Apply writes only bucketed employees' roster_import rows that pay more.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/repair-bucket-regrade.ts $FLAG
+              ;;
+            payable-days-check)
+              # Read-only in both modes.
+              npx tsx scripts/payable-days-check.ts
+              ;;
+            exception-control-audit)
+              # Read-only in both modes.
+              npx tsx scripts/exception-control-audit.ts
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"

@@ -1,12 +1,14 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ChevronLeft, ChevronRight, ChevronRight as Crumb, Layers, Users, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronRight as Crumb, Layers, Lightbulb, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useDrill, useDrillList, useLeads, type DrillFilters, type DrillSplit, type LeadFilters } from "@/hooks/useAtsDashboards";
 import { Journey, StatusPill, waited } from "./journey";
 import { BarRows, Empty, RateBar, V, fmt, tooltipStyle } from "./viz";
+import { ExportButton, HeatTable, InsightList, downloadCsv } from "../cc/cc-viz";
+import { buildDrillFindings } from "../cc/drill-insights";
 
 /**
  * Drill-down engine. Any tile, chart segment or table row on the ATS dashboards calls openDrill() with a set of
@@ -68,6 +70,8 @@ function DrillSheet({ stack, setStack }: { stack: DrillSpec[]; setStack: (s: Dri
   const [page, setPage] = useState(1);
   const { data: d, isLoading, isFetching } = useDrill(f);
   const { data: list, isFetching: listFetching } = useDrillList(f, page);
+  // The level above is the baseline for "In depth"; it is usually already cached because the user just came from it.
+  const { data: parent } = useDrill(stack.length > 1 ? stack[stack.length - 2].filters : null);
 
   const push = (crumb: string, extra: DrillFilters) => { setPage(1); setStack([...stack, { crumb, filters: { ...f, ...extra } }]); };
   const removeKey = (k: string) => { const next = { ...f }; delete (next as Record<string, unknown>)[k]; setPage(1); setStack([...stack.slice(0, -1), { ...cur, filters: next }]); };
@@ -79,10 +83,14 @@ function DrillSheet({ stack, setStack }: { stack: DrillSpec[]; setStack: (s: Dri
   const splitRows = (d && activeTab ? d.splits[activeTab] : []) as DrillSplit[];
   const pages = list ? Math.max(1, Math.ceil(list.total / list.limit)) : 1;
   const k = d?.kpis;
+  const findings = d ? buildDrillFindings(d, stack.length > 1 ? parent : null, activeTab) : [];
+  const exportList = () => list && downloadCsv(`ats-${stack[stack.length - 1].crumb.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.csv`,
+    ["Candidate", "Code", "Branch", "Process", "Source", "Recruiter", "Stage", "Status", "Registered"],
+    list.rows.map((r) => [r.full_name, r.candidate_code, r.branch, r.process, r.source, r.recruiter, r.stage, r.status, r.created_at?.slice(0, 10)]));
 
   return (
     <Sheet open onOpenChange={(o) => !o && setStack([])}>
-      <SheetContent className="w-full overflow-y-auto p-0 sm:max-w-3xl">
+      <SheetContent className="w-full overflow-y-auto p-0 sm:w-[60vw] sm:max-w-[60vw]">
         <div className="ats-viz space-y-4 p-5 text-foreground">
           <SheetHeader className="space-y-2 text-left">
             <SheetTitle className="flex items-center gap-2 text-lg"><Layers className="h-5 w-5 text-primary" aria-hidden />{stack[0].crumb}</SheetTitle>
@@ -117,6 +125,12 @@ function DrillSheet({ stack, setStack }: { stack: DrillSpec[]; setStack: (s: Dri
                 <Stat label="Selection rate" value={`${k.selRate}%`} sub="of candidates in view" />
               </div>
 
+              {findings.length > 0 && (
+                <section aria-label="In depth"><h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold"><Lightbulb className="h-4 w-4 text-amber-500" aria-hidden />In depth <span className="text-xs font-normal text-muted-foreground">what stands out in this slice</span></h3>
+                  <InsightList items={findings.map((x) => ({ tone: x.tone, title: x.title, body: x.body, onClick: x.drill ? () => push(x.drill!.crumb, x.drill!.extra) : undefined }))} />
+                </section>
+              )}
+
               <section aria-label="Trend"><h3 className="mb-1 text-sm font-semibold">{d.weekly ? "Weekly trend" : "Daily trend"}</h3>
                 {d.trend.length > 1 ? (
                   <ResponsiveContainer width="100%" height={200}>
@@ -147,20 +161,22 @@ function DrillSheet({ stack, setStack }: { stack: DrillSpec[]; setStack: (s: Dri
               {availableTabs.length > 0 && (
                 <section aria-label="Break down by"><div className="mb-2 flex flex-wrap items-center gap-1.5"><h3 className="mr-1 text-sm font-semibold">Break down by</h3>
                   {availableTabs.map((s) => <button key={s} onClick={() => setTab(s)} aria-pressed={activeTab === s} className={`cursor-pointer rounded-full px-2.5 py-1 text-xs font-medium capitalize transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${activeTab === s ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"}`}>{s}</button>)}</div>
-                  <ul className="space-y-1.5">
-                    {splitRows.map((r) => (
-                      <li key={r.name}>
-                        <button onClick={() => push(r.name, { [activeTab!]: r.name } as DrillFilters)} className="group w-full cursor-pointer rounded-lg p-1.5 text-left transition-colors duration-200 hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
-                          <div className="flex items-baseline justify-between gap-2 text-sm"><span className="truncate font-medium">{r.name}</span><span className="shrink-0 text-xs tabular-nums text-muted-foreground">{fmt(r.total)} · {r.selRate}% sel · {fmt(r.rejected)} rej <ChevronRight className="inline h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" aria-hidden /></span></div>
-                          <RateBar value={(r.total / Math.max(1, splitRows[0]?.total ?? 1)) * 100} color={V.blue} />
-                        </button>
-                      </li>))}
-                    {!splitRows.length && <Empty text="Nothing to break down" />}
-                  </ul>
+                  {splitRows.length ? (
+                    <HeatTable rows={splitRows} max={25}
+                      cols={[
+                        { key: "total", label: "Candidates", get: (r) => r.total },
+                        { key: "sel", label: "Selected %", get: (r) => r.selRate, format: (n) => `${n}%`, hue: "green" },
+                        { key: "rej", label: "Rejected %", get: (r) => r.rejRate ?? (r.total ? Math.round((r.rejected / r.total) * 100) : 0), format: (n) => `${n}%`, invert: true, hue: "red" },
+                        ...(splitRows.some((r) => r.noShowRate != null) ? [{ key: "ns", label: "No-show %", get: (r: DrillSplit) => r.noShowRate ?? 0, format: (n: number) => `${n}%`, invert: true, hue: "red" as const }] : []),
+                        ...(splitRows.some((r) => r.joinRate != null) ? [{ key: "jn", label: "Joined %", get: (r: DrillSplit) => r.joinRate ?? 0, format: (n: number) => `${n}%`, hue: "green" as const }] : []),
+                      ]}
+                      onRow={(r) => push(r.name, { [activeTab!]: r.name } as DrillFilters)}
+                      onCell={(r) => push(r.name, { [activeTab!]: r.name } as DrillFilters)} />
+                  ) : <Empty text="Nothing to break down" />}
                 </section>
               )}
 
-              <section aria-label="Candidates"><h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold"><Users className="h-4 w-4" aria-hidden />Candidates <span className="text-xs font-normal text-muted-foreground">click one for the full journey</span></h3>
+              <section aria-label="Candidates"><h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold"><Users className="h-4 w-4" aria-hidden />Candidates <span className="text-xs font-normal text-muted-foreground">click one for the full journey</span><span className="ml-auto"><ExportButton onClick={exportList} label="Export page" /></span></h3>
                 <div className={`overflow-x-auto rounded-xl border transition-opacity duration-200 ${listFetching ? "opacity-70" : ""}`}>
                   <table className="w-full min-w-[520px] text-sm text-card-foreground"><thead className="bg-muted/50 text-left text-xs text-muted-foreground"><tr><th className="px-3 py-2 font-medium">Candidate</th><th className="px-3 font-medium">Stage</th><th className="px-3 font-medium">Status</th><th className="px-3 text-right font-medium">Age</th></tr></thead>
                     <tbody>{list?.rows.length ? list.rows.map((r) => (
@@ -188,7 +204,7 @@ function LeadsSheet({ spec, onClose }: { spec: { crumb: string; filters: LeadFil
   const chips = Object.entries(filters).filter(([, v]) => v);
   return (
     <Sheet open onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="w-full overflow-y-auto p-0 sm:max-w-2xl">
+      <SheetContent className="w-full overflow-y-auto p-0 sm:w-[60vw] sm:max-w-[60vw]">
         <div className="ats-viz space-y-3 p-5 text-foreground">
           <SheetHeader className="text-left"><SheetTitle className="flex items-center gap-2 text-lg"><Layers className="h-5 w-5 text-primary" aria-hidden />{spec.crumb}</SheetTitle></SheetHeader>
           <div className="flex flex-wrap gap-1.5">{chips.map(([k, v]) => (

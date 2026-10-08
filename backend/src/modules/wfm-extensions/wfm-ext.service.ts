@@ -7,11 +7,10 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 import { rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
-import {
-  validateMinimumRest,
-  isRestPolicyFeatureActive,
-  logRestOverride,
-} from "../wfm/rest-policy.service.js";
+import { validateMinimumRest, isRestPolicyFeatureActive, logRestOverride } from "../wfm/rest-policy.service.js";
+import { notifyRosterRequest } from "../roster-requests/roster-requests.notify.js";
+import { onRosterRequestRaised, scheduleAutoApprove } from "../roster-requests/roster-requests.raise.js";
+import { columnExists } from "../../shared/schema-object-cache.js";
 import type { Request } from "express";
 
 type ScopeFilter = { sql?: string; params?: unknown[] };
@@ -58,12 +57,14 @@ export const rosterSwapService = {
     }
     // LOB filter applies to the requester (e1).
     const lobCond = filters.lob ? lobCondition(filters.lob, "e1") : null;
-    if (lobCond) {
-      conds.push(lobCond.sql);
-      params.push(...lobCond.params);
-    }
+    if (lobCond) { conds.push(lobCond.sql); params.push(...lobCond.params); }
+    // counterpart_status needs migration 1212; a plain SELECT of a missing column would 500 the list.
+    const counterpartCol = (await columnExists("wfm_roster_swap_request", "counterpart_status"))
+      ? "s.counterpart_status"
+      : "NULL AS counterpart_status";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT s.id,
+              ${counterpartCol},
               e1.lob_id AS requester_lob_id,
               s.requester_emp_id AS requester_employee_id,
               s.swap_with_emp_id AS target_employee_id,
@@ -107,6 +108,9 @@ export const rosterSwapService = {
       "SELECT * FROM wfm_roster_swap_request WHERE id = ? LIMIT 1",
       [id],
     );
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM wfm_roster_swap_request WHERE id = ? LIMIT 1", [id]);
+    // Approver inbox items + auto-approve evaluation, deferred and non-fatal (roster-requests.raise.ts).
+    onRosterRequestRaised({ kind: "swap", sourceId: id, employeeId: data.requester_emp_id, date: data.swap_date, summary: "Shift swap requested" });
     return rows[0];
   },
 
@@ -179,6 +183,10 @@ export const rosterSwapService = {
       "SELECT * FROM wfm_roster_swap_request WHERE id = ? LIMIT 1",
       [id],
     );
+    await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_SWAP_COUNTERPART_RESPONDED", module_key: "WFM", entity_type: "wfm_roster_swap_request", entity_id: id, change_summary: { response }, req });
+    // Acceptance is often the last missing auto-approve condition. Deferred and non-fatal.
+    if (response === "accepted") scheduleAutoApprove("swap", id);
+    const [after] = await db.execute<RowDataPacket[]>("SELECT * FROM wfm_roster_swap_request WHERE id = ? LIMIT 1", [id]);
     return after[0];
   },
 
@@ -213,18 +221,34 @@ export const rosterSwapService = {
           { statusCode: 409 },
         );
       }
-      await logSensitiveAction({
-        actor_user_id: reviewedBy,
-        action_type: "ROSTER_SWAP_REVIEWED",
-        module_key: "WFM",
-        entity_type: "wfm_roster_swap_request",
-        entity_id: id,
-        change_summary: { status },
-        req,
-      });
+      await logSensitiveAction({ actor_user_id: reviewedBy, action_type: "ROSTER_SWAP_REVIEWED", module_key: "WFM", entity_type: "wfm_roster_swap_request", entity_id: id, change_summary: { status }, req });
+      await rosterSwapService.notifySwapDecision(id, "rejected");
       return { status: "rejected" as const, applied: false };
     }
-    return rosterSwapService.applyApprovedSwap(id, reviewedBy, req, opts);
+    const applied = await rosterSwapService.applyApprovedSwap(id, reviewedBy, req, opts);
+    await rosterSwapService.notifySwapDecision(id, "approved");
+    return applied;
+  },
+
+  /** Tells the requester and counterpart a swap was decided. Never throws: the decision is already committed. */
+  async notifySwapDecision(id: string, decision: "approved" | "rejected") {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        "SELECT requester_emp_id, swap_with_emp_id, DATE_FORMAT(swap_date, '%Y-%m-%d') AS swap_date FROM wfm_roster_swap_request WHERE id = ? LIMIT 1",
+        [id]
+      );
+      const swap = rows[0];
+      if (!swap) return;
+      await notifyRosterRequest({
+        employeeIds: [swap.requester_emp_id, swap.swap_with_emp_id],
+        kind: "swap",
+        sourceId: id,
+        title: decision === "approved" ? "Shift swap approved" : "Shift swap rejected",
+        description: `Your shift swap on ${swap.swap_date} was ${decision}.`,
+      });
+    } catch (err) {
+      console.error("[roster-requests] swap notification lookup failed:", (err as Error)?.message);
+    }
   },
 
   /**
@@ -643,7 +667,11 @@ export const rosterConflictService = {
         ? "high"
         : "medium",
       status: row.resolved ? "resolved" : "open",
-      resolution_remarks: row.description ?? null,
+      description: row.description ?? null,
+      resolution_action: row.resolution_action ?? null,
+      resolution_remarks: row.resolution_remarks ?? null,
+      resolved_by: row.resolved_by ?? null,
+      resolved_at: row.resolved_at ?? null,
       created_at: row.detected_at,
     }));
   },
@@ -655,31 +683,69 @@ export const rosterConflictService = {
     description?: string;
   }) {
     const id = randomUUID();
-    await db.execute(
-      "INSERT IGNORE INTO wfm_roster_conflict_log (id, employee_id, conflict_date, conflict_type, description) VALUES (?, ?, ?, ?, ?)",
-      [
-        id,
-        data.employee_id,
-        data.conflict_date,
-        data.conflict_type,
-        data.description ?? null,
-      ],
-    );
+    const inserted: any = await db.execute("INSERT IGNORE INTO wfm_roster_conflict_log (id, employee_id, conflict_date, conflict_type, description) VALUES (?, ?, ?, ?, ?)", [id, data.employee_id, data.conflict_date, data.conflict_type, data.description ?? null]);
+    // INSERT IGNORE: a duplicate that was ignored raised nothing new, so nobody is notified for it.
+    if ((Array.isArray(inserted) ? inserted[0]?.affectedRows : undefined) !== 0) {
+      onRosterRequestRaised({ kind: "conflict", sourceId: id, employeeId: data.employee_id, date: data.conflict_date, summary: `Roster conflict: ${data.conflict_type}` });
+    }
     return id;
   },
 
-  async resolve(id: string, resolvedBy: string, req?: Request) {
-    await db.execute(
-      "UPDATE wfm_roster_conflict_log SET resolved = 1 WHERE id = ?",
-      [id],
+  // RR12/RR13: the resolution decision is persisted (migration 1759), the caller's row scope is
+  // applied, and a missing / already-resolved conflict is reported instead of returning success.
+  async resolve(
+    id: string,
+    resolvedBy: string,
+    input: { resolution_action: string; resolution_remarks?: string | null; scope: { sql: string; params: unknown[] } },
+    req?: Request,
+  ) {
+    const { scope } = input;
+    const fullAction = String(input.resolution_action ?? "").trim();
+    if (!fullAction) throw Object.assign(new Error("resolution_action is required"), { statusCode: 400 });
+    // resolution_action is VARCHAR(100); the untruncated text is always kept in resolution_remarks.
+    const resolutionAction = fullAction.slice(0, 100);
+    const resolutionRemarks = String(input.resolution_remarks ?? "").trim() || fullAction;
+
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT c.id, c.employee_id, c.resolved
+         FROM wfm_roster_conflict_log c
+         JOIN employees e ON e.id = c.employee_id
+        WHERE c.id = ? AND (${scope.sql})
+        LIMIT 1`,
+      [id, ...scope.params],
     );
+    const conflict = existing[0];
+    // Out-of-scope rows are reported as not found, so the endpoint does not confirm their existence.
+    if (!conflict) throw Object.assign(new Error("Roster conflict not found"), { statusCode: 404 });
+    if (Number(conflict.resolved) === 1) throw Object.assign(new Error("Roster conflict is already resolved"), { statusCode: 409 });
+
+    const [result] = await db.execute<ResultSetHeader>(
+      `UPDATE wfm_roster_conflict_log
+          SET resolved = 1, resolution_action = ?, resolution_remarks = ?, resolved_by = ?, resolved_at = NOW()
+        WHERE id = ? AND resolved = 0`,
+      [resolutionAction, resolutionRemarks, resolvedBy, id],
+    );
+    if (result.affectedRows !== 1) throw Object.assign(new Error("Roster conflict is already resolved"), { statusCode: 409 });
+
     await logSensitiveAction({
       actor_user_id: resolvedBy,
       action_type: "ROSTER_CONFLICT_RESOLVED",
       module_key: "WFM",
       entity_type: "wfm_roster_conflict_log",
       entity_id: id,
+      change_summary: {
+        employee_id: conflict.employee_id,
+        before: { resolved: 0 },
+        after: { resolved: 1, resolution_action: resolutionAction, resolution_remarks: resolutionRemarks, resolved_by: resolvedBy },
+      },
       req,
+    });
+    await notifyRosterRequest({
+      employeeIds: [conflict.employee_id],
+      kind: "conflict",
+      sourceId: id,
+      title: "Roster conflict resolved",
+      description: `Your roster conflict was resolved: ${resolutionAction}`,
     });
   },
 };
@@ -700,13 +766,20 @@ export const coverageService = {
       new Date().toISOString().slice(0, 10);
     const snapshotConds = ["s.snapshot_date = ?"];
     const snapshotParams: unknown[] = [date];
-    if (filters.process_id) {
-      snapshotConds.push("s.process_id = ?");
-      snapshotParams.push(filters.process_id);
-    }
-    if (filters.branch_id) {
-      snapshotConds.push("s.branch_id = ?");
-      snapshotParams.push(filters.branch_id);
+    if (filters.process_id) { snapshotConds.push("s.process_id = ?"); snapshotParams.push(filters.process_id); }
+    if (filters.branch_id) { snapshotConds.push("s.branch_id = ?"); snapshotParams.push(filters.branch_id); }
+    // RR17: the caller's row scope applies to the snapshot branch too, not only the live fallback.
+    // Only an explicit "1=1" (admin/hr/wfm/ceo) is unscoped; a missing predicate fails closed.
+    const isUnscoped = (filters.sql ?? "").trim() === "1=1";
+    if (!isUnscoped) {
+      // A scoped caller only sees process+branch grain rows that contain an employee they are
+      // scoped to. Coarser rows (process-wide or whole-org, NULL ids) span scopes they do not own.
+      snapshotConds.push("s.process_id IS NOT NULL");
+      snapshotConds.push("s.branch_id IS NOT NULL");
+      snapshotConds.push(
+        `EXISTS (SELECT 1 FROM employees e WHERE e.process_id = s.process_id AND e.branch_id = s.branch_id AND (${filters.sql ?? "1=0"}))`,
+      );
+      snapshotParams.push(...(filters.params ?? []));
     }
     const [snapshotRows] = await db.execute<RowDataPacket[]>(
       `SELECT s.*, p.process_name, b.branch_name
@@ -714,41 +787,40 @@ export const coverageService = {
          LEFT JOIN process_master p ON p.id = s.process_id
          LEFT JOIN branch_master b ON b.id = s.branch_id
         WHERE ${snapshotConds.join(" AND ")}
-        ORDER BY s.created_at DESC
-        LIMIT 200`,
+        ORDER BY s.created_at DESC`,
       snapshotParams,
     );
     if (snapshotRows.length) {
-      const required = snapshotRows.reduce(
-        (sum: number, row: any) => sum + Number(row.planned_headcount ?? 0),
-        0,
-      );
-      const available = snapshotRows.reduce(
-        (sum: number, row: any) => sum + Number(row.actual_headcount ?? 0),
-        0,
-      );
+      // RR16: a whole-scope aggregate row (NULL process and branch) and per-process/branch
+      // component rows can coexist for one date, and NULLs do not collide in the unique key, so
+      // summing every row double counts. Sum ONE grain, newest row per grain key.
+      const seenGrain = new Set<string>();
+      const dedupe = (rows: any[]) => rows.filter((row: any) => {
+        const key = `${row.process_id ?? "*"}|${row.branch_id ?? "*"}`;
+        if (seenGrain.has(key)) return false;
+        seenGrain.add(key);
+        return true;
+      });
+      const fineRows = snapshotRows.filter((row: any) => row.process_id != null && row.branch_id != null);
+      // A half-specified row (process-wide or branch-wide) is dropped when a process+branch row
+      // already covers part of it, so the two grains are never added together.
+      const overlapsFiner = (row: any) => fineRows.some((fine: any) => (row.process_id != null ? fine.process_id === row.process_id : fine.branch_id === row.branch_id));
+      const componentRows = dedupe(snapshotRows.filter((row: any) =>
+        (row.process_id != null && row.branch_id != null) || ((row.process_id != null || row.branch_id != null) && !overlapsFiner(row))));
+      const aggregateRows = dedupe(snapshotRows.filter((row: any) => row.process_id == null && row.branch_id == null));
+      const rowsForSum: any[] = componentRows.length > 0 ? componentRows : aggregateRows;
+      const required = rowsForSum.reduce((sum: number, row: any) => sum + Number(row.planned_headcount ?? 0), 0);
+      const available = rowsForSum.reduce((sum: number, row: any) => sum + Number(row.actual_headcount ?? 0), 0);
       return {
+        source: "snapshot" as const,
+        snapshot_grain: componentRows.length > 0 ? ("component" as const) : ("aggregate" as const),
+        snapshot_rows_considered: snapshotRows.length,
+        snapshot_rows_summed: rowsForSum.length,
         required_headcount: required,
         available_headcount: available,
-        coverage_pct:
-          required > 0 ? Math.round((available / required) * 10000) / 100 : 0,
-        gaps: snapshotRows
-          .filter(
-            (row: any) =>
-              Number(row.planned_headcount ?? 0) >
-              Number(row.actual_headcount ?? 0),
-          )
-          .map((row: any) => ({
-            process: row.process_name,
-            branch: row.branch_name,
-            gap_count: Math.max(
-              0,
-              Number(row.planned_headcount ?? 0) -
-                Number(row.actual_headcount ?? 0),
-            ),
-            note: `Shrinkage ${Number(row.shrinkage_pct ?? 0).toFixed(2)}%`,
-          })),
-        data: snapshotRows,
+        coverage_pct: required > 0 ? Math.round((available / required) * 10000) / 100 : 0,
+        gaps: rowsForSum.filter((row: any) => Number(row.planned_headcount ?? 0) > Number(row.actual_headcount ?? 0)).map((row: any) => ({ process: row.process_name, branch: row.branch_name, gap_count: Math.max(0, Number(row.planned_headcount ?? 0) - Number(row.actual_headcount ?? 0)), note: `Shrinkage ${Number(row.shrinkage_pct ?? 0).toFixed(2)}%` })),
+        data: rowsForSum,
       };
     }
 
@@ -790,6 +862,7 @@ export const coverageService = {
       0,
     );
     return {
+      source: "live" as const,
       required_headcount: required,
       available_headcount: available,
       coverage_pct:

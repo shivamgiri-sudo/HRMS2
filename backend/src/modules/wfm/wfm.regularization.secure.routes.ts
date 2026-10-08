@@ -3,12 +3,10 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import {
-  buildScopeWhereClause,
-  getUserAssignmentScopes,
-  hasAnyRole,
-  hasScopedAccess,
-} from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, getUserAssignmentScopes, hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
+import { canAccessEmployee as canAccessEmployeeInScope } from "./branch-scope.js";
 import { regularizationSchema } from "./wfm.validation.js";
 import { wfmService } from "./wfm.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -135,16 +133,15 @@ async function employeeTarget(employeeId: string) {
   return rows[0] as any | undefined;
 }
 
-async function canAccessEmployee(
-  userId: string,
-  employeeId: string,
-  allowSelf = true,
-) {
-  if (await hasAnyRole(userId, "admin", "hr", "wfm", "ceo")) return true;
+async function canAccessEmployee(userId: string, employeeId: string, allowSelf = true) {
+  // Org-wide roles only (owner ruling 2026-10-01): hr / wfm used to bypass here and could submit,
+  // preview or batch regularizations for any branch. They now go through the scope checks below.
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return true;
   const target = await employeeTarget(employeeId);
   if (!target) return false;
   const callerEmp = await getEmployeeForUser(userId);
   if (allowSelf && callerEmp?.id === employeeId) return true;
+  if (await canAccessEmployeeInScope(await resolveUserBusinessScope(userId), employeeId)) return true;
   return hasScopedAccess(
     userId,
     WFM_VIEW_SCOPE_ROLES,
@@ -292,7 +289,7 @@ async function isPayrollFrozenForDate(sessionDate: string): Promise<boolean> {
  *   added to the shared constant so granting bulk authority cannot silently widen
  *   single-row approval as a side effect.
  */
-async function regularizationReviewRole(
+export async function regularizationReviewRole(
   userId: string,
   regularizationId: string,
   approvalScopeRoles: string[] = WFM_APPROVAL_SCOPE_ROLES,
@@ -368,7 +365,7 @@ const TERMINAL_REGULARIZATION_STATUSES = ["approved", "rejected", "discarded"];
  * Rejection is never deferred: any stage can reject outright, since rejecting changes no
  * payroll figure.
  */
-function nextRegularizationStatus(
+export function nextRegularizationStatus(
   role: "super_admin" | "manager" | "wfm" | "payroll",
   currentStatus: string,
   requestedStatus: string,

@@ -727,6 +727,46 @@ export const payrollService = {
       }
     }
 
+    // A run must not be marked DISBURSED while salary-transfer items for it are still unresolved. The
+    // Payment Center tracks every employee in salary_transfer_batch_item: 'exported' (sent to the bank,
+    // no return file yet), 'rejected' (the bank bounced it) and 'corrected_ready' (fixed, awaiting
+    // re-export). Marking the run disbursed over any of those records money as paid that has not been
+    // confirmed to have moved. Runs paid without the Payment Center have no items and are unaffected.
+    // An independent break-glass reason (same rule as the finance sign-off exception) overrides it, and
+    // is audited as PAYROLL_RUN_DISBURSED_BREAKGLASS. Approved by the owner 2026-10-03.
+    if (input.status === "disbursed") {
+      const [outstandingRows] = await db.execute<RowDataPacket[]>(
+        `SELECT status, COUNT(*) AS n
+           FROM salary_transfer_batch_item
+          WHERE run_id = ? AND status IN ('exported', 'rejected', 'corrected_ready')
+          GROUP BY status`,
+        [id],
+      );
+      const outstanding = (Array.isArray(outstandingRows) ? (outstandingRows as { status: string; n: number }[]) : [])
+        .map((r) => ({ status: r.status, count: Number(r.n) || 0 }))
+        .filter((r) => r.count > 0);
+      if (outstanding.length > 0) {
+        if (!breakGlassReason) {
+          throw Object.assign(
+            new Error(
+              "Some salary transfers for this run are not confirmed yet: " +
+              outstanding.map((o) => `${o.count} ${o.status.replace("_", " ")}`).join(", ") +
+              ". Import the bank's return file and resolve them, or have an independent head record a break-glass reason.",
+            ),
+            { statusCode: 409, code: "PAYROLL_TRANSFERS_OUTSTANDING", outstanding },
+          );
+        }
+        const isPreparer = runRecord.created_by && String(runRecord.created_by) === String(userId);
+        const isApprover = runRecord.approved_by && String(runRecord.approved_by) === String(userId);
+        if (isPreparer || isApprover) {
+          throw Object.assign(
+            new Error("Break-glass must be invoked by someone who neither prepared nor approved this run"),
+            { statusCode: 403, code: "PAYROLL_BREAKGLASS_NOT_INDEPENDENT" },
+          );
+        }
+      }
+    }
+
     const sets = ["status = ?"];
     const params: unknown[] = [input.status];
     if (input.status === "approved") {
@@ -1154,7 +1194,8 @@ export const payrollService = {
     // Variable allowances intentionally excluded from PF base
     // Skipped entirely when employee has an approved PF opt-out (voluntary declaration).
     const pfBase = Math.min(basic, p.pfWageLimit);
-    const pfEmp = p.pfOptOut ? 0 : r2(pfBase * (p.pfEmployeePct / 100));
+    // Whole rupee, like db_bill's EPF (= ROUND(12% x Basic1) on every July row).
+    const pfEmp = p.pfOptOut ? 0 : Math.round(pfBase * (p.pfEmployeePct / 100));
 
     // Employer PF: EPF 3.67% + EPS 8.33% of min(Basic, ₹15,000 EPS ceiling)
     const epsCeiling = 15000;
@@ -1169,10 +1210,9 @@ export const payrollService = {
     // start of their contribution period stays covered even after crossing the
     // ceiling mid-period. Opt-out still wins over continuity — the && binds
     // tighter than the ||, so esicOptOut=true short-circuits regardless.
-    const esicApplicable =
-      !p.esicOptOut &&
-      (gross <= p.esicWageLimit || p.esicContinuityOverride === true);
-    const esicEmp = esicApplicable ? r2(gross * (p.esicEmployeePct / 100)) : 0;
+    const esicApplicable = !p.esicOptOut && (gross <= p.esicWageLimit || p.esicContinuityOverride === true);
+    // Whole rupee, like db_bill's ESIC (= ROUND(Gross1 x 0.75%) on all 674 July rows).
+    const esicEmp = esicApplicable ? Math.round(gross * (p.esicEmployeePct / 100)) : 0;
     const esicEmrPct = (p.esicEmployerPct ?? 3.25) / 100;
     const esicEmr = esicApplicable ? r2(gross * esicEmrPct) : 0;
 
@@ -1723,21 +1763,46 @@ export async function approveRunForDisbursement(
   if (!run) {
     throw new Error(`Run ${runId} not found`);
   }
-  if (run.status !== "locked") {
-    throw new Error(
-      `Run must be in 'locked' status to approve for disbursement (current: ${run.status})`,
+  // status is varchar with mixed casing; every other path compares case-insensitively.
+  if (String(run.status ?? "").toLowerCase() !== "locked") {
+    throw new Error(`Run must be in 'locked' status to approve for disbursement (current: ${run.status})`);
+  }
+
+  // Same head-level gate as PATCH /runs/:id/status -> disbursed. This route sits behind the plain
+  // `finance` role, which updateRunStatus deliberately refuses for locked/disbursed; without this
+  // check a plain finance user could disburse here and stamp their own finance sign-off.
+  const [closerRoles] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM user_roles
+      WHERE user_id = ? AND active_status = 1
+        AND role_key IN ('finance_head','payroll_head','admin','super_admin')
+      LIMIT 1`,
+    [approverUserId],
+  );
+  if (closerRoles.length === 0) {
+    throw Object.assign(
+      new Error("Disbursing a run is reserved for Finance or Payroll heads. Ask a head to complete this step."),
+      { statusCode: 403, code: "PAYROLL_CLOSE_NOT_AUTHORISED" },
     );
   }
 
-  // Update run status to 'disbursed' + record approver
-  await db.execute(
+  // Update run status to 'disbursed' + record approver. Expected-state predicate so two
+  // concurrent callers cannot both succeed; disbursed_by/at match the PATCH path.
+  const [upd] = await db.execute<ResultSetHeader>(
     `UPDATE salary_prep_run
         SET status = 'disbursed',
             finance_approved_by = ?,
-            finance_approved_at = NOW()
-      WHERE id = ?`,
-    [approverUserId, runId],
+            finance_approved_at = NOW(),
+            disbursed_by = ?,
+            disbursed_at = NOW()
+      WHERE id = ? AND LOWER(status) = 'locked'`,
+    [approverUserId, approverUserId, runId]
   );
+  if (upd.affectedRows !== 1) {
+    throw Object.assign(
+      new Error("This payroll run was changed by someone else — reload and try again"),
+      { statusCode: 409, code: "PAYROLL_RUN_STATE_CHANGED" },
+    );
+  }
 
   // Email notification (fire-and-forget) — this is a second entry point to the
   // 'disbursed' state (the other is updateRunStatus) and must notify identically,
@@ -1760,6 +1825,12 @@ export async function approveRunForDisbursement(
     entity_id: runId,
     change_summary: { run_id: runId, new_status: "disbursed" },
   });
+
+  // Same loan-ledger reconciliation the PATCH path runs on disbursal; isolated so a failure
+  // here cannot undo a disbursal that has already happened.
+  const { applyPayrollDeductions } = await import("./loans.service.js");
+  await applyPayrollDeductions(runId, approverUserId)
+    .catch((e: unknown) => console.error('[payroll-service] applyPayrollDeductions error:', e));
 
   return { success: true, run_id: runId, status: "disbursed" };
 }

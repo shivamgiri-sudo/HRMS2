@@ -1,0 +1,46 @@
+name: Ops Approval Audit (manual, read-only)
+
+# Read-only: aggregate counts of pending GRN / Branch Budget / Budget top-up / Bulk Upload approvals by stage,
+# and how many people hold each approving role. SELECT only, no names, amounts or ids. workflow_dispatch only.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-approval-audit-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Approval pending audit (read-only)
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Run audit
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          test -f /var/www/HRMS2/backend/.env
+          npx tsx scripts/approval-pending-audit.ts
+          echo "--- migration 2132 check ---"
+          npx tsx -e 'import "dotenv/config"; import { db } from "./src/db/mysql.js"; const [r]: any = await db.execute("SELECT COUNT(*) n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", ["approval_email_action"]); console.log("approval_email_action table exists:", Number(r[0].n) === 1); const [m]: any = await db.execute("SELECT COUNT(*) n FROM _migrations WHERE migration_id LIKE ?", ["%2132_approval_email_action%"]); console.log("migration 2132 recorded:", Number(m[0].n) >= 1); process.exit(0);'

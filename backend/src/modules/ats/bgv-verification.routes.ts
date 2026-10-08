@@ -14,12 +14,8 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
-import {
-  getUserAssignmentScopes,
-  hasAnyRole,
-  hasScopedAccess,
-  buildScopeWhereClause,
-} from "../../shared/scopeAccess.js";
+import { getUserAssignmentScopes, hasAnyRole, hasScopedAccess, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { canAccessCandidate, resolveCandidateScope } from "./candidate-access.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { env } from "../../config/env.js";
 import {
@@ -114,26 +110,10 @@ async function requireBgvCandidateScope(
   // (migration 1541/1542) — this inner check alone is not enough: the outer
   // requireRole() middleware runs first and 403s before this function is ever
   // reached, so both layers must carry the same role list.
-  const allowed = await hasScopedAccess(
-    req.authUser!.id,
-    [
-      "admin",
-      "hr",
-      "branch_hr",
-      "hr_admin",
-      "ho_hr",
-      "process_hr",
-      "recruitment_hr",
-      "recruiter",
-      "payroll_head",
-      "payroll_hr",
-    ],
-    {
-      branchId: candidate.applied_for_branch ?? undefined,
-      processId: candidate.applied_for_process ?? undefined,
-    },
-    { allowAdminBypass: true },
-  );
+  // Owner ruling 2026-10-01: canAccessCandidate is the single branch row-scope rule (own branch / assignments;
+  // org-wide roles see all). The older assignment-row check stays as an additional grant, never a bypass.
+  const allowed = (await canAccessCandidate(req.authUser!.id, candidateId))
+    || await hasScopedAccess(req.authUser!.id, ["admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "recruiter", "payroll_head", "payroll_hr"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
   const recruiterProfile = await resolveRecruiterForActor(req.authUser!.id);
   const candidateRecord = candidate as unknown as Record<string, unknown>;
   const assignedRecruiterIds = [
@@ -191,6 +171,9 @@ const BGV_ORG_WIDE_ROLES = [
   "payroll_head",
   "compliance",
 ] as const;
+// Owner ruling 2026-10-01: hr / hr_admin / ho_hr / recruitment_hr / process_hr / compliance are NO LONGER org-wide
+// here - they get the own-branch / assigned-scope rule (canAccessCandidate). Only the org-wide roles see every report.
+const BGV_ORG_WIDE_ROLES = ORG_WIDE_EXEMPT_ROLES;
 const BGV_BRANCH_MANAGER_ROLES = ["branch_head", "branch_manager"] as const;
 
 async function employeeBranchOf(userId: string): Promise<string | null> {
@@ -213,8 +196,8 @@ async function requireBgvReportScope(
 
   // Org-wide roles: admin, super_admin, all HR designations, payroll_head, compliance.
   if (await hasAnyRole(userId, ...BGV_ORG_WIDE_ROLES)) return;
-  if (!candidateBranch)
-    throw Object.assign(new Error("Access denied"), { statusCode: 403 });
+  if (await canAccessCandidate(userId, candidateId)) return;
+  if (!candidateBranch) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
 
   // Branch HR: must have a branch-type assignment scope on the candidate's branch.
   if (await hasAnyRole(userId, "branch_hr")) {
@@ -492,83 +475,15 @@ router.post(
 );
 
 // HR/BGV/Admin protected routes — all have role check + row-scope
-router.get(
-  "/queue",
-  requireAuth,
-  requireRole(
-    "admin",
-    "hr",
-    "branch_hr",
-    "hr_admin",
-    "ho_hr",
-    "process_hr",
-    "recruitment_hr",
-    "recruiter",
-  ),
-  h(async (req: AuthenticatedRequest, res) => {
-    const scoped = await buildScopeWhereClause(
-      req.authUser!.id,
-      [
-        "admin",
-        "hr",
-        "branch_hr",
-        "hr_admin",
-        "ho_hr",
-        "process_hr",
-        "recruitment_hr",
-        "recruiter",
-      ],
-      { branchId: "c.applied_for_branch", processId: "c.applied_for_process" },
-      { allowAdminBypass: true },
-    );
-    return res.json({
-      success: true,
-      data: await listBgvQueueScoped(
-        req.query.status as string | undefined,
-        scoped,
-      ),
-    });
-  }),
-);
+router.get("/queue", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
+  const scoped = await resolveCandidateScope(req.authUser!.id, "c");
+  return res.json({ success: true, data: await listBgvQueueScoped(req.query.status as string | undefined, scoped) });
+}));
 
-router.get(
-  "/candidates",
-  requireAuth,
-  requireRole(
-    "admin",
-    "hr",
-    "branch_hr",
-    "hr_admin",
-    "ho_hr",
-    "process_hr",
-    "recruitment_hr",
-    "recruiter",
-  ),
-  h(async (req: AuthenticatedRequest, res) => {
-    const scoped = await buildScopeWhereClause(
-      req.authUser!.id,
-      [
-        "admin",
-        "hr",
-        "branch_hr",
-        "hr_admin",
-        "ho_hr",
-        "process_hr",
-        "recruitment_hr",
-        "recruiter",
-      ],
-      { branchId: "c.applied_for_branch", processId: "c.applied_for_process" },
-      { allowAdminBypass: true },
-    );
-    return res.json({
-      success: true,
-      data: await listBgvQueueScoped(
-        req.query.status as string | undefined,
-        scoped,
-      ),
-    });
-  }),
-);
+router.get("/candidates", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
+  const scoped = await resolveCandidateScope(req.authUser!.id, "c");
+  return res.json({ success: true, data: await listBgvQueueScoped(req.query.status as string | undefined, scoped) });
+}));
 
 router.get(
   "/candidates/:candidateId",
@@ -1358,29 +1273,13 @@ router.put(
 );
 
 // ── Sync API check results → BGV report ──────────────────────────────────────
-router.post(
-  "/sync-report",
-  requireAuth,
-  requireRole(
-    "admin",
-    "hr",
-    "branch_hr",
-    "hr_admin",
-    "ho_hr",
-    "process_hr",
-    "recruitment_hr",
-    "payroll_hr",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { candidate_id } = req.body;
-    if (!candidate_id)
-      return res
-        .status(400)
-        .json({ success: false, message: "candidate_id required" });
-    const result = await syncBgvChecksToReport(String(candidate_id));
-    res.json({ success: true, ...result });
-  }),
-);
+router.post("/sync-report", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { candidate_id } = req.body;
+  if (!candidate_id) return res.status(400).json({ success: false, message: "candidate_id required" });
+  await requireBgvCandidateScope(req, String(candidate_id));
+  const result = await syncBgvChecksToReport(String(candidate_id));
+  res.json({ success: true, ...result });
+}));
 
 // ── Full BGV Report Data (for PDF generation) ─────────────────────────────────
 router.get(

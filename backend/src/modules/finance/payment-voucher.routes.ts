@@ -8,10 +8,8 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import {
-  paymentVoucherService,
-  PaymentVoucherError,
-} from "./payment-voucher.service.js";
+import { assertBranchInScope, bankAccountBranchId, callerBranchScope } from "./finance-branch-guard.js";
+import { paymentVoucherService, PaymentVoucherError } from "./payment-voucher.service.js";
 
 /**
  * Payment Voucher API — own prefix (/api/finance/payment-vouchers), matching imprest.routes.ts's
@@ -41,6 +39,13 @@ export const VOUCHER_READ_ROLES = [
 ] as const;
 
 export const paymentVoucherRouter = Router();
+
+/** A voucher belongs to its bank account's branch; 403 for a branch-limited caller outside it (no-op for org-wide). */
+async function assertVoucherVisible(req: AuthenticatedRequest, voucher: any): Promise<void> {
+  const scope = await callerBranchScope(req);
+  if (scope.mode === "all" || !voucher) return;
+  assertBranchInScope(scope, voucher.bank_account_id ? await bankAccountBranchId(String(voucher.bank_account_id)) : null, "payment voucher");
+}
 
 const h =
   (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -106,6 +111,7 @@ paymentVoucherRouter.get(
         ? String(req.query.bankAccountId)
         : undefined,
       limit: req.query.limit ? Number(req.query.limit) : undefined,
+      branchScope: await callerBranchScope(req),
     });
     res.json({ success: true, data });
   }),
@@ -133,12 +139,9 @@ paymentVoucherRouter.get(
   h(async (req, res) => {
     const csv = await paymentVoucherService.toCsv({
       status: req.query.status ? String(req.query.status) : undefined,
-      sourceType: req.query.sourceType
-        ? String(req.query.sourceType)
-        : undefined,
-      bankAccountId: req.query.bankAccountId
-        ? String(req.query.bankAccountId)
-        : undefined,
+      sourceType: req.query.sourceType ? String(req.query.sourceType) : undefined,
+      bankAccountId: req.query.bankAccountId ? String(req.query.bankAccountId) : undefined,
+      branchScope: await callerBranchScope(req),
     });
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
@@ -154,10 +157,8 @@ paymentVoucherRouter.get(
   requireRole(...VOUCHER_READ_ROLES),
   h(async (req, res) => {
     const data = await paymentVoucherService.get(req.params.id);
-    if (!data)
-      return res
-        .status(404)
-        .json({ success: false, error: "Payment voucher not found" });
+    if (!data) return res.status(404).json({ success: false, error: "Payment voucher not found" });
+    await assertVoucherVisible(req, data);
     res.json({ success: true, data });
   }),
 );
@@ -303,6 +304,7 @@ paymentVoucherRouter.get(
   requireRole(...VOUCHER_READ_ROLES),
   h(async (req, res) => {
     const voucher = await paymentVoucherService.get(req.params.id);
+    await assertVoucherVisible(req, voucher);
     const filePath = (voucher as any)?.attachment_path;
     const fileName =
       (voucher as any)?.attachment_original_name ??

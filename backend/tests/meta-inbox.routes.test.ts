@@ -53,37 +53,23 @@ let callerBranch: string | null = "Noida";
 const executed: string[] = [];
 
 function installDb() {
-  (db.execute as ReturnType<typeof vi.fn>).mockImplementation(
-    async (sql: string, params: unknown[] = []) => {
-      executed.push(sql);
-      if (sql.includes("FROM employees e") && sql.includes("branch_master")) {
-        return [callerBranch ? [{ branch_name: callerBranch }] : [], []];
-      }
-      if (
-        sql.includes("JOIN job_requisition jr") &&
-        sql.includes("jr.branch_name = ?") &&
-        sql.includes("SELECT 1")
-      ) {
-        const lead = LEADS[String(params[0])];
-        return [lead && lead.branch === params[1] ? [{ ok: 1 }] : [], []];
-      }
-      if (sql.includes("inbound_count")) {
-        const lead = LEADS[String(params[0])];
-        return [
-          lead
-            ? [
-                {
-                  screening_result: lead.screening,
-                  inbound_count: lead.inbound,
-                },
-              ]
-            : [],
-          [],
-        ];
-      }
-      return [[], []];
-    },
-  );
+  (db.execute as ReturnType<typeof vi.fn>).mockImplementation(async (sql: string, params: unknown[] = []) => {
+    executed.push(sql);
+    if (sql.includes('FROM employees e') && sql.includes('branch_master')) {
+      return [callerBranch ? [{ branch_name: callerBranch }] : [], []];
+    }
+    if (sql.includes('JOIN job_requisition jr') && sql.includes('jr.branch_name = ?') && sql.includes('SELECT 1')) {
+      const lead = LEADS[String(params[0])];
+      return [lead && lead.branch === params[1] ? [{ ok: 1 }] : [], []];
+    }
+    // canMessageLead counts the whole thread now (message_count: inbound OR
+    // outbound), not inbound only — an interview invite already opens the chat.
+    if (sql.includes('AS message_count')) {
+      const lead = LEADS[String(params[0])];
+      return [lead ? [{ screening_result: lead.screening, message_count: lead.inbound }] : [], []];
+    }
+    return [[], []];
+  });
 }
 
 const auth = (role: string) => ({ Authorization: `Bearer mock-token-${role}` });
@@ -117,11 +103,14 @@ describe("thread access is branch-scoped", () => {
     expect(res.status).toBe(200);
   });
 
-  it("lets an all-branch role open any branch", async () => {
-    const res = await request(app)
-      .get("/api/meta/leads/lead-delhi/messages")
-      .set(auth("admin"));
+  it('lets an all-branch (org-wide) role open any branch', async () => {
+    const res = await request(app).get('/api/meta/leads/lead-delhi/messages').set(auth('super_admin'));
     expect(res.status).toBe(200);
+  });
+
+  it("admin is branch-scoped (owner policy 2026-10-01): refused on another branch's thread", async () => {
+    const res = await request(app).get('/api/meta/leads/lead-delhi/messages').set(auth('admin'));
+    expect(res.status).toBe(403);
   });
 
   it("refuses mark-read on another branch's thread", async () => {

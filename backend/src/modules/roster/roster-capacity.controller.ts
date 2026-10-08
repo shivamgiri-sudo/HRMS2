@@ -1,13 +1,12 @@
-import type { Response } from "express";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import {
-  getEmployeeForUser,
-  hasProcessScope,
-  hasRole,
-} from "../../shared/accessGuard.js";
-import { rosterCapacityService } from "./roster-capacity.service.js";
+import type { Response } from 'express';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { getEmployeeForUser, hasRole } from '../../shared/accessGuard.js';
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from '../../shared/scopeAccess.js';
+import { resolveUserBusinessScope } from '../../shared/enterpriseScope.js';
+import { canAccessProcess, canAccessEmployee, scopedProcessIdsForUser } from '../wfm/branch-scope.js';
+import { rosterCapacityService } from './roster-capacity.service.js';
 
 type Request = AuthenticatedRequest;
 
@@ -18,11 +17,12 @@ async function assertProcessScope(
   processId: string | null | undefined,
 ): Promise<boolean> {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, "admin", "hr")) return true;
-  return (
-    Boolean(processId) &&
-    hasProcessScope(userId, processId!, null, ...SCOPED_ROSTER_ROLES)
-  );
+  // Owner ruling 2026-10-01: only org-wide roles are unrestricted. hr and a wfm 'all' grant are
+  // limited to their own branch / assigned processes.
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return true;
+  if (!processId) return false;
+  const scope = await resolveUserBusinessScope(userId);
+  return canAccessProcess(scope, processId, null);
 }
 
 async function ownEmployeeProcessId(
@@ -52,24 +52,8 @@ async function notificationOwnerId(
  * wfm/process_manager caller who omitted it got every allocation company-wide (delta-audit
  * 2026-08-14, P1).
  */
-async function resolveScopedProcessIds(
-  req: Request,
-): Promise<"unrestricted" | string[]> {
-  const userId = req.authUser!.id;
-  if (await hasRole(userId, "admin", "hr")) return "unrestricted";
-
-  const placeholders = SCOPED_ROSTER_ROLES.map(() => "?").join(", ");
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT scope_type, process_id
-       FROM user_assignment_scope
-      WHERE user_id = ?
-        AND role_key IN (${placeholders})
-        AND active_status = 1`,
-    [userId, ...SCOPED_ROSTER_ROLES],
-  );
-  const scopes = rows as { scope_type: string; process_id: string | null }[];
-  if (scopes.some((s) => s.scope_type === "all")) return "unrestricted";
-  return scopes.map((s) => s.process_id).filter((id): id is string => !!id);
+async function resolveScopedProcessIds(req: Request): Promise<'unrestricted' | string[]> {
+  return scopedProcessIdsForUser(req.authUser!.id);
 }
 
 export const rosterCapacityController = {
@@ -89,11 +73,22 @@ export const rosterCapacityController = {
         parseInt(dayOfWeek),
       );
 
-      if (!config) {
-        return res.status(404).json({ error: "Capacity config not found" });
-      }
+      // An unconfigured day is a normal state (the page shows defaults), not a 404.
+      res.json(config ?? null);
+    } catch (error: unknown) {
+      const err = error as Error;
+      res.status(500).json({ error: err.message });
+    }
+  },
 
-      res.json(config);
+  async listCapacityConfigs(req: Request, res: Response) {
+    try {
+      const { processId } = req.params;
+      if (!(await assertProcessScope(req, processId))) {
+        return res.status(403).json({ error: 'Not authorized for this process' });
+      }
+      const configs = await rosterCapacityService.listCapacityConfigs(processId);
+      res.json({ success: true, data: configs });
     } catch (error: unknown) {
       const err = error as Error;
       res.status(500).json({ error: err.message });
@@ -210,14 +205,14 @@ export const rosterCapacityController = {
       // No auth check beyond requireAuth existed here at all, despite the route
       // comment reading "Employee can view own" — any authenticated user could read
       // any other employee's week-off notification history by id.
-      if (!(await hasRole(req.authUser!.id, "admin", "hr", "wfm"))) {
+      if (!(await hasAnyRole(req.authUser!.id, ...ORG_WIDE_EXEMPT_ROLES))) {
         const caller = await getEmployeeForUser(req.authUser!.id);
-        if (!caller || caller.id !== employeeId) {
-          return res
-            .status(403)
-            .json({
-              error: "Not authorized to view this employee's notifications",
-            });
+        const ownRecord = !!caller && caller.id === employeeId;
+        // hr / wfm: only employees inside their own branch / scope (owner ruling 2026-10-01).
+        const reviewer = !ownRecord && (await hasRole(req.authUser!.id, 'hr', 'wfm'))
+          && (await canAccessEmployee(await resolveUserBusinessScope(req.authUser!.id), employeeId));
+        if (!ownRecord && !reviewer) {
+          return res.status(403).json({ error: 'Not authorized to view this employee\'s notifications' });
         }
       }
       const unreadOnly = req.query.unreadOnly === "true";
@@ -239,13 +234,14 @@ export const rosterCapacityController = {
       const { notificationId } = req.params;
       // No ownership check at all — any authenticated user could mark any other
       // employee's notification read by id.
-      if (!(await hasRole(req.authUser!.id, "admin", "hr", "wfm"))) {
+      if (!(await hasAnyRole(req.authUser!.id, ...ORG_WIDE_EXEMPT_ROLES))) {
         const owner = await notificationOwnerId(notificationId);
         const caller = await getEmployeeForUser(req.authUser!.id);
-        if (!owner || !caller || owner !== caller.id) {
-          return res
-            .status(403)
-            .json({ error: "Not authorized to modify this notification" });
+        const ownRecord = !!owner && !!caller && owner === caller.id;
+        const reviewer = !ownRecord && !!owner && (await hasRole(req.authUser!.id, 'hr', 'wfm'))
+          && (await canAccessEmployee(await resolveUserBusinessScope(req.authUser!.id), owner));
+        if (!ownRecord && !reviewer) {
+          return res.status(403).json({ error: 'Not authorized to modify this notification' });
         }
       }
       await rosterCapacityService.markNotificationRead(notificationId);

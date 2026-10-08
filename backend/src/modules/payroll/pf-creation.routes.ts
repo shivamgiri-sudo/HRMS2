@@ -6,6 +6,27 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { pfCreationService } from "./pf-creation.service.js";
+import { db } from "../../db/mysql.js";
+import { guardEmployee, visibleBranchIdsFor, narrowBranch, OUT_OF_SCOPE_BODY } from "./payroll-branch-scope.js";
+
+const OUT_OF_BRANCH = { success: false, message: "Forbidden: this batch / establishment is outside your branch / assigned scope" };
+
+/** Non-org-wide callers may only act on a batch that belongs to one of their branches. */
+async function batchInScope(req: AuthenticatedRequest, batchId: string): Promise<boolean> {
+  const visible = await visibleBranchIdsFor(req);
+  if (visible === null) return true;
+  const [rows] = await db.execute<any[]>("SELECT branch_id FROM pf_creation_batch WHERE id = ? LIMIT 1", [batchId]);
+  const b = rows[0]?.branch_id;
+  return Boolean(b && visible.has(String(b)));
+}
+
+async function establishmentInScope(req: AuthenticatedRequest, establishmentId: string): Promise<boolean> {
+  const visible = await visibleBranchIdsFor(req);
+  if (visible === null) return true;
+  const [rows] = await db.execute<any[]>("SELECT branch_id FROM pf_establishment_master WHERE id = ? LIMIT 1", [establishmentId]);
+  const b = rows[0]?.branch_id;
+  return Boolean(b && visible.has(String(b)));
+}
 
 const router = Router();
 const h =
@@ -15,94 +36,65 @@ const h =
 
 router.use(requireAuth);
 
-router.get(
-  "/queue",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await pfCreationService.getQueue({
-      batchId: req.query.batchId as string | undefined,
-      itemStatus: req.query.status as string | undefined,
-      branchId: req.query.branchId as string | undefined,
-      search: req.query.search as string | undefined,
-      limit: req.query.limit ? Number(req.query.limit) : undefined,
-      offset: req.query.offset ? Number(req.query.offset) : undefined,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/queue", requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // A browser branchId only narrows the caller's own scope; outside it -> 403.
+  const narrowed = await narrowBranch(req, req.query.branchId as string | undefined);
+  if (!narrowed.ok) return res.status(403).json(OUT_OF_SCOPE_BODY);
+  const data = await pfCreationService.getQueue({
+    branchIds: narrowed.branchIds,
+    batchId: req.query.batchId as string | undefined,
+    itemStatus: req.query.status as string | undefined,
+    branchId: req.query.branchId as string | undefined,
+    search: req.query.search as string | undefined,
+    limit: req.query.limit ? Number(req.query.limit) : undefined,
+    offset: req.query.offset ? Number(req.query.offset) : undefined,
+  });
+  return res.json({ success: true, data });
+}));
 
-router.post(
-  "/queue/generate-from-joiners",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await pfCreationService.generateBatchFromJoiners(
-      {
-        branchId: req.body.branchId ?? null,
-        establishmentId: req.body.establishmentId ?? null,
-      },
-      req.authUser!.id,
-    );
-    return res.status(201).json({ success: true, data });
-  }),
-);
-
-router.post(
-  "/validate",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { batchId } = req.body;
-    if (!batchId)
-      return res
-        .status(400)
-        .json({ success: false, message: "batchId is required" });
-    const data = await pfCreationService.validateBatch(
-      batchId,
-      req.authUser!.id,
-    );
-    return res.json({ success: true, data });
-  }),
-);
-
-router.post(
-  "/export",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { batchId, templateId } = req.body;
-    if (!batchId)
-      return res
-        .status(400)
-        .json({ success: false, message: "batchId is required" });
-    const data = await pfCreationService.exportBatch(
-      batchId,
-      templateId ?? null,
-      req.authUser!.id,
-    );
-    return res.json({ success: true, data });
-  }),
-);
-
-router.post(
-  "/import-acknowledgement",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { batchId, records } = req.body;
-    if (!batchId)
-      return res
-        .status(400)
-        .json({ success: false, message: "batchId is required" });
-    if (!Array.isArray(records) || records.length === 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "records array is required" });
+router.post("/queue/generate-from-joiners", requireRole("admin", "super_admin", "payroll_hr", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  {
+    const visible = await visibleBranchIdsFor(req);
+    if (visible && (!req.body.branchId || !visible.has(String(req.body.branchId)))) {
+      return res.status(403).json(OUT_OF_BRANCH);
     }
-    const data = await pfCreationService.importAcknowledgement(
-      batchId,
-      records,
-      req.authUser!.id,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+  }
+  const data = await pfCreationService.generateBatchFromJoiners(
+    {
+      branchId: req.body.branchId ?? null,
+      establishmentId: req.body.establishmentId ?? null,
+    },
+    req.authUser!.id,
+  );
+  return res.status(201).json({ success: true, data });
+}));
+
+router.post("/validate", requireRole("admin", "super_admin", "payroll_hr", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { batchId } = req.body;
+  if (!batchId) return res.status(400).json({ success: false, message: "batchId is required" });
+  if (!(await batchInScope(req, batchId))) return res.status(403).json(OUT_OF_BRANCH);
+  const data = await pfCreationService.validateBatch(batchId, req.authUser!.id);
+  return res.json({ success: true, data });
+}));
+
+router.post("/export", requireRole("admin", "super_admin", "payroll_hr", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { batchId, templateId } = req.body;
+  if (!batchId) return res.status(400).json({ success: false, message: "batchId is required" });
+  if (!(await batchInScope(req, batchId))) return res.status(403).json(OUT_OF_BRANCH);
+  const data = await pfCreationService.exportBatch(batchId, templateId ?? null, req.authUser!.id);
+  return res.json({ success: true, data });
+}));
+
+router.post("/import-acknowledgement", requireRole("admin", "super_admin", "payroll_hr", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { batchId, records } = req.body;
+  if (!batchId) return res.status(400).json({ success: false, message: "batchId is required" });
+  if (!Array.isArray(records) || records.length === 0) {
+    return res.status(400).json({ success: false, message: "records array is required" });
+  }
+  if (!(await batchInScope(req, batchId))) return res.status(403).json(OUT_OF_BRANCH);
+  const data = await pfCreationService.importAcknowledgement(batchId, records, req.authUser!.id);
+  return res.json({ success: true, data });
+}));
 
 /**
  * PF status for one employee.
@@ -118,24 +110,50 @@ router.post(
  * payroll and HR keep reading any employee exactly as before. Only the
  * self-service path is narrowed, which is what it was always meant to be.
  */
-router.get(
-  "/employee/:employeeId",
-  requireRole(
-    "admin",
-    "super_admin",
-    "payroll_hr",
-    "payroll",
-    "hr",
-    "employee",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const isPrivileged = await hasAnyRole(
-      req.authUser!.id,
-      "admin",
-      "super_admin",
-      "payroll_hr",
-      "payroll",
-      "hr",
+router.get("/employee/:employeeId", requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr", "employee"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const isPrivileged = await hasAnyRole(
+    req.authUser!.id,
+    "admin", "super_admin", "payroll_hr", "payroll", "hr",
+  );
+  if (!isPrivileged) {
+    const own = await getEmployeeForUser(req.authUser!.id);
+    if (!own || own.id !== req.params.employeeId) {
+      return res.status(403).json({ success: false, message: "Forbidden: not your PF record" });
+    }
+  } else if (!(await guardEmployee(req, res, req.params.employeeId))) {
+    return;
+  }
+  const data = await pfCreationService.getEmployeePfStatus(req.params.employeeId);
+  return res.json({ success: true, data });
+}));
+
+router.patch("/employee/:employeeId", requireRole("admin", "super_admin", "payroll_hr", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId } = req.params;
+  if (!(await guardEmployee(req, res, employeeId))) return;
+  const { uan_number, pf_member_id, pf_applicable, pf_establishment_id } = req.body;
+
+  const updates: string[] = [];
+  const params: unknown[] = [];
+
+  if (uan_number !== undefined) {
+    updates.push("uan_masked = ?");
+    params.push(uan_number);
+  }
+  if (pf_applicable !== undefined) {
+    updates.push("pf_applicable = ?");
+    params.push(pf_applicable ? 1 : 0);
+  }
+  if (pf_establishment_id !== undefined) {
+    updates.push("pf_establishment_id = ?");
+    params.push(pf_establishment_id);
+  }
+
+  if (updates.length > 0) {
+    updates.push("updated_at = NOW()");
+    params.push(employeeId);
+    await (await import("../../db/mysql.js")).db.execute(
+      `UPDATE employee_epf_compliance_profile SET ${updates.join(", ")} WHERE employee_id = ?`,
+      params,
     );
     if (!isPrivileged) {
       const own = await getEmployeeForUser(req.authUser!.id);
@@ -200,60 +218,37 @@ router.patch(
       }
     }
 
-    const data = await pfCreationService.getEmployeePfStatus(employeeId);
-    return res.json({
-      success: true,
-      data,
-      message: "Employee PF details updated.",
-    });
-  }),
-);
+router.get("/reports/readiness", requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const narrowed = await narrowBranch(req, req.query.branchId as string | undefined);
+  if (!narrowed.ok) return res.status(403).json(OUT_OF_SCOPE_BODY);
+  const data = await pfCreationService.getReadinessReport(null, narrowed.branchIds);
+  return res.json({ success: true, data });
+}));
 
-router.get(
-  "/reports/readiness",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await pfCreationService.getReadinessReport(
-      req.query.branchId as string | undefined,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/batches", requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const narrowedB = await narrowBranch(req, req.query.branchId as string | undefined);
+  if (!narrowedB.ok) return res.status(403).json(OUT_OF_SCOPE_BODY);
+  const data = await pfCreationService.getBatches({
+    branchIds: narrowedB.branchIds,
+    status: req.query.status as string | undefined,
+    establishmentId: req.query.establishmentId as string | undefined,
+  });
+  return res.json({ success: true, data });
+}));
 
-router.get(
-  "/batches",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await pfCreationService.getBatches({
-      status: req.query.status as string | undefined,
-      branchId: req.query.branchId as string | undefined,
-      establishmentId: req.query.establishmentId as string | undefined,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/batches/:batchId", requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await batchInScope(req, req.params.batchId))) return res.status(403).json(OUT_OF_BRANCH);
+  const data = await pfCreationService.getBatchDetail(req.params.batchId);
+  if (!data) return res.status(404).json({ success: false, message: "Batch not found" });
+  return res.json({ success: true, data });
+}));
 
-router.get(
-  "/batches/:batchId",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await pfCreationService.getBatchDetail(req.params.batchId);
-    if (!data)
-      return res
-        .status(404)
-        .json({ success: false, message: "Batch not found" });
-    return res.json({ success: true, data });
-  }),
-);
-
-router.get(
-  "/establishments",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const data = await pfCreationService.getEstablishments();
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/establishments", requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const visible = await visibleBranchIdsFor(req);
+  const all = await pfCreationService.getEstablishments();
+  const data = visible ? (all as any[]).filter((e) => e.branch_id && visible.has(String(e.branch_id))) : all;
+  return res.json({ success: true, data });
+}));
 
 /**
  * Admin CRUD for pf_establishment_master.
@@ -268,20 +263,21 @@ router.get(
  * that is the read path EcrDownloadTab's establishment picker already calls,
  * unchanged by this addition.
  */
-router.get(
-  "/establishments/all",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const data = await pfCreationService.getAllEstablishments();
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/establishments/all", requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const visible = await visibleBranchIdsFor(req);
+  const all = await pfCreationService.getAllEstablishments();
+  const data = visible ? (all as any[]).filter((e) => e.branch_id && visible.has(String(e.branch_id))) : all;
+  return res.json({ success: true, data });
+}));
 
-router.post(
-  "/establishments",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const {
+router.post("/establishments", requireRole("admin", "super_admin", "payroll_hr", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { establishment_code, establishment_name, branch_id, legal_entity, address, region_office } = req.body ?? {};
+  {
+    const visible = await visibleBranchIdsFor(req);
+    if (visible && (!branch_id || !visible.has(String(branch_id)))) return res.status(403).json(OUT_OF_BRANCH);
+  }
+  const data = await pfCreationService.createEstablishment(
+    {
       establishment_code,
       establishment_name,
       branch_id,
@@ -306,27 +302,20 @@ router.post(
   }),
 );
 
-router.put(
-  "/establishments/:id",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const {
-      establishment_code,
-      establishment_name,
-      branch_id,
-      legal_entity,
-      address,
-      region_office,
-    } = req.body ?? {};
-    const updates: Record<string, unknown> = {};
-    if (establishment_code !== undefined)
-      updates.establishment_code = establishment_code;
-    if (establishment_name !== undefined)
-      updates.establishment_name = establishment_name;
-    if (branch_id !== undefined) updates.branch_id = branch_id;
-    if (legal_entity !== undefined) updates.legal_entity = legal_entity;
-    if (address !== undefined) updates.address = address;
-    if (region_office !== undefined) updates.region_office = region_office;
+router.put("/establishments/:id", requireRole("admin", "super_admin", "payroll_hr", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { establishment_code, establishment_name, branch_id, legal_entity, address, region_office } = req.body ?? {};
+  if (!(await establishmentInScope(req, req.params.id))) return res.status(403).json(OUT_OF_BRANCH);
+  {
+    const visible = await visibleBranchIdsFor(req);
+    if (visible && branch_id !== undefined && (!branch_id || !visible.has(String(branch_id)))) return res.status(403).json(OUT_OF_BRANCH);
+  }
+  const updates: Record<string, unknown> = {};
+  if (establishment_code !== undefined) updates.establishment_code = establishment_code;
+  if (establishment_name !== undefined) updates.establishment_name = establishment_name;
+  if (branch_id !== undefined) updates.branch_id = branch_id;
+  if (legal_entity !== undefined) updates.legal_entity = legal_entity;
+  if (address !== undefined) updates.address = address;
+  if (region_office !== undefined) updates.region_office = region_office;
 
     const data = await pfCreationService.updateEstablishment(
       req.params.id,
@@ -403,10 +392,8 @@ router.get(
         .status(400)
         .json({ success: false, error: "establishmentId is required" });
     }
-    const result = await pfCreationService.generateEcrFile(
-      month,
-      establishmentId,
-    );
+    if (!(await establishmentInScope(req, establishmentId))) return res.status(403).json({ success: false, error: OUT_OF_BRANCH.message });
+    const result = await pfCreationService.generateEcrFile(month, establishmentId);
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader(
       "Content-Disposition",

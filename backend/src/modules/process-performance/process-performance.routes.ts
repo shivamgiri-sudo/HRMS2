@@ -5,17 +5,16 @@ import {
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./process-performance.service.js";
+import { tpzBranchScopeGuard } from "./tpz-branch-scope.guard.js";
 
 const router = Router();
-type AsyncHandler = (
-  req: AuthenticatedRequest,
-  res: Response,
-) => Promise<unknown>;
-const h =
-  (fn: AsyncHandler) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    void fn(req, res).catch(next);
-  };
+
+// Branch scoping for every TPZ company dashboard mounted under /api/process-performance (see the guard).
+router.use(tpzBranchScopeGuard);
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 
 /**
  * Who may open the Process Performance report card.

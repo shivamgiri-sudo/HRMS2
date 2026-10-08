@@ -9,8 +9,11 @@ import {
 const ROOT = process.cwd();
 const R = "src/modules/reporting";
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
+// SQL `-- ...` comments are stripped as well as TS ones: they are prose inside the template
+// literal, and "-- PT removed from active payroll" was read by drivingTable() as `FROM active`,
+// which made payroll-register look like it does not read payroll at all.
 const strip = (s: string) =>
-  s.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  s.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)--\s[^\n]*/g, "$1");
 
 /**
  * Payroll is closed monthly and always in arrears, so for most of any month there is no run

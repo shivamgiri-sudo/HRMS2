@@ -1,9 +1,13 @@
 {
-  "modules/ai/ai-insights.routes.ts": ["salary_payslip.run_id"],
-  "modules/management/manager-analytics.service.ts": ["employees.name"],
-  "modules/operations/operations-analytics.service.ts": ["employees.status"],
-  "modules/payroll/payroll-analytics.service.ts": ["employees.status"],
-  "modules/quality-dashboard/quality-analytics.service.ts": ["employees.name"],
+  "modules/ai/ai-insights.routes.ts": [
+    "salary_payslip.run_id"
+  ],
+  "modules/operations/operations-analytics.service.ts": [
+    "employees.status"
+  ],
+  "modules/quality-dashboard/quality-analytics.service.ts": [
+    "employees.name"
+  ],
   "modules/reporting/report-suite.routes.ts": [
     "action_plan.action_plan_number",
     "action_plan.action_type",
@@ -76,6 +80,5 @@
     "wfm_roster_plan.ack_required",
     "wfm_roster_plan.published_at",
     "wfm_roster_plan.published_by"
-  ],
-  "modules/wfm/wfm-analytics.service.ts": ["employees.name"]
+  ]
 }

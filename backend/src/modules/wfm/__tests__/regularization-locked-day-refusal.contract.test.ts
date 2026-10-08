@@ -57,7 +57,32 @@ describe("a locked day is refused, whoever locked it", () => {
     const body = reviewBody();
     // The condition must turn on the lock itself, with ownership as the only exemption.
     expect(body).toContain("const lockedDay =");
-    expect(body).toContain("if (lockedDay && !ownsExistingLock)");
+    // Since 982499a34 there is exactly one further exemption, pinned below: an APR bulk-upload
+    // lock. Anything else that is locked and not owned by this correction is refused.
+    expect(body).toContain("if (lockedDay && !ownsExistingLock && !lockedByAprBulk) {");
+  });
+
+  it("exempts only an APR bulk-upload lock with no owner, and unlocks it so the write lands", () => {
+    /*
+     * The APR bulk upload stamps is_locked = 1 with no regularization_id / override_by, which is
+     * the same fingerprint as a payroll-frozen day, so 3,494 September rows were wrongly refused
+     * as "payroll frozen" (982499a34). The exemption must stay that narrow: source_system
+     * 'apr_bulk' AND no owner. And because the upsert is a silent no-op on a locked row — the
+     * premise of this file — the exempted row has to be unlocked first, under the same three
+     * conditions, or the correction would evaporate exactly as it did before.
+     */
+    const body = reviewBody();
+    const at = body.indexOf("const lockedByAprBulk =");
+    expect(at, "lockedByAprBulk definition not found").toBeGreaterThan(-1);
+    const definition = body.slice(at, body.indexOf(";", at));
+    expect(definition).toContain("String(existing?.source_system ?? '') === 'apr_bulk'");
+    expect(definition).toContain("!existing?.regularization_id");
+    expect(definition).toContain("!existing?.override_by");
+    expect(definition).not.toContain("||");
+
+    expect(wfm).toMatch(
+      /if \(lockedByAprBulk\) \{\s*await conn\.execute\(\s*`UPDATE attendance_daily_record SET is_locked = 0\s+WHERE employee_id = \? AND record_date = \?\s+AND source_system = 'apr_bulk' AND regularization_id IS NULL AND override_by IS NULL`/,
+    );
   });
 
   it("no longer passes through a day whose lock has no owner", () => {

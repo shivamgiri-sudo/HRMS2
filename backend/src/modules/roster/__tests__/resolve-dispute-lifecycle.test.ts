@@ -15,10 +15,11 @@ import { describe, expect, it } from "vitest";
  * only the genuinely late-stage statuses (attendance_locked/payroll_input_ready/closed).
  */
 describe("resolve-dispute respects the cycle lifecycle", () => {
-  const source = readFileSync(
-    resolve(__dirname, "../roster.governance.routes.ts"),
-    "utf-8",
-  );
+  // The handler delegates to resolveDispute() in dispute-resolution.service.ts, which now owns
+  // the lifecycle check; the route file still owns the route registration.
+  const routes = readFileSync(resolve(__dirname, "../roster.governance.routes.ts"), "utf-8");
+  const service = readFileSync(resolve(__dirname, "../dispute-resolution.service.ts"), "utf-8");
+  const source = routes + "\n" + service;
 
   it("defines a locked-status set excluding only the late-stage statuses", () => {
     expect(source).toMatch(
@@ -27,12 +28,12 @@ describe("resolve-dispute respects the cycle lifecycle", () => {
   });
 
   function handler(): string {
-    const start = source.indexOf(
-      'router.post("/assignments/:id/resolve-dispute"',
-    );
-    expect(start, "resolve-dispute handler not found").toBeGreaterThan(-1);
-    const end = source.indexOf("}));", start);
-    return source.slice(start, end);
+    expect(routes, "resolve-dispute route not found").toContain('router.post("/assignments/:id/resolve-dispute"');
+    expect(routes).toMatch(/await resolveDispute\(/);
+    const start = service.indexOf("export async function resolveDispute(");
+    expect(start, "resolveDispute not found").toBeGreaterThan(-1);
+    const end = service.indexOf("\n}\n", start);
+    return service.slice(start, end);
   }
 
   it("selects the cycle's status alongside the assignment", () => {
@@ -46,7 +47,7 @@ describe("resolve-dispute respects the cycle lifecycle", () => {
     expect(checkIdx, "lifecycle check not found").toBeGreaterThan(-1);
     expect(updateIdx, "UPDATE statement not found").toBeGreaterThan(-1);
     expect(checkIdx).toBeLessThan(updateIdx);
-    expect(body.slice(checkIdx, checkIdx + 200)).toMatch(/status\(409\)/);
+    expect(body.slice(checkIdx, checkIdx + 200)).toMatch(/fail\(409/);
   });
 
   it("does not gate on the narrower draft/submitted/reviewed set that would block the route's own purpose", () => {

@@ -62,13 +62,21 @@ export interface SourceField {
   source_expression: string | null;
   unit: string | null;
   description: string | null;
+  /** Row conditions for this field: a list of { column, op, value }. mysql2 may hand back text. */
+  filter_json?: Array<{ column: string; op: string; value?: unknown }> | string | null;
 }
 
 export interface DataSourceSummary {
   id: string;
   source_code: string;
   source_name: string;
-  source_type: "local_query" | "integration_connector" | "upload" | "manual" | "google_sheet_csv";
+  source_type: "local_query" | "integration_connector" | "upload" | "manual" | "google_sheet_csv" | "named_pool";
+  /** google_sheet_csv: { csv_url, tab }. Parsed or text depending on the driver. */
+  config_json?: Record<string, unknown> | string | null;
+  process_key_kind?: "none" | "constant" | "column" | "employee" | null;
+  process_key_column?: string | null;
+  process_key_value?: string | null;
+  process_id?: string | null;
   integration_key: string | null;
   source_object: string | null;
   employee_key_column: string | null;
@@ -653,5 +661,89 @@ export function useMetricExplanation(
     },
     enabled: Boolean(employeeId && metricId),
     retry: false,
+  });
+}
+
+// ─── Compute a range ─────────────────────────────────────────────────────────────────────────
+
+export interface ComputeRangeDay {
+  date: string;
+  status: "pending" | "running" | "done" | "failed";
+  written?: number;
+  no_data?: number;
+  errors?: number;
+  source_failures?: Array<{ source_code: string; error: string }>;
+  message?: string;
+  seconds?: number;
+}
+
+export interface ComputeRangeJob {
+  id: string;
+  from: string;
+  to: string;
+  processId: string | null;
+  branchId: string | null;
+  dryRun: boolean;
+  status: "running" | "done" | "failed" | "cancelled";
+  startedBy: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  days: ComputeRangeDay[];
+}
+
+const COMPUTE_RANGE_POLL_MS = 3000;
+
+/**
+ * Whether the caller may act across every process. The server sends `org_wide` with the scope
+ * options; a server that predates it did not narrow anything, so a missing flag means org-wide.
+ */
+export function isOrgWide(options: ScopeOptions | undefined): boolean {
+  return (options as (ScopeOptions & { org_wide?: boolean }) | undefined)?.org_wide !== false;
+}
+
+/** Starts a background run over several days. A preview unless dry_run is explicitly false. */
+export function useStartComputeRange() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { from: string; to: string; process_id?: string; branch_id?: string; dry_run: boolean }) =>
+      (await hrmsApi.post<Envelope<ComputeRangeJob>>("/api/kpi-studio/compute-range", input)).data,
+    onSuccess: (job) => {
+      queryClient.setQueryData(["kpi-studio", "compute-range", job.id], job);
+      void queryClient.invalidateQueries({ queryKey: ["kpi-studio", "compute-ranges"] });
+    },
+  });
+}
+
+/** One run, polled every 3 seconds for as long as it is still running. */
+export function useComputeRange(jobId: string | null) {
+  return useQuery({
+    queryKey: ["kpi-studio", "compute-range", jobId],
+    queryFn: async () => (await hrmsApi.get<Envelope<ComputeRangeJob>>(`/api/kpi-studio/compute-range/${jobId}`)).data,
+    enabled: Boolean(jobId),
+    retry: false,
+    refetchInterval: (query) => (query.state.data?.status === "running" ? COMPUTE_RANGE_POLL_MS : false),
+  });
+}
+
+/** Recent runs. Kept fresh while any of them is still running. */
+export function useComputeRanges() {
+  return useQuery({
+    queryKey: ["kpi-studio", "compute-ranges"],
+    queryFn: async () => (await hrmsApi.get<Envelope<ComputeRangeJob[]>>("/api/kpi-studio/compute-range")).data ?? [],
+    retry: false,
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((job) => job.status === "running") ? COMPUTE_RANGE_POLL_MS : false,
+  });
+}
+
+export function useCancelComputeRange() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: string) =>
+      (await hrmsApi.post<Envelope<ComputeRangeJob | null>>(`/api/kpi-studio/compute-range/${jobId}/cancel`, {})).data,
+    onSuccess: (_job, jobId) => {
+      void queryClient.invalidateQueries({ queryKey: ["kpi-studio", "compute-range", jobId] });
+      void queryClient.invalidateQueries({ queryKey: ["kpi-studio", "compute-ranges"] });
+    },
   });
 }

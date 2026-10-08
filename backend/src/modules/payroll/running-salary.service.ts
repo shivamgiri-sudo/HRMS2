@@ -1,3 +1,4 @@
+import { attendanceInEmploymentWindowSql } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2/promise";
 import { resolveHolidaysForEmployeeV2 } from "./holiday-work.service.js";
@@ -216,7 +217,9 @@ export async function computeRunningSalary(
     `SELECT attendance_status, lwp_value, record_date, attendance_source, source_system
        FROM attendance_daily_record
       WHERE employee_id = ?
-        AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
+        AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+        -- Only days inside the employment window (salary start date .. exit date) count for pay.
+        AND ${attendanceInEmploymentWindowSql("attendance_daily_record")}`,
     [employeeId, monthStart, tillDate],
   );
 
@@ -416,15 +419,16 @@ export async function computeRunningSalary(
   });
   // Add incentive to net after statutory deductions, matching payrollCalculate.service.ts.
   // Subtract advance recovery and loan EMI last, same as the locked payroll run.
+  // The EMI / advance recovery is a FULL-MONTH figure, taken in the locked run from a full month's pay.
+  // Subtracting all of it from a few days' earnings (MAS47814, 3 Oct: 20,000 EMI against ~3,100 earned)
+  // clamped the running net to 0 and read as "no salary". Here it is taken in proportion to the days
+  // earned so far, which reaches the full amount on the last day of the month; the projection below
+  // takes it in full.
+  const recoveryRatio = activeCalDays > 0 ? Math.min(1, cappedEarned / activeCalDays) : 1;
+  const recoveryTillDate = Math.round((advanceRecoveryEarned + loanEmiEarned) * recoveryRatio * 100) / 100;
   const earnedCalc = {
     ...earnedCalcRaw,
-    net_salary: Math.max(
-      0,
-      earnedCalcRaw.net_salary +
-        approvedIncentivesEarned -
-        advanceRecoveryEarned -
-        loanEmiEarned,
-    ),
+    net_salary: Math.max(0, earnedCalcRaw.net_salary + approvedIncentivesEarned - recoveryTillDate),
   };
   // earned_salary_till_date shown in UI = structure gross + incentive (total take-home basis)
   const earnedSalaryTillDate = earnedStructureSalary + approvedIncentivesEarned;
@@ -503,7 +507,7 @@ export async function computeRunningSalary(
   // Incentive added to net after deductions, matching payrollCalculate.service.ts.
   const projectedCalc = {
     ...projectedCalcRaw,
-    net_salary: projectedCalcRaw.net_salary + approvedIncentivesEarned,
+    net_salary: Math.max(0, projectedCalcRaw.net_salary + approvedIncentivesEarned - advanceRecoveryEarned - loanEmiEarned),
   };
   const projectedSalary = projectedStructureSalary + approvedIncentivesEarned;
 
@@ -522,11 +526,9 @@ export async function computeRunningSalary(
     const { attendanceEngineService } =
       await import("../wfm/attendance-engine.service.js");
     aprEligible = await attendanceEngineService.isAprEligible(
-      emp.designation_id ?? null,
-      emp.department_id ?? null,
-      emp.process_id ?? null,
+      emp.designation_id ?? null, emp.department_id ?? null, emp.process_id ?? null,
       String(emp.dept_name ?? "").toLowerCase(),
-      String(emp.designation_name ?? "").toLowerCase(),
+      String(emp.designation_name ?? "").toLowerCase(), employeeId,
     );
   } catch {
     // Provenance is a label on the number, not the number. If eligibility cannot

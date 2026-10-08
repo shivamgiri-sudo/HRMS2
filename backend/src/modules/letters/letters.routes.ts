@@ -10,7 +10,9 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { letterSalaryRowsOrBlank } from "./appointmentLetterData.service.js";
+import { stripSalaryOverrides, resolveApprovedIncrementVars } from "./letterSalaryGuard.js";
 import { istDate, assertUsableName } from "./letterFormat.js";
+import { buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 
 const router = Router();
 const h =
@@ -19,6 +21,11 @@ const h =
     fn(req, res).catch(next);
 
 router.use(requireAuth);
+
+// Branch scoping (owner ruling 2026-10-01): admin/hr used to mean "letters of every employee in every
+// branch". HR is limited to employees inside its own branch / assignments; org-wide roles are unaffected.
+const OUT_OF_SCOPE = { error: "Forbidden: this employee is outside your branch / assigned scope" };
+const canSeeEmployee = (req: AuthenticatedRequest, employeeId: string) => canViewEmployee(req.authUser!, String(employeeId));
 
 // ── Build logo URL from request origin ────────────────────────────────────────
 function logoUrl(req: Request): string {
@@ -39,22 +46,17 @@ router.get(
 
 // ── Generate letter ────────────────────────────────────────────────────────────
 // Fetches real employee + payroll data, merges with override_vars, then generates.
-router.post(
-  "/generate",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res) => {
-    const { employee_id, template_code, issued_date, override_vars } =
-      req.body as {
-        employee_id: string;
-        template_code: string;
-        issued_date?: string;
-        override_vars?: Record<string, string>;
-      };
-    if (!employee_id || !template_code) {
-      return res
-        .status(400)
-        .json({ error: "employee_id and template_code required" });
-    }
+router.post("/generate", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res) => {
+  const { employee_id, template_code, issued_date, override_vars } = req.body as {
+    employee_id: string;
+    template_code: string;
+    issued_date?: string;
+    override_vars?: Record<string, string>;
+  };
+  if (!employee_id || !template_code) {
+    return res.status(400).json({ error: "employee_id and template_code required" });
+  }
+  if (!(await canSeeEmployee(req, employee_id))) return res.status(403).json(OUT_OF_SCOPE);
 
     const letter = await lettersService.generateLetter({
       employee_id,
@@ -79,24 +81,19 @@ router.post(
 );
 
 // ── List all generated letters (HR view) ─────────────────────────────────────
-router.get(
-  "/all",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req, res) => {
-    res.json({ data: await lettersService.listAll() });
-  }),
-);
+router.get("/all", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res) => {
+  const scoped = buildEmployeeScopeCondition(await resolveUserBusinessScope(req.authUser!), {
+    employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", lobId: "e.lob_id",
+    departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id",
+  });
+  res.json({ data: await lettersService.listAll(scoped) });
+}));
 
 // ── List generated letters for a specific employee ────────────────────────────
-router.get(
-  "/employee/:employeeId",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req, res) => {
-    res.json({
-      data: await lettersService.listGenerated(req.params.employeeId),
-    });
-  }),
-);
+router.get("/employee/:employeeId", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res) => {
+  if (!(await canSeeEmployee(req, req.params.employeeId))) return res.status(403).json(OUT_OF_SCOPE);
+  res.json({ data: await lettersService.listGenerated(req.params.employeeId) });
+}));
 
 // ── Render letter as HTML (for preview in iframe or headless PDF) ──────────────
 // Returns full self-contained HTML with inline CSS and logo.
@@ -108,12 +105,11 @@ router.get(
     const letter = await lettersService.getById(req.params.letterId);
     if (!letter) return res.status(404).json({ error: "Not found" });
 
-    const isAdminHr = await hasRole(userId, "admin", "hr", "super_admin");
-    if (!isAdminHr) {
-      const emp = await getEmployeeForUser(userId);
-      if (!emp || emp.id !== letter.employee_id) {
-        return res.status(403).json({ error: "Forbidden" });
-      }
+  const isAdminHr = (await hasRole(userId, "admin", "hr", "super_admin")) && (await canSeeEmployee(req, letter.employee_id));
+  if (!isAdminHr) {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp || emp.id !== letter.employee_id) {
+      return res.status(403).json({ error: "Forbidden" });
     }
 
     // Fetch full generated_letter row including stored JSON data
@@ -159,12 +155,11 @@ router.get(
     const letter = await lettersService.getById(req.params.letterId);
     if (!letter) return res.status(404).json({ error: "Not found" });
 
-    const isAdminHr = await hasRole(userId, "admin", "hr", "super_admin");
-    if (!isAdminHr) {
-      const emp = await getEmployeeForUser(userId);
-      if (!emp || emp.id !== letter.employee_id) {
-        return res.status(403).json({ error: "Forbidden" });
-      }
+  const isAdminHr = (await hasRole(userId, "admin", "hr", "super_admin")) && (await canSeeEmployee(req, letter.employee_id));
+  if (!isAdminHr) {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp || emp.id !== letter.employee_id) {
+      return res.status(403).json({ error: "Forbidden" });
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -200,22 +195,17 @@ router.get(
 
 // ── Quick-generate and return HTML in one shot (for pre-issue preview) ─────────
 // Does NOT save to DB. Used for preview-before-issue workflow.
-router.post(
-  "/preview-html",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res) => {
-    const { employee_id, template_code, issued_date, override_vars } =
-      req.body as {
-        employee_id: string;
-        template_code: string;
-        issued_date?: string;
-        override_vars?: Record<string, string>;
-      };
-    if (!employee_id || !template_code) {
-      return res
-        .status(400)
-        .json({ error: "employee_id and template_code required" });
-    }
+router.post("/preview-html", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res) => {
+  const { employee_id, template_code, issued_date, override_vars } = req.body as {
+    employee_id: string;
+    template_code: string;
+    issued_date?: string;
+    override_vars?: Record<string, string>;
+  };
+  if (!employee_id || !template_code) {
+    return res.status(400).json({ error: "employee_id and template_code required" });
+  }
+  if (!(await canSeeEmployee(req, employee_id))) return res.status(403).json(OUT_OF_SCOPE);
 
     // Fetch employee data
     const [empRows] = await db.execute<RowDataPacket[]>(
@@ -260,27 +250,47 @@ router.post(
       ...(override_vars ?? {}),
     };
 
-    // Fetch template letter_type
-    const [tplRows] = await db.execute<RowDataPacket[]>(
-      "SELECT letter_type FROM letter_template WHERE template_code = ? AND active_status = 1 LIMIT 1",
-      [template_code],
-    );
-    const tpl = (tplRows as RowDataPacket[])[0] as any;
-    if (!tpl)
-      return res
-        .status(404)
-        .json({ error: `Template not found: ${template_code}` });
+  // Fetch template letter_type
+  const [tplRows] = await db.execute<RowDataPacket[]>(
+    "SELECT letter_type FROM letter_template WHERE template_code = ? AND active_status = 1 LIMIT 1",
+    [template_code]
+  );
+  const tpl = (tplRows as RowDataPacket[])[0] as any;
+  if (!tpl) return res.status(404).json({ error: `Template not found: ${template_code}` });
 
-    const html = renderLetterHtml(
-      tpl.letter_type as string,
-      data,
-      logoUrl(req),
-    );
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
-    res.send(html);
-  }),
-);
+  // An increment letter's figures come from the approved, implemented increment, never from typed values.
+  let incrementVars: Record<string, string> = {};
+  if (tpl.letter_type === "increment") {
+    try { incrementVars = await resolveApprovedIncrementVars(employee_id); }
+    catch (e) { return res.status(409).json({ error: e instanceof Error ? e.message : "No approved increment" }); }
+  }
+
+  const data: Record<string, string> = {
+    full_name:         assertUsableName(emp.full_name),
+    employee_code:     emp.employee_code ?? "",
+    designation:       emp.designation_name ?? "",
+    department:        emp.dept_name ?? "",
+    location:          emp.branch_name ?? "",
+    branch_name:       emp.branch_name ?? "",
+    branch_address:    emp.branch_address ?? "",
+    branch_hr_contact: emp.branch_hr_contact ?? "",
+    date_of_joining:   istDate(emp.date_of_joining),
+    date_of_exit:      istDate(emp.date_of_exit),
+    issued_date:       istDate(issued_date ?? new Date()),
+    epf_no:            emp.epf_number ?? "",
+    esi_no:            emp.esic_number ?? "",
+    ...salaryRows,
+    // Typed overrides may not replace any approved salary figure (see letterSalaryGuard.ts).
+    ...stripSalaryOverrides(tpl.letter_type, override_vars),
+    ...incrementVars,
+  };
+
+
+  const html = renderLetterHtml(tpl.letter_type as string, data, logoUrl(req));
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(html);
+}));
 
 // ── Acknowledge letter ─────────────────────────────────────────────────────────
 router.post(
@@ -290,21 +300,11 @@ router.post(
     const letter = await lettersService.getById(req.params.letterId);
     if (!letter) return res.status(404).json({ error: "Not found" });
 
-    const isAdminHr = await hasRole(userId, "admin", "hr", "super_admin");
-    if (!isAdminHr) {
-      const emp = await getEmployeeForUser(userId);
-      if (!emp || emp.id !== letter.employee_id) {
-        return res.status(403).json({ success: false, message: "Forbidden" });
-      }
-    } else {
-      await logSensitiveAction({
-        actor_user_id: userId,
-        action_type: "LETTER_ACK_ADMIN_OVERRIDE",
-        module_key: "letters",
-        entity_type: "generated_letter",
-        entity_id: req.params.letterId,
-        req,
-      });
+  const isAdminHr = (await hasRole(userId, "admin", "hr", "super_admin")) && (await canSeeEmployee(req, letter.employee_id));
+  if (!isAdminHr) {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp || emp.id !== letter.employee_id) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
     }
 
     await lettersService.acknowledge(req.params.letterId);

@@ -2,6 +2,9 @@ import { db } from "../../db/mysql.js";
 import { randomUUID } from "crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { canViewEmployee } from "../../shared/enterpriseScope.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { branchAllowed, resolveCallerBranchScope } from "../org/branchScope.js";
 
 /**
  * Rows unactioned for longer than this are reported as aged.
@@ -27,40 +30,77 @@ export type WorkItemInput = {
   createdBy?: string;
 };
 
+type WorkItemScopeRow = {
+  assigned_to_user_id: string | null;
+  assigned_to_role: string | null;
+  status: string;
+  branch_id: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+};
+
+/**
+ * Is the work item inside the caller's branch / assigned scope? (owner ruling 2026-10-01)
+ * Org-wide roles (super_admin, admin, ceo ...) always; everyone else only for an item filed under one of
+ * their own branches, or about an employee they can see. An item with no branch and no employee fails closed.
+ */
+async function workItemInCallerScope(userId: string, item: WorkItemScopeRow): Promise<boolean> {
+  const caller = await resolveCallerBranchScope({ id: userId });
+  if (caller.orgWide) return true;
+  if (item.branch_id && branchAllowed(caller, item.branch_id)) return true;
+  if (item.entity_type === "employee" && item.entity_id) return canViewEmployee({ id: userId }, String(item.entity_id));
+  return false;
+}
+
+// Roles that could previously act on ANY item. Only super_admin / admin remain unconditional; the rest are
+// branch roles and must also be inside the item's branch / scope.
+const ITEM_PRIVILEGED_ROLES = ['super_admin', 'admin', 'ho_hr', 'hr_branch', 'branch_head', 'operations_head'];
+
 export async function assertWorkItemAccess(
   userId: string,
   workItemId: string,
   action: "complete" | "escalate" | "reassign",
 ): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT assigned_to_user_id, assigned_to_role, status FROM work_item WHERE id = ? LIMIT 1",
-    [workItemId],
+    'SELECT assigned_to_user_id, assigned_to_role, status, branch_id, entity_type, entity_id FROM work_item WHERE id = ? LIMIT 1',
+    [workItemId]
   );
   if (!(rows as any[]).length) {
     throw Object.assign(new Error("Work item not found"), { statusCode: 404 });
   }
-  const item = (rows as any)[0];
-  if (item.status === "completed" || item.status === "cancelled") {
-    throw Object.assign(new Error("Work item already " + item.status), {
-      statusCode: 400,
-    });
+  const item = (rows as any)[0] as WorkItemScopeRow;
+  if (item.status === 'completed' || item.status === 'cancelled') {
+    throw Object.assign(new Error('Work item already ' + item.status), { statusCode: 400 });
   }
   const { roleKeys } = await getUserRoleContext(userId);
-  const isPrivileged = roleKeys.some((r) =>
-    [
-      "super_admin",
-      "admin",
-      "ho_hr",
-      "hr_branch",
-      "branch_head",
-      "operations_head",
-    ].includes(r),
+  const isPrivileged = roleKeys.some(r => ITEM_PRIVILEGED_ROLES.includes(r));
+  const isAssignee = item.assigned_to_user_id === userId;
+  if (!isAssignee && !isPrivileged) {
+    throw Object.assign(new Error('Not authorized to ' + action + ' this work item'), { statusCode: 403 });
+  }
+  // The assignee may always act on their own item; a privileged caller (other than the org-wide roles)
+  // may only act on items inside their own branch / scope.
+  if (!isAssignee && !(await workItemInCallerScope(userId, item))) {
+    throw Object.assign(new Error('Forbidden: this work item is outside your branch / assigned scope'), { statusCode: 403 });
+  }
+}
+
+/** Read access for item detail endpoints (awol-context, priority): assignee, role-queue member in scope, or privileged in scope. */
+export async function assertWorkItemReadAccess(userId: string, workItemId: string): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT assigned_to_user_id, assigned_to_role, status, branch_id, entity_type, entity_id FROM work_item WHERE id = ? LIMIT 1',
+    [workItemId]
   );
-  if (item.assigned_to_user_id !== userId && !isPrivileged) {
-    throw Object.assign(
-      new Error("Not authorized to " + action + " this work item"),
-      { statusCode: 403 },
-    );
+  if (!(rows as any[]).length) {
+    throw Object.assign(new Error('Work item not found'), { statusCode: 404 });
+  }
+  const item = (rows as any)[0] as WorkItemScopeRow;
+  if (item.assigned_to_user_id === userId) return;
+  const { roleKeys } = await getUserRoleContext(userId);
+  const holdsQueueRole = !!item.assigned_to_role && roleKeys.includes(item.assigned_to_role);
+  const allowedRole = holdsQueueRole || roleKeys.some(r => ITEM_PRIVILEGED_ROLES.includes(r) || r === 'hr' || (ORG_WIDE_EXEMPT_ROLES as readonly string[]).includes(r));
+  if (!allowedRole || !(await workItemInCallerScope(userId, item))) {
+    throw Object.assign(new Error('Forbidden: this work item is outside your branch / assigned scope'), { statusCode: 403 });
   }
 }
 
@@ -118,7 +158,7 @@ export async function createWorkItem(input: WorkItemInput): Promise<string> {
  * 16 pending exit clearances, 120 BGV checks stuck in manual_review/mismatch — 162 real
  * items with nowhere a human would see them.
  *
- * Nine placeholders in order: leave's (mgr.user_id, role-IN-list), exit clearance's
+ * Twelve placeholders in order: leave's (mgr.user_id, role-IN-list, org-wide flag, userId, userId), exit clearance's
  * (owner_user_id, owner_role), BGV's (role-IN-list), GRN's (role-IN-list for the
  * branch_head stage, role-IN-list for the finance_head stage), Branch Budget's (same
  * shape as GRN). getMyWorkItems() interpolates this after its own two placeholders
@@ -159,6 +199,11 @@ const CLEARANCE_OWNER_ROLES = [
 // shape rather than a dynamic IN list. The placeholder count in that literal SQL string
 // must be kept equal to CLEARANCE_OWNER_ROLES.length by hand — there is no way to derive
 // a literal's placeholder count from an array length at the template-string level.
+/** 1 when the caller holds an org-wide role (these keep the company-wide HR leave fallback), else 0. */
+function isOrgWideRoleSet(role: string, allRoles: readonly string[]): 0 | 1 {
+  return [role, ...allRoles].some((r) => (ORG_WIDE_EXEMPT_ROLES as readonly string[]).includes(r)) ? 1 : 0;
+}
+
 function paddedOwnerRoleParams(allRoles: readonly string[]): string[] {
   const matched = CLEARANCE_OWNER_ROLES.filter((r) => allRoles.includes(r));
   const padded: string[] = [...matched];
@@ -218,7 +263,15 @@ const DERIVED_REGISTRY_UNION_SQL = `
          JOIN employees e ON e.id = lr.employee_id
          LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
         WHERE LOWER(COALESCE(lr.status, '')) = 'pending'
-          AND (mgr.user_id = ? OR ? IN ('hr', 'hr_head', 'admin', 'super_admin'))
+          -- Branch scoping (owner ruling 2026-10-01): the HR fallback is limited to the caller's own branch /
+          -- assigned branches. The 3rd placeholder is 1 for org-wide roles (super_admin, admin ...).
+          AND (mgr.user_id = ?
+               OR (? IN ('hr', 'hr_head', 'admin', 'super_admin')
+                   AND (? = 1
+                        OR e.branch_id IN (SELECT vb.branch_id FROM employees vb WHERE vb.user_id = ? AND vb.branch_id IS NOT NULL
+                                           UNION
+                                           SELECT s.branch_id FROM user_assignment_scope s
+                                            WHERE s.user_id = ? AND s.active_status = 1 AND s.branch_id IS NOT NULL))))
        UNION ALL
        /*
         * Exit clearance tasks, derived for the same reason as leave: FF_CLEARANCE_PENDING is
@@ -361,6 +414,7 @@ export async function getMyWorkItems(
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
   const safeOffset = Math.max(0, Number(offset) || 0);
   const ownerRoleParams = paddedOwnerRoleParams(allRoles);
+  const orgWide = isOrgWideRoleSet(role, allRoles);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM (
        SELECT wi.id,
@@ -413,23 +467,10 @@ export async function getMyWorkItems(
               merged.due_at ASC,
               merged.created_at DESC
      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    // work_item(userId, role) -> work_inbox_item(userId) -> leave(userId, role) ->
+    // work_item(userId, role) -> work_inbox_item(userId) -> leave(userId, role, orgWide, userId, userId) ->
     // exit(userId, ...CLEARANCE_OWNER_ROLES.length owner-role slots) -> bgv(role) ->
     // grn(role, role) -> budget(role, role)
-    [
-      userId,
-      role,
-      userId,
-      userId,
-      role,
-      userId,
-      ...ownerRoleParams,
-      role,
-      role,
-      role,
-      role,
-      role,
-    ],
+    [userId, role, userId, userId, role, orgWide, userId, userId, userId, ...ownerRoleParams, role, role, role, role, role]
   );
   return rows;
 }
@@ -446,6 +487,7 @@ export async function getDerivedRegistryItems(
 ) {
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 200));
   const ownerRoleParams = paddedOwnerRoleParams(allRoles);
+  const orgWide = isOrgWideRoleSet(role, allRoles);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM (
        ${DERIVED_REGISTRY_UNION_SQL}
@@ -455,9 +497,9 @@ export async function getDerivedRegistryItems(
               merged.due_at ASC,
               merged.created_at DESC
      LIMIT ${safeLimit}`,
-    // leave(userId, role) -> exit(userId, ...CLEARANCE_OWNER_ROLES.length owner-role slots) -> bgv(role) ->
+    // leave(userId, role, orgWide, userId, userId) -> exit(userId, ...CLEARANCE_OWNER_ROLES.length owner-role slots) -> bgv(role) ->
     // grn(role, role) -> budget(role, role)
-    [userId, role, userId, ...ownerRoleParams, role, role, role, role, role],
+    [userId, role, orgWide, userId, userId, userId, ...ownerRoleParams, role, role, role, role, role]
   );
   return rows;
 }

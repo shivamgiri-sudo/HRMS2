@@ -2,185 +2,16 @@ import { dialerQuery } from "../../db/dialerDb.js";
 import mysql from "mysql2/promise";
 import { env } from "../../config/env.js";
 import type { RowDataPacket } from "mysql2";
+import { getInboundProject, getInboundProjects, type InboundProject } from "../call-master/inbound-projects.js";
 
 // ─── Project Configuration (mirrors Tausif's Mydashboards) ─────────────────────
 
-interface ProjectConfig {
-  key: string;
-  name: string;
-  icon: string;
-  color: string;
-  table: string;
-  pattern: "A" | "B";
-  campaigns: string[];
-  mandate: number;
-  required: number;
-  hasFCR: boolean;
-  fcrClientId?: number;
-  clientId?: string;
-}
+type ProjectConfig = InboundProject;
 
-const PROJECTS: ProjectConfig[] = [
-  {
-    key: "gnc",
-    name: "GNC",
-    icon: "\u{1F6D2}",
-    color: "#2E86C1",
-    table: "cdr_in_4",
-    pattern: "A",
-    campaigns: [
-      "GNC_Order_Related",
-      "GNC_Product_Quality",
-      "GNC_Other_Queries",
-      "GNC_Product_Info",
-      "GNC_Offer_Order",
-      "GNC_Authentication",
-    ],
-    mandate: 8,
-    required: 6,
-    hasFCR: false,
-    clientId: "409",
-  },
-  {
-    key: "bellavita",
-    name: "Bellavita",
-    icon: "\u{1F338}",
-    color: "#E67E22",
-    table: "cdr_in_11_5",
-    pattern: "A",
-    campaigns: [
-      "H_Bellavita_Luxury",
-      "E_Bellavita_Organic",
-      "E_Bellavita_Luxury",
-      "H_Bellavita_Organic",
-      "H_Bevzilla_Complaint",
-      "H_Bevzilla_CC_Agent",
-      "E_Bevzilla_CC_Agent",
-      "H_Bevzilla_Order",
-      "E_Bevzilla_Order",
-      "E_Bevzilla_Complaint",
-      "E_Emb_Existing_Order",
-      "H_Bevzilla_Product",
-      "H_Emb_New_Order",
-      "H_Emb_Existing_Order",
-      "E_Bevzilla_Product",
-      "E_Emb_New_Order",
-    ],
-    mandate: 14,
-    required: 12,
-    hasFCR: false,
-    clientId: "375",
-  },
-  {
-    key: "clovia",
-    name: "Clovia",
-    icon: "\u{1F457}",
-    color: "#27AE60",
-    table: "cdr_in_250",
-    pattern: "A",
-    campaigns: ["Clovia_English", "Clovia_Hindi"],
-    mandate: 7,
-    required: 6,
-    hasFCR: false,
-    clientId: "468",
-  },
-  {
-    key: "neemans",
-    name: "Neemans",
-    icon: "\u{1F45F}",
-    color: "#8E44AD",
-    table: "cdr_in_249",
-    pattern: "B",
-    campaigns: ["Neemans_IB"],
-    mandate: 10,
-    required: 10,
-    hasFCR: true,
-    fcrClientId: 475,
-    clientId: "475",
-  },
-  {
-    key: "viega",
-    name: "Viega",
-    icon: "\u{1F6B0}",
-    color: "#E74C3C",
-    table: "cdr_in_249",
-    pattern: "B",
-    campaigns: ["Viega"],
-    mandate: 2,
-    required: 2,
-    hasFCR: false,
-    clientId: "352",
-  },
-  {
-    key: "exicom",
-    name: "Exicom",
-    icon: "⚡",
-    color: "#3498DB",
-    table: "cdr_in_9",
-    pattern: "B",
-    campaigns: ["Exicom_TC_Battery", "Exicom_EV_Battery", "EV_Charger833"],
-    mandate: 5,
-    required: 5,
-    hasFCR: false,
-    clientId: "326",
-  },
-  {
-    key: "dubangladesh",
-    name: "DU Bangladesh",
-    icon: "\u{1F1E7}\u{1F1E9}",
-    color: "#F39C12",
-    table: "cdr_in_4",
-    pattern: "B",
-    campaigns: [
-      "DU_Bangladesh_Bangla",
-      "DU_Bangladesh_Eng",
-      "DU_Bangladesh_Hindi",
-    ],
-    mandate: 3,
-    required: 3,
-    hasFCR: false,
-    clientId: "380",
-  },
-  // Live on cdr_in_249 (10 language-variant campaigns), confirmed live
-  // 2026-09-15: ~1,700 calls/30 days, active through today. required/mandate
-  // set to 9 -- the observed daily distinct-agent-login count (8-9 over the
-  // last 14 days), not an invented target. No clientId set: not verified
-  // against data_master_in, and this process has no FCR tracking anyway.
-  {
-    key: "dalmia",
-    name: "Dalmia",
-    icon: "\u{1F3ED}",
-    color: "#16A085",
-    table: "cdr_in_249",
-    pattern: "B",
-    campaigns: [
-      "Dalmia_Hindi",
-      "Dalmia_English",
-      "Dalmia_Kannada",
-      "Dalmia_Tamil",
-      "Dalmia_Bengoli",
-      "Dalmia_Malayalam",
-      "Dalmia_Odiya",
-      "Dalmia_Marathi",
-      "Dalmia_Telugu",
-      "Dalmia_Assamese",
-    ],
-    mandate: 9,
-    required: 9,
-    hasFCR: false,
-  },
-];
-
-export function getProjectsMeta() {
-  return PROJECTS.map((p) => ({
-    key: p.key,
-    name: p.name,
-    icon: p.icon,
-    color: p.color,
-    mandate: p.mandate,
-    required: p.required,
-    hasFCR: p.hasFCR,
-    clientId: p.clientId,
+export async function getProjectsMeta() {
+  return (await getInboundProjects()).map(p => ({
+    key: p.key, name: p.name, icon: p.icon, color: p.color,
+    mandate: p.mandate, required: p.required, hasFCR: p.hasFCR, clientId: p.clientId,
   }));
 }
 
@@ -338,9 +169,10 @@ export async function getInboundSummary(
   const cached = cacheGet<ProjectDailyRow[]>(cacheKey);
   if (cached) return cached;
 
+  const allProjects = await getInboundProjects();
   const projectsToQuery = projectKeys?.length
-    ? PROJECTS.filter((p) => projectKeys.includes(p.key))
-    : PROJECTS;
+    ? allProjects.filter(p => projectKeys.includes(p.key))
+    : allProjects;
 
   const results = await Promise.all(
     projectsToQuery.map(async (p) => {
@@ -444,7 +276,7 @@ export async function getInboundTrend(
   endDate: string,
   projectKey: string,
 ): Promise<TrendRow[]> {
-  const p = PROJECTS.find((proj) => proj.key === projectKey);
+  const p = await getInboundProject(projectKey);
   if (!p) return [];
 
   const cacheKey = `ib-trend:${projectKey}:${startDate}:${endDate}`;
@@ -501,9 +333,10 @@ export async function getConsolidatedTrend(
   endDate: string,
   projectKeys?: string[],
 ): Promise<ConsolidatedTrendRow[]> {
+  const allProjects = await getInboundProjects();
   const projects = projectKeys?.length
-    ? PROJECTS.filter((p) => projectKeys.includes(p.key))
-    : PROJECTS;
+    ? allProjects.filter(p => projectKeys.includes(p.key))
+    : allProjects;
 
   const allTrends = await Promise.all(
     projects.map((p) => getInboundTrend(startDate, endDate, p.key)),
@@ -563,11 +396,8 @@ export interface HourlyRow {
   sl: number;
 }
 
-export async function getProjectHourly(
-  projectKey: string,
-  date: string,
-): Promise<HourlyRow[]> {
-  const p = PROJECTS.find((proj) => proj.key === projectKey);
+export async function getProjectHourly(projectKey: string, date: string): Promise<HourlyRow[]> {
+  const p = await getInboundProject(projectKey);
   if (!p) return [];
 
   const placeholders = p.campaigns.map(() => "?").join(",");

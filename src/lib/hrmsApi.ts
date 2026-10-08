@@ -198,10 +198,43 @@ async function fetchOnce(
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 30000, signal?: AbortSignal): Promise<T> {
+/** The browser's own wording for a request that never got a response (Chrome / Firefox / Safari). */
+function isNetworkFailure(err: unknown): boolean {
+  return err instanceof TypeError && /failed to fetch|networkerror|load failed|network request failed/i.test(err.message);
+}
+
+export const NETWORK_FAILURE_MESSAGE =
+  "Could not reach the HRMS server. Check your connection and try again — if a release is going out, the server is back within a minute.";
+
+/**
+ * "Failed to fetch" means the request never got an answer — most often the backend restarting during
+ * a deploy, or a dropped connection. A GET is safe to repeat, so it is retried once after a short
+ * pause; a write is never retried (it may already have landed) and only gets a readable message.
+ */
+async function fetchWithNetworkRetry(
+  normalizedPath: string, method: string, body: unknown, timeoutMs: number, signal?: AbortSignal,
+): Promise<Response> {
+  try {
+    return await fetchOnce(normalizedPath, method, body, timeoutMs, signal);
+  } catch (err) {
+    if (!isNetworkFailure(err)) throw err;
+    if (method.toUpperCase() === "GET" && !signal?.aborted) {
+      await new Promise((r) => setTimeout(r, 1500));
+      try {
+        return await fetchOnce(normalizedPath, method, body, timeoutMs, signal);
+      } catch (retryErr) {
+        if (!isNetworkFailure(retryErr)) throw retryErr;
+      }
+    }
+    throw new Error(NETWORK_FAILURE_MESSAGE);
+  }
+}
+
+// 600s default (was 30s): long-running actions were aborted client-side while the server was still working.
+async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 600000, signal?: AbortSignal): Promise<T> {
   const normalizedPath = normalizeRequestPath(path);
 
-  let res = await fetchOnce(normalizedPath, method, body, timeoutMs, signal);
+  let res = await fetchWithNetworkRetry(normalizedPath, method, body, timeoutMs, signal);
 
   // On 401, try a silent token refresh once and retry the original request
   if (res.status === 401 && !path.includes("/api/auth/")) {

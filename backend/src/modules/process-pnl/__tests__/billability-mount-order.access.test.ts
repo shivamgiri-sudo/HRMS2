@@ -62,7 +62,9 @@ function appFor(role: string) {
 
 beforeEach(() => {
   execute.mockReset();
-  execute.mockResolvedValue([[], []]);
+  // payroll_branch is branch-scoped: its own employee row supplies the branch it is pinned to.
+  execute.mockImplementation(async (sql: string) =>
+    /FROM employees/.test(sql) && /user_id/.test(sql) ? [[{ branch_id: "b1", id: "e1" }], []] : [[], []]);
 });
 
 describe("billability API reached past processPnlRouter", () => {

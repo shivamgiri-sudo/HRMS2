@@ -66,17 +66,14 @@ export default function NativeRosterCapacityConfig() {
 
     setLoading(true);
     try {
-      // Fetch all 7 days config
-      const promises = DAYS.map(day =>
-        hrmsApi
-          .get<{ success: boolean; data: CapacityConfig | null }>(`/api/roster-capacity/config/${selectedProcess}/${day.value}`)
-          .then(result => result.data ?? null)
-          .catch(() => null)
+      // One call for every configured day; unconfigured days are absent and the
+      // grid shows defaults for them.
+      const result = await hrmsApi.get<{ success: boolean; data: CapacityConfig[] }>(
+        `/api/roster-capacity/config/${selectedProcess}`
       );
-
-      const results = await Promise.all(promises);
-      setConfigs(results.filter(Boolean) as CapacityConfig[]);
+      setConfigs(Array.isArray(result?.data) ? result.data : []);
     } catch (error) {
+      setConfigs([]);
       console.error('Failed to fetch configs:', error);
     } finally {
       setLoading(false);

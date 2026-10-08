@@ -33,7 +33,9 @@ vi.mock("../../../shared/accessGuard.js", () => ({
   getEmployeeForUser: vi.fn(async () => ({ id: "emp-actor" })),
   hasRole: vi.fn(async () => true),
 }));
+vi.mock("../../../shared/enterpriseScope.js", () => ({ canViewEmployee: vi.fn(async () => true) }));
 vi.mock("../../../shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "admin", "ceo"],
   hasAnyRole: vi.fn(async () => true),
   hasScopedAccess: vi.fn(async () => true),
   buildScopeWhereClause: vi.fn(async () => ({ sql: "1=1", params: [] })),
@@ -63,8 +65,16 @@ beforeEach(() => {
   dbExecute.mockReset();
   // The route reads the current status for its FSM check before doing anything else.
   dbExecute.mockImplementation(async (sql: string) => {
-    if (/SELECT status FROM exit_request/.test(sql))
-      return [[{ status: "manager_review" }], []];
+    // One combined prefetch now returns the current status, the employee's scope columns and
+    // the caller's roles (f65a43083 folded the separate status / user_roles reads into it).
+    if (/er\.status\s+AS current_status[\s\S]*FROM exit_request er/.test(sql)) {
+      return [[{
+        current_status: "manager_review",
+        employee_id: "emp-1",
+        roles: "hr",
+        is_reporting_manager: 1,
+      }], []];
+    }
     return [[], []];
   });
 });

@@ -73,6 +73,9 @@ vi.mock("@/components/layout/DashboardLayout", () => ({
   DashboardLayout: ({ children }: { children: React.ReactNode }) => children,
 }));
 
+// useApprovalFocus reads the router's search params; this test renders without a Router.
+vi.mock("@/hooks/useApprovalFocus", () => ({ useApprovalFocus: () => null }));
+
 // See file header: real Radix Tabs.Content only mounts the active panel with no click available
 // to switch tabs under renderToStaticMarkup. Passthrough so all 3 tab panels render at once,
 // which is what lets Section A assert Invoices/Credit Notes content in the same pass.

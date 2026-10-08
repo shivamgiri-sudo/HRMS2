@@ -1162,7 +1162,8 @@ export async function attritionDeepDive(
            ) AS early_quit_rate,
            -- Emitted so the missing reason data reads as a finding, not a blank column.
            ROUND(
-             SUM(NULLIF(TRIM(COALESCE(er.exit_reason_category, er.resignation_reason, '')), '') IS NOT NULL)
+             SUM(COALESCE(NULLIF(TRIM(COALESCE(er.exit_reason_category, er.resignation_reason, '')), ''),
+                          (SELECT NULLIF(TRIM(elm.left_reason), '') FROM employee_legacy_meta elm WHERE elm.employee_id = e.id AND TRIM(elm.left_reason) <> '' LIMIT 1)) IS NOT NULL)
              * 100.0 / NULLIF(COUNT(*), 0),
              2
            ) AS reason_captured_pct

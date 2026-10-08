@@ -19,6 +19,7 @@ import type {
   ExecResult,
 } from "./types.js";
 import { calculateWeekoffEligibility } from "../../payroll/weekoff-eligibility.service.js";
+import { getPayableDaysOverrides } from "../../payroll/payroll-cc-attendance.service.js";
 import {
   ATTENDANCE_STATUS_CODE,
   resolveMissingDayCell,
@@ -239,12 +240,15 @@ export async function attendanceRegisterMonthly(
       // Catches employees incorrectly marked inactive (bulk-import issue) who still have biometric/import
       // records generated for them. The exit-date guard prevents genuinely gone ex-employees (whose
       // date_of_exit was never backfilled) from re-appearing if they somehow have stale records.
-      " OR ((e.date_of_exit IS NULL OR e.date_of_exit >= ?) AND" +
+      " OR ((COALESCE(e.date_of_exit, e.date_of_leaving) IS NULL OR COALESCE(e.date_of_exit, e.date_of_leaving) >= ?) AND" +
       "      EXISTS (SELECT 1 FROM attendance_daily_record _x WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?))" +
       // Arm 3: employee whose DOJ falls within the report period and who has not exited before it.
       // These employees have joined recently and the attendance pipeline may not have generated
       // records for them yet — they should still appear so their post-DOJ days are filled in.
-      " OR (DATE(e.date_of_joining) BETWEEN ? AND ? AND (e.date_of_exit IS NULL OR e.date_of_exit >= ?))" +
+      " OR (DATE(e.date_of_joining) BETWEEN ? AND ? AND (COALESCE(e.date_of_exit, e.date_of_leaving) IS NULL OR COALESCE(e.date_of_exit, e.date_of_leaving) >= ?))" +
+      // Arm 4: exited on/after period start (incl. mid-month leavers) — shown even with zero
+      // attendance rows, so partial-month attendance (days 1..exit) is never dropped.
+      " OR (COALESCE(e.date_of_exit, e.date_of_leaving) >= ? AND DATE(e.date_of_joining) <= ?)" +
       ")",
   );
   // Exclude employees at inactive branches unless no branch is assigned.
@@ -261,6 +265,8 @@ export async function attendanceRegisterMonthly(
     firstDay,
     lastDay,
     firstDay,
+    firstDay,
+    lastDay,
   ] as const;
   // WHERE-only params (no JOIN binds) — used by the pre-pagination count/page queries.
   const whereOnlyParams: unknown[] = [...preJoinParams, ...armBinds];
@@ -297,7 +303,7 @@ export async function attendanceRegisterMonthly(
     // clauses[n-1] = branch EXISTS clause (skipped — branch joins are done in attSql)
     const fastWhere = [
       ...clauses.slice(0, clauses.length - 2),
-      "(e.active_status = 1 OR (e.date_of_exit IS NULL OR e.date_of_exit >= ?))",
+      "(e.active_status = 1 OR (COALESCE(e.date_of_exit, e.date_of_leaving) IS NULL OR COALESCE(e.date_of_exit, e.date_of_leaving) >= ?))",
     ];
     const fastParams = [...preJoinParams, firstDay];
 
@@ -353,7 +359,7 @@ export async function attendanceRegisterMonthly(
       CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
       CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
       e.date_of_joining,
-      e.date_of_exit,
+      COALESCE(e.date_of_exit, e.date_of_leaving) AS date_of_exit,
       -- Display-only, DD-MMM-YYYY. Kept separate from the raw date_of_joining above, which
       -- stays a real DATE value because the pivot below does day-boundary arithmetic on it.
       DATE_FORMAT(e.date_of_joining, '%d-%m-%Y') AS doj_display,
@@ -431,6 +437,13 @@ export async function attendanceRegisterMonthly(
   const todayTs = new Date();
   todayTs.setHours(0, 0, 0, 0);
 
+  // Payroll Head payable-days overrides (migration 1653): payroll pays these, so the register's
+  // SalDays must show them. Same cap as payroll — never more than the days in the month.
+  const salDaysOverrides = await getPayableDaysOverrides(
+    month,
+    Array.from(empMap.keys()),
+  );
+
   const pivotRows = await Promise.all(
     Array.from(empMap.values()).map(async (emp, idx) => {
       // Normalise date_of_joining and date_of_exit to midnight for day-boundary comparisons.
@@ -486,12 +499,11 @@ export async function attendanceRegisterMonthly(
 
       // Capped at the length of the month — see computeSalDays() in shared/attendanceDayCounts.ts
       // for why the sum is a ceiling and not a running total.
-      const salDays = computeSalDays(
-        paidBase,
-        eligibleWO,
-        holiday,
-        daysInMonth,
-      );
+      const salDays = salDaysOverrides.has(emp.employee_id)
+        ? Math.round(
+            Math.min(salDaysOverrides.get(emp.employee_id)!, daysInMonth) * 100,
+          ) / 100
+        : computeSalDays(paidBase, eligibleWO, holiday, daysInMonth);
 
       return {
         sno: idx + 1,

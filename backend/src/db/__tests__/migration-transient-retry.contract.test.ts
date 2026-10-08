@@ -142,7 +142,7 @@ describe("startup migrations retry transient DB errors instead of refusing to bo
   it("stays compatible with existing callers", () => {
     const source = read(RUNNER);
     // `attempt` must be defaulted, or server.ts / preflight would have to pass it.
-    expect(source).toMatch(/runPendingMigrations\(attempt = 1\)/);
+    expect(source).toMatch(/runPendingMigrations\(\s*attempt = 1,?\s*\)/);
   });
 
   /**

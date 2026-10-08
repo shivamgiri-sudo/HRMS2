@@ -6,10 +6,7 @@ import {
   type UtilizationInputRecord,
 } from "./onfido-wfm-inputs.service.js";
 import {
-  averageKnown,
   bucketKeyForDay,
-  computeUtilization,
-  sumInputs,
   weekCommencing,
   type Granularity,
   type UtilizationDerived,
@@ -17,7 +14,8 @@ import {
 } from "./onfido-overview-report.pure.js";
 
 /**
- * Utilization report (Utilization Format.xlsx). Columns, order and formulas follow the sheet.
+ * Utilization report (Utilization Format.xlsx). Import-driven: every WFM / calculated column is
+ * the uploaded value as stored, never recomputed.
  *
  * Real from the uploaded Onfido reports: Actual Task (DOC tasks), POA Live (POA tasks), AHT,
  * POA AHT, GD%, MCN%, SLA, APS and Escalated Task (DOC tasks flagged escalated).
@@ -116,26 +114,18 @@ const emptyInputs = (): UtilizationInputs => ({
   escalatedTask: null,
 });
 
-/** An uploaded (static) value wins over the calculation; a missing one falls back to it. */
+/** Uploaded (static) values exactly as stored; a column nobody uploaded is null (blank), never calculated. */
 export function applyUploadedValues(
-  calculated: UtilizationDerived,
   manual: UtilizationInputRecord | undefined,
 ): UtilizationDerived {
-  if (!manual) return calculated;
   return {
-    utilizationForecast:
-      manual.fixedUtilizationForecast ?? calculated.utilizationForecast,
-    utilizationWithAdhoc:
-      manual.fixedUtilizationWithAdhoc ?? calculated.utilizationWithAdhoc,
-    utilizationWithoutAdhoc:
-      manual.fixedUtilizationWithoutAdhoc ?? calculated.utilizationWithoutAdhoc,
-    utilizationWithAdhocPct:
-      manual.fixedUtilizationWithAdhocPct ?? calculated.utilizationWithAdhocPct,
-    utilizationWithoutAdhocPct:
-      manual.fixedUtilizationWithoutAdhocPct ??
-      calculated.utilizationWithoutAdhocPct,
-    poaAnsweringPct: manual.fixedPoaAnsweringPct ?? calculated.poaAnsweringPct,
-    escalatedPct: manual.fixedEscalatedPct ?? calculated.escalatedPct,
+    utilizationForecast: manual?.fixedUtilizationForecast ?? null,
+    utilizationWithAdhoc: manual?.fixedUtilizationWithAdhoc ?? null,
+    utilizationWithoutAdhoc: manual?.fixedUtilizationWithoutAdhoc ?? null,
+    utilizationWithAdhocPct: manual?.fixedUtilizationWithAdhocPct ?? null,
+    utilizationWithoutAdhocPct: manual?.fixedUtilizationWithoutAdhocPct ?? null,
+    poaAnsweringPct: manual?.fixedPoaAnsweringPct ?? null,
+    escalatedPct: manual?.fixedEscalatedPct ?? null,
   };
 }
 
@@ -173,7 +163,7 @@ export function buildUtilizationDay(
     month: monthLabel(date),
     wc: weekCommencing(date),
     inputs,
-    derived: applyUploadedValues(computeUtilization(inputs), manual),
+    derived: applyUploadedValues(manual),
     aht: doc?.aht ?? null,
     poaAht: poa?.aht ?? null,
     gdRatio: gd?.gd ?? null,
@@ -257,7 +247,10 @@ export async function getUtilizationDays(
   );
 }
 
-/** MTD row: complete column sums, sheet formulas on the sums, AVERAGE for GD/MCN/SLA/APS. */
+/**
+ * MTD row: no formulas. Nothing is totalled or averaged over the uploaded columns, so every MTD
+ * cell is blank; only the report-sourced AHT / POA AHT (plain averages over the raw reports) is kept.
+ */
 export function buildMtd(
   days: readonly UtilizationDay[],
   aht: number | null,
@@ -266,22 +259,17 @@ export function buildMtd(
   const withData = days.filter((d) => d.inputs.actualTask !== null);
   const through =
     withData.length > 0 ? withData[withData.length - 1].date : null;
-  const covered = through === null ? [] : days.filter((d) => d.date <= through);
-  const inputs =
-    covered.length > 0
-      ? sumInputs(covered.map((d) => d.inputs))
-      : emptyInputs();
   return {
     throughDate: through,
     mtd: {
-      inputs,
-      derived: computeUtilization(inputs),
+      inputs: emptyInputs(),
+      derived: applyUploadedValues(undefined),
       aht,
       poaAht,
-      gdRatio: averageKnown(covered.map((d) => d.gdRatio)),
-      mcnRatio: averageKnown(covered.map((d) => d.mcnRatio)),
-      slaRatio: averageKnown(covered.map((d) => d.slaRatio)),
-      apsRatio: averageKnown(covered.map((d) => d.apsRatio)),
+      gdRatio: null,
+      mcnRatio: null,
+      slaRatio: null,
+      apsRatio: null,
     },
   };
 }
@@ -320,7 +308,15 @@ export interface UtilizationTrendPoint {
   utilizationWithoutAdhocPct: number | null;
 }
 
-/** Utilization % per bucket for the Overview chart; a bucket is null unless every input it needs is present. */
+/** Mean of the uploaded values that exist (null when none); no value is derived from other columns. */
+const meanStored = (vs: readonly (number | null)[]): number | null => {
+  const known = vs.filter((v): v is number => v !== null);
+  return known.length === 0
+    ? null
+    : Math.round((known.reduce((a, b) => a + b, 0) / known.length) * 10) / 10;
+};
+
+/** Utilization % per bucket for the Overview chart, from the uploaded % values only. */
 export function utilizationTrend(
   days: readonly UtilizationDay[],
   granularity: Granularity,
@@ -331,18 +327,9 @@ export function utilizationTrend(
     const key = bucketKeyForDay(d.date, granularity);
     groups.set(key, [...(groups.get(key) ?? []), d]);
   }
-  return [...groups.entries()].map(([bucket, group]) => {
-    const derived = computeUtilization(sumInputs(group.map((d) => d.inputs)));
-    return {
-      bucket,
-      utilizationWithAdhocPct:
-        derived.utilizationWithAdhocPct === null
-          ? null
-          : Math.round(derived.utilizationWithAdhocPct * 10) / 10,
-      utilizationWithoutAdhocPct:
-        derived.utilizationWithoutAdhocPct === null
-          ? null
-          : Math.round(derived.utilizationWithoutAdhocPct * 10) / 10,
-    };
-  });
+  return [...groups.entries()].map(([bucket, group]) => ({
+    bucket,
+    utilizationWithAdhocPct: meanStored(group.map((d) => d.derived.utilizationWithAdhocPct)),
+    utilizationWithoutAdhocPct: meanStored(group.map((d) => d.derived.utilizationWithoutAdhocPct)),
+  }));
 }

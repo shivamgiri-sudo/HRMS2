@@ -63,28 +63,19 @@ router.get(
   }),
 );
 
-router.patch(
-  "/:id/priority",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: any) => {
-    const { priority } = req.body as {
-      priority: "low" | "medium" | "high" | "critical";
-    };
-    const allowed = ["low", "medium", "high", "critical"];
-    if (!allowed.includes(priority)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Invalid priority value" });
-    }
-    await (
-      await import("../../db/mysql.js")
-    ).db.execute(
-      `UPDATE work_item SET priority=?, updated_at=NOW() WHERE id=?`,
-      [priority, req.params.id],
-    );
-    return res.json({ success: true });
-  }),
-);
+router.patch("/:id/priority", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: any) => {
+  const { priority } = req.body as { priority: "low" | "medium" | "high" | "critical" };
+  const allowed = ["low", "medium", "high", "critical"];
+  if (!allowed.includes(priority)) {
+    return res.status(400).json({ success: false, error: "Invalid priority value" });
+  }
+  await svc.assertWorkItemReadAccess(req.authUser!.id, req.params.id);
+  await (await import("../../db/mysql.js")).db.execute(
+    `UPDATE work_item SET priority=?, updated_at=NOW() WHERE id=?`,
+    [priority, req.params.id]
+  );
+  return res.json({ success: true });
+}));
 
 router.get(
   "/my",
@@ -210,13 +201,12 @@ router.post(
   }),
 );
 
-router.get(
-  "/:id/awol-context",
-  h(async (req: AuthenticatedRequest, res: any) => {
-    const data = await getAwolContext(req.params.id);
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/:id/awol-context", h(async (req: AuthenticatedRequest, res: any) => {
+  // This endpoint had no authorization at all: any signed-in user could read any AWOL case.
+  await svc.assertWorkItemReadAccess(req.authUser!.id, req.params.id);
+  const data = await getAwolContext(req.params.id);
+  return res.json({ success: true, data });
+}));
 
 router.post(
   "/:id/awol/confirm",

@@ -196,8 +196,104 @@ export async function getPublicKitFile(token: string): Promise<{
 }
 
 /**
+ * eMudhra signing URLs are one-shot: once the signer has opened one, closing the
+ * tab or reloading gives "Invalid Page" for good, and the vendor then reports the
+ * session FAILED. The HRMS link must nonetheless stay usable until the signer has
+ * actually signed, so every "Proceed" that finds the stored session already used
+ * (or dead) starts a fresh vendor session over the same kit PDF.
+ */
+const DEAD_TX = ["failed", "expired", "cancelled", "abandoned_unresolved"];
+
+type KitTx = RowDataPacket & {
+  id: string; checklist_id: string; candidate_id: string | null; employee_id: string;
+  client_transaction_id: string | null; status: string; provider_url: string | null;
+  signer_email: string | null; initiated_by: string | null; initiated_at: Date | string;
+};
+
+async function latestKitTx(kitId: string): Promise<KitTx | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, checklist_id, candidate_id, employee_id, client_transaction_id, status,
+            provider_url, signer_email, initiated_by, initiated_at
+       FROM employee_document_esign_transaction
+      WHERE kit_id = ? AND scope = 'kit' ORDER BY initiated_at DESC LIMIT 1`,
+    [kitId],
+  );
+  return (rows[0] as KitTx | undefined) ?? null;
+}
+
+/**
+ * Start a new vendor session for a kit whose current one was already opened or is
+ * dead. Never runs for a signed kit, and first asks the vendor whether the old
+ * session was in fact completed, so a signature is never discarded.
+ */
+async function freshProviderSession(kitId: string, old: KitTx): Promise<string | null> {
+  const [lock] = await db.execute<RowDataPacket[]>(`SELECT GET_LOCK(?, 0) AS got`, [`kit-esign-${kitId}`]);
+  if (!Number(lock[0]?.got)) return null; // a parallel click is already creating one
+  try {
+    if (old.client_transaction_id) {
+      const { syncEsignStatus } = await import("../integrations/luckpay/luckpay-status.service.js");
+      const synced = await syncEsignStatus(String(old.client_transaction_id)).catch(() => null);
+      if (synced?.state === "completed") return "__signed__";
+    }
+    // A parallel click may have finished creating a session while we waited.
+    const current = await latestKitTx(kitId);
+    if (current && current.id !== old.id) return current.provider_url;
+
+    const [kitRows] = await db.execute<RowDataPacket[]>(
+      `SELECT f.storage_path, e.full_name, e.employee_code, b.branch_name, k.document_count
+         FROM employee_joining_esign_kit k
+         JOIN employee_joining_document_file f ON f.id = k.kit_file_id AND f.deleted_at IS NULL
+         JOIN employees e ON e.id = k.employee_id
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+        WHERE k.id = ? AND k.signed_file_id IS NULL LIMIT 1`,
+      [kitId],
+    );
+    const kit = kitRows[0];
+    if (!kit?.storage_path || !fs.existsSync(String(kit.storage_path))) return null;
+
+    const { luckpayClient, esignWithUrl } = await import("../integrations/luckpay/luckpay.client.js");
+    const clientTransactionId = luckpayClient.generateClientTransactionId("joining-kit");
+    const r = await Promise.race([
+      esignWithUrl({
+        filePath: String(kit.storage_path),
+        clientTransactionId,
+        signedBy: String(kit.full_name ?? kit.employee_code ?? "Employee"),
+        location: String(kit.branch_name ?? "India"),
+        reason: `Joining Documents Kit (${Number(kit.document_count ?? 0)} documents)`,
+      }),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("eSign provider timed out after 30 s")), 30_000)),
+    ]);
+    if (!r.providerUrl || !/^https?:/i.test(r.providerUrl) || /fail|error|reject|declin|cancel|expire/i.test(String(r.status ?? ""))) {
+      return null;
+    }
+    await db.execute(
+      `INSERT INTO employee_document_esign_transaction
+         (id, checklist_id, kit_id, scope, employee_id, candidate_id, document_code, provider,
+          client_transaction_id, provider_reference_id, signer_name, signer_email,
+          signer_location, signing_reason, status, provider_url, initiated_by)
+       VALUES (UUID(), ?, ?, 'kit', ?, ?, 'JOINING_KIT', 'luckpay', ?, ?, ?, ?, ?, 'Joining Documents Kit', ?, ?, ?)`,
+      [
+        old.checklist_id, kitId, old.employee_id, old.candidate_id,
+        clientTransactionId, r.providerReferenceId ?? null,
+        kit.full_name ?? null, old.signer_email, kit.branch_name ?? "India",
+        String(r.status ?? "initiated"), r.providerUrl, old.initiated_by,
+      ],
+    );
+    // The burned session no longer needs polling; the fresh row is now the latest.
+    await db.execute(
+      `UPDATE employee_document_esign_transaction SET status = 'cancelled' WHERE id = ? AND status <> 'cancelled'`,
+      [old.id],
+    ).catch(() => undefined);
+    return r.providerUrl;
+  } finally {
+    await db.execute(`SELECT RELEASE_LOCK(?)`, [`kit-esign-${kitId}`]).catch(() => undefined);
+  }
+}
+
+/**
  * Hand back the provider URL. Records that the signer opened it, which is the
- * only evidence we have that the link was actually reached.
+ * only evidence we have that the link was actually reached — and, because the
+ * vendor URL is one-shot, also what tells the next call the URL is used up.
  */
 export async function startKitEsign(params: {
   token: string;
@@ -209,35 +305,54 @@ export async function startKitEsign(params: {
   message: string | null;
 }> {
   const session = await getPublicKitSession(params.token);
-  await db
-    .execute(
-      `INSERT INTO employee_joining_document_audit_log
+  const employeeId = await kitEmployeeId(session.kitId);
+  let providerUrl = session.providerUrl;
+  let txStatus = session.txStatus;
+
+  const tx = await latestKitTx(session.kitId);
+  if (tx && session.status !== "signed" && !session.signedAt) {
+    const [opened] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM employee_joining_document_audit_log
+        WHERE employee_id = ? AND document_code = 'JOINING_KIT' AND action_type = 'KIT_ESIGN_OPENED'
+          AND created_at >= ? AND new_value LIKE ?`,
+      [employeeId, tx.initiated_at, `%${session.kitId}%`],
+    );
+    const used = Number(opened[0]?.n ?? 0) > 0;
+    if (used || DEAD_TX.includes(String(tx.status).toLowerCase()) || !tx.provider_url) {
+      try {
+        const fresh = await freshProviderSession(session.kitId, tx);
+        if (fresh === "__signed__") {
+          return { providerUrl: null, txStatus: "completed",
+            message: "These documents have already been signed. No further action is needed." };
+        }
+        if (fresh) { providerUrl = fresh; txStatus = "initiated"; }
+      } catch (e) {
+        console.warn("[joining-kit] fresh session failed:", e instanceof Error ? e.message : e);
+      }
+    }
+  }
+
+  await db.execute(
+    `INSERT INTO employee_joining_document_audit_log
        (id, employee_id, document_code, action_type, actor_type, new_value, ip_address, user_agent, created_at)
      VALUES (UUID(), ?, 'JOINING_KIT', 'KIT_ESIGN_OPENED', 'public_token', ?, ?, ?, NOW())`,
-      [
-        // employee_id is NOT NULL; the kit always has one.
-        await kitEmployeeId(session.kitId),
-        JSON.stringify({
-          kitId: session.kitId,
-          hasProviderUrl: Boolean(session.providerUrl),
-        }),
-        params.ipAddress ?? null,
-        params.userAgent ?? null,
-      ],
-    )
-    .catch((e) => {
-      console.warn(
-        "[joining-kit] audit KIT_ESIGN_OPENED failed:",
-        e instanceof Error ? e.message : e,
-      );
-    });
+    [
+      // employee_id is NOT NULL; the kit always has one.
+      employeeId,
+      JSON.stringify({ kitId: session.kitId, hasProviderUrl: Boolean(providerUrl) }),
+      params.ipAddress ?? null,
+      params.userAgent ?? null,
+    ],
+  ).catch((e) => {
+    console.warn("[joining-kit] audit KIT_ESIGN_OPENED failed:", e instanceof Error ? e.message : e);
+  });
 
   return {
-    providerUrl: session.providerUrl,
-    txStatus: session.txStatus,
-    message: session.providerUrl
+    providerUrl,
+    txStatus,
+    message: providerUrl
       ? null
-      : "The eSign provider is not available right now. Please contact HR — your documents can be signed manually.",
+      : "The eSign provider is not available right now. Please try again in a few minutes, or contact HR.",
   };
 }
 

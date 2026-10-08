@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { apiBaseUrl } from "@/lib/apiBase";
+import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,23 +48,20 @@ export function TaxDocumentsViewer({ employeeId }: TaxDocumentsViewerProps) {
     queryKey: ["my-tax-documents", employeeId],
     queryFn: async () => {
       const res = await hrmsApi.get<{success:boolean;data:any}>(`/api/employee-docs/${employeeId}`);
-      return res.data ?? [];
+      // /api/employee-docs returns every uploaded document (KYC, contracts...). This panel is for
+      // tax paperwork only; the rest are managed by HR and are not offered here.
+      return ((res.data ?? []) as any[]).filter((d) => TAX_DOCUMENT_TYPES.includes(String(d.document_type ?? "").toLowerCase()));
     },
     enabled: !!employeeId,
   });
 
   const handleDownload = async (fileUrl: string, fileName: string) => {
     try {
-      // Extract the path from the full URL if needed
-      const pathMatch = fileUrl.match(/employee-documents\/(.+)/);
-      const filePath = pathMatch ? pathMatch[1] : fileUrl;
+      // file_url is "/api/files/employee-documents/<file>" (older rows may hold a bare filename).
+      // The request must carry the session token, so it goes through hrmsApi, not a bare fetch.
+      const path = fileUrl.startsWith("/api/") ? fileUrl : `/api/files/employee-documents/${fileUrl.split("/").pop()}`;
+      const data = await hrmsApi.getBlob(path);
 
-      const HRMS_API = apiBaseUrl();
-      const fetchUrl = filePath?.startsWith("https://") ? filePath : `${HRMS_API}/api/files/documents/${filePath}`;
-      const resp = await fetch(fetchUrl);
-      const data = await resp.blob();
-
-      // Create download link
       const url = URL.createObjectURL(data);
       const a = document.createElement("a");
       a.href = url;
@@ -75,18 +72,19 @@ export function TaxDocumentsViewer({ employeeId }: TaxDocumentsViewerProps) {
       URL.revokeObjectURL(url);
     } catch (error) {
       console.error("Download error:", error);
+      toast.error("Could not download this document. Please try again or contact HR.");
     }
   };
 
   const getDocumentBadgeColor = (type: string) => {
     switch (type) {
-      case "W-2":
+      case "form_16":
         return "bg-blue-500/10 text-blue-600 border-blue-500/20";
-      case "1099":
+      case "investment_proof":
         return "bg-purple-500/10 text-purple-600 border-purple-500/20";
-      case "Tax Statement":
+      case "declaration_form":
         return "bg-green-500/10 text-green-600 border-green-500/20";
-      case "Tax Certificate":
+      case "tax_certificate":
         return "bg-orange-500/10 text-orange-600 border-orange-500/20";
       default:
         return "";
@@ -140,26 +138,31 @@ export function TaxDocumentsViewer({ employeeId }: TaxDocumentsViewerProps) {
                       {format(new Date(doc.uploaded_at), "MMM d, yyyy")}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setViewingDocument(doc)}
-                          title="View document"
-                        >
-                          <Eye className="h-4 w-4 mr-1" />
-                          View
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDownload(doc.file_url, doc.document_name)}
-                          title="Download document"
-                        >
-                          <Download className="h-4 w-4 mr-1" />
-                          Download
-                        </Button>
-                      </div>
+                      {doc.file_url ? (
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setViewingDocument(doc)}
+                            title="View document"
+                          >
+                            <Eye className="h-4 w-4 mr-1" />
+                            View
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDownload(doc.file_url, doc.document_name)}
+                            title="Download document"
+                          >
+                            <Download className="h-4 w-4 mr-1" />
+                            Download
+                          </Button>
+                        </div>
+                      ) : (
+                        // The server withholds stored files from the owner: show status, not dead buttons.
+                        <Badge variant={doc.verified ? "default" : "outline"}>{doc.verified ? "Verified" : "Under review"}</Badge>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -186,9 +189,8 @@ export function TaxDocumentsViewer({ employeeId }: TaxDocumentsViewerProps) {
                   <SelectValue placeholder="Select document type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="form_16">Form 16</SelectItem>
+                  {/* Form 16 / tax certificates are issued by the employer (HR uploads them). */}
                   <SelectItem value="investment_proof">Investment Proof</SelectItem>
-                  <SelectItem value="tax_certificate">Tax Certificate</SelectItem>
                   <SelectItem value="declaration_form">Declaration Form</SelectItem>
                 </SelectContent>
               </Select>

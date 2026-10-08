@@ -5,10 +5,22 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
-vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]) },
-  pingDb: vi.fn(),
-}));
+vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
+// Branch scoping (owner ruling 2026-10-01): these tests are about route behaviour, so the caller is an
+// org-wide role (super_admin). The real scope helpers still run on top of this resolved scope.
+vi.mock("../src/shared/enterpriseScope.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/shared/enterpriseScope.js")>();
+  return {
+    ...actual,
+    // canViewEmployee resolves the scope internally (not through the mocked export); an org-wide caller sees everyone.
+    canViewEmployee: vi.fn().mockResolvedValue(true),
+    resolveUserBusinessScope: vi.fn().mockResolvedValue({
+      userId: "user-1", roles: ["super_admin"], employeeId: null, employeeCode: null, branchId: null,
+      processId: null, lobId: null, departmentId: null, isSuperAdmin: true, isAdmin: false, isHr: false,
+      isPayroll: false, isFinance: false, assignments: [],
+    }),
+  };
+});
 vi.mock("../src/modules/payroll/payroll.service.js", () => ({
   payrollService: {
     listStructures: vi.fn(),
@@ -36,6 +48,8 @@ vi.mock("../src/middleware/requireRole.js", () => ({
       next(),
 }));
 vi.mock("../src/shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  hasOrgWideScope: vi.fn().mockResolvedValue(true),
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   hasAnyRole: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),
@@ -296,10 +310,27 @@ describe("PATCH /api/payroll/runs/:id/status", () => {
 // Prep Lines
 describe("GET /api/payroll/runs/:id/lines", () => {
   it("returns prep lines", async () => {
-    svc.listLines.mockResolvedValueOnce([fakeLine]);
-    const r = await request(app).get("/api/payroll/runs/run-1/lines").set(AUTH);
-    expect(r.status).toBe(200);
-    expect(r.body.data).toHaveLength(1);
+    // This URL is served by payroll-lines.compat.routes.ts, which app.ts mounts ahead of
+    // payroll.routes.ts and which queries the db directly — payrollService.listLines is never
+    // reached. It returns a paginated envelope { lines, total, page, limit }, not a bare array.
+    // mockReset first: unconsumed mockResolvedValueOnce values queued by earlier tests survive
+    // clearAllMocks and would be served ahead of this implementation.
+    mockExecute.mockReset();
+    mockExecute.mockImplementation(async (sql: string) => {
+      if (/COUNT\(\*\) AS total\s+FROM salary_prep_line spl/.test(String(sql))) return [[{ total: 1 }], []];
+      if (/FROM salary_prep_line spl/.test(String(sql))) return [[fakeLine], []];
+      return [[], []];
+    });
+    try {
+      const r = await request(app).get("/api/payroll/runs/run-1/lines").set(AUTH);
+      expect(r.status).toBe(200);
+      expect(r.body.data.lines).toHaveLength(1);
+      expect(r.body.data.lines[0].id).toBe("line-1");
+      expect(r.body.data).toMatchObject({ total: 1, page: 1 });
+    } finally {
+      mockExecute.mockReset();
+      mockExecute.mockResolvedValue([[], []]);
+    }
   });
 });
 

@@ -13,7 +13,7 @@
  *   - candidate_onboarding_nominee  (onboarding nominee)
  *
  * Usage:
- *   node backend/scripts/fill-ispart-missing-columns.mjs
+ *   node --env-file=backend/.env backend/scripts/fill-ispart-missing-columns.mjs
  */
 
 import mysql from "mysql2/promise";
@@ -21,15 +21,8 @@ import XLSX from "xlsx";
 import path from "path";
 import os from "os";
 
-const HRMS = {
-  host: "122.184.128.90",
-  port: 3306,
-  user: "shivam_user",
-  password: "qwersdfg!@#hjk",
-  database: "mas_hrms",
-  connectTimeout: 15000,
-};
-const DOWNLOADS = path.join(os.homedir(), "Downloads");
+const HRMS = { host:'122.184.128.90', port:3306, user:'shivam_user', password:process.env.DB_PASSWORD, database:'mas_hrms', connectTimeout:15000 };
+const DOWNLOADS = path.join(os.homedir(), 'Downloads');
 
 async function query(conn, sql, params = []) {
   const [rows] = await conn.query(sql, params);

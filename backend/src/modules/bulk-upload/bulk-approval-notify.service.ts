@@ -25,6 +25,7 @@ import { emailService } from "../communication/email.service.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import type { ApprovalStage, BatchRecord } from "./bulk-approval.service.js";
+import { buildAppLink } from "../../shared/appLink.js";
 
 /** What happened, in the creator's terms. */
 export type CreatorEvent =
@@ -185,8 +186,8 @@ function buildHtml(params: {
     }
     ${linesBlock}
     <p style="margin-top:20px;font-size:13px;color:#64748b">
-      Open <a href="https://mcnhrms.teammas.in/bulk-upload/approvals" style="color:#2563eb">Bulk Upload Approvals</a>
-      to see the batch, or <a href="https://mcnhrms.teammas.in/bulk-upload" style="color:#2563eb">Bulk Upload</a>
+      Open <a href="${buildAppLink("/bulk-upload/approvals")}" style="color:#2563eb">Bulk Upload Approvals</a>
+      to see the batch, or <a href="${buildAppLink("/bulk-upload")}" style="color:#2563eb">Bulk Upload</a>
       to correct and re-submit.
     </p>
     <hr style="border:none;border-top:1px solid #e2e8f0;margin:20px 0">

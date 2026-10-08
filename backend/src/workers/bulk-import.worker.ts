@@ -90,6 +90,23 @@ async function processJob(job: QueueRow): Promise<void> {
   try {
     await dispatchImport(rpc_name, batch_id, user_id);
     // dispatchImport sets batch_status internally (to 'imported' or 'pending_approval').
+    // If an importer returned without moving the batch (for example it found no importable rows), the
+    // batch would sit 'importing' until the stale-job check flagged it half an hour later. Say so now.
+    try {
+      const [still] = await db.execute<RowDataPacket[]>(
+        `SELECT batch_status FROM upload_batch WHERE id = ?`,
+        [batch_id],
+      );
+      if ((still as RowDataPacket[] | undefined)?.[0]?.batch_status === "importing") {
+        await db.execute(
+          `UPDATE upload_batch
+              SET batch_status = 'failed', approval_status = NULL, updated_at = NOW(),
+                  error_summary = 'The import finished without importing or rejecting any row (no importable rows were found for this batch). Re-run the import, or re-upload the file if it keeps happening.'
+            WHERE id = ? AND batch_status = 'importing'`,
+          [batch_id],
+        );
+      }
+    } catch { /* the stale-job check still covers it */ }
   } catch (err) {
     await db
       .execute(

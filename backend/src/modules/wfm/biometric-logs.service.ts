@@ -3,7 +3,9 @@ import { env } from "../../config/env.js";
 import { getNcosecPool } from "../../db/ncosecDb.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import { hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
+import { hasAnyRole, hasScopedAccess, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
+import { canAccessEmployee as canAccessEmployeeInScope } from "./branch-scope.js";
 
 const BIOMETRIC_VIEW_SCOPE_ROLES = [
   "wfm",
@@ -271,14 +273,12 @@ async function getTargetEmployee(
   return rows[0] ?? null;
 }
 
-async function canAccessEmployee(
-  userId: string,
-  employee: EmployeeRow,
-): Promise<boolean> {
-  if (await hasAnyRole(userId, "super_admin", "admin", "hr", "wfm", "ceo"))
-    return true;
+async function canAccessEmployee(userId: string, employee: EmployeeRow): Promise<boolean> {
+  // Org-wide roles only (owner ruling 2026-10-01); hr / wfm go through the branch / scope checks.
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return true;
   const callerEmployee = await getEmployeeForUser(userId);
   if (callerEmployee?.id === employee.id) return true;
+  if (await canAccessEmployeeInScope(await resolveUserBusinessScope(userId), employee.id)) return true;
   return hasScopedAccess(
     userId,
     BIOMETRIC_VIEW_SCOPE_ROLES,

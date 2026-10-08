@@ -14,14 +14,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const AUTH_USER_ID = "33333333-3333-3333-3333-333333333333";
 const EMPLOYEE_ID = "11111111-1111-1111-1111-111111111111";
 
-const { execute, hasAnyRole, logSensitiveAction } = vi.hoisted(() => ({
+const { execute, hasAnyRole, logSensitiveAction, resolveScope, buildCond, canViewEmployee } = vi.hoisted(() => ({
   execute: vi.fn(),
   hasAnyRole: vi.fn(),
   logSensitiveAction: vi.fn(),
+  resolveScope: vi.fn(),
+  buildCond: vi.fn(() => ({ sql: "e.branch_id = ?", params: ["branch-a"] })),
+  canViewEmployee: vi.fn(async () => true),
 }));
+// The caller's business scope (admin branch-scoping, owner ruling 2026-10-01) - a payroll_head by default.
+vi.mock("../../../shared/enterpriseScope.js", () => ({
+  resolveUserBusinessScope: resolveScope, buildEmployeeScopeCondition: buildCond, canViewEmployee,
+}));
+const scopeFor = (roles: string[], over: Record<string, unknown> = {}) => ({
+  userId: AUTH_USER_ID, roles, employeeId: "emp-self", employeeCode: "C1", branchId: "branch-a", processId: null, lobId: null,
+  departmentId: null, isSuperAdmin: roles.includes("super_admin"), isAdmin: roles.includes("admin"), isHr: false,
+  isPayroll: false, isFinance: false, assignments: [], ...over,
+});
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole }));
+vi.mock("../../../shared/scopeAccess.js", () => ({
+  hasAnyRole,
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+}));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (
@@ -59,6 +74,12 @@ function grantPayrollHead() {
 function grantNothing() {
   hasAnyRole.mockResolvedValue(false);
 }
+
+beforeEach(() => {
+  resolveScope.mockReset().mockResolvedValue(scopeFor(["payroll_head"]));
+  buildCond.mockClear();
+  canViewEmployee.mockReset().mockResolvedValue(true);
+});
 
 describe("attendance exception bucket routes", () => {
   beforeEach(() => {
@@ -217,5 +238,55 @@ describe("payable days override routes", () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/cannot be recalculated/);
+  });
+});
+
+describe("attendance exception bucket - admin is branch-scoped (owner ruling 2026-10-01)", () => {
+  const adminScope = () => scopeFor(["admin"], {
+    assignments: [{ roleKey: "admin", scopeType: "branch", branchId: "branch-a", processId: null, lobId: null, departmentId: null, managerEmployeeId: null, clientId: null }],
+  });
+  beforeEach(() => {
+    execute.mockReset(); hasAnyRole.mockReset(); logSensitiveAction.mockReset();
+    hasAnyRole.mockImplementation(async (_u: string, role: string) => role === "admin");
+    resolveScope.mockResolvedValue(adminScope());
+    canViewEmployee.mockResolvedValue(false);
+  });
+
+  it("list is limited to employees inside the admin's branch", async () => {
+    execute.mockResolvedValueOnce([[], []]);
+    const res = await request(buildApp()).get("/api/wfm/attendance-exception-bucket");
+    expect(res.status).toBe(200);
+    const [sql, params] = execute.mock.calls[0];
+    expect(String(sql)).toContain("e.branch_id = ?");
+    expect(params).toContain("branch-a");
+  });
+
+  it("a branch-less admin sees nothing (fail closed)", async () => {
+    resolveScope.mockResolvedValue(scopeFor(["admin"], { branchId: null, employeeId: null }));
+    buildCond.mockReturnValueOnce({ sql: "1=0", params: [] });
+    execute.mockResolvedValueOnce([[], []]);
+    const res = await request(buildApp()).get("/api/wfm/attendance-exception-bucket");
+    expect(res.status).toBe(200);
+    expect(String(execute.mock.calls[0][0])).toContain("1=0");
+  });
+
+  it("adding an employee from another branch is refused", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      if (/FROM employees WHERE id/.test(sql)) return [[{ id: EMPLOYEE_ID, employee_code: "X" }], []];
+      if (/SELECT branch_id, reporting_manager_id FROM employees/.test(sql)) return [[{ branch_id: "branch-b", reporting_manager_id: null }], []];
+      return [[], []];
+    });
+    const res = await request(buildApp()).post("/api/wfm/attendance-exception-bucket")
+      .send({ employee_id: EMPLOYEE_ID, single_punch_counts_as_present: true, reason: "a perfectly long reason string" });
+    expect(res.status).toBe(403);
+    expect(execute.mock.calls.some(([q]) => /INSERT|UPDATE employee_attendance_exception_bucket/.test(String(q)))).toBe(false);
+  });
+
+  it("an org-wide Payroll Head keeps an unfiltered list (no scope predicate)", async () => {
+    hasAnyRole.mockImplementation(async (_u: string, role: string) => role === "payroll_head");
+    resolveScope.mockResolvedValue(scopeFor(["payroll_head"]));
+    execute.mockResolvedValueOnce([[], []]);
+    await request(buildApp()).get("/api/wfm/attendance-exception-bucket");
+    expect(String(execute.mock.calls[0][0])).not.toContain("e.branch_id = ?");
   });
 });

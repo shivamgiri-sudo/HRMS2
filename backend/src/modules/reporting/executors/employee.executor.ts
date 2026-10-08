@@ -468,10 +468,16 @@ const SNAPSHOT_DISPLAY_COLUMNS = [
 ] as const;
 
 /** Snapshot is refused as stale beyond this — falls back to the live computation instead of
- *  silently serving a payroll-adjacent PII report that stopped refreshing. The cron runs every
- *  30 minutes; 3 hours gives it room for a few missed/slow ticks before anyone notices wrong
- *  data instead of just a slower page. */
-const SNAPSHOT_MAX_STALENESS_MS = 3 * 60 * 60 * 1000;
+ *  silently serving a payroll-adjacent PII report that stopped refreshing.
+ *
+ *  Must exceed the refresh cron's interval plus its run time. cron/employee-master-snapshot.cron.ts
+ *  refreshes every 4 hours and a refresh takes 13-39 minutes, so the snapshot is up to ~4h40m old
+ *  just before the next one lands. The limit was 3 hours (from when the interval was 30 minutes),
+ *  which made the snapshot "stale" for roughly an hour of every cycle: the report then ran the
+ *  live many-join query over all 59k employee rows (85s+ per 5,000-row chunk), so emailed Employee
+ *  Master requests sat in PROCESSING for 30+ minutes and were killed by the stale-job sweeper.
+ *  6 hours leaves a missed run's worth of headroom. */
+const SNAPSHOT_MAX_STALENESS_MS = 6 * 60 * 60 * 1000;
 
 /**
  * employee-master, fast path: reads the pre-computed employee_master_snapshot (migration 1615,

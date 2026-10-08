@@ -5,10 +5,27 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
-vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]) },
-  pingDb: vi.fn(),
+// The manager weekoff-review overrides write their state change and audit row in one
+// transaction (inManagerDecisionTx), so the mock pool hands out a connection. Its
+// statements go through the same execute mock so SQL-matched stubs cover both paths.
+const { txConn } = vi.hoisted(() => ({
+  txConn: {
+    beginTransaction: vi.fn(),
+    commit: vi.fn(),
+    rollback: vi.fn(),
+    release: vi.fn(),
+  },
 }));
+vi.mock("../src/db/mysql.js", () => {
+  const execute = vi.fn().mockResolvedValue([[], []]);
+  return {
+    db: {
+      execute,
+      getConnection: vi.fn(async () => ({ ...txConn, execute: (...args: unknown[]) => execute(...args) })),
+    },
+    pingDb: vi.fn(),
+  };
+});
 vi.mock("../src/modules/wfm/wfm.service.js", () => ({
   wfmService: {
     listShifts: vi.fn(),
@@ -39,6 +56,11 @@ vi.mock("../src/shared/accessGuard.js", () => ({
   selfOrAdminHr: () => (_req: any, _res: any, next: any) => next(),
 }));
 vi.mock("../src/shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  // role lookup used by enterpriseScope (user_roles + the synthetic department_head role)
+  USER_ROLES_WITH_DEPARTMENT_HEAD_SQL: "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+  DEPARTMENT_HEAD_ROLES: [],
+  hasOrgWideScope: vi.fn().mockResolvedValue(true),
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   hasAnyRole: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),
@@ -76,27 +98,12 @@ const svc = wfmService as {
 };
 const AUTH = { Authorization: "Bearer mock-token-admin" };
 
-const fakeShift = {
-  id: "shift-1",
-  shift_code: "GEN",
-  shift_name: "General",
-  start_time: "09:00",
-  end_time: "18:00",
-  required_minutes: 540,
-  active_status: 1,
-};
-const fakeSession = {
-  id: "sess-1",
-  employee_id: "emp-1",
-  session_date: "2026-05-21",
-  current_status: "Logged In",
-};
-const fakeReg = {
-  id: "reg-1",
-  employee_id: "emp-1",
-  session_date: "2026-05-20",
-  status: "pending",
-};
+const fakeShift = { id: "shift-1", shift_code: "GEN", shift_name: "General", start_time: "09:00", end_time: "18:00", required_minutes: 540, active_status: 1 };
+const fakeSession = { id: "sess-1", employee_id: "emp-1", session_date: "2026-05-21", current_status: "Logged In" };
+// Regularization is refused for dates older than 90 days (and for future dates), so a
+// fixed calendar date goes stale. Yesterday is always inside the window.
+const RECENT_DATE = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const fakeReg = { id: "reg-1", employee_id: "emp-1", session_date: RECENT_DATE, status: "pending" };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -112,7 +119,9 @@ beforeEach(() => {
   // than call order, since the handlers issue a varying number of queries.
   mockExecute.mockImplementation(async (sql: unknown) => {
     const text = String(sql);
-    if (/COUNT\(\*\)/i.test(text)) return [[{ total: 1 }], []];
+    // Anchored: the review pre-read selects the regularization row and carries COUNT(*)
+    // only in correlated subqueries, so an unanchored match would answer it with a total.
+    if (/^\s*SELECT\s+COUNT\(\*\)/i.test(text)) return [[{ total: 1 }], []];
     if (/attendance_regularization/i.test(text)) return [[fakeReg], []];
     return [[], []];
   });
@@ -248,14 +257,11 @@ describe("GET /api/wfm/sessions", () => {
 describe("POST /api/wfm/regularizations", () => {
   it("submits regularization", async () => {
     svc.submitRegularization.mockResolvedValueOnce(fakeReg);
-    const r = await request(app)
-      .post("/api/wfm/regularizations")
-      .set(AUTH)
-      .send({
-        employeeId: "550e8400-e29b-41d4-a716-446655440000",
-        sessionDate: "2026-05-20",
-        reason: "Was present",
-      });
+    const r = await request(app).post("/api/wfm/regularizations").set(AUTH).send({
+      employeeId: "550e8400-e29b-41d4-a716-446655440000",
+      sessionDate: RECENT_DATE,
+      reason: "Was present",
+    });
     expect(r.status).toBe(201);
   });
   it("returns 400 when reason is empty", async () => {
@@ -360,6 +366,10 @@ describe("Manager weekoff-review overrides — attendance-lock guard (Part A.3)"
       const r = await request(app).post(path).set(AUTH).send(body);
       expect(r.status).toBe(200);
       expect(r.body.success).toBe(true);
+      // The decision and its audit row commit together and the connection goes back.
+      expect(txConn.commit).toHaveBeenCalledTimes(1);
+      expect(txConn.rollback).not.toHaveBeenCalled();
+      expect(txConn.release).toHaveBeenCalledTimes(1);
     });
 
     it(`${name}: still requires reason before any lock check runs`, async () => {

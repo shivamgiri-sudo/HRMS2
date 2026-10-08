@@ -498,16 +498,20 @@ export const atsFormConfigService = {
   },
 
   async getRecruitersByBranch(branchDisplayName: string) {
-    // Resolve the canonical branch key from the display name
-    const [aliasRows] = await db.execute<BranchAliasRow[]>(
+    // Resolve the branch tolerantly: "Noida 2", "NOIDA-2", "noida_2" and "Noida (Okaya)" must all land
+    // on the same branch. Compare with punctuation/case/spacing stripped against branch_master
+    // name/code and every alias field, so a new spelling never silently yields an empty list.
+    const norm = (v: unknown) => String(v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const wanted = norm(branchDisplayName);
+    const [aliasList] = await db.execute<BranchAliasRow[]>(
       `SELECT canonical_key, display_name, alias_text
        FROM ats_branch_alias_master
-       WHERE active_status = 1
-         AND (display_name = ? OR alias_text = ? OR canonical_key = ?)
-       LIMIT 1`,
-      [branchDisplayName, branchDisplayName, branchDisplayName],
+       WHERE active_status = 1`
     );
-    const alias = aliasRows[0] ?? null;
+    const alias = (aliasList as BranchAliasRow[]).find((a) =>
+      [a.display_name, a.canonical_key, a.alias_text].some((v) => norm(v) === wanted)
+      || String(a.alias_text ?? "").split(/\s+/).some((t) => norm(t) === wanted)
+    ) ?? null;
     const canonicalKey: string = alias?.canonical_key ?? branchDisplayName;
     const branchLookupValues = [
       canonicalKey,
@@ -516,17 +520,13 @@ export const atsFormConfigService = {
       alias?.alias_text ?? "",
     ].filter((value, index, all) => value && all.indexOf(value) === index);
 
-    // Look up the branch_name in branch_master matching this canonical key
-    const branchPlaceholders = branchLookupValues.map(() => "?").join(",");
-    const [branchRows] = await db.execute<BranchRow[]>(
-      `SELECT id, branch_name, branch_code
-       FROM branch_master
-       WHERE active_status = 1
-         AND (branch_name IN (${branchPlaceholders}) OR branch_code IN (${branchPlaceholders}))
-       LIMIT 1`,
-      [...branchLookupValues, ...branchLookupValues],
+    const [branchList] = await db.execute<BranchRow[]>(
+      `SELECT id, branch_name, branch_code FROM branch_master WHERE active_status = 1`
     );
-    const branchRow = branchRows[0] ?? null;
+    const targets = new Set([wanted, norm(canonicalKey)]);
+    const branchRow = (branchList as BranchRow[]).find((br) =>
+      targets.has(norm(br.branch_name)) || targets.has(norm(br.branch_code))
+    ) ?? null;
     const branchName: string = branchRow?.branch_name ?? canonicalKey;
 
     // 1. Prefer active recruiter roster rows joined to active HR employees at the resolved branch.
@@ -557,9 +557,9 @@ export const atsFormConfigService = {
         employee_id: r.employee_id || null,
       }));
 
-    // 1. Prefer active employees at the resolved branch so inactive roster rows do not leak through.
-    // Roster membership is the explicit authorization; department filter kept but designation
-    // filter removed so HR assistants/managers in the roster are not excluded.
+    // 1. All ACTIVE HR-department employees at the resolved branch. Roster membership is not
+    // required (nothing auto-syncs employees into ats_recruiter_roster); roster id is attached
+    // when present, and the registration submit upserts the roster row on demand.
     if (branchRow?.id) {
       const [empRows] = await db.execute<RecruiterRow[]>(
         `SELECT DISTINCT
@@ -569,11 +569,10 @@ export const atsFormConfigService = {
            TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
            COALESCE(e.office_email, e.official_email, e.email) AS email,
            e.mobile
-         FROM ats_recruiter_roster r
-         JOIN employees e ON e.id = r.employee_id
+         FROM employees e
+         LEFT JOIN ats_recruiter_roster r ON r.employee_id = e.id AND r.active_status = 1
          LEFT JOIN department_master d ON d.id = e.department_id
-         WHERE r.active_status = 1
-           AND e.active_status = 1
+         WHERE e.active_status = 1
            AND e.branch_id = ?
            AND ${recruiterDepartmentPredicate}
          ORDER BY name ASC`,

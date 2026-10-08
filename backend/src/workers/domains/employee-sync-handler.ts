@@ -295,6 +295,12 @@ export class EmployeeSyncHandler {
             city = VALUES(city),
             state = VALUES(state),
             pincode = VALUES(pincode),
+            -- Rejoin in the legacy system: active, no leaving date, and touched after the exit.
+            -- Without this the old date_of_exit survives and the attendance register keeps
+            -- dropping the employee (it hides inactive-or-exited-before-the-month staff).
+            date_of_exit = IF(VALUES(active_status) = 1 AND VALUES(date_of_leaving) IS NULL
+                              AND date_of_exit IS NOT NULL
+                              AND VALUES(legacy_last_updated) > date_of_exit, NULL, date_of_exit),
             active_status = VALUES(active_status),
             legacy_last_updated = VALUES(legacy_last_updated),
             legacy_emp_id = VALUES(legacy_emp_id),

@@ -35,6 +35,16 @@ import {
   SubmitPulseCheckSchema,
   SubmitSurveyResponseSchema,
 } from "./engagement.validation.js";
+import { canViewEmployee } from "../../shared/enterpriseScope.js";
+import { isInReportingSpan } from "../../shared/reportingSpan.js";
+
+// Branch scoping (owner ruling 2026-10-01): awarding badges / adjusting points on someone is limited to
+// employees inside the caller's branch / assigned scope (managers may also reach their own reporting span).
+// Org-wide roles are unaffected - canViewEmployee returns true for them.
+async function canActOnEmployee(userId: string, employeeId: string): Promise<boolean> {
+  return (await canViewEmployee({ id: userId }, employeeId)) || (await isInReportingSpan(userId, employeeId));
+}
+const OUT_OF_SCOPE = { success: false, error: "Forbidden: this employee is outside your branch / assigned scope" };
 
 async function requireEmployee(req: AuthenticatedRequest) {
   const employee = await getEmployeeForUser(req.authUser!.id);
@@ -93,19 +103,9 @@ export const engagementController = {
       reason: req.body.reason,
       awarded_by: req.authUser!.id,
     });
-    if (!parsed.success)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error:
-            Object.values(parsed.error.flatten().fieldErrors)
-              .flat()
-              .join("; ") || parsed.error.message,
-        });
-    return res
-      .status(201)
-      .json({ success: true, data: await awardBadge(parsed.data) });
+    if (!parsed.success) return res.status(400).json({ success: false, error: Object.values(parsed.error.flatten().fieldErrors).flat().join("; ") || parsed.error.message });
+    if (!(await canActOnEmployee(req.authUser!.id, parsed.data.employee_id))) return res.status(403).json(OUT_OF_SCOPE);
+    return res.status(201).json({ success: true, data: await awardBadge(parsed.data) });
   },
 
   async getPoints(req: AuthenticatedRequest, res: Response) {
@@ -127,16 +127,8 @@ export const engagementController = {
       transaction_type: "manual_adjustment",
       description: req.body.reason,
     });
-    if (!parsed.success)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error:
-            Object.values(parsed.error.flatten().fieldErrors)
-              .flat()
-              .join("; ") || parsed.error.message,
-        });
+    if (!parsed.success) return res.status(400).json({ success: false, error: Object.values(parsed.error.flatten().fieldErrors).flat().join("; ") || parsed.error.message });
+    if (!(await canActOnEmployee(req.authUser!.id, parsed.data.employee_id))) return res.status(403).json(OUT_OF_SCOPE);
     return res.status(201).json({
       success: true,
       data: await addPoints(

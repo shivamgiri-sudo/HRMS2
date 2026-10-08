@@ -18,14 +18,16 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const ROUTES = readFileSync(
-  resolve(process.cwd(), "src/modules/payroll/payroll.routes.ts"),
-  "utf8",
-);
-const MORE_ROUTES = readFileSync(
-  resolve(process.cwd(), "src/modules/payroll/payroll-more.routes.ts"),
-  "utf8",
-);
+/**
+ * payroll.routes.ts is prettier-formatted since cd83825bc: calls these assertions pin on one line
+ * are now wrapped across several, with trailing commas. Undo only that layout — collapse
+ * whitespace runs, drop the padding inside ( [ and the trailing comma before ) ] — so the same
+ * literal guards are matched. No token is added or removed.
+ */
+const unwrap = (s: string) =>
+  s.replace(/\s+/g, " ").replace(/([([]) /g, "$1").replace(/,? ([)\]])/g, "$1");
+const ROUTES = unwrap(readFileSync(resolve(process.cwd(), "src/modules/payroll/payroll.routes.ts"), "utf8"));
+const MORE_ROUTES = readFileSync(resolve(process.cwd(), "src/modules/payroll/payroll-more.routes.ts"), "utf8");
 
 /** requireRole(...) argument list immediately following a given route path. */
 function requireRoleArgsFor(source: string, path: string): string[] {

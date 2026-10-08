@@ -24,6 +24,7 @@ import {
   TYPING_SCORE_VERSION,
 } from "./typing-scoring.js";
 import { questionBankService } from "./question-bank.service.js";
+import { buildCandidateScopeSql, type AtsBranchScope } from "../ats-extensions/ats-ext-scope.js";
 import { emailService } from "../communication/email.service.js";
 import { assessmentInvitationEmail } from "../ats/email.templates.js";
 import {
@@ -2402,10 +2403,15 @@ export async function listAssessmentAttempts(filters: {
   search?: string;
   limit?: number;
   offset?: number;
-}) {
+}, scope?: AtsBranchScope) {
   await ensureReady();
   const conditions = ["1 = 1"];
   const parameters: unknown[] = [];
+  if (scope) {
+    const sc = buildCandidateScopeSql(scope, "c");
+    conditions.push(`(${sc.sql})`);
+    parameters.push(...sc.params);
+  }
   if (filters.status) {
     conditions.push("a.status = ?");
     parameters.push(filters.status);
@@ -2718,8 +2724,18 @@ export async function reviewAssessment(input: {
   }
 }
 
-export async function getAssessmentDashboard() {
+/** Candidate an assessment attempt belongs to (undefined when the attempt does not exist). */
+export async function getAttemptCandidateId(attemptId: string): Promise<string | undefined> {
   await ensureReady();
+  const found = await rows<RowDataPacket>(db, "SELECT candidate_id FROM ats_candidate_assessment WHERE id = ? LIMIT 1", [attemptId]);
+  return found[0] ? String(found[0].candidate_id) : undefined;
+}
+
+export async function getAssessmentDashboard(scope?: AtsBranchScope) {
+  await ensureReady();
+  // Aggregates are limited to attempts of candidates inside the caller's scope (org-wide => unfiltered).
+  const candScope = scope ? buildCandidateScopeSql(scope, "sc") : { sql: "1=1", params: [] as unknown[] };
+  const scoped = `candidate_id IN (SELECT sc.id FROM ats_candidate sc WHERE ${candScope.sql})`;
   // The two aggregates are independent reads — issued together.
   const [metrics, byProcess] = await Promise.all([
     rows<RowDataPacket>(
@@ -2734,8 +2750,10 @@ export async function getAssessmentDashboard() {
        SUM(result = 'fail') AS failed,
        ROUND(AVG(CASE WHEN status = 'completed' THEN percentage END), 2) AS average_score,
        ROUND(100 * SUM(result = 'pass') / NULLIF(SUM(result IN ('pass','fail')), 0), 2) AS pass_rate
-     FROM ats_candidate_assessment`,
-    ),
+     FROM ats_candidate_assessment
+     WHERE ${scoped}`,
+    candScope.params,
+  ),
     rows<RowDataPacket>(
       db,
       `SELECT t.process_key, t.role_key, COUNT(*) AS total,
@@ -2744,9 +2762,11 @@ export async function getAssessmentDashboard() {
             ROUND(AVG(CASE WHEN a.status = 'completed' THEN a.percentage END), 2) AS average_score
      FROM ats_candidate_assessment a
      JOIN ats_assessment_template t ON t.id = a.template_id
+     WHERE a.${scoped}
      GROUP BY t.process_key, t.role_key
      ORDER BY t.process_key, t.role_key`,
-    ),
+    candScope.params,
+  ),
   ]);
   return { metrics: metrics[0] ?? {}, byProcess };
 }
@@ -3213,6 +3233,7 @@ export const assessmentService = {
   getAssessmentAttemptDetail,
   reviewAssessment,
   getAssessmentDashboard,
+  getAttemptCandidateId,
   listTemplates,
   setTemplateActive,
   createCustomTemplate,

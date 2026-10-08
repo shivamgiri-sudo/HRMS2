@@ -23,13 +23,9 @@ const exec = db.execute as ReturnType<typeof vi.fn>;
 
 /** Capture the SELECT (not the COUNT) that listRuns issues. */
 function captured() {
-  const call = exec.mock.calls.find(([sql]) =>
-    /SELECT \* FROM salary_prep_run/i.test(String(sql)),
-  );
-  return {
-    sql: String(call?.[0] ?? ""),
-    params: (call?.[1] ?? []) as unknown[],
-  };
+  // `spr.*`: the table is aliased so the scope filter's spr.branch_id / spr.process_id resolve.
+  const call = exec.mock.calls.find(([sql]) => /SELECT (?:spr\.)?\* FROM salary_prep_run/i.test(String(sql)));
+  return { sql: String(call?.[0] ?? ""), params: (call?.[1] ?? []) as unknown[] };
 }
 
 beforeEach(() => {

@@ -13,11 +13,10 @@ import {
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 import { resolveWeekOffScopeDefault } from "../roster/weekoff-policy.service.js";
 import { triggerRosterPublishPending } from "../work-inbox/work-inbox.triggers.js";
-import {
-  loadPlanOffdayPolicy,
-  markWeekOff,
-  stampPlanRows,
-} from "./roster-offday-apply.js";
+import { loadPlanOffdayPolicy, markWeekOff, stampPlanRows } from "./roster-offday-apply.js";
+import type { UserBusinessScope } from "../../shared/enterpriseScope.js";
+import { scopePredicate } from "./branch-scope.js";
+import { onRosterRequestRaised } from "../roster-requests/roster-requests.raise.js";
 
 type AnyRow = Record<string, any>;
 
@@ -261,7 +260,7 @@ async function queueLockedNotification(input: {
   );
 }
 
-async function insertConflict(input: {
+export async function insertConflict(input: {
   plan_id: string;
   assignment_id?: string | null;
   employee_id?: string | null;
@@ -270,12 +269,13 @@ async function insertConflict(input: {
   severity?: "info" | "medium" | "high" | "critical";
   message: string;
 }) {
-  await db.execute(
+  const conflictId = randomUUID();
+  const [header] = await db.execute(
     `INSERT INTO wfm_roster_conflict_log
      (id, plan_id, assignment_id, employee_id, roster_date, conflict_type, severity, message)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      randomUUID(),
+      conflictId,
       input.plan_id,
       input.assignment_id ?? null,
       input.employee_id ?? null,
@@ -285,6 +285,22 @@ async function insertConflict(input: {
       input.message,
     ],
   );
+  // Plain INSERT: a row exists unless the driver reports zero affected rows. Deferred + non-fatal; bulk
+  // sync bursts are coalesced per branch/process inside the raise hook. Conflicts with no employee cannot
+  // be routed to approvers and are skipped.
+  if (input.employee_id && ((header as { affectedRows?: number } | undefined)?.affectedRows ?? 1) > 0) {
+    try {
+      onRosterRequestRaised({
+        kind: "conflict",
+        sourceId: conflictId,
+        employeeId: input.employee_id,
+        date: input.roster_date ?? null,
+        summary: `Roster conflict: ${input.conflict_type}`,
+      });
+    } catch (err) {
+      console.error("[auto-roster] conflict raise hook failed (conflict already recorded):", (err as Error)?.message);
+    }
+  }
 }
 
 async function getEmployeePool(
@@ -1894,17 +1910,16 @@ export const autoRosterSyncedService = {
     return { created };
   },
 
-  async listEvents(planId?: string, since?: string) {
+  async listEvents(planId?: string, since?: string, scope?: UserBusinessScope) {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (planId) {
-      conds.push("plan_id = ?");
-      params.push(planId);
+    if (scope) {
+      // Owner ruling 2026-10-01: only events of plans in the caller's own branch / process scope.
+      const c = scopePredicate(scope, { branchId: "p.branch_id", processId: "p.process_id" });
+      if (c.sql !== "1=1") { conds.push(`plan_id IN (SELECT p.id FROM wfm_roster_plan p WHERE ${c.sql})`); params.push(...c.params); }
     }
-    if (since) {
-      conds.push("created_at > ?");
-      params.push(since);
-    }
+    if (planId) { conds.push("plan_id = ?"); params.push(planId); }
+    if (since) { conds.push("created_at > ?"); params.push(since); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM wfm_roster_event_log ${where} ORDER BY created_at DESC LIMIT 100`,

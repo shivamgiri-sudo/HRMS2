@@ -7,6 +7,7 @@ import { selfOrAdminHr } from "../../shared/accessGuard.js";
 import { lifecycleService } from "./lifecycle.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -17,31 +18,47 @@ const h =
 
 router.use(requireAuth);
 
+// Branch scoping (owner ruling 2026-10-01): requireRole says who may open a page, not whose records
+// they may open. admin/hr/branch_hr/branch_head/it_head used to reach every employee's lifecycle,
+// documents and compliance report in any branch. Org-wide roles are unaffected.
+const EMP_ALIAS = {
+  employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", lobId: "e.lob_id",
+  departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id",
+};
+async function scopeCondition(req: AuthenticatedRequest) {
+  return buildEmployeeScopeCondition(await resolveUserBusinessScope(req.authUser!), EMP_ALIAS);
+}
+const OUT_OF_SCOPE = { success: false, message: "Forbidden: this employee is outside your branch / assigned scope" };
+/** Guard for routes whose :param is an employee id. */
+const requireEmployeeScope = (param = "id") => async (req: any, res: any, next: any) => {
+  try {
+    if (await canViewEmployee(req.authUser!, String(req.params[param]))) return next();
+    return res.status(403).json(OUT_OF_SCOPE);
+  } catch (err) { return next(err); }
+};
+/** Guard for routes whose :param is an employee_documents id. */
+const requireDocumentScope = (param = "id") => async (req: any, res: any, next: any) => {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT employee_id FROM employee_documents WHERE id = ? LIMIT 1", [req.params[param]]);
+    const employeeId = (rows as RowDataPacket[])[0]?.employee_id;
+    if (!employeeId) return res.status(404).json({ success: false, message: "Document not found" });
+    if (await canViewEmployee(req.authUser!, String(employeeId))) return next();
+    return res.status(403).json(OUT_OF_SCOPE);
+  } catch (err) { return next(err); }
+};
+
 // GET /probation-due — employees due for confirmation
-router.get(
-  "/probation-due",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const days = req.query.days ? parseInt(req.query.days as string, 10) : 90;
-    const data = await lifecycleService.getProbationDue(days);
-    res.json({ success: true, data, total: data.length });
-  }),
-);
+router.get("/probation-due", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const days = req.query.days ? parseInt(req.query.days as string, 10) : 90;
+  const data = await lifecycleService.getProbationDue(days, await scopeCondition(req));
+  res.json({ success: true, data, total: data.length });
+}));
 
 // POST /employees/:id/confirm — confirm an employee
-router.post(
-  "/employees/:id/confirm",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    await lifecycleService.confirmEmployee(
-      req.params.id,
-      req.authUser!.id,
-      req.body.remarks,
-      req,
-    );
-    res.json({ success: true });
-  }),
-);
+router.post("/employees/:id/confirm", requireRole("admin", "hr"), requireEmployeeScope("id"), h(async (req: AuthenticatedRequest, res: Response) => {
+  await lifecycleService.confirmEmployee(req.params.id, req.authUser!.id, req.body.remarks, req);
+  res.json({ success: true });
+}));
 
 // Admin/HR see any employee; employee sees own
 router.get(
@@ -52,21 +69,13 @@ router.get(
   }),
 );
 
-router.post(
-  "/employees/:id/lifecycle",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const event = await lifecycleService.createEvent(
-      {
-        ...req.body,
-        employee_id: req.params.id,
-        initiated_by: req.authUser!.id,
-      },
-      req,
-    );
-    res.status(201).json({ data: event });
-  }),
-);
+router.post("/employees/:id/lifecycle", requireRole("admin", "hr"), requireEmployeeScope("id"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const event = await lifecycleService.createEvent(
+    { ...req.body, employee_id: req.params.id, initiated_by: req.authUser!.id },
+    req
+  );
+  res.status(201).json({ data: event });
+}));
 
 // Admin/HR see any employee's documents; employee sees own
 router.get(
@@ -92,19 +101,10 @@ router.get(
   }),
 );
 
-router.post(
-  "/documents/:id/verify",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    await lifecycleService.verifyDocument(
-      req.params.id,
-      req.authUser!.id,
-      req.body.remarks,
-      req,
-    );
-    res.json({ ok: true });
-  }),
-);
+router.post("/documents/:id/verify", requireRole("admin", "hr"), requireDocumentScope("id"), h(async (req: AuthenticatedRequest, res: Response) => {
+  await lifecycleService.verifyDocument(req.params.id, req.authUser!.id, req.body.remarks, req);
+  res.json({ ok: true });
+}));
 
 // Read routes below are widened to match the live role_page_access grants for
 // EMPLOYEE_MANAGEMENT (can_view=1: hr, branch_hr, it_head, branch_head,
@@ -120,23 +120,15 @@ const DOC_VERIFICATION_READ_ROLES = [
   "branch_head",
 ] as const;
 
-router.get(
-  "/documents/expiring",
-  requireRole(...DOC_VERIFICATION_READ_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const days = req.query.days ? parseInt(req.query.days as string, 10) : 30;
-    res.json({
-      data: await lifecycleService.getExpiredOrExpiringDocuments(days),
-    });
-  }),
-);
+router.get("/documents/expiring", requireRole(...DOC_VERIFICATION_READ_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const days = req.query.days ? parseInt(req.query.days as string, 10) : 30;
+  res.json({ data: await lifecycleService.getExpiredOrExpiringDocuments(days, await scopeCondition(req)) });
+}));
 
-router.get(
-  "/documents/unverified",
-  requireRole(...DOC_VERIFICATION_READ_ROLES),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT ed.id,
+router.get("/documents/unverified", requireRole(...DOC_VERIFICATION_READ_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scoped = await scopeCondition(req);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ed.id,
             ed.employee_id,
             ed.doc_type AS document_type,
             ed.doc_name AS document_name,
@@ -150,19 +142,17 @@ router.get(
        FROM employee_documents ed
        LEFT JOIN employees e ON e.id = ed.employee_id
       WHERE ed.verified = 0
+        AND (${scoped.sql})
       ORDER BY ed.created_at DESC
       LIMIT 200`,
-    );
-    res.json({ data: rows });
-  }),
-);
+    scoped.params
+  );
+  res.json({ data: rows });
+}));
 
-router.get(
-  "/documents/:id/access-log",
-  requireRole(...DOC_VERIFICATION_READ_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT dal.*,
+router.get("/documents/:id/access-log", requireRole(...DOC_VERIFICATION_READ_ROLES), requireDocumentScope("id"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT dal.*,
             dal.access_type AS action_type,
             e.first_name,
             e.last_name
@@ -180,11 +170,8 @@ router.get(
 // ─── GET /employees/:id/compliance-report ─────────────────────────────────
 // Full joiner/leaver compliance audit trail for one employee.
 // Returns: employee profile + ordered timeline of every lifecycle event with actor names.
-router.get(
-  "/employees/:id/compliance-report",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const empId = req.params.id;
+router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super_admin"), requireEmployeeScope("id"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const empId = req.params.id;
 
     // 1. Employee profile
     const [empRows] = await db.execute<RowDataPacket[]>(

@@ -219,8 +219,14 @@ function calculateRevenue(contract: any, required: number, available: number) {
   };
 }
 
+/**
+ * `allowedProcessIds` (owner ruling 2026-10-01): null/undefined = org-wide, results untouched. A Set limits every
+ * result to those processes; a contract or revenue row with no process is org-level and so hidden from scoped callers.
+ */
+export type AllowedProcessIds = ReadonlySet<string> | null | undefined;
+
 export const revenueRiskService = {
-  async listContracts() {
+  async listContracts(allowedProcessIds?: AllowedProcessIds) {
     if (!(await tableExists("client_contract_master"))) return [];
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ccm.*, cm.client_name, pm.process_name
@@ -230,6 +236,7 @@ export const revenueRiskService = {
         ORDER BY ccm.status, ccm.effective_from DESC
         LIMIT 500`,
     );
+    if (allowedProcessIds) return (rows as any[]).filter((r) => r.process_id && allowedProcessIds.has(String(r.process_id)));
     return rows;
   },
 
@@ -272,11 +279,9 @@ export const revenueRiskService = {
     return { id };
   },
 
-  async calculate(
-    date = new Date().toISOString().slice(0, 10),
-    persist = false,
-  ) {
-    const processes = await getProcessRows();
+  async calculate(date = new Date().toISOString().slice(0, 10), persist = false, allowedProcessIds?: AllowedProcessIds) {
+    const allProcesses = await getProcessRows();
+    const processes = allowedProcessIds ? allProcesses.filter((p) => allowedProcessIds.has(String(p.process_id))) : allProcesses;
 
     // Check table availability and batch-fetch all lookups in parallel — O(8 queries) total regardless of process count
     const [
@@ -439,9 +444,8 @@ export const revenueRiskService = {
     };
   },
 
-  async snapshot(date = new Date().toISOString().slice(0, 10)) {
-    if (!(await tableExists("process_revenue_daily")))
-      return this.calculate(date, false);
+  async snapshot(date = new Date().toISOString().slice(0, 10), allowedProcessIds?: AllowedProcessIds) {
+    if (!(await tableExists("process_revenue_daily"))) return this.calculate(date, false, allowedProcessIds);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT prd.*, cm.client_name, pm.process_name, ccm.billing_type, ccm.billing_rate
          FROM process_revenue_daily prd
@@ -453,14 +457,9 @@ export const revenueRiskService = {
         LIMIT 250`,
       [date],
     );
-    if (rows.length === 0) return this.calculate(date, false);
-    const mapped = rows.map((row: any) => ({
-      ...row,
-      reason_json:
-        typeof row.reason_json === "string"
-          ? JSON.parse(row.reason_json || "[]")
-          : row.reason_json,
-    }));
+    const visible = allowedProcessIds ? (rows as any[]).filter((r) => r.process_id && allowedProcessIds.has(String(r.process_id))) : rows;
+    if (visible.length === 0) return this.calculate(date, false, allowedProcessIds);
+    const mapped = visible.map((row: any) => ({ ...row, reason_json: typeof row.reason_json === "string" ? JSON.parse(row.reason_json || "[]") : row.reason_json }));
     return {
       generated_at: new Date().toISOString(),
       date,

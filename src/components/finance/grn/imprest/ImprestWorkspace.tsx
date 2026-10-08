@@ -29,7 +29,10 @@ import { ImprestAdjustmentPanel } from "@/components/finance/grn/imprest/Imprest
 type Pane = "approvals" | "allocation" | "adjustment" | "report" | "managers";
 
 export function ImprestWorkspace() {
-  const [pane, setPane] = useState<Pane>("approvals");
+  // Approval Center deep link: ?tab=imprest&pane=allocation&approvalId=<allocation id>.
+  const [pane, setPane] = useState<Pane>(() =>
+    new URLSearchParams(window.location.search).get("pane") === "allocation" ? "allocation" : "approvals",
+  );
   // Same authority as posting the adjustment itself (Owner ruling 2026-08-17) — a role that
   // would only get a 403 from the endpoint should not be offered the tab at all.
   const canAdjust = useHasRole("finance_head", "super_admin");

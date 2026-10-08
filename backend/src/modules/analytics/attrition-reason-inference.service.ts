@@ -416,10 +416,11 @@ export async function getInferredReasonBreakdown(req: Request, res: Response) {
         .slice(0, 10);
     }
 
-    const branchClause = branchId ? "AND e.branch_id = ?" : "";
-    const baseParams: unknown[] = branchId
-      ? [periodStart, periodEnd, branchId]
-      : [periodStart, periodEnd];
+    // Branch scoping (owner ruling 2026-10-01): the caller's employee scope from the route (null = org-wide);
+    // ?branchId only narrows it.
+    const brScope = (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope;
+    const branchClause = (branchId ? 'AND e.branch_id = ?' : '') + (brScope ? ` AND ${brScope.sql}` : '');
+    const baseParams: unknown[] = [periodStart, periodEnd, ...(branchId ? [branchId] : []), ...(brScope ? brScope.params : [])];
 
     // Fetch all exited employees in period with pre-computed signal data
     const [rows] = await pool.query<RowDataPacket[]>(

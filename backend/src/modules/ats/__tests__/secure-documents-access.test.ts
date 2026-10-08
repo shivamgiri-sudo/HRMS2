@@ -54,6 +54,13 @@ vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
   };
 });
 
+// Row scope is covered by branchScoping.ats.test.ts; here the candidate guard is neutral so this file keeps
+// pinning the ROLE list only.
+vi.mock("../candidate-access.js", () => ({
+  canAccessCandidate: vi.fn(async () => true),
+  candidateParamGuard: () => (_req: any, _res: any, next: any) => next(),
+}));
+
 import { secureDocumentsRouter } from "../secure-documents.routes.js";
 
 /** Exactly the list NativeJoiningControlRoom's ProtectedRoute and navConfig entry grant. */

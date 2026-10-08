@@ -8,12 +8,12 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getUserRoleKeys } from "../../shared/scopeAccess.js";
+import { getUserRoleKeys, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 
 /** HR roles that work across every branch. */
 export const ORG_WIDE_HR_ROLES = ["hr_head", "ho_hr"] as const;
-/** Non-HR roles that are org-wide by definition. */
-const ORG_WIDE_ROLES = ["super_admin", "admin", "ceo"] as const;
+/** Roles that are org-wide by definition (owner policy 2026-10-01; same list as scopeAccess.ts). */
+const ORG_WIDE_ROLES = ORG_WIDE_EXEMPT_ROLES;
 
 export interface HrBranchScope {
   orgWide: boolean;
@@ -86,7 +86,8 @@ export async function resolveHrBranchScope(
     `SELECT scope_type, branch_id FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
     [userId],
   );
-  if (scopeRows.some((r) => r.scope_type === "all")) return ORG_WIDE;
+  // An 'all' assignment row is only honoured for the org-wide roles (handled above); for anyone else it
+  // means "my own branch", which the home-branch lookup below already covers.
 
   const branchIds = new Set<string>();
   for (const row of scopeRows) {

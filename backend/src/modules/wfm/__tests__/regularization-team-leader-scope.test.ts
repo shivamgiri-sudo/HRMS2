@@ -32,6 +32,14 @@ vi.mock("../../../shared/scopeAccess.js", () => ({
   buildScopeWhereClause,
   hasScopedAccess,
 }));
+vi.mock("../../../shared/scopeAccess.js", () => ({
+  hasAnyRole, buildScopeWhereClause, hasScopedAccess,
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+}));
+vi.mock("../../../shared/enterpriseScope.js", () => ({
+  resolveUserBusinessScope: async () => ({ userId: "u-tl-1", roles: [], assignments: [] }),
+}));
+vi.mock("../branch-scope.js", () => ({ canAccessEmployee: async () => false }));
 
 const { dbExecute } = vi.hoisted(() => ({
   dbExecute: vi.fn(async (sql: string) => {

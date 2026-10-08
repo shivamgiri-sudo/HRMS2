@@ -256,12 +256,16 @@ describe("source pins", () => {
     expect(code).not.toContain("employee_salary_assignment");
   });
 
-  it("reads salary_component_assignments only for the PF/ESIC flags, never for amounts", () => {
-    // The single permitted reference is the LEFT JOIN pinned to the approved
-    // package_id. If a second one appears, an amount source has crept back.
+  it("reads salary_component_assignments only for PF/ESIC flags and the revised package id, never for amounts", () => {
+    // Two permitted references: the LEFT JOIN pinned to the resolved package
+    // (PF/ESIC flags) and the revision lookup, which selects ONLY package_id.
+    // A third one means an amount source has crept back.
     const refs = code.match(/salary_component_assignments/g) ?? [];
-    expect(refs.length).toBe(1);
-    expect(code).toContain("AND a.package_id = r.salary_package_id");
+    expect(refs.length).toBe(2);
+    expect(code).toContain("AND a.package_id = p.id");
+    expect(code).toContain("SELECT a.package_id");
+    // A revision only counts once it is in effect.
+    expect(code).toContain("a.effective_date <= CURDATE()");
     // Amounts come off the package alias `p`, never off the assignment alias `a`.
     expect(code).not.toMatch(/\bnum\(a\./);
   });

@@ -729,8 +729,190 @@ reportSuiteRouter.get(
     res.setHeader("Cache-Control", "no-store, no-cache");
     res.setHeader("Content-Length", buffer.length);
     res.send(buffer);
-  }),
-);
+    return;
+  }
+
+  let result;
+  try {
+    result = await executeReport(code, filters, scope, options);
+  } catch (err) {
+    if (err instanceof ReportExecutorNotFoundError) {
+      res.status(404).json({ error: 'EXECUTOR_NOT_FOUND', message: 'This report is not yet available.' });
+      return;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    const isDeadlock = /deadlock|lock wait timeout/i.test(msg);
+    if (isDeadlock) {
+      res.status(503).json({
+        error: 'REPORT_TEMPORARILY_UNAVAILABLE',
+        message: 'Report generation failed due to a temporary database conflict. Please wait a few seconds and try again.',
+      });
+      return;
+    }
+    // Surface the real error message in the response instead of masking it,
+    // so the frontend can show something actionable.
+    res.status(500).json({
+      error: 'REPORT_GENERATION_FAILED',
+      message: 'Report generation failed. Please try again or request the report by email.',
+    });
+    return;
+  }
+
+  if (result.rows.length > EXPORT_ROW_CAP) {
+    res.status(422).json({
+      error: 'TOO_LARGE',
+      message: 'Result exceeds download limit. Request the full report by email.',
+      rowCount: result.rowCount,
+      limit: EXPORT_ROW_CAP,
+    });
+    return;
+  }
+
+  const rows = stripCursorField(result.rows);
+
+  // ── Leave Balance: business-mandated exact workbook ─────────────────────────
+  // Uses the shared 17-column layout (merged group headers, exact column widths,
+  // thin borders, no metadata sheet) rather than the generic report workbook.
+  // `rows` here is the complete filtered dataset for the selected filters — it is
+  // fetched with the export row cap, never the preview page size.
+  if (LEAVE_BALANCE_CODES.has(code)) {
+    const month = businessMonth(req.query.month);
+    const leaveBuffer = await buildLeaveBalanceWorkbook({ rows, month });
+
+    if (leaveBuffer.length > EXPORT_BYTE_CAP) {
+      res.status(422).json({
+        error: 'FILE_TOO_LARGE',
+        message: 'Generated file exceeds size limit. Request the full report by email.',
+      });
+      return;
+    }
+
+    await recordReportAuditEvent({
+      reportRequestId: `export-${userId}-${code}-${Date.now()}`,
+      eventType: REPORT_AUDIT_EVENTS.EXPORT_DOWNLOAD ?? 'EXPORT_DOWNLOAD',
+      actorType: 'user',
+      reportCode: code,
+      message: `Immediate XLSX export: ${rows.length} rows, ${leaveBuffer.length} bytes`,
+      metadataJson: { userId, rowCount: rows.length, fileSizeBytes: leaveBuffer.length, code, month },
+    }).catch(() => {});
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${leaveBalanceFileName(month)}"`);
+    res.setHeader('Cache-Control', 'no-store, no-cache');
+    res.setHeader('Content-Length', leaveBuffer.length);
+    res.send(leaveBuffer);
+    return;
+  }
+
+  // ── Catalog-driven exact-label workbook ─────────────────────────────────────
+  if (CATALOG_FORMAT_CODES.has(code)) {
+    // For attendance-register-monthly the day columns carry static labels ("Day 1" … "Day 31")
+    // in the catalog. Replace them with the actual calendar dates derived from the month filter
+    // so the Excel header reads "01-Aug-26", "02-Aug-26" etc.
+    let exportColumns: CatalogWorkbookColumn[] = catalogEntry.columns as CatalogWorkbookColumn[];
+    if (code === "attendance-register-monthly" && filters.month) {
+      const SHORT_MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const [, fmStr] = (filters.month as string).split("-");
+      const [fyStr] = (filters.month as string).split("-");
+      const fm = Number(fmStr);
+      const shortYY = String(Number(fyStr)).slice(2);
+      // No such column as 31-Sep: drop day columns past the month's real length.
+      const daysInSelectedMonth = new Date(Number(fyStr), fm, 0).getDate();
+      exportColumns = exportColumns.filter(c => {
+        const dm = c.key.match(/^day_(\d+)$/);
+        return !dm || Number(dm[1]) <= daysInSelectedMonth;
+      }).map(c => {
+        const m = c.key.match(/^day_(\d+)$/);
+        if (!m) return c;
+        const d = Number(m[1]);
+        const dateLabel = `${String(d).padStart(2, "0")}-${SHORT_MONTHS[fm - 1]}-${shortYY}`;
+        const align: "center" | "left" | "right" | undefined =
+          (c.align === "left" || c.align === "center" || c.align === "right") ? c.align : undefined;
+        return { key: c.key, label: dateLabel, format: c.format, width: 55, align };
+      });
+    }
+    const catalogBuffer = await buildCatalogWorkbook({
+      rows,
+      columns: exportColumns,
+      sheetName: catalogEntry.name,
+    });
+
+    if (catalogBuffer.length > EXPORT_BYTE_CAP) {
+      res.status(422).json({
+        error: 'FILE_TOO_LARGE',
+        message: 'Generated file exceeds size limit. Request the full report by email.',
+      });
+      return;
+    }
+
+    await recordReportAuditEvent({
+      reportRequestId: `export-${userId}-${code}-${Date.now()}`,
+      eventType: REPORT_AUDIT_EVENTS.EXPORT_DOWNLOAD ?? 'EXPORT_DOWNLOAD',
+      actorType: 'user',
+      reportCode: code,
+      message: `Immediate XLSX export: ${rows.length} rows, ${catalogBuffer.length} bytes`,
+      metadataJson: { userId, rowCount: rows.length, fileSizeBytes: catalogBuffer.length, code },
+    }).catch(() => {});
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${buildSecureFilename(catalogEntry.name, 'export')}"`);
+    res.setHeader('Cache-Control', 'no-store, no-cache');
+    res.setHeader('Content-Length', catalogBuffer.length);
+    res.send(catalogBuffer);
+    return;
+  }
+
+  const scopeSummary = scope.isSuperAdmin
+    ? 'ALL BRANCHES'
+    : `BRANCHES: ${scope.branchScope.mode === 'all' ? 'ALL' : scope.branchScope.ids.join(', ')}`;
+
+  let buffer: Buffer;
+  try {
+    buffer = await buildSecureXlsxBuffer({
+      reportName:            catalogEntry.name,
+      requestReference:      `IMM-${Date.now()}`,
+      requesterEmployeeCode: (req as any).authUser?.employeeCode ?? 'UNKNOWN',
+      filters:               filters as Record<string, unknown>,
+      scopeSummary,
+      rows,
+      totalRows:             rows.length,
+    });
+  } catch (err) {
+    if (err instanceof XlsxFileSizeError) {
+      res.status(422).json({
+        error: 'FILE_TOO_LARGE',
+        message: 'Generated file exceeds size limit. Request the full report by email.',
+      });
+      return;
+    }
+    throw err;
+  }
+
+  if (buffer.length > EXPORT_BYTE_CAP) {
+    res.status(422).json({
+      error: 'FILE_TOO_LARGE',
+      message: 'Generated file exceeds size limit. Request the full report by email.',
+    });
+    return;
+  }
+
+  // Audit the export
+  await recordReportAuditEvent({
+    reportRequestId: `export-${userId}-${code}-${Date.now()}`,
+    eventType: REPORT_AUDIT_EVENTS.EXPORT_DOWNLOAD ?? 'EXPORT_DOWNLOAD',
+    actorType: 'user',
+    reportCode: code,
+    message: `Immediate XLSX export: ${rows.length} rows, ${buffer.length} bytes`,
+    metadataJson: { userId, rowCount: rows.length, fileSizeBytes: buffer.length, code },
+  }).catch(() => {});
+
+  const filename = buildSecureFilename(catalogEntry.name, `export`);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'no-store, no-cache');
+  res.setHeader('Content-Length', buffer.length);
+  res.send(buffer);
+}));
 
 // ─── Report Metadata Endpoint ─────────────────────────────────────────────────
 // Returns column definitions, row grain, RBAC info for UI rendering

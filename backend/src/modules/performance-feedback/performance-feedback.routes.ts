@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
-import { hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
+import { hasAnyRole, hasScopedAccess, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import { performanceFeedbackController as c } from "./performance-feedback.controller.js";
 import {
   getEmployeeQualityMetrics,
@@ -130,13 +130,10 @@ const QUALITY_READ_ROLES = [
 // 965 of 1,127 active employees carry a reporting_manager_id. Requiring an assignment row
 // alone would 403 real managers; relying on the manager link alone would lock out
 // branch/process owners who do not directly manage the people in their scope.
-const QUALITY_GLOBAL_ROLES = ["admin", "hr", "qa"];
-const QUALITY_SCOPED_ROLES = [
-  "manager",
-  "process_manager",
-  "branch_head",
-  "team_leader",
-];
+// Owner ruling 2026-10-01: hr and qa are branch-scoped like the other scoped roles; only the
+// org-wide roles (ORG_WIDE_EXEMPT_ROLES) read any employee.
+const QUALITY_GLOBAL_ROLES = ["admin", ...ORG_WIDE_EXEMPT_ROLES];
+const QUALITY_SCOPED_ROLES = ["hr", "qa", "manager", "process_manager", "branch_head", "team_leader"];
 
 /**
  * Returns the subset of employee codes the caller may NOT read. Fail-closed: a code that

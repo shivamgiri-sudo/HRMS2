@@ -52,10 +52,20 @@ function app() {
   return a;
 }
 
+// The route rejects dates in the future or older than 90 days, so a hard-coded date ages out
+// of the accepted window. Use a date a week back, in the DD-MM-YYYY shape uploaders send.
+function recentUploadDate(): string {
+  const d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${dd}-${mm}-${d.getUTCFullYear()}`;
+}
+
 function csvWithRows(n: number): string {
   const lines = ["employee_code,attendance_date,net_login_minutes"];
+  const date = recentUploadDate();
   for (let i = 1; i <= n; i++) {
-    lines.push(`MAS${String(i).padStart(4, "0")},01-06-2026,490`);
+    lines.push(`MAS${String(i).padStart(4, "0")},${date},490`);
   }
   return lines.join("\n");
 }

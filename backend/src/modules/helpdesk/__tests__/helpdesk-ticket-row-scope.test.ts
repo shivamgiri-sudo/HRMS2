@@ -205,7 +205,7 @@ describe("GET /api/helpdesk/tickets — row scope for branch_it/it/it_admin", ()
   it("branch_it gets a real scope condition AND a category restriction, not unrestricted access", async () => {
     hasRoleForRequest.mockImplementation(async (_user, ...roles: string[]) => {
       if (roles.length === 1 && roles[0] === "super_admin") return false;
-      if (roles.includes("admin") && roles.length === 3) return false; // the org-wide-only check
+      if (roles.length === 1 && roles[0] === "admin") return false; // the org-wide-only check
       return true; // the broader HELPDESK_ADMIN_ROLES check
     });
     await request(app()).get("/api/helpdesk/tickets");
@@ -241,7 +241,7 @@ describe("GET /api/helpdesk/tickets — row scope for branch_it/it/it_admin", ()
   it("a scoped IT role with no user_assignment_scope row fails closed (1=0), matching every other under-provisioned manager-tier role in this codebase", async () => {
     hasRoleForRequest.mockImplementation(async (_user, ...roles: string[]) => {
       if (roles.length === 1 && roles[0] === "super_admin") return false;
-      if (roles.includes("admin") && roles.length === 3) return false;
+      if (roles.length === 1 && roles[0] === "admin") return false;
       return true;
     });
     buildProcessScopeCondition.mockReturnValue({ sql: "1=0", params: [] });
@@ -257,7 +257,7 @@ describe("support command-center aggregates — same row scope as ticket lists",
   it("passes the resolved branch/process scope into KPI aggregation for scoped support roles", async () => {
     hasRoleForRequest.mockImplementation(async (_user, ...roles: string[]) => {
       if (roles.length === 1 && roles[0] === "super_admin") return false;
-      if (roles.includes("admin") && roles.length === 3) return false;
+      if (roles.length === 1 && roles[0] === "admin") return false;
       return true;
     });
 
@@ -276,7 +276,7 @@ describe("mutation routes — out-of-scope ticket is refused before any write", 
   beforeEach(() => {
     hasRoleForRequest.mockImplementation(async (_user, ...roles: string[]) => {
       if (roles.length === 1 && roles[0] === "super_admin") return false;
-      if (roles.includes("admin") && roles.length === 3) return false; // scoped IT, not org-wide
+      if (roles.length === 1 && roles[0] === "admin") return false; // scoped IT, not org-wide
       return true;
     });
   });

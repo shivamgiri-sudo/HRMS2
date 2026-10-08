@@ -80,26 +80,36 @@ describe("checkDpdpRestriction", () => {
 describe("the guard is actually mounted", () => {
   const APP = readFileSync(resolve(process.cwd(), "src/app.ts"), "utf8");
 
+  // app.ts was reformatted: the mount is spread over several lines now, so the single-line
+  // patterns these cases used no longer matched a mount that is still there. They read the
+  // whole app.use(...) call instead, whatever its layout.
+  const MOUNT = /app\.use\(\s*"\/api\/employees\/:employeeId",\s*(\w+),\s*checkDpdpRestriction,?\s*\)/;
+  const mount = MOUNT.exec(APP);
+
   it("app.ts mounts checkDpdpRestriction on the employee id prefix", () => {
-    expect(APP).toMatch(
-      /app\.use\("\/api\/employees\/:employeeId",\s*\w+,\s*checkDpdpRestriction\)/,
-    );
+    expect(APP).toMatch(MOUNT);
+    // Mounted once: a second, guard-less registration of the same prefix would not undo this
+    // one, but a moved or duplicated mount is how the order below gets broken.
+    expect(APP.match(/app\.use\(\s*"\/api\/employees\/:employeeId"/g)).toHaveLength(1);
   });
 
   it("mounts it above the employee routers, so it runs before they answer", () => {
-    const guard = APP.indexOf("checkDpdpRestriction)");
-    const firstRouter = APP.indexOf(
-      'app.use("/api/employees", listEndpointLimiter',
-    );
+    const guard = mount ? mount.index : -1;
+    const firstRouter = APP.search(/app\.use\(\s*"\/api\/employees",/);
     expect(guard).toBeGreaterThan(-1);
     expect(firstRouter).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(firstRouter);
   });
 
   it("runs behind requireAuth, so an anonymous probe cannot test for an order", () => {
-    const line = APP.split("\n").find((l) =>
-      l.includes('app.use("/api/employees/:employeeId"'),
+    // The middleware named between the path and the guard must be the real requireAuth —
+    // by import, not merely by having "auth" in its name.
+    const before = mount?.[1];
+    expect(before).toMatch(/requireAuth/i);
+    const imported = new RegExp(
+      `import \\{[^}]*\\brequireAuth(?:\\s+as\\s+${before})?\\b[^}]*\\}\\s*from\\s*"\\./middleware/authMiddleware\\.js"`,
     );
-    expect(line).toMatch(/requireAuth/i);
+    expect(APP).toMatch(imported);
+    if (before !== "requireAuth") expect(APP).toContain(`requireAuth as ${before}`);
   });
 });

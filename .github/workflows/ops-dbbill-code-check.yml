@@ -1,0 +1,45 @@
+name: Ops db_bill EmpCode Check (manual)
+
+# Read-only: reports which EmpCodes exist in db_bill.masjclrentry. Writes nothing anywhere.
+on:
+  workflow_dispatch:
+    inputs:
+      codes:
+        description: "EmpCodes, space/comma/newline separated"
+        required: true
+        type: string
+
+concurrency:
+  group: ops-dbbill-code-check-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: db_bill EmpCode check
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          CODES: ${{ inputs.codes }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
+          npx tsx scripts/dbbill-code-check.ts

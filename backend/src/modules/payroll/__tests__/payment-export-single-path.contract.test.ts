@@ -77,14 +77,17 @@ describe("the surviving exporter still carries every gate", () => {
     expect(block).toContain("hasOrgWideScope");
   });
 
-  it("requires a closed, validated run", () => {
+  it("requires an approved-or-closed, validated run", () => {
     expect(block).toContain("isRunClosed");
     expect(block).toContain("validation_status");
   });
 
-  it("requires Finance sign-off", () => {
+  it("does not require Finance sign-off to export, but records an export made before it", () => {
+    // Owner ruling 2026-10-03 ("export first, finance after"). Sign-off is still enforced at lock and
+    // disburse; here it is only audited.
+    expect(block).not.toContain("FINANCE_SIGNOFF_MISSING");
     expect(block).toContain("finance_approved_by");
-    expect(block).toContain("FINANCE_SIGNOFF_MISSING");
+    expect(block).toContain("PAYROLL_NEFT_EXPORT_BEFORE_FINANCE_SIGNOFF");
   });
 
   it("reconciles its payable population against bank readiness before releasing anything", () => {

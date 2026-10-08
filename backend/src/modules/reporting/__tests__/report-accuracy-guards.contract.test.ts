@@ -188,6 +188,22 @@ describe("no executor queries a table that does not exist", () => {
       "catalog entry is marked blocked.",
   };
 
+  /**
+   * Tables that live in db_bill, not mas_hrms. They carry no `db_bill.` qualifier to skip
+   * on because they are not queried through the mas_hrms pool at all: billQuery() runs on
+   * the read-only legacy pool whose default schema is db_bill. The schema snapshot here
+   * cannot adjudicate them — same position as the qualified cross-database case below.
+   *
+   * The allowance is for the connection, not the name: the next test fails if either is
+   * ever referenced in SQL that is not handed straight to billQuery().
+   */
+  const DB_BILL_VIA_BILL_POOL: Record<string, string> = {
+    masjclrentry:
+      "employee.executor.ts fetchLegacyMasterByCode — legacy master fields for the Employee Master snapshot.",
+    employee_master:
+      "employee.executor.ts fetchEmployeeMasterByCode — second legacy snapshot, fills what masjclrentry lacks.",
+  };
+
   it("resolves every FROM and JOIN target against the live schema", () => {
     const offenders: string[] = [];
 
@@ -207,6 +223,7 @@ describe("no executor queries a table that does not exist", () => {
         const t = table.toLowerCase();
         if (["select", "dual", "lateral", "unnest"].includes(t)) continue;
         if (t in HANDLED_ABSENT) continue;
+        if (t in DB_BILL_VIA_BILL_POOL) continue;
         if (!LIVE_TABLES.has(t)) offenders.push(`${t} (${name}.executor.ts)`);
       }
     }
@@ -216,5 +233,30 @@ describe("no executor queries a table that does not exist", () => {
       detail,
       `executors querying non-existent tables:\n${detail.join("\n")}`,
     ).toEqual([]);
+  });
+
+  it("db_bill tables are only ever queried through billQuery()", () => {
+    const offenders: string[] = [];
+    let seen = 0;
+
+    for (const name of EXECUTOR_FILES) {
+      const source = read(`src/modules/reporting/executors/${name}.executor.ts`);
+      for (const m of source.matchAll(/`([^`]*)`/g)) {
+        const sql = m[1].replace(/--[^\n]*/g, " ");
+        for (const table of Object.keys(DB_BILL_VIA_BILL_POOL)) {
+          if (!new RegExp(`\\b(?:FROM|JOIN)\\s+${table}\\b(?!\\.)`, "i").test(sql)) continue;
+          seen++;
+          // The template literal must be the first argument of a billQuery(...) call.
+          const before = source.slice(Math.max(0, m.index! - 120), m.index!);
+          if (!/\bbillQuery(?:<[^>]*>)?\(\s*$/.test(before)) {
+            offenders.push(`${table} (${name}.executor.ts) — not inside billQuery(), so it would hit mas_hrms`);
+          }
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+    // If this drops to zero the allowance above is dead and should be deleted.
+    expect(seen).toBeGreaterThanOrEqual(Object.keys(DB_BILL_VIA_BILL_POOL).length);
   });
 });

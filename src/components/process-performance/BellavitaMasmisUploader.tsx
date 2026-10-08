@@ -5,7 +5,7 @@ import { pollBatchJob, isBatchJobStarted } from "@/lib/bulkBatchJob";
 import { apiUrl } from "@/lib/apiBase";
 import { TONE_SOLID_CLASSES, type Tone } from "@/lib/processPerformanceTones";
 import { Upload, Loader2, CheckCircle2, XCircle, Trash2, UploadCloud, Download, CheckCircle } from "lucide-react";
-import { UploadCoverageBanner, useRefreshUploadCoverage, useUploadCoverage } from "./UploadCoverage";
+import { UploadCoverageBanner, LiveSourceBanner, useRefreshUploadCoverage, useUploadCoverage } from "./UploadCoverage";
 import { useSortableRows } from "./useSortableRows";
 import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
@@ -67,16 +67,29 @@ const RPC_BY_TYPE: Record<string, string> = {
   BIRLANU_APR_MASMIS: "import_birlanu_apr_batch",
   SATYA_ALLOCATION_MASMIS: "import_satya_allocation_batch",
   SATYA_CDR_MASMIS: "import_satya_cdr_batch",
+  ALT_RX_DUMP_MASMIS: "import_alt_rx_dump_batch",
   LP_FEEDBACK_APR_MASMIS: "import_lp_feedback_apr_batch",
   LP_FEEDBACK_CDR_MASMIS: "import_lp_feedback_cdr_batch",
   LP_ONBOARDING_APR_MASMIS: "import_lp_onboarding_apr_batch",
   LP_ONBOARDING_CDR_MASMIS: "import_lp_onboarding_cdr_batch",
   GNC_CHAT_MASMIS: "import_gnc_chat_batch",
   NEEMANS_CHAT_MASMIS: "import_neemans_chat_batch",
+  DU_CDR_KOREA: "import_du_cdr_korea_batch",
+  DU_CDR_THAILAND: "import_du_cdr_thailand_batch",
+  AHM_DUMP_MP: "import_ahm_dump_mp_batch",
+  AHM_DUMP_MM: "import_ahm_dump_mm_batch",
   DALMIA_DD_RAW: "import_dalmia_dd_batch",
   DALMIA_OUTBOUND_RAW: "import_dalmia_outbound_batch",
   DALMIA_AFTER_HOUR: "import_dalmia_after_hour_batch",
   DALMIA_APR: "import_dalmia_apr_batch",
+  SBI_CARD_DIALER_MIS: "import_sbi_card_dialer_mis_batch",
+  SBI_CARD_AGENT_MIS: "import_sbi_card_agent_mis_batch",
+  SBI_CARD_ACCOUNT_FILE: "import_sbi_card_account_file_batch",
+  SBI_CARD_DOWNTIME: "import_sbi_card_downtime_batch",
+  SBI_CARD_PEN_ESTIMATION: "import_sbi_card_pen_estimation_batch",
+  SBI_CARD_APR: "import_sbi_card_apr_batch",
+  SBI_CARD_OUTCOME: "import_sbi_card_outcome_batch",
+  SBI_CARD_ROSTER: "import_sbi_card_roster_batch",
 };
 
 /** Same normalization every aw-*-bulk.service.ts backend importer uses: lowercase,
@@ -86,6 +99,8 @@ const RPC_BY_TYPE: Record<string, string> = {
  * Allocation, all 3 original Neemans uploaders) where the real header was
  * present but spelled/cased/spaced differently than the catalog's required_columns
  * entry. Normalizing removes that whole class of false rejection. */
+import { pickSheetWithHeader, readCampaignSheets, describeCampaignRead, dropBlankRows, isSbiCardCode, SHEET_NAME_AS_CAMPAIGN_CODES, detectTimeRangeDate, serialToDateTime, latestDay, SBI_ACCOUNT_DATETIME_HEADERS, HEADER_HINTS, parseExportName, countUnmaskedPhones } from "@/lib/excelSheetPicker";
+
 function normalizeHeaderKey(k: string): string {
   return k.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -189,6 +204,12 @@ export function BellavitaMasmisUploader({
   const [dragOver, setDragOver] = useState(false);
   const [showAllLog, setShowAllLog] = useState(false);
   const [lastBatchId, setLastBatchId] = useState<string | null>(null);
+  // SBI Card account files and dialer APR exports carry no Report Date column. The day is read from the file (latest call time /
+  // "Time range:" line) and pre-filled; the operator can change it, and it defaults to today when the file has neither.
+  const [reportDate, setReportDate] = useState(() => new Date().toLocaleDateString("en-CA"));
+  const [reportDateEdited, setReportDateEdited] = useState(false);
+  const [detectedDate, setDetectedDate] = useState<string | null>(null);
+  const needsReportDate = templateCode === "SBI_CARD_ACCOUNT_FILE" || templateCode === "SBI_CARD_APR" || templateCode === "SBI_CARD_OUTCOME";
   const [downloadingErrorsId, setDownloadingErrorsId] = useState<string | null>(null);
   const [downloadingAllId, setDownloadingAllId] = useState<string | null>(null);
   const coverageQ = useUploadCoverage([templateCode]);
@@ -329,10 +350,32 @@ export function BellavitaMasmisUploader({
 
   function pickFile(f: File | null) {
     setFile(f);
+    setDetectedDate(null);
+    setReportDateEdited(false);
+    if (f && needsReportDate) void detectReportDate(f);
     setPhase("idle");
     setResult(null);
     setMessage(null);
     setLastBatchId(null);
+  }
+
+  /** Reads the snapshot day out of the file: the latest call time (account file) or the "Time range:" line (dialer APR). */
+  async function detectReportDate(f: File) {
+    try {
+      const lower = f.name.toLowerCase();
+      const wb = lower.endsWith(".csv") ? XLSX.read(await f.text(), { type: "string" }) : XLSX.read(new Uint8Array(await f.arrayBuffer()), { type: "array" });
+      const picked = pickBestSheet(wb, template);
+      const sheet = wb.Sheets[picked.name];
+      if (!sheet) return;
+      let day: string | null = parseExportName(f.name).date;
+      if (day) { /* the day-end export is named for its day (MAS_AHM_FLOW_NEW_DDMMYYYY) */ }
+      else if (templateCode === "SBI_CARD_APR") day = detectTimeRangeDate(sheet);
+      else {
+        const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: true, range: picked.headerRow });
+        day = latestDay(raw.flatMap((r) => SBI_ACCOUNT_DATETIME_HEADERS.map((h) => (typeof r[h] === "number" ? serialToDateTime(r[h] as number) : null))));
+      }
+      if (day) { setDetectedDate(day); setReportDate(day); }
+    } catch { /* detection is a convenience; the date picker still works */ }
   }
 
   /** Picks the sheet whose header row best matches this template's expected
@@ -346,44 +389,56 @@ export function BellavitaMasmisUploader({
    * excelFileToCsvText — ported here using this file's own normalized
    * header match (normalizeHeaderKey) instead of an exact-string match,
    * consistent with this uploader's existing tolerant-header philosophy. */
-  function pickBestSheet(workbook: XLSX.WorkBook, tmpl: UploadTemplate | null): string {
-    const sheetNames = workbook.SheetNames;
-    if (sheetNames.length === 0) throw new Error("The file has no sheets.");
+  function pickBestSheet(workbook: XLSX.WorkBook, tmpl: UploadTemplate | null): { name: string; headerRow: number } {
     const expected = new Set(
-      [...(tmpl?.required_columns || []), ...(tmpl?.optional_columns || [])].map(normalizeHeaderKey),
+      [...(tmpl?.required_columns || []), ...(tmpl?.optional_columns || []), ...(HEADER_HINTS[String(tmpl?.upload_type_code || "").toUpperCase()] ?? [])].map(normalizeHeaderKey),
     );
-    if (expected.size === 0) return sheetNames[0]!;
-
-    let bestSheetName = sheetNames[0]!;
-    let bestScore = -1;
-    let bestExtra = Infinity;
-    for (const name of sheetNames) {
-      const sheet = workbook.Sheets[name];
-      if (!sheet) continue;
-      const firstRow = XLSX.utils.sheet_to_json(sheet, { header: 1, range: 0 })[0] as unknown[] | undefined;
-      if (!firstRow) continue;
-      const headerCells = firstRow.map((cell) => String(cell ?? "").trim()).filter((c) => c !== "");
-      const normalizedHeaders = headerCells.map(normalizeHeaderKey);
-      const score = normalizedHeaders.filter((h) => expected.has(h)).length;
-      const extra = normalizedHeaders.filter((h) => !expected.has(h)).length;
-      if (score > bestScore || (score === bestScore && extra < bestExtra)) {
-        bestScore = score;
-        bestExtra = extra;
-        bestSheetName = name;
-      }
-    }
-    return bestSheetName;
+    // The header row may sit below a title row (e.g. SBI Card Dialer MIS has it on row 2) and empty "-"
+    // sheets never win over a sheet with matching headers -- see pickSheetWithHeader.
+    return pickSheetWithHeader(workbook, expected, normalizeHeaderKey);
   }
 
-  async function fileToRows(f: File): Promise<Record<string, string>[]> {
+  async function fileToRows(f: File): Promise<{ rows: Record<string, string>[]; summary: string | null }> {
     const lower = f.name.toLowerCase();
     const workbook = lower.endsWith(".csv")
       ? XLSX.read(await f.text(), { type: "string" })
       : XLSX.read(new Uint8Array(await f.arrayBuffer()), { type: "array" });
-    const sheetName = pickBestSheet(workbook, template);
-    return XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets[sheetName]!, {
-      defval: "", raw: false,
+    const code = String(template?.upload_type_code || "").toUpperCase();
+    const required = template?.required_columns || [];
+    if (SHEET_NAME_AS_CAMPAIGN_CODES.has(code)) {
+      // One sheet per campaign: stage every matching sheet, each row tagged with its own sheet name.
+      const expected = new Set([...required, ...(template?.optional_columns || [])].map(normalizeHeaderKey));
+      const res = readCampaignSheets(workbook, expected, normalizeHeaderKey, required);
+      return { rows: res.rows, summary: describeCampaignRead(res) };
+    }
+    const picked = pickBestSheet(workbook, template);
+    const rows = XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets[picked.name]!, {
+      defval: "", raw: false, range: picked.headerRow,
     });
+    if (code === "SBI_CARD_ACCOUNT_FILE") {
+      // Re-read call / callback times as raw Excel serials so the importer never sees a locale-formatted date.
+      const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[picked.name]!, { defval: "", raw: true, range: picked.headerRow });
+      rows.forEach((r, i) => {
+        for (const h of SBI_ACCOUNT_DATETIME_HEADERS) {
+          const v = raw[i]?.[h];
+          const iso = typeof v === "number" ? serialToDateTime(v) : null;
+          if (iso) r[h] = iso;
+        }
+      });
+    }
+    if (needsReportDate) {
+      for (const r of rows) if (getNormalized(r, "Report Date") === "") r["Report Date"] = reportDate;
+    }
+    let piiNote: string | null = null;
+    if (code === "SBI_CARD_ACCOUNT_FILE") {
+      // MAS_AHM_FLOW_NEW_<date> / MAS_AHM_FLOW_MANUAL_<date>: the same account can be in both, so the flow is part of its identity.
+      const flow = parseExportName(f.name).flow;
+      if (flow) for (const r of rows) if (getNormalized(r, "Flow") === "") r["Flow"] = flow;
+      const unmasked = countUnmaskedPhones(rows);
+      if (unmasked > 0) piiNote = `Warning: ${unmasked} row(s) carry full, unmasked contact numbers. SBI Card requires reporting exports to be masked; HRMS does not store contact numbers, but please use the masked reporting export for uploads.`;
+    }
+    // Blank spacer rows would otherwise be staged as "X is required" errors.
+    return { rows: isSbiCardCode(code) ? (dropBlankRows(rows, required, normalizeHeaderKey).rows as Record<string, string>[]) : rows, summary: piiNote };
   }
 
   async function handleUpload() {
@@ -393,7 +448,7 @@ export function BellavitaMasmisUploader({
     setResult(null);
 
     try {
-      const rows = await fileToRows(file);
+      const { rows, summary: readSummary } = await fileToRows(file);
       if (rows.length === 0) {
         throw new Error("This file has no data rows below the header.");
       }
@@ -452,7 +507,7 @@ export function BellavitaMasmisUploader({
       const batch = batchRes.data;
       setLastBatchId(batch.id);
 
-      setMessage(`Staging ${stagedRows.length} row(s)...`);
+      setMessage(`${readSummary ? `${readSummary}. ` : ""}Staging ${stagedRows.length} row(s)...`);
       for (let offset = 0; offset < stagedRows.length; offset += STAGE_CHUNK_SIZE) {
         const slice = stagedRows.slice(offset, offset + STAGE_CHUNK_SIZE);
         await hrmsApi.post(
@@ -476,6 +531,7 @@ export function BellavitaMasmisUploader({
 
       let imported = 0;
       let errored = errorRows;
+      let mappingNotes = "";
       if (isBatchJobStarted(importRes)) {
         const final = await pollBatchJob(`/api/bulk-upload/batches/${batch.id}/import-status`, {
           onProgress: (s) => setMessage(`Importing... ${s.progress?.processed ?? 0}/${s.progress?.total ?? "?"}`),
@@ -483,13 +539,14 @@ export function BellavitaMasmisUploader({
         if (final.phase === "failed") throw new Error(final.error || final.message || "Import failed.");
         const data = (final.result as { data?: any })?.data ?? {};
         imported = Number(data.importedRows ?? data.imported_rows ?? final.progress?.succeeded ?? 0);
+        if (Array.isArray(data.notes) && data.notes.length > 0) mappingNotes = (data.notes as string[]).join(" ");
         errored += Number(data.errorRows ?? data.error_rows ?? final.progress?.failed ?? 0);
       }
 
       setResult({ imported, errors: errored });
       void refreshCoverage([templateCode]);
       setPhase("done");
-      setMessage(null);
+      setMessage([readSummary, mappingNotes].filter(Boolean).join(" ") || null);
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       loadLog();
@@ -506,10 +563,22 @@ export function BellavitaMasmisUploader({
 
   return (
     <div className="space-y-4">
+      <LiveSourceBanner uploadTypeCode={templateCode} />
       <UploadCoverageBanner coverage={coverageQ.data?.[templateCode]} loading={coverageQ.isLoading} />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Dropzone + status */}
         <div className="lg:col-span-2">
+          {needsReportDate && (
+            <label className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              Report date for this account file
+              <input type="date" value={reportDate} max={new Date().toLocaleDateString("en-CA")} disabled={busy}
+                onChange={(e) => { setReportDate(e.target.value); setReportDateEdited(true); }}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" />
+              <span className="text-slate-400">
+                {detectedDate && !reportDateEdited ? `Read from the file (${detectedDate}). ` : ""}Used for rows without a Report Date column.
+              </span>
+            </label>
+          )}
           <div
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}

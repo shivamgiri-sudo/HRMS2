@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -81,6 +82,38 @@ interface WithdrawalEvidence {
   uploaded_by: string | null;
   created_at: string;
 }
+
+/** DB columns are module_key / action_required / recorded_at; older UI code used the names below. */
+export function normaliseTask(raw: Record<string, unknown>): WithdrawalTask {
+  return {
+    id: String(raw.id),
+    task_module: String(raw.task_module ?? raw.module_key ?? "other"),
+    task_description: String(raw.task_description ?? raw.action_required ?? ""),
+    assigned_to: (raw.assigned_to as string | null) ?? null,
+    status: (raw.status as WithdrawalTask["status"]) ?? "pending",
+    completed_at: (raw.completed_at as string | null) ?? null,
+    notes: (raw.notes as string | null) ?? null,
+  };
+}
+export function normaliseEvidence(raw: Record<string, unknown>): WithdrawalEvidence {
+  return {
+    id: String(raw.id),
+    evidence_type: String(raw.evidence_type ?? "other"),
+    file_path: (raw.file_path ?? raw.file_ref ?? null) as string | null,
+    description: (raw.description as string | null) ?? null,
+    uploaded_by: (raw.uploaded_by ?? raw.recorded_by ?? null) as string | null,
+    created_at: String(raw.created_at ?? raw.recorded_at ?? ""),
+  };
+}
+
+const EVIDENCE_TYPES = [
+  ["decision_letter", "Decision letter"],
+  ["communication_sent", "Communication sent to the employee"],
+  ["third_party_notice", "Notice to a processor / third party"],
+  ["anonymization_proof", "Anonymisation / deletion proof"],
+  ["retention_basis", "Legal basis for data retained"],
+  ["other", "Other"],
+] as const;
 
 interface WithdrawalStats {
   total_open: number;
@@ -228,11 +261,11 @@ export default function NativeDPDPWithdrawalAdmin() {
 
     await Promise.all([
       hrmsApi.get<{ data: WithdrawalTask[] }>(`/api/privacy/dpdp-withdrawal/${r.id}/tasks`)
-        .then((res) => setTasks(res.data ?? []))
+        .then((res) => setTasks((res.data ?? []).map((t) => normaliseTask(t as unknown as Record<string, unknown>))))
         .catch(() => setTasks([]))
         .finally(() => setTasksLoading(false)),
       hrmsApi.get<{ data: WithdrawalEvidence[] }>(`/api/privacy/dpdp-withdrawal/${r.id}/evidence`)
-        .then((res) => setEvidence(res.data ?? []))
+        .then((res) => setEvidence((res.data ?? []).map((e) => normaliseEvidence(e as unknown as Record<string, unknown>))))
         .catch(() => setEvidence([]))
         .finally(() => setEvidenceLoading(false)),
       hrmsApi.get<{ data: AuditEntry[] }>(`/api/privacy/dpdp-withdrawal/${r.id}/audit`)
@@ -246,7 +279,56 @@ export default function NativeDPDPWithdrawalAdmin() {
     try {
       await hrmsApi.post(`/api/privacy/dpdp-withdrawal/${id}/start-review`, {});
       await fetchRequests();
-    } catch { alert("Failed to start review."); }
+    } catch (err) {
+      // Surfaces the server's reason, e.g. "Cannot start review: request is in status 'approved'".
+      alert(err instanceof Error ? err.message : "Failed to start review.");
+      await fetchRequests();
+    }
+  };
+
+  const reloadTasksAndEvidence = async (id: string) => {
+    const [t, e] = await Promise.all([
+      hrmsApi.get<{ data: WithdrawalTask[] }>(`/api/privacy/dpdp-withdrawal/${id}/tasks`).catch(() => ({ data: [] as WithdrawalTask[] })),
+      hrmsApi.get<{ data: WithdrawalEvidence[] }>(`/api/privacy/dpdp-withdrawal/${id}/evidence`).catch(() => ({ data: [] as WithdrawalEvidence[] })),
+    ]);
+    setTasks((t.data ?? []).map((x) => normaliseTask(x as unknown as Record<string, unknown>)));
+    setEvidence((e.data ?? []).map((x) => normaliseEvidence(x as unknown as Record<string, unknown>)));
+  };
+
+  const [taskNotes, setTaskNotes] = useState<Record<string, string>>({});
+  const [taskBusy, setTaskBusy] = useState<string | null>(null);
+  const [taskError, setTaskError] = useState("");
+  const completeTask = async (requestId: string, taskId: string) => {
+    setTaskBusy(taskId);
+    setTaskError("");
+    try {
+      await hrmsApi.patch(`/api/privacy/dpdp-withdrawal/${requestId}/tasks/${taskId}`, { notes: taskNotes[taskId]?.trim() || undefined });
+      await reloadTasksAndEvidence(requestId);
+      await fetchRequests();
+    } catch (err) {
+      setTaskError(err instanceof Error ? err.message : "Could not complete the task.");
+    } finally {
+      setTaskBusy(null);
+    }
+  };
+
+  const [evType, setEvType] = useState<string>("decision_letter");
+  const [evDesc, setEvDesc] = useState("");
+  const [evBusy, setEvBusy] = useState(false);
+  const [evError, setEvError] = useState("");
+  const addEvidence = async (requestId: string) => {
+    if (!evDesc.trim()) { setEvError("Describe the evidence being recorded."); return; }
+    setEvBusy(true);
+    setEvError("");
+    try {
+      await hrmsApi.post(`/api/privacy/dpdp-withdrawal/${requestId}/evidence`, { evidence_type: evType, description: evDesc.trim() });
+      setEvDesc("");
+      await reloadTasksAndEvidence(requestId);
+    } catch (err) {
+      setEvError(err instanceof Error ? err.message : "Could not record the evidence.");
+    } finally {
+      setEvBusy(false);
+    }
   };
 
   const handleReleaseHold = async (id: string) => {
@@ -258,7 +340,7 @@ export default function NativeDPDPWithdrawalAdmin() {
         ...s,
         request: s.request ? { ...s.request, processing_hold_active: 0 } : null,
       }));
-    } catch { alert("Failed to release hold."); }
+    } catch (err) { alert(err instanceof Error ? err.message : "Failed to release hold."); }
     finally { setReleaseHoldLoading(false); }
   };
 
@@ -295,6 +377,14 @@ export default function NativeDPDPWithdrawalAdmin() {
       setActionError(msg);
     } finally { setActionLoading(false); }
   };
+
+  // Approval Center deep link: jump to the page that holds ?approvalId=<request id>.
+  const focusId = useApprovalFocus(!loading && requests.length > 0);
+  useEffect(() => {
+    if (!focusId) return;
+    const idx = requests.findIndex((r) => r.id === focusId);
+    if (idx >= 0) setPage(Math.floor(idx / PAGE_SIZE) + 1);
+  }, [focusId, requests]);
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(requests.length / PAGE_SIZE));
@@ -449,7 +539,7 @@ export default function NativeDPDPWithdrawalAdmin() {
                       {pagedRequests.map((r) => {
                         const sla = slaCountdown(r.sla_due_at);
                         return (
-                          <TableRow key={r.id} className="cursor-pointer hover:bg-slate-50/60"
+                          <TableRow key={r.id} data-approval-id={r.id} className="cursor-pointer hover:bg-slate-50/60"
                             onClick={() => void openDetail(r)}>
                             <TableCell className="font-mono text-xs text-slate-500">
                               {r.reference_number ?? r.id.slice(0, 8).toUpperCase()}
@@ -664,7 +754,9 @@ export default function NativeDPDPWithdrawalAdmin() {
                 {tasksLoading ? (
                   <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div>
                 ) : tasks.length === 0 ? (
-                  <p className="text-xs text-slate-400 text-center py-3">No tasks yet.</p>
+                  <p className="text-xs text-slate-400 text-center py-3">
+                    No tasks yet. They are created automatically when the request is approved.
+                  </p>
                 ) : (
                   <div className="space-y-2">
                     {tasks.map((t) => (
@@ -676,6 +768,21 @@ export default function NativeDPDPWithdrawalAdmin() {
                           <p className="text-xs font-bold text-slate-700 uppercase">{t.task_module.replace(/_/g, " ")}</p>
                           <p className="text-sm text-slate-600">{t.task_description}</p>
                           {t.notes && <p className="text-xs text-slate-400 mt-0.5 italic">{t.notes}</p>}
+                          {t.status !== "completed" && detailSheet.request && (
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <Input
+                                aria-label={`Notes for ${t.task_module.replace(/_/g, " ")} task`}
+                                placeholder="What was done (optional)"
+                                className="h-8 max-w-[260px] text-xs"
+                                value={taskNotes[t.id] ?? ""}
+                                onChange={(e) => setTaskNotes((n) => ({ ...n, [t.id]: e.target.value }))}
+                              />
+                              <Button size="sm" className="h-8" disabled={taskBusy === t.id}
+                                onClick={() => void completeTask(detailSheet.request!.id, t.id)}>
+                                {taskBusy === t.id ? "Saving…" : "Mark complete"}
+                              </Button>
+                            </div>
+                          )}
                         </div>
                         {t.completed_at && (
                           <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-500 mt-0.5" />
@@ -685,6 +792,7 @@ export default function NativeDPDPWithdrawalAdmin() {
                     <div className="text-xs text-slate-400 text-right">
                       {tasks.filter((t) => t.status === "completed").length}/{tasks.length} completed
                     </div>
+                    {taskError && <p role="alert" className="text-xs text-red-600">{taskError}</p>}
                   </div>
                 )}
               </div>
@@ -711,6 +819,34 @@ export default function NativeDPDPWithdrawalAdmin() {
                   </div>
                 )}
               </div>
+
+              {/* Record evidence */}
+              {detailSheet.request && (
+                <div className="rounded-xl border bg-slate-50 p-3 space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Record evidence</p>
+                  <div className="flex flex-wrap gap-2">
+                    <select
+                      aria-label="Evidence type"
+                      className="h-9 rounded-md border bg-white px-2 text-sm"
+                      value={evType}
+                      onChange={(e) => setEvType(e.target.value)}
+                    >
+                      {EVIDENCE_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                    </select>
+                    <Input
+                      aria-label="Evidence description"
+                      placeholder="What this evidence shows"
+                      className="h-9 min-w-[200px] flex-1"
+                      value={evDesc}
+                      onChange={(e) => setEvDesc(e.target.value)}
+                    />
+                    <Button size="sm" className="h-9" disabled={evBusy} onClick={() => void addEvidence(detailSheet.request!.id)}>
+                      {evBusy ? "Saving…" : "Add"}
+                    </Button>
+                  </div>
+                  {evError && <p role="alert" className="text-xs text-red-600">{evError}</p>}
+                </div>
+              )}
 
               {/* Audit timeline */}
               <div>

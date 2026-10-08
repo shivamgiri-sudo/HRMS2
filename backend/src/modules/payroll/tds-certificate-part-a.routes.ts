@@ -14,6 +14,7 @@ import {
   issueDownloadToken,
 } from "../document-vault/documentVault.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { guardEmployee, canSeeEmployee } from "./payroll-branch-scope.js";
 import {
   getPartAAvailability,
   recordPartA,
@@ -128,6 +129,7 @@ tdsCertificatePartARouter.post(
         });
     }
 
+    if (!(await guardEmployee(req, res, employeeId))) return;
     const file = (req as unknown as { file?: Express.Multer.File }).file;
     if (!file)
       return res
@@ -222,6 +224,7 @@ tdsCertificatePartARouter.post(
         });
     }
 
+    if (!(await guardEmployee(req, res, employeeId))) return;
     const ok = await verifyPartA(employeeId, financialYear, req.authUser!.id);
     if (!ok) {
       return res
@@ -259,12 +262,11 @@ tdsCertificatePartARouter.post(
  * Payroll roles act on anyone; everyone else only on themselves, resolved from
  * their own employee record rather than from a URL they control.
  */
-async function resolveAccess(
-  req: AuthenticatedRequest,
-  targetEmployeeId: string,
-) {
-  if (await hasAnyRole(req.authUser!.id, ...PAYROLL_ROLES))
-    return { allowed: true, privileged: true };
+async function resolveAccess(req: AuthenticatedRequest, targetEmployeeId: string) {
+  if (await hasAnyRole(req.authUser!.id, ...PAYROLL_ROLES)) {
+    // Branch scoping (owner ruling 2026-10-01): payroll roles act only inside their own scope.
+    return { allowed: await canSeeEmployee(req, targetEmployeeId), privileged: true };
+  }
   const own = await getEmployeeForUser(req.authUser!.id);
   return {
     allowed: Boolean(own && own.id === targetEmployeeId),

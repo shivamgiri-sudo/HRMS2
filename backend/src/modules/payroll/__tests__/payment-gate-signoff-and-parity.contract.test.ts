@@ -49,35 +49,29 @@ const HANDLER = slice(
   'router.get("/runs/:id/neft-export"',
 );
 
-describe("payment gate E — Finance sign-off is required before a payment file", () => {
-  it("refuses a run with no finance_approved_by", () => {
-    /*
-     * Applied to every run in scope, not just one. A month file assembled from a mix of approved
-     * and unapproved runs would move money nobody signed off, and the offending run would be
-     * invisible in a CSV that looked complete — so the list form is the stronger assertion.
-     */
+describe("payment gate E - Finance sign-off is recorded at export and required at lock / disburse", () => {
+  /*
+   * REVISED 2026-10-03 (owner ruling "export first, finance after"). The original gate refused any
+   * export without finance_approved_by. Combined with lock/disburse also needing it, no bank file
+   * could be produced for any run (finance_approved_by was NULL on all 66 live runs). The payroll
+   * head now exports once the run is approved and validated; the finance head signs off and
+   * releases the payment. The control moved, it was not removed: updateRunStatus still refuses
+   * LOCK and DISBURSE without sign-off or an independent break-glass.
+   */
+  it("does not refuse the export for a missing finance sign-off", () => {
+    expect(HANDLER).not.toContain("FINANCE_SIGNOFF_MISSING");
+  });
+
+  it("audit-logs an export made before sign-off, naming the runs", () => {
     expect(HANDLER).toContain("runs.filter((r) => !r.finance_approved_by)");
-    expect(HANDLER).toContain("FINANCE_SIGNOFF_MISSING");
+    expect(HANDLER).toContain("PAYROLL_NEFT_EXPORT_BEFORE_FINANCE_SIGNOFF");
+    expect(HANDLER).toContain("run_ids: unsigned.map");
   });
 
-  it("checks sign-off BEFORE building any part of the file", () => {
-    const signoff = HANDLER.indexOf("FINANCE_SIGNOFF_MISSING");
-    const population = HANDLER.indexOf("FROM salary_prep_line");
-    expect(signoff).toBeGreaterThan(-1);
-    expect(population).toBeGreaterThan(-1);
-    // A run nobody has signed off must not even be assembled into a file.
-    expect(signoff).toBeLessThan(population);
-  });
-
-  it("is a distinct failure from the run-state and validation checks", () => {
-    // "not signed off" is a workflow state a human resolves, not a malformed request — so it must
-    // not be collapsed into the 400/403 that report a wrong run status.
-    expect(HANDLER).toMatch(/FINANCE_SIGNOFF_MISSING[\s\S]{0,400}?/);
-    const signoffBlock = HANDLER.slice(
-      HANDLER.indexOf("finance_approved_by") - 200,
-      HANDLER.indexOf("FINANCE_SIGNOFF_MISSING") + 200,
-    );
-    expect(signoffBlock).toContain("409");
+  it("still enforces sign-off where money can actually leave (lock and disburse)", () => {
+    const svc = stripComments(read("src/modules/payroll/payroll.service.ts"));
+    expect(svc).toContain("PAYROLL_FINANCE_SIGNOFF_REQUIRED");
+    expect(svc).toMatch(/input\.status === "locked" \|\| input\.status === "disbursed"/);
   });
 });
 

@@ -150,14 +150,18 @@ export async function getClientInvoices(filters: PaymentFilters): Promise<{
   let hrmsStatuses: Map<number, any> = new Map();
 
   if (invoiceIds.length > 0) {
+    // client_invoice_payment_status is keyed to the db_bill invoice by legacy_invoice_id
+    // (tbl_invoice.id). This read used an invoice_ref_id column from the 1560 draft of the
+    // table; production has the 1865 shape, so every lookup failed.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT invoice_ref_id, payment_status, amount_received, payment_date, updated_at
+      `SELECT legacy_invoice_id, payment_status, amount_received,
+              last_payment_date AS payment_date, updated_at
        FROM client_invoice_payment_status
-       WHERE invoice_ref_id IN (${invoiceIds.map(() => "?").join(",")})`,
-      invoiceIds,
+       WHERE legacy_invoice_id IN (${invoiceIds.map(() => "?").join(",")})`,
+      invoiceIds
     );
     for (const row of rows) {
-      hrmsStatuses.set(row.invoice_ref_id, row);
+      hrmsStatuses.set(Number(row.legacy_invoice_id), row);
     }
   }
 
@@ -249,94 +253,93 @@ export async function updateInvoicePayment(
   payload: UpdatePaymentPayload,
   userId: string,
 ): Promise<{ success: boolean; id: string }> {
-  const id = randomUUID();
+  // Written against the production shape of these tables (migration 1865):
+  //   client_invoice_payment_status — one row per HRMS client_invoice (invoice_id, NOT NULL
+  //     FK), carrying legacy_invoice_id = db_bill tbl_invoice.id; no mode/ref/remarks columns.
+  //   client_invoice_payment_log — payment_status_id, amount_paid, net_amount, mode, ref, remarks.
+  // The previous version wrote the 1560 draft's columns (invoice_ref_id, client_name,
+  // branch_name, tracking_id, ...), none of which exist, so recording a payment always failed.
+  const paymentDate = payload.payment_date ?? new Date().toISOString().slice(0, 10);
 
   const [existing] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM client_invoice_payment_status WHERE invoice_ref_id = ?`,
-    [payload.invoice_ref_id],
+    `SELECT id, amount_received FROM client_invoice_payment_status WHERE legacy_invoice_id = ? LIMIT 1`,
+    [payload.invoice_ref_id]
   );
 
+  // The page edits the invoice's running total (its field is pre-filled with the amount
+  // already received), so the log records the change in that total, not the total itself.
+  // Otherwise a second instalment was logged as the whole amount and the history summed
+  // to more than was ever received.
+  const previouslyReceived = existing.length > 0 ? Number(existing[0].amount_received ?? 0) : 0;
+  const delta = Math.round((payload.amount_received - previouslyReceived) * 100) / 100;
+
+  let statusId: string;
   if (existing.length > 0) {
+    statusId = String(existing[0].id);
     await db.execute(
       `UPDATE client_invoice_payment_status SET
          payment_status = ?,
          amount_received = ?,
-         payment_date = ?,
-         payment_mode = ?,
-         transaction_ref = ?,
-         remarks = ?,
+         net_received = ? - tds_deducted,
+         last_payment_date = ?,
          updated_by = ?
-       WHERE invoice_ref_id = ?`,
+       WHERE id = ?`,
       [
         payload.payment_status,
         payload.amount_received,
+        payload.amount_received,
         payload.payment_date ?? null,
-        payload.payment_mode ?? null,
-        payload.transaction_ref ?? null,
-        payload.remarks ?? null,
         userId,
-        payload.invoice_ref_id,
-      ],
+        statusId,
+      ]
     );
-
-    if (payload.amount_received > 0) {
-      const logId = randomUUID();
-      await db.execute(
-        `INSERT INTO client_invoice_payment_log
-           (id, tracking_id, amount_paid, payment_date, payment_mode, transaction_ref, remarks, recorded_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          logId,
-          existing[0].id,
-          payload.amount_received,
-          payload.payment_date ?? new Date().toISOString().slice(0, 10),
-          payload.payment_mode ?? null,
-          payload.transaction_ref ?? null,
-          payload.remarks ?? null,
-          userId,
-        ],
+  } else {
+    // invoice_id is a NOT NULL foreign key to client_invoice, so the db_bill invoice must
+    // already be mirrored into HRMS client billing (client_invoice.legacy_id).
+    const [inv] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM client_invoice WHERE legacy_id = ? LIMIT 1`,
+      [payload.invoice_ref_id]
+    );
+    if (inv.length === 0) {
+      throw Object.assign(
+        new Error(
+          `Invoice ${payload.invoice_ref_id} is not yet in HRMS client billing, so its payment cannot be tracked here.`
+        ),
+        { statusCode: 409 }
       );
     }
-
-    return { success: true, id: existing[0].id };
+    statusId = randomUUID();
+    await db.execute(
+      `INSERT INTO client_invoice_payment_status
+         (id, invoice_id, legacy_invoice_id, payment_status, total_amount,
+          amount_received, net_received, last_payment_date, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        statusId,
+        inv[0].id,
+        payload.invoice_ref_id,
+        payload.payment_status,
+        payload.invoice_amount,
+        payload.amount_received,
+        payload.amount_received,
+        payload.payment_date ?? null,
+        userId,
+      ]
+    );
   }
 
-  await db.execute(
-    `INSERT INTO client_invoice_payment_status
-       (id, invoice_ref_id, client_name, branch_name, cost_centre, invoice_month, finance_year,
-        invoice_amount, payment_status, amount_received, payment_date, payment_mode, transaction_ref,
-        remarks, updated_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      payload.invoice_ref_id,
-      payload.client_name,
-      payload.branch_name,
-      payload.cost_centre,
-      payload.invoice_month,
-      payload.finance_year,
-      payload.invoice_amount,
-      payload.payment_status,
-      payload.amount_received,
-      payload.payment_date ?? null,
-      payload.payment_mode ?? null,
-      payload.transaction_ref ?? null,
-      payload.remarks ?? null,
-      userId,
-    ],
-  );
-
-  if (payload.amount_received > 0) {
-    const logId = randomUUID();
+  if (delta !== 0) {
     await db.execute(
       `INSERT INTO client_invoice_payment_log
-         (id, tracking_id, amount_paid, payment_date, payment_mode, transaction_ref, remarks, recorded_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, payment_status_id, amount_paid, net_amount, payment_date, payment_mode,
+          transaction_ref, remarks, recorded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        logId,
-        id,
-        payload.amount_received,
-        payload.payment_date ?? new Date().toISOString().slice(0, 10),
+        randomUUID(),
+        statusId,
+        delta,
+        delta,
+        paymentDate,
         payload.payment_mode ?? null,
         payload.transaction_ref ?? null,
         payload.remarks ?? null,
@@ -345,17 +348,16 @@ export async function updateInvoicePayment(
     );
   }
 
-  return { success: true, id };
+  return { success: true, id: statusId };
 }
 
 export async function getPaymentHistory(invoiceRefId: number): Promise<any[]> {
   const [logs] = await db.execute<RowDataPacket[]>(
     `SELECT l.*, u.full_name AS recorded_by_name
      FROM client_invoice_payment_log l
+     JOIN client_invoice_payment_status s ON s.id = l.payment_status_id
      LEFT JOIN employees u ON u.id = l.recorded_by
-     WHERE l.tracking_id IN (
-       SELECT id FROM client_invoice_payment_status WHERE invoice_ref_id = ?
-     )
+     WHERE s.legacy_invoice_id = ?
      ORDER BY l.recorded_at DESC`,
     [invoiceRefId],
   );

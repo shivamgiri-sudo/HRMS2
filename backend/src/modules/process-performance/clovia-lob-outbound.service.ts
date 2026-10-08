@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { getDialerPool } from "../../db/dialerDb.js";
 import {
   type ChartSpec,
   type Column,
@@ -50,29 +51,34 @@ import { dispoDetail, qualityDetail } from "./clovia-lob.detail.js";
 /**
  * CLOVIA -- OUTBOUND slide.
  *
- * Source: db_masmis.cl_outbound -- one row per DIAL by an agent (3,270 rows,
- * 1-15 Sep 2026). Columns used: call_date ("9/1/26"), start_time
- * ("9/1/26 10:33" -> hour), length_sec, status, reason, campaign, u_r, count_val.
+ * Source: dialer_db.cdr_ob_250 (the live Vicidial outbound CDR table) -- one row per DIAL,
+ * read live via the read-only dialer pool, same live-data pattern as the Inbound
+ * call-performance view (cdr_in_250). Columns used: CallDate (native date), StartTime
+ * (native datetime -> hour), LengthInSec, talk_sec, campaign_id, term_reason, Agent,
+ * PhoneNumber, id (real primary key). Replaces the old db_masmis.cl_outbound manual
+ * upload, which stopped being fed after 15 Sep 2026 (left in place, untouched, just no
+ * longer read here).
  *
  * Definitions:
- *   Dials       = rows.  Every row is one dial; there is no unique call id, so rows that
- *                 share agent + number + start + end + length are FLAGGED (not removed)
- *                 as suspected double uploads -- see notes.
- *   Connected   = status = 'Connected' as uploaded. In this file that is exactly
- *                 length_sec > 10 (every 'Not Connected' row is 0-10s, every 'Connected'
- *                 row is 11s or more), so a connected call means "talked more than 10 seconds".
+ *   Dials       = rows. Every row is one dial with a real unique id from the dialer, so
+ *                 there is no duplicate-upload risk (unlike the old manual sheet).
+ *   Connected   = CAST(LengthInSec AS UNSIGNED) >= 20 seconds -- the same threshold used by
+ *                 the Channels-tab Outbound summary card, per explicit correction from the
+ *                 old, inflated CallStatus='A' definition.
  *   Connect %   = Connected / Dials
- *   Avg talk    = mean length_sec of Connected dials only;  Talk hours = their sum / 3600
- *   Repeat dial = u_r = 'Repeat' (the same number dialled again that day; count_val = the
- *                 dial-count of that number that day)
+ *   Avg talk    = mean LengthInSec of Connected dials only;  Talk hours = their sum / 3600
+ *   Repeat dial = derived, not uploaded: the same valid phone number dialled again on the
+ *                 same CallDate (any agent), ordered by call time. count_val = the running
+ *                 dial-count of that number that day.
  *   Unique numbers = distinct valid numbers (10-12 digits, last 10 compared)
- *   Disconnected by = the `reason` column (CALLER / AGENT / NONE): who ended the call
+ *   Disconnected by = the `term_reason` column (CALLER / AGENT / NONE): who ended the call
  *   Campaign    = OUTBOUND (dedicated outbound work) or INBOUND / CHAT / EMAIL (call-backs
  *                 placed by agents working those LOBs). "All campaigns" is the default so the
  *                 total equals the Overview / Channels 'Outbound dialled' figure.
  *   Quality     = cl_quality lob = 'Outbound' (audit date);  Tickets = cl_dispo skill =
  *                 'outbound' (ticket date). Ticket capture = tickets / Connected dials of
- *                 campaign OUTBOUND.
+ *                 campaign OUTBOUND. Quality and tickets stay on the manual-upload tables --
+ *                 the dialer has no concept of either.
  *
  * OMITTED (no source column): dial attempts by disposition outcome (right-party contact,
  * promise, refusal...) -- the dial log only knows connected / not connected; ring time; list
@@ -139,105 +145,69 @@ const custKey = (phoneKey: string) =>
     .digest("hex")
     .slice(0, 12);
 
-async function load(
-  from: string,
-  to: string,
-  campaign: string | null,
-): Promise<Loaded> {
-  const [raw] = await db.execute<RowDataPacket[]>(
-    `SELECT id, agent, phone_number, DATE_FORMAT(STR_TO_DATE(call_date,'%c/%e/%y'),'%Y-%m-%d') AS d,
-            HOUR(STR_TO_DATE(start_time,'%c/%e/%y %H:%i')) AS hr, DATE_FORMAT(STR_TO_DATE(start_time,'%c/%e/%y %H:%i'),'%H:%i') AS hm,
-            end_time, start_time, call_code, length_sec, campaign, reason, status, count_val, u_r
-       FROM db_masmis.cl_outbound WHERE STR_TO_DATE(call_date,'%c/%e/%y') BETWEEN ? AND ? ORDER BY id`,
-    [from, to],
+async function outboundCoverage(pool: Awaited<ReturnType<typeof getDialerPool>>): Promise<CoverageRow & { unparseable: number }> {
+  const [[r]] = await pool.execute<any[]>(
+    `SELECT COUNT(*) AS n, DATE_FORMAT(MIN(CallDate),'%Y-%m-%d') AS mn, DATE_FORMAT(MAX(CallDate),'%Y-%m-%d') AS mx, COUNT(DISTINCT CallDate) AS days
+       FROM cdr_ob_250 WHERE campaign_id = 'OUTBOUND'`,
+  );
+  return {
+    source: "Outbound dial log (live dialer)", table: "dialer_db.cdr_ob_250", rows: num(r.n),
+    minDate: r.mn ? String(r.mn) : null, maxDate: r.mx ? String(r.mx) : null, days: num(r.days),
+    note: "one row per dial, campaign_id = OUTBOUND, live -- no upload lag", unparseable: 0,
+  };
+}
+
+async function load(from: string, to: string, campaign: string | null): Promise<Loaded> {
+  const pool = await getDialerPool();
+  const [raw] = await pool.execute<any[]>(
+    `SELECT id, Agent, PhoneNumber, DATE_FORMAT(CallDate,'%Y-%m-%d') AS d,
+            HOUR(StartTime) AS hr, DATE_FORMAT(StartTime,'%H:%i') AS hm, StartTime,
+            LengthInSec, campaign_id, term_reason
+       FROM cdr_ob_250 WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY) ORDER BY id`, [from, to],
   );
   const dir = await loadDirectory();
   let badPhones = 0;
   let noLen = 0;
   const all: OutRow[] = raw.map((r) => {
-    const phone = String(r.phone_number ?? "").trim();
+    const phone = String(r.PhoneNumber ?? "").trim();
     const validPhone = /^\d{10,12}$/.test(phone);
     if (!validPhone) badPhones++;
-    const lenRaw = String(r.length_sec ?? "").trim();
+    const lenRaw = String(r.LengthInSec ?? "").trim();
     const hasLen = /^\d+$/.test(lenRaw);
     if (!hasLen) noLen++;
-    const agentKey = String(r.agent ?? "").trim();
+    const agentKey = String(r.Agent ?? "").trim();
+    const len = hasLen ? Number(lenRaw) : 0;
     return {
-      id: num(r.id),
-      date: String(r.d),
-      hour: num(r.hr),
-      hm: String(r.hm ?? ""),
-      agentKey,
-      agent: agentName(dir, agentKey),
-      tl: tlOf(dir, agentKey),
-      phoneRaw: phone,
-      phoneKey: validPhone ? phone.slice(-10) : "",
-      callCode: String(r.call_code ?? ""),
-      len: hasLen ? Number(lenRaw) : 0,
-      hasLen,
-      connected: String(r.status ?? "") === "Connected",
-      campaign: String(r.campaign ?? "").trim() || "(blank)",
-      reason: String(r.reason ?? "").trim() || "(blank)",
-      repeat: String(r.u_r ?? "") === "Repeat",
-      countVal: num(r.count_val),
-      ts: Date.parse(`${r.d}T${r.hm ?? "00:00"}:00Z`),
+      id: num(r.id), date: String(r.d), hour: num(r.hr), hm: String(r.hm ?? ""), agentKey, agent: agentName(dir, agentKey), tl: tlOf(dir, agentKey),
+      phoneRaw: phone, phoneKey: validPhone ? phone.slice(-10) : "", callCode: "", len, hasLen,
+      connected: len >= 20, campaign: String(r.campaign_id ?? "").trim() || "(blank)", reason: String(r.term_reason ?? "").trim() || "(blank)",
+      repeat: false, countVal: 1, ts: r.StartTime instanceof Date ? r.StartTime.getTime() : Date.parse(`${r.d}T${r.hm ?? "00:00"}:00Z`),
     };
   });
-  const sigs = new Map<string, number>();
-  for (const [i, r] of raw.entries()) {
-    const s = [
-      r.agent,
-      r.phone_number,
-      r.start_time,
-      r.end_time,
-      r.length_sec,
-    ].join("|");
-    sigs.set(s, (sigs.get(s) ?? 0) + 1);
-    void i;
+  // Repeat-dial is not an uploaded column on the live table; derive it -- the same valid
+  // number dialled again on the same CallDate (any agent), ordered by call time.
+  const sortedForCount = [...all].sort((a, b) => a.ts - b.ts);
+  const dialCount = new Map<string, number>();
+  const repeatById = new Map<number, { repeat: boolean; countVal: number }>();
+  for (const r of sortedForCount) {
+    if (!r.phoneKey) { repeatById.set(r.id, { repeat: false, countVal: 1 }); continue; }
+    const k = `${r.phoneKey}|${r.date}`;
+    const c = (dialCount.get(k) ?? 0) + 1;
+    dialCount.set(k, c);
+    repeatById.set(r.id, { repeat: c > 1, countVal: c });
   }
-  const dupRows = [...sigs.values()].reduce(
-    (s, c) => s + (c > 1 ? c - 1 : 0),
-    0,
-  );
-  const rows = campaign ? all.filter((r) => r.campaign === campaign) : all;
-  const campaigns = [...new Set(all.map((r) => r.campaign))].sort();
+  const allWithRepeat = all.map((r) => ({ ...r, ...repeatById.get(r.id)! }));
+  const rows = campaign ? allWithRepeat.filter((r) => r.campaign === campaign) : allWithRepeat;
+  const campaigns = [...new Set(allWithRepeat.map((r) => r.campaign))].sort();
   const [q, d, cov, covQ, covD, [[oc]]] = await Promise.all([
-    loadQuality(from, to, "Outbound"),
-    loadDispo(from, to, ["outbound"]),
-    coverageOf(
-      "Outbound dial log",
-      "cl_outbound",
-      DATE_EXPR.outbound,
-      "one row per dial",
-    ),
-    coverageOf(
-      "Quality audits",
-      "cl_quality",
-      DATE_EXPR.quality,
-      "lob = Outbound is used here",
-    ),
-    coverageOf(
-      "CRM dispositions",
-      "cl_dispo",
-      DATE_EXPR.dispo,
-      "skill = outbound is used here",
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS n FROM db_masmis.cl_outbound WHERE STR_TO_DATE(call_date,'%c/%e/%y') BETWEEN ? AND ? AND campaign = 'OUTBOUND' AND status = 'Connected'`,
-      [from, to],
-    ),
+    loadQuality(from, to, "Outbound"), loadDispo(from, to, ["outbound"]),
+    outboundCoverage(pool),
+    coverageOf("Quality audits", "cl_quality", DATE_EXPR.quality, "lob = Outbound is used here"),
+    coverageOf("CRM dispositions", "cl_dispo", DATE_EXPR.dispo, "skill = outbound is used here"),
+    pool.execute<any[]>(`SELECT COUNT(*) AS n FROM cdr_ob_250 WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY) AND campaign_id = 'OUTBOUND' AND CAST(LengthInSec AS UNSIGNED) >= 20`, [from, to]),
   ]);
   return {
-    rows,
-    q,
-    d,
-    dir,
-    dupRows,
-    badPhones,
-    noLen,
-    campaigns,
-    outboundConnected: num(oc.n),
-    unparseable: cov.unparseable + covQ.unparseable + covD.unparseable,
+    rows, q, d, dir, dupRows: 0, badPhones, noLen, campaigns, outboundConnected: num(oc.n), unparseable: cov.unparseable + covQ.unparseable + covD.unparseable,
     coverage: [cov, covQ, covD].map(({ unparseable: _u, ...c }) => c),
   };
 }
@@ -996,26 +966,7 @@ export async function getOutboundLob(
       ],
       rows: realAgents,
     },
-    {
-      key: "out_tl_t",
-      title: "TL-wise performance",
-      tab: "people",
-      drillKind: "tl",
-      keyField: "_key",
-      subtitle:
-        "cl_outbound carries no TL column: each agent is mapped to the TL recorded for them in the chat log / quality audits.",
-      columns: [
-        { key: "tl", label: "TL", align: "left" },
-        { key: "agents", label: "Agents", fmt: "int" },
-        { key: "dials", label: "Dials", fmt: "int" },
-        { key: "connected", label: "Connected", fmt: "int" },
-        { key: "connectPct", label: "Connect %", fmt: "pct" },
-        { key: "avgTalk", label: "Avg talk", fmt: "sec" },
-        { key: "talkHours", label: "Talk hrs", fmt: "dec1" },
-        { key: "repeatPct", label: "Repeat %", fmt: "pct" },
-      ],
-      rows: tlRows,
-    },
+    { key: "out_tl_t", title: "TL-wise performance", tab: "people", drillKind: "tl", keyField: "_key", subtitle: "cdr_ob_250 carries no TL column: each agent is mapped to the TL recorded for them in the chat log / quality audits.", columns: [{ key: "tl", label: "TL", align: "left" }, { key: "agents", label: "Agents", fmt: "int" }, { key: "dials", label: "Dials", fmt: "int" }, { key: "connected", label: "Connected", fmt: "int" }, { key: "connectPct", label: "Connect %", fmt: "pct" }, { key: "avgTalk", label: "Avg talk", fmt: "sec" }, { key: "talkHours", label: "Talk hrs", fmt: "dec1" }, { key: "repeatPct", label: "Repeat %", fmt: "pct" }], rows: tlRows },
   ];
   const qs = qualitySection(b.q, "quality", "out_q");
   kpis.push(...qs.kpis);
@@ -1028,10 +979,7 @@ export async function getOutboundLob(
 
   const insights: Insight[] = [];
   if (total) {
-    insights.push({
-      tone: (v.connectPct as number) >= 85 ? "good" : "warn",
-      text: `${nf(v.dials as number)} dials, ${nf(v.connected as number)} connected (${v.connectPct}%); ${nf(v.notConnected as number)} ended in 10 seconds or less.`,
-    });
+    insights.push({ tone: (v.connectPct as number) >= 85 ? "good" : "warn", text: `${nf(v.dials as number)} dials, ${nf(v.connected as number)} connected (${v.connectPct}%); ${nf(v.notConnected as number)} ended in under 20 seconds.` });
     const ob = campRows.find((c) => c.label === "OUTBOUND");
     if (ob && !campaign && ob.share < 100)
       insights.push({
@@ -1087,22 +1035,10 @@ export async function getOutboundLob(
     });
 
   const notes = [
-    `'Connected' is the status column as uploaded; in this file it means the call lasted more than 10 seconds (all 'Not Connected' rows are 0-10s, all 'Connected' rows 11s+).`,
-    ...(L.dupRows
-      ? [
-          `${L.dupRows} row(s) share agent, number, start, end and length with another row -- suspected double uploads. They are KEPT because there is no call id to prove it; removing them would lower dials by ${L.dupRows}.`,
-        ]
-      : []),
-    ...(L.badPhones
-      ? [
-          `${L.badPhones} dial row(s) hold a non-numeric or short 'number' (e.g. text) -- counted as dials but excluded from unique-number and repeat-customer analysis.`,
-        ]
-      : []),
-    ...(L.noLen
-      ? [
-          `${L.noLen} dial row(s) have no call length; they count as 0 seconds (not connected).`,
-        ]
-      : []),
+    `'Connected' means CAST(LengthInSec AS UNSIGNED) >= 20 seconds, read live from dialer_db.cdr_ob_250 -- the same threshold used by the Channels-tab Outbound summary card.`,
+    `Repeat dial is derived from the live data (same valid number dialled again on the same CallDate), not an uploaded flag -- there is no double-upload risk on this source, since every row carries a real dialer id.`,
+    ...(L.badPhones ? [`${L.badPhones} dial row(s) hold a non-numeric or short 'number' (e.g. text) -- counted as dials but excluded from unique-number and repeat-customer analysis.`] : []),
+    ...(L.noLen ? [`${L.noLen} dial row(s) have no call length; they count as 0 seconds (not connected).`] : []),
     "Omitted because the source has no data for them: right-party-contact / promise / refusal outcomes, ring time, list penetration, and dials per LOGIN hour (cl_apr's LOB tag is unreliable for outbound agents).",
     "The 'OUTBOUND' campaign is the dedicated outbound work; INBOUND / CHAT / EMAIL rows are call-backs made by agents working those LOBs. Pick a campaign above to isolate them; 'All' equals the Overview / Channels 'Outbound dialled' figure.",
     ...(campaign
@@ -1118,26 +1054,10 @@ export async function getOutboundLob(
     ...qs.notes,
   ];
   const definitions = [
-    {
-      term: "Connect %",
-      meaning:
-        "Connected ÷ Dials, where Connected = status 'Connected' (talk longer than 10 seconds).",
-    },
-    {
-      term: "Repeat dial",
-      meaning:
-        "u_r = Repeat: the same number dialled again on the same day (count_val is that day's dial count for the number).",
-    },
-    {
-      term: "Ticket capture",
-      meaning:
-        "CRM tickets with skill = outbound ÷ Connected dials on campaign OUTBOUND (a coverage ratio across two sources).",
-    },
-    {
-      term: "Weeks",
-      meaning:
-        "W-1 = 1st-7th of the month, W-2 = 8th-14th, W-3 = 15th-21st, W-4 = 22nd-28th, W-5 = 29th onward.",
-    },
+    { term: "Connect %", meaning: "Connected ÷ Dials, where Connected = LengthInSec >= 20 seconds (live dialer_db.cdr_ob_250)." },
+    { term: "Repeat dial", meaning: "Derived: the same valid number dialled again on the same CallDate, any agent (count_val is that day's running dial count for the number)." },
+    { term: "Ticket capture", meaning: "CRM tickets with skill = outbound ÷ Connected dials on campaign OUTBOUND (a coverage ratio across two sources)." },
+    { term: "Weeks", meaning: "W-1 = 1st-7th of the month, W-2 = 8th-14th, W-3 = 15th-21st, W-4 = 22nd-28th, W-5 = 29th onward." },
   ];
   return {
     lob: "outbound",

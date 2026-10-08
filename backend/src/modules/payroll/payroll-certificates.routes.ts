@@ -15,6 +15,7 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
+import { employeeScopeFor, guardEmployee } from "./payroll-branch-scope.js";
 
 export const payrollCertificatesRouter = Router();
 
@@ -150,6 +151,8 @@ async function getEmployeeRecord(employeeId: string) {
  *                  none of that is derivable from an assignment row. Deriving it here would mean
  *                  inventing a number and printing it on a certificate.
  *   Basic        — the payroll line's own basic for the same reason.
+ *   Period totals — when period_from and period_to are provided, sums actual salary_prep_line
+ *                  data for that range (e.g., Apr 2022 to Mar 2023 = 12 months total income).
  *
  * The month the figures come from is returned alongside them so the certificate can say which
  * period it describes instead of implying a contractual constant.
@@ -161,7 +164,11 @@ async function getEmployeeRecord(employeeId: string) {
  *   decision, not one to settle inside a bug fix; actual-and-traceable is the conservative
  *   reading and is what a bank is normally asking for.
  */
-async function getCertificateSalaryFigures(employeeId: string) {
+async function getCertificateSalaryFigures(
+  employeeId: string,
+  periodFrom?: string | null,
+  periodTo?: string | null
+) {
   const [ctcRows] = await db.execute<RowDataPacket[]>(
     `SELECT esa.ctc_annual, esa.effective_from,
             ssm.basic_pct, ssm.hra_pct
@@ -211,7 +218,42 @@ async function getCertificateSalaryFigures(employeeId: string) {
       >
     )[0] ?? null;
 
-  if (!ctc && !paid) return null;
+  // If period_from and period_to provided, aggregate salary over that range
+  let periodGross: number | null = null;
+  let periodBasic: number | null = null;
+  let periodMonths: number = 0;
+
+  if (periodFrom && periodTo) {
+    const [periodData] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(spl.gross_salary) as total_gross,
+         SUM(spl.basic) as total_basic,
+         COUNT(*) as month_count
+       FROM salary_prep_line spl
+       JOIN salary_prep_run spr ON spr.id = spl.run_id
+       WHERE spl.employee_id = ?
+         AND spr.run_month >= ?
+         AND spr.run_month <= ?
+         AND spl.gross_salary > 0
+         AND LOWER(COALESCE(spl.status, '')) NOT IN ('excluded', 'blocked')
+         AND LOWER(COALESCE(spr.status, '')) NOT IN ('draft', 'cancelled')`,
+      [employeeId, periodFrom, periodTo]
+    );
+    const periodRow = (periodData as Array<RowDataPacket & {
+      total_gross: string | number | null;
+      total_basic: string | number | null;
+      month_count: number;
+    }>)[0];
+
+    if (periodRow && periodRow.total_gross) {
+      periodGross = Number(periodRow.total_gross);
+      periodBasic = periodRow.total_basic ? Number(periodRow.total_basic) : null;
+      periodMonths = periodRow.month_count;
+    }
+  }
+
+  if (!ctc && !paid && !periodGross) return null;
+
   return {
     annual_ctc: ctc?.ctc_annual != null ? Number(ctc.ctc_annual) : null,
     effective_from: ctc?.effective_from ?? null,
@@ -220,6 +262,10 @@ async function getCertificateSalaryFigures(employeeId: string) {
     net_salary: paid ? Number(paid.net_salary) : null,
     basic_salary: paid?.basic != null ? Number(paid.basic) : null,
     figures_from_month: paid?.run_month ?? null,
+    // Period aggregation (for yearly certificates)
+    period_gross_total: periodGross,
+    period_basic_total: periodBasic,
+    period_month_count: periodMonths,
   };
 }
 
@@ -272,21 +318,33 @@ function buildCertificateData(
   let annualCtc: number | null = null;
 
   if (template === "salary") {
-    // Non-null by contract: the generate route refuses a salary certificate without these
-    // rather than letting a zero reach the document.
-    const gross = Number(sal?.gross_salary ?? 0);
+    // Use period aggregation if available, otherwise monthly
+    const usePeriodTotal = sal?.period_gross_total != null && periodFrom && periodTo;
+    const gross = usePeriodTotal ? Number(sal.period_gross_total) : Number(sal?.gross_salary ?? 0);
     const net = Number(sal?.net_salary ?? 0);
-    // Naming the month is the difference between a true statement and a misleading one: these
-    // are the figures for a specific payroll, not a standing contractual amount.
-    const period = sal?.figures_from_month
-      ? ` for the payroll month of ${sal.figures_from_month}`
-      : "";
-    body =
-      `This is to certify that ${emp.employee_name}, ${emp.designation ?? "Employee"} is employed with MAS Callnet Private Limited since ${doJ}. ` +
-      `Their gross salary${period} is ${formatINR(gross)} and net take-home salary is ${formatINR(net)}.` +
-      (purpose
-        ? ` This certificate is issued for the purpose of ${purpose}.`
-        : "");
+
+    if (usePeriodTotal) {
+      // Yearly total income certificate
+      const fromDate = new Date(periodFrom + "-01");
+      const toDate = new Date(periodTo + "-01");
+      const fromStr = fromDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+      const toStr = toDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+
+      body =
+        `This is to certify that ${emp.employee_name}${emp.designation ? ', ' + emp.designation : ''} ` +
+        `is employed with MAS Callnet Private Limited since ${doJ}. ` +
+        `Their total income for the period ${fromStr} to ${toStr} is ${formatINR(gross)}.` +
+        (purpose ? ` This certificate is issued for the purpose of ${purpose}.` : "");
+    } else {
+      // Monthly certificate
+      const period = sal?.figures_from_month
+        ? ` for the payroll month of ${sal.figures_from_month}`
+        : "";
+      body =
+        `This is to certify that ${emp.employee_name}, ${emp.designation ?? "Employee"} is employed with MAS Callnet Private Limited since ${doJ}. ` +
+        `Their gross salary${period} is ${formatINR(gross)} and net take-home salary is ${formatINR(net)}.` +
+        (purpose ? ` This certificate is issued for the purpose of ${purpose}.` : "");
+    }
   } else if (template === "employment") {
     body =
       `This is to certify that ${emp.employee_name} is employed as ${emp.designation ?? "Employee"} at our ${emp.branch_name ?? "office"} branch since ${doJ} ` +
@@ -321,12 +379,13 @@ function buildCertificateData(
     department_name: emp.department_name,
     date_of_joining: doJ,
     employment_status: emp.employment_status,
-    gross_salary: sal ? Number(sal.gross_salary) : null,
+    gross_salary: sal?.period_gross_total ?? (sal ? Number(sal.gross_salary) : null),
     net_salary: sal ? Number(sal.net_salary) : null,
-    basic_salary: sal ? Number(sal.basic_salary) : null,
+    basic_salary: sal?.period_basic_total ?? (sal ? Number(sal.basic_salary) : null),
     annual_ctc: annualCtc,
     period_from: periodFrom,
     period_to: periodTo,
+    period_month_count: sal?.period_month_count ?? null,
     addressee: addressee ?? "To Whom It May Concern",
     purpose: purpose ?? "",
     body_text: body,
@@ -347,8 +406,13 @@ payrollCertificatesRouter.get(
     const limit = 50;
     const offset = (page - 1) * limit;
 
+    // Branch scoping (owner ruling 2026-10-01): only certificates of employees in the caller's scope.
+    const listScope = await employeeScopeFor(req, "e");
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM salary_certificate_request`,
+      `SELECT COUNT(*) AS total FROM salary_certificate_request scr
+         LEFT JOIN employees e ON e.id = scr.employee_id
+        WHERE (${listScope.sql})`,
+      listScope.params,
     );
     const total = Number((countRows as RowDataPacket[])[0]?.total ?? 0);
 
@@ -358,9 +422,10 @@ payrollCertificatesRouter.get(
               e.employee_code
          FROM salary_certificate_request scr
          LEFT JOIN employees e ON e.id = scr.employee_id
+        WHERE (${listScope.sql})
          ORDER BY scr.generated_at DESC
          ${sqlLimitOffset(limit, offset)}`,
-      [],
+      listScope.params,
     );
 
     return res.json({ success: true, data: rows, total });
@@ -397,6 +462,8 @@ payrollCertificatesRouter.get(
           .status(403)
           .json({ success: false, message: "Access denied" });
       }
+    } else if (!(await guardEmployee(req, res, employeeId))) {
+      return;
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -458,6 +525,7 @@ payrollCertificatesRouter.get(
     if (!isPayrollRole && String(row.emp_user_id) !== userId) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
+    if (isPayrollRole && String(row.emp_user_id) !== userId && !(await guardEmployee(req, res, String((row as any).employee_id)))) return;
 
     const certificate_data = row.certificate_data_json
       ? JSON.parse(row.certificate_data_json)
@@ -519,6 +587,8 @@ payrollCertificatesRouter.post(
             message: "You can only generate a certificate for yourself",
           });
       }
+    } else if (!(await guardEmployee(req, res, body.employee_id))) {
+      return;
     }
 
     const emp = await getEmployeeRecord(body.employee_id);
@@ -530,7 +600,11 @@ payrollCertificatesRouter.post(
 
     const sal =
       template !== "employment"
-        ? await getCertificateSalaryFigures(body.employee_id)
+        ? await getCertificateSalaryFigures(
+            body.employee_id,
+            body.period_from ?? null,
+            body.period_to ?? null
+          )
         : null;
 
     // Refuse rather than issue a certificate with a fabricated or zero figure on it. A document

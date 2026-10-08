@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -374,6 +376,9 @@ function GenerationProgress({ active }: { active: boolean }) {
 }
 
 export default function NativeWFMAutoRoster() {
+  // Approval Center deep link: ?approvalId=<planId> pre-selects that plan.
+  const [linkParams] = useSearchParams();
+  const linkedPlanId = linkParams.get("approvalId") ?? "";
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState("");
@@ -421,6 +426,7 @@ export default function NativeWFMAutoRoster() {
   });
 
   const selectedPlan = useMemo(() => plans.find((p) => p.id === selectedPlanId), [plans, selectedPlanId]);
+  useApprovalFocus(!!linkedPlanId && selectedPlanId === linkedPlanId);
 
   const loadBase = async () => {
     setLoading(true);
@@ -438,7 +444,11 @@ export default function NativeWFMAutoRoster() {
       setPlans(planRes.data || []);
       setRequirements(reqRes.data || []);
       setEvents(eventRes.data || []);
-      if (!selectedPlanId && planRes.data?.[0]?.id) setSelectedPlanId(planRes.data[0].id);
+      if (!selectedPlanId) {
+        const linked = linkedPlanId ? planRes.data?.find((p: AnyRow) => p.id === linkedPlanId) : null;
+        if (linked?.id) setSelectedPlanId(linked.id);
+        else if (planRes.data?.[0]?.id) setSelectedPlanId(planRes.data[0].id);
+      }
     } catch (err: any) {
       setMessage(err.message || "Unable to load Auto Roster data.");
     } finally {
@@ -651,7 +661,7 @@ export default function NativeWFMAutoRoster() {
             </select>
           </div>
           {selectedPlan && (
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div data-approval-id={selectedPlan.id} className="mt-4 flex flex-wrap gap-2 rounded-xl">
               <Pill tone="blue">{selectedPlan.approval_status || selectedPlan.plan_status}</Pill>
               <Pill tone={selectedPlan.publish_lock_status === "published_locked" ? "red" : "slate"}>{selectedPlan.publish_lock_status || "unlocked"}</Pill>
               <Pill tone="green">Shrinkage {selectedPlan.shrinkage_pct || 0}%</Pill>

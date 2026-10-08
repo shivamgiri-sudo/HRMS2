@@ -1,6 +1,6 @@
 import { BarChart3, FileCheck2, FileClock, FileText, GitBranch, Search, Wallet } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnForm";
 import { GrnHistoryTable } from "@/components/finance/grn/GrnHistoryTable";
@@ -103,7 +103,11 @@ export default function NativeGRNManagement() {
 
   const queueCount = summary?.inQueue.count ?? 0;
 
-  const [activeTab, setActiveTab] = useState<string>("create");
+  // Approval Center deep link (?approvalId=) lands on the Approval Queue tab, or on the Imprest tab with ?tab=imprest.
+  const [deepLinkParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<string>(
+    deepLinkParams.get("approvalId") ? (deepLinkParams.get("tab") === "imprest" ? "imprest" : "queue") : "create",
+  );
   const [editGrnId, setEditGrnId] = useState<string | null>(null);
 
   function handleReopenForEdit(grnId: string) {

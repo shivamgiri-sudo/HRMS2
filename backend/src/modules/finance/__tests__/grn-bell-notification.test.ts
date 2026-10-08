@@ -94,8 +94,21 @@ const BH_APPROVED_GRN = { ...SUBMITTED_GRN, status: "branch_head_approved" };
 // 3-stage chain (owner ruling, 2026-09-12): Branch Head -> Accounts Head -> Finance Head.
 const AH_APPROVED_GRN = { ...SUBMITTED_GRN, status: "accounts_head_approved" };
 
+/**
+ * The next-stage alert is fire-and-forget since 4448b009c (runInBackground — it must not hold the
+ * approval response), and notifyGrnStage reaches the inbox through a dynamic import. Drain a few
+ * turns of the event loop so the background task has run before asserting on it.
+ */
+const settle = async () => {
+  for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+};
+
 beforeEach(() => {
   execute.mockReset();
+  // Pool reads made outside the review transaction — the Head Office bypass check on an
+  // accounts_head approval (8a6336dae) and the background e-mail lookups — find nothing, so
+  // these GRNs take the ordinary three-stage chain.
+  execute.mockResolvedValue([[], []]);
   getConnection.mockReset();
   resolveRoleHolderUserIds
     .mockReset()
@@ -113,12 +126,8 @@ describe("submitForApproval raises a branch_head bell alert", () => {
       return [[], []];
     });
 
-    await grnService.submitForApproval(
-      "grn-1",
-      { remarks: "please approve" } as any,
-      "user-1",
-      "branch_admin",
-    );
+    await grnService.submitForApproval("grn-1", { remarks: "please approve" } as any, "user-1", "branch_admin");
+    await settle();
 
     expect(resolveRoleHolderUserIds).toHaveBeenCalledWith(
       "branch_head",
@@ -161,12 +170,8 @@ describe("reviewGrn's bell alerts follow the stage", () => {
     const conn = makeConnection(SUBMITTED_GRN);
     getConnection.mockResolvedValue(conn);
 
-    await grnService.reviewGrn(
-      "g1",
-      { decision: "approved" },
-      "u1",
-      "branch_head",
-    );
+    await grnService.reviewGrn("g1", { decision: "approved" }, "u1", "branch_head");
+    await settle();
 
     expect(resolveItems).toHaveBeenCalledWith({
       entity_type: "grn_request",
@@ -189,12 +194,8 @@ describe("reviewGrn's bell alerts follow the stage", () => {
     const conn = makeConnection(SUBMITTED_GRN);
     getConnection.mockResolvedValue(conn);
 
-    await grnService.reviewGrn(
-      "g1",
-      { decision: "rejected", reviewNote: "wrong amount" },
-      "u1",
-      "branch_head",
-    );
+    await grnService.reviewGrn("g1", { decision: "rejected", reviewNote: "wrong amount" }, "u1", "branch_head");
+    await settle();
 
     expect(resolveItems).toHaveBeenCalledWith({
       entity_type: "grn_request",
@@ -208,12 +209,8 @@ describe("reviewGrn's bell alerts follow the stage", () => {
     const conn = makeConnection(BH_APPROVED_GRN);
     getConnection.mockResolvedValue(conn);
 
-    await grnService.reviewGrn(
-      "g1",
-      { decision: "approved" },
-      "u2",
-      "accounts_head",
-    );
+    await grnService.reviewGrn("g1", { decision: "approved" }, "u2", "accounts_head");
+    await settle();
 
     expect(resolveItems).toHaveBeenCalledWith({
       entity_type: "grn_request",
@@ -236,12 +233,8 @@ describe("reviewGrn's bell alerts follow the stage", () => {
     const conn = makeConnection(AH_APPROVED_GRN);
     getConnection.mockResolvedValue(conn);
 
-    await grnService.reviewGrn(
-      "g1",
-      { decision: "approved" },
-      "u2",
-      "finance_head",
-    );
+    await grnService.reviewGrn("g1", { decision: "approved" }, "u2", "finance_head");
+    await settle();
 
     expect(resolveItems).toHaveBeenCalledWith({
       entity_type: "grn_request",

@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 
+vi.mock("../payroll-branch-scope.js", async () => (await import("./helpers/orgWideScopeMock.js")).orgWideScopeMock);
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/accessGuard.js", () => ({
   hasRole: vi.fn(),

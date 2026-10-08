@@ -58,7 +58,9 @@ export interface OpsControlTowerSummary {
   appointmentLetter: CountBlock;
   pennyDropMissing: CountBlock;
   accountDetailsMissing: CountBlock;
+  docsPending: CountBlock;
   bgvPending: CountBlock;
+  addressReviewPending: CountBlock;
   itProvisioningPending: CountBlock;
   adminProvisioningPending: CountBlock;
   wfmProvisioningPending: CountBlock;
@@ -73,7 +75,9 @@ export type DetailBlockKey =
   | "appointment-letter"
   | "penny-drop-missing"
   | "account-details-missing"
+  | "docs-pending"
   | "bgv-pending"
+  | "address-review-pending"
   | "it-provisioning-pending"
   | "admin-provisioning-pending"
   | "wfm-provisioning-pending";
@@ -123,3 +127,32 @@ export type DetailRow =
   | NocDetailRow
   | OnboardingDetailRow
   | SlaDetailRow;
+
+export type NudgeableBlock =
+  | "account-details-missing"
+  | "docs-pending"
+  | "penny-drop-missing"
+  | "digilocker-pending"
+  | "esign-pending"
+  | "appointment-letter"
+  | "bgv-pending";
+
+export interface NudgeInfo {
+  count: number;
+  lastSentMs: number | null;
+  due: boolean;
+  nextEligibleMs: number;
+}
+
+/** Fields the detail endpoint adds to every row (ageing, candidate link, nudge stats on nudgeable blocks). */
+export interface RowExtras {
+  daysOpen: number;
+  ageBucket: "0-2" | "3-7" | "8+";
+  candidateId: string | null;
+  nudge?: NudgeInfo;
+}
+
+export type NudgeStatus =
+  | "sent" | "failed" | "skipped_unconfigured" | "skipped_no_contact"
+  | "skipped_not_joining" | "skipped_cooldown" | "not_found";
+export interface NudgeResult { employeeId: string; status: NudgeStatus; error?: string; nextEligibleMs?: number }

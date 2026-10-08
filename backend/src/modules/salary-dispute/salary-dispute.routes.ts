@@ -8,6 +8,25 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { salaryDisputeService } from "./salary-dispute.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2/promise";
+import { employeeScopeFor, canSeeEmployee } from "../payroll/payroll-branch-scope.js";
+
+/**
+ * Branch scoping (owner ruling 2026-10-01): a dispute is readable by its owner, by the owner's
+ * reporting manager, and by callers whose branch / assigned scope covers the owner (org-wide roles always).
+ * Sends 404/403 and returns null otherwise.
+ */
+async function loadDisputeForCaller(req: AuthenticatedRequest, res: Response, id: string) {
+  const dispute = await salaryDisputeService.get(id);
+  if (!dispute) { res.status(404).json({ success: false, message: "Not found." }); return null; }
+  const me = await getEmployeeIdForUser(req.authUser!.id);
+  let ok = Boolean(me && String(dispute.employee_id) === me) || (await canSeeEmployee(req, String(dispute.employee_id)));
+  if (!ok && me) {
+    const [[owner]] = await db.execute<RowDataPacket[]>(`SELECT reporting_manager_id FROM employees WHERE id = ? LIMIT 1`, [dispute.employee_id]);
+    ok = Boolean(owner && String((owner as any).reporting_manager_id ?? "") === me);
+  }
+  if (!ok) { res.status(403).json({ success: false, message: "Forbidden: this dispute is outside your branch / assigned scope" }); return null; }
+  return dispute;
+}
 
 async function getEmployeeIdForUser(userId: string): Promise<string | null> {
   const [[emp]] = await db.execute<RowDataPacket[]>(
@@ -68,10 +87,8 @@ salaryDisputeRouter.get(
   "/queue/wfm",
   requireRole("wfm", "payroll_hr", "payroll", "super_admin"),
   h(async (req, res) => {
-    const branchId = req.query.branchId
-      ? String(req.query.branchId)
-      : undefined;
-    const disputes = await salaryDisputeService.listQueue("wfm", branchId);
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const disputes = await salaryDisputeService.listQueue("wfm", branchId, await employeeScopeFor(req, "e"));
     res.json({ success: true, data: disputes });
   }),
 );
@@ -98,21 +115,18 @@ salaryDisputeRouter.get(
 );
 
 // Get single dispute (all roles can view their own or scope-permitted)
-salaryDisputeRouter.get(
-  "/:id",
-  h(async (req, res) => {
-    const dispute = await salaryDisputeService.get(req.params.id);
-    if (!dispute)
-      return res.status(404).json({ success: false, message: "Not found." });
-    res.json({ success: true, data: dispute });
-  }),
-);
+salaryDisputeRouter.get("/:id", h(async (req, res) => {
+  const dispute = await loadDisputeForCaller(req, res, req.params.id);
+  if (!dispute) return;
+  res.json({ success: true, data: dispute });
+}));
 
 // WFM review (Stage 1)
 salaryDisputeRouter.post(
   "/:id/wfm-review",
   requireRole("wfm", "payroll_hr", "payroll", "super_admin"),
   h(async (req, res) => {
+    if (!(await loadDisputeForCaller(req, res, req.params.id))) return;
     const dispute = await salaryDisputeService.wfmReview(
       req.params.id,
       req.authUser!.id,
@@ -141,11 +155,8 @@ salaryDisputeRouter.get(
   "/:id/salary-details",
   requireRole("wfm", "payroll_hr", "payroll", "payroll_head", "super_admin"),
   h(async (req, res) => {
-    const dispute = await salaryDisputeService.get(req.params.id);
-    if (!dispute)
-      return res
-        .status(404)
-        .json({ success: false, message: "Dispute not found." });
+    const dispute = await loadDisputeForCaller(req, res, req.params.id);
+    if (!dispute) return;
 
     const details = await salaryDisputeService.getSalaryDetails(
       dispute.employee_id,
@@ -255,21 +266,18 @@ salaryDisputeRouter.get(
   "/:id/audit-log",
   requireRole("wfm", "payroll_hr", "payroll", "payroll_head", "super_admin"),
   h(async (req, res) => {
+    if (!(await loadDisputeForCaller(req, res, req.params.id))) return;
     const auditLog = await salaryDisputeService.getAuditLog(req.params.id);
     res.json({ success: true, data: auditLog });
   }),
 );
 
 // Get attachments for a dispute
-salaryDisputeRouter.get(
-  "/:id/attachments",
-  h(async (req, res) => {
-    const attachments = await salaryDisputeService.getAttachments(
-      req.params.id,
-    );
-    res.json({ success: true, data: attachments });
-  }),
-);
+salaryDisputeRouter.get("/:id/attachments", h(async (req, res) => {
+  if (!(await loadDisputeForCaller(req, res, req.params.id))) return;
+  const attachments = await salaryDisputeService.getAttachments(req.params.id);
+  res.json({ success: true, data: attachments });
+}));
 
 // Upload attachment (handled by files module, this just records the reference)
 salaryDisputeRouter.post(
@@ -283,21 +291,15 @@ salaryDisputeRouter.post(
         .status(404)
         .json({ success: false, message: "Dispute not found." });
 
-    // Only allow employee or reviewers to add attachments
-    const isOwner = dispute.employee_id === employeeId;
-    const isReviewer =
-      req.authUser!.role &&
-      ["wfm", "payroll_hr", "payroll", "payroll_head", "super_admin"].includes(
-        req.authUser!.role,
-      );
-    if (!isOwner && !isReviewer) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Not authorized to add attachments.",
-        });
-    }
+  // Only allow employee or reviewers to add attachments
+  const isOwner = dispute.employee_id === employeeId;
+  const isReviewer = req.authUser!.role && ["wfm", "payroll_hr", "payroll", "payroll_head", "super_admin"].includes(req.authUser!.role);
+  if (isReviewer && !isOwner && !(await canSeeEmployee(req, String(dispute.employee_id)))) {
+    return res.status(403).json({ success: false, message: "Forbidden: this dispute is outside your branch / assigned scope" });
+  }
+  if (!isOwner && !isReviewer) {
+    return res.status(403).json({ success: false, message: "Not authorized to add attachments." });
+  }
 
     const { fileName, filePath, fileType, fileSize } = req.body;
     if (!fileName || !filePath) {

@@ -16,6 +16,7 @@ import {
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import * as nocService from "./noc.service.js";
+import { employeeScopeFor, guardEmployee } from "./payroll-branch-scope.js";
 import type { Response } from "express";
 
 export const nocRouter = Router();
@@ -42,87 +43,39 @@ const upload = multer({
 });
 
 // GET /api/payroll/noc
-nocRouter.get(
-  "/",
-  requireAuth,
-  async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    if (
-      !(await hasAnyRole(
-        userId,
-        "payroll_head",
-        "payroll_branch",
-        "payroll",
-        "super_admin",
-        "admin",
-      ))
-    ) {
-      return res.status(403).json({ success: false, message: "Access denied" });
-    }
-    const { employeeId, uploadStatus, nocType, runMonth } = req.query as Record<
-      string,
-      string
-    >;
-    const nocs = await nocService.listNocs({
-      employeeId,
-      uploadStatus,
-      nocType,
-      runMonth,
-    });
-    return res.json({ success: true, data: nocs });
-  },
-);
+nocRouter.get("/", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  if (!(await hasAnyRole(userId, "payroll_head", "payroll_branch", "payroll", "super_admin", "admin"))) {
+    return res.status(403).json({ success: false, message: "Access denied" });
+  }
+  const { employeeId, uploadStatus, nocType, runMonth } = req.query as Record<string, string>;
+  const nocs = await nocService.listNocs({ employeeId, uploadStatus, nocType, runMonth, scope: await employeeScopeFor(req, "e") });
+  return res.json({ success: true, data: nocs });
+});
 
 // GET /api/payroll/noc/required/:employeeId
-nocRouter.get(
-  "/required/:employeeId",
-  requireAuth,
-  async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    if (
-      !(await hasAnyRole(
-        userId,
-        "payroll_head",
-        "payroll_branch",
-        "payroll",
-        "super_admin",
-        "admin",
-        "hr",
-      ))
-    ) {
-      return res.status(403).json({ success: false, message: "Access denied" });
-    }
-    const result = await nocService.nocRequired(req.params.employeeId);
-    return res.json({ success: true, data: result });
-  },
-);
+nocRouter.get("/required/:employeeId", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  if (!(await hasAnyRole(userId, "payroll_head", "payroll_branch", "payroll", "super_admin", "admin", "hr"))) {
+    return res.status(403).json({ success: false, message: "Access denied" });
+  }
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
+  const result = await nocService.nocRequired(req.params.employeeId);
+  return res.json({ success: true, data: result });
+});
 
 // GET /api/payroll/noc/:id/document — view/download the uploaded NOC file.
 // The record has always stored doc_path/doc_original_name, but no route ever served the
 // file back — Head Payroll had to Validate/Reject an exit-blocking NOC without being able
 // to see the document itself. Added 2026-09-01.
-nocRouter.get(
-  "/:id/document",
-  requireAuth,
-  async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    if (
-      !(await hasAnyRole(
-        userId,
-        "payroll_head",
-        "payroll_branch",
-        "payroll",
-        "super_admin",
-        "admin",
-      ))
-    ) {
-      return res.status(403).json({ success: false, message: "Access denied" });
-    }
-    const noc = await nocService.getNoc(req.params.id);
-    if (!noc || !noc.doc_path)
-      return res
-        .status(404)
-        .json({ success: false, message: "NOC document not found" });
+nocRouter.get("/:id/document", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  if (!(await hasAnyRole(userId, "payroll_head", "payroll_branch", "payroll", "super_admin", "admin"))) {
+    return res.status(403).json({ success: false, message: "Access denied" });
+  }
+  const noc = await nocService.getNoc(req.params.id);
+  if (!noc || !noc.doc_path) return res.status(404).json({ success: false, message: "NOC document not found" });
+  if (!(await guardEmployee(req, res, (noc as any).employee_id))) return;
 
     // doc_path is req.file.path from multer, always under NOC_UPLOAD_DIR — resolve and
     // confirm it stays there before serving, rather than trusting the stored value blindly.
@@ -191,16 +144,11 @@ nocRouter.post(
         });
     }
 
-    const { required, reason } = await nocService.nocRequired(employee_id);
-    if (!required) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "NOC is not required for this employee — no pending salary or FNF",
-        });
-    }
+  if (!(await guardEmployee(req, res, employee_id))) return;
+  const { required, reason } = await nocService.nocRequired(employee_id);
+  if (!required) {
+    return res.status(400).json({ success: false, message: "NOC is not required for this employee — no pending salary or FNF" });
+  }
 
     const noc = await nocService.createNoc({
       employeeId: employee_id,

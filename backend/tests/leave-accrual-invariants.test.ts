@@ -175,9 +175,14 @@ describe("Monthly credit worker — behavioral invariants (mocked DB)", () => {
     creditMonthlyLeaves = mod.creditMonthlyLeaves;
   });
 
-  const CL_ID = "lt-cl",
-    ML_ID = "lt-ml",
-    EL_ID = "lt-el";
+  const CL_ID = "lt-cl", ML_ID = "lt-ml", EL_ID = "lt-el";
+  // Since 76be649ef (2026-08-28) accrual starts from salary_start_date, falling back to
+  // date_of_joining, and the worker reads it as `accrual_start_date`. The fixtures used to match
+  // the older `SELECT id, date_of_joining FROM employees`; once that stopped matching, the
+  // employee read fell through to the default `{ affectedRows: 1 }` answer and the worker died
+  // on `employees is not iterable` before reaching anything these invariants check.
+  const ACTIVE_EMPLOYEES_QUERY =
+    /SELECT id, COALESCE\(salary_start_date, date_of_joining\) AS accrual_start_date\s+FROM employees/i;
 
   function routeExec(handlers: Array<[RegExp, unknown]>) {
     exec.mockImplementation((sql: string) => {
@@ -191,35 +196,9 @@ describe("Monthly credit worker — behavioral invariants (mocked DB)", () => {
   it("credits exactly 1.0 day for a CL schedule month — never a fractional amount", async () => {
     const insertedAmounts: number[] = [];
     routeExec([
-      [
-        /SELECT id, leave_code FROM leave_type_master/i,
-        [
-          [
-            { id: CL_ID, leave_code: "CL" },
-            { id: ML_ID, leave_code: "ML" },
-            { id: EL_ID, leave_code: "EL" },
-          ],
-          [],
-        ],
-      ],
-      [
-        /SELECT id, date_of_joining FROM employees/i,
-        [[{ id: "emp-1", date_of_joining: "2024-01-01" }], []],
-      ],
-      [
-        /FROM leave_credit_schedule/i,
-        [
-          [
-            {
-              month: 1,
-              leave_code: "CL",
-              credit_days: 1.0,
-              leave_type_id: CL_ID,
-            },
-          ],
-          [],
-        ],
-      ],
+      [/SELECT id, leave_code FROM leave_type_master/i, [[{ id: CL_ID, leave_code: "CL" }, { id: ML_ID, leave_code: "ML" }, { id: EL_ID, leave_code: "EL" }], []]],
+      [ACTIVE_EMPLOYEES_QUERY, [[{ id: "emp-1", accrual_start_date: "2024-01-01" }], []]],
+      [/FROM leave_credit_schedule/i, [[{ month: 1, leave_code: "CL", credit_days: 1.0, leave_type_id: CL_ID }], []]],
       [/SELECT 1 FROM leave_el_credit_log/i, [[], []]], // not yet credited
     ]);
     exec.mockImplementation((sql: string, params: unknown[]) => {
@@ -227,35 +206,9 @@ describe("Monthly credit worker — behavioral invariants (mocked DB)", () => {
         insertedAmounts.push(Number(params[4])); // roundedDays param position
       }
       for (const [pattern, result] of [
-        [
-          /SELECT id, leave_code FROM leave_type_master/i,
-          [
-            [
-              { id: CL_ID, leave_code: "CL" },
-              { id: ML_ID, leave_code: "ML" },
-              { id: EL_ID, leave_code: "EL" },
-            ],
-            [],
-          ],
-        ],
-        [
-          /SELECT id, date_of_joining FROM employees/i,
-          [[{ id: "emp-1", date_of_joining: "2024-01-01" }], []],
-        ],
-        [
-          /FROM leave_credit_schedule/i,
-          [
-            [
-              {
-                month: 1,
-                leave_code: "CL",
-                credit_days: 1.0,
-                leave_type_id: CL_ID,
-              },
-            ],
-            [],
-          ],
-        ],
+        [/SELECT id, leave_code FROM leave_type_master/i, [[{ id: CL_ID, leave_code: "CL" }, { id: ML_ID, leave_code: "ML" }, { id: EL_ID, leave_code: "EL" }], []]],
+        [ACTIVE_EMPLOYEES_QUERY, [[{ id: "emp-1", accrual_start_date: "2024-01-01" }], []]],
+        [/FROM leave_credit_schedule/i, [[{ month: 1, leave_code: "CL", credit_days: 1.0, leave_type_id: CL_ID }], []]],
         [/SELECT 1 FROM leave_el_credit_log/i, [[], []]],
       ] as Array<[RegExp, unknown]>) {
         if (pattern.test(sql)) return Promise.resolve(result);
@@ -265,6 +218,8 @@ describe("Monthly credit worker — behavioral invariants (mocked DB)", () => {
 
     await creditMonthlyLeaves(2026, 1);
 
+    // Exactly one CL credit must actually have been written, or the checks below are vacuous.
+    expect(insertedAmounts).toHaveLength(1);
     expect(insertedAmounts.every((a) => a === 1.0)).toBe(true);
     expect(insertedAmounts).not.toContain(0.583);
     expect(insertedAmounts).not.toContain(0.417);
@@ -275,35 +230,9 @@ describe("Monthly credit worker — behavioral invariants (mocked DB)", () => {
     exec.mockImplementation((sql: string) => {
       if (/INSERT INTO leave_balance_ledger/i.test(sql)) insertCount++;
       for (const [pattern, result] of [
-        [
-          /SELECT id, leave_code FROM leave_type_master/i,
-          [
-            [
-              { id: CL_ID, leave_code: "CL" },
-              { id: ML_ID, leave_code: "ML" },
-              { id: EL_ID, leave_code: "EL" },
-            ],
-            [],
-          ],
-        ],
-        [
-          /SELECT id, date_of_joining FROM employees/i,
-          [[{ id: "emp-1", date_of_joining: "2024-01-01" }], []],
-        ],
-        [
-          /FROM leave_credit_schedule/i,
-          [
-            [
-              {
-                month: 1,
-                leave_code: "CL",
-                credit_days: 1.0,
-                leave_type_id: CL_ID,
-              },
-            ],
-            [],
-          ],
-        ],
+        [/SELECT id, leave_code FROM leave_type_master/i, [[{ id: CL_ID, leave_code: "CL" }, { id: ML_ID, leave_code: "ML" }, { id: EL_ID, leave_code: "EL" }], []]],
+        [ACTIVE_EMPLOYEES_QUERY, [[{ id: "emp-1", accrual_start_date: "2024-01-01" }], []]],
+        [/FROM leave_credit_schedule/i, [[{ month: 1, leave_code: "CL", credit_days: 1.0, leave_type_id: CL_ID }], []]],
         [/SELECT 1 FROM leave_el_credit_log/i, [[{ 1: 1 }], []]], // ALREADY credited
       ] as Array<[RegExp, unknown]>) {
         if (pattern.test(sql)) return Promise.resolve(result);
@@ -322,32 +251,9 @@ describe("Monthly credit worker — behavioral invariants (mocked DB)", () => {
     // ever be returned for a CL month. This test locks that contract: for
     // month 2, only ML rows are ever supplied by the schedule query.
     routeExec([
-      [
-        /SELECT id, leave_code FROM leave_type_master/i,
-        [
-          [
-            { id: CL_ID, leave_code: "CL" },
-            { id: ML_ID, leave_code: "ML" },
-            { id: EL_ID, leave_code: "EL" },
-          ],
-          [],
-        ],
-      ],
-      [/SELECT id, date_of_joining FROM employees/i, [[], []]],
-      [
-        /FROM leave_credit_schedule/i,
-        [
-          [
-            {
-              month: 2,
-              leave_code: "ML",
-              credit_days: 1.0,
-              leave_type_id: ML_ID,
-            },
-          ],
-          [],
-        ],
-      ],
+      [/SELECT id, leave_code FROM leave_type_master/i, [[{ id: CL_ID, leave_code: "CL" }, { id: ML_ID, leave_code: "ML" }, { id: EL_ID, leave_code: "EL" }], []]],
+      [ACTIVE_EMPLOYEES_QUERY, [[], []]],
+      [/FROM leave_credit_schedule/i, [[{ month: 2, leave_code: "ML", credit_days: 1.0, leave_type_id: ML_ID }], []]],
     ]);
     await expect(creditMonthlyLeaves(2026, 2)).resolves.not.toThrow();
     // Assert only ML appeared in the schedule fetch for month 2.

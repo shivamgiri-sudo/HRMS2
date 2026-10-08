@@ -76,15 +76,19 @@ describe("GRN invoice-GST-components (unified vendor-GRN flow)", () => {
    * amountWithoutTax and its own gstRate, so "exclusive" is simply the correct reading of those
    * two inputs — GST is added on top of a stated base.
    */
-  it("takes the GST rate from the component, but gst_type and recoverability from the budget line", () => {
+  it("takes the GST rate from the component, gst_type from the GRN's state codes (else the budget line), and recoverability from the budget line", () => {
     const service = read("src/modules/finance/grn-smart.service.ts");
     expect(service).toContain("gstRate: Number(component.gstRate)");
+    // 6a0c2bdfd: the CGST+SGST vs IGST split is derived from the GRN's vendor and billing state
+    // codes — many budget lines carry gst_type "none", which recorded real tax as neither — and
+    // the budget line's gst_type is only the fallback when the state codes cannot decide.
     expect(service).toContain(
-      "gstType: String(line.gst_type) as BudgetGstType",
+      'const grnGstType: BudgetGstType = !_v2 || !_b2 ? "none" : _v2 === _b2 ? "cgst_sgst" : "igst";',
     );
     expect(service).toContain(
-      "recoverableTaxPct: Number(line.recoverable_tax_pct)",
+      'gstType: (grnGstType !== "none" ? grnGstType : String(line.gst_type)) as BudgetGstType',
     );
+    expect(service).toContain("recoverableTaxPct: Number(line.recoverable_tax_pct)");
     // The rate is still constrained — removing the exempt block did not open the rate up.
     expect(service).toContain(
       "ALLOWED_GST_RATES = new Set([0, 5, 12, 18, 28])",

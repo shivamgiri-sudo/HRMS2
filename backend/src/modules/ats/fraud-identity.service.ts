@@ -14,6 +14,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { extractDigilockerDemographics } from "./digilocker-demographics.js";
+import { getDigilockerFacePhotoBuffer } from "./digilocker-face-photo.js";
 
 export interface GovtIdentity {
   name: string | null;
@@ -138,6 +139,12 @@ async function loadSnapshot(
     [candidateId],
   );
 
+  // Must mirror exactly what /documents/digilocker-face-photo/:id serves: the UI only
+  // requests the photo when this is true. `govt !== null` (demographics present) was
+  // used before and was wrong both ways — a verified record without an image made the
+  // page request a photo that 404'd. Never throws; a missing photo is just false.
+  const hasDigilockerPhoto = (await getDigilockerFacePhotoBuffer(candidateId)) !== null;
+
   return {
     candidateId,
     code: clean(c.candidate_code),
@@ -151,7 +158,7 @@ async function loadSnapshot(
     panMasked: maskPan(c.pan_number) ?? maskPan(c.pan_number_masked),
     govt,
     selfieDocId: selfieRows[0]?.id ? String(selfieRows[0].id) : null,
-    hasDigilockerPhoto: govt !== null,
+    hasDigilockerPhoto,
     employee: e
       ? {
           code: String(e.employee_code),

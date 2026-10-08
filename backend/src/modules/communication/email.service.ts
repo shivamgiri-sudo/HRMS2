@@ -3,6 +3,7 @@ import nodemailer from "nodemailer";
 // transport implementation inside nodemailer, and its option type differs accordingly.
 import type SMTPPool from "nodemailer/lib/smtp-pool/index.js";
 import { env } from "../../config/env.js";
+import { smtpRateLimitPerMinute, withSmtpRetry } from "./smtp-retry.js";
 
 export type EmailAttachment = {
   filename: string;
@@ -65,6 +66,9 @@ function createTransporter() {
     pool: true,
     maxConnections: 3,
     maxMessages: 100,
+    // Throttle: a burst is queued by the pool instead of tripping Gmail's 421 limiter.
+    rateDelta: 60_000,
+    rateLimit: smtpRateLimitPerMinute(),
   };
 
   const pass = smtpPassword();
@@ -177,7 +181,7 @@ export const emailService = {
 
     assertNoLocalhostLinks(input);
 
-    const result = await getTransporter().sendMail({
+    const result = await withSmtpRetry(() => getTransporter().sendMail({
       from: fromAddress(),
       to: input.to,
       ...(input.cc ? { cc: input.cc } : {}),
@@ -187,7 +191,7 @@ export const emailService = {
       html: input.html,
       text: input.text,
       attachments: input.attachments,
-    });
+    }));
 
     return { messageId: result.messageId };
   },

@@ -1090,7 +1090,7 @@ export default function BreakDesk() {
           <div className="space-y-4">
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
               <MiniData label="Process" value={selectedEmployee.process_name ?? "-"} />
-              <MiniData label="Shift" value={selectedEmployee.shift_name ?? "-"} />
+              <MiniData label="Shift" value={selectedEmployee.shift_mismatch ? `${selectedEmployee.shift_name} (rostered: ${selectedEmployee.rostered_shift_name ?? "-"})` : (selectedEmployee.shift_name ?? "-")} />
               <MiniData label="Punch In" value={formatStamp(selectedEmployee.biometric_punch_in_time)} />
               <MiniData label="Punch Out" value={formatStamp(selectedEmployee.biometric_punch_out_time)} />
               <MiniData label="Shift Time" value={formatMinutes(selectedEmployee.shift_duration_minutes)} />

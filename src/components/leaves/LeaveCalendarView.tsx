@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { leaveTypeColors, getLeaveColor } from "@/lib/leaveColors";
+import { leaveTypeChartVar } from "./leaveTheme";
+import { fetchApprovedLeavesForMonth } from "./leaveCalendarData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
@@ -24,76 +24,6 @@ import {
 } from "date-fns";
 import { normalizeDate } from "@/lib/utils";
 
-interface LeaveData {
-  id: string;
-  start_date?: string;
-  end_date?: string;
-  from_date?: string;
-  to_date?: string;
-  days_count?: number;
-  total_days?: number;
-  employee_name?: string;
-  avatar_url?: string | null;
-  leave_type_name?: string;
-  employee: {
-    first_name: string;
-    last_name: string;
-    avatar_url: string | null;
-  } | null;
-  leave_type: {
-    name: string;
-  } | null;
-}
-
-function normalizeLeave(row: any): LeaveData {
-  if (row.start_date && row.end_date && row.employee && row.leave_type) return row as LeaveData;
-  const employeeName = String(row.employee_name ?? "Unknown").trim();
-  const [firstName = "Unknown", ...rest] = employeeName.split(/\s+/);
-  return {
-    ...row,
-    start_date: row.from_date ?? row.start_date,
-    end_date: row.to_date ?? row.end_date,
-    days_count: Number(row.total_days ?? row.days_count ?? 0),
-    employee: {
-      first_name: firstName,
-      last_name: rest.join(" "),
-      avatar_url: row.avatar_url ?? null,
-    },
-    leave_type: {
-      name: row.leave_type_name ?? row.leave_type?.name ?? "Leave",
-    },
-  };
-}
-
-async function fetchApprovedLeavesForYear(year: number): Promise<LeaveData[]> {
-  const limit = 100;
-  const first = await hrmsApi.get<{success:boolean;data:any[];total?:number}>(
-    `/api/leave/requests?status=approved&year=${year}&page=1&limit=${limit}`
-  );
-  const rows = first.data ?? [];
-  const total = Number(first.total ?? rows.length);
-  const totalPages = Math.ceil(total / limit);
-
-  const remaining = totalPages > 1
-    ? await Promise.all(
-        Array.from({ length: totalPages - 1 }, (_, index) =>
-          hrmsApi.get<{success:boolean;data:any[]}>(
-            `/api/leave/requests?status=approved&year=${year}&page=${index + 2}&limit=${limit}`
-          )
-        )
-      )
-    : [];
-
-  const byId = new Map<string, LeaveData>();
-  for (const raw of rows.concat(...remaining.map((page) => page.data ?? []))) {
-    const leave = normalizeLeave(raw);
-    const key = String(leave.id ?? "");
-    if (!key || byId.has(key) || !leave.start_date || !leave.end_date) continue;
-    byId.set(key, leave);
-  }
-  return Array.from(byId.values());
-}
-
 // leaveTypeColors, leaveColorFallbacks, getLeaveColor imported from @/lib/leaveColors
 
 export function LeaveCalendarView() {
@@ -104,12 +34,12 @@ export function LeaveCalendarView() {
   const monthEnd = endOfMonth(currentDate);
   const monthName = format(currentDate, "MMMM yyyy");
 
-  const { data: leaves = [], isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["leave-calendar-view", format(monthStart, "yyyy-MM-dd")],
-    queryFn: async () => {
-      return fetchApprovedLeavesForYear(currentDate.getFullYear());
-    },
+    queryFn: () => fetchApprovedLeavesForMonth(format(monthStart, "yyyy-MM-dd"), format(monthEnd, "yyyy-MM-dd")),
+    staleTime: 60_000,
   });
+  const leaves = data?.rows ?? [];
 
   // Generate all dates that have leaves
   const leaveDates = leaves.flatMap((leave) => {
@@ -147,21 +77,21 @@ export function LeaveCalendarView() {
   if (isLoading) {
     return (
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="border-white/10 bg-white/5">
+        <Card className="border-border bg-card">
           <CardHeader>
-            <Skeleton className="h-6 w-40 bg-white/10" />
+            <Skeleton className="h-6 w-40 bg-muted" />
           </CardHeader>
           <CardContent>
-            <Skeleton className="h-[300px] w-full bg-white/10" />
+            <Skeleton className="h-[300px] w-full bg-muted" />
           </CardContent>
         </Card>
-        <Card className="border-white/10 bg-white/5">
+        <Card className="border-border bg-card">
           <CardHeader>
-            <Skeleton className="h-6 w-32 bg-white/10" />
+            <Skeleton className="h-6 w-32 bg-muted" />
           </CardHeader>
           <CardContent className="space-y-3">
             {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-16 w-full bg-white/10" />
+              <Skeleton key={i} className="h-16 w-full bg-muted" />
             ))}
           </CardContent>
         </Card>
@@ -172,18 +102,18 @@ export function LeaveCalendarView() {
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       {/* Calendar */}
-      <Card className="border-white/10 bg-white/5">
+      <Card className="border-border bg-card">
         <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="flex items-center gap-2 text-lg text-white">
-            <CalendarDays className="h-5 w-5 text-[#5aa0dd]" />
+          <CardTitle className="flex items-center gap-2 text-lg text-foreground">
+            <CalendarDays className="h-5 w-5 text-primary" />
             Leave Calendar
           </CardTitle>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-300 hover:bg-white/10 hover:text-white" onClick={handlePrevMonth}>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={handlePrevMonth}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <span className="min-w-[120px] text-center text-sm font-medium text-slate-200">{monthName}</span>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-300 hover:bg-white/10 hover:text-white" onClick={handleNextMonth}>
+            <span className="min-w-[120px] text-center text-sm font-medium text-foreground">{monthName}</span>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={handleNextMonth}>
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
@@ -204,24 +134,37 @@ export function LeaveCalendarView() {
               caption: "hidden",
               table: "w-full border-collapse space-y-1",
               head_row: "flex w-full",
-              head_cell: "text-slate-400 rounded-md w-full font-normal text-[0.8rem]",
+              head_cell: "text-muted-foreground rounded-md w-full font-normal text-[0.8rem]",
               row: "flex w-full mt-2",
               cell: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20 w-full aspect-square",
-              day: "h-full w-full p-0 font-normal text-slate-200 aria-selected:opacity-100 hover:bg-white/10 rounded-md transition-colors",
-              day_selected: "bg-[#1B6AB5] text-white hover:bg-[#1B6AB5] hover:text-white focus:bg-[#1B6AB5] focus:text-white",
-              day_today: "ring-2 ring-[#5aa0dd] ring-offset-2 ring-offset-slate-950",
-              day_outside: "text-slate-600 opacity-50",
+              day: "h-full w-full p-0 font-normal text-foreground aria-selected:opacity-100 hover:bg-muted rounded-md transition-colors",
+              day_selected: "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
+              day_today: "ring-2 ring-primary ring-offset-2 ring-offset-background",
+              day_outside: "text-muted-foreground opacity-50",
             }}
           />
 
+          {isError && (
+            <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+              Could not load leave for this month.{" "}
+              <button type="button" className="font-semibold underline" onClick={() => refetch()}>Retry</button>
+            </p>
+          )}
+          {data?.truncated && (
+            <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800" role="status">
+              Showing {data.rows.length.toLocaleString("en-IN")} of {data.total.toLocaleString("en-IN")} approved leaves this month. Days
+              with more leave than shown may be missing people; use History with filters for the full list.
+            </p>
+          )}
+
           {/* Legend */}
-          <div className="mt-4 flex items-center gap-4 border-t border-white/10 pt-4 text-xs text-slate-400">
+          <div className="mt-4 flex items-center gap-4 border-t border-border pt-4 text-xs text-muted-foreground">
             <div className="flex items-center gap-1.5">
-              <div className="h-3 w-3 rounded-full bg-[#1B6AB5]/30" />
+              <div className="h-3 w-3 rounded-full bg-primary/30" />
               <span>Has leaves</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <div className="h-3 w-3 rounded-full ring-2 ring-[#5aa0dd]" />
+              <div className="h-3 w-3 rounded-full ring-2 ring-primary" />
               <span>Today</span>
             </div>
           </div>
@@ -229,17 +172,17 @@ export function LeaveCalendarView() {
       </Card>
 
       {/* Selected Date Details */}
-      <Card className="border-white/10 bg-white/5">
+      <Card className="border-border bg-card">
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-lg text-white">
-            <Users className="h-5 w-5 text-[#5aa0dd]" />
+          <CardTitle className="flex items-center gap-2 text-lg text-foreground">
+            <Users className="h-5 w-5 text-primary" />
             {selectedDate ? format(selectedDate, "EEEE, MMMM d, yyyy") : "Select a date"}
           </CardTitle>
         </CardHeader>
         <CardContent>
           {selectedDateLeaves.length > 0 ? (
             <div className="space-y-3">
-              <p className="mb-4 text-sm text-slate-400">
+              <p className="mb-4 text-sm text-muted-foreground">
                 {selectedDateLeaves.length} employee{selectedDateLeaves.length > 1 ? "s" : ""} on leave
               </p>
               {selectedDateLeaves.map((leave) => {
@@ -254,54 +197,47 @@ export function LeaveCalendarView() {
                 return (
                   <div
                     key={leave.id}
-                    className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/5 p-3 transition-colors hover:bg-white/8"
+                    className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:bg-muted/60"
                   >
                     <div className="relative">
                       <Avatar className="h-10 w-10 rounded-lg">
                         {leave.employee?.avatar_url && (
                           <AuthedAvatarImage src={normalizeMediaUrl(leave.employee.avatar_url)} className="rounded-lg" />
                         )}
-                        <AvatarFallback className="rounded-lg bg-white/10 text-slate-200">{initials}</AvatarFallback>
+                        <AvatarFallback className="rounded-lg bg-muted text-foreground">{initials}</AvatarFallback>
                       </Avatar>
                       <div
-                        className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-950 ${getLeaveColor(leaveType)}`}
+                        className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card"
+                        style={{ backgroundColor: leaveTypeChartVar(leaveType) }}
                       />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-white">{fullName}</p>
-                      <p className="text-xs text-slate-400">
+                      <p className="truncate text-sm font-medium text-foreground">{fullName}</p>
+                      <p className="text-xs text-muted-foreground">
                         {format(parseISO(normalizeDate(leave.start_date ?? "")), "MMM d")} - {format(parseISO(normalizeDate(leave.end_date ?? "")), "MMM d")}
                         <span className="ml-1">({leave.days_count ?? 0} day{Number(leave.days_count ?? 0) > 1 ? "s" : ""})</span>
                       </p>
                     </div>
-                    <Badge
-                      variant="secondary"
-                      className={`shrink-0 border-none ${
-                        leaveType === "Annual" ? "bg-emerald-500/15 text-emerald-400" :
-                        leaveType === "Sick" ? "bg-rose-500/15 text-rose-400" :
-                        leaveType === "Casual" ? "bg-sky-500/15 text-sky-400" :
-                        leaveType === "Unpaid" ? "bg-slate-500/15 text-slate-300" :
-                        "bg-[#1B6AB5]/15 text-[#5aa0dd]"
-                      }`}
-                    >
+                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2.5 py-0.5 text-xs font-medium text-foreground">
+                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: leaveTypeChartVar(leaveType) }} aria-hidden="true" />
                       {leaveType}
-                    </Badge>
+                    </span>
                   </div>
                 );
               })}
             </div>
           ) : selectedDate ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
-              <CalendarDays className="mb-3 h-10 w-10 text-slate-600" />
-              <p className="text-sm text-slate-400">No approved leaves on this date</p>
-              <p className="mt-1 text-xs text-slate-500">
+              <CalendarDays className="mb-3 h-10 w-10 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">No approved leaves on this date</p>
+              <p className="mt-1 text-xs text-muted-foreground">
                 Click on highlighted dates to see who's out
               </p>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-8 text-center">
-              <CalendarDays className="mb-3 h-10 w-10 text-slate-600" />
-              <p className="text-sm text-slate-400">Select a date to view leaves</p>
+              <CalendarDays className="mb-3 h-10 w-10 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">Select a date to view leaves</p>
             </div>
           )}
         </CardContent>

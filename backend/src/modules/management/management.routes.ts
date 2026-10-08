@@ -4,6 +4,8 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
+import { canAccessEmployeeRecord, employeeIdInScope, employeeListScope, OUTSIDE_SCOPE_MESSAGE } from "../dashboards/branch-scope-guards.js";
 import { managementService } from "./management.service.js";
 import { db } from "../../db/mysql.js";
 import { resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
@@ -37,10 +39,7 @@ router.use(requireAuth);
 // number of open tabs. Keyed on the RESOLVED scope, never on the user, so a narrower
 // entitlement can never be served a wider one's payload.
 const WORKFORCE_DASHBOARD_TTL_MS = 30_000;
-export const workforceDashboardCache = new TtlCache<unknown>({
-  maxEntries: 100,
-  defaultTtlMs: WORKFORCE_DASHBOARD_TTL_MS,
-});
+export const workforceDashboardCache = new TtlCache<unknown>({ maxEntries: 100, defaultTtlMs: WORKFORCE_DASHBOARD_TTL_MS, defaultStaleMs: 30 * 60_000 });
 
 /**
  * Whether the caller may see salary, PF/ESIC and payroll cost figures.
@@ -99,15 +98,15 @@ function requireRoleOrDirectReports(...roles: string[]) {
 }
 
 /**
- * Resolve scoped employee ID list for non-admin/hr roles.
- * Admins, HR, CEO see everyone. Managers/TLs see only their direct reports.
+ * Resolve scoped employee ID list.
+ * Org-wide roles (ORG_WIDE_EXEMPT_ROLES: admin, ceo, coo, cfo ...) see everyone. Everyone else - hr and qa included,
+ * owner ruling 2026-10-01 - is limited: managers/TLs to their direct reports, hr/qa to their own branch / assigned
+ * scope plus their reporting line.
  * Returns null if the caller has no employee record (block the request).
  * Returns [] if the manager has no reports yet (no data returned).
  */
-async function resolveTeamScope(
-  userId: string,
-): Promise<{ employeeIds: string[] | null; isWide: boolean }> {
-  if (await hasRole(userId, "admin", "hr", "ceo", "qa")) {
+async function resolveTeamScope(userId: string): Promise<{ employeeIds: string[] | null; isWide: boolean }> {
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
     return { employeeIds: null, isWide: true };
   }
   const emp = await getEmployeeForUser(userId);
@@ -115,94 +114,70 @@ async function resolveTeamScope(
   const ids = await managementService.getDirectReportIds(emp.id);
   // Include the manager's own employee ID for completeness (e.g. their own alerts)
   if (!ids.includes(emp.id)) ids.push(emp.id);
+  if (await hasRole(userId, "hr", "qa")) {
+    const pred = await employeeListScope({ id: userId }, "e");
+    if (pred) {
+      const [rows] = await db.execute<any[]>(
+        `SELECT e.id FROM employees e WHERE e.active_status = 1 AND ${pred.sql}`,
+        pred.params as any[],
+      );
+      for (const r of rows as any[]) {
+        const id = String(r.id);
+        if (!ids.includes(id)) ids.push(id);
+      }
+    }
+  }
   return { employeeIds: ids, isWide: false };
 }
 
-router.get(
-  "/team-kpi",
-  requireRole(
-    "admin",
-    "hr",
-    "manager",
-    "branch_head",
-    "ceo",
-    "process_manager",
-    "qa",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
-    if (!isWide && employeeIds !== null && employeeIds.length === 0) {
-      return res.json({ data: [] });
-    }
-    const filters: Record<string, unknown> = { ...req.query };
-    if (!isWide && employeeIds) filters.employee_ids = employeeIds;
-    res.json({
-      data: await managementService.getTeamKpiSummary(filters as any),
-    });
-  }),
-);
+/** 403 helper for the by-employee writes below; org-wide roles pass inside canAccessEmployeeRecord. */
+async function guardEmployee(req: AuthenticatedRequest, res: Response, employeeId: string): Promise<boolean> {
+  if (await canAccessEmployeeRecord(req.authUser!, employeeId)) return true;
+  res.status(403).json({ success: false, message: OUTSIDE_SCOPE_MESSAGE });
+  return false;
+}
 
-router.get(
-  "/coaching",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    if (await hasRole(userId, "admin", "hr", "qa")) {
-      return res.json({
-        data: await managementService.listCoachingSessions(req.query as any),
-      });
-    }
-    const emp = await getEmployeeForUser(userId);
-    if (!emp)
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
-    // Managers see sessions for all their direct reports
-    const directIds = await managementService.getDirectReportIds(emp.id);
-    if (directIds.length > 0) {
-      return res.json({
-        data: await managementService.listCoachingSessions({
-          employee_ids: directIds,
-        }),
-      });
-    }
-    // Fallback: show own sessions if no direct reports
-    return res.json({
-      data: await managementService.listCoachingSessions({
-        employee_id: emp.id,
-      }),
-    });
-  }),
-);
+router.get("/team-kpi", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
+  if (!isWide && employeeIds !== null && employeeIds.length === 0) {
+    return res.json({ data: [] });
+  }
+  const filters: Record<string, unknown> = { ...req.query };
+  if (!isWide && employeeIds) filters.employee_ids = employeeIds;
+  res.json({ data: await managementService.getTeamKpiSummary(filters as any) });
+}));
 
-router.post(
-  "/coaching",
-  requireRole(
-    "admin",
-    "hr",
-    "qa",
-    "manager",
-    "branch_head",
-    "process_manager",
-    "team_leader",
-    "assistant_manager",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { employee_id, session_date, session_type } = req.body;
-    if (!employee_id || !session_date || !session_type)
-      return res
-        .status(400)
-        .json({ error: "employee_id, session_date, session_type required" });
-    res
-      .status(201)
-      .json({
-        data: await managementService.createCoachingSession(
-          req.body,
-          req.authUser!.id,
-          req,
-        ),
-      });
-  }),
-);
+router.get("/coaching", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
+    return res.json({ data: await managementService.listCoachingSessions(req.query as any) });
+  }
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+  if (await hasRole(userId, "hr", "qa")) {
+    // hr / qa: sessions of people inside their own branch / assigned scope only (was: every session).
+    const { employeeIds } = await resolveTeamScope(userId);
+    const ids = employeeIds ?? [emp.id];
+    const requested = typeof req.query.employee_id === "string" ? req.query.employee_id : undefined;
+    if (requested && !ids.includes(requested)) return res.status(403).json({ success: false, message: OUTSIDE_SCOPE_MESSAGE });
+    return res.json({ data: await managementService.listCoachingSessions({ ...(req.query as any), employee_ids: ids }) });
+  }
+  // Managers see sessions for all their direct reports
+  const directIds = await managementService.getDirectReportIds(emp.id);
+  if (directIds.length > 0) {
+    return res.json({ data: await managementService.listCoachingSessions({ employee_ids: directIds }) });
+  }
+  // Fallback: show own sessions if no direct reports
+  return res.json({ data: await managementService.listCoachingSessions({ employee_id: emp.id }) });
+}));
+
+router.post("/coaching", requireRole("admin", "hr", "qa", "manager", "branch_head", "process_manager", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employee_id, session_date, session_type } = req.body;
+  if (!employee_id || !session_date || !session_type)
+    return res.status(400).json({ error: "employee_id, session_date, session_type required" });
+  if (!(await guardEmployee(req, res, String(employee_id)))) return;
+  res.status(201).json({ data: await managementService.createCoachingSession(req.body, req.authUser!.id, req) });
+}));
 
 router.get(
   "/alerts",
@@ -358,60 +333,111 @@ router.get(
 // ─── TNI (Training Needs Identification) ─────────────────────────────────────
 
 // Returns the calling manager's direct reports (for coaching modal dropdowns, etc.)
-router.get(
-  "/team-members",
-  requireRoleOrDirectReports(
-    "admin",
-    "hr",
-    "manager",
-    "branch_head",
-    "ceo",
-    "process_manager",
-    "qa",
-    "team_leader",
-    "assistant_manager",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    if (await hasRole(userId, "admin", "hr", "ceo")) {
-      // Wide roles: return a small employee list (name + id only) filtered by process if provided
-      const processId = req.query.process_id as string | undefined;
-      const conds = ["e.active_status = 1"];
-      const params: unknown[] = [];
-      if (processId) {
-        conds.push("e.process_id = ?");
-        params.push(processId);
-      }
-      const [rows] = await db.execute(
-        `SELECT e.id, e.employee_code, e.full_name FROM employees e WHERE ${conds.join(" AND ")} ORDER BY e.full_name LIMIT 500`,
-        params,
-      );
-      return res.json({ data: rows });
-    }
-    const emp = await getEmployeeForUser(userId);
-    if (!emp)
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
-    const ids = await managementService.getDirectReportIds(emp.id);
-    if (ids.length === 0) return res.json({ data: [] });
-    const placeholders = ids.map(() => "?").join(",");
+router.get("/team-members", requireRoleOrDirectReports("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
+    // Wide roles: return a small employee list (name + id only) filtered by process if provided
+    const processId = req.query.process_id as string | undefined;
+    const conds = ["e.active_status = 1"];
+    const params: unknown[] = [];
+    if (processId) { conds.push("e.process_id = ?"); params.push(processId); }
     const [rows] = await db.execute(
       `SELECT e.id, e.employee_code, e.full_name FROM employees e WHERE e.id IN (${placeholders}) AND e.active_status = 1 ORDER BY e.full_name`,
       ids,
     );
     return res.json({ data: rows });
-  }),
-);
+  }
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+  // hr / qa: their branch / assigned scope as well as their reporting line (resolveTeamScope).
+  const ids = (await hasRole(userId, "hr", "qa"))
+    ? ((await resolveTeamScope(userId)).employeeIds ?? [])
+    : await managementService.getDirectReportIds(emp.id);
+  if (ids.length === 0) return res.json({ data: [] });
+  const placeholders = ids.map(() => "?").join(",");
+  const [rows] = await db.execute(
+    `SELECT e.id, e.employee_code, e.full_name FROM employees e WHERE e.id IN (${placeholders}) AND e.active_status = 1 ORDER BY e.full_name`,
+    ids
+  );
+  return res.json({ data: rows });
+}));
 
-router.get(
-  "/tni",
-  requireRole("admin", "hr", "manager", "qa"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res.json({
-      data: await managementService.listTni(
-        req.query as { employee_id?: string; status?: string },
-      ),
+router.get("/tni", requireRole("admin", "hr", "manager", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
+  if (isWide) return res.json({ data: await managementService.listTni(req.query as { employee_id?: string; status?: string }) });
+  const ids = employeeIds ?? [];
+  const requested = typeof req.query.employee_id === "string" ? req.query.employee_id : undefined;
+  if (ids.length === 0 || (requested && !ids.includes(requested))) {
+    return requested ? res.status(403).json({ success: false, message: OUTSIDE_SCOPE_MESSAGE }) : res.json({ data: [] });
+  }
+  res.json({ data: await managementService.listTni({ ...(req.query as { employee_id?: string; status?: string }), employee_ids: ids }) });
+}));
+
+router.post("/tni", requireRole("admin", "hr", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employee_id, metric_id, need_type, description, priority, coaching_session_id } = req.body as {
+    employee_id: string;
+    metric_id?: string;
+    need_type: string;
+    description?: string;
+    priority?: string;
+    coaching_session_id?: string;
+  };
+  if (!employee_id || !need_type) {
+    return res.status(400).json({ error: "employee_id and need_type required" });
+  }
+  if (!(await guardEmployee(req, res, String(employee_id)))) return;
+  const data = await managementService.createTni(
+    { employee_id, metric_id, need_type, description, priority, coaching_session_id },
+    req.authUser!.id
+  );
+  res.status(201).json({ data });
+}));
+
+router.patch("/tni/:id", requireRole("admin", "hr", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { status } = req.body as { status: string };
+  if (!status) return res.status(400).json({ error: "status required" });
+  const tniEmployeeId = await managementService.getTniEmployeeId(req.params.id);
+  if (!tniEmployeeId) return res.status(404).json({ error: "Training need not found" });
+  if (!(await guardEmployee(req, res, tniEmployeeId))) return;
+  const data = await managementService.updateTniStatus(req.params.id, status);
+  res.json({ data });
+}));
+
+router.post("/coaching/:coachingId/create-tni", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { need_type, description, priority, metric_id } = req.body as {
+    need_type?: string;
+    description?: string;
+    priority?: string;
+    metric_id?: string;
+  };
+  const sessionEmployeeId = await managementService.getCoachingEmployeeId(req.params.coachingId);
+  if (sessionEmployeeId && !(await guardEmployee(req, res, sessionEmployeeId))) return;
+  const data = await managementService.createTniFromCoaching(
+    req.params.coachingId,
+    { need_type: need_type ?? "soft_skills", description, priority, metric_id },
+    req.authUser!.id
+  );
+  res.status(201).json({ data });
+}));
+
+router.get("/attrition-breakdown", requireRole("admin", "hr", "ceo", "manager", "branch_head", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    // Branch scoping: org-wide roles keep the company view; everyone else sees exits of people inside their own
+    // branch / assigned scope / reporting line only (null predicate = SQL unchanged).
+    const scope = await employeeIdInScope(req.authUser!, "er.employee_id");
+    const data = scope ? await managementService.getAttritionBreakdown(scope) : await managementService.getAttritionBreakdown();
+    res.json({ success: true, data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed";
+    console.error("[attrition-breakdown]", msg);
+    // `success: true` with an empty array told the caller the query ran and found
+    // no attrition — the reassuring answer, produced by a query that failed. The
+    // service beneath this already swallows its own error into [[]], so the route
+    // was the second of two places turning a fault into good news.
+    res.status(503).json({
+      success: false,
+      error: "Attrition breakdown is unavailable",
+      errorCode: "SOURCE_UNAVAILABLE",
     });
   }),
 );
@@ -909,9 +935,9 @@ router.get(
         .status(403)
         .json({ success: false, message: "No employee record" });
 
-    const summary = await getManagerAnalyticsSummary(Number(emp.id));
-    res.json({ success: true, data: summary });
-  }),
-);
+  // employees.id is a CHAR(36) UUID: Number() made it NaN, which matches no team.
+  const summary = await getManagerAnalyticsSummary(emp.id);
+  res.json({ success: true, data: summary });
+}));
 
 export { router as managementRouter };

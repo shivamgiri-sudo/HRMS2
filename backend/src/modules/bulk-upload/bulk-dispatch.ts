@@ -380,6 +380,12 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_alt_rx_dump_batch") {
+    const { importAltRxDumpBatch } = await import("./alt-rx-dump-bulk.service.js");
+    const data = await importAltRxDumpBatch(id, userId);
+    return { success: true, data };
+  }
+
   if (rpc_name === "import_bb_chat_masmis_batch") {
     const { importBbChatMasmisBatch } =
       await import("./bb-chat-masmis-bulk.service.js");
@@ -438,6 +444,54 @@ export async function dispatchImport(
     const { importDalmiaOutboundBatch } =
       await import("./dalmia-outbound-bulk.service.js");
     const data = await importDalmiaOutboundBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_sbi_card_dialer_mis_batch") {
+    const { importSbiCardDialerMisBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardDialerMisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_sbi_card_agent_mis_batch") {
+    const { importSbiCardAgentMisBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardAgentMisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_sbi_card_account_file_batch") {
+    const { importSbiCardAccountFileBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardAccountFileBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_sbi_card_roster_batch") {
+    const { importSbiCardRosterBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardRosterBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_sbi_card_outcome_batch") {
+    const { importSbiCardOutcomeBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardOutcomeBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_sbi_card_apr_batch") {
+    const { importSbiCardAgentTimeBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardAgentTimeBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_sbi_card_downtime_batch") {
+    const { importSbiCardDowntimeBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardDowntimeBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_sbi_card_pen_estimation_batch") {
+    const { importSbiCardPenEstimationBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardPenEstimationBatch(id, userId);
     return { success: true, data };
   }
 
@@ -840,6 +894,30 @@ export async function dispatchImport(
     const { importDuAprThailandBatch } =
       await import("./du-apr-daily-bulk.service.js");
     const data = await importDuAprThailandBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_cdr_korea_batch") {
+    const { importDuCdrKoreaBatch } = await import("./du-cdr-bulk.service.js");
+    const data = await importDuCdrKoreaBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_cdr_thailand_batch") {
+    const { importDuCdrThailandBatch } = await import("./du-cdr-bulk.service.js");
+    const data = await importDuCdrThailandBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_ahm_dump_mp_batch") {
+    const { importAhmDumpMpBatch } = await import("./ahm-dump-bulk.service.js");
+    const data = await importAhmDumpMpBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_ahm_dump_mm_batch") {
+    const { importAhmDumpMmBatch } = await import("./ahm-dump-bulk.service.js");
+    const data = await importAhmDumpMmBatch(id, userId);
     return { success: true, data };
   }
 

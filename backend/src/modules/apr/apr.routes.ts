@@ -1,14 +1,12 @@
 // backend/src/modules/apr/apr.routes.ts
-import { Router } from "express";
-import type { NextFunction, Response } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
-import { db } from "../../db/mysql.js";
-import { getAprData } from "./apr.service.js";
-import type { RowDataPacket } from "mysql2";
-import { getIstDateString } from "../../utils/dateUtils.js";
+import { Router } from 'express';
+import type { NextFunction, Response } from 'express';
+import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { db } from '../../db/mysql.js';
+import { getAprData } from './apr.service.js';
+import type { RowDataPacket } from 'mysql2';
+import { employeeListScope } from '../dashboards/branch-scope-guards.js';
+import { getIstDateString } from '../../utils/dateUtils.js';
 
 const router = Router();
 type AsyncHandler = (
@@ -70,11 +68,24 @@ router.get(
       return res.json({ success: true, data: { configured: false, rows: [] } });
     }
 
-    return res.json({
-      success: true,
-      data: { configured: true, rows: result.rows },
-    });
-  }),
-);
+  // Branch scoping (owner ruling 2026-10-01): the role gate above says who may open the page, not whose
+  // agents they see. Org-wide roles keep every row; hr / manager / TL etc. see only agents whose
+  // employee code belongs to someone inside their branch / assigned scope / reporting line.
+  // Rows that map to no in-scope employee are dropped (fail closed).
+  if (isManager) {
+    const scope = await employeeListScope(req.authUser!, 'e');
+    if (scope) {
+      const [codeRows] = await db.execute<RowDataPacket[]>(
+        `SELECT e.employee_code FROM employees e WHERE e.active_status = 1 AND ${scope.sql}`,
+        scope.params as never[]
+      );
+      const allowed = new Set((codeRows as EmployeeRow[]).map((r) => String(r.employee_code ?? '').trim().toUpperCase()).filter(Boolean));
+      const rows = (result.rows as RowDataPacket[]).filter((r) => allowed.has(String((r as { agent_user?: unknown }).agent_user ?? '').trim().toUpperCase()));
+      return res.json({ success: true, data: { configured: true, rows } });
+    }
+  }
+
+  return res.json({ success: true, data: { configured: true, rows: result.rows } });
+}));
 
 export { router as aprRouter };

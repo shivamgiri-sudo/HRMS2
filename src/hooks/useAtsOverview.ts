@@ -40,9 +40,10 @@ export interface AtsOverview {
 type Mover = { name: string; total: number; prevTotal: number; volumeDelta: number | null; selRate: number; selRateDelta: number | null };
 
 /** One aggregate request; server does the grouping. Keeps previous data visible while filters change. */
-export function useAtsOverview(period: OverviewPeriod, branch: string) {
+export function useAtsOverview(period: OverviewPeriod, branch: string, enabled = true) {
   return useQuery({
     queryKey: ["ats-overview", period, branch],
+    enabled,
     queryFn: async () => {
       const qs = new URLSearchParams({ period });
       if (branch) qs.set("branch", branch);

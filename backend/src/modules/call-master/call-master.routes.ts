@@ -5,7 +5,8 @@ import * as svc from "./call-master.service.js";
 import * as obSvc from "./outbound-sales.service.js";
 import * as oiSvc from "./opening-intelligence.service.js";
 import * as ciSvc from "./customer-intelligence.service.js";
-import { getIstDateString } from "../../utils/dateUtils.js";
+import { scopeClientIdsMiddleware } from "./call-master.scope.js";
+import { getIstDateString } from '../../utils/dateUtils.js';
 
 const router = Router();
 const h =
@@ -15,16 +16,9 @@ const h =
 
 router.use(
   requireAuth,
-  requireRole(
-    "super_admin",
-    "admin",
-    "ceo",
-    "manager",
-    "process_manager",
-    "operations_manager",
-    "qa",
-    "quality_analyst",
-  ),
+  requireRole("super_admin", "admin", "ceo", "manager", "process_manager", "operations_manager", "qa", "quality_analyst"),
+  // Branch / process scoping: ?clientIds= is only ever narrowed to the clients the caller's scope allows.
+  scopeClientIdsMiddleware,
 );
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -45,142 +39,39 @@ function parseFilters(q: Record<string, unknown>): svc.CallMasterFilters {
 }
 
 // ── Core call-master routes ────────────────────────────────────────────────
-router.get(
-  "/kpis",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getKPIs(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/quality-trend",
-  h(async (req, res) => {
-    const f = parseFilters(req.query as Record<string, unknown>);
-    const granularity =
-      (req.query.granularity as "daily" | "weekly" | "monthly") || "daily";
-    res.json({ data: await svc.getQualityTrend(f, granularity) });
-  }),
-);
-router.get(
-  "/calls-by-client",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getCallsByClient(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/calls-by-day",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getCallsByDay(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/top-agents",
-  h(async (req, res) => {
-    const f = parseFilters(req.query as Record<string, unknown>);
-    const limit = parseInt(String(req.query.limit ?? "10"), 10);
-    const order = (req.query.order as "top" | "bottom") || "top";
-    res.json({ data: await svc.getTopAgents(f, limit, order) });
-  }),
-);
-router.get(
-  "/agent-audit-summary",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getAgentAuditSummary(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/sales-funnel",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getSalesFunnel(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/cx-parameters",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getCXParameters(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/fatal-by-day",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getFatalByDay(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/fatal-agent-summary",
-  h(async (req, res) => {
-    const limit = parseInt(String(req.query.limit ?? "500"), 10);
-    res.json({
-      data: await svc.getFatalAgentSummary(
-        parseFilters(req.query as Record<string, unknown>),
-        limit,
-      ),
-    });
-  }),
-);
-router.get(
-  "/scenario-detail",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getScenarioDetail(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/active-agents-list",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getActiveAgentsList(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/clients",
-  h(async (_req, res) => res.json({ data: await svc.getClientList() })),
-);
-router.get(
-  "/export",
-  h(async (req, res) => {
-    const limit = parseInt(String(req.query.limit ?? "5000"), 10);
-    res.json({
-      data: await svc.getExportData(
-        parseFilters(req.query as Record<string, unknown>),
-        limit,
-      ),
-    });
-  }),
-);
+router.get("/kpis",               h(async (req, res) => res.json({ data: await svc.getKPIs(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/quality-trend",      h(async (req, res) => {
+  const f = parseFilters(req.query as Record<string, unknown>);
+  const granularity = (req.query.granularity as "daily" | "weekly" | "monthly") || "daily";
+  res.json({ data: await svc.getQualityTrend(f, granularity) });
+}));
+router.get("/calls-by-client",    h(async (req, res) => res.json({ data: await svc.getCallsByClient(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/calls-by-day",       h(async (req, res) => res.json({ data: await svc.getCallsByDay(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/top-agents",         h(async (req, res) => {
+  const f = parseFilters(req.query as Record<string, unknown>);
+  const limit = parseInt(String(req.query.limit ?? "10"), 10);
+  const order = (req.query.order as "top" | "bottom") || "top";
+  res.json({ data: await svc.getTopAgents(f, limit, order) });
+}));
+router.get("/agent-audit-summary",h(async (req, res) => res.json({ data: await svc.getAgentAuditSummary(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/sales-funnel",       h(async (req, res) => res.json({ data: await svc.getSalesFunnel(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/cx-parameters",      h(async (req, res) => res.json({ data: await svc.getCXParameters(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/fatal-by-day",       h(async (req, res) => res.json({ data: await svc.getFatalByDay(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/fatal-agent-summary",h(async (req, res) => {
+  const limit = parseInt(String(req.query.limit ?? "500"), 10);
+  res.json({ data: await svc.getFatalAgentSummary(parseFilters(req.query as Record<string, unknown>), limit) });
+}));
+router.get("/scenario-detail",    h(async (req, res) => res.json({ data: await svc.getScenarioDetail(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/active-agents-list", h(async (req, res) => res.json({ data: await svc.getActiveAgentsList(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/clients",            h(async (_req, res) => {
+  const allowed = res.locals.allowedClientIds as number[] | null | undefined;
+  const clients = await svc.getClientList();
+  res.json({ data: allowed ? clients.filter((c) => allowed.includes(Number(c.id))) : clients });
+}));
+router.get("/export",             h(async (req, res) => {
+  const limit = parseInt(String(req.query.limit ?? "5000"), 10);
+  res.json({ data: await svc.getExportData(parseFilters(req.query as Record<string, unknown>), limit) });
+}));
 
 // ── Outbound sales sub-routes ──────────────────────────────────────────────
 router.get(

@@ -7,6 +7,8 @@ import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { assetsService } from "./assets.service.js";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { assetParamGuard, assetScopeSql, canAssignToEmployee, canUseBranch } from "./assetScope.js";
+import { resolveCallerBranchScope } from "../org/branchScope.js";
 
 const router = Router();
 type AsyncHandler = (
@@ -22,24 +24,30 @@ const h =
 
 router.use(requireAuth);
 
-// Full asset master list: admin/hr only
-router.get(
-  "/",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res.json({
-      data: await assetsService.list(req.query as Record<string, unknown>),
-    });
-  }),
-);
+// Branch scoping (owner ruling 2026-10-01): every /:id route is restricted to assets of the caller's own
+// branch (or held by an employee in the caller's scope). Org-wide roles pass.
+router.param("id", assetParamGuard);
 
-router.post(
-  "/",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res.status(201).json({ data: await assetsService.create(req.body) });
-  }),
-);
+// Full asset master list: admin/hr only
+router.get("/", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  res.json({ data: await assetsService.list(req.query as Record<string, unknown>, await assetScopeSql(req.authUser!)) });
+}));
+
+router.post("/", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // A new asset must be filed under a branch the caller may act for; branch-scoped roles default to their own.
+  const body = { ...(req.body ?? {}) };
+  if (!(await canUseBranch(req.authUser!, body.branch_id))) {
+    return res.status(403).json({ success: false, message: "Forbidden: this branch is outside your scope" });
+  }
+  if (!body.branch_id) {
+    const caller = await resolveCallerBranchScope(req.authUser!);
+    if (!caller.orgWide) {
+      if (!caller.branchIds.length) return res.status(403).json({ success: false, message: "Forbidden: no branch scope" });
+      body.branch_id = caller.branchIds[0];
+    }
+  }
+  res.status(201).json({ data: await assetsService.create(body) });
+}));
 
 // Employee self-service: own assignments only; admin/hr can query any employee
 router.get(
@@ -48,9 +56,12 @@ router.get(
     const userId = req.authUser!.id;
     const targetId = req.params.employeeId;
 
-    if (await hasRole(userId, "admin", "hr")) {
-      return res.json({ data: await assetsService.listByEmployee(targetId) });
+  if (await hasRole(userId, "admin", "hr")) {
+    if (!(await canAssignToEmployee(req.authUser!, targetId))) {
+      return res.status(403).json({ success: false, message: "Forbidden: this employee is outside your branch / assigned scope" });
     }
+    return res.json({ data: await assetsService.listByEmployee(targetId) });
+  }
 
     const callerEmp = await getEmployeeForUser(userId);
     if (!callerEmp || callerEmp.id !== targetId) {
@@ -82,31 +93,23 @@ router.get(
   }),
 );
 
-router.put(
-  "/:id",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res.json({ data: await assetsService.update(req.params.id, req.body) });
-  }),
-);
+router.put("/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // Moving an asset to another branch is only allowed into a branch the caller may act for.
+  if (!(await canUseBranch(req.authUser!, req.body?.branch_id))) {
+    return res.status(403).json({ success: false, message: "Forbidden: this branch is outside your scope" });
+  }
+  res.json({ data: await assetsService.update(req.params.id, req.body) });
+}));
 
-router.post(
-  "/:id/assign",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { employee_id, notes } = req.body;
-    if (!employee_id)
-      return res.status(400).json({ error: "employee_id required" });
-    const assignment = await assetsService.assign(
-      req.params.id,
-      employee_id,
-      req.authUser!.id,
-      notes,
-      req,
-    );
-    res.status(201).json({ data: assignment });
-  }),
-);
+router.post("/:id/assign", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employee_id, notes } = req.body;
+  if (!employee_id) return res.status(400).json({ error: "employee_id required" });
+  if (!(await canAssignToEmployee(req.authUser!, String(employee_id)))) {
+    return res.status(403).json({ success: false, message: "Forbidden: this employee is outside your branch / assigned scope" });
+  }
+  const assignment = await assetsService.assign(req.params.id, employee_id, req.authUser!.id, notes, req);
+  res.status(201).json({ data: assignment });
+}));
 
 router.post(
   "/:id/return",

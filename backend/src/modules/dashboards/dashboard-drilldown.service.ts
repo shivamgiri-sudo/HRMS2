@@ -1,10 +1,7 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import {
-  type DashboardScope,
-  buildScopeWhere,
-  buildScopeWhereEmployees,
-} from "../../shared/dashboardScope.js";
+import { type DashboardScope, buildScopeWhere, buildScopeWhereEmployees } from "../../shared/dashboardScope.js";
+import { PAYABLE_BANK_SQL, PAN_ABSENT_SQL, PAN_INVALID_SQL } from "./dashboard-metric.service.js";
 import { LATEST_COMPLETE_ATTENDANCE_DATE_SQL } from "../../shared/attendanceStatus.js";
 import {
   drillAttendanceStatus,
@@ -83,7 +80,7 @@ export async function getDrilldown(
     case "ONBOARDING_PENDING":
       return drillOnboarding(scope, filters);
     case "ATTENDANCE":
-      return drillAttendance(scope);
+      return drillAttendance(scope, filters);
     case "PAYROLL_READINESS":
       return drillPayrollReadiness(scope);
     case "TAT":
@@ -345,9 +342,15 @@ async function drillOnboarding(
 }
 
 // ─── ATTENDANCE: today's exceptions ──────────────────────────────────────────
-async function drillAttendance(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+/** Statuses a tile may narrow the attendance drilldown to (`late` is the late_mark flag, not a status). */
+const ATTENDANCE_DRILL_FILTERS: Record<string, string> = {
+  absent: "a.attendance_status = 'absent'",
+  missing_punch: "a.attendance_status = 'missing_punch'",
+  half_day: "a.attendance_status = 'half_day'",
+  late: "a.late_mark = 1",
+};
+
+async function drillAttendance(scope: DashboardScope, filters?: Record<string, unknown>): Promise<DrilldownResult> {
   try {
     // Same TEAM_ONLY/SELF_ONLY gap as drillHeadcount above — use the employee-aware builder.
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
@@ -366,6 +369,8 @@ async function drillAttendance(
       };
     }
 
+    // Whitelisted lookup (never interpolated from the request): a tile such as "Absent" or "Late" opens only its own rows.
+    const narrow = typeof filters?.status === "string" ? ATTENDANCE_DRILL_FILTERS[filters.status] ?? null : null;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.employee_code AS employeeCode,
               COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS employeeName,
@@ -376,7 +381,7 @@ async function drillAttendance(
          JOIN employees e ON e.id = a.employee_id
          LEFT JOIN branch_master b ON b.id = e.branch_id
         WHERE a.record_date = ?
-          AND (a.attendance_status IN ('absent','missing_punch','half_day') OR a.late_mark = 1)
+          AND (${narrow ?? "a.attendance_status IN ('absent','missing_punch','half_day') OR a.late_mark = 1"})
           AND ${scopeSql}
         ORDER BY FIELD(a.attendance_status,'missing_punch','absent','half_day'), e.employee_code
         LIMIT 200`,
@@ -412,14 +417,17 @@ async function drillPayrollReadiness(
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT b.branch_name AS branchName,
               COUNT(*) AS total,
-              SUM(CASE WHEN COALESCE(TRIM(e.pan_number),'') = '' THEN 1 ELSE 0 END) AS missingPan,
-              SUM(CASE WHEN COALESCE(TRIM(e.uan_number),'') = '' THEN 1 ELSE 0 END) AS missingUan,
-              SUM(CASE WHEN COALESCE(TRIM(e.bank_account_number),'') = '' THEN 1 ELSE 0 END) AS missingBank
+              -- Same rules as the PAYROLL_READINESS tile (bank from employee_bank_detail, PAN in either column with a
+              -- format check, 30/60-day joining grace) so the branch rows add up to the number that was clicked.
+              SUM(CASE WHEN ${PAN_ABSENT_SQL} AND DATEDIFF(CURDATE(), e.date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingPan,
+              SUM(CASE WHEN ${PAN_INVALID_SQL} AND DATEDIFF(CURDATE(), e.date_of_joining) > 30 THEN 1 ELSE 0 END) AS invalidPan,
+              SUM(CASE WHEN COALESCE(TRIM(e.uan_number),'') = '' AND DATEDIFF(CURDATE(), e.date_of_joining) > 60 THEN 1 ELSE 0 END) AS missingUan,
+              SUM(CASE WHEN NOT ${PAYABLE_BANK_SQL} AND DATEDIFF(CURDATE(), e.date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingBank
          FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
         WHERE e.active_status = 1 AND ${scopeSql}
         GROUP BY e.branch_id, b.branch_name
-        ORDER BY missingPan DESC`,
+        ORDER BY missingBank + missingPan DESC`,
       params,
     );
     return {
@@ -428,6 +436,7 @@ async function drillPayrollReadiness(
         branchName: r.branchName ?? "Unassigned",
         total: Number(r.total),
         missingPan: Number(r.missingPan),
+        invalidPan: Number(r.invalidPan),
         missingUan: Number(r.missingUan),
         missingBank: Number(r.missingBank),
       })),
@@ -548,7 +557,7 @@ async function drillIncentive(scope: DashboardScope): Promise<DrilldownResult> {
          FROM incentive_upload_batch b
          LEFT JOIN incentive_approval_step s
            ON s.batch_id = b.id AND s.status = 'pending'
-        WHERE b.status = 'pending' AND ${scopeSql}
+        WHERE b.status IN ('pending','pending_approval','approval_chain_active','finance_approved') AND ${scopeSql}
         ORDER BY b.created_at ASC
         LIMIT 100`,
       params,

@@ -1,10 +1,16 @@
-import type { RowDataPacket } from "mysql2";
-import { db } from "../db/mysql.js";
-import mysql from "mysql2/promise";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../db/mysql.js';
+import mysql from 'mysql2/promise';
+import { withWorkerLock, recordWorkerRun } from './worker-utils.js';
+import { regradeAprChanges } from '../modules/wfm/apr-sync-regrade.service.js';
+import { aprSyncDates, aprSyncDaysBack, changedAprUsers } from './apr-sync-window.js';
 
 const WORKER_NAME = "apr-vicidial-sync";
 
 let intervalRef: ReturnType<typeof setInterval> | undefined;
+
+// Date of the last completed deep sweep (see apr-sync-window.ts). In memory: a restart may repeat one sweep.
+let lastDeepSweepDate: string | null = null;
 
 // Legacy tables from dialer_db (kept for backward compatibility)
 const LEGACY_DIALER_TABLES = [
@@ -513,9 +519,17 @@ async function syncFromLegacyDialer(
   return totalRows;
 }
 
-async function syncForDate(
-  istDate: string,
-): Promise<{ upserted: number; skipped: number }> {
+/** Net login seconds per employee code already stored for one ReportDate (all campaigns, all sources). */
+async function aprSecondsByUser(istDate: string): Promise<Map<string, number>> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT UserID, SUM(TIME_TO_SEC(Net_Login)) AS secs FROM apr WHERE ReportDate = ? GROUP BY UserID`,
+    [istDate]
+  );
+  return new Map((rows as RowDataPacket[]).map((r) => [String(r.UserID).toUpperCase(), Number(r.secs) || 0]));
+}
+
+async function syncForDate(istDate: string): Promise<{ upserted: number; skipped: number; changed: Set<string> }> {
+  const before = await aprSecondsByUser(istDate);
   const enrichMap = await loadEnrichmentMap();
   const rowMap = new Map<string, AggRow>();
 
@@ -533,54 +547,69 @@ async function syncForDate(
   console.log(`[${WORKER_NAME}]   Legacy dialer_db rows: ${legacyRows}`);
 
   // Upsert all aggregated rows
-  return upsertAggregatedRows(rowMap, enrichMap, istDate);
+  const result = await upsertAggregatedRows(rowMap, enrichMap, istDate);
+  const changed = changedAprUsers(before, await aprSecondsByUser(istDate));
+  return { ...result, changed };
 }
 
-async function runAprSync(daysBack = 1): Promise<void> {
-  const nowIST = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-  const dates: string[] = [];
-  for (let i = daysBack; i >= 0; i--) {
-    const d = new Date(nowIST);
-    d.setUTCDate(d.getUTCDate() - i);
-    dates.push(d.toISOString().slice(0, 10));
-  }
+async function runAprSync(): Promise<void> {
+  await withWorkerLock(WORKER_NAME, async () => {
+    const { daysBack, deep, today } = aprSyncDaysBack(Date.now(), lastDeepSweepDate);
+    const dates = aprSyncDates(Date.now(), daysBack);
+    console.log(`[${WORKER_NAME}] Syncing dates${deep ? ' (daily deep sweep)' : ''}: ${dates.join(', ')}`);
+    await recordWorkerRun(WORKER_NAME, 'started');
 
-  console.log(`[${WORKER_NAME}] Syncing dates: ${dates.join(", ")}`);
-  let totalUpserted = 0,
-    totalSkipped = 0;
-
-  for (const date of dates) {
-    console.log(`[${WORKER_NAME}] Processing ${date}...`);
-    try {
-      const { upserted, skipped } = await syncForDate(date);
-      console.log(
-        `[${WORKER_NAME}]   done: upserted=${upserted} skipped=${skipped}`,
-      );
-      totalUpserted += upserted;
-      totalSkipped += skipped;
-    } catch (err: any) {
-      console.error(`[${WORKER_NAME}] Error on ${date}: ${err.message}`);
+    let totalUpserted = 0, totalSkipped = 0, totalChanged = 0;
+    const failedDates: string[] = [];
+    const changes = new Map<string, Set<string>>();
+    for (const date of dates) {
+      console.log(`[${WORKER_NAME}] Processing ${date}...`);
+      try {
+        const { upserted, skipped, changed } = await syncForDate(date);
+        console.log(`[${WORKER_NAME}]   done: upserted=${upserted} skipped=${skipped} changed=${changed.size}`);
+        totalUpserted += upserted;
+        totalSkipped += skipped;
+        totalChanged += changed.size;
+        if (changed.size) changes.set(date, changed);
+      } catch (err: any) {
+        failedDates.push(date);
+        console.error(`[${WORKER_NAME}] Error on ${date}: ${err.message}`);
+      }
     }
-  }
+    if (deep && failedDates.length === 0) lastDeepSweepDate = today;
 
-  console.log(
-    `[${WORKER_NAME}] Complete — total upserted=${totalUpserted} skipped=${totalSkipped}`,
-  );
+    // Days already graded from a gap get re-graded now that their APR arrived (past days only, never locked
+    // records, never a month whose payroll has started).
+    let regrade = { regraded: 0, skippedPayroll: 0, skippedLocked: 0, noRecord: 0, failed: 0 };
+    try {
+      regrade = await regradeAprChanges(changes, today);
+    } catch (err: any) {
+      console.error(`[${WORKER_NAME}] Re-grade failed: ${err.message}`);
+    }
+
+    await recordWorkerRun(WORKER_NAME, failedDates.length ? 'failed' : 'completed', {
+      dates, deep, upserted: totalUpserted, skipped: totalSkipped, changed: totalChanged, failedDates, ...regrade,
+    });
+    console.log(`[${WORKER_NAME}] Complete — upserted=${totalUpserted} skipped=${totalSkipped} changed=${totalChanged} regraded=${regrade.regraded} skippedPayroll=${regrade.skippedPayroll}`);
+  });
 }
 
 export async function startAprVicidialSyncWorker(): Promise<void> {
-  await runAprSync(1).catch((err) =>
-    console.error(`[${WORKER_NAME}] Startup sync failed:`, err.message),
+  // Not awaited: all-workers.ts starts workers one after another, so awaiting this multi-minute startup
+  // sync held every worker listed after it (esign, DigiLocker, the three report workers...) until it
+  // finished, and with a deploy restarting the process every few minutes they never started at all.
+  // On 2026-10-07 the emailed-report queue sat untouched for ~1 hour because of exactly this.
+  void runAprSync().catch(err =>
+    console.error(`[${WORKER_NAME}] Startup sync failed:`, err.message)
   );
 
   const SYNC_INTERVAL_MS = 60 * 60 * 1000;
   console.log(`[${WORKER_NAME}] Scheduled hourly sync (every 60 min)`);
   intervalRef = setInterval(
-    () =>
-      runAprSync(0).catch((err) =>
-        console.error(`[${WORKER_NAME}] Hourly sync error:`, err.message),
-      ),
-    SYNC_INTERVAL_MS,
+    () => runAprSync().catch(err =>
+      console.error(`[${WORKER_NAME}] Hourly sync error:`, err.message)
+    ),
+    SYNC_INTERVAL_MS
   );
 }
 

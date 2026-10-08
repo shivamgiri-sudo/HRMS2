@@ -1,9 +1,10 @@
-import { db } from "../../db/mysql.js";
-import { getPoolForKey } from "../external-db/external-db.service.js";
-import type { Pool } from "mysql2/promise";
-import type { RowDataPacket, ResultSetHeader } from "mysql2";
-import { recordMappingException } from "./mapping-exception.service.js";
-import { readAprSourceAggregates } from "./performance-apr-source-reader.js";
+import { db } from '../../db/mysql.js';
+import { getPoolForKey } from '../external-db/external-db.service.js';
+import type { Pool } from 'mysql2/promise';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { recordMappingException } from './mapping-exception.service.js';
+import { recordSupervisoryChange } from '../management/manager-attribution.service.js';
+import { readAprSourceAggregates } from './performance-apr-source-reader.js';
 
 type KpiSource = "apr" | "attendance" | "quality" | "manual" | "calculated";
 
@@ -413,10 +414,20 @@ export async function syncIntegrationCallMetrics(
     [date],
   );
   for (const row of toAssign as any[]) {
-    await db.execute(
+    const [res] = await db.execute(
       `UPDATE employees SET process_id = ? WHERE id = ? AND process_id IS NULL`,
       [row.process_id, row.employee_id],
     );
+    // A first process assignment opens a supervisory period; skipped when the guard above
+    // found the blank already filled. Non-blocking — see manager-attribution.service.ts.
+    if (Number((res as { affectedRows?: number })?.affectedRows ?? 0) > 0) {
+      await recordSupervisoryChange({
+        employeeId: String(row.employee_id),
+        processId: String(row.process_id),
+        changedBy: null,
+        reason: "Process assigned from integration call feed",
+      });
+    }
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(

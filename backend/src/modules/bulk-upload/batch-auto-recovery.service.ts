@@ -48,6 +48,8 @@ export const AUTO_RETRY_SAFE_RPCS: ReadonlySet<string> = new Set([
   "import_domestic_billing_approved_hc_batch",
   "import_du_apr_korea_batch",
   "import_du_apr_thailand_batch",
+  "import_du_cdr_korea_batch",
+  "import_du_cdr_thailand_batch",
   "import_du_team_mapping_korea_batch",
   "import_du_team_mapping_thailand_batch",
   "import_email_ticket_daily_batch",
@@ -70,6 +72,15 @@ export const AUTO_RETRY_SAFE_RPCS: ReadonlySet<string> = new Set([
 ]);
 
 export const MAX_AUTO_RETRIES = 2;
+/**
+ * A batch whose import job was lost to a process restart did nothing wrong, and restarts are not under
+ * its control: with deploys landing every few minutes, a 2,618-row Bla Bli Blu import was lost twice in a
+ * row and ran out of its two retries without ever running to completion (2026-10-07). Restart losses get
+ * a larger allowance; every other transient failure keeps MAX_AUTO_RETRIES.
+ */
+export const MAX_RESTART_RETRIES = 6;
+/** Text reconcileStuckRows (bulk-approval.service.ts) writes on a row the import never reached. */
+export const NEVER_REACHED_MARKER = "never reached a final outcome";
 /** Leave a failure alone this long first, so a person already retrying it is not raced. */
 export const RETRY_AFTER_MINUTES = 3;
 /** Older failures are history, not something to resurrect. */
@@ -89,6 +100,14 @@ export function isTransientFailure(
 ): boolean {
   const text = String(errorSummary ?? "");
   return TRANSIENT_FAILURE_PATTERNS.some((re) => re.test(text));
+}
+
+export function isRestartLoss(errorSummary: string | null | undefined): boolean {
+  return /job tracking it was lost/i.test(String(errorSummary ?? ""));
+}
+
+export function retryLimitFor(errorSummary: string | null | undefined): number {
+  return isRestartLoss(errorSummary) ? MAX_RESTART_RETRIES : MAX_AUTO_RETRIES;
 }
 
 export function isAutoRetrySafe(rpcName: string | null | undefined): boolean {
@@ -177,7 +196,7 @@ export async function requeueTransientFailures(): Promise<
       reason = b.rpc
         ? "this import type is not marked safe to repeat automatically"
         : "it was started before automatic recovery existed, so its import function is unknown";
-    } else if (attempts >= MAX_AUTO_RETRIES) {
+    } else if (attempts >= retryLimitFor(b.error_summary)) {
       reason = `it already failed ${attempts + 1} times, including ${attempts} automatic retries`;
     }
     if (reason) {
@@ -200,7 +219,7 @@ async function requeueOne(
   b: FailedBatchRow,
   attempt: number,
 ): Promise<boolean> {
-  const note = `Auto-retry ${attempt}/${MAX_AUTO_RETRIES} after: ${String(b.error_summary ?? "").slice(0, 300)}`;
+  const note = `Auto-retry ${attempt}/${retryLimitFor(b.error_summary)} after: ${String(b.error_summary ?? "").slice(0, 300)}`;
   const [claim] = await db.execute<ResultSetHeader>(
     `UPDATE upload_batch
         SET batch_status = 'importing', error_summary = ?, updated_at = NOW(),
@@ -209,6 +228,18 @@ async function requeueOne(
     [note, attempt, b.id],
   );
   if (claim.affectedRows === 0) return false;
+
+  // Rows that reconcileStuckRows force-marked 'error' because the lost job never reached them are
+  // invisible to the importer (it only takes 'valid'/'pending'), so without this the retry finds nothing,
+  // returns, and the batch sits 'importing' until it is flagged lost again. BATCH-1791372390102 (2,618
+  // rows) cycled like that for hours. Only that exact message is reset; real row errors are untouched.
+  await db.execute(
+    `UPDATE upload_batch_row
+        SET row_status = 'valid', error_messages = NULL
+      WHERE upload_batch_id = ? AND row_status = 'error'
+        AND error_messages LIKE ?`,
+    [b.id, `%${NEVER_REACHED_MARKER}%`],
+  );
 
   const userId = b.import_user || b.uploaded_by;
   await db.execute(

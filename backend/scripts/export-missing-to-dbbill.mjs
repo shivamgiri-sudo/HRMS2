@@ -7,7 +7,7 @@
  * uploaded into db_bill.
  *
  * Usage:
- *   node backend/scripts/export-missing-to-dbbill.mjs
+ *   node --env-file=backend/.env backend/scripts/export-missing-to-dbbill.mjs
  *
  * Output: Downloads/missing-employees-for-dbbill-YYYY-MM-DD.xlsx
  */
@@ -17,22 +17,8 @@ import XLSX from "xlsx";
 import path from "path";
 import os from "os";
 
-const HRMS = {
-  host: "122.184.128.90",
-  port: 3306,
-  user: "shivam_user",
-  password: "qwersdfg!@#hjk",
-  database: "mas_hrms",
-  connectTimeout: 15000,
-};
-const BILL = {
-  host: "192.168.10.22",
-  port: 3306,
-  user: "shivam_user",
-  password: "qwersdfg!@#hjk",
-  database: "db_bill",
-  connectTimeout: 15000,
-};
+const HRMS = { host:'122.184.128.90', port:3306, user:'shivam_user', password:process.env.DB_PASSWORD, database:'mas_hrms', connectTimeout:15000 };
+const BILL = { host:'192.168.10.22',  port:3306, user:'shivam_user', password:process.env.BILL_DB_PASSWORD, database:'db_bill',  connectTimeout:15000 };
 
 // db_bill column order — must match exactly
 const HEADERS = [

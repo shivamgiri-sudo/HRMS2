@@ -100,3 +100,42 @@ export function severityForCount(
   if (n < highAt) return "medium";
   return "high";
 }
+
+/**
+ * Branch scoping (owner ruling 2026-10-01). `allowed` = the branch ids the caller may see, or null
+ * for org-wide callers (summary returned untouched). Every block that carries a per-branch list is
+ * cut down to those branches and its grand totals are recomputed from what is left, so a branch head
+ * never sees (or sums over) another branch's rows. An empty set yields empty blocks (fail closed).
+ */
+export function scopeSummaryToBranches<T extends Record<string, any>>(summary: T, allowed: ReadonlySet<string> | null): T {
+  if (allowed === null) return summary;
+  const out: Record<string, any> = { ...summary };
+  for (const [key, block] of Object.entries(summary)) {
+    if (!block || typeof block !== 'object' || !Array.isArray((block as any).branches)) continue;
+    const branches = (block as any).branches.filter((b: any) => allowed.has(String(b.branchId)));
+    const next: Record<string, any> = { ...block, branches };
+    if ('grandTotal' in next) {
+      next.grandTotal = branches.reduce((a: number, b: any) => a + Number(b.count ?? b.total ?? 0), 0);
+    }
+    if ('grandBuckets' in next) {
+      const tally = emptyBucketTally();
+      for (const b of branches) for (const k of JOIN_BUCKETS) tally[k] += Number(b.buckets?.[k] ?? 0);
+      next.grandBuckets = tally;
+    }
+    out[key] = next;
+  }
+  return out as T;
+}
+
+/**
+ * Blocks a payroll_hr-only user may open or nudge: the bank / payment-readiness items payroll
+ * actually fixes. Everyone else on VIEW_ROLES keeps the whole tower.
+ */
+export const PAYROLL_HR_BLOCKS: ReadonlySet<string> = new Set([
+  'account-details-missing',
+  'penny-drop-missing',
+]);
+
+export function blockAllowedForPayrollOnly(block: string): boolean {
+  return PAYROLL_HR_BLOCKS.has(block);
+}

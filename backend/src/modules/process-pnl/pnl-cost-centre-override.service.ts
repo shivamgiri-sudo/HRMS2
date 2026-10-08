@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
+import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance-access-scope.js";
 import { refuse } from "./finance-error.js";
 import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 
@@ -177,10 +178,12 @@ function mapRow(r: OverrideRowSql): CostCentreOverrideRow {
 }
 
 /** Active and deactivated rows, newest first — so a user can see what they turned off, not just what's live. */
-export async function listCostCentreOverrides(): Promise<
-  CostCentreOverrideRow[]
-> {
+export async function listCostCentreOverrides(scope: FinanceBranchScope = { mode: "all" }): Promise<CostCentreOverrideRow[]> {
   if (!(await tableExists("pnl_employee_cost_centre_override"))) return [];
+  // Branch scope: a non-global caller sees only overrides whose employee or target cost centre sits in their branch(es).
+  const empF = financeBranchFilter(scope, "e.branch_id");
+  const tgtF = financeBranchFilter(scope, "tccm.branch_id");
+  const scopeSql = scope.mode === "all" ? "" : `WHERE (${empF.sql} OR ${tgtF.sql})`;
   const [rows] = await db.execute<OverrideRowSql[]>(
     `SELECT ov.id, ov.employee_id, e.employee_code,
             COALESCE(NULLIF(TRIM(e.full_name), ''), NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), '')) AS employee_name,
@@ -201,7 +204,9 @@ export async function listCostCentreOverrides(): Promise<
        LEFT JOIN cost_centre_master tccm ON tccm.id = ov.target_cost_centre_id
        LEFT JOIN branch_master tbm ON tbm.id = tccm.branch_id
        LEFT JOIN employees cu ON cu.id = ov.created_by
+      ${scopeSql}
       ORDER BY ov.active_status DESC, ov.updated_at DESC`,
+    scope.mode === "all" ? [] : [...empF.params, ...tgtF.params],
   );
   return rows.map(mapRow);
 }
@@ -223,16 +228,18 @@ export interface OverrideCostCentreOption {
  */
 export async function listOverrideCostCentreOptions(
   branchId?: string | null,
+  scope: FinanceBranchScope = { mode: "all" },
 ): Promise<OverrideCostCentreOption[]> {
-  const where = [
-    "cc.active_status = 1",
-    "COALESCE(bm.active_status, 1) = 1",
-    ownCompanyCostCentreSql("cc"),
-  ];
+  const where = ["cc.active_status = 1", "COALESCE(bm.active_status, 1) = 1", ownCompanyCostCentreSql("cc")];
   const params: unknown[] = [];
   if (branchId) {
     where.push("cc.branch_id = ?");
     params.push(branchId);
+  }
+  if (scope.mode === "branches") {
+    const f = financeBranchFilter(scope, "cc.branch_id");
+    where.push(f.sql);
+    params.push(...f.params);
   }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT cc.id, cc.cost_centre_code, cc.cost_centre_name, cc.branch_id, bm.branch_name,

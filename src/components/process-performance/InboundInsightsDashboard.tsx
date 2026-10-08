@@ -134,7 +134,8 @@ function AgentDailyDrawer({
  * still use unchanged.
  */
 
-export type InboundInsightProject = "dubangladesh" | "exicom" | "viega" | "dalmia" | "neemans" | "gnc" | "bellavita" | "clovia";
+/** One of the eight hard-coded keys (dubangladesh, exicom, viega, dalmia, neemans, gnc, bellavita, clovia) or any key an admin registered via process_inbound_config -- the API decides which exist. */
+export type InboundInsightProject = string;
 
 interface Metrics {
   offered: number; answered: number; abandoned: number; answeredPct: number;
@@ -174,10 +175,10 @@ interface AgentDailyRow {
   transfers: number; fcrPct: number | null; fcrTagged: number;
 }
 interface LobRow extends Metrics { campaign: string; sharePct: number; uniqueCallers: number; agents: number }
-interface LobGroupRow extends Metrics { label: string; sharePct: number }
+interface LobGroupRow extends Metrics { label: string; sharePct: number; agents: number }
 interface CallerRow { key: string; masked: string; calls: number; answered: number; abandoned: number; lastDate: string; campaigns: string[] }
 interface Insights {
-  project: { key: string; name: string; campaigns: string[] };
+  project: { key: string; name: string; campaigns: string[]; filterOptions: string[] };
   filters: { startDate: string; endDate: string; campaign: string | null };
   definitions: Record<string, string>;
   truncated: boolean;
@@ -187,6 +188,7 @@ interface Insights {
   agents: AgentRow[]; agentDaily: AgentDailyRow[];
   agentHourly: Array<{ agentId: string; hour: number; calls: number }>;
   lobs: LobRow[]; lobGroups: { byBrand: LobGroupRow[]; byLanguage: LobGroupRow[] } | null; lobDaily: Array<{ campaign: string; date: string; offered: number }>;
+  lobGroupsDaily: Array<{ label: string; date: string; offered: number }> | null;
   waitBuckets: Array<{ label: string; answered: number; abandoned: number }>;
   talkBuckets: Array<{ label: string; calls: number }>;
   dispositions: Array<{ label: string; count: number }>;
@@ -207,7 +209,8 @@ interface DrillSpec {
   params: Record<string, string | number>;
 }
 
-const PROJECT_LABEL: Record<InboundInsightProject, { name: string; gradient: string }> = {
+const DEFAULT_GRADIENT = "from-blue-600 via-indigo-600 to-blue-700";
+const PROJECT_LABEL: Record<string, { name: string; gradient: string }> = {
   dubangladesh: { name: "DU Bangladesh", gradient: "from-amber-600 via-orange-600 to-amber-700" },
   exicom: { name: "Exicom", gradient: "from-blue-600 via-sky-600 to-blue-700" },
   viega: { name: "Viega", gradient: "from-rose-600 via-red-600 to-rose-700" },
@@ -306,14 +309,16 @@ interface PeriodsPayload {
 }
 const fmtPeriodCell = (v: number, fmt: string) => (fmt === "pct" ? `${Math.round(v * 10) / 10}%` : fmt === "sec" ? fmtSec(v) : fmt === "dec1" ? String(Math.round(v * 10) / 10) : fmtNum(v));
 
-export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChange }: {
+export function InboundInsightsDashboard({ projectKey, projectName, initialRange, onRangeChange }: {
   projectKey: InboundInsightProject;
+  /** Display name for a project that has no built-in label (an admin-registered process). */
+  projectName?: string;
   /** Optional: start on this range instead of the last 30 days (used when embedded in another dashboard). */
   initialRange?: { from: string; to: string };
   /** Optional: told whenever the user changes the range, so a host can keep its own views in step. */
   onRangeChange?: (from: string, to: string) => void;
 }) {
-  const meta = PROJECT_LABEL[projectKey];
+  const meta = PROJECT_LABEL[projectKey] ?? { name: projectName ?? projectKey, gradient: DEFAULT_GRADIENT };
   const initial = useMemo(() => initialRange ?? currentMonthRange(), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
@@ -370,6 +375,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
   useEffect(() => { setCampaign("all"); setData(null); }, [projectKey]);
 
   const campaigns = data?.project.campaigns ?? [];
+  const filterOptions = data?.project.filterOptions ?? campaigns;
   const showLobs = campaigns.length > 1 && campaign === "all";
   const tabs = useMemo(() => {
     const all: Array<{ key: TabKey; label: string }> = [
@@ -491,13 +497,23 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
     return { cells, max, cols };
   }, [data, agentGrid]);
 
-  // per-campaign daily volume, pivoted for a stacked chart
+  // Daily volume pivoted for the LOB-wise tab's stacked chart -- LOB-grouped (Bellavita: 5 brands)
+  // when the backend provides it, otherwise per-campaign (every other project, where a campaign
+  // already IS its own LOB, so there's no grouping to do).
   const lobDailyPivot = useMemo(() => {
     const byDate = new Map<string, Record<string, number | string>>();
-    for (const r of data?.lobDaily ?? []) {
-      const row = byDate.get(r.date) ?? { date: r.date };
-      row[r.campaign] = r.offered;
-      byDate.set(r.date, row);
+    if (data?.lobGroupsDaily) {
+      for (const r of data.lobGroupsDaily) {
+        const row = byDate.get(r.date) ?? { date: r.date };
+        row[r.label] = r.offered;
+        byDate.set(r.date, row);
+      }
+    } else {
+      for (const r of data?.lobDaily ?? []) {
+        const row = byDate.get(r.date) ?? { date: r.date };
+        row[r.campaign] = r.offered;
+        byDate.set(r.date, row);
+      }
     }
     return [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   }, [data]);
@@ -637,14 +653,14 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
             slides={exportSlides}
             activeSlideTitle={activeSlide}
           />
-          {campaigns.length > 1 && (
+          {filterOptions.length > 1 && (
             <Select value={campaign} onValueChange={setCampaign}>
               <SelectTrigger className="h-8 w-[220px] bg-white text-xs" aria-label="Filter by LOB / campaign">
                 <SelectValue placeholder="All LOBs" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All LOBs / campaigns</SelectItem>
-                {campaigns.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                {filterOptions.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
               </SelectContent>
             </Select>
           )}
@@ -703,12 +719,12 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                 <KpiCard icon={Gauge} label="AL %" value={`${h.abandonPct}%`} sub="Answered / Offered" tone="emerald" />
                 <KpiCard icon={Radio} label={`SL % (${h.slThresholdSec}s)`} value={`${h.slPct}%`} sub="of answered calls" tone="indigo" />
                 <KpiCard icon={Timer} label="AHT" value={fmtSec(h.aht)} sub={`Talk ${fmtSec(h.avgTalk)}`} tone="violet" />
-                <KpiCard icon={Users} label="Active Agents" value={String(h.agentsActive)} sub={`${h.callsPerAgent} calls / agent`} tone="sky" />
+                <KpiCard icon={Users} label="Active Agents" value={String(h.agentsActive)} sub={`${h.callsPerAgent} calls / agent`} tone="sky" onClick={() => setTab("agents")} />
                 <KpiCard icon={Repeat} label="Repeat Callers" value={`${h.repeatCallerPct}%`} sub={`${fmtNum(h.repeatCallers)} of ${fmtNum(h.uniqueCallers)} callers`} tone="violet" />
                 {h.fcrPct != null && <KpiCard icon={Gauge} label="FCR %" value={`${h.fcrPct}%`} sub="first-contact resolution" tone="teal" />}
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 <div className="lg:col-span-2">
                   <SectionCard icon={PhoneCall} title="Daily call volume" tone="blue">
                     <ResponsiveContainer width="100%" height={250}>
@@ -766,7 +782,28 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                 </SectionCard>
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
+              {data.lobGroups && (
+                <SectionCard icon={Layers} title="LOB-wise performance" tone="indigo" footnote="Click a row to filter the whole dashboard to that LOB.">
+                  <TableShell minWidth={560}>
+                    <thead><tr className={THEAD}><Head first>LOB</Head><Head>Offered</Head><Head>Answered</Head><Head>AL %</Head><Head>SL %</Head><Head>AHT</Head><Head>Active Agents</Head></tr></thead>
+                    <tbody>
+                      {data.lobGroups.byBrand.map((g, i) => (
+                        <tr key={g.label} className={rowCls(i)} onClick={() => setCampaign(g.label)} title={`Filter the dashboard to ${g.label}`}>
+                          <td className="py-2.5 pl-3 pr-3 font-medium text-slate-700">{g.label}</td>
+                          <td className={`${td} font-semibold`}>{fmtNum(g.offered)}</td>
+                          <td className={`${td} text-emerald-700`}>{fmtNum(g.answered)}</td>
+                          <td className={`${td} font-bold ${abTone(g.abandonPct)}`}>{g.abandonPct}%</td>
+                          <td className={`${td} font-bold ${slTone(g.slPct)}`}>{g.slPct}%</td>
+                          <td className={td}>{fmtSec(g.aht)}</td>
+                          <td className={td}>{g.agents}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </TableShell>
+                </SectionCard>
+              )}
+
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <SectionCard icon={Clock3} title="Hourly volume & AL %" tone="teal">
                   <ResponsiveContainer width="100%" height={240}>
                     <ComposedChart data={data.hourly} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
@@ -1053,7 +1090,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                   })()}
                 </div>
               )}
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <SectionCard icon={Users} title="Calls handled by agent" tone="indigo">
                   <ResponsiveContainer width="100%" height={Math.max(180, data.agents.length * 34)}>
                     <BarChart data={data.agents} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
@@ -1176,7 +1213,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
           {/* ───────────────────────────── LOB-wise ───────────────────────────── */}
           {tab === "lobs" && showLobs && (
             <div className="space-y-4">
-              <SectionCard icon={Layers} title="Daily volume by LOB / campaign" tone="violet">
+              <SectionCard icon={Layers} title={data.lobGroupsDaily ? "Daily volume by LOB" : "Daily volume by campaign"} tone="violet">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={lobDailyPivot} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -1184,16 +1221,16 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                     <YAxis tick={{ fontSize: 10 }} />
                     <Tooltip labelFormatter={(v: unknown) => fmtDate(String(v))} contentStyle={TOOLTIP_STYLE} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    {data.lobs.map((l, i) => (
-                      <Bar key={l.campaign} dataKey={l.campaign} stackId="lob" fill={LOB_COLORS[i % LOB_COLORS.length]} />
+                    {(data.lobGroups?.byBrand ?? data.lobs).map((l, i) => (
+                      <Bar key={"label" in l ? l.label : l.campaign} dataKey={"label" in l ? l.label : l.campaign} stackId="lob" fill={LOB_COLORS[i % LOB_COLORS.length]} />
                     ))}
                   </BarChart>
                 </ResponsiveContainer>
               </SectionCard>
               {data.lobGroups && (
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   {([["Brand", data.lobGroups.byBrand], ["Language", data.lobGroups.byLanguage]] as const).map(([title, rows]) => (
-                    <SectionCard key={title} icon={Layers} title={`${title}-wise roll-up`} tone="indigo" footnote="Grouped from the campaign names (H_ = Hindi, E_ = English; brand is the middle word).">
+                    <SectionCard key={title} icon={Layers} title={`${title}-wise roll-up`} tone="indigo" footnote="Grouped from the campaign names (H_ = Hindi, E_ = English) via an explicit campaign-to-LOB map.">
                       <TableShell minWidth={520}>
                         <thead><tr className={THEAD}><Head first>{title}</Head><Head>Offered</Head><Head>Share</Head><Head>AL %</Head><Head>SL %</Head><Head>AHT</Head></tr></thead>
                         <tbody>
@@ -1256,7 +1293,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
           {/* ─────────────────────────── Wait & Abandon ─────────────────────────── */}
           {tab === "wait" && (
             <div className="space-y-4">
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <SectionCard icon={Hourglass} title="Queue wait distribution" tone="amber" footnote="How long callers waited before an agent picked up (answered) or they hung up (abandoned). Click a bar's row below for calls.">
                   <ResponsiveContainer width="100%" height={250}>
                     <BarChart data={data.waitBuckets} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
@@ -1283,7 +1320,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                 </SectionCard>
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <SectionCard icon={Hourglass} title="Wait bucket detail" tone="amber">
                   <TableShell minWidth={380}>
                     <thead><tr className={THEAD}><Head first>Wait</Head><Head>Answered</Head><Head>Abandoned</Head><Head>Abandon %</Head></tr></thead>
@@ -1320,7 +1357,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                 </SectionCard>
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <SectionCard icon={Layers} title="Disposition" tone="blue">
                   <TableShell minWidth={300}>
                     <thead><tr className={THEAD}><Head first>Disposition</Head><Head>Calls</Head><Head>Share</Head></tr></thead>

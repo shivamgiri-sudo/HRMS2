@@ -22,8 +22,9 @@ describe("payslip display routes", () => {
   });
 
   it("allows established payroll administration roles to expand details", () => {
-    expect(routeSource).toContain(
-      'hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll", "payroll_head", "payroll_admin")',
+    // Whitespace-tolerant: prettier (cd83825bc) puts each argument on its own line.
+    expect(routeSource).toMatch(
+      /hasRole\(\s*req\.authUser!\.id,\s*"admin",\s*"hr",\s*"finance",\s*"payroll",\s*"payroll_head",\s*"payroll_admin",?\s*\)/,
     );
   });
 
@@ -38,8 +39,11 @@ describe("payslip display routes", () => {
   });
 
   it("resolves the self alias before tax document reads and uploads", () => {
-    expect(routeSource.match(/if \(employeeId === "me"\)/g)).toHaveLength(2);
-    expect(routeSource).toContain("employeeId = callerEmp.id");
+    // Four sites: tax-declaration GET/POST and tax-declaration documents GET/POST. The first
+    // pair was always there but single-quoted ('me'), so this double-quoted pattern counted
+    // only the documents pair until prettier (cd83825bc) normalised the quotes.
+    expect(routeSource.match(/if \(employeeId === "me"\)/g)).toHaveLength(4);
+    expect(routeSource).toContain('employeeId = callerEmp.id');
   });
 
   it("normalizes the live location-master collation in self-service payslip joins", () => {

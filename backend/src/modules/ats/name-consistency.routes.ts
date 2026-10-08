@@ -6,6 +6,7 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { canAccessCandidate, resolveCandidateScope } from "./candidate-access.js";
 
 const router = Router();
 type AsyncHandler = (
@@ -18,6 +19,15 @@ const h =
     void fn(req, res).catch(next);
   };
 router.use(requireAuth);
+
+// Branch scoping (owner ruling 2026-10-01): every /:candidateId route (summary read, recalculate, override
+// request/approve/reject) is limited to candidates inside the caller's branch scope. 404, not 403, so an
+// out-of-branch id is indistinguishable from a missing one.
+router.param("candidateId", (req, res, next, candidateId) => {
+  void canAccessCandidate((req as AuthenticatedRequest).authUser!.id, String(candidateId))
+    .then((ok) => (ok ? next() : res.status(404).json({ success: false, message: "Candidate not found" })))
+    .catch(next);
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -250,14 +260,16 @@ router.post(
 router.get(
   "/",
   requireRole("admin", "hr", "recruiter"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const scope = await resolveCandidateScope(req.authUser!.id, "ac");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cnms.*, ac.full_name, ac.candidate_code
        FROM candidate_name_match_summary cnms
        JOIN ats_candidate ac ON ac.id = cnms.candidate_id
-       WHERE cnms.overall_status != 'matched'
+       WHERE cnms.overall_status != 'matched' AND (${scope.sql})
        ORDER BY cnms.last_calculated_at DESC
        LIMIT 200`,
+      scope.params as any[]
     );
     return res.json({ success: true, data: rows });
   }),

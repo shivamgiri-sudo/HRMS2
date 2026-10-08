@@ -10,7 +10,11 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
 vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]) },
+  db: {
+    execute: vi.fn().mockResolvedValue([[], []]),
+    query: vi.fn().mockResolvedValue([[], []]),
+    getConnection: vi.fn(),
+  },
   pingDb: vi.fn(),
 }));
 
@@ -72,6 +76,7 @@ import { db } from "../src/db/mysql.js";
 import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
+const mockGetConnection = db.getConnection as ReturnType<typeof vi.fn>;
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 
 const ADMIN_AUTH = { Authorization: "Bearer admin.token" };
@@ -80,6 +85,9 @@ const EMP_AUTH = { Authorization: "Bearer emp.token" };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // mockReset, not just clear: clearAllMocks leaves unconsumed mockResolvedValueOnce entries
+  // queued, so one test's leftovers were answering the next test's queries.
+  mockExecute.mockReset();
   mockExecute.mockResolvedValue([[], []]);
 });
 
@@ -109,16 +117,34 @@ function mockEmployee(empId: string) {
   ]);
 }
 
+/**
+ * Branch scoping (owner policy 2026-10-01): hr and admin are branch-scoped, so a guarded route first runs
+ * resolveUserBusinessScope (three parallel reads: user_roles, user_assignment_scope, the caller's employee row)
+ * and, for a target employee, one employees read. Queued in that order, after the requireRole role read.
+ */
+function mockCallerScope(roleKey: string, branchId: string | null = "br-1") {
+  mockExecute.mockResolvedValueOnce([[{ role_key: roleKey }], []]);
+  mockExecute.mockResolvedValueOnce([[branchId ? { role_key: roleKey, scope_type: "branch", branch_id: branchId } : undefined].filter(Boolean), []]);
+  mockExecute.mockResolvedValueOnce([[{ id: "caller-emp", employee_code: "C001", branch_id: branchId }], []]);
+}
+/** assetParamGuard: asset exists, then assetScopeSql (resolveCallerBranchScope + employeeRowScope), then the in-scope check. */
+function mockAssetGuard(roleKey = "hr") {
+  mockExecute.mockResolvedValueOnce([[{ id: "a-1" }], []]);
+  mockCallerScope(roleKey);
+  mockCallerScope(roleKey);
+  mockExecute.mockResolvedValueOnce([[{ ok: 1 }], []]);
+}
+function mockTargetEmployee(id: string, branchId: string | null = "br-1") {
+  mockExecute.mockResolvedValueOnce([[{ id, branch_id: branchId }], []]);
+}
+
 describe("GET /api/lifecycle/employees/:id/lifecycle", () => {
   it("returns 200 for admin", async () => {
     mockAdmin();
-    mockExecute.mockResolvedValueOnce([
-      [{ id: "ev-1", event_type: "confirmation" }],
-      [],
-    ]);
-    const r = await request(app)
-      .get("/api/lifecycle/employees/emp-1/lifecycle")
-      .set(ADMIN_AUTH);
+    mockCallerScope("admin");
+    mockTargetEmployee("emp-1");
+    mockExecute.mockResolvedValueOnce([[{ id: "ev-1", event_type: "confirmation" }], []]);
+    const r = await request(app).get("/api/lifecycle/employees/emp-1/lifecycle").set(ADMIN_AUTH);
     expect(r.status).toBe(200);
   });
   it("returns 200 for employee reading own", async () => {
@@ -155,6 +181,8 @@ describe("POST /api/lifecycle/employees/:id/lifecycle", () => {
   });
   it("creates lifecycle event for hr", async () => {
     mockHr();
+    mockCallerScope("hr");
+    mockTargetEmployee("emp-1");
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
@@ -188,6 +216,9 @@ describe("POST /api/lifecycle/documents/:id/verify", () => {
   });
   it("verifies document for hr and writes audit", async () => {
     mockHr();
+    mockExecute.mockResolvedValueOnce([[{ employee_id: "emp-1" }], []]);
+    mockCallerScope("hr");
+    mockTargetEmployee("emp-1");
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     const r = await request(app)
@@ -234,17 +265,35 @@ describe("POST /api/assets-mgmt/:id/assign", () => {
     expect(r.status).toBe(403);
   });
   it("assigns asset for hr and writes audit", async () => {
+    // router.param("id") runs assetParamGuard BEFORE the route's requireRole, so the guard reads come first.
+    mockAssetGuard();
     mockHr();
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    mockExecute.mockResolvedValueOnce([[{ id: "aa-1", asset_id: "a-1" }], []]);
-    const r = await request(app)
-      .post("/api/assets-mgmt/a-1/assign")
-      .set(HR_AUTH)
+    mockCallerScope("hr");
+    mockTargetEmployee("emp-1");
+    // assetsService.assign now closes the old assignment, inserts the new one and flips
+    // asset_master inside ONE transaction on a pooled connection, so those statements go
+    // through conn.execute rather than db.execute.
+    const conn = {
+      beginTransaction: vi.fn(),
+      commit: vi.fn(),
+      rollback: vi.fn(),
+      release: vi.fn(),
+      execute: vi.fn(async (sql: unknown) =>
+        /^SELECT \* FROM asset_assignment/i.test(String(sql))
+          ? [[{ id: "aa-1", asset_id: "a-1" }], []]
+          : [{ affectedRows: 1 }, []]),
+    };
+    mockGetConnection.mockResolvedValue(conn);
+    const r = await request(app).post("/api/assets-mgmt/a-1/assign").set(HR_AUTH)
       .send({ employee_id: "emp-1" });
     expect(r.status).toBe(201);
+    expect(r.body.data).toMatchObject({ id: "aa-1", asset_id: "a-1" });
+    const insert = conn.execute.mock.calls.find(([sql]) => /INSERT INTO asset_assignment/i.test(String(sql)));
+    expect(insert, "expected the assignment to be inserted").toBeDefined();
+    expect(insert![1]).toEqual(expect.arrayContaining(["a-1", "emp-1", "u-hr"]));
+    expect(conn.commit).toHaveBeenCalledTimes(1);
+    expect(conn.rollback).not.toHaveBeenCalled();
+    expect(conn.release).toHaveBeenCalledTimes(1);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const auditCall = mockExecute.mock.calls.find(
       ([sql]: any) =>
@@ -256,6 +305,8 @@ describe("POST /api/assets-mgmt/:id/assign", () => {
 
 describe("POST /api/assets-mgmt/:id/return", () => {
   it("marks asset as returned for hr", async () => {
+    // router.param("id") runs assetParamGuard BEFORE the route's requireRole, so the guard reads come first.
+    mockAssetGuard();
     mockHr();
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
@@ -275,18 +326,27 @@ describe("POST /api/helpdesk/tickets", () => {
       error: null,
     });
     mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
-    mockExecute.mockResolvedValueOnce([
-      [{ id: "emp-1", employee_code: "E001" }],
-      [],
-    ]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    mockExecute.mockResolvedValueOnce([[{ id: "t-1", status: "open" }], []]);
-    mockExecute.mockResolvedValueOnce([[], []]);
-    const r = await request(app)
-      .post("/api/helpdesk/tickets")
-      .set(EMP_AUTH)
-      .send({ category: "hr", subject: "Test", description: "Desc" });
+    mockExecute.mockResolvedValueOnce([[{ id: "emp-1", employee_code: "E001" }], []]);
+    // createTicket now does an auto-routing lookup (raiser's branch, then the owning role's
+    // holders) before the INSERT, so the rest is keyed on the statement, not on position.
+    mockExecute.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (/INSERT INTO helpdesk_ticket/i.test(text)) return [{ affectedRows: 1 }, []];
+      if (/FROM helpdesk_ticket t/i.test(text)) return [[{ id: "t-1", employee_id: "emp-1", status: "open" }], []];
+      return [[], []];
+    });
+    const r = await request(app).post("/api/helpdesk/tickets").set(EMP_AUTH)
+      .send({ category: "hr", subject: "Test", description: "Desc", employee_id: "emp-attacker" });
     expect(r.status).toBe(201);
+    // The title's claim: employee_id comes from the caller's own employee record, and a
+    // body-supplied one is ignored on the non-admin path.
+    const insert = mockExecute.mock.calls.find(([sql]: [unknown]) =>
+      /INSERT INTO helpdesk_ticket/i.test(String(sql)),
+    );
+    expect(insert, "expected the ticket to be inserted").toBeDefined();
+    expect(insert![1]).toContain("emp-1");
+    expect(insert![1]).not.toContain("emp-attacker");
+    expect(insert![1]).toContain("u-emp"); // raised_by_user_id is the acting user
   });
 });
 
@@ -371,31 +431,10 @@ describe("GET /api/letters/templates", () => {
 describe("POST /api/letters/generate", () => {
   it("generates letter with employee data interpolated", async () => {
     mockAdmin();
-    mockExecute.mockResolvedValueOnce([
-      [
-        {
-          id: "tpl-1",
-          template_code: "OFFER_LETTER",
-          letter_type: "offer",
-          body_template: "Dear {{full_name}}, join as {{designation}}.",
-        },
-      ],
-      [],
-    ]);
-    mockExecute.mockResolvedValueOnce([
-      [
-        {
-          id: "emp-1",
-          employee_code: "EMP001",
-          full_name: "Amit Kumar",
-          first_name: "Amit",
-          last_name: "Kumar",
-          designation_name: "Agent",
-          date_of_joining: "2026-06-01",
-        },
-      ],
-      [],
-    ]);
+    mockCallerScope("admin");
+    mockTargetEmployee("emp-1");
+    mockExecute.mockResolvedValueOnce([[{ id: "tpl-1", template_code: "OFFER_LETTER", letter_type: "offer", body_template: "Dear {{full_name}}, join as {{designation}}." }], []]);
+    mockExecute.mockResolvedValueOnce([[{ id: "emp-1", employee_code: "EMP001", full_name: "Amit Kumar", first_name: "Amit", last_name: "Kumar", designation_name: "Agent", date_of_joining: "2026-06-01" }], []]);
     // Salary now resolves through resolveAppointmentLetterSalary, which walks
     // salary_component_assignments (package, then assignment) and refuses to
     // issue a letter whose amounts are all zero — "Refusing to issue a letter

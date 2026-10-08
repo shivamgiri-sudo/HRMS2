@@ -215,14 +215,9 @@ export const UPLOAD_DESTINATION_REGISTRY: Record<string, UploadDestination> = {
     batchIdColumn: "upload_batch_id",
   },
 
-  SATYA_ALLOCATION_MASMIS: {
-    table: "db_masmis.satya_allocation",
-    batchIdColumn: "upload_batch_id",
-  },
-  SATYA_CDR_MASMIS: {
-    table: "db_masmis.satya_cdr",
-    batchIdColumn: "upload_batch_id",
-  },
+  SATYA_ALLOCATION_MASMIS: { table: "db_masmis.satya_allocation", batchIdColumn: "upload_batch_id" },
+  SATYA_CDR_MASMIS: { table: "db_masmis.satya_cdr", batchIdColumn: "upload_batch_id" },
+  ALT_RX_DUMP_MASMIS: { table: "db_masmis.altdump", batchIdColumn: "upload_batch_id" },
 };
 
 /** Upload types deliberately left out of the registry with a reason, so the

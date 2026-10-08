@@ -7,6 +7,7 @@ import { toIST } from "../../shared/timezone.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
 import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
+import { attendedDaysSql, expectedToWorkSql, LATEST_COMPLETE_ATTENDANCE_DATE_SQL } from "../../shared/attendanceStatus.js";
 
 export const biometricSummaryRouter = Router();
 biometricSummaryRouter.use(requireAuth);
@@ -21,13 +22,15 @@ function dateValue(value: unknown, fallback: string): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : fallback;
 }
 
+// IST calendar date. The DB session runs on IST (CURDATE() is the IST day) but this used
+// the UTC date, so between 00:00 and 05:30 IST "today" was yesterday and the late-arrival
+// trend, which filters on this value, came back empty for the first 5.5 hours of every day.
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
 }
 
 function monthStart(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  return `${today().slice(0, 7)}-01`;
 }
 
 function limitValue(value: unknown, fallback: number): number {
@@ -113,7 +116,6 @@ const roleGuard = requireRole(
 async function injectScopeIfNeeded(req: any): Promise<void> {
   const userId = req.authUser?.id;
   if (!userId) return;
-  if (req.query.branchId || req.query.processId) return;
 
   try {
     const ctx = await getUserRoleContext(userId);
@@ -122,6 +124,19 @@ async function injectScopeIfNeeded(req: any): Promise<void> {
       ctx.primaryRole,
     );
     if (scope.level === "ORG_ALL") return;
+    // A ?branchId= / ?processId= from the browser used to make this function return before
+    // anything was injected, and commonWhere() then used ONLY the browser's value - so a
+    // branch-limited user read any branch by adding the parameter. The filter may now only
+    // NARROW what the user is entitled to; outside their scope it fails closed.
+    const askedBranch = req.query.branchId ? String(req.query.branchId) : "";
+    const askedProcess = req.query.processId ? String(req.query.processId) : "";
+    if (
+      (askedBranch && scope.branchIds.length && !scope.branchIds.includes(askedBranch)) ||
+      (askedProcess && scope.processIds.length && !scope.processIds.includes(askedProcess))
+    ) {
+      req.query.employeeIds = ["__no_scope__"];
+      return;
+    }
     if (scope.branchIds.length) req.query.branchIds = scope.branchIds;
     if (scope.processIds.length) req.query.processIds = scope.processIds;
     if (scope.employeeIds.length) req.query.employeeIds = scope.employeeIds;
@@ -132,13 +147,16 @@ async function injectScopeIfNeeded(req: any): Promise<void> {
   }
 }
 
-biometricSummaryRouter.get(
-  "/adherence-summary",
-  roleGuard,
-  h(async (req: any, res: any) => {
-    await injectScopeIfNeeded(req);
-    const params: any[] = [];
-    const where = commonWhere(req.query, params);
+biometricSummaryRouter.get("/adherence-summary", roleGuard, h(async (req: any, res: any) => {
+  await injectScopeIfNeeded(req);
+  const params: any[] = [];
+  const where = commonWhere(req.query, params);
+  // Same entitlement filters as `where`, without the date window — for the queries that pick
+  // their own anchor day. Built by re-running commonWhere and dropping its leading date clause.
+  const scopeParamsFull: any[] = [];
+  const scopeFull = commonWhere(req.query, scopeParamsFull);
+  const scopeOnly = scopeFull.replace(/^adr\.record_date BETWEEN \? AND \?( AND )?/, "") || "1=1";
+  const scopeOnlyParams = scopeParamsFull.slice(2);
 
     // Six independent aggregates over the same tables — none reads another's result, so
     // running them one after another only adds up their latencies for no reason. Measured
@@ -166,19 +184,42 @@ biometricSummaryRouter.get(
               SUM(adr.attendance_status = 'absent') AS absent_days,
               SUM(adr.late_mark = 1) AS late_days,
               SUM(adr.work_mode IN ('wfh','remote')) AS wfh_days,
-              ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS adherence_pct,
-              ROUND(SUM(adr.late_mark = 1) * 100.0 / NULLIF(COUNT(*), 0), 2) AS late_pct,
-              ROUND(SUM(adr.attendance_status = 'absent') * 100.0 / NULLIF(COUNT(*), 0), 2) AS shrinkage_pct,
-              ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS on_time_in_pct,
-              ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS on_time_out_pct,
-              ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS weekly_compliance_pct,
-              ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS biometric_compliance_pct,
-              SUM(CASE WHEN adr.clock_in_time IS NOT NULL AND adr.clock_out_time IS NULL AND adr.attendance_status NOT IN ('absent','week_off','holiday') THEN 1 ELSE 0 END) AS missed_out,
-              SUM(CASE WHEN adr.clock_in_time IS NULL AND adr.attendance_status NOT IN ('absent','week_off','holiday') THEN 1 ELSE 0 END) AS missed_in,
+              -- Attendance rate on the canonical definition (shared/attendanceStatus.ts): present +
+              -- week_off_worked + half a day for each half day, over days someone was EXPECTED to
+              -- work. It was present+half_day (half counted as a full day) over EVERY row, so
+              -- holidays, week-offs and approved leave sat in the denominator and depressed it.
+              ROUND(${attendedDaysSql("adr.attendance_status")} * 100.0 / NULLIF(${expectedToWorkSql("adr.attendance_status")}, 0), 2) AS adherence_pct,
+              ROUND(SUM(adr.late_mark = 1) * 100.0 / NULLIF(${expectedToWorkSql("adr.attendance_status")}, 0), 2) AS late_pct,
+              -- Shrinkage = (unplanned absence + planned/approved leave) over the days people were
+              -- rostered to be available. Was absent-only over EVERY row including holidays and
+              -- week-offs, so it understated shrinkage and moved with the calendar, not the floor.
+              ROUND(SUM(adr.attendance_status IN ('absent','leave_approved')) * 100.0
+                / NULLIF(COUNT(CASE WHEN adr.attendance_status NOT IN ('holiday','week_off') THEN 1 END), 0), 2) AS shrinkage_pct,
+              ROUND(SUM(adr.attendance_status = 'absent') * 100.0
+                / NULLIF(COUNT(CASE WHEN adr.attendance_status NOT IN ('holiday','week_off') THEN 1 END), 0), 2) AS unplanned_shrinkage_pct,
+              ROUND(SUM(adr.attendance_status = 'leave_approved') * 100.0
+                / NULLIF(COUNT(CASE WHEN adr.attendance_status NOT IN ('holiday','week_off') THEN 1 END), 0), 2) AS planned_shrinkage_pct,
+              -- On-time-in: share of days worked that were not flagged late. It was a verbatim copy of
+              -- the attendance rate, so "On-time In" could never disagree with "Present".
+              ROUND((1 - SUM(CASE WHEN adr.late_mark = 1 AND adr.attendance_status IN ('present','week_off_worked','half_day') THEN 1 ELSE 0 END)
+                / NULLIF(SUM(CASE WHEN adr.attendance_status IN ('present','week_off_worked','half_day') THEN 1 ELSE 0 END), 0)) * 100, 2) AS on_time_in_pct,
+              -- No source records an out-punch against shift end, and weekly compliance has no
+              -- definition: both were copies of the attendance rate. NULL (unavailable), never a
+              -- number that looks measured.
+              NULL AS on_time_out_pct,
+              NULL AS weekly_compliance_pct,
+              ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','week_off_worked','half_day') AND COALESCE(adr.biometric_minutes, 0) > 0 THEN 1 ELSE 0 END) * 100.0
+                / NULLIF(SUM(CASE WHEN adr.attendance_status IN ('present','week_off_worked','half_day') THEN 1 ELSE 0 END), 0), 2) AS biometric_compliance_pct,
+              SUM(CASE WHEN adr.clock_in_time IS NOT NULL AND adr.clock_out_time IS NULL AND adr.attendance_status NOT IN ('absent','week_off','holiday','leave_approved') THEN 1 ELSE 0 END) AS missed_out,
+              SUM(CASE WHEN adr.clock_in_time IS NULL AND adr.attendance_status NOT IN ('absent','week_off','holiday','leave_approved') THEN 1 ELSE 0 END) AS missed_in,
               SUM(CASE WHEN adr.clock_in_time IS NOT NULL AND adr.clock_out_time IS NOT NULL THEN 1 ELSE 0 END) AS valid_punch,
-              0 AS multiple_punch,
-              0 AS invalid_punch,
-              SUM(CASE WHEN adr.late_by_minutes > 30 THEN 1 ELSE 0 END) AS variance_0_1,
+              -- Not measured by any source here. Were hard-coded 0, rendered as "no anomalous punches".
+              NULL AS multiple_punch,
+              NULL AS invalid_punch,
+              -- Late-arrival severity bands. The labels are 0-1h / 1-4h / 4h+, but the first band
+              -- was "> 30 min" (so it overlapped the second's floor and excluded 1-30 min entirely)
+              -- and the middle began at 60: anyone late 30-60 min fell in the first, 1-30 in none.
+              SUM(CASE WHEN adr.late_by_minutes > 0 AND adr.late_by_minutes <= 60 THEN 1 ELSE 0 END) AS variance_0_1,
               SUM(CASE WHEN adr.late_by_minutes > 60 AND adr.late_by_minutes <= 240 THEN 1 ELSE 0 END) AS variance_1_4,
               SUM(CASE WHEN adr.late_by_minutes > 240 THEN 1 ELSE 0 END) AS variance_4_plus,
               ROUND(SUM(COALESCE(adr.raw_minutes,0)) / 60, 2) AS total_ot_hours,
@@ -221,32 +262,46 @@ biometricSummaryRouter.get(
           return [{ on_leave: null, working_remotely: null }] as any;
         }),
 
-      // Regularization summary.
-      //
-      // This read `attendance_regularization_request`, which does not exist — the
-      // table is `attendance_regularization` (31 rows). The .catch() below turned
-      // the resulting error into an empty object, so the whole tile has always
-      // rendered blank.
-      //
-      // The breakdown columns were wrong too. There is no `request_type`; the real
-      // column is `dispute_type`. And the status vocabulary differs: the live values
-      // are approved / rejected / discarded, with no 'cancelled' at all, so the old
-      // categories could not have matched even against the right table.
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT
-         SUM(status = 'pending')   AS pending,
-         SUM(status = 'approved')  AS approved,
-         SUM(status = 'rejected')  AS rejected,
-         SUM(status = 'discarded') AS discarded,
-         SUM(dispute_type = 'work_from_home')             AS work_from_home,
-         SUM(dispute_type IN ('late_in','early_out'))     AS timing,
-         SUM(dispute_type IN ('missed_punch','missing_punch')) AS missed_punch
-       FROM attendance_regularization`,
-          [],
-        )
-        .then(([r]) => r)
-        .catch(() => [{}] as any),
+    // Regularization summary.
+    //
+    // This read `attendance_regularization_request`, which does not exist — the
+    // table is `attendance_regularization` (31 rows). The .catch() below turned
+    // the resulting error into an empty object, so the whole tile has always
+    // rendered blank.
+    //
+    // The breakdown columns were wrong too. There is no `request_type`; the real
+    // column is `dispute_type`. And the status vocabulary differs: the live values
+    // are approved / rejected / discarded, with no 'cancelled' at all, so the old
+    // categories could not have matched even against the right table.
+    //
+    // Two further defects: it summed the WHOLE table (126k rows back to 2018 — "Approved
+    // 126,000" beside a 24-row pending queue, and a 10s full scan) and ignored the caller's
+    // scope entirely. Pending (incl. manager_approved, still waiting on WFM) is all open items;
+    // approved/rejected/discarded are the trailing 30 days. Each half uses its own index.
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(x.k = 'p')                                   AS pending,
+         SUM(x.k = 'w' AND x.status = 'approved')         AS approved,
+         SUM(x.k = 'w' AND x.status = 'rejected')         AS rejected,
+         SUM(x.k = 'w' AND x.status = 'discarded')        AS discarded,
+         SUM(x.dispute_type = 'work_from_home')           AS work_from_home,
+         SUM(x.dispute_type IN ('late_in','late_mark_dispute')) AS late_in,
+         SUM(x.dispute_type = 'early_out')                AS early_out,
+         SUM(x.dispute_type IN ('missed_punch','missing_punch','wrong_punch')) AS missed_punch
+       FROM (
+         SELECT r.employee_id, r.status, r.dispute_type, 'p' AS k
+           FROM attendance_regularization r
+          WHERE r.status IN ('pending','manager_approved')
+         UNION ALL
+         SELECT r.employee_id, r.status, r.dispute_type, 'w' AS k
+           FROM attendance_regularization r
+          WHERE r.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            AND r.status NOT IN ('pending','manager_approved')
+       ) x
+       JOIN employees e ON e.id = x.employee_id
+      WHERE ${scopeOnly}`,
+      scopeOnlyParams
+    ).then(([r]) => r).catch(() => [{}] as any),
 
       // Shift summary — breakdown by shift timing.
       //
@@ -316,77 +371,76 @@ biometricSummaryRouter.get(
         .then(([r]) => r)
         .catch(() => [] as any),
 
-      // Roster coverage buckets — fully/partially/understaffed by process today
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT
+    // Roster coverage buckets — fully/partially/understaffed by process, on the latest COMPLETE
+    // attendance day. Two defects: it read the unscoped org (a branch-scoped caller saw other
+    // branches' processes bucketed into their tile), and it anchored on MAX(record_date) <=
+    // CURDATE(), which is today — written at start of day and ~2% reconciled, so every process
+    // looked understaffed. Present % is also over days people were expected to work.
+    db.execute<RowDataPacket[]>(
+      `SELECT
          SUM(CASE WHEN present_pct >= 90 THEN 1 ELSE 0 END) AS fully_covered,
          SUM(CASE WHEN present_pct >= 70 AND present_pct < 90 THEN 1 ELSE 0 END) AS partially_covered,
          SUM(CASE WHEN present_pct < 70 THEN 1 ELSE 0 END) AS understaffed
        FROM (
          SELECT
            e.process_id,
-           ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS present_pct
+           ROUND(${attendedDaysSql("adr.attendance_status")} * 100.0 / NULLIF(${expectedToWorkSql("adr.attendance_status")}, 0), 2) AS present_pct
          FROM attendance_daily_record adr
          JOIN employees e ON e.id = adr.employee_id
-         WHERE adr.record_date = (SELECT MAX(record_date) FROM attendance_daily_record WHERE record_date <= CURDATE())
+         WHERE adr.record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}
            AND e.process_id IS NOT NULL
+           AND ${scopeOnly}
          GROUP BY e.process_id
        ) process_pcts`,
-          [],
-        )
-        .then(([r]) => r)
-        .catch(
-          () =>
-            // null, not 0. This query works today, but the fallback decides what is
-            // shown if it ever stops working — and `understaffed: 0` is a claim that
-            // no process is short-staffed, which is the single most reassuring thing
-            // this tile can say. null renders as unavailable instead.
-            [
-              {
-                fully_covered: null,
-                partially_covered: null,
-                understaffed: null,
-              },
-            ] as any,
-        ),
-    ]);
+      scopeOnlyParams,
+    ).then(([r]) => r).catch(() =>
+      // null, not 0. This query works today, but the fallback decides what is
+      // shown if it ever stops working — and `understaffed: 0` is a claim that
+      // no process is short-staffed, which is the single most reassuring thing
+      // this tile can say. null renders as unavailable instead.
+      [{ fully_covered: null, partially_covered: null, understaffed: null }] as any
+    ),
+  ]);
 
     const summary = rows[0] ?? {};
     const live = liveRows[0] ?? {};
     const reg = regRows[0] ?? {};
     const coverage = (rosterCoverageRows as any[])[0] ?? {};
 
-    return res.json({
-      success: true,
-      data: {
-        ...summary,
-        ...live,
-        fully_covered: Number(coverage.fully_covered ?? 0),
-        partially_covered: Number(coverage.partially_covered ?? 0),
-        understaffed: Number(coverage.understaffed ?? 0),
-        shift_summary: (shiftRows as any[]).map((row: any) => ({
-          shift_name: String(row.shift_name),
-          total: Number(row.total ?? 0),
-          present: Number(row.present ?? 0),
-          absent: Number(row.absent ?? 0),
-          late: Number(row.late ?? 0),
-          coverage_pct:
-            row.coverage_pct !== null ? Number(row.coverage_pct) : null,
-        })),
-        late_arrival_trend: (lateArrivalRows as any[]).map((row: any) => ({
-          label: `${String(row.hour_bucket).padStart(2, "0")}:00`,
-          value: Number(row.count ?? 0),
-        })),
-        regularization_summary: {
-          pending: Number(reg.pending ?? 0),
-          approved: Number(reg.approved ?? 0),
-          rejected: Number(reg.rejected ?? 0),
-          cancelled: Number(reg.cancelled ?? 0),
-          late_in: Number(reg.late_in ?? 0),
-          early_out: Number(reg.early_out ?? 0),
-          missed_punch: Number(reg.missed_punch ?? 0),
-        },
+  return res.json({
+    success: true,
+    data: {
+      ...summary,
+      ...live,
+      // null stays null: Number(null ?? 0) turned the failed-query fallback above back into a
+      // confident "0 understaffed processes".
+      fully_covered: coverage.fully_covered == null ? null : Number(coverage.fully_covered),
+      partially_covered: coverage.partially_covered == null ? null : Number(coverage.partially_covered),
+      understaffed: coverage.understaffed == null ? null : Number(coverage.understaffed),
+      window_from: dateValue(req.query.from, monthStart()),
+      window_to: dateValue(req.query.to, today()),
+      shift_summary: (shiftRows as any[]).map((row: any) => ({
+        shift_name: String(row.shift_name),
+        total: Number(row.total ?? 0),
+        present: Number(row.present ?? 0),
+        absent: Number(row.absent ?? 0),
+        late: Number(row.late ?? 0),
+        coverage_pct: row.coverage_pct !== null ? Number(row.coverage_pct) : null,
+      })),
+      late_arrival_trend: (lateArrivalRows as any[]).map((row: any) => ({
+        label: `${String(row.hour_bucket).padStart(2, "0")}:00`,
+        value: Number(row.count ?? 0),
+      })),
+      regularization_summary: {
+        pending: Number(reg.pending ?? 0),
+        approved: Number(reg.approved ?? 0),
+        rejected: Number(reg.rejected ?? 0),
+        // The ENUM has no 'cancelled'; withdrawn requests are 'discarded'. Key kept for the layout.
+        cancelled: Number(reg.discarded ?? 0),
+        work_from_home: Number(reg.work_from_home ?? 0),
+        late_in: Number(reg.late_in ?? 0),
+        early_out: Number(reg.early_out ?? 0),
+        missed_punch: Number(reg.missed_punch ?? 0),
       },
     });
   }),

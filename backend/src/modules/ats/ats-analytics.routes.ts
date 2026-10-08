@@ -15,6 +15,8 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { resolveAtsBranchScope } from "./ats-branch-scope.js";
 import {
   getUnifiedCandidateCount,
   getHiringTrends,
@@ -53,19 +55,27 @@ atsAnalyticsRouter.use(
   ),
 );
 
-atsAnalyticsRouter.get(
-  "/candidate-count",
-  async (_req: Request, res: Response) => {
-    try {
-      const data = await getUnifiedCandidateCount();
-      return res.json({ success: true, data });
-    } catch (error: unknown) {
-      return res
-        .status(500)
-        .json({ success: false, message: errorMessage(error) });
-    }
-  },
-);
+// Branch scoping (owner ruling 2026-10-01): these are company-wide aggregates (channel ROI, hiring trends,
+// predictive, time-to-hire, ad-hoc report) that are not computed per branch. hr / manager / recruiter and the
+// other branch-scoped roles are therefore refused; the org-wide roles are unaffected. Fail closed.
+atsAnalyticsRouter.use(async (req: Request, res: Response, next) => {
+  try {
+    const scope = await resolveAtsBranchScope((req as AuthenticatedRequest).authUser!.id);
+    if (scope.orgWide) return next();
+    return res.status(403).json({ success: false, message: "Forbidden: company-wide analytics are limited to head-office roles" });
+  } catch (error: unknown) {
+    return next(error);
+  }
+});
+
+atsAnalyticsRouter.get("/candidate-count", async (_req: Request, res: Response) => {
+  try {
+    const data = await getUnifiedCandidateCount();
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: errorMessage(error) });
+  }
+});
 
 atsAnalyticsRouter.get(
   "/hiring-trends",

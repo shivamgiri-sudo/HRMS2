@@ -1,11 +1,12 @@
-import { Router } from "express";
-import type { Response } from "express";
-import type { RowDataPacket } from "mysql2";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { db } from "../../db/mysql.js";
-import { logSensitiveAction } from "../../shared/auditLog.js";
+import { Router } from 'express';
+import type { Response } from 'express';
+import type { RowDataPacket } from 'mysql2';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { db } from '../../db/mysql.js';
+import { branchInScopeSql } from './payroll-branch-scope.js';
+import { logSensitiveAction } from '../../shared/auditLog.js';
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) =>
@@ -18,19 +19,10 @@ router.use(requireAuth);
 // admin/hr/payroll_head added 2026-08-25: HO Queues' Cheque Validation tab grants these roles
 // page access but this read-only list excluded them. The PATCH approve action stays restricted
 // to payroll/super_admin — gated client-side instead (NativePayrollHOQueues.tsx).
-router.get(
-  "/queue",
-  requireRole(
-    "payroll",
-    "super_admin",
-    "finance",
-    "admin",
-    "hr",
-    "payroll_head",
-  ),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT cnv.*,
+router.get('/queue', requireRole('payroll', 'super_admin', 'finance', 'admin', 'hr', 'payroll_head'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const cvScope = await branchInScopeSql(req, 'ac.applied_for_branch');
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT cnv.*,
             ac.full_name AS candidate_full_name, ac.candidate_code, ac.mobile,
             cob.account_holder_name, cob.bank_name, cob.ifsc_code,
             doc.file_url AS cheque_file_url
@@ -39,21 +31,19 @@ router.get(
      LEFT JOIN candidate_onboarding_bank_detail cob ON cob.id = cnv.bank_detail_id
      LEFT JOIN candidate_onboarding_document doc ON doc.id = cnv.cheque_document_id
        AND doc.deleted_at IS NULL
-     WHERE cnv.match_status = 'mismatch'
+     WHERE cnv.match_status = 'mismatch' AND (${cvScope.sql})
      ORDER BY cnv.created_at ASC`,
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    cvScope.params
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 // ── GET /api/payroll/cheque-validation/:id ───────────────────────────────────
 // Single case detail — includes cheque image URL and all candidate/bank details.
-router.get(
-  "/:id",
-  requireRole("payroll", "super_admin", "finance"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT cnv.*,
+router.get('/:id', requireRole('payroll', 'super_admin', 'finance'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const detailScope = await branchInScopeSql(req, 'ac.applied_for_branch');
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT cnv.*,
             ac.full_name AS candidate_full_name, ac.candidate_code, ac.mobile, ac.email,
             cob.account_holder_name, cob.bank_name, cob.ifsc_code,
             cob.account_no_masked, cob.account_type,
@@ -63,18 +53,14 @@ router.get(
      LEFT JOIN candidate_onboarding_bank_detail cob ON cob.id = cnv.bank_detail_id
      LEFT JOIN candidate_onboarding_document doc ON doc.id = cnv.cheque_document_id
        AND doc.deleted_at IS NULL
-     WHERE cnv.id = ?
+     WHERE cnv.id = ? AND (${detailScope.sql})
      LIMIT 1`,
-      [req.params.id],
-    );
-    const rec = rows[0] as any;
-    if (!rec)
-      return res
-        .status(404)
-        .json({ success: false, message: "Validation case not found" });
-    return res.json({ success: true, data: rec });
-  }),
-);
+    [req.params.id, ...detailScope.params]
+  );
+  const rec = (rows[0] as any);
+  if (!rec) return res.status(404).json({ success: false, message: 'Validation case not found' });
+  return res.json({ success: true, data: rec });
+}));
 
 // ── PATCH /api/payroll/cheque-validation/:id ─────────────────────────────────
 // Payroll HO validates (or rejects) a cheque name mismatch case.
@@ -97,20 +83,18 @@ router.patch(
         });
     }
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, candidate_id, bank_detail_id, match_status FROM cheque_name_validation WHERE id = ? LIMIT 1`,
-      [req.params.id],
-    );
-    const rec = rows[0] as any;
-    if (!rec)
-      return res
-        .status(404)
-        .json({ success: false, message: "Case not found" });
-    if (rec.match_status !== "mismatch") {
-      return res
-        .status(409)
-        .json({ success: false, message: `Case already ${rec.match_status}` });
-    }
+  const patchScope = await branchInScopeSql(req, 'ac.applied_for_branch');
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT cnv.id, cnv.candidate_id, cnv.bank_detail_id, cnv.match_status
+       FROM cheque_name_validation cnv JOIN ats_candidate ac ON ac.id = cnv.candidate_id
+      WHERE cnv.id = ? AND (${patchScope.sql}) LIMIT 1`,
+    [req.params.id, ...patchScope.params]
+  );
+  const rec = (rows[0] as any);
+  if (!rec) return res.status(404).json({ success: false, message: 'Case not found' });
+  if (rec.match_status !== 'mismatch') {
+    return res.status(409).json({ success: false, message: `Case already ${rec.match_status}` });
+  }
 
     await db.execute(
       `UPDATE cheque_name_validation

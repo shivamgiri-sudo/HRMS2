@@ -1,9 +1,10 @@
-import type { Response } from "express";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
-import { hasProcessScope, hasRole } from "../../shared/accessGuard.js";
-import { rosterMasterService } from "./roster-master.service.js";
+import type { Response } from 'express';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from '../../shared/scopeAccess.js';
+import { userCanAccessProcess, scopedProcessIdsForUser } from '../wfm/branch-scope.js';
+import { rosterMasterService } from './roster-master.service.js';
 
 type Request = AuthenticatedRequest;
 
@@ -28,16 +29,10 @@ async function assertProcessScope(
   branchId: string | null | undefined = null,
 ): Promise<void> {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, "admin", "hr")) return;
-  if (
-    !processId ||
-    !(await hasProcessScope(
-      userId,
-      processId,
-      branchId,
-      ...SCOPED_ROSTER_ROLES,
-    ))
-  ) {
+  // Owner ruling 2026-10-01: only org-wide roles bypass; hr / wfm / managers need the process to be in
+  // their own branch or assignments.
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return;
+  if (!processId || !(await userCanAccessProcess(userId, processId, branchId))) {
     throw new RosterMasterScopeError();
   }
 }
@@ -69,24 +64,8 @@ async function employeeProcessScope(
  * translate into "return nothing", matching the fail-closed behavior every other
  * under-provisioned manager-tier role in this codebase already gets.
  */
-async function resolveScopedProcessIds(
-  req: Request,
-): Promise<"unrestricted" | string[]> {
-  const userId = req.authUser!.id;
-  if (await hasRole(userId, "admin", "hr")) return "unrestricted";
-
-  const placeholders = SCOPED_ROSTER_ROLES.map(() => "?").join(", ");
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT scope_type, process_id
-       FROM user_assignment_scope
-      WHERE user_id = ?
-        AND role_key IN (${placeholders})
-        AND active_status = 1`,
-    [userId, ...SCOPED_ROSTER_ROLES],
-  );
-  const scopes = rows as { scope_type: string; process_id: string | null }[];
-  if (scopes.some((s) => s.scope_type === "all")) return "unrestricted";
-  return scopes.map((s) => s.process_id).filter((id): id is string => !!id);
+async function resolveScopedProcessIds(req: Request): Promise<'unrestricted' | string[]> {
+  return scopedProcessIdsForUser(req.authUser!.id);
 }
 
 export const rosterMasterController = {

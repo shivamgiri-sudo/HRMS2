@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 
 export type OrgChartScope =
   "my-chain" | "my-team" | "process" | "branch" | "company";
@@ -30,6 +31,8 @@ export interface UserOrgContext {
   isProcessManager: boolean;
   isWfm: boolean;
   isTeamLeader: boolean;
+  /** super_admin / admin / ceo / coo / cfo / payroll_head / finance_head / accounts_head / finance only. */
+  isOrgWide: boolean;
   availableScopes: ScopeResolution[];
   defaultScope: OrgChartScope;
 }
@@ -57,10 +60,9 @@ export async function resolveUserOrgContext(
   const isProcessManager =
     roleSet.has("process_manager") || roleSet.has("manager");
   const isWfm = roleSet.has("wfm") || roleSet.has("operations_manager");
-  const isTeamLeader =
-    roleSet.has("team_leader") ||
-    roleSet.has("tl") ||
-    roleSet.has("assistant_manager");
+  // Owner policy 2026-10-01: hr is branch-scoped, so it is NOT org-wide here.
+  const isOrgWide = roles.some((r) => (ORG_WIDE_EXEMPT_ROLES as readonly string[]).includes(r));
+  const isTeamLeader = roleSet.has("team_leader") || roleSet.has("tl") || roleSet.has("assistant_manager");
 
   // Fetch employee record
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -114,10 +116,7 @@ export async function resolveUserOrgContext(
   }
 
   // 3. process (available for process_manager, wfm, or full-access roles)
-  if (
-    processId &&
-    (isProcessManager || isWfm || isSuperAdmin || isAdmin || isHr || isCeo)
-  ) {
+  if (processId && (isProcessManager || isWfm || isOrgWide || isHr || isAdmin)) {
     const processCount = await getScopeCount("process", processId);
     availableScopes.push({
       scopeType: "process",
@@ -130,7 +129,7 @@ export async function resolveUserOrgContext(
   }
 
   // 4. branch (available for branch_head or full-access roles)
-  if (branchId && (isBranchHead || isSuperAdmin || isAdmin || isHr || isCeo)) {
+  if (branchId && (isBranchHead || isOrgWide || isHr || isAdmin)) {
     const branchCount = await getScopeCount("branch", branchId);
     availableScopes.push({
       scopeType: "branch",
@@ -142,8 +141,8 @@ export async function resolveUserOrgContext(
     });
   }
 
-  // 5. company (available for super_admin, admin, hr, ceo)
-  if (isSuperAdmin || isAdmin || isHr || isCeo) {
+  // 5. company (org-wide roles only; hr no longer gets company-wide)
+  if (isOrgWide) {
     const companyCount = await getScopeCount("company", null);
     availableScopes.push({
       scopeType: "company",
@@ -191,6 +190,7 @@ export async function resolveUserOrgContext(
     isProcessManager,
     isWfm,
     isTeamLeader,
+    isOrgWide,
     availableScopes,
     defaultScope,
   };
@@ -314,23 +314,36 @@ export function buildScopeWhereClause(
     wheres.push("(e.id = ? OR e.reporting_manager_id = ?)");
     params.push(ctx.employeeId, ctx.employeeId);
   } else if (requestedScope === "process") {
-    if (filters.processId) {
+    if (filters.processId && !ctx.isOrgWide && filters.processId !== ctx.processId) {
+      wheres.push("1=0"); // a browser filter can only narrow, never leave the caller's own process
+    } else if (filters.processId) {
       wheres.push("e.process_id = ?");
       params.push(filters.processId);
     } else if (ctx.processId) {
       wheres.push("e.process_id = ?");
       params.push(ctx.processId);
+    } else if (!ctx.isOrgWide) {
+      wheres.push("1=0");
+    }
+    // Branch-scoped roles stay inside their own branch even when the process spans several.
+    if (!ctx.isOrgWide) {
+      if (ctx.branchId) { wheres.push("e.branch_id = ?"); params.push(ctx.branchId); } else wheres.push("1=0");
     }
   } else if (requestedScope === "branch") {
-    if (filters.branchId) {
+    if (filters.branchId && !ctx.isOrgWide && filters.branchId !== ctx.branchId) {
+      wheres.push("1=0");
+    } else if (filters.branchId) {
       wheres.push("e.branch_id = ?");
       params.push(filters.branchId);
     } else if (ctx.branchId) {
       wheres.push("e.branch_id = ?");
       params.push(ctx.branchId);
+    } else if (!ctx.isOrgWide) {
+      wheres.push("1=0");
     }
   } else if (requestedScope === "company") {
-    // No additional filter — all active employees
+    // Only org-wide roles can reach this scope (assertScopeAccess); anyone else fails closed.
+    if (!ctx.isOrgWide) wheres.push("1=0");
   }
 
   // Additional filters

@@ -50,7 +50,7 @@ export function PayrollPrepWidget({ month }: { month: string }) {
     );
   }
 
-  if (!data || data.count === 0) {
+  if (!data || !data.count) {
     return (
       <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
         <CheckCircle2 className="h-5 w-5 text-emerald-500 flex-shrink-0" />

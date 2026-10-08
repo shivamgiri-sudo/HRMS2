@@ -1,12 +1,7 @@
-import nodemailer from "nodemailer";
-import type {
-  CommunicationProvider,
-  Attachment,
-} from "../provider.interface.js";
-import type {
-  ProviderResponse,
-  DeliveryStatus,
-} from "../../communication.types.js";
+import nodemailer from 'nodemailer';
+import type { CommunicationProvider, Attachment } from '../provider.interface.js';
+import { smtpRateLimitPerMinute, withSmtpRetry } from '../../smtp-retry.js';
+import type { ProviderResponse, DeliveryStatus } from '../../communication.types.js';
 
 export class NodemailerProvider implements CommunicationProvider {
   private transporter: nodemailer.Transporter;
@@ -22,9 +17,15 @@ export class NodemailerProvider implements CommunicationProvider {
     fromName?: string,
   ) {
     this.transporter = nodemailer.createTransport({
-      host: host ?? process.env.SMTP_HOST,
-      port: port ?? parseInt(process.env.SMTP_PORT ?? "587"),
-      secure: secure ?? process.env.SMTP_SECURE === "true",
+      host:   host   ?? process.env.SMTP_HOST,
+      port:   port   ?? parseInt(process.env.SMTP_PORT ?? '587'),
+      secure: secure ?? process.env.SMTP_SECURE === 'true',
+      // Pooled + rate limited so bursts queue instead of tripping Gmail's 421 limiter.
+      pool: true,
+      maxConnections: 2,
+      maxMessages: 100,
+      rateDelta: 60_000,
+      rateLimit: smtpRateLimitPerMinute(),
       auth: {
         user: user ?? process.env.SMTP_USER,
         pass: pass ?? process.env.SMTP_PASS,
@@ -43,17 +44,11 @@ export class NodemailerProvider implements CommunicationProvider {
     attachments?: Attachment[],
   ): Promise<ProviderResponse> {
     try {
-      const result = await this.transporter.sendMail({
+      const result = await withSmtpRetry(() => this.transporter.sendMail({
         from: this._from,
-        to: recipient,
-        subject,
-        html: body,
-        attachments: attachments?.map((a) => ({
-          filename: a.filename,
-          content: a.content,
-          contentType: a.contentType,
-        })),
-      });
+        to: recipient, subject, html: body,
+        attachments: attachments?.map(a => ({ filename: a.filename, content: a.content, contentType: a.contentType })),
+      }));
       return { success: true, message_id: result.messageId };
     } catch (e) {
       return {

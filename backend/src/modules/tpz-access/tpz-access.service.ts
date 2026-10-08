@@ -38,10 +38,10 @@ export async function loadBranchCompanies(
 ): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   if (branchIds.length === 0) return out;
-  const codeToKey = new Map<string, string>();
-  for (const c of TPZ_COMPANIES)
-    for (const code of c.processCodes) codeToKey.set(code, c.key);
-  const codes = [...codeToKey.keys()];
+  // A process code can back more than one company dashboard (LP Feedback and LP Onboarding share ERESOLUTION).
+  const codeToKeys = new Map<string, string[]>();
+  for (const c of TPZ_COMPANIES) for (const code of c.processCodes) codeToKeys.set(code, [...(codeToKeys.get(code) ?? []), c.key]);
+  const codes = [...codeToKeys.keys()];
   if (codes.length === 0) return out;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id, process_code FROM process_master
@@ -49,10 +49,10 @@ export async function loadBranchCompanies(
     [...branchIds, ...codes],
   );
   for (const r of rows) {
-    const key = codeToKey.get(String(r.process_code));
-    if (!key) continue;
+    const keys = codeToKeys.get(String(r.process_code));
+    if (!keys) continue;
     const list = out.get(String(r.branch_id)) ?? [];
-    if (!list.includes(key)) list.push(key);
+    for (const key of keys) if (!list.includes(key)) list.push(key);
     out.set(String(r.branch_id), list);
   }
   return out;

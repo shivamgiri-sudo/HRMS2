@@ -55,6 +55,16 @@ export async function importDepartmentMasterBatch(
   let errorRows = 0;
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
 
+  // Same name under a different code would create a second row for one department
+  // (the unique key is the code, not the name). Reject it instead of splitting the master.
+  const [existingRows] = await db.execute<RowDataPacket[]>(
+    `SELECT dept_code AS code, dept_name AS name FROM department_master`
+  );
+  const codeByName = new Map<string, string>();
+  for (const e of existingRows as RowDataPacket[]) {
+    codeByName.set(String(e.name ?? "").trim().toUpperCase(), String(e.code ?? "").trim());
+  }
+
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -71,6 +81,17 @@ export async function importDepartmentMasterBatch(
       errorRows++;
       continue;
     }
+
+    const nameKey = deptName.toUpperCase();
+    const knownCode = codeByName.get(nameKey);
+    if (knownCode !== undefined && knownCode !== deptCode) {
+      const msg = `Row ${row.row_no}: "${deptName}" already exists under code ${knownCode}`;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      errorRows++;
+      continue;
+    }
+    codeByName.set(nameKey, deptCode);
 
     parsed.push({
       rowId: row.id,

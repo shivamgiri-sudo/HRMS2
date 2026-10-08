@@ -21,6 +21,7 @@ import {
 import { db } from "../../db/mysql.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { employeeScopeFor, guardEmployee } from "./payroll-branch-scope.js";
 import { isRunClosed, runRankSql } from "./run-status.js";
 
 export const payableDaysOverrideRouter = Router();
@@ -145,23 +146,20 @@ payableDaysOverrideRouter.get(
         .json({ success: false, error: "Forbidden: Payroll access required" });
     }
 
-    const conds: string[] = [];
-    const params: unknown[] = [];
-    if (req.query.includeRevoked !== "1") conds.push("o.active_status = 1");
-    if (req.query.runMonth) {
-      const m = String(req.query.runMonth);
-      if (!RUN_MONTH_RE.test(m))
-        return res
-          .status(400)
-          .json({ success: false, error: "runMonth must be YYYY-MM" });
-      conds.push("o.run_month = ?");
-      params.push(m);
-    }
-    if (req.query.employeeId) {
-      conds.push("o.employee_id = ?");
-      params.push(String(req.query.employeeId));
-    }
-    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (req.query.includeRevoked !== "1") conds.push("o.active_status = 1");
+  if (req.query.runMonth) {
+    const m = String(req.query.runMonth);
+    if (!RUN_MONTH_RE.test(m)) return res.status(400).json({ success: false, error: "runMonth must be YYYY-MM" });
+    conds.push("o.run_month = ?"); params.push(m);
+  }
+  if (req.query.employeeId) { conds.push("o.employee_id = ?"); params.push(String(req.query.employeeId)); }
+  // Branch scoping (owner ruling 2026-10-01): admin / branch payroll roles see only their own branch's
+  // overrides (SELECT_ROW already joins employees as e). Org-wide roles get "1=1" and stay unfiltered.
+  const scope = await employeeScopeFor(req, "e");
+  if (scope.sql !== "1=1") { conds.push(`(${scope.sql})`); params.push(...scope.params); }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `${SELECT_ROW} ${where} ORDER BY o.run_month DESC, o.created_at DESC LIMIT 500`,
@@ -188,16 +186,11 @@ payableDaysOverrideRouter.get(
         .json({ success: false, error: "Forbidden: Payroll access required" });
     }
 
-    const employeeId = String(req.query.employeeId ?? "").trim();
-    const runMonth = String(req.query.runMonth ?? "").trim();
-    if (!employeeId)
-      return res
-        .status(400)
-        .json({ success: false, error: "employeeId is required" });
-    if (!RUN_MONTH_RE.test(runMonth))
-      return res
-        .status(400)
-        .json({ success: false, error: "runMonth must be YYYY-MM" });
+  const employeeId = String(req.query.employeeId ?? "").trim();
+  const runMonth = String(req.query.runMonth ?? "").trim();
+  if (!employeeId) return res.status(400).json({ success: false, error: "employeeId is required" });
+  if (!RUN_MONTH_RE.test(runMonth)) return res.status(400).json({ success: false, error: "runMonth must be YYYY-MM" });
+  if (!(await guardEmployee(req, res, employeeId))) return;
 
     const run = await getRunForMonth(runMonth);
     const [existingRows] = await db.execute<RowDataPacket[]>(
@@ -286,14 +279,12 @@ payableDaysOverrideRouter.post(
 
     const month = run_month.trim();
 
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM employees WHERE id = ? LIMIT 1`,
-      [employee_id.trim()],
-    );
-    if (!empRows.length)
-      return res
-        .status(404)
-        .json({ success: false, error: "Employee not found" });
+  if (!(await guardEmployee(req, res, employee_id.trim()))) return;
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employees WHERE id = ? LIMIT 1`, [employee_id.trim()],
+  );
+  if (!empRows.length) return res.status(404).json({ success: false, error: "Employee not found" });
 
     const run = await getRunForMonth(month);
     if (run && isRunClosed(run.status)) {
@@ -395,19 +386,12 @@ payableDaysOverrideRouter.delete(
         });
     }
 
-    const current = await getRowById(req.params.id);
-    if (!current)
-      return res
-        .status(404)
-        .json({ success: false, error: "Override not found" });
-    if (Number(current.active_status) === 0) {
-      return res
-        .status(409)
-        .json({
-          success: false,
-          error: "This override has already been withdrawn",
-        });
-    }
+  const current = await getRowById(req.params.id);
+  if (!current) return res.status(404).json({ success: false, error: "Override not found" });
+  if (!(await guardEmployee(req, res, String(current.employee_id)))) return;
+  if (Number(current.active_status) === 0) {
+    return res.status(409).json({ success: false, error: "This override has already been withdrawn" });
+  }
 
     const rErr = reasonError((req.body ?? {}).reason);
     if (rErr)
@@ -468,11 +452,9 @@ payableDaysOverrideRouter.get(
         .json({ success: false, error: "Forbidden: Payroll access required" });
     }
 
-    const row = await getRowById(req.params.id);
-    if (!row)
-      return res
-        .status(404)
-        .json({ success: false, error: "Override not found" });
+  const row = await getRowById(req.params.id);
+  if (!row) return res.status(404).json({ success: false, error: "Override not found" });
+  if (!(await guardEmployee(req, res, String(row.employee_id)))) return;
 
     const [auditRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, actor_user_id, action_type, actor_role, reason,

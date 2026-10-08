@@ -26,6 +26,7 @@ import { getActualPeopleCost } from "./bpo-pnl.service.js";
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { getApprovedAdjustmentsByProcess } from "./pnl-manual-adjustment.service.js";
+import { getForecastRevenueActuals, withoutCostCentres, type ForecastRevenueActuals } from "./pnl-forecast-overlay.js";
 
 /**
  * P&L redesign (PR 3): transposed statement — components as rows, entities as dynamic columns.
@@ -297,6 +298,8 @@ function enrichColumn(
   estimate?: ActualsByKey,
   /** GRN Committed (reserved, ex-GST) — added into Indirect Cost; see indirectCostTotal below. */
   committedIdc?: ActualsByKey,
+  /** Approved revenue forecasts; the other revenue sources arrive with these cost centres removed. */
+  forecast?: ForecastRevenueActuals
 ): Record<string, unknown> {
   /*
    * A6 FIX (2026-09-01): idc/seat must never inherit the WHOLE branch's total just because a
@@ -379,6 +382,20 @@ function enrichColumn(
    */
   const plannedRevenue = pickOwnRevenue(revenue) ?? 0;
   const invoiced = pickOwnRevenue(invoicedRevenue) ?? 0;
+  /*
+   * Revenue forecast (owner rule 2026-10-06, same as Live P&L): a cost centre with an approved
+   * forecast earns the forecast (open) or the closed amount, nothing else. Its old planned /
+   * invoiced / estimate revenue was already taken out of those maps (getStatement), so the
+   * forecast is added back on top of them. The canonical row's own figure comes from the process
+   * engine (bpo-pnl computeBranchRows), which applies the same forecast rule per process — it
+   * already contains the forecast, so it is used as-is, never with the forecast added again.
+   * (Zeroing it instead dropped every OTHER cost centre's engine revenue in the column: NOIDA-2,
+   * 2026-11, went from Rs 20.9 L to only the one forecast's Rs 3.73 L on live.)
+   */
+  const forecastAmount = forecast
+    ? (key.processId ? forecast.byProcess.get(key.processId) : key.branchId ? forecast.byBranch.get(key.branchId) : undefined)
+    : undefined;
+  const hasForecast = forecastAmount !== undefined;
   const existingRevenue = n(out.recognizedRevenue);
   /*
    * Priority for a CLOSED period: actual invoiced amount.
@@ -417,13 +434,13 @@ function enrichColumn(
   const estimated =
     periodOpen || !estimate ? 0 : (pickOwnRevenue(estimate) ?? 0);
   const billedPlusEstimate = invoiced + estimated;
-  const recognizedRevenue =
-    !periodOpen && billedPlusEstimate > 0
-      ? billedPlusEstimate
-      : existingRevenue > 0
-        ? existingRevenue
-        : plannedRevenue;
+  const useBilled = !periodOpen && billedPlusEstimate > 0;
+  const useCanonical = !useBilled && existingRevenue > 0;
+  const baseRevenue = useBilled ? billedPlusEstimate : useCanonical ? existingRevenue : plannedRevenue;
+  // The canonical figure already carries the forecast (see above); the billed and planned maps do not.
+  const recognizedRevenue = baseRevenue + (useCanonical ? 0 : (forecastAmount ?? 0));
   out.recognizedRevenue = recognizedRevenue;
+  out.revenueForecast = forecastAmount ?? 0;
   out.plannedRevenue = plannedRevenue;
   out.invoicedRevenue = invoiced;
   out.revenueEstimated = !periodOpen && billedPlusEstimate > 0 ? estimated : 0;
@@ -434,12 +451,11 @@ function enrichColumn(
    * "accounting_fallback") via the `...data` spread below reads from the source row; passed through
    * unchanged here for a process column so both surfaces agree on WHY a revenue figure is what it is.
    */
-  out.revenueBasis =
-    !periodOpen && billedPlusEstimate > 0
-      ? "invoiced"
-      : existingRevenue > 0
-        ? "row"
-        : "planned";
+  out.revenueBasis = hasForecast && baseRevenue === 0 && !useCanonical
+    ? "forecast"
+    : (!periodOpen && billedPlusEstimate > 0)
+      ? (hasForecast ? "invoiced+forecast" : "invoiced")
+      : hasForecast ? "planned+forecast" : (existingRevenue > 0 ? "row" : "planned");
 
   /*
    * Seat revenue: what the billable people actually on the floor are worth, as against the
@@ -749,6 +765,9 @@ export interface StatementDependencies {
   /** GRN Committed (reserved, ex-GST). When a caller injects getIndirectCost but not this, it is
    *  treated as none (a test double for consumed must not silently hit the live reserved reader). */
   getCommittedIndirectCost?: (period: string) => Promise<ActualsByKey>;
+  /** Approved Branch Head revenue forecasts (pnl-forecast-overlay.ts). When a caller injects
+   *  getInvoicedRevenue but not this, it is treated as none, like getCommittedIndirectCost. */
+  getForecastRevenue?: (period: string) => Promise<ForecastRevenueActuals>;
 }
 
 const emptyEstimate = (): ActualsByKey => ({
@@ -779,20 +798,13 @@ export async function getLiveRevenueEstimate(
     const out = emptyEstimate();
     const rec = await getPnlReconciliation(period);
     const estimated = rec.rows.filter((row) => row.revenueEstimated > 0);
-    const processByCc = await getCostCentreProcessIds(
-      estimated.map((row) => row.costCentreId),
-    );
+    const processByCc = await getCostCentreProcessIds(estimated.map((row) => row.costCentreId));
+    out.ccKeys = new Map();
     for (const row of estimated) {
       const amount = row.revenueEstimated;
-      out.byCostCentre.set(
-        row.costCentreId,
-        (out.byCostCentre.get(row.costCentreId) ?? 0) + amount,
-      );
-      if (row.branchId)
-        out.byBranch.set(
-          row.branchId,
-          (out.byBranch.get(row.branchId) ?? 0) + amount,
-        );
+      out.byCostCentre.set(row.costCentreId, (out.byCostCentre.get(row.costCentreId) ?? 0) + amount);
+      out.ccKeys.set(row.costCentreId, { branchId: row.branchId, processId: processByCc.get(row.costCentreId) ?? null });
+      if (row.branchId) out.byBranch.set(row.branchId, (out.byBranch.get(row.branchId) ?? 0) + amount);
       const processId = processByCc.get(row.costCentreId);
       if (processId)
         out.byProcess.set(
@@ -852,11 +864,24 @@ export async function getStatementPeopleCost(
   period: string,
 ): Promise<PeopleCostByKey> {
   const actual = await getActualPeopleCost(period);
-  if (actual.byBranch.size > 0 || actual.byProcess.size > 0) return actual;
-  return getRunningPeopleCost(period);
+  if (actual.byBranch.size === 0 && actual.byProcess.size === 0) return getRunningPeopleCost(period);
+  // Some cost centres run, others not yet: their staff keep the accrual (pnl-payroll-coverage.ts).
+  const running = await getRunningPeopleCost(period, { uncoveredOnly: true });
+  const add = <K>(into: Map<K, Record<string, number>>, from: Map<K, Record<string, number>>) => {
+    for (const [key, buckets] of from) {
+      const current = { ...(into.get(key) ?? {}) };
+      for (const [bucket, amount] of Object.entries(buckets)) current[bucket] = (current[bucket] ?? 0) + amount;
+      into.set(key, current);
+    }
+  };
+  add(actual.byBranch as Map<string, Record<string, number>>, running.byBranch as Map<string, Record<string, number>>);
+  add(actual.byProcess as Map<string, Record<string, number>>, running.byProcess as Map<string, Record<string, number>>);
+  for (const [key, cov] of running.coverageByBranch) if (!actual.coverageByBranch.has(key)) actual.coverageByBranch.set(key, cov);
+  for (const [key, cov] of running.coverageByProcess) if (!actual.coverageByProcess.has(key)) actual.coverageByProcess.set(key, cov);
+  return actual;
 }
 
-const defaultDependencies: StatementDependencies = {
+export const defaultDependencies: StatementDependencies = {
   getComponents,
   getSummary: (filters) => getStatementSummary(filters),
   getProcessSummary: (processId, period) =>
@@ -865,6 +890,9 @@ const defaultDependencies: StatementDependencies = {
   getCommittedIndirectCost: (period) => getCommittedIndirectCostActuals(period),
   getDriverRevenue: (period) => getDriverRevenueActuals(period),
   getInvoicedRevenue: (period) => getInvoicedRevenueActuals(period),
+  // Must be listed here: an injected getInvoicedRevenue without it reads as "test double, no
+  // forecasts" (getStatement), and these defaults inject getInvoicedRevenue.
+  getForecastRevenue: (period) => getForecastRevenueActuals(period),
   getSeatRevenue: (period) => getSeatRevenueActuals(period),
   /*
    * Actual payroll first; the recomputed snapshot only if payroll has nothing for the period.
@@ -932,20 +960,9 @@ export async function getStatement(
   // Resolved once for the whole statement: every column in it belongs to the same period, and
   // deciding per column would let two columns of one report use different cost sources.
   const periodOpen = isOpenPeriod(periodCode);
-  const committedReader =
-    deps.getCommittedIndirectCost ??
-    (deps.getIndirectCost
-      ? async () => emptyEstimate()
-      : getCommittedIndirectCostActuals);
-  const [
-    idc,
-    committedIdc,
-    revenue,
-    invoicedRevenue,
-    seat,
-    people,
-    manualAdjustments,
-  ] = await Promise.all([
+  const committedReader = deps.getCommittedIndirectCost
+    ?? (deps.getIndirectCost ? async () => emptyEstimate() : getCommittedIndirectCostActuals);
+  const [idc, committedIdc, driverRevenue, invoicedRevenueAll, seat, people, manualAdjustments] = await Promise.all([
     (deps.getIndirectCost ?? getIndirectCostActuals)(periodCode),
     committedReader(periodCode),
     (deps.getDriverRevenue ?? getDriverRevenueActuals)(periodCode),
@@ -956,13 +973,18 @@ export async function getStatement(
   ]);
   // Only a CLOSED month still inside the estimate window can carry one (see enrichColumn). Any
   // failure degrades to "no estimate", exactly as Live P&L and CEO Overview degrade.
-  const estimateApplies =
-    !periodOpen && isEstimateWindow(periodCode, getCurrentDateIST());
-  const estimate = estimateApplies
-    ? await (deps.getRevenueEstimate ?? getLiveRevenueEstimate)(
-        periodCode,
-      ).catch(() => emptyEstimate())
+  const estimateApplies = !periodOpen && isEstimateWindow(periodCode, getCurrentDateIST());
+  const rawEstimate = estimateApplies
+    ? await (deps.getRevenueEstimate ?? getLiveRevenueEstimate)(periodCode).catch(() => emptyEstimate())
     : emptyEstimate();
+  // Approved revenue forecasts replace their cost centres' revenue in every source (see enrichColumn).
+  const forecastReader = deps.getForecastRevenue
+    ?? (deps.getInvoicedRevenue ? async () => undefined : getForecastRevenueActuals);
+  const forecast = await forecastReader(periodCode).catch(() => undefined);
+  const forecastCcs = forecast ? [...forecast.byCostCentre.keys()] : [];
+  const revenue = forecastCcs.length ? withoutCostCentres(driverRevenue, forecastCcs) : driverRevenue;
+  const invoicedRevenue = forecastCcs.length ? withoutCostCentres(invoicedRevenueAll, forecastCcs) : invoicedRevenueAll;
+  const estimate = forecastCcs.length ? withoutCostCentres(rawEstimate, forecastCcs) : rawEstimate;
   columnData = columnData.map((item) => {
     const data = enrichColumn(
       item.data,
@@ -985,6 +1007,7 @@ export async function getStatement(
       viewBy === "process",
       estimate,
       committedIdc,
+      forecastCcs.length ? forecast : undefined
     );
     // Coverage belongs on the column, not among the money rows: it qualifies how far the whole
     // column can be trusted, and a consumer must be able to see that before reading any figure in it.
@@ -1059,6 +1082,12 @@ export async function getStatement(
      * intelligible rather than alarming.
      */
     revenueBasis: periodOpen ? "planned" : "invoiced",
+    /** Cost centres whose revenue is an approved Branch Head forecast (open or closed) this month. */
+    forecastRevenue: {
+      costCentres: forecastCcs.length,
+      amount: forecastCcs.reduce((t, cc) => t + (forecast?.byCostCentre.get(cc) ?? 0), 0),
+      closed: forecastCcs.filter((cc) => forecast?.state.get(cc) === "CLOSED").length,
+    },
     periodOpen,
     /** Rs of Live P&L's seat-rate estimate included in Recognised Revenue (last month only). */
     revenueEstimated: columnData.reduce(

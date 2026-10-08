@@ -48,6 +48,7 @@ const Step10Demo          = import.meta.env.DEV ? lazy(() => import("@/component
 const OnboardingFullDemo  = import.meta.env.DEV ? lazy(() => import("@/components/onboarding-full/OnboardingFullDemo")) : null;
 const CandidateOnboardingFullPageV2 = lazy(() => import("@/pages/CandidateOnboardingFullPageV2"));
 const PublicKpiCapture        = lazy(() => import("@/pages/PublicKpiCapture"));
+const LocationSharePage       = lazy(() => import("@/pages/hiring-engine/LocationSharePage"));
 const PublicKpiCaptureResults = lazy(() => import("@/pages/PublicKpiCaptureResults"));
 const BGVAddressVerify        = lazy(() => import("@/pages/public/BGVAddressVerify"));
 
@@ -147,6 +148,8 @@ export const publicRouteElements = (
           HRMS account. The form writes only to the kpi_capture_submission staging table.
           Results carry client names and targets, so they sit behind an unguessable token
           rather than a plain path, and the page sets robots noindex. */}
+      {/* Candidate "I'm on my way" page, opened from the WhatsApp link. Public by design; the per-match token is the credential. */}
+      <Route path="/w/:token"                   element={<LocationSharePage />} />
       <Route path="/kpi-capture"                element={<PublicKpiCapture />} />
       <Route path="/kpi-capture/results/:token" element={<PublicKpiCaptureResults />} />
 

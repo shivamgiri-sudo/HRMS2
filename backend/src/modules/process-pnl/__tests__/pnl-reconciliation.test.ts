@@ -159,6 +159,9 @@ function mockDb(options: { payrollRows?: number } = {}) {
       return [[{ rows: 2, latest_synced_at: "2026-08-19 12:00:00" }], []];
     }
     if (q.includes("FROM pnl_running_salary_snapshot")) {
+      // Posted payroll here is a company-wide run: the accrual's "not covered by a run" predicate
+      // (pnl-payroll-coverage.ts) leaves no snapshot row once it has lines.
+      if (payrollRows > 0) return [[], []];
       return [[{ cost_centre_id: "cc-noida-1", staff: 2, amount: L(42) }], []];
     }
     // readUnallocatedPayroll / exceptions(): filtering on the effective cost centre being NULL,
@@ -717,9 +720,8 @@ describe("P&L reconciliation — below-the-line (depreciation, finance cost, tax
     );
     const { getPnlReconciliation } =
       await import("../pnl-reconciliation.service.js");
-    const out = await getPnlReconciliation("2026-08", {
-      branchIds: ["branch-noida"],
-    });
+    // Company view: below-the-line is company-level, so it belongs to the unfiltered P&L only.
+    const out = await getPnlReconciliation("2026-08", {});
     // Baseline: revenue 120, payroll 60, HRMS-raised GRN 25 (fed app-side; the mirror is ignored) -> operatingProfit 35 (unchanged, contribution margin).
     expect(out.totals.operatingProfit).toBe(L(35));
     expect(out.totals.marginPct).toBeCloseTo((35 / 120) * 100, 6);
@@ -733,6 +735,19 @@ describe("P&L reconciliation — below-the-line (depreciation, finance cost, tax
     // Never allocated to a row or branch.
     expect(out.rows.every((r) => !("depreciation" in r))).toBe(true);
     expect(out.branches.every((b) => !("depreciation" in b))).toBe(true);
+  });
+
+  it("a branch-scoped view carries no company-level below-the-line or exceptions (they are company-wide)", async () => {
+    withOverrides((q) =>
+      q.includes("FROM process_pnl_cost_component")
+        ? [{ cost_type: "depreciation", amount: L(10) }, { cost_type: "tax", amount: L(1) }]
+        : undefined,
+    );
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"] });
+    expect(out.totals.belowTheLineTotal).toBe(0);
+    expect(out.totals.truePat).toBe(out.totals.operatingProfit);
+    expect(out.exceptions).toEqual([]);
   });
 
   it("filters to company-wide rows only (process_id IS NULL AND branch_id IS NULL) — never the canonical engine's per-process rows", async () => {

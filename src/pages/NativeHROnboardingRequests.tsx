@@ -201,9 +201,38 @@ interface SalaryPreview {
   esic_employer: number;
   net_in_hand: number;
   admin_charges?: number;
+  /** Monthly CTC = gross + employer PF + employer ESIC + admin charges (no gratuity). */
+  ctc?: number;
+  /** Where the figures came from, shown above the breakdown. */
+  source?: string;
 }
 type ManagerItem = { id: string; employee_code: string; full_name: string; grade?: string };
 type DocumentPreview = { id: string; title: string; fileName: string; mimeType?: string; downloadAllowed: boolean };
+
+/**
+ * A catalog package's stored components, as-is (no recalculation). DECIMAL columns
+ * arrive as strings. Gratuity is not a package component and is never shown here.
+ */
+function previewFromPackage(pkg: any): SalaryPreview {
+  const n = (v: unknown) => Number(v ?? 0) || 0;
+  return {
+    gross: n(pkg.gross),
+    basic: n(pkg.basic),
+    hra: n(pkg.hra),
+    conveyance: n(pkg.conveyance),
+    special_allowance: n(pkg.special_allowance),
+    // The offer has no lta/portfolio/medical/pli slots; the server carries them in other allowance.
+    bonus: n(pkg.bonus),
+    pf_employee: n(pkg.epf_employee ?? pkg.pf_employee),
+    pf_employer: n(pkg.epf_employer ?? pkg.pf_employer),
+    esic_employee: n(pkg.esic_employee),
+    esic_employer: n(pkg.esic_employer),
+    net_in_hand: n(pkg.net_in_hand),
+    admin_charges: n(pkg.admin_charges),
+    ctc: n(pkg.package_amount),
+    source: `Catalog package · Band ${pkg.band_code ?? '—'}${pkg.cost_centre_code ? ` · ${pkg.cost_centre_code}` : ' · branch-wide'}`,
+  };
+}
 
 // ── Style constants ───────────────────────────────────────────────────────────
 
@@ -390,7 +419,7 @@ function toneForStatus(raw: unknown): ChipTone {
 function prettyStatus(raw: unknown): string {
   const v = String(raw ?? '').trim();
   if (!v) return '—';
-  return v.includes('_') ? v.replace(/_/g, ' ').replace(/\w/g, (m) => m.toUpperCase()) : v;
+  return v.includes('_') ? v.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()) : v;
 }
 
 function StatusChip({ value, tone }: { value: unknown; tone?: ChipTone }) {
@@ -731,18 +760,26 @@ export default function NativeHROnboardingRequests() {
   }, [documentPreview]);
 
   // ── Load list
+  // The list is capped to the 500 newest requests; a typed search (3+ chars) is also run on the
+  // server so long-onboarded employees can still be found and sent a fresh link.
+  const [serverSearch, setServerSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setServerSearch(search.trim().length >= 3 ? search.trim() : ''), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const r = await hrmsApi.get<unknown>('/api/ats/onboarding/requests');
+      const r = await hrmsApi.get<unknown>(`/api/ats/onboarding/requests${serverSearch ? `?search=${encodeURIComponent(serverSearch)}` : ''}`);
       setRows(rowsFrom(r));
     } catch (e: any) {
       setLoadError(e?.message || 'Unable to load onboarding requests.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [serverSearch]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -1008,18 +1045,36 @@ export default function NativeHROnboardingRequests() {
       .catch(() => setAllCostCentres([]));
   }, []);
 
-  // ── Salary packages — refiltered whenever the picked band/cost-centre changes,
-  // so the dropdown only offers packages actually assigned under that band
-  // (salary_package_master is keyed by branch + cost centre + band).
+  // ── Salary packages — refiltered whenever the picked band/cost-centre changes.
+  // The endpoint returns active packages only, one per distinct package. No branch,
+  // no list -- an unfiltered call offered every branch's packages.
   useEffect(() => {
-    const cc = costCentres.find((c: any) => c.id === offer.cost_centre);
-    const params = new URLSearchParams();
-    if (selected?.branch_name) params.set('branch', selected.branch_name);
+    const branch = selected?.branch_name;
+    if (!branch) { setPackages([]); return; }
+    const cc = String(costCentres.find((c: any) => c.id === offer.cost_centre)?.cost_centre_code ?? '').trim().toUpperCase();
+    // Every active package of this branch (and band, once one is picked). A cost-centre filter
+    // here hid most packages, because a package's cost_centre_code does not always match the
+    // cost centre master's code; this cost centre's packages are listed first instead.
+    const params = new URLSearchParams({ branch });
     if (offer.salary_band) params.set('band', offer.salary_band);
-    if (cc?.cost_centre_code) params.set('costCentre', cc.cost_centre_code);
-    hrmsApi.get<unknown>(`/api/payroll-masters/packages?${params.toString()}`)
-      .then((r: any) => setPackages(r?.data ?? []))
-      .catch(() => setPackages([]));
+    let cancelled = false;
+    (async () => {
+      const fetched: any[] = ((await hrmsApi.get<unknown>(`/api/payroll-masters/packages?${params.toString()}`)) as any)?.data ?? [];
+      const rank = (p: any) => {
+        const pcc = String(p.cost_centre_code ?? '').trim().toUpperCase();
+        return cc && pcc === cc ? 0 : pcc ? 2 : 1;
+      };
+      const rows = [...fetched].sort((x, y) => rank(x) - rank(y));
+      if (cancelled) return;
+      setPackages(rows);
+      // A package chosen under the previous band/cost centre must not stay selected.
+      setOffer((p) => {
+        if (!p.selected_package_id || rows.some((r) => String(r.id) === p.selected_package_id)) return p;
+        setSalaryPreview(null);
+        return { ...p, selected_package_id: '' };
+      });
+    })().catch(() => { if (!cancelled) setPackages([]); });
+    return () => { cancelled = true; };
   }, [offer.salary_band, offer.cost_centre, selected?.branch_name, costCentres]);
 
   // ── Filtered list
@@ -1030,6 +1085,7 @@ export default function NativeHROnboardingRequests() {
       list = list.filter((r) =>
         r.full_name?.toLowerCase().includes(q) ||
         r.candidate_code?.toLowerCase().includes(q) ||
+        r.employee_code?.toLowerCase().includes(q) ||
         r.email?.toLowerCase().includes(q) ||
         r.mobile?.includes(q) ||
         r.branch_name?.toLowerCase().includes(q)
@@ -1160,14 +1216,22 @@ export default function NativeHROnboardingRequests() {
     }
     setCalcLoading(true);
     try {
-      const r = await hrmsApi.post<{ components?: SalaryPreview }>('/api/ats/onboarding/calculate-salary', {
+      // Same calculator as the Salary Package page (src/lib/salaryCalculator.ts calcFromCtc,
+      // ported server-side in salary.calculator.ts) -- the server is what saves the offer.
+      const r = await hrmsApi.post<{ components?: any; basic_pct?: number; hra_pct?: number }>('/api/ats/onboarding/calculate-salary', {
         ctc: monthlyCtc * 12,
         bandCode: offer.salary_band,
         pf_eligible: offer.pf_eligible,
         esi_eligible: offer.esi_eligible,
         branch_id: selected?.branch_id ?? null,
       });
-      setSalaryPreview(r.components ?? null);
+      const c = r.components;
+      const pctLabel = (v?: number) => (v == null ? '—' : `${Math.round(v * 100) / 100}%`);
+      setSalaryPreview(c ? {
+        ...c,
+        ctc: Number(c.offered_ctc ?? 0),
+        source: `Calculated from CTC · Basic ${pctLabel(r.basic_pct)} of gross · HRA ${pctLabel(r.hra_pct)} of basic · PF ${offer.pf_eligible ? 'on' : 'off'} · ESI ${offer.esi_eligible ? 'on' : 'off'}`,
+      } : null);
     } catch (e: any) {
       setFormError(e?.message || 'Salary calculation failed.');
     } finally {
@@ -1180,21 +1244,10 @@ export default function NativeHROnboardingRequests() {
     const pkg = packages.find((p) => String(p.id) === id);
     setF('selected_package_id', id);
     if (!pkg) { setSalaryPreview(null); return; }
-    setF('offered_ctc', String(pkg.package_amount ?? pkg.gross ?? ''));
-    setSalaryPreview({
-      gross: Number(pkg.gross ?? pkg.package_amount ?? 0),
-      basic: Number(pkg.basic ?? 0),
-      hra: Number(pkg.hra ?? 0),
-      conveyance: Number(pkg.conveyance ?? 0),
-      special_allowance: Number(pkg.special_allowance ?? 0),
-      bonus: Number(pkg.bonus ?? 0),
-      pf_employee: Number(pkg.epf_employee ?? pkg.pf_employee ?? 0),
-      pf_employer: Number(pkg.epf_employer ?? pkg.pf_employer ?? 0),
-      esic_employee: Number(pkg.esic_employee ?? 0),
-      esic_employer: Number(pkg.esic_employer ?? 0),
-      net_in_hand: Number(pkg.net_in_hand ?? 0),
-      admin_charges: Number(pkg.admin_charges ?? 0),
-    });
+    // The package's own CTC -- never its gross, which is a different (smaller) figure.
+    // The server saves this package's stored components verbatim (selected_package_id).
+    setF('offered_ctc', String(pkg.package_amount ?? ''));
+    setSalaryPreview(previewFromPackage(pkg));
   };
 
   // ── Validate offer
@@ -2146,7 +2199,6 @@ export default function NativeHROnboardingRequests() {
                               ['ESI Employee',  auditSelected.esic_employee],
                               ['ESI Employer',  auditSelected.esic_employer],
                               ['Prof. Tax',     auditSelected.professional_tax],
-                              ['Gratuity',      auditSelected.gratuity],
                               ['Admin Charges', auditSelected.admin_charges],
                             ] as [string, number | undefined][]).map(([label, val]) => (
                               <div key={label}>
@@ -2734,7 +2786,7 @@ export default function NativeHROnboardingRequests() {
                     {bgv && (
                       <>
                         <p className="mt-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">BGV Result</p>
-                        <InfoRow label="Overall Status" value={bgv.overall_status} />
+                        <InfoRowChip label="Overall Status" value={bgv.overall_status} />
                         <InfoRow label="Score" value={bgv.score != null ? String(bgv.score) : undefined} />
                         {(bgv.checks ?? []).map((c, idx) => (
                           <InfoRow key={idx} label={c.check_type} value={`${c.status}${c.result_summary ? ' · ' + c.result_summary : ''}`} />
@@ -3104,8 +3156,13 @@ export default function NativeHROnboardingRequests() {
                       <>
                         <Field label="Salary Package">
                           <select className={SEL} value={offer.selected_package_id} onChange={(e) => selectPackage(e.target.value)}>
-                            <option value="">Select a package</option>
-                            {packages.map((p) => <option key={p.id} value={p.id}>{fmt(p.package_amount)} / month · In-hand {fmt(p.net_in_hand)}</option>)}
+                            <option value="">{packages.length ? `Select a package (${packages.length} active)` : 'No active packages for this branch / band'}</option>
+                            {packages.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                Band {p.band_code} · CTC {fmt(p.package_amount)}/mo · Gross {fmt(p.gross)} · In-hand {fmt(p.net_in_hand)}
+                                {p.cost_centre_code ? ` · ${p.cost_centre_code}` : ' · branch-wide'}
+                              </option>
+                            ))}
                           </select>
                         </Field>
                         <Field label="Monthly CTC" required error={formFieldErrors.offered_ctc}>
@@ -3172,6 +3229,45 @@ export default function NativeHROnboardingRequests() {
                     )}
                   </div>
 
+                  {/* Active catalog packages with their components -- click a row to choose it */}
+                  {offerTab === 'standard' && packages.length > 0 && (
+                    <div className="rounded-xl border bg-white">
+                      <p className="border-b px-3 py-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+                        Active salary packages · {selected?.branch_name}{offer.salary_band ? ` · Band ${offer.salary_band}` : ''} (monthly)
+                      </p>
+                      <div className="max-h-64 overflow-auto">
+                        <table className="w-full text-xs tabular-nums">
+                          <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase text-slate-500">
+                            <tr>
+                              {['Band', 'Basic', 'HRA', 'Conv.', 'Special', 'Bonus', 'Gross', 'PF Emp', 'ESIC Emp', 'Net In-hand', 'PF Emplr', 'ESIC Emplr', 'Admin', 'CTC', 'Cost Centre'].map((h) => (
+                                <th key={h} className="whitespace-nowrap px-2 py-1.5 text-right first:text-left last:text-left">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {packages.map((p) => {
+                              const isSel = String(p.id) === offer.selected_package_id;
+                              return (
+                                <tr
+                                  key={p.id}
+                                  onClick={() => selectPackage(String(p.id))}
+                                  className={`cursor-pointer border-t ${isSel ? 'bg-blue-50 font-semibold text-blue-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                                  title="Use this package"
+                                >
+                                  <td className="px-2 py-1.5 text-left">{p.band_code}</td>
+                                  {[p.basic, p.hra, p.conveyance, p.special_allowance, p.bonus, p.gross, p.epf_employee, p.esic_employee, p.net_in_hand, p.epf_employer, p.esic_employer, p.admin_charges, p.package_amount].map((v, i) => (
+                                    <td key={i} className="whitespace-nowrap px-2 py-1.5 text-right">{fmt(v)}</td>
+                                  ))}
+                                  <td className="whitespace-nowrap px-2 py-1.5 text-left">{p.cost_centre_code || 'Branch-wide'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Calculate salary button + Advanced Package Builder */}
                   <div className="flex flex-wrap gap-2">
                     {offerTab === 'standard' && !offer.selected_package_id && (
@@ -3199,7 +3295,13 @@ export default function NativeHROnboardingRequests() {
                   {/* Full salary breakdown — 13 components */}
                   {salaryPreview && (
                     <div className="rounded-xl border bg-slate-50 p-4">
-                      <p className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">Salary Breakdown (Monthly)</p>
+                      <p className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">Salary Breakdown (Monthly)</p>
+                      {salaryPreview.source && <p className="mb-3 text-xs text-slate-500">{salaryPreview.source}</p>}
+                      {offer.selected_package_id && ((!offer.pf_eligible && salaryPreview.pf_employee > 0) || (!offer.esi_eligible && salaryPreview.esic_employee > 0)) && (
+                        <p className="mb-3 text-xs font-medium text-amber-600">
+                          ⚠ This package deducts {!offer.pf_eligible && salaryPreview.pf_employee > 0 ? 'PF' : 'ESIC'}, but the candidate is marked not eligible. Pick another package or change the eligibility.
+                        </p>
+                      )}
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                         {([
                           ['Gross', salaryPreview.gross],
@@ -3213,6 +3315,7 @@ export default function NativeHROnboardingRequests() {
                           ['ESIC (Emp)', salaryPreview.esic_employee],
                           ['ESIC (Emplr)', salaryPreview.esic_employer],
                           ['Admin Chrg', salaryPreview.admin_charges],
+                          ['Monthly CTC', salaryPreview.ctc],
                         ] as [string, number | undefined][]).map(([label, value]) => (
                           <div key={label} className="rounded-lg bg-white p-3 text-center shadow-sm">
                             <p className="text-[10px] font-bold uppercase text-slate-400">{label}</p>
@@ -3698,35 +3801,22 @@ export default function NativeHROnboardingRequests() {
         <PackageBuilderDialog
           open={showPackageBuilder}
           onOpenChange={setShowPackageBuilder}
-          defaultBand={offer.salary_band || undefined}
-          defaultCtc={offer.offered_ctc ? Number(offer.offered_ctc) : undefined}
-          defaultPfOpt={!offer.pf_eligible}
-          defaultEsiOpt={!offer.esi_eligible}
-          onSave={(pkg) => {
+          defaultBranch={selected?.branch_name ?? ''}
+          // The dialog's contract is onPackageCreated(packageId, draft); it closes itself.
+          // Draft carries monthly figures under the salary_package_master column names
+          // (epf_* rather than pf_*), same as selectPackage() above.
+          onPackageCreated={(pkgId, pkg) => {
+            // The builder saved (or reused) a catalog package; the offer is saved against
+            // that package's stored components, so what was built is exactly what is offered.
+            const row = { ...pkg, id: pkgId };
+            setPackages((prev) => (prev.some((p) => String(p.id) === String(pkgId)) ? prev : [row, ...prev]));
             setOffer((prev) => ({
               ...prev,
-              offered_ctc: String(pkg.ctc),
-              salary_band: pkg.band,
-              pf_eligible: !pkg.pfOptOut,
-              esi_eligible: !pkg.esiOptOut,
+              offered_ctc: String(pkg.package_amount ?? pkg.ctc),
+              salary_band: pkg.band_code || prev.salary_band,
+              selected_package_id: String(pkgId),
             }));
-            setSalaryPreview({
-              gross: pkg.gross,
-              net_in_hand: pkg.net,
-              basic: pkg.basic,
-              hra: pkg.hra,
-              conveyance: pkg.conveyance ?? 0,
-              special_allowance: pkg.specialAllowance ?? 0,
-              bonus: pkg.bonus ?? 0,
-              pf_employee: pkg.pfEmployee,
-              pf_employer: pkg.pfEmployer,
-              esic_employee: pkg.esicEmployee,
-              esic_employer: pkg.esicEmployer,
-              professional_tax: pkg.pt ?? 0,
-              lwf_employee: pkg.lwfEmployee ?? 0,
-              lwf_employer: pkg.lwfEmployer ?? 0,
-            });
-            setShowPackageBuilder(false);
+            setSalaryPreview(previewFromPackage(row));
           }}
         />
 

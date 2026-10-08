@@ -3,9 +3,9 @@
  * calls (legacy query shapes only) must produce the same whitespace-normalised SQL and params as
  * before. Snapshot generated on origin/main; passes on both trees.
  */
-import { describe, it, expect, vi } from "vitest";
-import { norm } from "./lobTestUtils";
-import { buildRunners } from "./lob-endpoints-harness";
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { norm } from './lobTestUtils';
+import { buildRunners } from './lob-endpoints-harness';
 
 const { calls, mockExecute } = vi.hoisted(() => {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
@@ -44,8 +44,14 @@ vi.mock("../../../shared/dashboardScope.js", () => ({
 
 const runners = buildRunners(true);
 
-describe("unfiltered SQL is unchanged", () => {
-  it.each(Object.keys(runners))("%s", async (name) => {
+// Some endpoints derive their default date window from "today" (compliance trend = last 6 months).
+// The recorded snapshot is for September 2026, so pin the clock; without this the test fails every
+// time the calendar leaves that month. Only Date is faked so promises and timers behave normally.
+beforeAll(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-15T06:30:00Z')); });
+afterAll(() => { vi.useRealTimers(); });
+
+describe('unfiltered SQL is unchanged', () => {
+  it.each(Object.keys(runners))('%s', async (name) => {
     calls.length = 0;
     await runners[name]();
     expect(

@@ -63,6 +63,29 @@ export interface DpdpConfigEntry {
 
 // ─── Consent ──────────────────────────────────────────────────────────────────
 
+/**
+ * Branch scoping for the DPDP admin lists. Non-org-wide callers (hr) see only EMPLOYEE principals
+ * who sit inside their branch / assignments. Candidate principals have no branch link in
+ * data_consent / data_rights_request, so they are not shown to a branch-scoped caller.
+ * dpo, admin and super_admin are unrestricted (the caller passes undefined).
+ */
+export type PrincipalScope = { consentSql: string; rightsSql: string; params: unknown[] };
+
+export async function buildPrincipalScope(user: { id: string }): Promise<PrincipalScope> {
+  const { buildEmployeeScopeCondition, resolveUserBusinessScope } = await import("../../shared/enterpriseScope.js");
+  const scope = await resolveUserBusinessScope(user);
+  const cond = buildEmployeeScopeCondition(scope, {
+    employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", lobId: "e.lob_id",
+    departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id",
+  });
+  const inScope = `(SELECT e.id FROM employees e WHERE (${cond.sql}) UNION SELECT e.user_id FROM employees e WHERE e.user_id IS NOT NULL AND (${cond.sql}))`;
+  return {
+    consentSql: `(principal_type = 'employee' AND data_principal_id IN ${inScope})`,
+    rightsSql: `(principal_type = 'employee' AND principal_id IN ${inScope})`,
+    params: [...cond.params, ...cond.params],
+  };
+}
+
 export const privacyService = {
   async getMyConsents(principalId: string): Promise<DataConsent[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -74,12 +97,10 @@ export const privacyService = {
     return rows as DataConsent[];
   },
 
-  async getAllConsents(filters: {
-    purpose_code?: string;
-    principal_type?: string;
-  }): Promise<DataConsent[]> {
+  async getAllConsents(filters: { purpose_code?: string; principal_type?: string }, principalScope?: PrincipalScope): Promise<DataConsent[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
+    if (principalScope) { conds.push(principalScope.consentSql); params.push(...principalScope.params); }
 
     if (filters.purpose_code) {
       conds.push("purpose_code = ?");
@@ -209,12 +230,10 @@ export const privacyService = {
     return rows as DataRightsRequest[];
   },
 
-  async getAllRightsRequests(filters: {
-    status?: string;
-    request_type?: string;
-  }): Promise<DataRightsRequest[]> {
+  async getAllRightsRequests(filters: { status?: string; request_type?: string }, principalScope?: PrincipalScope): Promise<DataRightsRequest[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
+    if (principalScope) { conds.push(principalScope.rightsSql); params.push(...principalScope.params); }
 
     if (filters.status) {
       conds.push("status = ?");

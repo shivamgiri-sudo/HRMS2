@@ -48,7 +48,8 @@ export function useManagerAnalytics(enabled = true) {
     queryKey: ["manager", "analytics"],
     queryFn: async () => {
       const response = await hrmsApi.get<{ success?: boolean; data?: ManagerAnalytics }>("/management/manager-analytics");
-      return response.data ?? response;
+      // The route returns the { success, data } envelope; the fallback tolerates a bare payload.
+      return response.data ?? (response as unknown as ManagerAnalytics);
     },
     enabled,
     staleTime: 5 * 60 * 1000, // 5 min

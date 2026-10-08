@@ -1,16 +1,14 @@
-import { Router, type NextFunction, type Response } from "express";
-import { db } from "../../db/mysql.js";
-import { upsertOpenWorkItem } from "../../shared/workItem.js";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import { requireWriteAccess } from "../../middleware/authMiddleware.js";
-import { checkEmployeeCodeGate } from "./employee-code-gate.service.js";
-import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
-import { generateEmployeeCode } from "../employees/employee-code.service.js";
-import type { RowDataPacket } from "mysql2";
+import { Router, type NextFunction, type Response } from 'express';
+import { db } from '../../db/mysql.js';
+import { upsertOpenWorkItem } from '../../shared/workItem.js';
+import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import { candidateParamGuard } from './candidate-access.js';
+import { requireWriteAccess } from '../../middleware/authMiddleware.js';
+import { checkEmployeeCodeGate } from './employee-code-gate.service.js';
+import { provisionLmsIdentityForEmployee } from '../lms/lms-provisioning.service.js';
+import { generateEmployeeCode } from '../employees/employee-code.service.js';
+import type { RowDataPacket } from 'mysql2';
 
 const router = Router();
 type AsyncHandler = (
@@ -23,6 +21,10 @@ const h =
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     void fn(req, res).catch(next);
   };
+
+// Branch scoping (owner ruling 2026-10-01): gate-check and generate are limited to candidates inside the
+// caller's own branch / assigned scope (org-wide roles unaffected).
+router.param('candidateId', candidateParamGuard());
 
 // GET /api/ats/employee-code/:candidateId/gate-check
 router.get(

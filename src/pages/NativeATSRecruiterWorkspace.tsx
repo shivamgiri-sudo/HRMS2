@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { canLoadOwnRecruiterStats } from "@/lib/recruiterWorkspaceAccess";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 type CandidateRow = {
@@ -357,8 +358,11 @@ function cascadeSelected(form: Form): Form {
 }
 
 export default function NativeATSRecruiterWorkspace() {
-  const { roleKeys } = useWorkforceAccess();
+  const { roleKeys, isResolved: rolesResolved } = useWorkforceAccess();
   const isPrivilegedUser = ["admin", "hr", "super_admin"].some(r => roleKeys.includes(r));
+  // Privileged non-recruiters (admin/HR) have no recruiter profile: the self-only daily-stats / other-pending
+  // endpoints are guaranteed to fail for them, so they are not called.
+  const loadsOwnStats = canLoadOwnRecruiterStats(roleKeys);
 
   const [screen, setScreen] = useState<"workspace" | "form">("workspace");
   const [tab, setTab] = useState<"pending" | "history">("pending");
@@ -526,6 +530,7 @@ export default function NativeATSRecruiterWorkspace() {
   };
 
   const loadOtherPending = async () => {
+    if (!loadsOwnStats) { setOtherPending([]); return; }
     try {
       const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/ats/recruiter/other-pending");
       setOtherPending((res.data ?? []).map((c: any) => ({
@@ -564,6 +569,7 @@ export default function NativeATSRecruiterWorkspace() {
   };
 
   const loadDailyStats = async () => {
+    if (!loadsOwnStats) { setDailyStats(null); return; }
     try {
       const res = await hrmsApi.get<{ success: boolean; data: DailyStats }>(
         "/api/ats/recruiter/daily-stats"
@@ -662,9 +668,14 @@ export default function NativeATSRecruiterWorkspace() {
     }
   };
 
+  // Wait for the roles so the first load knows whether this is a recruiter (see loadsOwnStats); load once.
+  const workspaceLoadedRef = useRef(false);
   useEffect(() => {
+    if (!rolesResolved || workspaceLoadedRef.current) return;
+    workspaceLoadedRef.current = true;
     loadWorkspace();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rolesResolved]);
 
   // Auto-refresh pending queue every 90s while on pending tab
   useEffect(() => {
@@ -1075,6 +1086,11 @@ export default function NativeATSRecruiterWorkspace() {
               <div className="rw-kpi-num">{convRate}%</div>
             </div>
           </div>
+          {rolesResolved && !loadsOwnStats && (
+            <p style={{ margin: "-6px 0 12px", fontSize: 12, color: "#64748b" }}>
+              Today's counts are per recruiter and appear when a recruiter opens this workspace. You are viewing all queues.
+            </p>
+          )}
 
           {/* ── Tab bar + header actions ── */}
           <div className="rw-card" style={{ paddingBottom: 0 }}>

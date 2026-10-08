@@ -39,6 +39,7 @@ import { payrollLinesCompatRouter } from "./modules/payroll/payroll-lines.compat
 import { payrollExtendedRouter } from "./modules/payroll/payroll-extended.routes.js";
 import { payrollMoreRouter } from "./modules/payroll/payroll-more.routes.js";
 import { esiRegDocsRouter } from "./modules/payroll/esi-reg-docs.routes.js";
+import { pendencyRemindersRouter } from "./modules/payroll/pendency/pendency-reminders.routes.js";
 import { esicAutomationRouter } from "./modules/payroll/esic-automation.routes.js";
 import { payrollBranchReadinessRouter } from "./modules/payroll/payroll-branch-readiness.routes.js";
 import { payrollCcAttendanceRouter } from "./modules/payroll/payroll-cc-attendance.routes.js";
@@ -147,6 +148,7 @@ import { managementRouter } from "./modules/management/management.routes.js";
 import performanceScorecardRoutes from "./modules/performance-scorecard/performance-scorecard.routes.js";
 import { dailyBriefRouter } from "./modules/management/daily-brief/daily-brief.routes.js";
 import { rosterGovRouter } from "./modules/roster/roster.governance.routes.js";
+import { rosterRequestsRouter } from "./modules/roster-requests/roster-requests.routes.js";
 import { weekoffPreferenceRouter } from "./modules/roster/weekoff-preference.routes.js";
 import { rosterSelfSecureRouter } from "./modules/roster/roster.self.secure.routes.js";
 import { rtaRouter } from "./modules/rta/rta.routes.js";
@@ -163,6 +165,8 @@ import ijpRouter from "./modules/ijp/ijp.routes.js";
 import { erpRouter } from "./modules/erp/erp.routes.js";
 import { clientBillingRouter } from "./modules/client-billing/client-billing.routes.js";
 import { inboxRouter } from "./modules/inbox/inbox.routes.js";
+import { approvalActionPublicRouter } from "./modules/approval-center/approval-action.public.routes.js";
+import { approvalCenterRouter } from "./modules/approval-center/approval-center.routes.js";
 import { itProvisioningRouter } from "./modules/it-provisioning/it-provisioning.routes.js";
 import { mobilityRouter } from "./modules/mobility/mobility.routes.js";
 import { goalsRouter } from "./modules/goals/goals.routes.js";
@@ -192,6 +196,9 @@ import { attendanceExceptionBucketRouter } from "./modules/wfm/attendance-except
 import { rosterImportRouter } from "./modules/wfm/roster-import.routes.js";
 import { rosterUploadTrackerRouter } from "./modules/wfm/roster-upload-tracker.routes.js";
 import { opsControlTowerRouter } from "./modules/ops-control-tower/ops-control-tower.routes.js";
+import { heRouter } from "./modules/hiring-engine/he.routes.js";
+import { heWebhookRouter } from "./modules/hiring-engine/he-webhook.routes.js";
+import { hePublicRouter } from "./modules/hiring-engine/he-public.routes.js";
 import { rosterBuilderRouter } from "./modules/wfm/roster-builder.routes.js";
 import { rosterIntelligenceRouter } from "./modules/wfm/roster-intelligence.routes.js";
 import { rosterAnalyticsRouter } from "./modules/wfm/roster-analytics.routes.js";
@@ -245,6 +252,7 @@ import { qualityGovernanceRouter } from "./modules/quality-dashboard/quality-gov
 import { processMetricDefinitionRouter } from "./modules/kpi/process-metric-definition.routes.js";
 import { qualityAggregationRouter } from "./modules/quality-dashboard/quality-aggregation.routes.js";
 import { callMasterRouter } from "./modules/call-master/call-master.routes.js";
+import { myDashboardsRouter } from "./modules/call-master/mydashboards.routes.js";
 import { inboundRouter } from "./modules/call-master/inbound.routes.js";
 import { inboundInsightsRouter } from "./modules/call-master/inbound-insights.routes.js";
 import { salesUploadRouter } from "./modules/sales-upload/sales-upload.routes.js";
@@ -256,6 +264,7 @@ import { performanceDashboardRouter } from "./modules/performance-dashboard/perf
 import { performanceIntelligenceRouter } from "./modules/performance-intelligence/performance-intelligence.routes.js";
 import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
 import { kpiStudioRouter } from "./modules/kpi/kpi-studio.routes.js";
+import { kpiCatalogueRouter } from "./modules/kpi-catalogue/kpi-catalogue.routes.js";
 import { jobRequisitionRouter } from "./modules/job-requisition/job-requisition.routes.js";
 import { metaCampaignRouter } from "./modules/meta-campaign/meta-campaign.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
@@ -297,6 +306,8 @@ import { birlanuDashboardRouter } from "./modules/process-performance/birlanu-da
 import { gncSaleDashboardRouter } from "./modules/process-performance/gnc-sale-dashboard.routes.js";
 import { gncChatDashboardRouter } from "./modules/process-performance/gnc-chat-dashboard.routes.js";
 import { housingPremiumDashboardRouter } from "./modules/process-performance/housing-premium-dashboard.routes.js";
+import { duDigitalDashboardRouter } from "./modules/process-performance/du-digital-dashboard.routes.js";
+import { ahmDashboardRouter } from "./modules/process-performance/ahm-dashboard.routes.js";
 import { lpFeedbackDashboardRouter } from "./modules/process-performance/lp-feedback-dashboard.routes.js";
 import { lpOnboardingDashboardRouter } from "./modules/process-performance/lp-onboarding-dashboard.routes.js";
 import { satyaRetailDashboardRouter } from "./modules/process-performance/satya-retail-dashboard.routes.js";
@@ -305,13 +316,19 @@ import { neemansCartDashboardRouter } from "./modules/process-performance/neeman
 import { neemansPerformanceDashboardRouter } from "./modules/process-performance/neemans-performance-dashboard.routes.js";
 import { bellavitaChatDashboardRouter } from "./modules/process-performance/bellavita-chat-dashboard.routes.js";
 import { dalmiaDashboardRouter } from "./modules/process-performance/dalmia-dashboard.routes.js";
+import { sbiCardDashboardRouter } from "./modules/process-performance/sbi-card-dashboard.routes.js";
+import { processDashboardRouter } from "./modules/process-dashboard/pd.routes.js";
 import { bellavitaCartDashboardRouter } from "./modules/process-performance/bellavita-cart-dashboard.routes.js";
 import { appreciateWealthDashboardRouter } from "./modules/process-performance/appreciate-wealth-dashboard.routes.js";
 import { dashboardExportRouter } from "./modules/process-performance/dashboard-export.routes.js";
+import { misScheduleRouter } from "./modules/process-performance/mis-schedule.routes.js";
+import { altRxRouter } from "./modules/process-performance/alt-rx/alt-rx.routes.js";
 import { misExportRouter } from "./modules/process-performance/mis-export.routes.js";
 import { kpiScorecardRouter } from "./modules/process-performance/kpi-scorecard.routes.js";
 import { processDataSourceRouter } from "./modules/process-data-source/process-data-source.routes.js";
 import { dashboardBuilderRouter } from "./modules/dashboard-builder/dashboard-builder.routes.js";
+import { analyticsCatalogueRouter } from "./modules/analytics-catalogue/analytics.routes.js";
+import { dashboardsRouter } from "./modules/analytics-catalogue/dashboards.routes.js";
 import { processOperationsRouter } from "./modules/process-operations/process-operations.routes.js";
 import { onfidoProcessDashboardRouter } from "./modules/onfido-process/onfido-process-dashboard.routes.js";
 import { onfidoNameMappingRouter } from "./modules/onfido-process/onfido-name-mapping.routes.js";
@@ -342,14 +359,18 @@ import { companyBankAccountRouter } from "./modules/finance/company-bank-account
 import { payableAccountRouter } from "./modules/finance/payable-account.routes.js";
 import { financeClientsRouter } from "./modules/finance/finance-clients.routes.js";
 import { paymentVoucherRouter } from "./modules/finance/payment-voucher.routes.js";
+import { tdsRouter } from "./modules/finance/tds.routes.js";
+import { grnTallyRouter } from "./modules/finance/grn-tally-export.routes.js";
 import { journalVoucherRouter } from "./modules/finance/journal-voucher.routes.js";
 import { bankReconciliationRouter } from "./modules/finance/bank-reconciliation.routes.js";
 import { ledgerReportsRouter } from "./modules/finance/ledger-reports.routes.js";
 import { bankMasterRouter } from "./modules/finance/bank-master.routes.js";
 import { salaryVoucherRouter } from "./modules/finance/salary-voucher.routes.js";
+import { tallyImportRouter } from "./modules/finance/tally-import.routes.js";
 import { payrollLedgerPostingRouter } from "./modules/finance/payroll-ledger-posting.routes.js";
 import { legacyReportsRouter } from "./modules/legacy-reports/legacy-reports.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
+import { revenueForecastRouter } from "./modules/process-pnl/revenue-forecast.routes.js";
 import { clientPaymentTrackingRouter } from "./modules/finance/client-payment-tracking.routes.js";
 import mandateSeatTrackingRouter from "./modules/finance/mandate-seat-tracking.routes.js";
 import { financeAnalyticsRouter } from "./modules/finance/finance-analytics.routes.js";
@@ -362,6 +383,7 @@ import { pennyDropRouter } from "./modules/onboarding/penny-drop.routes.js";
 import { nameValidationRouter } from "./modules/onboarding/name-validation.routes.js";
 import { digiLockerRouter } from "./modules/onboarding/digilocker.routes.js";
 import { employeeReactivationRouter } from "./modules/employees/employee-reactivation.routes.js";
+import { rejoinDossierRouter } from "./modules/employees/rejoin-dossier.routes.js";
 import { employeeVerifyRouter } from "./modules/employees/employee.verify.routes.js";
 import { salaryIncrementRouter } from "./modules/salary-increment/salaryIncrement.routes.js";
 import { breakDeskRouter } from "./modules/break-management/break-desk.routes.js";
@@ -527,6 +549,7 @@ app.use("/api/payroll", listEndpointLimiter, payrollRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollExtendedRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollMoreRouter);
 app.use("/api/payroll", listEndpointLimiter, esiRegDocsRouter);
+app.use("/api/payroll", pendencyRemindersRouter);
 app.use("/api/payroll", listEndpointLimiter, esicAutomationRouter);
 app.use(
   "/api/payroll/branch-readiness",
@@ -642,6 +665,7 @@ app.use("/api/employees", listEndpointLimiter, employeeJoiningDocumentsRouter);
 // running a script on the server.
 app.use("/api/employees", joiningKitRouter);
 app.use("/api/employees", employeeReactivationRouter);
+app.use("/api/employees", rejoinDossierRouter);
 app.use("/api/bgv/employee", employeeBgvRouter);
 app.use("/api/rm-change", rmChangeRouter);
 app.use("/api/statutory-change-requests", statutoryApprovalRouter);
@@ -653,6 +677,8 @@ app.use("/api/kpi-master", kpiMasterRouter);
 // routes, which reads as a permissions bug and hid it). Its migrations were
 // applied on 2026-09-03; only the mount was missing.
 app.use("/api/kpi-studio", kpiStudioRouter);
+// KPI Catalogue: one source of truth for process KPIs, reconciled with KPI Studio (2026-10-01).
+app.use("/api/kpi-catalogue", kpiCatalogueRouter);
 app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
 app.use("/api/portal/admin", portalAdminRouter);
@@ -665,6 +691,12 @@ app.use("/api/job-requisition", jobRequisitionRouter);
 // and VOICEBOT_CALLBACK_TOKEN respectively, and each REFUSES the request when its secret is
 // unset rather than falling open. Every other route in the router is requireAuth + requireRole.
 app.use("/api/meta", metaCampaignRouter);
+// Hiring Engine capture webhooks: unauthenticated by design (Pinbot / email provider / voice bot cannot present a
+// session); every route is gated on HE_WEBHOOK_TOKEN and refuses when it is unset. Authenticated API is /api/he.
+app.use("/api/he-hook", heWebhookRouter);
+// Candidate live-location page API. Unauthenticated: the per-match token is the credential (see he-public.routes.ts).
+app.use("/api/he-public", hePublicRouter);
+app.use("/api/he", heRouter);
 app.use("/api/ats", atsFormConfigRouter);
 // Unauthenticated by design so a walk-in can self-register. Rate limiting is
 // applied per-verb inside registrationEnhancedRouter (POST submissions only) so
@@ -674,6 +706,7 @@ app.use("/api/test-report", testDailyReportRouter); // TEMP TEST - REMOVE AFTER 
 app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)
 app.use("/api/public/verify", employeeVerifyRouter); // public QR code verification (no auth)
 app.use("/api/public/login-info", loginInfoRouter); // public login page stats (no auth, aggregate only)
+app.use("/api/public/approval-action", kpiCaptureLimiter, approvalActionPublicRouter); // emailed one-click links (no login)
 // Open KPI capture page (/kpi-capture). Unauthenticated by design so process owners can fill it
 // from a link without an HRMS account; writes only to the kpi_capture_submission staging table,
 // never to live KPI config. Must stay ABOVE the "/api" clientRouter mount, which applies
@@ -792,6 +825,7 @@ app.use("/api/management/daily-brief", dailyBriefRouter);
 app.use("/api/roster-gov", rosterSelfSecureRouter);
 app.use("/api/roster-gov", weekoffPreferenceRouter);
 app.use("/api/roster-gov", rosterGovRouter);
+app.use("/api/roster-requests", rosterRequestsRouter);
 app.use("/api/rta", rtaRouter);
 app.use("/api/account-control", accountControlRouter);
 app.use("/api/workforce-mandate", workforceMandateRouter);
@@ -834,6 +868,8 @@ app.use("/api/finance/bank-accounts", companyBankAccountRouter);
 app.use("/api/finance/payable-accounts", payableAccountRouter);
 app.use("/api/finance/clients", financeClientsRouter);
 app.use("/api/finance/payment-vouchers", paymentVoucherRouter);
+app.use("/api/finance/tds", tdsRouter);
+app.use("/api/finance/grn-tally", grnTallyRouter);
 app.use("/api/finance/journal-vouchers", journalVoucherRouter);
 app.use("/api/finance/bank-reconciliation", bankReconciliationRouter);
 // Journal Task 4 (Phase 4 of the double-entry plan) — Trial Balance / Vendor Ledger /
@@ -843,11 +879,13 @@ app.use("/api/finance/bank-master", bankMasterRouter);
 // Its own prefix, like imprest: a salary voucher exposes a whole branch payroll, and it must
 // not be reachable through a path that a broader finance router also serves.
 app.use("/api/finance/payroll", salaryVoucherRouter);
+app.use("/api/finance/tally-import", tallyImportRouter);
 // Same prefix, separate router — payroll-ledger-posting.routes.ts's own header explains why the
 // one WRITE action (post-to-ledger) is deliberately kept out of the read-only salaryVoucherRouter.
 app.use("/api/finance/payroll", payrollLedgerPostingRouter);
 app.use("/api/legacy-reports", legacyReportsRouter);
 app.use("/api/finance/cost-centres", costCentreManagementRouter);
+app.use("/api/finance/revenue-forecasts", revenueForecastRouter);
 app.use("/api/finance/client-payments", clientPaymentTrackingRouter);
 app.use("/api/finance/mandate-seats", mandateSeatTrackingRouter);
 app.use("/api/finance/analytics", financeAnalyticsRouter);
@@ -861,6 +899,7 @@ app.use("/api/finance", processPnlRouter);
 // path-less middleware added to a router on the shared base would reintroduce the same problem.
 app.use("/api/finance/billability", billabilityRouter);
 app.use("/api/inbox", inboxRouter);
+app.use("/api/approval-center", approvalCenterRouter);
 app.use("/api/it-provisioning", itProvisioningRouter);
 app.use("/api/onboarding-provisioning", itProvisioningRouter);
 app.use("/api/mobility", mobilityRouter);
@@ -958,6 +997,7 @@ app.use("/api/quality-governance", qualityGovernanceRouter); // per-process qual
 app.use("/api/kpi/process-metrics", processMetricDefinitionRouter); // per-process metric definitions — 1047 had readers and no writer
 app.use("/api/agent", qualityAggregationRouter);
 app.use("/api/call-master", callMasterRouter);
+app.use("/api/mydashboards/call-master", myDashboardsRouter);
 app.use("/api/inbound", tpzInboundProjectGate);
 app.use("/api/inbound", inboundRouter);
 app.use("/api/sales-upload", salesUploadRouter);
@@ -1001,6 +1041,8 @@ app.use("/api/process-performance", cloviaChannelsDashboardRouter);
 app.use("/api/process-performance", cloviaInboundSnapshotRouter);
 app.use("/api/process-performance", gncChatDashboardRouter);
 app.use("/api/process-performance", housingPremiumDashboardRouter);
+app.use("/api/process-performance", duDigitalDashboardRouter);
+app.use("/api/process-performance", ahmDashboardRouter);
 app.use("/api/process-performance", lpFeedbackDashboardRouter);
 app.use("/api/process-performance", lpOnboardingDashboardRouter);
 app.use("/api/process-performance", neemansPerformanceDashboardRouter);
@@ -1008,14 +1050,20 @@ app.use("/api/process-performance", satyaRetailDashboardRouter);
 app.use("/api/process-performance", satyaRetailReportRouter);
 app.use("/api/process-performance", cloviaLobDashboardRouter);
 app.use("/api/process-performance", dalmiaDashboardRouter);
+app.use("/api/process-performance", sbiCardDashboardRouter);
+app.use("/api/process-dashboard", processDashboardRouter);
 app.use("/api/process-performance", appreciateWealthDashboardRouter);
 app.use("/api/process-performance", dashboardExportRouter);
 app.use("/api/inbound-insights", tpzInsightsGate);
 app.use("/api/inbound-insights", inboundInsightsRouter);
+app.use("/api/process-performance", misScheduleRouter);
+app.use("/api/process-performance", altRxRouter);
 app.use("/api/process-performance", misExportRouter);
 app.use("/api/process-kpi-dashboard", kpiScorecardRouter);
 app.use("/api/process-data-source", processDataSourceRouter);
 app.use("/api/dashboard-builder", dashboardBuilderRouter);
+app.use("/api/analytics-catalogue/dashboards", dashboardsRouter);
+app.use("/api/analytics-catalogue", analyticsCatalogueRouter);
 app.use("/api/process-operations", processOperationsRouter);
 // Mounted BEFORE the broader /api/onfido-process router below: Express dispatches
 // mounted routers in registration order, and onfidoProcessDashboardRouter's own
@@ -1084,6 +1132,7 @@ app.use("/api/mcnmeet", mcnmeetRouter);
 // Predictive attrition scoring, manager risk leaderboard, intervention recommendations,
 // attrition reason inference, employee 360 composite profile, WFM compliance analytics.
 import { predictiveAttritionRouter } from "./modules/analytics/predictive-attrition.routes.js";
+import { attritionHubRouter } from "./modules/analytics/attrition-hub.routes.js";
 import { attritionReasonInferenceRouter } from "./modules/analytics/attrition-reason-inference.routes.js";
 import { managerRiskRouter } from "./modules/analytics/manager-risk.routes.js";
 import { employee360Router as analyticsEmployee360Router } from "./modules/analytics/employee-360.routes.js";
@@ -1091,6 +1140,7 @@ import { interventionRecommendationRouter } from "./modules/analytics/interventi
 import { wfmComplianceAnalyticsRouter } from "./modules/wfm/wfm-compliance-analytics.routes.js";
 
 app.use("/api/analytics/predictive-attrition", predictiveAttritionRouter);
+app.use("/api/analytics/attrition-hub", attritionHubRouter);
 app.use(
   "/api/analytics/attrition-reason-inference",
   attritionReasonInferenceRouter,

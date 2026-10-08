@@ -4,6 +4,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { canAccessEmployeeRecord } from "../dashboards/branch-scope-guards.js";
 import { skillRoadmapService } from "./skill-roadmap.service.js";
 
 export const skillRoadmapRouter = Router();
@@ -31,7 +32,9 @@ async function canAccessEmployee(
   employeeId: string,
 ): Promise<boolean> {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, ...MANAGER_ROLES)) return true;
+  // Owner ruling 2026-10-01: a manager role says who may use the page, not whose roadmap they may
+  // open. Org-wide roles pass inside canViewEmployee; everyone else is limited to branch / assigned scope.
+  if (await hasRole(userId, ...MANAGER_ROLES)) return canAccessEmployeeRecord(req.authUser!, employeeId);
   const emp = await getEmployeeForUser(userId);
   return !!emp && emp.id === employeeId;
 }
@@ -79,6 +82,9 @@ skillRoadmapRouter.post(
   "/employee/:employeeId/assign",
   requireRole(...MANAGER_ROLES),
   h(async (req, res) => {
+    if (!(await canAccessEmployee(req, req.params.employeeId))) {
+      return res.status(403).json({ success: false, message: "Forbidden: this employee is outside your branch / assigned scope" });
+    }
     const { roadmap_id } = req.body as { roadmap_id?: string };
     if (!roadmap_id || typeof roadmap_id !== "string") {
       return res
@@ -99,6 +105,9 @@ skillRoadmapRouter.delete(
   "/employee/:employeeId/assign/:roadmapId",
   requireRole(...MANAGER_ROLES),
   h(async (req, res) => {
+    if (!(await canAccessEmployee(req, req.params.employeeId))) {
+      return res.status(403).json({ success: false, message: "Forbidden: this employee is outside your branch / assigned scope" });
+    }
     await skillRoadmapService.unassignRoadmap(
       req.params.employeeId,
       req.params.roadmapId,

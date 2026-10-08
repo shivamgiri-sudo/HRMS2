@@ -341,22 +341,26 @@ router.post(
 );
 
 // GET /tat/dashboard — aggregated TAT stats by task type and status
-router.get(
-  "/dashboard",
-  h(async (_req: any, res: any) => {
-    const [stats] = await db.execute<RowDataPacket[]>(
-      `SELECT
-       task_type,
-       status,
+router.get("/dashboard", h(async (req: AuthenticatedRequest, res: any) => {
+  // Branch scoping (owner ruling 2026-10-01): same scope predicate GET /tasks applies. Org-wide callers get
+  // "1=1", so the aggregate they see is unchanged.
+  const ctx = await getUserRoleContext(req.authUser!.id);
+  const scope = await resolveDashboardScopeForRequest(req.authUser!, ctx.primaryRole);
+  const scopeWhere = scopeToSqlWhere(scope, "t");
+  const [stats] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       t.task_type,
+       t.status,
        COUNT(*) AS count,
-       SUM(CASE WHEN due_at < NOW() AND status IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS overdue_count,
-       AVG(TIMESTAMPDIFF(HOUR, created_at, COALESCE(completed_at, NOW()))) AS avg_age_hours
-     FROM task_tat_instance
-     GROUP BY task_type, status
-     ORDER BY task_type`,
-    );
-    return res.json({ success: true, data: stats });
-  }),
-);
+       SUM(CASE WHEN t.due_at < NOW() AND t.status IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS overdue_count,
+       AVG(TIMESTAMPDIFF(HOUR, t.created_at, COALESCE(t.completed_at, NOW()))) AS avg_age_hours
+     FROM task_tat_instance t
+     WHERE ${scopeWhere.sql}
+     GROUP BY t.task_type, t.status
+     ORDER BY t.task_type`,
+    scopeWhere.params
+  );
+  return res.json({ success: true, data: stats });
+}));
 
 export { router as tatRouter };

@@ -256,7 +256,32 @@ export async function listPackages(
   }
   sql += " ORDER BY spm.created_at DESC";
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-  return rows;
+  // The package pickers showed the same package many times: every "Create & Assign" and every
+  // onboarding Package Builder save inserted a new catalog row even when an identical one already
+  // existed. Pickers get one entry per distinct package (the oldest, i.e. the original); the
+  // admin screen (includeInactive) still lists every row so they can be managed.
+  return filters.includeInactive ? rows : dedupePackages(rows);
+}
+
+/** Everything that makes two packages pay differently. Two rows equal on all of it are one package. */
+function packageIdentity(p: Record<string, unknown>): string {
+  const norm = (v: unknown) => (v == null || v === "" ? "" : String(v).trim().toUpperCase());
+  const money = (v: unknown) => (v == null || v === "" ? "0" : Number(v).toFixed(2));
+  return [
+    norm(p.branch_name), norm(p.cost_centre_code), norm(p.band_code), money(p.package_amount),
+    ...PACKAGE_MONEY_COLUMNS.map((c) => money(p[c])),
+  ].join("|");
+}
+
+function dedupePackages(rows: RowDataPacket[]): RowDataPacket[] {
+  // rows arrive newest first; keep the oldest of each identical group, in the original order.
+  const keep = new Map<string, RowDataPacket>();
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const k = packageIdentity(rows[i]);
+    if (!keep.has(k)) keep.set(k, rows[i]);
+  }
+  const kept = new Set(keep.values());
+  return rows.filter((r) => kept.has(r));
 }
 
 export async function getPackageById(id: string) {
@@ -394,10 +419,27 @@ export async function createPackage(data: any, createdBy: string) {
   const id = randomUUID();
   const money = PACKAGE_MONEY_COLUMNS.map((c) => amtColumn(c, data[c]));
   const packageAmount = amt(data.package_amount);
-  const minWage = await checkPackageMinimumWage(
-    data.branch_name,
-    packageAmount,
+
+  // Reuse an identical active package rather than adding another copy of it to the shared
+  // catalog (see listPackages). Same branch, cost centre, band and every amount.
+  const wanted = packageIdentity({
+    branch_name: data.branch_name, cost_centre_code: data.cost_centre_code ?? null,
+    band_code: data.band_code, package_amount: packageAmount,
+    ...Object.fromEntries(PACKAGE_MONEY_COLUMNS.map((c, i) => [c, money[i]])),
+  });
+  const [sameShape] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM salary_package_master
+      WHERE active_status = 1 AND branch_name = ? AND band_code = ? AND package_amount = ?
+        AND (cost_centre_code <=> ?)
+      ORDER BY created_at ASC`,
+    [data.branch_name, data.band_code, packageAmount, data.cost_centre_code ?? null],
   );
+  const existing = Number(data.active_status ?? 1) === 1
+    ? sameShape.find((r) => packageIdentity(r) === wanted)
+    : undefined;
+  if (existing) return getPackageById(String(existing.id));
+
+  const minWage = await checkPackageMinimumWage(data.branch_name, packageAmount);
 
   await db.execute(
     `INSERT INTO salary_package_master

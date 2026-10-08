@@ -49,29 +49,19 @@ function primeDb(opts: {
       [{ id: TEMPLATE_ID, letter_type: opts.letterType, template_code: "X" }],
     ])
     // 2. employees + joins lookup
-    .mockResolvedValueOnce([
-      [
-        {
-          id: EMP_ID,
-          first_name: "Test",
-          last_name: "Employee",
-          full_name: "Test Employee",
-          employee_code: "MAS1",
-          employment_status: opts.employmentStatus,
-          date_of_exit: opts.dateOfExit,
-          designation_name: null,
-          dept_name: null,
-          branch_name: null,
-          branch_address: "",
-          branch_hr_contact: "",
-          date_of_joining: "2020-01-01",
-          epf_number: null,
-          esic_number: null,
-        },
-      ],
-    ])
-    // 3. INSERT INTO generated_letter (only reached if not blocked)
-    .mockResolvedValueOnce([{ affectedRows: 1 }]);
+    .mockResolvedValueOnce([[{
+      id: EMP_ID, first_name: "Test", last_name: "Employee", full_name: "Test Employee",
+      employee_code: "MAS1", employment_status: opts.employmentStatus, date_of_exit: opts.dateOfExit,
+      designation_name: null, dept_name: null, branch_name: null, branch_address: "", branch_hr_contact: "",
+      date_of_joining: "2020-01-01", epf_number: null, esic_number: null,
+    }]])
+    ;
+  // 3. approved increment lookup, consulted for increment letters only
+  if (opts.letterType === "increment") {
+    dbExecute.mockResolvedValueOnce([[{ proposed_ctc: 240000, effective_from: "2026-07-01" }]]);
+  }
+  // 4. INSERT INTO generated_letter (only reached if not blocked)
+  dbExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
   letterSalaryRowsMock.mockResolvedValue({ rows: {}, unavailableReason: null });
 }
 

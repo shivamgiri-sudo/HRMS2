@@ -6,11 +6,13 @@ import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, CheckCircle2, XCircle, X, AlertCircle, RefreshCw, Users, History, Ban, Search } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Loader2, CheckCircle2, CheckCheck, XCircle, X, AlertCircle, RefreshCw, Users, History, Ban, Search } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { CandidateJourneyDrawer } from '@/components/ats/CandidateJourneyDrawer';
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { useSearchParams } from 'react-router-dom';
+import { useApprovalFocus } from '@/hooks/useApprovalFocus';
 import {
   Table,
   TableBody,
@@ -120,6 +122,15 @@ function processCell(offer: PendingOffer): { text: string; tone: string; title?:
   return { text: '—', tone: 'text-slate-400' };
 }
 
+/** Employee creation needs a validated salary, so only these can be approved. */
+const isPayrollReady = (offer: PendingOffer) =>
+  offer.payroll_validated === 1 || offer.payroll_validated === true;
+
+type BulkResult = {
+  approved: { name: string; employeeCode: string | null }[];
+  failed: { name: string; candidateCode: string; message: string }[];
+};
+
 function offersFrom(payload: unknown): PendingOffer[] {
   if (Array.isArray(payload)) return payload as PendingOffer[];
   if (payload && typeof payload === 'object') {
@@ -133,6 +144,9 @@ function offersFrom(payload: unknown): PendingOffer[] {
 function OfferRow({
   offer,
   acting,
+  busy,
+  selected,
+  onToggleSelect,
   onAct,
   onRejectClick,
   remark,
@@ -141,6 +155,10 @@ function OfferRow({
 }: {
   offer: PendingOffer;
   acting: string | null;
+  /** A bulk approval is running — every row's controls are locked until it ends. */
+  busy: boolean;
+  selected: boolean;
+  onToggleSelect: (offerId: string, checked: boolean) => void;
   onAct: (id: string, action: 'approve' | 'reject', remark: string) => void;
   onRejectClick: (offer: PendingOffer, remark: string) => void;
   remark: string;
@@ -148,14 +166,16 @@ function OfferRow({
   onOpenJourney: (candidateId: string) => void;
 }) {
   const isActing = acting === offer.offer_id;
+  const locked = isActing || busy;
   const proc = processCell(offer);
   // Employee creation needs a validated salary (validateSalaryLock). Without
   // it Approve throws "Branch Head approval pending", which the branch head
   // cannot act on — so the blocker is shown here instead.
-  const payrollReady = offer.payroll_validated === 1 || offer.payroll_validated === true;
+  const payrollReady = isPayrollReady(offer);
 
   return (
     <TableRow
+      data-approval-id={offer.offer_id}
       onClick={() => onOpenJourney(offer.candidate_id)}
       onKeyDown={(e) => { if (e.key === 'Enter') onOpenJourney(offer.candidate_id); }}
       tabIndex={0}
@@ -165,14 +185,30 @@ function OfferRow({
     >
       {/* Candidate — sticky, so identity stays visible while the row is scrolled. */}
       <TableCell className="sticky left-0 z-10 bg-inherit py-3">
-        <div className="flex flex-col gap-1">
-          <span className="font-semibold text-slate-900">{offer.full_name}</span>
-          <span className="flex items-center gap-2">
-            <span className="font-mono text-[11px] text-slate-500">{offer.candidate_code}</span>
-            <span className="text-[11px] text-slate-400">
-              {offer.mobile ? offer.mobile.slice(0, 3) + 'XXXXX' + offer.mobile.slice(-3) : '—'}
-            </span>
+        <div className="flex items-center gap-3">
+          {/* Bulk-approve selection. Unvalidated salaries cannot be approved one
+              at a time either, so they cannot be selected. */}
+          <span
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            title={payrollReady ? undefined : 'Payroll HR must validate the salary before this can be approved'}
+          >
+            <Checkbox
+              checked={selected}
+              disabled={!payrollReady || busy}
+              onCheckedChange={(v) => onToggleSelect(offer.offer_id, v === true)}
+              aria-label={`Select ${offer.full_name} for bulk approval`}
+            />
           </span>
+          <div className="flex flex-col gap-1">
+            <span className="font-semibold text-slate-900">{offer.full_name}</span>
+            <span className="flex items-center gap-2">
+              <span className="font-mono text-[11px] text-slate-500">{offer.candidate_code}</span>
+              <span className="text-[11px] text-slate-400">
+                {offer.mobile ? offer.mobile.slice(0, 3) + 'XXXXX' + offer.mobile.slice(-3) : '—'}
+              </span>
+            </span>
+          </div>
         </div>
       </TableCell>
 
@@ -248,7 +284,7 @@ function OfferRow({
           value={remark}
           onChange={e => onRemarkChange(offer.offer_id, e.target.value)}
           placeholder="Remarks…"
-          disabled={isActing}
+          disabled={locked}
           className="h-9 w-full min-w-[140px] text-sm"
           onClick={(e) => e.stopPropagation()}
         />
@@ -269,7 +305,7 @@ function OfferRow({
           <Button
             size="sm"
             className="h-9 cursor-pointer bg-emerald-600 px-3 text-white shadow-sm transition-colors hover:bg-emerald-700"
-            disabled={isActing || !payrollReady}
+            disabled={locked || !payrollReady}
             title={payrollReady ? undefined : 'Payroll HR must validate the salary before this can be approved'}
             onClick={() => onAct(offer.offer_id, 'approve', remark)}
             aria-label={`Approve and activate ${offer.full_name}`}
@@ -285,7 +321,7 @@ function OfferRow({
             size="sm"
             variant="outline"
             className="h-9 cursor-pointer border-rose-200 px-3 text-rose-700 transition-colors hover:border-rose-300 hover:bg-rose-50 hover:text-rose-800"
-            disabled={isActing}
+            disabled={locked}
             onClick={() => onRejectClick(offer, remark)}
             aria-label={`Reject offer for ${offer.full_name}`}
           >
@@ -319,6 +355,15 @@ export default function NativeBranchHeadApproval() {
   const [rejectPromptOffer, setRejectPromptOffer] = useState<PendingOffer | null>(null);
   const [rejectPromptReason, setRejectPromptReason] = useState('');
 
+  // Bulk approval. Each selected offer goes through the same per-offer approve
+  // call as the row button, one after another, so every approval is authorised,
+  // audited and converted exactly as a single one is — and one failure does not
+  // stop or undo the rest.
+  const [selected, setSelected]       = useState<Set<string>>(new Set());
+  const [bulkConfirm, setBulkConfirm] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  const [bulkResult, setBulkResult]   = useState<BulkResult | null>(null);
+
   // Client-side filter: the queue is a handful of rows, so a round trip per
   // keystroke would be slower and no more correct.
   const q = query.trim().toLowerCase();
@@ -326,6 +371,32 @@ export default function NativeBranchHeadApproval() {
     [o.full_name, o.candidate_code, o.branch_name, o.cost_centre_code, o.client_name,
      o.process_name, o.process_raw, o.emp_type, o.salary_band]
       .some((f) => String(f ?? '').toLowerCase().includes(q)));
+
+  const bulkRunning = bulkProgress !== null;
+  const selectableVisible = visibleOffers.filter(isPayrollReady);
+  const selectedOffers = offers.filter((o) => selected.has(o.offer_id) && isPayrollReady(o));
+  const allVisibleSelected =
+    selectableVisible.length > 0 && selectableVisible.every((o) => selected.has(o.offer_id));
+  const someVisibleSelected = selectableVisible.some((o) => selected.has(o.offer_id));
+
+  const toggleSelect = (offerId: string, checked: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(offerId); else next.delete(offerId);
+      return next;
+    });
+  };
+
+  // Select-all acts on what the filter is showing, not the whole queue.
+  const toggleSelectAllVisible = (checked: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const o of selectableVisible) {
+        if (checked) next.add(o.offer_id); else next.delete(o.offer_id);
+      }
+      return next;
+    });
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -394,18 +465,49 @@ export default function NativeBranchHeadApproval() {
     void loadStats();  // refresh tab counts
   };
 
-  if (user && !roleKeys.some(k => ALLOWED.includes(k))) {
-    return (
-      <DashboardLayout>
-        <div className="p-8 text-center text-rose-600 font-bold">You do not have access to this page.</div>
-      </DashboardLayout>
-    );
-  }
+  const bulkApprove = async () => {
+    const batch = selectedOffers;
+    setBulkConfirm(false);
+    if (!batch.length) return;
+    setActionError(null);
+    setApprovalSuccess(null);
+    setBulkResult(null);
+    const result: BulkResult = { approved: [], failed: [] };
+    setBulkProgress({ done: 0, total: batch.length });
+    for (let i = 0; i < batch.length; i++) {
+      const offer = batch[i];
+      setActing(offer.offer_id);
+      try {
+        const r: any = await hrmsApi.post(
+          `/api/ats/onboarding/offers/${offer.offer_id}/approve`,
+          { remarks: remarks[offer.offer_id] ?? '' },
+        );
+        result.approved.push({ name: offer.full_name, employeeCode: r?.employeeCode ?? null });
+      } catch (e: any) {
+        result.failed.push({
+          name: offer.full_name,
+          candidateCode: offer.candidate_code,
+          message: e?.message ?? 'Failed to approve the offer.',
+        });
+      }
+      setBulkProgress({ done: i + 1, total: batch.length });
+    }
+    setActing(null);
+    setBulkProgress(null);
+    setBulkResult(result);
+    // Failed rows stay selected so they can be retried after the cause is fixed.
+    setSelected(new Set(batch
+      .filter((o) => result.failed.some((f) => f.candidateCode === o.candidate_code))
+      .map((o) => o.offer_id)));
+    void load();
+    void loadStats();
+  };
 
   // ── past decisions ────────────────────────────────────────────────────
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get('tab') ?? 'pending';
   const journeyCandidate = searchParams.get('candidate');
+  useApprovalFocus(!loading && tab === 'pending');
 
   const [decisions, setDecisions] = useState<DecisionRow[]>([]);
   const [decisionsLoading, setDecisionsLoading] = useState(false);
@@ -456,6 +558,15 @@ export default function NativeBranchHeadApproval() {
   }, []);
 
   useEffect(() => { loadStats(); }, [loadStats]);
+
+  // Below every hook: an early return above them made the hooks conditional.
+  if (user && !roleKeys.some(k => ALLOWED.includes(k))) {
+    return (
+      <DashboardLayout>
+        <div className="p-8 text-center text-rose-600 font-bold">You do not have access to this page.</div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -531,6 +642,51 @@ export default function NativeBranchHeadApproval() {
           </div>
         )}
 
+        {/* Bulk approval outcome — who was activated, and who was not and why. */}
+        {bulkResult && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`rounded-xl border p-4 flex items-start gap-3 shadow-sm ${
+              bulkResult.failed.length ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'
+            }`}
+          >
+            {bulkResult.failed.length
+              ? <AlertCircle className="h-5 w-5 text-amber-600 mt-0.5 flex-shrink-0" aria-hidden="true" />
+              : <CheckCircle2 className="h-5 w-5 text-emerald-600 mt-0.5 flex-shrink-0" aria-hidden="true" />}
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-slate-900">
+                {bulkResult.approved.length} offer{bulkResult.approved.length === 1 ? '' : 's'} approved
+                {bulkResult.failed.length > 0 && `, ${bulkResult.failed.length} failed`}
+              </p>
+              {bulkResult.approved.length > 0 && (
+                <p className="mt-1 text-sm text-emerald-800">
+                  {bulkResult.approved
+                    .map((a) => (a.employeeCode ? `${a.name} (${a.employeeCode})` : a.name))
+                    .join(', ')}
+                </p>
+              )}
+              {bulkResult.failed.length > 0 && (
+                <ul className="mt-2 space-y-1 text-sm text-rose-700">
+                  {bulkResult.failed.map((f) => (
+                    <li key={f.candidateCode}>
+                      <span className="font-semibold">{f.name}</span>
+                      <span className="font-mono text-xs"> ({f.candidateCode})</span> — {f.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <button
+              onClick={() => setBulkResult(null)}
+              className="text-slate-400 hover:text-slate-600 flex-shrink-0 p-2 rounded-lg focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+              aria-label="Dismiss bulk approval result"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
+        )}
+
         {/* Action error banner */}
         {actionError && (
           <div
@@ -593,6 +749,35 @@ export default function NativeBranchHeadApproval() {
                       ? ` offer${offers.length === 1 ? '' : 's'} awaiting your approval`
                       : ` of ${offers.length} shown`}
                   </p>
+                  {(selectedOffers.length > 0 || bulkRunning) && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-slate-700" aria-live="polite">
+                        {bulkProgress
+                          ? `Approving ${Math.min(bulkProgress.done + 1, bulkProgress.total)} of ${bulkProgress.total}…`
+                          : `${selectedOffers.length} selected`}
+                      </span>
+                      <Button
+                        size="sm"
+                        className="h-9 cursor-pointer bg-emerald-600 px-3 text-white shadow-sm transition-colors hover:bg-emerald-700"
+                        disabled={bulkRunning || acting !== null}
+                        onClick={() => setBulkConfirm(true)}
+                      >
+                        {bulkRunning
+                          ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                          : <CheckCheck className="h-4 w-4" aria-hidden="true" />}
+                        <span className="ml-1.5">Approve selected</span>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-9 cursor-pointer"
+                        disabled={bulkRunning}
+                        onClick={() => setSelected(new Set())}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                  )}
                   <div className="relative w-full sm:w-72">
                     <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
                     <Input
@@ -610,7 +795,7 @@ export default function NativeBranchHeadApproval() {
                     <TableHeader className="[&_tr]:border-slate-200">
                       <TableRow className="bg-slate-50 hover:bg-slate-50">
                         {[
-                          ['Candidate',     'sticky left-0 z-20 bg-slate-50 min-w-[160px]'],
+                          ['Candidate',     'sticky left-0 z-20 bg-slate-50 min-w-[190px]'],
                           ['Branch & Type', 'min-w-[140px]'],
                           ['Cost Centre',   'min-w-[120px]'],
                           ['Process',       'min-w-[110px]'],
@@ -627,7 +812,17 @@ export default function NativeBranchHeadApproval() {
                             key={label}
                             className={`h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wider text-slate-500 ${cls}`}
                           >
-                            {label}
+                            {label === 'Candidate' ? (
+                              <span className="flex items-center gap-3">
+                                <Checkbox
+                                  checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
+                                  disabled={bulkRunning || selectableVisible.length === 0}
+                                  onCheckedChange={(v) => toggleSelectAllVisible(v === true)}
+                                  aria-label="Select all offers ready for approval"
+                                />
+                                {label}
+                              </span>
+                            ) : label}
                           </TableHead>
                         ))}
                       </TableRow>
@@ -638,6 +833,9 @@ export default function NativeBranchHeadApproval() {
                           key={o.offer_id}
                           offer={o}
                           acting={acting}
+                          busy={bulkRunning}
+                          selected={selected.has(o.offer_id)}
+                          onToggleSelect={toggleSelect}
                           onAct={act}
                           onRejectClick={handleRejectClick}
                           remark={remarks[o.offer_id] || ''}
@@ -668,6 +866,53 @@ export default function NativeBranchHeadApproval() {
         open={Boolean(journeyCandidate)}
         onClose={closeJourney}
       />
+
+      {/* Bulk approve confirmation — approval creates employees, so it is never
+          one click away from a stray select-all. */}
+      {bulkConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <h3 className="font-bold text-slate-800">
+                Approve {selectedOffers.length} offer{selectedOffers.length === 1 ? '' : 's'}
+              </h3>
+              <button type="button" onClick={() => setBulkConfirm(false)} aria-label="Cancel bulk approval">
+                <X className="h-4 w-4 text-slate-400" />
+              </button>
+            </div>
+            <div className="space-y-4 p-5">
+              <p className="text-sm text-slate-600">
+                Each candidate below will be approved and activated as an employee. This cannot be
+                undone from this screen. Remarks typed on a row are recorded with that approval.
+              </p>
+              <ul className="max-h-56 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200 text-sm">
+                {selectedOffers.map((o) => (
+                  <li key={o.offer_id} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-slate-800">{o.full_name}</span>
+                      <span className="font-mono text-[11px] text-slate-500">{o.candidate_code}</span>
+                    </span>
+                    <span className="whitespace-nowrap tabular-nums text-slate-600">{inr(o.offered_ctc)}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex gap-3 pt-1">
+                <Button
+                  type="button"
+                  className="min-h-[44px] flex-1 cursor-pointer bg-emerald-600 text-white hover:bg-emerald-700"
+                  onClick={() => void bulkApprove()}
+                >
+                  <CheckCheck className="mr-2 h-4 w-4" aria-hidden="true" />
+                  Approve {selectedOffers.length}
+                </Button>
+                <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => setBulkConfirm(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Reject reason prompt — appears the moment Reject is clicked with no
           remark already typed, so the reason is captured right there instead

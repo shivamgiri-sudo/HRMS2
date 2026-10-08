@@ -9,11 +9,8 @@ import {
 } from "./bpo-pnl.calculation.js";
 import { getAdjustedTotal } from "./pnl-manual-adjustment.service.js";
 import { costComponentDataFlags } from "./pnl-cost-component-flags.js";
-import {
-  grnAllocationExGstSql,
-  grnRequestExGstSql,
-  vendorPayableExGstSql,
-} from "./pnl-ex-gst.js";
+import { grnAllocationExGstSql, grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
+import { allocationAccountingMonthSql, grnAccountingMonthSql, vendorAccountingMonthSql } from "./pnl-grn-month.js";
 
 type BpoPnlSummary = Awaited<ReturnType<typeof bpoPnlService.getSummary>>;
 
@@ -306,9 +303,7 @@ async function reservedAllocationRows(period: string) {
             COUNT(*) AS allocation_count, MAX(freshness) AS freshness
        FROM (
          SELECT a.process_id AS process_id, a.branch_id AS branch_id,
-                COALESCE(a.recognition_period,
-                  DATE_FORMAT(COALESCE(g.service_period_end, g.bill_date, g.reviewed_at, g.created_at), '%Y-%m')
-                ) AS period_code,
+                ${allocationAccountingMonthSql("a", "g")} AS period_code,
                 COALESCE(a.pnl_bucket, sh.pnl_bucket,
                   CASE WHEN a.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END
                 ) AS pnl_bucket,
@@ -412,16 +407,16 @@ async function legacyAllocatedGrnRows(period: string) {
        FROM vendor_payment_tracking vpt
        JOIN grn_request g ON g.id = vpt.grn_request_id
        JOIN (
+         -- Only GRNs whose allocations vw_process_pnl_grn_allocation actually adds back: the view INNER JOINs
+         -- finance_budget_line, so an allocation with no budget line is never added. Subtracting such a GRN
+         -- here removed it from the P&L entirely (Mas/5/26/279, 14.6L Fee & Subscription, May 2026).
          SELECT grn_request_id
            FROM grn_cost_allocation
-          WHERE lifecycle_status = 'consumed'
+          WHERE lifecycle_status = 'consumed' AND budget_line_id IS NOT NULL
           GROUP BY grn_request_id
        ) allocated ON allocated.grn_request_id = g.id
        LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
-      WHERE COALESCE(
-              vpt.recognition_period,
-              DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m')
-            ) = ?
+      WHERE ${vendorAccountingMonthSql("vpt")} = ?
         AND LOWER(REPLACE(COALESCE(vpt.payment_status, ''), '_', ' ')) IN (
           'payment pending','pending','approved','posted','scheduled','payment scheduled',
           'partially paid','paid','closed'
@@ -440,18 +435,18 @@ async function legacyAllocatedGrnRows(period: string) {
         SUM(${grnRequestExGstSql("g")}) AS amount
        FROM grn_request g
        JOIN (
+         -- Only GRNs whose allocations vw_process_pnl_grn_allocation actually adds back: the view INNER JOINs
+         -- finance_budget_line, so an allocation with no budget line is never added. Subtracting such a GRN
+         -- here removed it from the P&L entirely (Mas/5/26/279, 14.6L Fee & Subscription, May 2026).
          SELECT grn_request_id
            FROM grn_cost_allocation
-          WHERE lifecycle_status = 'consumed'
+          WHERE lifecycle_status = 'consumed' AND budget_line_id IS NOT NULL
           GROUP BY grn_request_id
        ) allocated ON allocated.grn_request_id = g.id
        LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
        LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = g.id
       WHERE vpt.id IS NULL
-        AND COALESCE(
-              g.recognition_period,
-              DATE_FORMAT(COALESCE(g.service_period_end, g.bill_date, g.reviewed_at, g.created_at), '%Y-%m')
-            ) = ?
+        AND ${grnAccountingMonthSql("g")} = ?
         AND LOWER(REPLACE(COALESCE(g.status, ''), '_', ' ')) IN (
           'approved','finance head approved','pending accounts payment','payment scheduled',
           'partially paid','paid','posted'

@@ -8,6 +8,7 @@ import { emailService } from "../communication/email.service.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { assessAggregatePunches } from "../wfm/cosec-punch-interpretation.service.js";
 import { getRealTimePunchesToday } from "../wfm/attendance-realtime-ncosec.service.js";
+import { buildAppLink } from "../../shared/appLink.js";
 
 /**
  * Business-rule rejection carrying an HTTP status.
@@ -182,94 +183,185 @@ function currentIstDateTime() {
   };
 }
 
-function resolveShiftDate(explicitDate?: string | null) {
-  if (explicitDate && /^\d{4}-\d{2}-\d{2}$/.test(explicitDate))
-    return explicitDate;
-  const now = currentIstDateTime();
-  if (now.hour >= 5) return now.date;
-  const previous = new Date(`${now.date}T00:00:00+05:30`);
-  previous.setUTCDate(previous.getUTCDate() - 1);
-  const parts = getIstParts(previous);
+// Night shifts run past midnight, so "today's" desk date must stay on the previous
+// calendar day until the latest night shift ends. Refreshed from wfm_shift_master.
+const DEFAULT_NIGHT_CARRYOVER_HOUR = 5;
+let nightCarryoverHour = DEFAULT_NIGHT_CARRYOVER_HOUR;
+
+type ShiftMaster = {
+  id: string;
+  name: string;
+  start: string; // HH:MM
+  end: string; // HH:MM
+  startMin: number;
+  endMin: number;
+  processName: string | null;
+};
+const SHIFT_MASTER_TTL_MS = 5 * 60_000;
+let shiftMasterCache: { loadedAt: number; rows: ShiftMaster[] } | null = null;
+
+function parseClockMinutes(value: unknown): number | null {
+  const match = /^(\d{1,2}):(\d{2})/.exec(String(value ?? "").trim());
+  if (!match) return null;
+  const minutes = Number(match[1]) * 60 + Number(match[2]);
+  return Number.isFinite(minutes) && minutes < 24 * 60 ? minutes : null;
+}
+
+function isNightShiftWindow(start: unknown, end: unknown) {
+  const startMin = parseClockMinutes(start);
+  const endMin = parseClockMinutes(end);
+  return startMin !== null && endMin !== null && endMin <= startMin;
+}
+
+async function loadShiftMasters(): Promise<ShiftMaster[]> {
+  if (shiftMasterCache && Date.now() - shiftMasterCache.loadedAt < SHIFT_MASTER_TTL_MS) return shiftMasterCache.rows;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, shift_name, start_time, end_time, process_name
+         FROM wfm_shift_master
+        WHERE COALESCE(active_status, 1) = 1`,
+    );
+    const masters: ShiftMaster[] = [];
+    for (const row of rows as any[]) {
+      const startMin = parseClockMinutes(row.start_time);
+      const endMin = parseClockMinutes(row.end_time);
+      if (startMin === null || endMin === null) continue;
+      masters.push({
+        id: String(row.id),
+        name: String(row.shift_name ?? "").trim(),
+        start: String(row.start_time).slice(0, 5),
+        end: String(row.end_time).slice(0, 5),
+        startMin,
+        endMin,
+        processName: row.process_name ? String(row.process_name) : null,
+      });
+    }
+    shiftMasterCache = { loadedAt: Date.now(), rows: masters };
+    const nightEnds = masters.filter((m) => m.endMin <= m.startMin).map((m) => Math.ceil(m.endMin / 60));
+    nightCarryoverHour = nightEnds.length > 0
+      ? Math.min(12, Math.max(DEFAULT_NIGHT_CARRYOVER_HOUR, Math.max(...nightEnds) + 1))
+      : DEFAULT_NIGHT_CARRYOVER_HOUR;
+  } catch {
+    shiftMasterCache = { loadedAt: Date.now(), rows: shiftMasterCache?.rows ?? [] };
+  }
+  return shiftMasterCache!.rows;
+}
+
+function circularMinuteDistance(a: number, b: number) {
+  const diff = Math.abs(a - b) % (24 * 60);
+  return Math.min(diff, 24 * 60 - diff);
+}
+
+const ACTUAL_SHIFT_MAX_DISTANCE_MINUTES = 180;
+const ROSTERED_SHIFT_KEEP_DISTANCE_MINUTES = 60;
+
+/**
+ * The shift an employee actually worked is the master whose start is closest to
+ * their first punch-in, not whatever the roster says (swaps/overrides are common).
+ * Roster wins only when the punch sits close to the rostered start.
+ */
+function inferActualShift(
+  punchIn: string | null | undefined,
+  rosteredShiftId: string | null | undefined,
+  processName: string | null | undefined,
+  masters: ShiftMaster[],
+): ShiftMaster | null {
+  if (!punchIn) return null;
+  const punchMin = parseClockMinutes(String(punchIn).replace("T", " ").split(" ")[1] ?? "");
+  if (punchMin === null || masters.length === 0) return null;
+
+  const rostered = rosteredShiftId ? masters.find((m) => m.id === rosteredShiftId) : undefined;
+  if (rostered && circularMinuteDistance(punchMin, rostered.startMin) <= ROSTERED_SHIFT_KEEP_DISTANCE_MINUTES) {
+    return rostered;
+  }
+
+  let best: ShiftMaster | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const master of masters) {
+    const distance = circularMinuteDistance(punchMin, master.startMin);
+    if (distance > ACTUAL_SHIFT_MAX_DISTANCE_MINUTES) continue;
+    // Same process breaks ties between identical-time masters (sub-minute bias only).
+    const score = distance + (processName && master.processName === processName ? 0 : 0.5);
+    if (score < bestScore) {
+      best = master;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function addDaysToDate(dateText: string, days: number) {
+  const date = new Date(`${dateText}T00:00:00+05:30`);
+  date.setUTCDate(date.getUTCDate() + days);
+  const parts = getIstParts(date);
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-const shiftLookupCache = new Map<
-  string,
-  { start_time: string; end_time: string; duration_minutes: number } | null
->();
-const SHIFT_CACHE_TTL_MS = 5 * 60_000;
-let shiftCacheLastClear = Date.now();
-let shiftTableAvailable = true;
+function resolveShiftDate(explicitDate?: string | null) {
+  if (explicitDate && /^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) return explicitDate;
+  const now = currentIstDateTime();
+  if (now.hour >= nightCarryoverHour) return now.date;
+  return addDaysToDate(now.date, -1);
+}
 
-async function resolveShiftDateSmart(
-  employeeId: string,
-  explicitDate?: string | null,
-): Promise<string> {
-  if (explicitDate && /^\d{4}-\d{2}-\d{2}$/.test(explicitDate))
-    return explicitDate;
-  if (!shiftTableAvailable) return resolveShiftDate(explicitDate);
+/** Scheduled end of a shift that started on shiftDate (next day when it crosses midnight). */
+function shiftEndInstantMs(shiftDate: string, startTime: unknown, endTime: unknown) {
+  const endMin = parseClockMinutes(endTime);
+  if (endMin === null) return Number.NaN;
+  const endDate = isNightShiftWindow(startTime, endTime) ? addDaysToDate(shiftDate, 1) : shiftDate;
+  const hh = String(Math.floor(endMin / 60)).padStart(2, "0");
+  const mm = String(endMin % 60).padStart(2, "0");
+  return new Date(`${endDate}T${hh}:${mm}:00+05:30`).getTime();
+}
 
-  if (Date.now() - shiftCacheLastClear > SHIFT_CACHE_TTL_MS) {
-    shiftLookupCache.clear();
-    shiftCacheLastClear = Date.now();
-  }
+const rosterShiftCache = new Map<string, { at: number; shift: { start: string; end: string } | null }>();
 
-  let shift: {
-    start_time: string;
-    end_time: string;
-    duration_minutes: number;
-  } | null;
-  if (shiftLookupCache.has(employeeId)) {
-    shift = shiftLookupCache.get(employeeId)!;
-  } else {
-    try {
-      const today = currentIstDateTime().date;
-      const [rows] = await db.execute(
-        `SELECT s.start_time, s.end_time, s.required_minutes AS duration_minutes
+async function getRosteredShiftWindow(employeeId: string, rosterDate: string) {
+  const key = `${employeeId}|${rosterDate}`;
+  const cached = rosterShiftCache.get(key);
+  if (cached && Date.now() - cached.at < SHIFT_MASTER_TTL_MS) return cached.shift;
+  let shift: { start: string; end: string } | null = null;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(ra.shift_start_time, ''), s.start_time) AS start_time,
+              COALESCE(NULLIF(ra.shift_end_time, ''), s.end_time) AS end_time
          FROM wfm_roster_assignment ra
-         JOIN wfm_shift_master s ON s.id = ra.shift_id
-         WHERE ra.employee_id = ? AND ra.roster_date = ?
-         LIMIT 1`,
-        [employeeId, today],
-      );
-      shift = (rows as any[])[0] ?? null;
-    } catch (err: any) {
-      if (
-        err?.code === "ER_NO_SUCH_TABLE" ||
-        String(err?.message ?? "").includes("doesn't exist")
-      ) {
-        shiftTableAvailable = false;
-      }
-      shift = null;
+         LEFT JOIN wfm_shift_master s ON s.id = ra.shift_id
+        WHERE ra.employee_id = ? AND ra.roster_date = ?
+          AND COALESCE(ra.is_week_off, 0) = 0
+        ORDER BY COALESCE(ra.updated_at, ra.created_at) DESC
+        LIMIT 1`,
+      [employeeId, rosterDate],
+    );
+    const row = (rows as any[])[0];
+    if (row && parseClockMinutes(row.start_time) !== null && parseClockMinutes(row.end_time) !== null) {
+      shift = { start: String(row.start_time), end: String(row.end_time) };
     }
-    shiftLookupCache.set(employeeId, shift);
+  } catch {
+    shift = null;
   }
+  if (rosterShiftCache.size > 5000) rosterShiftCache.clear();
+  rosterShiftCache.set(key, { at: Date.now(), shift });
+  return shift;
+}
 
-  if (!shift) return resolveShiftDate(explicitDate);
+async function resolveShiftDateSmart(employeeId: string, explicitDate?: string | null): Promise<string> {
+  if (explicitDate && /^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) return explicitDate;
+  await loadShiftMasters();
 
   const now = currentIstDateTime();
-  const startHH = parseInt(shift.start_time?.slice(0, 2) ?? "9", 10);
-  const durationHrs = (shift.duration_minutes ?? 540) / 60;
-  const endHH = (startHH + durationHrs) % 24;
-  const crossesMidnight = startHH >= 18 && endHH < startHH;
+  const yesterday = addDaysToDate(now.date, -1);
 
-  if (crossesMidnight) {
-    if (now.hour < endHH + 2) {
-      const previous = new Date(`${now.date}T00:00:00+05:30`);
-      previous.setUTCDate(previous.getUTCDate() - 1);
-      const parts = getIstParts(previous);
-      return `${parts.year}-${parts.month}-${parts.day}`;
-    }
-    return now.date;
+  // A night shift rostered yesterday owns the clock until it actually ends (+2h grace for
+  // late punch-outs and open breaks), regardless of what today's roster says.
+  const prev = await getRosteredShiftWindow(employeeId, yesterday);
+  if (prev && isNightShiftWindow(prev.start, prev.end)) {
+    const endMs = shiftEndInstantMs(yesterday, prev.start, prev.end);
+    if (Number.isFinite(endMs) && Date.now() < endMs + 2 * 60 * 60_000) return yesterday;
   }
 
-  if (now.hour < 5 && startHH < 12) {
-    const previous = new Date(`${now.date}T00:00:00+05:30`);
-    previous.setUTCDate(previous.getUTCDate() - 1);
-    const parts = getIstParts(previous);
-    return `${parts.year}-${parts.month}-${parts.day}`;
-  }
-
+  const today = await getRosteredShiftWindow(employeeId, now.date);
+  if (!today && !prev) return resolveShiftDate(null);
   return now.date;
 }
 
@@ -290,8 +382,20 @@ function normalizePunchStamp(value: unknown) {
     .slice(0, 19);
 }
 
-function resolveRealtimePunchWindow(shiftDate: string) {
+function resolveRealtimePunchWindow(shiftDate: string, isNightShift = false) {
   const now = currentIstDateTime();
+  const previousShiftDate = addDaysToDate(now.date, -1);
+  if (shiftDate !== now.date && shiftDate !== previousShiftDate) return null;
+
+  if (isNightShift) {
+    // Night shift: start late afternoon of shiftDate so the previous night's
+    // morning punch-out is not mistaken for this shift's punch-in; run to noon next day.
+    return {
+      dateStart: `${shiftDate} 16:00:00`,
+      dateEnd: `${addDaysToDate(shiftDate, 1)} 12:00:00`,
+    };
+  }
+
   if (shiftDate === now.date) {
     return {
       dateStart: `${shiftDate} 00:00:00`,
@@ -299,8 +403,7 @@ function resolveRealtimePunchWindow(shiftDate: string) {
     };
   }
 
-  const previousShiftDate = shiftDateByDays(now.date, -1);
-  if (now.hour < 5 && shiftDate === previousShiftDate) {
+  if (now.hour < nightCarryoverHour) {
     return {
       dateStart: `${shiftDate} 00:00:00`,
       dateEnd: `${now.date} 23:59:59`,
@@ -608,16 +711,33 @@ async function getBiometricSnapshot(
     biometricMinutes: Number(row.biometric_minutes ?? 0),
   };
 
-  if (shiftDate === currentIstDateTime().date && env.NCOSEC_DB_HOST) {
+  // Live overlay covers today AND the carried-over previous date, so a night-shift
+  // worker after midnight still has a punch-in on record when starting a break.
+  if (env.NCOSEC_DB_HOST && resolveRealtimePunchWindow(shiftDate)) {
     try {
-      const realtime = await getRealTimePunchesToday(employeeId);
-      if (realtime?.first_punch_in) {
+      const rostered = await getRosteredShiftWindow(employeeId, shiftDate);
+      const [enrollRows] = await db.execute<RowDataPacket[]>(
+        `SELECT cosec_user_id
+           FROM employee_biometric_enrollment
+          WHERE employee_id = ? AND is_active = 1
+          ORDER BY COALESCE(last_sync_at, enrolled_at) DESC, id DESC
+          LIMIT 1`,
+        [employeeId],
+      );
+      const live = (await getRealtimeNcosecPunchMap(
+        [{
+          employeeId,
+          employeeCode,
+          cosecUserId: (enrollRows as any[])[0]?.cosec_user_id ?? employeeCode,
+          isNightShift: Boolean(rostered && isNightShiftWindow(rostered.start, rostered.end)),
+        }],
+        shiftDate,
+      )).get(employeeId);
+      if (live?.punchIn) {
         return {
-          punchIn: normalizePunchStamp(realtime.first_punch_in),
-          punchOut: normalizePunchStamp(realtime.last_punch_out),
-          biometricMinutes: Number(
-            realtime.raw_minutes ?? fallback.biometricMinutes ?? 0,
-          ),
+          punchIn: live.punchIn,
+          punchOut: live.punchOut,
+          biometricMinutes: Number(live.biometricMinutes ?? fallback.biometricMinutes ?? 0),
         };
       }
     } catch (error) {
@@ -632,16 +752,27 @@ async function getBiometricSnapshot(
 }
 
 async function getRealtimeNcosecPunchMap(
-  employees: Array<{
-    employeeId: string;
-    employeeCode: string;
-    cosecUserId?: string | null;
-  }>,
+  employees: Array<{ employeeId: string; employeeCode: string; cosecUserId?: string | null; isNightShift?: boolean }>,
   shiftDate: string,
 ) {
-  const window = resolveRealtimePunchWindow(shiftDate);
-  if (!window || !env.NCOSEC_DB_HOST)
-    return new Map<string, LivePunchSnapshot>();
+  if (!env.NCOSEC_DB_HOST) return new Map<string, LivePunchSnapshot>();
+  const dayEmployees = employees.filter((employee) => !employee.isNightShift);
+  const nightEmployees = employees.filter((employee) => employee.isNightShift);
+  const merged = new Map<string, LivePunchSnapshot>();
+  for (const [group, isNight] of [[dayEmployees, false], [nightEmployees, true]] as const) {
+    if (group.length === 0) continue;
+    const window = resolveRealtimePunchWindow(shiftDate, isNight);
+    if (!window) continue;
+    const part = await queryNcosecPunchWindow(group, window);
+    for (const [employeeId, snapshot] of part) merged.set(employeeId, snapshot);
+  }
+  return merged;
+}
+
+async function queryNcosecPunchWindow(
+  employees: Array<{ employeeId: string; employeeCode: string; cosecUserId?: string | null }>,
+  window: { dateStart: string; dateEnd: string },
+) {
 
   const employeeIdsByUserId = new Map<string, string[]>();
   for (const employee of employees) {
@@ -793,15 +924,15 @@ function resolveShiftWorkedMinutes(row: {
 
 function isShiftEndReached(
   punchOut: string | null | undefined,
+  shiftStartTime: string | null | undefined,
   shiftEndTime: string | null | undefined,
   shiftDate: string,
 ): boolean {
-  if (!shiftEndTime) return true; // no roster → caller uses fallback
+  if (!shiftEndTime) return true; // no shift → caller uses fallback
   if (!punchOut) return false;
-  const [h, m] = String(shiftEndTime).split(":").map(Number);
-  const endMs = new Date(
-    `${shiftDate}T${String(h).padStart(2, "0")}:${String(m ?? 0).padStart(2, "0")}:00+05:30`,
-  ).getTime();
+  // Night shifts end on the next calendar day; comparing against shiftDate's end
+  // clock would flag them "completed" the moment they punch in.
+  const endMs = shiftEndInstantMs(shiftDate, shiftStartTime, shiftEndTime);
   const outMs = new Date(
     punchOut.replace(" ", "T") + (punchOut.includes("+") ? "" : "+05:30"),
   ).getTime();
@@ -844,19 +975,8 @@ function deriveStatus(row: any, settings: BreakSettingsRow, shiftDate: string) {
   if (row.biometric_punch_in_time && row.biometric_punch_out_time) {
     if (row.shift_end_time) {
       // Roster available: punch-out must be at or after the scheduled shift end
-      if (
-        isShiftEndReached(
-          row.biometric_punch_out_time,
-          row.shift_end_time,
-          shiftDate,
-        )
-      ) {
-        return {
-          label: "Shift Completed",
-          tone: "completed",
-          activeMinutes,
-          isExceeded,
-        };
+      if (isShiftEndReached(row.biometric_punch_out_time, row.shift_start_time, row.shift_end_time, shiftDate)) {
+        return { label: "Shift Completed", tone: "completed", activeMinutes, isExceeded };
       }
     } else if (workedMinutes >= MINIMUM_SHIFT_COMPLETION_MINUTES) {
       // No roster: fall back to 9-hour minimum
@@ -1082,6 +1202,8 @@ async function sendBreakAlertIfNeeded(sessionId: string) {
               <p><strong>Biometric punch-in:</strong> ${session.biometric_punch_in_time ?? "—"}</p>
               <p><strong>Biometric punch-out:</strong> ${session.biometric_punch_out_time ?? "—"}</p>
               <p><strong>Kiosk/source:</strong> Break Management Desk</p>
+              <p style="margin:16px 0 4px"><a href="${buildAppLink("/break-session-log")}" style="display:inline-block;background:#145da0;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600">Open break session log</a></p>
+              <p style="font-size:12px;color:#64748b;margin:4px 0">Or copy this link: ${buildAppLink("/break-session-log")}</p>
               <p style="margin-top:16px;color:#475569">This is an automated alert from HRMS2 Break Management.</p>
             </div>
           `,
@@ -1367,14 +1489,18 @@ async function validateKiosk(kioskCode: string, token: string, req: Request) {
   return device;
 }
 
-async function fetchDeskRows(
+type DeskScope = { nightRosterOnly?: boolean; excludeEmployeeIds?: string[] };
+
+async function loadDeskEmployees(
   kiosk: KioskDevice,
   filters: DeskFilters,
-  includeAll = false,
-  includeRealtime = false,
+  shiftDate: string,
+  includeAll: boolean,
+  includeRealtime: boolean,
+  scope: DeskScope = {},
 ) {
-  const shiftDate = resolveShiftDate(filters.date ?? null);
   await autoCloseEligibleBreaks(shiftDate);
+  const shiftMasters = await loadShiftMasters();
 
   const where: string[] = [
     "e.active_status = 1",
@@ -1423,11 +1549,13 @@ async function fetchDeskRows(
     where.push("e.reporting_manager_id = ?");
     params.push(filters.manager_id);
   }
-  if (filters.shift) {
-    where.push(
-      "COALESCE(NULLIF(sm.shift_name, ''), NULLIF(CONCAT(COALESCE(ra.shift_start_time, ''), CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END), ''), '') = ?",
-    );
-    params.push(filters.shift);
+  // Shift filter is applied after the actual (punch-derived) shift is resolved, not on the roster.
+  if (scope.nightRosterOnly) {
+    where.push("ra.shift_start_time IS NOT NULL AND ra.shift_end_time IS NOT NULL AND ra.shift_end_time <= ra.shift_start_time AND COALESCE(ra.is_week_off, 0) = 0");
+  }
+  if (scope.excludeEmployeeIds && scope.excludeEmployeeIds.length > 0) {
+    where.push(`e.id NOT IN (${scope.excludeEmployeeIds.map(() => "?").join(", ")})`);
+    params.push(...scope.excludeEmployeeIds);
   }
   if (filters.search) {
     const query = `%${filters.search.trim()}%`;
@@ -1464,8 +1592,9 @@ async function fetchDeskRows(
         COALESCE(ibd.last_punch, bal.last_punch_out) AS biometric_punch_out_time,
         COALESCE(ibd.biometric_minutes, bal.raw_minutes, 0) AS biometric_minutes,
         COALESCE(NULLIF(bal.source_system, ''), CASE WHEN ibd.first_punch IS NOT NULL THEN 'biometric_sync' ELSE NULL END) AS attendance_source_system,
-        ra.shift_start_time,
-        ra.shift_end_time,
+        ra.shift_id AS rostered_shift_id,
+        COALESCE(NULLIF(ra.shift_start_time, ''), sm.start_time) AS shift_start_time,
+        COALESCE(NULLIF(ra.shift_end_time, ''), sm.end_time) AS shift_end_time,
         CASE
           WHEN sm.shift_name IS NOT NULL AND sm.shift_name <> '' THEN sm.shift_name
           WHEN ra.shift_start_time IS NOT NULL AND ra.shift_start_time <> '' THEN CONCAT(ra.shift_start_time, CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END)
@@ -1598,7 +1727,7 @@ async function fetchDeskRows(
          ON active.id = active_pick.active_break_id
       WHERE ${where.join(" AND ")}
       ORDER BY employee_name ASC
-      LIMIT ${includeAll ? 500 : safeLimit(filters.limit)}`,
+      LIMIT ${includeAll || filters.shift ? 500 : safeLimit(filters.limit)}`,
     params,
   );
 
@@ -1608,6 +1737,7 @@ async function fetchDeskRows(
           employeeId: String(row.id),
           employeeCode: String(row.employee_code ?? ""),
           cosecUserId: row.cosec_user_id ?? row.employee_code ?? null,
+          isNightShift: isNightShiftWindow(row.shift_start_time, row.shift_end_time),
         })),
         shiftDate,
       )
@@ -1645,26 +1775,33 @@ async function fetchDeskRows(
   const settings = await getSettings(kiosk.branch_id, kiosk.process_id);
   const mapped = (rows as any[]).map((row) => {
     const livePunch = realtimePunches.get(String(row.id));
-    const punchIn =
-      livePunch?.punchIn ?? normalizePunchStamp(row.biometric_punch_in_time);
-    const punchOut =
-      livePunch?.punchOut ?? normalizePunchStamp(row.biometric_punch_out_time);
-    const biometricMinutes =
-      livePunch?.biometricMinutes ?? Number(row.biometric_minutes ?? 0);
-    const attendanceSourceSystem =
-      livePunch?.sourceSystem ??
-      row.attendance_source_system ??
-      (punchIn ? "biometric_sync" : null);
-    const status = deriveStatus(
-      {
-        ...row,
-        biometric_punch_in_time: punchIn,
-        biometric_punch_out_time: punchOut,
-        biometric_minutes: biometricMinutes,
-      },
-      settings,
-      shiftDate,
+    const punchIn = livePunch?.punchIn ?? normalizePunchStamp(row.biometric_punch_in_time);
+    const punchOut = livePunch?.punchOut ?? normalizePunchStamp(row.biometric_punch_out_time);
+    const biometricMinutes = livePunch?.biometricMinutes ?? Number(row.biometric_minutes ?? 0);
+    const attendanceSourceSystem = livePunch?.sourceSystem
+      ?? row.attendance_source_system
+      ?? (punchIn ? "biometric_sync" : null);
+    const actualShift = inferActualShift(
+      punchIn,
+      row.rostered_shift_id ? String(row.rostered_shift_id) : null,
+      row.process_name ?? null,
+      shiftMasters,
     );
+    const effectiveShiftName = actualShift ? actualShift.name : row.shift_name;
+    const effectiveShiftStart = actualShift ? actualShift.start : (row.shift_start_time ?? null);
+    const effectiveShiftEnd = actualShift ? actualShift.end : (row.shift_end_time ?? null);
+    const shiftMismatch = Boolean(
+      actualShift && row.rostered_shift_id && String(row.rostered_shift_id) !== actualShift.id
+      && (actualShift.startMin !== parseClockMinutes(row.shift_start_time) || actualShift.endMin !== parseClockMinutes(row.shift_end_time)),
+    );
+    const status = deriveStatus({
+      ...row,
+      shift_start_time: effectiveShiftStart,
+      shift_end_time: effectiveShiftEnd,
+      biometric_punch_in_time: punchIn,
+      biometric_punch_out_time: punchOut,
+      biometric_minutes: biometricMinutes,
+    }, settings, shiftDate);
     const completedBreakMinutes = Number(row.total_break_minutes ?? 0);
     const currentBreakMinutes = row.active_break_id ? status.activeMinutes : 0;
     const totalBreakMinutesOverall =
@@ -1704,9 +1841,13 @@ async function fetchDeskRows(
       biometric_punch_out_time: punchOut,
       biometric_minutes: biometricMinutes,
       attendance_source_system: attendanceSourceSystem,
-      shift_name: row.shift_name,
-      shift_start_time: row.shift_start_time ?? null,
-      shift_end_time: row.shift_end_time ?? null,
+      shift_date: shiftDate,
+      shift_name: effectiveShiftName,
+      shift_start_time: effectiveShiftStart,
+      shift_end_time: effectiveShiftEnd,
+      shift_source: actualShift ? "punch" : (row.shift_name ? "roster" : null),
+      rostered_shift_name: row.shift_name ?? null,
+      shift_mismatch: shiftMismatch,
       shift_duration_minutes: shiftDurationMinutes,
       roster_status: row.roster_status,
       leave_name: row.leave_name,
@@ -1746,6 +1887,33 @@ async function fetchDeskRows(
       },
     };
   });
+
+  const shiftFiltered = filters.shift
+    ? mapped.filter((row) => row.shift_name === filters.shift)
+    : mapped;
+  return { mapped: shiftFiltered, settings };
+}
+
+async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAll = false, includeRealtime = false) {
+  await loadShiftMasters(); // refreshes night carry-over hour before the date is resolved
+  const shiftDate = resolveShiftDate(filters.date ?? null);
+  const now = currentIstDateTime();
+  // Between midnight and the last night shift's end, today's calendar date is not yet
+  // the working day for night staff: show them under yesterday, everyone else under today.
+  const carryOver = !filters.date && now.hour < nightCarryoverHour;
+  let mapped: Awaited<ReturnType<typeof loadDeskEmployees>>["mapped"];
+  let settings: Awaited<ReturnType<typeof loadDeskEmployees>>["settings"];
+  if (carryOver) {
+    const night = await loadDeskEmployees(kiosk, filters, shiftDate, includeAll, includeRealtime, { nightRosterOnly: true });
+    const day = await loadDeskEmployees(kiosk, filters, now.date, includeAll, includeRealtime, {
+      excludeEmployeeIds: night.mapped.map((row) => String(row.employee_id)),
+    });
+    mapped = [...night.mapped, ...day.mapped];
+    settings = day.settings;
+  } else {
+    ({ mapped, settings } = await loadDeskEmployees(kiosk, filters, shiftDate, includeAll, includeRealtime));
+  }
+  if (!includeAll) mapped = mapped.slice(0, safeLimit(filters.limit));
 
   const counters = {
     entered: mapped.filter((row) => Boolean(row.biometric_punch_in_time))
@@ -1902,23 +2070,9 @@ async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
         ORDER BY label ASC`,
       scopeParams,
     ),
-    db
-      .execute<RowDataPacket[]>(
-        `SELECT DISTINCT
-          COALESCE(NULLIF(sm.shift_name, ''), NULLIF(CONCAT(COALESCE(ra.shift_start_time, ''), CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END), '')) AS label,
-          COALESCE(NULLIF(sm.shift_name, ''), NULLIF(CONCAT(COALESCE(ra.shift_start_time, ''), CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END), '')) AS value
-         FROM wfm_roster_assignment ra
-         JOIN employees e ON e.id = ra.employee_id
-         LEFT JOIN wfm_shift_master sm ON sm.id = ra.shift_id
-         WHERE ra.roster_date = ?
-           AND e.active_status = 1
-           AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
-           ${branchWhere}
-           ${processWhere}
-           AND COALESCE(NULLIF(sm.shift_name, ''), NULLIF(CONCAT(COALESCE(ra.shift_start_time, ''), CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END), '')) <> ''
-         ORDER BY label ASC`,
-        [shiftDate, ...scopeParams],
-      )
+    // Options are actual shift masters (desk shows the punch-derived shift, not the roster).
+    loadShiftMasters()
+      .then((masters) => [Array.from(new Set(masters.map((m) => m.name).filter(Boolean))).sort().map((name) => ({ label: name, value: name })) as any[], []] as any)
       .catch(() => [[] as RowDataPacket[], []]),
   ]);
 
@@ -2384,11 +2538,72 @@ export const breakManagementService = {
     };
   },
 
-  async getDashboard(filters: {
-    date?: string;
-    branch_id?: string;
-    process_id?: string;
-  }) {
+  /**
+   * Shared break summary for other pages (attendance, roster, team views, dashboards).
+   * Night-shift aware: each employee is summarised for THEIR working date unless a date is forced.
+   * Scoped by branch_id when given (the router pins non-org-wide callers to their own branch).
+   */
+  async getEmployeeBreakSummaries(input: { employee_ids: string[]; date?: string | null; branch_id?: string | null }) {
+    const ids = Array.from(new Set(input.employee_ids.map(String).filter(Boolean))).slice(0, 200);
+    if (ids.length === 0) return {};
+    const placeholders = ids.map(() => "?").join(", ");
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, branch_id, process_id FROM employees
+        WHERE id IN (${placeholders})${input.branch_id ? " AND branch_id = ?" : ""}`,
+      input.branch_id ? [...ids, input.branch_id] : ids,
+    );
+    const employees = empRows as any[];
+    await loadShiftMasters();
+
+    const dateByEmployee = new Map<string, string>();
+    for (const emp of employees) {
+      dateByEmployee.set(String(emp.id), await resolveShiftDateSmart(String(emp.id), input.date ?? null));
+    }
+    const dates = Array.from(new Set(dateByEmployee.values()));
+    const [sessionRows] = employees.length === 0 ? [[] as RowDataPacket[]] : await db.execute<RowDataPacket[]>(
+      `SELECT employee_id, shift_date, status, break_start_time, COALESCE(duration_minutes, 0) AS duration_minutes
+         FROM break_sessions
+        WHERE employee_id IN (${employees.map(() => "?").join(", ")})
+          AND shift_date IN (${dates.map(() => "?").join(", ")})
+          AND status <> 'CANCELLED'`,
+      [...employees.map((emp) => emp.id), ...dates],
+    );
+
+    const settingsCache = new Map<string, BreakSettingsRow>();
+    const nowStamp = currentIstDateTime().dateTime;
+    const result: Record<string, {
+      shift_date: string; break_count: number; completed_break_minutes: number; active_break_minutes: number;
+      total_break_minutes: number; on_break: boolean; active_break_since: string | null;
+      daily_limit_minutes: number; exceeded: boolean;
+    }> = {};
+
+    for (const emp of employees) {
+      const id = String(emp.id);
+      const shiftDate = dateByEmployee.get(id)!;
+      const key = `${emp.branch_id ?? ""}|${emp.process_id ?? ""}`;
+      if (!settingsCache.has(key)) settingsCache.set(key, await getSettings(emp.branch_id ?? null, emp.process_id ?? null));
+      const settings = settingsCache.get(key)!;
+      const mine = (sessionRows as any[]).filter((row) => String(row.employee_id) === id && String(row.shift_date).slice(0, 10) === shiftDate);
+      const active = mine.find((row) => row.status === "ACTIVE");
+      const completed = mine.filter((row) => row.status !== "ACTIVE").reduce((sum, row) => sum + Number(row.duration_minutes ?? 0), 0);
+      const activeMinutes = active?.break_start_time ? minutesBetween(String(active.break_start_time), nowStamp).minutes : 0;
+      const limit = Number(settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES);
+      result[id] = {
+        shift_date: shiftDate,
+        break_count: mine.length,
+        completed_break_minutes: completed,
+        active_break_minutes: activeMinutes,
+        total_break_minutes: completed + activeMinutes,
+        on_break: Boolean(active),
+        active_break_since: active?.break_start_time ? String(active.break_start_time) : null,
+        daily_limit_minutes: limit,
+        exceeded: completed + activeMinutes > limit,
+      };
+    }
+    return result;
+  },
+
+  async getDashboard(filters: { date?: string; branch_id?: string; process_id?: string }) {
     const shiftDate = resolveShiftDate(filters.date ?? null);
     const params: unknown[] = [shiftDate];
     let where = "WHERE bds.shift_date = ?";
@@ -3188,8 +3403,10 @@ export const breakManagementService = {
     return { id };
   },
 
-  async getExceptions(filters: { date?: string; limit?: number }) {
+  async getExceptions(filters: { date?: string; limit?: number; branch_id?: string; process_id?: string }) {
     const shiftDate = resolveShiftDate(filters.date ?? null);
+    const extraSql = `${filters.branch_id ? " AND bs.branch_id = ?" : ""}${filters.process_id ? " AND bs.process_id = ?" : ""}`;
+    const extraParams = [...(filters.branch_id ? [filters.branch_id] : []), ...(filters.process_id ? [filters.process_id] : [])];
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
           bs.*,
@@ -3201,10 +3418,10 @@ export const breakManagementService = {
          LEFT JOIN branch_master bm ON bm.id = bs.branch_id
          LEFT JOIN process_master pm ON pm.id = bs.process_id
         WHERE bs.shift_date = ?
-          AND (bs.no_biometric_punch_flag = 1 OR bs.status = 'EXCEPTION')
+          AND (bs.no_biometric_punch_flag = 1 OR bs.status = 'EXCEPTION')${extraSql}
         ORDER BY bs.break_start_time DESC
         LIMIT ${safeLimit(filters.limit ?? 100, 100)}`,
-      [shiftDate],
+      [shiftDate, ...extraParams],
     );
     return { shift_date: shiftDate, rows };
   },
@@ -3547,3 +3764,5 @@ export const breakManagementService = {
     return { rows: data, summary };
   },
 };
+
+export const __shiftInternals = { inferActualShift, isShiftEndReached, shiftEndInstantMs, isNightShiftWindow, resolveRealtimePunchWindow };

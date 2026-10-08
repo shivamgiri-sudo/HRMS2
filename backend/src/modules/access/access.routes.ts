@@ -38,6 +38,11 @@ import {
   setPageCatalogActiveStatus,
 } from "./user-page-access.service.js";
 import { db } from "../../db/mysql.js";
+import {
+  buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope,
+  type UserBusinessScope,
+} from "../../shared/enterpriseScope.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import type { RowDataPacket } from "mysql2";
 
 const router = Router();
@@ -164,13 +169,24 @@ router.get(
 );
 
 // Role catalog (admin/hr)
-router.get(
-  "/roles/catalog",
-  requireRole("admin", "hr"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    res.json({ data: await listRoleCatalog() });
-  }),
-);
+// Branch scoping (owner ruling 2026-10-01): admin/hr used to reach every user, branch and process. Org-wide roles
+// are unaffected; hr is limited to its own branch + explicitly assigned branches / scope.
+const ACCESS_EMP_ALIAS = {
+  employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", lobId: "e.lob_id",
+  departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id",
+};
+const isOrgWide = (scope: UserBusinessScope) => scope.roles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r));
+/** Branch ids a non-org-wide caller may see: own employee branch plus branch-bearing assignments. */
+function allowedBranchIds(scope: UserBusinessScope): string[] {
+  const ids = new Set<string>();
+  if (scope.branchId) ids.add(scope.branchId);
+  for (const a of scope.assignments) if (a.branchId && a.scopeType !== "self") ids.add(a.branchId);
+  return [...ids];
+}
+
+router.get("/roles/catalog", requireRole("admin", "hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  res.json({ data: await listRoleCatalog() });
+}));
 
 // Fast searchable users endpoint for the redesigned access-control page.
 router.get(
@@ -197,14 +213,27 @@ router.get(
       : "";
     const arm2Params: unknown[] = search ? [like, like] : [];
 
-    // PERF: this list took ~6s per query on prod and ran twice (rows + count). The cost was the
-    // user_roles join + GROUP_CONCAT/GROUP BY evaluated for every one of ~1,750 accounts before
-    // sorting and cutting to one page. auth_user.id and employees.id are both primary keys, so
-    // the old GROUP BY (au.id ... e.id ...) never merged rows: it produced exactly one row per
-    // auth_user x active-employee pair, i.e. the plain join below. The row set and ordering are
-    // therefore unchanged; roles are now aggregated only for the page that is returned, and the
-    // count runs without the roles join. Rows and count also run concurrently.
-    const unionSql = `
+  // Branch scoping: hr only lists accounts / employees inside its own branch / scope. An account with no active
+  // employee row cannot be placed in a branch, so it is hidden from a branch-limited caller (fail closed).
+  const callerScope = await resolveUserBusinessScope(req.authUser!);
+  let scopeArm1 = "";
+  let scopeArm2 = "";
+  if (!isOrgWide(callerScope)) {
+    const cond = buildEmployeeScopeCondition(callerScope, ACCESS_EMP_ALIAS);
+    scopeArm1 = `AND e.id IS NOT NULL AND (${cond.sql})`;
+    scopeArm2 = `AND (${cond.sql})`;
+    arm1Params.push(...cond.params);
+    arm2Params.push(...cond.params);
+  }
+
+  // PERF: this list took ~6s per query on prod and ran twice (rows + count). The cost was the
+  // user_roles join + GROUP_CONCAT/GROUP BY evaluated for every one of ~1,750 accounts before
+  // sorting and cutting to one page. auth_user.id and employees.id are both primary keys, so
+  // the old GROUP BY (au.id ... e.id ...) never merged rows: it produced exactly one row per
+  // auth_user x active-employee pair, i.e. the plain join below. The row set and ordering are
+  // therefore unchanged; roles are now aggregated only for the page that is returned, and the
+  // count runs without the roles join. Rows and count also run concurrently.
+  const unionSql = `
     SELECT
        au.id,
        COALESCE(NULLIF(TRIM(e.official_email), ''), au.email) AS email,
@@ -219,10 +248,8 @@ router.get(
        0 AS no_account
      FROM auth_user au
      LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
-     WHERE 1=1 ${blockFilter} ${searchFilter}
-     ${
-       search
-         ? `UNION ALL
+     WHERE 1=1 ${blockFilter} ${searchFilter} ${scopeArm1}
+     ${search ? `UNION ALL
      SELECT
        NULL AS id,
        NULL AS email,
@@ -236,9 +263,7 @@ router.get(
        e.employment_status,
        1 AS no_account
      FROM employees e
-     WHERE e.user_id IS NULL AND e.active_status = 1 ${arm2SearchFilter}`
-         : ""
-     }
+     WHERE e.user_id IS NULL AND e.active_status = 1 ${arm2SearchFilter} ${scopeArm2}` : ""}
   `;
 
     const [[rows], [countRows]] = await Promise.all([
@@ -482,13 +507,19 @@ router.get(
 );
 
 // Get roles for a user (admin/hr)
-router.get(
-  "/roles/user/:userId",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res.json({ data: await getUserRoles(req.params.userId) });
-  }),
-);
+router.get("/roles/user/:userId", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const callerScope = await resolveUserBusinessScope(req.authUser!);
+  if (!isOrgWide(callerScope) && req.params.userId !== req.authUser!.id) {
+    // hr may read a user's roles only when that user's employee record is inside its branch / scope.
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1", [req.params.userId]);
+    const empId = (empRows as RowDataPacket[])[0]?.id;
+    if (!empId || !(await canViewEmployee(req.authUser!, String(empId)))) {
+      return res.status(403).json({ success: false, error: "Forbidden: this user is outside your branch / assigned scope" });
+    }
+  }
+  res.json({ data: await getUserRoles(req.params.userId) });
+}));
 
 // Assign role (admin only — writes MySQL, audited)
 router.post(
@@ -538,34 +569,44 @@ router.post(
 );
 
 // GET /api/access/branches — lightweight branch list for scope picker (admin/hr)
-router.get(
-  "/branches",
-  requireRole("admin", "hr"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, branch_name, branch_code FROM branch_master WHERE active_status = 1 ORDER BY branch_name`,
-    );
-    res.json({ success: true, data: rows });
-  }),
-);
+router.get("/branches", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const callerScope = await resolveUserBusinessScope(req.authUser!);
+  const orgWide = isOrgWide(callerScope);
+  const allowed = orgWide ? [] : allowedBranchIds(callerScope);
+  if (!orgWide && allowed.length === 0) return res.json({ success: true, data: [] });
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, branch_name, branch_code FROM branch_master WHERE active_status = 1${orgWide ? "" : ` AND id IN (${allowed.map(() => "?").join(",")})`} ORDER BY branch_name`,
+    orgWide ? undefined : allowed
+  );
+  res.json({ success: true, data: rows });
+}));
 
 // GET /api/access/processes — lightweight process list for scope picker (admin/hr)
-router.get(
-  "/processes",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const branchId = String(req.query.branchId ?? "").trim();
-    const where = branchId
-      ? `WHERE pm.active_status = 1 AND EXISTS (SELECT 1 FROM employees e WHERE e.process_id = pm.id AND e.branch_id = ? AND e.active_status = 1)`
-      : `WHERE pm.active_status = 1`;
-    const params = branchId ? [branchId] : [];
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT pm.id, pm.process_name, pm.process_code FROM process_master pm ${where} ORDER BY pm.process_name`,
-      params,
-    );
-    res.json({ success: true, data: rows });
-  }),
-);
+router.get("/processes", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const branchId = String(req.query.branchId ?? "").trim();
+  const callerScope = await resolveUserBusinessScope(req.authUser!);
+  let where = branchId
+    ? `WHERE pm.active_status = 1 AND EXISTS (SELECT 1 FROM employees e WHERE e.process_id = pm.id AND e.branch_id = ? AND e.active_status = 1)`
+    : `WHERE pm.active_status = 1`;
+  let params: unknown[] = branchId ? [branchId] : [];
+  if (!isOrgWide(callerScope)) {
+    // ?branchId may only narrow the caller's own branches; a foreign one is a 403, never "all".
+    const allowed = allowedBranchIds(callerScope);
+    if (branchId && !allowed.includes(branchId)) {
+      return res.status(403).json({ success: false, error: "Forbidden: this branch is outside your assigned scope" });
+    }
+    if (!branchId) {
+      if (allowed.length === 0) return res.json({ success: true, data: [] });
+      where = `WHERE pm.active_status = 1 AND EXISTS (SELECT 1 FROM employees e WHERE e.process_id = pm.id AND e.branch_id IN (${allowed.map(() => "?").join(",")}) AND e.active_status = 1)`;
+      params = [...allowed];
+    }
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT pm.id, pm.process_name, pm.process_code FROM process_master pm ${where} ORDER BY pm.process_name`,
+    params
+  );
+  res.json({ success: true, data: rows });
+}));
 
 // GET /api/access/roles/user-scopes/:userId — get all scope assignments for a user (admin)
 router.get(

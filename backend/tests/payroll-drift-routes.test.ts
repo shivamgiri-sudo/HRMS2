@@ -10,15 +10,23 @@ const { mockExecute, mockRecalc } = vi.hoisted(() => ({
 
 vi.mock("../src/db/mysql.js", () => ({ db: { execute: mockExecute } }));
 
-vi.mock(
-  "../src/modules/payroll/payroll-targeted-recalculation.service.js",
-  () => ({
-    recalculateOpenPayrollForEmployee: mockRecalc,
-    drainPayrollRecalcQueue: vi
-      .fn()
-      .mockResolvedValue({ processed: 0, failed: 0, skipped_locked: 0 }),
-  }),
-);
+// Branch scoping (owner ruling 2026-10-01): these tests are about route behaviour, so the caller is an
+// org-wide role (super_admin). The real scope helpers still run on top of this resolved scope.
+vi.mock("../src/shared/enterpriseScope.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/shared/enterpriseScope.js")>();
+  return {
+    ...actual,
+    resolveUserBusinessScope: vi.fn().mockResolvedValue({
+      userId: "user-1", roles: ["super_admin"], employeeId: null, employeeCode: null, branchId: null,
+      processId: null, lobId: null, departmentId: null, isSuperAdmin: true, isAdmin: false, isHr: false,
+      isPayroll: false, isFinance: false, assignments: [],
+    }),
+  };
+});
+vi.mock("../src/modules/payroll/payroll-targeted-recalculation.service.js", () => ({
+  recalculateOpenPayrollForEmployee: mockRecalc,
+  drainPayrollRecalcQueue: vi.fn().mockResolvedValue({ processed: 0, failed: 0, skipped_locked: 0 }),
+}));
 
 // Mock auth middleware so routes don't require real tokens
 vi.mock("../src/middleware/requireRole.js", () => ({

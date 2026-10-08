@@ -378,9 +378,16 @@ describe("resend/reminder never mint a link to an already-dead Luckpay session",
     const body = fn.slice(0, fn.indexOf("\n}"));
     expect(body).toContain("FROM employee_document_esign_transaction");
     expect(body).toContain("ORDER BY initiated_at DESC LIMIT 1");
-    expect(body).toContain(
-      '"failed", "expired", "cancelled", "abandoned_unresolved"',
-    );
+    // 'failed' left the unconditional list on purpose: Luckpay reported FAILED on a
+    // transaction the candidate then completed on the same session two days later, so a
+    // fresh failure is still alive. It is dead only once the eMudhra session has aged out.
+    expect(body).toContain('["expired", "cancelled", "abandoned_unresolved"].includes(status)');
+    expect(body).toContain('status === "failed" && ageDays >= SESSION_DEAD_AFTER_DAYS');
+    expect(body).toContain('["pending", "initiated"].includes(status) && ageDays >= 7');
+    expect(body).toContain('TIMESTAMPDIFF(HOUR, initiated_at, NOW()) / 24 AS age_days');
+    expect(kitDispatch).toMatch(/const SESSION_DEAD_AFTER_DAYS = 1;/);
+    // Each dead state must actually refuse (return false), not merely be named.
+    expect(body.match(/return false;/g)?.length).toBe(3);
   });
 
   it("resendKitEsignLink refuses before minting when the session is dead", () => {

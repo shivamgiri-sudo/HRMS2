@@ -216,9 +216,9 @@ describe("The delete endpoint — the one path that always did revoke access", (
     // The reason guard must appear BEFORE the UPDATE statement, so a no-reason call
     // throws before touching any row.
     const reasonGuardIdx = deactivateFn.indexOf("DEACTIVATION_REASON_REQUIRED");
-    const updateIdx = deactivateFn.indexOf(
-      "UPDATE employees SET active_status = 0",
-    );
+    // Whitespace-tolerant: the UPDATE is a multi-line statement now (it also writes the
+    // attrition columns), so SET sits on its own line.
+    const updateIdx = deactivateFn.search(/UPDATE employees\s+SET active_status = 0/);
     expect(reasonGuardIdx).toBeGreaterThan(-1);
     expect(updateIdx).toBeGreaterThan(-1);
     expect(reasonGuardIdx).toBeLessThan(updateIdx);

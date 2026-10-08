@@ -331,14 +331,11 @@ describe("employee_statutory_info writers keep the PAN dual-write", () => {
   const EMPLOYEES = path.join(here, "..", "..", "modules", "employees");
 
   it("the HR-entry route writes ciphertext and blind index alongside the plaintext", () => {
-    const src = fs.readFileSync(
-      path.join(EMPLOYEES, "employee.routes.ts"),
-      "utf8",
-    );
-    expect(src).toContain(`addStat("pan_number_encrypted"`);
-    expect(src).toContain(`addStat("pan_blind_index"`);
-    expect(src).toContain("encryptPanForSync");
-    expect(src).toContain("blindIndexPan");
+    const src = fs.readFileSync(path.join(EMPLOYEES, "employee.routes.ts"), "utf8");
+    // Whitespace-tolerant and tied to the helper: the calls are wrapped across lines now, and
+    // matching the column to the helper that fills it is stricter than finding each anywhere.
+    expect(src).toMatch(/addStat\(\s*"pan_number_encrypted",\s*encryptPanForSync\(pan_number\b/);
+    expect(src).toMatch(/addStat\(\s*"pan_blind_index",\s*blindIndexPan\(pan_number\b/);
   });
 
   it("the legacy statutory sync handler writes ciphertext and blind index alongside the plaintext", () => {
@@ -393,9 +390,18 @@ describe("employee_statutory_info writers keep the PAN dual-write", () => {
     expect(insert).toContain("pan_number_encrypted");
     expect(insert).toContain("pan_blind_index");
     // Direct calls would bypass the dev-key refusals.
-    expect(src).toContain("encryptPanForSync");
-    expect(src).toContain("blindIndexPan");
-    expect(src).not.toMatch(/\bencryptField\s*\(/);
+    // The values bound to those columns come from the dev-key-refusing helpers.
+    const call = src.slice(start, src.indexOf(");", start));
+    expect(call).toMatch(/encryptPanForSync\(panNumber\b/);
+    expect(call).toMatch(/blindIndexPan\(panNumber\b/);
+    // Direct calls would bypass the dev-key refusals. This used to forbid encryptField()
+    // anywhere in the file; d28bda4dc then added an unrelated employee_bank_detail insert
+    // that encrypts an ACCOUNT number with it. The rule this test owns is about the PAN
+    // (and the statutory write), so it is stated as that: nothing PAN-shaped reaches
+    // encryptField/blindIndex directly, and the statutory write uses neither.
+    expect(call).not.toMatch(/\bencryptField\s*\(/);
+    expect(call).not.toMatch(/\bblindIndex\s*\(/);
+    expect(src).not.toMatch(/\b(?:encryptField|blindIndex)\s*\(\s*[^)]*\bpan/i);
   });
 });
 

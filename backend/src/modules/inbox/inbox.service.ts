@@ -488,16 +488,13 @@ export async function getMyPending(
   const callerBranchId: string | null =
     (empRows as RowDataPacket[])[0]?.branch_id ?? null;
 
-  const isAdmin = roles.some((r) => ["super_admin", "admin"].includes(r));
-  const isHrAdmin = roles.some((r) =>
-    ["hr_admin", "super_admin", "admin"].includes(r),
-  );
-  const isItHead = roles.some((r) =>
-    ["it_head", "it_admin", "super_admin", "admin"].includes(r),
-  );
-  const isItSpoc = roles.some((r) =>
-    ["it_spoc", "it_executive", "it_support"].includes(r),
-  );
+  // admin is BRANCH-SCOPED like hr (owner ruling 2026-10-01): only super_admin sees every branch here.
+  // `isBranchAdmin` (admin without super_admin) is held to its own branch below.
+  const isAdmin = roles.includes("super_admin");
+  const isBranchAdmin = !isAdmin && roles.includes("admin");
+  const isHrAdmin = roles.some((r) => ["hr_admin", "super_admin"].includes(r));
+  const isItHead = roles.some((r) => ["it_head", "it_admin", "super_admin"].includes(r));
+  const isItSpoc = roles.some((r) => ["it_spoc", "it_executive", "it_support"].includes(r));
   const isHr = roles.some((r) => ["hr", "hr_admin", "hr_manager"].includes(r));
   const isFinance = roles.some((r) =>
     ["finance", "finance_head", "payroll_admin"].includes(r),
@@ -589,13 +586,15 @@ export async function getMyPending(
     const rowBranch: string | null = row.branch_id ?? null;
     if (IT_MODULES.has(mod)) {
       if (isItHead || isAdmin) return true;
-      if (isItSpoc && callerBranchId) return rowBranch === callerBranchId;
+      if ((isItSpoc || isBranchAdmin) && callerBranchId) return rowBranch === callerBranchId;
+      if (isBranchAdmin) return false;
       // If caller has no IT role but task was directly assigned to them, include it
       return String(row.owner_user_id ?? "") === userId;
     }
     if (HR_MODULES.has(mod)) {
       if (isHrAdmin || isAdmin) return true;
-      if (isHr && callerBranchId) return rowBranch === callerBranchId;
+      if ((isHr || isBranchAdmin) && callerBranchId) return rowBranch === callerBranchId;
+      if (isBranchAdmin) return false;
       return String(row.owner_user_id ?? "") === userId;
     }
     // Finance, WFM, Ops — role check already done via owner_role match

@@ -8,6 +8,7 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { guardEmployee, requireRunInScope } from "../payroll/payroll-branch-scope.js";
 import { payrollComplianceService } from "./payrollCompliance.service.js";
 import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 
@@ -19,21 +20,14 @@ const h =
 
 router.use(requireAuth);
 
-router.post(
-  "/runs/:runId/compliance-check",
-  requireRole("admin", "hr", "finance", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await payrollComplianceService.validateRun(req.params.runId);
-    return res.json({ success: true, data });
-  }),
-);
+router.post("/runs/:runId/compliance-check", requireRole("admin", "hr", "finance", "payroll"), requireRunInScope("runId"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await payrollComplianceService.validateRun(req.params.runId);
+  return res.json({ success: true, data });
+}));
 
-router.get(
-  "/runs/:runId/compliance-issues",
-  requireRole("admin", "hr", "finance", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT pci.*, e.employee_code, e.full_name
+router.get("/runs/:runId/compliance-issues", requireRole("admin", "hr", "finance", "payroll"), requireRunInScope("runId"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT pci.*, e.employee_code, e.full_name
        FROM payroll_compliance_issue pci
        LEFT JOIN employees e ON e.id = pci.employee_id
       WHERE pci.run_id = ?
@@ -44,53 +38,43 @@ router.get(
   }),
 );
 
-router.put(
-  "/employees/:employeeId/component-snapshot",
-  requireRole("admin", "hr", "finance", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const schema = z.object({
-      effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      components: z
-        .array(
-          z.object({
-            component_code: z.string().min(1).max(80),
-            component_name: z.string().min(1).max(160),
-            component_type: z.enum(["earning", "deduction", "employer_cost"]),
-            amount: z.number(),
-            taxable: z.boolean().optional(),
-            pf_applicable: z.boolean().optional(),
-            esic_applicable: z.boolean().optional(),
-          }),
-        )
-        .min(1),
-    });
-    const body = schema.parse(req.body);
-    const data = await payrollComplianceService.upsertComponentSnapshot(
-      req.params.employeeId,
-      body.effectiveFrom,
-      body.components.map((c) => ({ ...c, source: "snapshot" as const })),
-      req.authUser?.id ?? null,
-    );
-    await payrollComplianceService.logSensitiveAccess({
-      actorUserId: req.authUser?.id,
-      employeeId: req.params.employeeId,
-      moduleKey: "payroll",
-      actionKey: "COMPONENT_SNAPSHOT_UPSERT",
-      purpose:
-        "Preserve existing employee salary component breakup for payroll calculation",
-      metadata: { count: body.components.length },
-      req,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+router.put("/employees/:employeeId/component-snapshot", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
+  const schema = z.object({
+    effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    components: z.array(z.object({
+      component_code: z.string().min(1).max(80),
+      component_name: z.string().min(1).max(160),
+      component_type: z.enum(["earning", "deduction", "employer_cost"]),
+      amount: z.number(),
+      taxable: z.boolean().optional(),
+      pf_applicable: z.boolean().optional(),
+      esic_applicable: z.boolean().optional(),
+    })).min(1),
+  });
+  const body = schema.parse(req.body);
+  const data = await payrollComplianceService.upsertComponentSnapshot(
+    req.params.employeeId,
+    body.effectiveFrom,
+    body.components.map(c => ({ ...c, source: "snapshot" as const })),
+    req.authUser?.id ?? null
+  );
+  await payrollComplianceService.logSensitiveAccess({
+    actorUserId: req.authUser?.id,
+    employeeId: req.params.employeeId,
+    moduleKey: "payroll",
+    actionKey: "COMPONENT_SNAPSHOT_UPSERT",
+    purpose: "Preserve existing employee salary component breakup for payroll calculation",
+    metadata: { count: body.components.length },
+    req,
+  });
+  return res.json({ success: true, data });
+}));
 
-router.get(
-  "/employees/:employeeId/component-snapshot",
-  requireRole("admin", "hr", "finance", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM payroll_employee_component_snapshot
+router.get("/employees/:employeeId/component-snapshot", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM payroll_employee_component_snapshot
       WHERE employee_id = ?
       ORDER BY effective_from DESC, component_type, component_code`,
       [req.params.employeeId],
@@ -206,12 +190,9 @@ export const manualAdjustmentHandlerForPhase2 = h(
   },
 );
 
-router.get(
-  "/runs/:runId/components",
-  requireRole("admin", "hr", "finance", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT splc.*, e.employee_code, e.full_name
+router.get("/runs/:runId/components", requireRole("admin", "hr", "finance", "payroll"), requireRunInScope("runId"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT splc.*, e.employee_code, e.full_name
        FROM salary_prep_line_component splc
        JOIN employees e ON e.id = splc.employee_id
       WHERE splc.run_id = ?
@@ -222,24 +203,10 @@ router.get(
   }),
 );
 
-router.get(
-  "/runs/:runId/register/:registerType",
-  requireRole("admin", "hr", "finance", "payroll", "ceo"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const registerType = req.params.registerType;
-    const allowed = new Set([
-      "salary",
-      "pf",
-      "esic",
-      "pt",
-      "tds",
-      "bank",
-      "variance",
-    ]);
-    if (!allowed.has(registerType))
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid register type" });
+router.get("/runs/:runId/register/:registerType", requireRole("admin", "hr", "finance", "payroll", "ceo"), requireRunInScope("runId"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const registerType = req.params.registerType;
+  const allowed = new Set(["salary", "pf", "esic", "pt", "tds", "bank", "variance"]);
+  if (!allowed.has(registerType)) return res.status(400).json({ success: false, message: "Invalid register type" });
 
     let sql = "";
     if (registerType === "salary") {

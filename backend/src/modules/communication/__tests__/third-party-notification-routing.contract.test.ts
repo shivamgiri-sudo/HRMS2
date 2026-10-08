@@ -101,6 +101,10 @@ describe("catalogue: which events are about a third party", () => {
     expect(flagged).toEqual([
       "esign_escalation_hr",
       "esign_escalation_manager",
+      // Exit events sent to the manager / HR about the departing employee (ef7a21f50).
+      "exit_auto_exited",
+      "exit_resignation_submitted",
+      "exit_revoked",
       "ijp_manager_approval_pending",
       "people_experience_action_assigned",
       "people_experience_action_overdue",

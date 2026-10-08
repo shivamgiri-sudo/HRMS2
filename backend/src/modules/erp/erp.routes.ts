@@ -16,6 +16,20 @@ import {
 import { syncVendorsFromDbBill } from "./vendor-sync.service.js";
 import { vendorApprovalService } from "../finance/vendor-approval.service.js";
 import { getUserBranchId } from "../finance/finance-access-scope.js";
+import { buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
+
+// Branch scoping (owner ruling 2026-10-01): admin/finance stay org-wide; hr (the only other role the
+// expense / procurement screens admit) is limited to employees inside its own branch / assignments.
+const REQUESTER_ALIAS = {
+  employeeId: "emp.id", branchId: "emp.branch_id", processId: "emp.process_id", lobId: "emp.lob_id",
+  departmentId: "emp.department_id", managerEmployeeId: "emp.reporting_manager_id",
+};
+/** undefined for org-wide callers (no filter); otherwise the SQL predicate over the `emp` join. */
+async function requesterScope(req: AuthenticatedRequest) {
+  const cond = buildEmployeeScopeCondition(await resolveUserBusinessScope(req.authUser!), REQUESTER_ALIAS);
+  return cond.sql === "1=1" ? undefined : cond;
+}
+const OUT_OF_SCOPE = { error: "Forbidden: this record belongs to an employee outside your branch / assigned scope" };
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -281,9 +295,7 @@ router.get(
     const isPrivileged = await hasRole(userId, "admin", "hr", "finance");
 
     if (isPrivileged) {
-      const data = await expenseService.list(
-        req.query as { employee_id?: string; status?: string },
-      );
+      const data = await expenseService.list(req.query as { employee_id?: string; status?: string }, await requesterScope(req));
       return res.json({ success: true, data });
     }
 
@@ -316,6 +328,7 @@ router.post(
       (await hasRole(userId, "admin", "hr", "finance"))
     ) {
       employeeId = req.body.employee_id as string;
+      if (!(await canViewEmployee(req.authUser!, employeeId))) return res.status(403).json(OUT_OF_SCOPE);
     } else {
       const emp = await getEmployeeForUser(userId);
       if (!emp)
@@ -341,14 +354,10 @@ router.patch(
         .status(400)
         .json({ error: "action must be 'approved' or 'rejected'" });
     }
-    const data = await expenseService.review(
-      req.params.id,
-      action,
-      req.authUser!.id,
-      remarks,
-    );
-    if (!data)
-      return res.status(404).json({ error: "Expense claim not found" });
+    const claim = await expenseService.getById(req.params.id);
+    if (claim && !(await canViewEmployee(req.authUser!, String(claim.employee_id)))) return res.status(403).json(OUT_OF_SCOPE);
+    const data = await expenseService.review(req.params.id, action, req.authUser!.id, remarks);
+    if (!data) return res.status(404).json({ error: "Expense claim not found" });
     res.json({ success: true, data });
   }),
 );
@@ -363,11 +372,8 @@ router.get(
 
     if (isPrivileged) {
       const data = await procurementService.list(
-        req.query as {
-          requested_by?: string;
-          status?: string;
-          department_id?: string;
-        },
+        req.query as { requested_by?: string; status?: string; department_id?: string },
+        await requesterScope(req),
       );
       return res.json({ success: true, data });
     }
@@ -395,6 +401,7 @@ router.post(
       (await hasRole(userId, "admin", "hr", "finance"))
     ) {
       requestedBy = req.body.requested_by as string;
+      if (!(await canViewEmployee(req.authUser!, requestedBy))) return res.status(403).json(OUT_OF_SCOPE);
     } else {
       const emp = await getEmployeeForUser(userId);
       if (!emp)
@@ -420,14 +427,10 @@ router.patch(
         .status(400)
         .json({ error: "action must be 'approved' or 'rejected'" });
     }
-    const data = await procurementService.approve(
-      req.params.id,
-      action,
-      req.authUser!.id,
-      remarks,
-    );
-    if (!data)
-      return res.status(404).json({ error: "Procurement request not found" });
+    const request = await procurementService.getById(req.params.id);
+    if (request && !(await canViewEmployee(req.authUser!, String(request.requested_by)))) return res.status(403).json(OUT_OF_SCOPE);
+    const data = await procurementService.approve(req.params.id, action, req.authUser!.id, remarks);
+    if (!data) return res.status(404).json({ error: "Procurement request not found" });
     res.json({ success: true, data });
   }),
 );

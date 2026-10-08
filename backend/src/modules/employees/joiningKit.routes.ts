@@ -91,14 +91,13 @@ publicJoiningKitRouter.post(
 export const joiningKitRouter = Router();
 // payroll_hr has no role alias, so it is named explicitly — requireRole("payroll")
 // does not admit a payroll_hr user.
-const KIT_ROLES = [
-  "super_admin",
-  "admin",
-  "hr",
-  "hr_manager",
-  "payroll_hr",
-] as const;
-joiningKitRouter.use(requireAuth, requireRole(...KIT_ROLES));
+const KIT_ROLES = ["super_admin", "admin", "hr", "hr_manager", "payroll_hr"] as const;
+// Scoped to the kit's own paths. This router is mounted at /api/employees BEFORE the
+// reactivation and rejoin-dossier routers; a bare .use(requireAuth, requireRole(...)) ran
+// for every request reaching it and 403'd branch heads, managers and payroll heads on
+// /api/employees/reactivation/* before those routers saw the request. Every route
+// below is /:employeeId/joining-kit[...], so this prefix covers all of them.
+joiningKitRouter.use("/:employeeId/joining-kit", requireAuth, requireRole(...KIT_ROLES));
 
 /** What would go into this employee's kit, and is anything in the way. */
 joiningKitRouter.get(

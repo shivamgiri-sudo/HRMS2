@@ -1,3 +1,4 @@
+import { scopePredicate, canAccessTarget } from "../wfm/branch-scope.js";
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import type { Request } from "express";
@@ -884,14 +885,17 @@ export async function getWorkforcePlanning(
      LIMIT 50`,
     scoped.params,
   );
+  // Owner ruling 2026-10-01: drafts are limited to the caller's own branch / process scope.
+  const draftScope = scopePredicate(await resolveUserBusinessScope(actor as any), { branchId: "wrd.branch_id", processId: "wrd.process_id" });
   const drafts = await queryRows(
     `SELECT wrd.*, b.branch_name, p.process_name
      FROM workforce_roster_draft wrd
      LEFT JOIN branch_master b ON b.id = wrd.branch_id
      LEFT JOIN process_master p ON p.id = wrd.process_id
+     ${draftScope.sql === "1=1" ? "" : `WHERE (${draftScope.sql})`}
      ORDER BY wrd.roster_date DESC, wrd.created_at DESC
      LIMIT ${limit(filters.limit)}`,
-    [],
+    draftScope.sql === "1=1" ? [] : draftScope.params,
   );
   return {
     summary: {
@@ -985,12 +989,11 @@ export async function createDraftRoster(
   ]);
 }
 
-export async function approveDraftRoster(
-  actor: Actor,
-  id: string,
-  approved: boolean,
-  req?: Request,
-) {
+export async function approveDraftRoster(actor: Actor, id: string, approved: boolean, req?: Request) {
+  const draftOwner = await queryOne("SELECT branch_id, process_id FROM workforce_roster_draft WHERE id = ? LIMIT 1", [id]);
+  if (draftOwner && !(await canAccessTarget(await resolveUserBusinessScope(actor as any), { branchId: draftOwner.branch_id as string | null, processId: draftOwner.process_id as string | null }))) {
+    throw Object.assign(new Error("Forbidden: outside your branch / assigned scope"), { statusCode: 403 });
+  }
   await db.executeRun(
     `UPDATE workforce_roster_draft
      SET status = ?, approved_by = ?, approved_at = NOW(), updated_at = NOW()

@@ -10,17 +10,16 @@
  * every branch instead.
  */
 
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { ORG_WIDE_EXEMPT_ROLES } from '../../shared/scopeAccess.js';
 
-/** Roles that see ALL branches — same set the campaign/leads pages already use. */
-export const ALL_BRANCH_ROLES: readonly string[] = [
-  "super_admin",
-  "admin",
-  "hr",
-  "management",
-  "manager",
-];
+/**
+ * Roles that see ALL branches. Owner policy 2026-10-01: only the org-wide exempt roles; hr, manager,
+ * management and every other role are limited to their own branch. (`management` is not a
+ * head-office role in the shared role list, so it is branch-scoped like `manager`.)
+ */
+export const ALL_BRANCH_ROLES: readonly string[] = ORG_WIDE_EXEMPT_ROLES;
 
 export type BranchScope =
   { all: true } | { all: false; branchName: string | null };
@@ -99,4 +98,47 @@ export async function canMessageLead(
     reason:
       "Candidate is not shortlisted for this requisition yet — run screening first",
   };
+}
+
+/**
+ * Combine the server-side scope with an optional browser-supplied branch filter. The filter may only
+ * NARROW: `deny` is true when the caller is branch-scoped with no resolvable branch, or asked for a
+ * branch other than their own (fail closed), otherwise `branchName` is the filter to apply
+ * (undefined = no branch restriction, only possible for org-wide callers).
+ */
+export function effectiveBranchFilter(
+  scope: BranchScope,
+  requested?: string | null
+): { deny: boolean; branchName?: string } {
+  const asked = requested && String(requested).trim() ? String(requested).trim() : undefined;
+  if (scope.all) return { deny: false, branchName: asked };
+  if (!scope.branchName) return { deny: true };
+  if (asked && asked.toLowerCase() !== scope.branchName.toLowerCase()) return { deny: true };
+  return { deny: false, branchName: scope.branchName };
+}
+
+/** True when the campaign's requisition belongs to the caller's branch (or the caller sees all). */
+export async function canAccessCampaign(campaignId: string, scope: BranchScope): Promise<boolean> {
+  if (scope.all) return true;
+  if (!scope.branchName) return false;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1
+       FROM meta_campaign mc
+       JOIN job_requisition jr ON jr.id = mc.requisition_id
+      WHERE mc.id = ? AND jr.branch_name = ?
+      LIMIT 1`,
+    [campaignId, scope.branchName]
+  );
+  return rows.length > 0;
+}
+
+/** True when the requisition belongs to the caller's branch (or the caller sees all). */
+export async function canAccessRequisition(requisitionId: string, scope: BranchScope): Promise<boolean> {
+  if (scope.all) return true;
+  if (!scope.branchName) return false;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT 1 FROM job_requisition WHERE id = ? AND branch_name = ? LIMIT 1',
+    [requisitionId, scope.branchName]
+  );
+  return rows.length > 0;
 }

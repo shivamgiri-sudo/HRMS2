@@ -124,6 +124,14 @@ describe("payroll sign-off — pending-run queue predicate", () => {
     expect(queueQuery).toMatch(/finance_approved_at IS NULL/);
   });
 
+  it("offers an opt-in pipeline list that keeps a finance-signed run visible until it is disbursed", () => {
+    // Approve Run / Lock Run / Mark as Disbursed sit on the same screen that picks its run from
+    // this list. The default queue drops a run once finance_approved_at is set, so without this
+    // mode a signed run could never be approved, locked or disbursed from the UI.
+    expect(queueQuery).toMatch(/req\.query\.include\s*===\s*"pipeline"/);
+    expect(queueQuery).toMatch(/IN \('processing', 'approved', 'locked'\)/);
+  });
+
   it("excludes synthetic runs so test data cannot be signed off", () => {
     // Live data on 31-Jul-2026 held a 'test-auto-gen' run for 2026-07 worth
     // ₹1.22 Cr across 1,288 payslip lines, rendering identically to the real
@@ -144,7 +152,7 @@ describe("payroll sign-off — pending-run queue predicate", () => {
   it("parameterises the synthetic-creator list rather than interpolating values", () => {
     // Only the placeholder count is interpolated; the values are bound.
     expect(queueQuery).toMatch(/\$\{placeholders\}/);
-    expect(queueQuery).toMatch(/SYNTHETIC_RUN_CREATORS,\s*\)/);
+    expect(queueQuery).toMatch(/\.\.\.SYNTHETIC_RUN_CREATORS,\s*\.\.\.runScope\.params/);
   });
 
   it("derives headcount from salary_prep_line instead of the stale run header", () => {

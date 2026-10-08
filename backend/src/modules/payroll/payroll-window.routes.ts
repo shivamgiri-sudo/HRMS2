@@ -1,18 +1,16 @@
-import { Router } from "express";
-import type { Response } from "express";
-import type { RowDataPacket } from "mysql2";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { db } from "../../db/mysql.js";
-import { isRunClosed } from "./run-status.js";
-import { encryptField } from "../../shared/fieldEncryption.js";
-import { logSensitiveAction } from "../../shared/auditLog.js";
-import { validateBankFields } from "../../shared/statutoryFormat.js";
-import {
-  computeAccountBlindIndex,
-  findDuplicateAccountOwner,
-} from "../../shared/bankAccountDuplicate.js";
+import { Router } from 'express';
+import type { Response } from 'express';
+import type { RowDataPacket } from 'mysql2';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { db } from '../../db/mysql.js';
+import { isRunClosed } from './run-status.js';
+import { encryptField } from '../../shared/fieldEncryption.js';
+import { employeeScopeFor, guardEmployee, requireRunInScope } from './payroll-branch-scope.js';
+import { logSensitiveAction } from '../../shared/auditLog.js';
+import { validateBankFields } from '../../shared/statutoryFormat.js';
+import { computeAccountBlindIndex, findDuplicateAccountOwner } from '../../shared/bankAccountDuplicate.js';
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) =>
@@ -24,19 +22,9 @@ router.use(requireAuth);
 // Returns window_close_date and whether the run is within the editable window.
 // admin/payroll_head added 2026-08-25: HO Queues' Run Window tab grants both roles page access
 // but this read-only status check excluded them.
-router.get(
-  "/runs/:id/window-status",
-  requireRole(
-    "payroll",
-    "super_admin",
-    "finance",
-    "hr",
-    "admin",
-    "payroll_head",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, run_month, status, window_close_date, auto_closed_at, closed_by, tds_mode
+router.get('/runs/:id/window-status', requireRole('payroll', 'super_admin', 'finance', 'hr', 'admin', 'payroll_head'), requireRunInScope(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, run_month, status, window_close_date, auto_closed_at, closed_by, tds_mode
      FROM salary_prep_run WHERE id = ? LIMIT 1`,
       [req.params.id],
     );
@@ -75,80 +63,47 @@ router.get(
 );
 
 // ── GET /api/payroll/runs/:id/tds-mode ───────────────────────────────────────
-router.get(
-  "/runs/:id/tds-mode",
-  requireRole("payroll", "super_admin", "finance"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, run_month, tds_mode FROM salary_prep_run WHERE id = ? LIMIT 1`,
-      [req.params.id],
-    );
-    const run = rows[0] as any;
-    if (!run)
-      return res.status(404).json({ success: false, message: "Run not found" });
-    return res.json({
-      success: true,
-      data: {
-        run_id: run.id,
-        run_month: run.run_month,
-        tds_mode: run.tds_mode ?? "manual",
-      },
-    });
-  }),
-);
+router.get('/runs/:id/tds-mode', requireRole('payroll', 'super_admin', 'finance'), requireRunInScope(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, run_month, tds_mode FROM salary_prep_run WHERE id = ? LIMIT 1`,
+    [req.params.id]
+  );
+  const run = (rows[0] as any);
+  if (!run) return res.status(404).json({ success: false, message: 'Run not found' });
+  return res.json({ success: true, data: { run_id: run.id, run_month: run.run_month, tds_mode: run.tds_mode ?? 'manual' } });
+}));
 
 // ── PATCH /api/payroll/runs/:id/tds-mode ─────────────────────────────────────
 // Toggle TDS mode for a run.
 // payroll_head/finance added 2026-08-25: matches the GET on the same resource above, which
 // already allowed finance. Payroll.tsx's TDS Mode panel shows the toggle to payroll_head and
 // finance, both of which 403'd on the actual write.
-router.patch(
-  "/runs/:id/tds-mode",
-  requireRole("payroll", "super_admin", "payroll_head", "finance"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { tds_mode } = req.body as { tds_mode: "auto" | "manual" };
-    if (!["auto", "manual"].includes(tds_mode)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "tds_mode must be auto or manual" });
-    }
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, status FROM salary_prep_run WHERE id = ? LIMIT 1`,
-      [req.params.id],
-    );
-    const run = rows[0] as any;
-    if (!run)
-      return res.status(404).json({ success: false, message: "Run not found" });
-    if (isRunClosed(run.status)) {
-      return res
-        .status(409)
-        .json({
-          success: false,
-          message: `Cannot change TDS mode on a ${run.status} run`,
-        });
-    }
-    await db.execute(`UPDATE salary_prep_run SET tds_mode = ? WHERE id = ?`, [
-      tds_mode,
-      req.params.id,
-    ]);
-    return res.json({ success: true, message: `TDS mode set to ${tds_mode}` });
-  }),
-);
+router.patch('/runs/:id/tds-mode', requireRole('payroll', 'super_admin', 'payroll_head', 'finance'), requireRunInScope(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { tds_mode } = req.body as { tds_mode: 'auto' | 'manual' };
+  if (!['auto', 'manual'].includes(tds_mode)) {
+    return res.status(400).json({ success: false, message: 'tds_mode must be auto or manual' });
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, status FROM salary_prep_run WHERE id = ? LIMIT 1`, [req.params.id]
+  );
+  const run = (rows[0] as any);
+  if (!run) return res.status(404).json({ success: false, message: 'Run not found' });
+  if (isRunClosed(run.status)) {
+    return res.status(409).json({ success: false, message: `Cannot change TDS mode on a ${run.status} run` });
+  }
+  await db.execute(`UPDATE salary_prep_run SET tds_mode = ? WHERE id = ?`, [tds_mode, req.params.id]);
+  return res.json({ success: true, message: `TDS mode set to ${tds_mode}` });
+}));
 
 // ── GET /api/payroll/runs/:id/tds-upload-template ────────────────────────────
 // Download CSV template: Emp Code, Employee Name, Branch, Tax Amount
-router.get(
-  "/runs/:id/tds-upload-template",
-  requireRole("payroll", "super_admin", "finance"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const runId = req.params.id;
-    const [runRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1`,
-      [runId],
-    );
-    const run = runRows[0] as any;
-    if (!run)
-      return res.status(404).json({ success: false, message: "Run not found" });
+router.get('/runs/:id/tds-upload-template', requireRole('payroll', 'super_admin', 'finance'), requireRunInScope(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const runId = req.params.id;
+  const [runRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1`, [runId]
+  );
+  const run = (runRows[0] as any);
+  if (!run) return res.status(404).json({ success: false, message: 'Run not found' });
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.employee_code,
@@ -182,18 +137,10 @@ router.get(
 
 // ── POST /api/payroll/runs/:id/manual-tds ────────────────────────────────────
 // Upsert manual TDS amounts. Body: array of { employee_id | employee_code, tds_amount, remarks? }
-router.post(
-  "/runs/:id/manual-tds",
-  requireRole("payroll", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const runId = req.params.id;
-    const actorUserId = req.authUser!.id;
-    const entries = req.body as Array<{
-      employee_id?: string;
-      employee_code?: string;
-      tds_amount: number;
-      remarks?: string;
-    }>;
+router.post('/runs/:id/manual-tds', requireRole('payroll', 'super_admin'), requireRunInScope(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const runId = req.params.id;
+  const actorUserId = req.authUser!.id;
+  const entries = req.body as Array<{ employee_id?: string; employee_code?: string; tds_amount: number; remarks?: string }>;
 
     if (!Array.isArray(entries) || entries.length === 0) {
       return res
@@ -264,12 +211,9 @@ router.post(
 );
 
 // ── GET /api/payroll/runs/:id/manual-tds ─────────────────────────────────────
-router.get(
-  "/runs/:id/manual-tds",
-  requireRole("payroll", "super_admin", "finance"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT srmt.*, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name, e.employee_code
+router.get('/runs/:id/manual-tds', requireRole('payroll', 'super_admin', 'finance'), requireRunInScope(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT srmt.*, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name, e.employee_code
      FROM salary_run_manual_tds srmt
      JOIN employees e ON e.id = srmt.employee_id
      WHERE srmt.run_id = ?
@@ -281,17 +225,11 @@ router.get(
 );
 
 // ── PATCH /api/payroll/runs/:id/manual-tds/:employeeId ───────────────────────
-router.patch(
-  "/runs/:id/manual-tds/:employeeId",
-  requireRole("payroll", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { tds_amount, remarks } = req.body as {
-      tds_amount: number;
-      remarks?: string;
-    };
-    const amt = Math.max(0, Number(tds_amount) || 0);
-    await db.execute(
-      `UPDATE salary_run_manual_tds SET tds_amount = ?, remarks = ?, updated_at = NOW()
+router.patch('/runs/:id/manual-tds/:employeeId', requireRole('payroll', 'super_admin'), requireRunInScope(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { tds_amount, remarks } = req.body as { tds_amount: number; remarks?: string };
+  const amt = Math.max(0, Number(tds_amount) || 0);
+  await db.execute(
+    `UPDATE salary_run_manual_tds SET tds_amount = ?, remarks = ?, updated_at = NOW()
      WHERE run_id = ? AND employee_id = ?`,
       [amt, remarks ?? null, req.params.id, req.params.employeeId],
     );
@@ -301,12 +239,10 @@ router.patch(
 
 // ── GET /api/payroll/bank-change-requests ────────────────────────────────────
 // Payroll HO queue for bank account change approvals routed to payroll.
-router.get(
-  "/bank-change-requests",
-  requireRole("payroll", "super_admin"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT pua.*,
+router.get('/bank-change-requests', requireRole('payroll', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const bcrScope = await employeeScopeFor(req, 'e');
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT pua.*,
             e.full_name AS employee_name,
             e.employee_code,
             bpdl.penny_drop_status,
@@ -320,11 +256,12 @@ router.get(
      WHERE pua.request_type = 'bank_details'
        AND COALESCE(pua.routed_to_role,'payroll') = 'payroll'
        AND pua.status = 'pending'
+       AND (${bcrScope.sql})
      ORDER BY pua.requested_at ASC`,
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    bcrScope.params
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 // ── PATCH /api/payroll/bank-change-requests/:id ──────────────────────────────
 // Payroll HO approves or rejects a bank account change.
@@ -360,18 +297,14 @@ router.patch(
      FROM profile_update_approval pua
      LEFT JOIN bank_penny_drop_log bpdl ON bpdl.id = pua.penny_drop_log_id
      WHERE pua.id = ? LIMIT 1`,
-      [req.params.id],
-    );
-    const rec = rows[0] as any;
-    if (!rec)
-      return res
-        .status(404)
-        .json({ success: false, message: "Request not found" });
-    if (rec.status !== "pending") {
-      return res
-        .status(409)
-        .json({ success: false, message: `Request already ${rec.status}` });
-    }
+    [req.params.id]
+  );
+  const rec = (rows[0] as any);
+  if (!rec) return res.status(404).json({ success: false, message: 'Request not found' });
+  if (!(await guardEmployee(req, res, rec.employee_id))) return;
+  if (rec.status !== 'pending') {
+    return res.status(409).json({ success: false, message: `Request already ${rec.status}` });
+  }
 
     // Name mismatch is a warning only — approval is always permitted.
     // The mismatch is recorded in bank_penny_drop_log and the audit log so
@@ -576,25 +509,16 @@ router.get(
       string | undefined
     >;
 
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-    if (branch_id) {
-      conditions.push("e.branch_id = ?");
-      params.push(branch_id);
-    }
-    if (employee_id) {
-      conditions.push("esa.employee_id = ?");
-      params.push(employee_id);
-    }
-    if (from) {
-      conditions.push("esa.effective_from >= ?");
-      params.push(from);
-    }
-    if (to) {
-      conditions.push("esa.effective_from <= ?");
-      params.push(to);
-    }
-    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  // Branch scoping: the caller's own scope always applies; branch_id / employee_id only narrow it.
+  const shScope = await employeeScopeFor(req, 'e');
+  conditions.push(`(${shScope.sql})`); params.push(...shScope.params);
+  if (branch_id)   { conditions.push('e.branch_id = ?'); params.push(branch_id); }
+  if (employee_id) { conditions.push('esa.employee_id = ?'); params.push(employee_id); }
+  if (from)        { conditions.push('esa.effective_from >= ?'); params.push(from); }
+  if (to)          { conditions.push('esa.effective_from <= ?'); params.push(to); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT esa.id, esa.employee_id, esa.ctc_annual,

@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   euclideanDistance: vi.fn(),
   loadImage: vi.fn(),
   recognize: vi.fn(),
+  terminate: vi.fn(),
+  createWorker: vi.fn(),
   execute: vi.fn().mockResolvedValue([[], []]),
 }));
 
@@ -53,9 +55,12 @@ vi.mock("canvas", () => ({
   loadImage: mocks.loadImage,
 }));
 
+// ocr.service no longer calls the one-shot Tesseract.recognize: it creates a worker with an
+// errorHandler (an undecodable image otherwise throws inside the worker callback and kills
+// the process — 3a67dae63), recognises through it, and always terminates it.
 vi.mock("tesseract.js", () => ({
   default: {
-    recognize: mocks.recognize,
+    createWorker: mocks.createWorker,
   },
 }));
 
@@ -85,6 +90,12 @@ const mockEuclideanDistance = mocks.euclideanDistance as ReturnType<
 const mockLoadImage = mocks.loadImage as ReturnType<typeof vi.fn>;
 const mockRecognize = mocks.recognize as ReturnType<typeof vi.fn>;
 const mockExecute = mocks.execute as ReturnType<typeof vi.fn>;
+const mockCreateWorker = mocks.createWorker as ReturnType<typeof vi.fn>;
+const mockTerminate = mocks.terminate as ReturnType<typeof vi.fn>;
+
+/** Twelve digits that satisfy the Verhoeff checksum, i.e. shaped like a real Aadhaar. */
+const VALID_AADHAAR = "234567890124";
+const VALID_AADHAAR_PRINTED = "2345 6789 0124";
 
 beforeAll(async () => {
   process.env.FACE_MODELS_PATH = modelDir;
@@ -121,10 +132,15 @@ beforeEach(() => {
   mockLoadImage.mockResolvedValue({});
   mockRecognize.mockResolvedValue({
     data: {
-      text: "John Doe\n1234 5678 9012",
+      text: `John Doe\n${VALID_AADHAAR_PRINTED}`,
       confidence: 91,
     },
   });
+  mockTerminate.mockResolvedValue(undefined);
+  mockCreateWorker.mockResolvedValue({ recognize: mocks.recognize, terminate: mocks.terminate });
+  // mockReset, not just clearAllMocks above: clearing keeps any unconsumed
+  // mockResolvedValueOnce entries, which then answer the NEXT test's queries.
+  mockExecute.mockReset();
   mockExecute.mockResolvedValue([[], []]);
   mockDetectSingleFace.mockImplementation(() => ({
     withFaceLandmarks: () => ({
@@ -207,9 +223,23 @@ describe("ATS OCR and face runtime", () => {
     const result = await extractFromDocument("aadhaar.png", "aadhaar");
 
     expect(result.documentType).toBe("aadhaar");
-    expect(result.extractedNumber).toBe("123456789012");
+    expect(result.extractedNumber).toBe(VALID_AADHAAR);
     expect(result.extractedName).toBe("John Doe");
     expect(result.confidence).toBe(91);
+  });
+
+  it("recognises through a worker with an errorHandler and always terminates it", async () => {
+    await extractFromDocument("aadhaar.png", "aadhaar");
+    expect(mockCreateWorker).toHaveBeenCalledWith(
+      "eng", 1, expect.objectContaining({ errorHandler: expect.any(Function) }),
+    );
+    expect(mockRecognize).toHaveBeenCalledWith("aadhaar.png", {}, { text: true, blocks: false });
+    expect(mockTerminate).toHaveBeenCalledTimes(1);
+
+    mockTerminate.mockClear();
+    mockRecognize.mockRejectedValueOnce(new Error("cannot decode image"));
+    await expect(extractFromDocument("broken.png", "aadhaar")).rejects.toThrow("cannot decode image");
+    expect(mockTerminate).toHaveBeenCalledTimes(1);
   });
 
   it("records OCR fraud alerts when extracted document numbers mismatch", async () => {
@@ -218,29 +248,62 @@ describe("ATS OCR and face runtime", () => {
       .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[], []]);
 
-    const result = await crossValidateDocument(
-      "candidate-1",
-      "doc-1",
-      "aadhaar",
-      {
-        rawText: "John Doe\n1234 5678 9012",
-        extractedNumber: "123456789012",
-        extractedName: "John Doe",
-        confidence: 91,
-        documentType: "aadhaar",
-      },
-    );
+    const result = await crossValidateDocument("candidate-1", "doc-1", "aadhaar", {
+      rawText: `John Doe\n${VALID_AADHAAR_PRINTED}`,
+      extractedNumber: VALID_AADHAAR,
+      extractedName: "John Doe",
+      extractedDob: null,
+      confidence: 91,
+      documentType: "aadhaar",
+    });
 
     expect(result.matched).toBe(false);
     expect(result.alertId).toBeDefined();
+    expect(mockExecute.mock.calls.some(([sql]) => String(sql).includes("candidate_fraud_alert"))).toBe(true);
     expect(
-      mockExecute.mock.calls.some(([sql]) =>
-        String(sql).includes("candidate_fraud_alert"),
-      ),
+      mockExecute.mock.calls.some(([sql, params]) =>
+        String(sql).includes("UPDATE candidate_onboarding_document") && (params as unknown[]).includes("mismatch")),
     ).toBe(true);
   });
 
-  it("keeps duplicate detection behavior unchanged", async () => {
+  it("does not raise a mismatch off an Aadhaar reading that fails the Verhoeff checksum", async () => {
+    // ba3a96f62: a number that cannot be a real Aadhaar is OCR noise — a bad photo, not a
+    // bad candidate — so it is recorded as "no number found" and never compared or alerted.
+    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, undefined]);
+
+    const result = await crossValidateDocument("candidate-1", "doc-1", "aadhaar", {
+      rawText: "John Doe\n1234 5678 9012",
+      extractedNumber: "123456789012",
+      extractedName: "John Doe",
+      extractedDob: null,
+      confidence: 91,
+      documentType: "aadhaar",
+    });
+
+    expect(result).toEqual({ matched: true });
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+    expect(String(mockExecute.mock.calls[0][0])).toContain("ocr_number_match = 'no_number_found'");
+    expect(mockExecute.mock.calls.some(([sql]) => String(sql).includes("candidate_fraud_alert"))).toBe(false);
+  });
+
+  it("flags a shared identifier as a duplicate when the two records are different people", async () => {
+    mockExecute
+      .mockResolvedValueOnce([[{ candidate_id: "candidate-2" }]])
+      .mockResolvedValueOnce([[
+        { id: "candidate-1", full_name: "RAJESH KUMAR", date_of_birth: "1995-04-02" },
+        { id: "candidate-2", full_name: "SUNITA DEVI", date_of_birth: "1988-11-20" },
+      ]]);
+
+    const result = await checkDuplicates("candidate-1", "aadhaar", "hashed-value");
+
+    expect(result).toEqual({ isDuplicate: true, matchedCandidateId: "candidate-2" });
+    const alert = mockExecute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO candidate_fraud_alert"));
+    expect(alert).toBeDefined();
+    expect(alert![1]).toEqual(expect.arrayContaining(["DUPLICATE_AADHAAR", "critical", "candidate-2"]));
+  });
+
+  it("still treats it as a duplicate when the other record cannot be identified", async () => {
+    // No party rows at all: the same person cannot be established, so it fails closed.
     mockExecute.mockResolvedValueOnce([[{ candidate_id: "candidate-2" }]]);
 
     const result = await checkDuplicates(
@@ -253,5 +316,20 @@ describe("ATS OCR and face runtime", () => {
       isDuplicate: true,
       matchedCandidateId: "candidate-2",
     });
+  });
+
+  it("does not call a rejoiner a duplicate: same name and date of birth is one person", async () => {
+    mockExecute
+      .mockResolvedValueOnce([[{ candidate_id: "candidate-2" }]])
+      .mockResolvedValueOnce([[
+        { id: "candidate-1", full_name: "RAJESH KUMAR", date_of_birth: "1995-04-02" },
+        { id: "candidate-2", full_name: "RAJESH KUMAR", date_of_birth: "1995-04-02" },
+      ]]);
+
+    const result = await checkDuplicates("candidate-1", "pan", "hashed-value");
+
+    expect(result).toEqual({ isDuplicate: false, matchedCandidateId: "candidate-2" });
+    const alert = mockExecute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO candidate_fraud_alert"));
+    expect(alert![1]).toEqual(expect.arrayContaining(["REPEAT_APPLICANT", "low"]));
   });
 });

@@ -86,8 +86,10 @@ describe("the holiday count is per employee, never a flat month figure", () => {
     // 26 August working days. Both worked 24 days.
     // Covered by both holidays -> 24 available -> full entitlement.
     expect(await calculateWeekoffEligibility("covered", 24, AUG, 2)).toBe(5);
-    // Joined mid-month, only one holiday falls after joining -> 25 available -> still short.
-    expect(await calculateWeekoffEligibility("joiner", 24, AUG, 1)).toBe(4);
+    // Joined mid-month, only one holiday falls after joining. Since 246e9fc0d (2026-09-18)
+    // the holiday is added to the paid base as well (24 + 1 = 25 against 25 available), so
+    // this is full entitlement. Owner confirmed 2026-09-30 that the live rule stands.
+    expect(await calculateWeekoffEligibility("joiner", 24, AUG, 1)).toBe(5);
     // A branch the holidays were not declared for -> 26 available -> short by two.
     expect(await calculateWeekoffEligibility("other-branch", 24, AUG, 0)).toBe(
       4,

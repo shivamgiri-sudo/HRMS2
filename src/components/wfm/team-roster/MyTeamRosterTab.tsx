@@ -17,6 +17,8 @@ import RosterQuickFill from "./RosterQuickFill";
 import { computeBulkFill, describeSkipped, pageShiftOptions, type BulkEdit } from "./rosterBulkFill";
 import SubmitProblemsDialog from "./SubmitProblemsDialog";
 import { planAutofill } from "./autofillPlan";
+import { weekContaining } from "./rosterDeepLink";
+import { usePendingCells } from "@/pages/wfm/roster-requests/usePendingCells";
 import TeamRosterGrid, { shiftOptionsFor, stagedKey, type StagedEdit } from "./TeamRosterGrid";
 import {
   RANGE_PRESETS, formatDmy, presetRange, shiftKeyOf, spanDays, splitShiftKey, storedLabel, unpackError,
@@ -25,7 +27,14 @@ import {
 
 const PAGE_SIZES = [25, 50, 100] as const;
 
-interface Props { me: TeamRosterMe; onSubmitted: (submissionId: number) => void }
+interface Props {
+  me: TeamRosterMe;
+  onSubmitted: (submissionId: number) => void;
+  /** Open on the Monday-Sunday week containing this date (validated YYYY-MM-DD) instead of the next 7 days. */
+  focusDate?: string | null;
+  /** Highlight and scroll to this employee's row when it is on the loaded page. */
+  focusEmployeeId?: string | null;
+}
 
 export function countDraftChanges(serverKeys: string[], staged: Record<string, StagedEdit>): number {
   const keys = new Set(serverKeys);
@@ -35,8 +44,8 @@ export function countDraftChanges(serverKeys: string[], staged: Record<string, S
   return keys.size;
 }
 
-export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
-  const initial = presetRange("next-7", me.today);
+export default function MyTeamRosterTab({ me, onSubmitted, focusDate = null, focusEmployeeId = null }: Props) {
+  const initial = focusDate ? weekContaining(focusDate) : presetRange("next-7", me.today);
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
   const [search, setSearch] = useState("");
@@ -56,6 +65,7 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
     : spanDays(from, to) > me.maxRangeDays ? `A range can span at most ${me.maxRangeDays} days.` : null;
 
   const grid = useTeamRosterGrid({ from, to, search: debounced.trim(), offset, limit: pageSize, lobId: lobId || undefined, processId: processId || undefined }, !rangeError);
+  const pendingCells = usePendingCells({ from, to, processId: processId || undefined, enabled: !rangeError });
   const templates = useTeamRosterTemplates(true);
   const draft = useTeamRosterDraft(true);
   const save = useSaveDraftLines();
@@ -244,6 +254,8 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
             staged={stagedChoice} onApply={applyEdits}
           />
           <TeamRosterGrid
+            pendingCells={pendingCells}
+            highlightEmployeeId={focusEmployeeId}
             data={grid.data} today={me.today} templates={templates.data?.processes ?? []} staged={staged}
             dayFillOptions={pageShiftOptions(gridRows, templates.data?.processes ?? [])}
             onFillRow={(row, choice) => fillSubset([row], gridDates, choice)}

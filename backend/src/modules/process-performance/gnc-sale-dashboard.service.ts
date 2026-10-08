@@ -881,3 +881,28 @@ function buildDateWiseBreakdown(
     a.date.localeCompare(b.date),
   );
 }
+
+export interface GncAbandonCartDailyRow {
+  date: string; total: number; attempted: number; connected: number; sameDayConnected: number; ncConnected: number;
+}
+
+export async function getGncAbandonCartDaily(from: string, to: string): Promise<GncAbandonCartDailyRow[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ANY_VALUE(DATE_FORMAT(alloc_date, '%Y-%m-%d')) AS date,
+       COUNT(*) AS total,
+       SUM(CASE WHEN calling_status != 'pending to call' THEN 1 ELSE 0 END) AS attempted,
+       SUM(CASE WHEN LOWER(TRIM(calling_status)) = 'connected' THEN 1 ELSE 0 END) AS connected,
+       SUM(CASE WHEN same_day_connect = 'Connected' THEN 1 ELSE 0 END) AS same_day_connected,
+       SUM(CASE WHEN LOWER(TRIM(calling_status)) = 'not connected' THEN 1 ELSE 0 END) AS nc_connected
+     FROM db_masmis.gnc_allocation
+     WHERE alloc_date >= ? AND alloc_date < DATE_ADD(?, INTERVAL 1 DAY)
+     GROUP BY alloc_date
+     ORDER BY alloc_date`,
+    [from, to],
+  );
+  return rows.map((r) => ({
+    date: String(r.date),
+    total: num(r.total), attempted: num(r.attempted), connected: num(r.connected),
+    sameDayConnected: num(r.same_day_connected), ncConnected: num(r.nc_connected),
+  }));
+}

@@ -20,17 +20,14 @@
 // Write role (PATCH /:id/resolve) is intentionally narrower: wfm, hr, admin, super_admin.
 // Resolving a mismatch rewrites attendance_status and lwp_value, which payroll reads.
 
-import { Router } from "express";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
-import { logSensitiveAction } from "../../shared/auditLog.js";
-import {
-  resolveUserBusinessScope,
-  buildEmployeeScopeCondition,
-} from "../../shared/enterpriseScope.js";
-import { logger } from "../../logger.js";
+import { Router } from 'express';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import { logSensitiveAction } from '../../shared/auditLog.js';
+import { resolveUserBusinessScope, buildEmployeeScopeCondition, canViewEmployee } from '../../shared/enterpriseScope.js';
+import { logger } from '../../logger.js';
 import {
   EscalationError,
   attachEscalations,
@@ -368,6 +365,12 @@ mismatchReviewRouter.patch(
         .json({ success: false, message: "Record not found" });
     }
     const rec = check[0] as any;
+
+    // Owner ruling 2026-10-01: wfm / hr may only resolve records of employees in their own branch / scope
+    // (the list is already scoped; this was the one by-id write that was not).
+    if (!(await canViewEmployee(req.authUser as any, String(rec.employee_id)))) {
+      return res.status(403).json({ success: false, message: 'Forbidden: this record is outside your branch / assigned scope' });
+    }
 
     if (rec.is_locked) {
       return res

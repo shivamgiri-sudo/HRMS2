@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { RaiseExitButton } from "@/components/exit/RaiseExitButton";
 import { Link } from "react-router-dom";
 import { ExternalLink, Info, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -159,6 +160,7 @@ function AttendanceTable({ data, onOpen }: { data: NonNullable<ReturnType<typeof
                 <div className="font-semibold text-slate-800">{row.name}</div>
                 <div className="text-[11px] text-slate-500">{[row.code, row.designation, row.processName].filter(Boolean).join(" - ")}</div>
                 <LobBadge name={row.lobName} />
+                {row.employeeId && <div className="mt-1"><RaiseExitButton employee={{ id: row.employeeId, name: row.name, code: row.code, process: row.processName }} /></div>}
               </th>
               {row.days.map((code, i) => (
                 <td key={i} className="border-b border-l border-slate-100 p-0 text-center">

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { Shield } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
@@ -12,7 +12,7 @@ import { useHubEmployees, useDebounce, useTodaySummary } from "@/hooks/useAttend
 import { formatLastSynced } from "@/lib/utils";
 import type { HubEmployee, HubFilters } from "@/hooks/useAttendanceHub";
 import { Button } from "@/components/ui/button";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 // branch_head, branch_wfm, payroll_hr added 2026-09-16 (owner request) — the backend
 // (/api/employees/hr-hub*) already row-scopes them to their own branch via
@@ -43,7 +43,10 @@ export default function AdminAttendanceView() {
   const { hasAnyRole } = useWorkforceAccess();
   const canAccess = hasAnyRole(...ALLOWED_ROLES);
 
-  const [filters, setFilters] = useState<HubFilters>(DEFAULT_FILTERS);
+  // Approval Center deep link: ?empCode=<code>&approvalId=<overrideId> opens that employee's drawer.
+  const [searchParams] = useSearchParams();
+  const linkedEmpCode = searchParams.get("empCode") ?? "";
+  const [filters, setFilters] = useState<HubFilters>(() => ({ ...DEFAULT_FILTERS, search: linkedEmpCode }));
   const [month, setMonth] = useState(currentMonthStr);
   const [selectedEmployee, setSelectedEmployee] = useState<HubEmployee | null>(null);
   const [view, setView] = useState<"directory" | "sheet">("directory");
@@ -59,6 +62,13 @@ export default function AdminAttendanceView() {
   const { data: todaySummary } = useTodaySummary();
   const employees = result?.data ?? [];
   const total = result?.total ?? 0;
+
+  useEffect(() => {
+    if (!linkedEmpCode || selectedEmployee) return;
+    const hit = employees.find((e) => e.employee_code === linkedEmpCode);
+    if (hit) setSelectedEmployee(hit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedEmpCode, employees]);
 
   const handleFiltersChange = useCallback((partial: Partial<HubFilters>) => {
     setFilters(prev => ({ ...prev, ...partial }));

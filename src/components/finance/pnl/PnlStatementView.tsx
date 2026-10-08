@@ -256,6 +256,9 @@ export function PnlStatementView({
                 ? `Revenue basis: this month is closed, so Recognised Revenue is what was invoiced, plus ₹${(statement.revenueEstimated! / 100000).toLocaleString("en-IN", { maximumFractionDigits: 2 })} L estimated (seat rate × seats) for cost centres not billed yet — the same figure Live P&L and CEO Overview use. It is replaced once those invoices arrive.`
                 : "Revenue basis: this month is closed, so Recognised Revenue is what was actually invoiced."
               : "Revenue basis: this month is still running, so Recognised Revenue is the planned figure — invoicing lags delivery and is shown separately below it."}
+            {(statement.forecastRevenue?.costCentres ?? 0) > 0
+              ? ` For ${statement.forecastRevenue!.costCentres} cost centre${statement.forecastRevenue!.costCentres === 1 ? "" : "s"} the approved revenue forecast replaces that figure (₹${(statement.forecastRevenue!.amount / 100000).toLocaleString("en-IN", { maximumFractionDigits: 2 })} L; ${statement.forecastRevenue!.closed} closed at actual, the rest still open) — the same revenue Live P&L shows.`
+              : ""}
           </p>
         )}
         <div className="overflow-auto rounded-3xl border border-slate-200 bg-white">

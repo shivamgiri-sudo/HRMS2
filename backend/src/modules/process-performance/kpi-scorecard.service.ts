@@ -156,7 +156,7 @@ export interface KpiScorecardRow {
   family: KpiFamily;
   unit: KpiUnit;
   lobLabel: string;
-  target: number;
+  target: number | null;
   direction: KpiDirection;
   availability: Availability;
   actual: number | null;
@@ -197,15 +197,9 @@ export function supportFrom(
   };
 }
 
-function ragFor(
-  actual: number,
-  target: number,
-  direction: KpiDirection,
-): "good" | "warn" | "crit" {
-  const ratio =
-    direction === "higher_is_better"
-      ? actual / target
-      : target / Math.max(actual, 1e-9);
+function ragFor(actual: number, target: number | null, direction: KpiDirection): "good" | "warn" | "crit" | null {
+  if (target == null || target <= 0) return null; // no business target yet: show the value, never a fabricated status
+  const ratio = direction === "higher_is_better" ? actual / target : target / Math.max(actual, 1e-9);
   if (ratio >= 0.995) return "good";
   if (ratio >= 0.88) return "warn";
   return "crit";

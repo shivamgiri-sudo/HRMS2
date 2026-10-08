@@ -4,15 +4,17 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { useDebounce } from "@/hooks/useAttendanceHub";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { Form16BulkUpload } from "@/components/payroll/Form16BulkUpload";
 import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGeneratorV2";
 import { downloadMasCallnetPayslipV2Format } from "@/lib/masCallnetPayslipGeneratorV2Format";
 import { numberToWords } from "@/lib/numberToWords";
+import { payslipDays } from "@/lib/payslipDays";
 
 type PayrollRun = { id: string; run_month: string; status: string; total_employees?: number; total_gross?: number; total_net?: number; };
 function runMonth(r: PayrollRun): number { return r.run_month ? parseInt(r.run_month.split("-")[1] ?? "1", 10) : 0; }
 function runYear(r: PayrollRun): number { return r.run_month ? parseInt(r.run_month.split("-")[0] ?? "0", 10) : 0; }
 type PayrollLine = { employee_id: string; employee_name: string; employee_code?: string; gross_pay: number; net_pay: number; pf_employee: number; esic_employee: number; total_deductions: number; payslip_id?: string; payslip_status?: string; };
-type Payslip = { id: string; employee_id: string; employee_name: string; employee_code?: string; designation?: string; department?: string; month: number; year: number; basic: number; hra: number; other_allowances: number; gross_pay: number; ctc?: number; ctc_annual?: number; pf_employee: number; esic_employee: number; lwp_deduction?: number; lwp_days?: number; advance_recovery?: number; tds_amount?: number; total_deductions: number; net_pay: number; working_days?: number; present_days?: number; eligible_weekoff_days?: number; eligible_holiday_days?: number | null; epf_number?: string; uan_number?: string; pan_number?: string; bank_account_masked?: string; bank_name?: string | null; esi_number?: string; branch_name?: string; location_name?: string; payslip_ref?: string; cheque_no?: string | null; payment_mode?: string | null; payment_date?: string | null; earnings?: PayslipComponent[]; deductions?: PayslipComponent[]; employer_costs?: PayslipComponent[]; acknowledged_at?: string | null; status?: string; ytd?: Record<string, number>; };
+type Payslip = { id: string; employee_id: string; employee_name: string; employee_code?: string; designation?: string; department?: string; month: number; year: number; basic: number; hra: number; other_allowances: number; gross_pay: number; ctc?: number; ctc_annual?: number; pf_employee: number; esic_employee: number; lwp_deduction?: number; lwp_days?: number; advance_recovery?: number; tds_amount?: number; total_deductions: number; net_pay: number; working_days?: number; present_days?: number; eligible_weekoff_days?: number; eligible_holiday_days?: number | null; epf_number?: string; uan_number?: string; pan_number?: string; bank_account_masked?: string; bank_name?: string | null; esi_number?: string; branch_name?: string; location_name?: string; payslip_ref?: string; cheque_no?: string | null; payment_mode?: string | null; payment_date?: string | null; earnings?: PayslipComponent[]; deductions?: PayslipComponent[]; employer_costs?: PayslipComponent[]; acknowledged_at?: string | null; status?: string; ytd?: Record<string, number>; ytd_by_type?: Record<string, Record<string, number>>; };
 type PayslipComponent = { component_code: string; component_name: string; component_type: string; amount: number | string; reason?: string; };
 type NeftSummary = { total: number; with_bank: number; missing_bank: number; total_net: number; };
 /**
@@ -99,7 +101,7 @@ async function downloadPayslipPdf(payslip: Payslip): Promise<void> {
     esiNo: payslip.esi_number || "",
     location: payslip.branch_name || payslip.location_name || "N/A",
     wDays: Number(payslip.working_days ?? 0),
-    earnedDays: Number(payslip.present_days ?? 0),
+    earnedDays: payslipDays(payslip as never).paidDays || Number(payslip.present_days ?? 0),
     lwpDays: Number(payslip.lwp_days ?? 0),
     totalDaysInMonth: Number(payslip.working_days ?? 30),
     basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
@@ -160,12 +162,15 @@ async function downloadPayslipPdfV2(payslip: Payslip): Promise<void> {
   // PDF prints "-" rather than a fabricated 0.00.
   const ytdMap = payslip.ytd;
   const ytdFor = (...codes: string[]) => codes.reduce((t, c) => t + Number(ytdMap?.[c.toUpperCase()] ?? 0), 0);
-  const ytdUnslottedEarnings = ytdMap
-    ? Object.entries(ytdMap).filter(([code]) => !SLOTTED.has(code.toUpperCase())).reduce((t, [, v]) => t + Number(v || 0), 0)
-    : 0;
-  const ytdUnslottedDeductions = ytdMap
-    ? Object.entries(ytdMap).filter(([code]) => !SLOTTED_DED.has(code.toUpperCase())).reduce((t, [, v]) => t + Number(v || 0), 0)
-    : 0;
+  // The flat ytd map mixes earnings, deductions and employer costs, so "not in a
+  // named slot" has to be taken per side or each Other row sums the opposite side.
+  const ytdByType = payslip.ytd_by_type;
+  const ytdUnslotted = (side: "earning" | "deduction", slotted: Set<string>) =>
+    Object.entries(ytdByType?.[side] ?? {})
+      .filter(([code]) => !slotted.has(code.toUpperCase()))
+      .reduce((t, [, v]) => t + Number(v || 0), 0);
+  const ytdUnslottedEarnings = ytdUnslotted("earning", SLOTTED);
+  const ytdUnslottedDeductions = ytdUnslotted("deduction", SLOTTED_DED);
   const ytd = ytdMap ? {
     basic: ytdFor("BASIC"), hra: ytdFor("HRA"), bonus: ytdFor("BONUS"),
     conv: ytdFor("CONVEYANCE", "CONV"), pa: ytdFor("PA", "PERSONAL_ALLOWANCE", "PORTFOLIO"),
@@ -202,7 +207,8 @@ async function downloadPayslipPdfV2(payslip: Payslip): Promise<void> {
     employerPf: employerPfV2,
     employerEsic: employerEsicV2,
     wDays: Number(payslip.working_days ?? 0),
-    earnedDays: Number(payslip.present_days ?? 0),
+    earnedDays: payslipDays(payslip as never).paidDays || Number(payslip.present_days ?? 0),
+    calendarDays: payslipDays(payslip as never).daysInMonth || undefined,
     weekOffDays: Number(payslip.eligible_weekoff_days ?? 0),
     paidHolidays: Number(payslip.eligible_holiday_days ?? 0),
     basic, hra, conv, pa, ma, sa, oa, arrear, bonus, incentive,
@@ -343,7 +349,7 @@ export default function NativePayslipCenter() {
 
   const fmt = (n: number | null | undefined) => Number(n ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  return <DashboardLayout><div className="space-y-6"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Payroll</p><h1 className="mt-2 text-3xl font-black text-slate-950">Payslip Center</h1><p className="mt-2 max-w-4xl text-slate-600">Generate, validate, view and distribute payslips with payroll risk checks.</p></div><button onClick={() => { void loadRuns(); if (selectedRunId) void loadLines(selectedRunId); }} disabled={loadingRuns} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-50"><RefreshCcw className="h-4 w-4" />Refresh</button></div>{message && <div className={`flex items-center justify-between gap-3 rounded-2xl border p-4 text-sm font-bold ${message.includes("Failed") || message.includes("Error") ? "border-red-200 bg-red-50 text-red-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}><div className="flex items-center gap-3"><AlertTriangle className="h-4 w-4 flex-shrink-0" />{message}</div></div>}
+  return <DashboardLayout><div className="space-y-6"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Payroll</p><h1 className="mt-2 text-3xl font-black text-slate-950">Payslip Center</h1><p className="mt-2 max-w-4xl text-slate-600">Generate, validate, view and distribute payslips with payroll risk checks.</p></div><button onClick={() => { void loadRuns(); if (selectedRunId) void loadLines(selectedRunId); }} disabled={loadingRuns} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-50"><RefreshCcw className="h-4 w-4" />Refresh</button></div>{message && <div className={`flex items-center justify-between gap-3 rounded-2xl border p-4 text-sm font-bold ${message.includes("Failed") || message.includes("Error") ? "border-red-200 bg-red-50 text-red-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}><div className="flex items-center gap-3"><AlertTriangle className="h-4 w-4 flex-shrink-0" />{message}</div></div>}<Form16BulkUpload />
     <div className="flex flex-wrap items-center gap-4 rounded-3xl border bg-white p-5 shadow-sm"><label className="whitespace-nowrap text-sm font-black text-slate-700">Payroll Run</label>{loadingRuns ? <Loader className="h-5 w-5 animate-spin text-slate-400" /> : <select value={selectedRunId} onChange={(e) => setSelectedRunId(e.target.value)} className="max-w-sm flex-1 rounded-2xl border bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 outline-none transition-colors focus:border-blue-400">{runs.length === 0 && <option value="">No runs available</option>}{runs.map((r) => <option key={r.id} value={r.id}>{MONTH_NAMES[runMonth(r)]} {runYear(r)} — {r.status}</option>)}</select>}{selectedRun && <Badge label={selectedRun.status} cls={selectedRun.status === "disbursed" ? "bg-emerald-50 text-emerald-700" : selectedRun.status === "locked" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"} />}<div className="ml-auto"><button onClick={() => { setShowDisbursalModal(true); setDisbursalResult(null); setDisbursalFile(null); }} disabled={!selectedRunId} className="inline-flex items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-800 hover:bg-blue-100 disabled:opacity-40"><Upload className="h-4 w-4" />Upload Disbursal Data</button></div></div>
     {showDisbursalModal && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4" onClick={() => setShowDisbursalModal(false)}>

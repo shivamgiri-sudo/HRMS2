@@ -1,204 +1,68 @@
 import type { ReactNode } from "react";
-import {
-  Briefcase,
-  Calendar,
-  CheckCircle2,
-  FileUser,
-  Filter,
-  Mail,
-  TrendingUp,
-  UserPlus,
-  Users,
-  XCircle,
-} from "lucide-react";
+import { Briefcase, CalendarCheck, FileCheck2, Handshake, ShieldCheck, TrendingUp, UserCheck, UserPlus, UserX, Users } from "lucide-react";
 
 import {
-  ReferenceHeader,
-  ReferenceListRow,
-  ReferenceMetricGrid,
-  ReferencePanel,
-  ReferenceQuickLink,
-} from "../ReferenceDashboardUI";
-import { buildRecruitmentFunnel } from "../dashboard-data-contracts";
+  ActionCenter, DashHero, InsightGrid, KpiTiles, LazySection, SectionTitle, SignalList, formatUnit, drillHref,
+} from "../kit";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
-import {
-  arrayAt,
-  asNumber,
-  formatValue,
-  metricValue,
-} from "../reference-dashboard-model";
-import {
-  OnboardingFunnelPanel,
-  RecruiterFunnelPanel,
-} from "./ReferenceSharedPanels";
+import { OnboardingFunnelPanel, RecruiterFunnelPanel } from "./ReferenceSharedPanels";
 import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
+import { PipelineFunnel } from "./recruiter/PipelineFunnel";
+import { LegacyAtsPanels } from "./recruiter/LegacyAtsPanels";
+import { kpiOf, kpiValue, seriesOf } from "./recruiter/helpers";
+
+const ICONS = {
+  walkins_today: Users, registered_today: UserPlus, selected_today: UserCheck, offers_today: Handshake, joined_today: CalendarCheck,
+  active_pipeline: TrendingUp, selection_rate: UserCheck, join_rate: CalendarCheck, offer_to_join: Handshake, offers_ghosted: UserX,
+  joining_week: CalendarCheck, docs_pending: FileCheck2, bgv_pending: ShieldCheck, open_seats: Briefcase, time_to_fill: Briefcase, no_show_rate: UserX,
+};
+const TODAY = ["walkins_today", "registered_today", "selected_today", "offers_today", "joined_today"];
+const RATES = ["selection_rate", "join_rate", "offer_to_join", "no_show_rate", "offers_ghosted"];
+const PENDING = ["joining_week", "docs_pending", "bgv_pending", "open_seats", "time_to_fill", "active_pipeline"];
 
 export function RecruiterReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
-  const m = data.metrics;
-  const drill = data.drilldownFor ?? (() => ({}));
-  const ats = data.ats;
-
-  // /api/ats/stats returns: total_candidates, by_stage (Record<string,number>), by_source, conversion_rate,
-  // open_positions (number), selected_candidates, previous_selected
-  const a = ats as Record<string, unknown>;
-  const byStage = (a.by_stage ?? {}) as Record<string, number>;
-
-  const totalApplications = asNumber(a.total_candidates ?? a.total_applications ?? metricValue(m, "ats"));
-  const walkins = asNumber(a.walkins_today ?? byStage["walk_in"] ?? byStage["Walk In"] ?? byStage["walkin"] ?? a.total_walkins);
-  const offers = asNumber(byStage["offered"] ?? byStage["offer_extended"] ?? a.offers_extended ?? a.offers_today);
-  const joined = asNumber(
-    ((byStage["converted"] ?? 0) + (byStage["Onboarded"] ?? 0) + (byStage["onboarded"] ?? 0)) ||
-    (a.joined ?? a.converted)
-  );
-
-  const funnelStages = buildRecruitmentFunnel(a);
-
-  const openCount = asNumber(a.open_positions);
-  const openPositions = arrayAt(ats, "open_requisitions")
-    .concat(Array.isArray(a.open_positions) ? arrayAt(ats, "open_positions") : [])
-    .slice(0, 6);
-
-  const recentCandidates = arrayAt(ats, "recent_candidates").concat(arrayAt(ats, "pipeline")).slice(0, 6);
+  const drill: (key: string) => { onDrilldown?: () => void } = data.drilldownFor ?? (() => ({}));
+  const ins = data.insights;
+  const loading = Boolean(data.insightsLoading);
+  const pick = (keys: string[]) => (ins?.kpis ?? []).filter((k) => keys.includes(k.key)).sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key));
+  const onDrill = (k: { drill?: { metricCode: string; filters?: Record<string, string> }; label: string }) => k.drill && data.openDrill?.(k.drill.metricCode, k.label, k.drill.filters);
+  const pipeline = kpiOf(ins, "active_pipeline");
+  const chip = (key: string, label: string, tone?: "good" | "bad" | "warn") => {
+    const k = kpiOf(ins, key); const f = formatUnit(k?.value ?? null, k?.unit);
+    return { label, value: `${f.text}${f.suffix}`, tone, href: k?.href };
+  };
+  const onboardingDrill = drill("onb");
 
   return (
-    <div className="reference-dashboard-page">
-      <ReferenceHeader
-        title="Recruitment Dashboard"
-        subtitle="ATS pipeline, walk-ins, offers and joining stages"
-        badge="Recruiter View"
+    <div className="space-y-5">
+      <DashHero
+        accent="violet" icon={Users} eyebrow="Recruiter View" title="Recruitment Command"
+        subtitle="Funnel, today vs target, offers, joiners and drop-off risk"
+        headline={{ label: "Active pipeline", value: formatUnit(pipeline?.value ?? null).text, caption: pipeline?.helper ?? (loading ? "Loading live pipeline…" : pipeline?.unavailable ?? undefined) }}
+        health={ins?.healthScore !== null && ins?.healthScore !== undefined ? { value: ins.healthScore, label: "Hiring health", basis: ins.healthBasis } : null}
+        stats={[chip("walkins_today", "Walk-ins today"), chip("offers_today", "Offers today"), chip("joined_today", "Joined today"), chip("offer_to_join", "Offer to join"), chip("no_show_rate", "No-show", "warn"), chip("joining_week", "Joining in 7d")]}
         right={filters}
       />
       <TodayCelebrationsWidget />
 
-      <ReferenceMetricGrid
-        columns={4}
-        loading={data.loading}
-        metrics={[
-          {
-            label: "Total Applications",
-            value: totalApplications,
-            helper: "in active pipeline",
-            icon: FileUser,
-            tone: "blue",
-            // changePct (movement since the last snapshot), not variancePct (distance from
-            // target). The arrow sits next to "in active pipeline", so it must describe
-            // movement; variancePct here would have shown target shortfall as if it were.
-            trend: m.ats?.changePct,
-            ...drill("recruiterPipeline"),
-          },
-          {
-            label: "Walk-ins Today",
-            value: walkins,
-            helper: "on-site candidates",
-            icon: Users,
-            tone: "violet",
-          },
-          {
-            label: "Offers Extended",
-            value: offers,
-            helper: "pending acceptance",
-            icon: Mail,
-            tone: "amber",
-          },
-          {
-            label: "Joined",
-            value: joined,
-            helper: "offer to onboarding converted",
-            icon: CheckCircle2,
-            tone: "green",
-            ...drill("recruiterPipeline", { status: "joined" }),
-          },
-        ]}
-      />
-
-      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        {/* "Pipeline by Stage", not "Hiring Funnel" — these are disjoint counts of who is
-            sitting in each stage right now, not sequential pass-through counts. A stage
-            further down this list can legitimately show a higher number than one above
-            it (more candidates currently at Offered than currently at Interview is not a
-            contradiction), so this must not imply monotonic drop-off the way a funnel
-            shape does. See deriveAtsStageSnapshot in dashboard-data-contracts.ts. */}
-        <ReferencePanel title="Pipeline by Stage" bodyClassName="p-4">
-          {totalApplications !== null ? (
-            <div className="space-y-3">
-              {funnelStages.map((stage) => {
-                const maxVal = Math.max(funnelStages[0]?.value ?? 0, 1);
-                const pct = maxVal > 0 ? Math.round((stage.value / maxVal) * 100) : 0;
-                return (
-                  <div key={stage.label} className="flex items-center gap-3">
-                    <span className="w-20 shrink-0 text-right text-xs text-[#61708a]">{stage.label}</span>
-                    <div className="flex-1 overflow-hidden rounded-full bg-[#f1f5f9] h-3">
-                      <div
-                        className="h-3 rounded-full transition-all"
-                        style={{ width: `${pct}%`, backgroundColor: stage.color }}
-                      />
-                    </div>
-                    <span className="w-10 text-xs font-semibold text-[#0b1f44]">{formatValue(stage.value)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="py-8 text-center text-sm text-[#a0aec0]">Recruitment funnel source unavailable</p>
-          )}
-        </ReferencePanel>
-
-        <ReferencePanel
-          title="Open Positions"
-          action={<span className="text-xs text-[#61708a]">{formatValue(openCount ?? openPositions.length)} roles</span>}
-          bodyClassName="p-0"
-        >
-          <div className="divide-y divide-[#edf1f6]">
-            {openPositions.length > 0 ? openPositions.map((row, i) => (
-              <ReferenceListRow
-                key={i}
-                title={String(row.role ?? row.designation ?? row.position ?? "Role")}
-                value={String(row.openings ?? row.count ?? row.vacancies ?? "")}
-                subtitle={[
-                  String(row.process ?? row.branch ?? row.department ?? ""),
-                  row.urgency ? String(row.urgency) : "",
-                ].filter(Boolean).join(" · ")}
-                tone={String(row.urgency ?? "").toLowerCase() === "urgent" ? "red" : "amber"}
-              />
-            )) : (
-              <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">
-                {openCount === 0 ? "No open positions" : "Requisition details unavailable"}
-              </p>
-            )}
-          </div>
-        </ReferencePanel>
+      <div className="grid gap-4 xl:grid-cols-[1.35fr_1fr]">
+        <PipelineFunnel series={seriesOf(ins, "funnel_30d")} loading={loading} />
+        <ActionCenter actions={ins?.actions} loading={loading} error={data.insightsError} title="Needs your action" limit={9} />
       </div>
 
-      {recentCandidates.length > 0 && (
-        <ReferencePanel
-          title="Recent Pipeline Activity"
-          action={<span className="text-xs text-[#61708a]">{formatValue(recentCandidates.length)} candidates</span>}
-          bodyClassName="p-0"
-        >
-          <div className="divide-y divide-[#edf1f6]">
-            {recentCandidates.map((row, i) => (
-              <ReferenceListRow
-                key={i}
-                title={String(row.candidate_name ?? row.name ?? "Candidate")}
-                value={String(row.stage ?? row.status ?? "")}
-                subtitle={[
-                  String(row.role ?? row.process ?? row.applied_for ?? ""),
-                  row.source ? String(row.source) : "",
-                ].filter(Boolean).join(" · ")}
-                tone="blue"
-              />
-            ))}
-          </div>
-        </ReferencePanel>
-      )}
+      <SectionTitle hint="today vs 7-day average (no daily target configured unless shown)">Today</SectionTitle>
+      <KpiTiles kpis={pick(TODAY)} loading={loading} cols={5} onDrill={onDrill} icons={ICONS} />
+      <SectionTitle>Conversion and risk</SectionTitle>
+      <KpiTiles kpis={pick(RATES)} loading={loading} cols={5} onDrill={onDrill} icons={ICONS} />
+      <SectionTitle>Pipeline load</SectionTitle>
+      <KpiTiles kpis={pick(PENDING)} loading={loading} cols={6} onDrill={onDrill} icons={ICONS} />
+      <p className="text-[12px] text-slate-500">Onboarding queue detail: <a className="text-blue-600 hover:underline" href={drillHref(data.dashboardCode, "ONBOARDING")} onClick={(e) => { if (onboardingDrill.onDrilldown) { e.preventDefault(); onboardingDrill.onDrilldown(); } }}>open onboarding records</a> · {String(kpiValue(ins, "docs_pending") ?? "—")} awaiting documents</p>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <ReferenceQuickLink href="/ats/candidate-master" title="Candidate Pipeline" icon={Users} />
-        <ReferenceQuickLink href="/ats/walkin-queue" title="Walk-in Registry" icon={Calendar} />
-        <ReferenceQuickLink href="/ats/offer-approvals" title="Offer Approvals" icon={Briefcase} />
-        <ReferenceQuickLink href="/ats/sourcing-analysis" title="ATS Reports" icon={TrendingUp} />
-      </div>
+      <LazySection><SignalList signals={ins?.signals} loading={loading} title="Drop-off risks and insights" /></LazySection>
+      <InsightGrid series={(ins?.series ?? []).filter((s) => s.key !== "funnel_30d")} tables={ins?.tables} loading={loading} />
 
+      <SectionTitle hint="original ATS datapoints, relabelled">Reference data</SectionTitle>
+      <LazySection><LegacyAtsPanels data={data} /></LazySection>
       <div className="grid gap-4 xl:grid-cols-2">
         <OnboardingFunnelPanel data={data} />
         <RecruiterFunnelPanel data={data} />

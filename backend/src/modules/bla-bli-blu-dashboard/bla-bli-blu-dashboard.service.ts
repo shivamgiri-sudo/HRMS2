@@ -1,15 +1,15 @@
-import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import {
   parseFlexibleSheet, normalizeDate, normalizeNumber, normalizeText, type FieldSpec,
 } from "../housing-dashboards/flexible-parser.js";
 import { buildDashboard, type ReceivedAgg, type SalesAgg, type TargetCfg } from "./bla-metrics.js";
+import { ingestReceived, newBatchId } from "./bbb-uploads.service.js";
 
 /** Received Data headers of BLA_BLI_BLU_Dashboard_Calculation. "CON" appears twice; the first is used. */
 const RECEIVED_FIELDS: FieldSpec[] = [
   { key: "date", aliases: ["Date"] },
-  { key: "phone", aliases: ["Phone"] },
+  { key: "phone", aliases: ["Phone", "Mobile", "Mobile Number", "Customer Number", "Customer Mobile", "Customer/Mobile Number"] },
   { key: "lob", aliases: ["LOB"] },
   { key: "dataType", aliases: ["Data Type", "Data_Type"] },
   { key: "workable", aliases: ["Workable"] },
@@ -20,64 +20,29 @@ const RECEIVED_FIELDS: FieldSpec[] = [
   { key: "empName", aliases: ["Emp Name", "Emp_Name"] },
 ];
 
-const CHUNK = 500;
-
-async function bulkInsert(
-  conn: { execute: (sql: string, params?: unknown[]) => Promise<unknown> },
-  table: string, cols: string[], rows: unknown[][],
-) {
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const part = rows.slice(i, i + CHUNK);
-    const ph = `(${cols.map(() => "?").join(",")})`;
-    await conn.execute(`INSERT INTO ${table} (${cols.join(",")}) VALUES ${part.map(() => ph).join(",")}`, part.flat());
-  }
-}
-
-/** Re-uploading a date replaces that date's rows (never doubles them). Only dates present in the file are touched. */
-async function replaceDates(table: string, cols: string[], rows: unknown[][], dates: string[]) {
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
-    if (dates.length) await conn.execute(`DELETE FROM ${table} WHERE report_date IN (${dates.map(() => "?").join(",")})`, dates);
-    await bulkInsert(conn, table, cols, rows);
-    await conn.commit();
-  } catch (e) {
-    await conn.rollback();
-    throw e;
-  } finally {
-    conn.release();
-  }
-}
-
-function summary(batchId: string, fileType: string, parsed: ReturnType<typeof parseFlexibleSheet>, stored: number, skipped: number, dates: string[]) {
+/**
+ * Received Data upload. One row per date + mobile number: a number already stored for that date is skipped as a
+ * duplicate, the same number on another date is a new row, and Fresh / NC is derived from the previous 1-3 days
+ * (see received-rules.ts). Each file is one batch that can be trashed and restored.
+ */
+export async function uploadReceivedData(buffer: Buffer, userId: string) {
+  const parsed = parseFlexibleSheet(buffer, RECEIVED_FIELDS, []);
+  const batchId = newBatchId();
+  const result = await ingestReceived(
+    parsed.rows.map((r) => ({
+      date: normalizeDate(r.date), phone: r.phone, lob: normalizeText(r.lob), sourceDataType: normalizeText(r.dataType),
+      workable: normalizeText(r.workable), callAnswer: normalizeText(r.callAnswer), sameDayAttempt: normalizeNumber(r.sameDayAttempt) ?? 0,
+      finalDispo: normalizeText(r.finalDispo), empId: normalizeText(r.empId), empName: normalizeText(r.empName),
+    })),
+    batchId, userId,
+  );
   return {
-    batchId, fileType, totalRows: parsed.totalRows, validRows: parsed.validRows, duplicateRows: parsed.duplicateRows,
-    storedRows: stored, skippedNoDate: skipped, datesReplaced: dates.length,
-    dateFrom: dates[0] ?? null, dateTo: dates[dates.length - 1] ?? null,
+    batchId, fileType: "received_data", totalRows: parsed.totalRows, validRows: parsed.validRows,
+    storedRows: result.inserted, duplicateSameDay: result.duplicateSameDay, skippedNoNumber: result.noNumber, skippedNoDate: result.noDate,
+    fresh: result.fresh, nc: result.nc, pending: result.pending, datesReplaced: 0, dateFrom: result.dateFrom, dateTo: result.dateTo,
     recognizedColumns: parsed.recognizedColumns, additionalColumns: parsed.additionalColumns,
     missingOptionalColumns: parsed.missingOptionalColumns, preview: parsed.previewRaw,
   };
-}
-
-export async function uploadReceivedData(buffer: Buffer, userId: string) {
-  const parsed = parseFlexibleSheet(buffer, RECEIVED_FIELDS, []);
-  const batchId = randomUUID();
-  const rows: unknown[][] = [];
-  let skipped = 0;
-  for (const r of parsed.rows) {
-    const date = normalizeDate(r.date);
-    if (!date) { skipped++; continue; }
-    rows.push([
-      batchId, date, normalizeText(r.lob), normalizeText(r.dataType), normalizeText(r.workable), normalizeText(r.callAnswer),
-      Math.max(0, Math.round(normalizeNumber(r.sameDayAttempt) ?? 0)), normalizeText(r.finalDispo),
-      normalizeText(r.empId), normalizeText(r.empName), normalizeText(r.phone), userId,
-    ]);
-  }
-  const dates = [...new Set(rows.map((r) => r[1] as string))].sort();
-  await replaceDates("bla_dash_received",
-    ["upload_batch_id", "report_date", "lob", "data_type", "workable", "call_answer", "same_day_attempt", "final_dispo", "emp_id", "emp_name", "phone", "created_by"],
-    rows, dates);
-  return summary(batchId, "received_data", parsed, rows.length, skipped, dates);
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -111,18 +76,12 @@ export async function saveTarget(t: TargetCfg, userId: string) {
 
 /** Formula Demo rows 7-15: every count is a COUNTIFS on Date + LOB (+ filters). Bucket labels keep the source's "Grater" typo, matched loosely. */
 async function loadReceived(from: string, to: string): Promise<ReceivedAgg[]> {
+  // Read from the daily summary, not the raw rows: summing a month of bla_dash_received takes over a minute on the
+  // production database. bbb-uploads.service.ts keeps the summary in step with uploads, trash and restore.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT DATE_FORMAT(report_date,'%Y-%m-%d') AS d, lob,
-       SUM(data_type='Fresh') AS fresh_base,
-       SUM(data_type='Fresh' AND workable='Workable') AS fresh_workable,
-       SUM(workable='Workable') AS total_workable,
-       SUM(workable='DND') AS dnd,
-       SUM(same_day_attempt>0 AND workable='Workable') AS unique_attempt,
-       SUM(data_type='Fresh' AND final_dispo='Connected') AS connected,
-       SUM(data_type='Fresh' AND final_dispo='Connected' AND call_answer='Less Than 30 Sec') AS le30,
-       SUM(data_type='Fresh' AND final_dispo='Connected' AND call_answer='Less Than 1 Min') AS lt1m,
-       SUM(data_type='Fresh' AND final_dispo='Connected' AND call_answer IN ('Grater Than 1 Min','Greater Than 1 Min')) AS ge1m
-     FROM bla_dash_received WHERE report_date BETWEEN ? AND ? AND lob IS NOT NULL GROUP BY d, lob`, [from, to]);
+    `SELECT DATE_FORMAT(report_date,'%Y-%m-%d') AS d, lob, fresh_base, fresh_workable, total_workable, dnd,
+            unique_attempt, connected, le30, lt1m, ge1m
+       FROM bla_dash_received_daily WHERE report_date BETWEEN ? AND ?`, [from, to]);
   return rows.map((r) => ({
     date: String(r.d), lob: String(r.lob), freshBase: n(r.fresh_base), freshWorkable: n(r.fresh_workable), totalWorkable: n(r.total_workable),
     dnd: n(r.dnd), uniqueAttempt: n(r.unique_attempt), connected: n(r.connected), le30: n(r.le30), lt1m: n(r.lt1m), ge1m: n(r.ge1m),
@@ -153,7 +112,7 @@ async function loadSales(from: string, to: string): Promise<SalesAgg[]> {
 async function latestDataDate(): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(GREATEST(COALESCE((SELECT MAX(report_date) FROM bla_bli_blu_overall_sales_raw), '1000-01-01'),
-                                 COALESCE((SELECT MAX(report_date) FROM bla_dash_received), '1000-01-01')), '%Y-%m-%d') AS d`);
+                                 COALESCE((SELECT MAX(report_date) FROM bla_dash_received_daily), '1000-01-01')), '%Y-%m-%d') AS d`);
   const d = rows[0]?.d ? String(rows[0].d) : null;
   return d && d > "1000-01-01" ? d : null;
 }

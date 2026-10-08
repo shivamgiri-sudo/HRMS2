@@ -1,6 +1,7 @@
 // src/pages/finance/PaymentVouchersPage.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { Download, IndianRupee, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,7 +32,7 @@ import { PaymentVoucherDrawer } from "@/components/finance/vendor/PaymentVoucher
 
 
 const emptyRaiseForm = {
-  sourceType: "vendor_grn" as "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application" | "internal_transfer",
+  sourceType: "vendor_grn" as "vendor_grn" | "imprest_allocation" | "general" | "salary" | "vendor_advance" | "vendor_advance_application" | "internal_transfer",
   vendorId: "",
   bankAccountId: "",
   /** Only for sourceType === "internal_transfer" — the company_bank_account receiving the funds. */
@@ -85,7 +86,9 @@ export function PaymentVouchersContent() {
   const [tab, setTab] = useState<"all" | "raised" | "ceo_approved" | "released" | "rejected" | "changes_requested">("all");
   const [raiseOpen, setRaiseOpen] = useState(false);
   const [raiseForm, setRaiseForm] = useState(emptyRaiseForm);
-  const [detailId, setDetailId] = useState<string | null>(null);
+  // Approval Center deep link: ?tab=payments&approvalId=<voucher id> opens that voucher's drawer.
+  const [deepLinkParams] = useSearchParams();
+  const [detailId, setDetailId] = useState<string | null>(() => deepLinkParams.get("approvalId"));
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [receiptForm, setReceiptForm] = useState(emptyReceiptForm);
 
@@ -229,7 +232,7 @@ export function PaymentVouchersContent() {
       linkedVendorId: (raiseForm.sourceType === "vendor_advance" || raiseForm.sourceType === "vendor_advance_application") ? raiseForm.vendorId : undefined,
       expenseHeadCode: expenseRequired ? raiseForm.expenseKey.split(EXPENSE_KEY_SEP)[0] || undefined : undefined,
       expenseSubHeadCode: expenseRequired ? raiseForm.expenseKey.split(EXPENSE_KEY_SEP)[1] || undefined : undefined,
-      particulars: raiseForm.sourceType === "general" ? raiseForm.particulars.trim() : undefined,
+      particulars: (raiseForm.sourceType === "general" || raiseForm.sourceType === "salary") ? raiseForm.particulars.trim() || undefined : undefined,
       amount: Number(raiseForm.amount),
       remarks: raiseForm.remarks?.trim() || undefined,
     })).data,
@@ -247,7 +250,6 @@ export function PaymentVouchersContent() {
       const payload = {
         sourceType: "sales_receipt",
         bankAccountId: receiptForm.bankAccountId,
-        payableAccountId: receiptForm.payableAccountId,
         clientName: receiptForm.clientName.trim() || undefined,
         amount: parseFloat(receiptForm.amount),
         paymentMode: receiptForm.instrumentType || undefined,
@@ -354,15 +356,16 @@ export function PaymentVouchersContent() {
                   {vouchersQuery.isLoading && <tr><td colSpan={6} className="px-4 py-6 text-center text-slate-400">Loading…</td></tr>}
                   {!vouchersQuery.isLoading && vouchers.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-slate-400">No vouchers here</td></tr>}
                   {vouchers.map((v) => (
-                    <tr key={v.id} className="cursor-pointer transition-colors duration-150 hover:bg-blue-50/50" onClick={() => setDetailId(v.id)}>
+                    <tr key={v.id} data-approval-id={v.id} className="cursor-pointer transition-colors duration-150 hover:bg-blue-50/50" onClick={() => setDetailId(v.id)}>
                       <td className="px-4 py-2.5 font-mono font-semibold text-gray-800">{v.voucher_number}</td>
                       <td className="px-4 py-2.5 text-gray-600">
                         {v.voucher_type === "receipt"
                           ? <Badge className="border-transparent bg-emerald-600 text-white">Receipt</Badge>
-                          : v.source_type === "vendor_grn" ? "Vendor GRN"
+                          : v.source_type === "vendor_grn" ? "Vendor Payment"
                           : v.source_type === "imprest_allocation" ? "Imprest Top-up"
                           : v.source_type === "vendor_advance" ? "Vendor Advance"
                           : v.source_type === "vendor_advance_application" ? "Apply Advance"
+                          : v.source_type === "salary" ? "Salary"
                           : "General"}
                       </td>
                       <td className="px-4 py-2.5 text-gray-600">{v.bank_account_name ?? "—"}</td>
@@ -393,11 +396,11 @@ export function PaymentVouchersContent() {
               <Select value={raiseForm.sourceType} onValueChange={(v) => setRaiseForm((f) => ({ ...f, sourceType: v as any, vendorId: "", grnAllocations: {}, linkedImprestManagerId: "", particulars: "", amount: "", destinationBankAccountId: "", payableAccountId: "" }))}>
                 <SelectTrigger className="cursor-pointer"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="vendor_grn">Vendor GRN Payment</SelectItem>
+                  <SelectItem value="vendor_grn">Vendor Payment</SelectItem>
                   <SelectItem value="imprest_allocation">Imprest Float Replenishment</SelectItem>
                   <SelectItem value="vendor_advance">Vendor Advance</SelectItem>
-                  <SelectItem value="vendor_advance_application">Apply Vendor Advance</SelectItem>
                   <SelectItem value="internal_transfer">Internal Transfer (own accounts)</SelectItem>
+                  <SelectItem value="salary">Salary</SelectItem>
                   <SelectItem value="general">Other / General Payment</SelectItem>
                 </SelectContent>
               </Select>
@@ -527,7 +530,7 @@ export function PaymentVouchersContent() {
                                   className="h-7 w-28 text-xs"
                                   value={raiseForm.grnAllocations[r.id]}
                                   onChange={(e) => setRaiseForm((f) => {
-                                    const next = { ...f.grnAllocations, [r.id]: e.target.value };
+                                    const next: Record<string, string> = { ...f.grnAllocations, [r.id]: e.target.value };
                                     const total = Object.values(next).reduce((s, a) => s + (Number(a) || 0), 0);
                                     return { ...f, grnAllocations: next, amount: total > 0 ? String(total) : "" };
                                   })}
@@ -549,8 +552,7 @@ export function PaymentVouchersContent() {
                 {raiseForm.sourceType === "vendor_advance" && (
                   <p className="text-xs text-slate-500">
                     Not tied to any GRN — the amount below is paid to the vendor as an advance and
-                    becomes available to apply against their future dues (raise a separate "Apply
-                    Vendor Advance" voucher when a due comes in).
+                    becomes available to apply against their future dues (Accounts applies it against a due later).
                   </p>
                 )}
               </div>
@@ -597,7 +599,7 @@ export function PaymentVouchersContent() {
                   value={raiseForm.particulars}
                   onChange={(e) => setRaiseForm((f) => ({ ...f, particulars: e.target.value }))}
                 />
-                <p className="mt-1 text-xs text-slate-500">For anything with no vendor GRN or imprest manager behind it — the Payable Account below is the category (Salary Payable, Statutory Dues, Bank Charges, TDS Payable, Other).</p>
+                <p className="mt-1 text-xs text-slate-500">For anything with no vendor GRN or imprest manager behind it — the Payment category below is the account it is booked against (Salary Payable, Statutory Dues, Bank Charges, TDS Payable, Other).</p>
               </div>
             )}
 
@@ -622,11 +624,11 @@ export function PaymentVouchersContent() {
                 searchPlaceholder="Type an account name…"
               />
             </div>
-            {raiseForm.sourceType !== "internal_transfer" && (
+            {raiseForm.sourceType === "general" && (
               <div>
-                <Label>Payable Account (bank ledger — Vendor Payables, TDS Payable, etc.)</Label>
+                <Label>Payment category</Label>
                 <Select value={raiseForm.payableAccountId} onValueChange={(v) => setRaiseForm((f) => ({ ...f, payableAccountId: v }))}>
-                  <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select ledger account" /></SelectTrigger>
+                  <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select category" /></SelectTrigger>
                   <SelectContent>
                     {(payableAccountsQuery.data ?? []).map((a: any) => (
                       <SelectItem key={a.id} value={a.id}>{a.account_name}</SelectItem>
@@ -682,17 +684,6 @@ export function PaymentVouchersContent() {
               />
             </div>
             <div>
-              <Label className="mb-1 block text-xs text-slate-500">Payable Account (Ledger Head)</Label>
-              <SearchableSelect
-                options={(payableAccountsQuery.data ?? [])
-                  .filter((p: any) => p.account_type === "receivable" || p.account_type === "income")
-                  .map((p: any) => ({ value: p.id, label: p.account_name }))}
-                value={receiptForm.payableAccountId}
-                onChange={(v) => setReceiptForm((f) => ({ ...f, payableAccountId: v }))}
-                placeholder="e.g. Sundry Debtors"
-              />
-            </div>
-            <div>
               <Label className="mb-1 block text-xs text-slate-500">Amount Received (₹)</Label>
               <Input
                 type="number" min="0" step="0.01"
@@ -735,7 +726,7 @@ export function PaymentVouchersContent() {
             <Button variant="outline" className="cursor-pointer" onClick={() => setReceiptOpen(false)}>Cancel</Button>
             <Button
               className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white transition-all duration-200"
-              disabled={!receiptForm.bankAccountId || !receiptForm.payableAccountId || !receiptForm.clientName.trim() || !receiptForm.amount || raiseReceiptMutation.isPending}
+              disabled={!receiptForm.bankAccountId || !receiptForm.clientName.trim() || !receiptForm.amount || raiseReceiptMutation.isPending}
               onClick={() => raiseReceiptMutation.mutate()}
             >
               {raiseReceiptMutation.isPending ? "Saving…" : "Record Receipt"}

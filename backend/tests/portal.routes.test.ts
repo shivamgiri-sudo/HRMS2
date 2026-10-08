@@ -82,7 +82,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockExecute.mockImplementation(async (sql: unknown) => {
     if (typeof sql === "string" && sql.includes("FROM client_user")) {
-      return [[{ is_active: 1 }], []];
+      // requireClientAuth re-reads the process scope from this row on every request
+      // (the JWT's processIds is only a login-time claim), so the row carries it.
+      return [[{ is_active: 1, process_ids: JSON.stringify(["p-1"]), session_revoked: 0 }], []];
     }
     return [[], []];
   });

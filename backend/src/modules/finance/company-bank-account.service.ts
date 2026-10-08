@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { encryptField } from "../../shared/fieldEncryption.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
+import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 
 // Same role set as BANK_ACCOUNT_WRITE_ROLES in company-bank-account.routes.ts, duplicated
 // (not imported) to avoid a service <-> routes import cycle — routes.ts already imports
@@ -146,8 +147,17 @@ function normaliseInput(input: CompanyBankAccountInput) {
 }
 
 export const companyBankAccountService = {
-  async list(options: { includeInactive?: boolean } = {}) {
-    const where = options.includeInactive ? "" : "WHERE cba.active_status = 1";
+  async list(options: { includeInactive?: boolean; branchScope?: FinanceBranchScope } = {}) {
+    const clauses: string[] = [];
+    const scopeParams: string[] = [];
+    if (!options.includeInactive) clauses.push("cba.active_status = 1");
+    // Branch scoping: non-org-wide callers only see their own branch(es)' accounts (no filter for org-wide).
+    if (options.branchScope && options.branchScope.mode === "branches") {
+      const f = financeBranchFilter(options.branchScope, "cba.branch_id");
+      clauses.push(f.sql);
+      scopeParams.push(...f.params);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cba.*, bm.bank_name, b.branch_name
          FROM company_bank_account cba
@@ -155,6 +165,7 @@ export const companyBankAccountService = {
          LEFT JOIN branch_master b ON b.id = cba.branch_id
          ${where}
         ORDER BY cba.account_name`,
+      scopeParams,
     );
     return (rows as RowDataPacket[]).map(maskedRow);
   },

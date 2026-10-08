@@ -249,7 +249,13 @@ export function selfOrAdminHr(employeeIdParam = "id") {
       const userId = req.authUser!.id;
       const targetEmployeeId = (req as Request).params[employeeIdParam];
 
-      if (await hasRole(userId, "admin", "hr")) return next();
+      if (await hasRole(userId, "admin", "hr")) {
+        // admin/hr no longer means "any employee". Org-wide roles (admin, super_admin ...) still
+        // pass; hr must be inside its own branch / assignments (owner ruling 2026-10-01).
+        const { canViewEmployee } = await import("./enterpriseScope.js");
+        if (await canViewEmployee(req.authUser!, targetEmployeeId)) return next();
+        return res.status(403).json({ success: false, message: "Forbidden: this employee is outside your branch / assigned scope" });
+      }
 
       const emp = await getEmployeeForUser(userId);
       if (emp && emp.id === targetEmployeeId) return next();

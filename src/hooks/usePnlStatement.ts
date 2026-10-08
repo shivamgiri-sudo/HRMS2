@@ -53,6 +53,8 @@ export interface PnlStatement {
   peopleCostAsOf?: string | null;
   /** "invoiced" once the month has closed, "planned" while it is still running. */
   revenueBasis?: "invoiced" | "planned";
+  /** Cost centres whose revenue is an approved Branch Head forecast this month (open or closed). */
+  forecastRevenue?: { costCentres: number; amount: number; closed: number };
   periodOpen?: boolean;
   /** Rs of Live P&L's seat-rate estimate (not-yet-billed cost centres) inside Recognised Revenue.
    *  Non-zero only for the month just closed, while invoices may still arrive. */

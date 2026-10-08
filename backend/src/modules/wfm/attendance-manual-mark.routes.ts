@@ -1,10 +1,11 @@
-import { Router } from "express";
-import { randomUUID } from "crypto";
-import { z } from "zod";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
+import { Router } from 'express';
+import { randomUUID } from 'crypto';
+import { z } from 'zod';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import { isEmployedOn, OUTSIDE_EMPLOYMENT_MESSAGE } from '../../shared/employmentWindow.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
 
 const router = Router();
 router.use(requireAuth);
@@ -87,6 +88,10 @@ router.post(
           success: false,
           message: "Cannot mark attendance for an inactive (exited) employee",
         });
+    }
+    // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+    if (!(await isEmployedOn(employee_id, attendance_date))) {
+      return res.status(409).json({ success: false, message: OUTSIDE_EMPLOYMENT_MESSAGE });
     }
 
     // Capture old status for audit

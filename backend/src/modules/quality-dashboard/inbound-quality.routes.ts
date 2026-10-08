@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./inbound-quality.service.js";
+import { requireClientInScope } from "../call-master/call-master.scope.js";
 
 const router = Router();
 const h =
@@ -31,14 +32,9 @@ const h =
 // buildClientScopeCondition), once that data exists.
 router.use(
   requireAuth,
-  requireRole(
-    "super_admin",
-    "admin",
-    "ceo",
-    "operations_manager",
-    "qa",
-    "quality_analyst",
-  ),
+  requireRole("super_admin", "admin", "ceo", "operations_manager", "qa", "quality_analyst"),
+  // Branch / process scoping (owner ruling 2026-10-01): ?clientId= must be a client inside the caller's scope.
+  requireClientInScope({ listPaths: ["/clients"], exemptPaths: ["/agent-master", "/neg-keywords"] }),
 );
 
 function parseFilters(q: Record<string, unknown>): svc.InboundQualityFilters {
@@ -54,206 +50,41 @@ function parseFilters(q: Record<string, unknown>): svc.InboundQualityFilters {
 }
 
 // ── Dashboard endpoints ───────────────────────────────────────────────────────
-router.get(
-  "/clients",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getInboundClients(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/kpis",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getInboundProcessKPIs(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/top-performers",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getTopPerformers(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/daily-scores",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getDailyScores(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/scenarios",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getScenarios(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/social-media-threats",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getSocialMediaThreats(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/social-threat-detail",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getSocialThreatDetail(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/neg-signal-details",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getTopNegativeSignalDetails(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/pos-signal-details",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getTopPositiveSignals(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/transcript",
-  h(async (req, res) => {
-    const leadId = String(req.query.leadId ?? "");
-    if (!leadId) return res.status(400).json({ error: "leadId required" });
-    res.json({ data: await svc.getTranscript(leadId) });
-  }),
-);
-router.get(
-  "/score-component-detail",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getScoreComponentDetail(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/potential-scams",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getPotentialScams(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/potential-scams-detail",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getPotentialScamsDetail(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/sensitive-word-analysis",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getSensitiveWordAnalysis(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/fatal-analysis",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getFatalAnalysis(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/fatal-calls-list",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getFatalCallsList(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/repeat-analysis",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getRepeatAnalysis(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/agent-audit-band",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getAgentAuditBandSummary(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/agent-param",
-  h(async (req, res) => {
-    const f = parseFilters(req.query as Record<string, unknown>);
-    const scenario = req.query.scenario
-      ? String(req.query.scenario)
-      : undefined;
-    res.json({ data: await svc.getAgentParameterWise({ ...f, scenario }) });
-  }),
-);
-router.get(
-  "/raw-data",
-  h(async (req, res) => {
-    const limit = parseInt(String(req.query.limit ?? "500"), 10);
-    res.json({
-      data: await svc.getRawData(
-        parseFilters(req.query as Record<string, unknown>),
-        limit,
-      ),
-    });
-  }),
-);
+router.get("/clients",               h(async (req, res) => {
+  const allowed = res.locals.allowedClientIds as number[] | null | undefined;
+  const rows = await svc.getInboundClients(parseFilters(req.query as Record<string, unknown>));
+  res.json({ data: allowed ? rows.filter((r) => allowed.includes(Number(r.client_id))) : rows });
+}));
+router.get("/kpis",                  h(async (req, res) => res.json({ data: await svc.getInboundProcessKPIs(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/top-performers",        h(async (req, res) => res.json({ data: await svc.getTopPerformers(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/daily-scores",          h(async (req, res) => res.json({ data: await svc.getDailyScores(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/scenarios",             h(async (req, res) => res.json({ data: await svc.getScenarios(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/social-media-threats",  h(async (req, res) => res.json({ data: await svc.getSocialMediaThreats(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/social-threat-detail",  h(async (req, res) => res.json({ data: await svc.getSocialThreatDetail(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/neg-signal-details",    h(async (req, res) => res.json({ data: await svc.getTopNegativeSignalDetails(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/pos-signal-details",    h(async (req, res) => res.json({ data: await svc.getTopPositiveSignals(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/transcript",            h(async (req, res) => {
+  const leadId = String(req.query.leadId ?? "");
+  if (!leadId) return res.status(400).json({ error: "leadId required" });
+  res.json({ data: await svc.getTranscript(leadId) });
+}));
+router.get("/score-component-detail",h(async (req, res) => res.json({ data: await svc.getScoreComponentDetail(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/potential-scams",       h(async (req, res) => res.json({ data: await svc.getPotentialScams(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/potential-scams-detail",h(async (req, res) => res.json({ data: await svc.getPotentialScamsDetail(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/sensitive-word-analysis",h(async (req, res) => res.json({ data: await svc.getSensitiveWordAnalysis(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/fatal-analysis",        h(async (req, res) => res.json({ data: await svc.getFatalAnalysis(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/fatal-calls-list",      h(async (req, res) => res.json({ data: await svc.getFatalCallsList(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/repeat-analysis",       h(async (req, res) => res.json({ data: await svc.getRepeatAnalysis(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/agent-audit-band",      h(async (req, res) => res.json({ data: await svc.getAgentAuditBandSummary(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/agent-param",           h(async (req, res) => {
+  const f = parseFilters(req.query as Record<string, unknown>);
+  const scenario = req.query.scenario ? String(req.query.scenario) : undefined;
+  res.json({ data: await svc.getAgentParameterWise({ ...f, scenario }) });
+}));
+router.get("/raw-data",              h(async (req, res) => {
+  const limit = parseInt(String(req.query.limit ?? "500"), 10);
+  res.json({ data: await svc.getRawData(parseFilters(req.query as Record<string, unknown>), limit) });
+}));
 
 // ── CLAP VOC Quotes (verbatim customer voice, 2026-07-17+) ───────────────────
 router.get(

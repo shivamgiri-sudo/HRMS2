@@ -1,5 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import type { UserBusinessScope } from "../../shared/enterpriseScope.js";
+import { scopePredicate } from "./branch-scope.js";
 
 export interface LiveSession {
   employee_id: string;
@@ -53,9 +55,7 @@ function istToday(): string {
     .slice(0, 10);
 }
 
-export async function getLiveTracker(
-  filters: LiveTrackerFilters,
-): Promise<LiveTrackerResult> {
+export async function getLiveTracker(filters: LiveTrackerFilters, scope?: UserBusinessScope): Promise<LiveTrackerResult> {
   const date = filters.date ?? istToday();
 
   const conds: string[] = ["ra.roster_date = ?"];
@@ -68,6 +68,13 @@ export async function getLiveTracker(
   if (filters.branchName) {
     conds.push("ra.branch_name = ?");
     params.push(filters.branchName);
+  }
+
+  // Branch scoping (owner ruling 2026-10-01): the processName/branchName a browser sends only narrows;
+  // non-org-wide callers are always limited to employees inside their own branch / assigned scope.
+  if (scope) {
+    const c = scopePredicate(scope, { employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id" });
+    if (c.sql !== "1=1") { conds.push(`(${c.sql})`); params.push(...c.params); }
   }
 
   const where = conds.join(" AND ");

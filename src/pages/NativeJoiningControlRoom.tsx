@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useBranches } from "@/hooks/useOrgMasters";
 import { AlertTriangle, CheckCircle2, ClipboardCheck, ExternalLink, FileText, Loader2, RefreshCw, Search, Send, ShieldCheck, UserCheck } from "lucide-react";
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -417,6 +418,8 @@ export default function NativeJoiningControlRoom() {
   const canViewBgvReport = hasAnyRole(...BGV_REPORT_ROLES);
   const [queue, setQueue] = useState<QueueRow[]>([]);
   const [search, setSearch] = useState("");
+  const [branchId, setBranchId] = useState("");
+  const { data: branches = [] } = useBranches();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [dateForm, setDateForm] = useState<any>(blankDates);
@@ -426,6 +429,9 @@ export default function NativeJoiningControlRoom() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const esignRecheckFiredFor = React.useRef<string | null>(null);
+  const detailSeq = React.useRef(0);
+  const selectedIdRef = React.useRef<string | null>(null);
+  selectedIdRef.current = selectedId;
 
   const selected = useMemo(() => queue.find((row) => row.candidate_id === selectedId) || null, [queue, selectedId]);
 
@@ -433,7 +439,7 @@ export default function NativeJoiningControlRoom() {
     setBusy(true);
     setError("");
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: QueueRow[] }>(`/api/ats/joining-control-room/queue?search=${encodeURIComponent(search)}`);
+      const res = await hrmsApi.get<{ success: boolean; data: QueueRow[] }>(`/api/ats/joining-control-room/queue?search=${encodeURIComponent(search)}&branch_id=${encodeURIComponent(branchId)}`);
       setQueue(res.data || []);
       if (!selectedId && res.data?.[0]) setSelectedId(res.data[0].candidate_id);
     } catch (err: any) {
@@ -445,8 +451,11 @@ export default function NativeJoiningControlRoom() {
 
   const loadDetail = async (candidateId: string) => {
     setError("");
+    const seq = ++detailSeq.current;
     try {
       const res = await hrmsApi.get<{ success: boolean; data: Detail }>(`/api/ats/joining-control-room/candidates/${candidateId}`);
+      // Drop out-of-order responses: a slow earlier click must not overwrite a newer selection.
+      if (seq !== detailSeq.current) return;
       setDetail(res.data);
       setDateForm({
         ...blankDates,
@@ -460,14 +469,42 @@ export default function NativeJoiningControlRoom() {
       setJclrForm({ ...blankJclr, ...(res.data.jclr || {}) });
       setStatutoryForm(seedStatutoryForm(res.data.statutory, res.data.onboarding?.profile));
     } catch (err: any) {
+      if (seq !== detailSeq.current) return;
       setError(err.message || "Unable to load candidate");
     }
   };
 
-  useEffect(() => { loadQueue(); }, []);
+  useEffect(() => { loadQueue(); }, [branchId]); // also the initial load
+
+  // Background refresh so BGV / readiness changes made by automation show up without HR reloading.
+  // Silent (no busy flag, no error banner) and paused while the tab is hidden. The open candidate's
+  // detail is only reloaded when its BGV or employee-code state actually changed, because a detail
+  // reload re-seeds the edit forms.
+  const queueRef = React.useRef<QueueRow[]>([]);
+  queueRef.current = queue;
+  useEffect(() => {
+    const id = window.setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: QueueRow[] }>(`/api/ats/joining-control-room/queue?search=${encodeURIComponent(search)}&branch_id=${encodeURIComponent(branchId)}`);
+        const next = res.data || [];
+        const sel = selectedIdRef.current;
+        const before = queueRef.current.find((r) => r.candidate_id === sel);
+        const after = next.find((r) => r.candidate_id === sel);
+        setQueue(next);
+        if (before && after && (before.bgv_status !== after.bgv_status || before.employee_code !== after.employee_code)) {
+          void loadDetail(sel as string);
+        }
+      } catch {
+        // transient — the next tick retries
+      }
+    }, 30000);
+    return () => window.clearInterval(id);
+  }, [search, branchId]);
   useEffect(() => {
     if (selectedId) {
       esignRecheckFiredFor.current = null; // reset so the new candidate gets a fresh check
+      setDetail(null); // never show the previous candidate's data under the new selection
       loadDetail(selectedId);
     }
   }, [selectedId]);
@@ -519,6 +556,7 @@ export default function NativeJoiningControlRoom() {
     try {
       await hrmsApi.post(`/api/ats/joining-control-room/candidates/${candidateId}/esign/recheck`, {});
       const res = await hrmsApi.get<{ success: boolean; data: Detail }>(`/api/ats/joining-control-room/candidates/${candidateId}`);
+      if (candidateId !== selectedIdRef.current) return;
       setDetail(res.data);
     } catch {
       // Silently swallow — the manual "Check e-sign status now" button is still there
@@ -566,6 +604,15 @@ export default function NativeJoiningControlRoom() {
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-white/60" />
                 <Input className="w-64 pl-9 bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:bg-white/20" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search candidate" onKeyDown={(event) => event.key === "Enter" && loadQueue()} />
               </div>
+              <select
+                aria-label="Filter by branch"
+                value={branchId}
+                onChange={(event) => { setSelectedId(null); setDetail(null); setBranchId(event.target.value); }}
+                className="min-h-[44px] w-48 rounded-md border border-white/20 bg-white/10 px-3 text-sm text-white focus:bg-white/20 focus:outline-none [&>option]:text-slate-900"
+              >
+                <option value="">All branches</option>
+                {branches.map((b) => (<option key={b.id} value={b.id}>{b.branch_name ?? b.name}</option>))}
+              </select>
               <Button type="button" variant="outline" onClick={loadQueue} disabled={busy} className="border-white/30 bg-white/10 text-white hover:bg-white/20 min-h-[44px]"><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>
             </div>
           </div>
@@ -631,7 +678,7 @@ export default function NativeJoiningControlRoom() {
 
           <div className="min-w-0 rounded-2xl border border-blue-200 bg-white shadow-sm">
             {!selected || !detail ? (
-              <div className="grid min-h-[520px] place-items-center text-sm text-slate-500">Select a candidate to continue.</div>
+              <div className="grid min-h-[520px] place-items-center text-sm text-slate-500">{selectedId && !error ? "Loading candidate…" : "Select a candidate to continue."}</div>
             ) : (
               <>
                 <div className="border-b border-blue-100 p-4">
@@ -943,6 +990,15 @@ export default function NativeJoiningControlRoom() {
                           {statusBadge(esign.kit_status || undefined)}
                           <span className="text-slate-500">DigiLocker</span>
                           {statusBadge(esign.digilocker_status || undefined)}
+                          {esign.digilocker_status !== "documents_received" && (
+                            <Button
+                              type="button" size="sm" variant="outline" className="h-7"
+                              onClick={() => action("digilocker/remind", {}, "DigiLocker reminder emailed")}
+                              disabled={busy}
+                            >
+                              <Send className="mr-1 h-3 w-3" />Remind
+                            </Button>
+                          )}
                           <span className="text-slate-500">Penny drop</span>
                           {statusBadge(esign.penny_drop_status || undefined)}
                         </div>

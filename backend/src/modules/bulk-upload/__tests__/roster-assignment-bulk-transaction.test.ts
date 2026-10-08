@@ -34,6 +34,16 @@ import { importRosterAssignmentBatch } from "../roster-assignment-bulk.service.j
 import { __resetSchemaCachesForTests } from "../../wfm/shift-scheduling.util.js";
 import { __resetSchemaProbeCachesForTests } from "../../wfm/schema-probe.util.js";
 
+/**
+ * The importer resolves employees and shifts for the WHOLE batch in two IN (...) queries and
+ * looks each row up in a Map keyed by code (4ee975a4f — it used to run one SELECT per row).
+ * So the rows handed back must carry the code they are keyed on, and a shift must carry its
+ * times; a bare `{ id }` is no longer found and the row is refused as "not found or inactive".
+ */
+const EMPLOYEE = { id: "emp-1", employee_code: "MAS001", process_id: "process-1", branch_id: "branch-1" };
+const shift = (shift_code: string, start_time: string, end_time: string) =>
+  ({ id: "shift-1", shift_code, start_time, end_time });
+
 function queueRows(...batches: unknown[][]) {
   let call = 0;
   conn.execute.mockImplementation(async () => {
@@ -87,24 +97,15 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     //    pre-migration column set
     // 8: INSERT wfm_roster_assignment
     // 9: UPDATE upload_batch_row
-    // 10: UPDATE upload_batch
+    // then finalizeBulkRosterRows' own off-day/process-stamping queries (57db33878), which
+    // read empty results here, and last the UPDATE upload_batch
     queueRows(
-      [
-        {
-          id: "row-1",
-          row_no: 1,
-          normalized_data: JSON.stringify({
-            cycle_id: "cycle-1",
-            employee_code: "MAS001",
-            roster_date: "2026-08-17",
-            shift_code: "GEN",
-            is_week_off: "0",
-            notes: null,
-          }),
-        },
-      ],
-      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
-      [{ id: "shift-1" }],
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
+        shift_code: "GEN", is_week_off: "0", notes: null,
+      }) }],
+      [EMPLOYEE],
+      [shift("GEN", "09:00:00", "18:00:00")],
       [],
       [],
       [],
@@ -150,22 +151,12 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     // 11: findAdjacentShifts next -> none
     // 12: UPDATE upload_batch_row (error)   13: UPDATE upload_batch
     queueRows(
-      [
-        {
-          id: "row-1",
-          row_no: 1,
-          normalized_data: JSON.stringify({
-            cycle_id: "cycle-1",
-            employee_code: "MAS001",
-            roster_date: "2026-08-17",
-            shift_code: "NGT",
-            is_week_off: "0",
-            notes: null,
-          }),
-        },
-      ],
-      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
-      [{ id: "shift-1", start_time: "04:00:00", end_time: "13:00:00" }],
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
+        shift_code: "NGT", is_week_off: "0", notes: null,
+      }) }],
+      [EMPLOYEE],
+      [shift("NGT", "04:00:00", "13:00:00")],
       [],
       [{ TABLE_NAME: "wfm_rest_policy" }],
       [],
@@ -230,22 +221,12 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     // 15: INSERT wfm_roster_assignment    16: UPDATE upload_batch_row (imported)
     // 17: UPDATE upload_batch
     queueRows(
-      [
-        {
-          id: "row-1",
-          row_no: 1,
-          normalized_data: JSON.stringify({
-            cycle_id: "cycle-1",
-            employee_code: "MAS001",
-            roster_date: "2026-08-17",
-            shift_code: "NGT",
-            is_week_off: "0",
-            notes: null,
-          }),
-        },
-      ],
-      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
-      [{ id: "shift-1", start_time: "04:00:00", end_time: "13:00:00" }],
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
+        shift_code: "NGT", is_week_off: "0", notes: null,
+      }) }],
+      [EMPLOYEE],
+      [shift("NGT", "04:00:00", "13:00:00")],
       [],
       [{ TABLE_NAME: "wfm_rest_policy" }],
       [],
@@ -310,22 +291,12 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     // 4: attendance_daily_record -> is_locked=1
     // 5: UPDATE upload_batch_row (error)   6: UPDATE upload_batch
     queueRows(
-      [
-        {
-          id: "row-1",
-          row_no: 1,
-          normalized_data: JSON.stringify({
-            cycle_id: "cycle-1",
-            employee_code: "MAS001",
-            roster_date: "2026-08-17",
-            shift_code: "GEN",
-            is_week_off: "0",
-            notes: null,
-          }),
-        },
-      ],
-      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
-      [{ id: "shift-1" }],
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
+        shift_code: "GEN", is_week_off: "0", notes: null,
+      }) }],
+      [EMPLOYEE],
+      [shift("GEN", "09:00:00", "18:00:00")],
       [{ is_locked: 1 }],
       [],
       [],
@@ -362,22 +333,12 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     // importRosterAssignmentBatch directly against the real DB, 0 successful imports
     // with a shift assigned.
     queueRows(
-      [
-        {
-          id: "row-1",
-          row_no: 1,
-          normalized_data: JSON.stringify({
-            cycle_id: "cycle-1",
-            employee_code: "MAS001",
-            roster_date: "2026-08-17",
-            shift_code: "GEN",
-            is_week_off: "0",
-            notes: null,
-          }),
-        },
-      ],
-      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
-      [{ id: "shift-1", start_time: "10:00:00", end_time: "19:00:00" }],
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
+        shift_code: "GEN", is_week_off: "0", notes: null,
+      }) }],
+      [EMPLOYEE],
+      [shift("GEN", "10:00:00", "19:00:00")],
       [],
       [],
       [],

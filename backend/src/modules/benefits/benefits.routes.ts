@@ -7,9 +7,21 @@ import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { inboxService } from "../../modules/inbox/inbox.service.js";
+import { canViewEmployee } from "../../shared/enterpriseScope.js";
+import { employeeRowScope } from "../org/branchScope.js";
 
 export const benefitsRouter = Router();
 benefitsRouter.use(requireAuth);
+
+// Branch scoping (owner ruling 2026-10-01): admin/hr used to mean "every employee's benefits and claims".
+// hr is limited to employees inside its own branch / assigned scope; org-wide roles are unaffected.
+const OUT_OF_SCOPE = { success: false, error: "Forbidden: this employee is outside your branch / assigned scope" };
+const canSee = (req: AuthenticatedRequest, employeeId: string) => canViewEmployee(req.authUser!, String(employeeId));
+async function claimEmployeeId(claimId: string): Promise<string | null> {
+  const [rows] = await db.execute("SELECT employee_id FROM reimbursement_claim WHERE id = ? LIMIT 1", [claimId]);
+  const id = (rows as { employee_id: string | null }[])[0]?.employee_id;
+  return id ? String(id) : null;
+}
 
 const h =
   (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -78,7 +90,7 @@ benefitsRouter.get(
   h(async (req, res) => {
     const userId = req.authUser!.id;
     const { employeeId } = req.params;
-    const privileged = await hasRole(userId, "admin", "hr");
+    const privileged = (await hasRole(userId, "admin", "hr")) && (await canSee(req, employeeId));
 
     if (!privileged) {
       const emp = await getEmployeeForUser(userId);
@@ -117,6 +129,7 @@ benefitsRouter.post(
           "employee_id, plan_id, enrolled_date, and effective_from are required",
       });
     }
+    if (!(await canSee(req, employee_id))) return res.status(403).json(OUT_OF_SCOPE);
     const enrollment = await benefitsService.enroll({
       employee_id,
       plan_id,
@@ -145,10 +158,10 @@ benefitsRouter.patch(
           error: `status must be one of: ${validStatuses.join(", ")}`,
         });
     }
-    const enrollment = await benefitsService.updateEnrollmentStatus(
-      req.params.id,
-      status,
-    );
+    const [enrRows] = await db.execute("SELECT employee_id FROM benefit_enrollment WHERE id = ? LIMIT 1", [req.params.id]);
+    const enrEmployee = (enrRows as { employee_id: string | null }[])[0]?.employee_id;
+    if (enrEmployee && !(await canSee(req, String(enrEmployee)))) return res.status(403).json(OUT_OF_SCOPE);
+    const enrollment = await benefitsService.updateEnrollmentStatus(req.params.id, status);
     return res.json({ success: true, data: enrollment });
   }),
 );
@@ -167,11 +180,12 @@ benefitsRouter.get(
     const privileged = await hasRole(userId, "admin", "hr");
 
     if (privileged) {
+      const scope = await employeeRowScope(req.authUser!, "e");
       const claims = await benefitsService.listClaims({
         employeeId: employee_id,
         status,
-      });
-      const stats = await benefitsService.claimStats();
+      }, scope);
+      const stats = await benefitsService.claimStats(scope);
       return res.json({ success: true, data: claims, stats });
     }
 
@@ -210,6 +224,7 @@ benefitsRouter.post(
             error: "No employee record linked to account",
           });
       }
+      if (!(await canSee(req, String(req.body.employee_id)))) return res.status(403).json(OUT_OF_SCOPE);
     }
 
     const employee_id = (emp?.id ??
@@ -272,6 +287,8 @@ benefitsRouter.patch(
           error: "action must be 'approved' or 'rejected'",
         });
     }
+    const reviewEmployee = await claimEmployeeId(req.params.id);
+    if (reviewEmployee && !(await canSee(req, reviewEmployee))) return res.status(403).json(OUT_OF_SCOPE);
     const claim = await benefitsService.reviewClaim(
       req.params.id,
       action,
@@ -322,10 +339,9 @@ benefitsRouter.post(
         .status(400)
         .json({ success: false, error: "paymentReference is required" });
     }
-    const claim = await benefitsService.payClaim(
-      req.params.id,
-      paymentReference.trim(),
-    );
+    const payEmployee = await claimEmployeeId(req.params.id);
+    if (payEmployee && !(await canSee(req, payEmployee))) return res.status(403).json(OUT_OF_SCOPE);
+    const claim = await benefitsService.payClaim(req.params.id, paymentReference.trim());
     // fire-and-forget: notify the employee that their claim has been paid
     try {
       const [uRows] = await db.execute(

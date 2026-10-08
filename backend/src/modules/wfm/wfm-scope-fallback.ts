@@ -36,8 +36,14 @@ export async function resolveWfmScope(
         WHERE user_id = ? AND active_status = 1 AND branch_id IS NOT NULL AND branch_id <> ''`,
       [actor.id],
     );
-    const branchIds = (rows as RowDataPacket[]).map((r) => String(r.branch_id));
+    let branchIds = (rows as RowDataPacket[]).map((r) => String(r.branch_id));
     if (!branchIds.length) throw err;
+    // Own-branch clamp (owner ruling 2026-10-01): never wider than the branch on the caller's own employee record.
+    const [own] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`, [actor.id],
+    );
+    const ownBranch = (own as RowDataPacket[])[0]?.branch_id;
+    if (ownBranch) branchIds = [String(ownBranch)];
     return {
       level: "BRANCH_ALL",
       branchIds,

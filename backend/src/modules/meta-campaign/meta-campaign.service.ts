@@ -28,21 +28,16 @@ import {
   fetchPageLeadForms,
   isMetaConfigured,
   MetaApiError,
-} from "./meta-api.client.js";
-import {
-  parseLead,
-  normaliseMetaId,
-  extractRoutingCode,
-} from "./meta-lead.parser.js";
-import { screenLead } from "./lead-screener.service.js";
-import { loadCampaignScreeningConfig } from "./campaign-screening.js";
-import { notifyQualifiedLead } from "./lead-outreach.service.js";
-import {
-  buildCanonicalFunnel,
-  canonicalStage,
-  CANONICAL_STAGE_LABEL,
-  CANONICAL_STAGE_ORDER,
-} from "../ats/ats-stage-model.js";
+} from './meta-api.client.js';
+import { parseLead, normaliseMetaId, extractRoutingCode } from './meta-lead.parser.js';
+import { screenLead } from './lead-screener.service.js';
+import { loadCampaignScreeningConfig } from './campaign-screening.js';
+import { notifyQualifiedLead } from './lead-outreach.service.js';
+import { heOwnsCampaign } from '../hiring-engine/he-campaign-config.service.js';
+import { bridgeOneMetaLead } from '../hiring-engine/he-meta-bridge.service.js';
+import { enqueueMetaLeadFollowup } from '../hiring-engine/qualified-followup.service.js';
+import { followupMode } from '../hiring-engine/qualified-followup.schedule.js';
+import { buildCanonicalFunnel, canonicalStage, CANONICAL_STAGE_LABEL, CANONICAL_STAGE_ORDER } from '../ats/ats-stage-model.js';
 import type {
   MetaCampaign,
   MetaCampaignRow,
@@ -377,15 +372,13 @@ export const metaCampaignService = {
     return updated;
   },
 
-  async listLeads(
-    filters: {
-      campaignId?: string;
-      requisitionId?: string;
-      screening?: string;
-    } = {},
-  ): Promise<MetaLead[]> {
+  async listLeads(filters: { campaignId?: string; requisitionId?: string; screening?: string; branchName?: string } = {}): Promise<MetaLead[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
+    if (filters.branchName) {
+      conds.push('requisition_id IN (SELECT id FROM job_requisition WHERE branch_name = ?)');
+      params.push(filters.branchName);
+    }
     if (filters.campaignId) {
       conds.push("campaign_id = ?");
       params.push(filters.campaignId);
@@ -767,6 +760,14 @@ export const metaCampaignService = {
           e instanceof Error ? e.message : e,
         ),
       );
+      // A campaign handed to the Hiring Engine: the lead joins the engine's pool right away (it does the outreach, see notifyQualifiedLead).
+      if (campaign?.id && (await heOwnsCampaign(campaign.id).catch(() => false))) await bridgeOneMetaLead(id);
+      // Qualified-lead follow-up (a no-op while QUAL_FOLLOWUP_MODE is off, the default): fire-and-forget, fail-open so ingest is unaffected.
+      const enqueued = enqueueMetaLeadFollowup(id).catch((e: unknown) =>
+        console.warn('[meta] enqueueMetaLeadFollowup failed', e instanceof Error ? e.message : e)
+      );
+      // Not off: wait for the row so notifyQualifiedLead's guard can see it. Off: fire-and-forget as before.
+      if (followupMode() !== 'off') await enqueued; else void enqueued;
       // Outreach is suppressed for backfilled leads or when auto_notify is explicitly disabled.
       // Default: auto_notify = true (fire immediately on qualify).
       const autoNotify = screeningConfig?.auto_notify !== false;
@@ -1310,7 +1311,7 @@ export const metaCampaignService = {
   },
 
   /** Roll-up across every campaign, for the dashboard header. */
-  async getOverview(): Promise<{
+  async getOverview(branchName?: string): Promise<{
     campaigns: number;
     activeCampaigns: number;
     impressions: number;
@@ -1335,7 +1336,9 @@ export const metaCampaignService = {
               COALESCE(SUM(impressions),0) AS impressions,
               COALESCE(SUM(clicks),0)      AS clicks,
               COALESCE(SUM(spend_inr),0)   AS spend_inr
-         FROM meta_campaign`,
+         FROM meta_campaign
+        ${branchName ? 'WHERE requisition_id IN (SELECT id FROM job_requisition WHERE branch_name = ?)' : ''}`,
+      branchName ? [branchName] : []
     );
     const [l] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS form_fills,
@@ -1343,7 +1346,9 @@ export const metaCampaignService = {
               SUM(CASE WHEN screening_result = 'disqualified' THEN 1 ELSE 0 END) AS disqualified,
               SUM(CASE WHEN screening_result = 'pending' THEN 1 ELSE 0 END)      AS pending,
               SUM(CASE WHEN ats_candidate_id IS NOT NULL THEN 1 ELSE 0 END)      AS candidates
-         FROM meta_lead_raw`,
+         FROM meta_lead_raw
+        ${branchName ? 'WHERE requisition_id IN (SELECT id FROM job_requisition WHERE branch_name = ?)' : ''}`,
+      branchName ? [branchName] : []
     );
 
     // ATS funnel stages for candidates from META campaigns — uses the canonical stage mapping
@@ -1355,7 +1360,9 @@ export const metaCampaignService = {
          SUM(CASE WHEN LOWER(c.current_stage) IN ('onboarded', 'converted', 'payroll_validated') THEN 1 ELSE 0 END) AS onboarded
        FROM meta_lead_raw ml
        JOIN ats_candidate c ON c.id = ml.ats_candidate_id
-       WHERE ml.ats_candidate_id IS NOT NULL`,
+       WHERE ml.ats_candidate_id IS NOT NULL
+        ${branchName ? 'AND ml.requisition_id IN (SELECT id FROM job_requisition WHERE branch_name = ?)' : ''}`,
+      branchName ? [branchName] : []
     );
 
     const spend = Number(c[0]?.spend_inr ?? 0);
@@ -1448,7 +1455,7 @@ export const metaCampaignService = {
   },
 
   /** Distinct branches, processes, and requisitions for the dashboard filter dropdowns. */
-  async getFilterOptions(): Promise<{
+  async getFilterOptions(branchName?: string): Promise<{
     branches: string[];
     processes: string[];
     requisitions: Array<{ id: string; code: string; designation: string }>;
@@ -1457,7 +1464,9 @@ export const metaCampaignService = {
       `SELECT DISTINCT jr.branch_name, jr.process_name
          FROM meta_campaign mc
          LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
-        WHERE jr.branch_name IS NOT NULL OR jr.process_name IS NOT NULL`,
+        WHERE (jr.branch_name IS NOT NULL OR jr.process_name IS NOT NULL)
+          ${branchName ? 'AND jr.branch_name = ?' : ''}`,
+      branchName ? [branchName] : []
     );
     const branches = [
       ...new Set(
@@ -1480,7 +1489,9 @@ export const metaCampaignService = {
          FROM meta_campaign mc
          LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
         WHERE mc.requisition_id IS NOT NULL
+          ${branchName ? 'AND jr.branch_name = ?' : ''}
         ORDER BY jr.requisition_code`,
+      branchName ? [branchName] : []
     );
     const requisitions = reqRows
       .filter((r) => r.id)

@@ -88,17 +88,17 @@ describe("report executor row scope", () => {
     // `all` for everyone. The canonical helper applies them anyway, which is why
     // it remains the preferred route.
     const offenders = fns
-      .filter((f) => !EXEMPT.has(f.name))
-      .filter((f) =>
-        /FROM\s+employees|JOIN\s+employees|FROM\s+salary_prep|FROM\s+attendance_|FROM\s+leave_/i.test(
-          f.body,
-        ),
-      )
-      .filter((f) => {
-        const canonical = f.body.includes("appendScopeConditions");
-        const inlineBoth =
-          /scope\.branchScope\./.test(f.body) &&
-          /scope\.processScope\./.test(f.body);
+      .filter(f => !EXEMPT.has(f.name))
+      .filter(f => /FROM\s+employees|JOIN\s+employees|FROM\s+salary_prep|FROM\s+attendance_|FROM\s+leave_/i.test(f.body))
+      .filter(f => {
+        // appendCandidateScopeConditions is the candidate-grain equivalent: those
+        // reports return ats_candidate rows and touch employees only to name the
+        // recruiter, so the restriction belongs on the candidate's applied-for
+        // branch and process. The helper itself is held to the same bar below.
+        const canonical =
+          f.body.includes("appendScopeConditions") ||
+          f.body.includes("appendCandidateScopeConditions(scope, clauses, params)");
+        const inlineBoth = /scope\.branchScope\./.test(f.body) && /scope\.processScope\./.test(f.body);
         return !canonical && !inlineBoth;
       })
       .map((f) => `${f.file}:${f.name}`);
@@ -108,6 +108,20 @@ describe("report executor row scope", () => {
       "these query employee data with at most a branch restriction, so a " +
         "process-restricted viewer sees every process in their branch",
     ).toEqual([]);
+  });
+
+  it("the candidate-grain scope helper restricts branch AND process and denies 'none'", () => {
+    const src = fs.readFileSync(path.join(dir, "recruitment.executor.ts"), "utf8");
+    const start = src.indexOf("function appendCandidateScopeConditions(");
+    expect(start, "appendCandidateScopeConditions missing").toBeGreaterThan(-1);
+    const helper = src.slice(start, src.indexOf("\n}\n", start));
+    expect(helper).toMatch(/scope\.branchScope\.mode === "restricted"[\s\S]*c\.applied_for_branch IN \(/);
+    expect(helper).toMatch(/scope\.processScope\.mode === "restricted"[\s\S]*c\.applied_for_process IN \(/);
+    for (const dim of ["branchScope", "processScope", "departmentScope", "costCentreScope"]) {
+      expect(helper, `${dim} 'none' must deny`).toContain(
+        `if (scope.${dim}.mode === "none") throw new ReportScopeAccessDeniedError("${dim}")`,
+      );
+    }
   });
 
   it("a report that scopes inline must still deny the no-access case", () => {

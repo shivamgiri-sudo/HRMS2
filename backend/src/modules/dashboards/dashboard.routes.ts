@@ -25,6 +25,10 @@ import {
 import { dashboardSummarySchema } from "../../shared/dashboardMetricContract.js";
 import { cacheInstance as dashboardMetricsCache } from "../../lib/cache/quality-cache.js";
 import { sharedInFlight } from "./metrics-in-flight.js";
+import { TtlCache } from "../../shared/ttlCache.js";
+import { cachedRoleInsights } from "./role-insights/index.js";
+import { canSeeFinanceFigures, istToday } from "./role-insights/helpers.js";
+import { loadRunInsights } from "./role-insights/providers/payrollRun.js";
 import { logSourceFailure } from "../../shared/apiResponse.js";
 import {
   HALF_DAY_STATUS,
@@ -37,10 +41,9 @@ import {
 } from "../../shared/attendanceStatus.js";
 
 const router = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+/** Outer stale-while-revalidate layer for the summary bundle: a cold SUPER_ADMIN bundle takes ~10s, so repeat visits are served instantly while one refresh runs. */
+const summaryMetricsSwr = new TtlCache<{ metrics: Record<string, unknown>; at: string }>({ maxEntries: 300, defaultTtlMs: 60_000, defaultStaleMs: 30 * 60_000 });
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 router.use(requireAuth);
 
 function dashboardAccessError(message: string, statusCode: number) {
@@ -140,9 +143,10 @@ async function requestedScope(
   // genuinely have no real branch/process to show and are left exactly as before) and the
   // v2 quality/operations dashboards' own separate, deliberately fail-closed "unconfigured
   // account" contract (tests/dashboards-v2.routes.test.ts) are completely unaffected.
-  const isDemoSystemWide =
-    user.isDemo === true &&
-    (user.role === "super_admin" || user.role === "admin");
+  // Owner ruling 2026-10-01: admin is branch-scoped like hr (resolveDashboardScope's SYSTEM_WIDE_ROLES is now
+  // super_admin only), so a demo `admin` no longer gets the org-wide scope either - it resolves like any
+  // other role. Only the demo super_admin keeps ORG_ALL.
+  const isDemoSystemWide = user.isDemo === true && user.role === "super_admin";
 
   const context = isDemoSystemWide
     ? {
@@ -218,28 +222,35 @@ router.get(
      FROM attendance_daily_record
      WHERE employee_id = ?
        AND record_date >= DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+05:30'), '%Y-%m-01')
-       AND record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))`,
-      [(employee as any).id],
-    );
+       -- Completed days only (strictly before today, IST). Today's rows are created at
+       -- start-of-day before any punch is reconciled — at 01:14 on 2 Oct production held 26
+       -- rows for the day, 19 already 'absent' and none 'present' — so counting them charged
+       -- people an absence for a shift that had not happened. Matches
+       -- LATEST_COMPLETE_ATTENDANCE_DATE_SQL, which also excludes today.
+       AND record_date < DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))`,
+    [(employee as any).id],
+  );
 
-    const row = rows[0] as any;
-    return res.json({
-      success: true,
-      data: {
-        metrics: {
-          att: {
-            value: Number(row?.attendance_pct ?? 0),
-            detail: {
-              present: Number(row?.present ?? 0),
-              halfDay: Number(row?.half_day ?? 0),
-              absent: Number(row?.absent ?? 0),
-              late: Number(row?.late ?? 0),
-              missedPunch: Number(row?.missed_punch ?? 0),
-              onLeave: Number(row?.on_leave ?? 0),
-              totalWorkingDays: Number(row?.total_working_days ?? 0),
-              expectedToWork: Number(row?.expected_to_work ?? 0),
-              attendanceRate: Number(row?.attendance_pct ?? 0),
-            },
+  const row = rows[0] as any;
+  // No completed day (1st of the month, or no attendance feed for this person) means there is
+  // no denominator: report the percentage as unavailable, never a confident 0%.
+  const attendancePct = row?.attendance_pct === null || row?.attendance_pct === undefined ? null : Number(row.attendance_pct);
+  return res.json({
+    success: true,
+    data: {
+      metrics: {
+        att: {
+          value: attendancePct,
+          detail: {
+            present: Number(row?.present ?? 0),
+            halfDay: Number(row?.half_day ?? 0),
+            absent: Number(row?.absent ?? 0),
+            late: Number(row?.late ?? 0),
+            missedPunch: Number(row?.missed_punch ?? 0),
+            onLeave: Number(row?.on_leave ?? 0),
+            totalWorkingDays: Number(row?.total_working_days ?? 0),
+            expectedToWork: Number(row?.expected_to_work ?? 0),
+            attendanceRate: attendancePct,
           },
         },
         generatedAt: new Date().toISOString(),
@@ -248,26 +259,22 @@ router.get(
   }),
 );
 
-router.get(
-  "/PAYROLL_HR_DASHBOARD/operational-summary",
-  requireFixedDashboard("PAYROLL_HR_DASHBOARD"),
-  h(async (req: AuthenticatedRequest, res: any) => {
-    const { scope } = await requestedScope(req);
-    const runId = String(req.query.runId ?? "").trim();
-    if (!runId) {
-      throw Object.assign(new Error("Select a payroll run"), {
-        statusCode: 400,
-        errorCode: "PAYROLL_RUN_REQUIRED",
-      });
-    }
+  // The run analytics take ~9s cold; identical for everyone with the same scope and run, so share the result
+  // and keep serving the previous one while it refreshes (stale-while-revalidate).
+  const opKey = `payroll-op:${runId}:${scope.level}:${scope.branchIds.join(",")}:${scope.processIds.join(",")}:${scope.employeeIds.join(",")}`;
+  const { value: opSummary } = await payrollOperationalCache.getOrCompute(opKey, () => computeOperationalSummary(scope, runId));
+  return res.json(opSummary);
+}));
 
-    // salary_prep_run has no `run_label` and no `closed_at` — neither has ever existed in
-    // any migration, so this endpoint raised ER_BAD_FIELD_ERROR and returned 500 on every
-    // payroll dashboard load. The label is derived below; `auto_closed_at` is the real
-    // closure timestamp (294_payroll_window_closure.sql).
-    const currentRun = await db
-      .execute<RowDataPacket[]>(
-        `SELECT id, run_month, status, branch_filter, total_employees, created_at,
+const payrollOperationalCache = new TtlCache<unknown>({ maxEntries: 60, defaultTtlMs: 60_000, defaultStaleMs: 30 * 60_000 });
+
+async function computeOperationalSummary(scope: DashboardScope, runId: string) {
+  // salary_prep_run has no `run_label` and no `closed_at` — neither has ever existed in
+  // any migration, so this endpoint raised ER_BAD_FIELD_ERROR and returned 500 on every
+  // payroll dashboard load. The label is derived below; `auto_closed_at` is the real
+  // closure timestamp (294_payroll_window_closure.sql).
+  const currentRun = await db.execute<RowDataPacket[]>(
+    `SELECT id, run_month, status, branch_filter, total_employees, created_at,
             auto_closed_at, attendance_snapshot_locked, tds_mode
        FROM salary_prep_run
       WHERE id = ?`,
@@ -284,18 +291,33 @@ router.get(
 
     const salaryScope = buildScopeWhere(scope, "e.branch_id", "e.process_id");
 
-    // salaryBill, unpaidActive and zeroAttendanceRisk are mutually independent —
-    // none reads another's result, only currentRun (already resolved above) and
-    // salaryScope. Previously three sequential awaits; against the live DB this
-    // measured ~28.7s for the endpoint. Kicked off together below; each keeps
-    // its own failure handling exactly as before (zeroAttendanceRisk's
-    // try/catch, in particular, is preserved verbatim — see the comment on it).
-    const salaryBillPromise = db
-      .execute<RowDataPacket[]>(
-        // gross_pay / gross_amount / net_pay / net_amount exist in no migration. COALESCE
-        // does not protect against unknown identifiers — MySQL resolves them before
-        // evaluating — so the old chain guaranteed a 500 rather than a fallback.
-        `SELECT COUNT(DISTINCT spl.employee_id) AS emp_count,
+  // Branch scoping (owner ruling 2026-10-01): a run id taken from the query string is only a request. A caller who is
+  // not org-wide must have at least one line of that run inside their scope, otherwise the run is not theirs to read.
+  if (scope.level !== "ORG_ALL") {
+    const [inScope] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 AS ok FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
+        WHERE spl.run_id = ? AND ${salaryScope.sql} LIMIT 1`,
+      [currentRun.id, ...salaryScope.params],
+    );
+    if (!(inScope as any[]).length) {
+      throw Object.assign(new Error("Forbidden: this payroll run has no employees inside your branch / assigned scope"), {
+        statusCode: 403,
+        errorCode: "PAYROLL_RUN_OUT_OF_SCOPE",
+      });
+    }
+  }
+
+  // salaryBill, unpaidActive and zeroAttendanceRisk are mutually independent —
+  // none reads another's result, only currentRun (already resolved above) and
+  // salaryScope. Previously three sequential awaits; against the live DB this
+  // measured ~28.7s for the endpoint. Kicked off together below; each keeps
+  // its own failure handling exactly as before (zeroAttendanceRisk's
+  // try/catch, in particular, is preserved verbatim — see the comment on it).
+  const salaryBillPromise = db.execute<RowDataPacket[]>(
+    // gross_pay / gross_amount / net_pay / net_amount exist in no migration. COALESCE
+    // does not protect against unknown identifiers — MySQL resolves them before
+    // evaluating — so the old chain guaranteed a 500 rather than a fallback.
+    `SELECT COUNT(DISTINCT spl.employee_id) AS emp_count,
             COALESCE(SUM(spl.gross_salary), 0) AS total_gross,
             COALESCE(SUM(spl.net_salary), 0) AS total_net,
             COALESCE(SUM(spl.total_deductions), 0) AS total_deductions
@@ -466,10 +488,61 @@ router.get(
       }
     };
 
-    const disbursementP = currentRun
-      ? panel("disbursement", async () => {
-          const [rows] = await db.execute<RowDataPacket[]>(
-            `SELECT status, total_amount, employee_count, bank_ref, disbursed_at
+  const totalGross = Number(salaryBill?.total_gross ?? 0);
+  const totalNet = Number(salaryBill?.total_net ?? 0);
+
+  const dataIntegrity: string[] = [];
+
+  if (zeroAttendanceRisk === null) {
+    dataIntegrity.push(
+      "Could not determine how many payable employees have no attendance marked present. " +
+        "Treat this check as unanswered rather than clear.",
+    );
+  } else if (zeroAttendanceRisk > 0) {
+    dataIntegrity.push(
+      `${zeroAttendanceRisk} payable employee(s) at active branches have no attendance ` +
+        `marked present in the last 60 days. An ADR-sourced run pays them zero, which is ` +
+        `indistinguishable from a genuine nil payment — confirm their attendance is ` +
+        `reaching the system before calculating.`,
+    );
+  }
+
+  const unpaidLines = Number(unpaidActive?.unpaid_lines ?? 0);
+  if (unpaidLines > 0) {
+    dataIntegrity.push(
+      `${unpaidLines} active employee(s) in this run have earning components totalling ` +
+        `${unpaidActive.earnings_recorded} but a net pay of zero. Most have no attendance ` +
+        `record for the period, so this is likely the attendance-exception backlog ` +
+        `reaching payroll — check the attendance exceptions panel before approving.`,
+    );
+  }
+
+  // Four of the six panels declared "unavailable" below actually have data; the
+  // layout was reading keys nothing ever returned, so they rendered empty forever.
+  //
+  //   disbursement      payroll_disbursement HAS a run_id column — it is run-linked,
+  //                     and the note claiming otherwise was simply wrong. 12 runs
+  //                     carry real NEFT references and amounts.
+  //   branchReadiness   payroll_branch_readiness.process_month matches run_month.
+  //                     The join needs an explicit COLLATE: the two columns carry
+  //                     different collations and MySQL raises
+  //                     ER_CANT_AGGREGATE_2COLLATIONS rather than comparing them.
+  //   loans /           org-wide aggregates, genuinely not run-scoped. Shown as
+  //   reimbursements    current position rather than pretending they belong to a run.
+  //
+  // Each is independently caught: one missing panel must not blank the others, and
+  // null renders as unavailable rather than as a zero.
+  const panel = async <T,>(key: string, fn: () => Promise<T>): Promise<T | null> => {
+    try { return await fn(); }
+    catch (err) { logSourceFailure(`dashboard.payroll-${key}`, err, { runId: currentRun?.id }); return null; }
+  };
+
+  // payroll_disbursement is one org-wide row per run (no branch dimension), so a scoped caller gets "unavailable"
+  // rather than the company total.
+  const disbursementP = currentRun ? panel("disbursement", async () => {
+    if (scope.level !== "ORG_ALL") return null;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT status, total_amount, employee_count, bank_ref, disbursed_at
          FROM payroll_disbursement WHERE run_id = ? ORDER BY disbursed_at DESC LIMIT 1`,
             [currentRun.id],
           );
@@ -488,58 +561,52 @@ router.get(
         })
       : Promise.resolve(null);
 
-    const branchReadinessP = currentRun
-      ? panel("branch-readiness", async () => {
-          const [rows] = await db.execute<RowDataPacket[]>(
-            `SELECT COUNT(*) AS branches,
+  const branchReadinessP = currentRun ? panel("branch-readiness", async () => {
+    // Only the caller's own branches (payroll_branch_readiness carries branch_id, no process).
+    const readinessScope = scope.level === "ORG_ALL"
+      ? { sql: "", params: [] as string[] }
+      : scope.branchIds.length > 0
+        ? { sql: ` AND branch_id IN (${scope.branchIds.map(() => "?").join(",")})`, params: [...scope.branchIds] }
+        : { sql: " AND 1=0", params: [] as string[] };
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS branches,
               SUM(attendance_frozen = 1) AS attendanceFrozen,
               SUM(attendance_data_ready = 1) AS dataReady
          FROM payroll_branch_readiness
-        WHERE process_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci`,
-            [currentRun.run_month],
-          );
-          const r = rows[0];
-          return Number(r?.branches ?? 0) === 0
-            ? null
-            : {
-                branches: Number(r.branches),
-                attendanceFrozen: Number(r.attendanceFrozen ?? 0),
-                dataReady: Number(r.dataReady ?? 0),
-              };
-        })
-      : Promise.resolve(null);
+        WHERE process_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci${readinessScope.sql}`,
+      [currentRun.run_month, ...readinessScope.params],
+    );
+    const r = rows[0];
+    return Number(r?.branches ?? 0) === 0 ? null : {
+      branches: Number(r.branches),
+      attendanceFrozen: Number(r.attendanceFrozen ?? 0),
+      dataReady: Number(r.dataReady ?? 0),
+    };
+  }) : Promise.resolve(null);
 
-    // salary_payslip is keyed by run_month (no run_id), so generation is counted for
-    // the run's month against the lines in the run. This is what the "Payslip
-    // Generation Status" panel was trying to show with a `disbursement` breakdown
-    // that the endpoint never returned.
-    const payslipsP = currentRun
-      ? panel("payslips", async () => {
-          const [rows] = await db.execute<RowDataPacket[]>(
-            `SELECT
-         (SELECT COUNT(*) FROM salary_payslip
-           WHERE run_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci) AS \`generated\`,
-         (SELECT COUNT(*) FROM salary_prep_line WHERE run_id = ?) AS expected`,
-            [currentRun.run_month, currentRun.id],
-          );
-          const r = rows[0];
-          const expected = Number(r?.expected ?? 0);
-          if (expected === 0) return null;
-          const generated = Number(r?.generated ?? 0);
-          return {
-            generated,
-            expected,
-            pending: Math.max(0, expected - generated),
-            pct: Math.round((generated / expected) * 1000) / 10,
-          };
-        })
-      : Promise.resolve(null);
-    // The three panels are independent and each already catches its own failure.
-    const [disbursement, branchReadiness, payslips] = await Promise.all([
-      disbursementP,
-      branchReadinessP,
-      payslipsP,
-    ]);
+  // Run-linked figures the old panels could not give: previous-run delta + variance drivers, active-vs-in-run
+  // headcount, branch cost, pipeline stage, pay date, filings and payslips. Payslips are matched to THIS run's lines
+  // through prep_line_id; the old count was keyed by run_month and over-counted whenever a month had two runs.
+  const runInsightsP = panel("run-insights", () => loadRunInsights(
+    { id: currentRun.id, run_month: currentMonth, status: String(currentRun.status ?? "draft") },
+    salaryScope, scope.level === "ORG_ALL", istToday(),
+  ));
+  // The three panels are independent and each already catches its own failure.
+  const payslipsP = currentRun ? panel("payslips", async () => {
+    const ri = await runInsightsP;
+    return ri?.payslips
+      ? {
+          generated: ri.payslips.generated,
+          expected: ri.payslips.expected,
+          pending: Math.max(0, ri.payslips.expected - ri.payslips.generated),
+          pct: Math.round((ri.payslips.generated / ri.payslips.expected) * 1000) / 10,
+          acknowledged: ri.payslips.acknowledged,
+          emailed: ri.payslips.emailed,
+        }
+      : null;
+  }) : Promise.resolve(null);
+  const [disbursement, branchReadiness, payslips] = await Promise.all([disbursementP, branchReadinessP, payslipsP]);
+  const runInsights = await runInsightsP;
 
     // Loans and reimbursements are deliberately NOT queried here.
     //
@@ -554,73 +621,56 @@ router.get(
     // intentional and left intact; both stay in unavailableSources with a real reason.
     // If those panels are wanted, they belong on a month- or org-scoped endpoint.
 
-    return res.json({
-      success: true,
-      data: {
-        currentMonth,
-        disbursement,
-        branchReadiness,
-        payslips,
-        currentRun: currentRun
-          ? {
-              id: currentRun.id,
-              month: currentRun.run_month,
-              status: currentRun.status ?? "draft",
-              label: runLabel,
-              totalEmployees:
-                currentRun.total_employees === null ||
-                currentRun.total_employees === undefined
-                  ? null
-                  : Number(currentRun.total_employees),
-              attendanceLocked: Boolean(currentRun.attendance_snapshot_locked),
-              tdsMode: currentRun.tds_mode,
-              createdAt: currentRun.created_at,
-              closedAt: currentRun.auto_closed_at,
-            }
-          : null,
-        salaryBill: salaryBill
-          ? {
-              employeeCount: Number(salaryBill.emp_count ?? 0),
-              totalGross,
-              totalNet,
-              totalDeductions: Number(salaryBill.total_deductions ?? 0),
-            }
-          : null,
-        dataIntegrity,
-        // Only what is genuinely unavailable. This used to list six sources
-        // unconditionally, including four that do have data — so the "Run-linked
-        // Source Availability" panel rendered the same six explanations on every
-        // load forever while the panels above it sat empty.
-        //
-        // Each entry is now conditional, so the panel shrinks as sources come back
-        // and disappears entirely once nothing is missing.
-        unavailableSources: {
-          // statutory_filing_record does not exist in the database at all.
-          statutoryFiling: "No statutory filing records are stored yet",
-          pendingQueues: "Queue records are not linked to a payroll run",
-          ...(disbursement
-            ? {}
-            : { disbursement: "No disbursement recorded for this run" }),
-          ...(payslips
-            ? {}
-            : {
-                payslips:
-                  "No payroll lines in this run to generate payslips for",
-              }),
-          ...(branchReadiness
-            ? {}
-            : {
-                branchReadiness: `No branch readiness recorded for ${currentRun?.run_month ?? "this month"}`,
-              }),
-          loans: "Loan balances are org-wide, not scoped to a payroll run",
-          reimbursements:
-            "Reimbursement claims are org-wide, not scoped to a payroll run",
-        },
-        generatedAt: new Date().toISOString(),
+  return {
+    success: true,
+    data: {
+      currentMonth,
+      disbursement,
+      branchReadiness,
+      payslips,
+      runInsights,
+      payDay: runInsights?.calendar?.pay ?? null,
+      statutoryFiling: runInsights?.filings ?? [],
+      currentRun: currentRun ? {
+        id: currentRun.id,
+        month: currentRun.run_month,
+        status: currentRun.status ?? "draft",
+        label: runLabel,
+        totalEmployees: currentRun.total_employees === null || currentRun.total_employees === undefined
+          ? null
+          : Number(currentRun.total_employees),
+        attendanceLocked: Boolean(currentRun.attendance_snapshot_locked),
+        tdsMode: currentRun.tds_mode,
+        createdAt: currentRun.created_at,
+        closedAt: currentRun.auto_closed_at,
+      } : null,
+      salaryBill: salaryBill ? {
+        employeeCount: Number(salaryBill.emp_count ?? 0),
+        totalGross,
+        totalNet,
+        totalDeductions: Number(salaryBill.total_deductions ?? 0),
+      } : null,
+      dataIntegrity,
+      // Only what is genuinely unavailable. This used to list six sources
+      // unconditionally, including four that do have data — so the "Run-linked
+      // Source Availability" panel rendered the same six explanations on every
+      // load forever while the panels above it sat empty.
+      //
+      // Each entry is now conditional, so the panel shrinks as sources come back
+      // and disappears entirely once nothing is missing.
+      unavailableSources: {
+        ...(runInsights ? (runInsights.filings.length ? {} : { statutoryFiling: `No statutory filing records exist for ${currentMonth}` }) : { runInsights: "Run analytics (previous-run delta, headcount, pipeline) could not be computed" }),
+        pendingQueues: "Queue records are not linked to a payroll run",
+        ...(disbursement ? {} : { disbursement: "No disbursement recorded for this run" }),
+        ...(payslips ? {} : { payslips: "No payroll lines in this run to generate payslips for" }),
+        ...(branchReadiness ? {} : { branchReadiness: `No branch readiness recorded for ${currentRun?.run_month ?? "this month"}` }),
+        loans: "Loan balances are org-wide, not scoped to a payroll run",
+        reimbursements: "Reimbursement claims are org-wide, not scoped to a payroll run",
       },
-    });
-  }),
-);
+      generatedAt: new Date().toISOString(),
+    },
+  };
+}
 
 router.get(
   "/:dashboardCode/summary",
@@ -664,42 +714,88 @@ router.get(
       }
     })();
 
-    // Metrics are org/branch/process-scoped aggregates, not per-user data — every
-    // viewer of the same scope (e.g. 20 people with the org-wide CEO dashboard
-    // open) was independently re-running the same ~4-6s of queries against a DB
-    // that is ~160ms away over the network. A short TTL cache means only the
-    // first request in the window pays that cost; everyone else within 30s gets
-    // the same real numbers instantly. workItems is deliberately NOT cached here
-    // — it is per-user (assigned_to_user_id = this viewer), so caching it under
-    // a scope-only key would leak one user's pending items to another.
-    // OPEN QUESTION (not yet confirmed by dashboard owners): 30s is my own pick
-    // for "reasonable staleness" for aggregate tiles, not a stated requirement.
-    // Ask per-dashboard whether that window is acceptable, same question as the
-    // pnl cache below (see canonical-pnl.service.ts) but lower stakes here since
-    // these are operational aggregates, not the P&L figures shown to finance/CEO.
-    const metricsCacheKey = `dash-metrics:v1:${dashboardCode}:${scope.level}:${scope.branchIds.join(",")}:${scope.processIds.join(",")}:${scope.employeeIds.join(",")}`;
-    //
-    // getOrSet() only de-duplicates AFTER a value is stored. When the 30s entry expired, or on a cold
-    // start, every request in that window ran the entire metric bundle itself — SUPER_ADMIN alone is
-    // eight metrics, several with multi-second scans — so a few open dashboards stampeded the DB into
-    // 502s. Concurrent callers for the same key now await the one computation already in flight.
-    const metricsPromise = sharedInFlight(metricsCacheKey, () =>
-      dashboardMetricsCache.getOrSet(
+  // Metrics are org/branch/process-scoped aggregates, not per-user data — every
+  // viewer of the same scope (e.g. 20 people with the org-wide CEO dashboard
+  // open) was independently re-running the same ~4-6s of queries against a DB
+  // that is ~160ms away over the network. A short TTL cache means only the
+  // first request in the window pays that cost; everyone else within 30s gets
+  // the same real numbers instantly. workItems is deliberately NOT cached here
+  // — it is per-user (assigned_to_user_id = this viewer), so caching it under
+  // a scope-only key would leak one user's pending items to another.
+  // OPEN QUESTION (not yet confirmed by dashboard owners): 30s is my own pick
+  // for "reasonable staleness" for aggregate tiles, not a stated requirement.
+  // Ask per-dashboard whether that window is acceptable, same question as the
+  // pnl cache below (see canonical-pnl.service.ts) but lower stakes here since
+  // these are operational aggregates, not the P&L figures shown to finance/CEO.
+  const metricsCacheKey = `dash-metrics:v1:${dashboardCode}:${scope.level}:${scope.branchIds.join(",")}:${scope.processIds.join(",")}:${scope.employeeIds.join(",")}`;
+  //
+  // getOrSet() only de-duplicates AFTER a value is stored. When the 30s entry expired, or on a cold
+  // start, every request in that window ran the entire metric bundle itself — SUPER_ADMIN alone is
+  // eight metrics, several with multi-second scans — so a few open dashboards stampeded the DB into
+  // 502s. Concurrent callers for the same key now await the one computation already in flight.
+  const metricsPromise = summaryMetricsSwr.getOrCompute(metricsCacheKey, async () => {
+    // Stamp the bundle with the moment it was computed, so a stale-while-revalidate answer says how old it is.
+    const computedAt = new Date();
+    const metrics = await sharedInFlight(
+      metricsCacheKey,
+      () => dashboardMetricsCache.getOrSet(
         metricsCacheKey,
-        () =>
-          executeDashboardMetrics(dashboardCode, scope, generatedAt) as Promise<
-            Record<string, unknown>
-          >,
-        30,
+        () => executeDashboardMetrics(dashboardCode, scope, computedAt) as Promise<Record<string, unknown>>,
+        90,
       ),
     );
+    return { metrics, at: computedAt.toISOString() };
+  }).then((r) => r.value);
 
-    const [{ workItems, workItemsStatus }, metrics] = await Promise.all([
-      workItemsPromise,
-      metricsPromise,
-    ]);
+  const [{ workItems, workItemsStatus }, { metrics, at: metricsAt }] = await Promise.all([
+    workItemsPromise,
+    metricsPromise,
+  ]);
 
-    const data = dashboardSummarySchema.parse({
+  const data = dashboardSummarySchema.parse({
+    dashboardCode,
+    scope,
+    workItems,
+    workItemsStatus,
+    metrics,
+    // When the metrics were computed (may be older than this request when served stale while refreshing).
+    generatedAt: metricsAt,
+  });
+  return res.json({ success: true, data });
+}));
+
+/**
+ * Role insights: pending actions, KPIs with sparklines, series, ranked tables and good/bad
+ * signals for one dashboard, computed by providers in ./role-insights/providers. Each section is
+ * isolated — a failing one is reported in `sectionErrors`, never blanks the rest or fakes a zero.
+ */
+router.get("/:dashboardCode/insights", h(async (req: AuthenticatedRequest, res: any) => {
+  const dashboardCode = req.params.dashboardCode as DashboardCode;
+  const { user, context, scope } = await requestedScope(req, dashboardCode);
+  const data = await cachedRoleInsights(
+    dashboardCode,
+    {
+      scope,
+      userId: user.id,
+      roleKeys: context.roleKeys,
+      canSeeFinance: canSeeFinanceFigures(context.roleKeys),
+      today: istToday(),
+      branchId: String(req.query.branchId ?? "") || undefined,
+      processId: String(req.query.processId ?? "") || undefined,
+    },
+    // Personal or inbox-bearing views must not be shared across users of the same scope.
+    dashboardCode === "EMPLOYEE_SELF_DASHBOARD" || dashboardCode === "MANAGEMENT_DASHBOARD",
+  );
+  return res.json({ success: true, data });
+}));
+
+router.get("/:dashboardCode/metric-values", h(async (req: AuthenticatedRequest, res: any) => {
+  const dashboardCode = req.params.dashboardCode as DashboardCode;
+  const { scope } = await requestedScope(req, dashboardCode);
+  const generatedAt = new Date();
+  return res.json({
+    success: true,
+    data: {
       dashboardCode,
       scope,
       workItems,
@@ -1027,3 +1123,14 @@ router.get(
 );
 
 export { router as dashboardRouter };
+
+/** Boot warm-up: fill the org-wide operational summary of the newest payroll run so the first payroll visit after a restart is instant. */
+export async function warmPayrollOperationalSummary(): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT id FROM salary_prep_run ORDER BY created_at DESC LIMIT 1");
+  const runId = rows[0]?.id ? String(rows[0].id) : "";
+  if (!runId) return;
+  const scope: DashboardScope = { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId: "warmup", role: "super_admin" };
+  const key = `payroll-op:${runId}:${scope.level}:${scope.branchIds.join(",")}:${scope.processIds.join(",")}:${scope.employeeIds.join(",")}`;
+  await payrollOperationalCache.getOrCompute(key, () => computeOperationalSummary(scope, runId));
+}
+

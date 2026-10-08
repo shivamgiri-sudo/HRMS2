@@ -24,7 +24,7 @@ export type Voucher = {
   id: string;
   voucher_number: string;
   voucher_type: string;
-  source_type: "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application";
+  source_type: "vendor_grn" | "imprest_allocation" | "general" | "salary" | "vendor_advance" | "vendor_advance_application";
   particulars: string | null;
   expense_head_name?: string | null;
   expense_sub_head_name?: string | null;
@@ -203,6 +203,7 @@ export function buildJournalPreview(v: Voucher): { lines: JournalPreviewLine[]; 
         approximate: false,
       };
 
+    case "salary":
     case "general":
       return { lines: [{ label: payable, side: "Dr", amount }, { label: bank, side: "Cr", amount }], approximate: false };
 

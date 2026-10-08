@@ -1,4 +1,6 @@
+import { assertNoPaidTwin } from "./grn-duplicate-guard.js";
 import { randomUUID } from "crypto";
+import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
@@ -163,12 +165,9 @@ async function validateGrnAllocations(
   },
   amount: number,
   notSelectedMessage: string,
-): Promise<{
-  allocations: Array<{ vendorPaymentTrackingId: string; amount: number }>;
-  vendorId: string;
-}> {
-  let allocations: Array<{ vendorPaymentTrackingId: string; amount: number }> =
-    [];
+  guard: { allow?: boolean; actorRole?: string } = {},
+): Promise<{ allocations: Array<{ vendorPaymentTrackingId: string; amount: number }>; vendorId: string }> {
+  let allocations: Array<{ vendorPaymentTrackingId: string; amount: number }> = [];
   if (input.grnAllocations && input.grnAllocations.length > 0) {
     allocations = input.grnAllocations.map((a) => ({
       vendorPaymentTrackingId: a.vendorPaymentTrackingId,
@@ -198,7 +197,7 @@ async function validateGrnAllocations(
   let vendorIdSeen: string | null = null;
   for (const alloc of allocations) {
     const [[vpt]] = await connection.execute<RowDataPacket[]>(
-      `SELECT vendor_id, due_amount, tds_deducted_amount, paid_amount
+      `SELECT vendor_id, due_amount, tds_deducted_amount, paid_amount, grn_number
          FROM vendor_payment_tracking WHERE id = ? FOR UPDATE`,
       [alloc.vendorPaymentTrackingId],
     );
@@ -221,6 +220,7 @@ async function validateGrnAllocations(
         `Allocated amount (${alloc.amount}) exceeds the remaining net-payable balance on GRN ${alloc.vendorPaymentTrackingId} (${remaining})`,
       );
     }
+    await assertNoPaidTwin(connection, alloc.vendorPaymentTrackingId, `GRN ${row.grn_number ?? alloc.vendorPaymentTrackingId}`, guard, (m) => new PaymentVoucherError(m, 409));
   }
   return { allocations, vendorId: vendorIdSeen as string };
 }
@@ -289,20 +289,13 @@ async function resolveExpenseClassification(
 }
 
 export interface RaiseVoucherInput {
-  sourceType:
-    | "vendor_grn"
-    | "imprest_allocation"
-    | "general"
-    | "vendor_advance"
-    | "vendor_advance_application"
-    | "sales_receipt"
-    | "internal_transfer";
+  sourceType: "vendor_grn" | "imprest_allocation" | "general" | "salary" | "vendor_advance" | "vendor_advance_application" | "sales_receipt" | "internal_transfer";
   bankAccountId: string;
   payableAccountId: string;
   /** Required for 'internal_transfer' — the company_bank_account receiving the funds.
    *  Must differ from bankAccountId (the paying/source account). */
   destinationBankAccountId?: string | null;
-  /** Required when sourceType === 'general' — the free-text description a GRN/imprest name
+  /** Required when sourceType === 'general' (optional for 'salary') — the free-text description a GRN/imprest name
    *  would otherwise supply (e.g. "March statutory PF challan", "Bank charges Q2"). */
   particulars?: string | null;
   /** Party name for sales_receipt — the client/company who paid. Stored in particulars column. */
@@ -319,6 +312,8 @@ export interface RaiseVoucherInput {
    * instead of a fresh bank payment.
    */
   grnAllocations?: Array<{ vendorPaymentTrackingId: string; amount: number }>;
+  /** A finance head / super admin confirming the GRN is NOT a duplicate of one already paid. */
+  allowPossibleDuplicate?: boolean;
   linkedImprestManagerId?: string | null;
   /** Required for 'vendor_advance' (which vendor is being paid an advance) and
    *  'vendor_advance_application' (whose advance balance this draws down). Neither source type
@@ -367,26 +362,28 @@ async function resolveActorNames(
   return names;
 }
 
+/** Ledger head each voucher lane books against when the caller does not name one. */
+const DEFAULT_PAYABLE_ACCOUNT_BY_SOURCE: Record<string, string> = {
+  vendor_grn: "Vendor Payables",
+  vendor_advance: "Vendor Payables",
+  vendor_advance_application: "Vendor Payables",
+  imprest_allocation: "Imprest Float",
+  internal_transfer: "Inter-Account Transfer",
+  sales_receipt: "Sundry Debtors",
+};
+
 export const paymentVoucherService = {
-  async list(filters: {
-    status?: string;
-    sourceType?: string;
-    bankAccountId?: string;
-    limit?: number;
-  }) {
+  async list(filters: { status?: string; sourceType?: string; bankAccountId?: string; limit?: number; branchScope?: FinanceBranchScope }) {
     const conditions: string[] = ["1=1"];
     const params: unknown[] = [];
-    if (filters.status) {
-      conditions.push("pv.status = ?");
-      params.push(filters.status);
-    }
-    if (filters.sourceType) {
-      conditions.push("pv.source_type = ?");
-      params.push(filters.sourceType);
-    }
-    if (filters.bankAccountId) {
-      conditions.push("pv.bank_account_id = ?");
-      params.push(filters.bankAccountId);
+    if (filters.status) { conditions.push("pv.status = ?"); params.push(filters.status); }
+    if (filters.sourceType) { conditions.push("pv.source_type = ?"); params.push(filters.sourceType); }
+    if (filters.bankAccountId) { conditions.push("pv.bank_account_id = ?"); params.push(filters.bankAccountId); }
+    // Branch scoping: a voucher belongs to its bank account's branch (cba is joined below). No filter for org-wide.
+    if (filters.branchScope && filters.branchScope.mode === "branches") {
+      const f = financeBranchFilter(filters.branchScope, "cba.branch_id");
+      conditions.push(f.sql);
+      params.push(...f.params);
     }
     const limit = Math.min(500, Math.max(1, filters.limit ?? 200));
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -423,11 +420,7 @@ export const paymentVoucherService = {
    *  list()'s own filters (status/sourceType/bankAccountId) so the export always matches
    *  whatever tab/filter the user is looking at, and a higher row cap than the grid view since
    *  a CSV download is explicitly asking for the full set, not a paginated page. */
-  async toCsv(filters: {
-    status?: string;
-    sourceType?: string;
-    bankAccountId?: string;
-  }) {
+  async toCsv(filters: { status?: string; sourceType?: string; bankAccountId?: string; branchScope?: FinanceBranchScope }) {
     const rows = await this.list({ ...filters, limit: 5000 });
     const columns = [
       "Voucher No.",
@@ -459,6 +452,7 @@ export const paymentVoucherService = {
       vendor_advance: "Vendor Advance",
       vendor_advance_application: "Apply Vendor Advance",
       general: "Other / General Payment",
+      salary: "Salary",
     };
     const escape = (value: unknown) => {
       const text = String(value ?? "");
@@ -639,17 +633,7 @@ export const paymentVoucherService = {
     actorRole?: string,
   ) {
     const isSalesReceipt = input.sourceType === "sales_receipt";
-    if (
-      ![
-        "vendor_grn",
-        "imprest_allocation",
-        "general",
-        "vendor_advance",
-        "vendor_advance_application",
-        "sales_receipt",
-        "internal_transfer",
-      ].includes(input.sourceType)
-    ) {
+    if (!["vendor_grn", "imprest_allocation", "general", "salary", "vendor_advance", "vendor_advance_application", "sales_receipt", "internal_transfer"].includes(input.sourceType)) {
       throw new PaymentVoucherError("Invalid source type");
     }
     if (input.sourceType === "general" && !input.particulars?.trim()) {
@@ -670,10 +654,20 @@ export const paymentVoucherService = {
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new PaymentVoucherError("Amount must be a positive number");
     }
-    if (!input.bankAccountId)
-      throw new PaymentVoucherError("Bank account is required");
-    if (!input.payableAccountId)
-      throw new PaymentVoucherError("Payable account is required");
+    if (!input.bankAccountId) throw new PaymentVoucherError("Bank account is required");
+    if (!input.payableAccountId) {
+      // The raise form no longer asks for a ledger head: every lane except a general payment has
+      // exactly one correct head, so it is resolved here by name rather than trusted from the client.
+      const defaultName = DEFAULT_PAYABLE_ACCOUNT_BY_SOURCE[input.sourceType];
+      if (defaultName) {
+        const [[row]] = await db.execute<RowDataPacket[]>(
+          `SELECT id FROM payable_account_master WHERE account_name = ? AND active_status = 1 LIMIT 1`,
+          [defaultName],
+        );
+        if (row) input = { ...input, payableAccountId: String((row as any).id) };
+      }
+    }
+    if (!input.payableAccountId) throw new PaymentVoucherError("Payable account is required");
 
     let id = "";
     let voucherNumber = "";
@@ -716,10 +710,8 @@ export const paymentVoucherService = {
       } | null = null;
       if (input.sourceType === "vendor_grn") {
         const result = await validateGrnAllocations(
-          connection,
-          input,
-          amount,
-          "At least one vendor GRN payment record must be selected",
+          connection, input, amount, "At least one vendor GRN payment record must be selected",
+          { allow: input.allowPossibleDuplicate === true, actorRole },
         );
         grnAllocations = result.allocations;
         expenseClassification = await resolveExpenseClassification(
@@ -805,7 +797,7 @@ export const paymentVoucherService = {
             "The destination bank account is closed",
           );
       }
-      // 'general' has no linkage to validate — Payable Account (already validated above) is the
+      // 'general' and 'salary' have no linkage to validate — Payable Account (already validated above) is the
       // category, and input.particulars (already required-checked above) is the description.
 
       // sales_receipt has no vendor or imprest link — particulars carries the client/party name.
@@ -2021,7 +2013,7 @@ export const paymentVoucherService = {
           ],
         );
       } else {
-        // 'general' lane — no vendor GRN or imprest manager to update, just the bank debit
+        // 'general' / 'salary' lane — no vendor GRN or imprest manager to update, just the bank debit
         // against whatever Payable Account (Salary Payable / Statutory Dues / Bank Charges /
         // TDS Payable / Other) the voucher was raised under. particulars carries the "what this
         // is for" a GRN number or imprest manager name would otherwise supply.

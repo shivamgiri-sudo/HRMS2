@@ -13,6 +13,14 @@ const h =
 router.use(requireAuth);
 
 // ========== Capacity Config (WFM/Admin only) ==========
+// All configured days for a process in one call (the config page used to fire
+// seven per-day requests, each 404ing for an unconfigured day).
+router.get(
+  '/config/:processId',
+  requireRole('wfm', 'admin'),
+  h(rosterCapacityController.listCapacityConfigs)
+);
+
 router.get(
   "/config/:processId/:dayOfWeek",
   requireRole("wfm", "admin"),

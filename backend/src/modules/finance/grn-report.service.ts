@@ -1,3 +1,4 @@
+import { grnBranchVisibility } from "./grn-branch-split.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import {
@@ -95,7 +96,8 @@ function scopeConditions(filters: GrnReportFilters) {
   const conditions: string[] = [ownCompanyGrnSql("g")];
   const params: unknown[] = [];
 
-  const scope = financeBranchFilter(filters.branchScope, "g.branch_id");
+  // Own branch plus Head Office GRNs that hold a share on it (grn-branch-split.ts).
+  const scope = grnBranchVisibility(filters.branchScope, "g");
   if (scope.sql !== "1=1") {
     conditions.push(scope.sql);
     params.push(...scope.params);

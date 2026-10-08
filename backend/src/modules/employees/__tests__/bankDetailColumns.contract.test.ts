@@ -25,17 +25,30 @@ const rawSource = readFileSync(
 const stripComments = (s: string): string =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
-const source = stripComments(rawSource);
+
+/**
+ * employee.routes.ts is prettier-formatted now, so a registration reads
+ * `router.put(\n  "/path",` rather than `router.put("/path",`. Joining the verb to its path
+ * keeps the route literals below formatting-independent.
+ */
+const joinRouteVerbs = (s: string): string =>
+  s.replace(/\b(router\.(?:get|post|put|patch|delete|use))\(\s+/g, "$1(");
+
+/** A handler runs from its registration to the next top-level `router.` registration. */
+function sliceRoute(src: string, idx: number): string {
+  const next = src.slice(idx + 1).search(/^router\.(?:get|post|put|patch|delete|use)\(/m);
+  return next === -1 ? src.slice(idx) : src.slice(idx, idx + 1 + next);
+}
+
+const source = joinRouteVerbs(stripComments(rawSource));
 
 /** Isolate a route handler body so a match elsewhere in the file doesn't count. */
 function routeBody(routeLiteral: string): string {
   const idx = source.indexOf(routeLiteral);
-  expect(idx, `route registration "${routeLiteral}" not found`).toBeGreaterThan(
-    -1,
-  );
-  // Handlers here are well under 2000 chars; generous enough to include the whole
-  // function body without spilling far into the next route.
-  return source.slice(idx, idx + 2000);
+  expect(idx, `route registration "${routeLiteral}" not found`).toBeGreaterThan(-1);
+  // The WHOLE handler: a fixed 2000-char window no longer covers the reformatted handlers,
+  // and a column name past the cut-off would have gone unchecked.
+  return sliceRoute(source, idx);
 }
 
 /**

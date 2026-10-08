@@ -64,6 +64,15 @@ class RosterCapacityService {
     return rows.length > 0 ? (rows[0] as ProcessWeekOffCapacity) : null;
   }
 
+  /** Every configured day for a process (0-7 rows); unconfigured days are simply absent. */
+  async listCapacityConfigs(processId: string): Promise<ProcessWeekOffCapacity[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      'SELECT * FROM process_weekoff_capacity WHERE process_id = ? ORDER BY day_of_week',
+      [processId]
+    );
+    return rows as ProcessWeekOffCapacity[];
+  }
+
   async updateCapacityConfig(
     processId: string,
     dayOfWeek: number,
@@ -99,6 +108,17 @@ class RosterCapacityService {
     }
 
     params.push(processId, dayOfWeek);
+
+    // An unconfigured day has no row, so the UPDATE below matched nothing and the
+    // save failed with "not found after update". Seed the row with the same
+    // defaults the config page shows (5 / 20% / no auto-approve; migration 061),
+    // then apply the edit. uk_process_day makes this a no-op for existing rows.
+    await db.execute(
+      `INSERT IGNORE INTO process_weekoff_capacity
+         (id, process_id, day_of_week, max_weekoff_count, max_weekoff_percentage, auto_approve_enabled, auto_approve_threshold)
+       VALUES (?, ?, ?, 5, 20, 0, NULL)`,
+      [randomUUID(), processId, dayOfWeek]
+    );
 
     await db.execute(
       `UPDATE process_weekoff_capacity SET ${sets.join(", ")}, updated_at = NOW()

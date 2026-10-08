@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import type { ScopeCondition } from "../../shared/enterpriseScope.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -108,14 +109,16 @@ export const careerService = {
     return record;
   },
 
-  async listAllCareerPaths(): Promise<CareerPath[]> {
+  async listAllCareerPaths(scope: ScopeCondition = { sql: "1=1", params: [] }): Promise<CareerPath[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cp.*,
               CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
               e.employee_code
        FROM career_path cp
        LEFT JOIN employees e ON e.id = cp.employee_id
+       WHERE (${scope.sql})
        ORDER BY cp.readiness_pct DESC`,
+      scope.params
     );
     return rows as CareerPath[];
   },
@@ -139,12 +142,14 @@ export const careerService = {
     return rows.length > 0;
   },
 
-  async listPips(filters: {
-    employeeId?: string;
-    status?: string;
-  }): Promise<PipRecord[]> {
+  async listPips(filters: { employeeId?: string; status?: string }, scope?: ScopeCondition): Promise<PipRecord[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
+
+    if (scope) {
+      conds.push(`(${scope.sql})`);
+      params.push(...scope.params);
+    }
 
     if (filters.employeeId) {
       conds.push("pr.employee_id = ?");
@@ -170,9 +175,16 @@ export const careerService = {
     return rows as PipRecord[];
   },
 
-  async getPip(
-    id: string,
-  ): Promise<(PipRecord & { checkpoints: PipCheckpoint[] }) | null> {
+  /** Owning employee of a PIP (null when the PIP does not exist). */
+  async getPipEmployeeId(id: string): Promise<string | null> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT employee_id FROM pip_record WHERE id = ? LIMIT 1",
+      [id]
+    );
+    return rows[0] ? String(rows[0].employee_id) : null;
+  },
+
+  async getPip(id: string): Promise<(PipRecord & { checkpoints: PipCheckpoint[] }) | null> {
     const [pipRows] = await db.execute<RowDataPacket[]>(
       `SELECT pr.*,
               CONCAT(e.first_name, ' ', e.last_name) AS employee_name,

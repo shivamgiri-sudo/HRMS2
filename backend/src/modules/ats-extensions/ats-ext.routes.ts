@@ -3,17 +3,9 @@ import type { NextFunction, Request, Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import {
-  requisitionService,
-  bgvService,
-  offerService,
-  duplicateService,
-  sourcingAnalyticsService,
-} from "./ats-ext.service.js";
-import {
-  assessmentProtectedRouter,
-  assessmentPublicRouter,
-} from "../ats-assessment/assessment.routes.js";
+import { resolveAtsBranchScope, checkCandidateScope, OUT_OF_SCOPE_MESSAGE } from "./ats-ext-scope.js";
+import { requisitionService, bgvService, offerService, duplicateService, sourcingAnalyticsService } from "./ats-ext.service.js";
+import { assessmentProtectedRouter, assessmentPublicRouter } from "../ats-assessment/assessment.routes.js";
 import {
   assessmentBuilderProtectedRouter,
   assessmentBuilderPublicRouter,
@@ -21,14 +13,19 @@ import {
 import { questionBankRouter } from "../ats-assessment/question-bank.routes.js";
 
 const router = Router();
-type AsyncHandler = (
-  req: AuthenticatedRequest | Request,
-  res: Response,
-) => Promise<unknown>;
-const h =
-  (fn: AsyncHandler) => (req: Request, res: Response, next: NextFunction) => {
-    void fn(req as AuthenticatedRequest | Request, res).catch(next);
-  };
+
+/** 403/404 reply for a candidate outside the caller's scope; returns true when the caller may proceed. */
+async function candidateGate(req: AuthenticatedRequest, res: Response, candidateId: string): Promise<boolean> {
+  const verdict = await checkCandidateScope(await resolveAtsBranchScope(req.authUser!.id), candidateId);
+  if (verdict === "ok") return true;
+  if (verdict === "not_found") res.status(404).json({ error: "Not found" });
+  else res.status(403).json({ success: false, error: OUT_OF_SCOPE_MESSAGE, message: OUT_OF_SCOPE_MESSAGE });
+  return false;
+}
+type AsyncHandler = (req: AuthenticatedRequest | Request, res: Response) => Promise<unknown>;
+const h = (fn: AsyncHandler) => (req: Request, res: Response, next: NextFunction) => {
+  void fn(req as AuthenticatedRequest | Request, res).catch(next);
+};
 
 // ── PUBLIC: Candidate pre-employment assessment ───────────────────────────────
 // Builder routes are mounted first so the enhanced admin shell and builder page
@@ -84,159 +81,78 @@ router.use(assessmentProtectedRouter);
 // feature with no data would be pure risk. If manpower requisitions are ever revived,
 // note the role guard below excludes `recruiter` — the only non-super_admin role granted
 // the ATS_EXTENSIONS page — so the page would 403 for exactly the people meant to use it.
-router.get(
-  "/requisitions",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res.json({
-      success: true,
-      data: await requisitionService.list(
-        req.query as Record<string, string | undefined>,
-      ),
-    });
-  }),
-);
+router.get("/requisitions", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scope = await resolveAtsBranchScope(req.authUser!.id);
+  res.json({ success: true, data: await requisitionService.list(req.query as Record<string, string | undefined>, scope) });
+}));
 
-router.post(
-  "/requisitions",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res
-      .status(201)
-      .json({
-        success: true,
-        data: await requisitionService.create(req.body, req.authUser!.id, req),
-      });
-  }),
-);
+router.post("/requisitions", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scope = await resolveAtsBranchScope(req.authUser!.id);
+  if (!scope.orgWide && !(req.body?.branch_id && scope.branchIds.includes(String(req.body.branch_id)))) {
+    return res.status(403).json({ success: false, error: OUT_OF_SCOPE_MESSAGE, message: OUT_OF_SCOPE_MESSAGE });
+  }
+  res.status(201).json({ success: true, data: await requisitionService.create(req.body, req.authUser!.id, req) });
+}));
 
-router.post(
-  "/requisitions/:id/approve",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const action = String(req.body?.action ?? "approved");
-    if (!["approved", "rejected"].includes(action))
-      return res
-        .status(400)
-        .json({ error: "action must be approved or rejected" });
-    await requisitionService.approve(
-      req.params.id,
-      req.authUser!.id,
-      req,
-      action as "approved" | "rejected",
-      req.body?.remarks ?? null,
-    );
-    res.json({ success: true, ok: true });
-  }),
-);
+router.post("/requisitions/:id/approve", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const action = String(req.body?.action ?? "approved");
+  if (!["approved", "rejected"].includes(action)) return res.status(400).json({ error: "action must be approved or rejected" });
+  const scope = await resolveAtsBranchScope(req.authUser!.id);
+  if (!scope.orgWide) {
+    const reqBranch = await requisitionService.getBranchId(req.params.id);
+    if (reqBranch === undefined) return res.status(404).json({ error: "Not found" });
+    if (!reqBranch || !scope.branchIds.includes(reqBranch)) {
+      return res.status(403).json({ success: false, error: OUT_OF_SCOPE_MESSAGE, message: OUT_OF_SCOPE_MESSAGE });
+    }
+  }
+  await requisitionService.approve(req.params.id, req.authUser!.id, req, action as "approved" | "rejected", req.body?.remarks ?? null);
+  res.json({ success: true, ok: true });
+}));
 
 // ── BGV ───────────────────────────────────────────────────────────────────────
-router.get(
-  "/candidates/:id/bgv",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const record = await bgvService.get(req.params.id);
-    if (!record) return res.status(404).json({ error: "Not found" });
-    res.json({ success: true, data: record });
-  }),
-);
+router.get("/candidates/:id/bgv", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await candidateGate(req, res, req.params.id))) return;
+  const record = await bgvService.get(req.params.id);
+  if (!record) return res.status(404).json({ error: "Not found" });
+  res.json({ success: true, data: record });
+}));
 
-router.post(
-  "/candidates/:id/bgv/initiate",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res
-      .status(201)
-      .json({
-        success: true,
-        data: await bgvService.initiate(
-          req.params.id,
-          req.body,
-          req.authUser!.id,
-          req,
-        ),
-      });
-  }),
-);
+router.post("/candidates/:id/bgv/initiate", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await candidateGate(req, res, req.params.id))) return;
+  res.status(201).json({ success: true, data: await bgvService.initiate(req.params.id, req.body, req.authUser!.id, req) });
+}));
 
-router.patch(
-  "/candidates/:id/bgv",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res.json({
-      success: true,
-      data: await bgvService.updateStatus(
-        req.params.id,
-        req.body,
-        req.authUser!.id,
-        req,
-      ),
-    });
-  }),
-);
+router.patch("/candidates/:id/bgv", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await candidateGate(req, res, req.params.id))) return;
+  res.json({ success: true, data: await bgvService.updateStatus(req.params.id, req.body, req.authUser!.id, req) });
+}));
 
-router.post(
-  "/candidates/:id/bgv",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res.json({
-      success: true,
-      data: await bgvService.updateStatus(
-        req.params.id,
-        req.body,
-        req.authUser!.id,
-        req,
-      ),
-    });
-  }),
-);
+router.post("/candidates/:id/bgv", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await candidateGate(req, res, req.params.id))) return;
+  res.json({ success: true, data: await bgvService.updateStatus(req.params.id, req.body, req.authUser!.id, req) });
+}));
 
 // ── Offers ────────────────────────────────────────────────────────────────────
-router.get(
-  "/offers",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res.json({
-      success: true,
-      data: await offerService.list(
-        req.query.candidate_id as string | undefined,
-        req.query.status as string | undefined,
-      ),
-    });
-  }),
-);
+router.get("/offers", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scope = await resolveAtsBranchScope(req.authUser!.id);
+  res.json({ success: true, data: await offerService.list(req.query.candidate_id as string | undefined, req.query.status as string | undefined, scope) });
+}));
 
-router.post(
-  "/offers",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!req.body.candidate_id)
-      return res.status(400).json({ error: "candidate_id required" });
-    res
-      .status(201)
-      .json({
-        success: true,
-        data: await offerService.create(req.body, req.authUser!.id, req),
-      });
-  }),
-);
+router.post("/offers", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.body.candidate_id) return res.status(400).json({ error: "candidate_id required" });
+  if (!(await candidateGate(req, res, String(req.body.candidate_id)))) return;
+  res.status(201).json({ success: true, data: await offerService.create(req.body, req.authUser!.id, req) });
+}));
 
-router.patch(
-  "/offers/:id/status",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { status, reason, remarks } = req.body;
-    if (!status) return res.status(400).json({ error: "status required" });
-    await offerService.updateStatus(
-      req.params.id,
-      status,
-      reason ?? remarks,
-      req.authUser!.id,
-      req,
-    );
-    res.json({ success: true, ok: true });
-  }),
-);
+router.patch("/offers/:id/status", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { status, reason, remarks } = req.body;
+  if (!status) return res.status(400).json({ error: "status required" });
+  const offerCandidate = await offerService.getCandidateId(req.params.id);
+  if (!offerCandidate) return res.status(404).json({ error: "Not found" });
+  if (!(await candidateGate(req, res, offerCandidate))) return;
+  await offerService.updateStatus(req.params.id, status, reason ?? remarks, req.authUser!.id, req);
+  res.json({ success: true, ok: true });
+}));
 
 /**
  * Every route in this file is admin/hr only, and that is deliberate.
@@ -257,49 +173,26 @@ router.patch(
 const ATS_EXT_LIVE_ROLES = ["admin", "hr"] as const;
 
 // ── Duplicate Detection ───────────────────────────────────────────────────────
-router.get(
-  "/duplicates",
-  requireRole(...ATS_EXT_LIVE_ROLES),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    res.json({ success: true, data: await duplicateService.listUnresolved() });
-  }),
-);
+router.get("/duplicates", requireRole(...ATS_EXT_LIVE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  res.json({ success: true, data: await duplicateService.listUnresolved(await resolveAtsBranchScope(req.authUser!.id)) });
+}));
 
-router.post(
-  "/duplicates/:id/resolve",
-  requireRole(...ATS_EXT_LIVE_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const note = req.body.note ?? req.body.resolution ?? "resolved";
-    await duplicateService.resolve(req.params.id, note, req.authUser!.id, req);
-    res.json({ success: true, ok: true });
-  }),
-);
+router.post("/duplicates/:id/resolve", requireRole(...ATS_EXT_LIVE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const note = req.body.note ?? req.body.resolution ?? "resolved";
+  const dupCandidate = await duplicateService.getCandidateId(req.params.id);
+  if (!dupCandidate) return res.status(404).json({ error: "Not found" });
+  if (!(await candidateGate(req, res, dupCandidate))) return;
+  await duplicateService.resolve(req.params.id, note, req.authUser!.id, req);
+  res.json({ success: true, ok: true });
+}));
 
 // ── Sourcing Analytics ────────────────────────────────────────────────────────
-router.get(
-  "/analytics/funnel",
-  requireRole(...ATS_EXT_LIVE_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res.json({
-      success: true,
-      data: await sourcingAnalyticsService.getFunnel(
-        req.query as Record<string, string | undefined>,
-      ),
-    });
-  }),
-);
+router.get("/analytics/funnel", requireRole(...ATS_EXT_LIVE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  res.json({ success: true, data: await sourcingAnalyticsService.getFunnel(req.query as Record<string, string | undefined>, await resolveAtsBranchScope(req.authUser!.id)) });
+}));
 
-router.get(
-  "/analytics/stages",
-  requireRole(...ATS_EXT_LIVE_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res.json({
-      success: true,
-      data: await sourcingAnalyticsService.getStageWise(
-        req.query as Record<string, string | undefined>,
-      ),
-    });
-  }),
-);
+router.get("/analytics/stages", requireRole(...ATS_EXT_LIVE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  res.json({ success: true, data: await sourcingAnalyticsService.getStageWise(req.query as Record<string, string | undefined>, await resolveAtsBranchScope(req.authUser!.id)) });
+}));
 
 export { router as atsExtRouter };

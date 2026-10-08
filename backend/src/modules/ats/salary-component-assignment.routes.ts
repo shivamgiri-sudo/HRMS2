@@ -1,17 +1,10 @@
-import {
-  Router,
-  type NextFunction,
-  type Request,
-  type Response,
-} from "express";
-import { db } from "../../db/mysql.js";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import { requireWriteAccess } from "../../middleware/authMiddleware.js";
-import type { RowDataPacket } from "mysql2";
+import { Router, type NextFunction, type Request, type Response } from 'express';
+import { db } from '../../db/mysql.js';
+import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import { candidateParamGuard } from './candidate-access.js';
+import { requireWriteAccess } from '../../middleware/authMiddleware.js';
+import type { RowDataPacket } from 'mysql2';
 
 const router = Router();
 type AsyncHandler = (
@@ -28,6 +21,10 @@ interface SlabRow extends RowDataPacket {
   id: string;
   slab_code?: string | null;
 }
+
+// Branch scoping (owner ruling 2026-10-01): every :candidateId route is limited to candidates inside the
+// caller's own branch / assigned scope (org-wide roles unaffected; out-of-branch id looks like a missing one).
+router.param('candidateId', candidateParamGuard());
 
 // GET /api/ats/salary-components/:candidateId
 router.get(

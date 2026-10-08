@@ -11,10 +11,12 @@ import {
   useActOnRMChangeRequest,
   type RMChangeRequest,
 } from '@/hooks/useReportingManagerChange';
+import { useApprovalFocus } from '@/hooks/useApprovalFocus';
 
 export default function NativeWFMManagerApproval() {
   const { data: requests, isLoading, refetch } = usePendingRMChangeRequests();
   const act = useActOnRMChangeRequest();
+  useApprovalFocus(!isLoading && !!requests?.length);
   const [acting, setActing] = useState<string | null>(null);
   const [remarks, setRemarks] = useState<Record<string, string>>({});
 
@@ -64,7 +66,7 @@ export default function NativeWFMManagerApproval() {
         )}
 
         {requests?.map((req) => (
-          <Card key={req.id} className="border-l-4 border-l-amber-400">
+          <Card key={req.id} data-approval-id={req.id} className="border-l-4 border-l-amber-400">
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">{req.employee_name}</CardTitle>

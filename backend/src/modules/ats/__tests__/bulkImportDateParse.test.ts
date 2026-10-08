@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseHistoricalDate } from "../bulk-import.service.js";
 
 /**
@@ -18,6 +18,17 @@ import { parseHistoricalDate } from "../bulk-import.service.js";
  */
 
 const iso = (s: string | null) => (s ?? "").slice(0, 10);
+
+/**
+ * The parser's rule is relative to the clock: it swaps to D/M only when the M/D reading is
+ * in the future and the D/M one is not. The literal-date cases below were written against the
+ * production clock of 2026-08-11 and went red on their own once 3 September 2026 had passed —
+ * at that point BOTH readings of 9/3/2026 are in the past and the documented M/D default
+ * applies. They describe an import run on that day, so they run on that day.
+ */
+const IMPORT_DAY = new Date("2026-08-11T06:00:00Z");
+const onImportDay = () => vi.useFakeTimers({ now: IMPORT_DAY, toFake: ["Date"] });
+afterEach(() => vi.useRealTimers());
 
 describe("parseHistoricalDate — unambiguous inputs are untouched", () => {
   it("uses the part above 12 as the day (M/D/YYYY)", () => {
@@ -45,10 +56,12 @@ describe("parseHistoricalDate — ambiguous inputs never land in the future", ()
    * 2026-09-03 and 2026-12-05, both after the import ran.
    */
   it("reads 9/3/2026 as 9 March, not 3 September", () => {
+    onImportDay();
     expect(iso(parseHistoricalDate("9/3/2026"))).toBe("2026-03-09");
   });
 
   it("reads 12/5/2026 as 12 May, not 5 December", () => {
+    onImportDay();
     expect(iso(parseHistoricalDate("12/5/2026"))).toBe("2026-05-12");
   });
 
@@ -83,6 +96,12 @@ describe("parseHistoricalDate — ambiguous inputs never land in the future", ()
 });
 
 describe("parseHistoricalDate — behaviour is unchanged where both readings are plausible", () => {
+  it("falls back to the M/D default for 9/3/2026 once both readings are in the past", () => {
+    // The other side of the same rule, and why the cases above pin the clock.
+    vi.useFakeTimers({ now: new Date("2026-09-30T06:00:00Z"), toFake: ["Date"] });
+    expect(iso(parseHistoricalDate("9/3/2026"))).toBe("2026-09-03");
+  });
+
   it("keeps the M/D default when neither reading is in the future", () => {
     // Both 2 March and 3 February are in the past, so the string is genuinely ambiguous and
     // nothing here can improve on a default. Preserving it keeps historical imports stable.
@@ -98,8 +117,7 @@ describe("parseHistoricalDate — behaviour is unchanged where both readings are
   });
 
   it("preserves the time component", () => {
-    expect(parseHistoricalDate("9/3/2026", "14:30:00")).toBe(
-      "2026-03-09 14:30:00",
-    );
+    onImportDay();
+    expect(parseHistoricalDate("9/3/2026", "14:30:00")).toBe("2026-03-09 14:30:00");
   });
 });

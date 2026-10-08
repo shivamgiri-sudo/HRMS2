@@ -41,19 +41,9 @@
 
 /** Honorifics carried by ID documents and bank records alike. */
 const HONORIFICS = new Set([
-  "mr",
-  "mrs",
-  "ms",
-  "miss",
-  "dr",
-  "prof",
-  "shri",
-  "sri",
-  "smt",
-  "late",
-  "kum",
-  "col",
-  "capt",
+  "mr", "mrs", "ms", "miss", "dr", "prof", "shri", "sri", "smt", "late", "kum", "col", "capt",
+  // Kumari, as SBI writes it for unmarried women: "Ms. KM HEMKALA".
+  "km", "kumari",
 ]);
 
 /**
@@ -217,11 +207,31 @@ function vowelVariant(a: string, b: string): boolean {
   return differences === 1;
 }
 
+/**
+ * One inherent vowel written on one side and dropped on the other:
+ * "bharadwaj" / "bhardwaj", "agarawal" / "agarwal".
+ *
+ * Hindi drops the short a between consonants in speech, so transliterations
+ * disagree on whether to write it. Only a single vowel may be missing and every
+ * other letter must line up, so a changed consonant still separates two people.
+ * Held to words of seven letters or more, where one vowel is a small part of the
+ * name.
+ */
+function droppedVowel(a: string, b: string): boolean {
+  const [longer, shorter] = a.length > b.length ? [a, b] : [b, a];
+  if (longer.length !== shorter.length + 1 || longer.length < 7) return false;
+  for (let i = 1; i < longer.length - 1; i += 1) {
+    if (!VOWELS.has(longer[i])) continue;
+    if (longer.slice(0, i) + longer.slice(i + 1) === shorter) return true;
+  }
+  return false;
+}
+
 /** True when two substantive words are the same name, allowing for spelling. */
 function sameWord(a: string, b: string): boolean {
   if (a === b) return true;
   const [keyA, keyB] = [spellingKey(a), spellingKey(b)];
-  return keyA === keyB || vowelVariant(keyA, keyB);
+  return keyA === keyB || vowelVariant(keyA, keyB) || droppedVowel(keyA, keyB);
 }
 
 /** A surname shared by millions, whichever way it is spelled. */

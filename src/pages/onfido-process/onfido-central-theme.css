@@ -47,7 +47,7 @@
     radial-gradient(ellipse at bottom left, rgba(59, 173, 73, 0.04), transparent 35%),
     linear-gradient(160deg, #f0f7ff 0%, #f3f6fb 35%, #eef3f9 65%, #f5f0ff 100%);
   border-radius: 20px;
-  padding: 20px;
+  padding: 10px 14px 14px;
 }
 
 .onfido-central-theme ::selection { background: rgba(27, 106, 181, 0.2); color: var(--text); }
@@ -462,10 +462,10 @@
 }
 
 /* KPI tiles: a tinted wash from each tile's own accent colour, larger value. */
-.onfido-central-theme .kr { gap: 12px; }
+.onfido-central-theme .kr { gap: 10px; }
 .onfido-central-theme .kpi {
   border-radius: 14px;
-  padding: 12px 14px 13px;
+  padding: 8px 12px 9px;
   border-top-width: 3px;
   background: var(--card);
   background: linear-gradient(165deg, color-mix(in srgb, var(--kc, var(--blue)) 9%, #ffffff) 0%, #ffffff 62%);
@@ -481,7 +481,7 @@
 }
 .onfido-central-theme .kpi:focus-visible { box-shadow: var(--ring), var(--lift); }
 .onfido-central-theme .kpi label { font-size: 9.5px; letter-spacing: 0.08em; }
-.onfido-central-theme .kpi .kv { font-size: 24px; margin: 8px 0 2px; }
+.onfido-central-theme .kpi .kv { font-size: 21px; margin: 4px 0 1px; }
 .onfido-central-theme .kpi .ks { font-size: 10px; }
 
 /* Filter bar: stays in view while scrolling long tabs. */
@@ -591,9 +591,9 @@
 }
 
 @media (max-width: 640px) {
-  .onfido-central-theme { padding: 12px; border-radius: 14px; }
+  .onfido-central-theme { padding: 8px; border-radius: 14px; }
   .onfido-central-theme .oc-filterbar { position: static; }
-  .onfido-central-theme .kpi .kv { font-size: 21px; }
+  .onfido-central-theme .kpi .kv { font-size: 19px; }
 }
 
 /* OcDataTable toolbar and sortable headers (2026-09-25 phase 2). */

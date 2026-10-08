@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { Video, Calendar, ChevronRight, Bell, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useMyMeetings, MEETING_STATUS_LABELS, type Meeting } from "@/hooks/useMcnmeet";
+import { useMcnmeetConfig, useMyMeetings, type Meeting } from "@/hooks/useMcnmeet";
 import { MeetingStatusBadge } from "./MeetingStatusBadge";
 
 const MCN_NAVY = "#073f78";
@@ -24,7 +24,15 @@ function isJoinable(meeting: Meeting): boolean {
 }
 
 export function MyMeetingsWidget() {
-  const { data, isLoading, isError } = useMyMeetings({ status: 'scheduled' });
+  // Ask the cheap /config probe first: when MCNmeet is disabled the meetings
+  // endpoints 404, so the widget must not request them at all.
+  const config = useMcnmeetConfig();
+  const moduleEnabled = config.data?.enabled === true;
+  const { data, isLoading: meetingsLoading, isError } = useMyMeetings(
+    { status: 'scheduled' },
+    { enabled: moduleEnabled },
+  );
+  const isLoading = config.isLoading || (moduleEnabled && meetingsLoading);
 
   const upcoming = (data?.meetings ?? [])
     .filter(m => m.status === 'scheduled' || m.status === 'live')
@@ -43,6 +51,17 @@ export function MyMeetingsWidget() {
         <div className="p-4 space-y-3">
           <Skeleton className="h-16 rounded-xl" />
           <Skeleton className="h-16 rounded-xl" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!moduleEnabled) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+        <WidgetHeader unacknowledgedCount={0} showViewAll={false} />
+        <div className="p-6 text-center text-sm text-slate-400">
+          {config.isError ? "Could not load meetings" : "Meetings are not enabled"}
         </div>
       </div>
     );
@@ -95,7 +114,7 @@ export function MyMeetingsWidget() {
   );
 }
 
-function WidgetHeader({ unacknowledgedCount }: { unacknowledgedCount: number }) {
+function WidgetHeader({ unacknowledgedCount, showViewAll = true }: { unacknowledgedCount: number; showViewAll?: boolean }) {
   return (
     <div className="flex items-center justify-between px-4 py-3" style={{ background: MCN_NAVY }}>
       <div className="flex items-center gap-2">
@@ -110,9 +129,11 @@ function WidgetHeader({ unacknowledgedCount }: { unacknowledgedCount: number }) 
             <Bell className="h-3 w-3" /> {unacknowledgedCount}
           </span>
         )}
-        <Link to="/meetings" className="text-xs text-blue-200 hover:text-white hover:underline">
-          View all
-        </Link>
+        {showViewAll && (
+          <Link to="/meetings" className="text-xs text-blue-200 hover:text-white hover:underline">
+            View all
+          </Link>
+        )}
       </div>
     </div>
   );

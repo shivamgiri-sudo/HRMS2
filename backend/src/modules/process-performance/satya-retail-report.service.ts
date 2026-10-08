@@ -1,10 +1,18 @@
 import { db } from "../../db/mysql.js";
+import { getDialerPool } from "../../db/dialerDb.js";
 import type { RowDataPacket } from "mysql2";
 
 /**
  * Satya Retail "Calling & Order Tracking" report -- live SQL aggregates over
  * db_masmis.satya_allocation (one row per shop allocated to an agent on a
- * date) and db_masmis.satya_cdr (one row per dial attempt), via
+ * date, still a staged upload table) and, as of 2026-09-30, the call side
+ * reads LIVE from dialer_db.data_master_in (WHERE ClientId = 499) instead of
+ * the staged db_masmis.satya_cdr copy -- same live-read pattern the Call
+ * Master inbound dashboards already use (inbound.service.ts), so the Calls
+ * tab is never stale behind a sync job. See dialerCdrBase() below for the
+ * exact field mapping and the "attempt" formula. db_masmis.satya_cdr itself
+ * is untouched and still fed by the manual Excel upload / sync_satya_cdr.py
+ * -- only this report stopped reading it.
  * GET /api/process-performance/satya-retail-report. Built to reproduce the
  * ops team's Excel "Calling & Order Tracking Report"; every figure it shows
  * was reconciled against that report on live data (2026-09-20, uploads
@@ -40,30 +48,38 @@ import type { RowDataPacket } from "mysql2";
  *   (roster 'Roster', warehouse 'Warehouse', beat 'Beatname'). It is kept in
  *   every count (so totals match the Excel) and labelled 'Unmapped'.
  * - order_value is text with thousands separators ("1,292").
- * - satya_cdr has no reliable dedupe key (call_id repeats across attempts),
- *   so it is shown as uploaded; possible duplicates are only *reported* in
- *   the Data checks tab.
- * - satya_cdr.roster is null on ~half its rows, so the roster filter applies
- *   to allocation views only.
+ * - The live dialer_db.data_master_in source has a real dataId primary key
+ *   (no repeating call_id problem the old staged satya_cdr had), so there is
+ *   no CDR duplicate-row check any more -- it can't happen from this source.
+ *
+ * "attempt" (call count on a number), verified 2026-09-30: dialer_db.data_master_in
+ * carries no attempt-number field at all -- the user's own Excel formula
+ * (`=COUNTIFS($A:$A,A2)` on the phone-number column) is what "attempt" means
+ * here: how many times THIS number was called, not a sequential 1st/2nd/3rd
+ * call index. Reproduced as `COUNT(*) OVER (PARTITION BY MSISDN)` inside
+ * dialerCdrBase(), scoped to the same date range + warehouse filter as the
+ * rest of the Calls tab (never re-scoped by agent/beat when drilling into
+ * one, since the number's total call count doesn't change depending who's
+ * looking at it -- same convention the old literal attempt column implied).
  */
 
-const A = "db_masmis.satya_allocation";
-const C = "db_masmis.satya_cdr";
+export const A = "db_masmis.satya_allocation";
+const DIALER_CDR_TABLE = "dialer_db.data_master_in";
+const SATYA_CLIENT_ID = 499;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ROSTERS = ["Morning", "Absentee", "Unmapped"] as const;
 
-const A_DATE = `STR_TO_DATE(report_date, '%e-%b-%y')`;
-const WH = `CASE WHEN warehouse IS NULL OR warehouse = '' OR warehouse = 'Warehouse' THEN 'Unmapped' ELSE warehouse END`;
-const ROSTER = `CASE WHEN roster IN ('Morning','Absentee') THEN roster ELSE 'Unmapped' END`;
-const BEAT = `CASE WHEN beat_name IS NULL OR beat_name = '' OR beat_name = 'Beatname' THEN 'Unmapped' ELSE beat_name END`;
-const REVENUE = `CASE WHEN order_value REGEXP '^[0-9,]+([.][0-9]+)?$' THEN CAST(REPLACE(order_value, ',', '') AS DECIMAL(12,2)) ELSE 0 END`;
-const CDR_TS = `CASE WHEN call_date REGEXP '^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4} ' THEN STR_TO_DATE(call_date, '%c/%e/%Y %H:%i') ELSE STR_TO_DATE(call_date, '%c/%e/%y %H:%i') END`;
+export const A_DATE = `STR_TO_DATE(report_date, '%e-%b-%y')`;
+export const WH = `CASE WHEN warehouse IS NULL OR warehouse = '' OR warehouse = 'Warehouse' THEN 'Unmapped' ELSE warehouse END`;
+export const ROSTER = `CASE WHEN roster IN ('Morning','Absentee') THEN roster ELSE 'Unmapped' END`;
+export const BEAT = `CASE WHEN beat_name IS NULL OR beat_name = '' OR beat_name = 'Beatname' THEN 'Unmapped' ELSE beat_name END`;
+export const REVENUE = `CASE WHEN order_value REGEXP '^[0-9,]+([.][0-9]+)?$' THEN CAST(REPLACE(order_value, ',', '') AS DECIMAL(12,2)) ELSE 0 END`;
 
 /** Additive counters shared by every allocation aggregate (headline, day,
  * roster, agent, warehouse, beat). Everything is a plain sum, so the client
  * can roll days up into weeks/MTD without losing accuracy. */
-const COUNTERS = `
+export const COUNTERS = `
   COUNT(*) AS allocation,
   SUM(disposition = 'Pending Call') AS pending,
   SUM(unique_flag = '1' AND disposition <> 'Pending Call') AS uniq,
@@ -284,7 +300,12 @@ export function normalizeFilters(input: {
 
 /** Ids of older exact-duplicate allocation rows (same date + uid + flag as a
  * newer row) -- see the header comment. */
-async function allocDuplicateIds(): Promise<number[]> {
+export async function allocDuplicateIds(): Promise<number[]> {
+  // Two rules, both matching the ops team's MIS workbook (verified 2026-10-03 against its
+  // Alloction sheet: Absentee 1-Sep 578 - 124 shared with Morning = 454):
+  //  1. an exact repeat of the same date + uid + unique flag -> keep the newest row;
+  //  2. an Absentee row whose uid is also on a Morning row for the same date -> drop the
+  //     Absentee copy (the shop was allocated to the morning roster that day).
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.id
        FROM ${A} a
@@ -293,16 +314,18 @@ async function allocDuplicateIds(): Promise<number[]> {
               WHERE uid IS NOT NULL AND uid <> ''
               GROUP BY report_date, uid, unique_flag
              HAVING COUNT(*) > 1) d
-         ON d.report_date = a.report_date AND d.uid = a.uid AND d.unique_flag <=> a.unique_flag AND a.id < d.keep_id`,
+         ON d.report_date = a.report_date AND d.uid = a.uid AND d.unique_flag <=> a.unique_flag AND a.id < d.keep_id
+     UNION
+     SELECT a.id
+       FROM ${A} a
+      WHERE a.roster = 'Absentee' AND a.uid IS NOT NULL AND a.uid <> ''
+        AND EXISTS (SELECT 1 FROM ${A} m
+                     WHERE m.roster = 'Morning' AND m.report_date = a.report_date AND m.uid = a.uid)`,
   );
   return rows.map((r) => Number(r.id)).filter((n) => Number.isInteger(n));
 }
 
-function allocWhere(
-  f: SatyaReportFilters,
-  dupIds: number[],
-  extra?: { sql: string; params: unknown[] },
-): { sql: string; params: unknown[] } {
+export function allocWhere(f: SatyaReportFilters, dupIds: number[], extra?: { sql: string; params: unknown[] }): { sql: string; params: unknown[] } {
   const parts = [`${A_DATE} >= ?`, `${A_DATE} < DATE_ADD(?, INTERVAL 1 DAY)`];
   const params: unknown[] = [f.from, f.to];
   if (f.warehouse) {
@@ -321,115 +344,182 @@ function allocWhere(
   return { sql: `WHERE ${parts.join(" AND ")}`, params };
 }
 
-function cdrWhere(
-  f: SatyaReportFilters,
-  extra?: { sql: string; params: unknown[] },
-): { sql: string; params: unknown[] } {
-  const parts = [`${A_DATE} >= ?`, `${A_DATE} < DATE_ADD(?, INTERVAL 1 DAY)`];
-  const params: unknown[] = [f.from, f.to];
-  if (f.warehouse) {
-    parts.push(`(${WH}) = ?`);
-    params.push(f.warehouse);
-  }
-  if (extra) {
-    parts.push(extra.sql);
-    params.push(...extra.params);
-  }
-  return { sql: `WHERE ${parts.join(" AND ")}`, params };
+/**
+ * Live call rows for the selected date range (+ optional warehouse), read straight from
+ * dialer_db.data_master_in (ClientId = 499) instead of the staged satya_cdr copy. Column
+ * mapping confirmed 2026-09-30 by content match against historical satya_cdr rows (see
+ * uploader/satya_retail/sync_satya_cdr.py's own header comment for the original reverse-
+ * engineering): Category1->scenario, Category2->sub_scenario_1, Field2->beat_name,
+ * Field4->warehouse, MSISDN->number_val, CallDate->call_date (a real DATETIME here, unlike
+ * satya_cdr's mixed-format text column), callcreated->agent_name (regex-extracted "MASxxxxx"
+ * code). "attempt" is computed, not stored -- see the header comment's "attempt" section.
+ * Only date range + warehouse are baked into this base query (never agent/beat), so a
+ * drill-down into one agent still sees that number's TRUE total attempt count, not just the
+ * attempts made by that one agent.
+ */
+/** Shared by dialerCdrBase() and fetchDialerCdrRows() so the two queries' row sets can never drift apart. */
+function dialerWhere(f: SatyaReportFilters): { sql: string; params: (string | number)[] } {
+  const parts = [`ClientId = ?`, `CallDate >= ?`, `CallDate < DATE_ADD(?, INTERVAL 1 DAY)`];
+  const params: (string | number)[] = [SATYA_CLIENT_ID, f.from, f.to];
+  if (f.warehouse) { parts.push(`(CASE WHEN Field4 IS NULL OR Field4 = '' THEN 'Unmapped' ELSE Field4 END) = ?`); params.push(f.warehouse); }
+  return { sql: parts.join(" AND "), params };
 }
 
-async function getCallsData(f: SatyaReportFilters): Promise<SatyaCallsData> {
-  const w = cdrWhere(f);
-  const dateWhere = cdrWhere(f, { sql: `${A_DATE} IS NOT NULL`, params: [] });
-  const hourWhere = cdrWhere(f, { sql: `(${CDR_TS}) IS NOT NULL`, params: [] });
+/** Used only by getSatyaDetail() below, scoped to one agent/beat/warehouse -- a small enough
+ * row set that the window function's cost there is fine. The main report's own fetch
+ * (fetchDialerCdrRows()) does NOT use this -- see its own header note for why. */
+function dialerCdrBase(f: SatyaReportFilters): { sql: string; params: (string | number)[] } {
+  const w = dialerWhere(f);
+  const sql = `
+    SELECT
+      Category1 AS scenario,
+      Category2 AS sub_scenario_1,
+      (CASE WHEN Field4 IS NULL OR Field4 = '' THEN 'Unmapped' ELSE Field4 END) AS warehouse,
+      (CASE WHEN Field2 IS NULL OR Field2 = '' THEN 'Unmapped' ELSE Field2 END) AS beat_name,
+      MSISDN AS number_val,
+      CallDate AS call_date,
+      REGEXP_SUBSTR(callcreated, 'MAS[0-9]+') AS agent_name,
+      COUNT(*) OVER (PARTITION BY MSISDN) AS attempt
+    FROM ${DIALER_CDR_TABLE}
+    WHERE ${w.sql}`;
+  return { sql, params: w.params };
+}
 
-  const [headlineR, dailyR, attemptR, hourR, scenarioR, subR, agentR] =
-    await Promise.all([
-      db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(scenario = 'Call Dropped') AS dropped,
-         SUM(sub_scenario_1 = 'Order Placed') AS order_calls,
-         COUNT(DISTINCT NULLIF(number_val, '0')) AS shops, COUNT(DISTINCT NULLIF(agent_name, '')) AS agents,
-         AVG(CAST(attempt AS UNSIGNED)) AS avg_attempt
-       FROM ${C} ${w.sql}`,
-        w.params,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT ${A_DATE} AS d, COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(sub_scenario_1 = 'Order Placed') AS order_calls
-       FROM ${C} ${dateWhere.sql} GROUP BY d ORDER BY d`,
-        dateWhere.params,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT CASE WHEN CAST(attempt AS UNSIGNED) >= 11 THEN '11+' WHEN CAST(attempt AS UNSIGNED) >= 6 THEN '6-10' ELSE CAST(CAST(attempt AS UNSIGNED) AS CHAR) END AS bucket,
-         MIN(CAST(attempt AS UNSIGNED)) AS sort_key, COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected
-       FROM ${C} ${w.sql} AND attempt REGEXP '^[0-9]+$' GROUP BY bucket ORDER BY sort_key`,
-        w.params,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT HOUR(${CDR_TS}) AS h, COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected
-       FROM ${C} ${hourWhere.sql} GROUP BY h ORDER BY h`,
-        hourWhere.params,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT COALESCE(NULLIF(scenario, ''), 'Unknown') AS scenario, COUNT(*) AS n FROM ${C} ${w.sql} GROUP BY scenario ORDER BY n DESC`,
-        w.params,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT COALESCE(NULLIF(sub_scenario_1, ''), 'Not tagged') AS sub_scenario, COUNT(*) AS n FROM ${C} ${w.sql} GROUP BY sub_scenario ORDER BY n DESC LIMIT 15`,
-        w.params,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT agent_name, COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(sub_scenario_1 = 'Order Placed') AS order_calls,
-         AVG(CAST(attempt AS UNSIGNED)) AS avg_attempt
-       FROM ${C} ${w.sql} AND agent_name IS NOT NULL AND agent_name <> '' GROUP BY agent_name ORDER BY attempts DESC`,
-        w.params,
-      ),
-    ]);
+export interface DialerCdrRow {
+  scenario: string; subScenario: string; warehouse: string; beatName: string;
+  numberVal: string; callDate: Date; agentName: string; attempt: number;
+}
 
-  const h = headlineR[0][0];
-  const attempts = num(h?.attempts);
-  const connected = num(h?.connected);
+/**
+ * The main report's one fetch for the whole page -- filters the shared dialer table down to
+ * this request's range (already narrow: ClientId=499 alone is ~30k rows out of ~900k total,
+ * confirmed live) WITHOUT the window function dialerCdrBase() uses: "attempt" (how many times
+ * a number was called) is computed here in JS instead, a plain group-by-count over the already-
+ * fetched rows. Confirmed live 2026-09-30: asking MySQL for COUNT(*) OVER (PARTITION BY MSISDN)
+ * over a month's ~29k rows took 10-19s on its own (server-load dependent) even as ONE query --
+ * and before this fix, getCallsData()/getChecks()/getSatyaReport() each ran their OWN
+ * independent copy of that window-function query (7 + 1 + 1 = 9 executions per page load, on
+ * top of its already-real per-query cost). This is both fixes at once: fetch once, and skip the
+ * window function that fetch never needed to pay for in the first place.
+ */
+const AGENT_CODE_RE = /MAS[0-9]+/;
+const DIALER_FETCH_TIMEOUT_MS = 90_000;
+
+export async function fetchDialerCdrRows(f: SatyaReportFilters): Promise<DialerCdrRow[]> {
+  const w = dialerWhere(f);
+  // Plain columns only -- the "Unmapped" fallback (CASE) and the MASxxxxx extraction
+  // (REGEXP_SUBSTR) both moved to the JS .map() below: computed per-row in SQL they were a real,
+  // measurable share of this query's cost (confirmed live 2026-09-30: dropping just these two
+  // cut an otherwise-identical fetch from ~12.8s to ~9s), and both are trivial in JS for a
+  // result set this size. Filtering by warehouse, when f.warehouse is set, still happens
+  // server-side via dialerWhere()'s own CASE expression -- only the SELECT-list labelling
+  // moved, not the WHERE-side filter.
+  const sql = `
+    SELECT
+      Category1 AS scenario,
+      Category2 AS sub_scenario_1,
+      Field4 AS warehouse_raw,
+      Field2 AS beat_raw,
+      MSISDN AS number_val,
+      CallDate AS call_date,
+      callcreated
+    FROM ${DIALER_CDR_TABLE}
+    WHERE ${w.sql}`;
+  const pool = await getDialerPool();
+  // Client-side timeout so a stuck dialer read cannot hold the request (and a pool slot) open indefinitely.
+  const [rawRows] = await pool.execute<RowDataPacket[]>({ sql, timeout: DIALER_FETCH_TIMEOUT_MS }, w.params);
+
+  const attemptByNumber = new Map<string, number>();
+  for (const r of rawRows) {
+    const n = String(r.number_val ?? "");
+    attemptByNumber.set(n, (attemptByNumber.get(n) ?? 0) + 1);
+  }
+
+  return rawRows.map((r) => {
+    const numberVal = String(r.number_val ?? "");
+    const warehouseRaw = String(r.warehouse_raw ?? "").trim();
+    const beatRaw = String(r.beat_raw ?? "").trim();
+    const agentMatch = AGENT_CODE_RE.exec(String(r.callcreated ?? ""));
+    return {
+      scenario: String(r.scenario ?? ""), subScenario: String(r.sub_scenario_1 ?? ""),
+      warehouse: warehouseRaw || "Unmapped", beatName: beatRaw || "Unmapped",
+      numberVal, callDate: new Date(r.call_date), agentName: agentMatch ? agentMatch[0] : "",
+      attempt: attemptByNumber.get(numberVal) ?? 0,
+    };
+  });
+}
+
+function getCallsData(rows: DialerCdrRow[]): SatyaCallsData {
+  const attempts = rows.length;
+  const connected = rows.filter((r) => r.scenario === "Connected").length;
+  const dropped = rows.filter((r) => r.scenario === "Call Dropped").length;
+  const orderCalls = rows.filter((r) => r.subScenario === "Order Placed").length;
+  const shops = new Set(rows.map((r) => r.numberVal).filter((v) => v && v !== "0")).size;
+  const agentSet = new Set(rows.map((r) => r.agentName).filter((v) => v));
+  const avgAttempt = attempts > 0 ? rows.reduce((s, r) => s + r.attempt, 0) / attempts : 0;
+
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const dayKey = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const dailyMap = new Map<string, { attempts: number; connected: number; orderCalls: number }>();
+  const hourlyMap = new Map<number, { attempts: number; connected: number }>();
+  const scenarioMap = new Map<string, number>();
+  const subScenarioMap = new Map<string, number>();
+  const attemptBucketMap = new Map<string, { sortKey: number; attempts: number; connected: number }>();
+  const agentMap = new Map<string, { attempts: number; connected: number; orderCalls: number; attemptSum: number }>();
+
+  for (const r of rows) {
+    const isConnected = r.scenario === "Connected";
+    const isOrder = r.subScenario === "Order Placed";
+
+    const dKey = dayKey(r.callDate);
+    const dCur = dailyMap.get(dKey) ?? { attempts: 0, connected: 0, orderCalls: 0 };
+    dCur.attempts += 1; if (isConnected) dCur.connected += 1; if (isOrder) dCur.orderCalls += 1;
+    dailyMap.set(dKey, dCur);
+
+    const hour = r.callDate.getHours();
+    const hCur = hourlyMap.get(hour) ?? { attempts: 0, connected: 0 };
+    hCur.attempts += 1; if (isConnected) hCur.connected += 1;
+    hourlyMap.set(hour, hCur);
+
+    const scenarioKey = r.scenario || "Unknown";
+    scenarioMap.set(scenarioKey, (scenarioMap.get(scenarioKey) ?? 0) + 1);
+    const subKey = r.subScenario || "Not tagged";
+    subScenarioMap.set(subKey, (subScenarioMap.get(subKey) ?? 0) + 1);
+
+    const bucket = r.attempt >= 11 ? "11+" : r.attempt >= 6 ? "6-10" : String(r.attempt);
+    const bCur = attemptBucketMap.get(bucket) ?? { sortKey: r.attempt, attempts: 0, connected: 0 };
+    bCur.sortKey = Math.min(bCur.sortKey, r.attempt);
+    bCur.attempts += 1; if (isConnected) bCur.connected += 1;
+    attemptBucketMap.set(bucket, bCur);
+
+    if (r.agentName) {
+      const aCur = agentMap.get(r.agentName) ?? { attempts: 0, connected: 0, orderCalls: 0, attemptSum: 0 };
+      aCur.attempts += 1; if (isConnected) aCur.connected += 1; if (isOrder) aCur.orderCalls += 1;
+      aCur.attemptSum += r.attempt;
+      agentMap.set(r.agentName, aCur);
+    }
+  }
+
   return {
     headline: {
-      attempts,
-      connected,
-      connectedPct: pct(connected, attempts),
-      dropped: num(h?.dropped),
-      orderCalls: num(h?.order_calls),
-      shops: num(h?.shops),
-      agents: num(h?.agents),
-      avgAttempt: Math.round(num(h?.avg_attempt) * 100) / 100,
+      attempts, connected, connectedPct: pct(connected, attempts), dropped,
+      orderCalls, shops, agents: agentSet.size, avgAttempt: Math.round(avgAttempt * 100) / 100,
     },
-    daily: dailyR[0].map((r) => ({
-      date: String(r.d),
-      attempts: num(r.attempts),
-      connected: num(r.connected),
-      orderCalls: num(r.order_calls),
-    })),
-    byAttempt: attemptR[0].map((r) => ({
-      bucket: String(r.bucket),
-      attempts: num(r.attempts),
-      connected: num(r.connected),
-    })),
-    hourly: hourR[0].map((r) => ({
-      hour: num(r.h),
-      attempts: num(r.attempts),
-      connected: num(r.connected),
-    })),
-    byScenario: scenarioR[0].map((r) => ({
-      scenario: String(r.scenario),
-      count: num(r.n),
-    })),
-    bySubScenario: subR[0].map((r) => ({
-      subScenario: String(r.sub_scenario),
-      count: num(r.n),
-    })),
-    agents: agentR[0].map((r) => ({
-      agentId: String(r.agent_name),
-      attempts: num(r.attempts),
-      connected: num(r.connected),
-      orderCalls: num(r.order_calls),
-      avgAttempt: Math.round(num(r.avg_attempt) * 100) / 100,
-    })),
+    daily: [...dailyMap.entries()].sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, v]) => ({ date, ...v })),
+    byAttempt: [...attemptBucketMap.entries()].sort(([, a], [, b]) => a.sortKey - b.sortKey)
+      .map(([bucket, v]) => ({ bucket, attempts: v.attempts, connected: v.connected })),
+    hourly: [...hourlyMap.entries()].sort(([a], [b]) => a - b)
+      .map(([hour, v]) => ({ hour, ...v })),
+    byScenario: [...scenarioMap.entries()].sort(([, a], [, b]) => b - a)
+      .map(([scenario, count]) => ({ scenario, count })),
+    bySubScenario: [...subScenarioMap.entries()].sort(([, a], [, b]) => b - a).slice(0, 15)
+      .map(([subScenario, count]) => ({ subScenario, count })),
+    agents: [...agentMap.entries()].sort(([, a], [, b]) => b.attempts - a.attempts)
+      .map(([agentId, v]) => ({
+        agentId, attempts: v.attempts, connected: v.connected, orderCalls: v.orderCalls,
+        avgAttempt: v.attempts > 0 ? Math.round((v.attemptSum / v.attempts) * 100) / 100 : 0,
+      })),
   };
 }
 
@@ -457,8 +547,8 @@ function findSpellingVariants(
     }));
 }
 
-async function getChecks(dupIds: number[]): Promise<SatyaCheck[]> {
-  const [totalsR, subR, cdrR, cdrDupR] = await Promise.all([
+async function getChecks(dupIds: number[], f: SatyaReportFilters, dialerRows: DialerCdrRow[], dialerError: string | null = null): Promise<SatyaCheck[]> {
+  const [totalsR, subR] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total,
          SUM(roster NOT IN ('Morning','Absentee') OR roster IS NULL) AS roster_unmapped,
@@ -468,21 +558,25 @@ async function getChecks(dupIds: number[]): Promise<SatyaCheck[]> {
          SUM(agent_id = 'VDCL') AS vdcl,
          SUM(sub_disposition = 'Order Placed' AND (warehouse IS NULL OR warehouse = '' OR warehouse = 'Warehouse')) AS orders_no_wh,
          MAX(inserted_at) AS last_upload
-       FROM ${A}`,
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT sub_disposition AS sub, COUNT(*) AS n FROM ${A} WHERE sub_disposition IS NOT NULL AND sub_disposition <> '' GROUP BY sub_disposition`,
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total, SUM(warehouse IS NULL OR warehouse = '') AS wh_null, SUM(roster IS NULL OR roster = '') AS roster_null, MAX(inserted_at) AS last_upload FROM ${C}`,
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(n - 1), 0) AS possible_dupes FROM (SELECT COUNT(*) AS n FROM ${C} GROUP BY call_id, attempt, call_date HAVING COUNT(*) > 1) x`,
-    ),
+       FROM ${A}`),
+    db.execute<RowDataPacket[]>(`SELECT sub_disposition AS sub, COUNT(*) AS n FROM ${A} WHERE sub_disposition IS NOT NULL AND sub_disposition <> '' GROUP BY sub_disposition`),
   ]);
+  // Derived from the same dialerRows fetch getSatyaReport already did -- was its own 9th
+  // independent dialerCdrBase() query before; see fetchDialerCdrRows()'s own header note.
+  const cdrTotal = dialerRows.length;
+  const cdrWhNull = dialerRows.filter((r) => r.warehouse === "Unmapped").length;
+  const cdrLastCall = dialerRows.length > 0
+    ? new Date(dialerRows.reduce((m, r) => Math.max(m, r.callDate.getTime()), 0))
+    : null;
   const t = totalsR[0][0];
-  const c = cdrR[0][0];
   const checks: SatyaCheck[] = [];
+  if (dialerError) {
+    checks.push({
+      id: "cdr-unavailable", level: "warn", count: 0,
+      title: "Live dialer data unavailable",
+      detail: "The call records could not be read from the dialer (dialer_db.data_master_in) just now, so the Call attempts figures read zero. Allocation figures are unaffected. Try again in a few minutes.",
+    });
+  }
 
   if (dupIds.length > 0) {
     checks.push({
@@ -521,48 +615,22 @@ async function getChecks(dupIds: number[]): Promise<SatyaCheck[]> {
       detail: `${num(t?.vdcl)} rows are assigned to the queue sentinel 'VDCL' rather than a person. They count in allocation and pending, but not in calls made or any agent table.`,
     });
   }
-  checks.push(
-    ...findSpellingVariants(
-      subR[0].map((r) => ({ sub: String(r.sub), n: num(r.n) })),
-    ),
-  );
-  if (num(cdrDupR[0][0]?.possible_dupes) > 0) {
+  checks.push(...findSpellingVariants(subR[0].map((r) => ({ sub: String(r.sub), n: num(r.n) }))));
+  if (cdrWhNull > 0) {
     checks.push({
-      id: "cdr-dupes",
-      level: "warn",
-      count: num(cdrDupR[0][0]?.possible_dupes),
-      title: "Possible duplicate dial-attempt rows",
-      detail:
-        "Rows sharing the same call id, attempt number and call time. satya_cdr has no reliable unique key, so nothing is removed — call-attempt totals are shown as uploaded.",
+      id: "cdr-warehouse", level: "info", count: cdrWhNull,
+      title: "Dial attempts with no warehouse",
+      detail: "Shown as 'Unmapped' in the Calls tab's warehouse breakdown; the warehouse filter still excludes them from a specific warehouse's view.",
     });
   }
-  if (num(c?.roster_null) > 0) {
-    checks.push({
-      id: "cdr-roster",
-      level: "info",
-      count: num(c?.roster_null),
-      title: "Dial attempts with no roster",
-      detail:
-        "The roster filter therefore applies to allocation views only, not to the Call attempts tab.",
-    });
-  }
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  const lastCallStr = cdrLastCall
+    ? `${cdrLastCall.getFullYear()}-${p2(cdrLastCall.getMonth() + 1)}-${p2(cdrLastCall.getDate())} ${p2(cdrLastCall.getHours())}:${p2(cdrLastCall.getMinutes())}`
+    : "—";
   checks.push({
-    id: "sources",
-    level: "info",
-    count: num(t?.total) + num(c?.total),
+    id: "sources", level: "info", count: num(t?.total) + cdrTotal,
     title: "Source rows",
-    detail: `${num(t?.total).toLocaleString("en-IN")} allocation rows (last upload ${String(
-      t?.last_upload ?? "—",
-    )
-      .slice(0, 16)
-      .replace(
-        "T",
-        " ",
-      )}) and ${num(c?.total).toLocaleString("en-IN")} dial-attempt rows (last upload ${String(
-      c?.last_upload ?? "—",
-    )
-      .slice(0, 16)
-      .replace("T", " ")}).`,
+    detail: `${num(t?.total).toLocaleString("en-IN")} allocation rows (last upload ${String(t?.last_upload ?? "—").slice(0, 16).replace("T", " ")}) and ${cdrTotal.toLocaleString("en-IN")} dial-attempt rows, live from the dialer (latest call in range ${lastCallStr}).`,
   });
   return checks;
 }
@@ -577,19 +645,21 @@ export async function getSatyaReport(
     params: [],
   });
 
-  const [
-    headlineR,
-    rosterR,
-    dailyR,
-    subR,
-    agentR,
-    whR,
-    beatR,
-    availR,
-    whListR,
-    calls,
-    checks,
-  ] = await Promise.all([
+  // The one expensive dialer fetch, done ONCE for the whole report -- see fetchDialerCdrRows()'s
+  // own header note for why (this used to happen 9 separate times per page load).
+  // Fail soft: dialer_db is a separate (read-only) source -- if it is unreachable or slow to error,
+  // the allocation side of the report still renders and the Data checks tab says why calls read zero.
+  let dialerRows: DialerCdrRow[] = [];
+  let dialerError: string | null = null;
+  try {
+    dialerRows = await fetchDialerCdrRows(f);
+  } catch (err) {
+    dialerError = err instanceof Error ? err.message : String(err);
+    console.warn("[satya-retail-report] live dialer CDR read failed:", dialerError);
+  }
+  const calls = getCallsData(dialerRows);
+
+  const [headlineR, rosterR, dailyR, subR, agentR, whR, beatR, availR, whListR, checks] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT ${COUNTERS}, COUNT(DISTINCT NULLIF(NULLIF(agent_id, ''), 'VDCL')) AS agents, COUNT(DISTINCT NULLIF(shop_phone, '')) AS shops
        FROM ${A} ${w.sql}`,
@@ -619,18 +689,16 @@ export async function getSatyaReport(
     ),
     db.execute<RowDataPacket[]>(
       `SELECT ${BEAT} AS beat_n, MAX(${WH}) AS wh, COUNT(DISTINCT NULLIF(shop_phone, '')) AS shops, ${COUNTERS}
-       FROM ${A} ${w.sql} GROUP BY beat_n ORDER BY allocation DESC`,
-      w.params,
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT MIN(${A_DATE}) AS min_d, MAX(${A_DATE}) AS max_d FROM ${A}`,
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT ${WH} AS wh FROM ${A} UNION SELECT ${WH} AS wh FROM ${C} ORDER BY wh`,
-    ),
-    getCallsData(f),
-    getChecks(dupIds),
+       FROM ${A} ${w.sql} GROUP BY beat_n ORDER BY allocation DESC`, w.params),
+    db.execute<RowDataPacket[]>(`SELECT MIN(${A_DATE}) AS min_d, MAX(${A_DATE}) AS max_d FROM ${A}`),
+    db.execute<RowDataPacket[]>(`SELECT DISTINCT ${WH} AS wh FROM ${A}`),
+    getChecks(dupIds, f, dialerRows, dialerError),
   ]);
+
+  // Warehouse dropdown options: allocation's own list (no date bound, same as before) plus
+  // whatever the live CDR side has for the current range -- derived from the same dialerRows
+  // fetch above now, instead of a separate 9th dialerCdrBase() query.
+  const warehouseSet = new Set<string>([...whListR[0].map((r) => String(r.wh)), ...dialerRows.map((r) => r.warehouse)]);
 
   const h = headlineR[0][0];
   return {
@@ -638,7 +706,7 @@ export async function getSatyaReport(
     available: {
       minDate: availR[0][0]?.min_d ? String(availR[0][0].min_d) : null,
       maxDate: availR[0][0]?.max_d ? String(availR[0][0].max_d) : null,
-      warehouses: whListR[0].map((r) => String(r.wh)),
+      warehouses: [...warehouseSet].sort(),
     },
     headline: { ...mapCounts(h), agents: num(h?.agents), shops: num(h?.shops) },
     byRoster: rosterR[0].map((r) => ({
@@ -678,29 +746,15 @@ export async function getSatyaReport(
   };
 }
 
-const DETAIL_DIMENSION: Record<
-  SatyaDetailType,
-  { alloc: string; cdr: string; breakdownLabel: string; breakdownExpr: string }
-> = {
-  agent: {
-    alloc: `agent_id = ?`,
-    cdr: `agent_name = ?`,
-    breakdownLabel: "Beat-wise",
-    breakdownExpr: BEAT,
-  },
-  beat: {
-    alloc: `(${BEAT}) = ?`,
-    cdr: `(${BEAT}) = ?`,
-    breakdownLabel: "Agent-wise",
-    breakdownExpr: `agent_id`,
-  },
-  warehouse: {
-    alloc: `(${WH}) = ?`,
-    cdr: `(${WH}) = ?`,
-    breakdownLabel: "Beat-wise",
-    breakdownExpr: BEAT,
-  },
+const DETAIL_DIMENSION: Record<SatyaDetailType, { alloc: string; breakdownLabel: string; breakdownExpr: string }> = {
+  agent: { alloc: `agent_id = ?`, breakdownLabel: "Beat-wise", breakdownExpr: BEAT },
+  beat: { alloc: `(${BEAT}) = ?`, breakdownLabel: "Agent-wise", breakdownExpr: `agent_id` },
+  warehouse: { alloc: `(${WH}) = ?`, breakdownLabel: "Beat-wise", breakdownExpr: BEAT },
 };
+/** dialerCdrBase() already outputs normalized agent_name/beat_name/warehouse columns, so the
+ * live-CDR side of a drill-down is just an equality filter on the matching one -- no CASE
+ * expression needed (unlike DETAIL_DIMENSION.alloc, which still runs against raw satya_allocation). */
+const CDR_DIM_COLUMN: Record<SatyaDetailType, string> = { agent: "agent_name", beat: "beat_name", warehouse: "warehouse" };
 
 /** One agent / beat / warehouse in full -- backs the row drill-down drawer.
  * Same date/warehouse/roster filters as the list it was opened from, so the
@@ -713,7 +767,7 @@ export async function getSatyaDetail(
   const dim = DETAIL_DIMENSION[type];
   const dupIds = await allocDuplicateIds();
   const w = allocWhere(f, dupIds, { sql: dim.alloc, params: [key] });
-  const cw = cdrWhere(f, { sql: dim.cdr, params: [key] });
+  const cdrBase = dialerCdrBase(f);
 
   const [totalsR, metaR, dailyR, dispR, breakR, ordersR, ordersCountR, callsR] =
     await Promise.all([
@@ -730,34 +784,31 @@ export async function getSatyaDetail(
       db.execute<RowDataPacket[]>(
         `SELECT ${A_DATE} AS d, COUNT(*) AS allocation, SUM(disposition = 'Connected') AS connected,
          SUM(sub_disposition = 'Order Placed') AS orders, SUM(${REVENUE}) AS revenue
-       FROM ${A} ${w.sql} GROUP BY d ORDER BY d`,
-        w.params,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT COALESCE(NULLIF(disposition, ''), 'Unknown') AS disp, COALESCE(NULLIF(sub_disposition, ''), 'Unknown') AS sub, COUNT(*) AS n
-       FROM ${A} ${w.sql} GROUP BY disp, sub ORDER BY n DESC`,
-        w.params,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT ${dim.breakdownExpr} AS name, ${COUNTERS} FROM ${A} ${w.sql} GROUP BY name ORDER BY allocation DESC LIMIT 60`,
-        w.params,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT ${A_DATE} AS d, shop_name, ${BEAT} AS beat_n, agent_id, ${ROSTER} AS roster_n, ${REVENUE} AS amount
-       FROM ${A} ${w.sql} AND sub_disposition = 'Order Placed' ORDER BY d DESC, id DESC LIMIT 50`,
-        w.params,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS n FROM ${A} ${w.sql} AND sub_disposition = 'Order Placed'`,
-        w.params,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(sub_scenario_1 = 'Order Placed') AS order_calls,
-         AVG(CAST(attempt AS UNSIGNED)) AS avg_attempt
-       FROM ${C} ${cw.sql}`,
-        cw.params,
-      ),
-    ]);
+       FROM ${A} ${w.sql} GROUP BY d ORDER BY d`, w.params),
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(disposition, ''), 'Unknown') AS disp, COALESCE(NULLIF(sub_disposition, ''), 'Unknown') AS sub, COUNT(*) AS n
+       FROM ${A} ${w.sql} GROUP BY disp, sub ORDER BY n DESC`, w.params),
+    db.execute<RowDataPacket[]>(
+      `SELECT ${dim.breakdownExpr} AS name, ${COUNTERS} FROM ${A} ${w.sql} GROUP BY name ORDER BY allocation DESC LIMIT 60`, w.params),
+    db.execute<RowDataPacket[]>(
+      `SELECT ${A_DATE} AS d, shop_name, ${BEAT} AS beat_n, agent_id, ${ROSTER} AS roster_n, ${REVENUE} AS amount
+       FROM ${A} ${w.sql} AND sub_disposition = 'Order Placed' ORDER BY d DESC, id DESC LIMIT 50`, w.params),
+    db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n FROM ${A} ${w.sql} AND sub_disposition = 'Order Placed'`, w.params),
+    // Live dialer side fails soft (calls read zero) so the allocation drill-down still opens.
+    (async (): Promise<[RowDataPacket[]]> => {
+      try {
+        const pool = await getDialerPool();
+        const [rows] = await pool.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(sub_scenario_1 = 'Order Placed') AS order_calls,
+             AVG(attempt) AS avg_attempt
+           FROM (${cdrBase.sql}) cdr WHERE ${CDR_DIM_COLUMN[type]} = ?`, [...cdrBase.params, key]);
+        return [rows];
+      } catch (err) {
+        console.warn("[satya-retail-report] live dialer detail read failed:", err instanceof Error ? err.message : String(err));
+        return [[]];
+      }
+    })(),
+  ]);
 
   const counts = mapCounts(totalsR[0][0]);
   if (counts.allocation === 0) return null;

@@ -152,6 +152,13 @@ describe("mandatory identity columns on employee-grain reports", () => {
       "EPFO ECR upload file. Column set and order are dictated by EPFO (uan, gross_wages, " +
       "epf_wages, eps_wages, edli_wages, ...). Adding employee code or cost centre would " +
       "break the upload. Use pf-contribution-register for the internal view.",
+    "employee-master":
+      "Legacy ExportEmployeeDetails layout. Since a18266550 (2026-09-10) the column set, order " +
+      "and labels mirror the legacy 74-column download header-for-header at the user's request, " +
+      "and the rows are read from employee_master_snapshot, which stores exactly those columns. " +
+      "That layout has CostCenter (cost_centre_name) but no cost-centre code and no process " +
+      "column; adding them would break the header parity the report exists for. Same case as " +
+      "pf-ecr-format: a dictated file layout, not a gap to close later.",
     // missing-documents-report was exempted here on the grounds that it was "blocked in the
     // catalog" because no org-wide list of required documents existed. Both halves of that are
     // now false: onboarding_document_master is present, active and populated, the report was

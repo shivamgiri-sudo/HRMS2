@@ -7,12 +7,39 @@ import { notifySalaryIncrementLetter } from "./salaryIncrement.notifications.js"
 type IncrementStatus =
   | "submitted"
   | "hr_validated"
-  | "finance_validated"
+  | "finance_validated" // legacy only: the Finance step was removed; old rows in this status can still be approved
   | "approved"
   | "rejected"
   | "implemented"
   | "cancelled"
   | "withdrawn";
+
+export type IncrementAction = "hr_validate" | "approve" | "reject" | "implement" | "cancel" | "withdraw";
+
+/**
+ * Owner rule 2026-10-05: no Finance sign-off; the Payroll Head is the last approval. HR may raise and validate;
+ * only the Payroll Head (or super admin) approves and applies. "finance_validated" survives only as a legacy
+ * status on old requests, which can still be approved, rejected or cancelled.
+ */
+export const INCREMENT_TRANSITIONS: Record<IncrementAction, { from: IncrementStatus[]; to: IncrementStatus; eventType: string; field: string }> = {
+  hr_validate: { from: ["submitted"], to: "hr_validated", eventType: "HR_VALIDATED", field: "hr_validated" },
+  approve:     { from: ["submitted", "hr_validated", "finance_validated"], to: "approved", eventType: "APPROVED", field: "approved" },
+  reject:      { from: ["submitted", "hr_validated", "finance_validated", "approved"], to: "rejected", eventType: "REJECTED", field: "rejected" },
+  implement:   { from: ["approved"], to: "implemented", eventType: "IMPLEMENTED", field: "implemented" },
+  cancel:      { from: ["submitted", "hr_validated", "finance_validated"], to: "cancelled", eventType: "CANCELLED", field: null as unknown as string },
+  withdraw:    { from: ["submitted"], to: "withdrawn", eventType: "WITHDRAWN", field: null as unknown as string },
+};
+
+export const INCREMENT_ROLE_GATES: Record<IncrementAction, string[]> = {
+  hr_validate: ["admin", "hr", "payroll_head", "super_admin"],
+  approve:     ["payroll_head", "super_admin"],
+  implement:   ["payroll_head", "super_admin"],
+  reject:      ["admin", "hr", "payroll_head", "super_admin"],
+  cancel:      ["admin", "hr", "payroll_head", "super_admin"],
+  withdraw:    ["admin", "hr", "payroll_head", "super_admin"],
+};
+
+export const INCREMENT_VIEW_ROLES = ["admin", "hr", "payroll_head", "super_admin"];
 
 async function writeAudit(
   requestId: string,
@@ -41,17 +68,50 @@ async function writeAudit(
 }
 
 export const salaryIncrementService = {
-  async list(filters: { employee_id?: string; status?: string }) {
+  /**
+   * One page of requests plus the total, never the whole table. A July 2026 bulk import left 14,467 implemented
+   * requests, and returning them all (14 MB) froze the Increment tab for minutes. `status: "pending"` means
+   * everything still waiting for an approval step. Search is the typed employee code (prefix) or name.
+   */
+  async list(filters: {
+    employee_id?: string;
+    status?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+    scope?: { sql: string; params: unknown[] };
+  }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
-    if (filters.employee_id) {
-      conds.push("sir.employee_id = ?");
-      params.push(filters.employee_id);
+    if (filters.scope && filters.scope.sql !== "1=1") { conds.push(`(${filters.scope.sql})`); params.push(...filters.scope.params); }
+    if (filters.employee_id) { conds.push("sir.employee_id = ?"); params.push(filters.employee_id); }
+    // The 14,467 "Legacy Migration" rows (source = 'legacy': created by the system in July 2026 from db_bill history,
+    // 0% change, never approved) are records, not increments. They stay out of every working view and are
+    // reachable only through the explicit "legacy" filter.
+    if (filters.status === "legacy") {
+      conds.push("sir.source = 'legacy'");
+    } else {
+      conds.push("sir.source = 'hrms'");
+      if (filters.status === "pending") {
+        conds.push("sir.status IN ('submitted','hr_validated','finance_validated')");
+      } else if (filters.status) {
+        conds.push("sir.status = ?"); params.push(filters.status);
+      }
     }
-    if (filters.status) {
-      conds.push("sir.status = ?");
-      params.push(filters.status);
+    const term = (filters.search ?? "").trim();
+    if (term) {
+      conds.push("(e.employee_code LIKE ? OR CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) LIKE ?)");
+      params.push(`${term}%`, `%${term}%`);
     }
+    // Validated integers interpolated, not bound: a bound LIMIT/OFFSET has failed on this driver before.
+    const limit = Math.min(Math.max(Math.trunc(Number(filters.limit) || 25), 1), 200);
+    const page = Math.max(Math.trunc(Number(filters.page) || 1), 1);
+    const offset = (page - 1) * limit;
+    const from = `FROM salary_increment_request sir
+       JOIN employees e ON e.id = sir.employee_id
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN designation_master d ON d.id = e.designation_id
+       WHERE ${conds.join(" AND ")}`;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT sir.*,
@@ -59,15 +119,13 @@ export const salaryIncrementService = {
               e.employee_code,
               b.branch_name,
               d.designation_name
-       FROM salary_increment_request sir
-       JOIN employees e ON e.id = sir.employee_id
-       LEFT JOIN branch_master b ON b.id = e.branch_id
-       LEFT JOIN designation_master d ON d.id = e.designation_id
-       WHERE ${conds.join(" AND ")}
-       ORDER BY sir.created_at DESC`,
-      params,
+       ${from}
+       ORDER BY sir.created_at DESC, sir.id DESC
+       LIMIT ${limit} OFFSET ${offset}`,
+      params
     );
-    return rows;
+    const [countRows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n ${from}`, params);
+    return { rows: rows as RowDataPacket[], total: Number((countRows as RowDataPacket[])[0]?.n ?? 0), page, limit };
   },
 
   async getById(id: string) {
@@ -178,14 +236,7 @@ export const salaryIncrementService = {
 
   async transition(
     id: string,
-    action:
-      | "hr_validate"
-      | "finance_validate"
-      | "approve"
-      | "reject"
-      | "implement"
-      | "cancel"
-      | "withdraw",
+    action: IncrementAction,
     actorUserId: string,
     actorRole: string,
     remarks?: string,
@@ -202,58 +253,7 @@ export const salaryIncrementService = {
 
     const oldStatus: IncrementStatus = req.status;
 
-    const TRANSITIONS: Record<
-      string,
-      {
-        from: IncrementStatus[];
-        to: IncrementStatus;
-        eventType: string;
-        field: string;
-      }
-    > = {
-      hr_validate: {
-        from: ["submitted"],
-        to: "hr_validated",
-        eventType: "HR_VALIDATED",
-        field: "hr_validated",
-      },
-      finance_validate: {
-        from: ["hr_validated"],
-        to: "finance_validated",
-        eventType: "FINANCE_VALIDATED",
-        field: "finance_validated",
-      },
-      approve: {
-        from: ["finance_validated", "hr_validated"],
-        to: "approved",
-        eventType: "APPROVED",
-        field: "approved",
-      },
-      reject: {
-        from: ["submitted", "hr_validated", "finance_validated", "approved"],
-        to: "rejected",
-        eventType: "REJECTED",
-        field: "rejected",
-      },
-      implement: {
-        from: ["approved"],
-        to: "implemented",
-        eventType: "IMPLEMENTED",
-        field: "implemented",
-      },
-      cancel: {
-        from: ["submitted", "hr_validated", "finance_validated"],
-        to: "cancelled",
-        eventType: "CANCELLED",
-        field: null as unknown as string,
-      },
-      withdraw: {
-        from: ["submitted"],
-        to: "withdrawn",
-        eventType: "WITHDRAWN",
-        field: null as unknown as string,
-      },
-    };
+    const TRANSITIONS = INCREMENT_TRANSITIONS;
 
     const t = TRANSITIONS[action];
     if (!t) throw Object.assign(new Error("Unknown action"), { status: 400 });

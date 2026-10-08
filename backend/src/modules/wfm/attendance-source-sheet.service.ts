@@ -29,6 +29,8 @@ export interface SheetEmployee {
   designation: string | null;
   profile: string | null;
   costCentre: string | null;
+  /** Optional so existing SheetEmployee literals stay valid; fetchSheet always sets it. */
+  costCentreName?: string | null;
   process: string | null;
   lob: string | null;
   /** ISO date string — last working day; days after this are blank, not absent. */
@@ -206,6 +208,7 @@ export async function fetchSheet(
             desm.designation_name,
             e.profile_type,
             ccm.cost_centre_code,
+            ccm.cost_centre_name,
             pm.process_name,
             lm.lob_name,
             DATE_FORMAT(COALESCE(e.date_of_exit, e.date_of_leaving), '%Y-%m-%d') AS date_of_leaving
@@ -260,6 +263,7 @@ export async function fetchSheet(
       designation: e.designation_name ?? null,
       profile: e.profile_type ?? null,
       costCentre: e.cost_centre_code ?? null,
+      costCentreName: e.cost_centre_name ?? null,
       process: e.process_name ?? null,
       lob: e.lob_name ?? null,
       dateOfLeaving: dol,

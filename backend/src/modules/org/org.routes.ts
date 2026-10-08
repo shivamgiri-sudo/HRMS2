@@ -18,6 +18,34 @@ import {
   processService,
 } from "./org.service.js";
 import { resolveFinanceBranchScopeSet } from "../finance/finance-access-scope.js";
+import { branchAllowed, resolveCallerBranchScope } from "./branchScope.js";
+
+/**
+ * Branch scoping (owner ruling 2026-10-01). Org masters used to hand every branch / process to any signed-in
+ * user, and let hr write cost centres and call-centre codes of any branch. A non-org-wide caller now sees and
+ * changes only its own branch(es); org-wide roles (super_admin, admin, ceo ...) are unaffected.
+ */
+async function callerBranches(req: Request) {
+  return resolveCallerBranchScope({ id: String((req as any).authUser?.id ?? "") });
+}
+async function restrictToCallerBranches<T extends Record<string, any>>(req: Request, rows: T[], col: string): Promise<T[]> {
+  if (!Array.isArray(rows)) return rows;
+  const caller = await callerBranches(req);
+  if (caller.orgWide) return rows;
+  const out = rows.filter((r) => branchAllowed(caller, r[col]));
+  // keep array-attached metadata (e.g. truncated) intact
+  (out as any).truncated = (rows as any).truncated;
+  return out;
+}
+/** Is a cost centre's branch inside the caller's write scope? Unknown / branch-less cost centres are admin-only. */
+async function mayWriteCostCentre(req: Request, branchId: unknown): Promise<boolean> {
+  const entitled = await costCentreBranchEntitlement(req);
+  if (entitled === undefined) return true;
+  const caller = await callerBranches(req);
+  if (caller.orgWide) return true;
+  return Boolean(branchId && entitled.includes(String(branchId)));
+}
+const OUT_OF_BRANCH = { error: "Forbidden: this branch is outside your scope" };
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -148,57 +176,63 @@ function buildCrud(
   const writeGuard = guards.write ?? requireRole("admin", "hr");
   const removeGuard = guards.remove ?? requireRole("admin");
   const statusGuard = guards.status ?? requireRole("admin", "hr");
-  router.get(
-    path,
-    h(async (req: Request, res: Response) => {
-      const { q, active_status, page, limit, branch_id, include_duplicates } =
-        req.query;
-      const options = {
-        q: q as string | undefined,
-        active_status: active_status as string | undefined,
-        page: page ? parseInt(page as string, 10) : undefined,
-        limit: limit ? parseInt(limit as string, 10) : undefined,
-        // Ignored by list() for tables with no branch_id column (see TABLES_WITH_BRANCH_ID
-        // in org.service.ts) — safe to always pass through.
-        branch_id: branch_id as string | undefined,
-        // Opt-in only — see includeDuplicates doc on ListOptions in org.service.ts. Nothing
-        // sends this today except the Org Masters Branches tab; every other caller of every
-        // other tab is unaffected.
-        includeDuplicates:
-          include_duplicates === "1" || include_duplicates === "true",
-      };
-      res.json({ data: await svc.list(options) });
-    }),
-  );
-  router.get(
-    `${path}/:id`,
-    h(async (req: Request, res: Response) => {
-      const item = await svc.getById(req.params.id);
-      if (!item) return res.status(404).json({ error: "Not found" });
-      res.json({ data: item });
-    }),
-  );
-  router.post(
-    path,
-    writeGuard,
-    h(async (req: Request, res: Response) => {
-      const item = await svc.create(req.body);
-      res.status(201).json({ data: item });
-    }),
-  );
-  router.put(
-    `${path}/:id`,
-    writeGuard,
-    h(async (req: Request, res: Response) => {
-      const item = await svc.update(req.params.id, req.body);
-      res.json({ data: item });
-    }),
-  );
-  router.delete(
-    `${path}/:id`,
-    removeGuard,
-    h(async (req: Request, res: Response) => {
-      await svc.delete(req.params.id);
+  router.get(path, h(async (req: Request, res: Response) => {
+    const { q, active_status, page, limit, branch_id, include_duplicates } = req.query;
+    const options = {
+      q: q as string | undefined,
+      active_status: active_status as string | undefined,
+      page: page ? parseInt(page as string, 10) : undefined,
+      limit: limit ? parseInt(limit as string, 10) : undefined,
+      // Ignored by list() for tables with no branch_id column (see TABLES_WITH_BRANCH_ID
+      // in org.service.ts) — safe to always pass through.
+      branch_id: branch_id as string | undefined,
+      // Opt-in only — see includeDuplicates doc on ListOptions in org.service.ts. Nothing
+      // sends this today except the Org Masters Branches tab; every other caller of every
+      // other tab is unaffected.
+      includeDuplicates: include_duplicates === "1" || include_duplicates === "true",
+    };
+    const rows = await svc.list(options);
+    if (path === "/branches") return res.json({ data: await restrictToCallerBranches(req, rows, "id") });
+    if (path === "/processes") return res.json({ data: await restrictToCallerBranches(req, rows, "branch_id") });
+    res.json({ data: rows });
+  }));
+  router.get(`${path}/:id`, h(async (req: Request, res: Response) => {
+    const item = await svc.getById(req.params.id);
+    if (!item) return res.status(404).json({ error: "Not found" });
+    res.json({ data: item });
+  }));
+  router.post(path, writeGuard, h(async (req: Request, res: Response) => {
+    if (path === "/processes" && !branchAllowed(await callerBranches(req), req.body?.branch_id)) return res.status(403).json(OUT_OF_BRANCH);
+    const item = await svc.create(req.body);
+    res.status(201).json({ data: item });
+  }));
+  router.put(`${path}/:id`, writeGuard, h(async (req: Request, res: Response) => {
+    if (path === "/branches" && !branchAllowed(await callerBranches(req), req.params.id)) return res.status(403).json(OUT_OF_BRANCH);
+    if (path === "/processes") {
+      const existing = await svc.getById(req.params.id);
+      const caller = await callerBranches(req);
+      if (existing && !branchAllowed(caller, (existing as any).branch_id)) return res.status(403).json(OUT_OF_BRANCH);
+      if (req.body?.branch_id && !branchAllowed(caller, req.body.branch_id)) return res.status(403).json(OUT_OF_BRANCH);
+    }
+    const item = await svc.update(req.params.id, req.body);
+    res.json({ data: item });
+  }));
+  router.delete(`${path}/:id`, removeGuard, h(async (req: Request, res: Response) => {
+    await svc.delete(req.params.id);
+    res.json({ ok: true });
+  }));
+  if (svc.setStatus) {
+    router.patch(`${path}/:id/status`, statusGuard, h(async (req: Request, res: Response) => {
+      if (path === "/branches" && !branchAllowed(await callerBranches(req), req.params.id)) return res.status(403).json(OUT_OF_BRANCH);
+      if (path === "/processes") {
+        const existing = await svc.getById(req.params.id);
+        if (existing && !branchAllowed(await callerBranches(req), (existing as any).branch_id)) return res.status(403).json(OUT_OF_BRANCH);
+      }
+      const { active_status } = req.body;
+      if (active_status !== 0 && active_status !== 1) {
+        return res.status(400).json({ error: "active_status must be 0 or 1" });
+      }
+      await svc.setStatus!(req.params.id, active_status);
       res.json({ ok: true });
     }),
   );
@@ -221,17 +255,15 @@ function buildCrud(
 }
 
 // Canonical filter source for all pages. Use this instead of building filters from employee/report rows.
-router.get(
-  "/filter-options",
-  h(async (_req: Request, res: Response) => {
-    // The manager list used to test `EXISTS (... team.reporting_manager_id = e.id OR team.manager_id = e.id)`.
-    // An OR across two different columns defeats index use: EXPLAIN showed a full scan of the
-    // 57k-row employees table per candidate ("Range checked for each record") and the query ran
-    // past the 10s cap. Each column has its own index, so the set of manager ids is now built with
-    // one loose-index-scan GROUP BY per column (UNION de-duplicates) and joined to employees by PK.
-    // Same row set: an employee qualifies when some employee names them in either column.
-    const managersPromise = db.execute<any[]>(
-      `SELECT e.id, e.employee_code,
+router.get("/filter-options", h(async (req: Request, res: Response) => {
+  // The manager list used to test `EXISTS (... team.reporting_manager_id = e.id OR team.manager_id = e.id)`.
+  // An OR across two different columns defeats index use: EXPLAIN showed a full scan of the
+  // 57k-row employees table per candidate ("Range checked for each record") and the query ran
+  // past the 10s cap. Each column has its own index, so the set of manager ids is now built with
+  // one loose-index-scan GROUP BY per column (UNION de-duplicates) and joined to employees by PK.
+  // Same row set: an employee qualifies when some employee names them in either column.
+  const managersPromise = db.execute<any[]>(
+    `SELECT e.id, e.employee_code,
             COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name
        FROM employees e
        JOIN (
@@ -243,14 +275,27 @@ router.get(
             ) m ON m.manager_key = e.id
       WHERE e.active_status = 1
         AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
-      ORDER BY full_name ASC`,
-    );
-    const [
-      [managers],
-      branches,
+      ORDER BY full_name ASC`
+  );
+  const [[managers], branches, departments, processes, costCentres, designations, locations] = await Promise.all([
+    managersPromise,
+    branchService.list(),
+    departmentService.list(),
+    processService.list(),
+    costCentreService.list({ active_status: 1, limit: 500 }),
+    designationService.list(),
+    locationService.list(),
+  ]);
+  const scopedBranches = await restrictToCallerBranches(req, branches as any[], "id");
+  const scopedProcesses = await restrictToCallerBranches(req, processes as any[], "branch_id");
+  const scopedCostCentres = await restrictToCallerBranches(req, costCentres as any[], "branch_id");
+  res.json({
+    success: true,
+    data: {
+      branches: scopedBranches,
       departments,
-      processes,
-      costCentres,
+      processes: scopedProcesses,
+      costCentres: scopedCostCentres,
       designations,
       locations,
     ] = await Promise.all([
@@ -278,19 +323,43 @@ router.get(
   }),
 );
 
-router.get(
-  "/",
-  h(async (_req: Request, res: Response) => {
-    const [
-      branches,
+router.get("/", h(async (req: Request, res: Response) => {
+  const [
+    branches,
+    departments,
+    designations,
+    processes,
+    lobs,
+    locations,
+    policies,
+    costCentres,
+    gradeBands,
+    campaigns,
+  ] = await Promise.all([
+    branchService.list(),
+    departmentService.list(),
+    designationService.list(),
+    processService.list(),
+    lobService.list(),
+    locationService.list(),
+    policyService.list(),
+    costCentreService.list({ active_status: 1, limit: 500 }),
+    gradeBandService.list(),
+    campaignService.list(),
+  ]);
+
+  return res.json({
+    success: true,
+    data: {
+      branches: await restrictToCallerBranches(req, branches as any[], "id"),
       departments,
       designations,
-      processes,
+      processes: await restrictToCallerBranches(req, processes as any[], "branch_id"),
       lobs,
       locations,
       policies,
-      costCentres,
-      gradeBands,
+      cost_centres: await restrictToCallerBranches(req, costCentres as any[], "branch_id"),
+      grade_bands: gradeBands,
       campaigns,
     ] = await Promise.all([
       branchService.list(),
@@ -416,12 +485,14 @@ router.get(
 );
 
 // Cost-centres: billing summary for last 3 months (must be before /:id route)
-router.get(
-  "/cost-centres/billing-summary",
-  h(async (_req: Request, res: Response) => {
-    const months = ["May-25", "Jun-25", "Jul-25"];
-    const [rows] = await db.execute<any[]>(
-      `SELECT cc.cost_centre_code, cc.id AS cost_centre_id,
+router.get("/cost-centres/billing-summary", h(async (req: Request, res: Response) => {
+  const months = ["May-25", "Jun-25", "Jul-25"];
+  // Branch scoping: billing / provision amounts per cost centre are limited to the caller's entitled branches.
+  const entitledBranches = await costCentreBranchEntitlement(req);
+  if (entitledBranches && entitledBranches.length === 0) return res.json({ success: true, data: {} });
+  const branchClause = entitledBranches ? `AND cc.branch_id IN (${entitledBranches.map(() => "?").join(",")})` : "";
+  const [rows] = await db.execute<any[]>(
+    `SELECT cc.cost_centre_code, cc.id AS cost_centre_id,
         bps.bill_client_name, bps.month_label,
         COALESCE(SUM(bps.provision_amt), 0) AS provision_amt,
         COALESCE(SUM(bps.billing_amt), 0)   AS billing_amt
@@ -430,32 +501,21 @@ router.get(
          ON bps.cost_centre_code COLLATE utf8mb4_unicode_ci = cc.cost_centre_code COLLATE utf8mb4_unicode_ci
         AND bps.month_label IN (?, ?, ?)
         AND bps.bill_branch NOT LIKE '%DIALDESK%'
-       WHERE cc.active_status = 1
+       WHERE cc.active_status = 1 ${branchClause}
        GROUP BY cc.cost_centre_code, cc.id, bps.bill_client_name, bps.month_label
        ORDER BY cc.cost_centre_code, bps.month_label`,
-      months,
-    );
-    const map: Record<
-      string,
-      {
-        bill_client_name: string | null;
-        months: Record<string, { provision: number; billing: number }>;
-      }
-    > = {};
-    for (const row of rows as any[]) {
-      const key = String(row.cost_centre_id);
-      if (!map[key])
-        map[key] = {
-          bill_client_name: row.bill_client_name ?? null,
-          months: {},
-        };
-      map[key].months[row.month_label] = {
-        provision: Number(row.provision_amt),
-        billing: Number(row.billing_amt),
-      };
-      if (!map[key].bill_client_name && row.bill_client_name) {
-        map[key].bill_client_name = row.bill_client_name;
-      }
+    [...months, ...(entitledBranches ?? [])]
+  );
+  const map: Record<string, { bill_client_name: string | null; months: Record<string, { provision: number; billing: number }> }> = {};
+  for (const row of rows as any[]) {
+    const key = String(row.cost_centre_id);
+    if (!map[key]) map[key] = { bill_client_name: row.bill_client_name ?? null, months: {} };
+    map[key].months[row.month_label] = {
+      provision: Number(row.provision_amt),
+      billing:   Number(row.billing_amt),
+    };
+    if (!map[key].bill_client_name && row.bill_client_name) {
+      map[key].bill_client_name = row.bill_client_name;
     }
     res.json({ success: true, data: map });
   }),
@@ -477,37 +537,28 @@ router.get(
   }),
 );
 
-router.post(
-  "/cost-centres",
-  requireRole("admin", "hr"),
-  h(async (req: Request, res: Response) => {
-    const item = await costCentreService.create(req.body);
-    res.status(201).json({ data: item });
-  }),
-);
+router.post("/cost-centres", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
+  if (!(await mayWriteCostCentre(req, req.body?.branch_id))) return res.status(403).json(OUT_OF_BRANCH);
+  const item = await costCentreService.create(req.body);
+  res.status(201).json({ data: item });
+}));
 
-router.put(
-  "/cost-centres/:id",
-  requireRole("admin", "hr"),
-  h(async (req: Request, res: Response) => {
-    const item = await costCentreService.update(
-      req.params.id,
-      req.body,
-      orgActor(req),
-    );
-    res.json({ data: item });
-  }),
-);
+router.put("/cost-centres/:id", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
+  const existingCc = await costCentreService.getById(req.params.id);
+  if (existingCc && !(await mayWriteCostCentre(req, (existingCc as any).branch_id))) return res.status(403).json(OUT_OF_BRANCH);
+  if (req.body?.branch_id && !(await mayWriteCostCentre(req, req.body.branch_id))) return res.status(403).json(OUT_OF_BRANCH);
+  const item = await costCentreService.update(req.params.id, req.body, orgActor(req));
+  res.json({ data: item });
+}));
 
 // Cost-centres: migrate existing record with required FKs
-router.put(
-  "/cost-centres/:id/migrate",
-  requireRole("admin", "hr"),
-  h(async (req: Request, res: Response) => {
-    const item = await costCentreService.migrate(req.params.id, req.body);
-    res.json({ data: item, message: "Cost centre migrated successfully" });
-  }),
-);
+router.put("/cost-centres/:id/migrate", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
+  const migrateCc = await costCentreService.getById(req.params.id);
+  if (migrateCc && !(await mayWriteCostCentre(req, (migrateCc as any).branch_id))) return res.status(403).json(OUT_OF_BRANCH);
+  if (req.body?.branch_id && !(await mayWriteCostCentre(req, req.body.branch_id))) return res.status(403).json(OUT_OF_BRANCH);
+  const item = await costCentreService.migrate(req.params.id, req.body);
+  res.json({ data: item, message: "Cost centre migrated successfully" });
+}));
 
 router.delete(
   "/cost-centres/:id",
@@ -518,32 +569,26 @@ router.delete(
   }),
 );
 
-router.patch(
-  "/cost-centres/:id/status",
-  requireRole("admin", "hr"),
-  h(async (req: Request, res: Response) => {
-    const { active_status } = req.body;
-    if (active_status !== 0 && active_status !== 1) {
-      return res.status(400).json({ error: "active_status must be 0 or 1" });
-    }
-    await costCentreService.setStatus(
-      req.params.id,
-      active_status,
-      orgActor(req),
-    );
-    res.json({ ok: true });
-  }),
-);
+router.patch("/cost-centres/:id/status", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
+  const { active_status } = req.body;
+  if (active_status !== 0 && active_status !== 1) {
+    return res.status(400).json({ error: "active_status must be 0 or 1" });
+  }
+  const statusCc = await costCentreService.getById(req.params.id);
+  if (statusCc && !(await mayWriteCostCentre(req, (statusCc as any).branch_id))) return res.status(403).json(OUT_OF_BRANCH);
+  await costCentreService.setStatus(req.params.id, active_status, orgActor(req));
+  res.json({ ok: true });
+}));
 
 // Employees scoped to a cost centre (for reporting manager dropdown)
-router.get(
-  "/employees-by-cost-centre",
-  h(async (req: Request, res: Response) => {
-    const costCentreId = req.query.cost_centre_id as string | undefined;
-    if (!costCentreId)
-      return res.status(400).json({ error: "cost_centre_id is required" });
-    const [rows] = await db.execute<any[]>(
-      `SELECT e.id,
+router.get("/employees-by-cost-centre", h(async (req: Request, res: Response) => {
+  const costCentreId = req.query.cost_centre_id as string | undefined;
+  if (!costCentreId) return res.status(400).json({ error: "cost_centre_id is required" });
+  const ccRow = await costCentreService.getById(costCentreId);
+  const ccEntitled = await costCentreBranchEntitlement(req);
+  if (ccEntitled && (!ccRow || !ccEntitled.includes(String((ccRow as any).branch_id ?? "")))) return res.json({ ok: true, data: [] });
+  const [rows] = await db.execute<any[]>(
+    `SELECT e.id,
             e.employee_code,
             COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS full_name,
             d.designation_name
@@ -560,14 +605,12 @@ router.get(
 );
 
 // Employees scoped to a branch (for reporting manager dropdown)
-router.get(
-  "/employees-by-branch",
-  h(async (req: Request, res: Response) => {
-    const branchId = req.query.branch_id as string | undefined;
-    if (!branchId)
-      return res.status(400).json({ error: "branch_id is required" });
-    const [rows] = await db.execute<any[]>(
-      `SELECT e.id,
+router.get("/employees-by-branch", h(async (req: Request, res: Response) => {
+  const branchId = req.query.branch_id as string | undefined;
+  if (!branchId) return res.status(400).json({ error: "branch_id is required" });
+  if (!branchAllowed(await callerBranches(req), branchId)) return res.json({ ok: true, data: [] });
+  const [rows] = await db.execute<any[]>(
+    `SELECT e.id,
             e.employee_code,
             COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS full_name,
             d.designation_name
@@ -593,10 +636,8 @@ router.patch(
     if (!ccCode || typeof ccCode !== "string" || ccCode.trim().length === 0) {
       return res.status(400).json({ error: "ccCode is required" });
     }
-    await branchService.updateCallCentreCode(
-      req.params.id,
-      ccCode.trim().toUpperCase(),
-    );
+    if (!branchAllowed(await callerBranches(req), req.params.id)) return res.status(403).json(OUT_OF_BRANCH);
+    await branchService.updateCallCentreCode(req.params.id, ccCode.trim().toUpperCase());
     res.json({ success: true });
   }),
 );
@@ -606,12 +647,15 @@ router.get(
   "/export/masters",
   requireAuth,
   requireRole("admin", "hr"),
-  h(async (_req: Request, res: Response) => {
-    const [branches, processes, costCentres] = await Promise.all([
+  h(async (req: Request, res: Response) => {
+    const [allBranches, allProcesses, allCostCentres] = await Promise.all([
       branchService.list(),
       processService.list(),
-      costCentreService.list(),
+      costCentreService.list({ branchIds: await costCentreBranchEntitlement(req) }),
     ]);
+    const branches = await restrictToCallerBranches(req, allBranches as any[], "id");
+    const processes = await restrictToCallerBranches(req, allProcesses as any[], "branch_id");
+    const costCentres = await restrictToCallerBranches(req, allCostCentres as any[], "branch_id");
 
     const wb = XLSX.utils.book_new();
 

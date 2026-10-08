@@ -26,7 +26,7 @@ export interface KpiScorecardRow {
   family: "rate" | "volume" | "duration" | "roi";
   unit: "percent" | "count" | "currency" | "seconds" | "ratio";
   lobLabel: string;
-  target: number;
+  target: number | null;
   direction: "higher_is_better" | "lower_is_better";
   availability: "ok" | "no_data" | "not_tracked";
   actual: number | null;
@@ -43,7 +43,7 @@ export interface KpiScorecardRow {
 export function formatKpiValue(v: number | null, unit: KpiScorecardRow["unit"]): string {
   if (v === null) return "—";
   switch (unit) {
-    case "percent": return `${v}%`;
+    case "percent": return `${Math.round(v * 10) / 10}%`;
     case "seconds": return v >= 3600 ? `${(v / 3600).toFixed(1)} hr` : `${Math.round(v)}s`;
     case "currency": return `₹${Math.round(v).toLocaleString("en-IN")}`;
     case "ratio": return `${v.toFixed(2)}x`;
@@ -65,7 +65,7 @@ const ragLabel: Record<NonNullable<KpiScorecardRow["rag"]>, string> = {
   good: "SLA Met", warn: "At Risk", crit: "Breached",
 };
 
-function KpiCard({ row, onOpen }: { row: KpiScorecardRow; onOpen: () => void }) {
+export function KpiCard({ row, onOpen }: { row: KpiScorecardRow; onOpen: () => void }) {
   const interactive = row.availability === "ok";
   return (
     <button
@@ -95,7 +95,7 @@ function KpiCard({ row, onOpen }: { row: KpiScorecardRow; onOpen: () => void }) 
         <span className={`text-xl font-semibold tabular-nums ${interactive ? "text-slate-900" : "text-slate-300"}`}>
           {interactive ? formatKpiValue(row.actual, row.unit) : "—"}
         </span>
-        <span className="text-[11px] text-slate-400">of target {formatKpiValue(row.target, row.unit)}</span>
+        <span className="text-[11px] text-slate-400">{row.target == null ? "no target set" : `of target ${formatKpiValue(row.target, row.unit)}`}</span>
       </div>
       {/* A rate with no volume beside it is unreadable: 98% of 12 calls and 98% of
           12,000 are the same number and not the same fact. Shown only when every

@@ -9,6 +9,7 @@
 // `JournalVouchersContent` (no DashboardLayout of its own) is the tab FinanceLedgerHubPage.tsx
 // mounts; the default export below wraps it for a direct link.
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart, Bar, CartesianGrid, XAxis, YAxis,
@@ -98,7 +99,9 @@ export function JournalVouchersContent() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingVoucher, setEditingVoucher] = useState<JvDetail | null>(null);
-  const [drawerId, setDrawerId] = useState<string | null>(null);
+  // Approval Center deep link: ?tab=journal&approvalId=<voucher id> opens that voucher's drawer.
+  const [deepLinkParams] = useSearchParams();
+  const [drawerId, setDrawerId] = useState<string | null>(() => deepLinkParams.get("approvalId"));
 
   const filterOptionsQuery = useQuery({
     queryKey: ["journal-voucher-options-filters"],
@@ -337,7 +340,7 @@ export function JournalVouchersContent() {
                 <TableRow><TableCell colSpan={8} className="p-0"><EmptyState title="No journal vouchers match these filters" description="Try widening the date range or clearing filters." /></TableCell></TableRow>
               )}
               {rows.map((r) => (
-                <TableRow key={r.id} className="cursor-pointer hover:bg-blue-50/40" onClick={() => setDrawerId(r.id)}>
+                <TableRow key={r.id} data-approval-id={r.id} className="cursor-pointer hover:bg-blue-50/40" onClick={() => setDrawerId(r.id)}>
                   <TableCell className="font-medium text-slate-800">{r.voucherNumber ?? <span className="text-slate-400">(draft)</span>}</TableCell>
                   <TableCell className="whitespace-nowrap text-slate-600">{dateOnly(r.voucherDate)}</TableCell>
                   <TableCell><Badge variant="outline" className="text-[10px]">{TYPE_LABEL[r.jvType]}</Badge></TableCell>

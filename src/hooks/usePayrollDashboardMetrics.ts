@@ -15,7 +15,8 @@ export function usePayrollAnalytics(enabled = true) {
     queryKey: ["payroll", "analytics"],
     queryFn: async () => {
       const response = await hrmsApi.get<{ success?: boolean; data?: PayrollAnalytics }>("/payroll/analytics");
-      return response.data ?? response;
+      // The route returns the { success, data } envelope; the fallback tolerates a bare payload.
+      return response.data ?? (response as unknown as PayrollAnalytics);
     },
     enabled,
     staleTime: 10 * 60 * 1000,

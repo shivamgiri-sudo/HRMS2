@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { format, differenceInDays, subDays, startOfDay, eachDayOfInterval, parseISO, isSameDay } from "date-fns";
 import { normalizeDate } from "@/lib/utils";
 import { useLeaveTypes, useSubmitLeaveRequest } from "@/hooks/useLeaveRequests";
+import { isBalanceGated } from "./leaveFormRules";
 import { useLeaveEligibility } from "@/hooks/useLeaveEligibility";
 import { useQuery } from "@tanstack/react-query";
 import { useCompanyHolidays } from "@/hooks/useCompanyHolidays";
@@ -24,9 +25,11 @@ const UNPAID_LEAVE_NAME = "Unpaid Leave";
 
 interface LeaveRequestFormProps {
   employeeId: string;
+  /** Called once a request has been submitted successfully (e.g. to close a surrounding dialog). */
+  onSubmitted?: () => void;
 }
 
-export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
+export function LeaveRequestForm({ employeeId, onSubmitted }: LeaveRequestFormProps) {
   const [leaveTypeId, setLeaveTypeId] = useState<string>("");
   const [startDate, setStartDate] = useState<Date>();
   const [endDate, setEndDate] = useState<Date>();
@@ -86,7 +89,12 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
 
   // Fetch actual leave balances from ledger (includes db_bill synced used_days)
   const { data: ledgerBalances } = useQuery({
-    queryKey: ["leave-balances", employeeId, currentYear],
+    // NOT the same key as useLeaveBalances: that hook caches MAPPED balances under
+    // ["leave-balances", employeeId, year] while this query stores the raw API rows. Sharing
+    // the key let whichever refetch landed last overwrite the other's shape, and the balance
+    // cards then crashed on a missing leave_type (seen live right after submitting a request).
+    // Still matched by the ["leave-balances"] / ["leave-balances", employeeId] invalidations.
+    queryKey: ["leave-balances", employeeId, currentYear, "ledger"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
         `/api/leave/balance/${employeeId}?year=${currentYear}`
@@ -178,9 +186,11 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
     setStartDate(undefined);
     setEndDate(undefined);
     setReason("");
+    onSubmitted?.();
   };
 
-  const selectedBalance = leaveTypeId && !isUnpaid ? leaveBalances[leaveTypeId] : null;
+  const selectedLeaveType = leaveTypes.find((t) => t.id === leaveTypeId);
+  const selectedBalance = leaveTypeId && isBalanceGated(isUnpaid, selectedLeaveType?.is_paid) ? leaveBalances[leaveTypeId] : null;
 
   // CL and ML draw from ONE shared yearly pool at approval — see POOL_PARTNER_CODE in
   // backend/src/modules/leave/leave.service.ts: a CL shortfall is covered by whatever ML is

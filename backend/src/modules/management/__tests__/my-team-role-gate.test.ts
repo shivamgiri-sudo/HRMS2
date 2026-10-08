@@ -19,6 +19,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
+// Branch scoping is covered in branchScoping.batch2.test.ts; this test is about other behaviour, so allow-all here.
+vi.mock("../../dashboards/branch-scope-guards.js", () => ({
+  canAccessEmployeeRecord: async () => true,
+  employeeListScope: async () => null,
+  employeeIdInScope: async () => null,
+  attachEmployeeScope: () => (_q: any, _s: any, n: any) => n(),
+  OUTSIDE_SCOPE_MESSAGE: "outside",
+}));
 vi.mock("../../../db/mysql.js", () => ({
   db: { execute, query: execute, getConnection: vi.fn() },
 }));

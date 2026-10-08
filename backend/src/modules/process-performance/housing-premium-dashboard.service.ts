@@ -495,11 +495,11 @@ function rollUpOverview(
   return out;
 }
 
-export async function getHousingPremiumOverview(
-  fromInput: string,
-  toInput: string,
-  agentInput?: string,
-): Promise<HousingPremiumOverviewData> {
+/**
+ * `fullCdr` (default false) skips the 5-day CDR window below and reads the CDR for the whole requested range --
+ * the live Overview route opts in (owner request 2026-10-01); every other caller keeps the capped, fast read.
+ */
+export async function getHousingPremiumOverview(fromInput: string, toInput: string, agentInput?: string, fullCdr = false): Promise<HousingPremiumOverviewData> {
   const { from, to } = resolveRange(fromInput, toInput);
   const columns = buildOverviewColumns(from, to);
   const roster = await loadRoster(to);
@@ -516,13 +516,8 @@ export async function getHousingPremiumOverview(
   // details" drill-down drawer (HousingPremiumDrilldownDrawer.tsx) does its OWN independent
   // fetch of the true full range, so this cap never reaches an Excel export -- only the
   // on-screen Dashboard/Overview tabs see the narrower window.
-  const cdrFrom = from < addDays(to, -4) ? addDays(to, -4) : from;
-  const agent =
-    agentInput &&
-    agentInput.trim() &&
-    agentInput.trim().toLowerCase() !== "overall"
-      ? agentInput.trim()
-      : null;
+  const cdrFrom = !fullCdr && from < addDays(to, -4) ? addDays(to, -4) : from;
+  const agent = agentInput && agentInput.trim() && agentInput.trim().toLowerCase() !== "overall" ? agentInput.trim() : null;
   if (agent) {
     // Agent scope: the same day/week/MTD columns for one agent, with that agent's own roster target (same convention getHousingPremiumDayWise uses). No per-TL blocks -- they would not describe one agent.
     const agentTarget =

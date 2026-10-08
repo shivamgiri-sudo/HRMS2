@@ -54,7 +54,7 @@ export default function OnfidoHero<K extends string>({
 }) {
   const [fullscreen, toggleFullscreen] = useFullscreen();
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1b6ab5] via-[#2a7fd0] to-indigo-700 p-3 text-white shadow-lg sm:p-4">
+    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1b6ab5] via-[#2a7fd0] to-indigo-700 p-2.5 text-white shadow-lg sm:p-3">
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.15]"
         style={{
@@ -62,9 +62,9 @@ export default function OnfidoHero<K extends string>({
             "radial-gradient(circle at 12% 20%, white, transparent 45%), radial-gradient(circle at 88% 90%, white, transparent 40%)",
         }}
       />
-      <div className="relative flex flex-wrap items-start justify-between gap-4">
+      <div className="relative flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-start gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/15 backdrop-blur-sm">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white/15 backdrop-blur-sm">
             <Activity className="h-5 w-5" />
           </span>
           <div>
@@ -102,7 +102,7 @@ export default function OnfidoHero<K extends string>({
       <div
         role="tablist"
         aria-label="Onfido dashboard views"
-        className="relative mt-3 flex flex-wrap gap-1 rounded-2xl bg-white/10 p-1 backdrop-blur-sm"
+        className="relative mt-2 flex flex-wrap gap-1 rounded-2xl bg-white/10 p-1 backdrop-blur-sm"
       >
         {tabs.map((t) => (
           <button

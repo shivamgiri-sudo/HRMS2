@@ -13,7 +13,7 @@ import {
 export const MAX_BULK_ROWS = 400;
 const MAX_REMARKS = 255;
 const MAX_HC = 100000;
-const MAX_INPUT_VALUE = 100000000;
+const MAX_INPUT_VALUE = 1e12;
 
 export interface ManpowerPlanInput {
   processQueue: PlanQueue;
@@ -33,7 +33,7 @@ export interface UtilizationInputRow {
   facialChecks: number | null;
   crossTrainingTaskPoa: number | null;
   poaLiveAuditsPq: number | null;
-  // Uploaded (static) values for the sheet's calculated columns; null = use the calculation.
+  // Uploaded (static) values for the sheet's calculated columns; null = blank (never calculated).
   fixedUtilizationForecast: number | null;
   fixedUtilizationWithAdhoc: number | null;
   fixedUtilizationWithoutAdhoc: number | null;
@@ -51,24 +51,37 @@ const fail = (error: string): { ok: false; error: string } => ({
   error,
 });
 
-/** Blank / null / undefined mean "not entered" (null); anything else must be a finite number >= 0. */
+const BLANK_TOKENS = new Set(["", "-", "--", "n/a", "na", "null", "#n/a", "#div/0!", "#value!", "#ref!"]);
+
+/**
+ * Lenient numeric reader for uploaded Utilization cells: '85%', '0.85', '85', '1,234.5', '(12)',
+ * ' 7 ' and a blank / '-' / 'N/A' placeholder (null = not entered, never 0). A percent sign is
+ * stripped and the number kept as written (percent columns hold percent points).
+ */
+export function parseUploadedNumber(raw: unknown): number | null | typeof Number.NaN {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : Number.NaN;
+  let t = String(raw).trim();
+  if (BLANK_TOKENS.has(t.toLowerCase())) return null;
+  let negative = false;
+  if (/^\(.*\)$/.test(t)) { negative = true; t = t.slice(1, -1); }
+  t = t.replace(/%\s*$/, "").replace(/[,\s\u00a0]/g, "").replace(/^[$\u20b9]/, "");
+  if (t === "") return null;
+  const n = Number(t);
+  if (!Number.isFinite(n)) return Number.NaN;
+  return negative ? -n : n;
+}
+
+/** Blank means "not entered" (null); anything else must be a finite number. Stored exactly as given. */
 function optionalNumber(
   raw: unknown,
   label: string,
-  opts: { integer: boolean; max: number },
+  opts: { max: number },
 ): Parsed<number | null> {
-  if (raw === null || raw === undefined) return { ok: true, value: null };
-  if (typeof raw === "string" && raw.trim() === "")
-    return { ok: true, value: null };
-  const n =
-    typeof raw === "number"
-      ? raw
-      : Number(String(raw).replace(/,/g, "").trim());
-  if (!Number.isFinite(n) || n < 0)
-    return fail(`${label} must be a number of 0 or more.`);
-  if (n > opts.max) return fail(`${label} is unreasonably large.`);
-  if (opts.integer && !Number.isInteger(n))
-    return fail(`${label} must be a whole number.`);
+  const n = parseUploadedNumber(raw);
+  if (n === null) return { ok: true, value: null };
+  if (Number.isNaN(n)) return fail(`${label} must be a number (e.g. 85, 0.85, 85% or 1,234).`);
+  if (Math.abs(n) > opts.max) return fail(`${label} is unreasonably large.`);
   return { ok: true, value: n };
 }
 
@@ -91,19 +104,17 @@ export function parseManpowerPlanInput(
     return fail("Queue must be EWYS, POA, Encord or the company total.");
   if (!isIsoDay(r.effectiveFrom))
     return fail("Effective from must be a valid date.");
-  const approved = optionalNumber(r.approvedHc, "Approved HC", {
-    integer: true,
-    max: MAX_HC,
-  });
+  const approved = optionalNumber(r.approvedHc, "Approved HC", { max: MAX_HC });
+  if (approved.ok && approved.value !== null && (approved.value < 0 || !Number.isInteger(approved.value)))
+    return fail("Approved HC must be a whole number of 0 or more.");
   if (!approved.ok) return approved;
   if (approved.value === null)
     return fail(
       "Approved HC is required (enter 0 if the queue has no approved staff).",
     );
-  const active = optionalNumber(r.activeHc, "Active HC", {
-    integer: true,
-    max: MAX_HC,
-  });
+  const active = optionalNumber(r.activeHc, "Active HC", { max: MAX_HC });
+  if (active.ok && active.value !== null && (active.value < 0 || !Number.isInteger(active.value)))
+    return fail("Active HC must be a whole number of 0 or more.");
   if (!active.ok) return active;
   const remarks = optionalRemarks(r.remarks);
   if (!remarks.ok) return remarks;
@@ -197,10 +208,7 @@ export function parseUtilizationInputRow(
     remarks: null,
   };
   for (const f of UTILIZATION_FIELDS) {
-    const parsed = optionalNumber(r[f.key], f.label, {
-      integer: f.integer,
-      max: MAX_INPUT_VALUE,
-    });
+    const parsed = optionalNumber(r[f.key], f.label, { max: MAX_INPUT_VALUE });
     if (!parsed.ok) return fail(`${r.inputDate}: ${parsed.error}`);
     out[f.key] = parsed.value;
   }

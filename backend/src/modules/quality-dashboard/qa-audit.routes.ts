@@ -143,58 +143,40 @@ router.post(
       });
     }
 
-    // An auditor has the agent's code, not their UUID. Resolve it here rather than
-    // making every caller look it up — and refuse an ambiguous code rather than
-    // picking one, because attributing a quality score to the wrong person is
-    // worse than refusing to file it.
-    let resolvedEmployeeId = employeeId ? String(employeeId) : "";
-    if (!resolvedEmployeeId) {
-      const [matches] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM employees WHERE employee_code = ? LIMIT 2`,
-        [String(employeeCode).trim()],
-      );
-      if (matches.length === 0) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-            message: `No employee with code ${employeeCode}`,
-          });
-      }
-      if (matches.length > 1) {
-        return res.status(409).json({
-          success: false,
-          message: `More than one employee has the code ${employeeCode} — resolve the duplicate first`,
-        });
-      }
-      resolvedEmployeeId = String(matches[0].id);
+  // Branch scoping (owner ruling 2026-10-01): the role gate says who may audit, not whom. The target employee must
+  // sit inside the auditor's branch/process scope - the same predicate GET /audits applies. Org-wide roles pass.
+  {
+    const roleContext = await getUserRoleContext(req.authUser!.id);
+    const scope = await resolveDashboardScopeForRequest(req.authUser!, roleContext.primaryRole);
+    const scopeWhere = buildScopeWhereEmployees(scope, "e");
+    const [allowed] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id FROM employees e WHERE e.id = ? AND ${scopeWhere.sql} LIMIT 1`,
+      [resolvedEmployeeId, ...scopeWhere.params],
+    );
+    if (!allowed.length) {
+      return res.status(403).json({ success: false, message: "Forbidden: that employee is outside your branch / assigned scope" });
     }
-    if (!Array.isArray(scores)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "scores must be an array" });
-    }
+  }
 
-    try {
-      const result = await submitQaAudit({
-        formId: String(formId),
-        employeeId: resolvedEmployeeId,
-        auditDate: String(auditDate).slice(0, 10),
-        // Taken from the session, never from the body: an auditor cannot file an
-        // audit under somebody else's name.
-        auditorUserId: req.authUser!.id,
-        callReference: callReference ?? null,
-        evidenceUrl: evidenceUrl ?? null,
-        remarks: remarks ?? null,
-        scores,
-        submit: submit !== false,
-      });
-      return res.status(201).json({ success: true, data: result });
-    } catch (err) {
-      return handleError(res, err);
-    }
-  }),
-);
+  try {
+    const result = await submitQaAudit({
+      formId: String(formId),
+      employeeId: resolvedEmployeeId,
+      auditDate: String(auditDate).slice(0, 10),
+      // Taken from the session, never from the body: an auditor cannot file an
+      // audit under somebody else's name.
+      auditorUserId: req.authUser!.id,
+      callReference: callReference ?? null,
+      evidenceUrl: evidenceUrl ?? null,
+      remarks: remarks ?? null,
+      scores,
+      submit: submit !== false,
+    });
+    return res.status(201).json({ success: true, data: result });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}));
 
 /**
  * GET /api/qa/audits?employeeId=&from=&to=

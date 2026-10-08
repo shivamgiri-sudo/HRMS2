@@ -259,17 +259,15 @@ export const portalKpiService = {
       periodToRange(period),
     );
     if (registryRows) {
-      const registryScorecards = registryRows.map((r): KpiScorecard => {
+      // Metrics without a configured target are left out of the client-facing scorecard (a fabricated target is worse
+      // than omitting the row); they still appear on the internal Process KPI dashboard.
+      const registryScorecards = registryRows.filter((r) => r.target != null).map((r): KpiScorecard => {
         // availability !== 'ok' means no real reading -- rag "no_data" and a null
         // achievement, never a fabricated 0%, which a client cannot tell apart
         // from a metric that IS measured and IS failing badly.
         const hasReading = r.availability === "ok" && r.actual != null;
         const ach = hasReading
-          ? portalKpiService.computeAchievement(
-              r.actual!,
-              r.target,
-              r.direction,
-            )
+          ? portalKpiService.computeAchievement(r.actual!, r.target!, r.direction)
           : null;
         return {
           metric_id: r.metricKey,
@@ -277,7 +275,7 @@ export const portalKpiService = {
           metric_name: r.label,
           unit: UNIT_LABEL[r.unit] ?? "",
           direction: r.direction,
-          target: r.target,
+          target: r.target!,
           actual: r.actual,
           achievement_pct: ach,
           rag:

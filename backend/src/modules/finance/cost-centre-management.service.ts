@@ -165,6 +165,24 @@ async function logApprovalAction(
 // Service
 // ============================================================================
 
+/**
+ * The Cost Centre sheet edits mandated_seats_value, but P&L and process performance read the older
+ * mandated_seats column — so a seat count entered here never reached them (13 of 406 cost centres
+ * even carried _value). Mirror it into mandated_seats, and, when this is the process's only cost
+ * centre, push it to the other seat stores.
+ */
+async function syncCostCentreSeats(id: string, next: number | undefined, previous: unknown, actor: Actor): Promise<void> {
+  if (next === undefined || next === null || Number(previous) === Number(next)) return;
+  await db.execute(`UPDATE cost_centre_master SET mandated_seats = ? WHERE id = ?`, [String(next), id]);
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT process_id FROM cost_centre_master WHERE id = ? LIMIT 1`, [id]);
+  const processId = (rows as RowDataPacket[])[0]?.process_id;
+  if (!processId) return;
+  const { soleCostCentreSeats, syncProcessSeatsSafe } = await import("../process-pnl/seat-mandate-sync.service.js");
+  if ((await soleCostCentreSeats(String(processId))) !== null) {
+    syncProcessSeatsSafe({ processId: String(processId), seats: Number(next), source: "cost_centre", actorId: String((actor as { id?: string })?.id ?? "system") });
+  }
+}
+
 export const costCentreManagementService = {
   /**
    * List cost centres with filters
@@ -465,6 +483,8 @@ export const costCentreManagementService = {
 
     await logApprovalAction(id, "created", null, "draft", actor);
 
+    await syncCostCentreSeats(id, data.mandated_seats_value, null, actor);
+
     await syncCostCentreRelatedTables({
       cost_centre_code: data.cost_centre_code,
       cost_centre_name: data.cost_centre_name,
@@ -618,6 +638,8 @@ export const costCentreManagementService = {
       existing.status,
       actor,
     );
+
+    await syncCostCentreSeats(id, data.mandated_seats_value, existing.mandated_seats_value, actor);
 
     return this.getById(id);
   },

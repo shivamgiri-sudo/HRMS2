@@ -59,16 +59,25 @@ describe("Migration Isolation Tests", () => {
       }
     });
 
-    it("should normalize the database default collation before creating fresh tables", () => {
+    it("should create a missing database with the utf8mb4_unicode_ci default, and never alter an existing one", () => {
       const runnerPath = path.resolve(__dirname, "../runPendingMigrations.ts");
       const runnerSource = fs.readFileSync(runnerPath, "utf-8");
 
       expect(runnerSource).toContain(
         "CREATE DATABASE IF NOT EXISTS \\`${dbName}\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
       );
-      expect(runnerSource).toContain(
-        "ALTER DATABASE \\`${dbName}\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+      // This used to require an ALTER DATABASE as well, to normalise a database created
+      // for us with the server default. fa58019af (2026-09-30) removed it: database-level
+      // DDL at startup queues behind any long query and took production down twice
+      // (tests/startup-no-database-ddl.test.ts is the guard). A pre-created database must
+      // now be given the right default by whoever creates it — see the "Set database
+      // default collation" step in .github/workflows/local-deployment-smoke.yml.
+      const ensure = runnerSource.slice(
+        runnerSource.indexOf("async function ensureDatabaseExists"),
+        runnerSource.indexOf("async function runFileOnConnection"),
       );
+      const code = ensure.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      expect(code).not.toMatch(/ALTER\s+DATABASE/i);
     });
   });
 

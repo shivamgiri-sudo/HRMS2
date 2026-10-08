@@ -1,6 +1,7 @@
 import type { Response } from "express";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { wfmService } from "./wfm.service.js";
+import { getScope, isOrgWide } from "./branch-scope.js";
 import {
   attendanceSessionFiltersSchema,
   breakSchema,
@@ -74,7 +75,10 @@ export const wfmController = {
 
   async listSessions(req: AuthenticatedRequest, res: Response) {
     const filters = attendanceSessionFiltersSchema.parse(req.query);
-    const result = await wfmService.listSessions(filters);
+    // Owner ruling 2026-10-01: sessions are limited to the caller's own branch / assigned scope.
+    const scope = await getScope(req);
+    if (!scope) return res.status(401).json({ success: false, message: "Unauthorized" });
+    const result = await wfmService.listSessions(filters, isOrgWide(scope) ? undefined : scope);
     return res.json({ success: true, ...result });
   },
 

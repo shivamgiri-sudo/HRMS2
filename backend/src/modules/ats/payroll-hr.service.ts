@@ -65,7 +65,8 @@ export interface SalaryValidationInput {
 /**
  * Get all BGV-completed candidates pending payroll validation
  */
-export async function getPendingCandidates(): Promise<PendingCandidate[]> {
+export async function getPendingCandidates(scope?: { sql: string; params: unknown[] }): Promise<PendingCandidate[]> {
+  const scopeSql = scope && scope.sql !== '1=1' ? ` AND (${scope.sql})` : '';
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       c.id as candidate_id,
@@ -114,8 +115,9 @@ export async function getPendingCandidates(): Promise<PendingCandidate[]> {
       AND COALESCE(bgv_details.blocker_count, 0) = 0
       AND COALESCE(bgv_checks.blocker_count, 0) = 0
       AND onb.submitted_at IS NOT NULL
-      AND (phr.id IS NULL OR phr.validation_status = 'correction_requested')
+      AND (phr.id IS NULL OR phr.validation_status = 'correction_requested')${scopeSql}
     ORDER BY COALESCE(bgv.completed_at, bgv_details.completed_at, bgv_checks.verified_at, onb.submitted_at) DESC`,
+    scopeSql ? (scope!.params as any[]) : []
   );
 
   return rows as PendingCandidate[];
@@ -124,7 +126,8 @@ export async function getPendingCandidates(): Promise<PendingCandidate[]> {
 /**
  * Get candidates whose payroll HR validation has been approved/validated
  */
-export async function getValidatedCandidates(): Promise<PendingCandidate[]> {
+export async function getValidatedCandidates(scope?: { sql: string; params: unknown[] }): Promise<PendingCandidate[]> {
+  const scopeSql = scope && scope.sql !== '1=1' ? ` AND (${scope.sql})` : '';
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       c.id as candidate_id,
@@ -140,8 +143,9 @@ export async function getValidatedCandidates(): Promise<PendingCandidate[]> {
       phr.gross_salary
     FROM ats_payroll_hr_validation phr
     JOIN ats_candidate c ON c.id = phr.candidate_id
-    WHERE phr.validation_status IN ('validated', 'approved')
+    WHERE phr.validation_status IN ('validated', 'approved')${scopeSql}
     ORDER BY phr.validated_at DESC`,
+    scopeSql ? (scope!.params as any[]) : []
   );
   return rows as PendingCandidate[];
 }

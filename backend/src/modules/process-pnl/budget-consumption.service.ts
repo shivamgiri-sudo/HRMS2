@@ -151,6 +151,10 @@ export const budgetConsumptionService = {
       roundMoney(amountInput),
       netAmountInput,
     );
+    if (line.cost_centre_id) {
+      await budgetClosureService.assertCostCentreOpen(connection, String(line.budget_id), String(line.cost_centre_id));
+    }
+    const amount = consumptionBasis(line, roundMoney(amountInput), netAmountInput);
     validatePositive(amount, quantity);
     const available = availability(line);
     if (amount > available.amount + 0.01) {

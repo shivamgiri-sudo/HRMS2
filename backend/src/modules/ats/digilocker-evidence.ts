@@ -60,3 +60,19 @@ export function digilockerVerifiedCheckTypes(
 
   return types;
 }
+
+/**
+ * Document types the provider itself reports in a DigiLocker status payload
+ * (`data.documentList[].document_type`, e.g. "AADHAAR", "PAN"). This is first-hand evidence from
+ * the issuing side, unlike the downloaded file's name — which names only ONE document and so
+ * missed PAN whenever the Aadhaar PDF was the one downloaded.
+ */
+export function documentTypesFromStatusPayload(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object") return [];
+  const root = payload as Record<string, unknown>;
+  const data = (root.data && typeof root.data === "object" ? root.data : root) as Record<string, unknown>;
+  const list = Array.isArray(data.documentList) ? data.documentList : [];
+  return list
+    .map((d) => (d && typeof d === "object" ? (d as Record<string, unknown>).document_type : null))
+    .filter((t): t is string => typeof t === "string" && t.trim() !== "");
+}

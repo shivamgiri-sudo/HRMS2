@@ -18,7 +18,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const SOURCE = readFileSync(resolve(__dirname, "../wfm.routes.ts"), "utf8");
+// The helper moved to weekoff-review.service.ts (shared by the manager-review overrides and the
+// Roster Requests hub); the acknowledge route that calls it stays in wfm.routes.ts.
+const SOURCE =
+  readFileSync(resolve(__dirname, "../wfm.routes.ts"), "utf8") +
+  "\n" +
+  readFileSync(resolve(__dirname, "../weekoff-review.service.ts"), "utf8");
 
 function advanceHelper(): string {
   const start = SOURCE.indexOf(

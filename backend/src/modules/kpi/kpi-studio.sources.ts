@@ -452,7 +452,7 @@ interface QueryPlan {
   keyKind: string;
 }
 
-function buildQueryPlan(
+export function buildQueryPlan(
   source: DataSourceConfig,
   fields: readonly SourceField[],
   keys: readonly string[],
@@ -491,16 +491,21 @@ function buildQueryPlan(
     .map((part) => `\`${part}\``)
     .join(".");
 
+  // The same date handling the process-grain plan uses. With no declared format this is the bare column, exactly
+  // as before. With one (text dates, Excel serials) the column is parsed first: comparing the raw text to a
+  // YYYY-MM-DD bound compares STRINGS and returns a confident, wrong set of rows.
+  const dateExpr = dateExpression(dateColumn, (source as { date_format?: string | null }).date_format);
+
   // GROUP BY employee and day so an aggregate is per employee per day regardless of how many
   // source rows underlie it — the grain every KPI in this system is stored at.
   const sql = `
     SELECT \`${keyColumn}\` AS __employee_key,
-           DATE(\`${dateColumn}\`) AS __score_date,
+           DATE(${dateExpr}) AS __score_date,
            ${fieldSelect}
       FROM ${quotedTable}
-     WHERE \`${dateColumn}\` >= ? AND \`${dateColumn}\` < DATE_ADD(?, INTERVAL 1 DAY)
-       AND \`${keyColumn}\` IN (${keys.map(() => "?").join(",")})
-     GROUP BY \`${keyColumn}\`, DATE(\`${dateColumn}\`)
+     WHERE ${dateExpr} >= ? AND ${dateExpr} < DATE_ADD(?, INTERVAL 1 DAY)
+       AND \`${keyColumn}\` IN (${keys.map(() => '?').join(',')})
+     GROUP BY \`${keyColumn}\`, DATE(${dateExpr})
   `;
 
   return {
@@ -1676,6 +1681,11 @@ export async function commitUploadRows(options: {
   rows: ReadonlyArray<Record<string, unknown>>;
   uploadedBy?: string;
   dryRun?: boolean;
+  /**
+   * When set, only employees in these processes may be uploaded for; other rows are rejected with a reason.
+   * null/undefined = no restriction (organisation-wide caller).
+   */
+  allowedProcessIds?: ReadonlySet<string> | null;
 }): Promise<CommitUploadResult> {
   const { rows, columnMapping, employeeColumn, dateColumn } = options;
   const rejections: UploadRowOutcome[] = [];
@@ -1695,11 +1705,23 @@ export async function commitUploadRows(options: {
     .filter(Boolean);
   const codeMap = await buildEmployeeCodeMap(codes);
 
-  const mappedFields = Object.entries(columnMapping).filter(([, header]) =>
-    Boolean(header),
-  );
-  if (!mappedFields.length)
-    throw new Error("No columns are mapped to fields yet");
+  // An upload writes somebody's KPI inputs, so it is scoped like an edit: a scoped uploader may only load
+  // figures for people in their own processes.
+  const outOfScope = new Set<string>();
+  if (options.allowedProcessIds) {
+    const ids = [...new Set(codeMap.values())];
+    for (let at = 0; at < ids.length; at += 500) {
+      const chunk = ids.slice(at, at + 500);
+      const [procRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, process_id FROM employees WHERE id IN (${chunk.map(() => '?').join(',')})`, chunk);
+      for (const r of procRows as any[]) {
+        if (!r.process_id || !options.allowedProcessIds.has(String(r.process_id))) outOfScope.add(String(r.id));
+      }
+    }
+  }
+
+  const mappedFields = Object.entries(columnMapping).filter(([, header]) => Boolean(header));
+  if (!mappedFields.length) throw new Error('No columns are mapped to fields yet');
 
   rows.forEach((row, index) => {
     // +2 so the number matches what the user sees in their spreadsheet: row 1 is the header.
@@ -1719,6 +1741,10 @@ export async function commitUploadRows(options: {
         employeeCode: code,
         reason: `No employee with code ${code}`,
       });
+      return;
+    }
+    if (outOfScope.has(employeeId)) {
+      rejections.push({ rowNumber, employeeCode: code, reason: `${code} is not in a process you manage` });
       return;
     }
 

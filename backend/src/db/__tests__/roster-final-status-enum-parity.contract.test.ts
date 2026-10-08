@@ -24,7 +24,8 @@ const ROOT = resolve(__dirname, "../../..");
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
 const ENUM_MIGRATION = read("sql/1222_roster_manager_rejected_enum.sql");
-const WFM_ROUTES = read("src/modules/wfm/wfm.routes.ts");
+// The manager-review overrides' writes live in weekoff-review.service.ts; scan both files.
+const WFM_ROUTES = read("src/modules/wfm/wfm.routes.ts") + "\n" + read("src/modules/wfm/weekoff-review.service.ts");
 
 /** The enum members as declared by the newest migration that redefines the column. */
 function declaredMembers(): string[] {

@@ -26,6 +26,27 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
+import { scopePredicate } from "./branch-scope.js";
+
+/**
+ * Non-org-wide caller's visibility over the grid: direct reports (reporting line), plus whatever
+ * their own branch / assignments cover (hr / wfm no longer see every branch - owner ruling 2026-10-01).
+ * Returns null when nobody is visible (fail closed).
+ */
+async function teamVisibility(userId: string, callerEmpId: string | undefined): Promise<{ sql: string; params: unknown[] } | null> {
+  const sc = await resolveUserBusinessScope(userId);
+  const pred = scopePredicate(sc, { employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id" });
+  const ors: string[] = [];
+  const params: unknown[] = [];
+  if (callerEmpId) {
+    ors.push("(e.reporting_manager_id = ? OR e.manager_id = ? OR e.id = ?)");
+    params.push(callerEmpId, callerEmpId, callerEmpId);
+  }
+  if (pred.sql !== "1=0") { ors.push(`(${pred.sql})`); params.push(...pred.params); }
+  return ors.length ? { sql: `(${ors.join(" OR ")})`, params } : null;
+}
 import { inboxService } from "../inbox/inbox.service.js";
 import { leaveService } from "../leave/leave.service.js";
 import { leaveRequestSchema } from "../leave/leave.validation.js";
@@ -116,7 +137,7 @@ teamAttendanceMonthRouter.get(
 
     const userId = req.authUser!.id;
     const [isWide, callerEmp] = await Promise.all([
-      hasRole(userId, "admin", "hr", "wfm", "ceo", "super_admin"),
+      hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES),
       getEmployeeForUser(userId),
     ]);
 
@@ -142,18 +163,12 @@ teamAttendanceMonthRouter.get(
     const params: unknown[] = [win.start, win.end, win.end, win.start];
 
     if (!isWide) {
-      if (!callerEmp?.id) {
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message: "No employee record for this user",
-          });
+      const vis = await teamVisibility(userId, callerEmp?.id);
+      if (!vis) {
+        return res.status(403).json({ success: false, message: "No employee record for this user" });
       }
-      where.push(
-        "(e.reporting_manager_id = ? OR e.manager_id = ? OR e.id = ?)",
-      );
-      params.push(callerEmp.id, callerEmp.id, callerEmp.id);
+      where.push(vis.sql);
+      params.push(...vis.params);
     }
 
     // Optional narrowing, never widening.
@@ -425,19 +440,11 @@ teamAttendanceMonthRouter.post(
     }
 
     const userId = req.authUser!.id;
-    const isWide = await hasRole(
-      userId,
-      "admin",
-      "hr",
-      "wfm",
-      "ceo",
-      "super_admin",
-    );
+    const isWide = await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES);
     const callerEmp = await getEmployeeForUser(userId);
-    if (!isWide && !callerEmp?.id) {
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record for this user" });
+    const vis = isWide ? null : await teamVisibility(userId, callerEmp?.id);
+    if (!isWide && !vis) {
+      return res.status(403).json({ success: false, message: "No employee record for this user" });
     }
 
     // Re-check the team on the way in. The grid already scoped what a manager could
@@ -452,12 +459,8 @@ teamAttendanceMonthRouter.post(
         .json({ success: false, message: "No employees in the request" });
     }
     const ph = ids.map(() => "?").join(",");
-    const scopeSql = isWide
-      ? ""
-      : " AND (e.reporting_manager_id = ? OR e.manager_id = ? OR e.id = ?)";
-    const scopeParams = isWide
-      ? []
-      : [callerEmp!.id, callerEmp!.id, callerEmp!.id];
+    const scopeSql = isWide ? "" : ` AND ${vis!.sql}`;
+    const scopeParams = isWide ? [] : vis!.params;
 
     const [allowedRows] = await db.query<RowDataPacket[]>(
       `SELECT e.id, e.employee_code, e.auth_user_id,

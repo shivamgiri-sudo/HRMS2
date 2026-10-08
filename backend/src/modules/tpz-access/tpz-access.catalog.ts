@@ -40,15 +40,8 @@ export const TPZ_COMPANIES: TpzCompany[] = [
     },
   },
   {
-    key: "gnc",
-    label: "GNC",
-    processCodes: ["GNC"],
-    perfPrefixes: [
-      "/gnc-sale-dashboard",
-      "/gnc-chat-dashboard",
-      "/gnc-abandon-cart-dashboard",
-      "/gnc-targets",
-    ],
+    key: "gnc", label: "GNC", processCodes: ["GNC", "GUARDIAN_HC"], // GNC sale agents sit on GUARDIAN_HC (traced in prod 2026-10-02)
+    perfPrefixes: ["/gnc-sale-dashboard", "/gnc-chat-dashboard", "/gnc-abandon-cart-dashboard", "/gnc-targets"],
     inboundKeys: ["gnc"],
     uploads: {
       GNC_SALE_MASMIS: "import_gnc_sale_masmis_batch",
@@ -77,11 +70,8 @@ export const TPZ_COMPANIES: TpzCompany[] = [
     },
   },
   {
-    key: "appreciate_health",
-    label: "Appreciate Wealth",
-    processCodes: [],
-    perfPrefixes: ["/appreciate-wealth"],
-    inboundKeys: [],
+    key: "appreciate_health", label: "Appreciate Wealth", processCodes: ["APPRICIATE_WEALTH", "BSS_OB_NOIDA_923"], // sic: APPRICIATE_WEALTH (sql/199); BSS_OB_NOIDA_923 = the live Noida process row (verified in prod 2026-10-01)
+    perfPrefixes: ["/appreciate-wealth"], inboundKeys: [],
     uploads: {
       AW_BILLING_MASMIS: "import_aw_billing_batch",
       AW_INBOUND_MASMIS: "import_aw_inbound_batch",
@@ -92,11 +82,8 @@ export const TPZ_COMPANIES: TpzCompany[] = [
     },
   },
   {
-    key: "housing_owner",
-    label: "Housing Owner",
-    processCodes: ["HOUSING_OWNER"],
-    perfPrefixes: ["/housing-owner-dashboard"],
-    inboundKeys: [],
+    key: "housing_owner", label: "Housing Owner", processCodes: ["HOUSING_OWNER", "HOUSING_COM"], // HOUSING_COM holds the staff (105 active, prod 2026-10-01)
+    perfPrefixes: ["/housing-owner-dashboard"], inboundKeys: [],
     uploads: {
       OWNER_SALE_MASMIS: "import_owner_sale_batch",
       OWNER_CDR_MASMIS: "import_owner_cdr_batch",
@@ -104,11 +91,8 @@ export const TPZ_COMPANIES: TpzCompany[] = [
     },
   },
   {
-    key: "housing_premium",
-    label: "Housing Premium",
-    processCodes: ["HOUSING_PREMIUM"],
-    perfPrefixes: ["/housing-premium-dashboard"],
-    inboundKeys: [],
+    key: "housing_premium", label: "Housing Premium", processCodes: ["HOUSING_PREMIUM", "HOUSING_COM"], // HOUSING_COM holds the staff (105 active, prod 2026-10-01)
+    perfPrefixes: ["/housing-premium-dashboard"], inboundKeys: [],
     uploads: {
       PRE_SALE_MASMIS: "import_pre_sale_batch",
       PRE_CDR_MASMIS: "import_pre_cdr_batch",
@@ -139,94 +123,54 @@ export const TPZ_COMPANIES: TpzCompany[] = [
     },
   },
   {
-    key: "birlanu",
-    label: "Birlanu",
-    processCodes: ["BIRLANU"],
-    perfPrefixes: ["/birlanu-dashboard", "/birlanu-mis"],
-    inboundKeys: [],
+    key: "birlanu", label: "Birlanu", processCodes: ["BIRLANU"],
+    perfPrefixes: ["/birlanu-dashboard", "/birlanu-mis"], inboundKeys: [],
+    uploads: { BIRLANU_SALE_MASMIS: "import_birlanu_sale_batch", BIRLANU_APR_MASMIS: "import_birlanu_apr_batch" },
+  },
+  {
+    // No ALT RX row in process_master yet (searched prod 2026-10-06): org-wide roles see it; branch-scoped
+    // users are refused until HR creates the ALT_RX process and assigns its staff, per the scoping ruling.
+    key: "alt_rx", label: "ALT RX", processCodes: ["ALT_RX"],
+    perfPrefixes: ["/alt-rx"], inboundKeys: [],
+    uploads: { ALT_RX_DUMP_MASMIS: "import_alt_rx_dump_batch" },
+  },
+  {
+    key: "satya_retail", label: "Satya Retail", processCodes: ["SATYA_RETAIL", "BSS_OB_NOIDA_1045", "IDAM", "VST"], // Satya agents sit on IDAM / VST (traced in prod 2026-10-02) // SATYA_RETAIL (migration 1920, no branch); BSS_OB_NOIDA_1045 = "SATYA E-COM SERVICES LIMITED", the Noida row staff sit on
+    perfPrefixes: ["/satya-retail-dashboard", "/satya-retail-report"], inboundKeys: [],
+    uploads: { SATYA_ALLOCATION_MASMIS: "import_satya_allocation_batch", SATYA_CDR_MASMIS: "import_satya_cdr_batch" },
+  },
+  {
+    key: "lp_feedback", label: "LP Feedback", processCodes: ["ERESOLUTION", "BSS_OB_NOIDA_1005"], // Lawyer Panel runs on the Eresolution process (business-datapoints ERESOLUTION -> lawyerPanel)
+    perfPrefixes: ["/lp-feedback-dashboard"], inboundKeys: [],
+    uploads: { LP_FEEDBACK_APR_MASMIS: "import_lp_feedback_apr_batch", LP_FEEDBACK_CDR_MASMIS: "import_lp_feedback_cdr_batch" },
+  },
+  {
+    key: "lp_onboarding", label: "LP Onboarding", processCodes: ["ERESOLUTION", "BSS_OB_NOIDA_1005"],
+    perfPrefixes: ["/lp-onboarding-dashboard"], inboundKeys: [],
+    uploads: { LP_ONBOARDING_APR_MASMIS: "import_lp_onboarding_apr_batch", LP_ONBOARDING_CDR_MASMIS: "import_lp_onboarding_cdr_batch" },
+  },
+  { key: "puresta", label: "Puresta", processCodes: [], perfPrefixes: [], inboundKeys: [], uploads: {} },
+  {
+    key: "dalmia", label: "Dalmia", processCodes: ["DALMIA_CEMENT"],
+    perfPrefixes: ["/dalmia-dashboard"], inboundKeys: ["dalmia"],
     uploads: {
       BIRLANU_SALE_MASMIS: "import_birlanu_sale_batch",
       BIRLANU_APR_MASMIS: "import_birlanu_apr_batch",
     },
   },
   {
-    key: "satya_retail",
-    label: "Satya Retail",
-    processCodes: [],
-    perfPrefixes: ["/satya-retail-dashboard", "/satya-retail-report"],
-    inboundKeys: [],
+    key: "sbi_card", label: "SBI Card Collections", processCodes: ["SBI_CARD"],
+    perfPrefixes: ["/sbi-card-dashboard"], inboundKeys: [],
     uploads: {
-      SATYA_ALLOCATION_MASMIS: "import_satya_allocation_batch",
-      SATYA_CDR_MASMIS: "import_satya_cdr_batch",
+      SBI_CARD_DIALER_MIS: "import_sbi_card_dialer_mis_batch", SBI_CARD_AGENT_MIS: "import_sbi_card_agent_mis_batch",
+      SBI_CARD_ACCOUNT_FILE: "import_sbi_card_account_file_batch", SBI_CARD_DOWNTIME: "import_sbi_card_downtime_batch",
+      SBI_CARD_PEN_ESTIMATION: "import_sbi_card_pen_estimation_batch", SBI_CARD_APR: "import_sbi_card_apr_batch", SBI_CARD_OUTCOME: "import_sbi_card_outcome_batch", SBI_CARD_ROSTER: "import_sbi_card_roster_batch",
     },
   },
-  {
-    key: "lp_feedback",
-    label: "LP Feedback",
-    processCodes: [],
-    perfPrefixes: ["/lp-feedback-dashboard"],
-    inboundKeys: [],
-    uploads: {
-      LP_FEEDBACK_APR_MASMIS: "import_lp_feedback_apr_batch",
-      LP_FEEDBACK_CDR_MASMIS: "import_lp_feedback_cdr_batch",
-    },
-  },
-  {
-    key: "lp_onboarding",
-    label: "LP Onboarding",
-    processCodes: [],
-    perfPrefixes: ["/lp-onboarding-dashboard"],
-    inboundKeys: [],
-    uploads: {
-      LP_ONBOARDING_APR_MASMIS: "import_lp_onboarding_apr_batch",
-      LP_ONBOARDING_CDR_MASMIS: "import_lp_onboarding_cdr_batch",
-    },
-  },
-  {
-    key: "puresta",
-    label: "Puresta",
-    processCodes: [],
-    perfPrefixes: [],
-    inboundKeys: [],
-    uploads: {},
-  },
-  {
-    key: "dalmia",
-    label: "Dalmia",
-    processCodes: ["DALMIA_CEMENT"],
-    perfPrefixes: ["/dalmia-dashboard"],
-    inboundKeys: ["dalmia"],
-    uploads: {
-      DALMIA_DD_RAW: "import_dalmia_dd_batch",
-      DALMIA_OUTBOUND_RAW: "import_dalmia_outbound_batch",
-      DALMIA_APR: "import_dalmia_apr_batch",
-      DALMIA_AFTER_HOUR: "import_dalmia_after_hour_batch",
-    },
-  },
-  {
-    key: "dubangladesh",
-    label: "DU Bangladesh",
-    processCodes: [],
-    perfPrefixes: [],
-    inboundKeys: ["dubangladesh"],
-    uploads: {},
-  },
-  {
-    key: "viega",
-    label: "Viega",
-    processCodes: ["VIEGA"],
-    perfPrefixes: [],
-    inboundKeys: ["viega"],
-    uploads: {},
-  },
-  {
-    key: "exicom",
-    label: "Exicom",
-    processCodes: ["EXICOM"],
-    perfPrefixes: [],
-    inboundKeys: ["exicom"],
-    uploads: {},
-  },
+  // DU_DIGITAL per business-datapoints; DUBANGLADESH per migration 1952.
+  { key: "dubangladesh", label: "DU Bangladesh", processCodes: ["DU_DIGITAL", "BSS_IB_NOIDA_654", "DUBANGLADESH"], perfPrefixes: [], inboundKeys: ["dubangladesh"], uploads: {} },
+  { key: "viega", label: "Viega", processCodes: ["VIEGA"], perfPrefixes: [], inboundKeys: ["viega"], uploads: {} },
+  { key: "exicom", label: "Exicom", processCodes: ["EXICOM"], perfPrefixes: [], inboundKeys: ["exicom"], uploads: {} },
 ];
 
 export type TpzCapability = "dashboards" | "upload" | "mis";

@@ -34,25 +34,13 @@ import { joiningDocumentsTrackerRouter } from "./ats.joiningDocumentsTracker.rou
 import { getIstDateString } from "../../utils/dateUtils.js";
 import { bulkImportRouter } from "./bulk-import.routes.js";
 import { getRecruiterAnalyticsSummary } from "./recruiter-analytics.service.js";
-import {
-  canAccessCandidate,
-  resolveCandidateScope,
-} from "./candidate-access.js";
-import {
-  getAtsOverview,
-  type OverviewPeriod,
-} from "./dashboard.overview.service.js";
-import {
-  getAtsInsights,
-  getSourcingInsights,
-  getSourcingLeads,
-} from "./dashboard.insights.service.js";
+import { canAccessCandidate, resolveCandidateScope } from "./candidate-access.js";
+import { branchInScope, buildBranchNameScopeSql, pinDashboardBranch, resolveAtsBranchScope, OUT_OF_BRANCH_MESSAGE } from "./ats-branch-scope.js";
+import { getAtsOverview, limitOverviewToBranches, type OverviewPeriod } from "./dashboard.overview.service.js";
+import { getAtsInsights, getSourcingInsights, getSourcingLeads } from "./dashboard.insights.service.js";
 import { getOperations } from "./dashboard.operations.service.js";
-import {
-  getCandidateJourney,
-  getDrill,
-  listPipeline,
-} from "./dashboard.pipeline.service.js";
+import { getCandidateJourney, getDrill, listPipeline } from "./dashboard.pipeline.service.js";
+import { getCohorts, getLeakage, getReusablePool, getRecruiterNameSuspects, getStageDwell } from "./dashboard.commandcenter.service.js";
 
 export const atsRouter = Router();
 export const atsPublicRouter = Router(); // Public routes (no auth)
@@ -416,71 +404,48 @@ const dashInt = (v: unknown) =>
     ? Number(v)
     : undefined;
 
-atsRouter.get(
-  "/dashboard/overview",
-  requireRole(...DASH_AGG_ROLES),
-  h(async (req, res) => {
-    const q = req.query;
-    return res.json({
-      success: true,
-      data: await getAtsOverview(
-        dashPeriod(q.period, "30d"),
-        dashText(q.branch),
-      ),
-    });
-  }),
-);
-atsRouter.get(
-  "/dashboard/insights",
-  requireRole(...DASH_AGG_ROLES),
-  h(async (req, res) => {
-    const q = req.query;
-    return res.json({
-      success: true,
-      data: await getAtsInsights(
-        dashPeriod(q.period, "90d"),
-        dashText(q.branch) ?? "",
-      ),
-    });
-  }),
-);
-atsRouter.get(
-  "/dashboard/sourcing",
-  requireRole(...DASH_AGG_ROLES),
-  h(async (req, res) => {
-    return res.json({
-      success: true,
-      data: await getSourcingInsights(dashPeriod(req.query.period, "all")),
-    });
-  }),
-);
-atsRouter.get(
-  "/dashboard/sourcing/leads",
-  requireRole(...DASH_AGG_ROLES),
-  h(async (req, res) => {
-    const q = req.query;
-    return res.json({
-      success: true,
-      data: await getSourcingLeads({
-        notSource: dashText(q.notSource),
-        source: dashText(q.source),
-        recruiter: dashText(q.recruiter),
-        stage: dashText(q.stage, 20),
-        month: dashText(q.month, 7),
-        reason: dashText(q.reason, 200),
-        page: Number(q.page) || 1,
-        limit: Number(q.limit) || 25,
-      }),
-    });
-  }),
-);
-atsRouter.get(
-  "/dashboard/operations",
-  requireRole(...DASH_AGG_ROLES),
-  h(async (_req, res) => {
-    return res.json({ success: true, data: await getOperations() });
-  }),
-);
+// Branch scoping (owner ruling 2026-10-01): hr / manager are no longer org-wide. Org-wide roles keep the cached
+// org-wide aggregates; everyone else is pinned to ONE branch of their own (a ?branch= may only narrow to a branch
+// they hold - a foreign one is 403). Aggregates that cannot be limited to a branch (sourcing, operations) are
+// org-wide-roles-only.
+const ORG_WIDE_ONLY_MESSAGE = "Forbidden: this report is company-wide and limited to head-office roles";
+// Whether the caller sees every branch. The Command Center reads this once so it never calls an organisation-wide-only
+// endpoint (live queue, sourcing, analytics) for a branch-limited role, which would just answer 403.
+atsRouter.get("/dashboard/scope", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  const scope = await resolveAtsBranchScope(req.authUser!.id);
+  return res.json({ success: true, data: { orgWide: scope.orgWide, branches: scope.orgWide ? [] : scope.branchNames } });
+}));
+atsRouter.get("/dashboard/overview", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
+  const q = req.query;
+  const scope = await resolveAtsBranchScope(req.authUser!.id);
+  const pin = pinDashboardBranch(scope, dashText(q.branch));
+  if (!pin.ok) return res.status(403).json({ success: false, message: OUT_OF_BRANCH_MESSAGE });
+  const overview = await getAtsOverview(dashPeriod(q.period, "30d"), pin.branch);
+  // Branch-limited callers must not see other branches in the breakdown / movers (those sections come from the org-wide cube).
+  return res.json({ success: true, data: scope.orgWide ? overview : limitOverviewToBranches(overview, (name) => branchInScope(scope, name)) });
+}));
+atsRouter.get("/dashboard/insights", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
+  const q = req.query;
+  const pin = pinDashboardBranch(await resolveAtsBranchScope(req.authUser!.id), dashText(q.branch));
+  if (!pin.ok) return res.status(403).json({ success: false, message: OUT_OF_BRANCH_MESSAGE });
+  return res.json({ success: true, data: await getAtsInsights(dashPeriod(q.period, "90d"), pin.branch ?? "") });
+}));
+atsRouter.get("/dashboard/sourcing", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
+  if (!(await resolveAtsBranchScope(req.authUser!.id)).orgWide) return res.status(403).json({ success: false, message: ORG_WIDE_ONLY_MESSAGE });
+  return res.json({ success: true, data: await getSourcingInsights(dashPeriod(req.query.period, "all")) });
+}));
+atsRouter.get("/dashboard/sourcing/leads", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
+  const q = req.query;
+  const leadScope = buildBranchNameScopeSql(await resolveAtsBranchScope(req.authUser!.id), "branch_name");
+  return res.json({
+    success: true,
+    data: await getSourcingLeads({ scope: leadScope.sql === "1=1" ? undefined : leadScope, notSource: dashText(q.notSource), source: dashText(q.source), recruiter: dashText(q.recruiter), stage: dashText(q.stage, 20), month: dashText(q.month, 7), reason: dashText(q.reason, 200), page: Number(q.page) || 1, limit: Number(q.limit) || 25 }),
+  });
+}));
+atsRouter.get("/dashboard/operations", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
+  if (!(await resolveAtsBranchScope(req.authUser!.id)).orgWide) return res.status(403).json({ success: false, message: ORG_WIDE_ONLY_MESSAGE });
+  return res.json({ success: true, data: await getOperations() });
+}));
 
 const dashFilters = async (req: AuthenticatedRequest) => {
   const q = req.query;
@@ -511,96 +476,91 @@ const dashFilters = async (req: AuthenticatedRequest) => {
     scope: await resolveCandidateScope(req.authUser!.id),
   };
 };
-atsRouter.get(
-  "/dashboard/candidates",
-  requireRole(...DASH_CANDIDATE_ROLES),
-  h(async (req, res) => {
-    return res.json({
-      success: true,
-      data: await listPipeline(await dashFilters(req)),
-    });
-  }),
-);
-atsRouter.get(
-  "/dashboard/drill",
-  requireRole(...DASH_CANDIDATE_ROLES),
-  h(async (req, res) => {
-    return res.json({
-      success: true,
-      data: await getDrill(await dashFilters(req)),
-    });
-  }),
-);
-atsRouter.get(
-  "/dashboard/candidates/:id/journey",
-  requireRole(...DASH_CANDIDATE_ROLES),
-  h(async (req, res) => {
-    // 404 (not 403) when out of scope, matching assertCandidateInScope: a 403 would confirm the id exists.
-    if (!(await canAccessCandidate(req.authUser!.id, req.params.id)))
-      return res
-        .status(404)
-        .json({ success: false, message: "Candidate not found" });
-    return res.json({
-      success: true,
-      data: await getCandidateJourney(req.params.id),
-    });
-  }),
-);
+atsRouter.get("/dashboard/candidates", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  return res.json({ success: true, data: await listPipeline(await dashFilters(req)) });
+}));
+atsRouter.get("/dashboard/drill", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  return res.json({ success: true, data: await getDrill(await dashFilters(req)) });
+}));
+atsRouter.get("/dashboard/reusable-pool", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  return res.json({ success: true, data: await getReusablePool(await dashFilters(req)) });
+}));
+atsRouter.get("/dashboard/stage-dwell", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  return res.json({ success: true, data: await getStageDwell(await dashFilters(req)) });
+}));
+atsRouter.get("/dashboard/cohorts", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  return res.json({ success: true, data: await getCohorts(await dashFilters(req), req.query.weeks) });
+}));
+atsRouter.get("/dashboard/recruiter-name-suspects", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
+  if (!(await resolveAtsBranchScope(req.authUser!.id)).orgWide) return res.status(403).json({ success: false, message: ORG_WIDE_ONLY_MESSAGE });
+  return res.json({ success: true, data: await getRecruiterNameSuspects() });
+}));
+atsRouter.get("/dashboard/leakage", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  return res.json({ success: true, data: await getLeakage(await dashFilters(req)) });
+}));
+atsRouter.get("/dashboard/candidates/:id/journey", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  // 404 (not 403) when out of scope, matching assertCandidateInScope: a 403 would confirm the id exists.
+  if (!(await canAccessCandidate(req.authUser!.id, req.params.id))) return res.status(404).json({ success: false, message: "Candidate not found" });
+  return res.json({ success: true, data: await getCandidateJourney(req.params.id) });
+}));
+
+// Candidate / queue-token guards: 404 (not 403) when the candidate is outside the caller's branch scope.
+async function assertCandidateInScopeRoute(req: AuthenticatedRequest, res: Response, candidateId: string): Promise<boolean> {
+  if (await canAccessCandidate(req.authUser!.id, candidateId)) return true;
+  res.status(404).json({ success: false, message: "Candidate not found" });
+  return false;
+}
+async function assertTokenInScope(req: AuthenticatedRequest, res: Response, tokenId: string): Promise<boolean> {
+  const { db } = await import("../../db/mysql.js");
+  const [rows] = await db.execute<import("mysql2").RowDataPacket[]>("SELECT candidate_id FROM ats_queue_token WHERE id = ? LIMIT 1", [tokenId]);
+  const candidateId = (rows as import("mysql2").RowDataPacket[])[0]?.candidate_id;
+  if (!candidateId) { res.status(404).json({ success: false, message: "Queue token not found" }); return false; }
+  return assertCandidateInScopeRoute(req, res, String(candidateId));
+}
 
 // Walk-in queue â€” candidates who arrived via Walk-In channel, sorted by walk_in_date desc
-atsRouter.get(
-  "/walkin-queue",
-  requireRole("admin", "hr", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { db } = await import("../../db/mysql.js");
-    const [rows] = await db.execute(
-      `SELECT c.*, e.full_name AS assigned_to_name
+atsRouter.get("/walkin-queue",                   requireRole("admin", "hr", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { db } = await import("../../db/mysql.js");
+  const scope = await resolveCandidateScope(req.authUser!.id, "c");
+  const [rows] = await db.execute(
+    `SELECT c.*, e.full_name AS assigned_to_name
      FROM ats_candidate c
      LEFT JOIN employees e ON e.id = c.created_by
-     WHERE c.sourcing_channel = 'Walk-In' AND c.active_status = 1
+     WHERE c.sourcing_channel = 'Walk-In' AND c.active_status = 1 AND (${scope.sql})
      ORDER BY c.walk_in_date DESC, c.created_at DESC
      LIMIT 100`,
-      [],
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    scope.params as any[]
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 // Alias: waiting-queue = walkin-queue (used by NativeATSWaitingQueue page)
-atsRouter.get(
-  "/waiting-queue",
-  requireRole("admin", "hr", "recruiter", "manager"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { db } = await import("../../db/mysql.js");
-    const [rows] = await db.execute(
-      `SELECT c.* FROM ats_candidate c
-     WHERE c.current_stage IN ('New','Screening') AND c.active_status = 1
+atsRouter.get("/waiting-queue",                  requireRole("admin", "hr", "recruiter", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { db } = await import("../../db/mysql.js");
+  const scope = await resolveCandidateScope(req.authUser!.id, "c");
+  const [rows] = await db.execute(
+    `SELECT c.* FROM ats_candidate c
+     WHERE c.current_stage IN ('New','Screening') AND c.active_status = 1 AND (${scope.sql})
      ORDER BY c.walk_in_date DESC, c.created_at DESC
      LIMIT 100`,
-      [],
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    scope.params as any[]
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 // â”€â”€ Queue Token Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // POST /api/ats/queue-tokens â€” create arrival token for a candidate (HR/recruiter)
-atsRouter.post(
-  "/queue-tokens",
-  requireRole("admin", "hr", "super_admin", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { candidateId, arrivalTime } = req.body;
-    if (!candidateId || typeof candidateId !== "string") {
-      return res
-        .status(400)
-        .json({ success: false, message: "candidateId is required" });
-    }
-    const arrival = arrivalTime ?? `${getIstDateString()} 00:00:00`;
-    const data = await atsQueueService.createToken(candidateId, arrival);
-    return res.status(201).json({ success: true, data });
-  }),
-);
+atsRouter.post("/queue-tokens", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { candidateId, arrivalTime } = req.body;
+  if (!candidateId || typeof candidateId !== 'string') {
+    return res.status(400).json({ success: false, message: "candidateId is required" });
+  }
+  if (!(await assertCandidateInScopeRoute(req, res, candidateId))) return;
+  const arrival = arrivalTime ?? `${getIstDateString()} 00:00:00`;
+  const data = await atsQueueService.createToken(candidateId, arrival);
+  return res.status(201).json({ success: true, data });
+}));
 
 // GET /api/ats/queue-tokens/candidate/:candidateId â€” active token for a candidate
 atsRouter.get(
@@ -627,98 +587,60 @@ atsRouter.get(
 );
 
 // POST /api/ats/queue-tokens/:id/walk-out â€” mark candidate as walked out
-atsRouter.post(
-  "/queue-tokens/:id/walk-out",
-  requireRole("admin", "hr", "super_admin", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await atsQueueService.walkOut(req.params.id);
-    return res.json({ success: true, data });
-  }),
-);
+atsRouter.post("/queue-tokens/:id/walk-out", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await assertTokenInScope(req, res, req.params.id))) return;
+  const data = await atsQueueService.walkOut(req.params.id);
+  return res.json({ success: true, data });
+}));
 
 // POST /api/ats/queue-tokens/re-entry â€” re-entry after walk-out
-atsRouter.post(
-  "/queue-tokens/re-entry",
-  requireRole("admin", "hr", "super_admin", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { candidateId, arrivalTime } = req.body;
-    if (!candidateId || typeof candidateId !== "string") {
-      return res
-        .status(400)
-        .json({ success: false, message: "candidateId is required" });
-    }
-    const arrival = arrivalTime ?? `${getIstDateString()} 00:00:00`;
-    const data = await atsQueueService.reEntry(candidateId, arrival);
-    return res.status(201).json({ success: true, data });
-  }),
-);
+atsRouter.post("/queue-tokens/re-entry", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { candidateId, arrivalTime } = req.body;
+  if (!candidateId || typeof candidateId !== 'string') {
+    return res.status(400).json({ success: false, message: "candidateId is required" });
+  }
+  if (!(await assertCandidateInScopeRoute(req, res, candidateId))) return;
+  const arrival = arrivalTime ?? `${getIstDateString()} 00:00:00`;
+  const data = await atsQueueService.reEntry(candidateId, arrival);
+  return res.status(201).json({ success: true, data });
+}));
 
 // PATCH /api/ats/queue-tokens/:id/assign-recruiter
-atsRouter.patch(
-  "/queue-tokens/:id/assign-recruiter",
-  requireRole("admin", "hr", "super_admin", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { recruiterId } = req.body;
-    const data = await atsQueueService.assignRecruiter(
-      req.params.id,
-      recruiterId ?? null,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+atsRouter.patch("/queue-tokens/:id/assign-recruiter", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { recruiterId } = req.body;
+  if (!(await assertTokenInScope(req, res, req.params.id))) return;
+  const data = await atsQueueService.assignRecruiter(req.params.id, recruiterId ?? null);
+  return res.json({ success: true, data });
+}));
 
 // PATCH /api/ats/queue-tokens/:id/assign-interviewer
-atsRouter.patch(
-  "/queue-tokens/:id/assign-interviewer",
-  requireRole("admin", "hr", "super_admin", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { interviewerId } = req.body;
-    const data = await atsQueueService.assignInterviewer(
-      req.params.id,
-      interviewerId ?? null,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+atsRouter.patch("/queue-tokens/:id/assign-interviewer", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { interviewerId } = req.body;
+  if (!(await assertTokenInScope(req, res, req.params.id))) return;
+  const data = await atsQueueService.assignInterviewer(req.params.id, interviewerId ?? null);
+  return res.json({ success: true, data });
+}));
 
 // PATCH /api/ats/queue-tokens/:id/stage
-atsRouter.patch(
-  "/queue-tokens/:id/stage",
-  requireRole("admin", "hr", "super_admin", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { stage } = req.body;
-    if (!stage || typeof stage !== "string") {
-      return res
-        .status(400)
-        .json({ success: false, message: "stage is required" });
-    }
-    const data = await atsQueueService.updateStage(req.params.id, stage);
-    return res.json({ success: true, data });
-  }),
-);
+atsRouter.patch("/queue-tokens/:id/stage", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { stage } = req.body;
+  if (!stage || typeof stage !== 'string') {
+    return res.status(400).json({ success: false, message: "stage is required" });
+  }
+  if (!(await assertTokenInScope(req, res, req.params.id))) return;
+  const data = await atsQueueService.updateStage(req.params.id, stage);
+  return res.json({ success: true, data });
+}));
 
 // GET /api/ats/queue-tokens/active â€” full active queue with wait times and >20min alerts
-atsRouter.get(
-  "/queue-tokens/active",
-  requireRole("admin", "hr", "super_admin", "recruiter", "manager"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const scoped = await buildScopeWhereClause(
-      req.authUser!.id,
-      ["hr", "recruiter"],
-      { branchId: "c.applied_for_branch", processId: "c.applied_for_process" },
-      { allowCeoAllRead: true },
-    );
-    const data = await atsQueueService.listActiveQueue({
-      sql: scoped.sql ?? "",
-      params: scoped.params ?? [],
-    });
-    return res.json({
-      success: true,
-      data,
-      alert_count: data.filter((r) => r.over_threshold).length,
-    });
-  }),
-);
+atsRouter.get("/queue-tokens/active", requireRole("admin", "hr", "super_admin", "recruiter", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // Same candidate row-scope rule as every other ATS list (branch names/codes/ids; org-wide roles 1=1).
+  const scoped = await resolveCandidateScope(req.authUser!.id, "c");
+  const data = await atsQueueService.listActiveQueue(
+    { sql: scoped.sql ?? '', params: scoped.params ?? [] }
+  );
+  return res.json({ success: true, data, alert_count: data.filter((r) => r.over_threshold).length });
+}));
 
 // â”€â”€ Recruiter identity + scoped candidate list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

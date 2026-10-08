@@ -50,7 +50,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildPayslipEarningComponents } from "../payrollCalculate.service.js";
+import { buildPayslipEarningComponents, prorateToRupee, sumProratedComponents } from "../payrollCalculate.service.js";
 
 function sum(components: Array<{ amount: number }>): number {
   return Math.round(components.reduce((s, c) => s + c.amount, 0) * 100) / 100;
@@ -395,6 +395,26 @@ describe("the calling code resets compAmounts and passes the assignment SPECIAL 
   });
 });
 
+describe("sumProratedComponents — gross is the sum of whole-rupee earned components", () => {
+  it("MAS60236 Aug 2026: 25 of 31 days gives db_bill's Gross1 of 59,140, not 59,139.52", () => {
+    const pkg = { BASIC: 50000, HRA: 17568, BONUS: 4165, CONV: 1600 };
+    expect(prorateToRupee(50000, 25, 31)).toBe(40323);
+    expect(prorateToRupee(17568, 25, 31)).toBe(14168);
+    expect(prorateToRupee(4165, 25, 31)).toBe(3359);
+    expect(prorateToRupee(1600, 25, 31)).toBe(1290);
+    expect(sumProratedComponents(pkg, 25, 31)).toBe(59140);
+  });
+
+  it("a full month earns the package exactly", () => {
+    expect(sumProratedComponents({ BASIC: 50000, HRA: 17568, BONUS: 4165, CONV: 1600 }, 31, 31)).toBe(73333);
+  });
+
+  it("ignores unknown or non-positive components and a zero month length", () => {
+    expect(sumProratedComponents({ BASIC: 1000, NOPE: 500, HRA: 0 }, 10, 30)).toBe(333);
+    expect(prorateToRupee(1000, 10, 0)).toBe(0);
+  });
+});
+
 describe("buildPayslipEarningComponents — db_bill parity and proration", () => {
   const basic = 8000,
     hra = 4793,
@@ -417,16 +437,11 @@ describe("buildPayslipEarningComponents — db_bill parity and proration", () =>
       convAllowanceDefault: 0,
       medicalAllowanceDefault: 0,
     });
-    const r2 = (n: number) => Math.round(n * 100) / 100;
-    expect(components.find((c) => c.code === "BASIC")?.amount).toBe(
-      r2((basic * 26) / 31),
-    );
-    expect(components.find((c) => c.code === "BONUS")?.amount).toBe(
-      r2((bonus * 26) / 31),
-    );
-    expect(
-      Math.abs(sum(components) - r2((pkgGross * 26) / 31)),
-    ).toBeLessThanOrEqual(0.05);
+    // db_bill earns every component to a whole rupee: ROUND(component * EarnedDays / WorkingDays).
+    expect(components.find((c) => c.code === "BASIC")?.amount).toBe(Math.round((basic * 26) / 31));
+    expect(components.find((c) => c.code === "BONUS")?.amount).toBe(Math.round((bonus * 26) / 31));
+    expect(components.every((c) => Number.isInteger(c.amount))).toBe(true);
+    expect(Math.abs(sum(components) - (pkgGross * 26) / 31)).toBeLessThanOrEqual(2);
   });
 
   it("reproduces db_bill's Bonus1 at a .5 rounding boundary", () => {
@@ -447,7 +462,7 @@ describe("buildPayslipEarningComponents — db_bill parity and proration", () =>
       convAllowanceDefault: 0,
       medicalAllowanceDefault: 0,
     });
-    expect(components.find((c) => c.code === "BONUS")?.amount).toBe(365.5);
+    expect(components.find((c) => c.code === "BONUS")?.amount).toBe(366);
   });
 
   it("falls back to the precomputed ratio when no pair is supplied", () => {

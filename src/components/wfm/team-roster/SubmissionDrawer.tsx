@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { useSubmissionAction, useSubmissionDetail, type SubmissionAction, type SubmissionDetail } from "@/hooks/useTeamRoster";
+import SubmissionCoverage, { type CellEdit } from "./SubmissionCoverage";
+import { useEditSubmissionLine, useSubmissionAction, useSubmissionDetail, type SubmissionAction, type SubmissionDetail } from "@/hooks/useTeamRoster";
 import { AUDIT_ACTION_LABEL, LINE_STATUS_META, STATUS_META, formatDmy, formatDmyTime, unpackError } from "./teamRosterFormat";
 
 const MIN_REMARKS = 8;
@@ -48,8 +49,9 @@ const STEP_ICON: Record<StepState, React.ReactNode> = {
   waiting: <Circle className="h-4 w-4 text-slate-300" aria-hidden />,
 };
 
-export function DrawerBody({ detail, busy, onAction }: {
+export function DrawerBody({ detail, busy, onAction, onEditCell }: {
   detail: SubmissionDetail; busy: boolean; onAction: (action: SubmissionAction, remarks?: string) => void;
+  onEditCell?: (edit: CellEdit) => Promise<unknown>;
 }) {
   const [remarks, setRemarks] = useState("");
   const { submission: s, permissions: p, lines, summary, timeline } = detail;
@@ -81,6 +83,10 @@ export function DrawerBody({ detail, busy, onAction }: {
           ))}
         </ol>
       </section>
+
+      {detail.coverage && (
+        <SubmissionCoverage coverage={detail.coverage} canEdit={canDecide && !!onEditCell} busy={busy} onEdit={onEditCell ?? (async () => undefined)} />
+      )}
 
       <section>
         <SectionLabel>Warnings for approvers</SectionLabel>
@@ -171,6 +177,7 @@ interface Props { id: number | null; onClose: () => void; onCopiedToDraft?: () =
 export default function SubmissionDrawer({ id, onClose, onCopiedToDraft }: Props) {
   const detail = useSubmissionDetail(id);
   const action = useSubmissionAction();
+  const edit = useEditSubmissionLine();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { action.reset(); }, [id]);
   const d = detail.data;
@@ -186,9 +193,17 @@ export default function SubmissionDrawer({ id, onClose, onCopiedToDraft }: Props
     });
   };
 
+  const editCell = (e: CellEdit) => {
+    if (id === null) return Promise.resolve();
+    return edit.mutateAsync({ id, ...e }).then(
+      (r) => { toast.success(r.removed ? "Change removed." : "Cell updated."); },
+      (err) => { toast.error(unpackError(err).message); },
+    );
+  };
+
   return (
     <Sheet open={id !== null} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="right" className="flex w-full max-w-2xl flex-col p-0 sm:max-w-2xl">
+      <SheetContent side="right" className="flex w-full flex-col p-0 sm:w-[65vw] sm:max-w-[65vw] min-[1800px]:max-w-[1400px]">
         <SheetHeader className="border-b px-5 pb-3 pt-5">
           <div className="flex items-center gap-2">
             <SheetTitle className="text-base">{d ? d.submission.submissionNo ?? `Submission ${d.submission.id}` : "Submission"}</SheetTitle>
@@ -199,7 +214,7 @@ export default function SubmissionDrawer({ id, onClose, onCopiedToDraft }: Props
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {detail.isLoading && <div className="py-8 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-400" aria-label="Loading" /></div>}
           {detail.isError && <p className="text-sm text-red-600">Could not load this submission.</p>}
-          {d && <DrawerBody detail={d} busy={action.isPending} onAction={run} />}
+          {d && <DrawerBody detail={d} busy={action.isPending || edit.isPending} onAction={run} onEditCell={editCell} />}
         </div>
       </SheetContent>
     </Sheet>

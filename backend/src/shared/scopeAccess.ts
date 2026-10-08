@@ -42,6 +42,63 @@ export interface ScopeAliases {
   employeeId?: string;
 }
 
+// Roles whose scope_type='all' grant is honoured. Every other role is branch-scoped by default:
+// an 'all' row is downgraded to the user's own employees.branch_id.
+//
+// Owner ruling 2026-10-01: hr, payroll_hr, managers (reporting managers) and branch roles are
+// BRANCH-scoped; finance, payroll_head, finance_head and accounts_head are ALL-branch.
+// Owner ruling 2026-10-01 (later): `admin` is branch-scoped too - only super_admin / ceo / coo / cfo
+// and the finance roles below are org-wide. An admin sees their own employees.branch_id (fails closed
+// with no branch); `allowAdminBypass` now means "admin takes part, limited to own branch".
+//
+// Owner ruling 2026-10-01 (latest): HEADS OF ANY DEPARTMENT see all branches. That is the department
+// head roles below plus the synthetic role `department_head`, which the role lookup adds for anyone
+// named as the head of an ACTIVE department (department_master.dept_head_employee_id).
+// `branch_head` is a branch role, not a department head, and stays branch-scoped.
+export const DEPARTMENT_HEAD_ROLES = [
+  "department_head",
+  "hr_head", "it_head", "tq_head", "qa_head", "operations_head", "security_head", "recruitment_head",
+  "compliance_head", "wfm_head", "training_head", "sales_head", "admin_head",
+];
+
+export const ORG_WIDE_EXEMPT_ROLES = [
+  "super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance",
+  ...DEPARTMENT_HEAD_ROLES,
+];
+
+/**
+ * user_roles rows PLUS the synthetic `department_head` role. One statement (UNION), so the number of
+ * queries a scope check makes does not change.
+ */
+export const USER_ROLES_WITH_DEPARTMENT_HEAD_SQL = `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1
+     UNION
+     SELECT 'department_head' AS role_key
+       FROM department_master d
+       JOIN employees de ON de.id = d.dept_head_employee_id
+      WHERE de.user_id = ? AND de.active_status = 1 AND d.active_status = 1`;
+
+/**
+ * True for super_admin and the org-wide exempt roles; false for everyone else, admin included.
+ * Use this - not hasAnyRole(..., "admin") - when a data check means "may see every branch".
+ */
+export async function isOrgWideUser(userId: string): Promise<boolean> {
+  if (await hasAnyRole(userId, "super_admin")) return true;
+  return holdsOrgWideExemptRole(userId);
+}
+
+async function holdsOrgWideExemptRole(userId: string): Promise<boolean> {
+  const roles = await getUserRoleKeys(userId);
+  return roles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r));
+}
+
+async function ownBranchId(userId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  );
+  return ((rows as RowDataPacket[])[0]?.branch_id as string) ?? null;
+}
+
 export async function getUserRoleKeys(userId: string): Promise<string[]> {
   // buildScopeWhereClause / hasScopedAccess call hasAnyRole up to 4x per request, each of which
   // re-read the same user_roles rows. Memoised for ONE request only (see requestContext.ts:
@@ -54,10 +111,7 @@ export async function getUserRoleKeys(userId: string): Promise<string[]> {
 }
 
 async function fetchUserRoleKeys(userId: string): Promise<string[]> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
-    [userId],
-  );
+  const [rows] = await db.execute<RowDataPacket[]>(USER_ROLES_WITH_DEPARTMENT_HEAD_SQL, [userId, userId]);
   const dbRoles = (rows as RowDataPacket[]).map((r: any) => String(r.role_key));
 
   // Demo/mock-token ids (DEMO_TOKEN_MAP in demoAuth.ts) have no user_roles row, so every
@@ -116,6 +170,18 @@ export async function getUserAssignmentScopes(
  * - Admin can bypass scope only when allowAdminBypass=true.
  * - CEO can be allowed read-only by passing ceo in allowedRoles and assigning scope_type=all.
  */
+/**
+ * Own-branch clamp (owner ruling 2026-10-01): beyond the org-wide roles, a user only ever sees data of
+ * the branch on their own employees record. Assignment rows (branch / process / team / lob ...) can
+ * narrow further but never reach into another branch. Org-wide exempt roles (and super_admin) are
+ * untouched. A user with no branch on their employee record (e.g. an account not linked to an employee)
+ * has nothing to clamp to, so their explicit assignment rows decide, as before.
+ */
+async function isBranchClamped(userId: string): Promise<boolean> {
+  if (await hasAnyRole(userId, "super_admin")) return false;
+  return !(await holdsOrgWideExemptRole(userId));
+}
+
 export async function hasScopedAccess(
   userId: string,
   allowedRoles: string[],
@@ -125,13 +191,30 @@ export async function hasScopedAccess(
     requireScopeForNonAdmin?: boolean;
   } = {},
 ): Promise<boolean> {
+  if (!(await hasScopedAccessUnclamped(userId, allowedRoles, target, options))) return false;
+  if (!target.branchId || !(await isBranchClamped(userId))) return true;
+  const own = await ownBranchId(userId);
+  return !own || own === target.branchId;
+}
+
+async function hasScopedAccessUnclamped(
+  userId: string,
+  allowedRoles: string[],
+  target: ScopeTarget,
+  options: { allowAdminBypass?: boolean; requireScopeForNonAdmin?: boolean } = {}
+): Promise<boolean> {
   const allowAdminBypass = options.allowAdminBypass ?? false;
   const requireScopeForNonAdmin = options.requireScopeForNonAdmin ?? true;
 
   // super_admin bypasses all scope checks unconditionally
   if (await hasAnyRole(userId, "super_admin")) return true;
-  if (allowAdminBypass && (await hasAnyRole(userId, "admin"))) return true;
+  if (allowAdminBypass && !(await holdsOrgWideExemptRole(userId)) && await hasAnyRole(userId, "admin")) {
+    return Boolean(target.branchId) && (await ownBranchId(userId)) === target.branchId;
+  }
   if (!(await hasAnyRole(userId, ...allowedRoles))) return false;
+
+  // All-branch roles incl. heads of any department: by role, not by an assignment row (see buildScopeWhereClause).
+  if (await holdsOrgWideExemptRole(userId)) return true;
 
   const scopes = await getUserAssignmentScopes(userId, allowedRoles);
 
@@ -139,8 +222,14 @@ export async function hasScopedAccess(
     return !requireScopeForNonAdmin;
   }
 
+  const orgWideOk = await holdsOrgWideExemptRole(userId);
   for (const scope of scopes) {
-    if (scope.scope_type === "all") return true;
+    if (scope.scope_type === "all") {
+      if (orgWideOk || ORG_WIDE_EXEMPT_ROLES.includes(scope.role_key)) return true;
+      if (!target.branchId) continue;
+      if ((await ownBranchId(userId)) === target.branchId) return true;
+      continue;
+    }
 
     if (
       scope.scope_type === "branch" &&
@@ -253,6 +342,7 @@ export async function hasOrgWideScope(
   if (await hasAnyRole(userId, "super_admin")) return true;
   if (!(await hasAnyRole(userId, ...allowedRoles))) return false;
   const scopes = await getUserAssignmentScopes(userId, allowedRoles);
+  if (!(await holdsOrgWideExemptRole(userId))) return false;
   return scopes.some((s) => s.scope_type === "all");
 }
 
@@ -271,18 +361,56 @@ export async function buildScopeWhereClause(
   userId: string,
   allowedRoles: string[],
   aliases: ScopeAliases,
-  options: { allowAdminBypass?: boolean; allowCeoAllRead?: boolean } = {},
+  options: {
+    allowAdminBypass?: boolean;
+    allowCeoAllRead?: boolean;
+    /**
+     * Role keys for which scope_type='all' is NOT honoured — the user is forced to their
+     * explicitly assigned branch(es) instead.  If no branch assignment exists either, falls
+     * back to the user's own employees.branch_id so the scope never silently becomes 1=0.
+     * super_admin / admin (with allowAdminBypass) / ceo (with allowCeoAllRead) bypass before
+     * reaching this logic and are unaffected.
+     */
+    blockOrgWideForRoles?: string[];
+  } = {}
+): Promise<{ sql: string; params: unknown[] }> {
+  const base = await buildScopeWhereClauseUnclamped(userId, allowedRoles, aliases, options);
+  if (!aliases.branchId || base.sql === "1=0" || !(await isBranchClamped(userId))) return base;
+  const own = await ownBranchId(userId);
+  if (!own) return base;
+  const inner = base.sql === "1=1" ? "" : `(${base.sql}) AND `;
+  return { sql: `${inner}${aliases.branchId} = ?`, params: [...base.params, own] };
+}
+
+async function buildScopeWhereClauseUnclamped(
+  userId: string,
+  allowedRoles: string[],
+  aliases: ScopeAliases,
+  options: {
+    allowAdminBypass?: boolean;
+    allowCeoAllRead?: boolean;
+    /**
+     * Role keys for which scope_type='all' is NOT honoured — the user is forced to their
+     * explicitly assigned branch(es) instead.  If no branch assignment exists either, falls
+     * back to the user's own employees.branch_id so the scope never silently becomes 1=0.
+     * super_admin / admin (with allowAdminBypass) / ceo (with allowCeoAllRead) bypass before
+     * reaching this logic and are unaffected.
+     */
+    blockOrgWideForRoles?: string[];
+  } = {}
 ): Promise<{ sql: string; params: unknown[] }> {
   const allowAdminBypass = options.allowAdminBypass ?? false;
   const allowCeoAllRead = options.allowCeoAllRead ?? false;
+  const blockOrgWideForRoles = options.blockOrgWideForRoles ?? [];
 
   // super_admin always sees everything
   if (await hasAnyRole(userId, "super_admin")) {
     return { sql: "1=1", params: [] };
   }
 
-  if (allowAdminBypass && (await hasAnyRole(userId, "admin"))) {
-    return { sql: "1=1", params: [] };
+  if (allowAdminBypass && !(await holdsOrgWideExemptRole(userId)) && await hasAnyRole(userId, "admin")) {
+    const branchId = aliases.branchId ? await ownBranchId(userId) : null;
+    return branchId && aliases.branchId ? { sql: `${aliases.branchId} = ?`, params: [branchId] } : { sql: "1=0", params: [] };
   }
 
   if (allowCeoAllRead && (await hasAnyRole(userId, "ceo"))) {
@@ -293,6 +421,15 @@ export async function buildScopeWhereClause(
     return { sql: "1=0", params: [] };
   }
 
+  // All-branch roles (finance, payroll_head ..., and HEADS OF ANY DEPARTMENT) are all-branch by ROLE, not by
+  // an assignment row: a department head who is only NAMED in department_master has no user_assignment_scope
+  // row at all, which used to mean "no scope -> sees nothing". The route's own role gate still decides who
+  // may call; this only decides how much of the branch data they then see.
+  if (await holdsOrgWideExemptRole(userId)) {
+    const held = await getUserRoleKeys(userId);
+    if (!blockOrgWideForRoles.some((r) => held.includes(r))) return { sql: "1=1", params: [] };
+  }
+
   const scopes = await getUserAssignmentScopes(userId, allowedRoles);
   if (scopes.length === 0) {
     return { sql: "1=0", params: [] };
@@ -300,9 +437,16 @@ export async function buildScopeWhereClause(
 
   const ors: string[] = [];
   const params: unknown[] = [];
+  const orgWideOk = await holdsOrgWideExemptRole(userId);
+  let downgradedAll = false;
 
   for (const s of scopes) {
     if (s.scope_type === "all") {
+      // Branch scoping is the default: only exempt roles keep org-wide access.
+      if (!orgWideOk || blockOrgWideForRoles.includes(s.role_key)) {
+        downgradedAll = true;
+        continue;
+      }
       ors.push("1=1");
       continue;
     }
@@ -373,6 +517,15 @@ export async function buildScopeWhereClause(
   }
 
   if (ors.length === 0) {
+    // If blockOrgWideForRoles stripped every scope_type='all' entry and the user has no
+    // explicit branch/process assignments, fall back to their own employee record's branch_id
+    // so they can still see their own branch rather than nothing.
+    if (downgradedAll && aliases.branchId) {
+      const branchId = await ownBranchId(userId);
+      if (branchId) {
+        return { sql: `${aliases.branchId} = ?`, params: [branchId] };
+      }
+    }
     return { sql: "1=0", params: [] };
   }
 

@@ -435,11 +435,11 @@ async function getAttendanceOverrides(
        lhm.holiday_name AS override_note
      FROM leave_holiday_master lhm
      JOIN employees e ON e.id IN (${ph})
-       AND (lhm.branch_id IS NULL OR lhm.branch_id = e.branch_id)
      WHERE lhm.holiday_date BETWEEN ? AND ?
        AND lhm.active_status = 1
        AND (
-         NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
+         (NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
+           AND (lhm.branch_id IS NULL OR lhm.branch_id = e.branch_id))
          OR EXISTS (
            SELECT 1 FROM holiday_cost_centre_mapping hccm
            WHERE hccm.holiday_id = lhm.id AND hccm.cost_centre_id = e.cost_centre_id

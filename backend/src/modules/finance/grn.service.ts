@@ -1,3 +1,5 @@
+import { assertBranchSplitAllowed } from "./grn-branch-split.js";
+import { grnBranchVisibility } from "./grn-branch-split.js";
 import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -18,6 +20,8 @@ import { budgetConsumptionService } from "../process-pnl/budget-consumption.serv
 import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { resolveAccountingPeriod } from "./grn-number-monthly.service.js";
 import { grnSmartService } from "./grn-smart.service.js";
+import { assertNoPaidTwinForGrn } from "./grn-duplicate-guard.js";
+import { captureVendorGstin } from "./vendor-gstin-capture.js";
 import { resolveGrnNumberOnSubmit } from "./grn-number-on-submit.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import { applyImprestNoGst, IMPREST_TAX_PROFILE } from "./grn-imprest-tax.js";
@@ -96,6 +100,13 @@ export interface CreateGrnPayload {
    * cost-centre split before the GRN can be approved (grnSmartService.linkUnbudgetedBudgetLines).
    */
   isUnbudgeted?: boolean;
+  /**
+   * Head Office GRN that will be split across branches (grn-branch-split.ts). Raised with a
+   * head/sub-head only: no Head Office cost centre and no Head Office budget is involved, because
+   * each branch share is funded from that branch's OWN budget when the split is saved.
+   * Finance Head / super admin at Head Office only; refused otherwise.
+   */
+  branchSplit?: boolean;
   /** Expense head — read from the budget line for a budgeted GRN, supplied here when unbudgeted. */
   head?: string;
   /** Expense sub-head — same rule as head. */
@@ -121,6 +132,8 @@ export interface CreateGrnPayload {
 
 export interface SubmitGrnPayload {
   remarks?: string;
+  /** Finance head / super admin only: confirms this is a different bill from an already-paid look-alike. */
+  allowPossibleDuplicate?: boolean;
 }
 
 export interface ReviewGrnPayload {
@@ -296,7 +309,10 @@ async function createUnbudgetedDraft(
     throw new Error("An expense head is required for an unbudgeted GRN");
   if (!subHead)
     throw new Error("An expense sub-head is required for an unbudgeted GRN");
-  if (!payload.costCentreId) {
+  // A Head Office GRN to be split across branches carries NO cost centre of its own: each branch
+  // share lands on that branch's Back Office cost centre when the split is saved.
+  const branchSplit = Boolean(payload.branchSplit);
+  if (!payload.costCentreId && !branchSplit) {
     throw new Error("A cost centre is required for an unbudgeted GRN");
   }
 
@@ -304,17 +320,20 @@ async function createUnbudgetedDraft(
   // so it gets the same scrutiny getLineForGrn() applies to a line: it must exist, be active, and
   // belong to the branch the GRN is being raised for. Without this an unbudgeted GRN would be the
   // one create path able to attribute spend to another branch's cost centre.
-  const [costCentreRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, cost_centre_name, branch_id, process_id
-       FROM cost_centre_master
-      WHERE id = ? AND active_status = 1
-      LIMIT 1`,
-    [payload.costCentreId],
-  );
-  const costCentre = costCentreRows[0] as any;
-  if (!costCentre) throw new Error("Cost centre not found or inactive");
-  if (String(costCentre.branch_id) !== String(payload.branchId)) {
-    throw new Error("Cost centre does not belong to this branch");
+  let costCentre: any = { process_id: null, cost_centre_name: null };
+  if (payload.costCentreId) {
+    const [costCentreRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, cost_centre_name, branch_id, process_id
+         FROM cost_centre_master
+        WHERE id = ? AND active_status = 1
+        LIMIT 1`,
+      [payload.costCentreId],
+    );
+    costCentre = costCentreRows[0] as any;
+    if (!costCentre) throw new Error("Cost centre not found or inactive");
+    if (String(costCentre.branch_id) !== String(payload.branchId)) {
+      throw new Error("Cost centre does not belong to this branch");
+    }
   }
 
   const accountingPeriod = resolveAccountingPeriod({
@@ -344,19 +363,23 @@ async function createUnbudgetedDraft(
    * which does it per row. What is checked here is existence, which is knowable now and saves the
    * raiser filling in an invoice against a head nobody in the branch has budget for.
    */
-  const coverage = await getHeadSubHeadCoverage(
-    String(payload.branchId),
-    accountingPeriod,
-    head,
-    subHead,
-  );
-  assertCoverageExists(coverage, accountingPeriod, head, subHead);
-  await budgetClosureService.assertSubheadOpen(
-    db,
-    String(coverage.budgetId),
-    head,
-    subHead,
-  );
+  // Skipped for a branch split: the paying branch (Head Office) is not funding it, so its budget is
+  // irrelevant here. Every receiving branch's own budget is checked, by name, when the split is saved.
+  if (!branchSplit) {
+    const coverage = await getHeadSubHeadCoverage(
+      String(payload.branchId),
+      accountingPeriod,
+      head,
+      subHead,
+    );
+    assertCoverageExists(coverage, accountingPeriod, head, subHead);
+    await budgetClosureService.assertSubheadOpen(
+      db,
+      String(coverage.budgetId),
+      head,
+      subHead,
+    );
+  }
 
   // Derived from the booking month rather than the budget line's period_code, which is the same
   // value in every budgeted case — getLineForGrn()'s period_code must already equal the bill month
@@ -404,7 +427,7 @@ async function createUnbudgetedDraft(
       // client, unlike finance_budget_line.process_id, which is almost never populated (see
       // the budgeted twin below).
       costCentre.process_id ?? null,
-      payload.costCentreId,
+      payload.costCentreId ?? null,
       vendor.vendorId,
       vendor.vendorName,
       head,
@@ -414,7 +437,7 @@ async function createUnbudgetedDraft(
       accountingPeriod,
       paymentTermsDays,
       dueDate,
-      `${head} - ${subHead} (unbudgeted)`,
+      branchSplit ? `${head} - ${subHead} (Head Office bill split across branches)` : `${head} - ${subHead} (unbudgeted)`,
       payload.remarks?.trim() || null,
       financialYear,
       actorUserId,
@@ -436,6 +459,7 @@ async function createUnbudgetedDraft(
       budgetLineId: null,
       accountingPeriod,
       unbudgeted: true,
+      branchSplit: branchSplit || undefined,
     },
   });
   await writeGrnAudit("CREATE_DRAFT_UNBUDGETED", id, actorUserId, actorRole, {
@@ -443,8 +467,9 @@ async function createUnbudgetedDraft(
     is_unbudgeted: true,
     head,
     sub_head: subHead,
-    cost_centre_id: payload.costCentreId,
+    cost_centre_id: payload.costCentreId ?? null,
     cost_centre_name: costCentre.cost_centre_name ?? null,
+    branch_split: branchSplit || undefined,
     accounting_period: accountingPeriod,
     financial_year: financialYear,
   });
@@ -456,12 +481,19 @@ export const grnService = {
     payload: CreateGrnPayload,
     actorUserId: string,
     actorRole: string,
+    actorRoles: string[] = [],
   ) {
     // P0-2: a type with no accounting lifecycle in application code cannot be raised. Covers
     // `salary` as well as `provision` — see grn-type-support.ts.
     assertGrnTypeSupported(payload.grnType, "Creation");
     if (!payload.branchId) throw new Error("Branch is required");
-    const isUnbudgeted = Boolean(payload.isUnbudgeted);
+    if (payload.branchSplit) {
+      // Who may raise it, and that it is a Head Office vendor GRN, is decided in one place.
+      await assertBranchSplitAllowed({
+        grnBranchId: payload.branchId, grnType: payload.grnType, actorRole, actorRoles,
+      });
+    }
+    const isUnbudgeted = Boolean(payload.isUnbudgeted) || Boolean(payload.branchSplit);
     if (!isUnbudgeted && !payload.budgetLineId) {
       throw new Error("An approved budget line is required");
     }
@@ -790,6 +822,23 @@ export const grnService = {
       throw new Error(
         "Invoice / supporting attachment is required before submission",
       );
+    }
+    // The same bill must not enter approval (and the budget) again once it has been paid under
+    // another GRN - the legacy-import copy has no invoice number, so only this check sees it.
+    await assertNoPaidTwinForGrn(
+      db,
+      grnId,
+      `GRN ${grn.grn_number ?? grn.invoice_number ?? grnId}`,
+      { allow: payload?.allowPossibleDuplicate === true, actorRole },
+    );
+    // A valid GSTIN typed on this GRN is remembered on a vendor that has none, so the next GRN fills it in.
+    try {
+      await captureVendorGstin(db, {
+        vendorId: grn.vendor_id ? String(grn.vendor_id) : null,
+        grnGstin: grn.vendor_gstin ? String(grn.vendor_gstin) : null,
+      });
+    } catch (error) {
+      console.error("[grn] could not save the GSTIN to the vendor", grnId, error);
     }
 
     // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not at
@@ -2004,7 +2053,8 @@ export const grnService = {
       );
     }
     if (filters.branchScope) {
-      const filter = financeBranchFilter(filters.branchScope, "g.branch_id");
+      // Own branch's GRNs plus Head Office GRNs holding a share on it (grn-branch-split.ts).
+      const filter = grnBranchVisibility(filters.branchScope, "g");
       if (filter.sql !== "1=1") {
         conditions.push(filter.sql);
         params.push(...filter.params);
@@ -2040,16 +2090,20 @@ export const grnService = {
       params.push(filters.costClass);
     }
     if (filters.status) {
-      conditions.push("g.status = ?");
-      params.push(filters.status);
+      // One status, or a comma-separated set (an approval queue asks for every pending stage at
+      // once, so it can page on the server instead of filtering one page of everything).
+      const statuses = [...new Set(filters.status.split(",").map((v) => v.trim()).filter(Boolean))];
+      conditions.push(`g.status IN (${statuses.map(() => "?").join(", ")})`);
+      params.push(...statuses);
       // Migrated GRNs (bill_source_id IS NOT NULL) were fully approved in DB_Bill before
       // being imported into HRMS. They must never appear in HRMS approval queue views.
       const APPROVAL_QUEUE_STATUSES = new Set([
         "submitted",
         "branch_head_approved",
         "accounts_head_approved",
+        "returned_to_branch_head",
       ]);
-      if (APPROVAL_QUEUE_STATUSES.has(filters.status)) {
+      if (statuses.some((status) => APPROVAL_QUEUE_STATUSES.has(status))) {
         conditions.push("g.bill_source_id IS NULL");
       }
     }
@@ -2634,11 +2688,13 @@ export const grnService = {
 
       // Release from either pre-Finance-Head status — both are still holding a reservation;
       // only Finance Head's own approve() converts it into consumed.
-      if (
-        (from === "branch_head_approved" ||
-          from === "accounts_head_approved") &&
-        grn.budget_line_id
-      ) {
+      // A Smart GRN's reservation sits on its allocation rows (possibly spread over several
+      // lines), not on grn_request.budget_line_id, which is only its first split's line. Releasing
+      // the GRN total there drained other GRNs' reservations and left the other lines reserved.
+      const holdsReservation = from === "branch_head_approved" || from === "accounts_head_approved";
+      if (holdsReservation && (await grnSmartService.hasAllocations(grnId))) {
+        await grnSmartService.releaseReservations(connection, grnId);
+      } else if (holdsReservation && grn.budget_line_id) {
         await budgetConsumptionService.release(
           connection,
           String(grn.budget_line_id),
@@ -2765,7 +2821,8 @@ export const grnService = {
     ];
     const params: unknown[] = [];
     if (filters.branchScope) {
-      const filter = financeBranchFilter(filters.branchScope, "g.branch_id");
+      // Own branch's GRNs plus Head Office GRNs holding a share on it (grn-branch-split.ts).
+      const filter = grnBranchVisibility(filters.branchScope, "g");
       if (filter.sql !== "1=1") {
         conditions.push(filter.sql);
         params.push(...filter.params);

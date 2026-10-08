@@ -30,6 +30,12 @@ async function runNightlyRecalcInternal(): Promise<void> {
   const [runs] = await db.execute<RowDataPacket[]>(
     `SELECT id, run_month, status FROM salary_prep_run
       WHERE run_month = ? AND status IN ('draft', 'processing')
+        -- A successful calculation clears finance/CEO sign-off and validation. A run that already
+        -- carries any of them is waiting on the Approve/Lock steps, so recalculating it here would
+        -- silently wipe those signatures every night.
+        AND finance_approved_at IS NULL
+        AND ceo_acknowledged_at IS NULL
+        AND COALESCE(validation_status, 'pending') <> 'validated'
       ORDER BY created_at ASC`,
     [runMonth],
   );

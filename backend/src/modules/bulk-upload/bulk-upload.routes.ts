@@ -22,6 +22,8 @@ import {
   assertEmployeeLobUploader,
 } from "./bulk-dispatch.js";
 import { ONFIDO_REPORT_CONFIGS } from "./onfido-report-configs.js";
+import { requireBatchVisible } from "./bulk-batch-visibility.js";
+import { snapshotRouter } from "./snapshot.routes.js";
 import {
   HUB_ROLES,
   denyLobOnly,
@@ -140,84 +142,31 @@ router.get(
  * their own branch/process, not the whole company's.
  */
 const PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES = [
-  "AW_BILLING_MASMIS",
-  "AW_INBOUND_MASMIS",
-  "AW_MANDATE_MASMIS",
-  "AW_NEW_CDR_MASMIS",
-  "AW_OUT_MASMIS",
-  "AW_CHAT_MASMIS",
-  "BB_APR_MASMIS",
-  "BB_CART_MASMIS",
-  "BB_CHAT_MASMIS",
-  "BB_SALE_MASMIS",
-  "BIRLANU_APR_MASMIS",
-  "BIRLANU_SALE_MASMIS",
-  "CL_APR_MASMIS",
-  "CL_CHAT_MASMIS",
-  "CL_DISPO_MASMIS",
-  "CL_EMAIL_RAW_MASMIS",
-  "CL_FEEDBACK_MASMIS",
-  "CL_IB_CDR_MASMIS",
-  "CL_OUTBOUND_MASMIS",
-  "CL_QUALITY_MASMIS",
-  "CL_RECHURN_CALL_MASMIS",
-  "GNC_ALLOCATION_MASMIS",
-  "GNC_APR",
-  "GNC_CHAT_MASMIS",
-  "GNC_SALE_MASMIS",
-  "LP_FEEDBACK_APR_MASMIS",
-  "LP_FEEDBACK_CDR_MASMIS",
-  "LP_ONBOARDING_APR_MASMIS",
-  "LP_ONBOARDING_CDR_MASMIS",
-  "NEEMANS_AGENT_DETAILS_MASMIS",
-  "NEEMANS_ALLOCATION_MASMIS",
-  "NEEMANS_APR_MASMIS",
-  "NEEMANS_CHAT_MASMIS",
-  "NEEMANS_MONTH_TARGET_MASMIS",
-  "NEEMANS_SALE_RAW_MASMIS",
-  "OWNER_AGENT_DETAILS_MASMIS",
-  "OWNER_CDR_MASMIS",
-  "OWNER_SALE_MASMIS",
-  "PRE_AGENT_DETAILS_MASMIS",
-  "PRE_CDR_MASMIS",
-  "PRE_SALE_MASMIS",
-  "SATYA_ALLOCATION_MASMIS",
-  "SATYA_CDR_MASMIS",
-  "DALMIA_DD_RAW",
-  "DALMIA_OUTBOUND_RAW",
-  "DALMIA_APR",
-  "DALMIA_AFTER_HOUR",
+  "ALT_RX_DUMP_MASMIS",
+  "AW_BILLING_MASMIS", "AW_INBOUND_MASMIS", "AW_MANDATE_MASMIS", "AW_NEW_CDR_MASMIS", "AW_OUT_MASMIS", "AW_CHAT_MASMIS",
+  "BB_APR_MASMIS", "BB_CART_MASMIS", "BB_CHAT_MASMIS", "BB_SALE_MASMIS",
+  "BIRLANU_APR_MASMIS", "BIRLANU_SALE_MASMIS",
+  "CL_APR_MASMIS", "CL_CHAT_MASMIS", "CL_DISPO_MASMIS", "CL_EMAIL_RAW_MASMIS", "CL_FEEDBACK_MASMIS",
+  "CL_IB_CDR_MASMIS", "CL_OUTBOUND_MASMIS", "CL_QUALITY_MASMIS", "CL_RECHURN_CALL_MASMIS",
+  "GNC_ALLOCATION_MASMIS", "GNC_APR", "GNC_CHAT_MASMIS", "GNC_SALE_MASMIS",
+  "LP_FEEDBACK_APR_MASMIS", "LP_FEEDBACK_CDR_MASMIS", "LP_ONBOARDING_APR_MASMIS", "LP_ONBOARDING_CDR_MASMIS",
+  "NEEMANS_AGENT_DETAILS_MASMIS", "NEEMANS_ALLOCATION_MASMIS", "NEEMANS_APR_MASMIS", "NEEMANS_CHAT_MASMIS",
+  "NEEMANS_MONTH_TARGET_MASMIS", "NEEMANS_SALE_RAW_MASMIS",
+  "OWNER_AGENT_DETAILS_MASMIS", "OWNER_CDR_MASMIS", "OWNER_SALE_MASMIS",
+  "PRE_AGENT_DETAILS_MASMIS", "PRE_CDR_MASMIS", "PRE_SALE_MASMIS",
+  "SATYA_ALLOCATION_MASMIS", "SATYA_CDR_MASMIS",
+  "DALMIA_DD_RAW", "DALMIA_OUTBOUND_RAW", "DALMIA_APR", "DALMIA_AFTER_HOUR",
+  "SBI_CARD_DIALER_MIS", "SBI_CARD_AGENT_MIS", "SBI_CARD_ACCOUNT_FILE", "SBI_CARD_DOWNTIME", "SBI_CARD_PEN_ESTIMATION", "SBI_CARD_APR", "SBI_CARD_OUTCOME", "SBI_CARD_ROSTER",
 ];
 
-router.get(
-  "/process-performance-v2-stats",
-  requireRole(
-    "admin",
-    "hr",
-    "super_admin",
-    "wfm",
-    "wfm_analyst",
-    "payroll",
-    "payroll_hr",
-  ),
-  denyLobOnly,
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const scope = await buildScopeWhereClause(
-      userId,
-      [
-        "admin",
-        "hr",
-        "wfm",
-        "wfm_analyst",
-        "payroll",
-        "payroll_hr",
-        "branch_head",
-        "branch_admin",
-      ],
-      { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
-      { allowAdminBypass: true },
-    );
+router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), denyLobOnly, h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const scope = await buildScopeWhereClause(
+    userId,
+    ["admin", "hr", "wfm", "wfm_analyst", "payroll", "payroll_hr", "branch_head", "branch_admin"],
+    { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
+    { allowAdminBypass: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
+  );
 
     // Optional ?codes=A,B,C narrows the same aggregate to one company's own
     // upload types (e.g. the BellaVita hub card asking only about BB_*),
@@ -284,26 +233,14 @@ router.get(
  * WHO RAISED IT. auth_user carries no name (email only), so the display name comes from the
  * employee record joined on user_id â€” populated for all 65 rows â€” falling back to the login email.
  */
-router.get(
-  "/batches",
-  requireRole(...HUB_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const scope = await buildScopeWhereClause(
-      userId,
-      [
-        "admin",
-        "hr",
-        "wfm",
-        "wfm_analyst",
-        "payroll",
-        "payroll_hr",
-        "branch_head",
-        "branch_admin",
-      ],
-      { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
-      { allowAdminBypass: true },
-    );
+router.get("/batches", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const scope = await buildScopeWhereClause(
+    userId,
+    ["admin", "hr", "wfm", "wfm_analyst", "payroll", "payroll_hr", "branch_head", "branch_admin"],
+    { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
+    { allowAdminBypass: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
+  );
 
     const where: string[] = [`(ub.uploaded_by = ? OR (${scope.sql}))`];
     const params: unknown[] = [userId, ...scope.params];
@@ -385,29 +322,17 @@ router.get(
  * Scoped identically to the list above, so the options can never hint at the existence of another
  * branch's uploads.
  */
-router.get(
-  "/batches/filter-options",
-  requireRole(...HUB_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const scope = await buildScopeWhereClause(
-      userId,
-      [
-        "admin",
-        "hr",
-        "wfm",
-        "wfm_analyst",
-        "payroll",
-        "payroll_hr",
-        "branch_head",
-        "branch_admin",
-      ],
-      { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
-      { allowAdminBypass: true },
-    );
-    const lobOnly = lobOnlyBatchFilter(req, "ub");
-    const visible = `(ub.uploaded_by = ? OR (${scope.sql}))${lobOnly.sql}`;
-    const params = [userId, ...scope.params, ...lobOnly.params];
+router.get("/batches/filter-options", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const scope = await buildScopeWhereClause(
+    userId,
+    ["admin", "hr", "wfm", "wfm_analyst", "payroll", "payroll_hr", "branch_head", "branch_admin"],
+    { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
+    { allowAdminBypass: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
+  );
+  const lobOnly = lobOnlyBatchFilter(req, "ub");
+  const visible = `(ub.uploaded_by = ? OR (${scope.sql}))${lobOnly.sql}`;
+  const params = [userId, ...scope.params, ...lobOnly.params];
 
     const [types] = await db.execute<RowDataPacket[]>(
       `SELECT ub.upload_type_code AS value, COUNT(*) AS n
@@ -447,15 +372,10 @@ router.get(
  * this, was the only thing shown â€” see loadRowsWithLiveStatus's own comment for why
  * that alone was not trustworthy.
  */
-router.get(
-  "/batches/:id/rows",
-  requireRole(...HUB_ROLES),
-  restrictLobOnlyBatchAccess(),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const rows = await loadRowsWithLiveStatus(req.params.id);
-    res.json({ success: true, data: rows });
-  }),
-);
+router.get("/batches/:id/rows", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), requireBatchVisible(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const rows = await loadRowsWithLiveStatus(req.params.id);
+  res.json({ success: true, data: rows });
+}));
 
 /**
  * On-demand healing for a batch stuck with rows that never reached a final outcome
@@ -546,33 +466,27 @@ router.post(
   }),
 );
 
-router.post(
-  "/batches/:id/rows",
-  requireRole(...HUB_ROLES),
-  restrictLobOnlyBatchAccess(),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const rows = req.body as Array<{
-      row_no: number;
-      raw_data?: Record<string, unknown> | unknown[] | string | null;
-      normalized_data?: Record<string, unknown> | unknown[] | string | null;
-      row_status?: string;
-      error_messages?: string[] | string | null;
-    }>;
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return res.status(400).json({ error: "rows array required" });
-    }
-    // Build pre-assigned row objects with IDs fixed before any chunking, so a deadlock
-    // retry on any chunk replays the identical INSERT and never double-stages a row.
-    // IDs are assigned here once â€” not inside the retry lambda â€” for the same reason.
-    const staged: Array<unknown[]> = rows.map((row) => [
-      randomUUID(),
-      req.params.id,
-      row.row_no,
-      row.raw_data ? JSON.stringify(row.raw_data) : null,
-      row.normalized_data ? JSON.stringify(row.normalized_data) : null,
-      row.row_status ?? "pending",
-      row.error_messages ? JSON.stringify(row.error_messages) : null,
-    ]);
+router.post("/batches/:id/rows", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), requireBatchVisible(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const rows = req.body as Array<{
+    row_no: number;
+    raw_data?: Record<string, unknown> | unknown[] | string | null;
+    normalized_data?: Record<string, unknown> | unknown[] | string | null;
+    row_status?: string;
+    error_messages?: string[] | string | null;
+  }>;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ error: "rows array required" });
+  }
+  // Build pre-assigned row objects with IDs fixed before any chunking, so a deadlock
+  // retry on any chunk replays the identical INSERT and never double-stages a row.
+  // IDs are assigned here once â€” not inside the retry lambda â€” for the same reason.
+  const staged: Array<unknown[]> = rows.map((row) => [
+    randomUUID(), req.params.id, row.row_no,
+    row.raw_data ? JSON.stringify(row.raw_data) : null,
+    row.normalized_data ? JSON.stringify(row.normalized_data) : null,
+    row.row_status ?? "pending",
+    row.error_messages ? JSON.stringify(row.error_messages) : null,
+  ]);
 
     // Large Onfido/POA files send 20k+ rows in a single call. One monolithic INSERT
     // of 20k rows and their JSON blobs can exceed MySQL's lock-wait timeout and collide
@@ -740,6 +654,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_bb_apr_masmis_batch",
   "import_bb_cart_masmis_batch",
   "import_bb_chat_masmis_batch",
+  "import_alt_rx_dump_batch",
   // Bla Bli Blu Overall Sales (curated workbook sheet, distinct from the Shopify direct export)
   "import_bla_bli_blu_abandon_batch",
   "import_bla_bli_blu_overall_sales_batch",
@@ -749,6 +664,15 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_dalmia_apr_batch",
   "import_dalmia_dd_batch",
   "import_dalmia_outbound_batch",
+  // SBI Card Collections uploads -- campaign dialer MIS, agent MIS, account export, downtime tracker, pen estimation (sbi-card-bulk.service.ts)
+  "import_sbi_card_dialer_mis_batch",
+  "import_sbi_card_agent_mis_batch",
+  "import_sbi_card_account_file_batch",
+  "import_sbi_card_downtime_batch",
+  "import_sbi_card_pen_estimation_batch",
+  "import_sbi_card_apr_batch",
+  "import_sbi_card_outcome_batch",
+  "import_sbi_card_roster_batch",
   // Domestic Billing Approved Headcount â€” month/process/LOB-grain planning table.
   "import_domestic_billing_approved_hc_batch",
   // GS1 India â€” email GTIN processing daily actuals, DataKart task daily
@@ -818,19 +742,20 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_housing_owner_sale_raw_batch",
   "import_du_apr_korea_batch",
   "import_du_apr_thailand_batch",
+  "import_du_cdr_korea_batch",
+  "import_du_cdr_thailand_batch",
+  // AHM "Dump" export (one row per outlet/SKU order line), two uploaders, one shared table (sql/1875).
+  "import_ahm_dump_mp_batch",
+  "import_ahm_dump_mm_batch",
   "import_du_team_mapping_korea_batch",
   "import_du_team_mapping_thailand_batch",
   "import_bella_repeat_alignment_batch",
 ]);
 
 // POST /batches/:id/import â€” dispatch import by rpc_name
-router.post(
-  "/batches/:id/import",
-  requireRole(...HUB_ROLES),
-  restrictLobOnlyBatchAccess({ requireImportRpc: true }),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
-    const { rpc_name } = req.body as { rpc_name?: string };
+router.post("/batches/:id/import", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess({ requireImportRpc: true }), requireBatchVisible(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const { rpc_name } = req.body as { rpc_name?: string };
 
     if (!rpc_name || !KNOWN_IMPORT_RPCS.has(rpc_name)) {
       return res.status(501).json({
@@ -1011,21 +936,14 @@ router.get(
   }),
 );
 
-router.get(
-  "/batches/:id/import-status",
-  requireRole(...HUB_ROLES),
-  restrictLobOnlyBatchAccess(),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
-    const [batchRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, batch_status, approval_status, imported_rows, error_rows, total_rows, error_summary FROM upload_batch WHERE id = ? LIMIT 1",
-      [id],
-    );
-    const batch = (batchRows as RowDataPacket[])[0];
-    if (!batch)
-      return res
-        .status(404)
-        .json({ success: false, error: "Upload batch not found" });
+router.get("/batches/:id/import-status", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), requireBatchVisible(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const [batchRows] = await db.execute<RowDataPacket[]>(
+    "SELECT id, batch_status, approval_status, imported_rows, error_rows, total_rows, error_summary FROM upload_batch WHERE id = ? LIMIT 1",
+    [id]
+  );
+  const batch = (batchRows as RowDataPacket[])[0];
+  if (!batch) return res.status(404).json({ success: false, error: "Upload batch not found" });
 
     const job = getBatchJob(id);
     const progress = await readBatchProgress(id, "import");
@@ -1057,34 +975,24 @@ router.get(
 );
 
 // DELETE /batches/:id — remove a batch log entry (does not undo already-imported rows)
-router.delete(
-  "/batches/:id",
-  requireRole(...HUB_ROLES),
-  restrictLobOnlyBatchAccess(),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
-    const [rows] = await db.query<RowDataPacket[]>(
-      "SELECT id, batch_status FROM upload_batch WHERE id = ? LIMIT 1",
-      [id],
-    );
-    const batch = rows[0];
-    if (!batch)
-      return res
-        .status(404)
-        .json({ success: false, error: "Upload batch not found" });
-    if (batch.batch_status === "importing") {
-      return res
-        .status(409)
-        .json({
-          success: false,
-          error: "Cannot delete a batch that is currently importing",
-        });
-    }
-    // Chunked: one statement over a large JSON-heavy batch ran for minutes holding row locks.
-    await deleteBatchRowsChunked(id);
-    await db.query("DELETE FROM upload_batch WHERE id = ?", [id]);
-    return res.json({ success: true });
-  }),
-);
+router.delete("/batches/:id", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), requireBatchVisible(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const [rows] = await db.query<RowDataPacket[]>(
+    "SELECT id, batch_status FROM upload_batch WHERE id = ? LIMIT 1",
+    [id]
+  );
+  const batch = rows[0];
+  if (!batch) return res.status(404).json({ success: false, error: "Upload batch not found" });
+  if (batch.batch_status === "importing") {
+    return res.status(409).json({ success: false, error: "Cannot delete a batch that is currently importing" });
+  }
+  // Chunked: one statement over a large JSON-heavy batch ran for minutes holding row locks.
+  await deleteBatchRowsChunked(id);
+  await db.query("DELETE FROM upload_batch WHERE id = ?", [id]);
+  return res.json({ success: true });
+}));
+
+// Retention snapshots (counts/errors of batches whose rows were purged). Same audience as the Hub, LOB-only excluded.
+router.use("/snapshots", requireRole(...HUB_ROLES), denyLobOnly, snapshotRouter);
 
 export { router as bulkUploadRouter };

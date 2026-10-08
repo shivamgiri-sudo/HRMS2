@@ -97,16 +97,48 @@ describe("the GRN number is allocated at final (Finance Head) approval, by which
   it("branch_head approval — the FIRST stage — never allocates one either", () => {
     const smart = read("src/modules/finance/grn-smart.service.ts");
     const legacy = read("src/modules/finance/grn.service.ts");
+    // The branch_head arm ends where the accounts_head arm begins (3-stage chain, 2026-09-12);
+    // it used to run straight into finance_head's.
     const smartBhBranch = smart.slice(
       smart.indexOf('if (role === "branch_head") {'),
-      smart.indexOf('} else if (role === "finance_head") {'),
+      smart.indexOf('} else if (role === "accounts_head") {'),
     );
     const legacyBhBranch = legacy.slice(
       legacy.indexOf('if (effectiveStage === "branch_head") {'),
-      legacy.indexOf('} else if (effectiveStage === "finance_head") {'),
+      legacy.indexOf('} else if (effectiveStage === "accounts_head") {'),
     );
+    expect(smartBhBranch.length).toBeGreaterThan(200);
+    expect(legacyBhBranch.length).toBeGreaterThan(200);
     expect(smartBhBranch).not.toContain("resolveGrnNumberOnSubmit");
     expect(legacyBhBranch).not.toContain("resolveGrnNumberOnSubmit");
+  });
+
+  it("accounts_head approval — the MIDDLE stage — allocates one only when it is the final approval", () => {
+    // Head Office bypass (owner ruling 2026-09-23, 8a6336dae): a GRN raised by Finance Head at
+    // Head Office skips the Finance Head stage, so Accounts Head's approval is the final one and
+    // is where the number is issued. On the ordinary chain this stage still allocates nothing.
+    const smart = read("src/modules/finance/grn-smart.service.ts");
+    const legacy = read("src/modules/finance/grn.service.ts");
+    const arms: Array<[string, string]> = [
+      [smart, smart.slice(
+        smart.indexOf('} else if (role === "accounts_head") {'),
+        smart.indexOf('} else if (role === "finance_head") {'),
+      )],
+      [legacy, legacy.slice(
+        legacy.indexOf('} else if (effectiveStage === "accounts_head") {'),
+        legacy.indexOf('} else if (effectiveStage === "finance_head") {'),
+      )],
+    ];
+    for (const [, arm] of arms) {
+      expect(arm.match(/resolveGrnNumberOnSubmit\(/g) ?? []).toHaveLength(1);
+      const guard = arm.indexOf("if (skipFinanceHead) {");
+      const call = arm.indexOf("resolveGrnNumberOnSubmit(");
+      expect(guard).toBeGreaterThan(-1);
+      expect(call).toBeGreaterThan(guard);
+      // Nothing closes the skipFinanceHead arm between the guard and the allocation.
+      expect(arm.slice(guard, call)).not.toContain("} else {");
+      expect(arm).toContain("shouldSkipFinanceHeadOnAccountsApproval(grn)");
+    }
   });
 
   it("the allocator itself is unchanged — same format-flag routing, same idempotency guard", () => {

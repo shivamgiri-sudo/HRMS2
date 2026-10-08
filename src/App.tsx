@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes, useLocation } from "react-router-dom";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AICommandBar } from "@/components/ai/AICommandBar";
@@ -20,6 +20,13 @@ function LocationHeartbeatRunner() {
 
 import { appRouteElements } from "./config/routes";
 import NotFound from "./pages/NotFound";
+
+/** Cookie banner and the staff AI bar are for signed-in HRMS users; candidate pages (/w/:token invitation link) stay clean on a phone. */
+const StaffChrome = () => {
+  const { pathname } = useLocation();
+  if (/^\/w\/[a-f0-9]{32}\/?$/.test(pathname)) return null;
+  return (<><CookieConsent /><AICommandBar /></>);
+};
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -55,9 +62,8 @@ const App = () => (
               </Routes>
             </Suspense>
           </ErrorBoundary>
-          <CookieConsent />
+          <StaffChrome />
           <OfflineFallback />
-          <AICommandBar />
           </ViewAsProvider>
         </AuthProvider>
       </BrowserRouter>

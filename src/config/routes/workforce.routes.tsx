@@ -205,7 +205,7 @@ export const workforceRouteElements = (
       <Route path="/wfm/employee-roster/:employeeId" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><EmployeeRosterProfile /></Gate></ProtectedRoute>} />
       <Route path="/wfm/capacity-dashboard" element={<RosterCommandCenterRedirect toTab="capacity" />} />
       <Route path="/wfm/team-comparison" element={<RosterCommandCenterRedirect toTab="comparison" />} />
-      <Route path="/wfm/notification-hub" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterNotificationHub /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/notification-hub" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><DashboardLayout><RosterNotificationHub /></DashboardLayout></Gate></ProtectedRoute>} />
       {/* Mobile PWA optimized views for managers */}
       <Route path="/wfm/mobile-roster" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><MobileRosterDashboard /></Gate></ProtectedRoute>} />
       {/* Was a hard-coded mock page — no real data source; forwarded to the live console. */}
@@ -276,7 +276,7 @@ export const workforceRouteElements = (
       <Route path="/week-off-preferences"   element={<ProtectedRoute><NativeWeekOffPreferences /></ProtectedRoute>} />
       {/* Superseded by RosterBuilderPage — redirect */}
       <Route path="/roster-master-builder"  element={<Navigate to="/wfm/roster-builder" replace />} />
-      <Route path="/roster-capacity-config" element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><NativeRosterCapacityConfig /></Gate></ProtectedRoute>} />
+      <Route path="/roster-capacity-config" element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><DashboardLayout><NativeRosterCapacityConfig /></DashboardLayout></Gate></ProtectedRoute>} />
 
       {/* Live tracker / biometric */}
       <Route path="/wfm/live-tracker"              element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativeBiometricCommandCenter /></Gate></ProtectedRoute>} />

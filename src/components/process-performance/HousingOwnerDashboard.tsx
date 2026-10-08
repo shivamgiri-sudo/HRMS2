@@ -678,9 +678,25 @@ export function HousingOwnerDashboard() {
         matrixTable("Vintage Wise Performance Metrics", vintageCols),
         matrixTable("TL Wise Performance Metrics", tlCols),
         {
-          title: "Agent Productivity",
-          columns: ["Agent", "TL", "AM", "Vintage", "Calls", "Connected %", "Sale Count", "Revenue", "Ach %", "Avg Talk"],
-          rows: agentRows.map((r) => [r.agent, r.tl, r.am, r.vintage, int(r.m.calls), `${r.m.connectedPct}%`, r.m.saleCount, formatINR(r.m.revenue), r.m.monthlyTarget > 0 ? `${r.m.achPct}%` : "—", r.m.avgTalkSec > 0 ? fmtHms(r.m.avgTalkSec) : "—"]),
+          title: "Agent Wise Performance",
+          columns: ["Agent", "TL", "AM", "Vintage", "Calls", "Connected", "Conn %", "Sales", "Revenue", "Target", "Ach %", "Stage (TQ/MQ/BQ)", "MTD Target", "MTD %", "Avg Talk"],
+          rows: agentRows.map((r) => [
+            r.agent, r.tl, r.am, r.vintage, int(r.m.calls), r.m.connected, `${r.m.connectedPct}%`, r.m.saleCount, formatINR(r.m.revenue),
+            r.m.monthlyTarget > 0 ? formatINR(r.m.monthlyTarget) : "—", r.m.monthlyTarget > 0 ? `${r.m.achPct}%` : "—",
+            stageOf(r.m.achPct, r.m.monthlyTarget > 0), r.m.mtdTarget > 0 ? formatINR(r.m.mtdTarget) : "—", r.m.mtdTarget > 0 ? `${r.m.mtdPct}%` : "—",
+            r.m.avgTalkSec > 0 ? fmtHms(r.m.avgTalkSec) : "—",
+          ]),
+        },
+        {
+          title: "TQ MQ BQ Summary",
+          columns: ["Stage", "Agent Count", "Total Revenue", "Avg Ach %"],
+          rows: (["TQ", "MQ", "BQ", "NA"] as const).map((stage) => {
+            const inStage = agentRows.filter((r) => stageOf(r.m.achPct, r.m.monthlyTarget > 0) === stage);
+            const totalRevenue = inStage.reduce((s, r) => s + r.m.revenue, 0);
+            const targeted = inStage.filter((r) => r.m.monthlyTarget > 0);
+            const avgAch = targeted.length > 0 ? Math.round(targeted.reduce((s, r) => s + r.m.achPct, 0) / targeted.length) : 0;
+            return [stage === "NA" ? "No Target" : stage, inStage.length, formatINR(totalRevenue), targeted.length > 0 ? `${avgAch}%` : "—"];
+          }),
         },
       ],
     }];

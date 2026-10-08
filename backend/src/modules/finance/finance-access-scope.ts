@@ -12,6 +12,7 @@ const GLOBAL_FINANCE_ROLES = new Set([
   "hr_admin",
   "ceo",
   "coo",
+  "cfo",
 ]);
 
 function normalizedRoles(primaryRole?: string, userRoles?: string[]) {
@@ -50,6 +51,7 @@ const OVERRIDING_GLOBAL_FINANCE_ROLES = new Set([
   "payroll_head",
   "ceo",
   "coo",
+  "cfo",
   "hr_admin",
 ]);
 
@@ -255,8 +257,11 @@ export async function resolveFinanceBranchScope(input: {
   const scope = await resolveFinanceBranchScopeSet(input);
   if (scope.mode === "all") return undefined;
   if (scope.branchIds.length === 1) return scope.branchIds[0];
-  throw new Error(
-    "This finance screen does not support multi-branch access yet; select a single branch",
+  // A user entitled to several branches asked a single-branch view without picking one: a
+  // request to choose (400), not a server error.
+  throw Object.assign(
+    new Error("You have access to more than one branch — select a branch to see this view"),
+    { statusCode: 400, code: "BRANCH_SELECTION_REQUIRED" },
   );
 }
 

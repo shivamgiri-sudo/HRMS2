@@ -108,6 +108,7 @@ export const workforceMandateService = {
       trainingBufferPct: number;
       effectiveFrom: string;
       effectiveTo?: string;
+      reason?: string;
     },
     userId: string,
   ): Promise<RowDataPacket> {
@@ -154,10 +155,8 @@ export const workforceMandateService = {
       module_key: "WORKFORCE_MANDATE",
       entity_type: "workforce_mandate",
       entity_id: input.processId,
-      change_summary: {
-        role_group: input.roleGroup,
-        mandated_hc: input.mandatedHc,
-      },
+      reason: input.reason,
+      change_summary: { role_group: input.roleGroup, mandated_hc: input.mandatedHc, branch_id: branchId },
     });
 
     // Fetch actual row (ON DUPLICATE KEY may have returned existing id)

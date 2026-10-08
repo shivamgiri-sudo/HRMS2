@@ -29,6 +29,12 @@ export interface MasmisRawSource {
   extraWhere?: string;
   /** Extra columns to leave out of this sheet (e.g. a free-text chat transcript full of customer details). */
   excludeColumns?: string[];
+  /** When set, the raw sheet keeps only the highest-`id` (most recently uploaded) row per
+   * distinct value of this column -- e.g. bb_sale has re-uploaded duplicate rows per
+   * bella_vita_order_id, so this collapses them to one row per real order. */
+  dedupeBy?: string;
+  /** Computed columns appended after the table's own columns: a header plus a SQL expression. */
+  derivedColumns?: Array<{ header: string; expr: string }>;
   /** Shown in the Raw Data Notes sheet. */
   note?: string;
 }
@@ -40,7 +46,19 @@ export interface DialerRawSource {
   projectKey: string;
 }
 
-export type RawSource = MasmisRawSource | DialerRawSource;
+/** Satya Retail's Calls raw sheet -- the one export source that isn't a plain masmis table or
+ * a call-master PROJECTS-shaped dialer export. Read live from dialer_db.data_master_in
+ * (ClientId 499), same field mapping as satya-retail-report.service.ts's dialerCdrBase(), so
+ * the exported rows match what the dashboard itself shows. db_masmis.satya_cdr (the old
+ * staged table this replaces) is untouched -- still exists, still fed by the manual upload,
+ * just no longer read by this export. Sheet name is kept as "satya_cdr" for continuity with
+ * anyone's existing Excel workflow built around that sheet name. */
+export interface SatyaDialerRawSource {
+  kind: "satya_dialer";
+  sheet: string;
+}
+
+export type RawSource = MasmisRawSource | DialerRawSource | SatyaDialerRawSource;
 
 /** Columns that are upload bookkeeping, not business data. */
 export const EXCLUDED_RAW_COLUMNS = new Set(["upload_batch_id", "uploaded_by"]);
@@ -62,10 +80,16 @@ const AW_DATE = (c: string) =>
   `CASE WHEN ${c} REGEXP '^[0-9]{5}$' THEN DATE_ADD('1899-12-30', INTERVAL CAST(${c} AS UNSIGNED) DAY) ` +
   `WHEN ${c} REGEXP '^[0-9]{1,2}-[A-Za-z]{3}-[0-9]{2}$' THEN STR_TO_DATE(${c}, '%e-%b-%y') ELSE NULL END`;
 
-const NO_RANGE_NOTE =
-  "Exported in full: this report does not filter these rows by the selected date range.";
+const DU_TIME_COLUMNS = [
+  { header: "Thailand Date & Time (THA)", expr: "DATE_FORMAT(DATE_SUB(call_datetime, INTERVAL 2 HOUR), '%c/%e/%Y %k:%i')" },
+  { header: "Indian Date & Time (IST)", expr: "DATE_FORMAT(DATE_SUB(call_datetime, INTERVAL 210 MINUTE), '%c/%e/%Y %k:%i')" },
+];
+const NO_RANGE_NOTE ="Exported in full: this report does not filter these rows by the selected date range.";
 
 export const RAW_SOURCES: Record<string, RawSource[]> = {
+  ahm: [
+    { kind: "masmis", sheet: "ahm_dump_raw", table: "ahm_dump_raw", dateExpr: "survey_date" },
+  ],
   gnc_sale: [
     {
       kind: "masmis",
@@ -140,37 +164,16 @@ export const RAW_SOURCES: Record<string, RawSource[]> = {
   ],
 
   bellavita_sale: [
-    { kind: "masmis", sheet: "bb_sale", table: "bb_sale", dateExpr: "`Date`" },
-    {
-      kind: "masmis",
-      sheet: "bb_apr",
-      table: "bb_apr",
-      dateExpr: "report_date",
-    },
+    { kind: "masmis", sheet: "bb_sale", table: "bb_sale", dateExpr: "`Date`", dedupeBy: "bella_vita_order_id" },
+    { kind: "masmis", sheet: "bb_apr", table: "bb_apr", dateExpr: "report_date" },
   ],
   bellavita_agent_performance: [
-    {
-      kind: "masmis",
-      sheet: "bb_apr",
-      table: "bb_apr",
-      dateExpr: "report_date",
-    },
-    { kind: "masmis", sheet: "bb_sale", table: "bb_sale", dateExpr: "`Date`" },
+    { kind: "masmis", sheet: "bb_apr", table: "bb_apr", dateExpr: "report_date" },
+    { kind: "masmis", sheet: "bb_sale", table: "bb_sale", dateExpr: "`Date`", dedupeBy: "bella_vita_order_id" },
   ],
   bellavita_chat: [
     {
-      kind: "masmis",
-      sheet: "bb_chat",
-      table: "bb_chat",
-      dateExpr: "chat_date",
-      lobColumn: "lob",
-    },
-    {
-      kind: "masmis",
-      sheet: "bb_sale (Chat)",
-      table: "bb_sale",
-      dateExpr: "`Date`",
-      extraWhere: "campaign = 'Chat'",
+      kind: "masmis", sheet: "bb_sale (Chat)", table: "bb_sale", dateExpr: "`Date`", extraWhere: "campaign = 'Chat'", dedupeBy: "bella_vita_order_id",
       note: "Sale rows the Revenue/AOV figures come from (campaign = 'Chat'). Not narrowed by the LOB filter: bb_sale has no Bevzilla/Kenaz split.",
     },
   ],
@@ -184,27 +187,14 @@ export const RAW_SOURCES: Record<string, RawSource[]> = {
       note: "Chats behind the Overview snapshot: user_type Chat, Kenaz or Bevzilla only (Email is excluded).",
     },
     {
-      kind: "masmis",
-      sheet: "bb_sale (Sale Made)",
-      table: "bb_sale",
-      dateExpr: "`Date`",
-      extraWhere: "campaign = 'Chat' AND calling_status = 'Sale Made'",
+      kind: "masmis", sheet: "bb_sale (Sale Made)", table: "bb_sale", dateExpr: "`Date`",
+      extraWhere: "campaign = 'Chat' AND calling_status = 'Sale Made'", dedupeBy: "bella_vita_order_id",
       note: "Every sale row, one per order line item. Sale Made and Revenue count each bella_vita_order_id once, so this sheet holds more rows than the snapshot's Sale Made. bb_sale has no Kenaz/Bevzilla split.",
     },
   ],
   bellavita_cart: [
     {
-      kind: "masmis",
-      sheet: "bb_cart",
-      table: "bb_cart",
-      dateExpr: D_MON_YY("call_date"),
-    },
-    {
-      kind: "masmis",
-      sheet: "bb_sale (Abandon Cart)",
-      table: "bb_sale",
-      dateExpr: "`Date`",
-      extraWhere: "campaign = 'Abandon Cart'",
+      kind: "masmis", sheet: "bb_sale (Abandon Cart)", table: "bb_sale", dateExpr: "`Date`", extraWhere: "campaign = 'Abandon Cart'", dedupeBy: "bella_vita_order_id",
       note: "Sale rows the Abandon Cart Revenue / Sale Count figures come from (campaign = 'Abandon Cart').",
     },
   ],
@@ -272,39 +262,29 @@ export const RAW_SOURCES: Record<string, RawSource[]> = {
   ],
 
   housing_owner: [
-    {
-      kind: "masmis",
-      sheet: "owner_sale",
-      table: "owner_sale",
-      note: NO_RANGE_NOTE,
-    },
-    {
-      kind: "masmis",
-      sheet: "Owner_cdr",
-      table: "Owner_cdr",
-      note: NO_RANGE_NOTE,
-    },
-    {
-      kind: "masmis",
-      sheet: "owner_agent_details",
-      table: "owner_agent_details",
-      note: "Agent roster/targets -- not date based.",
-    },
+    { kind: "masmis", sheet: "owner_sale", table: "owner_sale", dateExpr: "STR_TO_DATE(CONCAT(LPAD(`day`, 2, '0'), '-', LEFT(`month`, 3), '-', RIGHT(`month`, 2)), '%d-%b-%y')" },
+    { kind: "masmis", sheet: "Owner_cdr", table: "Owner_cdr", dateExpr: D_MON_YY("report_date") },
+    { kind: "masmis", sheet: "owner_agent_details", table: "owner_agent_details", note: "Agent roster/targets -- not date based." },
   ],
   housing_premium: [
+    { kind: "masmis", sheet: "pre_sale", table: "pre_sale", dateExpr: "report_date" },
+    { kind: "masmis", sheet: "Pre_cdr", table: "Pre_cdr", dateExpr: "report_date_iso" },
+    { kind: "masmis", sheet: "pre_agent_details", table: "pre_agent_details", note: "Agent roster/targets -- not date based." },
+  ],
+
+  du_thailand: [
     {
-      kind: "masmis",
-      sheet: "pre_sale",
-      table: "pre_sale",
-      note: NO_RANGE_NOTE,
+      kind: "masmis", sheet: "DU CDR (Thailand)", table: "du_cdr_daily_actual", dateExpr: "call_date", extraWhere: "dashboard_label = 'THAILAND'",
+      derivedColumns: DU_TIME_COLUMNS,
     },
-    { kind: "masmis", sheet: "Pre_cdr", table: "Pre_cdr", note: NO_RANGE_NOTE },
+    { kind: "masmis", sheet: "DU APR (Thailand)", table: "du_apr_daily_actual", dateExpr: "call_date", extraWhere: "dashboard_label = 'THAILAND'" },
+  ],
+  du_korea: [
     {
-      kind: "masmis",
-      sheet: "pre_agent_details",
-      table: "pre_agent_details",
-      note: "Agent roster/targets -- not date based.",
+      kind: "masmis", sheet: "DU CDR (Korea)", table: "du_cdr_daily_actual", dateExpr: "call_date", extraWhere: "dashboard_label = 'KOREA'",
+      derivedColumns: DU_TIME_COLUMNS,
     },
+    { kind: "masmis", sheet: "DU APR (Korea)", table: "du_apr_daily_actual", dateExpr: "call_date", extraWhere: "dashboard_label = 'KOREA'" },
   ],
 
   lp_feedback: [
@@ -337,38 +317,15 @@ export const RAW_SOURCES: Record<string, RawSource[]> = {
   ],
 
   satya_retail: [
-    {
-      kind: "masmis",
-      sheet: "satya_allocation",
-      table: "satya_allocation",
-      note: NO_RANGE_NOTE,
-    },
-    {
-      kind: "masmis",
-      sheet: "satya_cdr",
-      table: "satya_cdr",
-      note: NO_RANGE_NOTE,
-    },
+    { kind: "masmis", sheet: "satya_allocation", table: "satya_allocation", note: NO_RANGE_NOTE },
+    { kind: "satya_dialer", sheet: "satya_cdr" },
   ],
   // The "Calling & Order Tracking" report filters both tables by report_date and
   // by warehouse, so its raw sheets do too (an 'Unmapped' warehouse has no real
   // column value to bind, so the client omits the lob filter for it).
   satya_retail_report: [
-    {
-      kind: "masmis",
-      sheet: "satya_allocation",
-      table: "satya_allocation",
-      dateExpr: D_MON_YY("report_date"),
-      lobColumn: "warehouse",
-      note: "Rows exactly as uploaded -- includes older duplicate allocation rows that the report skips (see its Data checks page).",
-    },
-    {
-      kind: "masmis",
-      sheet: "satya_cdr",
-      table: "satya_cdr",
-      dateExpr: D_MON_YY("report_date"),
-      lobColumn: "warehouse",
-    },
+    { kind: "masmis", sheet: "satya_allocation", table: "satya_allocation", dateExpr: D_MON_YY("report_date"), lobColumn: "warehouse", note: "Rows exactly as uploaded -- includes older duplicate allocation rows that the report skips (see its Data checks page)." },
+    { kind: "satya_dialer", sheet: "satya_cdr" },
   ],
 
   // Appreciate Wealth: call_date is mixed text ("5-Sep-26") / Excel serial ("46270"); the expression handles both.

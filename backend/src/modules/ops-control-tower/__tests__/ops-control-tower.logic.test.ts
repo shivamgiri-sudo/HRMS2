@@ -117,3 +117,19 @@ describe("severityForCount", () => {
     expect(severityForCount(8, 3, 8)).toBe("high");
   });
 });
+
+describe('flagLowAprDays (dialler feed outage)', () => {
+  it('flags a missing day and a day far below a normal weekday, not a quiet Sunday', async () => {
+    const { flagLowAprDays } = await import('../ops-attendance-actions.service.js');
+    const days = [
+      { date: '2026-09-18', users: 202 }, // Fri
+      { date: '2026-09-19', users: 205 }, // Sat
+      { date: '2026-09-20', users: 151 }, // Sun
+      { date: '2026-09-21', users: 14 },  // Mon - sync outage
+      { date: '2026-09-22', users: 13 },
+      { date: '2026-09-23', users: 196 },
+      { date: '2026-09-24', users: 0 },   // nothing at all
+    ];
+    expect(flagLowAprDays(days).filter((d) => d.low).map((d) => d.date)).toEqual(['2026-09-21', '2026-09-22', '2026-09-24']);
+  });
+});

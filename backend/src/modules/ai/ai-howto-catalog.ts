@@ -209,10 +209,11 @@ export const HOWTO_CATALOG: HowToEntry[] = [
     // in the array than resignation_approve, .find() would shadow it with
     // the wrong entry (verified live by a failing RBAC cross-check test
     // before this fix).
-    aliases: [
-      /\b(submit|raise|file)\b.*\bresign/i,
-      /\bI\s+(want|need)\s+to\s+resign\b/i,
-      /\bresign\b.*\b(how|where|system)\b/i,
+    aliases: [/\b(submit|raise|file)\b.*\bresign/i, /\bI\s+(want|need)\s+to\s+resign\b/i, /\bresign\b.*\b(how|where|system)\b/i],
+    steps: [
+      '1. Go to Exit → Exit Desk.',
+      '2. Click "Submit Resignation".',
+      '3. Enter your last working day and reason, then submit for approval.',
     ],
     steps: [
       "1. Go to Exit → My Resignation.",
@@ -630,13 +631,19 @@ export const HOWTO_CATALOG: HowToEntry[] = [
 
   // ─── PAYROLL — STATUTORY CENTER ──────────────────────────────────────────────
   {
-    code: "statutory_filing",
-    title: "Track PF, ESI, PT or TDS statutory filing",
-    aliases: [
-      /\b(pf|esi|pt|tds)\b.*\b(filing|status|due|compliance)\b/i,
-      /\bstatutory\s*filing\b/i,
-      /\bstatutory\s*compliance\s*status\b/i,
-      /\bchallan\b/i,
+    code: 'statutory_filing',
+    title: 'Track PF, ESI, PT or TDS statutory filing',
+    // "statutory compliance status" is deliberately NOT an alias here: it is the verbatim
+    // title of statutory_compliance (/compliance/statutory), and first-match-wins meant this
+    // entry answered that question with its own static role list instead of the
+    // STATUTORY_COMPLIANCE page grant — hr was refused a page it holds, admin/finance were
+    // sent to a different page. An entry must stay reachable by its own title.
+    aliases: [/\b(pf|esi|pt|tds)\b.*\b(filing|status|due|compliance)\b/i, /\bstatutory\s*filing\b/i, /\bchallan\b/i],
+    steps: [
+      '1. Go to Payroll → Statutory Center.',
+      '2. The Filing tab shows PF/ESI/PT/TDS filing status, due dates, and outstanding amounts.',
+      '3. Click any row to see details or download the challan.',
+      '4. Switch to the Config tab (Super Admin only) to update statutory rates.',
     ],
     steps: [
       "1. Go to Payroll → Statutory Center.",
@@ -1053,15 +1060,14 @@ export const HOWTO_CATALOG: HowToEntry[] = [
     title: "Revoke or cancel a resignation",
     aliases: [/\b(revoke|cancel|withdraw|take\s*back)\b.*\bresign/i],
     steps: [
-      "1. Go to Exit → My Resignation.",
+      '1. Go to Exit → Exit Desk.',
       '2. Your active resignation is shown. Click "Revoke" or "Withdraw".',
       "3. Add a reason (optional) and confirm — you return to active status.",
     ],
-    route: "/exit/resignation",
-    auth: { mode: "page_code", pageCode: "RESIGNATION_MY_REQUEST" },
-    status: "verified",
-    deniedExplanation:
-      "Your role does not have access to the My Resignation page.",
+    route: '/exit/resignation',
+    auth: { mode: 'page_code', pageCode: 'RESIGNATION_MY_REQUEST' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to the Exit Desk page.',
   },
 
   // ─── PERFORMANCE / KPI ───────────────────────────────────────────────────────
@@ -1772,16 +1778,10 @@ export const HOWTO_CATALOG: HowToEntry[] = [
       "3. Select the holiday date and hours worked.",
       "4. Submit — your manager/WFM will approve the comp-off or OT.",
     ],
-    route: "/payroll/holiday-work",
-    auth: {
-      mode: "static_roles",
-      roles: ["super_admin", "admin", "wfm", "payroll_head", "payroll_branch"],
-      citation:
-        "src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/holiday-work)",
-    },
-    status: "verified",
-    deniedExplanation:
-      "Your role does not have access to Holiday Work management.",
+    route: '/payroll/holiday-work',
+    auth: { mode: 'static_roles', roles: ['super_admin', 'admin', 'wfm', 'branch_wfm', 'payroll_head', 'payroll_branch'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/holiday-work)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Holiday Work management.',
   },
   {
     code: "holiday_master",
@@ -1792,21 +1792,10 @@ export const HOWTO_CATALOG: HowToEntry[] = [
       /\bnational\s*holidays?\b/i,
       /\bdefine\b.*\bholiday\b/i,
     ],
-    steps: [
-      "1. Go to Payroll → Holiday Master.",
-      "2. Select the year and branch.",
-      "3. Add or remove holidays — national, regional, and company-specific.",
-    ],
-    route: "/payroll/holiday-master",
-    auth: {
-      mode: "static_roles",
-      roles: ["super_admin", "admin", "payroll_head", "payroll_branch"],
-      citation:
-        "src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/holiday-master)",
-    },
-    status: "verified",
-    deniedExplanation:
-      "Your role does not have access to Holiday Master. This is for Payroll and Admin.",
+    route: '/payroll/holiday-master',
+    auth: { mode: 'static_roles', roles: ['super_admin', 'admin', 'payroll_head', 'payroll_branch', 'branch_wfm'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/holiday-master)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Holiday Master. This is for Payroll and Admin.',
   },
   {
     code: "payroll_sign_off",

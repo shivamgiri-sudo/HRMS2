@@ -26,6 +26,7 @@ import {
 import { db } from "../../db/mysql.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { branchAdminScope, canAccessEmployee, scopePredicate, OUT_OF_SCOPE_MSG } from "./branch-scope.js";
 import { COSEC_DEFAULT_FULL_DAY_MINUTES } from "./attendance-engine.service.js";
 
 export const attendanceExceptionBucketRouter = Router();
@@ -67,6 +68,29 @@ async function assertPayrollAccess(
     return { actorRole: "payroll_admin" };
   return null;
 }
+
+// ─── Branch scoping (owner ruling 2026-10-01) ─────────────────────────────────
+// admin is branch-scoped like hr: a branch admin only reads / changes bucket rows of employees inside their own
+// branch / scope. Org-wide roles and the payroll roles are unchanged (no extra predicate, SQL byte-identical).
+
+/** `e.id`-style predicate for a branch admin, or null when the caller needs no extra limit. */
+async function employeeLimit(userId: string, alias = "e"): Promise<{ sql: string; params: unknown[] } | null> {
+  const scope = await branchAdminScope(userId);
+  if (!scope) return null;
+  return scopePredicate(scope, {
+    employeeId: `${alias}.id`, branchId: `${alias}.branch_id`, processId: `${alias}.process_id`,
+    managerEmployeeId: `${alias}.reporting_manager_id`,
+  });
+}
+
+/** True when the caller may act on this employee (always true unless a branch admin). */
+async function mayAccessEmployee(userId: string, employeeId: string): Promise<boolean> {
+  const scope = await branchAdminScope(userId);
+  if (!scope) return true;
+  return canAccessEmployee(scope, employeeId);
+}
+
+const denyScope = (res: Response) => res.status(403).json({ success: false, error: OUT_OF_SCOPE_MSG });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -138,15 +162,14 @@ attendanceExceptionBucketRouter.get(
         .json({ success: false, error: "Forbidden: Payroll access required" });
     }
 
-    const includeInactive = req.query.includeInactive === "1";
-    const conds: string[] = [];
-    const params: unknown[] = [];
-    if (!includeInactive) conds.push("b.active_status = 1");
-    if (req.query.employeeId) {
-      conds.push("b.employee_id = ?");
-      params.push(String(req.query.employeeId));
-    }
-    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const includeInactive = req.query.includeInactive === "1";
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (!includeInactive) conds.push("b.active_status = 1");
+  if (req.query.employeeId) { conds.push("b.employee_id = ?"); params.push(String(req.query.employeeId)); }
+  const limit = await employeeLimit(req.authUser.id);
+  if (limit) { conds.push(`(${limit.sql})`); params.push(...limit.params); }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `${SELECT_ROW} ${where} ORDER BY b.active_status DESC, b.created_at DESC LIMIT 500`,
@@ -188,13 +211,13 @@ attendanceExceptionBucketRouter.get(
       });
     }
 
-    const rows = await matchGroupEmployees(filters);
-    if (rows.length > MAX_BULK_MATCH) {
-      return res.status(400).json({
-        success: false,
-        error: `This matches more than ${MAX_BULK_MATCH} employees. Narrow the filters (add a Cost Centre or Designation) before bulk-applying.`,
-      });
-    }
+  const rows = await matchGroupEmployees(filters, await employeeLimit(req.authUser.id));
+  if (rows.length > MAX_BULK_MATCH) {
+    return res.status(400).json({
+      success: false,
+      error: `This matches more than ${MAX_BULK_MATCH} employees. Narrow the filters (add a Cost Centre or Designation) before bulk-applying.`,
+    });
+  }
 
     return res.json({ success: true, data: rows });
   }),
@@ -211,11 +234,9 @@ attendanceExceptionBucketRouter.get(
         .json({ success: false, error: "Forbidden: Payroll access required" });
     }
 
-    const row = await getRowById(req.params.id);
-    if (!row)
-      return res
-        .status(404)
-        .json({ success: false, error: "Exception bucket entry not found" });
+  const row = await getRowById(req.params.id);
+  if (!row) return res.status(404).json({ success: false, error: "Exception bucket entry not found" });
+  if (!(await mayAccessEmployee(req.authUser.id, String(row.employee_id)))) return denyScope(res);
 
     const [auditRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, actor_user_id, action_type, actor_role, reason,
@@ -400,15 +421,31 @@ attendanceExceptionBucketRouter.post(
       req,
     });
 
-    return res.status(created ? 201 : 200).json({
-      success: true,
-      data: await getRowById(id),
-      message: created
-        ? "Employee added to the exception bucket. It applies from the next attendance processing run."
-        : "Exception updated. It applies from the next attendance processing run.",
-    });
-  }),
-);
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_code FROM employees WHERE id = ? LIMIT 1`,
+    [employee_id.trim()],
+  );
+  if (!empRows.length) return res.status(404).json({ success: false, error: "Employee not found" });
+  if (!(await mayAccessEmployee(req.authUser.id, employee_id.trim()))) return denyScope(res);
+
+  const { id, created } = await upsertBucketRow({
+    employeeId: employee_id.trim(),
+    singlePunch,
+    thresholdValue: threshold.value,
+    reason: String(reason).trim(),
+    actorId: req.authUser.id,
+    actorRole: access.actorRole,
+    req,
+  });
+
+  return res.status(created ? 201 : 200).json({
+    success: true,
+    data: await getRowById(id),
+    message: created
+      ? "Employee added to the exception bucket. It applies from the next attendance processing run."
+      : "Exception updated. It applies from the next attendance processing run.",
+  });
+}));
 
 // ─── Bulk-by-group helpers ────────────────────────────────────────────────────
 
@@ -431,11 +468,10 @@ function bulkGroupFilters(query: Record<string, unknown>) {
   return { branchId, costCentreId, designationId };
 }
 
-async function matchGroupEmployees(filters: {
-  branchId: string | null;
-  costCentreId: string | null;
-  designationId: string | null;
-}) {
+async function matchGroupEmployees(
+  filters: { branchId: string | null; costCentreId: string | null; designationId: string | null },
+  limit: { sql: string; params: unknown[] } | null = null,
+) {
   const { branchId, costCentreId, designationId } = filters;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code,
@@ -452,17 +488,11 @@ async function matchGroupEmployees(filters: {
       WHERE e.active_status = 1
         AND (? IS NULL OR e.branch_id      = ?)
         AND (? IS NULL OR e.cost_centre_id = ?)
-        AND (? IS NULL OR e.designation_id = ?)
+        AND (? IS NULL OR e.designation_id = ?)${limit ? `
+        AND (${limit.sql})` : ""}
       ORDER BY employee_name
       LIMIT ${MAX_BULK_MATCH + 1}`,
-    [
-      branchId,
-      branchId,
-      costCentreId,
-      costCentreId,
-      designationId,
-      designationId,
-    ],
+    [branchId, branchId, costCentreId, costCentreId, designationId, designationId, ...(limit?.params ?? [])],
   );
   return rows;
 }
@@ -475,17 +505,65 @@ async function matchGroupEmployees(filters: {
  * Writes one individual bucket row per matched employee — same upsert, same audit trail as the
  * single-employee form above; this is a faster SELECT, not a new kind of rule.
  */
-attendanceExceptionBucketRouter.post(
-  "/bulk",
-  h(async (req, res) => {
-    const access = await assertPayrollAccess(req.authUser.id);
-    if (!access) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "Forbidden: Payroll Head or Payroll Admin role required",
-        });
+attendanceExceptionBucketRouter.post("/bulk", h(async (req, res) => {
+  const access = await assertPayrollAccess(req.authUser.id);
+  if (!access) {
+    return res.status(403).json({ success: false, error: "Forbidden: Payroll Head or Payroll Admin role required" });
+  }
+
+  const body = req.body ?? {};
+  const filters = bulkGroupFilters(body);
+  if (!filters.branchId && !filters.costCentreId && !filters.designationId) {
+    return res.status(400).json({
+      success: false,
+      error: "Pick at least a Branch, Cost Centre, or Designation before applying.",
+    });
+  }
+
+  const rErr = reasonError(body.reason);
+  if (rErr) return res.status(400).json({ success: false, error: rErr });
+
+  const threshold = normaliseThreshold(body.full_day_threshold_minutes);
+  if ("error" in threshold) return res.status(400).json({ success: false, error: threshold.error });
+
+  const singlePunch = body.single_punch_counts_as_present === true || body.single_punch_counts_as_present === 1 ? 1 : 0;
+  if (singlePunch === 0 && threshold.value === null) {
+    return res.status(400).json({
+      success: false,
+      error: "Set at least one exception: single-punch-counts-as-present, or a full-day threshold.",
+    });
+  }
+
+  const rows = await matchGroupEmployees(filters, await employeeLimit(req.authUser.id));
+  if (rows.length === 0) {
+    return res.status(404).json({ success: false, error: "No active employees match this combination." });
+  }
+  if (rows.length > MAX_BULK_MATCH) {
+    return res.status(400).json({
+      success: false,
+      error: `This matches more than ${MAX_BULK_MATCH} employees. Narrow the filters before applying.`,
+    });
+  }
+
+  const reason = String(body.reason).trim();
+  let created = 0;
+  let updated = 0;
+  const failed: Array<{ employee_id: string; error: string }> = [];
+
+  for (const row of rows) {
+    try {
+      const result = await upsertBucketRow({
+        employeeId: String(row.id),
+        singlePunch,
+        thresholdValue: threshold.value,
+        reason,
+        actorId: req.authUser.id,
+        actorRole: access.actorRole,
+        req,
+      });
+      if (result.created) created += 1; else updated += 1;
+    } catch (e: any) {
+      failed.push({ employee_id: String(row.id), error: e?.message ?? "Unknown error" });
     }
 
     const body = req.body ?? {};
@@ -585,11 +663,9 @@ attendanceExceptionBucketRouter.patch(
         });
     }
 
-    const current = await getRowById(req.params.id);
-    if (!current)
-      return res
-        .status(404)
-        .json({ success: false, error: "Exception bucket entry not found" });
+  const current = await getRowById(req.params.id);
+  if (!current) return res.status(404).json({ success: false, error: "Exception bucket entry not found" });
+  if (!(await mayAccessEmployee(req.authUser.id, String(current.employee_id)))) return denyScope(res);
 
     const {
       single_punch_counts_as_present,
@@ -698,19 +774,12 @@ attendanceExceptionBucketRouter.delete(
         });
     }
 
-    const current = await getRowById(req.params.id);
-    if (!current)
-      return res
-        .status(404)
-        .json({ success: false, error: "Exception bucket entry not found" });
-    if (Number(current.active_status) === 0) {
-      return res
-        .status(409)
-        .json({
-          success: false,
-          error: "This employee is already removed from the bucket",
-        });
-    }
+  const current = await getRowById(req.params.id);
+  if (!current) return res.status(404).json({ success: false, error: "Exception bucket entry not found" });
+  if (!(await mayAccessEmployee(req.authUser.id, String(current.employee_id)))) return denyScope(res);
+  if (Number(current.active_status) === 0) {
+    return res.status(409).json({ success: false, error: "This employee is already removed from the bucket" });
+  }
 
     const reason = (req.body ?? {}).reason;
     const rErr = reasonError(reason);

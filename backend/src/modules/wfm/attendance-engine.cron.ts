@@ -1,5 +1,9 @@
-import { attendanceEngineService } from "./attendance-engine.service.js";
-import { nowIST } from "../../shared/timezone.js";
+import { attendanceEngineService } from './attendance-engine.service.js';
+import { nowIST } from '../../shared/timezone.js';
+import { recordWorkerRun } from '../../workers/worker-utils.js';
+import { runHealOnce } from './attendance-heal.worker.js';
+
+export const SWEEP_WORKER_NAME = 'attendance-engine-sweep';
 
 const RUN_HOUR = 23;
 let nextRun: NodeJS.Timeout | undefined;
@@ -18,7 +22,9 @@ export async function runAttendanceSweep(): Promise<{
   const date = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, "0")}-${String(yesterdayDate.getDate()).padStart(2, "0")}`;
 
   console.log(`[AttendanceEngine] Starting sweep for ${date}`);
+  await recordWorkerRun(SWEEP_WORKER_NAME, 'started', { date });
   const result = await attendanceEngineService.processDateBatch(date, 50);
+  await recordWorkerRun(SWEEP_WORKER_NAME, result.failed > 0 ? 'failed' : 'completed', { date, processed: result.processed, skipped: result.skipped, failed: result.failed });
   console.log(
     `[AttendanceEngine] Completed ${date}: processed=${result.processed} ` +
       `skipped=${result.skipped} failed=${result.failed}`,
@@ -28,6 +34,8 @@ export async function runAttendanceSweep(): Promise<{
       console.error(`[AttendanceEngine] Error: ${e}`),
     );
   }
+  // Whatever this run missed (or a restart cut short) is filled straight away instead of staying a hole.
+  await runHealOnce().catch(() => undefined);
   return result;
 }
 

@@ -126,34 +126,15 @@ describe("a value is either real or explicitly absent", () => {
   // The same shape answers every call in these tests: the aggregate, the exits
   // and mandate lookups, and the coverage probe (late_marks / issues non-zero,
   // i.e. both producing engines ran in the window).
-  const rowWith = (over: Record<string, unknown> = {}) => [
-    [
-      {
-        group_id: "p1",
-        group_name: "Onfido",
-        group_subtitle: "ONF",
-        headcount: 10,
-        manager_count: 2,
-        present_days: 100,
-        late_days: 30,
-        absent_days: 5,
-        half_days: 4,
-        leave_days: 1,
-        missing_punch_days: 0,
-        off_days: 0,
-        total_days: 120,
-        issue_days: 0,
-        missing_adr_days: 0,
-        people_cost: null,
-        exits: 1,
-        quality_score: null,
-        aht: null,
-        late_marks: 1,
-        issues: 1,
-        ...over,
-      },
-    ],
-  ];
+  const rowWith = (over: Record<string, unknown> = {}) => ([[{
+    group_id: "p1", group_name: "Onfido", group_subtitle: "ONF",
+    headcount: 10, manager_count: 2,
+    present_days: 100, late_days: 30, absent_days: 5, half_days: 4, leave_days: 1,
+    missing_punch_days: 0, off_days: 0, total_days: 120,
+    issue_days: 0, missing_adr_days: 0, people_cost: null,
+    exits: 1, quality_sum: null, audited_calls: 0, aht: null,
+    late_marks: 1, issues: 1, ...over,
+  }]]);
 
   it("computes late comers % from real numerator and denominator", async () => {
     execute.mockResolvedValue(rowWith());
@@ -260,7 +241,7 @@ describe("a value is either real or explicitly absent", () => {
   });
 
   it("marks a metric with no rows as no_data rather than zero", async () => {
-    execute.mockResolvedValue(rowWith({ quality_score: null }));
+    execute.mockResolvedValue(rowWith({ quality_sum: null, audited_calls: 0 }));
     const [row] = await svc.getProcessRows("u", FILTERS);
     const quality = row.sections.find((s) => s.key === "quality")!;
     expect(quality.availability).toBe("no_data");
@@ -298,14 +279,30 @@ describe("a value is either real or explicitly absent", () => {
     // An agent audited on 4 calls must not move the process score as far as one
     // audited on 400 -- and the cell must agree with the drill-down behind it,
     // which averages the underlying rows directly.
-    execute.mockReset().mockResolvedValue([[{}]]);
-    await svc.getProcessRows("u", FILTERS);
-    const agg = sqlOf();
-    expect(agg).toContain(
-      "SUM(q.quality_sum) / NULLIF(SUM(q.audited_calls), 0)",
+    //
+    // Quality left the aggregate in ae2de564a so a slow db_audit cannot stall the
+    // page: it is now its own per-group query returning the SUM and the COUNT, and
+    // the division happens in toSections. Same weighting, pinned in both halves.
+    execute.mockReset().mockResolvedValue(
+      rowWith({ quality_sum: 400 * 90 + 4 * 10, audited_calls: 404 }),
     );
+    const [row] = await svc.getProcessRows("u", FILTERS);
+    const agg = sqlOf();
     expect(agg).toContain("SUM(o.aht_sum) / NULLIF(SUM(o.aht_days), 0)");
-    expect(agg).not.toMatch(/AVG\(q\.quality_score\)|AVG\(o\.aht\)/);
+    const qualitySql = execute.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .find((q: string) => q.includes("db_audit.call_quality_assessment"))!;
+    expect(qualitySql).toBeTruthy();
+    expect(qualitySql).toMatch(/SUM\(q\.quality_percentage\)\s+AS quality_sum/);
+    expect(qualitySql).toMatch(/COUNT\(\*\)\s+AS audited_calls/);
+    for (const q of [agg, qualitySql]) {
+      expect(q).not.toMatch(/AVG\(q\.quality_(score|percentage)\)|AVG\(o\.aht\)|AVG\(k\.actual_value\)/);
+    }
+    // 400 calls at 90 and 4 calls at 10: call-weighted 89.21, not the 50 a mean of
+    // the two per-person means would give.
+    const quality = row.sections.find((s) => s.key === "quality")!;
+    expect(quality.availability).toBe("ok");
+    expect(quality.value).toBeCloseTo(89.21, 2);
   });
 
   it("reports people cost from the salary snapshot when one exists", async () => {
@@ -326,7 +323,7 @@ describe("a value is either real or explicitly absent", () => {
   });
 
   it("offers a root cause only where the schema categorises one", async () => {
-    execute.mockResolvedValue(rowWith({ quality_score: 81.5, aht: 42 }));
+    execute.mockResolvedValue(rowWith({ quality_sum: 815, audited_calls: 10, aht: 42 }));
     const [row] = await svc.getProcessRows("u", FILTERS);
     const by = Object.fromEntries(
       row.sections.map((s) => [s.key, s.hasRootCause]),

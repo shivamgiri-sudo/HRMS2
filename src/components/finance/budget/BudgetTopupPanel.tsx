@@ -1,7 +1,8 @@
 // src/components/finance/budget/BudgetTopupPanel.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Circle, Clock, PlusCircle, XCircle } from "lucide-react";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
+import { Ban, CheckCircle2, Circle, Clock, Pencil, PlusCircle, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,7 +23,7 @@ import { toast } from "sonner";
 export type BudgetTopupRequest = {
   id: string;
   budget_line_id: string;
-  status: "submitted" | "branch_head_approved" | "finance_head_approved" | "rejected" | "applied";
+  status: "submitted" | "branch_head_approved" | "finance_head_approved" | "rejected" | "applied" | "cancelled";
   requested_amount: number;
   requested_quantity: number;
   reason: string;
@@ -56,6 +57,9 @@ export type BudgetTopupRequest = {
   unit_rate: number | null;
   unit: string | null;
   rejection_reason: string | null;
+  /** Set when the raiser withdrew the request themselves (status 'cancelled'). */
+  cancellation_reason: string | null;
+  cancelled_at: string | null;
   created_at: string;
   requested_by: string | null;
   /** Joined in budget-topup.service.ts list() — who actually raised this request, for display. */
@@ -165,6 +169,7 @@ const STATUS_TONE: Record<string, string> = {
   finance_head_approved: "border-emerald-200 bg-emerald-50 text-emerald-800",
   applied: "border-emerald-200 bg-emerald-50 text-emerald-800",
   rejected: "border-rose-200 bg-rose-50 text-rose-800",
+  cancelled: "border-slate-200 bg-slate-100 text-slate-600",
 };
 
 /** "12 Aug, 3:40 pm" — short enough to sit under a three-across stage track without wrapping,
@@ -441,6 +446,7 @@ export function BudgetTopupPanel({
   presetLineId,
   onConsumedPreset,
   currentUserId,
+  isSuperAdmin,
   presetNewLineHead,
   presetNewLineSubHead,
   currentBudgetId,
@@ -465,6 +471,9 @@ export function BudgetTopupPanel({
   /** Current user's ID — used to disable the Approve button when the viewer is the submitter
    *  (maker-checker enforcement mirrors the backend check in budget-topup.service.ts). */
   currentUserId?: string | null;
+  /** super_admin may edit the amount of / cancel a request they did not raise — same override
+   *  budget-topup.service.ts's updateAmount()/cancel() apply. */
+  isSuperAdmin?: boolean;
   /** Group D deep-link readiness: mirrors presetLineId's shape for the "no line exists yet"
    *  case a blocked GRN can also produce (see BranchBudgetManagementWorkspace's ?newLineHead=/
    *  ?newLineSubHead= params). Nothing sends these yet — Group A, not built — this only makes
@@ -502,6 +511,12 @@ export function BudgetTopupPanel({
   const [directAmount, setDirectAmount] = useState("");
   const [directReason, setDirectReason] = useState("");
   const [directSplitRows, setDirectSplitRows] = useState<TopupSplitRow[]>(() => [blankSplitRow()]);
+  /** The raiser's own two actions on a request they submitted. Each holds the row being acted on,
+   *  so one dialog serves the whole queue. */
+  const [editRequest, setEditRequest] = useState<BudgetTopupRequest | null>(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [cancelRequest, setCancelRequest] = useState<BudgetTopupRequest | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
 
   const listQuery = useQuery({
     // period is part of the key AND the request. It was omitted from both, so the panel showed
@@ -522,6 +537,7 @@ export function BudgetTopupPanel({
     enabled: Boolean(branchId),
   });
   const requests = listQuery.data ?? [];
+  useApprovalFocus(!listQuery.isLoading);
 
   const linesQuery = useQuery({
     queryKey: ["budget-lines-available-for-topup", branchId, period],
@@ -768,6 +784,48 @@ export function BudgetTopupPanel({
     onError: (error: Error) => toast.error(error.message || "Review failed"),
   });
 
+  const editAmountMutation = useMutation({
+    mutationFn: async () => {
+      if (!editRequest) throw new Error("No request selected");
+      const amount = Number(editAmount);
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid amount");
+      return hrmsApi.patch(`/api/finance/pnl/budget-topups/${editRequest.id}`, { requestedAmount: amount });
+    },
+    onSuccess: () => {
+      toast.success("Top-up amount updated");
+      setEditRequest(null);
+      setEditAmount("");
+      queryClient.invalidateQueries({ queryKey: ["budget-topups"] });
+      queryClient.invalidateQueries({ queryKey: ["budget-topups-for-variance"] });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to update the amount");
+      // A refusal here usually means Branch Head approved in the meantime — refetch so the
+      // Edit button this row no longer qualifies for disappears.
+      queryClient.invalidateQueries({ queryKey: ["budget-topups"] });
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: async () => {
+      if (!cancelRequest) throw new Error("No request selected");
+      return hrmsApi.post(`/api/finance/pnl/budget-topups/${cancelRequest.id}/cancel`, {
+        reason: cancelReason.trim() || undefined,
+      });
+    },
+    onSuccess: () => {
+      toast.success("Top-up request cancelled");
+      setCancelRequest(null);
+      setCancelReason("");
+      queryClient.invalidateQueries({ queryKey: ["budget-topups"] });
+      queryClient.invalidateQueries({ queryKey: ["budget-topups-for-variance"] });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to cancel the request");
+      queryClient.invalidateQueries({ queryKey: ["budget-topups"] });
+    },
+  });
+
   const canReviewRow = (request: BudgetTopupRequest) =>
     (request.status === "submitted" && canReviewBranchStage) ||
     (request.status === "branch_head_approved" && canReviewFinanceStage);
@@ -831,12 +889,20 @@ export function BudgetTopupPanel({
           const decisionNote =
             request.status === "rejected"
               ? request.rejection_reason
-              : request.finance_head_review_note ?? request.branch_head_review_note;
-          const decisionNoteLabel = request.status === "rejected" ? "Rejected" : "Reviewer remark";
+              : request.status === "cancelled"
+                ? request.cancellation_reason
+                : request.finance_head_review_note ?? request.branch_head_review_note;
+          const decisionNoteLabel =
+            request.status === "rejected" ? "Rejected" : request.status === "cancelled" ? "Cancelled" : "Reviewer remark";
+          /* The raiser's (or a super_admin's) actions. Both stop the moment Branch Head approves —
+             from there the request leaves the queue only by a reviewer's decision. Mirrors
+             updateAmount()/cancel() in budget-topup.service.ts. */
+          const canEditOrCancel = (isOwnRequest(request) || isSuperAdmin) && request.status === "submitted";
 
           return (
             <div
               key={request.id}
+              data-approval-id={request.id}
               className="rounded-2xl border border-slate-200 bg-white p-4 transition-shadow duration-200 hover:shadow-md"
             >
               {/* Two columns from lg up, stacked below it. The right column is what fills the
@@ -903,6 +969,33 @@ export function BudgetTopupPanel({
                   </div>
 
                   <ApprovalTrack stages={stages} />
+
+                  {canEditOrCancel && (
+                    <div className="flex gap-2 border-t border-slate-100 pt-3">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => {
+                            setEditRequest(request);
+                            setEditAmount(String(Number(request.requested_amount)));
+                          }}
+                        >
+                          <Pencil className="mr-1 h-3.5 w-3.5" />Edit amount
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                          onClick={() => {
+                            setCancelRequest(request);
+                            setCancelReason("");
+                          }}
+                        >
+                          <Ban className="mr-1 h-3.5 w-3.5" />Cancel request
+                        </Button>
+                    </div>
+                  )}
 
                   {canReviewRow(request) && (
                     <div className="flex flex-col gap-2 border-t border-slate-100 pt-3">
@@ -1151,6 +1244,86 @@ export function BudgetTopupPanel({
               onClick={() => createMutation.mutate()}
             >
               Submit for branch_head review
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(editRequest)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditRequest(null);
+            setEditAmount("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Edit requested amount</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-slate-600">
+              {editRequest?.head}{editRequest?.sub_head ? ` · ${editRequest.sub_head}` : ""} — currently{" "}
+              <strong>{money(editRequest?.requested_amount)}</strong>. The amount can be changed only until
+              Branch Head approves; any cost-centre split is adjusted in the same proportion.
+            </p>
+            <div>
+              <Label className="text-xs">Additional amount needed *</Label>
+              <Input
+                type="number"
+                inputMode="decimal"
+                className="mt-1 h-9"
+                value={editAmount}
+                onChange={(event) => setEditAmount(event.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setEditRequest(null)}>Close</Button>
+            <Button
+              disabled={
+                editAmountMutation.isPending ||
+                !(Number(editAmount) > 0) ||
+                Number(editAmount) === Number(editRequest?.requested_amount)
+              }
+              onClick={() => editAmountMutation.mutate()}
+            >
+              Save amount
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(cancelRequest)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCancelRequest(null);
+            setCancelReason("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Cancel this top-up request?</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-slate-600">
+              {cancelRequest?.head}{cancelRequest?.sub_head ? ` · ${cancelRequest.sub_head}` : ""} —{" "}
+              <strong>{money(cancelRequest?.requested_amount)}</strong>. The request is withdrawn from the
+              approval queue and cannot be reopened; raise a new one if the increase is still needed.
+            </p>
+            <div>
+              <Label className="text-xs">Reason (optional)</Label>
+              <Textarea
+                className="mt-1 min-h-[64px]"
+                value={cancelReason}
+                onChange={(event) => setCancelReason(event.target.value)}
+                placeholder="Why this request is being withdrawn"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCancelRequest(null)}>Keep request</Button>
+            <Button variant="destructive" disabled={cancelMutation.isPending} onClick={() => cancelMutation.mutate()}>
+              Cancel request
             </Button>
           </DialogFooter>
         </DialogContent>

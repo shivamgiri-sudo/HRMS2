@@ -10,6 +10,7 @@
  * rather than whenever the form was filled in.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
 
 type Rows = Record<string, unknown>[];
 const state: {
@@ -69,13 +70,24 @@ describe("age arithmetic", () => {
 describe("the 18th-birthday boundary", () => {
   it("blocks someone one day short of 18", async () => {
     const join = new Date("2026-08-01T12:00:00");
-    state.profile = [{ dob: "2008-08-02" }];
+    // Provider-verified: since 230c9d17a the submit-time hard block fires only
+    // on a DOB a verification provider confirmed (see "the block itself").
+    state.bgv = [{ matched_dob: "2008-08-02" }];
     const v = await resolveVerifiedDob("cand-1", join);
     expect(v.age).toBe(17);
     expect(v.isMinor).toBe(true);
     await expect(assertEmployableAge("cand-1", join)).rejects.toMatchObject({
       code: "UNDERAGE_CANDIDATE",
     });
+  });
+
+  it("still flags someone one day short of 18 when the DOB is only self-declared", async () => {
+    const join = new Date("2026-08-01T12:00:00");
+    state.profile = [{ dob: "2008-08-02" }];
+    const v = await resolveVerifiedDob("cand-1", join);
+    expect(v.age).toBe(17);
+    expect(v.isMinor).toBe(true);
+    expect(v.verified).toBe(false);
   });
 
   it("allows someone exactly 18 on their joining date", async () => {
@@ -191,7 +203,7 @@ describe("reading a DOB out of OCR text", () => {
 
 describe("the block itself", () => {
   it("throws in the shape the onboarding guards already use", async () => {
-    state.profile = [{ dob: dobFor(15) }];
+    state.bgv = [{ matched_dob: dobFor(15) }];
     try {
       await assertEmployableAge("cand-1");
       throw new Error("should have thrown");
@@ -201,6 +213,26 @@ describe("the block itself", () => {
       expect(err.code).toBe("UNDERAGE_CANDIDATE");
       expect(err.message).toContain(String(MINIMUM_EMPLOYMENT_AGE));
     }
+  });
+
+  /**
+   * 230c9d17a (2026-08-24) narrowed the SUBMIT-time block to provider-verified
+   * DOBs: OCR of garbled/rotated Aadhaar scans read issue dates as birth dates
+   * and self-declared typos did the same, falsely stopping adult candidates.
+   * The unverified minor is not waved through — the flag is still computed and
+   * returned for persistMinorFlag / HR review, and employee creation (pinned in
+   * the next describe) refuses a minor from ANY source.
+   */
+  it("does not hard-block an unverified underage DOB at submit, but returns it flagged", async () => {
+    state.profile = [{ dob: dobFor(15) }];
+    const selfDeclared = await assertEmployableAge("cand-1");
+    expect(selfDeclared).toMatchObject({ isMinor: true, verified: false, source: "self_declared", age: 15 });
+    expect(selfDeclared.reason).toContain(String(MINIMUM_EMPLOYMENT_AGE));
+
+    state.profile = [];
+    state.docs = [{ ocr_raw_text: "DOB: 15/06/2009" }];
+    const ocr = await assertEmployableAge("cand-1", new Date("2026-08-01T12:00:00"));
+    expect(ocr).toMatchObject({ isMinor: true, verified: false, source: "ocr_document" });
   });
 
   it("does not block when no DOB exists — that is a data gap, not a minor", async () => {
@@ -220,6 +252,31 @@ describe("the block itself", () => {
  * still never throws, so a write failure cannot block the rest of onboarding submission
  * over one column.
  */
+describe("employee creation refuses a minor whatever the DOB source", () => {
+  // The relaxed submit-time check above is only safe because this gate is not
+  // relaxed with it. It is a SQL-transaction path a unit test cannot reach
+  // cheaply, so it is pinned at source level.
+  const orchestrator = readFileSync(
+    new URL("../../employees/employee-creation-orchestrator.service.ts", import.meta.url),
+    "utf8",
+  );
+  const at = orchestrator.indexOf("const ageCheck = await resolveVerifiedDob(");
+  const gate = orchestrator.slice(at, at + 420);
+
+  it("judges age on the offer's joining date", () => {
+    expect(at).toBeGreaterThan(-1);
+    expect(gate).toMatch(/resolveVerifiedDob\(candidateId, offer\?\.date_of_joining \?\? null\)/);
+  });
+
+  it("blocks on isMinor alone — not only when the DOB is verified", () => {
+    expect(gate).toMatch(/if \(ageCheck\.isMinor\) \{/);
+    expect(gate).not.toMatch(/ageCheck\.isMinor\s*&&/);
+    expect(gate).toContain("type: 'underage_candidate'");
+    expect(gate).toContain("severity: 'critical'");
+    expect(gate).toMatch(/await conn\.rollback\(\);\s*return result;/);
+  });
+});
+
 describe("persistMinorFlag", () => {
   it("writes is_minor and does not throw on success", async () => {
     await expect(

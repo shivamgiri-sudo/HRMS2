@@ -80,4 +80,41 @@ describe("ExitStagePipeline", () => {
     expect(html).not.toContain("still have open clearance");
     expect(html).toContain("Show all stages");
   });
+
+  it("an exited employee with open clearance is shown in Settle, not Exit; fully cleared stays in Exit", async () => {
+    const { exitStageOfRow } = await import("@/components/exit/ExitStagePipeline");
+    expect(exitStageOfRow({ status: "exited", clearance_total: 8, clearance_cleared: 3 })).toBe("settle");
+    expect(exitStageOfRow({ status: "exited", clearance_total: 8, clearance_cleared: 8 })).toBe("exit");
+    expect(exitStageOfRow({ status: "exited" })).toBe("exit");
+    expect(exitStageOfRow({ status: "clearance_pending" })).toBe("settle");
+    expect(exitStageOfRow({ status: "revoked" })).toBe("stopped");
+  });
+
+  it("counts open-clearance exited employees in the Settle card", () => {
+    const html = renderToStaticMarkup(
+      <ExitStagePipeline
+        rows={[
+          { status: "exited", clearance_total: 2, clearance_cleared: 0 },
+          { status: "exited", clearance_total: 2, clearance_cleared: 1 },
+          { status: "exited", clearance_total: 2, clearance_cleared: 2 },
+        ]}
+        active="all"
+        onSelect={() => {}}
+      />,
+    );
+    expect(html).toContain("2 exited employee(s) still have open clearance");
+  });
+
+  it("flags a backdated resignation as held for HR, and nothing else", async () => {
+    const { isHeldForHr } = await import("@/components/exit/ExitStagePipeline");
+    const base = { status: "manager_review", exit_type: "voluntary", exit_sub_type: "resignation", submitted_at: "2026-09-30 22:10:00" };
+    expect(isHeldForHr({ ...base, last_working_day_proposed: "2026-09-15" })).toBe(true);
+    expect(isHeldForHr({ ...base, last_working_day_proposed: "2026-10-31" })).toBe(false);
+    expect(isHeldForHr({ ...base, last_working_day_proposed: "2026-09-15", status: "accepted" })).toBe(false);
+    expect(isHeldForHr({ ...base, last_working_day_proposed: "2026-09-15", exit_sub_type: "absconding" })).toBe(false);
+    const html = renderToStaticMarkup(
+      <ExitStagePipeline rows={[{ ...base, last_working_day_proposed: "2026-09-15" }]} active="all" onSelect={() => {}} />,
+    );
+    expect(html).toContain("1 resignation(s) are held for HR");
+  });
 });

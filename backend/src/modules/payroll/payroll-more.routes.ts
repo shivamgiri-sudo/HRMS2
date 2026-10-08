@@ -6,6 +6,8 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
+import { resolveDashboardScope } from "../../shared/dashboardScope.js";
+import { attendanceInEmploymentWindowSql } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
@@ -15,6 +17,7 @@ import { recalculateOpenPayrollForEmployee } from "./payroll-targeted-recalculat
 import { payslipService } from "./payslip.service.js";
 import { computeForm16Data } from "./form16-data.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { employeeScopeFor, scopeFor, filterVisibleEmployeeIds, visibleBranchIdsFor, canSeeEmployee, guardEmployee, isOrgWideCaller, OUT_OF_SCOPE_BODY } from "./payroll-branch-scope.js";
 
 const QUEUE_REASON_LIST_MAX = 500;
 
@@ -226,72 +229,54 @@ payrollMoreRouter.patch(
 
 // ─── Payroll Config Flags ─────────────────────────────────────────────────────
 
-payrollMoreRouter.get(
-  "/config-flags",
-  requireRole(
-    "admin",
-    "super_admin",
-    "finance",
-    "payroll",
-    "payroll_head",
-    "payroll_branch",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { branch_id, process_id } = req.query as {
-      branch_id?: string;
-      process_id?: string;
-    };
-    const conds: string[] = [];
-    const params: unknown[] = [];
-    if (branch_id) {
-      conds.push("branch_id = ?");
-      params.push(branch_id);
+payrollMoreRouter.get("/config-flags", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { branch_id, process_id } = req.query as { branch_id?: string; process_id?: string };
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  // Branch scoping: a browser branch_id only NARROWS what the caller may see. Non-org-wide callers
+  // see their own branch's flags plus the company-wide defaults (both ids NULL), never another branch's.
+  const visible = await visibleBranchIdsFor(req);
+  if (visible) {
+    if (branch_id && !visible.has(String(branch_id))) {
+      return res.status(403).json({ success: false, message: "Forbidden: this branch is outside your assigned scope" });
     }
-    if (process_id) {
-      conds.push("process_id = ?");
-      params.push(process_id);
-    }
-    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM payroll_config_flags ${where} ORDER BY config_key ASC`,
-      params,
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    const ids = Array.from(visible);
+    conds.push(ids.length
+      ? `(branch_id IN (${ids.map(() => "?").join(",")}) OR (branch_id IS NULL AND process_id IS NULL))`
+      : "1 = 0");
+    params.push(...ids);
+  }
+  if (branch_id)  { conds.push("branch_id = ?");  params.push(branch_id); }
+  if (process_id) { conds.push("process_id = ?"); params.push(process_id); }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM payroll_config_flags ${where} ORDER BY config_key ASC`,
+    params
+  );
+  return res.json({ success: true, data: rows });
+}));
 
-payrollMoreRouter.put(
-  "/config-flags",
-  requireRole(
-    "admin",
-    "super_admin",
-    "finance",
-    "payroll",
-    "payroll_head",
-    "payroll_branch",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { branch_id, process_id, config_key, config_value, description } =
-      req.body as {
-        branch_id?: string | null;
-        process_id?: string | null;
-        config_key: string;
-        config_value: string;
-        description?: string;
-      };
-    if (!config_key || config_value === undefined) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "config_key and config_value are required",
-        });
+payrollMoreRouter.put("/config-flags", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { branch_id, process_id, config_key, config_value, description } = req.body as {
+    branch_id?: string | null; process_id?: string | null;
+    config_key: string; config_value: string; description?: string;
+  };
+  if (!config_key || config_value === undefined) {
+    return res.status(400).json({ success: false, message: "config_key and config_value are required" });
+  }
+  {
+    // Non-org-wide callers may only write flags for a branch inside their own scope; company-wide
+    // (branch_id NULL) and other-branch flags need an org-wide role.
+    const visible = await visibleBranchIdsFor(req);
+    if (visible && (!branch_id || !visible.has(String(branch_id)))) {
+      return res.status(403).json({ success: false, message: "Forbidden: you may only change flags for a branch inside your assigned scope" });
     }
-    const { randomUUID } = await import("crypto");
-    const id = randomUUID();
-    const actor = req.authUser?.id ?? "system";
-    await db.execute(
-      `INSERT INTO payroll_config_flags (id, branch_id, process_id, config_key, config_value, description, updated_by)
+  }
+  const { randomUUID } = await import("crypto");
+  const id = randomUUID();
+  const actor = req.authUser?.id ?? "system";
+  await db.execute(
+    `INSERT INTO payroll_config_flags (id, branch_id, process_id, config_key, config_value, description, updated_by)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), description = COALESCE(VALUES(description), description), updated_by = VALUES(updated_by), updated_at = NOW()`,
       [
@@ -314,45 +299,26 @@ payrollMoreRouter.put(
 
 // ─── Recalculation Queue ─────────────────────────────────────────────────────
 
-payrollMoreRouter.get(
-  "/recalculation-queue",
-  requireRole(
-    "admin",
-    "super_admin",
-    "finance",
-    "payroll",
-    "payroll_head",
-    "payroll_branch",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const {
-      status,
-      payrollMonth,
-      page: rawPage,
-      limit: rawLimit,
-    } = req.query as {
-      status?: string;
-      payrollMonth?: string;
-      page?: string;
-      limit?: string;
-    };
-    const page = Math.max(1, parseInt(rawPage ?? "1", 10));
-    const limit = Math.min(200, parseInt(rawLimit ?? "50", 10));
-    const offset = (page - 1) * limit;
-    const conds: string[] = [];
-    const params: unknown[] = [];
-    if (status) {
-      conds.push("rq.status = ?");
-      params.push(status);
-    }
-    if (payrollMonth) {
-      pushMonthRange(conds, params, payrollMonth);
-    }
-    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      // Explicit columns, `reason` capped: it can be many KB and the grid shows it truncated
-      // anyway. Was `rq.*`, which dragged every full reason over the wire on each page load.
-      `SELECT rq.id, rq.employee_id, rq.run_id, rq.payroll_month, rq.source_event_type, rq.source_event_id,
+payrollMoreRouter.get("/recalculation-queue", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { status, payrollMonth, page: rawPage, limit: rawLimit } = req.query as {
+    status?: string; payrollMonth?: string; page?: string; limit?: string;
+  };
+  const page  = Math.max(1, parseInt(rawPage ?? "1", 10));
+  const limit = Math.min(200, parseInt(rawLimit ?? "50", 10));
+  const offset = (page - 1) * limit;
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (status)        { conds.push("rq.status = ?");               params.push(status); }
+  if (payrollMonth)  { pushMonthRange(conds, params, payrollMonth); }
+  // Branch scoping: only the queue rows of employees inside the caller's scope.
+  const qScope = await employeeScopeFor(req, "e");
+  const scopeConds = [`(${qScope.sql})`];
+  const where = `WHERE ${[...conds, ...scopeConds].join(" AND ")}`;
+  params.push(...qScope.params);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    // Explicit columns, `reason` capped: it can be many KB and the grid shows it truncated
+    // anyway. Was `rq.*`, which dragged every full reason over the wire on each page load.
+    `SELECT rq.id, rq.employee_id, rq.run_id, rq.payroll_month, rq.source_event_type, rq.source_event_id,
             LEFT(rq.reason, ${QUEUE_REASON_LIST_MAX}) AS reason,
             rq.status, rq.requested_by, rq.requested_at, rq.processed_at, rq.error_message,
             COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -362,32 +328,28 @@ payrollMoreRouter.get(
        ${where}
        ORDER BY rq.requested_at DESC
        LIMIT ${limit} OFFSET ${offset}`,
-      params,
-    );
-    const [countRow] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM payroll_recalculation_queue rq ${where}`,
-      params,
-    );
+    params
+  );
+  const [countRow] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM payroll_recalculation_queue rq LEFT JOIN employees e ON e.id = rq.employee_id ${where}`,
+    params
+  );
 
-    // Status breakdown across the full filtered set (payrollMonth only, never the status filter
-    // itself) — the KPI tiles used to be computed client-side over just the current page's `data`,
-    // so "Failed" could read 0/green while thousands of failed rows sat on other pages.
-    const statusConds: string[] = [];
-    const statusParams: unknown[] = [];
-    if (payrollMonth) {
-      pushMonthRange(statusConds, statusParams, payrollMonth);
-    }
-    const statusWhere = statusConds.length
-      ? `WHERE ${statusConds.join(" AND ")}`
-      : "";
-    const [statusRows] = await db.execute<RowDataPacket[]>(
-      `SELECT rq.status, COUNT(*) AS c FROM payroll_recalculation_queue rq ${statusWhere} GROUP BY rq.status`,
-      statusParams,
-    );
-    const statusCounts: Record<string, number> = {};
-    (statusRows as any[]).forEach((r) => {
-      statusCounts[r.status] = Number(r.c);
-    });
+  // Status breakdown across the full filtered set (payrollMonth only, never the status filter
+  // itself) — the KPI tiles used to be computed client-side over just the current page's `data`,
+  // so "Failed" could read 0/green while thousands of failed rows sat on other pages.
+  const statusConds: string[] = [];
+  const statusParams: unknown[] = [];
+  if (payrollMonth) { pushMonthRange(statusConds, statusParams, payrollMonth); }
+  statusConds.push(`(${qScope.sql})`);
+  statusParams.push(...qScope.params);
+  const statusWhere = `WHERE ${statusConds.join(" AND ")}`;
+  const [statusRows] = await db.execute<RowDataPacket[]>(
+    `SELECT rq.status, COUNT(*) AS c FROM payroll_recalculation_queue rq LEFT JOIN employees e ON e.id = rq.employee_id ${statusWhere} GROUP BY rq.status`,
+    statusParams
+  );
+  const statusCounts: Record<string, number> = {};
+  (statusRows as any[]).forEach((r) => { statusCounts[r.status] = Number(r.c); });
 
     return res.json({
       success: true,
@@ -532,6 +494,7 @@ payrollMoreRouter.get(
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params as { runId: string };
+    const driftScope = await employeeScopeFor(req, "e");
     const [runRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, run_month, attendance_snapshot_locked FROM salary_prep_run WHERE id = ? LIMIT 1`,
       [runId],
@@ -578,13 +541,15 @@ payrollMoreRouter.get(
                       ELSE 0 END) AS live_paid_base
            FROM attendance_daily_record
            WHERE record_date BETWEEN ? AND ?
+             AND ${attendanceInEmploymentWindowSql("attendance_daily_record")}
            GROUP BY employee_id
          ) adr ON adr.employee_id = spl.employee_id
         WHERE spl.run_id = ?
           AND ABS(ROUND(adr.live_paid_base, 1) - ROUND(spl.paid_working_days, 1)) > 0.4
+          AND (${driftScope.sql})
         ORDER BY ABS(adr.live_paid_base - spl.paid_working_days) DESC
         LIMIT 500`,
-      [monthStart, monthEnd, runId],
+      [monthStart, monthEnd, runId, ...driftScope.params],
     );
 
     const rows = driftRows as any[];
@@ -655,6 +620,7 @@ payrollMoreRouter.post(
                         ELSE 0 END) AS live_paid_base
              FROM attendance_daily_record
              WHERE record_date BETWEEN ? AND ?
+               AND ${attendanceInEmploymentWindowSql("attendance_daily_record")}
              GROUP BY employee_id
            ) adr ON adr.employee_id = spl.employee_id
           WHERE spl.run_id = ?
@@ -761,23 +727,47 @@ payrollMoreRouter.post(
 
 // ─── Holiday Master ───────────────────────────────────────────────────────────
 
-payrollMoreRouter.get(
-  "/holiday-master",
-  requireRole(
-    "admin",
-    "super_admin",
-    "finance",
-    "payroll",
-    "payroll_head",
-    "payroll_branch",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { year, includeInactive } = req.query as {
-      year?: string;
-      includeInactive?: string;
-    };
-    const params: unknown[] = [];
-    let sql = `SELECT lhm.*,
+// payroll_branch and branch_wfm maintain holidays for their own branch(es) only. Org-wide
+// roles (admin, super_admin, payroll_head, ...) resolve to ORG_ALL and stay unrestricted.
+// Everyone else is limited to holidays whose branch_id is in their assigned branches;
+// global holidays (branch_id NULL) are view-only for them.
+const HOLIDAY_WRITE_ROLES = ["admin", "super_admin", "payroll_head", "payroll_branch", "branch_wfm"] as const;
+
+async function holidayBranchScope(req: AuthenticatedRequest): Promise<{ unrestricted: boolean; branchIds: string[] }> {
+  const scope = await resolveDashboardScope(req.authUser!.id, req.authUser!.role ?? "");
+  if (scope.level === "ORG_ALL") return { unrestricted: true, branchIds: [] };
+  return { unrestricted: false, branchIds: scope.branchIds };
+}
+
+/** Returns an error message when the caller may not write to a holiday of `holidayBranchId`. */
+function holidayBranchDenied(scope: { unrestricted: boolean; branchIds: string[] }, holidayBranchId: string | null | undefined): string | null {
+  if (scope.unrestricted) return null;
+  if (!holidayBranchId) return "Only head office can change all-branch holidays";
+  if (!scope.branchIds.includes(holidayBranchId)) return "Holiday belongs to a branch outside your scope";
+  return null;
+}
+
+async function loadHolidayBranch(id: string): Promise<{ found: boolean; branchId: string | null }> {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT branch_id FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]);
+  const row = (rows as any[])[0];
+  return { found: Boolean(row), branchId: row?.branch_id ?? null };
+}
+
+/** Sends 404/403 and returns null when the caller may not write to holiday `id`. */
+async function guardHolidayWrite(req: AuthenticatedRequest, res: Response, id: string) {
+  const scope = await holidayBranchScope(req);
+  const holiday = await loadHolidayBranch(id);
+  if (!holiday.found) { res.status(404).json({ success: false, message: "Holiday not found" }); return null; }
+  const denied = holidayBranchDenied(scope, holiday.branchId);
+  if (denied) { res.status(403).json({ success: false, message: denied }); return null; }
+  return { scope };
+}
+
+payrollMoreRouter.get("/holiday-master", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch", "branch_wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scope = await holidayBranchScope(req);
+  const { year, includeInactive } = req.query as { year?: string; includeInactive?: string };
+  const params: unknown[] = [];
+  let sql = `SELECT lhm.*,
                     hcc.cost_centre_ids,
                     hdm.designation_ids
                FROM leave_holiday_master lhm
@@ -790,48 +780,122 @@ payrollMoreRouter.get(
                    FROM holiday_designation_mapping GROUP BY holiday_id
                ) hdm ON hdm.holiday_id = lhm.id
               WHERE 1=1`;
-    if (
-      !includeInactive ||
-      includeInactive === "0" ||
-      includeInactive === "false"
-    ) {
-      sql += " AND lhm.active_status = 1";
+  if (!includeInactive || includeInactive === "0" || includeInactive === "false") {
+    sql += " AND lhm.active_status = 1";
+  }
+  if (year) { sql += " AND YEAR(lhm.holiday_date) = ?"; params.push(year); }
+  if (!scope.unrestricted) {
+    if (scope.branchIds.length === 0) {
+      sql += " AND lhm.branch_id IS NULL";
+    } else {
+      sql += ` AND (lhm.branch_id IS NULL OR lhm.branch_id IN (${scope.branchIds.map(() => "?").join(",")}))`;
+      params.push(...scope.branchIds);
     }
-    if (year) {
-      sql += " AND YEAR(lhm.holiday_date) = ?";
-      params.push(year);
-    }
-    sql += " ORDER BY lhm.holiday_date ASC";
-    const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-    return res.json({ success: true, data: rows });
-  }),
-);
+  }
+  sql += " ORDER BY lhm.holiday_date ASC";
+  const [rows] = await db.execute<RowDataPacket[]>(sql, params);
+  return res.json({ success: true, data: rows });
+}));
 
-payrollMoreRouter.post(
-  "/holiday-master",
-  requireRole("admin", "super_admin", "payroll_head"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const {
-      holiday_name,
-      holiday_date,
-      holiday_type,
-      branch_id,
-      active_status,
-    } = req.body as {
-      holiday_name: string;
-      holiday_date: string;
-      holiday_type: string;
-      branch_id?: string;
-      active_status?: number;
-    };
-    if (!holiday_name || !holiday_date || !holiday_type) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "holiday_name, holiday_date and holiday_type are required",
-        });
+// Branch ids the caller may write holidays for (null = every branch); drives the form's Branch dropdown.
+payrollMoreRouter.get("/holiday-master/my-branches", requireRole(...HOLIDAY_WRITE_ROLES, "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scope = await holidayBranchScope(req);
+  return res.json({ success: true, data: scope.unrestricted ? null : scope.branchIds });
+}));
+
+payrollMoreRouter.post("/holiday-master", requireRole(...HOLIDAY_WRITE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { holiday_name, holiday_date, holiday_type, branch_id, active_status } = req.body as {
+    holiday_name: string; holiday_date: string; holiday_type: string;
+    branch_id?: string; active_status?: number;
+  };
+  if (!holiday_name || !holiday_date || !holiday_type) {
+    return res.status(400).json({ success: false, message: "holiday_name, holiday_date and holiday_type are required" });
+  }
+  const denied = holidayBranchDenied(await holidayBranchScope(req), branch_id);
+  if (denied) return res.status(403).json({ success: false, message: denied });
+  const { v4: uuidv4 } = await import("uuid");
+  const id = uuidv4();
+  await db.execute(
+    `INSERT INTO leave_holiday_master (id, holiday_name, holiday_date, holiday_type, branch_id, active_status)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [id, holiday_name, holiday_date, holiday_type, branch_id ?? null, active_status ?? 1]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]);
+  return res.status(201).json({ success: true, data: rows[0] });
+}));
+
+payrollMoreRouter.put("/holiday-master/:id", requireRole(...HOLIDAY_WRITE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const guard = await guardHolidayWrite(req, res, id);
+  if (!guard) return;
+  const { holiday_name, holiday_date, holiday_type, branch_id, active_status } = req.body as {
+    holiday_name?: string; holiday_date?: string; holiday_type?: string;
+    branch_id?: string | null; active_status?: number;
+  };
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  if (holiday_name !== undefined)  { sets.push("holiday_name = ?");  params.push(holiday_name); }
+  if (holiday_date !== undefined)  { sets.push("holiday_date = ?");  params.push(holiday_date); }
+  if (holiday_type !== undefined)  { sets.push("holiday_type = ?");  params.push(holiday_type); }
+  if (branch_id !== undefined)     { sets.push("branch_id = ?");     params.push(branch_id); }
+  if (active_status !== undefined) { sets.push("active_status = ?"); params.push(active_status); }
+  if (sets.length === 0) return res.status(400).json({ success: false, message: "No fields to update" });
+  if (branch_id !== undefined) {
+    const moveDenied = holidayBranchDenied(guard.scope, branch_id);
+    if (moveDenied) return res.status(403).json({ success: false, message: moveDenied });
+  }
+  params.push(id);
+  await db.execute(`UPDATE leave_holiday_master SET ${sets.join(", ")} WHERE id = ?`, params);
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]);
+  if (!(rows as any[]).length) return res.status(404).json({ success: false, message: "Holiday not found" });
+  return res.json({ success: true, data: rows[0] });
+}));
+
+payrollMoreRouter.patch("/holiday-master/:id/toggle", requireRole(...HOLIDAY_WRITE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  if (!(await guardHolidayWrite(req, res, id))) return;
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT active_status FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]);
+  if (!(rows as any[]).length) return res.status(404).json({ success: false, message: "Holiday not found" });
+  const newStatus = (rows[0] as any).active_status ? 0 : 1;
+  await db.execute("UPDATE leave_holiday_master SET active_status = ? WHERE id = ?", [newStatus, id]);
+  return res.json({ success: true, active_status: newStatus });
+}));
+
+payrollMoreRouter.post("/holiday-master/cc-mapping", requireRole(...HOLIDAY_WRITE_ROLES, "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { holiday_id, cost_centre_ids, branch_id, process_id, department_id } = req.body as {
+    holiday_id: string; cost_centre_ids: string[];
+    branch_id?: string; process_id?: string; department_id?: string;
+  };
+  if (!holiday_id || !Array.isArray(cost_centre_ids)) return res.status(400).json({ success: false, message: "holiday_id and cost_centre_ids required" });
+  const ccGuard = await guardHolidayWrite(req, res, holiday_id);
+  if (!ccGuard) return;
+  if (!ccGuard.scope.unrestricted && cost_centre_ids.length > 0) {
+    const [ccRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, branch_id FROM cost_centre_master WHERE id IN (${cost_centre_ids.map(() => "?").join(",")})`,
+      cost_centre_ids,
+    );
+    const outside = (ccRows as any[]).some((r) => !ccGuard.scope.branchIds.includes(r.branch_id));
+    if (outside || (ccRows as any[]).length !== new Set(cost_centre_ids).size) {
+      return res.status(403).json({ success: false, message: "Cost centre outside your branch scope" });
     }
+  }
+  await db.execute("DELETE FROM holiday_cost_centre_mapping WHERE holiday_id = ?", [holiday_id]);
+  const { v4: uuidv4 } = await import("uuid");
+  for (const cc of cost_centre_ids) {
+    await db.execute(
+      "INSERT INTO holiday_cost_centre_mapping (id, holiday_id, cost_centre_id, branch_id, process_id, department_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [uuidv4(), holiday_id, cc, branch_id ?? null, process_id ?? null, department_id ?? null]
+    );
+  }
+  return res.json({ success: true });
+}));
+
+payrollMoreRouter.post("/holiday-master/designation-mapping", requireRole(...HOLIDAY_WRITE_ROLES, "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { holiday_id, designation_ids } = req.body as { holiday_id: string; designation_ids: string[] };
+  if (!holiday_id || !Array.isArray(designation_ids)) return res.status(400).json({ success: false, message: "holiday_id and designation_ids required" });
+  if (!(await guardHolidayWrite(req, res, holiday_id))) return;
+  await db.execute("DELETE FROM holiday_designation_mapping WHERE holiday_id = ?", [holiday_id]);
+  for (const did of designation_ids) {
     const { v4: uuidv4 } = await import("uuid");
     const id = uuidv4();
     await db.execute(
@@ -854,234 +918,40 @@ payrollMoreRouter.post(
   }),
 );
 
-payrollMoreRouter.put(
-  "/holiday-master/:id",
-  requireRole("admin", "super_admin", "payroll_head"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
-    const {
-      holiday_name,
-      holiday_date,
-      holiday_type,
-      branch_id,
-      active_status,
-    } = req.body as {
-      holiday_name?: string;
-      holiday_date?: string;
-      holiday_type?: string;
-      branch_id?: string | null;
-      active_status?: number;
-    };
-    const sets: string[] = [];
-    const params: unknown[] = [];
-    if (holiday_name !== undefined) {
-      sets.push("holiday_name = ?");
-      params.push(holiday_name);
-    }
-    if (holiday_date !== undefined) {
-      sets.push("holiday_date = ?");
-      params.push(holiday_date);
-    }
-    if (holiday_type !== undefined) {
-      sets.push("holiday_type = ?");
-      params.push(holiday_type);
-    }
-    if (branch_id !== undefined) {
-      sets.push("branch_id = ?");
-      params.push(branch_id);
-    }
-    if (active_status !== undefined) {
-      sets.push("active_status = ?");
-      params.push(active_status);
-    }
-    if (sets.length === 0)
-      return res
-        .status(400)
-        .json({ success: false, message: "No fields to update" });
-    params.push(id);
-    await db.execute(
-      `UPDATE leave_holiday_master SET ${sets.join(", ")} WHERE id = ?`,
-      params,
-    );
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1",
-      [id],
-    );
-    if (!(rows as any[]).length)
-      return res
-        .status(404)
-        .json({ success: false, message: "Holiday not found" });
-    return res.json({ success: true, data: rows[0] });
-  }),
-);
-
-payrollMoreRouter.patch(
-  "/holiday-master/:id/toggle",
-  requireRole("admin", "super_admin", "payroll_head"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT active_status FROM leave_holiday_master WHERE id = ? LIMIT 1",
-      [id],
-    );
-    if (!(rows as any[]).length)
-      return res
-        .status(404)
-        .json({ success: false, message: "Holiday not found" });
-    const newStatus = (rows[0] as any).active_status ? 0 : 1;
-    await db.execute(
-      "UPDATE leave_holiday_master SET active_status = ? WHERE id = ?",
-      [newStatus, id],
-    );
-    return res.json({ success: true, active_status: newStatus });
-  }),
-);
-
-payrollMoreRouter.post(
-  "/holiday-master/cc-mapping",
-  requireRole("admin", "super_admin", "payroll", "payroll_head"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const {
-      holiday_id,
-      cost_centre_ids,
-      branch_id,
-      process_id,
-      department_id,
-    } = req.body as {
-      holiday_id: string;
-      cost_centre_ids: string[];
-      branch_id?: string;
-      process_id?: string;
-      department_id?: string;
-    };
-    if (!holiday_id || !Array.isArray(cost_centre_ids))
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "holiday_id and cost_centre_ids required",
-        });
-    await db.execute(
-      "DELETE FROM holiday_cost_centre_mapping WHERE holiday_id = ?",
-      [holiday_id],
-    );
-    const { v4: uuidv4 } = await import("uuid");
-    for (const cc of cost_centre_ids) {
-      await db.execute(
-        "INSERT INTO holiday_cost_centre_mapping (id, holiday_id, cost_centre_id, branch_id, process_id, department_id) VALUES (?, ?, ?, ?, ?, ?)",
-        [
-          uuidv4(),
-          holiday_id,
-          cc,
-          branch_id ?? null,
-          process_id ?? null,
-          department_id ?? null,
-        ],
-      );
-    }
-    return res.json({ success: true });
-  }),
-);
-
-payrollMoreRouter.post(
-  "/holiday-master/designation-mapping",
-  requireRole("admin", "super_admin", "payroll", "payroll_head"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { holiday_id, designation_ids } = req.body as {
-      holiday_id: string;
-      designation_ids: string[];
-    };
-    if (!holiday_id || !Array.isArray(designation_ids))
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "holiday_id and designation_ids required",
-        });
-    await db.execute(
-      "DELETE FROM holiday_designation_mapping WHERE holiday_id = ?",
-      [holiday_id],
-    );
-    for (const did of designation_ids) {
-      const { v4: uuidv4 } = await import("uuid");
-      await db.execute(
-        "INSERT INTO holiday_designation_mapping (id, holiday_id, designation_id) VALUES (?, ?, ?)",
-        [uuidv4(), holiday_id, did],
-      );
-    }
-    return res.json({ success: true });
-  }),
-);
-
-payrollMoreRouter.delete(
-  "/holiday-master/:id",
-  requireRole("super_admin", "admin", "payroll_head"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
-    if (!id)
-      return res.status(400).json({ success: false, message: "id required" });
-    await db.execute(
-      "DELETE FROM holiday_cost_centre_mapping WHERE holiday_id = ?",
-      [id],
-    );
-    await db.execute(
-      "DELETE FROM holiday_designation_mapping WHERE holiday_id = ?",
-      [id],
-    );
-    await db.execute("DELETE FROM leave_holiday_master WHERE id = ?", [id]);
-    return res.json({ success: true });
-  }),
-);
+payrollMoreRouter.delete("/holiday-master/:id", requireRole(...HOLIDAY_WRITE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ success: false, message: "id required" });
+  if (!(await guardHolidayWrite(req, res, id))) return;
+  await db.execute("DELETE FROM holiday_cost_centre_mapping WHERE holiday_id = ?", [id]);
+  await db.execute("DELETE FROM holiday_designation_mapping WHERE holiday_id = ?", [id]);
+  await db.execute("DELETE FROM leave_holiday_master WHERE id = ?", [id]);
+  return res.json({ success: true });
+}));
 
 // ─── Holiday Work Policies & Requests ────────────────────────────────────────
 
-payrollMoreRouter.get(
-  "/holiday-work/policies",
-  requireRole(
-    "admin",
-    "super_admin",
-    "finance",
-    "payroll",
-    "payroll_head",
-    "payroll_branch",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM holiday_work_policy_master WHERE is_active = 1 ORDER BY payout_type ASC",
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+payrollMoreRouter.get("/holiday-work/policies", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch", "branch_wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT * FROM holiday_work_policy_master WHERE is_active = 1 ORDER BY payout_type ASC"
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 // wfm added 2026-08-25: HolidayWork.tsx's REQUEST_ROLES/APPROVAL_ROLES include wfm on all three
 // of these endpoints, but this list (and the two below) excluded it — a wfm user could reach
 // the page and 403 on the very first list fetch.
-payrollMoreRouter.get(
-  "/holiday-work/requests",
-  requireRole(
-    "admin",
-    "super_admin",
-    "finance",
-    "payroll",
-    "payroll_head",
-    "payroll_branch",
-    "wfm",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { status, month } = req.query as { status?: string; month?: string };
-    const conds: string[] = [];
-    const params: unknown[] = [];
-    if (status) {
-      conds.push("hwr.status = ?");
-      params.push(status);
-    }
-    if (month) {
-      conds.push("DATE_FORMAT(hwr.request_month, '%Y-%m') = ?");
-      params.push(month);
-    }
-    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT hwr.*,
+payrollMoreRouter.get("/holiday-work/requests", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch", "wfm", "branch_wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { status, month } = req.query as { status?: string; month?: string };
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (status) { conds.push("hwr.status = ?"); params.push(status); }
+  if (month)  { conds.push("DATE_FORMAT(hwr.request_month, '%Y-%m') = ?"); params.push(month); }
+  // Branch scoping: only requests raised for a branch / process inside the caller's scope.
+  const hwScope = await scopeFor(req, { branchId: "hwr.branch_id", processId: "hwr.process_id" });
+  conds.push(`(${hwScope.sql})`); params.push(...hwScope.params);
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT hwr.*,
             lhm.holiday_name, lhm.holiday_type,
             hwp.payout_type, hwp.extra_multiplier AS payout_rate_multiplier,
             COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS requested_by_name
@@ -1097,43 +967,25 @@ payrollMoreRouter.get(
   }),
 );
 
-payrollMoreRouter.post(
-  "/holiday-work/requests",
-  requireRole("admin", "super_admin", "payroll", "payroll_head", "wfm"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const {
-      holiday_id,
-      request_month,
-      branch_id,
-      process_id,
-      cost_centre_id,
-      payout_policy_id,
-      designation_ids,
-      request_reason,
-      remarks,
-    } = req.body as {
-      holiday_id: string;
-      request_month: string;
-      branch_id: string;
-      process_id: string;
-      cost_centre_id?: string;
-      payout_policy_id: string;
-      designation_ids?: string[];
-      request_reason?: string;
-      remarks?: string;
-    };
-    if (!holiday_id || !payout_policy_id)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "holiday_id and payout_policy_id required",
-        });
-    const month = request_month ?? new Date().toISOString().slice(0, 7) + "-01";
-    const { v4: uuidv4 } = await import("uuid");
-    const id = uuidv4();
-    await db.execute(
-      `INSERT INTO holiday_work_request (id, holiday_id, request_month, branch_id, process_id, cost_centre_id, payout_policy_id, request_reason, remarks, status, requested_by)
+payrollMoreRouter.post("/holiday-work/requests", requireRole("admin", "super_admin", "payroll", "payroll_head", "wfm", "payroll_branch", "branch_wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { holiday_id, request_month, branch_id, process_id, cost_centre_id, payout_policy_id, designation_ids, request_reason, remarks } = req.body as {
+    holiday_id: string; request_month: string; branch_id: string; process_id: string;
+    cost_centre_id?: string; payout_policy_id: string; designation_ids?: string[];
+    request_reason?: string; remarks?: string;
+  };
+  if (!holiday_id || !payout_policy_id) return res.status(400).json({ success: false, message: "holiday_id and payout_policy_id required" });
+  {
+    // The branch comes from the browser: it must be one the caller is allowed to act for.
+    const visible = await visibleBranchIdsFor(req);
+    if (visible && (!branch_id || !visible.has(String(branch_id)))) {
+      return res.status(403).json({ success: false, message: "Forbidden: you may only raise holiday-work requests for a branch inside your assigned scope" });
+    }
+  }
+  const month = request_month ?? new Date().toISOString().slice(0, 7) + "-01";
+  const { v4: uuidv4 } = await import("uuid");
+  const id = uuidv4();
+  await db.execute(
+    `INSERT INTO holiday_work_request (id, holiday_id, request_month, branch_id, process_id, cost_centre_id, payout_policy_id, request_reason, remarks, status, requested_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?)`,
       [
         id,
@@ -1164,21 +1016,18 @@ payrollMoreRouter.post(
   }),
 );
 
-payrollMoreRouter.get(
-  "/holiday-work/requests/:id",
-  requireRole(
-    "admin",
-    "super_admin",
-    "finance",
-    "payroll",
-    "payroll_head",
-    "payroll_branch",
-    "wfm",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT hwr.*,
+// Branch ids the caller may raise holiday-work requests for (null = every branch). The request
+// form uses this to limit its Branch dropdown; the POST handler still enforces it server-side.
+payrollMoreRouter.get("/holiday-work/my-branches", requireRole("admin", "super_admin", "payroll", "payroll_head", "payroll_branch", "wfm", "branch_wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const visible = await visibleBranchIdsFor(req);
+  return res.json({ success: true, data: visible ? Array.from(visible) : null });
+}));
+
+payrollMoreRouter.get("/holiday-work/requests/:id", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch", "wfm", "branch_wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const detailScope = await scopeFor(req, { branchId: "hwr.branch_id", processId: "hwr.process_id" });
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT hwr.*,
             lhm.holiday_name, lhm.holiday_type,
             hwp.payout_type, hwp.extra_multiplier AS payout_rate_multiplier,
             COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS requested_by_name,
@@ -1190,14 +1039,13 @@ payrollMoreRouter.get(
        LEFT JOIN employees e ON e.id = hwr.requested_by
        LEFT JOIN branch_master bm ON bm.id = hwr.branch_id
        LEFT JOIN process_master pm ON pm.id = hwr.process_id
-      WHERE hwr.id = ?
+      WHERE hwr.id = ? AND (${detailScope.sql})
       LIMIT 1`,
-      [id],
-    );
-    if (!rows[0])
-      return res.status(404).json({ success: false, message: "Not found" });
-    const [designations] = await db.execute<RowDataPacket[]>(
-      `SELECT hwrd.designation_id, dm.designation_name
+    [id, ...detailScope.params]
+  );
+  if (!rows[0]) return res.status(404).json({ success: false, message: "Not found" });
+  const [designations] = await db.execute<RowDataPacket[]>(
+    `SELECT hwrd.designation_id, dm.designation_name
        FROM holiday_work_request_designation hwrd
        LEFT JOIN designation_master dm ON dm.id = hwrd.designation_id
       WHERE hwrd.request_id = ?`,
@@ -1219,47 +1067,26 @@ payrollMoreRouter.get(
   }),
 );
 
-payrollMoreRouter.patch(
-  "/holiday-work/requests/:id/approve",
-  requireRole("admin", "super_admin", "payroll", "payroll_head", "wfm"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
-    const { action, remarks } = req.body as {
-      action: "approve" | "reject";
-      remarks?: string;
-    };
-    if (!["approve", "reject"].includes(action))
-      return res
-        .status(400)
-        .json({ success: false, message: "action must be approve or reject" });
-    const [existing] = await db.execute<RowDataPacket[]>(
-      "SELECT status FROM holiday_work_request WHERE id = ? LIMIT 1",
-      [id],
-    );
-    const fromStatus = (existing[0] as any)?.status ?? "";
-    const newStatus =
-      action === "approve" ? "payroll_head_approved" : "rejected";
-    await db.execute(
-      "UPDATE holiday_work_request SET status = ? WHERE id = ?",
-      [newStatus, id],
-    );
-    const { v4: uuidv4 } = await import("uuid");
-    await db.execute(
-      "INSERT INTO holiday_work_approval_log (id, request_id, approver_id, approver_role, action, from_status, to_status, remarks) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [
-        uuidv4(),
-        id,
-        req.authUser!.id,
-        "payroll_head",
-        action === "approve" ? "approved" : "rejected",
-        fromStatus,
-        newStatus,
-        remarks ?? null,
-      ],
-    );
-    return res.json({ success: true, status: newStatus });
-  }),
-);
+payrollMoreRouter.patch("/holiday-work/requests/:id/approve", requireRole("admin", "super_admin", "payroll", "payroll_head", "wfm", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const { action, remarks } = req.body as { action: "approve" | "reject"; remarks?: string };
+  if (!["approve", "reject"].includes(action)) return res.status(400).json({ success: false, message: "action must be approve or reject" });
+  const apScope = await scopeFor(req, { branchId: "hwr.branch_id", processId: "hwr.process_id" });
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT hwr.status FROM holiday_work_request hwr WHERE hwr.id = ? AND (${apScope.sql}) LIMIT 1`, [id, ...apScope.params]);
+  if (apScope.sql !== "1=1" && !existing[0]) {
+    return res.status(403).json({ success: false, message: "Forbidden: this request is outside your branch / assigned scope" });
+  }
+  const fromStatus = (existing[0] as any)?.status ?? "";
+  const newStatus = action === "approve" ? "payroll_head_approved" : "rejected";
+  await db.execute("UPDATE holiday_work_request SET status = ? WHERE id = ?", [newStatus, id]);
+  const { v4: uuidv4 } = await import("uuid");
+  await db.execute(
+    "INSERT INTO holiday_work_approval_log (id, request_id, approver_id, approver_role, action, from_status, to_status, remarks) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    [uuidv4(), id, req.authUser!.id, "payroll_head", action === "approve" ? "approved" : "rejected", fromStatus, newStatus, remarks ?? null]
+  );
+  return res.json({ success: true, status: newStatus });
+}));
 
 // ══════════════════════════════════════════════════════════════════════════════
 // DEDUCTION TYPE MASTER — CRUD + TOGGLE
@@ -1497,6 +1324,9 @@ payrollMoreRouter.post(
       ]),
     );
 
+    // Branch scoping: rows for employees outside the caller's scope are rejected, not written.
+    const visibleEmpIds = await filterVisibleEmployeeIds(req, Array.from(empMap.values()).map(String));
+
     let inserted = 0;
     const errors: string[] = [];
 
@@ -1509,12 +1339,8 @@ payrollMoreRouter.post(
 
       const empCode = row["employee_code"]?.toLowerCase();
       const empId = empMap.get(empCode);
-      if (!empId) {
-        errors.push(
-          `Row ${i + 1}: employee_code "${row["employee_code"]}" not found`,
-        );
-        continue;
-      }
+      if (!empId) { errors.push(`Row ${i + 1}: employee_code "${row["employee_code"]}" not found`); continue; }
+      if (!visibleEmpIds.has(String(empId))) { errors.push(`Row ${i + 1}: employee_code "${row["employee_code"]}" is outside your branch / assigned scope`); continue; }
 
       const runMonth = row["month"] || null;
       const branchId = branchMap.get(row["branch"]?.toLowerCase()) ?? null;
@@ -1559,19 +1385,14 @@ payrollMoreRouter.post(
 );
 
 // GET /deductions/employee/:employeeId — list deduction entries for one employee
-payrollMoreRouter.get(
-  "/deductions/employee/:employeeId",
-  requireRole("admin", "hr", "finance", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { runMonth } = req.query as any;
-    const params: unknown[] = [req.params.employeeId];
-    let extra = "";
-    if (runMonth) {
-      extra = " AND (run_month IS NULL OR run_month = ?)";
-      params.push(runMonth);
-    }
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT ede.*, pdt.deduction_name FROM employee_deduction_entries ede
+payrollMoreRouter.get("/deductions/employee/:employeeId", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
+  const { runMonth } = req.query as any;
+  const params: unknown[] = [req.params.employeeId];
+  let extra = "";
+  if (runMonth) { extra = " AND (run_month IS NULL OR run_month = ?)"; params.push(runMonth); }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ede.*, pdt.deduction_name FROM employee_deduction_entries ede
      LEFT JOIN payroll_deduction_type pdt ON pdt.deduction_code = ede.deduction_type_code
      WHERE ede.employee_id = ?${extra}
      ORDER BY ede.created_at DESC`,
@@ -1582,25 +1403,18 @@ payrollMoreRouter.get(
 );
 
 // PATCH /deductions/entry/:id — activate / deactivate one entry
-payrollMoreRouter.patch(
-  "/deductions/entry/:id",
-  requireRole("admin", "hr", "finance", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { status } = req.body as { status: "active" | "inactive" };
-    if (!["active", "inactive"].includes(status))
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: 'status must be "active" or "inactive"',
-        });
-    await db.execute(
-      "UPDATE employee_deduction_entries SET status=? WHERE id=?",
-      [status, req.params.id],
-    );
-    return res.json({ success: true });
-  }),
-);
+payrollMoreRouter.patch("/deductions/entry/:id", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { status } = req.body as { status: "active" | "inactive" };
+  if (!["active", "inactive"].includes(status)) return res.status(400).json({ success: false, message: 'status must be "active" or "inactive"' });
+  {
+    const [own] = await db.execute<RowDataPacket[]>("SELECT employee_id FROM employee_deduction_entries WHERE id = ? LIMIT 1", [req.params.id]);
+    const ownerId = (own as any[])[0]?.employee_id;
+    if (ownerId && !(await guardEmployee(req, res, String(ownerId)))) return;
+    if (!ownerId && !(await isOrgWideCaller(req))) return res.status(403).json(OUT_OF_SCOPE_BODY);
+  }
+  await db.execute("UPDATE employee_deduction_entries SET status=? WHERE id=?", [status, req.params.id]);
+  return res.json({ success: true });
+}));
 
 // ─── Holiday Work Auto-Generation Config ──────────────────────────────────────
 

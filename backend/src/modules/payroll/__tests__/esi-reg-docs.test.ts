@@ -74,14 +74,23 @@ vi.mock("archiver", () => {
 /** The archive the code under test just constructed. */
 const lastArchive = () => zipInstances[zipInstances.length - 1];
 
+const scopeMock = vi.hoisted(() => ({ canSee: true, visible: null as null | Set<string> }));
+vi.mock("../payroll-branch-scope.js", () => ({
+  OUT_OF_SCOPE_BODY: { success: false, error: "out of scope" },
+  employeeScopeFor: vi.fn(async () => ({ sql: "1=1", params: [] })),
+  canSeeEmployee: vi.fn(async () => scopeMock.canSee),
+  filterVisibleEmployeeIds: vi.fn(async (_r: unknown, ids: string[]) => scopeMock.visible ?? new Set(ids)),
+}));
+
 import { db } from "../../../db/mysql.js";
+import sharp from "sharp";
 
 const app = express();
 app.use(express.json());
 app.use("/api/payroll", esiRegDocsRouter);
 
 describe("GET /api/payroll/esi-reg-docs", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); scopeMock.canSee = true; scopeMock.visible = null; });
 
   it("returns paginated ESI-eligible employees with readiness flags", async () => {
     vi.mocked(db.execute)
@@ -119,7 +128,7 @@ describe("GET /api/payroll/esi-reg-docs", () => {
 });
 
 describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); scopeMock.canSee = true; scopeMock.visible = null; });
 
   it("streams a zip with manifest.txt when no files exist on disk", async () => {
     // The employee row is queued; everything after it resolves EMPTY by default.
@@ -172,8 +181,9 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
     fs.mkdirSync(onboardingRoot, { recursive: true });
     const pan = path.join(onboardingRoot, "esi-test-pan.jpg");
     const aadhaar = path.join(onboardingRoot, "esi-test-aadhaar.jpg");
-    fs.writeFileSync(pan, "fake-pan-bytes");
-    fs.writeFileSync(aadhaar, "fake-aadhaar-bytes");
+    const png = await sharp({ create: { width: 40, height: 40, channels: 3, background: "#888" } }).png().toBuffer();
+    fs.writeFileSync(pan, png);
+    fs.writeFileSync(aadhaar, png);
 
     try {
       vi.mocked(db.execute).mockImplementation(async (sql: unknown) => {
@@ -209,7 +219,7 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
       });
 
       const res = await request(app)
-        .get("/api/payroll/esi-reg-docs/emp-1/download")
+        .get("/api/payroll/esi-reg-docs/emp-1/download?docs=pan,aadhaar")
         .buffer(true)
         .parse((res: any, cb: any) => {
           const chunks: Buffer[] = [];
@@ -221,13 +231,21 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
       // The mock ZipArchive records every archive.file() call; both real files
       // must have reached it under the labels the pack promises.
       const archived = lastArchive();
-      const namedFiles = archived.file.mock.calls.map((c: any[]) => c[1]?.name);
-      expect(namedFiles).toContain("PAN_Card.jpg");
-      expect(namedFiles).toContain("Aadhaar.jpg");
+      const namedFiles = archived.append.mock.calls.map((c: any[]) => c[1]?.name);
+      expect(namedFiles.some((n: string) => /PAN_Card\.jpg$/.test(n))).toBe(true);
+      expect(namedFiles.some((n: string) => /Aadhaar\.jpg$/.test(n))).toBe(true);
     } finally {
       fs.rmSync(pan, { force: true });
       fs.rmSync(aadhaar, { force: true });
     }
+  });
+
+  it("parseEsiPackDocs defaults to photo + passbook and ignores unknown values", async () => {
+    const { parseEsiPackDocs } = await import("../esi-reg-docs.routes.js");
+    expect([...parseEsiPackDocs(undefined)].sort()).toEqual(["passbook", "photo"]);
+    expect([...parseEsiPackDocs("bogus")].sort()).toEqual(["passbook", "photo"]);
+    expect([...parseEsiPackDocs("pan,Aadhaar,declaration")].sort()).toEqual(["aadhaar", "declaration", "pan"]);
+    expect([...parseEsiPackDocs(["photo"])]).toEqual(["photo"]);
   });
 
   it("returns 404 when employee not found", async () => {
@@ -240,7 +258,7 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
 });
 
 describe("POST /api/payroll/esi-reg-docs/bulk-download", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); scopeMock.canSee = true; scopeMock.visible = null; });
 
   it("returns 400 when more than 200 employee_ids supplied", async () => {
     const ids = Array.from({ length: 201 }, (_, i) => `emp-${i}`);
@@ -294,9 +312,9 @@ describe("POST /api/payroll/esi-reg-docs/bulk-download", () => {
 });
 
 describe("GET /api/payroll/esi-reg-docs/export-csv", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); scopeMock.canSee = true; scopeMock.visible = null; });
 
-  it("returns CSV with BOM, all 12 column headers, and masked account number", async () => {
+  it("returns CSV with BOM, all 12 column headers, and the full account number", async () => {
     vi.mocked(db.execute).mockResolvedValueOnce([
       [
         {
@@ -322,23 +340,40 @@ describe("GET /api/payroll/esi-reg-docs/export-csv", () => {
     expect(res.headers["content-type"]).toMatch(/text\/csv/);
     expect(res.text.charCodeAt(0)).toBe(0xfeff);
     const expectedColumns = [
-      "Emp Code",
-      "Name",
-      "Branch",
-      "ESIC Number",
-      "PAN Number",
-      "Bank Name",
-      "Account Number (Masked)",
-      "IFSC Code",
-      "Account Type",
-      "PAN Ready",
-      "Photo Ready",
-      "Bank Ready",
+      "Emp Code", "Name", "Branch", "ESIC Number", "PAN Number",
+      "Bank Name", "Account Number", "IFSC Code",
+      "Account Type", "PAN Ready", "Photo Ready", "Bank Ready",
     ];
     for (const col of expectedColumns) {
       expect(res.text).toContain(col);
     }
-    expect(res.text).toContain("****3210");
-    expect(res.text).not.toContain("9876543210");
+    // b2eba3ed2 (2026-09-17): ESI registration needs the usable number, so this
+    // role-gated HR export carries it in full. Owner confirmed 2026-09-30.
+    expect(res.text).toContain("9876543210");
+    expect(res.text).not.toContain("****3210");
+  });
+});
+
+describe("branch scoping", () => {
+  beforeEach(() => { vi.clearAllMocks(); scopeMock.canSee = true; scopeMock.visible = null; });
+
+  it("download returns 403 for an employee outside the caller's scope", async () => {
+    scopeMock.canSee = false;
+    const res = await request(app).get("/api/payroll/esi-reg-docs/emp-9/download");
+    expect(res.status).toBe(403);
+  });
+
+  it("document viewer returns 403 for an employee outside the caller's scope", async () => {
+    scopeMock.canSee = false;
+    const res = await request(app).get("/api/payroll/esi-reg-docs/emp-9/doc/pan");
+    expect(res.status).toBe(403);
+  });
+
+  it("bulk download returns 403 when any requested employee is outside scope", async () => {
+    scopeMock.visible = new Set(["emp-1"]);
+    const res = await request(app)
+      .post("/api/payroll/esi-reg-docs/bulk-download")
+      .send({ employee_ids: ["emp-1", "emp-2"] });
+    expect(res.status).toBe(403);
   });
 });

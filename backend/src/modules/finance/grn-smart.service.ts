@@ -23,6 +23,7 @@ import { budgetClosureService } from "../process-pnl/budget-closure.service.js";
 import { refuse } from "../process-pnl/finance-error.js";
 import { applyImprestNoGst, IMPREST_TAX_PROFILE } from "./grn-imprest-tax.js";
 import { assertGrnTypeSupported } from "./grn-type-support.js";
+import { assertBranchSplitAllowed, resolveBranchBackOffice } from "./grn-branch-split.js";
 import { resolveGrnNumberOnSubmit } from "./grn-number-on-submit.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
@@ -30,7 +31,7 @@ import {
   grnPeriodAllocationService,
   resolveEligiblePeriods,
 } from "./grn-period-allocation.service.js";
-import { notifyGrnStage, resolveGrnNotifications } from "./grn-notify.js";
+import { notifyBranchShares, notifyGrnStage, resolveGrnNotifications } from "./grn-notify.js";
 import { runInBackground } from "./grn-background.js";
 import { notifyGrnAccountsHeadPendingEmail } from "./grn.notifications.js";
 import {
@@ -102,6 +103,13 @@ export interface CostCentreSplitRowInput {
   budgetLineId?: string;
   /** Cost centre ID — required for unbudgeted expenses (when budgetLineId is missing) */
   costCentreId?: string;
+  /**
+   * Head Office GRN split across branches: the branch whose share this row is. The share lands on
+   * that branch's Back Office cost centre (auto-resolved; `costCentreId` is then only the Finance
+   * Head's explicit pick among that branch's candidates) and is funded from that branch's own
+   * budget. Omitted / equal to the GRN's branch = the ordinary same-branch split.
+   */
+  branchId?: string | null;
   percentage: number;
   remarks?: string;
 }
@@ -1091,10 +1099,54 @@ function hasBudgetLine(allocation: any) {
  * shortfall — the same answer the raiser would have got at save time, instead of a per-line
  * message about a line they never chose.
  */
-async function reserveAllocations(
-  connection: PoolConnection,
-  allocations: any[],
-) {
+type BudgetMove = { lineId: string; gross: number; quantity: number; net?: number };
+
+const isNoSuchTable = (error: unknown) => (error as { code?: string })?.code === "ER_NO_SUCH_TABLE";
+
+/** The budget lines an allocation's money sits on: the draws recorded when Branch Head approval
+ *  spread its reservation across several lines (grn_allocation_budget_draw, migration 2117), else
+ *  its own budget_line_id for the full amount. consume / release / reverse must move money on
+ *  exactly these lines — moving the row's full amount on one line drifted reserved_amount. */
+async function budgetMovesFor(connection: PoolConnection, allocation: any): Promise<BudgetMove[]> {
+  let draws: RowDataPacket[] = [];
+  try {
+    const result = await connection.execute<RowDataPacket[]>(
+      `SELECT budget_line_id, amount_with_tax, amount_without_tax, quantity
+         FROM grn_allocation_budget_draw
+        WHERE allocation_id = ?
+        ORDER BY created_at, id`,
+      [String(allocation.id)]
+    );
+    draws = (result?.[0] as RowDataPacket[] | undefined) ?? [];
+  } catch (error) {
+    if (!isNoSuchTable(error)) throw error;
+  }
+  if (draws.length) {
+    return draws.map((draw) => ({
+      lineId: String(draw.budget_line_id),
+      gross: Number(draw.amount_with_tax),
+      quantity: Number(draw.quantity),
+      net: draw.amount_without_tax == null ? undefined : Number(draw.amount_without_tax) || undefined,
+    }));
+  }
+  return [{
+    lineId: String(allocation.budget_line_id),
+    gross: Number(allocation.amount_with_tax),
+    quantity: Number(allocation.quantity),
+    net: Number(allocation.amount_without_tax) || undefined,
+  }];
+}
+
+/** Forget an allocation's recorded draws — its money now sits wholly on its own line again. */
+async function clearBudgetDraws(connection: PoolConnection, allocationId: string) {
+  try {
+    await connection.execute(`DELETE FROM grn_allocation_budget_draw WHERE allocation_id = ?`, [allocationId]);
+  } catch (error) {
+    if (!isNoSuchTable(error)) throw error;
+  }
+}
+
+async function reserveAllocations(connection: PoolConnection, allocations: any[]) {
   for (const allocation of allocations) {
     if (!hasBudgetLine(allocation)) continue;
     const amount = Number(allocation.amount_with_tax);
@@ -1107,6 +1159,7 @@ async function reserveAllocations(
         Number(allocation.quantity),
         netAmount,
       );
+      await clearBudgetDraws(connection, String(allocation.id));
       continue;
     } catch (error) {
       // Only a headroom shortfall on this one line is recoverable. A closed sub-head, an
@@ -1145,22 +1198,22 @@ async function reserveAllocations(
     );
 
     // Throws HEADROOM_EXCEEDED with the exact shortfall when the whole branch cannot cover it.
-    const draws = allocateAcrossLines(
-      String(allocation.budget_line_id),
-      amount,
-      coverage.lines,
-      netAmount,
-    );
+    const draws = allocateAcrossLines(String(allocation.budget_line_id), amount, coverage.lines, netAmount);
+    await clearBudgetDraws(connection, String(allocation.id));
     for (const draw of draws) {
       // Quantity and net amount are apportioned by this draw's share of the row so the ledgers
       // stay consistent with the money actually moved onto each line.
       const share = amount > 0 ? draw.amount / amount : 0;
-      await budgetConsumptionService.reserve(
-        connection,
-        draw.lineId,
-        draw.amount,
-        roundQuantity(Number(allocation.quantity) * share),
-        netAmount == null ? undefined : roundMoney(netAmount * share),
+      const drawQuantity = roundQuantity(Number(allocation.quantity) * share);
+      const drawNet = netAmount == null ? undefined : roundMoney(netAmount * share);
+      await budgetConsumptionService.reserve(connection, draw.lineId, draw.amount, drawQuantity, drawNet);
+      // Recorded so consume / release / reverse move exactly these amounts on these lines.
+      await connection.execute(
+        `INSERT INTO grn_allocation_budget_draw
+           (id, allocation_id, grn_request_id, budget_line_id, amount_with_tax, amount_without_tax, quantity)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [randomUUID(), String(allocation.id), String(allocation.grn_request_id), draw.lineId,
+          draw.amount, drawNet ?? null, drawQuantity]
       );
     }
     // Re-point the row at the line that carried the largest share, so the allocation still names
@@ -1202,13 +1255,9 @@ async function consumeAllocations(
 ) {
   for (const allocation of allocations) {
     if (!hasBudgetLine(allocation)) continue;
-    await budgetConsumptionService.consume(
-      connection,
-      String(allocation.budget_line_id),
-      Number(allocation.amount_with_tax),
-      Number(allocation.quantity),
-      Number(allocation.amount_without_tax) || undefined,
-    );
+    for (const move of await budgetMovesFor(connection, allocation)) {
+      await budgetConsumptionService.consume(connection, move.lineId, move.gross, move.quantity, move.net);
+    }
   }
   await connection.execute(
     `UPDATE grn_cost_allocation
@@ -1225,13 +1274,9 @@ async function releaseAllocations(
   for (const allocation of allocations) {
     if (String(allocation.lifecycle_status) !== "reserved") continue;
     if (!hasBudgetLine(allocation)) continue;
-    await budgetConsumptionService.release(
-      connection,
-      String(allocation.budget_line_id),
-      Number(allocation.amount_with_tax),
-      Number(allocation.quantity),
-      Number(allocation.amount_without_tax) || undefined,
-    );
+    for (const move of await budgetMovesFor(connection, allocation)) {
+      await budgetConsumptionService.release(connection, move.lineId, move.gross, move.quantity, move.net);
+    }
   }
   if (allocations.length) {
     await connection.execute(
@@ -1253,13 +1298,9 @@ async function reverseConsumedAllocations(
   for (const allocation of allocations) {
     if (String(allocation.lifecycle_status) !== "consumed") continue;
     if (!hasBudgetLine(allocation)) continue;
-    await budgetConsumptionService.reverseConsumption(
-      connection,
-      String(allocation.budget_line_id),
-      Number(allocation.amount_with_tax),
-      Number(allocation.quantity),
-      Number(allocation.amount_without_tax) || undefined,
-    );
+    for (const move of await budgetMovesFor(connection, allocation)) {
+      await budgetConsumptionService.reverseConsumption(connection, move.lineId, move.gross, move.quantity, move.net);
+    }
   }
   if (allocations.length) {
     await connection.execute(
@@ -1271,6 +1312,17 @@ async function reverseConsumedAllocations(
   }
 }
 
+/**
+ * grn_request.is_branch_split (migration 2121). Written only when it changes: an ordinary GRN that
+ * never was split costs no extra statement, and a database that has not run the migration yet is
+ * untouched by every save except an actual branch split (which the feature flag keeps off until then).
+ */
+async function markBranchSplit(connection: PoolConnection, grn: { is_branch_split?: unknown }, grnId: string, isBranchSplit: boolean) {
+  const wasSplit = Number(grn.is_branch_split ?? 0) === 1;
+  if (isBranchSplit === wasSplit) return;
+  await connection.execute("UPDATE grn_request SET is_branch_split = ? WHERE id = ?", [isBranchSplit ? 1 : 0, grnId]);
+}
+
 export const grnSmartService = {
   async hasAllocations(grnId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -1278,6 +1330,15 @@ export const grnSmartService = {
       [grnId],
     );
     return Number(rows[0]?.total ?? 0) > 0;
+  },
+
+  /** Called by grnService.returnGrn() for a Smart GRN still holding its Branch Head reservation:
+   *  releases every allocation (per recorded draw) and marks the rows 'released', so a resubmit's
+   *  fresh Branch Head approval reserves them once, not on top of the old reservation. Caller
+   *  holds the row lock on grn_request. */
+  async releaseReservations(connection: PoolConnection, grnId: string) {
+    const allocations = await loadAllocations(connection, grnId, true);
+    await releaseAllocations(connection, allocations);
   },
 
   /** Called by grnService.reverseConsumption() once it has confirmed the GRN is a smart
@@ -2004,6 +2065,7 @@ export const grnSmartService = {
     input: SmartGrnComponentSplitInput,
     actorUserId: string,
     actorRole: string,
+    actorRoles: string[] = []
   ) {
     const components = Array.isArray(input.components) ? input.components : [];
     const splits = Array.isArray(input.costCentreSplits)
@@ -2084,6 +2146,38 @@ export const grnSmartService = {
           );
         }
 
+        const targetBranchId = String(split?.branchId ?? "").trim();
+        if (targetBranchId && targetBranchId !== String(grn.branch_id)) {
+          // A BRANCH SHARE of a Head Office GRN. Never funded from a line the raiser picked: the
+          // share lands on the branch's Back Office cost centre and draws that branch's own budget
+          // (resolved below, with the branch's own coverage), so Head Office's budget and P&L are
+          // untouched. Who may do this and where is decided in one place (grn-branch-split.ts).
+          if (split.budgetLineId) {
+            throw new Error(`Cost centre ${index + 1}: a branch share is funded from that branch's own budget automatically — do not pick a budget line`);
+          }
+          await assertBranchSplitAllowed({
+            grnBranchId: String(grn.branch_id), grnType: String(grn.grn_type), actorRole, actorRoles,
+          });
+          const [branchRows] = await connection.execute<RowDataPacket[]>(
+            "SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1", [targetBranchId]
+          );
+          if (!branchRows[0]) throw new Error(`Cost centre ${index + 1}: branch not found`);
+          const branchLabel = String(branchRows[0].branch_name);
+          const backOffice = await resolveBranchBackOffice(targetBranchId, split.costCentreId, branchLabel, connection);
+          percentageSum += percentage;
+          resolvedSplits.push({
+            line: null, // Synthetic line filled in below; funded from the branch's own coverage
+            costCentreId: backOffice.id,
+            costCentreCode: backOffice.name ?? backOffice.code,
+            percentage,
+            remarks: split.remarks?.trim() || null,
+            raiserPickedNoLine: true,
+            branchId: targetBranchId,
+            branchName: branchLabel,
+            isBranchSplit: true,
+          });
+          continue;
+        }
         if (!split?.budgetLineId) {
           // No budget line for this row: fall back to the cost centre the raiser picked directly.
           if (!split?.costCentreId)
@@ -2395,21 +2489,30 @@ export const grnSmartService = {
       const period = consumptionPeriodOf(grn);
       const sharedHead = String(resolvedSplits[0].line.head);
       const sharedSubHead = resolvedSplits[0].line.sub_head ?? null;
-      const coverage = await getHeadSubHeadCoverage(
-        String(grn.branch_id),
-        period,
-        sharedHead,
-        sharedSubHead,
+      // One coverage per branch that funds a share: the GRN's own branch for ordinary splits, and
+      // each target branch for a branch share (so a Head Office GRN draws every branch's OWN
+      // budget). A GRN with no ordinary split never touches Head Office's budget at all.
+      const branchOfSplit = (split: any) => String(split.branchId ?? grn.branch_id);
+      const branchNameOf = new Map<string, string>(
+        resolvedSplits.filter((item) => item.isBranchSplit).map((item) => [String(item.branchId), String(item.branchName)])
       );
-      assertCoverageExists(coverage, period, sharedHead, sharedSubHead);
-      // Same closure gate as saveAllocations(): refuse new spend on a head/sub-head Finance has
-      // closed for the month, here rather than only at Branch Head approval.
-      await budgetClosureService.assertSubheadOpen(
-        connection,
-        String(coverage.budgetId),
-        sharedHead,
-        sharedSubHead,
-      );
+      const coverageByBranch = new Map<string, Awaited<ReturnType<typeof getHeadSubHeadCoverage>>>();
+      for (const branchId of new Set(resolvedSplits.map(branchOfSplit))) {
+        const branchCoverage = await getHeadSubHeadCoverage(branchId, period, sharedHead, sharedSubHead);
+        try {
+          assertCoverageExists(branchCoverage, period, sharedHead, sharedSubHead);
+          // Same closure gate as saveAllocations(): refuse new spend on a head/sub-head Finance has
+          // closed for the month, here rather than only at Branch Head approval.
+          await budgetClosureService.assertSubheadOpen(
+            connection, String(branchCoverage.budgetId), sharedHead, sharedSubHead
+          );
+        } catch (error) {
+          const label = branchNameOf.get(branchId);
+          if (label && error instanceof Error) error.message = `${label}: ${error.message}`;
+          throw error;
+        }
+        coverageByBranch.set(branchId, branchCoverage);
+      }
 
       // Group grid cells by the split they came from. cell.line is the SAME OBJECT reference as
       // split.line for every cell built from that split (each split — budgeted or synthetic
@@ -2447,11 +2550,20 @@ export const grnSmartService = {
         const splitTotalNet = roundMoney(
           cellsForSplit.reduce((sum, cell) => sum + cell.amounts.baseAmount, 0),
         );
-        const preferredLineId =
-          split.line.id != null ? String(split.line.id) : null;
+        // A branch share draws the Back Office cost centre's own budget line first (the most available
+        // one), then the rest of the branch's lines for this head/sub-head — the allocator's order.
+        const ownBranchLine = split.isBranchSplit
+          ? [...coverageByBranch.get(branchOfSplit(split))!.lines]
+              .filter((candidate) => String(candidate.cost_centre_id ?? "") === String(split.line.cost_centre_id))
+              .sort((a: any, b: any) => Number(b.available_gross_amount) - Number(a.available_gross_amount))[0]
+          : undefined;
+        const preferredLineId = split.line.id != null
+          ? String(split.line.id)
+          : ownBranchLine ? String(ownBranchLine.id) : null;
 
         // Net out whatever earlier splits in this same save already drew against each of these
         // lines before handing them to the allocator — see drawnAmountByLineId's comment above.
+        const coverage = coverageByBranch.get(branchOfSplit(split))!;
         const netLines = coverage.lines.map((candidate) => {
           const alreadyDrawn =
             drawnAmountByLineId.get(String(candidate.id)) ?? 0;
@@ -2469,12 +2581,15 @@ export const grnSmartService = {
         // Branch-wide money split for this split's total. Can throw HEADROOM_EXCEEDED if the
         // branch aggregate (not just the one line the raiser picked) cannot cover it — let it
         // propagate.
-        const draws = allocateAcrossLines(
-          preferredLineId,
-          splitTotalGross,
-          netLines,
-          splitTotalNet,
-        );
+        let draws: ReturnType<typeof allocateAcrossLines>;
+        try {
+          draws = allocateAcrossLines(preferredLineId, splitTotalGross, netLines, splitTotalNet);
+        } catch (error) {
+          // A branch share the branch's own budget cannot cover is refused naming the branch, so
+          // the Finance Head knows whose Branch Head must top up.
+          if (split.isBranchSplit && error instanceof Error) error.message = `${split.branchName}: ${error.message}`;
+          throw error;
+        }
 
         const subRowsByCell = new Map<any, any[]>();
         for (const cell of cellsForSplit) subRowsByCell.set(cell, []);
@@ -2559,6 +2674,10 @@ export const grnSmartService = {
               // branch-common pooled line funded it. See migration 1630.
               fundingCostCentreId: fundingLine.cost_centre_id ?? null,
               raiserPickedNoLine: Boolean(split.raiserPickedNoLine),
+              // WHICH BRANCH OWNS THIS COST: the allocation row's branch_id. The GRN header stays at
+              // Head Office (it pays the vendor); a branch share belongs to the branch it landed on.
+              branchId: branchOfSplit(split),
+              isBranchSplit: Boolean(split.isBranchSplit),
             });
 
             drawnQuantityByLineId.set(
@@ -2671,40 +2790,20 @@ export const grnSmartService = {
             pnl_cost_amount, lifecycle_status, remarks, is_unbudgeted, created_by)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
-            randomUUID(),
-            grnId,
-            sequenceNo,
-            cell.line.budget_id,
-            cell.line.id,
-            componentIds[cell.componentIndex],
-            grn.branch_id,
-            cell.line.process_id ?? null,
+            randomUUID(), grnId, sequenceNo, cell.line.budget_id, cell.line.id,
+            componentIds[cell.componentIndex], cell.branchId ?? grn.branch_id, cell.line.process_id ?? null,
             cell.line.cost_centre_id ?? null,
             cell.fundingCostCentreId ?? null,
-            cell.line.process_id || cell.line.cost_centre_id
-              ? "direct"
-              : "indirect",
-            percentage,
-            cell.quantity,
-            cell.line.unit,
-            cell.unitRate,
-            "exclusive",
-            cell.component.gstRate,
-            grnGstType !== "none" ? grnGstType : cell.line.gst_type,
-            cell.line.recoverable_tax_pct,
-            cell.amounts.baseAmount,
-            cell.amounts.taxAmount,
-            cell.amounts.cgstAmount,
-            cell.amounts.sgstAmount,
-            cell.amounts.igstAmount,
-            cell.amounts.grossAmount,
-            cell.amounts.recoverableTaxAmount,
-            cell.amounts.pnlCostAmount,
-            "draft",
-            cell.remarks,
-            cell.line.id == null ? 1 : 0,
-            actorUserId,
-          ],
+            // A branch's Back Office share is that branch's overhead (BMC), not a direct process cost.
+            cell.isBranchSplit ? "indirect" : cell.line.process_id || cell.line.cost_centre_id ? "direct" : "indirect",
+            percentage, cell.quantity, cell.line.unit, cell.unitRate,
+            "exclusive", cell.component.gstRate, (grnGstType !== "none" ? grnGstType : cell.line.gst_type),
+            cell.line.recoverable_tax_pct, cell.amounts.baseAmount,
+            cell.amounts.taxAmount, cell.amounts.cgstAmount, cell.amounts.sgstAmount,
+            cell.amounts.igstAmount, cell.amounts.grossAmount,
+            cell.amounts.recoverableTaxAmount, cell.amounts.pnlCostAmount,
+            "draft", cell.remarks, cell.line.id == null ? 1 : 0, actorUserId,
+          ]
         );
       }
 
@@ -2729,37 +2828,22 @@ export const grnSmartService = {
         );
       }
 
-      const totalGrossFinal = roundMoney(
-        fundedGrid.reduce((sum, cell) => sum + cell.amounts.grossAmount, 0),
-      );
-      const totalPnlFinal = roundMoney(
-        fundedGrid.reduce((sum, cell) => sum + cell.amounts.pnlCostAmount, 0),
-      );
-      const totalQuantity = roundQuantity(
-        fundedGrid.reduce((sum, cell) => sum + cell.quantity, 0),
-      );
-      const first = resolvedSplits[0].line;
-      const distinctProcesses = new Set(
-        resolvedSplits.map((item) => item.line.process_id).filter(Boolean),
-      );
+      const totalGrossFinal = roundMoney(fundedGrid.reduce((sum, cell) => sum + cell.amounts.grossAmount, 0));
+      const totalPnlFinal = roundMoney(fundedGrid.reduce((sum, cell) => sum + cell.amounts.pnlCostAmount, 0));
+      const totalQuantity = roundQuantity(fundedGrid.reduce((sum, cell) => sum + cell.quantity, 0));
+      const hasBranchSplit = resolvedSplits.some((item) => item.isBranchSplit);
+      // The header describes Head Office's own side: with branch shares it must not name one
+      // branch's Back Office cost centre as the GRN's cost centre.
+      const first = (resolvedSplits.find((item) => !item.isBranchSplit) ?? resolvedSplits[0]).line;
+      const distinctProcesses = new Set(resolvedSplits.map((item) => item.line.process_id).filter(Boolean));
       const distinctCostCentres = new Set(
-        resolvedSplits.map((item) => item.line.cost_centre_id).filter(Boolean),
+        hasBranchSplit ? [] : resolvedSplits.map((item) => item.line.cost_centre_id).filter(Boolean)
       );
-      const units = new Set(
-        resolvedSplits.map((item) => String(item.line.unit)),
-      );
-      const gstTypes = new Set(
-        resolvedSplits.map((item) => String(item.line.gst_type)),
-      );
-      const weightedGstRate =
-        rawTotalBase > 0 ? roundMoney((rawTotalTax / rawTotalBase) * 100) : 0;
-      const totalRecoverable = roundMoney(
-        grid.reduce((sum, cell) => sum + cell.amounts.recoverableTaxAmount, 0),
-      );
-      const weightedRecoverablePct =
-        rawTotalTax > 0
-          ? roundMoney((totalRecoverable / rawTotalTax) * 100)
-          : 0;
+      const units = new Set(resolvedSplits.map((item) => String(item.line.unit)));
+      const gstTypes = new Set(resolvedSplits.map((item) => String(item.line.gst_type)));
+      const weightedGstRate = rawTotalBase > 0 ? roundMoney((rawTotalTax / rawTotalBase) * 100) : 0;
+      const totalRecoverable = roundMoney(grid.reduce((sum, cell) => sum + cell.amounts.recoverableTaxAmount, 0));
+      const weightedRecoverablePct = rawTotalTax > 0 ? roundMoney((totalRecoverable / rawTotalTax) * 100) : 0;
 
       await connection.execute(
         `UPDATE grn_request
@@ -2787,13 +2871,15 @@ export const grnSmartService = {
           first.id,
           distinctProcesses.size === 1 ? [...distinctProcesses][0] : null,
           distinctCostCentres.size === 1 ? [...distinctCostCentres][0] : null,
-          resolvedSplits.some(
-            (item) => item.line.process_id || item.line.cost_centre_id,
-          )
-            ? "direct"
-            : "indirect",
-          String(first.head),
-          first.sub_head ?? null,
+          // A branch-split header is Head Office's payable, classed indirect. The P&L engines count a
+          // GRN header at its own branch, then the allocation overlay subtracts that header and adds
+          // each allocation row where it belongs; a "direct" header with no process is the one case
+          // that subtraction skips (bpo-pnl-allocation-overlay.service.ts), which would leave the
+          // whole bill on Head Office on top of the branches' shares.
+          hasBranchSplit
+            ? "indirect"
+            : resolvedSplits.some((item) => item.line.process_id || item.line.cost_centre_id) ? "direct" : "indirect",
+          String(first.head), first.sub_head ?? null,
           `${components.length} invoice component(s) across ${resolvedSplits.length} cost centre(s)`,
           totalQuantity,
           units.size === 1 ? [...units][0] : "Mixed",
@@ -2843,6 +2929,8 @@ export const grnSmartService = {
         ],
       );
 
+      await markBranchSplit(connection, grn, grnId, hasBranchSplit);
+
       // Recognition schedule last: it reads back the allocation rows just written, and being
       // inside this transaction means a split that does not reconcile rolls the invoice back.
       const periodSplit = await writePeriodSplits(
@@ -2854,35 +2942,32 @@ export const grnSmartService = {
         actorRole,
       );
 
-      await writeAuditInTransaction(
-        connection,
-        "INVOICE_COMPONENTS_SAVED",
-        grnId,
-        actorUserId,
-        actorRole,
-        {
-          recognition_months: periodSplit?.eligibleCount ?? 1,
-          component_count: components.length,
-          cost_centre_count: resolvedSplits.length,
-          // The facts is_unbudgeted used to carry on its own, kept on the record now that the
-          // column means only "no budget line funded this".
-          raiser_picked_no_line_count: resolvedSplits.filter(
-            (item) => item.raiserPickedNoLine,
-          ).length,
-          funded_by_other_cost_centre_count: fundedGrid.filter(
-            (cell) =>
-              cell.fundingCostCentreId &&
-              String(cell.fundingCostCentreId) !==
-                String(cell.line.cost_centre_id ?? ""),
-          ).length,
-          unfunded_count: fundedGrid.filter((cell) => cell.line.id == null)
-            .length,
-          amount_without_tax: rawTotalBase,
-          tax_amount: rawTotalTax,
-          amount_with_tax: totalGrossFinal,
-          round_off_amount: diff,
-        },
-      );
+      await writeAuditInTransaction(connection, "INVOICE_COMPONENTS_SAVED", grnId, actorUserId, actorRole, {
+        recognition_months: periodSplit?.eligibleCount ?? 1,
+        component_count: components.length,
+        cost_centre_count: resolvedSplits.length,
+        // The facts is_unbudgeted used to carry on its own, kept on the record now that the
+        // column means only "no budget line funded this".
+        raiser_picked_no_line_count: resolvedSplits.filter((item) => item.raiserPickedNoLine).length,
+        // Head Office GRN split across branches: who bears what, on which Back Office cost centre.
+        branch_shares: hasBranchSplit
+          ? [...new Set(fundedGrid.filter((cell) => cell.isBranchSplit).map((cell) => String(cell.branchId)))].map((branchId) => ({
+              branch_id: branchId,
+              branch_name: branchNameOf.get(branchId) ?? null,
+              cost_centre_ids: [...new Set(fundedGrid.filter((cell) => cell.branchId === branchId).map((cell) => String(cell.line.cost_centre_id)))],
+              amount_with_tax: roundMoney(fundedGrid.filter((cell) => cell.branchId === branchId).reduce((t, cell) => t + cell.amounts.grossAmount, 0)),
+            }))
+          : undefined,
+        funded_by_other_cost_centre_count: fundedGrid.filter(
+          (cell) => cell.fundingCostCentreId
+            && String(cell.fundingCostCentreId) !== String(cell.line.cost_centre_id ?? "")
+        ).length,
+        unfunded_count: fundedGrid.filter((cell) => cell.line.id == null).length,
+        amount_without_tax: rawTotalBase,
+        tax_amount: rawTotalTax,
+        amount_with_tax: totalGrossFinal,
+        round_off_amount: diff,
+      });
       await connection.commit();
       return this.getWorkspace(grnId);
     } catch (error) {
@@ -3575,13 +3660,10 @@ export const grnSmartService = {
          */
         if (String(allocation.lifecycle_status) === "reserved") {
           if (hasBudgetLine(allocation)) {
-            await budgetConsumptionService.release(
-              connection,
-              String(allocation.budget_line_id),
-              Number(allocation.amount_with_tax),
-              Number(allocation.quantity),
-              Number(allocation.amount_without_tax) || undefined,
-            );
+            for (const move of await budgetMovesFor(connection, allocation)) {
+              await budgetConsumptionService.release(connection, move.lineId, move.gross, move.quantity, move.net);
+            }
+            await clearBudgetDraws(connection, String(allocation.id));
           }
           await budgetConsumptionService.reserve(
             connection,
@@ -4119,6 +4201,11 @@ export const grnSmartService = {
     // Closing the old bell alert is one cheap UPDATE and must land before the next stage's alert
     // is raised, so it stays inline; raising the next alert and the email run in the background.
     await resolveGrnNotifications(grnId);
+    // Final approval of a Head Office GRN that was split across branches: tell each receiving
+    // branch's Branch Head what landed on them (an alert, not an approval step).
+    if (decision === "approved" && (newStatus === "pending_accounts_payment" || newStatus === "approved")) {
+      runInBackground("branch-share-alert", () => notifyBranchShares(grnId, grnNumber ?? notifyGrnNumber, notifyVendorName));
+    }
     if (decision === "approved") {
       const clearedRole = actorRole.toLowerCase();
       if (clearedRole === "branch_head") {

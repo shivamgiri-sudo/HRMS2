@@ -17,6 +17,7 @@ import {
   Building2,
   CheckCircle2,
   Download,
+  RefreshCw,
   Search,
   UserCheck,
   UserPlus,
@@ -134,7 +135,7 @@ const EmployeeMetricCard = ({
           </p>
 
           <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-            {value}
+            {typeof value === "number" ? value.toLocaleString("en-IN") : value}
           </h3>
         </div>
 
@@ -207,7 +208,7 @@ const Employees = () => {
     : statusFilter === "offboarded"
       ? "Terminated"
       : undefined;
-  const { data: directoryData, isLoading: isLoadingEmployees, isError: isErrorEmployees, refetch: refetchEmployees } = useEmployeeDirectory({
+  const { data: directoryData, isLoading: isLoadingEmployees, isFetching: isFetchingEmployees, isError: isErrorEmployees, refetch: refetchEmployees } = useEmployeeDirectory({
     page: currentPage,
     limit: pageSize,
     recordStatus,
@@ -234,7 +235,7 @@ const Employees = () => {
   const { data: departments = [] } = useDepartments();
   const { data: directoryMasters } = useEmployeeDirectoryMasters();
   const { data: employeeSearchOptions = [] } = useEmployeeSearchOptions(debouncedSearch);
-  const { isAdminOrHR, isLoading: isLoadingRole, roleKeys } = useIsAdminOrHR();
+  const { isAdminOrHR, roleKeys } = useIsAdminOrHR();
   const canResetEmployeePassword =
     roleKeys.includes("super_admin") || roleKeys.includes("admin") || roleKeys.includes("wfm");
   const isHROrPayroll = roleKeys.some(r => ["super_admin","admin","hr","hr_admin","payroll","finance"].includes(r));
@@ -297,7 +298,9 @@ const Employees = () => {
   const canGoNext = currentPage < totalPages;
   const canGoPrevious = currentPage > 1;
 
-  const isLoading = isLoadingEmployees || isLoadingRole;
+  // Role only gates action buttons, so it must not hold the whole list behind a skeleton.
+  const isLoading = isLoadingEmployees;
+  const isStatsLoading = !directoryAnalytics && isFetchingAnalytics;
 
   // Metric-card counts come from the analytics call (page=1&limit=1, includeAnalytics=true),
   // not the row-fetching directoryData call — the backend only computes stats/process_breakdown
@@ -598,19 +601,6 @@ const Employees = () => {
 
   const hasActiveFilters = searchQuery.trim() || departmentFilter !== "all" || processFilter !== "all" || branchFilter !== "all" || statusFilter !== "active";
 
-  if (isErrorEmployees) {
-    return (
-      <DashboardLayout>
-        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
-          <p className="text-sm text-rose-600 font-semibold">Failed to load data. Please try again.</p>
-          <button onClick={() => refetchEmployees()} className="text-sm text-blue-600 underline hover:no-underline">
-            Retry
-          </button>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
   return (
     <DashboardLayout>
       <div className="space-y-5">
@@ -631,15 +621,15 @@ const Employees = () => {
               <div className="mt-4 flex flex-wrap gap-2">
                 <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total</p>
-                  <p className="text-lg font-black text-white">{totalEmployees}</p>
+                  <p className="text-lg font-black text-white">{isStatsLoading ? <Skeleton className="mt-1 h-6 w-12 bg-white/20" /> : totalEmployees.toLocaleString("en-IN")}</p>
                 </div>
                 <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Active</p>
-                  <p className="text-lg font-black text-[#3BAD49]">{activeEmployees}</p>
+                  <p className="text-lg font-black text-[#3BAD49]">{isStatsLoading ? <Skeleton className="mt-1 h-6 w-12 bg-white/20" /> : activeEmployees.toLocaleString("en-IN")}</p>
                 </div>
                 <div className="rounded-xl border border-white/10 bg-white/8 px-4 py-2">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Departments</p>
-                  <p className="text-lg font-black text-[#5aa0dd]">{filteredDepartmentCount}</p>
+                  <p className="text-lg font-black text-[#5aa0dd]">{isStatsLoading ? <Skeleton className="mt-1 h-6 w-12 bg-white/20" /> : filteredDepartmentCount.toLocaleString("en-IN")}</p>
                 </div>
               </div>
             </div>
@@ -664,6 +654,18 @@ const Employees = () => {
             )}
           </div>
         </section>
+
+        {isErrorEmployees && (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3.5">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-4 w-4 text-rose-600" />
+              <p className="text-sm font-semibold text-rose-800">Couldn't load employees. Check your connection and try again.</p>
+            </div>
+            <Button size="sm" variant="outline" className="rounded-xl border-rose-300 bg-white text-rose-700 hover:bg-rose-100" onClick={() => refetchEmployees()}>
+              Retry
+            </Button>
+          </div>
+        )}
 
         {/* Bank Data Quality Alert — HR/Admin only, shown when corrupt records exist */}
         {isHROrPayroll && bankCorruptCount > 0 && (
@@ -754,11 +756,11 @@ const Employees = () => {
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {isLoading ? (
-            <div className="flex flex-wrap gap-4">
+            <>
               {[1, 2, 3, 4].map((item) => (
-                <Skeleton key={item} className="h-20 w-24 rounded-xl" />
+                <Skeleton key={item} className="h-28 rounded-2xl" />
               ))}
-            </div>
+            </>
           ) : (
             <>
               <EmployeeMetricCard
@@ -810,12 +812,24 @@ const Employees = () => {
 
               <Input
                 placeholder="Search by name, official email or employee number..."
-                className="h-11 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
+                className="h-11 rounded-xl border-slate-200 bg-white pl-10 pr-9 text-sm shadow-sm"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 onFocus={() => setIsSearchFocused(true)}
                 onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 150)}
+                aria-label="Search employees"
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  className="absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => setSearchQuery("")}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
 
               {isSearchFocused && searchQuery.trim() && (
                 <div className="absolute left-0 right-0 top-12 z-30 overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-2xl">
@@ -912,8 +926,18 @@ const Employees = () => {
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
           <span className="rounded-full bg-slate-100 px-3 py-1 font-medium">
-            {directoryTotal === 0 ? "No employees found" : `${directoryTotal} matching employee${directoryTotal === 1 ? "" : "s"}`}
+            {directoryTotal === 0 ? "No employees found" : `${directoryTotal.toLocaleString("en-IN")} matching employee${directoryTotal === 1 ? "" : "s"}`}
           </span>
+          <button
+            type="button"
+            aria-label="Refresh employee list"
+            disabled={isFetchingEmployees}
+            onClick={() => { refetchEmployees(); }}
+            className="inline-flex cursor-pointer items-center gap-1 rounded-full px-3 py-1 font-semibold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:cursor-wait"
+          >
+            <RefreshCw className={`h-3 w-3 ${isFetchingEmployees ? "animate-spin" : ""}`} />
+            {isFetchingEmployees ? "Updating…" : "Refresh"}
+          </button>
 
           {departmentFilter !== "all" && (
             <span className="rounded-full bg-sky-50 px-3 py-1 font-medium text-sky-700">
@@ -947,6 +971,205 @@ const Employees = () => {
             </button>
           )}
         </div>
+
+        <section className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold tracking-tight text-slate-950">
+                Employee List
+              </h2>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                View, edit, sort and manage employee records.
+              </p>
+            </div>
+
+            {selectedEmployeeIds.length > 0 && (
+              <div className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 ring-1 ring-amber-100">
+                {selectedEmployeeIds.length} selected
+              </div>
+            )}
+          </div>
+
+          {isLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3, 4, 5].map((item) => (
+                <Skeleton key={item} className="h-16 rounded-xl" />
+              ))}
+            </div>
+          ) : filteredEmployees.length === 0 ? (
+            <Card className="border-dashed border-slate-200 bg-slate-50/70 shadow-none">
+              <CardContent className="flex flex-col items-center justify-center py-14 text-center">
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm ring-1 ring-slate-200">
+                  <Users className="h-7 w-7" />
+                </div>
+
+                <h3 className="text-base font-semibold text-slate-950">
+                  No Employees Found
+                </h3>
+
+                <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
+                  {employees.length === 0
+                    ? isAdminOrHR
+                      ? "Start by adding your first employee."
+                      : "No team members are available to display."
+                    : "No employees match your current search or filter criteria."}
+                </p>
+
+                {employees.length === 0 && isAdminOrHR && (
+                  <Button
+                    asChild
+                    className="mt-5 bg-slate-950 text-white hover:bg-slate-800 rounded-2xl px-5 py-2.5 font-semibold cursor-pointer transition-colors"
+                  >
+                    <Link to="/onboarding">
+                      <UserPlus className="mr-2 h-4 w-4" />
+                      Add Employee
+                    </Link>
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <div className={`space-y-4 transition-opacity duration-200 ${isFetchingEmployees ? "opacity-60" : ""}`} aria-busy={isFetchingEmployees}>
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                <EmployeeTable
+                  employees={paginatedEmployees}
+                  onView={(employee) => setViewEmployee(employee)}
+                  onEdit={isAdminOrHR ? (employee) => setEditEmployee(employee) : undefined}
+                  onManageDocuments={
+                    isAdminOrHR ? (employee) => setDocumentsEmployee(employee) : undefined
+                  }
+                  onResetPassword={canResetEmployeePassword ? (employee) => setResetPasswordEmployee(employee) : undefined}
+                  isAdminOrHR={isAdminOrHR}
+                  canResetPassword={canResetEmployeePassword}
+                  sortKey={sortKey}
+                  sortDirection={sortDirection}
+                  onSort={requestSort}
+                  selectedIds={selectedEmployeeIds}
+                  onSelectionChange={setSelectedEmployeeIds}
+                  onBulkAction={handleBulkAction}
+                />
+              </div>
+
+              {totalItems > 0 && (
+                <div className="flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row">
+                  <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500 sm:justify-start">
+                    <span>
+                      Showing {(currentPage - 1) * pageSize + 1} to{" "}
+                      {Math.min(currentPage * pageSize, totalItems)} of {totalItems}
+                    </span>
+
+                    <Select
+                      value={pageSize.toString()}
+                      onValueChange={(value) => setPageSize(Number(value))}
+                    >
+                      <SelectTrigger className="h-8 w-[74px] rounded-lg bg-white text-xs !text-slate-900 [&>span]:!text-slate-900">
+                        <SelectValue />
+                      </SelectTrigger>
+
+                      <SelectContent className="bg-white !text-slate-900">
+                        <SelectItem value="5" className="!text-slate-900">5</SelectItem>
+                        <SelectItem value="10" className="!text-slate-900">10</SelectItem>
+                        <SelectItem value="20" className="!text-slate-900">20</SelectItem>
+                        <SelectItem value="50" className="!text-slate-900">50</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <span>per page</span>
+                  </div>
+
+                  {totalPages > 1 && (
+                  <Pagination className="mx-0 w-auto">
+                    <PaginationContent>
+                      <PaginationItem>
+                        <button
+                          type="button"
+                          aria-label="First page"
+                          disabled={!canGoPrevious}
+                          onClick={() => setCurrentPage(1)}
+                          className="h-9 cursor-pointer rounded-md px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          First
+                        </button>
+                      </PaginationItem>
+                      <PaginationItem>
+                        <PaginationPrevious
+                          onClick={() => canGoPrevious && setCurrentPage((page) => page - 1)}
+                          className={
+                            !canGoPrevious
+                              ? "pointer-events-none opacity-50"
+                              : "cursor-pointer"
+                          }
+                        />
+                      </PaginationItem>
+
+                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                        let pageNum: number;
+
+                        if (totalPages <= 5) {
+                          pageNum = i + 1;
+                        } else if (currentPage <= 3) {
+                          pageNum = i + 1;
+                        } else if (currentPage >= totalPages - 2) {
+                          pageNum = totalPages - 4 + i;
+                        } else {
+                          pageNum = currentPage - 2 + i;
+                        }
+
+                        return (
+                          <PaginationItem key={pageNum}>
+                            <PaginationLink
+                              onClick={() => setCurrentPage(pageNum)}
+                              isActive={currentPage === pageNum}
+                              className="cursor-pointer"
+                            >
+                              {pageNum}
+                            </PaginationLink>
+                          </PaginationItem>
+                        );
+                      })}
+
+                      <PaginationItem>
+                        <PaginationNext
+                          onClick={() => canGoNext && setCurrentPage((page) => page + 1)}
+                          className={
+                            !canGoNext
+                              ? "pointer-events-none opacity-50"
+                              : "cursor-pointer"
+                          }
+                        />
+                      </PaginationItem>
+                      <PaginationItem>
+                        <button
+                          type="button"
+                          aria-label="Last page"
+                          disabled={!canGoNext}
+                          onClick={() => setCurrentPage(totalPages)}
+                          className="h-9 cursor-pointer rounded-md px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Last ({totalPages.toLocaleString("en-IN")})
+                        </button>
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                  )}
+                  {totalPages > 1 && (
+                    <form
+                      className="flex items-center gap-1.5 text-xs text-slate-500"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const value = Number(new FormData(event.currentTarget).get("page"));
+                        if (Number.isFinite(value) && value >= 1) setCurrentPage(Math.min(Math.floor(value), totalPages));
+                      }}
+                    >
+                      <label htmlFor="emp-page-jump">Go to</label>
+                      <Input id="emp-page-jump" name="page" type="number" min={1} max={totalPages} placeholder={String(currentPage)} className="h-8 w-20 rounded-lg bg-white text-xs" />
+                    </form>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
           <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -1025,173 +1248,11 @@ const Employees = () => {
             </div>
           ) : isFetchingAnalytics ? (
             <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-              Loading process-wise analytics...
+              <Skeleton className="mx-auto h-40 w-full max-w-3xl rounded-xl" />
             </div>
           ) : (
             <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
               No process-wise data available for the selected filters.
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-sm font-semibold tracking-tight text-slate-950">
-                Employee List
-              </h2>
-              <p className="mt-1 text-xs leading-5 text-slate-500">
-                View, edit, sort and manage employee records.
-              </p>
-            </div>
-
-            {selectedEmployeeIds.length > 0 && (
-              <div className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 ring-1 ring-amber-100">
-                {selectedEmployeeIds.length} selected
-              </div>
-            )}
-          </div>
-
-          {isLoading ? (
-            <div className="space-y-3">
-              {[1, 2, 3, 4, 5].map((item) => (
-                <Skeleton key={item} className="h-16 rounded-xl" />
-              ))}
-            </div>
-          ) : filteredEmployees.length === 0 ? (
-            <Card className="border-dashed border-slate-200 bg-slate-50/70 shadow-none">
-              <CardContent className="flex flex-col items-center justify-center py-14 text-center">
-                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm ring-1 ring-slate-200">
-                  <Users className="h-7 w-7" />
-                </div>
-
-                <h3 className="text-base font-semibold text-slate-950">
-                  No Employees Found
-                </h3>
-
-                <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-                  {employees.length === 0
-                    ? isAdminOrHR
-                      ? "Start by adding your first employee."
-                      : "No team members are available to display."
-                    : "No employees match your current search or filter criteria."}
-                </p>
-
-                {employees.length === 0 && isAdminOrHR && (
-                  <Button
-                    asChild
-                    className="mt-5 bg-slate-950 text-white hover:bg-slate-800 rounded-2xl px-5 py-2.5 font-semibold cursor-pointer transition-colors"
-                  >
-                    <Link to="/onboarding">
-                      <UserPlus className="mr-2 h-4 w-4" />
-                      Add Employee
-                    </Link>
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-4">
-              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                <EmployeeTable
-                  employees={paginatedEmployees}
-                  onView={(employee) => setViewEmployee(employee)}
-                  onEdit={isAdminOrHR ? (employee) => setEditEmployee(employee) : undefined}
-                  onManageDocuments={
-                    isAdminOrHR ? (employee) => setDocumentsEmployee(employee) : undefined
-                  }
-                  onResetPassword={canResetEmployeePassword ? (employee) => setResetPasswordEmployee(employee) : undefined}
-                  isAdminOrHR={isAdminOrHR}
-                  canResetPassword={canResetEmployeePassword}
-                  sortKey={sortKey}
-                  sortDirection={sortDirection}
-                  onSort={requestSort}
-                  selectedIds={selectedEmployeeIds}
-                  onSelectionChange={setSelectedEmployeeIds}
-                  onBulkAction={handleBulkAction}
-                />
-              </div>
-
-              {totalPages > 1 && (
-                <div className="flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row">
-                  <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500 sm:justify-start">
-                    <span>
-                      Showing {(currentPage - 1) * pageSize + 1} to{" "}
-                      {Math.min(currentPage * pageSize, totalItems)} of {totalItems}
-                    </span>
-
-                    <Select
-                      value={pageSize.toString()}
-                      onValueChange={(value) => setPageSize(Number(value))}
-                    >
-                      <SelectTrigger className="h-8 w-[74px] rounded-lg bg-white text-xs !text-slate-900 [&>span]:!text-slate-900">
-                        <SelectValue />
-                      </SelectTrigger>
-
-                      <SelectContent className="bg-white !text-slate-900">
-                        <SelectItem value="5" className="!text-slate-900">5</SelectItem>
-                        <SelectItem value="10" className="!text-slate-900">10</SelectItem>
-                        <SelectItem value="20" className="!text-slate-900">20</SelectItem>
-                        <SelectItem value="50" className="!text-slate-900">50</SelectItem>
-                      </SelectContent>
-                    </Select>
-
-                    <span>per page</span>
-                  </div>
-
-                  <Pagination>
-                    <PaginationContent>
-                      <PaginationItem>
-                        <PaginationPrevious
-                          onClick={() => canGoPrevious && setCurrentPage((page) => page - 1)}
-                          className={
-                            !canGoPrevious
-                              ? "pointer-events-none opacity-50"
-                              : "cursor-pointer"
-                          }
-                        />
-                      </PaginationItem>
-
-                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                        let pageNum: number;
-
-                        if (totalPages <= 5) {
-                          pageNum = i + 1;
-                        } else if (currentPage <= 3) {
-                          pageNum = i + 1;
-                        } else if (currentPage >= totalPages - 2) {
-                          pageNum = totalPages - 4 + i;
-                        } else {
-                          pageNum = currentPage - 2 + i;
-                        }
-
-                        return (
-                          <PaginationItem key={pageNum}>
-                            <PaginationLink
-                              onClick={() => setCurrentPage(pageNum)}
-                              isActive={currentPage === pageNum}
-                              className="cursor-pointer"
-                            >
-                              {pageNum}
-                            </PaginationLink>
-                          </PaginationItem>
-                        );
-                      })}
-
-                      <PaginationItem>
-                        <PaginationNext
-                          onClick={() => canGoNext && setCurrentPage((page) => page + 1)}
-                          className={
-                            !canGoNext
-                              ? "pointer-events-none opacity-50"
-                              : "cursor-pointer"
-                          }
-                        />
-                      </PaginationItem>
-                    </PaginationContent>
-                  </Pagination>
-                </div>
-              )}
             </div>
           )}
         </section>

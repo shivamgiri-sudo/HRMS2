@@ -8,6 +8,8 @@
  * 6. Payroll run window status & closure
  */
 import { useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BadgeCheck,
@@ -288,6 +290,8 @@ function OptOutQueue() {
   });
   const rows: any[] = data?.data ?? [];
 
+  useApprovalFocus(rows.length > 0);
+
   const approveMutation = useMutation({
     mutationFn: ({ id, decision, note, effectiveMonth: em }: any) =>
       hrmsApi.patch(`/api/payroll/statutory-overrides/${id}/approve`, {
@@ -376,6 +380,7 @@ function OptOutQueue() {
               {rows.map((r: any, idx: number) => (
                 <tr
                   key={r.id}
+                  data-approval-id={r.id}
                   className={idx % 2 === 0 ? "bg-white hover:bg-slate-50" : "bg-slate-50/60 hover:bg-slate-100"}
                 >
                   <TD className="font-medium text-slate-900">
@@ -1081,6 +1086,7 @@ function BankChangeTab() {
     enabled: canManageBankChange,
   });
   const rows: any[] = data?.data ?? [];
+  useApprovalFocus(rows.length > 0);
 
   const decideMutation = useMutation({
     mutationFn: ({ id, decision, note }: any) =>
@@ -1169,6 +1175,7 @@ function BankChangeTab() {
                 return (
                   <tr
                     key={r.id}
+                    data-approval-id={r.id}
                     className={
                       idx % 2 === 0
                         ? "bg-white hover:bg-slate-50"
@@ -2326,6 +2333,7 @@ function AdvanceRequestsTab() {
   });
   const advances = advancesResp?.data ?? [];
   const advancesTotal = advancesResp?.total ?? 0;
+  useApprovalFocus(!!advancesResp);
 
   const requestMut = useMutation({
     mutationFn: (payload: object) => hrmsApi.post("/api/payroll/advances", payload),
@@ -2443,7 +2451,7 @@ function AdvanceRequestsTab() {
               </thead>
               <tbody>
                 {filteredAdvances.map((adv: any) => (
-                  <tr key={adv.id} className="border-t">
+                  <tr key={adv.id} data-approval-id={adv.id} className="border-t">
                     <td className="px-3 py-2 font-mono text-xs">{adv.employee_code}</td>
                     <td className="px-3 py-2">{adv.employee_name}</td>
                     <td className="px-3 py-2 text-right font-medium">₹{fmt(adv.amount)}</td>
@@ -2506,6 +2514,10 @@ const TABS = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function NativePayrollHOQueues() {
+  // ?tab=<value> makes a tab linkable (e.g. the bank-change email links to ?tab=bankchg).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const activeTab = TABS.some((t) => t.value === requestedTab) ? (requestedTab as string) : "optout";
   return (
     <div className="space-y-6">
       {/* Page header */}
@@ -2524,7 +2536,10 @@ export default function NativePayrollHOQueues() {
         </div>
       </div>
 
-      <Tabs defaultValue="optout">
+      <Tabs
+        value={activeTab}
+        onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
+      >
         {/* Tab bar */}
         <TabsList className="mb-6 flex h-auto w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm">
           {TABS.map(({ value, label, icon: Icon }) => (

@@ -87,7 +87,7 @@ CREATE TABLE salary_prep_run (id TEXT PRIMARY KEY, run_month TEXT, status TEXT, 
   disbursed_at TEXT, auto_closed_at TEXT, finance_approved_at TEXT, updated_at TEXT);
 CREATE TABLE salary_prep_line (id TEXT PRIMARY KEY, run_id TEXT, employee_id TEXT, gross_salary REAL,
   pf_employer REAL, esic_employer REAL, gratuity REAL, other_deductions REAL DEFAULT 0, loan_emi REAL DEFAULT 0,
-  advance_recovery REAL DEFAULT 0, lwp_deduction REAL DEFAULT 0);
+  advance_recovery REAL DEFAULT 0, lwp_deduction REAL DEFAULT 0, incentive_total REAL DEFAULT 0);
 CREATE TABLE pnl_employee_cost_centre_override (id TEXT PRIMARY KEY, employee_id TEXT UNIQUE,
   target_cost_centre_id TEXT, active_status INT);
 CREATE TABLE pnl_running_salary_snapshot (id TEXT PRIMARY KEY, period_code TEXT, employee_id TEXT, employee_code TEXT,

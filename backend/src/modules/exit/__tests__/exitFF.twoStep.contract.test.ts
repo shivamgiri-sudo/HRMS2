@@ -23,6 +23,7 @@ vi.mock("../../payroll/noc-release-gate.service.js", () => ({
 }));
 vi.mock("../exit.notifications.js", () => ({
   notifyFullFinalReady: vi.fn().mockResolvedValue(undefined),
+  notifyFFApproved: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../../../shared/auditLog.js", () => ({
   logSensitiveAction: vi.fn().mockResolvedValue(undefined),
@@ -41,42 +42,13 @@ describe("F&F 2-step flow", () => {
     vi.clearAllMocks();
   });
 
-  it("approveFF proceeds even when is_ff_provisional = 1 (gate removed)", async () => {
-    // SELECT returns a provisional draft record
+  it('approveFF refuses a provisional calculation before any write', async () => {
+    // Owner decision 2026-09-30: the service refuses what the HTTP route already refuses.
     mockDb.execute
-      .mockResolvedValueOnce([
-        [
-          {
-            id: "ff-id",
-            exit_request_id: "er-id",
-            employee_id: "emp-id",
-            status: "draft",
-            is_ff_provisional: 1,
-            approved_by: null,
-          },
-        ],
-      ]) // SELECT by id
-      .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE approve
-      .mockResolvedValueOnce([
-        [
-          {
-            id: "ff-id",
-            exit_request_id: "er-id",
-            employee_id: "emp-id",
-            status: "approved",
-            is_ff_provisional: 1,
-            approved_by: "approver-id",
-            approved_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ],
-      ]) // getFF SELECT
-      .mockResolvedValueOnce([[]]); // getPayrollAlreadyPaid
+      .mockResolvedValueOnce([[{ id: 'ff-id', exit_request_id: 'er-id', employee_id: 'emp-id', status: 'draft', is_ff_provisional: 1, approved_by: null }]]); // SELECT by id
 
-    await expect(
-      ffService.approveFF("ff-id", "approver-id"),
-    ).resolves.not.toThrow();
+    await expect(ffService.approveFF('ff-id', 'approver-id')).rejects.toThrow(/provisional statutory values/);
+    expect(mockDb.execute).toHaveBeenCalledTimes(1);
   });
 
   it("setProvisionalFalse without reason throws 400", async () => {

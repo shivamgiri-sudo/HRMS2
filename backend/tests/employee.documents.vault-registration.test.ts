@@ -30,9 +30,12 @@ const UPLOAD_DIR = join(backendRoot, "uploads", "employee-documents");
 const EMPLOYEE_ID = "11111111-1111-1111-1111-111111111111";
 const USER_ID = "22222222-2222-2222-2222-222222222222";
 
-const { dbExecute, registerUpload } = vi.hoisted(() => ({
+const { dbExecute, registerUpload, isHrAdmin } = vi.hoisted(() => ({
   dbExecute: vi.fn(),
   registerUpload: vi.fn(),
+  // Whether the caller holds admin/hr. Employees uploading their own record are limited to
+  // PAN / Aadhaar / bank passbook; HR/admin are not.
+  isHrAdmin: { value: true },
 }));
 
 vi.mock("../src/db/mysql.js", () => ({ db: { execute: dbExecute } }));
@@ -64,14 +67,8 @@ vi.mock("../src/middleware/requireRole.js", () => ({
 vi.mock("../src/shared/accessGuard.js", () => ({
   // Ownership/role check is a separate concern from vault registration —
   // pass through so these tests focus on what happens after auth succeeds.
-  selfOrAdminHr:
-    () =>
-    (
-      _req: express.Request,
-      _res: express.Response,
-      next: express.NextFunction,
-    ) =>
-      next(),
+  selfOrAdminHr: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
+  hasRole: async () => isHrAdmin.value,
 }));
 
 const { employeeDocsRouter } =
@@ -97,6 +94,7 @@ describe("POST /api/employee-docs/:employeeId/upload", () => {
   beforeEach(() => {
     dbExecute.mockReset();
     registerUpload.mockReset();
+    isHrAdmin.value = true;
     before.clear();
     for (const f of uploadedFiles()) before.add(f);
   });
@@ -168,5 +166,45 @@ describe("POST /api/employee-docs/:employeeId/upload", () => {
     // no files present after this request beyond what existed before it.
     const after = uploadedFiles().filter((f) => !before.has(f));
     expect(after).toEqual([]);
+  });
+
+  it("stores the typed doc_category (pan/aadhaar/bank) instead of leaving every row as 'other'", async () => {
+    registerUpload.mockResolvedValue("vault-item-1");
+    dbExecute.mockResolvedValue([[{ id: "doc-1" }]] as any);
+    for (const [type, category] of [["pan_card", "pan"], ["aadhaar_card", "aadhaar"], ["bank_passbook", "bank"], ["contract", "other"]]) {
+      dbExecute.mockClear();
+      const res = await request(app())
+        .post(`/api/employee-docs/${EMPLOYEE_ID}/upload`)
+        .field("document_type", type)
+        .attach("file", FAKE_PDF, "x.pdf");
+      expect(res.status).toBe(201);
+      const insert = dbExecute.mock.calls.find((c) => String(c[0]).startsWith("INSERT INTO employee_documents"))!;
+      expect(String(insert[0])).toContain("doc_category");
+      expect(insert[1]).toEqual(expect.arrayContaining([type, category]));
+    }
+  });
+
+  it("lets an employee (not HR/admin) upload only PAN, Aadhaar or bank passbook to their own record", async () => {
+    isHrAdmin.value = false;
+    registerUpload.mockResolvedValue("vault-item-1");
+    dbExecute.mockResolvedValue([[{ id: "doc-1" }]] as any);
+
+    const allowed = await request(app())
+      .post(`/api/employee-docs/${EMPLOYEE_ID}/upload`)
+      .field("document_type", "bank_passbook")
+      .attach("file", FAKE_PDF, "p.pdf");
+    expect(allowed.status).toBe(201);
+
+    dbExecute.mockClear();
+    registerUpload.mockClear();
+    const denied = await request(app())
+      .post(`/api/employee-docs/${EMPLOYEE_ID}/upload`)
+      .field("document_type", "offer_letter")
+      .attach("file", FAKE_PDF, "o.pdf");
+    expect(denied.status).toBe(403);
+    // Rejected before anything is recorded, and the file multer wrote is removed.
+    expect(registerUpload).not.toHaveBeenCalled();
+    expect(dbExecute).not.toHaveBeenCalled();
+    expect(uploadedFiles().filter((f) => !before.has(f)).length).toBe(1); // only the allowed upload remains
   });
 });

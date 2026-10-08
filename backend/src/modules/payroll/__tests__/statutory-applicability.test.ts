@@ -31,6 +31,7 @@ const {
   resolveStatutoryApplicabilityForPeriod,
   resolveStatutoryApplicability,
   summariseApplicability,
+  loadStatutoryNotApplicable,
 } = await import("../statutory-applicability.service.js");
 
 beforeEach(() => {
@@ -209,5 +210,59 @@ describe("summary keeps unresolved visible", () => {
       notApplicable: 1,
       unresolved: 0,
     });
+  });
+});
+
+describe("loadStatutoryNotApplicable - what the payroll ENGINE honours", () => {
+  // Aug 2026: db_bill deducts nothing for any employee it flags NO (ESIC 502/502, PF 313/313), yet
+  // HRMS deducted ESIC from 91 and PF from 12 of them. Only an explicit NO may switch a deduction
+  // off; YES / unreadable leave the engine's own wage rules alone.
+  it("returns only the employees explicitly flagged NOT applicable, per scheme", async () => {
+    billQuery.mockResolvedValue([
+      { EmpCode: "mas001 ", PFELig: "YES", ESIElig: "NO" },
+      { EmpCode: "MAS002", PFELig: "NO", ESIElig: "NO" },
+      { EmpCode: "MAS003", PFELig: "YES", ESIElig: "YES" },
+      { EmpCode: "MAS004", PFELig: "junk", ESIElig: "" },
+    ]);
+    const r = await loadStatutoryNotApplicable("2026-08");
+    expect([...(r?.esi ?? [])].sort()).toEqual(["MAS001", "MAS002"]);
+    expect([...(r?.pf ?? [])]).toEqual(["MAS002"]);
+  });
+
+  it("includes an approved HRMS opt-out for the month", async () => {
+    billQuery.mockResolvedValue([{ EmpCode: "MAS010", PFELig: "YES", ESIElig: "YES" }]);
+    execute
+      .mockResolvedValueOnce([[], []]) // employee_statutory_info
+      .mockResolvedValueOnce([[{ employee_code: "MAS010", override_type: "pf_opt_out" }], []]);
+    const r = await loadStatutoryNotApplicable("2026-08");
+    expect(r?.pf.has("MAS010")).toBe(true);
+    expect(r?.esi.has("MAS010")).toBe(false);
+  });
+
+  it("never throws: db_bill unreachable gives null so the run keeps its own rules", async () => {
+    billQuery.mockRejectedValue(new Error("ECONNREFUSED"));
+    await expect(loadStatutoryNotApplicable("2026-08")).resolves.toBeNull();
+  });
+});
+
+describe("loadStatutoryNotApplicable - assignment flags as the fallback", () => {
+  it("uses the active salary assignment only where db_bill / HRMS statutory record could not decide", async () => {
+    billQuery.mockResolvedValue([
+      { EmpCode: "MAS100", PFELig: "YES", ESIElig: "YES" }, // db_bill decides YES: assignment NO must NOT override
+    ]);
+    execute
+      .mockResolvedValueOnce([[], []]) // employee_statutory_info
+      .mockResolvedValueOnce([[], []]) // approved overrides
+      .mockResolvedValueOnce([[
+        { code: "MAS100", pf_applicable: 0, esi_applicable: 0 }, // db_bill YES wins
+        { code: "MAS200", pf_applicable: 0, esi_applicable: 1 }, // db_bill silent: assignment decides PF
+        { code: "MAS300", pf_applicable: null, esi_applicable: null }, // unknown stays unknown
+      ], []]);
+    const r = await loadStatutoryNotApplicable("2026-09");
+    expect(r?.pf.has("MAS100")).toBe(false);
+    expect(r?.esi.has("MAS100")).toBe(false);
+    expect(r?.pf.has("MAS200")).toBe(true);
+    expect(r?.esi.has("MAS200")).toBe(false);
+    expect(r?.pf.has("MAS300")).toBe(false);
   });
 });

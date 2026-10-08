@@ -3,7 +3,12 @@
  *
  * People Cost for a month, per salary_prep_line:
  *
- *   People Cost = CTC paid − (Other deduction + Leave deduction)
+ *   People Cost = CTC paid + Incentive − (Other deduction + Leave deduction)
+ *
+ *   Incentive       = COALESCE(incentive_total,0)   (owner decision 2026-10-05: incentives ARE people
+ *                     cost. db_bill's CTC and the finance sheet both include them; HRMS alone left them
+ *                     out, 11-16 lakh a month. Verified May 2026: payroll 193.3 + incentive 14.3 = 207.6
+ *                     vs db_bill CTC 208.7 vs sheet 211.8.)
  *
  *   CTC paid        = COALESCE(gross_salary,0) + COALESCE(pf_employer,0)
  *                   + COALESCE(esic_employer,0) + COALESCE(gratuity,0)
@@ -29,17 +34,9 @@
  */
 
 /** Columns the rule reads, in the order the rule lists them. */
-export const PEOPLE_COST_CTC_COLUMNS = [
-  "gross_salary",
-  "pf_employer",
-  "esic_employer",
-  "gratuity",
-] as const;
-export const PEOPLE_COST_OTHER_DEDUCTION_COLUMNS = [
-  "other_deductions",
-  "loan_emi",
-  "advance_recovery",
-] as const;
+export const PEOPLE_COST_CTC_COLUMNS = ["gross_salary", "pf_employer", "esic_employer", "gratuity"] as const;
+export const PEOPLE_COST_INCENTIVE_COLUMN = "incentive_total" as const;
+export const PEOPLE_COST_OTHER_DEDUCTION_COLUMNS = ["other_deductions", "loan_emi", "advance_recovery"] as const;
 export const PEOPLE_COST_LEAVE_DEDUCTION_COLUMNS = ["lwp_deduction"] as const;
 
 /** Legacy fallback used by the column-aware readers when salary_prep_line has no gratuity column. */
@@ -52,6 +49,8 @@ export interface PeopleCostExprs {
   gratuity: string;
   /** CTC paid = gross + pfEmployer + esicEmployer + gratuity. */
   ctcPaid: string;
+  /** incentive_total (part of People Cost since 2026-10-05). */
+  incentive: string;
   /** other_deductions + loan_emi + advance_recovery. */
   otherDeduction: string;
   /** lwp_deduction. */
@@ -65,12 +64,8 @@ function col(alias: string, column: string): string {
 }
 
 function build(parts: {
-  gross: string;
-  pfEmployer: string;
-  esicEmployer: string;
-  gratuity: string;
-  other: string[];
-  leave: string[];
+  gross: string; pfEmployer: string; esicEmployer: string; gratuity: string; incentive: string;
+  other: string[]; leave: string[];
 }): PeopleCostExprs {
   const ctcPaid = `(${parts.gross} + ${parts.pfEmployer} + ${parts.esicEmployer} + ${parts.gratuity})`;
   const otherDeduction = parts.other.length
@@ -85,9 +80,10 @@ function build(parts: {
     esicEmployer: parts.esicEmployer,
     gratuity: parts.gratuity,
     ctcPaid,
+    incentive: parts.incentive,
     otherDeduction,
     leaveDeduction,
-    peopleCost: `(${ctcPaid} - (${otherDeduction} + ${leaveDeduction}))`,
+    peopleCost: `(${ctcPaid} + ${parts.incentive} - (${otherDeduction} + ${leaveDeduction}))`,
   };
 }
 
@@ -98,6 +94,7 @@ export function peopleCostExprs(alias: string): PeopleCostExprs {
     pfEmployer: col(alias, "pf_employer"),
     esicEmployer: col(alias, "esic_employer"),
     gratuity: col(alias, "gratuity"),
+    incentive: col(alias, PEOPLE_COST_INCENTIVE_COLUMN),
     other: PEOPLE_COST_OTHER_DEDUCTION_COLUMNS.map((c) => col(alias, c)),
     leave: PEOPLE_COST_LEAVE_DEDUCTION_COLUMNS.map((c) => col(alias, c)),
   });
@@ -129,12 +126,9 @@ export function peopleCostExprsForColumns(
     pfEmployer: opt("pf_employer"),
     esicEmployer: opt("esic_employer"),
     gratuity,
-    other: PEOPLE_COST_OTHER_DEDUCTION_COLUMNS.filter((c) =>
-      columns.has(c),
-    ).map((c) => col(alias, c)),
-    leave: PEOPLE_COST_LEAVE_DEDUCTION_COLUMNS.filter((c) =>
-      columns.has(c),
-    ).map((c) => col(alias, c)),
+    incentive: opt(PEOPLE_COST_INCENTIVE_COLUMN),
+    other: PEOPLE_COST_OTHER_DEDUCTION_COLUMNS.filter((c) => columns.has(c)).map((c) => col(alias, c)),
+    leave: PEOPLE_COST_LEAVE_DEDUCTION_COLUMNS.filter((c) => columns.has(c)).map((c) => col(alias, c)),
   });
 }
 

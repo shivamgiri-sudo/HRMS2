@@ -688,6 +688,75 @@ async function loadEmployeeBankRows(
   return rows;
 }
 
+
+type ResolvedBankRow = { row: EmployeeBankRow; resolution: ReturnType<typeof resolveAccountNumberWithConflict> };
+
+function resolveBankRows(employeeRows: EmployeeBankRow[]): ResolvedBankRow[] {
+  return employeeRows.map((r) => ({
+    row: r,
+    resolution: resolveAccountNumberWithConflict({
+      account_number_enc: r.account_number_enc,
+      account_number: r.account_number_legacy,
+    }),
+  }));
+}
+
+/** Resolved account -> every employee_code holding it as an active primary account. */
+function accountOwners(resolved: ResolvedBankRow[]): Map<string, string[]> {
+  const byAccount = new Map<string, string[]>();
+  for (const { row, resolution } of resolved) {
+    const acct = normaliseAccount(resolution.resolved);
+    if (!acct) continue;
+    const list = byAccount.get(acct) ?? [];
+    list.push(row.employee_code);
+    byAccount.set(acct, list);
+  }
+  return byAccount;
+}
+
+/**
+ * The one classification both the org-wide report and the per-employee view run, so the two can
+ * never disagree about the same employee.
+ */
+function classifyResolvedRows(
+  resolved: ResolvedBankRow[],
+  byAccount: Map<string, string[]>,
+  credits: Map<string, { account: string; confirmed: boolean }>,
+  source: VerificationSource,
+): BankReadinessReport["rows"] {
+  return resolved.map(({ row, resolution }) => {
+    const acct = normaliseAccount(resolution.resolved);
+    const sharers = acct ? (byAccount.get(acct) ?? []).filter((c) => c !== row.employee_code) : [];
+    const credit = credits.get(String(row.employee_code ?? "").trim().toUpperCase());
+
+    let result = classifyBankReadiness({
+      employee_id: row.employee_id,
+      employee_code: row.employee_code,
+      employee_name: String(row.employee_name ?? "").trim(),
+      active_primary_count: Number(row.active_primary_count ?? 0),
+      account_number: acct || null,
+      account_sources_conflict: resolution.status === "conflict",
+      ifsc_code: row.ifsc_code,
+      bank_name: row.bank_name,
+      account_holder_name: row.account_holder_name,
+      legacy_employee_column_account: row.legacy_employee_column_account,
+      has_open_change_request: Number(row.open_change_requests ?? 0) > 0,
+      duplicate_of_employee_code: sharers[0] ?? null,
+      credited_account: credit?.account ?? null,
+      credit_receipt_confirmed: credit?.confirmed ?? false,
+    });
+    if (!source.available) result = degradeUnverifiable(result);
+
+    return {
+      ...result,
+      branch_id: row.branch_id,
+      branch_name: row.branch_name,
+      has_email:
+        !!String(row.official_email ?? "").trim() || !!String(row.personal_email ?? "").trim(),
+    };
+  });
+}
+
 export interface BankReadinessReport {
   as_of: string;
   /** The run this population was scoped to, or null for the org-wide exceptions queue. */
@@ -725,67 +794,15 @@ export async function buildBankReadinessReport(
   // Resolve every account first, so the duplicate map is built from resolved values rather than
   // from whichever column happened to be populated. Building it from the raw legacy column would
   // miss a collision between an encrypted row and a legacy one.
-  const resolved = employeeRows.map((r) => {
-    const resolution = resolveAccountNumberWithConflict({
-      account_number_enc: r.account_number_enc,
-      account_number: r.account_number_legacy,
-    });
-    return { row: r, resolution };
-  });
-
-  const byAccount = new Map<string, string[]>();
-  for (const { row, resolution } of resolved) {
-    const acct = normaliseAccount(resolution.resolved);
-    if (!acct) continue;
-    const list = byAccount.get(acct) ?? [];
-    list.push(row.employee_code);
-    byAccount.set(acct, list);
-  }
+  const resolved = resolveBankRows(employeeRows);
+  const byAccount = accountOwners(resolved);
 
   const totals = Object.fromEntries(
     BANK_READINESS_CLASSES.map((c) => [c, 0]),
   ) as Record<BankReadinessClass, number>;
 
-  const rows = resolved.map(({ row, resolution }) => {
-    const acct = normaliseAccount(resolution.resolved);
-    const sharers = acct
-      ? (byAccount.get(acct) ?? []).filter((c) => c !== row.employee_code)
-      : [];
-    const credit = credits.get(
-      String(row.employee_code ?? "")
-        .trim()
-        .toUpperCase(),
-    );
-
-    let result = classifyBankReadiness({
-      employee_id: row.employee_id,
-      employee_code: row.employee_code,
-      employee_name: String(row.employee_name ?? "").trim(),
-      active_primary_count: Number(row.active_primary_count ?? 0),
-      account_number: acct || null,
-      account_sources_conflict: resolution.status === "conflict",
-      ifsc_code: row.ifsc_code,
-      bank_name: row.bank_name,
-      account_holder_name: row.account_holder_name,
-      legacy_employee_column_account: row.legacy_employee_column_account,
-      has_open_change_request: Number(row.open_change_requests ?? 0) > 0,
-      duplicate_of_employee_code: sharers[0] ?? null,
-      credited_account: credit?.account ?? null,
-      credit_receipt_confirmed: credit?.confirmed ?? false,
-    });
-    if (!source.available) result = degradeUnverifiable(result);
-
-    totals[result.readiness_class]++;
-    return {
-      ...result,
-      branch_id: row.branch_id,
-      branch_name: row.branch_name,
-      has_email:
-        !!String(row.official_email ?? "").trim() ||
-        !!String(row.personal_email ?? "").trim(),
-    };
-  });
-
+  const rows = classifyResolvedRows(resolved, byAccount, credits, source);
+  for (const r of rows) totals[r.readiness_class]++;
   const payable_count = totals.READY;
   const unresolved_count = rows.length - payable_count;
 
@@ -799,6 +816,252 @@ export async function buildBankReadinessReport(
     unresolved_count,
     gate_clear: unresolved_count === 0,
     rows,
+  };
+}
+
+// ── Per-employee readiness (Payroll Head salary review) ──────────────────────────────────────
+//
+// The salary review queue and its per-employee view used to call buildBankReadinessReport(null)
+// and keep the one or few rows they needed. That ran, on every page load and again after every
+// assign / accept / approve: the org-wide employee query with two correlated subqueries per
+// active employee, a decrypt of every account, and two full scans of db_bill.salary_data across
+// its whole history (one GROUP BY for the verification month, one DISTINCT over every confirmed
+// credit) — the largest result set leaving db_bill — only to throw almost all of it away.
+//
+// This computes the same classification for just the requested employees:
+//   - their own rows: the org-wide query, limited to those ids (same columns, same
+//     active_status = 1 population, so an employee the report would not list is not listed here);
+//   - duplicate accounts: still judged against every active employee's active primary account,
+//     but from a light query (code + account only), not the full report;
+//   - credits: the verification month is resolved once and remembered (it moves once a month),
+//     and both credit queries are limited to these employees' codes.
+// Classification itself is classifyResolvedRows, the function the org-wide report runs.
+
+const VERIFICATION_MONTH_TTL_MS = 10 * 60 * 1000;
+let verificationMonthCache: { month: string; at: number } | null = null;
+
+async function cachedVerificationMonth(): Promise<string | null> {
+  if (verificationMonthCache && Date.now() - verificationMonthCache.at < VERIFICATION_MONTH_TTL_MS) {
+    return verificationMonthCache.month;
+  }
+  const month = await resolveVerificationMonth();
+  // Only a found month is remembered; "none yet" is re-asked next time.
+  if (month) verificationMonthCache = { month, at: Date.now() };
+  return month;
+}
+
+// db_bill is a remote MySQL 5.5 behind a 5-connection pool with no query timeout, shared by
+// every module that reads it. salary_data has no index this lookup can use, so each credit query
+// is a scan. Opening a few employees on the review page — each open also refreshes the queue —
+// stacked those scans behind the 5 connections, and the page sat waiting on them ("stuck after
+// 4 checks"). Credits for an employee code are therefore remembered for 10 minutes (a salary
+// credit does not change between clicks), codes already being fetched are not fetched twice,
+// and a lookup slower than CREDIT_LOOKUP_TIMEOUT_MS degrades to "unverifiable" for that call
+// instead of holding the page.
+type Credit = { account: string; confirmed: boolean };
+const CREDIT_TTL_MS = 10 * 60 * 1000;
+const CREDIT_LOOKUP_TIMEOUT_MS = 4000;
+const creditCache = new Map<string, { credit: Credit | null; month: string; at: number }>();
+const creditInFlight = new Map<string, Promise<void>>();
+
+/** Credits for these codes in this verification month (same rules as loadCreditedAccounts). */
+async function queryCreditsFor(month: string, codes: string[]): Promise<Map<string, Credit>> {
+  const credits = new Map<string, Credit>();
+  const inList = codes.map(() => "?").join(",");
+  const [rows, confirmedRows] = await Promise.all([
+    billQuery<CreditRow>(
+      `SELECT EmpCode, AcNo, SalaryReceiveStatus
+         FROM salary_data
+        WHERE SalDate = ?
+          AND EmpCode IN (${inList})
+          AND AcNo IS NOT NULL AND TRIM(AcNo) <> ''`,
+      [month, ...codes],
+    ),
+    billQuery<RowDataPacket & { EmpCode: string; AcNo: string }>(
+      `SELECT DISTINCT EmpCode, AcNo
+         FROM salary_data
+        WHERE SalaryReceiveStatus = 'YES'
+          AND EmpCode IN (${inList})
+          AND AcNo IS NOT NULL AND TRIM(AcNo) <> ''`,
+      codes,
+    ),
+  ]);
+  const everConfirmed = new Set<string>();
+  for (const r of confirmedRows) {
+    const k = String(r.EmpCode ?? "").trim().toUpperCase();
+    if (!k) continue;
+    everConfirmed.add(`${k}|${normaliseAccount(r.AcNo)}`);
+  }
+  for (const r of rows) {
+    const key = String(r.EmpCode ?? "").trim().toUpperCase();
+    if (!key) continue;
+    const account = normaliseAccount(r.AcNo);
+    credits.set(key, {
+      account,
+      confirmed:
+        String(r.SalaryReceiveStatus ?? "").toUpperCase() === "YES" ||
+        everConfirmed.has(`${key}|${account}`),
+    });
+  }
+  for (const compound of everConfirmed) {
+    const sep = compound.lastIndexOf("|");
+    const k = compound.slice(0, sep);
+    const account = compound.slice(sep + 1);
+    if (!credits.has(k)) credits.set(k, { account, confirmed: true });
+  }
+  return credits;
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`db_bill credit lookup exceeded ${ms}ms`)), ms);
+    t.unref?.();
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
+/** Tests only: forget remembered verification month and credits. */
+export function resetBankReadinessCachesForTests(): void {
+  verificationMonthCache = null;
+  creditCache.clear();
+  creditInFlight.clear();
+}
+
+async function loadCreditedAccountsFor(employeeCodes: string[]): Promise<{
+  source: VerificationSource;
+  credits: Map<string, Credit>;
+}> {
+  const credits = new Map<string, Credit>();
+  try {
+    const month = await withTimeout(cachedVerificationMonth(), CREDIT_LOOKUP_TIMEOUT_MS);
+    if (!month) {
+      return {
+        source: {
+          available: false,
+          month: null,
+          confirmed_credits: 0,
+          error: "db_bill holds no salary row with a confirmed receipt",
+        },
+        credits,
+      };
+    }
+    const codes = [...new Set(employeeCodes.map((c) => String(c ?? "").trim()).filter(Boolean))];
+    const keyOf = (c: string) => c.toUpperCase();
+    const fresh = (c: string) => {
+      const hit = creditCache.get(keyOf(c));
+      return !!hit && hit.month === month && Date.now() - hit.at < CREDIT_TTL_MS;
+    };
+
+    const missing = codes.filter((c) => !fresh(c) && !creditInFlight.has(keyOf(c)));
+    if (missing.length) {
+      const fetch = queryCreditsFor(month, missing).then((found) => {
+        const at = Date.now();
+        for (const c of missing) creditCache.set(keyOf(c), { credit: found.get(keyOf(c)) ?? null, month, at });
+      });
+      const settled = fetch.finally(() => { for (const c of missing) creditInFlight.delete(keyOf(c)); });
+      for (const c of missing) creditInFlight.set(keyOf(c), settled);
+    }
+    const waits = [...new Set(codes.map((c) => creditInFlight.get(keyOf(c))).filter(Boolean))] as Promise<void>[];
+    await withTimeout(Promise.all(waits), CREDIT_LOOKUP_TIMEOUT_MS);
+
+    for (const c of codes) {
+      const hit = creditCache.get(keyOf(c));
+      if (hit?.credit) credits.set(keyOf(c), hit.credit);
+    }
+    return {
+      source: {
+        available: true,
+        month,
+        // Counted over the requested employees only, not the whole workforce.
+        confirmed_credits: [...credits.values()].filter((c) => c.confirmed).length,
+        error: null,
+      },
+      credits,
+    };
+  } catch (err) {
+    const e = err as { code?: string; message?: string; name?: string };
+    const detail = [e?.name, e?.code, e?.message].filter((p) => p && String(p).trim()).join(" | ");
+    return {
+      source: { available: false, month: null, confirmed_credits: 0, error: detail || String(err) },
+      credits,
+    };
+  }
+}
+
+/** Every active employee's active primary account, for duplicate detection only. */
+async function loadActiveAccountOwnerRows(): Promise<EmployeeBankRow[]> {
+  const [rows] = await db.query<EmployeeBankRow[]>(
+    `SELECT e.employee_code,
+            ebd.account_number_enc,
+            CAST(ebd.account_number AS CHAR) AS account_number_legacy
+       FROM employees e
+       JOIN employee_bank_detail ebd
+         ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
+      WHERE e.active_status = 1`,
+  );
+  return rows;
+}
+
+async function loadEmployeeBankRowsFor(employeeIds: string[]): Promise<EmployeeBankRow[]> {
+  const [rows] = await db.query<EmployeeBankRow[]>(
+    `SELECT
+       e.id                                                          AS employee_id,
+       e.employee_code,
+       COALESCE(NULLIF(TRIM(e.full_name), ''),
+                CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+       e.branch_id,
+       b.branch_name,
+       e.official_email,
+       e.personal_email,
+       CAST(e.bank_account_number AS CHAR)                            AS legacy_employee_column_account,
+       ebd.id                                                         AS bank_detail_id,
+       ebd.account_number_enc,
+       CAST(ebd.account_number AS CHAR)                               AS account_number_legacy,
+       ebd.ifsc_code,
+       ebd.bank_name,
+       ebd.account_holder_name,
+       (SELECT COUNT(*) FROM employee_bank_detail x
+         WHERE x.employee_id = e.id AND x.active_status = 1 AND x.is_primary = 1)
+                                                                      AS active_primary_count,
+       (SELECT COUNT(*) FROM profile_update_approval p
+         WHERE p.employee_id = e.id AND p.request_type = 'bank_details' AND p.status = 'pending')
+                                                                      AS open_change_requests
+     FROM employees e
+     LEFT JOIN employee_bank_detail ebd
+            ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
+     LEFT JOIN branch_master b ON b.id = e.branch_id
+    WHERE e.active_status = 1 AND e.id IN (?)
+    ORDER BY e.employee_code`,
+    [employeeIds],
+  );
+  return rows;
+}
+
+/**
+ * Bank readiness for specific employees, classified exactly as buildBankReadinessReport(null)
+ * would classify them. Same `rows` shape; an employee the org-wide report would not list
+ * (not active) is absent here too.
+ */
+export async function buildBankReadinessForEmployees(employeeIds: string[]): Promise<{
+  as_of: string;
+  verification_source: VerificationSource;
+  rows: BankReadinessReport["rows"];
+}> {
+  const as_of = new Date().toISOString();
+  const ids = [...new Set(employeeIds.filter(Boolean))];
+  if (!ids.length) {
+    return { as_of, verification_source: { available: true, month: null, confirmed_credits: 0, error: null }, rows: [] };
+  }
+  const employeeRows = await loadEmployeeBankRowsFor(ids);
+  const [ownerRows, { source, credits }] = await Promise.all([
+    loadActiveAccountOwnerRows(),
+    loadCreditedAccountsFor(employeeRows.map((r) => r.employee_code)),
+  ]);
+  const resolved = resolveBankRows(employeeRows);
+  return {
+    as_of,
+    verification_source: source,
+    rows: classifyResolvedRows(resolved, accountOwners(resolveBankRows(ownerRows)), credits, source),
   };
 }
 

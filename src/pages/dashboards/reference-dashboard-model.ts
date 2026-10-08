@@ -1,4 +1,5 @@
 import type { RoleDashboardVariant } from "./roleDashboardAccess";
+import type { RoleInsights } from "../../../backend/src/modules/dashboards/role-insights/types";
 import type {
   DashboardMetric,
   DashboardSummaryContract,
@@ -37,6 +38,18 @@ export interface ReferenceDashboardData {
    * everything-included breakdown. Metrics with only one tile can omit it.
    */
   drilldownFor?: (metricKey: string, filters?: Record<string, string>) => { onDrilldown?: () => void };
+  /** Backend dashboard code, e.g. "CEO_DASHBOARD" — needed to build /dashboards/drill/... links. */
+  dashboardCode: string;
+  /**
+   * Role insights (pending actions, KPIs, series, tables, signals) from
+   * GET /api/dashboards/:code/insights. Loads independently AFTER the summary so the hero and
+   * summary tiles paint first; `insightsLoading` is true until it resolves.
+   */
+  insights?: RoleInsights;
+  insightsLoading?: boolean;
+  insightsError?: string | null;
+  /** Opens the shared drill-down drawer for an arbitrary metric code (KPIs from insights). */
+  openDrill?: (metricCode: string, metricName: string, filters?: Record<string, string>) => void;
   employee: EmployeeDashboardData;
   ats: JsonRecord;
   system: JsonRecord;
@@ -44,6 +57,11 @@ export interface ReferenceDashboardData {
   pnl: JsonRecord;
   payroll: JsonRecord;
   payrollRuns?: JsonRecord[];
+  /** True while the payroll run list or the selected run's analytics (~9s cold) are still loading — not a failure. */
+  payrollLoading?: boolean;
+  /** True while the executive quality summary (~20s cold) is still in flight - the score is loading, not unavailable. */
+  qualityLoading?: boolean;
+  payrollError?: string | null;
   selectedPayrollRunId?: string;
   onPayrollRunChange?: (runId: string) => void;
   biometric: JsonRecord;

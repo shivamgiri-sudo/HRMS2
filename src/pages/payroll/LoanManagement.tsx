@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -517,6 +518,7 @@ function LoansTable({
             <>
               <TableRow
                 key={`row-${loan.id}`}
+                data-approval-id={loan.id}
                 className="cursor-pointer hover:bg-slate-50/60"
               >
                 <TableCell>
@@ -1380,6 +1382,7 @@ function PendingApprovalTab({ canApproveLoans }: PendingApprovalTabProps) {
       hrmsApi.get<LoansListResponse>("/api/payroll/loans?status=pending_approval&limit=200"),
     staleTime: 30_000,
   });
+  useApprovalFocus(!isLoading);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["loans-pending-approval"] });
@@ -1495,7 +1498,7 @@ export default function LoanManagement() {
           </div>
         </div>
 
-        <Tabs defaultValue={defaultTab}>
+        <Tabs defaultValue={new URLSearchParams(window.location.search).has("approvalId") && isFinance ? "pending" : defaultTab}>
           <TabsList>
             {isAdmin && <TabsTrigger value="all">All Loans</TabsTrigger>}
             <TabsTrigger value="mine">My Loans</TabsTrigger>

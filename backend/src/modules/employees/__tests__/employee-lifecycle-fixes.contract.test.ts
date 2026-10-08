@@ -33,36 +33,88 @@ describe("updateEmployeeSchema — userId not patchable", () => {
   });
 });
 
-// ── Task 3: official_email must not be self-serviceable ──────────────────────
-describe("PATCH /me — official_email not self-serviceable", () => {
+/**
+ * One routed handler in employee.routes.ts, from its registration to the next top-level
+ * statement. The file is prettier-formatted, so a registration reads `router.put(\n  "/path",`
+ * and a handler ends `  }),\n);` — the old `router.put("/path"` / `\n}));` markers match
+ * nothing, and a missing start marker silently produced an EMPTY section, against which every
+ * `not.toContain` assertion passes. This throws instead of returning ''.
+ */
+function routedHandler(verb: string, routePath: string): string {
+  const src = fs.readFileSync(path.resolve(__dirname, '../employee.routes.ts'), 'utf8');
+  const escaped = routePath.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+  const start = src.search(new RegExp(`^router\\.${verb}\\(\\s*"${escaped}"`, 'm'));
+  expect(start, `routed ${verb.toUpperCase()} ${routePath} handler not found in employee.routes.ts`).toBeGreaterThan(-1);
+  const rest = src.slice(start + 1);
+  const next = rest.search(/^(?:router\.|function |const |export |\/\/ )/m);
+  const section = next === -1 ? src.slice(start) : src.slice(start, start + 1 + next);
+  expect(section.length, 'handler section is empty').toBeGreaterThan(50);
+  return section;
+}
+
+// ── Task 3: official_email is not freely self-serviceable ────────────────────
+//
+// Until 41311c0f5 (2026-09-28) PATCH /me refused official_email outright. It now lets an
+// employee fill it in exactly ONCE, while employees.official_email is still empty, and only
+// with a company-domain address that no other account holds; once set (by IT, HR or the
+// employee) it locks and the 403 below applies again. What this block guards is unchanged in
+// spirit: the login identity cannot be re-pointed by its owner, and never through the
+// generic allowlist loop.
+describe('PATCH /me — official_email is set-once, then locked', () => {
   // These assertions used to read employee.profile.service.ts, which has NO importer:
   // `updateMyProfile` exists in three places and only the inline router.patch("/me")
   // handler in employee.routes.ts is routed. The other two (employee.profile.service.ts,
   // employee.controller.ts) are unreachable, so guarding them proved nothing about the
   // live endpoint. Read the routed handler instead.
-  const routeSrc = () =>
-    fs.readFileSync(path.resolve(__dirname, "../employee.routes.ts"), "utf8");
-
   /** The body of the routed PATCH /me handler, isolated from the rest of the file. */
   function patchMeHandler(): string {
-    const src = routeSrc();
-    const startIdx = src.indexOf('router.patch("/me"');
-    expect(
-      startIdx,
-      "routed PATCH /me handler not found in employee.routes.ts",
-    ).toBeGreaterThan(-1);
-    const endIdx = src.indexOf("\n}));", startIdx) + 5;
-    return src.slice(startIdx, endIdx);
+    return routedHandler('patch', '/me');
   }
 
-  it("rejects official_email with a 403 before building any UPDATE", () => {
+  /** The `if (req.body.official_email !== undefined) { ... }` guard block. */
+  function officialEmailGuard(): string {
     const section = patchMeHandler();
-    expect(section).toMatch(/req\.body\.official_email\s*!==\s*undefined/);
-    expect(section).toMatch(/status\(403\)/);
+    const start = section.search(/if\s*\(\s*req\.body\.official_email\s*!==\s*undefined\s*\)/);
+    expect(start, 'official_email guard not found in PATCH /me').toBeGreaterThan(-1);
+    const end = section.indexOf('officialEmailToSync = candidate', start);
+    expect(end, 'guard must end by accepting the candidate').toBeGreaterThan(start);
+    return section.slice(start, end);
+  }
+
+  it('rejects official_email with a 403 once one is already stored, before building any UPDATE', () => {
+    const section = patchMeHandler();
+    const guard = officialEmailGuard();
+    // Reads the stored value for THIS employee and refuses when it is non-empty.
+    expect(guard).toMatch(/SELECT official_email FROM employees WHERE id = \?/);
+    expect(guard).toMatch(/if\s*\(\s*currentRows\[0\]\?\.official_email\s*\)\s*\{\s*return res\s*\.status\(403\)/);
+    // ...and the whole guard runs before the first SET clause is built.
+    expect(section.indexOf('officialEmailToSync = candidate'))
+      .toBeLessThan(section.indexOf('updates.push('));
   });
 
-  it("never writes the official_email column", () => {
-    expect(patchMeHandler()).not.toMatch(/official_email\s*=\s*\?/);
+  it('only accepts a company-domain address that no other account holds', () => {
+    const guard = officialEmailGuard();
+    expect(guard).toMatch(/if\s*\(\s*!isOfficialEmail\(candidate\)\s*\)\s*\{\s*return res\s*\.status\(400\)/);
+    expect(guard).toMatch(/SELECT id FROM auth_user WHERE email = \? AND id != \?/);
+    expect(guard).toMatch(/if\s*\(\s*conflictRows\.length\s*\)\s*\{\s*return res\s*\.status\(409\)/);
+    // Domain check, then already-set check, then conflict check — all before acceptance.
+    expect(guard.indexOf('isOfficialEmail(')).toBeLessThan(guard.indexOf('status(403)'));
+    expect(guard.indexOf('status(403)')).toBeLessThan(guard.indexOf('status(409)'));
+  });
+
+  it('writes the official_email column only from the guarded, validated value', () => {
+    const section = patchMeHandler();
+    // Exactly one place writes the column, and it is gated on the guard's output — never on
+    // req.body directly.
+    const writes = [...section.matchAll(/official_email`?\s*=\s*\?/g)];
+    expect(writes).toHaveLength(1);
+    expect(section).toMatch(
+      /if\s*\(\s*officialEmailToSync\s*\)\s*\{\s*updates\.push\("`official_email` = \?"\);\s*values\.push\(officialEmailToSync\);/,
+    );
+    expect(section).not.toMatch(/values\.push\(\s*req\.body\.official_email/);
+    // The login identity moves with it, and the change is audited under its own action type.
+    expect(section).toMatch(/UPDATE auth_user SET email = \? WHERE id = \?/);
+    expect(section).toContain('EMPLOYEE_SELF_OFFICIAL_EMAIL_SET');
   });
 
   it("builds its UPDATE from an allowlist, not from arbitrary req.body keys", () => {
@@ -86,17 +138,11 @@ describe("PATCH /me — official_email not self-serviceable", () => {
 });
 
 // ── Task 4: statutory-details must go through approval ───────────────────────
-describe("PUT /me/statutory-details — approval gate", () => {
-  it("route handler must not directly write to employee_statutory_info", () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, "../employee.routes.ts"),
-      "utf8",
-    );
-    const startIdx = src.indexOf('router.put("/me/statutory-details"');
-    const endIdx = src.indexOf("\n}));", startIdx) + 5;
-    const section = src.slice(startIdx, endIdx);
-    expect(section).not.toContain("employee_statutory_info");
-    expect(section).toContain("submitStatutoryDetailsForApproval");
+describe('PUT /me/statutory-details — approval gate', () => {
+  it('route handler must not directly write to employee_statutory_info', () => {
+    const section = routedHandler('put', '/me/statutory-details');
+    expect(section).not.toContain('employee_statutory_info');
+    expect(section).toContain('submitStatutoryDetailsForApproval');
   });
 
   it("profile-approval.service must export submitStatutoryDetailsForApproval", () => {
@@ -112,18 +158,13 @@ describe("PUT /me/statutory-details — approval gate", () => {
 });
 
 // ── Task 5: PUT /me/bank-details must not bypass approval ───────────────────
-describe("PUT /me/bank-details — tombstoned", () => {
-  it("route handler returns 410 and does not directly write to employee_bank_detail", () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, "../employee.routes.ts"),
-      "utf8",
-    );
-    const startIdx = src.indexOf('router.put("/me/bank-details"');
-    const endIdx = src.indexOf("\n}));", startIdx) + 5;
-    const section = src.slice(startIdx, endIdx);
-    expect(section).toContain("410");
-    expect(section).not.toContain("INSERT INTO employee_bank_detail");
-    expect(section).not.toContain("UPDATE employee_bank_detail");
+describe('PUT /me/bank-details — tombstoned', () => {
+  it('route handler returns 410 and does not directly write to employee_bank_detail', () => {
+    const section = routedHandler('put', '/me/bank-details');
+    expect(section).toMatch(/status\(410\)/);
+    expect(section).not.toContain('db.execute');
+    expect(section).not.toContain('INSERT INTO employee_bank_detail');
+    expect(section).not.toContain('UPDATE employee_bank_detail');
   });
 });
 
@@ -281,16 +322,25 @@ describe("exit.service — exited status propagation", () => {
       path.resolve(__dirname, "../../exit/exit.service.ts"),
       "utf8",
     );
-    // Find the line that calls createDefaultClearanceTasks with the status check
-    const clearanceLine = src
-      .split("\n")
-      .find(
-        (l) =>
-          l.includes("accepted") &&
-          l.includes("notice_serving") &&
-          l.includes("exited"),
-      );
-    expect(clearanceLine).toBeDefined();
+    // This used to look for one line gating on ["accepted","notice_serving","exited"]. Since
+    // the 2026-09-15 owner ruling tasks are no longer created at accept time: they key off the
+    // confirmed Last Working Day (in-request when it is already due, otherwise the daily
+    // sweep). What must still hold is the second half of the title — an exit that reaches
+    // "exited" always gets its tasks, because the sweep treats "exited" as terminal.
+    const gate = src.match(
+      /const clearanceDueNow = nextStatus === "exited";\s*if \(\(confirmedLwdInput \|\| clearanceDueNow\) && !isReversalOutcome\) \{([\s\S]*?)\n {4}\}\n/
+    );
+    expect(gate, 'updateExitStatus no longer creates clearance tasks on "exited"').toBeTruthy();
+    // "exited" skips the LWD-due lookup; the LWD path keeps it.
+    expect(gate![1]).toMatch(/clearanceDueNow\s*\?\s*\[\[\{ due: 1 \}\]\]/);
+    expect(gate![1]).toContain('last_working_day_confirmed <= CURDATE()');
+    expect(gate![1]).toMatch(/await createDefaultClearanceTasks\(id, employeeIdForExit\)/);
+    // A reversed resignation never gets a clearance chain.
+    expect(src).toMatch(
+      /const isReversalOutcome = \[\s*"revoked",\s*"rejected",\s*"cancelled",\s*"withdrawn",?\s*\]\.includes\(nextStatus\)/
+    );
+    // Involuntary exits are created directly at "exited" and get theirs at creation.
+    expect(src).toMatch(/if \(isInvoluntary\) \{[\s\S]{0,300}await createDefaultClearanceTasks\(id, input\.employeeId\)/);
   });
 });
 

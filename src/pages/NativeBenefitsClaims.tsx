@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import {
   BadgeCheck,
   CheckCircle2,
@@ -605,6 +607,8 @@ function ClaimsManagementTab() {
   const [payRef, setPayRef] = useState("");
   const [paying, setPaying] = useState(false);
 
+  useApprovalFocus(!loading && claims.length > 0);
+
   const load = async () => {
     setLoading(true);
     setMessage("");
@@ -757,7 +761,7 @@ function ClaimsManagementTab() {
               </thead>
               <tbody>
                 {claims.map((c) => (
-                  <tr key={c.id} className="border-t hover:bg-slate-50/80 transition-colors">
+                  <tr key={c.id} data-approval-id={c.id} className="border-t hover:bg-slate-50/80 transition-colors">
                     <td className="p-4">
                       <div className="font-bold text-slate-950">
                         {c.employee_name ?? c.employee_id}
@@ -1335,7 +1339,9 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
 ];
 
 export default function NativeBenefitsClaims() {
-  const [activeTab, setActiveTab] = useState<Tab>("my-claims");
+  // Approval Center deep link (?approvalId=<claim id>) opens Claims Management.
+  const [deepLinkParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<Tab>(deepLinkParams.get("approvalId") ? "manage-claims" : "my-claims");
 
   return (
     <DashboardLayout>

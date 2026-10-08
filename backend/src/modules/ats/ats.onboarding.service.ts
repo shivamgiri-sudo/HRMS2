@@ -1,21 +1,15 @@
-import { randomUUID } from "crypto";
-import { RowDataPacket, PoolConnection } from "mysql2/promise";
-import { db } from "../../db/mysql.js";
-import { hashPiiForMatch } from "../../shared/piiHash.js";
-import { env } from "../../config/env.js";
-import { hasScopedAccess } from "../../shared/scopeAccess.js";
-import {
-  recordBranchHeadDecision,
-  revertBranchHeadDecision,
-} from "./branch-head-approval.record.js";
-import {
-  resolveEmployeeIdForAuthUser,
-  resolveBranchHeadScope,
-} from "./branch-head-scope.js";
-import { inboxService } from "../inbox/inbox.service.js";
-import { calculateSalary, SalaryComponents } from "./salary.calculator.js";
-import { resolveBandPct } from "./band-package-ratio.service.js";
-import { parseCtcInput } from "./ctc-parser.js";
+import { randomUUID } from 'crypto';
+import { RowDataPacket, PoolConnection } from 'mysql2/promise';
+import { db } from '../../db/mysql.js';
+import { hashPiiForMatch } from '../../shared/piiHash.js';
+import { env } from '../../config/env.js';
+import { hasScopedAccess } from '../../shared/scopeAccess.js';
+import { recordBranchHeadDecision, revertBranchHeadDecision } from './branch-head-approval.record.js';
+import { resolveEmployeeIdForAuthUser, resolveBranchHeadScope } from './branch-head-scope.js';
+import { inboxService } from '../inbox/inbox.service.js';
+import { calculateSalary, SalaryComponents } from './salary.calculator.js';
+import { resolveBandPct, findExactCatalogPackageId } from './band-package-ratio.service.js';
+import { parseCtcInput } from './ctc-parser.js';
 import {
   sendOnboardingTokenEmail,
   sendBankResubmitEmail,
@@ -189,7 +183,10 @@ export async function sendOnboardingToken(
   let emailError: string | undefined;
   if (sendTo) {
     try {
-      await withDeliveryTimeout(
+      // send() reports failure as {ok:false} instead of throwing, and withDeliveryTimeout resolves null on
+      // timeout — both used to fall through to emailSent = true, so HR was told "link resent" when nothing
+      // had gone out.
+      const result = await withDeliveryTimeout(
         sendOnboardingTokenEmail({
           candidateId,
           to: sendTo,
@@ -198,7 +195,11 @@ export async function sendOnboardingToken(
         }),
         `email delivery for ${candidateId}`,
       );
-      emailSent = true;
+      if (result === null) emailError = 'The email server did not respond in time — the email may not have been sent';
+      else if (result.skipped) emailError = 'Email is not configured on the server (SMTP) — nothing was sent';
+      else if (!result.ok) emailError = result.error ?? 'Email delivery failed';
+      else emailSent = true;
+      if (emailError) console.error('[onboarding] email not delivered for', candidateId, emailError);
     } catch (emailErr) {
       emailError =
         emailErr instanceof Error ? emailErr.message : String(emailErr);
@@ -526,10 +527,14 @@ export async function submitProfile(
  * until real server-side pagination + counts replace this — accepted tradeoff
  * for now, not the final shape.
  */
-export async function listOnboardingRequests(scopeFilter: {
-  sql: string;
-  params: unknown[];
-}) {
+export async function listOnboardingRequests(scopeFilter: { sql: string; params: unknown[] }, search?: string) {
+  // Server-side search reaches requests older than the 500-row window (e.g. long-onboarded employees
+  // whose link must be resent). Matches name, candidate code, employee code, mobile and email.
+  const term = String(search ?? '').trim().slice(0, 60);
+  const searchSql = term.length >= 3
+    ? `AND (c.full_name LIKE ? OR c.candidate_code LIKE ? OR e.employee_code LIKE ? OR c.mobile LIKE ? OR c.email LIKE ?)`
+    : '';
+  const searchParams = term.length >= 3 ? Array(5).fill(`%${term.replace(/[%_]/g, '')}%`) : [];
   // db.query, not db.execute — load-bearing. Measured live 2026-09-22: this exact
   // SQL/data ran in 561ms via a direct mysql client (text protocol) but 8.7s
   // through db.execute() (prepared/binary protocol) — MySQL's prepared-statement
@@ -577,10 +582,10 @@ export async function listOnboardingRequests(scopeFilter: {
      LEFT JOIN employees e ON e.id = ob.employee_id
      LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
      LEFT JOIN candidate_onboarding_bank_detail bank ON bank.candidate_id = c.id
-     WHERE (${scopeFilter.sql})
+     WHERE (${scopeFilter.sql}) ${searchSql}
      ORDER BY r.created_at DESC
      LIMIT 500`,
-    scopeFilter.params,
+    [...scopeFilter.params, ...searchParams],
   );
   return rows;
 }
@@ -1082,6 +1087,64 @@ async function syncCandidateProcessFromCostCentre(
     );
 }
 
+/**
+ * The offer's salary components taken verbatim from an active salary_package_master
+ * row (the package Payroll HR picked on the offer form). Nothing is recalculated.
+ *
+ * Refuses rather than silently drifting when the package is retired/missing, when the
+ * CTC sent does not match the package, or when the candidate was opted out of PF/ESI
+ * but the package deducts it. The offer has no lta/portfolio/medical/pli slots, so any
+ * such amounts are carried in other_allowance to keep the components adding up to the
+ * package's gross. Gratuity is not part of the package and is saved as 0.
+ */
+export async function componentsFromCatalogPackage(
+  packageId: string,
+  monthlyCtc: number,
+  pfEligible: boolean,
+  esiEligible: boolean,
+): Promise<SalaryComponents> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM salary_package_master WHERE id = ? AND active_status = 1 LIMIT 1`,
+    [packageId],
+  );
+  const pkg = (rows as RowDataPacket[])[0];
+  const bad = (message: string) => Object.assign(new Error(message), { statusCode: 400 });
+  if (!pkg) throw bad('The selected salary package is no longer active. Pick another package.');
+  const n = (v: unknown) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : 0;
+  };
+  const packageAmount = n(pkg.package_amount);
+  if (Math.abs(packageAmount - monthlyCtc) > 0.01) {
+    throw bad(`Monthly CTC ₹${monthlyCtc.toLocaleString('en-IN')} does not match the selected package (₹${packageAmount.toLocaleString('en-IN')}). Pick the package again.`);
+  }
+  if (!pfEligible && n(pkg.epf_employee) > 0) {
+    throw bad('The candidate is marked not PF eligible, but the selected package deducts PF. Pick a package without PF or tick PF Eligible.');
+  }
+  if (!esiEligible && n(pkg.esic_employee) > 0) {
+    throw bad('The candidate is marked not ESI eligible, but the selected package deducts ESIC. Pick a package without ESIC or tick ESI Eligible.');
+  }
+  return {
+    offered_ctc:       packageAmount,
+    gross:             n(pkg.gross),
+    basic:             n(pkg.basic),
+    hra:               n(pkg.hra),
+    conveyance:        n(pkg.conveyance),
+    da:                0,
+    special_allowance: n(pkg.special_allowance),
+    other_allowance:   n(pkg.other_allowance) + n(pkg.lta) + n(pkg.portfolio) + n(pkg.medical) + n(pkg.pli),
+    bonus:             n(pkg.bonus),
+    pf_employee:       n(pkg.epf_employee),
+    pf_employer:       n(pkg.epf_employer),
+    esic_employee:     n(pkg.esic_employee),
+    esic_employer:     n(pkg.esic_employer),
+    professional_tax:  n(pkg.professional_tax),
+    gratuity:          0,
+    admin_charges:     n(pkg.admin_charges),
+    net_in_hand:       n(pkg.net_in_hand),
+  };
+}
+
 export async function saveOffer(
   requestId: string,
   offerData: Record<string, unknown>,
@@ -1160,16 +1223,29 @@ export async function saveOffer(
       .catch(() => [[] as RowDataPacket[]] as [RowDataPacket[]]);
     stateCode = (stateRows as RowDataPacket[])[0]?.state ?? null;
   }
-  const components: SalaryComponents = await calculateSalary(
-    annualCtcInput,
-    band.basicPct,
-    band.hraPct,
-    false,
-    undefined,
-    pfEligible,
-    esiEligible,
-    stateCode,
-  );
+  // A package picked from the catalog is saved exactly as the catalog stores it. This
+  // used to be thrown away and the offer recalculated from the package's CTC, so the
+  // saved breakdown drifted from the package Payroll HR had chosen.
+  const pickedPackageId = !offerData.is_proposed_exception && typeof offerData.selected_package_id === 'string'
+    ? offerData.selected_package_id.trim()
+    : '';
+  // No package picked, but the typed CTC is exactly one active catalog package: use that package.
+  const selectedPackageId = pickedPackageId
+    || (!offerData.is_proposed_exception
+      ? (await findExactCatalogPackageId(typeof offerData.salary_band === 'string' ? offerData.salary_band : null, annualCtcInput / 12)) ?? ''
+      : '');
+  const components: SalaryComponents = selectedPackageId
+    ? await componentsFromCatalogPackage(selectedPackageId, annualCtcInput / 12, pfEligible, esiEligible)
+    : await calculateSalary(
+        annualCtcInput,
+        band.basicPct,
+        band.hraPct,
+        false,
+        undefined,
+        pfEligible,
+        esiEligible,
+        stateCode,
+      );
 
   // Persisted so an out-of-band CTC carries its justification with it, not just
   // a transient flag the request forgets the moment it is handled -- an

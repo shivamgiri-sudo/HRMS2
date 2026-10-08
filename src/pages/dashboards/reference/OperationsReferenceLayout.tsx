@@ -1,227 +1,71 @@
-import type { ReactNode } from "react";
-import {
-  Activity,
-  AlertOctagon,
-  Clock,
-  Headphones,
-  Target,
-  TrendingDown,
-  TrendingUp,
-  Users,
-} from "lucide-react";
-
-import {
-  ReferenceHeader,
-  ReferenceListRow,
-  ReferenceMetricGrid,
-  ReferencePanel,
-  ReferenceLineChart,
-  ReferenceQuickLink,
-} from "../ReferenceDashboardUI";
-import type { ReferenceDashboardData } from "../reference-dashboard-model";
-import {
-  arrayAt,
-  asNumber,
-  formatValue,
-  metricDetail,
-  metricUnavailableReason,
-  metricValue,
-} from "../reference-dashboard-model";
-import {
-  AttendanceBreakdownPanel,
-  LiveVsProcessedPanel,
-} from "./ReferenceSharedPanels";
+import { useState, type ReactNode } from "react";
 import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
+import { ActionCenter, InsightGrid, KpiTiles, LazySection, SectionTitle, SignalList, type InsightKpi } from "../kit";
+import type { ReferenceDashboardData } from "../reference-dashboard-model";
+import { GapNotes } from "./gap/GapNotes";
+import { FteVsRequired } from "./operations/FteVsRequired";
+import { OperationsClassicPanels } from "./operations/OperationsClassicPanels";
+import { OperationsHeroBlock } from "./operations/OperationsHeroBlock";
+import { OperationsPulseTiles } from "./operations/OperationsPulseTiles";
+import { ProcessBoard } from "./operations/ProcessBoard";
+import { tableOf } from "./operations/operationsModel";
 
+/**
+ * Operations - process control tower.
+ *
+ * Every people / attendance / shrinkage number is computed by Operations Command (the engine behind
+ * /operations-dashboard), so each tile and card links into the exact page that explains it, pre-filtered
+ * (branch -> process -> team -> analyst). The summary/pulse tiles paint first; the rest is insight-fed and lazy.
+ * The previous panels live on, whole, under "Classic panels".
+ */
 export function OperationsReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
-  const m = data.metrics;
-  const drill = data.drilldownFor ?? (() => ({}));
-  const opsPulse = data.opsPulse;
-
-  // Field names from /api/bi/daily-operations-pulse: total_calls, avg_aht_seconds, agents_logged_in, login_adherence_pct
-  const o = opsPulse as Record<string, unknown>;
-  const totalVolume = asNumber(o.total_calls ?? o.total_volume ?? o.calls_handled ?? metricValue(m, "calls"));
-  const loginAdherence = asNumber(o.login_adherence_pct);
-  const loginAdherenceTarget = asNumber(o.login_adherence_target_pct ?? o.login_adherence_target);
-  const avgHandleTime = asNumber(o.avg_aht_seconds ?? o.avg_handle_time ?? o.aht ?? metricValue(m, "aht"));
-  const activeHeadcount = asNumber(o.agents_logged_in ?? o.agents_scheduled ?? metricDetail(m, "hc", "active") ?? metricValue(m, "hc"));
-
-  /**
-   * The dialler feed delivers agent rows without the columns that measure them.
-   *
-   * `apr` has been receiving 150–380 agent rows a day while Calls, AHT and every shrinkage
-   * column (BIO / LUNCH / QA / TRAINING) arrive empty — 0 calls on most days for a fortnight
-   * to 2026-08-28, against ~1,100 active staff. Rendered as a number, that reads as a floor
-   * that took no calls; it is a feed that is not reporting them.
-   *
-   * The distinction is testable rather than assumed: agents present AND the measure absent
-   * means the column is missing, not that the work did not happen. With no agents logged in
-   * at all, a zero is a real zero and stays one.
-   */
-  const agentsLoggedIn = asNumber(o.agents_logged_in);
-  const feedSilent = (measure: number | null) =>
-    (agentsLoggedIn ?? 0) > 0 && (measure === null || measure === 0)
-      ? "Not reported by the dialler feed"
-      : null;
-
-  const volumeTrend = arrayAt(opsPulse, "volume_trend").map((row) => ({
-    label: String(row.period ?? row.hour ?? row.label ?? ""),
-    value: Number(row.volume ?? row.calls ?? row.value ?? 0),
-  }));
-
-  // Shrinkage breakdown from pulse — shown when no volume trend array
-  const shrinkage = o.shrinkage_breakdown as Record<string, number> | undefined;
-  const shrinkageRows = shrinkage
-    ? Object.entries(shrinkage).map(([label, value]) => ({ label, value: Number(value) }))
-    : [];
-
-  // Top process from pulse
-  const topProcess = o.top_process as Record<string, unknown> | null | undefined;
-
-  const interventionFlags = arrayAt(opsPulse, "intervention_flags").slice(0, 6);
-  const processRows = arrayAt(data.workforce, "process_breakdown").concat(arrayAt(data.workforce, "processes")).slice(0, 6);
+  const [classicOpen, setClassicOpen] = useState(false);
+  const ins = data.insights;
+  const loading = Boolean(data.insightsLoading && !ins);
+  const sectionErrors = Object.keys(ins?.sectionErrors ?? {});
+  const onDrill = (k: InsightKpi) => data.openDrill?.(k.drill!.metricCode, k.label, k.drill!.filters);
+  const tiles = (ins?.kpis ?? []).filter((k) => !k.key.startsWith("pnl_"));
+  const pnl = (ins?.kpis ?? []).filter((k) => k.key.startsWith("pnl_"));
 
   return (
-    <div className="reference-dashboard-page">
-      <ReferenceHeader
-        title="Operations Dashboard"
-        subtitle="Live volume, login adherence, AHT and floor headcount"
-        badge="Ops View"
-        right={filters}
-      />
+    <div className="space-y-5 pb-10">
+      <OperationsHeroBlock insights={ins} loading={loading} filters={filters} />
       <TodayCelebrationsWidget />
 
-      <ReferenceMetricGrid
-        columns={4}
-        loading={data.loading}
-        metrics={[
-          {
-            label: "Calls Handled",
-            value: totalVolume,
-            helper: "total volume today",
-            icon: Headphones,
-            tone: "blue",
-            unavailableReason: feedSilent(totalVolume),
-          },
-          {
-            label: "Login Adherence",
-            value: loginAdherence !== null ? `${loginAdherence.toFixed(1)}%` : null,
-            helper: loginAdherenceTarget === null ? "agents logged in vs scheduled" : `target ${loginAdherenceTarget}%`,
-            icon: Target,
-            tone: loginAdherence === null || loginAdherenceTarget === null
-              ? "slate"
-              : loginAdherence >= loginAdherenceTarget ? "green" : "red",
-          },
-          {
-            label: "Avg Handle Time",
-            value: avgHandleTime !== null ? `${avgHandleTime.toFixed(0)}s` : null,
-            helper: "seconds per interaction",
-            icon: Clock,
-            tone: avgHandleTime !== null && avgHandleTime <= 300 ? "green" : "amber",
-            unavailableReason: feedSilent(avgHandleTime),
-          },
-          {
-            label: "Active Headcount",
-            value: activeHeadcount,
-            helper: "agents on floor",
-            icon: Users,
-            tone: "violet",
-            unavailableReason: metricUnavailableReason(m, "hc"),
-            ...drill("hc"),
-          },
-        ]}
-      />
+      {data.insightsError ? <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-[12px] text-amber-800">Operations insights could not be loaded ({data.insightsError}). The live tiles below are unaffected.</p> : null}
+      {sectionErrors.length ? <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-[12px] text-amber-800">Some sections failed to load and are hidden, not zero: {sectionErrors.join(", ")}.</p> : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-        <ReferencePanel title={volumeTrend.length > 0 ? "Volume Trend" : "Shrinkage Breakdown"} bodyClassName="p-4">
-          {volumeTrend.length > 0 ? (
-            <ReferenceLineChart data={volumeTrend} height={160} />
-          ) : shrinkageRows.length > 0 ? (
-            <div className="divide-y divide-[#edf1f6]">
-              {shrinkageRows.map((row) => (
-                <ReferenceListRow
-                  key={row.label}
-                  title={row.label}
-                  value={formatValue(row.value, "%")}
-                />
-              ))}
-            </div>
-          ) : topProcess ? (
-            <div className="flex flex-col gap-1 py-4 text-sm">
-              <p className="font-semibold text-[#0b1f44]">Top Process: {String(topProcess.name ?? "")}</p>
-              <p className="text-[#61708a]">{String(topProcess.calls ?? 0)} calls · {String(topProcess.agent_count ?? 0)} agents</p>
-            </div>
-          ) : (
-            <p className="py-8 text-center text-sm text-[#a0aec0]">No trend data available</p>
-          )}
-        </ReferencePanel>
+      <SectionTitle hint="today, from the dialler / pulse feed">Live floor</SectionTitle>
+      <OperationsPulseTiles data={data} />
 
-        <ReferencePanel
-          title="Intervention Flags"
-          action={
-            interventionFlags.length > 0 ? (
-              <span className="rounded-full bg-[#ef4444] px-2 py-0.5 text-xs font-bold text-white">
-                {formatValue(interventionFlags.length)}
-              </span>
-            ) : null
-          }
-          bodyClassName="p-0"
-        >
-          <div className="divide-y divide-[#edf1f6]">
-            {interventionFlags.length > 0 ? interventionFlags.map((row, i) => {
-              const severity = String(row.severity ?? row.priority ?? "").toLowerCase();
-              return (
-                <ReferenceListRow
-                  key={i}
-                  title={String(row.flag_type ?? row.type ?? row.label ?? "Alert")}
-                  value={String(row.count ?? row.value ?? "")}
-                  subtitle={[String(row.process ?? row.team ?? ""), severity.toUpperCase()]
-                    .filter(Boolean)
-                    .join(" · ")}
-                  tone={severity === "critical" ? "red" : severity === "high" ? "amber" : "blue"}
-                />
-              );
-            }) : (
-              <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">No active flags</p>
-            )}
-          </div>
-        </ReferencePanel>
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+        <div className="space-y-3">
+          <ActionCenter actions={ins?.actions} loading={loading} error={data.insightsError} title="Operations queues needing action" limit={10} />
+          <GapNotes actions={ins?.actions} />
+        </div>
+        <SignalList signals={ins?.signals} loading={loading} title="What changed / what to watch" />
       </div>
 
-      {processRows.length > 0 && (
-        <ReferencePanel
-          title="Process Breakdown"
-          action={<span className="text-xs text-[#61708a]">{formatValue(processRows.length)} processes</span>}
-          bodyClassName="p-0"
-        >
-          <div className="divide-y divide-[#edf1f6]">
-            {processRows.map((row, i) => (
-              <ReferenceListRow
-                key={i}
-                title={String(row.process_name ?? row.process ?? row.lob ?? "Process")}
-                value={String(row.calls_handled ?? row.volume ?? row.headcount ?? "")}
-                subtitle={[
-                  row.sla_pct != null ? `SLA ${Number(row.sla_pct).toFixed(1)}%` : "",
-                  row.status ? String(row.status) : "",
-                ].filter(Boolean).join(" · ")}
-                tone={String(row.status ?? "").toLowerCase() === "critical" ? "red" : "green"}
-              />
-            ))}
-          </div>
-        </ReferencePanel>
-      )}
+      <SectionTitle hint="30 days to the latest complete processed day vs the prior 30">Vitals</SectionTitle>
+      <KpiTiles kpis={tiles} loading={loading} cols={5} onDrill={onDrill} />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <ReferenceQuickLink href="/wfm/live-tracker" title="Live Tracker" icon={Activity} />
-        <ReferenceQuickLink href="/operations-kpi" title="Operations KPI" icon={TrendingUp} />
-        <ReferenceQuickLink href="/quality/dashboard" title="QA Queue" icon={AlertOctagon} />
-        <ReferenceQuickLink href="/wfm/roster" title="Roster" icon={Users} />
-      </div>
-
+      <SectionTitle>Processes</SectionTitle>
+      <LazySection minHeight={280}><ProcessBoard table={tableOf(ins, "process_board")} loading={loading} /></LazySection>
       <div className="grid gap-4 xl:grid-cols-2">
-        <AttendanceBreakdownPanel data={data} />
-        <LiveVsProcessedPanel data={data} />
+        <LazySection><FteVsRequired table={tableOf(ins, "fte_gap")} loading={loading} /></LazySection>
+        <LazySection><InsightGrid series={ins?.series} only={["shrink_rank"]} loading={loading} /></LazySection>
       </div>
+      <LazySection><InsightGrid series={ins?.series} only={["ops_trend", "att_league_top", "att_league_bottom"]} loading={loading} /></LazySection>
+
+      <SectionTitle hint="SLA / AHT / occupancy come from the process KPI matrix and say how old they are">Service &amp; economics</SectionTitle>
+      <LazySection><InsightGrid tables={ins?.tables} only={["service_board", "pnl_lite"]} loading={loading} /></LazySection>
+      {pnl.length ? <KpiTiles kpis={pnl} cols={3} onDrill={onDrill} /> : null}
+      <LazySection><InsightGrid tables={ins?.tables} only={["quality_interplay"]} loading={loading} /></LazySection>
+
+      <details className="rounded-2xl border border-slate-200 bg-white/60 p-3" onToggle={(e) => setClassicOpen((e.currentTarget as HTMLDetailsElement).open)}>
+        <summary className="cursor-pointer select-none px-2 py-1 text-[13px] font-extrabold uppercase tracking-[.14em] text-slate-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500">Classic panels (every previous datapoint)</summary>
+        {classicOpen ? <div className="mt-3"><OperationsClassicPanels data={data} /></div> : null}
+      </details>
     </div>
   );
 }

@@ -26,10 +26,14 @@ const {
 } = await import("../payroll-month-outputs.service.js");
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const routes = fs.readFileSync(
-  path.resolve(DIR, "../payroll.routes.ts"),
-  "utf8",
-);
+/**
+ * payroll.routes.ts is prettier-formatted since cd83825bc, so a registration reads
+ * `router.post(\n  "/runs",` rather than `router.post("/runs",`. Re-join the path onto the verb
+ * so the markers below keep locating the same handlers; nothing inside a handler is altered.
+ */
+const joinRouteRegistrations = (s: string) =>
+  s.replace(/(router\.(?:get|post|put|patch|delete))\(\s+"/g, '$1("');
+const routes = joinRouteRegistrations(fs.readFileSync(path.resolve(DIR, "../payroll.routes.ts"), "utf8"));
 
 beforeEach(() => execute.mockReset());
 
@@ -162,26 +166,29 @@ describe("the month payment file applies every gate to every run", () => {
     routes.indexOf('router.get("/runs/:id/neft-export"'),
   );
 
-  it("refuses when any run in scope is not closed", () => {
-    expect(neft).toContain("runs.filter((r) => !isRunClosed(r.status))");
+  it("refuses when any run in scope is neither approved nor closed", () => {
+    // Owner ruling 2026-10-03 ("export first, finance after"): an APPROVED run is exportable.
+    expect(neft).toContain("runs.filter((r) => !exportable(r.status))");
+    expect(neft).toContain("isRunClosed(status as string)");
+    expect(neft).toMatch(/toLowerCase\(\) === "approved"/);
   });
 
   it("refuses when any run in scope is unvalidated", () => {
-    expect(neft).toContain("r.validation_status !== 'validated'");
+    // Either quote style: prettier rewrote the literal to double quotes.
+    expect(neft).toMatch(/r\.validation_status !== ['"]validated['"]/);
   });
 
-  it("refuses when any run in scope lacks finance sign-off", () => {
-    /*
-     * The one that matters most. A file assembled from a mix of approved and unapproved runs moves
-     * money nobody signed off, and the offending run is invisible in a CSV that looks complete.
-     */
+  it("no longer blocks on finance sign-off, but audit-logs an export made before it", () => {
+    // Owner ruling 2026-10-03 ("export first, finance after"): sign-off is still enforced at LOCK and
+    // DISBURSE in payroll.service.updateRunStatus; the export only records that it happened first.
+    expect(neft).not.toContain("FINANCE_SIGNOFF_MISSING");
     expect(neft).toContain("runs.filter((r) => !r.finance_approved_by)");
-    expect(neft).toContain("FINANCE_SIGNOFF_MISSING");
+    expect(neft).toContain("PAYROLL_NEFT_EXPORT_BEFORE_FINANCE_SIGNOFF");
   });
 
   it("names the offending runs so the refusal is actionable", () => {
     // "Some run isn't approved" across six runs is not something a person can act on.
-    expect(neft).toContain("runs: unsigned.map");
+    expect(neft).toContain("run_ids: unsigned.map");
     expect(neft).toContain("runs: notClosed.map");
   });
 

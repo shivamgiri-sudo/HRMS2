@@ -1,13 +1,14 @@
-import { Router } from "express";
-import type { Response } from "express";
-import type { RowDataPacket } from "mysql2";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { db } from "../../db/mysql.js";
-import { hasRole } from "../../shared/accessGuard.js";
-import { logSensitiveAction } from "../../shared/auditLog.js";
-import { notificationGateway } from "../communication/notification.gateway.js";
+import { Router } from 'express';
+import type { Response } from 'express';
+import type { RowDataPacket } from 'mysql2';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { db } from '../../db/mysql.js';
+import { employeeScopeFor, guardEmployee } from './payroll-branch-scope.js';
+import { hasRole } from '../../shared/accessGuard.js';
+import { logSensitiveAction } from '../../shared/auditLog.js';
+import { notificationGateway } from '../communication/notification.gateway.js';
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) =>
@@ -185,24 +186,22 @@ router.get(
 
 // ── GET /api/payroll/statutory-overrides/pending ─────────────────────────────
 // Payroll HO sees all pending opt-out requests.
-router.get(
-  "/pending",
-  requireRole("payroll", "super_admin", "finance"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT eso.*,
+router.get('/pending', requireRole('payroll', 'super_admin', 'finance'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const pScope = await employeeScopeFor(req, 'e');
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT eso.*,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
             e.employee_code, e.branch_id,
             bm.branch_name
      FROM employee_statutory_override eso
      JOIN employees e ON e.id = eso.employee_id
      LEFT JOIN branch_master bm ON bm.id = e.branch_id
-     WHERE eso.status = 'pending'
+     WHERE eso.status = 'pending' AND (${pScope.sql})
      ORDER BY eso.requested_at ASC`,
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    pScope.params
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 // ── GET /api/payroll/statutory-overrides/all ─────────────────────────────────
 // Full list for audit, filterable by status/employee.
@@ -222,17 +221,13 @@ router.get(
     const status = req.query.status as string | undefined;
     const empId = req.query.employee_id as string | undefined;
 
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-    if (status) {
-      conditions.push("eso.status = ?");
-      params.push(status);
-    }
-    if (empId) {
-      conditions.push("eso.employee_id = ?");
-      params.push(empId);
-    }
-    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  const aScope = await employeeScopeFor(req, 'e');
+  conditions.push(`(${aScope.sql})`); params.push(...aScope.params);
+  if (status) { conditions.push('eso.status = ?'); params.push(status); }
+  if (empId)  { conditions.push('eso.employee_id = ?'); params.push(empId); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT eso.*,
@@ -272,20 +267,16 @@ router.patch(
         });
     }
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, employee_id, override_type, status FROM employee_statutory_override WHERE id = ? LIMIT 1`,
-      [id],
-    );
-    const rec = rows[0] as any;
-    if (!rec)
-      return res
-        .status(404)
-        .json({ success: false, message: "Override request not found" });
-    if (rec.status !== "pending") {
-      return res
-        .status(409)
-        .json({ success: false, message: `Request is already ${rec.status}` });
-    }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_id, override_type, status FROM employee_statutory_override WHERE id = ? LIMIT 1`,
+    [id]
+  );
+  const rec = (rows[0] as any);
+  if (!rec) return res.status(404).json({ success: false, message: 'Override request not found' });
+  if (!(await guardEmployee(req, res, rec.employee_id))) return;
+  if (rec.status !== 'pending') {
+    return res.status(409).json({ success: false, message: `Request is already ${rec.status}` });
+  }
 
     const newStatus = decision === "approved" ? "approved" : "rejected";
     await db.execute(
@@ -459,23 +450,16 @@ router.patch(
     const { id } = req.params;
     const { note } = req.body as { note?: string };
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, employee_id, override_type, status FROM employee_statutory_override WHERE id = ? LIMIT 1`,
-      [id],
-    );
-    const rec = rows[0] as any;
-    if (!rec)
-      return res
-        .status(404)
-        .json({ success: false, message: "Override not found" });
-    if (rec.status !== "approved") {
-      return res
-        .status(409)
-        .json({
-          success: false,
-          message: "Can only revoke an approved override",
-        });
-    }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_id, override_type, status FROM employee_statutory_override WHERE id = ? LIMIT 1`,
+    [id]
+  );
+  const rec = (rows[0] as any);
+  if (!rec) return res.status(404).json({ success: false, message: 'Override not found' });
+  if (!(await guardEmployee(req, res, rec.employee_id))) return;
+  if (rec.status !== 'approved') {
+    return res.status(409).json({ success: false, message: 'Can only revoke an approved override' });
+  }
 
     await db.execute(
       `UPDATE employee_statutory_override

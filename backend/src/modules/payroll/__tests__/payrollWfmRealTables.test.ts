@@ -115,7 +115,10 @@ describe("no query targets a table that does not exist", () => {
 });
 
 describe("the manager scope clause", () => {
-  const SOURCE = code(read("src/modules/wfm/wfm.routes.ts"));
+  // The week-off review handlers were extracted into weekoff-review.service.ts; their
+  // process-scope subqueries are part of the same invariant, so scan both files.
+  const SOURCE =
+    code(read("src/modules/wfm/wfm.routes.ts")) + "\n" + code(read("src/modules/wfm/weekoff-review.service.ts"));
 
   it("requires the scope mapping to be active", () => {
     // Without this a deactivated mapping would still grant a manager sight of
@@ -126,13 +129,10 @@ describe("the manager scope clause", () => {
     // five of them, plus an unrelated earlier query on the same table that had
     // always used the correct name — which is how the wrong name survived so
     // long in the other five.
-    const clauses = [
-      ...SOURCE.matchAll(/SELECT 1 FROM user_assignment_scope[\s\S]{0,200}/g),
-    ];
-    expect(
-      clauses.length,
-      "expected the process-scope subqueries",
-    ).toBeGreaterThanOrEqual(5);
+    const clauses = [...SOURCE.matchAll(/SELECT 1 FROM user_assignment_scope[\s\S]{0,200}/g)];
+    // Was 5 copy-pasted clauses (list + four actions). The four actions now share one
+    // preflight() in weekoff-review.service.ts, so: the list query + that shared check.
+    expect(clauses.length, "expected the process-scope subqueries").toBeGreaterThanOrEqual(2);
     for (const [clause] of clauses) {
       expect(clause).toMatch(/active_status\s*=\s*1/);
     }

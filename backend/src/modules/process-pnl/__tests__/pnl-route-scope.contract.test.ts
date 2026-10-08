@@ -36,7 +36,8 @@ describe("P&L page routes resolve role scope from one source", () => {
     it(`${route} reads roles through actor(req), never req.userRoles directly`, () => {
       const block = routeBlock(route);
       expect(block).toContain("requireRole(...PNL_READ_ROLES)");
-      expect(block).toContain("userRoles: user.roles");
+      // Directly, or through scopedBranchList(req), which reads roles from actor(req) too.
+      expect(block.includes("userRoles: user.roles") || block.includes("scopedBranchList(req")).toBe(true);
       expect(block).not.toContain("userRoles: req.userRoles");
     });
   }

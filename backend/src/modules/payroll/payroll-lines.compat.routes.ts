@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
+import { employeeScopeFor } from "./payroll-branch-scope.js";
 
 export const payrollLinesCompatRouter = Router();
 payrollLinesCompatRouter.use(requireAuth);
@@ -46,15 +47,16 @@ payrollLinesCompatRouter.get(
       const searchExtra = search
         ? ` AND (spl.employee_code LIKE ? OR COALESCE(NULLIF(e.full_name, ''), CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))) LIKE ?)`
         : "";
-      const searchParams: unknown[] = search
-        ? [`%${search}%`, `%${search}%`]
-        : [];
+      // Branch scoping (owner ruling 2026-10-01): only org-wide roles see every employee's line.
+      const scoped = await employeeScopeFor(req as any, "e");
+      const searchExtra2 = `${searchExtra} AND (${scoped.sql})`;
+      const searchParams: unknown[] = [...(search ? [`%${search}%`, `%${search}%`] : []), ...scoped.params];
 
       const [countRows] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total
            FROM salary_prep_line spl
            LEFT JOIN employees e ON e.id = spl.employee_id
-          WHERE spl.run_id = ?${searchExtra}`,
+          WHERE spl.run_id = ?${searchExtra2}`,
         [req.params.id, ...searchParams],
       );
       const total: number = (countRows as any[])[0]?.total ?? 0;
@@ -75,7 +77,7 @@ payrollLinesCompatRouter.get(
            FROM salary_prep_line spl
            LEFT JOIN employees e ON e.id = spl.employee_id
            LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
-          WHERE spl.run_id = ?${searchExtra}
+          WHERE spl.run_id = ?${searchExtra2}
           ORDER BY spl.employee_code ASC
           LIMIT ? OFFSET ?`,
         [req.params.id, ...searchParams, limit, offset],

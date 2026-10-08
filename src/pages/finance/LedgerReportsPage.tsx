@@ -11,6 +11,7 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { VendorLedgerView } from "@/components/finance/vendor/VendorLedgerView";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 type TrialBalanceRow = {
@@ -175,7 +176,7 @@ function AccountLedgerDrawer({
                     <td className="max-w-[220px] truncate py-2 pr-2 text-slate-700" title={e.narration}>{e.narration}</td>
                     <td className="py-2 pr-2">
                       <Badge variant="outline" className="text-[10px]">
-                        {e.sourceType === "grn" ? "GRN" : e.sourceType === "payment_voucher" ? "Payment Voucher" : e.sourceType}
+                        {e.sourceType === "grn" ? "GRN" : e.sourceType === "payment_voucher" ? "Payment Voucher" : e.sourceType === "vendor_payment" ? "Vendor Payment" : e.sourceType}
                       </Badge>
                     </td>
                     <td className="max-w-[120px] truncate py-2 pr-2 text-slate-600" title={e.branchName ?? undefined}>{e.branchName ?? "—"}</td>
@@ -301,101 +302,6 @@ function TrialBalanceTab() {
   );
 }
 
-function VendorLedgerTab() {
-  const [search, setSearch] = useState("");
-  const [vendorId, setVendorId] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-
-  const vendorQuery = useQuery({
-    queryKey: ["ledger-reports-vendor-search", search],
-    queryFn: async () => {
-      const res = await hrmsApi.get<any>(`/api/erp/vendors?q=${encodeURIComponent(search)}&limit=50&is_active=1`);
-      return (res as any)?.data ?? res ?? [];
-    },
-  });
-  const vendorOptions: { id: string; vendor_code: string; vendor_name: string }[] = vendorQuery.data ?? [];
-
-  const ledgerQuery = useQuery({
-    queryKey: ["ledger-reports-vendor-ledger", vendorId, from, to],
-    queryFn: async () => {
-      const qs = new URLSearchParams();
-      if (from) qs.set("from", from);
-      if (to) qs.set("to", to);
-      const res = await hrmsApi.get<{ success: boolean; data: { entries: AccountLedgerEntry[]; closingBalance: number } }>(
-        `/api/finance/ledger-reports/vendor-ledger/${vendorId}?${qs.toString()}`,
-      );
-      return res.data;
-    },
-    enabled: !!vendorId,
-  });
-  const entries = ledgerQuery.data?.entries ?? [];
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-[220px]">
-          <Label>Vendor</Label>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-            <Input className="h-8 pl-7 text-xs" placeholder="Search name or code…" value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
-          <Select value={vendorId} onValueChange={setVendorId}>
-            <SelectTrigger className="mt-1 h-8 text-xs"><SelectValue placeholder="Select vendor…" /></SelectTrigger>
-            <SelectContent>
-              {vendorOptions.map((v) => (
-                <SelectItem key={v.id} value={v.id}>{v.vendor_code} — {v.vendor_name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div><Label>From</Label><Input type="date" className="h-8 text-xs" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
-        <div><Label>To</Label><Input type="date" className="h-8 text-xs" value={to} onChange={(e) => setTo(e.target.value)} /></div>
-      </div>
-
-      <div className="overflow-hidden rounded-2xl border border-white/60 bg-white/95 shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-blue-50/60 text-left text-[11px] font-bold uppercase tracking-wide text-blue-800">
-              <tr>
-                <th className="px-3 py-2.5">Date</th>
-                <th className="px-3 py-2.5">Narration</th>
-                <th className="px-3 py-2.5">Source</th>
-                <th className="px-3 py-2.5 text-right">Debit</th>
-                <th className="px-3 py-2.5 text-right">Credit</th>
-                <th className="px-3 py-2.5 text-right">Running Balance</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-blue-100">
-              {!vendorId && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">Search and select a vendor above</td></tr>}
-              {vendorId && ledgerQuery.isLoading && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">Loading…</td></tr>}
-              {vendorId && !ledgerQuery.isLoading && entries.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">No postings for this vendor</td></tr>}
-              {entries.map((e) => (
-                <tr key={e.journalEntryId} className="hover:bg-blue-50/40">
-                  <td className="px-3 py-2 text-gray-600">{e.entryDate}</td>
-                  <td className="max-w-xs truncate px-3 py-2 text-gray-500" title={e.narration}>{e.narration}</td>
-                  <td className="px-3 py-2"><Badge variant="outline" className="text-[10px]">{e.sourceType === "grn" ? "GRN" : e.sourceType === "payment_voucher" ? "Payment Voucher" : e.sourceType}</Badge></td>
-                  <td className="px-3 py-2 text-right tabular-nums text-rose-600">{e.debitAmount ? money(e.debitAmount) : "—"}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-emerald-600">{e.creditAmount ? money(e.creditAmount) : "—"}</td>
-                  <td className="px-3 py-2 text-right font-bold tabular-nums text-gray-800">{money(e.runningBalance)}</td>
-                </tr>
-              ))}
-            </tbody>
-            {entries.length > 0 && ledgerQuery.data && (
-              <tfoot>
-                <tr className="border-t-2 border-blue-100 bg-blue-50/40 font-bold text-gray-800">
-                  <td colSpan={5} className="px-3 py-2 text-right">Closing balance</td>
-                  <td className="px-3 py-2 text-right">{money(ledgerQuery.data.closingBalance)}</td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function HeadSubHeadLedgerTab() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -510,7 +416,7 @@ export function LedgerReportsContent() {
             <TabsTrigger value="head-subhead" className="cursor-pointer">Head / Sub-head Spend</TabsTrigger>
           </TabsList>
           <TabsContent value="trial-balance" className="mt-4"><TrialBalanceTab /></TabsContent>
-          <TabsContent value="vendor-ledger" className="mt-4"><VendorLedgerTab /></TabsContent>
+          <TabsContent value="vendor-ledger" className="mt-4"><VendorLedgerView /></TabsContent>
           <TabsContent value="head-subhead" className="mt-4"><HeadSubHeadLedgerTab /></TabsContent>
         </Tabs>
       </div>

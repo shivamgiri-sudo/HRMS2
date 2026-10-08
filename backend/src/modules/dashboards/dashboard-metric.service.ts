@@ -797,7 +797,7 @@ export async function getAttendanceMetrics(
  * account number but is very much non-empty). The legacy column is kept as a fallback so
  * an employee who has one and no detail row is still counted as payable.
  */
-const PAYABLE_BANK_SQL = `(
+export const PAYABLE_BANK_SQL = `(
   EXISTS (
     SELECT 1 FROM employee_bank_detail bd
      WHERE bd.employee_id = e.id
@@ -843,13 +843,13 @@ const PAN_USABLE_SQL = `(
 )`;
 
 /** Stored, but in a shape the Income Tax Act does not recognise. */
-const PAN_INVALID_SQL = `(
+export const PAN_INVALID_SQL = `(
   e.pan_number IS NOT NULL AND e.pan_number <> ''
   AND UPPER(TRIM(e.pan_number)) NOT REGEXP '^[A-Z]{5}[0-9]{4}[A-Z]$'
 )`;
 
 /** No PAN on file at all, in either column. */
-const PAN_ABSENT_SQL = `(
+export const PAN_ABSENT_SQL = `(
   (e.pan_number IS NULL OR e.pan_number = '')
   AND (e.pan_number_encrypted IS NULL OR e.pan_number_encrypted = '')
 )`;
@@ -993,9 +993,12 @@ export async function getIncentiveMetrics(
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS source_rows,
-         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pendingBatches,
-         SUM(CASE WHEN status = 'pending' THEN total_amount ELSE 0 END) AS pendingAmount,
-         SUM(CASE WHEN status = 'approved' THEN total_amount ELSE 0 END) AS approvedAmount,
+         -- A batch is awaiting approval in ANY of these states. 'pending' alone matched nothing in production:
+         -- the incentive flow writes 'pending_approval', then 'approval_chain_active' and 'finance_approved'
+         -- before the final 'approved' (incentives.routes.ts / incentives.types.ts).
+         SUM(CASE WHEN status IN ('pending','pending_approval','approval_chain_active','finance_approved') THEN 1 ELSE 0 END) AS pendingBatches,
+         SUM(CASE WHEN status IN ('pending','pending_approval','approval_chain_active','finance_approved') THEN total_amount ELSE 0 END) AS pendingAmount,
+         SUM(CASE WHEN status IN ('approved','applied') THEN total_amount ELSE 0 END) AS approvedAmount,
          SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejectedBatches
        FROM incentive_upload_batch
        WHERE ${scopeSql}`,
@@ -1107,16 +1110,22 @@ export async function getResignationMetrics(
     // sourceRows counts every exit in scope regardless of status, so an empty table
     // renders "No data recorded yet" rather than four confident zeros. Filtering in
     // the SELECT rather than the WHERE is what makes both numbers available at once.
-    const ACTIVE = `LOWER(er.status) NOT IN ('completed','cancelled','exited')`;
+    // Vocabulary is exit.validation.ts's updateExitStatusSchema: draft, submitted, manager_review,
+    // hr_review, admin_review, accepted, rejected, revoked, notice_serving, exited. The earlier list
+    // named 'pending_discussion', which no code path writes, so the "awaiting review" bucket was a
+    // permanent false zero, and counted withdrawn / revoked / rejected exits as still open (4 of 15
+    // "active" resignations on 2026-10-02 had already been revoked or withdrawn).
+    const OPEN_REVIEW = `('submitted','manager_review','hr_review','admin_review','pending_discussion')`;
+    const ACTIVE = `LOWER(er.status) NOT IN ('completed','cancelled','exited','withdrawn','revoked','rejected','draft')`;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS sourceRows,
          SUM(CASE WHEN ${ACTIVE} THEN 1 ELSE 0 END) AS totalActive,
-         SUM(CASE WHEN ${ACTIVE} AND LOWER(er.status) = 'pending_discussion' THEN 1 ELSE 0 END) AS pendingDiscussion,
+         SUM(CASE WHEN ${ACTIVE} AND LOWER(er.status) IN ${OPEN_REVIEW} THEN 1 ELSE 0 END) AS pendingDiscussion,
          SUM(CASE WHEN ${ACTIVE} AND LOWER(er.status) = 'accepted' THEN 1 ELSE 0 END) AS accepted,
-         SUM(CASE WHEN ${ACTIVE} AND LOWER(er.status) = 'withdrawn' THEN 1 ELSE 0 END) AS withdrawn,
+         SUM(CASE WHEN LOWER(er.status) = 'withdrawn' THEN 1 ELSE 0 END) AS withdrawn,
          SUM(CASE WHEN ${ACTIVE} AND LOWER(er.status)
-                  NOT IN ('pending_discussion','accepted','withdrawn') THEN 1 ELSE 0 END) AS other
+                  NOT IN ('submitted','manager_review','hr_review','admin_review','pending_discussion','accepted') THEN 1 ELSE 0 END) AS other
        FROM exit_request er
        LEFT JOIN employees e ON e.id = er.employee_id
        WHERE ${scopeSql}`,
@@ -1337,7 +1346,10 @@ export async function getBgvMetrics(
          SUM(CASE WHEN c.breached > 0 THEN 1 ELSE 0 END) AS breached,
          SUM(CASE WHEN c.breached = 0 AND c.flagged > 0 THEN 1 ELSE 0 END) AS flagged,
          SUM(CASE WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding > 0 THEN 1 ELSE 0 END) AS pending,
-         SUM(CASE WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding = 0 THEN 1 ELSE 0 END) AS cleared,
+         -- cleared excludes candidates whose only outstanding checks pre-date the pendency cutoff: those
+         -- are counted in pendingBeforeCutoff, not settled. Before, 79 of the 96 "cleared" candidates
+         -- (2026-10-02) were really stale pending, which inflated every BGV clear-rate gauge.
+         SUM(CASE WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding = 0 AND c.outstandingOld = 0 THEN 1 ELSE 0 END) AS cleared,
          SUM(CASE WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding = 0 AND c.outstandingOld > 0 THEN 1 ELSE 0 END) AS pendingBeforeCutoff,
          COALESCE(SUM(c.checks), 0) AS totalChecks,
          COALESCE(SUM(c.outstanding), 0) AS checksPending
@@ -2154,11 +2166,13 @@ export async function getLeaveApprovalMetrics(
                    AND NOT (${raisedOnOrAfterCutoffSql(LEAVE_RAISED_AT)}) THEN 1 ELSE 0 END) AS pendingBeforeCutoff,
          SUM(CASE WHEN lr.status = 'pending' THEN 1 ELSE 0 END) AS pendingAllSources,
          SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NOT NULL THEN 1 ELSE 0 END) AS legacyBacklog,
-         SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL AND lr.from_date < CURDATE() THEN 1 ELSE 0 END) AS pendingAlreadyStarted,
+         SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL AND lr.from_date < CURDATE()
+                   AND ${raisedOnOrAfterCutoffSql(LEAVE_RAISED_AT)} THEN 1 ELSE 0 END) AS pendingAlreadyStarted,
          SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL AND lr.requires_branch_head_approval = 1 THEN 1 ELSE 0 END) AS needsBranchHead,
          SUM(CASE WHEN lr.status = 'approved' THEN 1 ELSE 0 END) AS approved,
          SUM(CASE WHEN lr.status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
-         MAX(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL THEN DATEDIFF(CURDATE(), lr.from_date) END) AS oldestPendingDays
+         MAX(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL
+                   AND ${raisedOnOrAfterCutoffSql(LEAVE_RAISED_AT)} THEN DATEDIFF(CURDATE(), lr.from_date) END) AS oldestPendingDays
        FROM leave_request lr
        JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
        WHERE ${scopeSql}`,

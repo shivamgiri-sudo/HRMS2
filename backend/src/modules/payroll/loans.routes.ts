@@ -19,6 +19,7 @@ import {
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
+import { employeeScopeFor, guardEmployee } from "./payroll-branch-scope.js";
 
 export const loansRouter = Router();
 
@@ -80,6 +81,11 @@ loansRouter.get(
 
     const conditions: string[] = [];
     const params: unknown[] = [];
+
+    // Branch scoping (owner ruling 2026-10-01): hr / payroll are limited to their own branch.
+    const loanScope = await employeeScopeFor(req, "e");
+    conditions.push(`(${loanScope.sql})`);
+    params.push(...loanScope.params);
 
     if (employee_id) {
       conditions.push("el.employee_id = ?");
@@ -170,6 +176,8 @@ loansRouter.get(
           .status(403)
           .json({ success: false, message: "Access denied" });
       }
+    } else if (!(await guardEmployee(req, res, employeeId))) {
+      return;
     }
 
     const [loans] = await db.execute<RowDataPacket[]>(
@@ -256,6 +264,10 @@ loansRouter.post(
           "Required fields: employee_id, loan_type, amount, start_date, installments, deduction_per_month",
       });
     }
+
+    // Branch scoping (owner ruling 2026-10-01): admin / hr / branch payroll may only open a loan for
+    // an employee inside their own branch; org-wide roles pass.
+    if (!(await guardEmployee(req, res, String(employee_id)))) return;
 
     // Resolve employee_code from DB
     const [empRows] = await db.execute<RowDataPacket[]>(
@@ -555,6 +567,7 @@ loansRouter.post(
         .status(404)
         .json({ success: false, message: "Loan not found" });
     }
+    if (!(await guardEmployee(req, res, String(loan.employee_id)))) return;
 
     if (loan.created_by && String(loan.created_by) === String(userId)) {
       return res.status(403).json({
@@ -645,6 +658,7 @@ loansRouter.post(
         .status(404)
         .json({ success: false, message: "Loan not found" });
     }
+    if (!(await guardEmployee(req, res, String(loan.employee_id)))) return;
 
     if (loan.created_by && String(loan.created_by) === String(userId)) {
       return res.status(403).json({
@@ -726,6 +740,7 @@ loansRouter.patch(
         .status(404)
         .json({ success: false, message: "Loan not found" });
     }
+    if (!(await guardEmployee(req, res, String(loan.employee_id)))) return;
 
     const body = req.body as Record<string, unknown>;
     const ALLOWED = [
@@ -866,6 +881,7 @@ loansRouter.post(
         .status(404)
         .json({ success: false, message: "Loan not found" });
     }
+    if (!(await guardEmployee(req, res, String(loan.employee_id)))) return;
     if (loan.status === "cancelled") {
       return res.status(400).json({
         success: false,
@@ -951,6 +967,7 @@ loansRouter.get(
     if (!isPayrollRole && String(loan.emp_user_id) !== userId) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
+    if (isPayrollRole && !(await guardEmployee(req, res, String(loan.employee_id)))) return;
 
     const installments = Number(loan.installments);
     const emi = Number(loan.deduction_per_month);

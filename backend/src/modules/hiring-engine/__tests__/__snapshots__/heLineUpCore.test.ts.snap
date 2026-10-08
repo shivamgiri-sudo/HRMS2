@@ -1,0 +1,117 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`line-up SQL before the stream options (snapshot of today's behaviour) > suggestMatchesDetailed(d1) 1`] = `
+[
+  [
+    "SELECT * FROM he_drive WHERE id = ? LIMIT 1",
+    [
+      "d1",
+    ],
+  ],
+  [
+    "SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.approval_status, jr.active_status, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required, bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1 WHERE jr.id = ? LIMIT 1",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT l.id, l.mobile10, l.ats_candidate_id, l.status, l.primary_source, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome, l.history_refreshed_at, l.locality, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.lat, l.lng, COALESCE(i.engagement_score, 0) AS eng, EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) AS has_consent FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id LEFT JOIN ats_candidate ac ON ac.id = l.ats_candidate_id LEFT JOIN meta_lead_raw mr ON mr.id = l.meta_lead_id LEFT JOIN he_lead_profile lp ON lp.lead_id = l.id WHERE l.status IN ('new','contacted','interested','declined','no_show') AND l.is_employee = 0 AND l.final_status <> 'joined' -- Already booked: an invite on a LIVE drive, or a confirmation anywhere. An invite that sits on a closed drive (the drive was -- replaced or abandoned) no longer holds anyone, so that person can be lined up again; a confirmed person keeps their date. AND NOT EXISTS (SELECT 1 FROM he_match m LEFT JOIN he_drive dd ON dd.id = m.drive_id WHERE m.lead_id = l.id AND m.slot_at >= NOW() AND ((m.state IN ('invited','confirmed') AND (dd.id IS NULL OR dd.status <> 'closed')) OR m.state = 'confirmed')) AND NOT EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NOT NULL) -- WHERE THE PERSON LIVES decides (RESIDENCE_SQL: city, addresses, Meta form answer, profile, recruiter-noted location). The branch they applied to -- and their campaign's branch say where the JOB is, so they never count. A named-but-ruled-out city ("No Noida location") does not count either. -- Only when the records hold NO residence text at all is a person of this very requisition trusted (the form's own ad targeting). AND ((LOWER(CONCAT_WS(' ', l.locality, ac.current_address, ac.address, ac.permanent_address, mr.parsed_location, lp.address, lp.state, (SELECT GROUP_CONCAT(a.candidate_location SEPARATOR ' ') FROM ats_recruiter_hiring_activity a WHERE a.mobile10 = l.mobile10))) REGEXP ? AND NOT LOWER(CONCAT_WS(' ', l.locality, ac.current_address, ac.address, ac.permanent_address, mr.parsed_location, lp.address, lp.state, (SELECT GROUP_CONCAT(a.candidate_location SEPARATOR ' ') FROM ats_recruiter_hiring_activity a WHERE a.mobile10 = l.mobile10))) REGEXP ?) OR (TRIM(LOWER(CONCAT_WS(' ', l.locality, ac.current_address, ac.address, ac.permanent_address, mr.parsed_location, lp.address, lp.state, (SELECT GROUP_CONCAT(a.candidate_location SEPARATOR ' ') FROM ats_recruiter_hiring_activity a WHERE a.mobile10 = l.mobile10)))) = '' AND mr.requisition_id = ?)) ORDER BY (mr.requisition_id <=> ?) DESC, has_consent DESC, eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000",
+    [
+      "(^|[^a-z])(noida|greater[ -]?noida|delhi|new[ -]?delhi|ghaziabad|gurgaon|gurugram|faridabad|ncr|indirapuram|vaishali|tughlakabad)([^a-z]|$)",
+      "(^|[^a-z])(no|not|nahi|nahin|outside|other than|except|cannot|cant)[ -]+([a-z]+[ -]+){0,2}(noida|greater[ -]?noida|delhi|new[ -]?delhi|ghaziabad|gurgaon|gurugram|faridabad|ncr|indirapuram|vaishali|tughlakabad)([^a-z]|$)",
+      "r1",
+      "r1",
+    ],
+  ],
+  [
+    "INSERT INTO he_match (lead_id, requisition_id, drive_id, score, reasons_json, distance_km, state, token) VALUES (?,?,?,?,?,?, 'suggested', ?) ON DUPLICATE KEY UPDATE -- moved to a new drive (the old one was closed, or its slot is past): back to 'suggested' with no slot, so it is invited -- afresh for the new date. Order matters: slot_at and state read the OLD drive_id before it is overwritten. -- a no-show of an earlier drive is invited afresh for a NEW drive (same-drive rows keep their state) slot_at = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released','no_show'), slot_at, NULL), state = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released','no_show'), state, 'suggested'), drive_id = VALUES(drive_id), score = VALUES(score), reasons_json = VALUES(reasons_json), distance_km = VALUES(distance_km)",
+    [
+      "1",
+      "r1",
+      "d1",
+      60,
+      "{"reasons":["same city as the branch"],"unknown":[],"confidence":1,"priority":0}",
+      null,
+      "tok",
+    ],
+  ],
+  [
+    "INSERT INTO he_match (lead_id, requisition_id, drive_id, score, reasons_json, distance_km, state, token) VALUES (?,?,?,?,?,?, 'suggested', ?) ON DUPLICATE KEY UPDATE -- moved to a new drive (the old one was closed, or its slot is past): back to 'suggested' with no slot, so it is invited -- afresh for the new date. Order matters: slot_at and state read the OLD drive_id before it is overwritten. -- a no-show of an earlier drive is invited afresh for a NEW drive (same-drive rows keep their state) slot_at = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released','no_show'), slot_at, NULL), state = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released','no_show'), state, 'suggested'), drive_id = VALUES(drive_id), score = VALUES(score), reasons_json = VALUES(reasons_json), distance_km = VALUES(distance_km)",
+    [
+      "2",
+      "r1",
+      "d1",
+      60,
+      "{"reasons":["same city as the branch"],"unknown":[],"confidence":1,"priority":0}",
+      null,
+      "tok",
+    ],
+  ],
+  [
+    "DELETE FROM he_match WHERE drive_id = ? AND state = 'suggested' AND lead_id NOT IN (?,?)",
+    [
+      "d1",
+      "1",
+      "2",
+    ],
+  ],
+]
+`;
+
+exports[`line-up SQL before the stream options (snapshot of today's behaviour) > suggestMatchesDetailed(d1, 5, metaOnly) 1`] = `
+[
+  [
+    "SELECT * FROM he_drive WHERE id = ? LIMIT 1",
+    [
+      "d1",
+    ],
+  ],
+  [
+    "SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.approval_status, jr.active_status, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required, bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1 WHERE jr.id = ? LIMIT 1",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT l.id, l.mobile10, l.ats_candidate_id, l.status, l.primary_source, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome, l.history_refreshed_at, l.locality, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.lat, l.lng, COALESCE(i.engagement_score, 0) AS eng, EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) AS has_consent FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id LEFT JOIN ats_candidate ac ON ac.id = l.ats_candidate_id LEFT JOIN meta_lead_raw mr ON mr.id = l.meta_lead_id LEFT JOIN he_lead_profile lp ON lp.lead_id = l.id WHERE l.status IN ('new','contacted','interested','declined','no_show') AND l.is_employee = 0 AND l.final_status <> 'joined' AND EXISTS (SELECT 1 FROM he_lead_campaign lc JOIN meta_lead_raw q ON q.id = lc.meta_lead_id AND q.screening_result = 'qualified' WHERE lc.lead_id = l.id ) -- Already booked: an invite on a LIVE drive, or a confirmation anywhere. An invite that sits on a closed drive (the drive was -- replaced or abandoned) no longer holds anyone, so that person can be lined up again; a confirmed person keeps their date. AND NOT EXISTS (SELECT 1 FROM he_match m LEFT JOIN he_drive dd ON dd.id = m.drive_id WHERE m.lead_id = l.id AND m.slot_at >= NOW() AND ((m.state IN ('invited','confirmed') AND (dd.id IS NULL OR dd.status <> 'closed')) OR m.state = 'confirmed')) AND NOT EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NOT NULL) -- WHERE THE PERSON LIVES decides (RESIDENCE_SQL: city, addresses, Meta form answer, profile, recruiter-noted location). The branch they applied to -- and their campaign's branch say where the JOB is, so they never count. A named-but-ruled-out city ("No Noida location") does not count either. -- Only when the records hold NO residence text at all is a person of this very requisition trusted (the form's own ad targeting). AND ((LOWER(CONCAT_WS(' ', l.locality, ac.current_address, ac.address, ac.permanent_address, mr.parsed_location, lp.address, lp.state, (SELECT GROUP_CONCAT(a.candidate_location SEPARATOR ' ') FROM ats_recruiter_hiring_activity a WHERE a.mobile10 = l.mobile10))) REGEXP ? AND NOT LOWER(CONCAT_WS(' ', l.locality, ac.current_address, ac.address, ac.permanent_address, mr.parsed_location, lp.address, lp.state, (SELECT GROUP_CONCAT(a.candidate_location SEPARATOR ' ') FROM ats_recruiter_hiring_activity a WHERE a.mobile10 = l.mobile10))) REGEXP ?) OR (TRIM(LOWER(CONCAT_WS(' ', l.locality, ac.current_address, ac.address, ac.permanent_address, mr.parsed_location, lp.address, lp.state, (SELECT GROUP_CONCAT(a.candidate_location SEPARATOR ' ') FROM ats_recruiter_hiring_activity a WHERE a.mobile10 = l.mobile10)))) = '' AND mr.requisition_id = ?)) ORDER BY (mr.requisition_id <=> ?) DESC, has_consent DESC, eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000",
+    [
+      "(^|[^a-z])(noida|greater[ -]?noida|delhi|new[ -]?delhi|ghaziabad|gurgaon|gurugram|faridabad|ncr|indirapuram|vaishali|tughlakabad)([^a-z]|$)",
+      "(^|[^a-z])(no|not|nahi|nahin|outside|other than|except|cannot|cant)[ -]+([a-z]+[ -]+){0,2}(noida|greater[ -]?noida|delhi|new[ -]?delhi|ghaziabad|gurgaon|gurugram|faridabad|ncr|indirapuram|vaishali|tughlakabad)([^a-z]|$)",
+      "r1",
+      "r1",
+    ],
+  ],
+  [
+    "INSERT INTO he_match (lead_id, requisition_id, drive_id, score, reasons_json, distance_km, state, token) VALUES (?,?,?,?,?,?, 'suggested', ?) ON DUPLICATE KEY UPDATE -- moved to a new drive (the old one was closed, or its slot is past): back to 'suggested' with no slot, so it is invited -- afresh for the new date. Order matters: slot_at and state read the OLD drive_id before it is overwritten. -- a no-show of an earlier drive is invited afresh for a NEW drive (same-drive rows keep their state) slot_at = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released','no_show'), slot_at, NULL), state = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released','no_show'), state, 'suggested'), drive_id = VALUES(drive_id), score = VALUES(score), reasons_json = VALUES(reasons_json), distance_km = VALUES(distance_km)",
+    [
+      "1",
+      "r1",
+      "d1",
+      60,
+      "{"reasons":["same city as the branch"],"unknown":[],"confidence":1,"priority":0}",
+      null,
+      "tok",
+    ],
+  ],
+  [
+    "INSERT INTO he_match (lead_id, requisition_id, drive_id, score, reasons_json, distance_km, state, token) VALUES (?,?,?,?,?,?, 'suggested', ?) ON DUPLICATE KEY UPDATE -- moved to a new drive (the old one was closed, or its slot is past): back to 'suggested' with no slot, so it is invited -- afresh for the new date. Order matters: slot_at and state read the OLD drive_id before it is overwritten. -- a no-show of an earlier drive is invited afresh for a NEW drive (same-drive rows keep their state) slot_at = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released','no_show'), slot_at, NULL), state = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released','no_show'), state, 'suggested'), drive_id = VALUES(drive_id), score = VALUES(score), reasons_json = VALUES(reasons_json), distance_km = VALUES(distance_km)",
+    [
+      "2",
+      "r1",
+      "d1",
+      60,
+      "{"reasons":["same city as the branch"],"unknown":[],"confidence":1,"priority":0}",
+      null,
+      "tok",
+    ],
+  ],
+  [
+    "DELETE FROM he_match WHERE drive_id = ? AND state = 'suggested' AND lead_id NOT IN (?,?)",
+    [
+      "d1",
+      "1",
+      "2",
+    ],
+  ],
+]
+`;

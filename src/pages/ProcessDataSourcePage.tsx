@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -225,6 +226,10 @@ export default function ProcessDataSourcePage() {
               Supply the figures HRMS cannot measure itself — enter them, paste them in, or connect
               this client's own database. Anything supplied here appears on the Process KPI Dashboard.
             </p>
+            <Link to={processId ? `/performance/process-dashboard-admin?process=${encodeURIComponent(processId)}` : "/performance/process-dashboard-admin"}
+              className="mt-2 inline-flex min-h-[36px] items-center text-sm font-semibold text-blue-800 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
+              Dashboard Setup: give this process an automatic dashboard
+            </Link>
           </div>
         </header>
 

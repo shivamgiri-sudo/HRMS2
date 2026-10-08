@@ -22,7 +22,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useHasRole } from "@/hooks/useUserRole";
-import { hrmsApi } from "@/lib/hrmsApi";
+import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   PAYMENT_MODES, buildJournalPreview, buildStages, dateTime, money, type Voucher,
@@ -130,7 +130,7 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
     mutationFn: async ({ id, file }: { id: string; file: File }) => {
       const form = new FormData();
       form.append("file", file);
-      return (await hrmsApi.postForm(`/api/finance/payment-vouchers/${id}/attachment`, form)).data;
+      return (await hrmsApi.postForm<HrmsEnvelope>(`/api/finance/payment-vouchers/${id}/attachment`, form)).data;
     },
     onSuccess: () => { toast({ title: "Attachment saved" }); invalidate(); },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),

@@ -12,6 +12,7 @@ import { recalculateNameMatch } from "./name-consistency.routes.js";
 import { getLatestDigilockerFile } from "../integrations/luckpay/luckpay-status.service.js";
 import { getDigilockerFacePhotoBuffer } from "./digilocker-face-photo.js";
 import { buildIdentityComparison } from "./fraud-identity.service.js";
+import { canAccessCandidate, candidateParamGuard, resolveCandidateScope } from "./candidate-access.js";
 
 const router = Router();
 const PAGE_SIZE = 100; // matches the frontend's PAGE_SIZE in NativeFraudAlertReview.tsx
@@ -32,29 +33,32 @@ const FRAUD_ALERT_ROLES = [
   "payroll_head",
 ];
 
-router.get(
-  "/",
-  requireAuth,
-  requireRole(...FRAUD_ALERT_ROLES),
-  async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const status = (req.query.status as string) || "open";
-      const offset = Math.max(
-        0,
-        parseInt(String(req.query.offset ?? "0"), 10) || 0,
-      );
-      const whereClause = status === "all" ? "" : "WHERE fa.status = ?";
-      const params: unknown[] =
-        status === "all" ? [PAGE_SIZE, offset] : [status, PAGE_SIZE, offset];
-      // db.query, not db.execute — this specific 3-table-JOIN query fails MySQL's
-      // binary prepared-statement protocol with ER_WRONG_ARGUMENTS / errno 1210
-      // regardless of placeholder count or literal-vs-bound LIMIT/OFFSET (confirmed
-      // live against production data); the text protocol below runs the identical
-      // SQL with values escaped client-side and works. This is what actually
-      // crashed the page in production — every call here had no try/catch, so the
-      // uncaught rejection took the whole Node process down, not just this request.
-      const [rows] = await db.query<RowDataPacket[]>(
-        `SELECT fa.*, c.full_name AS candidate_name, c.applied_for_branch, c.applied_for_process,
+// Branch scoping (owner ruling 2026-10-01): fraud alerts belong to candidates; hr / payroll_hr see and act on
+// only the alerts of candidates inside their own branch / assigned scope (org-wide roles unaffected).
+// Every /candidate/:candidateId... route (alerts, comparison, DigiLocker previews) is guarded by the param.
+router.param("candidateId", candidateParamGuard());
+const alertInScope = async (userId: string, alertId: string): Promise<boolean> => {
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT candidate_id FROM candidate_fraud_alert WHERE id = ? LIMIT 1`, [alertId]);
+  const cid = rows[0]?.candidate_id;
+  return !!cid && (await canAccessCandidate(userId, String(cid)));
+};
+
+router.get("/", requireAuth, requireRole(...FRAUD_ALERT_ROLES), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const status = req.query.status as string || "open";
+    const offset = Math.max(0, parseInt(String(req.query.offset ?? "0"), 10) || 0);
+    const scope = await resolveCandidateScope(req.authUser!.id, "c");
+    const whereClause = status === "all" ? `WHERE (${scope.sql})` : `WHERE fa.status = ? AND (${scope.sql})`;
+    const params: unknown[] = status === "all" ? [...scope.params, PAGE_SIZE, offset] : [status, ...scope.params, PAGE_SIZE, offset];
+    // db.query, not db.execute — this specific 3-table-JOIN query fails MySQL's
+    // binary prepared-statement protocol with ER_WRONG_ARGUMENTS / errno 1210
+    // regardless of placeholder count or literal-vs-bound LIMIT/OFFSET (confirmed
+    // live against production data); the text protocol below runs the identical
+    // SQL with values escaped client-side and works. This is what actually
+    // crashed the page in production — every call here had no try/catch, so the
+    // uncaught rejection took the whole Node process down, not just this request.
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT fa.*, c.full_name AS candidate_name, c.applied_for_branch, c.applied_for_process,
               mc.full_name AS matched_candidate_name
          FROM candidate_fraud_alert fa
          JOIN ats_candidate c ON c.id = fa.candidate_id
@@ -72,93 +76,41 @@ router.get(
       );
       res.status(500).json({ error: "Could not load the alert queue" });
     }
-  },
-);
-
-router.get(
-  "/candidate/:candidateId",
-  requireAuth,
-  requireRole(...FRAUD_ALERT_ROLES),
-  async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT * FROM candidate_fraud_alert WHERE candidate_id = ? ORDER BY created_at DESC`,
-        [req.params.candidateId],
-      );
-      res.json({ alerts: rows });
-    } catch (err: unknown) {
-      console.error(
-        "[fraud-alerts] candidate lookup failed:",
-        err instanceof Error ? err.message : err,
-      );
-      res
-        .status(500)
-        .json({ error: "Could not load alerts for this candidate" });
+    if (status !== "under_review" && !String(notes ?? "").trim()) {
+      return res.status(400).json({
+        error: "A reason is required to resolve or dismiss a fraud alert, because doing so allows the employee record to be created.",
+      });
     }
-  },
-);
-
-router.patch(
-  "/:alertId/review",
-  requireAuth,
-  requireRole(...FRAUD_ALERT_ROLES),
-  async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      // Clearing an alert is what unblocks employee creation
-      // (validateNoOpenFraudAlerts in the creation orchestrator refuses while any
-      // critical or high alert is still open), so the reason is not optional. A
-      // free-text-only trail cannot be counted, and the whole point of reviewing
-      // these is learning which variances are genuine.
-      const { status, notes } = req.body;
-      const validStatuses = [
-        "under_review",
-        "resolved_fraud",
-        "resolved_false_positive",
-        "dismissed",
-      ];
-      if (!validStatuses.includes(status)) {
-        return res.status(400).json({ error: "Invalid status" });
-      }
-      if (status !== "under_review" && !String(notes ?? "").trim()) {
-        return res.status(400).json({
-          error:
-            "A reason is required to resolve or dismiss a fraud alert, because doing so allows the employee record to be created.",
-        });
-      }
-      await db.execute(
-        `UPDATE candidate_fraud_alert SET status = ?, review_notes = ?, reviewed_by = ?, reviewed_at = NOW() WHERE id = ?`,
-        [status, notes ?? null, req.authUser?.id ?? null, req.params.alertId],
-      );
-      res.json({ success: true });
-    } catch (err: unknown) {
-      console.error(
-        "[fraud-alerts] review update failed:",
-        err instanceof Error ? err.message : err,
-      );
-      res.status(500).json({ error: "Could not record this decision" });
+    if (!(await alertInScope(req.authUser!.id, req.params.alertId))) {
+      return res.status(403).json({ error: "Forbidden: this alert is outside your branch / assigned scope" });
     }
-  },
-);
+    await db.execute(
+      `UPDATE candidate_fraud_alert SET status = ?, review_notes = ?, reviewed_by = ?, reviewed_at = NOW() WHERE id = ?`,
+      [status, notes ?? null, req.authUser?.id ?? null, req.params.alertId]
+    );
+    res.json({ success: true });
+  } catch (err: unknown) {
+    console.error("[fraud-alerts] review update failed:", err instanceof Error ? err.message : err);
+    res.status(500).json({ error: "Could not record this decision" });
+  }
+});
 
-router.get(
-  "/stats",
-  requireAuth,
-  requireRole(...FRAUD_ALERT_ROLES),
-  async (_req: AuthenticatedRequest, res: Response) => {
-    try {
-      const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT alert_type, status, COUNT(*) as count FROM candidate_fraud_alert GROUP BY alert_type, status`,
-      );
-      res.json({ stats: rows });
-    } catch (err: unknown) {
-      console.error(
-        "[fraud-alerts] stats failed:",
-        err instanceof Error ? err.message : err,
-      );
-      res.status(500).json({ error: "Could not load alert statistics" });
-    }
-  },
-);
+router.get("/stats", requireAuth, requireRole(...FRAUD_ALERT_ROLES), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const scope = await resolveCandidateScope(req.authUser!.id, "c");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT fa.alert_type, fa.status, COUNT(*) as count
+         FROM candidate_fraud_alert fa JOIN ats_candidate c ON c.id = fa.candidate_id
+        WHERE (${scope.sql})
+        GROUP BY fa.alert_type, fa.status`,
+      scope.params as any[]
+    );
+    res.json({ stats: rows });
+  } catch (err: unknown) {
+    console.error("[fraud-alerts] stats failed:", err instanceof Error ? err.message : err);
+    res.status(500).json({ error: "Could not load alert statistics" });
+  }
+});
 
 // Full fraud comparison payload for a single candidate — used in HR Profile Approval
 // and the Fraud Alert Review page to show face grid, name table, and document numbers.
@@ -409,19 +361,18 @@ router.get(
 // Returns the detected face bounding box for a document image.
 // The frontend uses these coordinates to crop and vertically align faces
 // in the comparison grid regardless of document orientation.
-router.get(
-  "/documents/face-detect/:documentId",
-  requireAuth,
-  requireRole(...FRAUD_ALERT_ROLES),
-  async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const { documentId } = req.params;
-      const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT file_path, mime_type FROM candidate_onboarding_document WHERE id = ? LIMIT 1`,
-        [documentId],
-      );
-      const doc = rows[0];
-      if (!doc) return res.status(404).json({ error: "Document not found" });
+router.get("/documents/face-detect/:documentId", requireAuth, requireRole(...FRAUD_ALERT_ROLES), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { documentId } = req.params;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT file_path, mime_type, candidate_id FROM candidate_onboarding_document WHERE id = ? LIMIT 1`,
+      [documentId]
+    );
+    const doc = rows[0];
+    if (!doc) return res.status(404).json({ error: "Document not found" });
+    if (!doc.candidate_id || !(await canAccessCandidate(req.authUser!.id, String(doc.candidate_id)))) {
+      return res.status(404).json({ error: "Document not found" });
+    }
 
       const resolvedPath = resolveOnboardingDocumentFile(doc.file_path);
       if (!resolvedPath) return res.json({ bbox: null });

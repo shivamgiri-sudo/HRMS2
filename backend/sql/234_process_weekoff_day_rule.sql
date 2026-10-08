@@ -81,6 +81,25 @@ CREATE TABLE IF NOT EXISTS process_weekoff_day_rule (
 -- New WFM notification templates for the demand-aware engine.
 -- INSERT IGNORE is idempotent.
 
+-- notification_template as created by 132 has `subject` but no `subject_template` / `category`;
+-- production carries both (added out of band), and the seeds below write to them. On a rebuilt
+-- database the INSERT therefore failed with "Unknown column 'subject_template'" and stopped the
+-- whole migration replay at this file. Add the columns first, guarded so a database that already
+-- has them (production) is untouched.
+SET @s = (SELECT IF(COUNT(*) = 0,
+  'ALTER TABLE notification_template ADD COLUMN subject_template VARCHAR(500) NULL',
+  'SELECT 1')
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'notification_template' AND column_name = 'subject_template');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @s = (SELECT IF(COUNT(*) = 0,
+  'ALTER TABLE notification_template ADD COLUMN category VARCHAR(50) NULL',
+  'SELECT 1')
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'notification_template' AND column_name = 'category');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
 INSERT IGNORE INTO notification_template
   (id, template_code, template_name, subject_template, body_template, channel, category, active_status)
 VALUES

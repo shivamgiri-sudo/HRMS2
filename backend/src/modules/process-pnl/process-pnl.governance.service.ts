@@ -7,6 +7,7 @@ import {
   ownCompanyBranchSql,
 } from "../../shared/ownCompanyCostCentre.js";
 import { processPnlService } from "./process-pnl.service.js";
+import { syncProcessSeatsSafe } from "./seat-mandate-sync.service.js";
 
 type SignoffRole =
   "finance_preparer" | "finance_head" | "accounts_head" | "ceo";
@@ -503,6 +504,12 @@ export const processPnlGovernanceService = {
         statusCode: 400,
       });
 
+    const [prevPlan] = await db.execute<RowDataPacket[]>(
+      `SELECT contracted_seats FROM process_monthly_plan WHERE process_id = ? AND period_code = ? LIMIT 1`,
+      [input.process_id, input.period_code],
+    );
+    const previousSeats = (prevPlan as RowDataPacket[])[0]?.contracted_seats;
+
     const id = input.id?.trim() || randomUUID();
     const values = [
       input.process_id,
@@ -544,6 +551,14 @@ export const processPnlGovernanceService = {
     );
 
     processPnlService.invalidateCaches();
+
+    // Contracted seats edited for the CURRENT month: sync the other seat stores. A plan for another
+    // period is a forecast, not today's mandate, so it never overwrites them.
+    if (input.contracted_seats !== null && input.contracted_seats !== undefined
+        && Number(previousSeats) !== Number(input.contracted_seats)
+        && input.period_code === currentPeriod()) {
+      syncProcessSeatsSafe({ processId: input.process_id, seats: Number(input.contracted_seats), source: "monthly_plan", actorId: actorUserId });
+    }
     return { id };
   },
 

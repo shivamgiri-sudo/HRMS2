@@ -88,10 +88,24 @@ describe("submitStatutoryDetailsForApproval — pending-request dedup", () => {
     logSensitiveAction.mockReset().mockResolvedValue(undefined);
   });
 
+  /**
+   * The function now reads the employee's current statutory values (employees, then
+   * employee_statutory_info) between the pending lookup and the INSERT, so old_values carries
+   * a real before-state. Keyed on the statement so those reads cannot shift the sequence.
+   */
+  function stubStatutoryFlow(pending: Array<{ id: string }>) {
+    dbExecute.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (/SELECT id FROM profile_update_approval/.test(text)) return [pending];
+      if (/FROM employees WHERE id = \?/.test(text)) return [[{ pan_number: "OLDPN1234A" }]];
+      if (/FROM employee_statutory_info WHERE employee_id = \?/.test(text)) return [[{ pan_number: "OLDPN1234A" }]];
+      if (/INSERT INTO profile_update_approval/.test(text)) return [{}];
+      throw new Error(`unexpected statement: ${text.slice(0, 80)}`);
+    });
+  }
+
   it("reuses the existing pending row's id instead of inserting a new one", async () => {
-    dbExecute
-      .mockResolvedValueOnce([[{ id: EXISTING_PENDING_ID }]]) // SELECT existing pending (findPendingApprovalId)
-      .mockResolvedValueOnce([{}]); // INSERT ... ON DUPLICATE KEY UPDATE
+    stubStatutoryFlow([{ id: EXISTING_PENDING_ID }]);
 
     const result = await submitStatutoryDetailsForApproval(
       USER_ID,
@@ -104,12 +118,17 @@ describe("submitStatutoryDetailsForApproval — pending-request dedup", () => {
       String(c[0]).includes("INSERT INTO profile_update_approval"),
     );
     expect(insertCall![1][0]).toBe(EXISTING_PENDING_ID);
+    // Replaces in place: the statement is an upsert on that id, carrying before and after.
+    expect(String(insertCall![0])).toContain("ON DUPLICATE KEY UPDATE");
+    expect(JSON.parse(insertCall![1][2])).toEqual({
+      employees: { pan_number: "OLDPN1234A" },
+      employee_statutory_info: { pan_number: "OLDPN1234A" },
+    });
+    expect(JSON.parse(insertCall![1][3])).toEqual({ pan_number: "ABCDE1234F" });
   });
 
   it("generates a fresh id when no pending statutory request exists", async () => {
-    dbExecute
-      .mockResolvedValueOnce([[]]) // SELECT existing pending — none
-      .mockResolvedValueOnce([{}]); // INSERT
+    stubStatutoryFlow([]);
 
     const result = await submitStatutoryDetailsForApproval(
       USER_ID,
@@ -118,12 +137,13 @@ describe("submitStatutoryDetailsForApproval — pending-request dedup", () => {
     );
 
     expect(result.id).not.toBe(EXISTING_PENDING_ID);
+    expect(result.id).toMatch(/^[0-9a-f-]{36}$/);
+    const insertCall = dbExecute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO profile_update_approval"));
+    expect(insertCall![1][0]).toBe(result.id);
   });
 
   it("bank and statutory dedup lookups are scoped independently by request_type", async () => {
-    dbExecute
-      .mockResolvedValueOnce([[]]) // SELECT pending statutory_details — none, even if a bank one is pending
-      .mockResolvedValueOnce([{}]);
+    stubStatutoryFlow([]); // no pending statutory_details, even if a bank one is pending
 
     await submitStatutoryDetailsForApproval(USER_ID, EMPLOYEE_ID, {
       pan_number: "ABCDE1234F",

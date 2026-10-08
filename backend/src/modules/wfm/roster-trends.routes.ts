@@ -8,6 +8,8 @@
 import { Router, type Request, type Response } from "express";
 import { requireRole } from "../../middleware/requireRole.js";
 import { readLobFilter, type LobFilter } from "../../shared/lobFilter.js";
+import { employeeFieldGuard, getScope, canAccessTarget, OUT_OF_SCOPE_MSG } from "./branch-scope.js";
+import { db } from "../../db/mysql.js";
 import { daySpan, isValidDate } from "./roster-trends.calc.js";
 import {
   getShrinkageTrend,
@@ -46,6 +48,8 @@ const MAX_RANGE_DAYS = 366;
 const ID_RE = /^[\w-]{1,64}$/;
 
 rosterTrendsRouter.use(requireRole(...TRENDS_ROLES));
+// employeeId named in the query (member-detail, lateness/employee) must be inside the caller's scope.
+rosterTrendsRouter.use(employeeFieldGuard("employeeId"));
 
 interface Parsed {
   from: string;
@@ -236,6 +240,12 @@ rosterTrendsRouter.get("/publish/cycle/:cycleId", async (req, res) => {
     return;
   }
   try {
+    const scope = await getScope(req as any);
+    if (!scope) { res.status(401).json({ error: "Unauthorized" }); return; }
+    const [own] = await db.execute<any[]>("SELECT branch_id, process_id FROM weekly_roster_cycle WHERE id = ? LIMIT 1", [cycleId]);
+    if (own[0] && !(await canAccessTarget(scope, { branchId: own[0].branch_id, processId: own[0].process_id }))) {
+      res.status(403).json({ error: OUT_OF_SCOPE_MSG }); return;
+    }
     const d = await getCycleDetail(cycleId);
     if (!d) {
       res.status(404).json({ error: "Roster cycle not found" });

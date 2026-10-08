@@ -1,5 +1,6 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GstTallyExportPanel } from "@/components/finance/gst/GstTallyExportPanel";
+import { TallyPaymentImportPanel } from "@/components/finance/gst/TallyPaymentImportPanel";
 
 /**
  * GST / Tally Export — its own page rather than a Client Billing tab: the audience (who
@@ -11,6 +12,7 @@ export default function GstTallyExportPage() {
     <DashboardLayout>
       <div className="grn-scope p-4 md:p-6">
         <GstTallyExportPanel />
+        <div className="mt-4"><TallyPaymentImportPanel /></div>
       </div>
     </DashboardLayout>
   );

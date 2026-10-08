@@ -572,11 +572,37 @@ describe("p) Employee cannot GET /api/exit/ (list all)", () => {
 
 describe("q) Employee cannot PATCH /api/exit/:id/status", () => {
   it("returns 403 when user has employee role only", async () => {
-    mockEmployee();
+    // The exit request must exist for this to test authorization at all. Since f65a43083 the
+    // handler reads the exit and the caller's roles in one prefetch and answers 404 for an id
+    // that matches nothing BEFORE any role/scope check, so with an empty database this request
+    // never reached the guard. Here the exit is a real one belonging to somebody else, and the
+    // caller holds only `employee` with no assignment scope — the scope check must refuse.
+    mockGetUser.mockResolvedValue({
+      data: { user: { id: "user-emp", email: "employee@mcn.com" } },
+      error: null,
+    });
+    mockQueries([
+      // Listed first: the prefetch also joins user_roles, and patterns are tried in order.
+      [/FROM exit_request er/i, [{
+        current_status: "submitted",
+        employee_id: "emp-other",
+        branch_id: "branch-1",
+        process_id: "proc-1",
+        lob_id: null,
+        department_id: "dept-1",
+        reporting_manager_id: "mgr-other",
+        manager_id: null,
+        roles: "employee",
+        is_reporting_manager: 0,
+      }]],
+      [/user_roles/i, [{ role_key: "employee" }]],
+    ]);
     const r = await request(app)
       .patch("/api/exit/exit-1/status")
       .set(EMP_TOKEN)
       .send({ status: "closed" });
     expect(r.status).toBe(403);
+    // Refused, not merely failed: no write reached exit_request.
+    expect(mockExecute.mock.calls.some(([sql]) => /UPDATE\s+exit_request/i.test(String(sql)))).toBe(false);
   });
 });

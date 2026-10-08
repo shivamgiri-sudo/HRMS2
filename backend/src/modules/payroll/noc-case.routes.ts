@@ -43,6 +43,7 @@ import {
 } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import * as nocCase from "./noc-case.service.js";
+import { filterVisibleEmployeeIds, guardEmployee } from "./payroll-branch-scope.js";
 import {
   overrideNocRelease,
   nocBlockedEmployeesForRuns,
@@ -241,7 +242,7 @@ nocCaseRouter.get(
         processId: "c.process_id",
         employeeId: "c.employee_id",
       },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
 
     const {
@@ -297,7 +298,7 @@ nocCaseRouter.get(
         processId: "c.process_id",
         employeeId: "c.employee_id",
       },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
 
     const [byRole] = await db.execute<RowDataPacket[]>(
@@ -356,7 +357,10 @@ nocCaseRouter.get(
         "Only payroll and finance roles can view withheld salary.",
       );
     }
-    const rows = await nocBlockedEmployeesForRuns([String(req.params.runId)]);
+    // Branch scoping: only withheld employees inside the caller's branch / assigned scope.
+    const allRows = await nocBlockedEmployeesForRuns([String(req.params.runId)]);
+    const visibleIds = await filterVisibleEmployeeIds(req as any, allRows.map((r) => String(r.employee_id)));
+    const rows = allRows.filter((r) => visibleIds.has(String(r.employee_id)));
     const total = rows.reduce((s, r) => s + (Number(r.net_salary) || 0), 0);
     return res.json({
       success: true,
@@ -382,6 +386,7 @@ nocCaseRouter.get(
         "You do not have access to NOC clearance records.",
       );
     }
+    if (!(await guardEmployee(req as any, res, String(req.params.employeeId)))) return;
     const existing = await nocCase.getCaseByEmployee(
       String(req.params.employeeId),
     );

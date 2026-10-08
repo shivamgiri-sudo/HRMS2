@@ -180,10 +180,30 @@ const refreshInFlight = new Map<string, Promise<void>>();
  * this treats the cause). Serve the last good value immediately, refresh it in the background,
  * and let only the very first call after a process restart pay the real cost.
  */
+function allocationSummaryKey(filters: Partial<PnlQueryFilters>): string {
+  // branchIds is part of the scope: a user confined to several branches arrives with branchIds and
+  // no branchId, and without it in the key they were served the company-wide entry (the same one the
+  // boot warmer fills with { period }) — other branches' figures. Sorted so order cannot split keys.
+  const branchIdsKey = [...((filters as { branchIds?: string[] }).branchIds ?? [])].sort().join(",");
+  return `pnl-allocation-summary:v2:${filters.period ?? ""}:${filters.branchId ?? ""}:${branchIdsKey}:${filters.processId ?? ""}:${filters.clientId ?? ""}:${filters.search ?? ""}`;
+}
+
+/**
+ * Compute and store a fresh value, waiting for it — for the warmer (pnl-summary-warmer.ts), which
+ * must refresh its keys ONE AT A TIME. getCachedAllocationSummary on a stale key returns at once
+ * and refreshes in the background, so looping it over many keys would start them all together.
+ */
+export async function refreshAllocationSummary(filters: Partial<PnlQueryFilters>): Promise<void> {
+  const key = allocationSummaryKey(filters);
+  const value = (await bpoPnlAllocationOverlayService.getSummary(filters)) as Record<string, unknown>;
+  await pnlSummaryCache.set(key, value, 60);
+  staleAllocationSummary.set(key, { value, computedAt: Date.now() });
+}
+
 export async function getCachedAllocationSummary(
   filters: Partial<PnlQueryFilters>,
 ) {
-  const key = `pnl-allocation-summary:v1:${filters.period ?? ""}:${filters.branchId ?? ""}:${filters.processId ?? ""}:${filters.clientId ?? ""}:${filters.search ?? ""}`;
+  const key = allocationSummaryKey(filters);
   const fetcher = () =>
     bpoPnlAllocationOverlayService.getSummary(filters) as Promise<
       Record<string, unknown>

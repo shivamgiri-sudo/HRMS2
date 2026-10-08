@@ -28,6 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { CalendarClock, CheckCircle2, XCircle, RefreshCw, Plus } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -132,7 +133,9 @@ type Tab = "my-preferences" | "pending-approvals";
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function NativeRosterPreference() {
-  const [activeTab, setActiveTab] = useState<Tab>("my-preferences");
+  // Approval Center deep link (?approvalId=) opens the approvals tab.
+  const [activeTab, setActiveTab] = useState<Tab>(() =>
+    new URLSearchParams(window.location.search).get("approvalId") ? "pending-approvals" : "my-preferences");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<SubmitForm>(EMPTY_FORM);
   const [rejectId, setRejectId] = useState<string | null>(null);
@@ -168,6 +171,8 @@ export default function NativeRosterPreference() {
         .then((r) => r.data ?? []),
     enabled: activeTab === "pending-approvals" && isApprover,
   });
+
+  useApprovalFocus(!!pendingQuery.data);
 
   // -- Mutations ----------------------------------------------------------------
 
@@ -630,7 +635,7 @@ export default function NativeRosterPreference() {
                       </TableRow>
                     )}
                     {pendingQuery.data.map((pref) => (
-                      <TableRow key={pref.id} className="hover:bg-gray-50 transition-colors">
+                      <TableRow key={pref.id} data-approval-id={pref.id} className="hover:bg-gray-50 transition-colors">
                         <TableCell>
                           <div className="flex flex-col">
                             <span className="font-medium text-sm">

@@ -1,5 +1,9 @@
+import { useEffect, useRef } from "react";
 import { LobBadge } from "@/components/wfm/LobBadge";
+import { RaiseExitButton } from "@/components/exit/RaiseExitButton";
+import { Link } from "react-router-dom";
 import { Lock, Pencil } from "lucide-react";
+import { pendingBadgeHref, pendingBadgeTitle, pendingCellKey, type PendingRef } from "@/pages/wfm/roster-requests/pendingCells";
 import ShiftChoiceOptions from "./ShiftChoiceOptions";
 import type { GridResponse, GridRow } from "@/hooks/useTeamRoster";
 import {
@@ -23,6 +27,10 @@ export interface TeamRosterGridProps {
   onFillDay?: (date: string, choice: CellChoice) => void;
   /** Shifts offered in the column-header select (union across the people shown). */
   dayFillOptions?: ShiftOption[];
+  /** Pending roster requests keyed `${employeeId}|${date}` (see indexPendingCells). Optional. */
+  pendingCells?: Map<string, PendingRef[]>;
+  /** Row to highlight and scroll into view once (deep link from the Roster Requests hub). */
+  highlightEmployeeId?: string | null;
 }
 
 export const stagedKey = cellKey;
@@ -106,6 +114,17 @@ function GridCellView({ row, date, props }: { row: GridRow; date: string; props:
   );
 }
 
+export function PendingRequestBadges({ refs }: { refs: PendingRef[] }) {
+  return (
+    <>
+      {refs.map((r) => (
+        <Link key={`${r.kind}:${r.id}`} to={pendingBadgeHref(r)} title={pendingBadgeTitle(r.kind)} aria-label={pendingBadgeTitle(r.kind)}
+          className="ml-1 inline-block h-2.5 w-2.5 rounded-full bg-amber-500 ring-1 ring-amber-300" />
+      ))}
+    </>
+  );
+}
+
 function FillSelect({ label, options, onPick }: { label: string; options: ShiftOption[]; onPick: (c: CellChoice) => void }) {
   return (
     <select
@@ -122,7 +141,16 @@ function FillSelect({ label, options, onPick }: { label: string; options: ShiftO
 }
 
 export default function TeamRosterGrid(props: TeamRosterGridProps) {
-  const { data, today, onFillRow, onFillDay, dayFillOptions, templates } = props;
+  const { data, today, onFillRow, onFillDay, dayFillOptions, templates, pendingCells, highlightEmployeeId } = props;
+  const highlightRef = useRef<HTMLTableRowElement | null>(null);
+  const scrolledTo = useRef<string | null>(null);
+  const highlightShown = !!highlightEmployeeId && data.rows.some((r) => r.employeeId === highlightEmployeeId);
+  useEffect(() => {
+    // Once per employee: later re-renders (edits, refetches) must not keep yanking the scroll position.
+    if (!highlightShown || scrolledTo.current === highlightEmployeeId) return;
+    scrolledTo.current = highlightEmployeeId ?? null;
+    highlightRef.current?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  }, [highlightShown, highlightEmployeeId]);
   if (data.rows.length === 0) {
     return <p className="rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No team members match your search.</p>;
   }
@@ -143,15 +171,21 @@ export default function TeamRosterGrid(props: TeamRosterGridProps) {
         </thead>
         <tbody>
           {data.rows.map((row) => (
-            <tr key={row.employeeId} className="hover:bg-slate-50/60">
-              <th scope="row" className="sticky left-0 z-10 border-b border-r bg-white px-3 py-2 text-left font-normal">
+            <tr key={row.employeeId}
+              {...(row.employeeId === highlightEmployeeId
+                ? { ref: highlightRef, "data-highlighted": "true", "aria-current": "true" as const, className: "bg-amber-50/70 outline outline-2 -outline-offset-2 outline-amber-400" }
+                : { className: "hover:bg-slate-50/60" })}>
+              <th scope="row" className={`sticky left-0 z-10 border-b border-r px-3 py-2 text-left font-normal ${row.employeeId === highlightEmployeeId ? "bg-amber-50" : "bg-white"}`}>
                 <div className="font-semibold text-slate-800">{row.name}</div>
                 <div className="text-[11px] text-slate-500">{[row.code, row.processName].filter(Boolean).join(" - ")}</div>
                 <LobBadge name={row.lobName} />
+                <div className="mt-1"><RaiseExitButton employee={{ id: row.employeeId, name: row.name, code: row.code, process: row.processName }} /></div>
                 {onFillRow && <FillSelect label={`Fill all empty days for ${row.name}`} options={shiftOptionsFor(templates, row.processId)} onPick={(c) => onFillRow(row, c)} />}
               </th>
               {data.dates.map((d) => (
-                <td key={d} className="border-b px-1.5 py-1.5 align-middle"><GridCellView row={row} date={d} props={props} /></td>
+                <td key={d} className="border-b px-1.5 py-1.5 align-middle"><GridCellView row={row} date={d} props={props} />
+                  {pendingCells?.get(pendingCellKey(row.employeeId, d)) ? <PendingRequestBadges refs={pendingCells.get(pendingCellKey(row.employeeId, d)) as PendingRef[]} /> : null}
+                </td>
               ))}
             </tr>
           ))}

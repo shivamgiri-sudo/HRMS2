@@ -25,8 +25,10 @@ import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.j
 import { triggerResignationPendingReview } from "../work-inbox/work-inbox.triggers.js";
 import { recordManagerChange } from "../management/manager-attribution.service.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
+import { AUTO_ACTOR, isExitAutoEnabled } from "./exit-auto-config.js";
 import { upsertOpenWorkItem } from "../../shared/workItem.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { buildAppLink } from "../../shared/appLink.js";
 
 // Singleton transporter — created once at module load, not per-call
 const mailer = nodemailer.createTransport({
@@ -44,7 +46,7 @@ async function notifyManagerOfResignation(
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.first_name, e.last_name, e.email AS emp_email,
-              m.first_name AS mgr_first, m.last_name AS mgr_last, m.email AS mgr_email
+              m.first_name AS mgr_first, m.last_name AS mgr_last, m.email AS mgr_email, m.user_id AS mgr_user_id
          FROM employees e
          LEFT JOIN employees m ON m.id = e.reporting_manager_id
         WHERE e.id = ? LIMIT 1`,
@@ -53,14 +55,20 @@ async function notifyManagerOfResignation(
     const emp = (rows as RowDataPacket[])[0];
     if (!emp?.mgr_email) return; // no manager email — skip silently
 
+    // Lazy import: approval-center loops back through the exit module.
+    const approvalBlock = emp.mgr_user_id
+      ? await (await import("../approval-center/approval-email.service.js")).buildApprovalBlock(String(emp.mgr_user_id), { kinds: ["exit_resignation"], entityId: exitRequestId })
+      : null;
     await mailer.sendMail({
       from: `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM}>`,
       to: emp.mgr_email,
       subject: `Resignation Notice — ${emp.first_name} ${emp.last_name}`,
       html: `<p>Dear ${emp.mgr_first ?? "Manager"},</p>
              <p><strong>${emp.first_name} ${emp.last_name}</strong> has submitted a resignation request.</p>
-             <p>Please log in to HRMS to review and action this request.</p>
-             <p style="color:#888;font-size:12px">Exit Request ID: ${exitRequestId}</p>`,
+             <p>Please review and action this request in HRMS:</p>
+             <p><a href="${buildAppLink("/exit/command-center")}" style="display:inline-block;background:#073f78;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600">Review resignation</a></p>
+             <p style="font-size:12px;color:#6b7280">Or copy this link: ${buildAppLink("/exit/command-center")}</p>
+             <p style="color:#888;font-size:12px">Exit Request ID: ${exitRequestId}</p>${approvalBlock?.html ?? ""}`,
     });
   } catch (err) {
     logger.error({ err }, "[exit] manager notification email failed");
@@ -304,7 +312,7 @@ export const exitService = {
     search?: string;
     page: number;
     limit: number;
-  }): Promise<PaginatedResult<ExitRequest>> {
+  }, scope?: { sql: string; params: unknown[] }): Promise<PaginatedResult<ExitRequest>> {
     const { page, limit, status, employeeId, branchId, processId, search } =
       filters;
     const offset = (page - 1) * limit;
@@ -333,6 +341,11 @@ export const exitService = {
       );
       const q = `%${search}%`;
       params.push(q, q, q, q);
+    }
+
+    if (scope && scope.sql !== "1=1") {
+      conds.push(`(${scope.sql})`);
+      params.push(...scope.params);
     }
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
@@ -448,9 +461,12 @@ export const exitService = {
     },
     userId: string,
   ): Promise<ExitRequest> {
+    // 'withdrawn' / 'cancelled' are reversal terminals exactly like 'revoked': the resignation was
+    // taken back. Without them here, an employee who withdrew could never resign again - every
+    // later attempt hit this 409 against the withdrawn row (found 2026-10-01).
     const [openRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM exit_request
-        WHERE employee_id = ? AND status NOT IN ('rejected','revoked','exited')
+        WHERE employee_id = ? AND status NOT IN ('rejected','revoked','exited','withdrawn','cancelled')
         LIMIT 1`,
       [input.employeeId],
     );
@@ -675,6 +691,23 @@ export const exitService = {
       }
     }
 
+    // Route to the reporting manager's review bucket automatically. Nothing needs a person here:
+    // the manager has already been emailed above and the item is in their queue, so leaving the
+    // row at 'submitted' until someone clicked "Move to Manager Review" only stranded it (nine
+    // sat there on 2026-10-01). Same transition, same audit log; the actor is 'system'.
+    // Never throws - if it fails the exit stays 'submitted' and exit-auto-progress picks it up.
+    if (await isExitAutoEnabled()) {
+      await this.updateExitStatus(
+        id,
+        "manager_review",
+        "Auto: routed to the reporting manager for review",
+        AUTO_ACTOR,
+        "submitted",
+      ).catch((err: unknown) => {
+        logger.error({ err, exitRequestId: id }, "[exit] Auto-route to manager_review failed");
+      });
+    }
+
     return this.getExitRequest(id);
   },
 
@@ -761,11 +794,24 @@ export const exitService = {
     // write the new date into exit_request but stamp employees.date_of_exit from the stale
     // value — reintroducing the exact two-systems-disagree split this precedence exists to
     // prevent, on the one transition where it is unrecoverable.
+    //
+    // No "today" fallback (owner decision 2026-10-06). Marking someone exited stamps
+    // employees.date_of_exit, which payroll, salary days, F&F and the attendance window treat as the
+    // end of employment. When no last working day had ever been entered, this used to write the
+    // date of the click instead - a guess that could pay or dock days the person never worked.
+    // Refuse instead; HR confirms the real last working day on the same action. The automatic exit
+    // job never reaches this: it only exits rows whose confirmed LWD has already passed.
     const lastWorkingDay =
       confirmedLwdInput ??
       (exitRecord.last_working_day_confirmed as string | null) ??
       (exitRecord.last_working_day_proposed as string | null) ??
-      new Date().toISOString().slice(0, 10);
+      null;
+    if (nextStatus === "exited" && !lastWorkingDay) {
+      throw Object.assign(
+        new Error("Confirm the employee's last working day before marking the exit as Exited. The Exit Date is set from it."),
+        { statusCode: 400, code: "EXIT_LWD_REQUIRED" },
+      );
+    }
 
     // Notice columns, folded into the single status UPDATE below so they commit atomically
     // with the transition that agreed them.
@@ -964,11 +1010,22 @@ export const exitService = {
       "cancelled",
       "withdrawn",
     ].includes(nextStatus);
-    if (confirmedLwdInput && !isReversalOutcome) {
-      const [dueRows] = await db.execute<RowDataPacket[]>(
-        `SELECT 1 FROM exit_request WHERE id = ? AND last_working_day_confirmed <= CURDATE()`,
-        [id],
-      );
+    //
+    // "exited" always needs its tasks, LWD or not. The ruling above moved creation off the
+    // accept-time transition; it did not mean an employee can leave with no clearance chain at
+    // all — yet that was the result whenever an exit reached "exited" before its confirmed
+    // LWD came due (early release, no LWD confirmed, or marked before the 8am sweep): this
+    // branch did not fire, and the sweep treats "exited" as terminal and never revisits it.
+    // Zero tasks also means nothing for the F&F approval guard to count as open.
+    // createDefaultClearanceTasks is idempotent, so an exit that already has tasks is untouched.
+    const clearanceDueNow = nextStatus === "exited";
+    if ((confirmedLwdInput || clearanceDueNow) && !isReversalOutcome) {
+      const [dueRows] = clearanceDueNow
+        ? [[{ due: 1 }]]
+        : await db.execute<RowDataPacket[]>(
+            `SELECT 1 FROM exit_request WHERE id = ? AND last_working_day_confirmed <= CURDATE()`,
+            [id],
+          );
       if (dueRows[0]) {
         await createDefaultClearanceTasks(id, employeeIdForExit).catch(
           (err: unknown) => {
@@ -1148,9 +1205,13 @@ export const exitService = {
     return this.getExitRequest(id);
   },
 
-  async getExitStats(): Promise<ExitStats & Record<string, number>> {
+  async getExitStats(scope?: { sql: string; params: unknown[] }): Promise<ExitStats & Record<string, number>> {
+    const scoped = scope && scope.sql !== "1=1";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT status, COUNT(*) AS cnt FROM exit_request GROUP BY status`,
+      scoped
+        ? `SELECT er.status AS status, COUNT(*) AS cnt FROM exit_request er LEFT JOIN employees e ON e.id = er.employee_id WHERE (${scope!.sql}) GROUP BY er.status`
+        : `SELECT status, COUNT(*) AS cnt FROM exit_request GROUP BY status`,
+      scoped ? scope!.params : [],
     );
 
     const counts: Record<string, number> = {};

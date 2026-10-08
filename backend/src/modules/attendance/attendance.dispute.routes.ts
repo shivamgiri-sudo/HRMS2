@@ -20,8 +20,11 @@ import {
   hasAnyRole,
   hasScopedAccess,
   buildScopeWhereClause,
+  isOrgWideUser,
 } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
+import { canAccessEmployee, scopePredicate } from "../wfm/branch-scope.js";
 import { wfmService } from "../wfm/wfm.service.js";
 import { resolveEffectiveApprover } from "../../shared/approvalEscalation.js";
 
@@ -160,14 +163,13 @@ async function getDisputeWithTarget(
 }
 
 /** Verify caller can read/act on a specific dispute. */
-async function canAccessDispute(
-  userId: string,
-  dispute: AttendanceDisputeRow,
-  allowSelf = true,
-): Promise<boolean> {
-  // Super admin / admin / hr / wfm have full access
-  if (await hasAnyRole(userId, "admin", "super_admin", "hr", "wfm", "ceo"))
-    return true;
+async function canAccessDispute(userId: string, dispute: AttendanceDisputeRow, allowSelf = true): Promise<boolean> {
+  // Super admin / ceo / coo / cfo have full access
+  if (await hasAnyRole(userId, "super_admin", "ceo", "coo", "cfo")) return true;
+  // admin / hr / wfm: only disputes of employees inside their own branch / scope (owner ruling 2026-10-01).
+  if (await hasAnyRole(userId, "admin", "hr", "wfm")) {
+    if (await canAccessEmployee(await resolveUserBusinessScope(userId), dispute.employee_id)) return true;
+  }
 
   // Payroll Head/Admin can access payroll-impact disputes only
   if (
@@ -206,12 +208,28 @@ async function canAccessDispute(
   );
 }
 
+/**
+ * admin / hr / wfm may act on disputes (role gate) but only inside their own branch / scope (owner ruling
+ * 2026-10-01). Org-wide roles pass. Sends the 403 itself and returns false when refused.
+ */
+async function guardPrivilegedDisputeScope(userId: string, dispute: AttendanceDisputeRow, res: Response): Promise<boolean> {
+  if (await hasAnyRole(userId, "super_admin", "ceo", "coo", "cfo")) return true;
+  if (await canAccessEmployee(await resolveUserBusinessScope(userId), dispute.employee_id)) return true;
+  res.status(403).json({ success: false, error: "Forbidden: employee outside your branch / scope" });
+  return false;
+}
+
 /** Build scope-restricted WHERE clause for list queries. */
-async function buildDisputeListScope(
-  userId: string,
-): Promise<{ sql: string; params: unknown[] }> {
-  if (await hasAnyRole(userId, "admin", "super_admin", "hr", "wfm", "ceo")) {
+async function buildDisputeListScope(userId: string): Promise<{ sql: string; params: unknown[] }> {
+  if (await hasAnyRole(userId, "super_admin", "ceo", "coo", "cfo")) {
     return { sql: "1=1", params: [] };
+  }
+  // admin is branch-scoped like hr / wfm (owner ruling 2026-10-01)
+  if (await hasAnyRole(userId, "admin", "hr", "wfm")) {
+    const own = scopePredicate(await resolveUserBusinessScope(userId), {
+      employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id",
+    });
+    return own;
   }
 
   // Payroll Head/Admin: only payroll-impact rows
@@ -457,13 +475,25 @@ attendanceDisputeRouter.post(
   h(async (req, res) => {
     const { action, reason } = req.body as { action?: string; reason?: string };
 
-    if (!action || !["approve", "reject", "escalate_to_hr"].includes(action)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: "action must be: approve | reject | escalate_to_hr",
-        });
+  if (!action || !["approve", "reject", "escalate_to_hr"].includes(action)) {
+    return res.status(400).json({ success: false, error: "action must be: approve | reject | escalate_to_hr" });
+  }
+  if ((action === "reject" || action === "escalate_to_hr") && !reason?.trim()) {
+    return res.status(400).json({ success: false, error: "reason is mandatory for reject and escalate_to_hr" });
+  }
+
+  const dispute = await getDisputeWithTarget(req.params.id);
+  if (!dispute) return res.status(404).json({ success: false, error: "Dispute not found" });
+
+  // Access: manager must be scoped to this employee (not self, not cross-team)
+  const isPrivileged = await hasAnyRole(req.authUser.id, "admin", "super_admin", "hr", "wfm");
+  if (isPrivileged) {
+    if (!(await guardPrivilegedDisputeScope(req.authUser.id, dispute, res))) return;
+  } else {
+    const callerEmp = await getEmployeeForUser(req.authUser.id);
+    if (!callerEmp) return res.status(403).json({ success: false, error: "No employee record" });
+    if (callerEmp.id === dispute.employee_id) {
+      return res.status(403).json({ success: false, error: "Cannot act on your own dispute" });
     }
     if (
       (action === "reject" || action === "escalate_to_hr") &&
@@ -677,11 +707,9 @@ attendanceDisputeRouter.post(
         .json({ success: false, error: "Forbidden: HR or WFM role required" });
     }
 
-    const dispute = await getDisputeWithTarget(req.params.id);
-    if (!dispute)
-      return res
-        .status(404)
-        .json({ success: false, error: "Dispute not found" });
+  const dispute = await getDisputeWithTarget(req.params.id);
+  if (!dispute) return res.status(404).json({ success: false, error: "Dispute not found" });
+  if (!(await guardPrivilegedDisputeScope(req.authUser.id, dispute, res))) return;
 
     // Guard: HR cannot directly approve payroll-impact disputes
     if (

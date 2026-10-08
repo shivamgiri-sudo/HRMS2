@@ -228,26 +228,6 @@ export default function OnfidoOverviewReport({ range, tlFilter, amFilter }: { ra
 
       <CapacityBuilderCard />
 
-      <SectionCard title="Queue Wise" accent="var(--teal)" subtitle="Required HC = Approved HC x 120%. Click a row for its approved-HC history.">
-        <SectionState loading={loadingFor("manpower")} error={errorFor("manpower") ?? manpowerSection?.error} empty={!mp} emptyText="No manpower data in this range.">
-          {mp && (
-            <div style={{ overflowX: "auto" }}>
-              <table className="oc-table">
-                <thead><tr><th>Queue</th><th className="oc-right">Required HC</th><th className="oc-right">Active HC</th><th className="oc-right">Buffer %</th><th className="oc-right">Shortfall</th></tr></thead>
-                <tbody>
-                  {mp.queues.map((r) => (
-                    <tr key={r.queue} className="oc-row-click" onClick={() => setDrill({ kind: "queue", queue: r })}>
-                      <td>{r.label}</td><td className="oc-right">{fmtHc(r.requiredHc)}</td><td className="oc-right">{fmtHc(r.activeHc)}</td>
-                      <td className="oc-right" style={N(r.bufferPct)}>{fmtPct(r.bufferPct)}</td><td className="oc-right">{fmtHc(r.shortfall)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </SectionState>
-      </SectionCard>
-
       <SectionCard
         title="AON Wise" accent="var(--purple)"
         subtitle={aonSection?.data?.asOf ? `Active HC by live days as on ${fmtDate(aonSection.data.asOf)}. Click a bucket to see who is in it.` : "Active HC by live days"}

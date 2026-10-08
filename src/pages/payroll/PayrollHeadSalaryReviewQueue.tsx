@@ -461,6 +461,9 @@ export function FinalSalarySection({
                         : filtered.map((p) => (
                           <SelectItem key={p.id} value={p.id} className="text-xs">
                             {p.name ?? p.band_name ?? `Band ${p.band_code}`} · {inr(p.package_amount)}/mo
+                            {/* Two packages can share band and amount but pay differently. */}
+                            {` · Gross ${inr(p.gross)} · Net ${inr(p.net_in_hand)}`}
+                            {p.cost_centre_code ? ` · ${p.cost_centre_code}` : ''}
                             {p.slab_from != null ? ` · ₹${Number(p.slab_from).toLocaleString('en-IN')}–₹${Number(p.slab_to).toLocaleString('en-IN')}` : ''}
                           </SelectItem>
                         ))}
@@ -870,10 +873,23 @@ function SectionPopup({
 
   useEffect(() => {
     const branch = journey?.employee?.branch_name;
+    const costCentre = String(journey?.employee?.cost_centre_code ?? '').trim().toUpperCase();
     if (!branch) { setPackages([]); return; }
+    // The whole branch, as before. Filtering by the employee's cost centre hid most packages:
+    // a package's cost_centre_code does not always match the employee's cost centre code, so
+    // the filter returned only the branch-wide ones. Instead, this cost centre's packages are
+    // listed first and every option names its cost centre.
     hrmsApi.get<{ data: any[] }>(`/api/payroll-masters/packages?branch=${encodeURIComponent(branch)}`)
-      .then((r: any) => setPackages(r?.data ?? [])).catch(() => {});
-  }, [journey?.employee?.branch_name]);
+      .then((r: any) => {
+        const rows: any[] = r?.data ?? [];
+        const rank = (p: any) => {
+          const cc = String(p.cost_centre_code ?? '').trim().toUpperCase();
+          return costCentre && cc === costCentre ? 0 : cc ? 2 : 1;
+        };
+        setPackages([...rows].sort((a, b) => rank(a) - rank(b)));
+      })
+      .catch(() => {});
+  }, [journey?.employee?.branch_name, journey?.employee?.cost_centre_code]);
 
   async function run(fn: () => Promise<unknown>, ok?: string) {
     setBusy(true); setError(null); setNotice(null);
@@ -1260,10 +1276,23 @@ function ReviewDrawer({
 
   useEffect(() => {
     const branch = journey?.employee?.branch_name;
+    const costCentre = String(journey?.employee?.cost_centre_code ?? '').trim().toUpperCase();
     if (!branch) { setPackages([]); return; }
+    // The whole branch, as before. Filtering by the employee's cost centre hid most packages:
+    // a package's cost_centre_code does not always match the employee's cost centre code, so
+    // the filter returned only the branch-wide ones. Instead, this cost centre's packages are
+    // listed first and every option names its cost centre.
     hrmsApi.get<{ data: any[] }>(`/api/payroll-masters/packages?branch=${encodeURIComponent(branch)}`)
-      .then((r: any) => setPackages(r?.data ?? [])).catch(() => {});
-  }, [journey?.employee?.branch_name]);
+      .then((r: any) => {
+        const rows: any[] = r?.data ?? [];
+        const rank = (p: any) => {
+          const cc = String(p.cost_centre_code ?? '').trim().toUpperCase();
+          return costCentre && cc === costCentre ? 0 : cc ? 2 : 1;
+        };
+        setPackages([...rows].sort((a, b) => rank(a) - rank(b)));
+      })
+      .catch(() => {});
+  }, [journey?.employee?.branch_name, journey?.employee?.cost_centre_code]);
 
   async function run(fn: () => Promise<unknown>, ok?: string) {
     setBusy(true); setError(null); setNotice(null);

@@ -19,10 +19,8 @@ import {
   decryptPanForProvider,
 } from "./onboarding-full.service.js";
 import { resolveBankNameVariance } from "./bank-name-corroboration.js";
-import {
-  digilockerVerifiedCheckTypes,
-  type DigilockerEvidence,
-} from "./digilocker-evidence.js";
+import { classifyNameMatch } from "./indian-name-match.js";
+import { digilockerVerifiedCheckTypes, type DigilockerEvidence } from "./digilocker-evidence.js";
 import { propagateIdentityVerification } from "../../shared/identityVerificationPropagation.js";
 import { encrypt } from "../../utils/encryption.js";
 import { hashPiiForMatch as hashValue } from "../../shared/piiHash.js";
@@ -152,11 +150,46 @@ async function ensureConsent(candidateId: string) {
     );
 }
 
+/** Every name the candidate is recorded under, most specific first, de-duplicated. */
+export function recordedIdentityNames(candidate: Record<string, unknown>): string[] {
+  const names = [candidate.employee_name, candidate.full_name, candidate.employee_record_name]
+    .map((n) => String(n ?? "").trim())
+    .filter(Boolean);
+  return [...new Set(names)];
+}
+
+/**
+ * The adapter judges the bank's owner against one name: the profile's employee_name when
+ * there is one. The candidate is recorded under up to three (that one, the ATS record and
+ * the employee master), and they are corrected independently. "SAKSHI" at the bank against
+ * an ATS record of "SAKSHI" went to manual review on 2026-09-29 because the profile name
+ * differed. Any recorded name of the candidate matching the bank's owner is the same person.
+ * Only these names count: the typed account-holder name is never identity.
+ */
+export function clearByRecordedName<T extends { status: string; matchScore?: number | null; matchedName?: string | null; resultSummary?: string | null; riskFlags?: string[] }>(
+  result: T,
+  names: string[],
+): T {
+  if (!result.riskFlags?.includes("BANK_HOLDER_NAME_DIVERGENCE") || !result.matchedName) return result;
+  const hit = names
+    .map((name) => ({ name, match: classifyNameMatch(name, result.matchedName) }))
+    .find((m) => !m.match.suspicious && m.match.tier !== "unknown");
+  if (!hit) return result;
+  return {
+    ...result,
+    status: "verified",
+    matchScore: hit.match.score,
+    resultSummary: `bank registered name matches the candidate's recorded name "${hit.name}" (${hit.match.tier}: ${hit.match.reason})`,
+    riskFlags: [],
+  };
+}
+
 async function getCandidateIdentity(candidateId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.full_name, c.email, c.mobile, c.date_of_birth, c.pan_number, c.aadhar_number,
             p.employee_name, p.pan_number_hash, p.aadhaar_number_hash, p.pan_number_masked, p.aadhaar_number_masked,
-            p.pan_number_encrypted
+            p.pan_number_encrypted,
+            (SELECT e.full_name FROM employees e WHERE e.employee_code = c.employee_code AND c.employee_code <> '' LIMIT 1) AS employee_record_name
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
       WHERE c.id = ? LIMIT 1`,
@@ -630,6 +663,14 @@ export async function computeAndSaveScore(
        updated_at = NOW()`,
     [candidateId, scorePct, nextOverallStatus],
   );
+
+  // BGV just cleared: the joining-kit auto-trigger may already have run and been skipped on this
+  // very warning, so re-attempt issuance. Fire-and-forget; the eligibility gate still applies.
+  if (nextOverallStatus === "clear" && cur?.overall_status !== "clear") {
+    import("../letters/appointmentLetterIssue.service.js")
+      .then(({ autoIssueAppointmentLetterForCandidate }) => autoIssueAppointmentLetterForCandidate(candidateId))
+      .catch(() => undefined);
+  }
 
   return { score: scorePct, overallStatus: nextOverallStatus };
 }
@@ -1108,6 +1149,7 @@ export async function verifyBankForCandidate(
       }
     }
   }
+  result = clearByRecordedName(result, recordedIdentityNames(candidate));
   // Before troubling a human with a name variance, see whether the candidate's
   // verified PAN already settles it.
   //
@@ -1159,21 +1201,68 @@ export async function verifyBankForCandidate(
     );
   }
 
-  const checkId = await createOrUpdateCheck(
-    candidateId,
-    "bank",
-    result.status,
-    {
-      providerKey: result.providerKey,
-      providerRequestId: result.providerRequestId,
-      providerReferenceId: result.providerReferenceId,
-      matchScore: result.matchScore,
-      matchedName: result.matchedName,
-      resultSummary: result.resultSummary,
-      resultJson: result.raw,
-      riskFlags: result.riskFlags,
-    },
-  );
+  const checkId = await createOrUpdateCheck(candidateId, "bank", result.status, {
+    providerKey: result.providerKey,
+    providerRequestId: result.providerRequestId,
+    providerReferenceId: result.providerReferenceId,
+    matchScore: result.matchScore,
+    matchedName: result.matchedName,
+    resultSummary: result.resultSummary,
+    resultJson: result.raw,
+    riskFlags: result.riskFlags,
+  });
+  await persistBankVerificationOutcome(candidateId, { accountNo, ifscCode, accountHolderName, bankDetailId }, result);
+  // Only a real call is logged as one. This table is what the API cost report bills
+  // against, so recording a replay here would invent a charge that never happened.
+  if (!reusable) {
+    await db.execute(
+      `INSERT INTO candidate_bgv_api_request_log
+         (id, candidate_id, check_id, provider_key, endpoint_key, request_ref, request_payload_hash, response_status_code, response_payload, duration_ms, success_flag)
+       VALUES (?, ?, ?, ?, 'BANK_VERIFY', ?, ?, 200, ?, ?, ?)` ,
+      [randomUUID(), candidateId, checkId, result.providerKey, result.providerRequestId, accountNo ? hashValue(`${accountNo}|${ifscCode}`) : null, JSON.stringify(result.raw ?? result), Date.now() - started, result.status === "verified" ? 1 : 0]
+    );
+  }
+  await logEvent(candidateId, "BANK_VERIFICATION_COMPLETED", result, checkId, meta);
+  // Mirror onto the onboarding bridge, which nothing was writing — four
+  // candidates had a verified penny drop while all 304 bridge rows still read
+  // 'not_started'.
+  await syncBridgePennyDropStatus(db, candidateId, result.status, result.riskFlags);
+  // A joiner who is already an employee gets the verified account on their employee record now.
+  // Conversion copies it once; a verification landing after conversion used to wait for a
+  // manual Approve. Never fails the verification itself.
+  if (result.status === "verified") {
+    try {
+      const { copyVerifiedBankToEmployee } = await import("../payroll/bank-manual-review.service.js");
+      const copied = await copyVerifiedBankToEmployee(candidateId);
+      if (copied.status === "inserted") {
+        await logEvent(candidateId, "BANK_COPIED_TO_EMPLOYEE", { employee_id: copied.employeeId }, checkId, { actorType: "system" });
+      }
+    } catch (err) {
+      console.error(`[BGV] verified bank account not copied to employee for ${candidateId}:`, (err as Error).message);
+    }
+  }
+  // A completed identity check is the moment there is something new to
+  // reconcile across sources, so the cross-source name comparison runs here
+  // rather than waiting for an HR user to press it.
+  await reconcileNamesAfterVerification(candidateId);
+  return getBgvStatusForCandidate(candidateId);
+}
+
+/**
+ * Records a bank penny-drop outcome in the stores the rest of the system reads:
+ * candidate_bank_verification (what employee creation and the verified-bank copy read) and
+ * candidate_onboarding_bank_detail (the onboarding form's status). Shared by the verify button and
+ * the submit-time async BGV trigger -- the latter used to write only candidate_bgv_check, so a
+ * genuinely verified account (63555C, 2026-09-17) never reached the employee record and Ops
+ * Control Tower kept listing it as pending.
+ */
+export async function persistBankVerificationOutcome(
+  candidateId: string,
+  input: { accountNo?: string | null; ifscCode?: string | null; accountHolderName?: string | null; bankDetailId?: string | null },
+  result: { status: string; providerKey: string; providerReferenceId: string; matchedName?: string | null; matchScore?: number | null; raw?: unknown },
+): Promise<void> {
+  const { accountNo, ifscCode, accountHolderName } = input;
+  const bankDetailId = input.bankDetailId ?? null;
   await db.execute(
     `INSERT INTO candidate_bank_verification
        (id, candidate_id, bank_detail_id, account_no_last4, account_no_hash, ifsc_code, input_account_holder_name,
@@ -1227,47 +1316,6 @@ export async function verifyBankForCandidate(
       candidateId,
     ],
   );
-  // Only a real call is logged as one. This table is what the API cost report bills
-  // against, so recording a replay here would invent a charge that never happened.
-  if (!reusable) {
-    await db.execute(
-      `INSERT INTO candidate_bgv_api_request_log
-         (id, candidate_id, check_id, provider_key, endpoint_key, request_ref, request_payload_hash, response_status_code, response_payload, duration_ms, success_flag)
-       VALUES (?, ?, ?, ?, 'BANK_VERIFY', ?, ?, 200, ?, ?, ?)`,
-      [
-        randomUUID(),
-        candidateId,
-        checkId,
-        result.providerKey,
-        result.providerRequestId,
-        accountNo ? hashValue(`${accountNo}|${ifscCode}`) : null,
-        JSON.stringify(result.raw ?? result),
-        Date.now() - started,
-        result.status === "verified" ? 1 : 0,
-      ],
-    );
-  }
-  await logEvent(
-    candidateId,
-    "BANK_VERIFICATION_COMPLETED",
-    result,
-    checkId,
-    meta,
-  );
-  // Mirror onto the onboarding bridge, which nothing was writing — four
-  // candidates had a verified penny drop while all 304 bridge rows still read
-  // 'not_started'.
-  await syncBridgePennyDropStatus(
-    db,
-    candidateId,
-    result.status,
-    result.riskFlags,
-  );
-  // A completed identity check is the moment there is something new to
-  // reconcile across sources, so the cross-source name comparison runs here
-  // rather than waiting for an HR user to press it.
-  await reconcileNamesAfterVerification(candidateId);
-  return getBgvStatusForCandidate(candidateId);
 }
 
 export async function verifyUanByToken(

@@ -39,18 +39,16 @@ const VIEWER_ROLES = [
   "tq_head",
 ];
 
-router.get(
-  "/housing-premium-dashboard/overview",
-  requireRole(...VIEWER_ROLES),
-  h(async (req, res) => {
-    const data = await getHousingPremiumOverview(
-      String(req.query.from ?? ""),
-      String(req.query.to ?? ""),
-      req.query.agent ? String(req.query.agent) : undefined,
-    );
-    res.json({ success: true, data });
-  }),
-);
+router.get("/housing-premium-dashboard/overview", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  // fullCdr=true: explicit user request 2026-10-01 to see the whole month's real CDR figures on this live
+  // route too, not just in the MIS export -- accepting the documented 15-20s cost of a full-month Pre_cdr scan
+  // (see getHousingPremiumOverview's header) rather than waiting on the pre_cdr_daily_summary migration (449,
+  // unapplied). Drop the 4th argument once that migration is applied and the Overview reads from it.
+  const data = await getHousingPremiumOverview(
+    String(req.query.from ?? ""), String(req.query.to ?? ""), req.query.agent ? String(req.query.agent) : undefined, true,
+  );
+  res.json({ success: true, data });
+}));
 
 router.get(
   "/housing-premium-dashboard/day-wise",

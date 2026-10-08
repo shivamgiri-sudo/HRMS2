@@ -37,8 +37,10 @@ describe("GRN reverseConsumption() — journal reversal (Journal Task 5)", () =>
 
   it("calls journalService.reverse with the actor and the reversal reason, only when a live entry was found", () => {
     expect(service).toContain("if (liveEntry) {");
-    expect(service).toContain(
-      "await journalService.reverse(connection, String((liveEntry as any).id), actorUserId, trimmedReason);",
+    // Compared without whitespace / trailing commas: the call is wrapped one argument per line.
+    const compact = (s: string) => s.replace(/\s+/g, "").replace(/,(?=[)\]}])/g, "");
+    expect(compact(service)).toContain(
+      compact("await journalService.reverse(connection, String((liveEntry as any).id), actorUserId, trimmedReason);"),
     );
   });
 

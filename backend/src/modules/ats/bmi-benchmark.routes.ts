@@ -1,11 +1,13 @@
-import { Router } from "express";
-import { excludeEmployeeShapedCandidatesSql } from "./ats-reporting-scope.js";
-import { canonicalSourceSql, SOURCE_BMI_TYPE } from "./ats-vocabulary.js";
-import type { Request, Response } from "express";
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
+import { Router } from 'express';
+import { excludeEmployeeShapedCandidatesSql } from './ats-reporting-scope.js';
+import { canonicalSourceSql, SOURCE_BMI_TYPE } from './ats-vocabulary.js';
+import type { Request, Response } from 'express';
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { branchInScope, resolveAtsBranchScope, OUT_OF_BRANCH_MESSAGE } from './ats-branch-scope.js';
 
 export /**
  * ats_candidate holds 29,926 legacy EMPLOYEE records beside 7,760 genuine candidates. This
@@ -109,7 +111,18 @@ function buildRow(
 
 bmiBenchmarkRouter.get("/", async (req: Request, res: Response) => {
   try {
-    const branchId = (req.query.branch_id as string) || null;
+    let branchId = (req.query.branch_id as string) || null;
+
+    // Branch scoping (owner ruling 2026-10-01): hr / manager / branch_head are limited to their own branch.
+    // A requested branch_id (id or name) may only narrow that; with none requested the board is pinned to the
+    // caller's first branch. No resolvable branch => 403. Org-wide roles keep the all-branch board.
+    const bmiScope = await resolveAtsBranchScope((req as AuthenticatedRequest).authUser!.id);
+    if (!bmiScope.orgWide) {
+      if (branchId ? !branchInScope(bmiScope, branchId) : bmiScope.branchIds.length === 0) {
+        return res.status(403).json({ ok: false, error: OUT_OF_BRANCH_MESSAGE });
+      }
+      if (!branchId) branchId = bmiScope.branchIds[0];
+    }
 
     /**
      * applied_for_branch holds branch NAMES, not ids — verified on production: of the 361
@@ -977,8 +990,13 @@ bmiBenchmarkRouter.post("/manual", async (req: Request, res: Response) => {
         });
     }
 
-    const userId =
-      (req as Request & { user?: { id: string } }).user?.id ?? null;
+    // Owner ruling 2026-10-01: a manual input may only be written for a branch the caller holds.
+    const bmiScope = await resolveAtsBranchScope((req as AuthenticatedRequest).authUser!.id);
+    if (!bmiScope.orgWide && !branchInScope(bmiScope, branch_id)) {
+      return res.status(403).json({ ok: false, error: OUT_OF_BRANCH_MESSAGE });
+    }
+
+    const userId = (req as Request & { user?: { id: string } }).user?.id ?? null;
 
     await db.execute(
       `INSERT INTO bmi_manual_input (id, branch_id, period_month, metric_key, value, updated_by)

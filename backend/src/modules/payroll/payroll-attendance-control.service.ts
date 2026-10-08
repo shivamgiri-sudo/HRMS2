@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import { isEmployedOn } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
@@ -47,6 +48,12 @@ type ControlParams = {
   processId?: string;
   page?: number;
   limit?: number;
+  /**
+   * SERVER-resolved branch scope for the caller (an `e.`-aliased predicate), never from the
+   * browser. Absent / "1=1" for org-wide roles. branchId/processId above may only narrow it.
+   */
+  scopeSql?: string;
+  scopeParams?: unknown[];
 };
 
 const PAYROLL_ROLES = [
@@ -372,6 +379,10 @@ function employeeScope(alias = "e", params: ControlParams, dateExpr?: string) {
       ${alias}.active_status = 1
       OR (${alias}.date_of_leaving IS NOT NULL AND ${alias}.date_of_leaving >= ${dateExpr})
     )`);
+  }
+  if (params.scopeSql && params.scopeSql !== "1=1") {
+    clauses.push(`(${params.scopeSql})`);
+    values.push(...(params.scopeParams ?? []));
   }
   if (params.branchId) {
     clauses.push(`${alias}.branch_id = ?`);
@@ -905,6 +916,11 @@ async function repairMissingAdrFromApr(
       skipped += 1;
       continue;
     }
+    // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+    if (!(await isEmployedOn(parsed.employeeId, parsed.issueDate))) {
+      skipped += 1;
+      continue;
+    }
 
     const aprMinutes = Math.max(0, Math.round(Number(row.apr_minutes ?? 0)));
     const classification = classifyAprStatus(aprMinutes);
@@ -1028,6 +1044,11 @@ async function repairMissingAdrFromNcosec(
         Boolean(row.override_by) ||
         Boolean(row.regularization_id));
     if (protectedAdr) {
+      skipped += 1;
+      continue;
+    }
+    // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+    if (!(await isEmployedOn(parsed.employeeId, parsed.issueDate))) {
       skipped += 1;
       continue;
     }
@@ -1399,9 +1420,11 @@ export const payrollAttendanceControlService = {
       run: run
         ? {
             ...run,
-            attendance_snapshot_locked: Number(
-              run.attendance_snapshot_locked ?? 0,
-            ),
+            // Run-wide money / headcount totals span every branch: org-wide callers only.
+            ...(params.scopeSql && params.scopeSql !== "1=1"
+              ? { total_employees: null, total_gross: null, total_deductions: null, total_net: null }
+              : {}),
+            attendance_snapshot_locked: Number(run.attendance_snapshot_locked ?? 0),
           }
         : null,
       status: blockers > 0 ? "blocked" : warnings > 0 ? "warning" : "ready",
@@ -1637,6 +1660,9 @@ export const payrollAttendanceControlService = {
         skipped++;
         continue;
       }
+
+      // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+      if (!(await isEmployedOn(String(row.employee_id), String(row.session_date)))) { skipped++; continue; }
 
       const requestedStatus = String(row.requested_status ?? "present");
       const lwpValue =

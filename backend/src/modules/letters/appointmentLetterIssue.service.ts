@@ -332,6 +332,28 @@ export async function issueAppointmentLetter(params: {
   };
 }
 
+/**
+ * Auto-issue entry point for BGV-clear events. The kit-completion trigger only fires once, and
+ * an in-progress BGV is an overridable warning that blocks the unattended (non-forced) path, so
+ * a joiner whose BGV cleared after the kit was signed was never picked up. Called when
+ * candidate_bgv_report flips to 'clear'; the normal eligibility gate still decides. Never throws.
+ */
+export async function autoIssueAppointmentLetterForCandidate(candidateId: string): Promise<void> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? AND employee_id IS NOT NULL LIMIT 1`,
+      [candidateId],
+    );
+    const employeeId = (rows as RowDataPacket[])[0]?.employee_id;
+    if (!employeeId) return;
+    await issueAppointmentLetter({ employeeId: String(employeeId), actorUserId: "system" });
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    if (code === "already_issued" || code === "not_eligible" || code === "needs_confirmation") return; // "not yet"
+    console.warn("[appointment-letter] auto issue on BGV clear failed:", e instanceof Error ? e.message : e);
+  }
+}
+
 export async function revokeAppointmentLetter(params: {
   issueId: string;
   actorUserId: string;

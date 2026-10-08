@@ -25,17 +25,11 @@ import {
   type ShrinkageDetailKind,
 } from "./roster-analytics-detail.service.js";
 
-const ROLES = [
-  "super_admin",
-  "admin",
-  "hr",
-  "wfm",
-  "branch_head",
-  "operations_manager",
-  "ceo",
-  "coo",
-];
+const ROLES = ["super_admin", "admin", "hr", "wfm", "branch_head", "operations_manager", "ceo", "coo"];
+import { branchParamGuard, employeeParamGuard } from "./branch-scope.js";
 const router = Router();
+router.param("branchId", branchParamGuard());
+router.param("employeeId", employeeParamGuard());
 
 const str = (v: unknown): string | undefined =>
   typeof v === "string" && v.trim() ? v.trim() : undefined;

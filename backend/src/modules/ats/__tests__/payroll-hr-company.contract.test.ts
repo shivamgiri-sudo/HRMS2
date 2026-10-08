@@ -27,8 +27,8 @@
  * it would be a destructive migration for no gain — but nothing requires it.
  */
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(process.cwd(), "..");
@@ -37,7 +37,28 @@ const readRepo = (p: string) => readFileSync(resolve(repoRoot, p), "utf8");
 
 const routes = read("src/modules/ats/payroll-hr.routes.ts");
 const service = read("src/modules/ats/payroll-hr.service.ts");
-const page = readRepo("src/pages/NativePayrollHRValidation.tsx");
+
+/**
+ * src/pages/NativePayrollHRValidation.tsx — the page these checks used to read — was deleted
+ * by c8f57a092 as dead code (nothing routed to it). Reading it at module load made the WHOLE
+ * file fail with ENOENT, taking the backend assertions below down with it.
+ *
+ * The backend half of the contract is unchanged and still asserted. The frontend half is
+ * restated over every frontend source file instead of one page: whichever screen ends up
+ * posting to this API, none may call the routeless company endpoint or bring the unfillable
+ * selector back.
+ */
+const PAGE_PATH = "src/pages/NativePayrollHRValidation.tsx";
+function frontendSources(dir = resolve(repoRoot, "src"), out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const p = join(dir, entry);
+    if (statSync(p).isDirectory()) {
+      if (!/^(node_modules|__tests__)$/.test(entry) && !entry.startsWith("backup-")) frontendSources(p, out);
+    } else if (/\.(ts|tsx)$/.test(entry) && !/\.(test|spec)\.tsx?$/.test(entry)) out.push(p);
+  }
+  return out;
+}
+const frontend = frontendSources().map((file) => ({ file, src: readFileSync(file, "utf8") }));
 
 describe("payroll HR validation — submitting does not require a company", () => {
   it("company_id is optional in the schema", () => {
@@ -52,10 +73,7 @@ describe("payroll HR validation — submitting does not require a company", () =
     // The page spreads formData wholesale, so company_id: "" is always posted.
     // A plain .optional() would still reject "" — the preprocess is the point.
     expect(routes).toMatch(/const optionalUuid = z\.preprocess\(/);
-    expect(routes).toMatch(
-      /value === ''\s*\|\|\s*value === null\s*\?\s*undefined\s*:\s*value/,
-    );
-    expect(page).toContain("...formData");
+    expect(routes).toMatch(/value === ''\s*\|\|\s*value === null\s*\?\s*undefined\s*:\s*value/);
   });
 
   it("the insert stores NULL rather than an empty string", () => {
@@ -87,27 +105,29 @@ describe("payroll HR validation — reading a record does not join a missing tab
   });
 });
 
-describe("payroll HR validation — the page does not offer an unfillable field", () => {
-  it("does not call the routeless /api/org/companies", () => {
-    const calls = [...page.matchAll(/hrmsApi\.get\('([^']+)'\)/g)].map(
-      (m) => m[1],
-    );
-    expect(calls).not.toContain("/api/org/companies");
+describe("payroll HR validation — no screen offers an unfillable field", () => {
+  it("scans a real frontend tree — otherwise the checks below prove nothing", () => {
+    expect(frontend.length).toBeGreaterThan(100);
   });
 
-  it("renders no Company selector", () => {
-    expect(page).not.toMatch(/Company \*/);
-    expect(page).not.toMatch(/Select Company/);
+  it("nothing in the frontend calls the routeless /api/org/companies", () => {
+    const callers = frontend.filter(({ src }) => src.includes("/api/org/companies")).map(({ file }) => file);
+    expect(callers).toEqual([]);
   });
 
-  it("still loads the master lists that do have routes", () => {
-    for (const path of [
-      "/api/org/designations",
-      "/api/org/departments",
-      "/api/org/processes",
-      "/api/org/cost-centres",
-    ]) {
-      expect(page).toContain(path);
+  it("no screen posting a payroll HR validation renders a Company selector", () => {
+    const posters = frontend.filter(({ src }) => src.includes("/api/ats/payroll-hr/validate"));
+    for (const { file, src } of posters) {
+      expect(src, file).not.toMatch(/Company \*/);
+      expect(src, file).not.toMatch(/Select Company/);
     }
+  });
+
+  it("the deleted page has not come back half-wired", () => {
+    // If it is restored it must be restored whole: a lazy() import of a missing file breaks
+    // the build, and a present file with no importer is the dead page c8f57a092 removed.
+    const importers = frontend.filter(({ src }) => /NativePayrollHRValidation/.test(src)).map(({ file }) => file)
+      .filter((file) => !file.endsWith("NativePayrollHRValidation.tsx"));
+    expect(existsSync(resolve(repoRoot, PAGE_PATH))).toBe(importers.length > 0);
   });
 });

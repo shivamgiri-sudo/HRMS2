@@ -12,6 +12,13 @@ import {
   buildEmployeeScopeCondition,
 } from "../../shared/enterpriseScope.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import { evaluateRehire } from "./rehire/rehireEligibility.js";
+import { loadRehireFacts } from "./rehire/rehireFacts.js";
+import { isFormerReport } from "./rehire/rehireAccess.js";
+import { activateRejoin, RejoinBlockedError } from "./rehire/rejoinActivation.js";
+import { runRejoinFollowUps, type FollowUpResult } from "./rehire/rejoinFollowUps.js";
+import { realFollowUpDeps } from "./rehire/rejoinFollowUps.deps.js";
+import { notifyRejoinRequested, notifyRejoinDecided, notifyFollowUpAttention } from "./rehire/rejoinNotifications.js";
 
 export const employeeReactivationRouter = Router();
 
@@ -55,7 +62,9 @@ type ReactivationRow = {
 };
 
 // ── GET /reactivation/pending ─────────────────────────────────────────────────
-// Returns all requests pending action for the current user's role
+// Returns all requests pending action for the current user's role. 'branch_head_approved' is a legacy
+// status: the old two-step flow parked requests there for an HR confirmation that no longer exists, so
+// those requests are still waiting for the branch head's final decision.
 
 employeeReactivationRouter.get(
   "/reactivation/pending",
@@ -70,23 +79,19 @@ employeeReactivationRouter.get(
         return res.json({ success: true, data: [] });
       }
 
-      // branch_head previously saw every pending reactivation request company-wide — this
-      // handler's own prior comment admitted it ("branch heads see all for now"). Scoped via
-      // the same employee-scope mechanism (shared/enterpriseScope.ts) used across the rest of
-      // this delta-audit remediation (delta-audit 2026-08-14, P1). hr/admin/super_admin stay
-      // unrestricted (buildEmployeeScopeCondition's own admin/hr/super_admin/ceo bypass).
-      let scopeCondition: { sql: string; params: unknown[] } = {
-        sql: "1=1",
-        params: [],
-      };
-      if (isBranchHead && !isHR) {
-        const scope = await resolveUserBusinessScope(userId!);
-        scopeCondition = buildEmployeeScopeCondition(scope, {
-          employeeId: "e.id",
-          branchId: "e.branch_id",
-          processId: "e.process_id",
-        });
-      }
+    // branch_head previously saw every pending reactivation request company-wide — this
+    // handler's own prior comment admitted it ("branch heads see all for now"). Scoped via
+    // the same employee-scope mechanism (shared/enterpriseScope.ts) used across the rest of
+    // this delta-audit remediation (delta-audit 2026-08-14, P1). hr/admin/super_admin stay
+    // unrestricted (buildEmployeeScopeCondition's own admin/hr/super_admin/ceo bypass).
+    // Owner ruling 2026-10-01: hr is branch-scoped too, so the scope is applied to every caller
+    // (org-wide roles get 1=1 from buildEmployeeScopeCondition).
+    const scope = await resolveUserBusinessScope(userId!);
+    const scopeCondition = buildEmployeeScopeCondition(scope, {
+      employeeId: "e.id",
+      branchId: "e.branch_id",
+      processId: "e.process_id",
+    });
 
       const query = `
       SELECT
@@ -143,19 +148,23 @@ employeeReactivationRouter.get(
       const offset = (page - 1) * limit;
       const statusFilter = req.query.status ? String(req.query.status) : "";
 
-      let whereClause = "";
-      const params: any[] = [];
+    // Branch scoping (owner ruling 2026-10-01): hr only sees reactivations of its own branch.
+    const allScope = buildEmployeeScopeCondition(await resolveUserBusinessScope(req.authUser!.id), {
+      employeeId: "e.id",
+      branchId: "e.branch_id",
+      processId: "e.process_id",
+    });
+    let whereClause = `WHERE (${allScope.sql})`;
+    const params: any[] = [...allScope.params];
 
-      if (statusFilter) {
-        whereClause = "WHERE r.status = ?";
-        params.push(statusFilter);
-      }
+    if (statusFilter) {
+      whereClause += " AND r.status = ?";
+      params.push(statusFilter);
+    }
 
-      const countQuery = `SELECT COUNT(*) as total FROM employee_reactivation_requests r ${whereClause}`;
-      const [countRows] = await pool.execute<
-        (RowDataPacket & { total: number })[]
-      >(countQuery, params);
-      const total = countRows[0]?.total ?? 0;
+    const countQuery = `SELECT COUNT(*) as total FROM employee_reactivation_requests r JOIN employees e ON r.employee_id = e.id ${whereClause}`;
+    const [countRows] = await pool.execute<(RowDataPacket & { total: number })[]>(countQuery, params);
+    const total = countRows[0]?.total ?? 0;
 
       const dataQuery = `
       SELECT
@@ -286,44 +295,35 @@ const initiateSchema = z.object({
 
 employeeReactivationRouter.post(
   "/reactivation/initiate",
-  requireRole("hr", "admin", "super_admin"),
+  requireRole("hr", "admin", "super_admin", "manager"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const body = initiateSchema.parse(req.body);
       const initiatedBy = req.authUser!.id;
+      const role = req.authUser!.role;
 
-      // Check employee exists and is inactive
-      const [empRows] = await pool.execute<
-        (RowDataPacket & {
-          employment_status: string;
-          date_of_exit: string | null;
-          cost_centre_id: string | null;
-        })[]
-      >(
-        "SELECT employment_status, date_of_exit, cost_centre_id FROM employees WHERE id = ?",
+      if (!(await canViewEmployee(initiatedBy, body.employee_id))) {
+        return res.status(403).json({ success: false, message: "This employee is outside your branch / assigned scope" });
+      }
+
+      // A reporting manager may raise only for someone who reported to them.
+      if (role === "manager" && !(await isFormerReport(pool, body.employee_id, initiatedBy))) {
+        return res.status(403).json({ success: false, message: "You can raise a rejoin only for an employee who reported to you" });
+      }
+
+      const loaded = await loadRehireFacts(pool, body.employee_id, body.proposed_joining_date);
+      if (!loaded) return res.status(404).json({ success: false, message: "Employee not found" });
+
+      const [activeRows] = await pool.execute<RowDataPacket[]>(
+        "SELECT 1 FROM employees WHERE id = ? AND LOWER(employment_status) = 'active' AND active_status = 1",
         [body.employee_id],
       );
+      if (activeRows.length) return res.status(400).json({ success: false, message: "Employee is already active" });
 
-      if (!empRows.length) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Employee not found" });
-      }
-
-      const emp = empRows[0];
-
-      if (emp.employment_status === "Active") {
-        return res
-          .status(400)
-          .json({ success: false, message: "Employee is already active" });
-      }
-
-      // Check if there's already a pending request
       const [existingRows] = await pool.execute<RowDataPacket[]>(
         "SELECT id FROM employee_reactivation_requests WHERE employee_id = ? AND status IN ('pending', 'branch_head_approved')",
         [body.employee_id],
       );
-
       if (existingRows.length > 0) {
         return res
           .status(400)
@@ -334,66 +334,48 @@ employeeReactivationRouter.post(
           });
       }
 
-      // Calculate gap days
-      const exitDate = emp.date_of_exit ? new Date(emp.date_of_exit) : null;
-      const proposedDate = new Date(body.proposed_joining_date);
-      const gapDays = exitDate
-        ? Math.floor(
-            (proposedDate.getTime() - exitDate.getTime()) /
-              (1000 * 60 * 60 * 24),
-          )
-        : 0;
-
-      // Reactivation only allowed within 30 days
-      // Beyond 30 days = fresh onboarding through ATS required
-      if (gapDays > 30) {
+      const verdict = evaluateRehire(loaded.facts);
+      if (verdict.status === "blocked") {
         return res.status(400).json({
           success: false,
-          message:
-            "Gap exceeds 30 days. Employee must complete fresh onboarding through ATS with new documentation and background verification.",
-          reason: "REQUIRES_FRESH_ONBOARDING",
+          message: verdict.reasons.find((r) => r.severity === "blocked")?.message ?? "Rejoin is not allowed",
+          ...(verdict.requiresFreshOnboarding ? { reason: "REQUIRES_FRESH_ONBOARDING" } : {}),
+          eligibility: verdict,
         });
       }
 
-      // Reactivation is always to same branch/process/cost centre
-      const sameCostCentre = 1;
+      await pool.execute<ResultSetHeader>(
+        `INSERT INTO employee_reactivation_requests (
+           employee_id, old_employment_status, proposed_joining_date, reinstatement_reason,
+           gap_days, same_cost_centre, ff_already_paid, status, exit_request_id, initiated_by,
+           raised_by_role, eligibility_status, eligibility_snapshot
+         ) VALUES (?, ?, ?, ?, ?, 1, ?, 'pending', ?, ?, ?, ?, ?)`,
+        [
+          body.employee_id,
+          loaded.facts.legacyStatusText ?? "Inactive",
+          body.proposed_joining_date,
+          body.reinstatement_reason.trim(),
+          loaded.facts.gapDays,
+          loaded.ffAlreadyPaid ? 1 : 0,
+          loaded.exitRequestId,
+          initiatedBy,
+          role,
+          verdict.status,
+          JSON.stringify(verdict),
+        ],
+      );
 
-      // Check if F&F was already paid (placeholder logic - adjust based on your exit schema)
-      const [ffRows] = await pool.execute<
-        (RowDataPacket & { ff_paid: number })[]
-      >(
-        "SELECT IF(ff_paid_at IS NOT NULL, 1, 0) as ff_paid FROM full_final_calculation WHERE employee_id = ? ORDER BY created_at DESC LIMIT 1",
+      // The primary key is CHAR(36) DEFAULT (UUID()), so result.insertId is 0: read the real id back.
+      const [idRows] = await pool.execute<RowDataPacket[]>(
+        `SELECT id FROM employee_reactivation_requests WHERE employee_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1`,
         [body.employee_id],
       );
-      const ffAlreadyPaid = ffRows.length > 0 ? ffRows[0].ff_paid : 0;
+      const requestId = idRows?.[0]?.id ? String(idRows[0].id) : undefined;
+      if (requestId) {
+        try { await notifyRejoinRequested(requestId); } catch (e) { console.error("[Reactivation] notify failed:", e); }
+      }
 
-      // Insert request
-      const insertQuery = `
-        INSERT INTO employee_reactivation_requests (
-          employee_id, old_employment_status, proposed_joining_date, reinstatement_reason,
-          gap_days, same_cost_centre, ff_already_paid, status,
-          initiated_by, initiated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW())
-      `;
-
-      const [result] = await pool.execute<ResultSetHeader>(insertQuery, [
-        body.employee_id,
-        emp.employment_status,
-        body.proposed_joining_date,
-        body.reinstatement_reason.trim(),
-        gapDays,
-        sameCostCentre,
-        ffAlreadyPaid,
-        initiatedBy,
-      ]);
-
-      res
-        .status(201)
-        .json({
-          success: true,
-          id: result.insertId,
-          message: "Reactivation request created successfully",
-        });
+      res.status(201).json({ success: true, id: requestId, eligibility: verdict, message: "Rejoin request created" });
     } catch (err: any) {
       if (err.name === "ZodError") {
         return res
@@ -421,164 +403,111 @@ employeeReactivationRouter.post(
 const branchActionSchema = z.object({
   action: z.enum(["approved", "rejected"]),
   remarks: z.string().min(5),
+  // Required (true) and remarks >= 20 chars when the leaver absconded.
+  absconding_acknowledged: z.boolean().optional(),
 });
 
 employeeReactivationRouter.post(
   "/reactivation/:id/branch-action",
-  requireRole("branch_head", "hr", "admin", "super_admin"),
+  requireRole("branch_head"),
   async (req: AuthenticatedRequest, res) => {
     try {
       const { id } = req.params;
       const body = branchActionSchema.parse(req.body);
       const actionedBy = req.authUser!.id;
 
-      // Fetch current request
-      const [rows] = await pool.execute<(ReactivationRow & RowDataPacket)[]>(
-        "SELECT * FROM employee_reactivation_requests WHERE id = ?",
-        [id],
-      );
-
-      if (!rows.length) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Request not found" });
-      }
-
-      const request = rows[0];
-
-      // branch_head previously had no scope check at all here and could approve/reject any
-      // employee's reactivation in any branch, simply by supplying its :id (delta-audit
-      // 2026-08-14, P1). hr/admin/super_admin stay unrestricted, matching every other role
-      // in this module and canViewEmployee's own admin/hr/super_admin/ceo bypass.
-      if (!(await canViewEmployee(actionedBy, String(request.employee_id)))) {
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message: "This reactivation request is not in your assigned scope",
-          });
-      }
-
-      if (request.status !== "pending") {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Request is not pending branch head action",
-          });
-      }
-
-      const newStatus =
-        body.action === "approved" ? "branch_head_approved" : "rejected";
-
-      await pool.execute(
-        `UPDATE employee_reactivation_requests
-         SET status = ?, branch_head_actioned_by = ?, branch_head_actioned_at = NOW(), branch_head_remarks = ?
-         WHERE id = ?`,
-        [newStatus, actionedBy, body.remarks.trim(), id],
-      );
-
-      res.json({
-        success: true,
-        message: `Request ${body.action} by branch head`,
-      });
-    } catch (err: any) {
-      if (err.name === "ZodError") {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Invalid input",
-            errors: err.errors,
-          });
-      }
-      console.error("[Reactivation] Branch action failed:", err);
-      res
-        .status(500)
-        .json({
-          success: false,
-          message: err.message ?? "Failed to process action",
-        });
-    }
-  },
-);
-
-// ── POST /reactivation/:id/hr-action ──────────────────────────────────────────
-// HR final action: confirmed (reactivates employee) or rejected
-
-const hrActionSchema = z.object({
-  action: z.enum(["confirmed", "rejected"]),
-  remarks: z.string().min(5),
-});
-
-employeeReactivationRouter.post(
-  "/reactivation/:id/hr-action",
-  requireRole("hr", "admin", "super_admin"),
-  async (req: AuthenticatedRequest, res) => {
-    try {
-      const { id } = req.params;
-      const body = hrActionSchema.parse(req.body);
-      const actionedBy = req.authUser!.id;
-
       const conn = await pool.getConnection();
       try {
         await conn.beginTransaction();
-
-        // Fetch request
         const [rows] = await conn.execute<(ReactivationRow & RowDataPacket)[]>(
           "SELECT * FROM employee_reactivation_requests WHERE id = ? FOR UPDATE",
           [id],
         );
-
         if (!rows.length) {
           await conn.rollback();
           return res
             .status(404)
             .json({ success: false, message: "Request not found" });
         }
-
         const request = rows[0];
 
-        if (request.status !== "branch_head_approved") {
+        if (!(await canViewEmployee(actionedBy, String(request.employee_id)))) {
           await conn.rollback();
-          return res
-            .status(400)
-            .json({
-              success: false,
-              message: "Request is not pending HR final action",
-            });
+          return res.status(403).json({ success: false, message: "This reactivation request is not in your assigned scope" });
+        }
+        // 'branch_head_approved' rows were left by the old flow at the removed HR step: the branch head
+        // finishes them here, through the same eligibility-checked activation.
+        if (request.status !== "pending" && request.status !== "branch_head_approved") {
+          await conn.rollback();
+          return res.status(400).json({ success: false, message: "Request is not pending branch head action" });
         }
 
-        const newStatus = body.action === "confirmed" ? "approved" : "rejected";
+        // mysql2 returns a JSON column as an object, so stringify before searching it.
+        const isAbsconding = JSON.stringify((request as { eligibility_snapshot?: unknown }).eligibility_snapshot ?? {}).includes('"ABSCONDING"');
+        if (body.action === "approved" && isAbsconding) {
+          if (body.absconding_acknowledged !== true || body.remarks.trim().length < 20) {
+            await conn.rollback();
+            return res.status(400).json({ success: false, message: "This employee absconded: tick the acknowledgement and give remarks of at least 20 characters" });
+          }
+        }
 
         await conn.execute(
           `UPDATE employee_reactivation_requests
-           SET status = ?, hr_final_actioned_by = ?, hr_final_actioned_at = NOW(), hr_final_remarks = ?
-           WHERE id = ?`,
-          [newStatus, actionedBy, body.remarks.trim(), id],
+              SET status = ?, absconding_acknowledged = ?,
+                  branch_head_actioned_by = ?, branch_head_actioned_at = NOW(), branch_head_remarks = ?
+            WHERE id = ?`,
+          [body.action === "approved" ? "approved" : "rejected", body.absconding_acknowledged === true ? 1 : 0, actionedBy, body.remarks.trim(), id],
         );
 
-        // If confirmed, reactivate the employee (same employee code, same placement)
-        if (body.action === "confirmed") {
-          await conn.execute(
-            `UPDATE employees
-             SET employment_status = 'Active',
-                 active_status = 1,
-                 date_of_exit = NULL,
-                 date_of_joining = ?
-             WHERE id = ?`,
-            [request.proposed_joining_date, request.employee_id],
+        if (body.action === "approved") {
+          const verdict = await activateRejoin(
+            conn,
+            { id: request.id, employee_id: request.employee_id, proposed_joining_date: request.proposed_joining_date, absconding_acknowledged: body.absconding_acknowledged === true ? 1 : 0 },
+            actionedBy,
+            body.remarks.trim(),
           );
+          // The 20-character rule above reads the snapshot stored when the request was raised, which requests from
+          // the old flow do not have. The live verdict is the authority, so enforce it here too: throwing rolls the
+          // whole activation back (the catch below does the rollback).
+          if (verdict.requiresAbscondingAck && body.remarks.trim().length < 20) {
+            throw new RejoinBlockedError(verdict, "This employee absconded: give remarks of at least 20 characters");
+          }
         }
 
         await conn.commit();
 
-        res.json({
+        // After the commit, never inside the transaction: the follow-ups use the pool, and their failure
+        // must not undo an approval that is already durable.
+        let followUps: FollowUpResult[] = [];
+        if (body.action === "approved") {
+          const rawDate: unknown = request.proposed_joining_date;
+          const rejoinDate = rawDate instanceof Date ? rawDate.toISOString().slice(0, 10) : String(rawDate).slice(0, 10);
+          try {
+            followUps = await runRejoinFollowUps(pool, realFollowUpDeps, {
+              requestId: String(request.id),
+              employeeId: String(request.employee_id),
+              approverId: actionedBy,
+              rejoinDate,
+            });
+          } catch (e) {
+            console.error("[Reactivation] follow-ups failed after approval:", e);
+          }
+        }
+
+        // Best effort, after the commit and the follow-ups: a notification problem never changes the result.
+        try {
+          await notifyRejoinDecided(String(request.id), body.action === "approved" ? "approved" : "rejected");
+          if (body.action === "approved" && followUps.some((f) => f.ok === false)) {
+            await notifyFollowUpAttention(String(request.id), followUps);
+          }
+        } catch (e) {
+          console.error("[Reactivation] notify failed:", e);
+        }
+
+        return res.json({
           success: true,
-          message:
-            body.action === "confirmed"
-              ? "Employee reactivated successfully"
-              : "Request rejected",
+          message: body.action === "approved" ? "Rejoin approved; employee is active again" : "Rejoin request rejected",
+          followUps,
         });
       } catch (err) {
         await conn.rollback();
@@ -596,13 +525,25 @@ employeeReactivationRouter.post(
             errors: err.errors,
           });
       }
-      console.error("[Reactivation] HR action failed:", err);
-      res
-        .status(500)
-        .json({
-          success: false,
-          message: err.message ?? "Failed to process action",
-        });
+      if (err instanceof RejoinBlockedError) {
+        return res.status(400).json({ success: false, message: err.message, eligibility: err.verdict });
+      }
+      console.error("[Reactivation] Branch action failed:", err);
+      res.status(500).json({ success: false, message: err.message ?? "Failed to process action" });
     }
+  },
+);
+
+// ── POST /reactivation/:id/hr-action ──────────────────────────────────────────
+// Removed: the branch head's approval now activates the employee.
+
+employeeReactivationRouter.post(
+  "/reactivation/:id/hr-action",
+  requireRole("hr", "admin", "super_admin"),
+  (_req, res) => {
+    res.status(410).json({
+      success: false,
+      message: "HR confirmation was removed. The branch head's approval now activates the employee.",
+    });
   },
 );

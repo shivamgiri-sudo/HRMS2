@@ -37,6 +37,12 @@ describe("parseCallDate", () => {
 describe("headers", () => {
   it("names every column the template asks for", () => {
     expect(CLOVIA_FEEDBACK_HEADERS).toContain("Unique");
-    expect(CLOVIA_FEEDBACK_HEADERS).toContain("CSAT_DSAT");
+    // 65a8537f0 corrected the column names to the real export's: the rating column is
+    // printed "C-SAT/D-SAT", not the "CSAT_DSAT" the first draft guessed.
+    expect(CLOVIA_FEEDBACK_HEADERS).toContain("C-SAT/D-SAT");
+    expect(CLOVIA_FEEDBACK_HEADERS).not.toContain("CSAT_DSAT");
+    expect([...CLOVIA_FEEDBACK_HEADERS]).toEqual([
+      "Unique", "Call Date", "Date", "Advisor Id", "Phone Number", "Language", "Option", "C-SAT/D-SAT",
+    ]);
   });
 });

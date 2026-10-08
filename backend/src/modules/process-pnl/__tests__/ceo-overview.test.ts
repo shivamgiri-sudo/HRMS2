@@ -77,6 +77,9 @@ function mockDb(f: Fixture) {
     if (q.includes("COUNT(*) AS line_count")) return [f.billing ?? [], []];
     if (q.includes("billing_invoice_particular_snapshot"))
       return [f.revenue ?? [], []];
+    // The accrual read carries the "not covered by a run" predicate, which mentions salary_prep_line;
+    // with no accrual fixture it is empty (withRunningSalary below answers it when there is one).
+    if (q.includes("FROM pnl_running_salary_snapshot")) return [[], []];
     if (q.includes("salary_prep_line") && q.includes("zero_paid"))
       return [[{ zero_paid: 0 }], []];
     if (q.includes("salary_prep_line")) return [f.people ?? [], []];
@@ -1160,6 +1163,9 @@ describe("accrued running-salary fallback — parity with Live P&L's readPayroll
     execute.mockImplementation(async (sql: string, params?: unknown[]) => {
       const q = String(sql);
       if (q.includes("FROM pnl_running_salary_snapshot")) {
+        // The fixture's posted payroll is a company-wide run, which covers every employee: the
+        // accrual predicate (pnl-payroll-coverage.ts) then leaves no snapshot row.
+        if (f.people?.length) return [[], []];
         return [
           running.map((r) => ({
             branch_id: r.branch_id,

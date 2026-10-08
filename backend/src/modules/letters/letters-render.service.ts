@@ -163,34 +163,69 @@ function letterHeader(logoUrl: string, d?: Record<string, string>): string {
   </div>`;
 }
 
-function expLetterHead(logoUrl: string, d?: Record<string, string>): string {
-  // Experience letter uses a different header with two columns and a rule underneath
-  return `<table class="exp-header-table" style="margin-bottom:2mm">
-    <tr>
-      <td style="width:65%;vertical-align:top">
-        <strong style="font-size:13pt">Mas Callnet India Pvt. Ltd.</strong><br>
-        CIN No. : U74899DL1990PTC038798<br>
-        Registered Office : 102/C-1, Kanchan House, Karampura Commercial Complex,<br>
-        New Delhi-110015<br>
-        Tel . : 011-91-61105550 &nbsp; E-mail : care@teammas.in &nbsp; Web : www.teammas.in
-        ${
-          (d?.branch_address ?? "").trim()
-            ? `<br><br><strong>Issuing Branch${(d?.branch_name ?? "").trim() ? ` : ${(d?.branch_name ?? "").trim()}` : ""}</strong><br>${(
-                d?.branch_address ?? ""
-              )
-                .split("\n")
-                .map((l) => l.trim())
-                .filter(Boolean)
-                .join("<br>")}`
-            : ""
-        }
-      </td>
-      <td style="width:35%;text-align:right;vertical-align:top">
-        <img src="${logoUrl}" alt="MAS Logo" style="width:60px;height:60px;object-fit:contain" />
-      </td>
-    </tr>
-  </table>
-  <hr style="border:none;border-top:1.5px solid #000;margin-bottom:6mm">`;
+/**
+ * The standard letter frame, identical for every letter that is not a table-driven statement:
+ * MAS header with logo and issuing branch, "To," block with employee code, dated, "Subject :" line,
+ * salutation, body, signature block, branch footer. This is the appointment letter's layout, so
+ * increment, promotion and experience letters no longer drift from it (they each had their own header,
+ * a hardcoded "Okaya Center" address and a hardcoded signatory name).
+ */
+function standardLetter(o: {
+  docTitle: string;
+  subject: string;
+  d: Record<string, string>;
+  logoUrl: string;
+  body: string;
+  /** "employee" prints To, <name>, EMP Code and "Dear <name>"; "whom" prints "To Whomsoever it May Concern". */
+  addressee?: "employee" | "whom";
+  closing?: string;
+}): string {
+  const { d } = o;
+  const whom = o.addressee === "whom";
+  const toBlock = whom
+    ? ""
+    : `<div class="to-block">
+      <p>To,</p>
+      <p class="name" style="margin-top:3mm">${d.full_name || ""}</p>
+      <p class="name">EMP Code - ${d.employee_code || ""}</p>
+    </div>`;
+  const salutation = whom
+    ? `<p class="dear">To Whomsoever it May Concern</p>`
+    : `<p class="dear">Dear ${d.full_name || ""},</p>`;
+  const signer = (d.hr_name || "").trim()
+    ? `<p style="margin-top:6mm">${d.hr_name}</p>${(d.hr_designation || "").trim() ? `<p>${d.hr_designation}</p>` : ""}`
+    : `<p style="margin-top:6mm">Authorized Signatory</p>`;
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+  <title>${o.docTitle} – ${d.full_name || ""}</title>
+  ${pageStyles()}
+  </head><body>
+  <div class="page">
+    ${letterHeader(o.logoUrl, d)}
+    ${toBlock}
+    <p class="date-line">Date : ${d.issued_date || ""}</p>
+    <div class="subject-line">
+      <span class="subject-label">Subject :</span>
+      <span class="subject-value">${o.subject}</span>
+    </div>
+    ${salutation}
+${o.body}
+    <div class="sign-block">
+      <p>${o.closing || "Sincerely,"}</p>
+      <p style="margin-top:6mm">For Mas Callnet India Pvt. Ltd.</p>
+      ${signer}
+    </div>
+    ${footer(d)}
+  </div>
+  </body></html>`;
+}
+
+/** Financial year (Apr-Mar) of a date as "2026-27", and the one before it. Null when the date is unusable. */
+function financialYears(dateText: string | undefined): { fy: string; prev: string } | null {
+  const t = new Date(String(dateText || ""));
+  if (Number.isNaN(t.getTime())) return null;
+  const start = t.getMonth() >= 3 ? t.getFullYear() : t.getFullYear() - 1;
+  const label = (y: number) => `${y}-${String((y + 1) % 100).padStart(2, "0")}`;
+  return { fy: label(start), prev: label(start - 1) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -442,41 +477,26 @@ export function renderSalarySlip(
 // 3. INCREMENT LETTER
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function renderIncrementLetter(
-  d: Record<string, string>,
-  logoUrl: string,
-): string {
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-  <title>Increment Letter – ${d.full_name}</title>
-  ${pageStyles()}
-  </head><body>
-  <div class="page">
-    ${letterHeader(logoUrl, d)}
-
-    <div class="to-block">
-      <p class="date-line" style="margin-bottom:3mm">Date - ${d.issued_date || ""}</p>
-      <p class="name">${d.full_name || ""}</p>
-      <p>${d.designation || ""}</p>
-      <p>Okaya Center, Noida Sector - 62</p>
-    </div>
-
-    <div style="margin:6mm 0 2mm">
-      <p style="font-size:10pt;color:#555">Compensation Review: ${d.review_year || "2026-2027"}</p>
-      <p class="subject-value" style="font-size:13pt;margin-top:1mm">Increment Letter</p>
-    </div>
-
-    <p class="dear">Dear ${d.full_name || ""},</p>
-    <p class="body-para">We are happy to inform you that we have completed the Annual Performance Evaluation for the year ${d.eval_year || "2025-2026"} and the management has been pleased to observe the sincerity, dedication, and hard work you have consistently demonstrated in your role.</p>
-    <p class="body-para">In recognition of your efforts and performance, management has decided to revise your Total Remuneration (Total cost to Company) TCTC to Rs ${d.revised_ctc || "_________"}/-  per year which is inclusive of all allowances, benefits, perks and perquisites. The revised TCTC shall be with effect from ${d.effective_date || "Apr 1, 2026"}.</p>
-    <p class="body-para">Your Total Cost To Company for the Financial Year ${d.financial_year || "2025-26"} is as follows:</p>
+export function renderIncrementLetter(d: Record<string, string>, logoUrl: string): string {
+  // The year labels follow the approved effective date instead of a hardcoded 2025-26 / 2026-27.
+  const yrs = financialYears(d.effective_date);
+  const fy = d.financial_year || yrs?.fy || "";
+  const evalYear = d.eval_year || yrs?.prev || "";
+  const variableRow = (d.variable_pay || "").trim()
+    ? `<tr><td>Performance Linked Variable Pay</td><td>${d.variable_pay}</td></tr>`
+    : "";
+  const body = `    <p style="font-size:10pt;color:#555;margin-bottom:3mm">Compensation Review: ${d.review_year || fy}</p>
+    <p class="body-para">We are happy to inform you that we have completed the Annual Performance Evaluation for the year ${evalYear} and the management has been pleased to observe the sincerity, dedication, and hard work you have consistently demonstrated in your role.</p>
+    <p class="body-para">In recognition of your efforts and performance, management has decided to revise your Total Remuneration (Total cost to Company) TCTC to Rs ${d.revised_ctc || "_________"}/-  per year which is inclusive of all allowances, benefits, perks and perquisites. The revised TCTC shall be with effect from ${d.effective_date || ""}.</p>
+    <p class="body-para">Your Total Cost To Company for the Financial Year ${fy} is as follows:</p>
 
     <table class="ctc-table">
       <thead>
         <tr><th>Component</th><th>Amount (in Rs.)</th></tr>
       </thead>
       <tbody>
-        <tr><td>Revised Fixed CTC WEF ${d.effective_date || "1 Apr 26"}</td><td>${d.revised_fixed_ctc || ""}</td></tr>
-        <tr><td>Performance Linked Variable Pay</td><td>${d.variable_pay || ""}</td></tr>
+        <tr><td>Revised Fixed CTC WEF ${d.effective_date || ""}</td><td>${d.revised_fixed_ctc || ""}</td></tr>
+        ${variableRow}
         <tr><td><strong>Total Cost To Company (TCTC)</strong></td><td><strong>${d.total_tctc || ""}</strong></td></tr>
       </tbody>
     </table>
@@ -484,90 +504,38 @@ export function renderIncrementLetter(
     <p class="body-para">We look forward to your continued success and outstanding contributions to the company.</p>
     <p class="body-para">If you have any questions or require further clarification, please do not hesitate to reach out.</p>
     <p class="body-para">Please note that the information shared in this letter is confidential and any disclosure of the same shall be considered as a gross violation of the company's ethics.</p>
-
-    <div class="sign-block">
-      <p>Best Regards,</p>
-      <p style="margin-top:8mm">${d.hr_name || "Sheelu Verma"}</p>
-      <p>${d.hr_designation || "Sr. HR"}</p>
-    </div>
-    ${footer(d)}
-  </div>
-  </body></html>`;
+`;
+  return standardLetter({ docTitle: "Increment Letter", subject: "INCREMENT LETTER", d, logoUrl, body });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. PROMOTION LETTER
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function renderPromotionLetter(
-  d: Record<string, string>,
-  logoUrl: string,
-): string {
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-  <title>Promotion Letter – ${d.full_name}</title>
-  ${pageStyles()}
-  </head><body>
-  <div class="page">
-    ${letterHeader(logoUrl, d)}
-
-    <div class="to-block">
-      <p class="date-line" style="margin-bottom:3mm">Date - ${d.issued_date || ""}</p>
-      <p class="name">${(d.full_name || "").toUpperCase()}</p>
-      <p>Okaya Center, Noida Sector - 62</p>
-    </div>
-
-    <div style="margin:6mm 0 2mm">
-      <p class="subject-value" style="font-size:13pt">Promotion Letter</p>
-    </div>
-
-    <p class="dear">Dear ${(d.full_name || "").toUpperCase()},</p>
-    <p class="body-para">We are happy to inform you that we have completed the Annual Performance Evaluation for the year ${d.eval_year || "2025-2026"} and the management has been pleased to observe the sincerity, dedication, and hard work you have consistently demonstrated in your role.</p>
+export function renderPromotionLetter(d: Record<string, string>, logoUrl: string): string {
+  const yrs = financialYears(d.effective_date);
+  const evalYear = d.eval_year || yrs?.prev || "";
+  const body = `    <p class="body-para">We are happy to inform you that we have completed the Annual Performance Evaluation for the year ${evalYear} and the management has been pleased to observe the sincerity, dedication, and hard work you have consistently demonstrated in your role.</p>
     <p class="body-para">In recognition of your efforts and performance, management has decided to promote you to the position of ${d.new_designation || ""} in the ${d.new_department || ""} Department from ${d.effective_date || ""}. In your new role you will have increased responsibilities and expectations, details will be shared by your manager and HR.</p>
     <p class="body-para">Once again, congratulations on your well-deserved promotion! We look forward to your continued success and outstanding contributions to the company.</p>
     <p class="body-para">If you have any questions or require further clarification regarding your new role, please do not hesitate to reach out.</p>
     <p class="body-para">Please note that the information shared in this letter is confidential and any disclosure of the same shall be considered as a gross violation of the company's ethics.</p>
-
-    <div class="sign-block">
-      <p>Best Regards,</p>
-      <p style="margin-top:8mm">${d.hr_name || "Sheelu Verma"}</p>
-      <p>${d.hr_designation || "Sr. HR"}</p>
-    </div>
-    ${footer(d)}
-  </div>
-  </body></html>`;
+`;
+  return standardLetter({ docTitle: "Promotion Letter", subject: "PROMOTION LETTER", d, logoUrl, body });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 5. EXPERIENCE / RELIEVING LETTER
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function renderExperienceLetter(
-  d: Record<string, string>,
-  logoUrl: string,
-): string {
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-  <title>Experience Letter – ${d.full_name}</title>
-  ${pageStyles()}
-  </head><body>
-  <div class="page">
-    ${expLetterHead(logoUrl, d)}
-
-    <p style="margin-bottom:4mm"><strong>Date ${d.issued_date || ""}</strong></p>
-    <p class="section-heading" style="margin-bottom:4mm">To Whomsoever it May Concern</p>
-    <p class="body-para">This is to certify that Mr./Ms. <strong>${d.full_name || ""}</strong> (Emp Code-${d.employee_code || ""}) has worked with Mas Callnet India Pvt. Ltd. from <strong>${d.date_of_joining || ""}</strong> to <strong>${d.date_of_exit || ""}</strong>.</p>
+export function renderExperienceLetter(d: Record<string, string>, logoUrl: string): string {
+  const body = `    <p class="body-para">This is to certify that Mr./Ms. <strong>${d.full_name || ""}</strong> (Emp Code-${d.employee_code || ""}) has worked with Mas Callnet India Pvt. Ltd. from <strong>${d.date_of_joining || ""}</strong> to <strong>${d.date_of_exit || ""}</strong>.</p>
     <p class="body-para"><strong>${d.full_name || ""}</strong> has been relieved from the duties as a Designation- <strong>${(d.designation || "").toUpperCase()}</strong>, Department- <strong>${(d.department || "").toUpperCase()}</strong></p>
     <p class="body-para">During the tenure the employee was sincere and dedicated towards the role and responsibilities. As per our records and knowledge ${d.full_name || ""} has not been involved in any untoward conduct resulting towards any controversy in the organization.</p>
     <p class="body-para">We have no objection to ${d.full_name || ""} joining any other organization.</p>
     <p class="body-para">We wish ${d.full_name || ""} the best in all future endeavors.</p>
-
-    <div class="sign-block">
-      <p>Yours Sincerely, ${d.hr_name || "Sheelu Verma"}</p>
-      <p style="margin-top:4mm">Authorized Signatory</p>
-      <p>Human Resource</p>
-    </div>
-    ${footer(d)}
-  </div>
-  </body></html>`;
+`;
+  return standardLetter({ docTitle: "Experience Letter", subject: "EXPERIENCE CERTIFICATE", d, logoUrl, body, addressee: "whom", closing: "Yours Sincerely," });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

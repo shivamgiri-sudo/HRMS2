@@ -3,6 +3,29 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
+import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
+import { employeeRowScope, resolveCallerBranchScope } from "../org/branchScope.js";
+
+/**
+ * Branch scoping (owner ruling 2026-10-01): the security centre admitted hr / it / security with no branch
+ * filter at all. Org-wide roles (admin, ceo ...) and the DPO (company-wide compliance role, as in the DPDP
+ * screens) still see every event; everybody else sees only events whose actor or target employee is inside
+ * their own branch / assigned scope. Events with no resolvable employee are hidden from scoped callers.
+ */
+export async function securityEventScope(user: { id: string }): Promise<{ sql: string; params: unknown[]; scoped: boolean; userSql: string; userParams: unknown[] }> {
+  const caller = await resolveCallerBranchScope(user);
+  const roles = (await resolveUserBusinessScope(user)).roles;
+  if (caller.orgWide || roles.includes("dpo")) return { sql: "1=1", params: [], scoped: false, userSql: "1=1", userParams: [] };
+  const emp = await employeeRowScope(user, "e");
+  const sub = `SELECT e.%COL% FROM employees e WHERE ${emp.sql}`;
+  return {
+    sql: `(actor_user_id IN (${sub.replace("%COL%", "user_id")}) OR target_employee_id IN (${sub.replace("%COL%", "id")}) OR actor_employee_id IN (${sub.replace("%COL%", "id")}))`,
+    params: [...emp.params, ...emp.params, ...emp.params],
+    scoped: true,
+    userSql: `id IN (${sub.replace("%COL%", "user_id")})`,
+    userParams: [...emp.params],
+  };
+}
 
 export const securityCenterRouter = Router();
 securityCenterRouter.use(requireAuth);
@@ -56,7 +79,7 @@ function limitParam(value: unknown) {
   return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 1000) : 100;
 }
 
-async function readCounts() {
+async function readCounts(scope?: Awaited<ReturnType<typeof securityEventScope>>) {
   await ensureSecurityTables();
   const [todayRows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -68,90 +91,63 @@ async function readCounts() {
        SUM(CASE WHEN event_type = 'SENSITIVE_VIEW' THEN 1 ELSE 0 END) AS sensitive_views_today,
        SUM(CASE WHEN severity IN ('high','critical') THEN 1 ELSE 0 END) AS high_risk_today
      FROM security_audit_event
-     WHERE DATE(created_at) = CURDATE()`,
+     WHERE DATE(created_at) = CURDATE() AND ${scope?.sql ?? '1=1'}`,
+    scope?.params ?? []
   );
   const [userRows] = await db
     .execute<RowDataPacket[]>(
       `SELECT
        SUM(CASE WHEN active_status = 1 THEN 1 ELSE 0 END) AS active_users,
        SUM(CASE WHEN active_status = 0 THEN 1 ELSE 0 END) AS inactive_users
-     FROM auth_user`,
-    )
-    .catch(async () => [[{ active_users: 0, inactive_users: 0 }]] as any);
+     FROM auth_user WHERE ${scope?.userSql ?? '1=1'}`,
+    scope?.userParams ?? []
+  ).catch(async () => [[{ active_users: 0, inactive_users: 0 }]] as any);
   return { ...(todayRows[0] ?? {}), ...(userRows[0] ?? {}) };
 }
 
-securityCenterRouter.get(
-  "/summary",
-  securityRoles,
-  h(async (_req, res) => {
-    const counts = await readCounts();
-    const highRisk = Number(counts.high_risk_today ?? 0);
-    const failedLogins = Number(counts.failed_logins_today ?? 0);
-    const exports = Number(counts.exports_today ?? 0);
-    const sensitiveViews = Number(counts.sensitive_views_today ?? 0);
-    const score = Math.max(
-      0,
-      100 - highRisk * 8 - failedLogins * 2 - exports * 2 - sensitiveViews,
-    );
-    return res.json({
-      success: true,
-      data: {
-        securityScore: score,
-        loginsToday: Number(counts.logins_today ?? 0),
-        failedLoginsToday: failedLogins,
-        passwordResetsToday: Number(counts.password_resets_today ?? 0),
-        roleChangesToday: Number(counts.role_changes_today ?? 0),
-        exportsToday: exports,
-        sensitiveViewsToday: sensitiveViews,
-        highRiskToday: highRisk,
-        activeUsers: Number(counts.active_users ?? 0),
-        inactiveUsers: Number(counts.inactive_users ?? 0),
-      },
-    });
-  }),
-);
+securityCenterRouter.get("/summary", securityRoles, h(async (req, res) => {
+  const counts = await readCounts(await securityEventScope(req.authUser!));
+  const highRisk = Number(counts.high_risk_today ?? 0);
+  const failedLogins = Number(counts.failed_logins_today ?? 0);
+  const exports = Number(counts.exports_today ?? 0);
+  const sensitiveViews = Number(counts.sensitive_views_today ?? 0);
+  const score = Math.max(0, 100 - highRisk * 8 - failedLogins * 2 - exports * 2 - sensitiveViews);
+  return res.json({
+    success: true,
+    data: {
+      securityScore: score,
+      loginsToday: Number(counts.logins_today ?? 0),
+      failedLoginsToday: failedLogins,
+      passwordResetsToday: Number(counts.password_resets_today ?? 0),
+      roleChangesToday: Number(counts.role_changes_today ?? 0),
+      exportsToday: exports,
+      sensitiveViewsToday: sensitiveViews,
+      highRiskToday: highRisk,
+      activeUsers: Number(counts.active_users ?? 0),
+      inactiveUsers: Number(counts.inactive_users ?? 0),
+    },
+  });
+}));
 
-securityCenterRouter.get(
-  "/events",
-  securityRoles,
-  h(async (req, res) => {
-    await ensureSecurityTables();
-    const limit = limitParam(req.query.limit);
-    const clauses: string[] = [];
-    const params: unknown[] = [];
-    if (req.query.severity && req.query.severity !== "all") {
-      clauses.push("severity = ?");
-      params.push(String(req.query.severity));
-    }
-    if (req.query.eventType && req.query.eventType !== "all") {
-      clauses.push("event_type = ?");
-      params.push(String(req.query.eventType));
-    }
-    if (req.query.module && req.query.module !== "all") {
-      clauses.push("module_key = ?");
-      params.push(String(req.query.module));
-    }
-    if (req.query.from) {
-      clauses.push("DATE(created_at) >= ?");
-      params.push(String(req.query.from));
-    }
-    if (req.query.to) {
-      clauses.push("DATE(created_at) <= ?");
-      params.push(String(req.query.to));
-    }
-    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM security_audit_event ${where} ORDER BY created_at DESC LIMIT ${limit}`,
-      params,
-    );
-    return res.json({
-      success: true,
-      data: rows,
-      meta: { count: rows.length, limit },
-    });
-  }),
-);
+securityCenterRouter.get("/events", securityRoles, h(async (req, res) => {
+  await ensureSecurityTables();
+  const limit = limitParam(req.query.limit);
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (req.query.severity && req.query.severity !== "all") { clauses.push("severity = ?"); params.push(String(req.query.severity)); }
+  if (req.query.eventType && req.query.eventType !== "all") { clauses.push("event_type = ?"); params.push(String(req.query.eventType)); }
+  if (req.query.module && req.query.module !== "all") { clauses.push("module_key = ?"); params.push(String(req.query.module)); }
+  if (req.query.from) { clauses.push("DATE(created_at) >= ?"); params.push(String(req.query.from)); }
+  if (req.query.to) { clauses.push("DATE(created_at) <= ?"); params.push(String(req.query.to)); }
+  const evScope = await securityEventScope(req.authUser!);
+  if (evScope.scoped) { clauses.push(evScope.sql); params.push(...evScope.params); }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM security_audit_event ${where} ORDER BY created_at DESC LIMIT ${limit}`,
+    params,
+  );
+  return res.json({ success: true, data: rows, meta: { count: rows.length, limit } });
+}));
 
 securityCenterRouter.post(
   "/events",

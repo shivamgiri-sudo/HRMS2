@@ -20,10 +20,14 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 const { getMonthCoverage } = await import("../payroll-run-coverage.service.js");
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const routes = fs.readFileSync(
-  path.resolve(DIR, "../payroll.routes.ts"),
-  "utf8",
-);
+/**
+ * payroll.routes.ts is prettier-formatted since cd83825bc, so a registration reads
+ * `router.post(\n  "/runs",` rather than `router.post("/runs",`. Re-join the path onto the verb
+ * so the markers below keep locating the same handlers; nothing inside a handler is altered.
+ */
+const joinRouteRegistrations = (s: string) =>
+  s.replace(/(router\.(?:get|post|put|patch|delete))\(\s+"/g, '$1("');
+const routes = joinRouteRegistrations(fs.readFileSync(path.resolve(DIR, "../payroll.routes.ts"), "utf8"));
 
 const cc = (over: Record<string, unknown> = {}) => ({
   cost_centre_id: "cc-1",
@@ -285,9 +289,8 @@ describe("the route resolves scope itself", () => {
     // A caller who could name their own branches could read any branch's structure.
     const idx = routes.indexOf('router.get("/runs/coverage"');
     const block = routes.slice(idx, idx + 1400);
-    expect(block).toContain(
-      "resolveVisibleBranchIdsForCoverage(req.authUser!.id)",
-    );
+    // Whitespace-tolerant: prettier wraps the argument onto its own line.
+    expect(block).toMatch(/resolveVisibleBranchIdsForCoverage\(\s*req\.authUser!\.id,?\s*\)/);
     expect(block).not.toMatch(/req\.(query|body)\.branch/i);
   });
 
@@ -298,8 +301,8 @@ describe("the route resolves scope itself", () => {
       "async function resolveVisibleBranchIdsForCoverage",
     );
     const fn = routes.slice(idx, idx + 700);
-    expect(fn).toMatch(
-      /"super_admin", "admin", "payroll_head", "finance_head"/,
-    );
+    // Now delegates to the shared ORG_WIDE_EXEMPT_ROLES resolution (owner ruling 2026-10-01), which
+    // keeps super_admin/admin/payroll_head/finance_head (and the other org-wide roles) unrestricted.
+    expect(fn).toMatch(/visibleBranchIdsForUser/);
   });
 });

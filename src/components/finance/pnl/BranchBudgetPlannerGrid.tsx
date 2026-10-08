@@ -73,6 +73,12 @@ export interface PriorBudgetRow {
   amount: number;
   quantity?: number | null;
   unitRate?: number | null;
+  /**
+   * The complete line exactly as it was submitted (tax treatment, GST, cost centre, vendor,
+   * allocation, unit, justification...). Present for a workspace budget, absent for the mirror.
+   * When set, Copy reproduces it verbatim instead of rebuilding a line from head + amount.
+   */
+  line?: BranchBudgetLineInput;
 }
 
 /**
@@ -102,6 +108,7 @@ export function applyCopyForward(
   makeLine: (preset: Partial<BranchBudgetLineInput>) => BranchBudgetLineInput,
 ): BranchBudgetLineInput[] {
   if (priorRows.length === 0) return lines;
+  if (priorRows.every((row) => row.line)) return copyFullLines(lines, priorRows);
 
   // Duplicate head/sub-head pairs occur in real prior data (2026-09 NOIDA-2 carries several
   // twice), so collapse to one row per key and sum, matching how the Prev column totals them.
@@ -141,6 +148,35 @@ export function applyCopyForward(
 
   if (created.length === 0) return filled;
   // Drop the starter row only if it is still untouched — an empty head with nothing priced on it.
+  const kept = filled.filter((line) => !(!line.head && !line.subHead && !(Number(line.unitRate) || 0)));
+  return [...kept, ...created];
+}
+
+/**
+ * Faithful copy of a submitted workspace budget: every line comes across exactly as saved, with
+ * only its id dropped so it saves as a new line. Same precedence as the lossy path — a row the
+ * branch already priced is left alone, an unpriced matching row is replaced by the prior line.
+ */
+function copyFullLines(lines: BranchBudgetLineInput[], priorRows: PriorBudgetRow[]): BranchBudgetLineInput[] {
+  const fresh = (row: PriorBudgetRow): BranchBudgetLineInput => ({ ...(row.line as BranchBudgetLineInput), id: undefined });
+  const isPriced = (line: BranchBudgetLineInput) => (Number(line.quantity) || 0) * (Number(line.unitRate) || 0) !== 0;
+
+  const pricedKeys = new Set(lines.filter(isPriced).map((l) => budgetLineKey(l.head, l.subHead)));
+  const consumed = new Set<number>();
+  const filled = lines.map((line) => {
+    if (isPriced(line)) return line;
+    const key = budgetLineKey(line.head, line.subHead);
+    const at = priorRows.findIndex((row, i) => !consumed.has(i) && budgetLineKey(row.head, row.subHead) === key);
+    if (at < 0) return line;
+    consumed.add(at);
+    return fresh(priorRows[at]);
+  });
+
+  const created = priorRows
+    .filter((row, i) => !consumed.has(i) && !pricedKeys.has(budgetLineKey(row.head, row.subHead)))
+    .map(fresh);
+
+  if (created.length === 0) return filled;
   const kept = filled.filter((line) => !(!line.head && !line.subHead && !(Number(line.unitRate) || 0)));
   return [...kept, ...created];
 }

@@ -81,9 +81,7 @@ export const updateEmployeeSchema = z.object({
     .nullable()
     .optional(),
   employmentType: z.string().trim().optional(),
-  employmentStatus: z
-    .enum(["Active", "Inactive", "On Notice", "Onboarding"])
-    .optional(),
+  employmentStatus: z.enum(["Active", "Inactive", "On Notice", "Onboarding", "Preboarding"]).optional(),
   // Required by the service whenever this request actually deactivates someone.
   // Optional here because it is meaningless on every other kind of profile edit.
   deactivationReason: z.string().trim().max(500).optional(),

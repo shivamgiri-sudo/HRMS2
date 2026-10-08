@@ -18,9 +18,30 @@ const mockBuildScopeWhereClause = vi
   .mockResolvedValue({ sql: "1=1", params: [] });
 
 vi.mock("../src/shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  getUserRoleKeys: vi.fn(async (id: string) => [ACTOR_ROLES.get(id) ?? "employee"]),
+  getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
   buildScopeWhereClause: mockBuildScopeWhereClause,
   hasScopedAccess: vi.fn().mockResolvedValue(true),
 }));
+
+// The ATS candidate scope now comes from ats-branch-scope (owner policy 2026-10-01): org-wide roles see
+// everything, every other role - hr and admin included - is limited to its own branch. The resolver is mocked
+// (role -> scope) so the db.execute queue below stays reserved for the report queries; the SQL builders are real.
+const ORG_WIDE = ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"];
+const BRANCH_SCOPE = { orgWide: false, branchIds: ["b1"], branchSpellings: ["Branch One", "b1"], branchNames: ["Branch One"], processNames: [] };
+const mockResolveAtsBranchScope = vi.fn();
+vi.mock("../src/modules/ats/ats-branch-scope.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/modules/ats/ats-branch-scope.js")>();
+  return { ...actual, resolveAtsBranchScope: mockResolveAtsBranchScope };
+});
+function useRoleDrivenScope() {
+  mockResolveAtsBranchScope.mockImplementation(async (id: string) =>
+    ORG_WIDE.includes(ACTOR_ROLES.get(id) ?? "") ? { ...actual_ORG } : { ...BRANCH_SCOPE });
+}
+const actual_ORG = { orgWide: true, branchIds: [], branchSpellings: [], branchNames: [], processNames: [] };
+const scopedCandidateQuery = () =>
+  mockDbExecute.mock.calls.find((c) => /applied_for_branch IN/.test(String(c[0])));
 
 const mockDbExecute = vi.fn();
 vi.mock("../src/db/mysql.js", () => ({
@@ -186,20 +207,21 @@ describe("atsFullParityService.webData() — scope injection", () => {
     vi.clearAllMocks();
     // Re-apply mocks after resetModules
     mockBuildScopeWhereClause.mockResolvedValue({ sql: "1=1", params: [] });
+    useRoleDrivenScope();
     mockDbExecute.mockResolvedValue([[]]);
   });
 
   it("TC-S11-01: actorId without bypassScope → buildScopeWhereClause called", async () => {
     seedCandidateAndConfig();
-    const { atsFullParityService } =
-      await import("../src/modules/ats-full-parity/atsFullParity.service.js");
+    const { atsFullParityService } = await import("../src/modules/ats-full-parity/atsFullParity.service.js");
+    ACTOR_ROLES.set("user-bh-1", "branch_head");
     await atsFullParityService.webData({ actorId: "user-bh-1" });
-    expect(mockBuildScopeWhereClause).toHaveBeenCalledWith(
-      "user-bh-1",
-      ["branch_head", "process_manager", "recruiter", "manager", "hr"],
-      { branchId: "c.applied_for_branch", processId: "c.applied_for_process" },
-      { allowAdminBypass: true, allowCeoAllRead: true },
-    );
+    // Owner policy 2026-10-01: the ATS branch resolver (not buildScopeWhereClause) scopes the rows.
+    expect(mockResolveAtsBranchScope).toHaveBeenCalledWith("user-bh-1");
+    expect(mockBuildScopeWhereClause).not.toHaveBeenCalled();
+    const q = scopedCandidateQuery();
+    expect(q).toBeTruthy();
+    expect(q![1]).toEqual(expect.arrayContaining(["Branch One", "b1"]));
   });
 
   it("TC-S11-02: bypassScope=true → buildScopeWhereClause NOT called", async () => {
@@ -211,6 +233,8 @@ describe("atsFullParityService.webData() — scope injection", () => {
       bypassScope: true,
     });
     expect(mockBuildScopeWhereClause).not.toHaveBeenCalled();
+    expect(mockResolveAtsBranchScope).not.toHaveBeenCalled();
+    expect(scopedCandidateQuery()).toBeUndefined();
   });
 
   it("TC-S11-03: no actorId at all → buildScopeWhereClause NOT called (backward-compat)", async () => {
@@ -222,7 +246,8 @@ describe("atsFullParityService.webData() — scope injection", () => {
   });
 
   it("TC-S11-04: scope returns 1=0 → candidateRows empty", async () => {
-    mockBuildScopeWhereClause.mockResolvedValueOnce({ sql: "1=0", params: [] });
+    // A user whose scope cannot be resolved sees nothing (fails closed).
+    mockResolveAtsBranchScope.mockResolvedValueOnce({ orgWide: false, branchIds: [], branchSpellings: [], branchNames: [], processNames: [] });
     // webData issues the (independent) config lookup first and the candidate query right behind it.
     mockDbExecute.mockResolvedValueOnce([configRows]); // getConfigMap
     // candidateSelect with 1=0 returns no rows
@@ -245,6 +270,7 @@ describe("GET /api/ats-full-parity/web-data — route scope forwarding", () => {
     vi.resetModules();
     vi.clearAllMocks();
     mockBuildScopeWhereClause.mockResolvedValue({ sql: "1=1", params: [] });
+    useRoleDrivenScope();
     mockDbExecute.mockResolvedValue([[]]);
   });
 
@@ -253,19 +279,22 @@ describe("GET /api/ats-full-parity/web-data — route scope forwarding", () => {
     mockDbExecute.mockResolvedValueOnce([configRows]); // getConfigMap
     const app = await makeApp("user-bh-1", "branch_head");
     await request(app).get("/api/ats-full-parity/web-data");
-    expect(mockBuildScopeWhereClause).toHaveBeenCalledWith(
-      "user-bh-1",
-      expect.arrayContaining(["branch_head"]),
-      expect.objectContaining({ branchId: "c.applied_for_branch" }),
-      expect.any(Object),
-    );
+    expect(mockResolveAtsBranchScope).toHaveBeenCalledWith("user-bh-1");
+    expect(scopedCandidateQuery()).toBeTruthy();
   });
 
-  it("TC-S11-06: admin role → buildScopeWhereClause NOT called (bypassScope)", async () => {
+  it("TC-S11-06: admin is branch-scoped; super_admin (org-wide) is not", async () => {
     mockDbExecute.mockResolvedValueOnce([[]]); // candidateSelect
     mockDbExecute.mockResolvedValueOnce([configRows]); // getConfigMap
     const app = await makeApp("user-admin-1", "admin");
     await request(app).get("/api/ats-full-parity/web-data");
+    expect(scopedCandidateQuery()).toBeTruthy();
+
+    mockDbExecute.mockClear();
+    mockDbExecute.mockResolvedValue([[]]);
+    const appSuper = await makeApp("user-super-1", "super_admin");
+    await request(appSuper).get("/api/ats-full-parity/web-data");
+    expect(scopedCandidateQuery()).toBeUndefined();
     expect(mockBuildScopeWhereClause).not.toHaveBeenCalled();
   });
 });
@@ -279,6 +308,7 @@ describe("GET /api/ats-full-parity/queue — route scope forwarding", () => {
     vi.resetModules();
     vi.clearAllMocks();
     mockBuildScopeWhereClause.mockResolvedValue({ sql: "1=1", params: [] });
+    useRoleDrivenScope();
     mockDbExecute.mockResolvedValue([[]]);
   });
 
@@ -287,19 +317,22 @@ describe("GET /api/ats-full-parity/queue — route scope forwarding", () => {
     mockDbExecute.mockResolvedValueOnce([configRows]); // getConfigMap
     const app = await makeApp("user-pm-1", "process_manager");
     await request(app).get("/api/ats-full-parity/queue");
-    expect(mockBuildScopeWhereClause).toHaveBeenCalledWith(
-      "user-pm-1",
-      expect.arrayContaining(["process_manager"]),
-      expect.objectContaining({ processId: "c.applied_for_process" }),
-      expect.any(Object),
-    );
+    expect(mockResolveAtsBranchScope).toHaveBeenCalledWith("user-pm-1");
+    expect(scopedCandidateQuery()).toBeTruthy();
   });
 
-  it("TC-S11-08: hr role → buildScopeWhereClause NOT called (bypassScope)", async () => {
+  it("TC-S11-08: hr is limited to its own branch (no longer bypasses scope); coo bypasses", async () => {
     mockDbExecute.mockResolvedValueOnce([[]]); // candidateSelect
     mockDbExecute.mockResolvedValueOnce([configRows]); // getConfigMap
     const app = await makeApp("user-hr-1", "hr");
     await request(app).get("/api/ats-full-parity/queue");
+    expect(scopedCandidateQuery()).toBeTruthy();
+
+    mockDbExecute.mockClear();
+    mockDbExecute.mockResolvedValue([[]]);
+    const appCoo = await makeApp("user-coo-1", "coo");
+    await request(appCoo).get("/api/ats-full-parity/queue");
+    expect(scopedCandidateQuery()).toBeUndefined();
     expect(mockBuildScopeWhereClause).not.toHaveBeenCalled();
   });
 });

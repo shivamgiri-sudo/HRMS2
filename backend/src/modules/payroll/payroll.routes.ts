@@ -54,7 +54,9 @@ import { buildBankReadinessReport } from "./bank-payment-readiness.service.js";
 import { payrollAttendanceControlService } from "./payroll-attendance-control.service.js";
 import { cosecSyncService } from "../wfm/cosec-sync.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { attendanceInEmploymentWindowSql } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
+import { employeeScopeFor, guardEmployee, canSeeEmployee, scopeFor, narrowBranch, filterVisibleEmployeeIds, requireRunInScope, visibleBranchIdsForUser, guardOwnedRow, controlTowerScope, guardGapKeys, isOrgWideCaller, OUT_OF_SCOPE_BODY } from "./payroll-branch-scope.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
@@ -143,17 +145,20 @@ const h =
 router.use(requireAuth);
 
 // ─── Payroll Analytics (Dashboard) ────────────────────────────────────────────
+// This registration (5fb5ded2d) shares its URL with the older run-level analytics endpoint
+// further down ("GET /analytics?dimension=…&runMonth=…", the Payroll Analytics page), and being
+// registered first it shadowed it: that page received the dashboard summary instead of
+// { kpi, data, meta }, and `hr` — allowed there, not here — got a 403. The two callers are
+// told apart by the query string: the page always sends `dimension`, the dashboard sends
+// nothing. A request carrying either parameter is handed on to the original handler, before
+// this route's own role check runs.
 router.get(
   "/analytics",
-  requireRole(
-    "super_admin",
-    "admin",
-    "payroll",
-    "payroll_head",
-    "finance",
-    "ceo",
-    "coo",
-  ),
+  (req: any, _res: any, next: any) =>
+    req.query.dimension !== undefined || req.query.runMonth !== undefined
+      ? next("route")
+      : next(),
+  requireRole("super_admin", "admin", "payroll", "payroll_head", "finance", "ceo", "coo"),
   h(async (req, res) => {
     const summary = await getPayrollAnalyticsSummary();
     res.json({ success: true, data: summary });
@@ -209,7 +214,7 @@ router.get(
         "payroll_admin",
       ],
       { branchId: "e.branch_id", processId: "e.process_id" },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -432,7 +437,7 @@ router.get(
         req.authUser!.id,
         [...PAYROLL_SCOPE_ROLES],
         { branchId: "spr.branch_id", processId: "spr.process_id" },
-        { allowAdminBypass: true, allowCeoAllRead: true },
+        { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
       );
     } catch (_err) {
       scoped = { sql: "1=0", params: [] };
@@ -461,7 +466,7 @@ router.get(
         req.authUser!.id,
         [...PAYROLL_SCOPE_ROLES],
         { branchId: "e.branch_id", processId: "e.process_id" },
-        { allowAdminBypass: true, allowCeoAllRead: true },
+        { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
       );
     } catch (_err) {
       scoped = { sql: "1=0", params: [] };
@@ -504,6 +509,7 @@ router.get(
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await payrollAttendanceControlService.getControlTower({
+      ...(await controlTowerScope(req)),
       runMonth:
         typeof req.query.runMonth === "string" ? req.query.runMonth : undefined,
       runId: typeof req.query.runId === "string" ? req.query.runId : undefined,
@@ -548,6 +554,7 @@ router.get(
     "branch_head",
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardGapKeys(req, res, [String(req.params.key ?? "")]))) return;
     const data = await payrollAttendanceControlService.getGapDetail(
       String(req.params.key ?? ""),
     );
@@ -574,7 +581,9 @@ router.post(
     "branch_head",
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (Array.isArray(req.body.conflictKeys) && !(await guardGapKeys(req, res, req.body.conflictKeys.map(String)))) return;
     const data = await payrollAttendanceControlService.notifyReportingManagers({
+      ...(await controlTowerScope(req)),
       runMonth:
         typeof req.body.runMonth === "string" ? req.body.runMonth : undefined,
       runId: typeof req.body.runId === "string" ? req.body.runId : undefined,
@@ -627,6 +636,7 @@ router.post(
         .status(400)
         .json({ success: false, message: "Select at least one conflict row" });
     }
+    if (!(await guardGapKeys(req, res, conflictKeys))) return;
     const data = await payrollAttendanceControlService.updateReviewStatus({
       runMonth:
         typeof req.body.runMonth === "string" ? req.body.runMonth : undefined,
@@ -672,6 +682,7 @@ router.post(
           "Only APR-backed or COSEC-backed ADR missing rows can be repaired from this action",
       });
     }
+    if (!(await guardGapKeys(req, res, conflictKeys))) return;
     const data = await payrollAttendanceControlService.repairMissingAdr({
       conflictKeys,
       actorUserId: req.authUser?.id ?? null,
@@ -715,6 +726,7 @@ router.post(
           "Only approved_regularization_not_locked_in_adr rows can be locked from this action",
       });
     }
+    if (!(await guardGapKeys(req, res, conflictKeys))) return;
     const data =
       await payrollAttendanceControlService.lockUnlockedRegularizations({
         conflictKeys,
@@ -923,6 +935,26 @@ router.post(
         .status(400)
         .json({ success: false, message: "Date range must be 1–31 days" });
     }
+    // A COSEC re-sync rewrites attendance for every employee in the range: a branch-scoped caller may
+    // only run it for one employee inside their own scope.
+    if (!(await isOrgWideCaller(req))) {
+      const code = employeeCode;
+      let allowed = false;
+      if (code) {
+        const [empRows] = await db.execute<RowDataPacket[]>(
+          "SELECT id FROM employees WHERE employee_code = ? LIMIT 1",
+          [code],
+        );
+        const empId = (empRows as any[])[0]?.id;
+        allowed = !!empId && (await canSeeEmployee(req, String(empId)));
+      }
+      if (!allowed) {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden: a COSEC re-sync outside organisation-wide scope must name one employee inside your branch / assigned scope",
+        });
+      }
+    }
     if (cosecSyncService.isRunning()) {
       return res.status(409).json({
         success: false,
@@ -1016,7 +1048,7 @@ router.get(
       req.authUser!.id,
       [...PAYROLL_SCOPE_ROLES],
       { branchId: "e.branch_id", processId: "e.process_id" },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
     const scopeSql = scoped.sql === "1=1" ? "" : ` AND (${scoped.sql})`;
 
@@ -1119,7 +1151,8 @@ router.get(
        COALESCE(SUM(lwp_value), 0)                                                      AS lwp_days,
        COUNT(CASE WHEN attendance_status NOT IN ('week_off','holiday') THEN 1 END)      AS working_days
      FROM attendance_daily_record
-    WHERE employee_id = ? AND record_date BETWEEN ? AND ?`,
+    WHERE employee_id = ? AND record_date BETWEEN ? AND ?
+      AND ${attendanceInEmploymentWindowSql("attendance_daily_record")}`,
       [line.employee_id, monthStart, monthEnd],
     );
     const summary = (rows as any[])[0] ?? {};
@@ -1190,22 +1223,9 @@ router.post(
 async function resolveVisibleBranchIdsForCoverage(
   userId: string,
 ): Promise<Set<string> | null> {
-  if (
-    await hasAnyRoleAsync(
-      userId,
-      "super_admin",
-      "admin",
-      "payroll_head",
-      "finance_head",
-    )
-  )
-    return null;
-  const scopes = await getUserAssignmentScopes(userId);
-  if (scopes.length === 0) return null;
-  if (scopes.some((s) => s.scope_type === "all")) return null;
-  return new Set(
-    scopes.map((s) => s.branch_id).filter((b): b is string => !!b),
-  );
+  // Owner ruling 2026-10-01: org-wide roles only; everyone else gets their own branch(es), and a
+  // user with no resolvable branch gets an empty set (sees nothing) instead of everything.
+  return visibleBranchIdsForUser(userId);
 }
 
 router.get(
@@ -1246,11 +1266,13 @@ router.get(
 router.get(
   "/runs/:id",
   requireRole("admin", "hr", "super_admin", "finance", "payroll"),
+  requireRunInScope(),
   h(c.getRun),
 );
 router.get(
   "/runs/:id/readiness",
   requireRole("admin", "hr", "super_admin", "finance", "payroll"),
+  requireRunInScope(),
   h(async (req, res) => {
     const data = await payrollGovernanceService.readiness(req.params.id);
     return res.json({ success: true, data });
@@ -1315,11 +1337,13 @@ router.patch(
     "finance_head",
     "payroll_head",
   ),
+  requireRunInScope(),
   h(c.updateRunStatus),
 );
 router.get(
   "/runs/:id/lines",
   requireRole("admin", "hr", "super_admin", "finance", "payroll"),
+  requireRunInScope(),
   h(c.listLines),
 );
 
@@ -1358,6 +1382,7 @@ router.get(
   requireRole("admin", "hr", "super_admin", "finance", "payroll"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const runId = req.params.id;
+    const scopedBd = await employeeScopeFor(req, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
        COALESCE(bm.branch_name, 'Unassigned') AS branch_name,
@@ -1367,10 +1392,10 @@ router.get(
      FROM salary_prep_line spl
      LEFT JOIN employees e ON e.id = spl.employee_id
      LEFT JOIN branch_master bm ON bm.id = e.branch_id
-     WHERE spl.run_id = ?
+     WHERE spl.run_id = ? AND (${scopedBd.sql})
      GROUP BY e.branch_id, bm.branch_name
      ORDER BY bm.branch_name ASC`,
-      [runId],
+      [runId, ...scopedBd.params],
     );
     return res.json({ success: true, data: rows ?? [] });
   }),
@@ -1380,6 +1405,7 @@ router.post(
   "/runs/:id/calculate",
   payrollRunLimiter,
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  requireRunInScope(),
   async (req: any, res: any, next: any) => {
     try {
       await assertRunEditable(req.params.id);
@@ -1485,6 +1511,7 @@ router.post(
   "/runs/:id/correct-weekoffs",
   payrollRunLimiter,
   requireRole("admin", "super_admin", "finance", "payroll"),
+  requireRunInScope(),
   async (req: any, res: any, next: any) => {
     try {
       await assertRunEditable(req.params.id);
@@ -1576,6 +1603,7 @@ router.patch(
   "/lines/:id",
   requireRole("admin", "super_admin", "finance", "payroll"),
   h(async (req: any, res: any) => {
+    if (!(await guardOwnedRow(req, res, "salary_prep_line", req.params.id))) return;
     // Resolve run_id from line, then check window guard
     const [lineRows] = await db.execute<RowDataPacket[]>(
       `SELECT run_id FROM salary_prep_line WHERE id = ? LIMIT 1`,
@@ -1594,6 +1622,7 @@ router.patch(
   requireAuth,
   requireWFMAccess,
   h(async (req: any, res: any) => {
+    if (!(await guardOwnedRow(req, res, "salary_prep_line", req.params.lineId))) return;
     const [lineRows] = await db.execute<RowDataPacket[]>(
       `SELECT run_id FROM salary_prep_line WHERE id = ? LIMIT 1`,
       [req.params.lineId],
@@ -1642,6 +1671,8 @@ router.get(
           message: "Forbidden: you may only view your own advances",
         });
       }
+    } else if (!(await guardEmployee(req, res, req.params.employeeId))) {
+      return;
     }
     return c.listAdvances(req as any, res);
   }),
@@ -1675,7 +1706,7 @@ router.get(
           req.authUser!.id,
           ["admin", "hr", "finance", "payroll", "payroll_head"],
           { branchId: "e.branch_id", processId: "e.process_id" },
-          { allowCeoAllRead: true },
+          { allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
         );
       }
     } catch {
@@ -1741,6 +1772,7 @@ router.patch(
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
+    if (!(await guardOwnedRow(req, res, "salary_advance_log", id))) return;
     await db.execute(
       // approved_by / approved_at do not exist on this table, so this UPDATE threw and no advance
       // could ever be approved. Who approved it and when is recorded by logSensitiveAction below,
@@ -1765,6 +1797,7 @@ router.patch(
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
+    if (!(await guardOwnedRow(req, res, "salary_advance_log", id))) return;
     const { reason } = req.body;
     await db.execute(
       // Same three missing columns as the approve route. The reason is not dropped - it is passed
@@ -2020,6 +2053,26 @@ router.get(
 // GET /api/payroll/verify/payslip/:empCode/:monthYear — moved to payroll.public.routes.ts.
 // It must stay off this router: `router.use(requireAuth)` above gates every route
 // registered here, so the payslip QR scan was answered with 401 instead of a verdict.
+
+// GET /api/payroll/payslip/my/ytd?month=YYYY-MM — the caller's own financial-year-to-date totals up to that month.
+// Legacy payslips (pre-run-engine months) have no run_id, so the per-run detail endpoint cannot serve them;
+// the V2 slip calls this instead. Self-service only: the employee is resolved from the session, never a param.
+router.get(
+  "/payslip/my/ytd",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp) {
+      return res.status(403).json({ success: false, message: "No employee record for authenticated user" });
+    }
+    const month = String(req.query.month ?? "");
+    const y = Number(month.split("-")[0]);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || y < 2000 || y > new Date().getFullYear() + 1) {
+      return res.status(400).json({ success: false, message: "month must be YYYY-MM" });
+    }
+    const data = await payslipService.getYtdForEmployee(callerEmp.id, month);
+    return res.json({ success: true, data });
+  }),
+);
 
 // GET /api/payroll/payslip/list/:employeeId — paginated payslip history for one employee (admin/HR view)
 //
@@ -2342,6 +2395,7 @@ router.post(
         .status(400)
         .json({ success: false, message: "employeeId is required" });
     }
+    if (!(await guardEmployee(req, res, employeeId))) return;
 
     const data = await payslipService.generatePayslip(
       req.params.runId,
@@ -2408,6 +2462,8 @@ router.get(
           message: "Forbidden: you may only view your own tax declaration",
         });
       }
+    } else if (!(await guardEmployee(req, res, employeeId))) {
+      return;
     }
 
     const [data, history] = await Promise.all([
@@ -2463,6 +2519,7 @@ router.post(
       });
     }
 
+    if (!(await guardEmployee(req, res, employeeId))) return;
     const data = await taxDeclarationService.upsert(
       employeeId,
       year,
@@ -2544,6 +2601,7 @@ router.post(
       }
       employeeId = callerEmp.id;
     }
+    if (!(await guardEmployee(req, res, employeeId))) return;
 
     const documentType = `tax_declaration_${year}`;
     const documentName =
@@ -2598,6 +2656,7 @@ router.get(
       }
       employeeId = callerEmp.id;
     }
+    if (!(await guardEmployee(req, res, employeeId))) return;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, employee_id, 'tax_declaration' AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at
@@ -2617,6 +2676,7 @@ router.patch(
   requireRole("admin", "hr", "super_admin", "payroll", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { employeeId, year } = req.params;
+    if (!(await guardEmployee(req, res, employeeId))) return;
     const { status, review_note } = req.body as {
       status?: "verified" | "rejected";
       review_note?: string;
@@ -2666,6 +2726,7 @@ router.delete(
   requireRole("admin", "hr", "super_admin", "payroll", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { employeeId, docId } = req.params;
+    if (!(await guardEmployee(req, res, employeeId))) return;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, file_url FROM employee_documents WHERE id = ? AND employee_id = ? LIMIT 1`,
@@ -2712,6 +2773,8 @@ router.get(
       if (!callerEmp || callerEmp.id !== employeeId) {
         return res.status(403).json({ success: false, message: "Forbidden" });
       }
+    } else if (!(await guardEmployee(req, res, employeeId))) {
+      return;
     }
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_uan WHERE employee_id = ? LIMIT 1",
@@ -2730,6 +2793,7 @@ router.post(
   requireRole("admin", "hr", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { employeeId } = req.params;
+    if (!(await guardEmployee(req, res, employeeId))) return;
     const { uan, member_id, epf_join_date } = req.body as {
       uan: string;
       member_id?: string;
@@ -3414,6 +3478,7 @@ router.get(
 router.get(
   "/runs/:id/neft-summary",
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  requireRunInScope(),
   h(async (req: AuthenticatedRequest, res: Response) => {
     // This is the figure Finance reads BEFORE exporting, so it must use the same definition of
     // "payable" the export itself uses, or the preview and the file disagree.
@@ -3609,11 +3674,18 @@ const neftExportHandler = h(
     // isRunClosed (locked/disbursed/finalized, case-insensitive) rather than a literal
     // ["locked","disbursed"] list — that literal previously blocked NEFT export for every
     // FINALIZED production run (see run-status.ts).
-    const notClosed = runs.filter((r) => !isRunClosed(r.status));
+    // Owner ruling 2026-10-03 ("export first, finance after"): the payroll head exports the bank file
+    // once the run is APPROVED (which already requires a second person - PAYROLL_SELF_APPROVAL) and
+    // validated, and hands it to the finance head, who signs off and releases the payment. Sign-off is
+    // still required at LOCK and DISBURSE in payroll.service.updateRunStatus; only the export no longer
+    // waits for it, which together with lock-needs-sign-off made the file unobtainable for every run.
+    const exportable = (status: unknown) =>
+      isRunClosed(status as string) || String(status ?? "").toLowerCase() === "approved";
+    const notClosed = runs.filter((r) => !exportable(r.status));
     if (notClosed.length) {
       return res.status(400).json({
         error:
-          "Run must be locked, finalized, or disbursed to generate NEFT export",
+          "Run must be approved, locked, finalized, or disbursed to generate NEFT export",
         runs: notClosed.map((r) => ({ run_id: r.id, status: r.status })),
       });
     }
@@ -3633,25 +3705,26 @@ const neftExportHandler = h(
       });
     }
 
-    // FINANCE SIGN-OFF (payment gate requirement E).
-    //
-    // A closed, validated run still is not a mandate to move money — that is a separate act by a
-    // separate person, which is why salary_prep_run carries finance_approved_by/at at all. Nothing
-    // read those columns before this, so the only thing standing between a FINALIZED run and a bank
-    // file was validation_status. Verified live 2026-08-17: finance_approved_by is NULL on ALL 66
-    // runs, so no run in this system has ever actually been signed off for payment.
-    //
-    // Deliberately checked as a distinct 409 rather than folded into the run-state check above:
-    // "not signed off" is a workflow state a human resolves, not a malformed request.
+    // FINANCE SIGN-OFF is no longer a precondition of the EXPORT (owner ruling 2026-10-03, see above).
+    // It is still required to lock and to disburse. An export made before sign-off is not hidden: it is
+    // written to the audit trail, with the runs concerned, so the finance head sees exactly what was
+    // handed over and the control becomes "visible and attributable" instead of "blocks every run"
+    // (finance_approved_by was NULL on all 66 live runs on 2026-08-17, so the old hard gate meant no
+    // bank file could ever be generated).
     const unsigned = runs.filter((r) => !r.finance_approved_by);
     if (unsigned.length) {
-      return res.status(409).json({
-        success: false,
-        code: "FINANCE_SIGNOFF_MISSING",
-        message:
-          "Finance sign-off is required before a payment file can be generated. " +
-          `${unsigned.length} run(s) in this scope have no finance_approved_by. Record the sign-off, then export.`,
-        runs: unsigned.map((r) => ({ run_id: r.id, run_month: r.run_month })),
+      void logSensitiveAction({
+        actor_user_id: req.authUser!.id,
+        action_type: "PAYROLL_NEFT_EXPORT_BEFORE_FINANCE_SIGNOFF",
+        module_key: "payroll",
+        entity_type: "salary_prep_run",
+        entity_id: unsigned[0].id,
+        change_summary: {
+          run_ids: unsigned.map((r) => r.id),
+          run_months: unsigned.map((r) => r.run_month),
+          statuses: unsigned.map((r) => r.status),
+        },
+        req: req as never,
       });
     }
 
@@ -3934,6 +4007,7 @@ const neftExportHandler = h(
 router.get(
   "/runs/:id/neft-export",
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  requireRunInScope(),
   neftExportHandler,
 );
 router.get(
@@ -3948,6 +4022,7 @@ router.get(
 router.get(
   "/runs/:id/line-coverage",
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  requireRunInScope(),
   h(async (req: AuthenticatedRequest, res: Response) => {
     return res.json({
       success: true,
@@ -4100,6 +4175,7 @@ const ecrHandler = h(async (req: AuthenticatedRequest, res: Response) => {
     runId: req.params.id,
     month: req.params.month,
   });
+  const ecrScope = await employeeScopeFor(req, "e");
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -4113,8 +4189,9 @@ const ecrHandler = h(async (req: AuthenticatedRequest, res: Response) => {
      JOIN employees e        ON e.id  = spl.employee_id
      LEFT JOIN employee_uan eu ON eu.employee_id = spl.employee_id
      WHERE spl.run_id IN (${runIdPlaceholders(runIds)}) AND spl.status != 'cancelled'
+       AND (${ecrScope.sql})
      ORDER BY e.employee_code`,
-    runIds,
+    [...runIds, ...ecrScope.params],
   );
 
   return res.json({
@@ -4130,6 +4207,7 @@ const ecrHandler = h(async (req: AuthenticatedRequest, res: Response) => {
 router.get(
   "/runs/:id/ecr",
   requireRole("admin", "super_admin", "finance", "payroll"),
+  requireRunInScope(),
   ecrHandler,
 );
 router.get(
@@ -4158,6 +4236,7 @@ const esicChallanHandler = h(
     });
     const runId = runIds[0];
     const run = { run_month: month };
+    const esicScope = await employeeScopeFor(req, "e");
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -4169,8 +4248,9 @@ const esicChallanHandler = h(
      FROM salary_prep_line spl
      JOIN employees e ON e.id = spl.employee_id
      WHERE spl.run_id IN (${runIdPlaceholders(runIds)}) AND spl.status != 'cancelled'
+       AND (${esicScope.sql})
      ORDER BY e.employee_code`,
-      runIds,
+      [...runIds, ...esicScope.params],
     );
 
     const lines = rows as Array<{
@@ -4206,6 +4286,7 @@ const esicChallanHandler = h(
 router.get(
   "/runs/:id/esic-challan",
   requireRole("admin", "super_admin", "finance", "payroll"),
+  requireRunInScope(),
   esicChallanHandler,
 );
 router.get(
@@ -4304,6 +4385,7 @@ router.post(
   "/runs/:id/finance-approve",
   requireAuth,
   requireRole("finance", "admin", "super_admin"),
+  requireRunInScope(),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const actorUserId = req.authUser!.id;
@@ -4319,6 +4401,9 @@ router.post(
       }
       if (msg.includes("must be in")) {
         return res.status(400).json({ success: false, message: msg });
+      }
+      if (err?.statusCode) {
+        return res.status(err.statusCode).json({ success: false, message: msg, code: err.code });
       }
       throw err;
     }

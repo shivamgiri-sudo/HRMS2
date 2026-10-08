@@ -1,0 +1,103 @@
+# Flips DIGILOCKER_RECONCILIATION_ENABLED on the production host and restarts the workers process.
+#
+# The reconciler (backend/src/workers/digilocker-reconciliation.worker.ts) runs inside hrms2-workers
+# (all-workers.ts) and reads the flag once at startup. Once on, every 15 minutes it asks Luckpay about
+# up to 25 recent DigiLocker sessions still open on our side, so a joiner who finished DigiLocker and
+# closed the page leaves the Ops Control Tower's DigiLocker pending list. Owner turned it on 2026-10-06.
+# The first step prints how many open sessions it would check before anything changes.
+#
+# Runs on the self-hosted runner because backend/.env and pm2 exist only on 192.168.11.225.
+
+name: DigiLocker reconciler (enable/disable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      state:
+        description: "enable or disable the DigiLocker reconciliation worker"
+        required: true
+        type: choice
+        default: enable
+        options:
+          - enable
+          - disable
+
+concurrency:
+  group: digilocker-reconciler-flag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  flag:
+    name: Set DIGILOCKER_RECONCILIATION_ENABLED on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - name: Preview open sessions (read only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /var/www/HRMS2/backend
+          node --input-type=module -e '
+            import "dotenv/config";
+            import mysql from "mysql2/promise";
+            const c = await mysql.createConnection({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT) || 3306, user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME });
+            await c.query("SET SESSION TRANSACTION READ ONLY");
+            const [[r]] = await c.query("SELECT COUNT(DISTINCT candidate_id) n FROM ats_provider_transaction_log WHERE provider = \"luckpay\" AND service_type = \"digilocker\" AND created_at >= NOW() - INTERVAL 15 DAY AND COALESCE(status, \"\") NOT IN (\"documents_received\", \"completed\", \"failed\", \"expired\")");
+            console.log("open DigiLocker sessions (last 15 days): " + r.n);
+            await c.end();
+          '
+
+      - name: Set the flag in backend/.env
+        id: env
+        shell: bash
+        env:
+          STATE: ${{ inputs.state }}
+        run: |
+          set -euo pipefail
+          ENV_FILE="/var/www/HRMS2/backend/.env"
+          KEY="DIGILOCKER_RECONCILIATION_ENABLED"
+          test -f "$ENV_FILE" || { echo "::error::$ENV_FILE not found."; exit 1; }
+          if [[ "$STATE" == "enable" ]]; then VALUE=true; else VALUE=false; fi
+          BACKUP="${ENV_FILE}.bak-digilocker-flag-$(date -u +%Y%m%dT%H%M%SZ)"
+          cp -a "$ENV_FILE" "$BACKUP"
+          echo "Backed up to $BACKUP"
+          if [[ -s "$ENV_FILE" && -n "$(tail -c 1 "$ENV_FILE")" ]]; then printf '\n' >> "$ENV_FILE"; fi
+          sed -i -E "/^${KEY}=/d" "$ENV_FILE"
+          printf '%s=%s\n' "$KEY" "$VALUE" >> "$ENV_FILE"
+          COUNT="$(grep -cE "^${KEY}=" "$ENV_FILE" || true)"
+          if [[ "$COUNT" != "1" ]]; then
+            echo "::error::Expected exactly one ${KEY} line, found ${COUNT}. Restoring the backup."
+            cp -a "$BACKUP" "$ENV_FILE"
+            exit 1
+          fi
+          echo "$ENV_FILE now sets: $(grep -E "^${KEY}=" "$ENV_FILE")"
+          echo "value=${VALUE}" >> "$GITHUB_OUTPUT"
+
+      - name: Restart the workers process
+        shell: bash
+        run: |
+          set -euo pipefail
+          # hrms2-workers: all-workers.ts starts the reconciler. --update-env makes pm2 take the new .env value.
+          pm2 restart hrms2-workers --update-env --no-color
+          pm2 save --no-color
+          pm2 status hrms2-workers --no-color
+
+      - name: Confirm
+        shell: bash
+        env:
+          EXPECTED: ${{ steps.env.outputs.value }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            if pm2 logs hrms2-workers --lines 400 --nostream --no-color 2>/dev/null | grep -F '[digilocker-reconciliation]' | tail -n 3; then break; fi
+            echo "No [digilocker-reconciliation] line yet (${attempt}/12) - waiting 5s"; sleep 5
+          done
+          if [[ "$EXPECTED" == "true" ]]; then
+            pm2 logs hrms2-workers --lines 400 --nostream --no-color 2>/dev/null | grep -qF '[digilocker-reconciliation] started' \
+              || echo "::warning::No 'started' line seen in the last 400 log lines; check pm2 logs."
+          fi

@@ -49,9 +49,13 @@ function insertColumns(): string[] {
  * the pattern has to consume `\'` rather than stopping at the first apostrophe it meets.
  */
 function placeholderTuple(): string {
-  const m = source.match(/batchPrepLines\.map\(\(\) => '((?:[^'\\]|\\.)*)'\)/);
+  // Either quote style and any line wrapping: prettier (cd83825bc) rewrote the tuple as a
+  // double-quoted string on its own line, which no longer needs the escaped apostrophes.
+  const m = source.match(
+    /batchPrepLines\s*\.map\(\s*\(\) =>\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1,?\s*\)/,
+  );
   expect(m, "placeholder tuple not found").toBeTruthy();
-  return m![1].replace(/\\'/g, "'");
+  return m![2].replace(/\\'/g, "'");
 }
 
 describe("the line carries its branch and cost centre", () => {

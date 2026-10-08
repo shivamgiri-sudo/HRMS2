@@ -1,0 +1,95 @@
+# Flips OPS_AUTO_NUDGE_ENABLED on the production host and restarts the workers process.
+#
+# The scheduler (backend/src/modules/ops-control-tower/ops-nudge.cron.ts) runs inside hrms2-workers and reads
+# the flag once at startup. Once on, every day at 10:00 IST it WhatsApps each joiner with an open Ops Control
+# Tower item (bank details, DigiLocker, documents, eSign, appointment letter, BGV) with their onboarding link,
+# at most once per item per 24h and 300 sends per run; after 3 reminders the branch head is told.
+# Owner turned it on 2026-10-06. The first step prints recent nudge history before anything changes.
+#
+# Runs on the self-hosted runner because backend/.env and pm2 exist only on 192.168.11.225.
+
+name: Ops auto nudge (enable/disable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      state:
+        description: "enable or disable the daily Ops Control Tower WhatsApp reminder"
+        required: true
+        type: choice
+        default: enable
+        options:
+          - enable
+          - disable
+
+concurrency:
+  group: ops-auto-nudge-flag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  flag:
+    name: Set OPS_AUTO_NUDGE_ENABLED on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - name: Preview nudge history (read only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /var/www/HRMS2/backend
+          node --input-type=module -e '
+            import "dotenv/config";
+            import mysql from "mysql2/promise";
+            const c = await mysql.createConnection({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT) || 3306, user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME });
+            await c.query("SET SESSION TRANSACTION READ ONLY");
+            const [rows] = await c.query("SELECT status, COUNT(*) n FROM ops_nudge_log WHERE created_at >= NOW() - INTERVAL 30 DAY GROUP BY status");
+            console.log("ops_nudge_log last 30 days: " + JSON.stringify(rows));
+            await c.end();
+          '
+
+      - name: Set the flag in backend/.env
+        id: env
+        shell: bash
+        env:
+          STATE: ${{ inputs.state }}
+        run: |
+          set -euo pipefail
+          ENV_FILE="/var/www/HRMS2/backend/.env"
+          KEY="OPS_AUTO_NUDGE_ENABLED"
+          test -f "$ENV_FILE" || { echo "::error::$ENV_FILE not found."; exit 1; }
+          if [[ "$STATE" == "enable" ]]; then VALUE=true; else VALUE=false; fi
+          BACKUP="${ENV_FILE}.bak-ops-nudge-flag-$(date -u +%Y%m%dT%H%M%SZ)"
+          cp -a "$ENV_FILE" "$BACKUP"
+          echo "Backed up to $BACKUP"
+          if [[ -s "$ENV_FILE" && -n "$(tail -c 1 "$ENV_FILE")" ]]; then printf '\n' >> "$ENV_FILE"; fi
+          sed -i -E "/^${KEY}=/d" "$ENV_FILE"
+          printf '%s=%s\n' "$KEY" "$VALUE" >> "$ENV_FILE"
+          COUNT="$(grep -cE "^${KEY}=" "$ENV_FILE" || true)"
+          if [[ "$COUNT" != "1" ]]; then
+            echo "::error::Expected exactly one ${KEY} line, found ${COUNT}. Restoring the backup."
+            cp -a "$BACKUP" "$ENV_FILE"
+            exit 1
+          fi
+          echo "$ENV_FILE now sets: $(grep -E "^${KEY}=" "$ENV_FILE")"
+          echo "value=${VALUE}" >> "$GITHUB_OUTPUT"
+
+      - name: Restart the workers process
+        shell: bash
+        run: |
+          set -euo pipefail
+          # hrms2-workers: all-workers.ts starts the nudge scheduler. --update-env makes pm2 take the new .env value.
+          pm2 restart hrms2-workers --update-env --no-color
+          pm2 save --no-color
+          pm2 status hrms2-workers --no-color
+
+      - name: Confirm
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -E "^OPS_AUTO_NUDGE_ENABLED=" /var/www/HRMS2/backend/.env
+          pm2 status hrms2-workers --no-color

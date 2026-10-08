@@ -304,6 +304,23 @@ export function PackageBuilderDialog({
 
   const pickedPkg = existingPkgs.find(p => p.id === pickedPkgId) ?? null;
 
+  // Picking a catalog package loads its full component breakup into the grid below, so the
+  // operator can review every line (earnings, deductions, employer cost, CTC) before approving.
+  // The grid is read-only in this mode: assigning the package unchanged is the whole point.
+  useEffect(() => {
+    if (mode !== 'existing' || !pickedPkg) return;
+    const c = numify(pickedPkg) as Partial<Draft>;
+    setDraft(d => ({
+      ...BLANK, ...c,
+      branch_name: (c.branch_name as string) || d.branch_name,
+      band_code: (c.band_code as string) ?? '',
+      cost_centre_code: (c.cost_centre_code as string) ?? '',
+      package_amount: Number(c.package_amount ?? c.ctc ?? 0),
+      ctc: Number(c.ctc ?? c.package_amount ?? 0),
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickedPkgId, mode, existingPkgs]);
+
   const canSave = mode === 'existing'
     ? !!pickedPkg
     : !!draft.branch_name && !!draft.band_code && draft.package_amount > 0;
@@ -388,11 +405,11 @@ export function PackageBuilderDialog({
               <span><strong>Minimum wage alert:</strong> Gross {inr(draft.gross)} is below {resolvedState} minimum wage {inr(minWage)}/month.</span>
             </div>
           )}
-          {similarPkg && (
+          {similarPkg && mode !== 'existing' && (
             <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span>
-                <strong>Similar package exists:</strong> {similarPkg.name ?? `Band ${similarPkg.band_code}`} has CTC {inr(similarPkg.package_amount / 12)}/mo (within ±5%). Consider assigning that instead.
+                <strong>Similar package exists:</strong> {similarPkg.name ?? `Band ${similarPkg.band_code}`} has CTC {inr(Number(similarPkg.ctc ?? similarPkg.package_amount))}/mo (within ±5%). Consider assigning that instead.
               </span>
             </div>
           )}
@@ -560,7 +577,7 @@ export function PackageBuilderDialog({
             {/* Earnings */}
             <div className="space-y-1.5">
               <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b pb-1">
-                Earnings — click any field to edit (switches to manual)
+                {mode === 'existing' ? 'Earnings — selected package (read-only)' : 'Earnings — click any field to edit (switches to manual)'}
               </p>
               {EARNINGS.map(([field, label]) => {
                 const val = (draft as any)[field] as number;
@@ -571,7 +588,7 @@ export function PackageBuilderDialog({
                     <Input
                       className={`h-7 text-xs flex-1 tabular-nums ${isBasicLocked ? 'bg-amber-50 border-amber-200' : 'bg-white'}`}
                       type="number"
-                      readOnly={isBasicLocked}
+                      readOnly={isBasicLocked || mode === 'existing'}
                       value={val ?? 0}
                       onChange={e => editComponent(field, Number(e.target.value))}
                     />

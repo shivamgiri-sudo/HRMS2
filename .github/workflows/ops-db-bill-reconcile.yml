@@ -1,0 +1,78 @@
+name: Ops db_bill Process Reconcile (manual)
+
+# Compares db_bill (legacy billing master, read-only) with HRMS employee -> process assignment.
+#   discover   : read-only report of db_bill Process / ClientName / CostCenter groups and how those employees sit in HRMS.
+#   trace      : read-only: where the agents found in each process's upload tables sit in HRMS (process / cost centre / LOB).
+#   ppv2-sources : read-only: which servers / schemas Process Performance V2 reads, and per-table freshness.
+#   schema     : read-only: column names / row counts / value shapes of db_masmis upload tables (no content).
+#   gaps       : read-only analysis of active HRMS employees with no process and what db_bill's cost centre says.
+#   apply-gaps : fills ONLY blank employees.process_id from an unambiguous cost centre. Never overwrites an assignment.
+# workflow_dispatch only. db_bill is never written; the discover mode writes nothing anywhere.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "discover = db_bill groups; gaps = analyse employees with no process (read-only); apply-gaps = fill blank process_id only"
+        required: true
+        default: gaps
+        type: choice
+        options:
+          - discover
+          - gaps
+          - trace
+          - schema
+          - ppv2-sources
+          - apply-gaps
+      confirm:
+        description: "To apply-gaps, type apply-gaps. Ignored otherwise."
+        required: false
+        type: string
+
+concurrency:
+  group: ops-db-bill-reconcile-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: db_bill reconcile (${{ inputs.mode }})
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Refuse an unconfirmed apply
+        if: inputs.mode == 'apply-gaps'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.confirm }}" != "apply-gaps" ]; then echo "::error::Type apply-gaps in confirm to apply."; exit 1; fi
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
+          case "${{ inputs.mode }}" in
+            discover)   npx tsx scripts/db-bill-process-discovery.ts ;;
+            gaps)       npx tsx scripts/db-bill-process-gaps.ts ;;
+            trace)      npx tsx scripts/staff-process-trace.ts ;;
+            schema)     npx tsx scripts/masmis-schema-peek.ts ;;
+            ppv2-sources) npx tsx scripts/ppv2-source-check.ts ;;
+            apply-gaps) npx tsx scripts/db-bill-process-gaps.ts --apply ;;
+          esac

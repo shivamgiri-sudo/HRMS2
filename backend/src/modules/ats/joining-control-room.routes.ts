@@ -4,6 +4,8 @@ import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { describeSkip, sendPendencyReminders } from "../payroll/pendency/pendency.service.js";
 import {
   approveSalaryProposal,
   generateEmployeeCode,
@@ -62,15 +64,53 @@ const h =
   (req: AuthenticatedRequest, res: any, next: any) =>
     fn(req, res).catch(next);
 
-joiningControlRoomRouter.get(
-  "/queue",
-  h(async (req, res) => {
-    const data = await listJoiningControlRoomQueue(
-      String(req.query.search || ""),
+/**
+ * Branch RBAC for this screen. Same rule as the appointment-letter pages: a user's role scope rows
+ * decide which branches they may see ("1=1" for org-wide / super_admin), and the optional
+ * ?branch_id= filter can only narrow within that, never widen it.
+ */
+async function branchScopeFor(req: AuthenticatedRequest) {
+  return buildScopeWhereClause(req.authUser!.id, [...roles], { branchId: "b.id" });
+}
+
+/** null = unrestricted; otherwise every id and name of the allowed branches. */
+async function allowedBranchKeys(req: AuthenticatedRequest, requested?: string): Promise<string[] | null> {
+  const scope = await branchScopeFor(req);
+  const wanted = requested?.trim() || "";
+  if (scope.sql === "1=1" && !wanted) return null;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT b.id, b.branch_name FROM branch_master b WHERE (${scope.sql})${wanted ? " AND b.id = ?" : ""}`,
+    wanted ? [...scope.params, wanted] : scope.params,
+  );
+  return (rows as RowDataPacket[]).flatMap((r) => [String(r.id), String(r.branch_name ?? "")].filter(Boolean));
+}
+
+// Every /candidates/:candidateId/* route takes an id from the URL, so list scoping alone would leave
+// the whole screen reachable by id from another branch. Checked once here, for all of them.
+joiningControlRoomRouter.param("candidateId", async (req, res, next, candidateId) => {
+  try {
+    const scope = await branchScopeFor(req as AuthenticatedRequest);
+    if (scope.sql === "1=1") return next();
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 AS ok FROM ats_candidate c
+         JOIN branch_master b ON b.id = c.applied_for_branch OR b.branch_name = c.applied_for_branch
+        WHERE c.id = ? AND (${scope.sql}) LIMIT 1`,
+      [candidateId, ...scope.params],
     );
-    return res.json({ success: true, data });
-  }),
-);
+    if (!(rows as RowDataPacket[]).length) {
+      return res.status(403).json({ success: false, message: "Forbidden: this candidate is outside your assigned branch scope" });
+    }
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
+
+joiningControlRoomRouter.get("/queue", h(async (req, res) => {
+  const branchKeys = await allowedBranchKeys(req, typeof req.query.branch_id === "string" ? req.query.branch_id : undefined);
+  const data = await listJoiningControlRoomQueue(String(req.query.search || ""), branchKeys);
+  return res.json({ success: true, data });
+}));
 
 joiningControlRoomRouter.get(
   "/candidates/:candidateId",
@@ -219,18 +259,41 @@ joiningControlRoomRouter.post(
   }),
 );
 
-joiningControlRoomRouter.post(
-  "/candidates/:candidateId/dpdp-consent/sync",
-  h(async (req, res) => {
-    const candidateId = req.params.candidateId;
-    const result = await syncDpdpConsentFromOnboarding(
-      candidateId,
-      req.authUser!.id,
-    );
-    const data = await getJoiningControlRoomCandidate(candidateId);
-    return res.json({ success: true, data: { ...data, dpdpSync: result } });
-  }),
-);
+// Email the employee a link to finish DigiLocker verification. Reuses the existing onboarding
+// link and never mints a new one (that would invalidate the link already in their inbox).
+// Cooldown, cap and the pendency_reminder_log row come from the shared pendency service.
+joiningControlRoomRouter.post("/candidates/:candidateId/digilocker/remind", h(async (req, res) => {
+  const candidateId = req.params.candidateId;
+  const [bridge] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const employeeId = (bridge as RowDataPacket[])[0]?.employee_id;
+  if (!employeeId) {
+    return res.status(409).json({ success: false, message: "No employee record exists yet for this candidate" });
+  }
+  const [result] = await sendPendencyReminders({
+    kind: "digilocker",
+    employeeIds: [String(employeeId)],
+    sentBy: req.authUser!.id,
+    trigger: "manual",
+  });
+  if (result.status !== "sent") {
+    return res.status(409).json({
+      success: false,
+      message: result.status === "failed" ? `Email could not be sent: ${result.reason ?? "unknown error"}` : describeSkip(result.reason),
+    });
+  }
+  const data = await getJoiningControlRoomCandidate(candidateId);
+  return res.json({ success: true, data: { ...data, digilockerReminder: result } });
+}));
+
+joiningControlRoomRouter.post("/candidates/:candidateId/dpdp-consent/sync", h(async (req, res) => {
+  const candidateId = req.params.candidateId;
+  const result = await syncDpdpConsentFromOnboarding(candidateId, req.authUser!.id);
+  const data = await getJoiningControlRoomCandidate(candidateId);
+  return res.json({ success: true, data: { ...data, dpdpSync: result } });
+}));
 
 joiningControlRoomRouter.post(
   "/candidates/:candidateId/salary-register/lock",

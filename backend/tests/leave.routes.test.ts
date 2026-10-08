@@ -31,6 +31,7 @@ vi.mock("../src/middleware/requireRole.js", () => ({
 vi.mock("../src/shared/scopeAccess.js", () => ({
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   hasAnyRole: vi.fn().mockResolvedValue(true),
+  isOrgWideUser: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),
   getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
   getRosterPlanScope: vi
@@ -42,6 +43,10 @@ vi.mock("../src/shared/scopeAccess.js", () => ({
   getUserRoles: vi.fn().mockResolvedValue([{ role_key: "admin" }]),
   hasRole: vi.fn().mockResolvedValue(true),
   buildScopeWhereClause: vi.fn().mockReturnValue({ where: "", params: [] }),
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  // role lookup used by enterpriseScope (user_roles + the synthetic department_head role)
+  USER_ROLES_WITH_DEPARTMENT_HEAD_SQL: "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+  DEPARTMENT_HEAD_ROLES: [],
   AccessDeniedError: class AccessDeniedError extends Error {},
   BadRequestAccessError: class BadRequestAccessError extends Error {},
 }));
@@ -89,9 +94,22 @@ const fakeHoliday = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetUser.mockResolvedValue({
-    data: { user: { id: "user-1", email: "admin@mcn.com" } },
-    error: null,
+  mockGetUser.mockResolvedValue({ data: { user: { id: "user-1", email: "admin@mcn.com" } }, error: null });
+  // admin is branch-scoped (owner policy 2026-10-01): the demo admin below is an admin whose own branch is
+  // branch-1, so scope-guarded routes admit employees of branch-1 only. Matched on SQL, not call order.
+  mockExecute.mockImplementation(async (sql: unknown) => {
+    const text = String(sql);
+    if (/FROM user_roles/i.test(text)) return [[{ role_key: "admin" }], []];
+    if (/FROM user_assignment_scope/i.test(text)) {
+      return [[{ role_key: "admin", scope_type: "branch", branch_id: "branch-1" }], []];
+    }
+    if (/FROM employees\s+WHERE user_id/i.test(text)) {
+      return [[{ id: "caller-emp", employee_code: "ADM001", branch_id: "branch-1" }], []];
+    }
+    if (/FROM employees\s+WHERE id/i.test(text)) {
+      return [[{ id: "emp-1", branch_id: "branch-1", process_id: "proc-1", reporting_manager_id: null }], []];
+    }
+    return [[], []];
   });
 });
 
@@ -171,24 +189,49 @@ describe("GET /api/leave/requests", () => {
 });
 
 describe("PATCH /api/leave/requests/:id/review", () => {
-  it("approves request", async () => {
-    svc.reviewRequest.mockResolvedValueOnce({
-      ...fakeRequest,
-      status: "approved",
+  // The review route is leaveSecureRouter's, which authorises every call through
+  // canReviewLeave(): it loads the request's row and refuses (403) when the request does not
+  // exist or when the caller is the employee who raised it, before any role is consulted. The
+  // suite's mocked caller is employee emp-1, so the request under review has to belong to
+  // someone else for the privileged (admin/hr) path to apply at all.
+  function requestUnderReviewBelongsTo(employeeId: string | null) {
+    mockExecute.mockImplementation(async (sql: unknown) => {
+      if (/FROM leave_request lr/i.test(String(sql)) && employeeId) {
+        return [[{ employee_id: employeeId, status: "pending", leave_type_id: "lt-1" }], []];
+      }
+      return [[], []];
     });
-    const r = await request(app)
-      .patch("/api/leave/requests/lr-1/review")
-      .set(AUTH)
+  }
+
+  it("approves request", async () => {
+    requestUnderReviewBelongsTo("emp-2");
+    svc.reviewRequest.mockResolvedValueOnce({ ...fakeRequest, employee_id: "emp-2", status: "approved" });
+    const r = await request(app).patch("/api/leave/requests/lr-1/review").set(AUTH)
       .send({ status: "approved" });
     expect(r.status).toBe(200);
     expect(r.body.data.status).toBe("approved");
+    expect(svc.reviewRequest).toHaveBeenCalledWith("lr-1", { status: "approved", remarks: null }, expect.any(String));
   });
   it("returns 400 for invalid status", async () => {
-    const r = await request(app)
-      .patch("/api/leave/requests/lr-1/review")
-      .set(AUTH)
+    requestUnderReviewBelongsTo("emp-2");
+    const r = await request(app).patch("/api/leave/requests/lr-1/review").set(AUTH)
       .send({ status: "maybe" });
     expect(r.status).toBe(400);
+    expect(svc.reviewRequest).not.toHaveBeenCalled();
+  });
+  it("refuses to let a caller review their own leave request, even as admin/hr", async () => {
+    requestUnderReviewBelongsTo("emp-1");
+    const r = await request(app).patch("/api/leave/requests/lr-1/review").set(AUTH)
+      .send({ status: "approved" });
+    expect(r.status).toBe(403);
+    expect(svc.reviewRequest).not.toHaveBeenCalled();
+  });
+  it("refuses a request that does not exist instead of reviewing it", async () => {
+    requestUnderReviewBelongsTo(null);
+    const r = await request(app).patch("/api/leave/requests/lr-1/review").set(AUTH)
+      .send({ status: "approved" });
+    expect(r.status).toBe(403);
+    expect(svc.reviewRequest).not.toHaveBeenCalled();
   });
 });
 

@@ -88,11 +88,9 @@ beforeEach(() => {
 
 const auth = (role: string) => ({ Authorization: `Bearer mock-token-${role}` });
 
-describe("GET /shortlist/summary", () => {
-  it("shows an all-branch role every lead", async () => {
-    const res = await request(app)
-      .get("/api/meta/shortlist/summary")
-      .set(auth("admin"));
+describe('GET /shortlist/summary', () => {
+  it('shows an all-branch (org-wide) role every lead', async () => {
+    const res = await request(app).get('/api/meta/shortlist/summary').set(auth('super_admin'));
     expect(res.status).toBe(200);
     expect(res.body.data.totalLeads).toBe(4);
     expect(res.body.data.proposed).toEqual({
@@ -153,13 +151,18 @@ describe("GET /shortlist/export.csv", () => {
     expect(res.status).toBe(403);
   });
 
-  it("exports for HR with a BOM and one row per lead", async () => {
-    const res = await request(app)
-      .get("/api/meta/shortlist/export.csv")
-      .set(auth("hr"));
+  it('exports for an org-wide role with a BOM and one row per lead', async () => {
+    const res = await request(app).get('/api/meta/shortlist/export.csv').set(auth('super_admin'));
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("text/csv");
     expect(res.text.charCodeAt(0)).toBe(0xfeff);
     expect(res.text.trim().split("\r\n")).toHaveLength(5);
+  });
+
+  it("exports only the caller's own branch for HR (header + the 2 Noida leads)", async () => {
+    const res = await request(app).get('/api/meta/shortlist/export.csv').set(auth('hr'));
+    expect(res.status).toBe(200);
+    expect(res.text.charCodeAt(0)).toBe(0xfeff);
+    expect(res.text.trim().split('\r\n')).toHaveLength(3);
   });
 });

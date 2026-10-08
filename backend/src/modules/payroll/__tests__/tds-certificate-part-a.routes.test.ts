@@ -40,6 +40,7 @@ const {
   logSensitiveAction: vi.fn(),
 }));
 
+vi.mock("../payroll-branch-scope.js", async () => (await import("./helpers/orgWideScopeMock.js")).orgWideScopeMock);
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole }));
 vi.mock("../../../shared/accessGuard.js", () => ({ getEmployeeForUser }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));

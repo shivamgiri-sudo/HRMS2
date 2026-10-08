@@ -14,7 +14,8 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
-import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasAnyRole, isOrgWideUser } from "../../shared/scopeAccess.js";
+import { buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 import {
   createJoiningDocumentEsignRequest,
   createPublicTokenForEpfReview,
@@ -2002,23 +2003,16 @@ publicEmployeeDocumentRouter.post(
               [alRow.id],
             );
 
-            // Step 3: email candidate
-            const candidateEmail = String(alRow.email ?? "");
-            if (candidateEmail.includes("@")) {
-              try {
-                const { emailService } =
-                  await import("../communication/email.service.js");
-                const frontendBase =
-                  process.env.FRONTEND_URL ??
-                  process.env.APP_URL ??
-                  "https://mcnhrms.teammas.in";
-                const downloadUrl = `${frontendBase}/api/letters/appointment/by-candidate/${alRow.candidate_id}/download`;
-                await emailService.send({
-                  to: candidateEmail,
-                  subject: "Your Appointment Letter — MAS Callnet",
-                  html: `<p>Dear ${String(alRow.full_name ?? "")},</p>
-                       <p>Your appointment letter is ready. Please download it using the link below:</p>
-                       <p><a href="${downloadUrl}" style="background:#2563eb;color:#fff;padding:8px 16px;border-radius:4px;text-decoration:none;">Download Appointment Letter</a></p>
+          // Step 3: email candidate
+          const candidateEmail = String(alRow.email ?? "");
+          if (candidateEmail.includes("@")) {
+            try {
+              const { emailService } = await import("../communication/email.service.js");
+              await emailService.send({
+                to: candidateEmail,
+                subject: "Your Appointment Letter — MAS Callnet",
+                html: `<p>Dear ${String(alRow.full_name ?? "")},</p>
+                       <p>Your appointment letter is ready. It is attached to this email as a PDF.</p>
                        <p>Regards,<br/>MAS Callnet HR Team</p>`,
                   attachments: pdfBytes
                     ? [
@@ -2080,26 +2074,20 @@ payrollEpfComplianceRouter.use(
   requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr", "manager"),
 );
 
-payrollEpfComplianceRouter.get(
-  "/epf-compliance",
-  h(async (req: AuthenticatedRequest, res) => {
-    const userId = req.authUser!.id;
-    const adminBypass = await hasAnyRole(userId, "admin", "super_admin");
-    const scoped = await buildScopeWhereClause(
-      userId,
-      ["payroll_hr", "payroll", "hr", "manager"],
-      {
-        branchId: "p.branch_id",
-        processId: "p.process_id",
-        departmentId: "e.department_id",
-        managerEmployeeId: "e.reporting_manager_id",
-        employeeId: "e.id",
-      },
-      { allowAdminBypass: true },
-    );
-    const whereSql = adminBypass ? "1=1" : scoped.sql;
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
+payrollEpfComplianceRouter.get("/epf-compliance", h(async (req: AuthenticatedRequest, res) => {
+  const userId = req.authUser!.id;
+  // admin is branch-scoped (owner policy 2026-10-01): only super_admin short-circuits to 1=1; admin is
+  // clamped to its own branch by buildScopeWhereClause (allowAdminBypass).
+  const adminBypass = await hasAnyRole(userId, "super_admin");
+  const scoped = await buildScopeWhereClause(
+    userId,
+    ["payroll_hr", "payroll", "hr", "manager"],
+    { branchId: "p.branch_id", processId: "p.process_id", departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id", employeeId: "e.id" },
+    { allowAdminBypass: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
+  );
+  const whereSql = adminBypass ? "1=1" : scoped.sql;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
         p.employee_id,
         e.employee_code,
         p.employee_name,
@@ -2128,25 +2116,19 @@ payrollEpfComplianceRouter.get(
   }),
 );
 
-payrollEpfComplianceRouter.post(
-  "/epf-compliance/:employeeId/review",
-  h(async (req: AuthenticatedRequest, res) => {
-    const decision = String(req.body?.decision ?? "");
-    if (!["approved", "pushback"].includes(decision)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "decision must be approved or pushback",
-        });
-    }
-    const { profile } = await ensureEpfProfile(
-      req.params.employeeId,
-      req.authUser!.id,
-    );
-    await syncEpfValidation(req.params.employeeId, req.authUser!.id);
-    await db.execute(
-      `UPDATE employee_epf_compliance_profile
+payrollEpfComplianceRouter.post("/epf-compliance/:employeeId/review", h(async (req: AuthenticatedRequest, res) => {
+  const decision = String(req.body?.decision ?? "");
+  if (!["approved", "pushback"].includes(decision)) {
+    return res.status(400).json({ success: false, message: "decision must be approved or pushback" });
+  }
+  // Branch scoping (owner ruling 2026-10-01): hr / payroll / manager may only review inside their own branch.
+  if (!(await canViewEmployee(req.authUser!, String(req.params.employeeId)))) {
+    return res.status(403).json({ success: false, message: "Forbidden: this employee is outside your branch / assigned scope" });
+  }
+  const { profile } = await ensureEpfProfile(req.params.employeeId, req.authUser!.id);
+  await syncEpfValidation(req.params.employeeId, req.authUser!.id);
+  await db.execute(
+    `UPDATE employee_epf_compliance_profile
         SET status = ?,
             compliance_stage = ?,
             correction_status = ?,
@@ -2293,16 +2275,15 @@ payrollEpfComplianceRouter.post(
         });
     }
 
+    // Branch scoping (owner ruling 2026-10-01): an hr / payroll uploader can only touch employees inside
+    // their own branch / assigned scope; rows for anyone else are reported as not found.
+    const uploadScope = buildEmployeeScopeCondition(await resolveUserBusinessScope(req.authUser!), {
+      employeeId: "id", branchId: "branch_id", processId: "process_id", lobId: "lob_id",
+      departmentId: "department_id", managerEmployeeId: "reporting_manager_id",
+    });
     const [empRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, employee_code FROM employees WHERE active_status = 1",
-    );
-    const empMap = new Map(
-      (empRows as RowDataPacket[]).map((e) => [
-        String(e.employee_code ?? "")
-          .trim()
-          .toLowerCase(),
-        e.id as string,
-      ]),
+      `SELECT id, employee_code FROM employees WHERE active_status = 1 AND (${uploadScope.sql})`,
+      uploadScope.params,
     );
 
     const errors: string[] = [];
@@ -2323,12 +2304,7 @@ payrollEpfComplianceRouter.post(
       }
 
       const empId = empMap.get(code.toLowerCase());
-      if (!empId) {
-        errors.push(
-          `Row ${i + 1}: employee_code "${code}" not found among active employees`,
-        );
-        continue;
-      }
+      if (!empId) { errors.push(`Row ${i + 1}: employee_code "${code}" not found among active employees in your scope`); continue; }
 
       const pick = (at: number) => (at === -1 ? "" : (cols[at] ?? "").trim());
       const esic = pick(idx.esic);

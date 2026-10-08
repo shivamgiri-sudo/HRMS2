@@ -2,6 +2,9 @@ import fs from "fs";
 import path from "path";
 import { Router } from "express";
 import { requireRole } from "../../middleware/requireRole.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { canAccessCandidate, candidateParamGuard } from "./candidate-access.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import {
   getDocumentAudit,
@@ -39,10 +42,35 @@ export const secureDocumentsRouter = Router();
  */
 const documentRoles = requireRole("super_admin", "admin", "hr", "payroll_hr");
 
-const h =
-  (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: any, next: any) =>
-    fn(req, res).catch(next);
+/*
+ * Branch scoping (owner ruling 2026-10-01). The paragraph above records that the role list was the WHOLE access
+ * control; that is no longer true. hr / payroll_hr reach only the documents of candidates inside their own
+ * branch / assigned scope (org-wide roles unaffected). :candidateId routes use the shared candidate guard;
+ * :documentId routes resolve the owning candidate first. A missing document falls through to the service's own 404.
+ */
+secureDocumentsRouter.param("candidateId", candidateParamGuard());
+secureDocumentsRouter.param("documentId", (req: any, res: any, next: any, documentId: string) => {
+  const userId = req.authUser?.id as string | undefined;
+  if (!userId) return next();
+  db.execute<RowDataPacket[]>(
+    `SELECT candidate_id FROM candidate_onboarding_document WHERE id = ?
+     UNION ALL SELECT candidate_id FROM ats_candidate_documents WHERE id = ? LIMIT 1`,
+    [documentId, documentId],
+  )
+    .then(async ([rows]) => {
+      const cid = (rows as RowDataPacket[])[0]?.candidate_id;
+      if (!cid) return next();
+      if (await canAccessCandidate(userId, String(cid))) return next();
+      return res.status(404).json({ success: false, message: "Document not found" });
+    })
+    .catch(next);
+});
+
+const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (
+  req: AuthenticatedRequest,
+  res: any,
+  next: any,
+) => fn(req, res).catch(next);
 
 function meta(req: AuthenticatedRequest) {
   return { ip: req.ip, userAgent: req.get("user-agent") || undefined };

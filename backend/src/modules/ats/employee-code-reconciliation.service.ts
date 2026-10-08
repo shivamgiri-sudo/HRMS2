@@ -71,15 +71,13 @@ export async function reconcileEmployeeCodeDrift(): Promise<ReconciliationResult
       `UPDATE ats_candidate SET employee_code = ?, updated_at = NOW() WHERE id = ?`,
       [row.current_code, row.candidate_id],
     );
-    await db
-      .execute<ResultSetHeader>(
-        `UPDATE ats_onboarding_bridge SET employee_code = ?, updated_at = NOW() WHERE candidate_id = ?`,
-        [row.current_code, row.candidate_id],
-      )
-      .catch(() => {
-        // ats_onboarding_bridge.employee_code may not exist on an older bridge row shape; the
-        // ats_candidate copy above is the one every current search path actually reads.
-      });
+    await db.execute<ResultSetHeader>(
+      `UPDATE ats_onboarding_bridge SET employee_code = ? WHERE candidate_id = ?`,
+      [row.current_code, row.candidate_id],
+    ).catch(() => {
+      // ats_onboarding_bridge.employee_code may not exist on an older bridge row shape; the
+      // ats_candidate copy above is the one every current search path actually reads.
+    });
     staleCodesRepaired.push({
       candidateId: row.candidate_id,
       candidateCode: row.candidate_code,

@@ -6,25 +6,14 @@ import type { Request } from "express";
 
 import { blankToNull } from "../../shared/sql-values.js";
 export const assetsService = {
-  async list(filters: {
-    status?: string;
-    branch_id?: string;
-    category?: string;
-  }) {
+  async list(filters: { status?: string; branch_id?: string; category?: string }, scope?: { sql: string; params: unknown[] }) {
     const conds = ["a.active_status = 1"];
     const params: unknown[] = [];
-    if (filters.status) {
-      conds.push("a.status = ?");
-      params.push(filters.status);
-    }
-    if (filters.branch_id) {
-      conds.push("a.branch_id = ?");
-      params.push(filters.branch_id);
-    }
-    if (filters.category) {
-      conds.push("a.asset_category = ?");
-      params.push(filters.category);
-    }
+    // Branch scoping: a browser ?branch_id= below can only narrow what this already allows.
+    if (scope && scope.sql !== "1=1") { conds.push(`(${scope.sql})`); params.push(...scope.params); }
+    if (filters.status)    { conds.push("a.status = ?");          params.push(filters.status); }
+    if (filters.branch_id) { conds.push("a.branch_id = ?");       params.push(filters.branch_id); }
+    if (filters.category)  { conds.push("a.asset_category = ?");  params.push(filters.category); }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT a.*, b.branch_name,
               aa.employee_id AS assigned_to,

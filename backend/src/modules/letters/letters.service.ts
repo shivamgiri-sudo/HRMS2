@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getIstDateString } from "../../utils/dateUtils.js";
 import { letterSalaryRowsOrBlank } from "./appointmentLetterData.service.js";
+import { stripSalaryOverrides, resolveApprovedIncrementVars } from "./letterSalaryGuard.js";
 import { istDate, assertUsableName } from "./letterFormat.js";
 import { nocReleaseStatusForEmployee } from "../payroll/noc-release-gate.service.js";
 
@@ -128,7 +129,10 @@ export const lettersService = {
       epf_no: emp.epf_number ?? "",
       esi_no: emp.esic_number ?? "",
       ...salaryRows,
-      ...data.override_vars,
+      // Typed overrides may not replace any approved salary figure; an increment letter's figures come
+      // from the approved, implemented increment and win over anything typed (see letterSalaryGuard.ts).
+      ...stripSalaryOverrides(template.letter_type, data.override_vars),
+      ...(template.letter_type === "increment" ? await resolveApprovedIncrementVars(data.employee_id) : {}),
     };
 
     // generated_text stores a JSON blob so the renderer can re-hydrate later
@@ -160,7 +164,7 @@ export const lettersService = {
     };
   },
 
-  async listAll() {
+  async listAll(scope: { sql: string; params: unknown[] } = { sql: "1=1", params: [] }) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT gl.id, gl.letter_type, gl.issued_date, gl.acknowledged_at, gl.created_at,
               lt.template_name, lt.template_code,
@@ -169,7 +173,9 @@ export const lettersService = {
        FROM generated_letter gl
        JOIN letter_template lt ON lt.id = gl.template_id
        JOIN employees e ON e.id = gl.employee_id
+       WHERE (${scope.sql})
        ORDER BY gl.created_at DESC`,
+      scope.params
     );
     return rows as RowDataPacket[];
   },

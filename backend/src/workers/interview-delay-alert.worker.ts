@@ -1,14 +1,11 @@
-import { randomUUID } from "crypto";
-import { db } from "../db/mysql.js";
-import { env } from "../config/env.js";
-import nodemailer from "nodemailer";
-import { inboxService } from "../modules/inbox/inbox.service.js";
-import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
-import {
-  shouldAlert,
-  markAlerted,
-  cleanupCooldowns,
-} from "../shared/alert-cooldown.js";
+import { randomUUID } from 'crypto';
+import { db } from '../db/mysql.js';
+import { env } from '../config/env.js';
+import nodemailer from 'nodemailer';
+import { inboxService } from '../modules/inbox/inbox.service.js';
+import { isWorkerEnabled, markWorkerRun } from '../shared/worker-config.js';
+import { shouldAlert, markAlerted, cleanupCooldowns } from '../shared/alert-cooldown.js';
+import { buildAppLink } from '../shared/appLink.js';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -93,7 +90,9 @@ async function sendDelayAlert(row: {
       <tr style="background:#f8fafc"><td style="padding:10px 16px;font-size:12px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:#64748b;border-top:1px solid #f1f5f9">Recruiter</td><td style="padding:10px 16px;font-weight:600;border-top:1px solid #f1f5f9">${escapeHtml(row.recruiter_name)}</td></tr>
       <tr><td style="padding:10px 16px;font-size:12px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:#64748b;border-top:1px solid #f1f5f9">Time Pending</td><td style="padding:10px 16px;font-weight:700;color:#b45309;border-top:1px solid #f1f5f9">${escapeHtml(delayStr)}</td></tr>
     </table>
-    <p style="font-size:13px;color:#64748b">Please log in to HRMS and ensure the recruiter submits the interview result at the earliest.</p>
+    <p style="font-size:13px;color:#64748b">Please ensure the recruiter submits the interview result at the earliest.</p>
+    <p style="margin:16px 0 0"><a href="${buildAppLink('/ats/walkin-queue')}" style="display:inline-block;background:#b45309;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:700;font-size:14px">Open Walk-in Queue</a></p>
+    <p style="font-size:12px;color:#94a3b8;margin:8px 0 0">Or copy this link: ${buildAppLink('/ats/walkin-queue')}</p>
   </td></tr>
   <tr><td style="padding:16px 32px;border-top:1px solid #f1f5f9;font-size:12px;color:#94a3b8;text-align:center">
     MAS Callnet PeopleOS &mdash; Automated Interview Delay Alert

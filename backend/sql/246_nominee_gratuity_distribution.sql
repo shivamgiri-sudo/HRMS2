@@ -20,8 +20,17 @@ CREATE TABLE IF NOT EXISTS gratuity_distribution (
 );
 
 -- 2. Standardize employee address field naming (address_line1 → address1 for consistency)
-ALTER TABLE employees CHANGE COLUMN IF EXISTS address_line1 address1 VARCHAR(255) NULL;
-ALTER TABLE employees CHANGE COLUMN IF EXISTS address_line2 address2 VARCHAR(255) NULL;
+-- CHANGE COLUMN IF EXISTS is MariaDB-only; MySQL 8.0 rejects it at the token. Guarded rename instead.
+SET @s = (SELECT IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'employees' AND column_name = 'address_line1') > 0
+  AND (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'employees' AND column_name = 'address1') = 0,
+  'ALTER TABLE employees CHANGE COLUMN address_line1 address1 VARCHAR(255) NULL', 'SELECT 1'));
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+SET @s = (SELECT IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'employees' AND column_name = 'address_line2') > 0
+  AND (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'employees' AND column_name = 'address2') = 0,
+  'ALTER TABLE employees CHANGE COLUMN address_line2 address2 VARCHAR(255) NULL', 'SELECT 1'));
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
 -- 3. Add separate permanent address fields to employees table
 SET @mcol_1 = (
@@ -138,5 +147,8 @@ SET nominee_distribution_status = CASE
 END
 WHERE nominee_distribution_status = 'not_applicable';
 
-INSERT INTO audit_log (action, module, details, created_at)
-VALUES ('nominee_gratuity_distribution_setup', 'exit', 'Created gratuity_distribution table, standardized address fields, added permanent address columns', NOW());
+-- audit_log columns are action_type / module_key / metadata_json (the original action / module /
+-- details names never existed), so this insert failed on every rebuilt database. IGNORE keeps a
+-- strict-mode column default from aborting what is only a setup note.
+INSERT IGNORE INTO audit_log (action_type, module_key, metadata_json, created_at)
+VALUES ('nominee_gratuity_distribution_setup', 'exit', JSON_OBJECT('note', 'Created gratuity_distribution table, standardized address fields, added permanent address columns'), NOW());

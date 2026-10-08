@@ -61,6 +61,9 @@ function withFullOrphanBacklog() {
         [],
       ];
     }
+    if (/SELECT client_id FROM process_master WHERE id = \?/i.test(text)) {
+      return [[{ client_id: null }], []];
+    }
     if (/FROM client_master WHERE id = \?/i.test(text)) {
       return [[{ client_name: "SATYA E-COM SERVICES LIMITED" }], []];
     }
@@ -89,6 +92,33 @@ function insertCall() {
 beforeEach(() => {
   dbExecute.mockReset();
   withFullOrphanBacklog();
+});
+
+describe("process must belong to the chosen client", () => {
+  it("rejects a process that belongs to a different client", async () => {
+    dbExecute.mockImplementation(async (sql: unknown) => {
+      if (/SELECT client_id FROM process_master WHERE id = \?/i.test(String(sql))) return [[{ client_id: "other-client" }], []];
+      return [[], []];
+    });
+    await expect(costCentreService.create({ ...VALID })).rejects.toThrow(/different client/i);
+    expect(insertCall().sql).toBe("");
+  });
+
+  it("rejects an unknown process", async () => {
+    dbExecute.mockImplementation(async () => [[], []]);
+    await expect(costCentreService.create({ ...VALID })).rejects.toThrow(/Process not found/i);
+  });
+
+  it("accepts a process that belongs to the same client", async () => {
+    dbExecute.mockImplementation(async (sql: unknown) => {
+      const t = String(sql);
+      if (/SELECT client_id FROM process_master WHERE id = \?/i.test(t)) return [[{ client_id: "client-1" }], []];
+      if (/FROM client_master WHERE id = \?/i.test(t)) return [[{ client_name: "X" }], []];
+      if (/INSERT INTO cost_centre_master/i.test(t)) return [{ affectedRows: 1 }, []];
+      return [[{ id: "new-id" }], []];
+    });
+    await expect(costCentreService.create({ ...VALID })).resolves.toBeTruthy();
+  });
 });
 
 describe("creating a cost centre in HRMS", () => {

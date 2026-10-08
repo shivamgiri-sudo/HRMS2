@@ -139,6 +139,8 @@ export async function loanRegister(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            el.loan_type,
            el.amount AS loan_amount,
@@ -153,6 +155,7 @@ export async function loanRegister(
       JOIN employees e ON e.id = el.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY el.id ASC`;
 
@@ -182,16 +185,11 @@ export async function dojChangeRegister(
   const clauses: string[] = ["1 = 1"];
   const params: unknown[] = [];
 
-  // change_doj_snapshot may not have employee_id — join via employee_code
-  if (scope.branchScope.mode === "restricted") {
-    const ids = scope.branchScope.ids.filter(Boolean);
-    if (ids.length === 0) {
-      clauses.push("1 = 0");
-    } else {
-      clauses.push(`e.branch_id IN (${ids.map(() => "?").join(",")})`);
-      params.push(...ids);
-    }
-  }
+  // change_doj_snapshot may not have employee_id — join via employee_code.
+  // Full row scope (branch AND process, and deny on mode 'none'): the hand-rolled
+  // branch-only clause here showed a process-restricted viewer their whole branch
+  // and returned every row to a caller with no scope at all.
+  appendScopeConditions(scope, clauses, params, "e");
 
   if (filters.branchId) {
     clauses.push("e.branch_id = ?");
@@ -318,6 +316,8 @@ export async function nomineeRegister(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            en.nominee_name,
            en.relationship,
@@ -327,6 +327,7 @@ export async function nomineeRegister(
       JOIN employees e ON e.id = en.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY en.id ASC`;
 

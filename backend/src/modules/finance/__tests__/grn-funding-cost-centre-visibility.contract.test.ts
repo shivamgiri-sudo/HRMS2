@@ -15,6 +15,16 @@ function readRepo(relativePath: string) {
 }
 
 /**
+ * Layout-insensitive form of a source text: all whitespace removed, the JSX `{" "}` spacer and the
+ * trailing comma before a closing bracket dropped. grn.service.ts and SmartGrnApprovalQueue.tsx
+ * are prettier-formatted now, so an expression these assertions quote on one line is wrapped
+ * across several in the file. Comparing compacted text to compacted needle pins exactly the same
+ * tokens in the same order.
+ */
+const compact = (s: string) =>
+  s.replace(/\{" "\}/g, " ").replace(/\s+/g, "").replace(/,(?=[)\]}])/g, "");
+
+/**
  * 2026-08-29: `funding_cost_centre_id` (migration 1630 — WHOSE BUDGET actually paid, as distinct
  * from `cost_centre_id`, WHO INCURRED the spend) was found to be read by ZERO P&L-facing query in
  * the whole process-pnl module. Not a double-count — each allocation row is still summed once —
@@ -73,11 +83,7 @@ describe("funding_cost_centre_id surfaced where a person actually looks", () => 
     // Conditioned on inequality (or a NULL funding centre — the branch pool), not shown
     // unconditionally: a row funded by its own cost centre must read exactly as it always has.
     expect(form).toContain("alloc.funding_cost_centre_id == null");
-    expect(form).toContain(
-      'String(alloc.funding_cost_centre_id) !== String(alloc.cost_centre_id ?? "")',
-    );
-    expect(form).toContain(
-      'funded from {alloc.funding_cost_centre_name ?? "branch pool"}',
-    );
+    expect(compact(form)).toContain(compact('String(alloc.funding_cost_centre_id) !== String(alloc.cost_centre_id ?? "")'));
+    expect(compact(form)).toContain(compact("funded from {alloc.funding_cost_centre_name ?? \"branch pool\"}"));
   });
 });

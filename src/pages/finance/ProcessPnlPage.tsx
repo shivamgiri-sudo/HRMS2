@@ -9,6 +9,7 @@ import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useHasRole } from "@/hooks/useUserRole";
 import { downloadBpoPnlExport, useBpoProcessPnl } from "@/hooks/useBpoProcessPnl";
 import { usePnlStatement, type PnlStatementViewBy } from "@/hooks/usePnlStatement";
 import { usePnlLiveReconciliation } from "@/hooks/usePnlLiveReconciliation";
@@ -105,7 +106,10 @@ export default function ProcessPnlPage() {
   const clientId = searchParams.get("clientId") ?? "";
   const search = searchParams.get("search") ?? "";
   const [draftSearch, setDraftSearch] = useState(search);
-  const [activeTab, setActiveTab] = useState<"overview" | "live" | "trend" | "insights" | "matrix" | "statement" | "alerts">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "live" | "trend" | "insights" | "matrix" | "statement" | "alerts" | "leakage">("overview");
+  // Same roles as GET /pnl/cost-leakage (process-pnl.routes.ts): it exposes company-wide spend, so
+  // every other P&L reader got a raw 403 in this tab.
+  const canSeeCostLeakage = useHasRole("super_admin", "admin", "finance_head", "accounts_head");
   const [statementViewBy, setStatementViewBy] = useState<PnlStatementViewBy>("process");
   const [matrixPreset, setMatrixPreset] = useState<ProcessPnlMatrixPreset>("summary");
   const [statusFilter, setStatusFilter] = useState<ProcessPnlStatusFilter>("all");
@@ -548,7 +552,7 @@ export default function ProcessPnlPage() {
             <TabsTrigger value="matrix" className={tabTriggerClass}>Process Matrix</TabsTrigger>
             <TabsTrigger value="statement" className={tabTriggerClass}>P&amp;L Statement</TabsTrigger>
             <TabsTrigger value="alerts">Alerts &amp; Reconciliation</TabsTrigger>
-            <TabsTrigger value="leakage" className={tabTriggerClass}>Cost Leakage</TabsTrigger>
+            {canSeeCostLeakage && <TabsTrigger value="leakage" className={tabTriggerClass}>Cost Leakage</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="overview" className="flex-1 overflow-auto px-4 py-3 m-0">
@@ -724,11 +728,13 @@ export default function ProcessPnlPage() {
             </Suspense>
           </TabsContent>
 
-          <TabsContent value="leakage" className="flex-1 overflow-auto px-4 py-3 m-0">
-            <Suspense fallback={tabFallback}>
-              <PnlCostLeakagePanel period={period} />
-            </Suspense>
-          </TabsContent>
+          {canSeeCostLeakage && (
+            <TabsContent value="leakage" className="flex-1 overflow-auto px-4 py-3 m-0">
+              <Suspense fallback={tabFallback}>
+                <PnlCostLeakagePanel period={period} />
+              </Suspense>
+            </TabsContent>
+          )}
 
           <TabsContent value="matrix" className="flex-1 overflow-auto px-4 py-3 m-0">
             <ProcessPnlMatrixToolbar

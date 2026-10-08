@@ -5,6 +5,7 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireTpzCompanyInScope } from "../dashboards/process-scope-guards.js";
 import * as svc from "./sales-upload.service.js";
 
 const upload = multer({
@@ -40,19 +41,25 @@ salesUploadRouter.use(
   ),
 );
 
-salesUploadRouter.get(
-  "/health",
-  h(async (_req, res) => {
-    return res.json({
-      success: true,
-      data: {
-        module: "sales-upload",
-        status: "available",
-        message: "Sales upload routes are registered.",
-      },
-    });
-  }),
-);
+// Owner ruling 2026-10-01: each company dashboard needs that company's process inside the caller's scope.
+const COMPANY_BY_PREFIX: Array<[string, string]> = [
+  ["/bellavita", "bellavita"], ["/gnc", "gnc"], ["/neemans", "neemans"], ["/nms", "neemans"], ["/aw", "appreciate_health"],
+];
+salesUploadRouter.use((req, res, next) => {
+  const hit = COMPANY_BY_PREFIX.find(([prefix]) => req.path.startsWith(prefix));
+  return hit ? requireTpzCompanyInScope(hit[1])(req, res, next) : next();
+});
+
+salesUploadRouter.get("/health", h(async (_req, res) => {
+  return res.json({
+    success: true,
+    data: {
+      module: "sales-upload",
+      status: "available",
+      message: "Sales upload routes are registered.",
+    },
+  });
+}));
 
 // ── Dashboard endpoints (read-only) ───────────────────────────────────────────
 

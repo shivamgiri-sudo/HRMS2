@@ -10,12 +10,11 @@ import {
   getTrainingReadinessPulse,
   getRevenueAtRisk,
   getQualityIntervention,
-} from "./bi.service.js";
-import {
-  resolveDashboardScopeForRequest,
-  narrowDashboardScope,
-} from "../../shared/dashboardScope.js";
-import { getUserRoleContext } from "../../shared/roleResolver.js";
+} from './bi.service.js';
+import { resolveDashboardScopeForRequest, narrowDashboardScope } from '../../shared/dashboardScope.js';
+import { db } from '../../db/mysql.js';
+import { employeeListScope } from '../dashboards/branch-scope-guards.js';
+import { getUserRoleContext } from '../../shared/roleResolver.js';
 import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
 
 export const biRouter = Router();
@@ -81,13 +80,11 @@ biRouter.get(
   "/attrition-risk-signal",
   requireRole(...OPS_ROLES, "hr"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const branchId = req.query.branchId
-      ? String(req.query.branchId)
-      : undefined;
-    const processId = req.query.processId
-      ? String(req.query.processId)
-      : undefined;
-    const data = await getAttritionRiskSignal(branchId, processId);
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
+    // Owner ruling 2026-10-01: ?branchId / ?processId only NARROW the caller's own scope (org-wide roles: null).
+    const scope = await employeeListScope(req.authUser!, 'e');
+    const data = scope ? await getAttritionRiskSignal(branchId, processId, scope) : await getAttritionRiskSignal(branchId, processId);
     return res.json({ success: true, data });
   }),
 );
@@ -107,13 +104,10 @@ biRouter.get(
   "/training-readiness-pulse",
   requireRole(...OPS_ROLES, "hr", "trainer", "process_manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const branchId = req.query.branchId
-      ? String(req.query.branchId)
-      : undefined;
-    const processId = req.query.processId
-      ? String(req.query.processId)
-      : undefined;
-    const data = await getTrainingReadinessPulse(branchId, processId);
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
+    const scope = await employeeListScope(req.authUser!, 'e');
+    const data = scope ? await getTrainingReadinessPulse(branchId, processId, scope) : await getTrainingReadinessPulse(branchId, processId);
     return res.json({ success: true, data });
   }),
 );
@@ -143,13 +137,17 @@ biRouter.get(
   "/quality-intervention",
   requireRole(...OPS_ROLES, "qa", "quality_analyst"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const branchId = req.query.branchId
-      ? String(req.query.branchId)
-      : undefined;
-    const processId = req.query.processId
-      ? String(req.query.processId)
-      : undefined;
-    const data = await getQualityIntervention(branchId, processId);
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
+    // Audit rows are keyed by agent code: a scoped caller only sees agents inside their own scope.
+    const scope = await employeeListScope(req.authUser!, 'e');
+    let codes: string[] | undefined;
+    if (scope) {
+      const [rows] = await db.execute<any[]>(
+        `SELECT e.employee_code FROM employees e WHERE e.active_status = 1 AND ${scope.sql}`, scope.params as any[]);
+      codes = (rows as any[]).map((r) => String(r.employee_code)).filter(Boolean);
+    }
+    const data = codes ? await getQualityIntervention(branchId, processId, codes) : await getQualityIntervention(branchId, processId);
     return res.json({ success: true, data });
   }),
 );

@@ -24,7 +24,8 @@ export type BudgetTopupStatus =
   | "branch_head_approved"
   | "finance_head_approved"
   | "rejected"
-  | "applied";
+  | "applied"
+  | "cancelled";
 
 /**
  * Every refusal in this file is a decision the reviewer needs to read, not an internal fault.
@@ -1111,6 +1112,7 @@ export const budgetTopupService = {
       ).length,
       applied: decorated.filter((r) => String(r.status) === "applied").length,
       rejected: decorated.filter((r) => String(r.status) === "rejected").length,
+      cancelled: decorated.filter((r) => String(r.status) === "cancelled").length,
     };
 
     return { rows: visible, counts };
@@ -1330,6 +1332,214 @@ export const budgetTopupService = {
         "TOPUP_NO_REVIEW_ROLE",
         `Your role (${effectiveRole || "none"}) cannot review a top-up request in status ${status}`,
       );
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+  /**
+   * The raiser (or a super_admin) withdraws a request — only while it is still 'submitted'. Once
+   * Branch Head has approved, the request is a reviewer's decision in flight and leaves the queue
+   * by Finance Head's approve/reject, not by withdrawal. Deliberately NOT routed through
+   * review(): the maker-checker rule there refuses the raiser outright, which is exactly why a
+   * request raised in error used to have no way out short of asking a reviewer to reject it.
+   */
+  async cancel(id: string, actorId: string, actorRole: string, isSuperAdmin: boolean, reason?: string) {
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT t.*, h.period_code
+           FROM finance_budget_topup_request t
+           JOIN finance_budget_header h ON h.id = t.budget_id
+          WHERE t.id = ?
+          FOR UPDATE`,
+        [id]
+      );
+      const request = rows[0];
+      if (!request) throw refuse(404, "TOPUP_NOT_FOUND", "Top-up request not found");
+      const status = String(request.status);
+      if (String(request.requested_by) !== actorId && !isSuperAdmin) {
+        throw refuse(403, "TOPUP_NOT_OWNER", "Only the person who raised this top-up request can cancel it");
+      }
+      if (status !== "submitted") {
+        throw refuse(
+          409,
+          "TOPUP_WRONG_STAGE",
+          status === "branch_head_approved"
+            ? "Branch Head has already approved this top-up request, so it can no longer be cancelled"
+            : `Cannot cancel a top-up request in status ${status}`
+        );
+      }
+      await connection.execute(
+        `UPDATE finance_budget_topup_request
+            SET status = 'cancelled', cancelled_by = ?, cancelled_at = NOW(), cancellation_reason = ?
+          WHERE id = ?`,
+        [actorId, reason?.trim() || null, id]
+      );
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "budget_topup",
+          entityId: id,
+          action: "cancel",
+          fromStatus: status,
+          toStatus: "cancelled",
+          actorUserId: actorId,
+          actorRole: actorRole || "unknown",
+          remarks: reason?.trim() || null,
+          details: {
+            periodCode: String(request.period_code ?? ""),
+            budgetLineId: request.budget_line_id == null ? null : String(request.budget_line_id),
+            requestedAmount: Number(request.requested_amount),
+          },
+        },
+        connection
+      );
+      await connection.commit();
+      return this.get(id);
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+  /**
+   * The raiser (or a super_admin) corrects a request's amount — only while it is still 'submitted'.
+   * Once Branch Head has approved, the figure is the one a reviewer signed off, and changing it
+   * underneath that approval would send Finance Head a number nobody at the branch stage saw.
+   *
+   * Quantity is re-derived as amount / unit_rate here rather than accepted from the client, so
+   * the amount the approver reads stays the amount applyTopupToLine applies (see create()).
+   * Hand-typed cost-centre splits are rescaled in proportion, the last one absorbing the
+   * rounding, so they still sum to the request; a request shared by a driver has none to rescale.
+   */
+  async updateAmount(id: string, newAmount: number, actorId: string, actorRole: string, isSuperAdmin: boolean) {
+    const requestedAmount = roundMoney(newAmount);
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
+      throw refuse(400, "TOPUP_AMOUNT_INVALID", "Requested amount must be greater than zero");
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT t.*, h.period_code
+           FROM finance_budget_topup_request t
+           JOIN finance_budget_header h ON h.id = t.budget_id
+          WHERE t.id = ?
+          FOR UPDATE`,
+        [id]
+      );
+      const request = rows[0];
+      if (!request) throw refuse(404, "TOPUP_NOT_FOUND", "Top-up request not found");
+      const status = String(request.status);
+      if (String(request.requested_by) !== actorId && !isSuperAdmin) {
+        throw refuse(403, "TOPUP_NOT_OWNER", "Only the person who raised this top-up request can edit it");
+      }
+      if (status !== "submitted") {
+        throw refuse(
+          409,
+          "TOPUP_EDIT_LOCKED",
+          status === "branch_head_approved"
+            ? "Branch Head has already approved this top-up request, so its amount can no longer be edited"
+            : `Cannot edit a top-up request in status ${status}`
+        );
+      }
+      if (await isPeriodLocked(String(request.period_code), connection)) {
+        throw refuse(
+          409,
+          "FINANCE_PERIOD_LOCKED",
+          `${request.period_code} is locked for P&L close, so its budget cannot be topped up.`
+        );
+      }
+
+      let unitRate = Number(request.unit_rate);
+      if (Number(request.is_new_line) !== 1) {
+        const [lineRows] = await connection.execute<RowDataPacket[]>(
+          `SELECT unit_rate FROM finance_budget_line WHERE id = ?`,
+          [request.budget_line_id]
+        );
+        if (!lineRows[0]) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
+        unitRate = Number(lineRows[0].unit_rate);
+      }
+      if (!(unitRate > 0)) {
+        throw refuse(
+          409,
+          "TOPUP_LINE_HAS_NO_UNIT_RATE",
+          "This budget line has no unit rate, so an increase cannot be sized in units"
+        );
+      }
+      const requestedQuantity = roundQuantity(requestedAmount / unitRate);
+      if (!(requestedQuantity > 0)) {
+        throw refuse(
+          400,
+          "TOPUP_QUANTITY_INVALID",
+          "Requested quantity must be greater than zero — a top-up of zero units raises no headroom"
+        );
+      }
+
+      const previousAmount = Number(request.requested_amount);
+      const previousQuantity = Number(request.requested_quantity);
+
+      const [splitRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, quantity FROM finance_budget_topup_request_split WHERE topup_request_id = ? ORDER BY id`,
+        [id]
+      );
+      if (splitRows.length) {
+        const ratio = requestedQuantity / previousQuantity;
+        let quantityLeft = requestedQuantity;
+        let amountLeft = requestedAmount;
+        for (let index = 0; index < splitRows.length; index += 1) {
+          const isLast = index === splitRows.length - 1;
+          const quantity = isLast ? roundQuantity(quantityLeft) : roundQuantity(Number(splitRows[index].quantity) * ratio);
+          const amount = isLast ? roundMoney(amountLeft) : roundMoney(quantity * unitRate);
+          if (!(quantity > 0) || !(amount > 0)) {
+            throw refuse(
+              400,
+              "TOPUP_SPLIT_AMOUNT_INVALID",
+              "This amount is too small to share across the request's cost centres. Cancel the request and raise a new one instead."
+            );
+          }
+          quantityLeft -= quantity;
+          amountLeft -= amount;
+          await connection.execute(
+            `UPDATE finance_budget_topup_request_split SET amount = ?, quantity = ? WHERE id = ?`,
+            [amount, quantity, splitRows[index].id]
+          );
+        }
+      }
+
+      await connection.execute(
+        `UPDATE finance_budget_topup_request SET requested_amount = ?, requested_quantity = ? WHERE id = ?`,
+        [requestedAmount, requestedQuantity, id]
+      );
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "budget_topup",
+          entityId: id,
+          action: "edit_amount",
+          fromStatus: status,
+          toStatus: status,
+          actorUserId: actorId,
+          actorRole: actorRole || "unknown",
+          details: {
+            periodCode: String(request.period_code ?? ""),
+            budgetLineId: request.budget_line_id == null ? null : String(request.budget_line_id),
+            previousAmount,
+            previousQuantity,
+            requestedAmount,
+            requestedQuantity,
+            unitRate,
+          },
+        },
+        connection
+      );
+      await connection.commit();
+      return this.get(id);
     } catch (error) {
       await connection.rollback();
       throw error;

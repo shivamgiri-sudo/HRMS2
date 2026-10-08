@@ -87,6 +87,85 @@ export interface PayslipData {
   /** Financial-year-to-date total per component_code, summed across finalized
    *  runs from the FY's April up to and including this payslip's run_month. */
   ytd?: Record<string, number>;
+  ytd_by_type?: Record<string, Record<string, number>>;
+}
+
+export interface LegacyYtdLine {
+  run_month: string;
+  gross_salary?: unknown; basic?: unknown; hra?: unknown; special_allowance?: unknown;
+  pf_employee?: unknown; esic_employee?: unknown; professional_tax?: unknown;
+  tds?: unknown; tds_amount?: unknown; lwp_deduction?: unknown; advance_recovery?: unknown;
+  loan_emi?: unknown; other_deductions?: unknown;
+}
+
+/**
+ * Adds one salary_prep_line's own totals to a YTD map using the same component codes the payroll engine
+ * writes, so the payslip's slotting (BASIC, HRA, PF_EMPLOYEE, ...) treats legacy and modern months alike.
+ * Earnings the line does not itemise (gross minus basic/HRA/special) land in OTHER_EARNINGS.
+ */
+export function foldLegacyLineIntoYtd(ytd: Record<string, Record<string, number>>, line: LegacyYtdLine): void {
+  const n = (v: unknown) => { const x = Number(v ?? 0); return Number.isFinite(x) ? x : 0; };
+  const add = (type: "earning" | "deduction", code: string, amount: number) => {
+    if (!(amount > 0)) return;
+    const bucket = (ytd[type] ??= {});
+    bucket[code] = (bucket[code] ?? 0) + amount;
+  };
+  const basic = n(line.basic), hra = n(line.hra), special = n(line.special_allowance);
+  add("earning", "BASIC", basic);
+  add("earning", "HRA", hra);
+  add("earning", "SPECIAL", special);
+  add("earning", "OTHER_EARNINGS", Math.round((n(line.gross_salary) - basic - hra - special) * 100) / 100);
+  add("deduction", "PF_EMPLOYEE", n(line.pf_employee));
+  add("deduction", "ESIC_EMPLOYEE", n(line.esic_employee));
+  add("deduction", "PROFESSIONAL_TAX", n(line.professional_tax));
+  add("deduction", "TDS", n(line.tds) || n(line.tds_amount));
+  add("deduction", "LWP_DEDUCTION", n(line.lwp_deduction));
+  add("deduction", "ADVANCE_RECOVERY", n(line.advance_recovery));
+  add("deduction", "LOAN_EMI", n(line.loan_emi));
+  add("deduction", "OTHER_DEDUCTIONS", n(line.other_deductions));
+}
+
+export interface LegacySnapshotYtdRow {
+  run_month: string;
+  basic?: unknown; hra?: unknown; conveyance?: unknown; portfolio?: unknown; medical_allowance?: unknown;
+  lta?: unknown; special_allowance?: unknown; other_allowance?: unknown; bonus?: unknown; incentive?: unknown;
+  arrear?: unknown; extra_day?: unknown; pli?: unknown;
+  epf_employee?: unknown; esic_employee?: unknown; professional_tax?: unknown; income_tax?: unknown;
+  leave_deduction?: unknown; loan_deduction?: unknown; advance_paid?: unknown; other_deduction?: unknown;
+  short_collection?: unknown; asset_recovery?: unknown;
+}
+
+/** One legacy_payslip_snapshot month -> YTD map, using the same component codes the V2 slip slots by. */
+export function foldLegacySnapshotIntoYtd(ytd: Record<string, Record<string, number>>, row: LegacySnapshotYtdRow): void {
+  const n = (v: unknown) => { const x = Number(v ?? 0); return Number.isFinite(x) ? x : 0; };
+  const add = (type: "earning" | "deduction", code: string, amount: number) => {
+    if (!(amount > 0)) return;
+    const bucket = (ytd[type] ??= {});
+    bucket[code] = (bucket[code] ?? 0) + amount;
+  };
+  add("earning", "BASIC", n(row.basic));
+  add("earning", "HRA", n(row.hra));
+  add("earning", "CONVEYANCE", n(row.conveyance));
+  add("earning", "PORTFOLIO", n(row.portfolio));
+  add("earning", "MEDICAL_ALLOWANCE", n(row.medical_allowance));
+  add("earning", "SPECIAL", n(row.special_allowance));
+  add("earning", "BONUS", n(row.bonus));
+  add("earning", "INCENTIVE", n(row.incentive));
+  add("earning", "ARREAR", n(row.arrear));
+  add("earning", "LTA", n(row.lta));
+  add("earning", "OTHER_ALLOWANCE", n(row.other_allowance));
+  add("earning", "PLI", n(row.pli));
+  add("earning", "EXTRA_DAY", n(row.extra_day));
+  add("deduction", "PF_EMPLOYEE", n(row.epf_employee));
+  add("deduction", "ESIC_EMPLOYEE", n(row.esic_employee));
+  add("deduction", "TDS", n(row.income_tax));
+  add("deduction", "LWP_DEDUCTION", n(row.leave_deduction));
+  add("deduction", "LOAN", n(row.loan_deduction));
+  add("deduction", "ADVANCE", n(row.advance_paid));
+  add("deduction", "PROFESSIONAL_TAX", n(row.professional_tax));
+  add("deduction", "OTHER_DEDUCTION", n(row.other_deduction));
+  add("deduction", "SHORT_COLLECTION", n(row.short_collection));
+  add("deduction", "ASSET_RECOVERY", n(row.asset_recovery));
 }
 
 export const payslipService = {
@@ -388,7 +467,19 @@ export const payslipService = {
     );
 
     if (rec.run_month) {
-      rec.ytd = await this.getYtdComponents(employeeId, rec.run_month);
+      const ytdByType = await this.getYtdComponentsByType(employeeId, rec.run_month, String(rec.prep_line_id ?? ""));
+      // `ytd` stays a flat code -> amount map for existing readers. It cannot say
+      // which side of the payslip a code belongs to, so "everything not in a named
+      // slot" summed earnings into Other Deduction and deductions into Other
+      // Allowance. `ytd_by_type` carries the side.
+      const flat: Record<string, number> = {};
+      for (const type of Object.keys(ytdByType)) {
+        for (const code of Object.keys(ytdByType[type])) {
+          flat[code] = (flat[code] ?? 0) + ytdByType[type][code];
+        }
+      }
+      rec.ytd = flat;
+      rec.ytd_by_type = ytdByType;
     }
 
     return rec;
@@ -402,21 +493,28 @@ export const payslipService = {
    * not double-counted, extended to component-level (component_code +
    * component_type) instead of the flat salary_prep_line columns.
    */
-  async getYtdComponents(
+  async getYtdComponentsByType(
     employeeId: string,
     uptoRunMonth: string,
-  ): Promise<Record<string, number>> {
+    /**
+     * The salary_prep_line the slip being viewed belongs to. Its own month always counts, even while
+     * its run is still draft/calculated/under review: YTD otherwise only reads finalized runs, so a
+     * slip viewed before finalisation — or a new joiner whose only month is the current one — came
+     * out with every YTD cell blank ("-") no matter how often the figures were corrected.
+     */
+    includeLineId: string = "",
+  ): Promise<Record<string, Record<string, number>>> {
     const [yr, mo] = uptoRunMonth.split("-").map(Number);
     const fyStart = mo >= 4 ? yr : yr - 1;
     const fyFirstMonth = `${fyStart}-04`;
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT component_code, COALESCE(SUM(amount), 0) AS amount
+      `SELECT component_code, component_type, COALESCE(SUM(amount), 0) AS amount
          FROM (
-           SELECT splc.component_code, splc.amount,
+           SELECT splc.component_code, splc.component_type, splc.amount,
                   ROW_NUMBER() OVER (
                     PARTITION BY spr.run_month, splc.component_code, splc.component_type
-                    ORDER BY FIELD(spr.status, 'disbursed', 'finalized', 'locked', 'approved', 'completed'),
+                    ORDER BY (spl.id = ?) DESC, FIELD(spr.status, 'disbursed', 'finalized', 'locked', 'approved', 'completed'),
                              spr.created_at DESC
                   ) AS rn
              FROM salary_prep_line spl
@@ -424,21 +522,101 @@ export const payslipService = {
              JOIN salary_prep_line_component splc ON splc.line_id = spl.id
             WHERE spl.employee_id = ?
               AND spr.run_month BETWEEN ? AND ?
-              AND spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed')
+              AND (spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed') OR spl.id = ?)
               AND spl.status NOT IN ('excluded', 'blocked')
          ) canonical
         WHERE canonical.rn = 1
-        GROUP BY component_code`,
-      [employeeId, fyFirstMonth, uptoRunMonth],
+        GROUP BY component_code, component_type`,
+      [includeLineId, employeeId, fyFirstMonth, uptoRunMonth, includeLineId],
     );
-    const ytd: Record<string, number> = {};
+    const ytd: Record<string, Record<string, number>> = {};
     for (const row of rows as Array<{
       component_code: string;
+      component_type: string | null;
       amount: number;
     }>) {
-      ytd[row.component_code] = Number(row.amount ?? 0);
+      const type = String(row.component_type ?? "").toLowerCase();
+      (ytd[type] ??= {})[row.component_code] = Number(row.amount ?? 0);
+    }
+
+    // Months that only have salary_prep_line totals (legacy / migrated payroll, and runs whose component rows
+    // were never written) contribute nothing to the component sum above, so YTD silently under-counted or came
+    // out empty. Fold those months in from the line's own columns, one canonical line per month — never for a
+    // month that already has component rows, so nothing is counted twice.
+    const [coveredRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT spr.run_month
+         FROM salary_prep_line spl
+         JOIN salary_prep_run spr ON spr.id = spl.run_id
+         JOIN salary_prep_line_component splc ON splc.line_id = spl.id
+        WHERE spl.employee_id = ?
+          AND spr.run_month BETWEEN ? AND ?
+          AND (spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed') OR spl.id = ?)
+          AND spl.status NOT IN ('excluded', 'blocked')`,
+      [employeeId, fyFirstMonth, uptoRunMonth, includeLineId],
+    );
+    const covered = new Set((coveredRows as Array<{ run_month: string }>).map((r) => String(r.run_month)));
+    const [lineRows] = await db.execute<RowDataPacket[]>(
+      `SELECT run_month, gross_salary, basic, hra, special_allowance, pf_employee, esic_employee,
+              professional_tax, tds, tds_amount, lwp_deduction, advance_recovery, loan_emi, other_deductions
+         FROM (
+           SELECT spr.run_month, spl.gross_salary, spl.basic, spl.hra, spl.special_allowance,
+                  spl.pf_employee, spl.esic_employee, spl.professional_tax, spl.tds, spl.tds_amount,
+                  spl.lwp_deduction, spl.advance_recovery, spl.loan_emi, spl.other_deductions,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY spr.run_month
+                    ORDER BY (spl.id = ?) DESC, FIELD(spr.status, 'disbursed', 'finalized', 'locked', 'approved', 'completed'),
+                             spr.created_at DESC
+                  ) AS rn
+             FROM salary_prep_line spl
+             JOIN salary_prep_run spr ON spr.id = spl.run_id
+            WHERE spl.employee_id = ?
+              AND spr.run_month BETWEEN ? AND ?
+              AND (spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed') OR spl.id = ?)
+              AND spl.status NOT IN ('excluded', 'blocked')
+         ) canonical
+        WHERE canonical.rn = 1`,
+      [includeLineId, employeeId, fyFirstMonth, uptoRunMonth, includeLineId],
+    );
+    const modernMonths = new Set<string>(covered);
+    for (const line of lineRows as LegacyYtdLine[]) {
+      modernMonths.add(String(line.run_month));
+      if (covered.has(String(line.run_month))) continue;
+      foldLegacyLineIntoYtd(ytd, line);
+    }
+
+    // Pre-run-engine months live only in legacy_payslip_snapshot (db_bill history). Those payslips have no
+    // run, so YTD for them — and for any later slip in the same financial year — was blank. One snapshot per
+    // employee/month (unique key); months a modern run already covers are skipped so nothing is counted twice.
+    try {
+      const [legacyRows] = await db.execute<RowDataPacket[]>(
+        `SELECT pay_month AS run_month, basic, hra, conveyance, portfolio, medical_allowance, lta, special_allowance,
+                other_allowance, bonus, incentive, arrear, extra_day, pli,
+                epf_employee, esic_employee, professional_tax, income_tax, leave_deduction, loan_deduction,
+                advance_paid, other_deduction, short_collection, asset_recovery
+           FROM legacy_payslip_snapshot
+          WHERE employee_id = ?
+            AND pay_month BETWEEN ? AND ?`,
+        [employeeId, fyFirstMonth, uptoRunMonth],
+      );
+      for (const row of legacyRows as LegacySnapshotYtdRow[]) {
+        if (modernMonths.has(String(row.run_month))) continue;
+        foldLegacySnapshotIntoYtd(ytd, row);
+      }
+    } catch (err) {
+      const e = err as { code?: string; errno?: number };
+      if (e?.code !== "ER_NO_SUCH_TABLE" && e?.errno !== 1146) throw err;
     }
     return ytd;
+  },
+
+  /** Flat code -> amount plus per-side map, in the shape getPayslip() returns as ytd / ytd_by_type. */
+  async getYtdForEmployee(employeeId: string, uptoMonth: string) {
+    const ytdByType = await this.getYtdComponentsByType(employeeId, uptoMonth);
+    const ytd: Record<string, number> = {};
+    for (const type of Object.keys(ytdByType)) {
+      for (const code of Object.keys(ytdByType[type])) ytd[code] = (ytd[code] ?? 0) + ytdByType[type][code];
+    }
+    return { ytd, ytd_by_type: ytdByType };
   },
 
   /**

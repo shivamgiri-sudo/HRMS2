@@ -154,7 +154,9 @@ describe("generated columns are never named in an INSERT", () => {
       found++;
       from = i + 1;
     }
-    expect(found).toBe(2);
+    // approve, re-apply after a partial failure, and reject — the re-apply path was added
+    // after this test was written and is held to the same rule by the loop above.
+    expect(found).toBe(3);
   });
 });
 

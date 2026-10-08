@@ -2,6 +2,8 @@ import { randomUUID } from "crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
+import type { UserBusinessScope } from "../../shared/enterpriseScope.js";
+import { scopePredicate } from "../wfm/branch-scope.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
   enumerateDates,
@@ -1224,25 +1226,18 @@ export const discardService = {
     employeeId?: string;
     fromDate?: string;
     toDate?: string;
-  }): Promise<{ data: unknown[]; total: number; page: number; limit: number }> {
+  }, scope?: UserBusinessScope): Promise<{ data: unknown[]; total: number; page: number; limit: number }> {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.entityType) {
-      conds.push("adl.entity_type = ?");
-      params.push(filters.entityType);
+    if (scope) {
+      // Owner ruling 2026-10-01: wfm sees the discard history of employees in its own branch / scope only.
+      const c = scopePredicate(scope, { employeeId: "e2.id", branchId: "e2.branch_id", processId: "e2.process_id", managerEmployeeId: "e2.reporting_manager_id" });
+      if (c.sql !== "1=1") { conds.push(`adl.employee_id IN (SELECT e2.id FROM employees e2 WHERE ${c.sql})`); params.push(...c.params); }
     }
-    if (filters.employeeId) {
-      conds.push("adl.employee_id = ?");
-      params.push(filters.employeeId);
-    }
-    if (filters.fromDate) {
-      conds.push("DATE(adl.discarded_at) >= ?");
-      params.push(filters.fromDate);
-    }
-    if (filters.toDate) {
-      conds.push("DATE(adl.discarded_at) <= ?");
-      params.push(filters.toDate);
-    }
+    if (filters.entityType) { conds.push("adl.entity_type = ?"); params.push(filters.entityType); }
+    if (filters.employeeId) { conds.push("adl.employee_id = ?"); params.push(filters.employeeId); }
+    if (filters.fromDate) { conds.push("DATE(adl.discarded_at) >= ?"); params.push(filters.fromDate); }
+    if (filters.toDate) { conds.push("DATE(adl.discarded_at) <= ?"); params.push(filters.toDate); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
     const [countRows] = await db.execute<RowDataPacket[]>(

@@ -1,6 +1,6 @@
 /**
  * CSV import for the Utilization tab's WFM inputs. The header row uses the same labels as
- * "Utilization Format.xlsx". The hand-entered columns are read, and so are the sheet's
+ * "Utilization Format.xlsx" (see UTILIZATION_COLUMNS). The hand-entered columns are read, and so are the sheet's
  * calculated columns (Utilization Forecast, with/without Adhoc and their %, POA Answering,
  * Escalated %) - those are stored as the uploaded static values, no formula applied. The report
  * columns (Actual Task, POA Live, AHT, GD%, ...) come from the uploaded reports and are ignored,
@@ -29,30 +29,76 @@ export interface ImportRow {
 
 export interface ImportParse { rows: ImportRow[]; errors: string[] }
 
+/**
+ * ONE source of truth for the Utilization sheet's columns: template download, CSV header matching
+ * and the page's table all read this list, in this order (column letters follow the sheet's
+ * formulas: D Forecasted Task ... Z Escalated Task). `field` is the ImportRow key for columns WFM
+ * uploads; `source` columns come from the uploaded Onfido reports and are not imported.
+ * NOTE: the order was reconstructed from the sheet's formula column letters; the user's
+ * "Utilization Format" file was not available, so confirm it against that file and edit here only.
+ */
+export type UtilizationColumn =
+  | { header: string; field: keyof ImportRow; kind: "num" | "pct" | "date" | "text" }
+  | { header: string; source: "month" | "wc" | "actualTask" | "poaLive" | "aht" | "poaAht" | "gd" | "mcn" | "sla" | "aps" | "escalatedTask" };
+
+export const UTILIZATION_COLUMNS: readonly UtilizationColumn[] = [
+  { header: "Date", field: "inputDate", kind: "date" },
+  { header: "Month", source: "month" },
+  { header: "WC", source: "wc" },
+  { header: "Forecasted Task", field: "forecastTask", kind: "num" },
+  { header: "Forecasted Task POA", field: "forecastTaskPoa", kind: "num" },
+  { header: "Utilization Forecast", field: "fixedUtilizationForecast", kind: "num" },
+  { header: "Actual Task", source: "actualTask" },
+  { header: "Manual FAR Case", field: "manualFarCases", kind: "num" },
+  { header: "POA Live", source: "poaLive" },
+  { header: "Adhoc Time", field: "adhocTime", kind: "num" },
+  { header: "Analyst QC", field: "analystQc", kind: "num" },
+  { header: "Facial checks", field: "facialChecks", kind: "num" },
+  { header: "Cross training task POA", field: "crossTrainingTaskPoa", kind: "num" },
+  { header: "POA Live Audits / POA PQ Audits", field: "poaLiveAuditsPq", kind: "num" },
+  { header: "AHT", source: "aht" },
+  { header: "POA AHT", source: "poaAht" },
+  { header: "GD%", source: "gd" },
+  { header: "MCN%", source: "mcn" },
+  { header: "SLA", source: "sla" },
+  { header: "APS", source: "aps" },
+  { header: "Utilization with Adhoc", field: "fixedUtilizationWithAdhoc", kind: "num" },
+  { header: "Utilization without Adhoc", field: "fixedUtilizationWithoutAdhoc", kind: "num" },
+  { header: "Utilization with Adhoc %", field: "fixedUtilizationWithAdhocPct", kind: "pct" },
+  { header: "Utilization without Adhoc %", field: "fixedUtilizationWithoutAdhocPct", kind: "pct" },
+  { header: "POA Answering", field: "fixedPoaAnsweringPct", kind: "pct" },
+  { header: "Escalated Task", source: "escalatedTask" },
+  { header: "Escalated %", field: "fixedEscalatedPct", kind: "pct" },
+  { header: "Remarks", field: "remarks", kind: "text" },
+];
+
+/** Header row of the downloadable template (exactly the page columns, same order). */
+export const UTILIZATION_TEMPLATE_HEADERS: readonly string[] = UTILIZATION_COLUMNS.map((c) => c.header);
+
+export function utilizationTemplateCsv(): string {
+  return `${UTILIZATION_TEMPLATE_HEADERS.join(",")}\n`;
+}
+
+const normHeader = (h: string) => h.toLowerCase().replace(/\s+/g, " ").trim();
+
 const HEADER_TO_FIELD: Record<string, keyof ImportRow> = {
-  "date": "inputDate",
-  "forecasted task": "forecastTask",
-  "forecasted task poa": "forecastTaskPoa",
-  "manual far case": "manualFarCases",
-  "adhoc time": "adhocTime",
-  "analyst qc": "analystQc",
-  "facial checks": "facialChecks",
-  "cross training task poa": "crossTrainingTaskPoa",
-  "poa live audits / poa pq audits": "poaLiveAuditsPq",
-  "utilization forecast": "fixedUtilizationForecast",
-  "utilization forecaste": "fixedUtilizationForecast", // the WFM workbook's own spelling
-  "utilization with adhoc": "fixedUtilizationWithAdhoc",
-  "utilization without adhoc": "fixedUtilizationWithoutAdhoc",
-  "utilization with adhoc %": "fixedUtilizationWithAdhocPct",
-  "utilization without adhoc %": "fixedUtilizationWithoutAdhocPct",
-  "poa answering": "fixedPoaAnsweringPct",
+  ...Object.fromEntries(
+    UTILIZATION_COLUMNS.flatMap((c) => ("field" in c ? [[normHeader(c.header), c.field] as const] : [])),
+  ),
+  // spelling variants seen in the WFM workbook
+  "utilization forecaste": "fixedUtilizationForecast",
+  "manual far cases": "manualFarCases",
   "poa answering %": "fixedPoaAnsweringPct",
-  "escalated %": "fixedEscalatedPct",
-  "remarks": "remarks",
 };
 
-/** A "85.2%" cell from the sheet is the number 85.2 (percent columns are stored as percent points). */
-const stripPercent = (v: string): string => v.replace(/%\s*$/, "").trim();
+/** Any numeric cell: "85.2%" -> "85.2", "1,234" -> "1234", "-" / "N/A" -> blank. Kept as text; no calculation. */
+export function cleanNumericCell(v: string): string {
+  const t = v.replace(/[\s\u00a0]/g, "");
+  if (t === "" || /^(-|--|n\/a|na|null|#n\/a|#div\/0!|#value!|#ref!)$/i.test(t)) return "";
+  const neg = /^\(.*\)$/.test(t);
+  const num = t.replace(/^\(|\)$/g, "").replace(/%$/, "").replace(/,/g, "").replace(/^[$\u20b9]/, "");
+  return Number.isFinite(Number(num)) && num !== "" ? (neg ? `-${num}` : num) : v.trim();
+}
 
 /** Splits one CSV record, honouring double-quoted fields and "" escapes. */
 export function splitCsvLine(line: string): string[] {
@@ -89,7 +135,7 @@ export function normaliseImportDate(raw: string): string | null {
 export function parseUtilizationCsv(text: string): ImportParse {
   const lines = text.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim() !== "");
   if (lines.length < 2) return { rows: [], errors: ["The file needs a header row and at least one data row."] };
-  const headers = splitCsvLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, " ").trim());
+  const headers = splitCsvLine(lines[0]).map(normHeader);
   const fieldAt = headers.map((h) => HEADER_TO_FIELD[h]);
   if (!fieldAt.includes("inputDate")) return { rows: [], errors: ["The header row must include a Date column."] };
   if (fieldAt.filter((f) => f && f !== "inputDate" && f !== "remarks").length === 0) {
@@ -106,7 +152,11 @@ export function parseUtilizationCsv(text: string): ImportParse {
       fixedUtilizationWithAdhocPct: "", fixedUtilizationWithoutAdhocPct: "", fixedPoaAnsweringPct: "", fixedEscalatedPct: "",
       remarks: "",
     };
-    fieldAt.forEach((field, col) => { if (field) row[field] = field.endsWith("Pct") ? stripPercent(cells[col] ?? "") : (cells[col] ?? ""); });
+    fieldAt.forEach((field, col) => {
+      if (!field) return;
+      const cell = cells[col] ?? "";
+      row[field] = field === "inputDate" || field === "remarks" ? cell : cleanNumericCell(cell);
+    });
     const date = normaliseImportDate(row.inputDate);
     if (!date) {
       // A blank-date line (a totals row, for instance) is skipped; a non-blank bad date is reported.

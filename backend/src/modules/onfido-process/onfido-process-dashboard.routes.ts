@@ -7,12 +7,14 @@ import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./onfido-process-dashboard.service.js";
 import * as clientDocSeries from "./onfido-client-doc-series.service.js";
 import { ensureDocTaskTypeColumn } from "./onfido-doc-task-type-column.js";
+import { getAuditSamplingReport } from "./onfido-audit-sampling.service.js";
 import { onfidoResponseCache } from "./onfido-response-cache.js";
 import {
   streamAttritionExitsCsv,
   streamRecordsCsv,
 } from "./onfido-export.service.js";
 import { mountPoaPageRoutes } from "./onfido-poa-pages.routes.js";
+import { mountQualityPageRoutes } from "./onfido-quality-pages.routes.js";
 import { mountOverviewReportRoutes } from "./onfido-overview-report.routes.js";
 import { mountOutlierRoutes } from "./onfido-outlier.routes.js";
 import type { RowDataPacket } from "mysql2";
@@ -100,13 +102,10 @@ router.get(
       from: q.from ?? d90.toISOString().slice(0, 10),
       to: q.to ?? new Date().toISOString().slice(0, 10),
     };
+    // Most callers are not Onfido analysts, and an analyst can have an empty
+    // range: both are a normal empty state (200, data: null), not a 404.
     const data = await svc.getAnalystPerformance(email, filters);
-    if (!data)
-      return res.status(404).json({
-        success: false,
-        message: "No Onfido records for your account in this range.",
-      });
-    res.json({ success: true, data });
+    res.json({ success: true, data: data ?? null });
   }),
 );
 
@@ -285,6 +284,9 @@ router.get(
 
 // POA Internal / External / Trail pages in the reference dashboard format (2026-09-18).
 mountPoaPageRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
+
+// Quality tab pages: Overall / Internal / External (internal and external kept apart).
+mountQualityPageRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
 
 // Overview / Analyst Performance / Utilization formats and their WFM inputs (2026-09-23).
 mountOverviewReportRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
@@ -1019,6 +1021,7 @@ const DOC_RAW_DIMENSIONS = new Set([
   "am_name",
   "task_type",
   "analyst_email",
+  "document_name",
 ]);
 router.get(
   "/doc-raw/overview",
@@ -1238,7 +1241,7 @@ router.get(
   requireRole(...VIEWER_ROLES),
   h(async (req, res) => {
     const q = req.query as Record<string, string | undefined>;
-    const data = await svc.getAuditSampling(
+    const data = await getAuditSamplingReport(
       {
         from: q.from,
         to: q.to,

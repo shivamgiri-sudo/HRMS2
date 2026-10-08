@@ -30,6 +30,13 @@
     "appointment_letter_request.generated_by",
     "appointment_letter_request.template_data"
   ],
+  "modules/lms/lms.routes.ts": [
+    "portal_sessions.absolute_expires_at",
+    "portal_sessions.session_family_id",
+    "portal_sessions.token",
+    "portal_sessions.user_id",
+    "portal_sessions.user_type"
+  ],
   "modules/privacy/dpdpErasure.service.ts": [
     "auth_user.first_name",
     "auth_user.last_name",

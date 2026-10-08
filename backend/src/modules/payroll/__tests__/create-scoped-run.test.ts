@@ -22,14 +22,15 @@ import { describe, expect, it } from "vitest";
 import { createRunSchema } from "../payroll.validation.js";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const routes = fs.readFileSync(
-  path.resolve(DIR, "../payroll.routes.ts"),
-  "utf8",
-);
-const service = fs.readFileSync(
-  path.resolve(DIR, "../payroll.service.ts"),
-  "utf8",
-);
+/**
+ * payroll.routes.ts is prettier-formatted since cd83825bc, so a registration reads
+ * `router.post(\n  "/runs",` rather than `router.post("/runs",`. Re-join the path onto the verb
+ * so the markers below keep locating the same handlers; nothing inside a handler is altered.
+ */
+const joinRouteRegistrations = (s: string) =>
+  s.replace(/(router\.(?:get|post|put|patch|delete))\(\s+"/g, '$1("');
+const routes = joinRouteRegistrations(fs.readFileSync(path.resolve(DIR, "../payroll.routes.ts"), "utf8"));
+const service = fs.readFileSync(path.resolve(DIR, "../payroll.service.ts"), "utf8");
 
 /** The `POST /runs` registration only — later routes have different role rules. */
 function createRunRoute(): string {

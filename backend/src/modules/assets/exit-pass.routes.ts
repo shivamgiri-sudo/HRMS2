@@ -241,14 +241,37 @@ exitPassRouter.get(
 //
 // Still fully authenticated and role-gated by the router-level requireAuth /
 // requireRole above — the token identifies WHICH pass, it never authorises.
-exitPassRouter.get(
-  "/verify/token/:token",
-  h(async (req, res) => {
-    try {
-      const data = await findPassForVerificationByQrToken(req.params.token);
-      return res.json({ success: true, data });
-    } catch (error) {
-      return fail(res, error);
+exitPassRouter.get('/verify/token/:token', h(async (req, res) => {
+  try {
+    const requester = await resolveRequestingEmployee(req.authUser!.id);
+    const roles = await getActorRoles(req.authUser!.id);
+    const data = await findPassForVerificationByQrToken(req.params.token, { actor: requester, roles });
+    return res.json({ success: true, data });
+  } catch (error) {
+    return fail(res, error);
+  }
+}));
+
+exitPassRouter.get('/verify/:passNumber', h(async (req, res) => {
+  try {
+    const requester = await resolveRequestingEmployee(req.authUser!.id);
+    const roles = await getActorRoles(req.authUser!.id);
+    const data = await findPassForVerification(req.params.passNumber, { actor: requester, roles });
+    return res.json({ success: true, data });
+  } catch (error) {
+    return fail(res, error);
+  }
+}));
+
+exitPassRouter.post('/verify/:passNumber/exit', h(async (req, res) => {
+  try {
+    const requester = await resolveRequestingEmployee(req.authUser!.id);
+    const roles = await getActorRoles(req.authUser!.id);
+    const { gate, method, remarks, qr_token } = req.body as {
+      gate: string; method: 'qr' | 'manual'; remarks?: string; qr_token?: string;
+    };
+    if (!['qr', 'manual'].includes(method)) {
+      return res.status(400).json({ success: false, message: 'method must be qr or manual' });
     }
   }),
 );

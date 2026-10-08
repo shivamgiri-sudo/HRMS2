@@ -55,14 +55,16 @@ import { getCloviaInboundSnapshot } from "./clovia-inbound-snapshot.service.js";
  * CLOVIA -- INBOUND add-ons (the call-performance views themselves are the
  * shared InboundInsightsDashboard on the live dialer, cdr_in_250).
  *
- * This service adds what the dialer table cannot know, from the uploaded tables:
- *   CSAT      cl_feedback   IVR post-call survey. One row per response; csat_dsat 1 = Satisfied,
- *                           0 = Not Satisfied (option_val agrees on all 736 rows). advisor_id =
- *                           the agent who took the call, language = Hindi / English.
- *                           CSAT % = Satisfied / responses.  Survey response rate = responses /
- *                           agent-handled calls from the dialer for the same days (null if the
- *                           dialer is unreachable). Exact duplicate rows (same unique_id +
- *                           call_date) are removed, latest upload kept.
+ * This service adds what the dialer table cannot know, from the uploaded tables --
+ * except CSAT, which is now also read live off the dialer:
+ *   CSAT      dialer_db.feedback_log_250 (live IVR post-call survey, replacing the old
+ *                           db_masmis.cl_feedback manual upload -- left in place, untouched,
+ *                           just no longer read here). One row per response; option1 = '1' is
+ *                           Satisfied, anything else Not Satisfied. `user` = the agent who took
+ *                           the call, language = Hin / Eng. CSAT % = Satisfied / responses.
+ *                           Survey response rate = responses / agent-handled calls from the
+ *                           dialer for the same days (null if the dialer is unreachable). No
+ *                           duplicate-row risk on this source -- every row carries a real id.
  *   Quality   cl_quality    audits with lob = 'Inbound' (audit date). Voice audits carry only the
  *                           overall score, ACPT owner, query and remarks (the six chat/e-mail
  *                           parameters are blank).
@@ -158,29 +160,31 @@ async function loadHandled(
   }
 }
 
-async function load(from: string, to: string): Promise<Loaded> {
-  const [fbRaw] = await db.execute<RowDataPacket[]>(
-    `SELECT id, unique_id, DATE_FORMAT(STR_TO_DATE(report_date,'${DMY}'),'%Y-%m-%d') AS d, DATE_FORMAT(STR_TO_DATE(call_date,'%c/%e/%y %H:%i'),'%H:%i') AS hm,
-            advisor_id, phone_number, language, option_val, csat_dsat, call_date
-       FROM db_masmis.cl_feedback WHERE STR_TO_DATE(report_date,'${DMY}') BETWEEN ? AND ? ORDER BY id`,
-    [from, to],
+const LANGUAGE_NAMES: Record<string, string> = { hin: "Hindi", eng: "English" };
+
+async function feedbackCoverage(pool: Awaited<ReturnType<typeof getDialerPool>>): Promise<CoverageRow & { unparseable: number }> {
+  const [[r]] = await pool.execute<any[]>(
+    `SELECT COUNT(*) AS n, DATE_FORMAT(MIN(calltime),'%Y-%m-%d') AS mn, DATE_FORMAT(MAX(calltime),'%Y-%m-%d') AS mx, COUNT(DISTINCT DATE(calltime)) AS days FROM feedback_log_250`,
   );
-  const fbLatest = new Map<string, RowDataPacket>();
-  for (const r of fbRaw) fbLatest.set(`${r.unique_id}|${r.call_date}`, r);
+  return {
+    source: "IVR feedback (CSAT, live dialer)", table: "dialer_db.feedback_log_250", rows: num(r.n),
+    minDate: r.mn ? String(r.mn) : null, maxDate: r.mx ? String(r.mx) : null, days: num(r.days),
+    note: "one row per survey response, live -- no upload lag", unparseable: 0,
+  };
+}
+
+async function load(from: string, to: string): Promise<Loaded> {
+  const dialerPool = await getDialerPool();
+  const [fbRaw] = await dialerPool.execute<any[]>(
+    `SELECT id, uniqueid, DATE_FORMAT(calltime,'%Y-%m-%d') AS d, DATE_FORMAT(calltime,'%H:%i') AS hm,
+            user, phone, language, option1
+       FROM feedback_log_250 WHERE calltime >= ? AND calltime < DATE_ADD(?, INTERVAL 1 DAY) ORDER BY id`, [from, to],
+  );
   const dir = await loadDirectory();
-  const fb: FbRow[] = [...fbLatest.values()]
-    .map((r) => ({
-      id: num(r.id),
-      date: String(r.d),
-      hm: String(r.hm ?? ""),
-      advisor: String(r.advisor_id ?? ""),
-      agent: agentName(dir, String(r.advisor_id ?? "")),
-      phoneRaw: String(r.phone_number ?? ""),
-      language: String(r.language ?? "").trim() || "Unknown",
-      sat: String(r.csat_dsat).trim() === "1",
-      option: String(r.option_val ?? ""),
-    }))
-    .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
+  const fb: FbRow[] = fbRaw.map((r) => ({
+    id: num(r.id), date: String(r.d), hm: String(r.hm ?? ""), advisor: String(r.user ?? ""), agent: agentName(dir, String(r.user ?? "")), phoneRaw: String(r.phone ?? "").trim(),
+    language: LANGUAGE_NAMES[String(r.language ?? "").trim().toLowerCase()] ?? String(r.language ?? "").trim() ?? "Unknown", sat: String(r.option1 ?? "").trim() === "1", option: String(r.option1 ?? ""),
+  })).sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
 
   const [rcRaw] = await db.execute<RowDataPacket[]>(
     `SELECT id, agent, phone_number, status, DATE_FORMAT(STR_TO_DATE(report_date,'${DMY}'),'%Y-%m-%d') AS d,
@@ -222,45 +226,14 @@ async function load(from: string, to: string): Promise<Loaded> {
     .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
 
   const [q, d, allDispo, handled, cFb, cRc, cQ, cD] = await Promise.all([
-    loadQuality(from, to, "Inbound"),
-    loadDispo(from, to, ["inbound"]),
-    loadDispo(from, to, null),
-    loadHandled(from, to),
-    coverageOf(
-      "IVR feedback (CSAT)",
-      "cl_feedback",
-      DATE_EXPR.feedback,
-      "one row per survey response",
-    ),
-    coverageOf(
-      "Rechurn calls",
-      "cl_rechurn_call",
-      DATE_EXPR.rechurn,
-      "abandoned callers who rang again",
-    ),
-    coverageOf(
-      "Quality audits",
-      "cl_quality",
-      DATE_EXPR.quality,
-      "lob = Inbound is used here",
-    ),
-    coverageOf(
-      "CRM dispositions",
-      "cl_dispo",
-      DATE_EXPR.dispo,
-      "skill = inbound is used here",
-    ),
+    loadQuality(from, to, "Inbound"), loadDispo(from, to, ["inbound"]), loadDispo(from, to, null), loadHandled(from, to),
+    feedbackCoverage(dialerPool),
+    coverageOf("Rechurn calls", "cl_rechurn_call", DATE_EXPR.rechurn, "abandoned callers who rang again"),
+    coverageOf("Quality audits", "cl_quality", DATE_EXPR.quality, "lob = Inbound is used here"),
+    coverageOf("CRM dispositions", "cl_dispo", DATE_EXPR.dispo, "skill = inbound is used here"),
   ]);
   return {
-    fb,
-    rc,
-    q,
-    d,
-    handled,
-    dir,
-    allDispo,
-    fbDup: fbRaw.length - fb.length,
-    rcDup: rcRaw.length - rc.length,
+    fb, rc, q, d, handled, dir, allDispo, fbDup: 0, rcDup: rcRaw.length - rc.length,
     unparseable: [cFb, cRc, cQ, cD].reduce((s, c) => s + c.unparseable, 0),
     coverage: [cFb, cRc, cQ, cD].map(({ unparseable: _u, ...c }) => c),
   };
@@ -1059,7 +1032,8 @@ export async function getInboundExtras(
   }
 
   const notes = [
-    `${L.fbDup} exact duplicate feedback row(s) (same unique_id and call time) and ${L.rcDup} duplicate rechurn row(s) were removed.`,
+    ...(L.fbDup ? [`${L.fbDup} exact duplicate feedback row(s) were removed.`] : []),
+    ...(L.rcDup ? [`${L.rcDup} duplicate rechurn row(s) (same unique_id and call time) were removed.`] : []),
     "CSAT counts the IVR survey only: a caller who did not answer the survey is not in it, so CSAT % is a share of respondents, not of all calls.",
     "The meaning of the rechurn status 'Press 2' is not documented in the upload; it is displayed as uploaded. Whether the re-call was answered is not in the data.",
     "Omitted because the sources have no data for them: agent occupancy / login-hour utilisation (cl_apr's LOB tag is unreliable), staffing plan, and re-call outcome.",

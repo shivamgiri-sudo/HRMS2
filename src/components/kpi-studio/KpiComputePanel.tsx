@@ -2,7 +2,9 @@ import { useState } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useComputeKpis, useScopeOptions, type ComputeOutcome } from "@/hooks/useKpiStudio";
+import { isOrgWide, useComputeKpis, useScopeOptions, type ComputeOutcome } from "@/hooks/useKpiStudio";
+import { ComputeRangePanel } from "./ComputeRangePanel";
+import { friendlyError, todayLocal } from "./definition-model";
 
 /**
  * Runs the calculations and shows what happened.
@@ -23,7 +25,10 @@ import { useComputeKpis, useScopeOptions, type ComputeOutcome } from "@/hooks/us
  */
 
 export function KpiComputePanel() {
-  const [date, setDate] = useState(() => new Date(Date.now() - 86_400_000).toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => {
+    const now = new Date();
+    return todayLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+  });
   const [processId, setProcessId] = useState("");
   const [outcome, setOutcome] = useState<{ dry: boolean; result: ComputeOutcome } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +46,7 @@ export function KpiComputePanel() {
       });
       setOutcome({ dry: dryRun, result });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not run the calculation");
+      setError(friendlyError(caught));
     }
   }
 
@@ -64,7 +69,7 @@ export function KpiComputePanel() {
           <Input
             type="date"
             value={date}
-            max={new Date().toISOString().slice(0, 10)}
+            max={todayLocal()}
             onChange={(event) => setDate(event.target.value)}
             className="w-40"
           />
@@ -75,9 +80,9 @@ export function KpiComputePanel() {
           <select
             value={processId}
             onChange={(event) => setProcessId(event.target.value)}
-            className="h-10 w-56 cursor-pointer rounded-lg border border-slate-300 bg-white px-2 text-sm"
+            className="h-10 w-56 max-w-full cursor-pointer rounded-lg border border-slate-300 bg-white px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
           >
-            <option value="">Everyone in scope</option>
+            <option value="">{isOrgWide(scopeOptions.data) ? "All processes" : "Every process I manage"}</option>
             {(scopeOptions.data?.processes ?? []).map((process) => (
               <option key={process.id} value={process.id}>
                 {process.name}
@@ -86,19 +91,19 @@ export function KpiComputePanel() {
           </select>
         </label>
 
-        <Button variant="outline" onClick={() => void run(true)} disabled={compute.isPending}>
+        <Button type="button" variant="outline" onClick={() => void run(true)} disabled={compute.isPending}>
           {compute.isPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
           Try it without saving
         </Button>
 
-        <Button onClick={() => void run(false)} disabled={compute.isPending}>
+        <Button type="button" onClick={() => void run(false)} disabled={compute.isPending}>
           <PlayCircle className="mr-1.5 h-4 w-4" />
           Run and save
         </Button>
       </div>
 
       {error && (
-        <p className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>
+        <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>
       )}
 
       {result && (
@@ -153,7 +158,7 @@ export function KpiComputePanel() {
           )}
 
           {result.sample.length > 0 && (
-            <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
               <p className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
                 A sample of what came out
               </p>
@@ -182,6 +187,8 @@ export function KpiComputePanel() {
           )}
         </div>
       )}
+
+      <ComputeRangePanel />
     </div>
   );
 }

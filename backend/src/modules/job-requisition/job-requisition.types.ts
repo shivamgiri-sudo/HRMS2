@@ -106,6 +106,8 @@ export interface JobRequisition {
   /** Structured screening config — see MetaScreeningConfig (migration 1829). */
   meta_screening_config: MetaScreeningConfig | null;
   internal_posting: boolean;
+  /** Whether marketing should run an ad for this requisition (migration 2107). Drives the brief's subject. */
+  ad_required: boolean;
   active_status: boolean;
   closed_at: string | null;
   closed_reason: string | null;
@@ -151,6 +153,7 @@ export interface CreateRequisitionInput {
   business_justification?: string;
   preferred_sources?: string[];
   internal_posting?: boolean;
+  ad_required?: boolean;
   // META campaign targeting (migration 1810) — see JobRequisition above for why the age band matters.
   bmi_assessment_url?: string | null;
   meta_target_age_min?: number | null;

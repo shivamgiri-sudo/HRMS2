@@ -191,13 +191,13 @@ describe("joining document templates", () => {
         mobile: "9876543210",
         email: "kamal.rawat@example.com",
         pi_signature_date: "2026-07-29",
+        // {{process}} was added to this form in 042819c7f; every token it carries is supplied.
+        process: "Inbound Sales",
       });
       const xml = new PizZip(out).file("word/document.xml")?.asText() ?? "";
       expect(xml).toContain("KAMAL SINGH RAWAT");
-      expect(
-        xml,
-        "employee code was eaten by the legacy fix-up pass",
-      ).toContain("MAS36220");
+      expect(xml, "employee code was eaten by the legacy fix-up pass").toContain("MAS36220");
+      expect(xml).toContain("Process: Inbound Sales");
       expect(xml, "a token survived substitution").not.toMatch(/\{\{/);
       // Dates render in the Indian convention, not as a raw ISO string.
       expect(xml).toContain("29/07/2026");

@@ -139,9 +139,10 @@ describe("cost centre is written when an employee is created", () => {
   it("an unresolvable cost centre leaves the employee unassigned instead of failing", () => {
     // Fail-open is correct HERE specifically: the alternative blocks a real joiner over a
     // reference-data gap. It must stay visible, hence the warning.
-    expect(orchestrator).toMatch(
-      /costCentreId\s*=\s*\(ccRows\[0\][\s\S]{0,80}\?\?\s*null/,
-    );
+    // c04da3a21 reads the row once into `ccRow` (it now also supplies process/branch), so the
+    // null fallback is on ccRow?.id rather than on an inline (ccRows[0] as ...)?.id.
+    expect(orchestrator).toMatch(/const ccRow\s*=\s*ccRows\[0\]/);
+    expect(orchestrator).toMatch(/const costCentreId\s*=\s*ccRow\?\.id\s*\?\?\s*null/);
     expect(
       orchestrator,
       "a silently unassigned cost centre is how 185 employees ended up NULL — warn on it",

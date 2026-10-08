@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Paperclip, RefreshCw, ShieldCheck } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -49,6 +50,7 @@ export function ExitClearanceQueue({ ownerRole, embedded, title, description, on
   });
 
   const rows = data?.data ?? [];
+  useApprovalFocus(!isLoading && rows.length > 0);
   const total = data?.pagination?.total ?? rows.length;
 
   const invalidateAll = () => {
@@ -136,6 +138,7 @@ export function ExitClearanceQueue({ ownerRole, embedded, title, description, on
               {rows.map((task) => (
                 <TableRow
                   key={task.id}
+                  data-approval-id={task.id}
                   className="cursor-pointer hover:bg-blue-50/40"
                   onClick={() => onRowClick?.(task.exit_request_id)}
                 >

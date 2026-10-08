@@ -11,6 +11,7 @@
  * a batch is never presented as filing-ready while `exception_rows > 0`.
  */
 
+import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance-access-scope.js";
 import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
@@ -473,7 +474,9 @@ export const gstExportService = {
    * approved invoices count towards that date, matching collectRows(), so the figure means
    * "the last invoice this registration actually raised", not "the last one someone drafted".
    */
-  async listRegistrations() {
+  async listRegistrations(scope?: FinanceBranchScope) {
+    // Branch scoping: a branch-limited caller (branch_admin) only sees the registrations of its own branch(es).
+    const sf = scope && scope.mode === "branches" ? financeBranchFilter(scope, "bm.id") : null;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT bm.gstin                        AS company_gstin,
               MAX(bm.gst_state_code)          AS gst_state_code,
@@ -483,33 +486,29 @@ export const gstExportService = {
          FROM branch_master bm
          LEFT JOIN cost_centre_master cm ON cm.branch_id = bm.id
          LEFT JOIN client_invoice ci ON ci.cost_centre_id = cm.id AND ci.invoice_status = 'approved'
-        WHERE bm.gstin IS NOT NULL AND bm.gstin <> ''
+        WHERE bm.gstin IS NOT NULL AND bm.gstin <> ''${sf ? ` AND ${sf.sql}` : ""}
         GROUP BY bm.gstin
         ORDER BY company_name, company_gstin`,
+      sf ? sf.params : undefined
     );
     return rows;
   },
 
-  async listBatches(filters: {
-    exportType?: string;
-    companyGstin?: string;
-    periodMonth?: string;
-    limit?: number;
-  }) {
+  async listBatches(
+    filters: { exportType?: string; companyGstin?: string; periodMonth?: string; limit?: number },
+    scope?: FinanceBranchScope,
+  ) {
     const where: string[] = [];
     const params: unknown[] = [];
-    if (filters.exportType) {
-      where.push("export_type = ?");
-      params.push(filters.exportType);
+    if (scope && scope.mode === "branches") {
+      // Only batches of a GSTIN carried by one of the caller's own branches.
+      const sf = financeBranchFilter(scope, "id");
+      where.push(`company_gstin IN (SELECT gstin FROM branch_master WHERE gstin IS NOT NULL AND ${sf.sql})`);
+      params.push(...sf.params);
     }
-    if (filters.companyGstin) {
-      where.push("company_gstin = ?");
-      params.push(String(filters.companyGstin).toUpperCase());
-    }
-    if (filters.periodMonth) {
-      where.push("period_month = ?");
-      params.push(filters.periodMonth);
-    }
+    if (filters.exportType) { where.push("export_type = ?"); params.push(filters.exportType); }
+    if (filters.companyGstin) { where.push("company_gstin = ?"); params.push(String(filters.companyGstin).toUpperCase()); }
+    if (filters.periodMonth) { where.push("period_month = ?"); params.push(filters.periodMonth); }
     const limit = Math.min(Math.max(Number(filters.limit ?? 50), 1), 200);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM gst_export_batch
@@ -521,28 +520,58 @@ export const gstExportService = {
     return rows;
   },
 
-  async getBatch(batchId: string) {
+  /**
+   * Branch scoping for a batch addressed by id. Returns null for an org-wide caller (no filter).
+   * A branch-limited caller may open a batch only when one of its own branches carries the batch's
+   * GSTIN (403 otherwise) and then sees only the rows supplied by its own branch(es).
+   */
+  async batchRowScope(batch: RowDataPacket, scope?: FinanceBranchScope): Promise<string[] | null> {
+    if (!scope || scope.mode === "all") return null;
+    const sf = financeBranchFilter(scope, "id");
+    const [own] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_name FROM branch_master WHERE gstin = ? AND ${sf.sql}`,
+      [batch.company_gstin, ...sf.params]
+    );
+    if (own.length === 0) {
+      throw Object.assign(new Error("Forbidden: this GST export batch is outside your branch / assigned scope"), { statusCode: 403 });
+    }
+    return own.map((r) => String(r.branch_name));
+  },
+
+  async getBatch(batchId: string, scope?: FinanceBranchScope) {
     const [batches] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM gst_export_batch WHERE id = ? LIMIT 1",
       [batchId],
     );
     if (!batches[0]) throw new Error("GST export batch not found");
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM gst_export_row WHERE batch_id = ? ORDER BY sequence_no",
-      [batchId],
-    );
+    const names = await this.batchRowScope(batches[0], scope);
+    const [rows] = names
+      ? await db.execute<RowDataPacket[]>(
+          `SELECT * FROM gst_export_row WHERE batch_id = ? AND branch_name IN (${names.map(() => "?").join(",")}) ORDER BY sequence_no`,
+          [batchId, ...names]
+        )
+      : await db.execute<RowDataPacket[]>(
+          "SELECT * FROM gst_export_row WHERE batch_id = ? ORDER BY sequence_no",
+          [batchId]
+        );
     return { batch: batches[0], rows };
   },
 
   /** Only the rows a preparer has to act on. This is the report that replaces the manual reconciliation. */
-  async getExceptions(batchId: string) {
+  async getExceptions(batchId: string, scope?: FinanceBranchScope) {
+    let names: string[] | null = null;
+    if (scope && scope.mode === "branches") {
+      const [batches] = await db.execute<RowDataPacket[]>("SELECT * FROM gst_export_batch WHERE id = ? LIMIT 1", [batchId]);
+      if (!batches[0]) return [];
+      names = await this.batchRowScope(batches[0], scope);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT sequence_no, source_type, source_id, bill_no, invoice_date, client_name,
               client_gstin, taxable_value, invoice_value, validation_errors
          FROM gst_export_row
-        WHERE batch_id = ? AND validation_status = 'exception'
+        WHERE batch_id = ? AND validation_status = 'exception'${names ? ` AND branch_name IN (${names.map(() => "?").join(",")})` : ""}
         ORDER BY sequence_no`,
-      [batchId],
+      names ? [batchId, ...names] : [batchId]
     );
     return rows;
   },
@@ -641,14 +670,11 @@ async function collectRows(
     row.cgst = -Math.abs(row.cgst);
     row.sgst = -Math.abs(row.sgst);
     row.invoiceValue = -Math.abs(row.invoiceValue);
-    row.errors = validateRow({
-      ...row,
-      taxableValue: Math.abs(row.taxableValue),
-      igst: Math.abs(row.igst),
-      cgst: Math.abs(row.cgst),
-      sgst: Math.abs(row.sgst),
-      invoiceValue: Math.abs(row.invoiceValue),
-    });
+    // The round-off was left with its invoice-side sign, so a credit note carried e.g. -140 - 26 - 1
+    // against a total of -165. It flips with everything else.
+    row.roundOff = -row.roundOff;
+    row.otherCharges = -Math.abs(row.otherCharges);
+    row.errors = validateRow({ ...row, taxableValue: Math.abs(row.taxableValue), igst: Math.abs(row.igst), cgst: Math.abs(row.cgst), sgst: Math.abs(row.sgst), invoiceValue: Math.abs(row.invoiceValue), roundOff: -row.roundOff, otherCharges: Math.abs(row.otherCharges) });
     staged.push(row);
   }
 

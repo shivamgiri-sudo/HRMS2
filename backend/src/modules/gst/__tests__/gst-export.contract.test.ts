@@ -215,3 +215,10 @@ describe("automation worker", () => {
     expect(all).toContain("stopGstExportAutoWorker();");
   });
 });
+
+describe("credit notes carry every amount with the credit sign", () => {
+  it("flips the round-off with the taxable value and taxes (it was left positive, so a note did not add up)", () => {
+    const src = readFileSync(new URL("../gst-export.service.ts", import.meta.url), "utf8");
+    expect(src).toContain("row.roundOff = -row.roundOff;");
+  });
+});

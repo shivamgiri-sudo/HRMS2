@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, Clock3, Loader2, RefreshCcw, ShieldCheck, UserRoundCheck, X, CalendarClock } from "lucide-react";
 import { VisitorEmpty, VisitorShell, VisitorStatusBadge } from "@/components/visitor/VisitorShell";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { visitorApi, visitorDateTime, toLocalInputValue, type VisitorVisit } from "@/features/visitor/visitorApi";
 
 export default function VisitorApprovals() {
@@ -30,6 +31,7 @@ export default function VisitorApprovals() {
   };
 
   useEffect(() => { void load(); }, []);
+  useApprovalFocus(!loading && visits.length > 0);
 
   const approve = async (visit: VisitorVisit) => {
     setWorkingId(visit.id); setMessage(""); setSuccess("");
@@ -85,7 +87,7 @@ export default function VisitorApprovals() {
         <div className="mb-5 flex items-center justify-between"><div><h2 className="text-lg font-black text-slate-950">Awaiting your decision</h2><p className="mt-1 text-sm text-slate-500">{pendingVisits.length} pending visit{pendingVisits.length === 1 ? "" : "s"}</p></div><div className="rounded-2xl bg-amber-50 p-3 text-amber-700"><Clock3 className="h-5 w-5" /></div></div>
         {loading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-[#2784c4]" /></div> : pendingVisits.length === 0 ? <VisitorEmpty title="Your approval queue is clear" description="New visitor requests assigned to you will appear here automatically." /> : (
           <div className="grid gap-4 xl:grid-cols-2">{pendingVisits.map((visit) => (
-            <article key={visit.id} className="rounded-3xl border border-slate-200 p-5 transition hover:border-slate-300 hover:shadow-md">
+            <article key={visit.id} data-approval-id={visit.id} className="rounded-3xl border border-slate-200 p-5 transition hover:border-slate-300 hover:shadow-md">
               <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-3"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-[#2784c4]"><UserRoundCheck className="h-6 w-6" /></div><div><h3 className="font-black text-slate-950">{visit.visitor_name}</h3><p className="mt-0.5 text-sm text-slate-500">{visit.company_name || visit.masked_mobile || "Independent visitor"}</p></div></div><VisitorStatusBadge status={visit.status} /></div>
               <div className="mt-5 grid grid-cols-2 gap-3"><div className="rounded-2xl bg-slate-50 p-3"><p className="text-xs font-black uppercase tracking-wide text-slate-400">When</p><p className="mt-1 text-sm font-bold text-slate-800">{visitorDateTime(visit.scheduled_start)}</p></div><div className="rounded-2xl bg-slate-50 p-3"><p className="text-xs font-black uppercase tracking-wide text-slate-400">Where</p><p className="mt-1 text-sm font-bold text-slate-800">{visit.branch_name}</p></div></div>
               <div className="mt-3 rounded-2xl border border-slate-100 p-3"><p className="text-xs font-black uppercase tracking-wide text-slate-400">Purpose · <span className="capitalize">{visit.visit_type.replace(/_/g, " ")}</span></p><p className="mt-1 text-sm leading-6 text-slate-700">{visit.purpose}</p></div>

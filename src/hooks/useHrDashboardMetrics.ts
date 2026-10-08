@@ -23,7 +23,8 @@ export function useExitAnalytics(enabled = true) {
     queryKey: ["hr", "exit", "analytics"],
     queryFn: async () => {
       const response = await hrmsApi.get<{ success?: boolean; data?: ExitAnalytics }>("/exit/analytics");
-      return response.data ?? response;
+      // The route returns the { success, data } envelope; the fallback tolerates a bare payload.
+      return response.data ?? (response as unknown as ExitAnalytics);
     },
     enabled,
     staleTime: 10 * 60 * 1000, // 10 min

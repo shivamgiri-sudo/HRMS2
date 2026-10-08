@@ -15,6 +15,18 @@ const EXCLUDE_EMPLOYEE_SHAPED_C = excludeEmployeeShapedCandidatesSql("c");
  * Provides comprehensive metrics and analytics for ATS operations
  */
 
+/**
+ * Caller's candidate row scope (candidate-access.ts). Owner ruling 2026-10-01: only org-wide roles see every
+ * branch; hr / manager / recruiter / branch_head are limited to their own branch. Omitted/`1=1` = no filter.
+ * `sql` is written against a bare ats_candidate (no alias); use the `cScope` form for the `c` alias.
+ */
+export type CandidateScopeArg = { sql: string; params: unknown[] } | undefined;
+const sc = (s: CandidateScopeArg) => (s && s.sql !== '1=1' ? ` AND (${s.sql})` : '');
+const sp = (s: CandidateScopeArg): unknown[] => (s && s.sql !== '1=1' ? s.params : []);
+/** ats_candidate ids inside the scope, for tables keyed by candidate_id. */
+const CANDIDATE_TABLE = 'ats_candidate';
+const inScopeIds = (s: CandidateScopeArg) => (s && s.sql !== '1=1' ? ` AND candidate_id IN (SELECT id FROM ${CANDIDATE_TABLE} WHERE ${s.sql})` : '');
+
 export interface DashboardMetrics {
   total_candidates: number;
   active_candidates: number;
@@ -78,7 +90,7 @@ export interface StageDistribution {
 /**
  * Get dashboard metrics — all 7 counts fetched in parallel via Promise.all
  */
-export async function getDashboardMetrics(): Promise<DashboardMetrics> {
+export async function getDashboardMetrics(scope?: CandidateScopeArg, cScope?: CandidateScopeArg): Promise<DashboardMetrics> {
   const [
     [totalRes],
     [activeRes],
@@ -89,13 +101,15 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     [joinedRes],
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as total FROM ats_candidate WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
+      `SELECT COUNT(*) as total FROM ats_candidate WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}${sc(scope)}`,
+      sp(scope)
     ),
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as active FROM ats_candidate
        WHERE active_status = 1
        AND current_stage NOT IN ('rejected', 'joined', 'rejected_by_branch_head')
-       AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
+       AND ${EXCLUDE_EMPLOYEE_SHAPED}${sc(scope)}`,
+      sp(scope)
     ),
     db.execute<RowDataPacket[]>(
       // active_status = 1 is load-bearing, not decoration. conversion_rate below divides this
@@ -104,7 +118,8 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
       `SELECT COUNT(*) as selected FROM ats_candidate
        WHERE active_status = 1
        AND current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted')
-       AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
+       AND ${EXCLUDE_EMPLOYEE_SHAPED}${sc(scope)}`,
+      sp(scope)
     ),
     db.execute<RowDataPacket[]>(
       // Same reason: rejected is rendered beside total and selected, so it has to be counted
@@ -112,19 +127,22 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
       `SELECT COUNT(*) as rejected FROM ats_candidate
        WHERE active_status = 1
        AND current_stage IN ('rejected', 'rejected_by_branch_head')
-       AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
+       AND ${EXCLUDE_EMPLOYEE_SHAPED}${sc(scope)}`,
+      sp(scope)
     ),
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as today_interviews FROM ats_interview_result
-       WHERE DATE(interviewed_at) = CURDATE()`,
+       WHERE DATE(interviewed_at) = CURDATE()${inScopeIds(scope)}`,
+      sp(scope)
     ),
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as pending FROM ats_payroll_hr_validation
        WHERE validation_status NOT IN ('approved', 'rejected')
        AND candidate_id IN (
          SELECT id FROM ats_candidate
-          WHERE current_stage = 'payroll_validated' AND ${EXCLUDE_EMPLOYEE_SHAPED}
+          WHERE current_stage = 'payroll_validated' AND ${EXCLUDE_EMPLOYEE_SHAPED}${sc(scope)}
        )`,
+      sp(scope)
     ),
     db.execute<RowDataPacket[]>(
       // Joined to ats_candidate so the exclusion can apply: this read stage_log alone, so a
@@ -135,7 +153,8 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
        WHERE sl.to_stage = 'joined'
          AND MONTH(sl.stage_date) = MONTH(CURRENT_DATE())
          AND YEAR(sl.stage_date) = YEAR(CURRENT_DATE())
-         AND ${EXCLUDE_EMPLOYEE_SHAPED_C}`,
+         AND ${EXCLUDE_EMPLOYEE_SHAPED_C}${sc(cScope)}`,
+      sp(cScope)
     ),
   ]);
 
@@ -159,7 +178,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
 /**
  * Get source channel metrics
  */
-export async function getSourceMetrics(): Promise<SourceMetrics[]> {
+export async function getSourceMetrics(scope?: CandidateScopeArg): Promise<SourceMetrics[]> {
   // The raw channel is selected as-is. `COALESCE(sourcing_channel, 'Walk-in')` used to sit
   // here, which labelled every candidate with no channel as a WALK-IN — 2,741 of the 7,760
   // genuine candidates carry no channel at all, so the largest channel on this chart was
@@ -170,8 +189,9 @@ export async function getSourceMetrics(): Promise<SourceMetrics[]> {
       COUNT(*) as total_candidates,
       SUM(CASE WHEN current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted', 'joined') THEN 1 ELSE 0 END) as selected_count
     FROM ats_candidate
-    WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
+    WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}${sc(scope)}
     GROUP BY sourcing_channel`,
+    sp(scope)
   );
 
   /**
@@ -241,7 +261,7 @@ export async function getSourceMetrics(): Promise<SourceMetrics[]> {
 /**
  * Get branch metrics
  */
-export async function getBranchMetrics(): Promise<BranchMetrics[]> {
+export async function getBranchMetrics(cScope?: CandidateScopeArg): Promise<BranchMetrics[]> {
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
       c.applied_for_branch as branch_name,
@@ -257,9 +277,10 @@ export async function getBranchMetrics(): Promise<BranchMetrics[]> {
       COUNT(DISTINCT qt.recruiter_id) as active_recruiters
     FROM ats_candidate c
     LEFT JOIN ats_queue_token qt ON qt.candidate_id = c.id AND DATE(qt.created_at) = CURDATE()
-    WHERE c.active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED_C}
+    WHERE c.active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED_C}${sc(cScope)}
     GROUP BY c.applied_for_branch, c.branch_display_name
     ORDER BY total_candidates DESC`,
+    sp(cScope)
   );
 
   return results as BranchMetrics[];
@@ -278,6 +299,7 @@ function getIstDateString(offsetDays = 0): string {
 export async function getRecruiterPerformance(
   fromDate?: string,
   toDate?: string,
+  scope?: CandidateScopeArg
 ): Promise<RecruiterPerformance[]> {
   const from = fromDate || getIstDateString(30);
   const to = toDate || getIstDateString(0);
@@ -296,12 +318,12 @@ export async function getRecruiterPerformance(
       ROUND(AVG(ir.stability_rating), 2) as avg_stability_rating
     FROM ats_interview_result ir
     LEFT JOIN employees e ON e.id = ir.recruiter_id
-    WHERE DATE(ir.interviewed_at) BETWEEN ? AND ?
+    WHERE DATE(ir.interviewed_at) BETWEEN ? AND ?${inScopeIds(scope).replace('candidate_id', 'ir.candidate_id')}
     GROUP BY ir.recruiter_id, e.employee_code, e.first_name, e.last_name
     HAVING total_interviews > 0
     ORDER BY total_interviews DESC
     LIMIT 20`,
-    [from, to],
+    [from, to, ...sp(scope)]
   );
 
   return results as RecruiterPerformance[];
@@ -310,9 +332,7 @@ export async function getRecruiterPerformance(
 /**
  * Get timeline data (max 30 days — UNION date-series is hard-coded to 30 rows)
  */
-export async function getTimelineData(
-  days: number = 30,
-): Promise<TimelineData[]> {
+export async function getTimelineData(days: number = 30, scope?: CandidateScopeArg): Promise<TimelineData[]> {
   const safeDays = Math.min(days, 30); // UNION only generates 30 rows; cap to avoid silent truncation
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -336,29 +356,30 @@ export async function getTimelineData(
     LEFT JOIN (
       SELECT DATE(created_at) as date, COUNT(*) as registrations
       FROM ats_candidate
-      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY) AND ${EXCLUDE_EMPLOYEE_SHAPED}
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY) AND ${EXCLUDE_EMPLOYEE_SHAPED}${sc(scope)}
       GROUP BY DATE(created_at)
     ) reg ON date_series.date = reg.date
     LEFT JOIN (
       SELECT DATE(interviewed_at) as date, COUNT(*) as interviews
       FROM ats_interview_result
-      WHERE interviewed_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+      WHERE interviewed_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)${inScopeIds(scope)}
       GROUP BY DATE(interviewed_at)
     ) int ON date_series.date = int.date
     LEFT JOIN (
       SELECT DATE(interviewed_at) as date, COUNT(*) as selections
       FROM ats_interview_result
-      WHERE interview_status = 'selected' AND interviewed_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+      WHERE interview_status = 'selected' AND interviewed_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)${inScopeIds(scope)}
       GROUP BY DATE(interviewed_at)
     ) sel ON date_series.date = sel.date
     LEFT JOIN (
       SELECT DATE(interviewed_at) as date, COUNT(*) as rejections
       FROM ats_interview_result
-      WHERE interview_status = 'rejected' AND interviewed_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+      WHERE interview_status = 'rejected' AND interviewed_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)${inScopeIds(scope)}
       GROUP BY DATE(interviewed_at)
     ) rej ON date_series.date = rej.date
     ORDER BY date_series.date ASC`,
-    [safeDays, safeDays, safeDays, safeDays, safeDays],
+    // placeholder order: series, reg(days, scope), int(days, scope), sel(days, scope), rej(days, scope)
+    [safeDays, safeDays, ...sp(scope), safeDays, ...sp(scope), safeDays, ...sp(scope), safeDays, ...sp(scope)]
   );
 
   return results as TimelineData[];
@@ -367,16 +388,17 @@ export async function getTimelineData(
 /**
  * Get stage distribution
  */
-export async function getStageDistribution(): Promise<StageDistribution[]> {
+export async function getStageDistribution(scope?: CandidateScopeArg): Promise<StageDistribution[]> {
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
       current_stage as stage,
       COUNT(*) as count,
-      ROUND((COUNT(*) / (SELECT COUNT(*) FROM ats_candidate WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED})) * 100, 2) as percentage
+      ROUND((COUNT(*) / (SELECT COUNT(*) FROM ats_candidate WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}${sc(scope)})) * 100, 2) as percentage
     FROM ats_candidate
-    WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
+    WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}${sc(scope)}
     GROUP BY current_stage
     ORDER BY count DESC`,
+    [...sp(scope), ...sp(scope)]
   );
 
   return results as StageDistribution[];
@@ -385,18 +407,17 @@ export async function getStageDistribution(): Promise<StageDistribution[]> {
 /**
  * Get role-wise applications
  */
-export async function getRoleMetrics(): Promise<
-  { role: string; count: number }[]
-> {
+export async function getRoleMetrics(scope?: CandidateScopeArg): Promise<{ role: string; count: number }[]> {
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
       COALESCE(role_applied, applied_for_process) as role,
       COUNT(*) as count
     FROM ats_candidate
-    WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
+    WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}${sc(scope)}
     GROUP BY COALESCE(role_applied, applied_for_process)
     ORDER BY count DESC
     LIMIT 10`,
+    sp(scope)
   );
 
   return results as { role: string; count: number }[];
@@ -405,15 +426,13 @@ export async function getRoleMetrics(): Promise<
 /**
  * Get experience-wise distribution
  */
-export async function getExperienceDistribution(): Promise<
-  { experience: string; count: number }[]
-> {
+export async function getExperienceDistribution(scope?: CandidateScopeArg): Promise<{ experience: string; count: number }[]> {
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
       experience,
       COUNT(*) as count
     FROM ats_candidate
-    WHERE active_status = 1 AND experience IS NOT NULL AND ${EXCLUDE_EMPLOYEE_SHAPED}
+    WHERE active_status = 1 AND experience IS NOT NULL AND ${EXCLUDE_EMPLOYEE_SHAPED}${sc(scope)}
     GROUP BY experience
     ORDER BY
       CASE
@@ -422,6 +441,7 @@ export async function getExperienceDistribution(): Promise<
         WHEN experience LIKE '%+%' THEN CAST(SUBSTRING_INDEX(experience, '+', 1) AS UNSIGNED)
         ELSE 999
       END`,
+    sp(scope)
   );
 
   return results as { experience: string; count: number }[];

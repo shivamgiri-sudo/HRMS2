@@ -15,6 +15,7 @@ export type TokenData = {
   gender?: string;
   date_of_birth?: string;
   branch_name?: string;
+  branch_city?: string | null;
   process_name?: string;
   source_type?: string;
   source?: string;

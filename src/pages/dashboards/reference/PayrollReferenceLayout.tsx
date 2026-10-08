@@ -1,371 +1,179 @@
 import type { ReactNode } from "react";
-import {
-  BadgeIndianRupee,
-  CalendarDays,
-  Clock3,
-  CreditCard,
-  FileCheck2,
-  FileText,
-  IndianRupee,
-  ReceiptIndianRupee,
-  ShieldCheck,
-  TriangleAlert,
-  Users,
-  WalletCards,
-} from "lucide-react";
-
-import {
-  ReferenceDonut,
-  ReferenceHeader,
-  ReferenceListRow,
-  ReferenceMetricGrid,
-  ReferencePanel,
-  ReferenceProgress,
-} from "../ReferenceDashboardUI";
+import { BadgeIndianRupee } from "lucide-react";
+import { ActionCenter, DashHero, DashSkeleton, InsightGrid, LazySection, Panel, SectionTitle, SeriesPanel, SignalList, drillHref, type HeroStat } from "../kit";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
-import {
-  arrayAt,
-  asNumber,
-  formatCurrency,
-  metricDetail,
-  metricUnavailableReason,
-  metricValue,
-  numberAt,
-  read,
-  stringAt,
-} from "../reference-dashboard-model";
-import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
+import { arrayAt, asNumber, metricDetail, metricUnavailableReason, read, stringAt } from "../reference-dashboard-model";
 import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
-import {
-  AttendanceExceptionPanel,
-  SalaryComponentPanel,
-} from "./ReferenceSharedPanels";
+import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
+import { AttendanceExceptionPanel, SalaryComponentPanel } from "./ReferenceSharedPanels";
+import { RunPipeline } from "./payroll/RunPipeline";
+import { PayrollKpiGrid } from "./payroll/PayrollKpiGrid";
+import { BlockersPanel, IncentivePanel, NoticeBar } from "./payroll/BlockerPanels";
+import { AbnormalPanel, BranchCostPanel, DisbursalPanel, HeadcountPanel, RunComparePanel, StatutoryPanel } from "./payroll/PayrollPanels";
+import { buildLocalActions, formatPayDate, payrollHealth, readRunData, stageProgress } from "./payroll/payrollModel";
 
 export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
   const m = data.metrics;
-  const drill = data.drilldownFor ?? (() => ({}));
-  const salaryBill = (read(data.payroll, "salaryBill") ?? {}) as Record<string, unknown>;
+  const drill: (key: string) => { onDrilldown?: () => void } = data.drilldownFor ?? (() => ({}));
+  const code = data.dashboardCode || "PAYROLL_HR_DASHBOARD";
+  const run = readRunData(data.payroll);
   const currentRun = (read(data.payroll, "currentRun") ?? {}) as Record<string, unknown>;
-  const totalGross = asNumber(salaryBill.totalGross ?? salaryBill.total_gross);
-  const totalNet = asNumber(salaryBill.totalNet ?? salaryBill.total_net);
-  const deductions = asNumber(salaryBill.totalDeductions ?? salaryBill.total_deductions);
-  const employerContribution = null;
-  const payrollCost = totalGross;
-  const currentMonth = String(data.payroll.currentMonth ?? currentRun.month ?? currentRun.run_month ?? "Current Cycle");
-  const processed = asNumber(salaryBill.employeeCount ?? salaryBill.emp_count);
-  // `total` was `processed`, so "Total Employees" always equalled "Processed Payroll".
-  // The run header carries the real establishment count.
-  const total = asNumber(currentRun.totalEmployees ?? currentRun.total_employees) ?? processed;
-  const pending = total !== null && processed !== null ? Math.max(0, total - processed) : null;
+  const currentMonth = String(data.payroll.currentMonth ?? currentRun.month ?? "Current cycle");
+  // The run header's total is stale (it disagreed with the line count by 12 on the live run); kept only to say so.
+  const totalEmployees = asNumber(currentRun.totalEmployees ?? currentRun.total_employees);
+  const runStatus = String(currentRun.status ?? "unknown");
 
-  // The PAYROLL_READINESS metric returns the blocker breakdown on every load and none of
-  // it was rendered — these four counts are the actionable part of the dashboard.
+  // PAYROLL_READINESS breakdown (counts only).
   const readyCount = metricDetail(m, "payroll", "readyCount");
   const blockerCount = metricDetail(m, "payroll", "blockerCount");
   const readinessTotal = metricDetail(m, "payroll", "total");
   const missingBank = metricDetail(m, "payroll", "missingBank");
+  const missingNeftBank = metricDetail(m, "payroll", "missingNeftBank");
   const missingPan = metricDetail(m, "payroll", "missingPan");
+  const invalidPan = metricDetail(m, "payroll", "invalidPan");
   const missingUan = metricDetail(m, "payroll", "missingUan");
-  const readinessPct = readinessTotal && readyCount !== null && readinessTotal > 0
-    ? Math.round((readyCount / readinessTotal) * 100)
-    : null;
+  const readinessPct = readinessTotal && readyCount !== null && readinessTotal > 0 ? Math.round((readyCount / readinessTotal) * 100) : null;
+  const readinessReason = metricUnavailableReason(m, "payroll");
 
-  // Incentive batch states, likewise fetched and discarded.
   const incentivePending = metricDetail(m, "incentive", "pendingBatches");
-  const incentivePendingAmt = metricDetail(m, "incentive", "pendingAmount");
-  const incentiveApprovedAmt = metricDetail(m, "incentive", "approvedAmount");
-  const incentiveRejected = metricDetail(m, "incentive", "rejectedBatches");
-
-  // Surfaced by the backend when a run's net exceeds its gross — arithmetically
-  // impossible and true of the finalized runs today.
-  const dataIntegrity = arrayAt(data.payroll, "dataIntegrity");
-  const statutoryRows = arrayAt(data.payroll, "statutoryFiling");
-  // branchReadiness is a single object for the run's month, not a list of branches.
-  const readiness = read(data.payroll, "branchReadiness") as Record<string, unknown> | null;
-  // disbursement is the run's actual disbursement record (status, amount, NEFT ref),
-  // not a generation-progress breakdown. `completed`/`in_progress`/`initiated`/
-  // `failed` were never returned, so the old donut summed four undefineds to 0 and
-  // printed "0%" over a body that said "No data".
-  const disbursement = read(data.payroll, "disbursement") as Record<string, unknown> | null;
-  const payslips = read(data.payroll, "payslips") as Record<string, unknown> | null;
-  const pendingQueues = (read(data.payroll, "pendingQueues") ?? {}) as Record<string, unknown>;
-  const loans = (read(data.payroll, "loans") ?? {}) as Record<string, unknown>;
-  const reimbursements = (read(data.payroll, "reimbursements") ?? {}) as Record<string, unknown>;
+  const dataIntegrity = arrayAt(data.payroll, "dataIntegrity").map((x) => String(x));
   const unavailableSources = (read(data.payroll, "unavailableSources") ?? {}) as Record<string, unknown>;
-  const payDay = stringAt(data.payroll, "payDay") ?? stringAt(currentRun, "payDate");
+  const attendanceBlockers = metricDetail(m, "attException", "blockers");
+
   const payrollRuns = data.payrollRuns ?? [];
   const selectedRunId = data.selectedPayrollRunId ?? "";
+  const newestRunId = payrollRuns[0] ? String(payrollRuns[0].id) : "";
   const runSelector = (
-    <label className="block max-w-md text-sm font-semibold text-[#1d2b45]">
+    <label className="block text-[12px] font-semibold text-slate-700">
       Payroll run
-      <select
-        value={selectedRunId}
-        onChange={(event) => data.onPayrollRunChange?.(event.target.value)}
-        className="mt-2 h-10 w-full rounded-lg border border-[#d7dfeb] bg-white px-3 text-sm text-[#1d2b45]"
-      >
+      <select value={selectedRunId} onChange={(e) => data.onPayrollRunChange?.(e.target.value)} className="mt-1 h-9 w-full min-w-[200px] rounded-lg border border-slate-200 bg-white px-2 text-[13px] text-slate-800">
         <option value="">Select a payroll run</option>
-        {payrollRuns.map((run) => (
-          <option key={String(run.id)} value={String(run.id)}>
-            {String(run.run_label ?? run.run_month ?? run.id)} · {String(run.status ?? "unknown")}
-          </option>
-        ))}
+        {payrollRuns.map((r) => <option key={String(r.id)} value={String(r.id)}>{String(r.run_label ?? r.run_month ?? r.id)} · {String(r.status ?? "unknown")}</option>)}
       </select>
     </label>
   );
+  const heroRight = <div className="flex flex-wrap items-end gap-3">{runSelector}{filters ?? productHeaderControls}</div>;
 
-  const statutoryValue = (name: string) => {
-    const row = statutoryRows.find((item) => String(item.filing_type ?? item.type ?? "").toLowerCase().includes(name.toLowerCase()));
-    return row ? asNumber(row.amount ?? row.liability ?? row.value) : null;
-  };
-
-  const pf = statutoryValue("pf");
-  const esi = statutoryValue("esi");
-  const tds = statutoryValue("tds");
+  const insights = data.insights;
+  const loansKpi = insights?.kpis.find((k) => k.key === "loans");
+  const localActions = buildLocalActions({ run, missingBank, missingPan, invalidPan, missingUan, attendanceBlockers });
+  const actions = [...(insights?.actions ?? []), ...localActions];
+  const health = payrollHealth({ readinessPct, run });
 
   if (!selectedRunId) {
     return (
-      <div className="reference-dashboard-page">
-        <ReferenceHeader title="Finance / Payroll Dashboard" subtitle="Manage payroll operations and financial compliance" right={filters ?? productHeaderControls} />
+      <div className="space-y-5">
+        <DashHero eyebrow="Payroll command" title="Payroll Dashboard" subtitle="Select a payroll run to load its pipeline, amounts, blockers and filings." accent="indigo" icon={BadgeIndianRupee} right={heroRight} />
+        <p className="text-sm text-slate-500">Select a payroll run to load its population, amounts, blockers, filings, and disbursement status.</p>
         <TodayCelebrationsWidget />
-        <ReferencePanel title="Run Selection">
-          {runSelector}
-          <p className="mt-4 text-sm text-[#71809a]">
-            Select a payroll run to load its population, amounts, blockers, filings, and disbursement status.
-          </p>
-        </ReferencePanel>
+        <div className="grid gap-4 xl:grid-cols-2">
+          <ActionCenter actions={actions} loading={data.insightsLoading} error={data.insightsError} limit={12} />
+          <SignalList signals={insights?.signals} loading={data.insightsLoading} />
+        </div>
       </div>
     );
   }
 
+  if (data.loading && !run) return <div className="space-y-5"><DashHero eyebrow="Payroll command" title="Payroll Dashboard" accent="indigo" icon={BadgeIndianRupee} right={heroRight} /><DashSkeleton /></div>;
+
+  const p = run?.pipeline;
+  const days = p?.daysToPayDate ?? null;
+  const prog = run ? stageProgress(run.pipeline.stages) : null;
+  const stuck = p?.stuckLabel ?? null;
+  const stats: HeroStat[] = [
+    { label: "Stuck at", value: stuck ?? (run ? "Complete" : "—"), tone: stuck ? (days !== null && days < 0 ? "bad" : "warn") : "good", href: run?.pipeline.stages.find((s) => s.key === p?.stuckAt)?.href },
+    { label: "Net pay", value: run ? <>{(run.totals.net / 100000).toFixed(2)} L</> : "—", href: "/payroll" },
+    { label: "Employees paid", value: run ? run.totals.employees.toLocaleString("en-IN") : "—", href: "/payroll" },
+    { label: "Blocked employees", value: blockerCount ?? "—", tone: blockerCount ? "bad" : "good", onClick: drill("payroll").onDrilldown, href: drill("payroll").onDrilldown ? undefined : drillHref(code, "PAYROLL_READINESS") },
+    { label: "Pipeline", value: prog ? `${prog.done}/${prog.total} stages` : "—" },
+    { label: "Pay date", value: formatPayDate(p?.payDate ?? stringAt(data.payroll, "payDay")), href: "/payroll/calendar" },
+  ];
+
   return (
-    <div className="reference-dashboard-page">
-      <ReferenceHeader title="Finance / Payroll Dashboard" subtitle="Manage payroll operations and financial compliance" right={filters ?? productHeaderControls} />
-      <ReferencePanel title="Run Selection">{runSelector}</ReferencePanel>
-      {Object.keys(unavailableSources).length ? (
-        <ReferencePanel title="Run-linked Source Availability">
-          <div className="grid gap-2 sm:grid-cols-2">
-            {Object.entries(unavailableSources).map(([source, reason]) => (
-              <div key={source} className="rounded-lg border border-[#e3e9f2] bg-[#f8fafc] p-3">
-                <p className="text-xs font-semibold capitalize text-[#1d2b45]">{source}</p>
-                <p className="mt-1 text-xs text-[#71809a]">{String(reason)}</p>
-              </div>
-            ))}
+    <div className="space-y-5">
+      <DashHero
+        eyebrow="Payroll command" title={`Payroll run ${currentMonth}`} accent="indigo" icon={BadgeIndianRupee}
+        subtitle={`Status: ${runStatus}${p?.lastActivityDays !== null && p?.lastActivityDays !== undefined ? ` · last activity ${p.lastActivityDays}d ago` : ""}`}
+        headline={days === null ? { label: "Days to pay date", value: "—", caption: "No pay date in the payroll calendar for this month" } : { label: days < 0 ? "Days past pay date" : "Days to pay date", value: Math.abs(days), caption: days < 0 && stuck ? `Run is still waiting at ${stuck}` : stuck ? `Next: ${stuck}` : "Every stage is complete" }}
+        health={health ? { value: health.value, label: "Payroll health", basis: health.basis } : null}
+        stats={stats} right={heroRight}
+      >
+        {run ? <RunPipeline pipeline={run.pipeline} />
+          : data.payrollLoading ? <div className="grid grid-cols-2 gap-2 lg:grid-cols-4 xl:grid-cols-7" aria-busy="true" aria-label="Loading run analytics">{Array.from({ length: 7 }, (_, i) => <div key={i} className="kit-shimmer h-[92px] rounded-2xl" />)}</div>
+          : <p className="text-[13px] text-amber-700">Run analytics could not be computed{data.payrollError ? ` (${data.payrollError})` : ""} - see the unavailable sources below.</p>}
+      </DashHero>
+
+      <NoticeBar integrity={dataIntegrity} unavailable={unavailableSources} />
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
+        <ActionCenter actions={actions} loading={data.insightsLoading && !localActions.length} error={data.insightsError} limit={12} subtitle={data.insightsLoading ? "Loading approval queues…" : undefined} />
+        <PayrollKpiGrid
+          run={run} loading={data.loading || Boolean(data.payrollLoading)} totalEmployees={totalEmployees} readinessPct={readinessPct} readinessReason={readinessReason} blockerCount={blockerCount}
+          incentivePending={incentivePending} loansActive={loansKpi?.value ?? null} readinessHref={drillHref(code, "PAYROLL_READINESS")} costHref={drillHref(code, "SALARY_COMPONENTS")}
+          onReadinessDrill={drill("payroll").onDrilldown}
+        />
+      </div>
+
+      {run ? (
+        <>
+          <SectionTitle hint="vs previous run">Cost & headcount</SectionTitle>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <LazySection eager><RunComparePanel run={run} /></LazySection>
+            <LazySection eager><HeadcountPanel h={run.headcount} totalEmployees={totalEmployees} /></LazySection>
           </div>
-        </ReferencePanel>
+        </>
       ) : null}
 
-      {dataIntegrity.length > 0 ? (
-        <div className="rounded-lg border border-[#ffdadd] bg-[#fff7f7] px-4 py-3 text-sm text-[#b91c1c]">
-          {dataIntegrity.map((row, i) => <p key={i}>{String(row)}</p>)}
-        </div>
+      <SectionTitle hint="what stops this run">Blockers & approvals</SectionTitle>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <LazySection>
+          <BlockersPanel
+            v={{ readyCount, readinessTotal, blockerCount, missingBank, missingNeftBank, missingPan, invalidPan, missingUan, noStructure: run?.headcount.missingNoStructure ?? null, unfrozenUnits: run?.readinessUnits ?? null, zeroNet: run?.totals.zeroNet ?? null, unavailable: readinessReason }}
+            onDrill={drill("payroll").onDrilldown}
+          />
+        </LazySection>
+        <LazySection>
+          <IncentivePanel pending={incentivePending} pendingAmount={metricDetail(m, "incentive", "pendingAmount")} approvedAmount={metricDetail(m, "incentive", "approvedAmount")} rejected={metricDetail(m, "incentive", "rejectedBatches")} unavailable={metricUnavailableReason(m, "incentive")} />
+        </LazySection>
+      </div>
+
+      <SectionTitle hint="all runs">Trends</SectionTitle>
+      <div className="grid gap-4 lg:grid-cols-3">
+        {data.insightsLoading && !insights ? [0, 1, 2].map((i) => <div key={i} className="kit-shimmer h-60 rounded-2xl" />) : (insights?.series ?? []).map((s) => <LazySection key={s.key}><SeriesPanel series={s} /></LazySection>)}
+      </div>
+
+      {run ? (
+        <>
+          <SectionTitle hint="selected run">Branches & exceptions</SectionTitle>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <LazySection><BranchCostPanel run={run} /></LazySection>
+            <LazySection><AbnormalPanel run={run} /></LazySection>
+          </div>
+          <SectionTitle hint="PF, ESI, TDS, LWF">Statutory, disbursal & payslips</SectionTitle>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <LazySection><StatutoryPanel filings={run.filings} totals={run.totals} month={currentMonth} /></LazySection>
+            <LazySection><DisbursalPanel run={run} status={runStatus} /></LazySection>
+          </div>
+        </>
       ) : null}
 
-      <ReferenceMetricGrid
-        columns={5}
-        loading={data.loading}
-        metrics={[
-          { label: "Total Employees", value: total, helper: "Active payroll population", icon: Users, tone: "violet", href: "/employees" },
-          { label: "Processed Payroll", value: processed, helper: "This Month", icon: FileCheck2, tone: "green", href: "/payroll" },
-          { label: "Pending Payroll", value: pending, helper: total !== null && processed !== null ? `${total} establishment vs ${processed} processed` : "This Month", icon: Clock3, tone: pending ? "amber" : "green", href: "/payroll" },
-          { label: `Payroll Cost (${currentMonth})`, value: formatCurrency(payrollCost), helper: "Total Cost", icon: IndianRupee, tone: "blue", href: "/payroll" },
-          {
-            label: "Payroll Readiness",
-            value: readinessPct,
-            valueSuffix: "%",
-            helper: blockerCount ? `${blockerCount} employees blocked` : "All employees payroll-ready",
-            icon: ShieldCheck,
-            tone: readinessPct === null ? "slate" : readinessPct >= 95 ? "green" : readinessPct >= 80 ? "amber" : "red",
-            unavailableReason: metricUnavailableReason(m, "payroll"),
-            ...drill("payroll"),
-          },
-        ]}
-      />
+      <SectionTitle hint="cycle calendar and branch attendance lock">Calendar & readiness</SectionTitle>
+      <InsightGrid tables={insights?.tables} loading={data.insightsLoading} />
 
-      {/* Payroll blockers: computed on every load and previously not rendered at all.
-          Counts only — no individual bank / PAN / UAN values are exposed here. */}
-      <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-        <ReferencePanel
-          title="Payroll Blockers"
-          action={
-            <span className="text-xs text-[#61708a]">
-              {readyCount !== null && readinessTotal !== null ? `${readyCount} of ${readinessTotal} ready` : "readiness source unavailable"}
-            </span>
-          }
-          bodyClassName="p-0"
-        >
-          <div className="divide-y divide-[#edf1f6]">
-            <ReferenceListRow icon={WalletCards} title="Missing Bank Account" subtitle="Cannot be paid by NEFT" value={missingBank} tone="red" href="/employees" />
-            <ReferenceListRow icon={FileCheck2} title="Missing PAN" subtitle="Blocks TDS computation" value={missingPan} tone="red" href="/employees" />
-            <ReferenceListRow icon={ShieldCheck} title="Missing UAN" subtitle="Blocks PF filing" value={missingUan} tone="amber" href="/employees" />
-            <ReferenceListRow icon={Users} title="Total Blocked" subtitle="Not payroll-ready" value={blockerCount} tone="red" />
-          </div>
-        </ReferencePanel>
+      <SectionTitle>Insights</SectionTitle>
+      <SignalList signals={insights?.signals} loading={data.insightsLoading} />
 
-        <ReferencePanel title="Incentive Batches" bodyClassName="p-0">
-          {metricUnavailableReason(m, "incentive") ? (
-            <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">{metricUnavailableReason(m, "incentive")}</p>
-          ) : (
-            <div className="divide-y divide-[#edf1f6]">
-              <ReferenceListRow icon={Clock3} title="Pending Approval" value={incentivePending} tone="amber" />
-              <ReferenceListRow icon={IndianRupee} title="Pending Amount" value={formatCurrency(incentivePendingAmt)} tone="amber" />
-              <ReferenceListRow icon={IndianRupee} title="Approved Amount" value={formatCurrency(incentiveApprovedAmt)} tone="green" />
-              <ReferenceListRow icon={Clock3} title="Rejected Batches" value={incentiveRejected} tone="red" />
-            </div>
-          )}
-        </ReferencePanel>
+      <SectionTitle hint="latest run, not the selected one">Salary components & attendance exceptions</SectionTitle>
+      {selectedRunId !== newestRunId && newestRunId ? <p className="text-[12px] text-amber-700">The component split describes the newest run, not the one selected above.</p> : null}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <LazySection><SalaryComponentPanel data={data} /></LazySection>
+        <LazySection><AttendanceExceptionPanel data={data} /></LazySection>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.05fr_1.05fr_0.9fr]">
-        <ReferencePanel title={`Payroll Summary (${currentMonth})`}>
-          <div className="divide-y divide-[#edf1f6]">
-            <ReferenceListRow icon={IndianRupee} title="Gross Pay" value={formatCurrency(totalGross)} tone="blue" />
-            <ReferenceListRow icon={WalletCards} title="Net Pay" value={formatCurrency(totalNet)} tone="green" />
-            <ReferenceListRow icon={ReceiptIndianRupee} title="Employee Deductions" value={formatCurrency(deductions)} tone="amber" />
-            {/* employerContribution is a hardcoded null — the run stores no employer
-                cost total. Labelled as not captured rather than rendered as a blank
-                currency value that looks like zero rupees. */}
-            <ReferenceListRow icon={BadgeIndianRupee} title="Employer Contributions" value="Not captured" tone="slate" />
-          </div>
-        </ReferencePanel>
-
-        {/* This panel re-rendered the Payroll Summary above it: "Net Pay Paid" was
-            the same `totalNet` variable as "Net Pay", "Gross Pay" was the same
-            `totalGross`, Employer Contributions was a hardcoded null, and
-            paymentMode was never returned. Two panels showed one set of numbers,
-            with the second implying money had moved.
-            It now shows what was actually disbursed, which is genuinely different
-            from what was computed. */}
-        <ReferencePanel title={`Payment Summary (${currentMonth})`}>
-          {disbursement ? (
-            <div className="divide-y divide-[#edf1f6]">
-              <ReferenceListRow icon={WalletCards} title="Amount Disbursed" value={formatCurrency(asNumber(disbursement.totalAmount))} tone="green" />
-              <ReferenceListRow icon={BadgeIndianRupee} title="Employees Paid" value={asNumber(disbursement.employeeCount)} tone="blue" />
-              <ReferenceListRow icon={ReceiptIndianRupee} title="Status" value={String(disbursement.status ?? "—")} tone={String(disbursement.status ?? "").toLowerCase() === "completed" ? "green" : "amber"} />
-              <ReferenceListRow icon={CreditCard} title="Bank Reference" value={String(disbursement.bankRef ?? "—")} tone="slate" />
-            </div>
-          ) : (
-            <p className="px-3 py-8 text-center text-xs text-[#94a3b8]">No disbursement recorded for this run</p>
-          )}
-        </ReferencePanel>
-
-        <ReferencePanel title="Upcoming Payroll">
-          <div className="rounded-lg border border-[#dce8fb] bg-[#f4f8ff] p-5">
-            <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-[#0b63e5]"><CalendarDays className="h-5 w-5" /></span>
-              <div><p className="text-[13px] font-bold text-[#0b63e5]">{currentMonth}</p><p className="mt-1 text-xs text-[#71809a]">Payroll cycle</p></div>
-            </div>
-            <div className="mt-5 rounded-lg border border-[#bcd4fb] bg-white p-4 text-center">
-              <p className="text-xs text-[#61708a]">Pay Day</p>
-              <p className="mt-2 text-[20px] font-extrabold text-[#0b1f44]">{payDay ? new Date(payDay).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</p>
-            </div>
-          </div>
-        </ReferencePanel>
-      </div>
-
-      <div className="grid gap-3 sm:gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-        <ReferencePanel title={`Statutory Summary (${currentMonth})`}>
-          <div className="divide-y divide-[#edf1f6]">
-            <ReferenceListRow title="Provident Fund (PF)" value={formatCurrency(pf)} tone="green" />
-            <ReferenceListRow title="Employees' State Insurance (ESI)" value={formatCurrency(esi)} tone="green" />
-            <ReferenceListRow title="TDS (Tax Deducted at Source)" value={formatCurrency(tds)} tone="amber" />
-          </div>
-        </ReferencePanel>
-
-        <ReferencePanel title={`PF / ESI / TDS Liability (${currentMonth})`}>
-          <div className="grid grid-cols-3 gap-3">
-            {([
-              ["PF Liability", pf, Users, "green"],
-              ["ESI Liability", esi, CreditCard, "blue"],
-              ["TDS Liability", tds, FileText, "amber"],
-            // as const - see CeoReferenceLayout: otherwise every slot widens to one union
-            // and the first element includes the icon component type.
-            ] as const).map(([label, value, Icon, tone]) => {
-              const IconComponent = Icon as typeof Users;
-              return <div key={String(label)} className="rounded-lg border border-[#e3e9f2] p-4 text-center"><span className={`mx-auto flex h-9 w-9 items-center justify-center rounded-full ${tone === "green" ? "bg-[#eaf8ef] text-[#16a34a]" : tone === "amber" ? "bg-[#fff4e8] text-[#f97316]" : "bg-[#edf4ff] text-[#0b63e5]"}`}><IconComponent className="h-4 w-4" /></span><p className="mt-3 text-xs text-[#61708a]">{label}</p><p className="mt-2 text-[15px] font-extrabold text-[#0b1f44]">{formatCurrency(value as number | null)}</p></div>;
-            })}
-          </div>
-        </ReferencePanel>
-
-        <ReferencePanel title="Important Alerts">
-          <div className="divide-y divide-[#edf1f6]">
-            {statutoryRows.length ? statutoryRows.slice(0, 5).map((row, index) => (
-              <ReferenceListRow
-                key={String(row.id ?? index)}
-                icon={index === 0 ? TriangleAlert : FileText}
-                title={String(row.filing_type ?? row.type ?? "Compliance filing")}
-                subtitle={String(row.due_date ?? row.dueDate ?? "Due date unavailable")}
-                value={String(row.status ?? "Pending")}
-                tone={String(row.status ?? "").toLowerCase().includes("paid") || String(row.status ?? "").toLowerCase().includes("filed") ? "green" : index === 0 ? "red" : "amber"}
-              />
-            )) : <div className="px-3 py-10 text-center text-xs text-[#94a3b8]">Run-linked statutory source unavailable</div>}
-          </div>
-        </ReferencePanel>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[0.8fr_0.8fr_1.1fr_1fr]">
-        <ReferencePanel title="Loan & Advances Snapshot">
-          <div className="divide-y divide-[#edf1f6]">
-            {/* Loan balances are org-wide, not scoped to a payroll run, so this
-                endpoint deliberately does not serve them — see the note in
-                dashboard.routes.ts. Stated plainly rather than shown as four
-                em dashes that look like missing data. */}
-            <p className="px-3 py-8 text-center text-xs text-[#94a3b8]">
-              Loan balances are org-wide and not scoped to a payroll run
-            </p>
-          </div>
-        </ReferencePanel>
-
-        <ReferencePanel title="Reimbursements Pending">
-          <div className="divide-y divide-[#edf1f6]">
-            {/* Same reasoning as loans: claims are org-wide, not run-scoped. */}
-            <p className="px-3 py-8 text-center text-xs text-[#94a3b8]">
-              Reimbursement claims are org-wide and not scoped to a payroll run
-            </p>
-          </div>
-        </ReferencePanel>
-
-        <ReferencePanel title="Compliance Due Dates">
-          <div className="divide-y divide-[#edf1f6]">
-            {statutoryRows.length ? statutoryRows.slice(0, 6).map((row, index) => (
-              <ReferenceListRow key={String(row.id ?? index)} title={String(row.filing_type ?? row.type ?? "Filing")} subtitle={String(row.due_date ?? row.dueDate ?? "—")} value={String(row.status ?? "Pending")} tone={String(row.status ?? "").toLowerCase().includes("filed") ? "green" : "blue"} />
-             )) : readiness ? (
-               <>
-                 {/* branchReadiness is an object keyed to the run's month, not a list
-                     of branches. It was read with arrayAt, so it was always empty. */}
-                 <ReferenceListRow title="Branches in scope" value={asNumber(readiness.branches)} tone="slate" />
-                 <ReferenceListRow title="Attendance frozen" value={asNumber(readiness.attendanceFrozen)} tone={Number(readiness.attendanceFrozen ?? 0) > 0 ? "green" : "amber"} />
-                 <ReferenceListRow title="Attendance data ready" value={asNumber(readiness.dataReady)} tone={Number(readiness.dataReady ?? 0) > 0 ? "green" : "amber"} />
-               </>
-             ) : null}
-             {!statutoryRows.length && !readiness ? <p className="px-3 py-8 text-center text-xs text-[#94a3b8]">No compliance or readiness data for this run</p> : null}
-          </div>
-        </ReferencePanel>
-
-        {/* The donut summed four values the endpoint never returned, so it was
-            always 0 and printed "0% Generated" over a body reading "No data".
-            salary_payslip is month-keyed, so generation is counted for the run's
-            month against the run's own lines. */}
-        <ReferencePanel title={`Payslip Generation Status (${currentMonth})`}>
-          {payslips ? (
-            <>
-              <ReferenceDonut compact centerValue={`${asNumber(payslips.pct) ?? 0}%`} centerLabel="Generated" data={[
-                { name: "Generated", value: asNumber(payslips.generated) ?? 0 },
-                { name: "Pending", value: asNumber(payslips.pending) ?? 0 },
-              ]} />
-              <div className="mt-4 divide-y divide-[#edf1f6]">
-                <ReferenceListRow title="Generated" value={asNumber(payslips.generated)} tone="green" />
-                <ReferenceListRow title="Expected (run lines)" value={asNumber(payslips.expected)} tone="slate" />
-              </div>
-            </>
-          ) : (
-            <p className="px-3 py-8 text-center text-xs text-[#94a3b8]">No payroll lines in this run to generate payslips for</p>
-          )}
-        </ReferencePanel>
-
-        <SalaryComponentPanel data={data} />
-        <AttendanceExceptionPanel data={data} />
-      </div>
+      <Panel title="Loans & reimbursements" subtitle="Org-wide, not scoped to a run" href="/payroll/loans" hrefLabel="Loans">
+        <p className="text-[12px] text-slate-600">{loansKpi?.helper ? `Active loans: ${loansKpi.value} - ${loansKpi.helper}.` : "Loan position unavailable."} Reimbursement claims awaiting action appear in the action list above.</p>
+      </Panel>
     </div>
   );
 }

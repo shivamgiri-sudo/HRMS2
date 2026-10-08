@@ -152,20 +152,12 @@ describe("migrations 1859 / 1860", () => {
       "roster_team_submission_audit",
     ]) {
       // 1861 appends the time-only shift columns to the line table right after new_shift_template_id
-      const expected =
-        t === "roster_team_submission_line"
-          ? created(t).flatMap((c) =>
-              c === "new_shift_template_id"
-                ? [
-                    c,
-                    "new_shift_start_time",
-                    "new_shift_end_time",
-                    "new_shift_id",
-                  ]
-                : [c],
-            )
-          : created(t);
-      expect(snapshot.tables[t]).toEqual(expected);
+      const expected = t === "roster_team_submission_line"
+        ? created(t).flatMap((c) => (c === "new_shift_template_id" ? [c, "new_shift_start_time", "new_shift_end_time", "new_shift_id"] : [c]))
+        : created(t);
+      // Set equality, not order: columns added later by ALTER sit at the end of a real table, which is
+      // what the DB-derived snapshot records, so list position says nothing about correctness here.
+      expect([...snapshot.tables[t]].sort()).toEqual([...expected].sort());
     }
     expect(snapshot.tableCount).toBe(Object.keys(snapshot.tables).length);
     expect(snapshot.columnCount).toBe(

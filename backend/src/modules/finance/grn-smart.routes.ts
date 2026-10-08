@@ -1,3 +1,4 @@
+import { assertGrnReadAccess } from "./grn-branch-split.js";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync } from "fs";
 import { promises as fsp } from "fs";
@@ -175,11 +176,34 @@ async function authorizeGrn(
   }
 }
 
-async function onlyWhenSmart(
+/**
+ * READ-ONLY authorization for the workspace and the invoice file: the GRN's own branch, or a branch
+ * that bears a share of a Head Office GRN (grn-branch-split.ts). Writes keep authorizeGrn.
+ */
+async function authorizeGrnRead(
   req: SmartRequest,
-  _res: Response,
-  next: NextFunction,
+  res: Response,
+  next: NextFunction
 ) {
+  try {
+    const user = actor(req);
+    const grn = await grnService.getGrn(req.params.id);
+    const viaShare = await assertGrnReadAccess({
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+      grnId: req.params.id, headerBranchId: grn.branch_id,
+    });
+    req.financeGrn = grn;
+    (req as SmartRequest & { grnShareBranchIds?: string[] | null }).grnShareBranchIds = viaShare;
+    next();
+  } catch (error) {
+    res.status(403).json({
+      success: false,
+      error: error instanceof Error ? error.message : "GRN access denied",
+    });
+  }
+}
+
+async function onlyWhenSmart(req: SmartRequest, _res: Response, next: NextFunction) {
   try {
     if (!(await grnSmartService.hasAllocations(req.params.id))) {
       next("router");
@@ -222,10 +246,16 @@ export const smartGrnRouter = Router();
 smartGrnRouter.get(
   "/:id/workspace",
   requireRole(...SMART_READ_ROLES),
-  authorizeGrn,
+  authorizeGrnRead,
   async (req: SmartRequest, res) => {
     try {
-      const data = await grnSmartService.getWorkspace(req.params.id);
+      const data: any = await grnSmartService.getWorkspace(req.params.id);
+      // A branch that only bears a share sees its own share(s), not what other branches carry.
+      const shareBranches = (req as SmartRequest & { grnShareBranchIds?: string[] | null }).grnShareBranchIds;
+      if (shareBranches && Array.isArray(data?.allocations)) {
+        data.allocations = data.allocations.filter((row: any) => shareBranches.includes(String(row.branch_id)));
+        data.readOnlyShare = true;
+      }
       res.json({ success: true, data });
     } catch (error) {
       res.status(400).json({
@@ -336,6 +366,7 @@ smartGrnRouter.put(
         body,
         user.id,
         user.role,
+        user.roles
       );
       res.json({ success: true, data });
     } catch (error) {
@@ -669,7 +700,7 @@ smartGrnRouter.post(
 smartGrnRouter.get(
   "/:id/documents/:documentId/file",
   requireRole(...SMART_READ_ROLES),
-  authorizeGrn,
+  authorizeGrnRead,
   async (req: SmartRequest, res) => {
     try {
       const workspace = await grnSmartService.getWorkspace(req.params.id);

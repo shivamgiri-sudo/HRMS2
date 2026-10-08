@@ -28,6 +28,7 @@ import {
 } from "./payroll-readiness-summary-cache.js";
 import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { db } from "../../db/mysql.js";
+import { visibleBranchIdsFor } from "./payroll-branch-scope.js";
 import { triggerPayrollAttendanceFreezeRequest } from "../work-inbox/work-inbox.triggers.js";
 
 export const payrollBranchReadinessRouter = Router();
@@ -209,7 +210,10 @@ payrollBranchReadinessRouter.get(
         });
       }
 
-      const data = await payrollBranchReadinessService.getHOSummary(month);
+      // Branch scoping: non-org-wide callers see only their own branch rows, and no org-wide governance block.
+      const visibleBranches = await visibleBranchIdsFor(req);
+      const data = (await payrollBranchReadinessService.getHOSummary(month))
+        .filter((b) => !visibleBranches || visibleBranches.has(String(b.branch_id)));
 
       // CSV header
       const csvRows = [
@@ -287,7 +291,9 @@ payrollBranchReadinessRouter.get(
           seedErr instanceof Error ? seedErr.message : seedErr,
         );
       }
-      const data = await payrollBranchReadinessService.getHOSummary(month);
+      const visibleBranches = await visibleBranchIdsFor(req);
+      const data = (await payrollBranchReadinessService.getHOSummary(month))
+        .filter((b) => !visibleBranches || visibleBranches.has(String(b.branch_id)));
 
       // Compute summary stats
       const total = data.length;
@@ -306,7 +312,7 @@ payrollBranchReadinessRouter.get(
       // Org-wide, not per-branch — see getOrgWideGovernanceSummary's comment. Covers
       // PAN validity, salary structure, statutory config, attendance-error checks
       // this page's own checklist does not.
-      const governance = await getOrgWideGovernanceSummaryCached(month);
+      const governance = visibleBranches ? null : await getOrgWideGovernanceSummaryCached(month);
 
       return res.json({
         success: true,

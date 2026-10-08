@@ -39,6 +39,10 @@ const mockBuildScopeWhereClause = vi
   .mockResolvedValue({ sql: "1=1", params: [] });
 
 vi.mock("../src/shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  // Role keys follow the actor makeApp/makeFpApp created (ACTOR_ROLES below), not a blanket org-wide caller.
+  getUserRoleKeys: vi.fn(async (id: string) => [ACTOR_ROLES.get(id) ?? "employee"]),
+  getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
   hasScopedAccess: mockHasScopedAccess,
   buildScopeWhereClause: mockBuildScopeWhereClause,
 }));
@@ -449,8 +453,8 @@ describe("POST /api/ats-full-parity/recruiter-submission — impersonation preve
     expect(res.body.message).toMatch(/recruiter profile/i);
   });
 
-  it("TC-S12-10: admin with different recruiterCode → allowed (privilege bypass)", async () => {
-    const app = await makeFpApp("user-admin-1", "admin");
+  it("TC-S12-10: org-wide role (super_admin) with different recruiterCode → allowed (privilege bypass)", async () => {
+    const app = await makeFpApp("user-admin-1", "super_admin");
     // admin provides a different recruiterCode in body — should be resolved via lookup, not JWT chain
     const body = {
       recruiterCode: "RC_OTHER",
@@ -492,13 +496,19 @@ describe("GET /api/ats-full-parity/journey — scope enforcement", () => {
     mockHasScopedAccess.mockResolvedValue(true);
   });
 
-  it("TC-S12-11: admin gets candidate journey without scope check", async () => {
-    const app = await makeFpApp("user-admin-1", "admin");
-    const res = await request(app).get(
-      "/api/ats-full-parity/journey?query=cand-1",
-    );
+  it("TC-S12-11: org-wide role (super_admin) gets candidate journey without scope check", async () => {
+    const app = await makeFpApp("user-admin-1", "super_admin");
+    const res = await request(app).get("/api/ats-full-parity/journey?query=cand-1");
     expect(res.status).toBe(200);
     expect(mockHasScopedAccess).not.toHaveBeenCalled();
+  });
+
+  it("TC-S12-11b: admin is branch-scoped (owner policy 2026-10-01) - journey goes through the scope check", async () => {
+    mockHasScopedAccess.mockResolvedValueOnce(false);
+    const app = await makeFpApp("user-admin-2", "admin");
+    const res = await request(app).get("/api/ats-full-parity/journey?query=cand-1");
+    expect(res.status).toBe(403);
+    expect(mockHasScopedAccess).toHaveBeenCalled();
   });
 
   it("TC-S12-12: branch_head denied when scope check fails → 403", async () => {

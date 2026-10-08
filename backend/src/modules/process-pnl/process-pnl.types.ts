@@ -13,6 +13,12 @@ export interface PnlQueryFilters {
   processId?: string;
   clientId?: string;
   search?: string;
+  /**
+   * Processes that must stay in the row set although they are inactive or sit on a DialDesk branch,
+   * because the period carries billed revenue for them. Set only by the BPO P&L for closed months,
+   * from getInvoicedRevenueActuals, so invoiced revenue is never silently dropped.
+   */
+  includeProcessIds?: string[];
 }
 
 export interface ProcessPnlRecord {

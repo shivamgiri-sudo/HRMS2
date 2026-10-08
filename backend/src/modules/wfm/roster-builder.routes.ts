@@ -6,12 +6,18 @@ import {
   getShiftTemplateTimes,
 } from "./roster-builder.service.js";
 import { rosterService } from "./roster.service.js";
+import { branchScopeGuard, rosterOwnerGuard, employeeFieldGuard } from "./branch-scope.js";
 import { readLobFilter } from "../../shared/lobFilter.js";
 
 const WFM_ROLES = ["wfm", "admin", "super_admin"];
 
 export const rosterBuilderRouter = Router();
 rosterBuilderRouter.use(requireAuth);
+// Owner ruling 2026-10-01: grid / assign are limited to the caller's own branch / process; a client
+// branchId only narrows. cycleId and employeeId are checked against their owning branch/process.
+rosterBuilderRouter.use(branchScopeGuard({ inject: false }));
+rosterBuilderRouter.use(rosterOwnerGuard("weekly_roster_cycle", "cycleId"));
+rosterBuilderRouter.use(employeeFieldGuard("employeeId"));
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h =

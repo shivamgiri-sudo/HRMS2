@@ -85,9 +85,8 @@ describe("each figure comes from a source that can actually produce it", () => {
 
 describe("it refuses rather than printing a figure it cannot stand behind", () => {
   it("refuses a salary certificate when there is no calculated payroll line", () => {
-    expect(CODE).toMatch(
-      /template === "salary" && \(sal\?\.gross_salary == null \|\| sal\?\.net_salary == null\)/,
-    );
+    // \s+ / \s* where the formatter now wraps the condition across lines.
+    expect(CODE).toMatch(/template === "salary" &&\s+\(sal\?\.gross_salary == null \|\| sal\?\.net_salary == null\)/);
     expect(CODE).toMatch(/Cannot issue a salary certificate/);
   });
 
@@ -107,8 +106,6 @@ describe("it refuses rather than printing a figure it cannot stand behind", () =
   it("still issues an employment certificate, which needs no salary figure", () => {
     // 116 of 1,327 active employees have no calculated line; they must still be able to get the
     // certificate that does not depend on one.
-    expect(CODE).toMatch(
-      /template !== "employment" \? await getCertificateSalaryFigures/,
-    );
+    expect(CODE).toMatch(/template !== "employment"\s+\? await getCertificateSalaryFigures/);
   });
 });

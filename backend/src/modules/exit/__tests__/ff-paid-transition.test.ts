@@ -44,6 +44,7 @@ const { logSensitiveAction } = vi.hoisted(() => ({
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 vi.mock("../exit.notifications.js", () => ({
   notifyFullFinalReady: vi.fn(),
+  notifyFFApproved: vi.fn(async () => undefined),
   notifyResignationSubmitted: vi.fn(),
   notifyResignationDecision: vi.fn(),
 }));
@@ -440,10 +441,16 @@ describe("approveFF — approval is guarded on the state it was decided on", () 
     );
   });
 
-  it("still refuses a provisional calculation", async () => {
-    stub(ffRow({ is_ff_provisional: 1 }));
-    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toThrow(
-      /provisional/i,
+  it("refuses to approve a provisional calculation, and writes nothing", async () => {
+    // ee3a7b80e (2026-09-23) removed this gate from the service while the HTTP route kept
+    // it. Owner decision 2026-09-30: the service refuses too.
+    stub(ffRow({ status: "draft", is_ff_provisional: 1, approved_by: null }));
+    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toThrow(/provisional statutory values/);
+
+    const update = execute.mock.calls.find(([s]) => String(s).includes("SET status = 'approved'"));
+    expect(update, "an approval UPDATE was issued for a provisional calculation").toBeUndefined();
+    expect(logSensitiveAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action_type: "FULL_FINAL_APPROVED" }),
     );
   });
 });

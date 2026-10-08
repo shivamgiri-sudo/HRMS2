@@ -10,12 +10,15 @@ import type {
 import { resolveUanFilingReadinessForPeriod } from "./pf-applicability.service.js";
 
 interface BatchFilter {
+  /** Server-resolved branch scope (null/undefined = unrestricted org-wide caller). */
+  branchIds?: string[] | null;
   branchId?: string | null;
   establishmentId?: string | null;
   status?: string | null;
 }
 
 interface QueueFilter {
+  branchIds?: string[] | null;
   batchId?: string | null;
   itemStatus?: string | null;
   branchId?: string | null;
@@ -567,6 +570,13 @@ export const pfCreationService = {
       whereClauses.push("p.branch_id = ?");
       params.push(filters.branchId);
     }
+    if (filters.branchIds) {
+      if (filters.branchIds.length === 0) whereClauses.push("1 = 0");
+      else {
+        whereClauses.push(`p.branch_id IN (${filters.branchIds.map(() => "?").join(",")})`);
+        params.push(...filters.branchIds);
+      }
+    }
     if (filters.search) {
       whereClauses.push(
         "(e.employee_code LIKE ? OR CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) LIKE ?)",
@@ -629,6 +639,13 @@ export const pfCreationService = {
       whereClauses.push("b.branch_id = ?");
       params.push(filters.branchId);
     }
+    if (filters.branchIds) {
+      if (filters.branchIds.length === 0) whereClauses.push("1 = 0");
+      else {
+        whereClauses.push(`b.branch_id IN (${filters.branchIds.map(() => "?").join(",")})`);
+        params.push(...filters.branchIds);
+      }
+    }
     if (filters.establishmentId) {
       whereClauses.push("b.establishment_id = ?");
       params.push(filters.establishmentId);
@@ -689,9 +706,15 @@ export const pfCreationService = {
     return items;
   },
 
-  async getReadinessReport(branchId?: string | null) {
-    const where = branchId ? "WHERE p.branch_id = ?" : "";
-    const params = branchId ? [branchId] : [];
+  async getReadinessReport(branchId?: string | null, branchIds?: string[] | null) {
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    if (branchId) { conds.push("p.branch_id = ?"); params.push(branchId); }
+    if (branchIds) {
+      if (branchIds.length === 0) conds.push("1 = 0");
+      else { conds.push(`p.branch_id IN (${branchIds.map(() => "?").join(",")})`); params.push(...branchIds); }
+    }
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT

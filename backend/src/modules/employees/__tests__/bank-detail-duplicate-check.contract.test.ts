@@ -26,23 +26,34 @@ const rawSource = readFileSync(
 const stripComments = (s: string): string =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
-const source = stripComments(rawSource);
 
-function routeBody(routeLiteral: string, len = 2500): string {
+/**
+ * employee.routes.ts is prettier-formatted now, so a registration reads
+ * `router.put(\n  "/path",` rather than `router.put("/path",`. Joining the verb to its path
+ * keeps the route literals below formatting-independent.
+ */
+const joinRouteVerbs = (s: string): string =>
+  s.replace(/\b(router\.(?:get|post|put|patch|delete|use))\(\s+/g, "$1(");
+
+/** A handler runs from its registration to the next top-level `router.` registration. */
+function sliceRoute(src: string, idx: number): string {
+  const next = src.slice(idx + 1).search(/^router\.(?:get|post|put|patch|delete|use)\(/m);
+  return next === -1 ? src.slice(idx) : src.slice(idx, idx + 1 + next);
+}
+
+const source = joinRouteVerbs(stripComments(rawSource));
+
+function routeBody(routeLiteral: string): string {
   const idx = source.indexOf(routeLiteral);
-  expect(idx, `route registration "${routeLiteral}" not found`).toBeGreaterThan(
-    -1,
-  );
-  return source.slice(idx, idx + len);
+  expect(idx, `route registration "${routeLiteral}" not found`).toBeGreaterThan(-1);
+  return sliceRoute(source, idx);
 }
 
 describe("PUT /:employeeId/bank-details checks for a cross-employee duplicate account", () => {
   const body = routeBody('router.put("/:employeeId/bank-details"');
 
   it("calls findDuplicateAccountOwner before writing, excluding the employee's own record", () => {
-    expect(body).toMatch(
-      /findDuplicateAccountOwner\(String\(account_number\), empId\)/,
-    );
+    expect(body).toMatch(/findDuplicateAccountOwner\(\s*String\(account_number\),\s*empId,?\s*\)/);
   });
 
   it("refuses with 409 naming the other employee when a duplicate is found", () => {

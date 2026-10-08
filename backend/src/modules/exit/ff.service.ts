@@ -447,6 +447,16 @@ export const ffService = {
     if (rec.status === "paid")
       throw ffError(409, "F&F already paid — cannot re-approve");
 
+    // Same refusal the HTTP route makes (ff-approval-guard.compat.routes.ts). Kept here too
+    // so a caller that reaches the service directly cannot approve provisional figures.
+    if (Number(rec.is_ff_provisional) === 1) {
+      throw ffError(
+        409,
+        "Cannot approve F&F: calculation contains provisional statutory values. " +
+        "Verify and recalculate with approved configuration before approving."
+      );
+    }
+
     // WHERE carries the status this decision was made on. It was `WHERE id = ?` alone, with
     // no predicate at all, which made the guard above advisory: between that SELECT and this
     // UPDATE another actor could mark the settlement paid, and this statement would then

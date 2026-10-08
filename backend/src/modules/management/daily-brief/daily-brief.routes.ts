@@ -12,6 +12,7 @@ import { db } from "../../../db/mysql.js";
 import { requireAuth } from "../../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRole } from "../../../shared/accessGuard.js";
+import { canViewEmployee } from "../../../shared/enterpriseScope.js";
 import { getBusinessDateIST } from "../../../shared/istDate.js";
 import {
   buildDailyBriefForEmployee,
@@ -51,21 +52,20 @@ router.get(
 
     let targetEmployeeId: string | undefined = requestedEmployeeId;
 
-    if (requestedEmployeeId) {
-      // Previewing someone else's brief is an admin-only capability.
-      const isPrivileged = await hasRole(userId, "admin", "super_admin");
-      if (!isPrivileged) {
-        // Self-preview is still allowed even when an employeeId is passed, as long as it
-        // resolves to the caller's own employee record.
-        const own = await getEmployeeForUser(userId);
-        if (!own || own.id !== requestedEmployeeId) {
-          return res
-            .status(403)
-            .json({
-              success: false,
-              message: "Forbidden: can only preview your own briefing",
-            });
-        }
+  if (requestedEmployeeId) {
+    // Previewing someone else's brief is an admin-only capability.
+    const isPrivileged = await hasRole(userId, "admin", "super_admin");
+    // admin is branch-scoped (owner ruling 2026-10-01): may preview only employees inside their branch
+    // (canViewEmployee is true for the org-wide roles, super_admin included).
+    if (isPrivileged && !(await canViewEmployee(userId, requestedEmployeeId))) {
+      return res.status(403).json({ success: false, message: "Forbidden: this employee is outside your branch / assigned scope" });
+    }
+    if (!isPrivileged) {
+      // Self-preview is still allowed even when an employeeId is passed, as long as it
+      // resolves to the caller's own employee record.
+      const own = await getEmployeeForUser(userId);
+      if (!own || own.id !== requestedEmployeeId) {
+        return res.status(403).json({ success: false, message: "Forbidden: can only preview your own briefing" });
       }
     } else {
       const own = await getEmployeeForUser(userId);

@@ -111,11 +111,9 @@ export async function getTniAnalysis(
   branchId?: string | null,
   processId?: string | null,
   costCentreId?: string | null,
-): Promise<{
-  agents: TniAgentRow[];
-  summary: TniSummary;
-  thresholds: TniThresholds;
-}> {
+  /** Branch scoping: an employee predicate on alias `e` (null / undefined = org-wide, SQL unchanged). */
+  employeeScope?: { sql: string; params: unknown[] } | null,
+): Promise<{ agents: TniAgentRow[]; summary: TniSummary; thresholds: TniThresholds }> {
   const pool = getShivamgiriPool();
 
   const conditions: string[] = [];
@@ -137,6 +135,8 @@ export async function getTniAnalysis(
     conditions.push("AND e.cost_centre_id = ?");
     baseParams.push(costCentreId);
   }
+
+  if (employeeScope) { conditions.push(`AND ${employeeScope.sql}`); baseParams.push(...(employeeScope.params as (string | number)[])); }
 
   const extraCond = conditions.join(" ");
 

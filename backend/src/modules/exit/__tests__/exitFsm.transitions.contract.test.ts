@@ -21,6 +21,10 @@ vi.mock("../exit-intelligence.service.js", () => ({
 vi.mock("../exit.notifications.js", () => ({
   notifyResignationSubmitted: vi.fn().mockResolvedValue(false),
   notifyResignationDecision: vi.fn().mockResolvedValue(undefined),
+  // The FSM now also notifies on manager decisions and revocations; without these the mocked module
+  // threw "No export defined" as unhandled errors after the assertions had already passed.
+  notifyManagerDecision: vi.fn().mockResolvedValue(undefined),
+  notifyResignationRevoked: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../../communication/sms.helper.js", () => ({ sendSMS: vi.fn() }));
 vi.mock("nodemailer", () => ({

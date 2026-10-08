@@ -1,0 +1,81 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`today's slot allocators > assignInterviewSlot walks past the booked 10:00 1`] = `
+{
+  "calls": [
+    [
+      "SELECT ml.interview_date, ml.interview_time FROM meta_lead_raw ml LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id WHERE jr.branch_name = ? AND ml.interview_date IS NOT NULL AND ml.interview_time IS NOT NULL",
+      [
+        "NOIDA",
+      ],
+    ],
+    [
+      "UPDATE meta_lead_raw SET interview_date = ?, interview_time = ?, interview_slot_assigned_at = NOW() WHERE id = ?",
+      [
+        "2026-10-12",
+        "10:30:00",
+        "lead-1",
+      ],
+    ],
+  ],
+  "slot": {
+    "date": "2026-10-12",
+    "dateLabel": "Mon, 12 Oct 2026",
+    "time": "10:30:00",
+    "timeLabel": "10:30 AM",
+  },
+}
+`;
+
+exports[`today's slot allocators > reserveSlot picks the first free slot with room 1`] = `
+{
+  "calls": [
+    [
+      "BEGIN",
+      [],
+    ],
+    [
+      "SELECT id, lead_id, drive_id FROM he_match WHERE id = ? FOR UPDATE",
+      [
+        "m1",
+      ],
+    ],
+    [
+      "SELECT * FROM he_drive WHERE id = ? FOR UPDATE",
+      [
+        "d1",
+      ],
+    ],
+    [
+      "SELECT slot_at, COUNT(*) AS n FROM he_match WHERE drive_id = ? AND slot_at IS NOT NULL AND state IN ('invited','confirmed') AND id <> ? GROUP BY slot_at",
+      [
+        "d1",
+        "m1",
+      ],
+    ],
+    [
+      "UPDATE he_match SET slot_at = ? WHERE id = ?",
+      [
+        "2026-10-12 10:30:00",
+        "m1",
+      ],
+    ],
+    [
+      "COMMIT",
+      [],
+    ],
+    [
+      "addEvent",
+      [
+        "l1",
+        "slot_assigned",
+        {
+          "detail": "2026-10-12 10:30:00",
+          "driveId": "d1",
+        },
+      ],
+    ],
+  ],
+  "slot": "2026-10-12 10:30:00",
+}
+`;

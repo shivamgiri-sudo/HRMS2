@@ -8,6 +8,7 @@ import MyTeamRosterTab from "@/components/wfm/team-roster/MyTeamRosterTab";
 import SubmissionDrawer from "@/components/wfm/team-roster/SubmissionDrawer";
 import SubmissionsTable from "@/components/wfm/team-roster/SubmissionsTable";
 import TeamAttendanceTab from "@/components/wfm/team-roster/TeamAttendanceTab";
+import { parseRosterDeepLink } from "@/components/wfm/team-roster/rosterDeepLink";
 import { SUBMISSION_STATUS_FILTERS, STATUS_META, unpackError } from "@/components/wfm/team-roster/teamRosterFormat";
 import { useApprovals, useMySubmissions, useTeamRosterMe, type TeamRosterMe } from "@/hooks/useTeamRoster";
 
@@ -109,6 +110,8 @@ export default function TeamRosterPage() {
   }
 
   const wanted = (params.get("tab") as TabKey | null) ?? tabOverride;
+  // ?date= / ?employee= (e.g. "Open in roster" in the Roster Requests hub): read once, by the roster tab.
+  const focus = parseRosterDeepLink(params);
   const active: TabKey = wanted && tabs.includes(wanted) ? wanted : tabs[0];
   const openTab = (t: string) => { setTabOverride(t as TabKey); setParams((p) => { const n = new URLSearchParams(p); n.set("tab", t); n.delete("submission"); return n; }, { replace: true }); };
 
@@ -123,7 +126,7 @@ export default function TeamRosterPage() {
         </TabsList>
         {tabs.includes("roster") && (
           <TabsContent value="roster" className="mt-4">
-            <MyTeamRosterTab me={data} onSubmitted={(id) => { openTab("submissions"); setDrawerId(id); }} />
+            <MyTeamRosterTab me={data} focusDate={focus.date} focusEmployeeId={focus.employeeId} onSubmitted={(id) => { openTab("submissions"); setDrawerId(id); }} />
           </TabsContent>
         )}
         {tabs.includes("attendance") && <TabsContent value="attendance" className="mt-4"><TeamAttendanceTab me={data} /></TabsContent>}

@@ -98,3 +98,23 @@ describe("ESI mid-period continuity override", () => {
     expect(result.esic_employee).toBe(0);
   });
 });
+
+describe("PF / ESIC / net are whole rupees, like db_bill", () => {
+  // db_bill July 2026: ESIC = ROUND(Gross1 * 0.75%) on 674/674 rows, EPF = ROUND(12% * Basic1),
+  // NetSalary an integer on every row.
+  it("rounds ESIC and PF to the rupee and keeps net a whole number", () => {
+    const result = payrollService.calculateNetSalary({
+      ...BASE,
+      grossMonthlyCTC: 17333, // 0.75% = 129.9975 ; basic 50% = 8666.5 ; 12% = 1039.98
+      esicOptOut: false,
+      pfOptOut: false,
+      professionalTax: 0,
+      tds: 0,
+    });
+    expect(result.esic_employee).toBe(130);
+    expect(result.pf_employee).toBe(1040);
+    expect(Number.isInteger(result.total_deductions)).toBe(true);
+    expect(Number.isInteger(result.net_salary)).toBe(true);
+    expect(result.net_salary).toBe(result.gross_salary - result.total_deductions);
+  });
+});

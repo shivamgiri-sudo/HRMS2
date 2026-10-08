@@ -33,10 +33,7 @@ type EmailType =
   | "bank_resubmit_request"
   | "bgv_address_link";
 
-interface SendResult {
-  ok: boolean;
-  error?: string;
-}
+interface SendResult { ok: boolean; error?: string; /** true when nothing was sent because SMTP is not configured */ skipped?: boolean }
 
 const transporter = nodemailer.createTransport({
   host: env.SMTP_HOST || "",
@@ -70,6 +67,26 @@ async function logEmail(
   }
 }
 
+/**
+ * Append the full-request card + one-click Approve / Decline to an approver's email. The approver is found by
+ * login email; no login, nothing pending, or any failure leaves the html untouched.
+ */
+async function withApprovalBlock(to: string, html: string, kinds: string[]): Promise<string> {
+  try {
+    const [rows] = await db.execute<any[]>('SELECT id FROM auth_user WHERE email = ? LIMIT 1', [to]);
+    const userId = rows?.[0]?.id ? String(rows[0].id) : null;
+    if (!userId) return html;
+    // Lazy import: approval-center pulls a large module graph this service must not load eagerly.
+    const { buildApprovalBlock } = await import('../approval-center/approval-email.service.js');
+    const block = await buildApprovalBlock(userId, { kinds });
+    if (!block) return html;
+    const at = html.toLowerCase().lastIndexOf('</body>');
+    return at >= 0 ? html.slice(0, at) + block.html + html.slice(at) : html + block.html;
+  } catch {
+    return html;
+  }
+}
+
 async function send(
   to: string,
   subject: string,
@@ -78,11 +95,9 @@ async function send(
   type: EmailType,
 ): Promise<SendResult> {
   if (!env.SMTP_USER || !env.SMTP_PASS) {
-    console.warn(
-      `[ATS-EMAIL] SMTP not configured - skipping ${type} to ${to} (candidate ${candidateId})`,
-    );
-    await logEmail(candidateId, type, to, "skipped", "SMTP not configured");
-    return { ok: true };
+    console.warn(`[ATS-EMAIL] SMTP not configured - skipping ${type} to ${to} (candidate ${candidateId})`);
+    await logEmail(candidateId, type, to, 'skipped', 'SMTP not configured');
+    return { ok: true, skipped: true };
   }
   const fromAddr = env.SMTP_FROM || env.SMTP_USER;
   const finalHtml = /<html[\s>]/i.test(html)
@@ -214,16 +229,12 @@ export async function sendRejectedEmail(params: {
   );
 }
 
-export async function sendOnboardingTokenEmail(params: {
-  candidateId: string;
-  to: string;
-  candidateName: string;
-  onboardingLink: string;
-}): Promise<SendResult> {
-  return send(
-    params.to,
-    "Complete Your Joining Formalities - MAS Callnet",
-    atsFrame({
+export function buildOnboardingTokenEmail(params: {
+  candidateName: string; onboardingLink: string; validFor?: string;
+}): { subject: string; html: string } {
+  return {
+    subject: 'Complete Your Joining Formalities - MAS Callnet',
+    html: atsFrame({
       eyebrow: "Candidate Onboarding",
       title: "Complete Your 10-Step Joining Form",
       body: `<p>Dear <strong>${escapeHtml(params.candidateName)}</strong>,</p>
@@ -234,11 +245,18 @@ export async function sendOnboardingTokenEmail(params: {
         <p style="margin-top:18px;color:#64748b;font-size:13px;line-height:1.6">If the button does not open, copy this link into your browser:<br><span style="word-break:break-all">${escapeHtml(params.onboardingLink)}</span></p>`,
       actionLabel: "Open Onboarding Form",
       actionUrl: params.onboardingLink,
-      note: "This secure link is valid for 15 days. If it expires, ask your recruiter or HR to resend it.",
+      note: `This secure link is valid for ${params.validFor ?? "15 days"}. If it expires, ask your recruiter or HR to resend it.`,
     }),
-    params.candidateId,
-    "token_sent",
-  );
+  };
+}
+
+export async function sendOnboardingTokenEmail(params: {
+  candidateId: string; to: string; candidateName: string; onboardingLink: string;
+  /** Human text for how long the link works, e.g. "3 days"; defaults to the standard 15-day link. */
+  validFor?: string;
+}): Promise<SendResult> {
+  const mail = buildOnboardingTokenEmail(params);
+  return send(params.to, mail.subject, mail.html, params.candidateId, 'token_sent');
 }
 
 /**
@@ -285,11 +303,11 @@ export async function sendOfferReviewEmail(params: {
 }): Promise<SendResult> {
   return send(
     params.to,
-    "New Employment Offer Awaiting Your Approval - MAS Callnet",
-    `<p>A new employment offer requires your approval.</p>
+    'New Employment Offer Awaiting Your Approval - MAS Callnet',
+    await withApprovalBlock(params.to, `<p>A new employment offer requires your approval.</p>
      <p><strong>Candidate:</strong> ${params.candidateName}</p>
      <p>${params.offerSummary}</p>
-     <p>Please log in to review and approve.</p>`,
+     <p>Please log in to review and approve.</p>`, ['ats_offer', 'ats_branch_head']),
     params.candidateId,
     "offer_review",
   );
@@ -531,8 +549,8 @@ export async function sendBranchHeadApprovalEmail(params: {
 
   return send(
     params.to,
-    "Approval Request - MAS Callnet",
-    html,
+    'Approval Request - MAS Callnet',
+    await withApprovalBlock(params.to, html, ['ats_offer', 'ats_branch_head']),
     params.candidateId,
     "branch_head_approval",
   );

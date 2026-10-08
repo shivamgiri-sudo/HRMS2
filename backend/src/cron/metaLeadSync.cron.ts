@@ -19,16 +19,44 @@ import { metaCampaignService } from "../modules/meta-campaign/meta-campaign.serv
 import { isMetaConfigured } from "../modules/meta-campaign/meta-api.client.js";
 import { notifyQualifiedLead } from "../modules/meta-campaign/lead-outreach.service.js";
 import { reconcileDeliveryStatuses } from "../modules/meta-campaign/meta-messages.service.js";
+import { enqueueMetaLeadFollowup, followupHasLiveRow } from "../modules/hiring-engine/qualified-followup.service.js";
+import { readSyncStatus, safeErrorCode, writeSyncStatus, type SyncStatusRecord } from "../modules/meta-campaign/meta-sync-status.store.js";
+import { followupSkipSql, pipelineOwnsSends } from "../modules/hiring-engine/qualified-followup.policy.js";
 
 let scheduler: NodeJS.Timeout | undefined;
 let runInFlight = false;
-const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes (webhook real-time sync is off; this pull is the only intake)
 
 // Never notify leads older than this: the Sep-20 backlog (1,906 leads) was handled through a
 // separate channel. Within the floor, a rolling window (not process-start time) means a backend
 // restart cannot orphan leads that qualified while the process was down.
 const NOTIFY_FLOOR = new Date("2026-09-21T00:00:00+05:30");
 const NOTIFY_LOOKBACK_MS = 48 * 60 * 60 * 1000;
+
+/*
+ * A form Meta answers with "(#100) Tried accessing nonexisting field (leads)" is not a lead form
+ * this token can read (deleted, or the id is not a Lead Gen form). Retrying it every cycle only
+ * repeated the same error in the log forever, so it is parked for a day and logged once.
+ */
+const FORM_PARK_MS = 24 * 60 * 60 * 1000;
+const parkedForms = new Map<string, number>();
+
+export function isFormParked(formId: string, now = Date.now()): boolean {
+  const until = parkedForms.get(formId);
+  if (until === undefined) return false;
+  if (until <= now) { parkedForms.delete(formId); return false; }
+  return true;
+}
+
+/** Returns true when the error parked the form (first time only), so the caller logs it once. */
+export function parkFormOnPermanentError(formId: string, message: string, now = Date.now()): boolean {
+  if (!/\(#100\)/.test(message)) return false;
+  if (isFormParked(formId, now)) return false;
+  parkedForms.set(formId, now + FORM_PARK_MS);
+  return true;
+}
+
+export function _resetParkedFormsForTest(): void { parkedForms.clear(); }
 
 function notifyWindowStart(now = new Date()): Date {
   return new Date(
@@ -58,21 +86,54 @@ async function listUnlinkedPageFormIds(linked: Set<string>): Promise<string[]> {
   return unlinked;
 }
 
-async function runMetaLeadSync(): Promise<void> {
-  if (!isMetaConfigured()) {
-    scheduler = undefined;
-    scheduleNext();
-    return;
-  }
+export interface MetaSyncSummary {
+  startedAt: string;
+  finishedAt: string;
+  imported: number;
+  forms: number;
+  formErrors: number;
+  parkedSkipped: number;
+  outreach: { sent: number; skipped: number; failed: number };
+}
 
-  if (runInFlight) {
-    console.warn("[meta-sync] already in flight, skipping this tick");
-    scheduler = undefined;
-    scheduleNext();
-    return;
-  }
+export type MetaSyncNowResult =
+  | { status: "ok"; summary: MetaSyncSummary }
+  | { status: "not_configured" }
+  | { status: "in_flight" }
+  | { status: "error"; message: string };
+
+let lastSummary: MetaSyncSummary | null = null;
+let lastRecord: SyncStatusRecord | null = null;
+
+/** Outcome (ok or error) of the latest cycle in this process; the health strip also reads the persisted copy after a restart. */
+export function getLastMetaSyncRecord(): SyncStatusRecord | null {
+  return lastRecord;
+}
+
+async function recordOutcome(rec: Omit<SyncStatusRecord, "lastOkAt">): Promise<void> {
+  // after a restart the in-memory copy is empty: carry the last good time over from the persisted one
+  const prev = rec.ok ? null : lastRecord ?? (await readSyncStatus());
+  const lastOkAt = rec.ok ? rec.finishedAt : prev?.lastOkAt ?? null;
+  lastRecord = { ...rec, lastOkAt };
+  await writeSyncStatus(lastRecord);
+}
+
+/** Result of the most recent completed run (scheduled or manual) in this process, for the UI. */
+export function getLastMetaSyncSummary(): MetaSyncSummary | null {
+  return lastSummary;
+}
+
+/**
+ * One full sync cycle, shared by the scheduler and the manual "Sync now" button so both do exactly
+ * the same work and honour the same in-flight guard (a manual click during a scheduled run is told
+ * to wait, never doubled up).
+ */
+async function runSyncCycle(): Promise<MetaSyncNowResult> {
+  if (!isMetaConfigured()) return { status: "not_configured" };
+  if (runInFlight) return { status: "in_flight" };
 
   runInFlight = true;
+  const startedAt = new Date().toISOString();
   console.log("[meta-sync] Starting lead sync...");
 
   try {
@@ -99,7 +160,9 @@ async function runMetaLeadSync(): Promise<void> {
 
     let totalImported = 0;
     let formErrors = 0;
+    let parkedSkipped = 0;
     for (const form of formsToPull) {
+      if (isFormParked(form.id)) { parkedSkipped++; continue; }
       try {
         const result = await metaCampaignService.backfillFormLeads(form.id);
         totalImported += result.imported;
@@ -110,14 +173,16 @@ async function runMetaLeadSync(): Promise<void> {
         }
       } catch (err: any) {
         formErrors++;
-        console.error(
-          `[meta-sync] Form ${form.id} ("${form.name}") error:`,
-          err?.message ?? err,
-        );
+        const message = String(err?.message ?? err);
+        if (parkFormOnPermanentError(form.id, message)) {
+          console.error(`[meta-sync] Form ${form.id} ("${form.name}") is not readable as a lead form; skipping it for 24h: ${message}`);
+        } else {
+          console.error(`[meta-sync] Form ${form.id} ("${form.name}") error:`, message);
+        }
       }
     }
     console.log(
-      `[meta-sync] Lead sync complete: ${totalImported} imported across ${formsToPull.length} forms (${unlinkedIds.length} unlinked), ${formErrors} form errors`,
+      `[meta-sync] Lead sync complete: ${totalImported} imported across ${formsToPull.length} forms (${unlinkedIds.length} unlinked), ${formErrors} form errors, ${parkedSkipped} parked form(s) skipped`
     );
 
     // 2. Sync campaign metrics (impressions, reach, clicks, spend)
@@ -160,39 +225,94 @@ async function runMetaLeadSync(): Promise<void> {
 
     // 4. Notify newly qualified leads within the rolling window.
     //    backfillFormLeads sets skipOutreach=true, so we do outreach here.
-    await notifyNewQualifiedLeads();
+    const outreach = await notifyNewQualifiedLeads();
+
+    const summary: MetaSyncSummary = {
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      imported: totalImported,
+      forms: formsToPull.length,
+      formErrors,
+      parkedSkipped,
+      outreach,
+    };
+    lastSummary = summary;
+    await recordOutcome({ finishedAt: summary.finishedAt, ok: true, imported: totalImported, forms: formsToPull.length, formErrors, errorCode: null });
+    return { status: "ok", summary };
   } catch (err: any) {
     console.error("[meta-sync] Sync error:", err?.message ?? err);
+    await recordOutcome({ finishedAt: new Date().toISOString(), ok: false, imported: 0, forms: 0, formErrors: 0, errorCode: safeErrorCode(err) });
+    return { status: "error", message: String(err?.message ?? err) };
   } finally {
     runInFlight = false;
-    scheduler = undefined;
-    scheduleNext();
   }
 }
 
-async function notifyNewQualifiedLeads(): Promise<void> {
+async function runMetaLeadSync(): Promise<void> {
+  const result = await runSyncCycle();
+  if (result.status === "in_flight") console.warn("[meta-sync] already in flight, skipping this tick");
+  scheduler = undefined;
+  scheduleNext();
+}
+
+/** Manual trigger (UI "Sync now"). Does not touch the schedule: the next tick stays where it was. */
+export async function runMetaLeadSyncNow(): Promise<MetaSyncNowResult> {
+  return runSyncCycle();
+}
+
+// Live: leads already handed to the pipeline (a live row, open or stopped) are not re-selected every sync.
+const LIVE_ROW_SKIP = `
+        AND NOT EXISTS (SELECT 1 FROM qualified_followup qf
+                         WHERE qf.mode_at_enqueue = 'live'
+                           AND (qf.meta_lead_id = meta_lead_raw.id COLLATE utf8mb4_unicode_ci
+                                OR (qf.mobile10 = RIGHT(REGEXP_REPLACE(meta_lead_raw.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci
+                                    AND qf.requisition_id = meta_lead_raw.requisition_id COLLATE utf8mb4_unicode_ci)))`;
+
+export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped: number; failed: number }> {
   const [leads] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM meta_lead_raw
       WHERE screening_result = 'qualified'
         AND notification_sent_at IS NULL
-        AND created_at >= ?
+        AND created_at >= ?${pipelineOwnsSends() ? LIVE_ROW_SKIP : ""}
       ORDER BY created_at ASC
       LIMIT 100`,
     [notifyWindowStart()],
   );
 
-  if (!(leads as any[]).length) return;
+  if (!(leads as any[]).length) return { sent: 0, skipped: 0, failed: 0 };
 
   console.log(
     `[meta-sync] Triggering outreach for ${(leads as any[]).length} new qualified lead(s)...`,
   );
   let sent = 0;
+  let skipped = 0;
   let failed = 0;
 
   for (const lead of leads as any[]) {
     try {
-      await notifyQualifiedLead(lead.id);
-      sent++;
+      // Live pipeline: enqueue first; an enqueued or already-enrolled lead is handed over and not messaged from here. Any other
+      // result (invalid, not_qualified, a throw) falls through to the old flow, whose own guard fails closed on a lookup error.
+      if (pipelineOwnsSends()) {
+        const enq = await enqueueMetaLeadFollowup(lead.id, "live").catch(() => null);
+        // `exists` may be a dry_run/test row the live worker never sends: hand over only when a live row exists (a lookup error falls to the old flow).
+        const handed = enq?.status === "enqueued" || (enq?.status === "exists" && await followupHasLiveRow(lead.id).catch(() => false));
+        if (enq && handed) {
+          skipped++;
+          console.log(`[meta-sync] Lead ${lead.id} handed to the follow-up pipeline (${enq.status})`);
+          continue;
+        }
+      }
+      // notifyQualifiedLead reports refusals/skips in its outcome instead of throwing, so count
+      // by what actually landed. Counting every non-throw as "sent" hid leads that never got a message.
+      const outcome = await notifyQualifiedLead(lead.id);
+      if (outcome.succeeded.length > 0) sent++;
+      else skipped++;
+      for (const s of outcome.skipped) {
+        console.warn(`[meta-sync] Lead ${lead.id} ${s.channel} skipped: ${s.reason}`);
+      }
+      for (const f of outcome.failed) {
+        console.warn(`[meta-sync] Lead ${lead.id} ${f.channel} failed: ${f.error}`);
+      }
     } catch (err: any) {
       failed++;
       console.warn(
@@ -202,7 +322,8 @@ async function notifyNewQualifiedLeads(): Promise<void> {
     }
   }
 
-  console.log(`[meta-sync] Outreach complete: ${sent} sent, ${failed} failed`);
+  console.log(`[meta-sync] Outreach complete: ${sent} delivered, ${skipped} nothing sent (see skip reasons above), ${failed} errored`);
+  return { sent, skipped, failed };
 }
 
 function scheduleNext(): void {
@@ -213,9 +334,7 @@ function scheduleNext(): void {
 
 export function startMetaLeadSyncScheduler(): void {
   if (scheduler) return;
-  console.log(
-    `[meta-sync] 30-min Meta lead sync scheduler starting (notifying leads created >= ${notifyWindowStart().toISOString()}, rolling 48h)`,
-  );
+  console.log(`[meta-sync] 30-minute Meta lead sync scheduler starting (notifying leads created >= ${notifyWindowStart().toISOString()}, rolling 48h)`);
   runMetaLeadSync();
 }
 

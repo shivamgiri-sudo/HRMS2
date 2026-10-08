@@ -186,7 +186,9 @@ describe("CEO Quality Overview panel", () => {
 });
 
 // ─── Revenue Gap MTD ──────────────────────────────────────────────────────────
-describe("CEO Revenue Gap MTD tile", () => {
+// Relabelled from "Revenue Gap MTD": the figure is the sum of process_revenue_daily.revenue_at_risk, not a gap
+// against a target (no revenue-target source is live — bill_revenue_target_snapshot stops at 2020-06).
+describe("CEO Revenue at risk (MTD) tile", () => {
   it("shows no figure when the revenue-risk feed has never been generated", () => {
     const html = render(baseData({
       pnl: {
@@ -199,7 +201,7 @@ describe("CEO Revenue Gap MTD tile", () => {
       } as never,
     }));
 
-    expect(html).toContain("Revenue Gap MTD");
+    expect(html).toContain("Revenue at risk (MTD)");
     expect(html).toContain("Revenue-risk feed not generated");
   });
 

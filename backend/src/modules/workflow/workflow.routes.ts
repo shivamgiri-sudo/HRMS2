@@ -3,7 +3,23 @@ import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { workflowService } from "./workflow.service.js";
+import { workflowService, type RequesterScope } from "./workflow.service.js";
+import { employeeRowScope } from "../org/branchScope.js";
+
+// Branch scoping (owner ruling 2026-10-01): approvers only see / act on requests raised by people in their own
+// branch / assigned scope (they were filtered by approver_role alone). Org-wide roles are unaffected.
+async function requesterScope(req: AuthenticatedRequest): Promise<RequesterScope> {
+  const s = await employeeRowScope(req.authUser!, "e");
+  return { ...s, userId: req.authUser!.id };
+}
+async function assertRequestInScope(req: AuthenticatedRequest, res: Response): Promise<boolean> {
+  const ok = await workflowService.requestInScope(req.params.id, await requesterScope(req));
+  if (ok === false) {
+    res.status(403).json({ error: "Forbidden: this request is outside your branch / assigned scope" });
+    return false;
+  }
+  return true; // exists in scope, or unknown id (the handler answers 404)
+}
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -50,55 +66,33 @@ router.post(
 
 // Pending requests for caller's role (approver inbox)
 // Role is derived from the authenticated user's roles, not a query param
-router.get(
-  "/requests/pending",
-  requireRole("admin", "hr", "manager", "team_leader", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userRoles: string[] = (req.authUser as any)?.roles ?? [];
-    // Pick the most privileged approver role the caller holds
-    const APPROVER_PRIORITY = ["admin", "hr", "manager", "team_leader"];
-    const derivedRole =
-      APPROVER_PRIORITY.find((r) => userRoles.includes(r)) ??
-      userRoles[0] ??
-      "hr";
-    const role = (req.query.role as string) || derivedRole;
-    const requests = await workflowService.listPendingForRole(role);
-    res.json({ data: requests });
-  }),
-);
+router.get("/requests/pending", requireRole("admin", "hr", "manager", "team_leader", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userRoles: string[] = (req.authUser as any)?.roles ?? [];
+  // Pick the most privileged approver role the caller holds
+  const APPROVER_PRIORITY = ["admin", "hr", "manager", "team_leader"];
+  const derivedRole = APPROVER_PRIORITY.find(r => userRoles.includes(r)) ?? userRoles[0] ?? "hr";
+  const role = (req.query.role as string) || derivedRole;
+  const requests = await workflowService.listPendingForRole(role, await requesterScope(req));
+  res.json({ data: requests });
+}));
 
 // Requests for a specific entity
-router.get(
-  "/requests/entity/:type/:id",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const requests = await workflowService.listRequestsForEntity(
-      req.params.type,
-      req.params.id,
-    );
-    res.json({ data: requests });
-  }),
-);
+router.get("/requests/entity/:type/:id", h(async (req: AuthenticatedRequest, res: Response) => {
+  const requests = await workflowService.listRequestsForEntity(req.params.type, req.params.id, await requesterScope(req));
+  res.json({ data: requests });
+}));
 
 // Act on a request (approve/reject/withdraw)
-router.post(
-  "/requests/:id/act",
-  requireRole("admin", "hr", "manager", "team_leader", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { action, remarks } = req.body;
-    if (!["approved", "rejected", "withdrawn"].includes(action)) {
-      return res
-        .status(400)
-        .json({ error: "action must be approved, rejected, or withdrawn" });
-    }
-    const updated = await workflowService.act(
-      req.params.id,
-      req.authUser!.id,
-      action,
-      remarks,
-    );
-    res.json({ data: updated });
-  }),
-);
+router.post("/requests/:id/act", requireRole("admin", "hr", "manager", "team_leader", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { action, remarks } = req.body;
+  if (!["approved", "rejected", "withdrawn"].includes(action)) {
+    return res.status(400).json({ error: "action must be approved, rejected, or withdrawn" });
+  }
+  // withdraw is the requester's own act; approve / reject need the request to be inside the approver's scope.
+  if (!(await assertRequestInScope(req, res))) return;
+  const updated = await workflowService.act(req.params.id, req.authUser!.id, action, remarks);
+  res.json({ data: updated });
+}));
 
 // My submitted requests (all authenticated users)
 router.get(
@@ -116,31 +110,23 @@ router.get(
 );
 
 // All requests — admin/hr
-router.get(
-  "/requests",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 25;
-    const requests = await workflowService.listAllRequests({
-      status: req.query.status as string | undefined,
-      entity_type: req.query.entity_type as string | undefined,
-      requested_by: req.query.requested_by as string | undefined,
-      page,
-      limit,
-    });
-    res.json({ data: requests });
-  }),
-);
+router.get("/requests", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 25;
+  const requests = await workflowService.listAllRequests({
+    status: req.query.status as string | undefined,
+    entity_type: req.query.entity_type as string | undefined,
+    requested_by: req.query.requested_by as string | undefined,
+    page, limit,
+  }, await requesterScope(req));
+  res.json({ data: requests });
+}));
 
 // Audit/action log for a single request
-router.get(
-  "/requests/:id/actions",
-  requireRole("admin", "hr", "manager", "team_leader", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const actions = await workflowService.getRequestActions(req.params.id);
-    res.json({ data: actions });
-  }),
-);
+router.get("/requests/:id/actions", requireRole("admin", "hr", "manager", "team_leader", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await assertRequestInScope(req, res))) return;
+  const actions = await workflowService.getRequestActions(req.params.id);
+  res.json({ data: actions });
+}));
 
 export { router as workflowRouter };

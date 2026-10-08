@@ -1,167 +1,15 @@
 import { getDialerPool } from "../../db/dialerDb.js";
+import { STATIC_PROJECTS, getInboundProject, getInboundProjects, type InboundProject } from "./inbound-projects.js";
 
-interface ProjectConfig {
-  key: string;
-  name: string;
-  icon: string;
-  color: string;
-  table: string;
-  pattern: "A" | "B";
-  campaigns: string[];
-  mandate: number;
-  required: number;
-  hasFCR: boolean;
-  fcrClientId?: number;
-}
+type ProjectConfig = InboundProject;
 
 interface InboundFilters {
   startDate: string;
   endDate: string;
 }
 
-export const PROJECTS: ProjectConfig[] = [
-  {
-    key: "gnc",
-    name: "GNC",
-    icon: "🛒",
-    color: "#2E86C1",
-    table: "cdr_in_4",
-    pattern: "A",
-    campaigns: [
-      "GNC_Order_Related",
-      "GNC_Product_Quality",
-      "GNC_Other_Queries",
-      "GNC_Product_Info",
-      "GNC_Offer_Order",
-      "GNC_Authentication",
-    ],
-    mandate: 8,
-    required: 6,
-    hasFCR: false,
-  },
-  {
-    key: "bellavita",
-    name: "Bellavita",
-    icon: "🌸",
-    color: "#E67E22",
-    table: "cdr_in_11_5",
-    pattern: "A",
-    campaigns: [
-      "H_Bellavita_Luxury",
-      "E_Bellavita_Organic",
-      "E_Bellavita_Luxury",
-      "H_Bellavita_Organic",
-      "H_Bevzilla_Complaint",
-      "H_Bevzilla_CC_Agent",
-      "E_Bevzilla_CC_Agent",
-      "H_Bevzilla_Order",
-      "E_Bevzilla_Order",
-      "E_Bevzilla_Complaint",
-      "E_Emb_Existing_Order",
-      "H_Bevzilla_Product",
-      "H_Emb_New_Order",
-      "H_Emb_Existing_Order",
-      "E_Bevzilla_Product",
-      "E_Emb_New_Order",
-    ],
-    mandate: 14,
-    required: 12,
-    hasFCR: false,
-  },
-  {
-    key: "clovia",
-    name: "Clovia",
-    icon: "👗",
-    color: "#27AE60",
-    table: "cdr_in_250",
-    pattern: "A",
-    campaigns: ["Clovia_English", "Clovia_Hindi"],
-    mandate: 7,
-    required: 6,
-    hasFCR: false,
-  },
-  {
-    key: "neemans",
-    name: "Neemans",
-    icon: "👟",
-    color: "#8E44AD",
-    table: "cdr_in_249",
-    pattern: "B",
-    campaigns: ["Neemans_IB"],
-    mandate: 10,
-    required: 10,
-    hasFCR: true,
-    fcrClientId: 475,
-  },
-  {
-    key: "viega",
-    name: "Viega",
-    icon: "🚰",
-    color: "#E74C3C",
-    table: "cdr_in_249",
-    pattern: "B",
-    campaigns: ["Viega"],
-    mandate: 2,
-    required: 2,
-    hasFCR: false,
-  },
-  {
-    key: "exicom",
-    name: "Exicom",
-    icon: "⚡",
-    color: "#3498DB",
-    table: "cdr_in_9",
-    pattern: "B",
-    campaigns: ["Exicom_TC_Battery", "Exicom_EV_Battery", "EV_Charger833"],
-    mandate: 5,
-    required: 5,
-    hasFCR: false,
-  },
-  {
-    key: "dubangladesh",
-    name: "DU Bangladesh",
-    icon: "🇧🇩",
-    color: "#F39C12",
-    table: "cdr_in_4",
-    pattern: "B",
-    campaigns: [
-      "DU_Bangladesh_Bangla",
-      "DU_Bangladesh_Eng",
-      "DU_Bangladesh_Hindi",
-    ],
-    mandate: 3,
-    required: 3,
-    hasFCR: false,
-  },
-  // Live on cdr_in_249 (10 language-variant campaigns), confirmed live 2026-09-15:
-  // ~1,700 calls/30 days, active through today. required/mandate set to 9 --
-  // the observed daily distinct-agent-login count (8-9 over the last 14 days),
-  // not an invented target, since no contractual mandate figure exists for this
-  // process anywhere in this codebase.
-  {
-    key: "dalmia",
-    name: "Dalmia",
-    icon: "🏭",
-    color: "#16A085",
-    table: "cdr_in_249",
-    pattern: "B",
-    campaigns: [
-      "Dalmia_Hindi",
-      "Dalmia_English",
-      "Dalmia_Kannada",
-      "Dalmia_Tamil",
-      "Dalmia_Bengoli",
-      "Dalmia_Malayalam",
-      "Dalmia_Odiya",
-      "Dalmia_Marathi",
-      "Dalmia_Telugu",
-      "Dalmia_Assamese",
-    ],
-    mandate: 9,
-    required: 9,
-    hasFCR: false,
-  },
-];
+/** The static (hard-coded) inbound projects. The live list -- DB config merged over these -- is getInboundProjects() in inbound-projects.ts. */
+export const PROJECTS: ProjectConfig[] = STATIC_PROJECTS;
 
 type DailyRow = {
   date: string;
@@ -315,13 +163,11 @@ function aggregateRows(rows: DailyRow[]) {
   };
 }
 
-export async function getProjectSummary(
-  filters: InboundFilters,
-  projectKey?: string,
-) {
-  const projects = projectKey
-    ? PROJECTS.filter((p) => p.key === projectKey)
-    : PROJECTS;
+/** Optional scope predicate (branch scoping): projects it refuses are never queried. */
+export type ProjectAllow = (p: { key: string; processId?: string | null; clientId?: string | null }) => boolean;
+
+export async function getProjectSummary(filters: InboundFilters, projectKey?: string, allow?: ProjectAllow) {
+  const projects = (await getInboundProjects({ includeDbOnly: Boolean(projectKey) })).filter((p) => (!projectKey || p.key === projectKey) && (!allow || allow(p)));
 
   const results = await Promise.all(
     projects.map(async (p) => {
@@ -358,11 +204,8 @@ export async function getProjectSummary(
  * lookup in parallel. Same aggregation as getProjectSummary -- additive, the
  * existing functions are unchanged.
  */
-export async function getProjectOverview(
-  filters: InboundFilters,
-  projectKey: string,
-) {
-  const p = PROJECTS.find((x) => x.key === projectKey);
+export async function getProjectOverview(filters: InboundFilters, projectKey: string) {
+  const p = await getInboundProject(projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
 
   const [rows, fcrRows] = await Promise.all([
@@ -389,13 +232,8 @@ export async function getProjectOverview(
   };
 }
 
-export async function getProjectTrend(
-  filters: InboundFilters,
-  projectKey?: string,
-) {
-  const projects = projectKey
-    ? PROJECTS.filter((p) => p.key === projectKey)
-    : PROJECTS;
+export async function getProjectTrend(filters: InboundFilters, projectKey?: string, allow?: ProjectAllow) {
+  const projects = (await getInboundProjects({ includeDbOnly: Boolean(projectKey) })).filter((p) => (!projectKey || p.key === projectKey) && (!allow || allow(p)));
 
   return Promise.all(
     projects.map(async (p) => {
@@ -405,12 +243,9 @@ export async function getProjectTrend(
   );
 }
 
-export async function getConsolidatedTrend(filters: InboundFilters) {
-  const trendData = await getProjectTrend(filters);
-  const byDate: Record<
-    string,
-    { date: string; offered: number; answered: number; sl_num: number }
-  > = {};
+export async function getConsolidatedTrend(filters: InboundFilters, allow?: ProjectAllow) {
+  const trendData = await getProjectTrend(filters, undefined, allow);
+  const byDate: Record<string, { date: string; offered: number; answered: number; sl_num: number }> = {};
 
   for (const proj of trendData) {
     for (const row of proj.trend) {
@@ -458,11 +293,8 @@ type AgentRow = {
  * client uses) is excluded, same as the login_count calculation above:
  * there is no real agent to attribute those rows to.
  */
-export async function getProjectAgentSummary(
-  filters: InboundFilters,
-  projectKey: string,
-) {
-  const p = PROJECTS.find((x) => x.key === projectKey);
+export async function getProjectAgentSummary(filters: InboundFilters, projectKey: string) {
+  const p = await getInboundProject(projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
 
   const { startDate, endDate } = filters;
@@ -536,11 +368,8 @@ export async function getProjectAgentSummary(
  * text), which a live check against Clovia's 15-Sep-26 data matched the
  * reference report's own slot-wise counts almost exactly.
  */
-export async function getProjectHourlyByDate(
-  filters: InboundFilters,
-  projectKey: string,
-) {
-  const p = PROJECTS.find((x) => x.key === projectKey);
+export async function getProjectHourlyByDate(filters: InboundFilters, projectKey: string) {
+  const p = await getInboundProject(projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
 
   const { startDate, endDate } = filters;
@@ -602,11 +431,8 @@ export async function getProjectHourlyByDate(
  * company (GNC/Bellavita/Clovia/Neemans/Dalmia/DU Bangladesh/Viega/Exicom),
  * so the fix benefits all of them, not just Clovia.
  */
-async function getProjectHourlyRaw(
-  filters: InboundFilters,
-  projectKey: string,
-) {
-  const p = PROJECTS.find((x) => x.key === projectKey);
+async function getProjectHourlyRaw(filters: InboundFilters, projectKey: string) {
+  const p = await getInboundProject(projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
 
   const { startDate, endDate } = filters;
@@ -657,11 +483,8 @@ type LobRow = {
  * English/Hindi). Same Pattern A/B query shape as runProjectQuery, GROUP BY
  * CampaignName instead of date/hour.
  */
-async function getProjectLobSummaryRaw(
-  filters: InboundFilters,
-  projectKey: string,
-) {
-  const p = PROJECTS.find((x) => x.key === projectKey);
+async function getProjectLobSummaryRaw(filters: InboundFilters, projectKey: string) {
+  const p = await getInboundProject(projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
 
   const { startDate, endDate } = filters;

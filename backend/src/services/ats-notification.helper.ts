@@ -4,6 +4,7 @@ import type {
   NotificationContext,
 } from "./notification.service.js";
 import { emailService } from "../modules/communication/email.service.js";
+import { buildAppLink } from "../shared/appLink.js";
 
 // Database connection
 let db: any;
@@ -339,7 +340,7 @@ function buildSlaBreachHtml(input: {
             <p style="margin:0 0 16px;font-size:13px;color:#475569;">
               Please ensure the recruiter attends to this candidate immediately.
             </p>
-            <a href="https://mcnhrms.teammas.in/ats/walkin-queue"
+            <a href="${buildAppLink("/ats/walkin-queue")}"
                style="display:inline-block;background:#dc2626;color:#ffffff;font-size:13px;font-weight:600;padding:10px 22px;border-radius:6px;text-decoration:none;">
               Open Walk-in Queue →
             </a>

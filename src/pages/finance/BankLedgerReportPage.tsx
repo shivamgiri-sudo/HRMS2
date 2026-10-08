@@ -43,6 +43,8 @@ function firstOfMonth() {
 
 /** Authenticated CSV download — the repo-wide idiom (GstTallyExportPanel, VendorPaymentDispatchPage)
  *  since a plain <a href> cannot carry the JWT auth header. */
+import { downloadTallyFile } from "@/lib/tallyExportDownload";
+
 async function downloadCsv(path: string, filename: string, toast: (opts: any) => void) {
   try {
     const blob = await hrmsApi.getBlob(path);
@@ -102,11 +104,10 @@ export function BankLedgerReportContent() {
               variant="outline"
               className="cursor-pointer border-white/40 bg-white/10 text-white hover:bg-white/20"
               disabled={!bankAccountId}
-              onClick={() => downloadCsv(
+              onClick={() => downloadTallyFile(
                 `/api/finance/bank-accounts/${bankAccountId}/tally-export?from=${from}&to=${to}`,
                 `tally-export-${selectedAccount?.account_name ?? bankAccountId}-${from}-to-${to}.xml`,
-                toast,
-              )}
+              ).catch((e) => toast({ title: "Export failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" }))}
             >
               <Download className="mr-1.5 h-4 w-4" /> Tally XML
             </Button>

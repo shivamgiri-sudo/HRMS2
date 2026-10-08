@@ -1,0 +1,113 @@
+-- Migration 1950: Analytics catalogue (semantic layer) for Dashboard Studio and KPI Studio v2.
+-- A dataset names one table, how its rows are scoped (process / branch / employee / constant / org), and the fields
+-- users may pick. The query compiler only ever reads identifiers from here. Additive: new tables + idempotent seeds.
+
+CREATE TABLE IF NOT EXISTS analytics_dataset (
+  id               CHAR(36)     NOT NULL,
+  code             VARCHAR(64)  NOT NULL,
+  name             VARCHAR(128) NOT NULL,
+  description      VARCHAR(500) NULL,
+  category         VARCHAR(64)  NULL,
+  connection       VARCHAR(32)  NOT NULL DEFAULT 'hrms',
+  source_table     VARCHAR(128) NOT NULL,
+  time_field       VARCHAR(64)  NULL,
+  scope_mode       ENUM('process_branch','process','branch','employee','constant','org') NOT NULL,
+  process_column   VARCHAR(64)  NULL,
+  branch_column    VARCHAR(64)  NULL,
+  employee_column  VARCHAR(64)  NULL,
+  scope_process_id CHAR(36)     NULL,
+  max_rows         INT          NOT NULL DEFAULT 5000,
+  active_status    TINYINT      NOT NULL DEFAULT 1,
+  created_by       CHAR(36)     NULL,
+  created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_analytics_dataset_code (code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS analytics_dataset_field (
+  id           CHAR(36)     NOT NULL,
+  dataset_id   CHAR(36)     NOT NULL,
+  field_key    VARCHAR(64)  NOT NULL,
+  label        VARCHAR(128) NOT NULL,
+  column_name  VARCHAR(64)  NOT NULL,
+  role         ENUM('dimension','measure','time') NOT NULL,
+  data_type    ENUM('string','number','date','datetime','boolean') NOT NULL DEFAULT 'string',
+  default_agg  ENUM('sum','avg','min','max','count','count_distinct') NOT NULL DEFAULT 'count',
+  format       ENUM('number','integer','percent','currency','duration','text','date') NOT NULL DEFAULT 'number',
+  lookup       ENUM('none','process','branch','employee','metric','metric_code') NOT NULL DEFAULT 'none',
+  description  VARCHAR(300) NULL,
+  sort_order   INT          NOT NULL DEFAULT 0,
+  hidden       TINYINT      NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_analytics_field (dataset_id, field_key),
+  KEY idx_analytics_field_dataset (dataset_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO analytics_dataset (id, code, name, description, category, connection, source_table, time_field, scope_mode, process_column, branch_column, employee_column) VALUES
+ ('a0000000-0000-4000-8000-000000000001','process_kpi_daily','Process KPIs (daily)','One row per process, metric and day: every KPI shown on Process Operations.','KPIs','hrms','process_metric_actual','date','process','process_id',NULL,NULL),
+ ('a0000000-0000-4000-8000-000000000002','employee_kpi_daily','Employee KPIs (daily)','One row per employee, metric and day, computed by KPI Studio and the connectors.','KPIs','hrms','kpi_daily_actual','date','employee',NULL,NULL,'employee_id'),
+ ('a0000000-0000-4000-8000-000000000003','headcount','Employees (headcount)','Every employee record with process, branch and status. No salary or identity fields.','People','hrms','employees',NULL,'process_branch','process_id','branch_id',NULL),
+ ('a0000000-0000-4000-8000-000000000004','attendance_daily','Attendance (daily)','One row per employee per day: status, lateness, login minutes.','People','hrms','attendance_daily_record','date','process_branch','process_id','branch_id',NULL),
+ ('a0000000-0000-4000-8000-000000000005','bla_bli_blu_sales','Bla Bli Blu sales','Order-level sales from the Overall Sales upload.','Sales','hrms','bla_bli_blu_overall_sales_raw','date','process','process_id',NULL,NULL);
+
+INSERT IGNORE INTO analytics_dataset_field (id, dataset_id, field_key, label, column_name, role, data_type, default_agg, format, lookup, sort_order) VALUES
+ (UUID(),'a0000000-0000-4000-8000-000000000001','date','Date','score_date','time','date','count','date','none',1),
+ (UUID(),'a0000000-0000-4000-8000-000000000001','metric','Metric','metric_key','dimension','string','count','text','metric_code',2),
+ (UUID(),'a0000000-0000-4000-8000-000000000001','metric_code','Metric code','metric_key','dimension','string','count','text','none',3),
+ (UUID(),'a0000000-0000-4000-8000-000000000001','process','Process','process_id','dimension','string','count','text','process',4),
+ (UUID(),'a0000000-0000-4000-8000-000000000001','source','Source','source','dimension','string','count','text','none',5),
+ (UUID(),'a0000000-0000-4000-8000-000000000001','value','Value','actual_value','measure','number','avg','number','none',6),
+ (UUID(),'a0000000-0000-4000-8000-000000000001','numerator','Numerator','rollup_numerator','measure','number','sum','number','none',7),
+ (UUID(),'a0000000-0000-4000-8000-000000000001','denominator','Denominator','rollup_denominator','measure','number','sum','number','none',8),
+
+ (UUID(),'a0000000-0000-4000-8000-000000000002','date','Date','score_date','time','date','count','date','none',1),
+ (UUID(),'a0000000-0000-4000-8000-000000000002','metric','Metric','metric_id','dimension','string','count','text','metric',2),
+ (UUID(),'a0000000-0000-4000-8000-000000000002','employee','Employee','employee_id','dimension','string','count','text','employee',3),
+ (UUID(),'a0000000-0000-4000-8000-000000000002','process','Process (at the time)','process_id_at_event','dimension','string','count','text','process',4),
+ (UUID(),'a0000000-0000-4000-8000-000000000002','branch','Branch (at the time)','branch_id_at_event','dimension','string','count','text','branch',5),
+ (UUID(),'a0000000-0000-4000-8000-000000000002','source','Source','source','dimension','string','count','text','none',6),
+ (UUID(),'a0000000-0000-4000-8000-000000000002','value','Value','actual_value','measure','number','avg','number','none',7),
+ (UUID(),'a0000000-0000-4000-8000-000000000002','numerator','Numerator','numerator_value','measure','number','sum','number','none',8),
+ (UUID(),'a0000000-0000-4000-8000-000000000002','denominator','Denominator','denominator_value','measure','number','sum','number','none',9),
+ (UUID(),'a0000000-0000-4000-8000-000000000002','employees','Employees','employee_id','measure','string','count_distinct','integer','none',10),
+
+ (UUID(),'a0000000-0000-4000-8000-000000000003','process','Process','process_id','dimension','string','count','text','process',1),
+ (UUID(),'a0000000-0000-4000-8000-000000000003','branch','Branch','branch_id','dimension','string','count','text','branch',2),
+ (UUID(),'a0000000-0000-4000-8000-000000000003','status','Employment status','employment_status','dimension','string','count','text','none',3),
+ (UUID(),'a0000000-0000-4000-8000-000000000003','active','Active (1/0)','active_status','dimension','number','count','integer','none',4),
+ (UUID(),'a0000000-0000-4000-8000-000000000003','type','Employment type','employment_type','dimension','string','count','text','none',5),
+ (UUID(),'a0000000-0000-4000-8000-000000000003','gender','Gender','gender','dimension','string','count','text','none',6),
+ (UUID(),'a0000000-0000-4000-8000-000000000003','joined','Date of joining','date_of_joining','time','date','count','date','none',7),
+ (UUID(),'a0000000-0000-4000-8000-000000000003','exited','Date of exit','date_of_exit','dimension','date','count','date','none',8),
+ (UUID(),'a0000000-0000-4000-8000-000000000003','employees','Employees','id','measure','string','count_distinct','integer','none',9),
+
+ (UUID(),'a0000000-0000-4000-8000-000000000004','date','Date','record_date','time','date','count','date','none',1),
+ (UUID(),'a0000000-0000-4000-8000-000000000004','status','Attendance status','attendance_status','dimension','string','count','text','none',2),
+ (UUID(),'a0000000-0000-4000-8000-000000000004','process','Process','process_id','dimension','string','count','text','process',3),
+ (UUID(),'a0000000-0000-4000-8000-000000000004','branch','Branch','branch_id','dimension','string','count','text','branch',4),
+ (UUID(),'a0000000-0000-4000-8000-000000000004','employee','Employee','employee_id','dimension','string','count','text','employee',5),
+ (UUID(),'a0000000-0000-4000-8000-000000000004','work_mode','Work mode','work_mode','dimension','string','count','text','none',6),
+ (UUID(),'a0000000-0000-4000-8000-000000000004','source','Source','attendance_source','dimension','string','count','text','none',7),
+ (UUID(),'a0000000-0000-4000-8000-000000000004','employees','Employees','employee_id','measure','string','count_distinct','integer','none',8),
+ (UUID(),'a0000000-0000-4000-8000-000000000004','late_marks','Late marks','late_mark','measure','number','sum','integer','none',9),
+ (UUID(),'a0000000-0000-4000-8000-000000000004','late_minutes','Minutes late','late_by_minutes','measure','number','avg','number','none',10),
+ (UUID(),'a0000000-0000-4000-8000-000000000004','raw_minutes','Logged minutes','raw_minutes','measure','number','avg','number','none',11),
+ (UUID(),'a0000000-0000-4000-8000-000000000004','dialler_minutes','Dialler minutes','dialler_minutes','measure','number','avg','number','none',12),
+ (UUID(),'a0000000-0000-4000-8000-000000000004','mismatches','Mismatches','mismatch_flag','measure','number','sum','integer','none',13),
+
+ (UUID(),'a0000000-0000-4000-8000-000000000005','date','Date','report_date','time','date','count','date','none',1),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','campaign','Campaign','campaign','dimension','string','count','text','none',2),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','business','Sale type','business_type','dimension','string','count','text','none',3),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','payment','Payment status','payment_status','dimension','string','count','text','none',4),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','order_status','Order status','current_status','dimension','string','count','text','none',5),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','call_status','Calling status','calling_status','dimension','string','count','text','none',6),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','channel','Channel','source_channel','dimension','string','count','text','none',7),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','category','Product category','new_sold_line_item_category','dimension','string','count','text','none',8),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','agent','Agent','emp_name','dimension','string','count','text','none',9),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','agent_code','Agent code','emp_code','dimension','string','count','text','none',10),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','call_time','Call time','call_date_time','dimension','datetime','count','date','none',11),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','orders','Orders','order_id','measure','string','count_distinct','integer','none',12),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','amount','Revenue','amount','measure','number','sum','currency','none',13),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','items','Items','item_count','measure','number','sum','integer','none',14),
+ (UUID(),'a0000000-0000-4000-8000-000000000005','call_seconds','Call duration','call_duration_seconds','measure','number','avg','duration','none',15);

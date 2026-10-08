@@ -344,28 +344,21 @@ router.post(
       );
     }
 
-    // 5. Email the candidate/employee
-    const emailedTo: string[] = [];
-    const candidateName = String(alRow.full_name ?? "");
-    const candidateEmail = String(alRow.email ?? "");
-    const rawCcEmail: unknown = req.body?.ccEmail ?? req.body?.cc_email ?? "";
-    const ccEmail = String(rawCcEmail ?? "").trim();
-    try {
-      const { emailService } =
-        await import("../communication/email.service.js");
-      if (candidateEmail.includes("@")) {
-        const frontendBase =
-          process.env.FRONTEND_URL ??
-          process.env.APP_URL ??
-          "https://mcnhrms.teammas.in";
-        const downloadUrl = `${frontendBase}/api/letters/appointment/by-candidate/${candidateId}/download`;
-        await emailService.send({
-          to: candidateEmail,
-          ...(ccEmail.includes("@") ? { cc: ccEmail } : {}),
-          subject: `Your Appointment Letter — MAS Callnet`,
-          html: `<p>Dear ${candidateName},</p>
-               <p>Your appointment letter has been signed and is ready. Please find it attached or download it using the link below:</p>
-               <p><a href="${downloadUrl}" style="background:#2563eb;color:#fff;padding:8px 16px;border-radius:4px;text-decoration:none;">Download Appointment Letter</a></p>
+  // 5. Email the candidate/employee
+  const emailedTo: string[] = [];
+  const candidateName = String(alRow.full_name ?? "");
+  const candidateEmail = String(alRow.email ?? "");
+  const rawCcEmail: unknown = req.body?.ccEmail ?? req.body?.cc_email ?? "";
+  const ccEmail = String(rawCcEmail ?? "").trim();
+  try {
+    const { emailService } = await import("../communication/email.service.js");
+    if (candidateEmail.includes("@")) {
+      await emailService.send({
+        to: candidateEmail,
+        ...(ccEmail.includes("@") ? { cc: ccEmail } : {}),
+        subject: `Your Appointment Letter — MAS Callnet`,
+        html: `<p>Dear ${candidateName},</p>
+               <p>Your appointment letter has been signed and is ready. The signed letter is attached to this email as a PDF.</p>
                <p>If you have any questions, please contact HR.</p>
                <p>Regards,<br/>MAS Callnet HR Team</p>`,
           attachments: pdfBytes

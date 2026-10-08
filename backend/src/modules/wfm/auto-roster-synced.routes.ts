@@ -10,6 +10,7 @@ import {
 } from "../../middleware/scopeMiddleware.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
+import { getScope, isOrgWide, rosterOwnerGuard, branchScopeGuard } from "./branch-scope.js";
 import { autoRosterSyncedService as s } from "./auto-roster-synced.service.js";
 
 const router = Router();
@@ -179,25 +180,22 @@ router.post(
 router.get(
   "/plans/:id/assignments",
   requireRole("admin", "hr", "wfm", "process_manager", "ceo"),
-  h(async (req, res) =>
-    res.json({ success: true, data: await s.getAssignments(req.params.id) }),
-  ),
+  rosterOwnerGuard("wfm_roster_plan", "id"),
+  h(async (req, res) => res.json({ success: true, data: await s.getAssignments(req.params.id) }))
 );
 
 router.get(
   "/plans/:id/coverage",
   requireRole("admin", "hr", "wfm", "process_manager", "ceo"),
-  h(async (req, res) =>
-    res.json({ success: true, data: await s.getCoverage(req.params.id) }),
-  ),
+  rosterOwnerGuard("wfm_roster_plan", "id"),
+  h(async (req, res) => res.json({ success: true, data: await s.getCoverage(req.params.id) }))
 );
 
 router.get(
   "/plans/:id/conflicts",
   requireRole("admin", "hr", "wfm", "process_manager", "ceo"),
-  h(async (req, res) =>
-    res.json({ success: true, data: await s.getConflicts(req.params.id) }),
-  ),
+  rosterOwnerGuard("wfm_roster_plan", "id"),
+  h(async (req, res) => res.json({ success: true, data: await s.getConflicts(req.params.id) }))
 );
 
 router.post(
@@ -269,17 +267,14 @@ router.post(
 router.post(
   "/plans/:id/queue-manager-tasks",
   requireRole("admin", "wfm", "process_manager"),
-  h(async (req, res) =>
-    res.json({
-      success: true,
-      data: await s.queueManagerTasks(req.params.id, req.authUser!.id),
-    }),
-  ),
+  rosterOwnerGuard("wfm_roster_plan", "id"),
+  h(async (req, res) => res.json({ success: true, data: await s.queueManagerTasks(req.params.id, req.authUser!.id) }))
 );
 
 router.get(
   "/plans/:id/events",
   requireRole("admin", "hr", "wfm", "process_manager", "ceo"),
+  rosterOwnerGuard("wfm_roster_plan", "id"),
   h(async (req, res) => {
     const since =
       typeof req.query.since === "string" ? req.query.since : undefined;
@@ -290,20 +285,15 @@ router.get(
 router.get(
   "/plans/:id/approval-log",
   requireRole("admin", "hr", "wfm", "process_manager", "ceo"),
-  h(async (req, res) =>
-    res.json({ success: true, data: await s.listApprovalLog(req.params.id) }),
-  ),
+  rosterOwnerGuard("wfm_roster_plan", "id"),
+  h(async (req, res) => res.json({ success: true, data: await s.listApprovalLog(req.params.id) }))
 );
 
 router.get(
   "/plans/:id/change-requests",
   requireRole("admin", "hr", "wfm", "process_manager", "ceo"),
-  h(async (req, res) =>
-    res.json({
-      success: true,
-      data: await s.listChangeRequests(req.params.id),
-    }),
-  ),
+  rosterOwnerGuard("wfm_roster_plan", "id"),
+  h(async (req, res) => res.json({ success: true, data: await s.listChangeRequests(req.params.id) }))
 );
 
 router.patch(
@@ -366,10 +356,11 @@ router.get(
   "/events",
   requireRole("admin", "hr", "wfm", "process_manager", "ceo"),
   h(async (req, res) => {
-    const since =
-      typeof req.query.since === "string" ? req.query.since : undefined;
-    res.json({ success: true, data: await s.listEvents(undefined, since) });
-  }),
+    const since = typeof req.query.since === "string" ? req.query.since : undefined;
+    const callerScope = await getScope(req);
+    if (!callerScope) return res.status(401).json({ success: false, message: "Unauthorized" });
+    res.json({ success: true, data: await s.listEvents(undefined, since, isOrgWide(callerScope) ? undefined : callerScope) });
+  })
 );
 
 router.get(
@@ -439,6 +430,7 @@ router.get(
 router.patch(
   "/schedule-config/:processId",
   requireRole("admin", "wfm", "super_admin"),
+  branchScopeGuard({ inject: false }),
   h(async (req, res) => {
     const { processId } = req.params;
     const body = z

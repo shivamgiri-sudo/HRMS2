@@ -1,16 +1,8 @@
-import {
-  Router,
-  type NextFunction,
-  type Request,
-  type Response,
-} from "express";
-import { z } from "zod";
-import {
-  requireAuth,
-  requireWriteAccess,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
+import { Router, type NextFunction, type Request, type Response } from 'express';
+import { z } from 'zod';
+import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import { canAccessCandidate, candidateParamGuard } from './candidate-access.js';
 import {
   getAssignedCandidates,
   getCandidateForInterview,
@@ -40,6 +32,15 @@ function getErrorMessage(error: unknown): string {
 // All routes require authentication and recruiter/hr/admin role
 interviewRouter.use(requireAuth);
 interviewRouter.use(requireRole("admin", "hr", "recruiter"));
+
+// Branch scoping (owner ruling 2026-10-01): candidate-id routes (/candidate/:id, /history/:id) and the
+// body-id writes below are limited to candidates inside the caller's own branch / assigned scope.
+interviewRouter.param('candidateId', candidateParamGuard());
+const bodyCandidateInScope = async (req: AuthenticatedRequest, res: Response, candidateId: string) => {
+  if (await canAccessCandidate(req.authUser!.id, candidateId)) return true;
+  res.status(404).json({ success: false, message: 'Candidate not found' });
+  return false;
+};
 
 // ── 1. Get assigned candidates for logged-in recruiter ────────────────────────
 interviewRouter.get(
@@ -106,12 +107,10 @@ const interviewResultSchema = z.object({
   recruiter_recommendation: z.string().optional(),
 });
 
-interviewRouter.post(
-  "/submit-result",
-  requireWriteAccess,
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const input = interviewResultSchema.parse(req.body);
+interviewRouter.post('/submit-result', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const input = interviewResultSchema.parse(req.body);
+    if (!(await bodyCandidateInScope(req, res, input.candidate_id))) return;
 
       const result = await submitInterviewResult({
         ...input,
@@ -182,12 +181,10 @@ const updateQueueStatusSchema = z.object({
   status: z.enum(["called", "in_interview"]),
 });
 
-interviewRouter.post(
-  "/update-queue-status",
-  requireWriteAccess,
-  h(async (req: Request, res: Response) => {
-    try {
-      const { candidate_id, status } = updateQueueStatusSchema.parse(req.body);
+interviewRouter.post('/update-queue-status', requireWriteAccess, h(async (req: Request, res: Response) => {
+  try {
+    const { candidate_id, status } = updateQueueStatusSchema.parse(req.body);
+    if (!(await bodyCandidateInScope(req as AuthenticatedRequest, res, candidate_id))) return;
 
       const result = await updateQueueStatus(candidate_id, status);
 

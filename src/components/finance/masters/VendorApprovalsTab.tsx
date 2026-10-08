@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
@@ -33,7 +35,8 @@ const STATUS_STYLE: Record<string, string> = {
 export function VendorApprovalsTab() {
   const qc = useQueryClient();
   const [statusFilter, setStatusFilter] = useState("pending");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [deepLinkParams] = useSearchParams();
+  const [expandedId, setExpandedId] = useState<string | null>(() => deepLinkParams.get("approvalId"));
   const [editedPayloads, setEditedPayloads] = useState<Record<string, Record<string, any>>>({});
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
 
@@ -47,6 +50,7 @@ export function VendorApprovalsTab() {
     },
   });
   const requests = data ?? [];
+  useApprovalFocus(!isLoading);
 
   const approveMutation = useMutation({
     mutationFn: ({ id, editedPayload, notes }: { id: string; editedPayload: Record<string,any> | null; notes?: string }) =>
@@ -126,7 +130,7 @@ export function VendorApprovalsTab() {
             const isPending = req.status === "pending";
 
             return (
-              <div key={req.id} className="border-b">
+              <div key={req.id} data-approval-id={req.id} className="border-b">
                 {/* Summary row */}
                 <div
                   className={`grid grid-cols-[1fr_120px_120px_100px_90px_80px] gap-0 text-sm hover:bg-slate-50 transition-colors cursor-pointer ${isExpanded ? "bg-slate-50" : ""}`}

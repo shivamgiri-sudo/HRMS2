@@ -1,10 +1,8 @@
+import type { RequestParamHandler } from "express";
 import type { RowDataPacket } from "mysql2";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
-import {
-  getUserRoleKeys,
-  getUserAssignmentScopes,
-} from "../../shared/scopeAccess.js";
-import { branchNameVariants } from "./ats-vocabulary.js";
+import { buildCandidateScopeSql, resolveAtsBranchScope } from "./ats-branch-scope.js";
 
 /**
  * ONE canonical candidate row-scope rule, for every candidate operation.
@@ -25,69 +23,16 @@ import { branchNameVariants } from "./ats-vocabulary.js";
  */
 export type CandidateScope = { sql: string; params: unknown[] };
 
-const WIDE_ROLES = ["super_admin", "admin", "hr", "manager", "ceo"];
-
-/** Resolve the actor's candidate row scope. `1=1` = all, `1=0` = none. */
-export async function resolveCandidateScope(
-  userId: string,
-): Promise<CandidateScope> {
-  const roleKeys = await getUserRoleKeys(userId);
-  if (roleKeys.some((r) => WIDE_ROLES.includes(r))) {
-    return { sql: "1=1", params: [] };
-  }
-
-  const scopes = await getUserAssignmentScopes(userId, ["recruiter"]);
-  if (scopes.length === 0) return { sql: "1=0", params: [] };
-  if (scopes.some((s) => s.scope_type === "all"))
-    return { sql: "1=1", params: [] };
-
-  const branchIds = [
-    ...new Set(
-      scopes.filter((s) => s.branch_id).map((s) => s.branch_id as string),
-    ),
-  ];
-  const processNames = [
-    ...new Set(
-      scopes.filter((s) => s.process_id).map((s) => s.process_id as string),
-    ),
-  ];
-
-  const sqlParts: string[] = [];
-  const params: unknown[] = [];
-
-  if (branchIds.length > 0) {
-    const [bmRows] = await db.execute<RowDataPacket[]>(
-      `SELECT branch_name FROM branch_master WHERE id IN (${branchIds.map(() => "?").join(",")})`,
-      branchIds,
-    );
-    const branchNames = (bmRows as { branch_name: string }[]).map(
-      (r) => r.branch_name,
-    );
-    // applied_for_branch is free text, and the same physical branch is recorded under
-    // several spellings (e.g. 1,862 candidates as "Okaya Centre" rather than "NOIDA-2") —
-    // see ats-vocabulary.ts. Matching only the canonical branch_master name silently
-    // dropped every one of those candidates for a recruiter scoped to that branch.
-    // branchNameVariants() only adds confirmed aliases, so this can only widen who a
-    // scoped recruiter sees, never narrow it.
-    const expandedNames = [
-      ...new Set(branchNames.flatMap((n) => branchNameVariants(n))),
-    ];
-    if (expandedNames.length > 0) {
-      sqlParts.push(
-        `applied_for_branch IN (${expandedNames.map(() => "?").join(",")})`,
-      );
-      params.push(...expandedNames);
-    }
-  }
-
-  if (processNames.length > 0) {
-    sqlParts.push(
-      `applied_for_process IN (${processNames.map(() => "?").join(",")})`,
-    );
-    params.push(...processNames);
-  }
-
-  return { sql: sqlParts.length > 0 ? sqlParts.join(" OR ") : "1=0", params };
+/**
+ * Resolve the actor's candidate row scope. `1=1` = all, `1=0` = none.
+ *
+ * Owner ruling 2026-10-01: only the org-wide roles (ORG_WIDE_EXEMPT_ROLES) see every candidate. hr and
+ * manager used to be "wide" here; they are now limited to their own branch / assigned scope like every other
+ * role (see ats-branch-scope.ts). A scope_type='all' row no longer widens a non-org-wide role.
+ * `alias` is the ats_candidate alias when the caller joins it; default is the bare column name.
+ */
+export async function resolveCandidateScope(userId: string, alias?: string): Promise<CandidateScope> {
+  return buildCandidateScopeSql(await resolveAtsBranchScope(userId), alias);
 }
 
 /**
@@ -128,4 +73,22 @@ export async function assertCandidateInScope(
   if (await canAccessCandidate(userId, candidateId)) return true;
   res.status(404).json({ success: false, message: "Candidate not found" });
   return false;
+}
+
+/**
+ * `router.param(name, candidateParamGuard())` - refuses (404, same as assertCandidateInScope) every route that
+ * carries a candidate id the caller's branch scope does not cover (owner ruling 2026-10-01).
+ *
+ * Express runs param callbacks BEFORE a route's own middleware (requireAuth / requireRole), so an
+ * unauthenticated request is passed through untouched (`next()`): the route's requireAuth then answers 401.
+ * Only a caller that is authenticated AND out of scope is refused here.
+ */
+export function candidateParamGuard(): RequestParamHandler {
+  return (req, res, next, candidateId) => {
+    const userId = (req as AuthenticatedRequest).authUser?.id;
+    if (!userId) return next();
+    canAccessCandidate(userId, String(candidateId))
+      .then((ok) => (ok ? next() : void res.status(404).json({ success: false, message: "Candidate not found" })))
+      .catch(next);
+  };
 }

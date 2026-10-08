@@ -63,57 +63,70 @@ const PAYROLL_READ_SCOPE_ROLES = [
 // with any of the newly-added roles (verified live), and this list has no effect on
 // allowCeoAllRead regardless (that flag keys off the caller's own role set, not this
 // array — see shared/scopeAccess.ts).
-router.get(
-  "/runs",
-  requireRole(
-    "admin",
-    "super_admin",
-    "hr",
-    "finance",
-    "payroll",
-    "finance_head",
-    "payroll_head",
-    "payroll_admin",
-  ),
-  h(async (req, res) => {
-    const scoped = await buildScopeWhereClause(
-      req.authUser!.id,
-      PAYROLL_READ_SCOPE_ROLES,
-      {
-        branchId: "spr.branch_id",
-        processId: "spr.process_id",
-      },
-      { allowAdminBypass: true, allowCeoAllRead: false },
-    );
-    (req as any).scopeFilter = scoped;
-    return c.listRuns(req, res);
-  }),
-);
+router.get("/runs", requireRole(
+  "admin", "super_admin", "hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin",
+), h(async (req, res) => {
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    PAYROLL_READ_SCOPE_ROLES,
+    {
+      branchId: "spr.branch_id",
+      processId: "spr.process_id",
+    },
+    { allowAdminBypass: true, allowCeoAllRead: false, blockOrgWideForRoles: ["hr", "hr_admin"] },
+  );
+  (req as any).scopeFilter = scoped;
+  return c.listRuns(req, res);
+}));
 
 // `ceo` removed — see the note on /runs above. This one is the more sensitive of
 // the pair: it returns employee-level gross, net and deductions. Role list widened
 // 2026-08-14 for the same reason as /runs above.
-router.get(
-  "/records",
-  requireRole(
-    "admin",
-    "super_admin",
-    "hr",
-    "finance",
-    "payroll",
-    "finance_head",
-    "payroll_head",
-    "payroll_admin",
-  ),
-  h(async (req, res) => {
-    const scoped = await buildScopeWhereClause(
-      req.authUser!.id,
-      PAYROLL_READ_SCOPE_ROLES,
-      {
-        branchId: "e.branch_id",
-        processId: "e.process_id",
-      },
-      { allowAdminBypass: true, allowCeoAllRead: false },
+router.get("/records", requireRole(
+  "admin", "super_admin", "hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin",
+), h(async (req, res) => {
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    PAYROLL_READ_SCOPE_ROLES,
+    {
+      branchId: "e.branch_id",
+      processId: "e.process_id",
+    },
+    { allowAdminBypass: true, allowCeoAllRead: false, blockOrgWideForRoles: ["hr", "hr_admin"] },
+  );
+
+  const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+  const limit = Math.min(Math.max(1, Number(req.query.limit ?? 50) || 50), 1000);
+  const offset = (page - 1) * limit;
+  const conds: string[] = [];
+  const params: unknown[] = [];
+
+  if (req.query.runMonth) { conds.push("spr.run_month = ?"); params.push(String(req.query.runMonth)); }
+  if (req.query.status) {
+    const normalizedStatus = String(req.query.status).trim().toLowerCase();
+    if (normalizedStatus === "paid") {
+      conds.push("LOWER(COALESCE(spr.status, '')) IN ('disbursed', 'finalized', 'finalised', 'paid')");
+    } else if (normalizedStatus === "processing") {
+      conds.push("(LOWER(COALESCE(spr.status, '')) IN ('processing', 'reviewed', 'approved', 'locked') OR LOWER(COALESCE(spl.status, '')) = 'calculated')");
+    } else if (normalizedStatus === "pending") {
+      conds.push("(LOWER(COALESCE(spr.status, '')) NOT IN ('disbursed', 'finalized', 'finalised', 'paid', 'processing', 'reviewed', 'approved', 'locked') AND LOWER(COALESCE(spl.status, '')) <> 'calculated')");
+    } else {
+      conds.push("(LOWER(COALESCE(spr.status, '')) = ? OR LOWER(COALESCE(spl.status, '')) = ?)");
+      params.push(normalizedStatus, normalizedStatus);
+    }
+  }
+  if (req.query.branchId) { conds.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+  if (req.query.processId) { conds.push("e.process_id = ?"); params.push(String(req.query.processId)); }
+  if (req.query.departmentId) { conds.push("e.department_id = ?"); params.push(String(req.query.departmentId)); }
+  if (req.query.costCentreId || req.query.costCenterId) {
+    conds.push("e.cost_centre_id = ?");
+    params.push(String(req.query.costCentreId ?? req.query.costCenterId));
+  }
+  if (req.query.search) {
+    const escaped = String(req.query.search).replace(/[%_\\]/g, ch => "\\" + ch);
+    conds.push(
+      "(e.employee_code LIKE ? ESCAPE '\\\\' OR e.full_name LIKE ? ESCAPE '\\\\' OR e.email LIKE ? ESCAPE '\\\\'" +
+      " OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ? ESCAPE '\\\\')"
     );
 
     const page = Math.max(1, Number(req.query.page ?? 1) || 1);

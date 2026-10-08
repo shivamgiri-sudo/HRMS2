@@ -29,18 +29,12 @@ import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import multer from "multer";
 import { createHash } from "crypto";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { isRunClosed } from "./run-status.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
-import {
-  hasOrgWideScope,
-  getUserAssignmentScopes,
-  hasAnyRole,
-} from "../../shared/scopeAccess.js";
+import { hasOrgWideScope, getUserAssignmentScopes, hasAnyRole, getUserRoleKeys, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 import {
   buildBankReadinessReport,
@@ -64,6 +58,7 @@ import {
 import {
   getManualReviewBankGaps,
   approveManualReviewBankDetail,
+  rejectManualReviewBankDetail,
 } from "./bank-manual-review.service.js";
 import {
   generateSalaryTransferBatch,
@@ -199,19 +194,40 @@ bankPaymentReadinessRouter.use(requireAuth);
  * described in the header. Callers that must distinguish them — only /payment-file does — call
  * hasOrgWideScope directly instead of relying on this.
  */
-async function resolveVisibleBranchIds(
-  userId: string,
-): Promise<Set<string> | null> {
-  if (await hasAnyRole(userId, "super_admin", "admin")) return null;
+async function resolveVisibleBranchIds(userId: string): Promise<Set<string> | null> {
+  // Owner ruling 2026-10-01: only ORG_WIDE_EXEMPT_ROLES see every branch. Everyone else is limited
+  // to the branches they are assigned, plus their own employee branch. A user with NO resolvable
+  // branch gets an EMPTY set (sees nothing) - this used to fail OPEN (null = no restriction).
+  const roles = await getUserRoleKeys(userId);
+  if (roles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r))) return null;
   const scopes = await getUserAssignmentScopes(userId);
-  if (scopes.length === 0) return null;
-  if (scopes.some((s) => s.scope_type === "all")) return null;
-  const ids = scopes.map((s) => s.branch_id).filter((b): b is string => !!b);
-  // Scoped, but by something other than branch (process/department). Falling through to "see
-  // everything" would silently widen access, so an empty set is returned and the caller sees
-  // nothing rather than everything.
-  return new Set(ids);
+  const ids = new Set<string>(scopes.map((s) => s.branch_id).filter((b): b is string => !!b));
+  // An 'all' row on a non-exempt role means "my branch"; so does having no branch-typed row.
+  if (ids.size === 0 || scopes.some((s) => s.scope_type === "all")) {
+    const [own] = await db.execute<RowDataPacket[]>(
+      "SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+      [userId],
+    );
+    const b = (own as RowDataPacket[])?.[0]?.branch_id;
+    if (b) ids.add(String(b));
+  }
+  return ids;
 }
+
+/** Subset of employeeIds whose branch the caller may see (all of them for an org-wide caller). */
+async function employeeIdsInScope(ids: string[], visible: Set<string> | null): Promise<Set<string>> {
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  if (!visible) return new Set(unique);
+  if (unique.length === 0 || visible.size === 0) return new Set();
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employees WHERE id IN (${unique.map(() => "?").join(",")})
+        AND branch_id IN (${Array.from(visible).map(() => "?").join(",")})`,
+    [...unique, ...Array.from(visible)],
+  );
+  return new Set((rows as RowDataPacket[]).map((r) => String(r.id)));
+}
+
+const OUT_OF_BRANCH = { success: false, message: "Forbidden: this employee is outside your branch / assigned scope" };
 
 // ─── Exception workflow overlay ──────────────────────────────────────────────
 
@@ -536,6 +552,9 @@ bankPaymentReadinessRouter.patch(
       return res
         .status(404)
         .json({ success: false, message: "Employee not found" });
+    }
+    if (!(await employeeIdsInScope([employeeId], await resolveVisibleBranchIds(req.authUser!.id))).has(employeeId)) {
+      return res.status(403).json(OUT_OF_BRANCH);
     }
 
     if (owner_user_id) {
@@ -1160,6 +1179,28 @@ function handleSalaryTransferExport(reexport: boolean) {
         .json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
 
+    // A bank file is a formed instruction to move money, so the run must have been approved (by a second
+    // person - PAYROLL_SELF_APPROVAL) first. Owner ruling 2026-10-03, "export first, finance after": the
+    // payroll head exports from here once the run is approved; finance signs off at lock / disburse.
+    // Before this the export had no run-status check at all, so a draft or still-calculating run could
+    // be exported. 'processing' and 'draft' are refused; approved and every closed status are allowed.
+    const [exportRunRows] = await db.execute<RowDataPacket[]>(
+      "SELECT status FROM salary_prep_run WHERE id = ? LIMIT 1",
+      [runId],
+    );
+    const exportRun = (exportRunRows as { status: string | null }[])[0];
+    if (!exportRun) return res.status(404).json({ success: false, message: "Payroll run not found" });
+    const exportStatus = String(exportRun.status ?? "").toLowerCase();
+    if (exportStatus !== "approved" && !isRunClosed(exportStatus)) {
+      return res.status(409).json({
+        success: false,
+        code: "RUN_NOT_APPROVED",
+        message:
+          `This run is '${exportRun.status}'. The bank file can be generated once the run is approved ` +
+          "(and then locked or disbursed). Ask a second approver to approve it first.",
+      });
+    }
+
     let result;
     try {
       result = await generateSalaryTransferBatch({
@@ -1238,10 +1279,13 @@ bankPaymentReadinessRouter.get(
   requireRole(...READ_ROLES),
   h(async (req, res) => {
     const runId = String(req.query.run_id ?? "").trim();
-    if (!runId)
-      return res
-        .status(400)
-        .json({ success: false, message: "run_id is required" });
+    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
+    const visibleBranches = await resolveVisibleBranchIds(req.authUser!.id);
+    const branchSql = visibleBranches
+      ? visibleBranches.size > 0
+        ? ` AND e.branch_id IN (${Array.from(visibleBranches).map(() => "?").join(",")})`
+        : " AND 1=0"
+      : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT i.id, i.batch_id, i.employee_id, i.employee_code, i.amount, i.pay_mod, i.account_masked,
               i.status, i.rejection_reason, i.rejection_note, i.rejected_at,
@@ -1251,9 +1295,9 @@ bankPaymentReadinessRouter.get(
          FROM salary_transfer_batch_item i
          JOIN salary_transfer_batch b ON b.id = i.batch_id
          LEFT JOIN employees e ON e.id = i.employee_id
-        WHERE i.run_id = ?
+        WHERE i.run_id = ?${branchSql}
         ORDER BY i.created_at DESC`,
-      [runId],
+      [runId, ...(visibleBranches ? Array.from(visibleBranches) : [])],
     );
     // bucket: the plain-language grouping payroll actually thinks in ('Ready for Disbursal' /
     // 'Disbursed' / 'Rejected'), derived server-side from the real status enum so the frontend
@@ -1312,6 +1356,19 @@ bankPaymentReadinessRouter.patch(
           message: `reason must be one of ${REJECTION_REASONS.join(", ")}`,
         });
     }
+    {
+      const visibleBranches = await resolveVisibleBranchIds(req.authUser!.id);
+      if (visibleBranches) {
+        const itemIds = Array.from(new Set(item_ids.map(String)));
+        const [own] = visibleBranches.size === 0 ? [[]] : await db.execute<RowDataPacket[]>(
+          `SELECT i.id FROM salary_transfer_batch_item i JOIN employees e ON e.id = i.employee_id
+            WHERE i.id IN (${itemIds.map(() => "?").join(",")})
+              AND e.branch_id IN (${Array.from(visibleBranches).map(() => "?").join(",")})`,
+          [...itemIds, ...Array.from(visibleBranches)],
+        );
+        if ((own as unknown[]).length !== itemIds.length) return res.status(403).json(OUT_OF_BRANCH);
+      }
+    }
     let result;
     try {
       result = await rejectTransferItems({
@@ -1362,6 +1419,17 @@ bankPaymentReadinessRouter.patch(
   "/salary-transfer/items/:itemId/mark-corrected-ready",
   requireRole(...MANAGE_ROLES),
   h(async (req, res) => {
+    {
+      const visibleBranches = await resolveVisibleBranchIds(req.authUser!.id);
+      if (visibleBranches) {
+        const [itemRows] = await db.execute<RowDataPacket[]>(
+          "SELECT employee_id FROM salary_transfer_batch_item WHERE id = ? LIMIT 1", [req.params.itemId]);
+        const empId = (itemRows as RowDataPacket[])[0]?.employee_id;
+        if (empId && !(await employeeIdsInScope([String(empId)], visibleBranches)).has(String(empId))) {
+          return res.status(403).json(OUT_OF_BRANCH);
+        }
+      }
+    }
     await markItemCorrectedReady(req.params.itemId);
     void logSensitiveAction({
       actor_user_id: req.authUser!.id,
@@ -1391,12 +1459,11 @@ bankPaymentReadinessRouter.post(
   requireRole(...MANAGE_ROLES),
   csvUpload.single("file"),
   h(async (req: any, res) => {
-    const file = req.file as
-      { buffer: Buffer; originalname: string } | undefined;
-    if (!file)
-      return res
-        .status(400)
-        .json({ success: false, message: "file is required" });
+    if ((await resolveVisibleBranchIds(req.authUser!.id)) !== null) {
+      return res.status(403).json({ success: false, message: "Forbidden: the transfer-number import spans every branch and needs organisation-wide payroll scope" });
+    }
+    const file = req.file as { buffer: Buffer; originalname: string } | undefined;
+    if (!file) return res.status(400).json({ success: false, message: "file is required" });
     const runId = String(req.body?.run_id ?? "").trim();
     if (!runId)
       return res
@@ -1445,6 +1512,9 @@ bankPaymentReadinessRouter.post(
   "/salary-transfer/import/commit",
   requireRole(...MANAGE_ROLES),
   h(async (req, res) => {
+    if ((await resolveVisibleBranchIds(req.authUser!.id)) !== null) {
+      return res.status(403).json({ success: false, message: "Forbidden: the transfer-number import spans every branch and needs organisation-wide payroll scope" });
+    }
     const { file_name, file_sha256, preview } = req.body as {
       file_name?: string;
       file_sha256?: string;
@@ -1498,8 +1568,11 @@ bankPaymentReadinessRouter.post(
 bankPaymentReadinessRouter.get(
   "/manual-review-queue",
   requireRole(...READ_ROLES),
-  h(async (_req, res) => {
-    const rows = await getManualReviewBankGaps();
+  h(async (req, res) => {
+    const all = await getManualReviewBankGaps();
+    const visibleBranches = await resolveVisibleBranchIds(req.authUser!.id);
+    const allowedIds = await employeeIdsInScope(all.map((r) => r.employee_id), visibleBranches);
+    const rows = all.filter((r) => allowedIds.has(r.employee_id));
     return res.json({ success: true, count: rows.length, data: rows });
   }),
 );
@@ -1515,6 +1588,9 @@ bankPaymentReadinessRouter.patch(
   requireRole(...MANAGE_ROLES),
   h(async (req, res) => {
     const { employeeId } = req.params;
+    if (!(await employeeIdsInScope([employeeId], await resolveVisibleBranchIds(req.authUser!.id))).has(employeeId)) {
+      return res.status(403).json(OUT_OF_BRANCH);
+    }
     const result = await approveManualReviewBankDetail({ employeeId });
 
     if (result.status === "no_manual_review_row") {
@@ -1535,6 +1611,12 @@ bankPaymentReadinessRouter.patch(
             "This employee already has an active primary bank record — nothing to approve.",
         });
     }
+    if (result.status === "account_changed") {
+      return res.status(409).json({
+        success: false,
+        message: "The account number on file is not the one the bank verified. Re-run the bank check on the current number before approving.",
+      });
+    }
 
     void logSensitiveAction({
       actor_user_id: req.authUser!.id,
@@ -1549,6 +1631,50 @@ bankPaymentReadinessRouter.patch(
     return res.json({
       success: true,
       message: "Bank account approved and copied to the employee record.",
+    });
+  }),
+);
+
+/**
+ * PATCH /manual-review-queue/:employeeId/reject — refuses the account (e.g. it is in someone
+ * else's name). Nothing reaches employee_bank_detail; the joiner is sent the bank-resubmit link.
+ * Same roles and branch scope as approve.
+ */
+bankPaymentReadinessRouter.patch(
+  "/manual-review-queue/:employeeId/reject",
+  requireRole(...MANAGE_ROLES),
+  h(async (req, res) => {
+    const { employeeId } = req.params;
+    const reason = String((req.body as { reason?: unknown } | undefined)?.reason ?? "").trim();
+    if (reason.length < 5) {
+      return res.status(400).json({ success: false, message: "A reason of at least 5 characters is required to reject." });
+    }
+    if (!(await employeeIdsInScope([employeeId], await resolveVisibleBranchIds(req.authUser!.id))).has(employeeId)) {
+      return res.status(403).json(OUT_OF_BRANCH);
+    }
+    const result = await rejectManualReviewBankDetail({
+      employeeId, reason: reason.slice(0, 500), actorUserId: req.authUser!.id,
+    });
+    if (result.status === "no_manual_review_row") {
+      return res.status(404).json({ success: false, message: "No bank verification awaiting review for this employee." });
+    }
+
+    void logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "BANK_MANUAL_REVIEW_REJECTED",
+      module_key: "payroll",
+      entity_type: "candidate_bank_verification",
+      entity_id: employeeId,
+      change_summary: { reason, candidate_id: result.candidateId, resubmit_email_sent: result.resubmitEmailSent },
+      req: req as never,
+    });
+
+    return res.json({
+      success: true,
+      message: result.resubmitEmailSent
+        ? "Rejected. The joiner has been emailed a link to submit their own bank account."
+        : `Rejected. The resubmit email could not be sent${result.resubmitError ? ` (${result.resubmitError})` : ""}; ask the joiner to update their bank details.`,
+      data: { resubmit_email_sent: !!result.resubmitEmailSent },
     });
   }),
 );

@@ -18,15 +18,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const {
-  execute,
-  getEmployeeBgvStatus,
-  buildBankReadinessReport,
-  createItem,
-  hasAnyRole,
-  buildScopeWhereClause,
-  queueJoiningKit,
-  dispatchJoiningKit,
+  execute, getEmployeeBgvStatus, buildBankReadinessReport, createItem,
+  hasAnyRole, buildScopeWhereClause, queueJoiningKit, dispatchJoiningKit,
+  generateEmploymentContractForEmployee,
 } = vi.hoisted(() => ({
+  generateEmploymentContractForEmployee: vi.fn(),
   execute: vi.fn(),
   getEmployeeBgvStatus: vi.fn(),
   buildBankReadinessReport: vi.fn(),
@@ -73,43 +69,50 @@ vi.mock("../../employees/joiningKitDispatch.service.js", () => ({
   queueJoiningKit,
   dispatchJoiningKit,
 }));
+vi.mock("../../employees/joiningKitDispatch.service.js", () => ({ queueJoiningKit, dispatchJoiningKit }));
+// Since 21ad388fa approval first generates the EMPLOYMENT_CONTRACT (its appendix prints the
+// approved remuneration, so it cannot exist earlier) and only then releases the kit, in one
+// sequential fire-and-forget block. Unmocked, the real generator ran against the mocked db and
+// the kit step had not been reached by the time these assertions ran.
+vi.mock("../../employees/employeeJoiningDocuments.service.js", () => ({ generateEmploymentContractForEmployee }));
 
 import { approve } from "../payroll-head-review.service.js";
 
 /** The seven queries approve() issues, in order, for a clean pending_review -> approved run. */
 function primeApprovableReview() {
-  execute
-    .mockResolvedValueOnce([
-      [{ id: "review-1", status: "pending_review", package_accepted: 1 }],
-    ]) // getReviewRow
-    .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE -> approved
-    .mockResolvedValueOnce(undefined) // audit
-    .mockResolvedValueOnce(undefined) // writeHistory
-    .mockResolvedValueOnce([[]]) // notify targets
-    .mockResolvedValueOnce([
-      [
-        {
-          full_name: "Jane Doe",
-          employee_code: "E123",
-          user_id: "user-emp-1",
-          ctc_annual: 600000,
-        },
-      ],
-    ])
-    .mockResolvedValueOnce([[{ id: "review-1", status: "approved" }]]); // final getReviewRow
+  // Routed by query, not by position: approval notifications run after approve() returns, so
+  // their queries interleave with the final review read.
+  let reviewReads = 0;
+  execute.mockImplementation(async (sql: string) => {
+    if (/FROM employee_payroll_head_review WHERE employee_id/.test(sql)) {
+      reviewReads++;
+      return [[reviewReads === 1
+        ? { id: "review-1", status: "pending_review", package_accepted: 1 }
+        : { id: "review-1", status: "approved" }]];
+    }
+    if (/UPDATE employee_payroll_head_review SET status = 'approved'/.test(sql)) return [{ affectedRows: 1 }];
+    if (/sca\.net_estimate AS net_in_hand/.test(sql)) {
+      return [[{ full_name: "Jane Doe", employee_code: "E123", user_id: "user-emp-1", ctc_annual: 600000 }]];
+    }
+    return [[]];
+  });
 }
 
-/** The dispatch is fire-and-forget, so let the microtask queue drain before asserting. */
-const settle = () => new Promise((r) => setTimeout(r, 0));
+/**
+ * The dispatch is fire-and-forget behind two dynamic imports, so a single macrotask is not enough
+ * to reach it. Drain a few turns of the event loop before asserting.
+ */
+const settle = async () => {
+  for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+};
 
 describe("approve() releases the blocked joining kit", () => {
   beforeEach(() => {
     execute.mockReset();
     createItem.mockClear();
     queueJoiningKit.mockReset().mockResolvedValue({ kitId: "kit-1" });
-    dispatchJoiningKit
-      .mockReset()
-      .mockResolvedValue({ kitId: "kit-1", status: "sent" });
+    dispatchJoiningKit.mockReset().mockResolvedValue({ kitId: "kit-1", status: "sent" });
+    generateEmploymentContractForEmployee.mockReset().mockResolvedValue(undefined);
   });
 
   it("queues and dispatches the kit for the approved employee", async () => {
@@ -126,6 +129,22 @@ describe("approve() releases the blocked joining kit", () => {
         triggerSource: "payroll_head_approved",
       }),
     );
+    expect(dispatchJoiningKit).toHaveBeenCalledWith("kit-1", "actor-1");
+    // The contract is generated for the same employee, and before the kit is queued.
+    expect(generateEmploymentContractForEmployee).toHaveBeenCalledWith("emp-1", "actor-1");
+    expect(generateEmploymentContractForEmployee.mock.invocationCallOrder[0])
+      .toBeLessThan(queueJoiningKit.mock.invocationCallOrder[0]);
+  });
+
+  it("still releases the kit when contract generation fails", async () => {
+    primeApprovableReview();
+    generateEmploymentContractForEmployee.mockRejectedValue(new Error("template missing"));
+
+    await approve("emp-1", "actor-1");
+    await settle();
+
+    // dispatchJoiningKit itself blocks on 'draft_missing' in that case; approve() must still ask.
+    expect(queueJoiningKit).toHaveBeenCalledTimes(1);
     expect(dispatchJoiningKit).toHaveBeenCalledWith("kit-1", "actor-1");
   });
 

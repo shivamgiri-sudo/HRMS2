@@ -16,6 +16,17 @@ describe("parseDate", () => {
   it("returns null for blank", () => {
     expect(parseDate("")).toBeNull();
   });
+  it("reads the DD-MM-YY text the CSV hub delivers (batch BATCH-1791282537749)", () => {
+    expect(parseDate("01-09-26")).toBe("2026-09-01");
+    expect(parseDate("26-09-26")).toBe("2026-09-26");
+  });
+  it("reads DD-MM-YYYY and ISO text", () => {
+    expect(parseDate("01-09-2026")).toBe("2026-09-01");
+    expect(parseDate("2026-09-01")).toBe("2026-09-01");
+  });
+  it("returns null for unparseable text", () => {
+    expect(parseDate("not a date")).toBeNull();
+  });
 });
 
 /** Order Creation time/Call Date & Time are FRACTIONAL Excel serials (date + time-of-day). */
@@ -26,6 +37,9 @@ describe("parseDateTime", () => {
   it("returns null for blank", () => {
     expect(parseDateTime("")).toBeNull();
   });
+  it("reads the DD-MM-YY HH:mm text the CSV hub delivers", () => {
+    expect(parseDateTime("01-09-26 14:49")).toBe("2026-09-01 14:49:00");
+  });
 });
 
 /** A call never lasts a whole day, so this fraction-of-a-day column is unambiguous by construction. */
@@ -35,6 +49,9 @@ describe("parseCallDurationSeconds", () => {
   });
   it("returns null for blank", () => {
     expect(parseCallDurationSeconds("")).toBeNull();
+  });
+  it("reads the h:mm:ss text the CSV hub delivers (0:07:12 = 432 seconds)", () => {
+    expect(parseCallDurationSeconds("0:07:12")).toBe(432);
   });
 });
 

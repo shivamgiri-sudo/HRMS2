@@ -30,6 +30,7 @@
 import { db } from "../src/db/mysql.js";
 import { emailService } from "../src/modules/communication/email.service.js";
 import { env } from "../src/config/env.js";
+import { buildAppLink } from "../src/shared/appLink.js";
 import { logSensitiveAction } from "../src/shared/auditLog.js";
 
 const APPLY = process.argv.includes("--apply");
@@ -125,7 +126,7 @@ const NOT_A_REAL_EMPLOYEE_SQL = `
     return;
   }
 
-  const link = `${env.FRONTEND_URL}/profile`;
+  const link = buildAppLink("/profile", { tab: "statutory" });
 
   if (!APPLY) {
     console.log(`\n--- sample recipient list (first 15 of ${rows.length}) ---`);

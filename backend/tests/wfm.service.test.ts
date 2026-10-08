@@ -99,6 +99,16 @@ const fakeReg = {
  */
 const fakeApprovableReg = { ...fakeReg, requested_status: "present" };
 
+// Approval checks the employment window first (shared/employmentWindow.ts, added 2026-10-06):
+// one employees SELECT, then one employment_stint SELECT. emp-1 joined well before 2026-05-20
+// and has not exited, so the date is inside the window and approval proceeds.
+function mockEmployedOnSessionDate() {
+  exec.mockResolvedValueOnce([[{
+    id: "emp-1", salary_start_date: "2026-01-01", date_of_joining: "2026-01-01", end_date: null,
+  }], []]); // employment window: employees row
+  exec.mockResolvedValueOnce([[], []]); // employment window: no rejoin stints
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   exec.mockReset().mockResolvedValue([[], []]);
@@ -302,6 +312,7 @@ describe("wfmService.reviewRegularization", () => {
 
   it("approves regularization", async () => {
     exec.mockResolvedValueOnce([[fakeApprovableReg], []]); // get
+    mockEmployedOnSessionDate();
     mocks.connExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // regularization status UPDATE
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // inbox alert close
     exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
@@ -350,6 +361,7 @@ describe("wfmService.reviewRegularization", () => {
     // Reviewing used to update attendance and leave the alert open, so the
     // approver kept being reminded about a regularization they had cleared.
     exec.mockResolvedValueOnce([[fakeApprovableReg], []]); // get
+    mockEmployedOnSessionDate();
     mocks.connExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     exec.mockResolvedValueOnce([{ affectedRows: 2 }, []]); // inbox alert close
     exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
@@ -394,16 +406,14 @@ describe("wfmService.reviewRegularization", () => {
   });
 
   it("creates and locks ADR when approved APR regularization has no existing ADR", async () => {
-    exec.mockResolvedValueOnce([
-      [
-        {
-          ...fakeReg,
-          requested_status: "present",
-          reason_code: "DIALLER_NOT_LOGGED",
-        },
-      ],
-      [],
-    ]);
+    exec.mockResolvedValueOnce([[
+      {
+        ...fakeReg,
+        requested_status: "present",
+        reason_code: "DIALLER_NOT_LOGGED",
+      },
+    ], []]);
+    mockEmployedOnSessionDate();
     mocks.connExecute
       .mockResolvedValueOnce([{ affectedRows: 1 }, []]) // regularization status UPDATE
       .mockResolvedValueOnce([[], []]) // existing ADR lookup

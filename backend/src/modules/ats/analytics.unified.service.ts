@@ -1,6 +1,20 @@
-import { db } from "../../db/mysql.js";
-import { RowDataPacket } from "mysql2/promise";
-import { excludeEmployeeShapedCandidatesSql } from "./ats-reporting-scope.js";
+import { db } from '../../db/mysql.js';
+import { RowDataPacket } from 'mysql2/promise';
+import { excludeEmployeeShapedCandidatesSql } from './ats-reporting-scope.js';
+import { canonicalChannel, CANONICAL_CHANNEL_LABEL } from './ats-source-channel-model.js';
+
+/**
+ * Display label for a raw `sourcing_channel`, so WALKIN / Walk-In / walk in land in one bucket.
+ * A blank is `Unspecified` — it used to be relabelled 'Walk-in', which credited the 32k candidates
+ * of the June 2026 bulk import (no channel recorded) to walk-in. An unrecognised value keeps its own
+ * name rather than being folded into Other, so it stays visible as unmapped.
+ */
+function channelLabel(raw: unknown): string {
+  const text = raw == null ? '' : String(raw);
+  const canonical = canonicalChannel(text);
+  return canonical ? CANONICAL_CHANNEL_LABEL[canonical] : text.trim();
+}
+
 
 const EXCLUDE_EMPLOYEE_SHAPED =
   excludeEmployeeShapedCandidatesSql("ats_candidate");
@@ -216,6 +230,7 @@ interface RoleDayRow extends RowDataPacket {
 interface SourceDayRow extends RowDataPacket {
   source: string;
   avg_days: number | null;
+  n?: number;
 }
 
 interface BranchDayRow extends RowDataPacket {
@@ -312,18 +327,18 @@ export async function getSourceChannelROI(): Promise<
   const mobileJoinMapPromise = getEmployeeMobileJoinMap();
   mobileJoinMapPromise.catch(() => undefined); // awaited below; avoids an unhandled rejection if a query throws first
   const [newDataResult, candidateRowsResult] = await Promise.all([
-    db.execute<SourceRow[]>(
-      `SELECT
-      COALESCE(sourcing_channel, 'Walk-in') as source_channel,
+  db.execute<SourceRow[]>(
+    `SELECT
+      sourcing_channel as source_channel,
       COUNT(*) as total_candidates,
       AVG(DATEDIFF(updated_at, created_at)) as avg_time_to_hire_days
     FROM ats_candidate
     WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY sourcing_channel
-    ORDER BY total_candidates DESC`,
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(sourcing_channel, 'Walk-in') as source_channel,
+    ORDER BY total_candidates DESC`
+  ),
+  db.execute<RowDataPacket[]>(
+    `SELECT sourcing_channel as source_channel,
             current_stage, mobile, created_at
        FROM ats_candidate
       WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
@@ -339,35 +354,36 @@ export async function getSourceChannelROI(): Promise<
   const mobileJoinMap = await mobileJoinMapPromise;
   const hiredByChannel = new Map<string, number>();
   for (const row of candidateRows as RowDataPacket[]) {
-    if (
-      candidateBecameEmployee(
-        row as {
-          current_stage: string | null;
-          mobile: string | null;
-          created_at: string;
-        },
-        mobileJoinMap,
-      )
-    ) {
-      const channel = String(row.source_channel);
+    if (candidateBecameEmployee(row as { current_stage: string | null; mobile: string | null; created_at: string }, mobileJoinMap)) {
+      const channel = channelLabel(row.source_channel);
       hiredByChannel.set(channel, (hiredByChannel.get(channel) ?? 0) + 1);
     }
   }
 
-  return newData.map((row) => {
-    const totalCandidates = Number(row.total_candidates ?? 0);
-    const totalHired = hiredByChannel.get(row.source_channel) ?? 0;
-    return {
-      source_channel: row.source_channel,
-      total_candidates: totalCandidates,
-      total_hired: totalHired,
-      conversion_rate:
-        totalCandidates > 0
-          ? Math.round((totalHired / totalCandidates) * 10000) / 100
-          : 0,
-      avg_time_to_hire_days: Number(row.avg_time_to_hire_days ?? 0),
-    };
-  });
+  // Several raw spellings collapse into one label, so merge their totals; the average time to hire
+  // is weighted by candidate count rather than averaged across rows of different sizes.
+  const byLabel = new Map<string, { total: number; days: number }>();
+  for (const row of newData) {
+    const label = channelLabel(row.source_channel);
+    const total = Number(row.total_candidates ?? 0);
+    const entry = byLabel.get(label) ?? { total: 0, days: 0 };
+    entry.total += total;
+    entry.days += Number(row.avg_time_to_hire_days ?? 0) * total;
+    byLabel.set(label, entry);
+  }
+
+  return [...byLabel.entries()]
+    .map(([label, e]) => {
+      const totalHired = hiredByChannel.get(label) ?? 0;
+      return {
+        source_channel: label,
+        total_candidates: e.total,
+        total_hired: totalHired,
+        conversion_rate: e.total > 0 ? Math.round((totalHired / e.total) * 10000) / 100 : 0,
+        avg_time_to_hire_days: e.total > 0 ? e.days / e.total : 0,
+      };
+    })
+    .sort((a, b) => b.total_candidates - a.total_candidates);
 }
 
 /**
@@ -482,6 +498,22 @@ export async function getPredictiveAnalytics(): Promise<{
 /**
  * Get time-to-hire metrics
  */
+/** Merge per-spelling averages into per-channel averages, weighted by how many candidates each covers. */
+function mergeSourceDays(rows: Array<{ source: unknown; avg_days: unknown; n?: unknown }>): { source: string; avg_days: number }[] {
+  const merged = new Map<string, { weight: number; days: number }>();
+  for (const row of rows) {
+    const label = channelLabel(row.source);
+    const weight = Number(row.n ?? 1) || 1;
+    const entry = merged.get(label) ?? { weight: 0, days: 0 };
+    entry.weight += weight;
+    entry.days += Number(row.avg_days || 0) * weight;
+    merged.set(label, entry);
+  }
+  return [...merged.entries()]
+    .map(([source, e]) => ({ source, avg_days: Math.round(e.days / e.weight) }))
+    .sort((a, b) => a.avg_days - b.avg_days);
+}
+
 export async function getTimeToHireMetrics(): Promise<{
   overall_avg_days: number;
   by_role: { role: string; avg_days: number }[];
@@ -511,11 +543,12 @@ export async function getTimeToHireMetrics(): Promise<{
     ORDER BY avg_days`,
       ),
 
-      // By source
-      db.execute<SourceDayRow[]>(
-        `SELECT
-      COALESCE(sourcing_channel, 'Walk-in') as source,
-      ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
+  // By source
+  db.execute<SourceDayRow[]>(
+    `SELECT
+      sourcing_channel as source,
+      ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days,
+      COUNT(*) as n
     FROM ats_candidate
     WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY sourcing_channel
@@ -545,18 +578,9 @@ export async function getTimeToHireMetrics(): Promise<{
 
   return {
     overall_avg_days: Math.round(overall[0]?.avg_days || 0),
-    by_role: byRole.map((row) => ({
-      role: row.role,
-      avg_days: Math.round(Number(row.avg_days || 0)),
-    })),
-    by_source: bySource.map((row) => ({
-      source: row.source,
-      avg_days: Math.round(Number(row.avg_days || 0)),
-    })),
-    by_branch: byBranch.map((row) => ({
-      branch: row.branch,
-      avg_days: Math.round(Number(row.avg_days || 0)),
-    })),
+    by_role: byRole.map((row) => ({ role: row.role, avg_days: Math.round(Number(row.avg_days || 0)) })),
+    by_source: mergeSourceDays(bySource),
+    by_branch: byBranch.map((row) => ({ branch: row.branch, avg_days: Math.round(Number(row.avg_days || 0)) })),
     fastest_hire_days: minMax[0]?.fastest || 0,
     slowest_hire_days: minMax[0]?.slowest || 0,
   };

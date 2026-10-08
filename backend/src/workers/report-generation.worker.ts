@@ -33,32 +33,23 @@ import {
 import { REPORT_CATALOG } from "../modules/reporting/report-catalog.js";
 
 // ── Configuration (all values from env) ───────────────────────────────────────
-const WORKER_NAME = "report-generation";
-const INTERVAL_MS = 30_000;
-const STALE_PROCESSING_MINUTES = Number(
-  process.env.REPORT_STALE_PROCESSING_MINUTES ?? 25,
-);
-const CHUNK_SIZE = Number(process.env.REPORT_WORKER_CHUNK_SIZE ?? 5_000);
-const MAX_ROWS = Number(process.env.REPORT_MAX_XLSX_ROWS ?? 100_000);
-const ATTACHMENT_MAX_BYTES = Number(
-  process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520,
-); // 20 MB
-const LARGE_FILE_THRESHOLD = Number(
-  process.env.REPORT_LARGE_FILE_THRESHOLD_BYTES ?? 15_728_640,
-); // 15 MB
-const TOKEN_TTL_HOURS = Number(
-  process.env.REPORT_DOWNLOAD_TOKEN_TTL_HOURS ?? 48,
-);
-const RETENTION_RESTRICTED = Number(
-  process.env.REPORT_RETENTION_RESTRICTED_DAYS ?? 2,
-);
-const RETENTION_DEFAULT = Number(
-  process.env.REPORT_RETENTION_DEFAULT_DAYS ?? 7,
-);
-const MAX_RETRIES = 3;
-const BASE_URL = process.env.BACKEND_URL ?? "http://localhost:5055";
+const WORKER_NAME             = 'report-generation';
+const INTERVAL_MS             = Number(process.env.REPORT_GENERATION_POLL_MS ?? 3_000);
+const MAX_JOBS_PER_TICK       = Number(process.env.REPORT_MAX_JOBS_PER_TICK ?? 5);
+const JOB_TIMEOUT_MS          = Number(process.env.REPORT_JOB_TIMEOUT_MINUTES ?? 12) * 60_000;
+export const STALE_PROCESSING_MINUTES = Number(process.env.REPORT_STALE_PROCESSING_MINUTES ?? 20);
+const CHUNK_SIZE              = Number(process.env.REPORT_WORKER_CHUNK_SIZE ?? 5_000);
+const MAX_ROWS                = Number(process.env.REPORT_MAX_XLSX_ROWS ?? 100_000);
+const ATTACHMENT_MAX_BYTES    = Number(process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520); // 20 MB
+const LARGE_FILE_THRESHOLD    = Number(process.env.REPORT_LARGE_FILE_THRESHOLD_BYTES ?? 15_728_640); // 15 MB
+const TOKEN_TTL_HOURS         = Number(process.env.REPORT_DOWNLOAD_TOKEN_TTL_HOURS ?? 48);
+const RETENTION_RESTRICTED    = Number(process.env.REPORT_RETENTION_RESTRICTED_DAYS ?? 2);
+const RETENTION_DEFAULT       = Number(process.env.REPORT_RETENTION_DEFAULT_DAYS ?? 7);
+const MAX_RETRIES             = 3;
+const BASE_URL                = process.env.BACKEND_URL ?? 'http://localhost:5055';
 
 let intervalTimer: NodeJS.Timeout | null = null;
+let tickRunning = false;
 
 function isMissingReportTableError(error: unknown): boolean {
   return (
@@ -236,7 +227,7 @@ async function markFailed(
 
 // ── Core generation for one request ───────────────────────────────────────────
 
-async function processOneRequest(): Promise<void> {
+async function processOneRequest(): Promise<boolean> {
   // Atomically claim one QUEUED request
   const conn = await db.getConnection();
   let requestId: string | null = null;
@@ -248,10 +239,7 @@ async function processOneRequest(): Promise<void> {
        ORDER BY priority DESC, requested_at ASC
        LIMIT 1 FOR UPDATE SKIP LOCKED`,
     );
-    if (!claimRows.length) {
-      await conn.rollback();
-      return;
-    }
+    if (!claimRows.length) { await conn.rollback(); return false; }
 
     requestId = (claimRows[0] as { id: string }).id;
     await conn.execute(
@@ -283,7 +271,7 @@ async function processOneRequest(): Promise<void> {
      FROM report_request WHERE id = ?`,
     [requestId],
   );
-  if (!reqRows.length) return;
+  if (!reqRows.length) return true;
 
   const req = reqRows[0] as {
     report_code: string;
@@ -445,10 +433,13 @@ async function processOneRequest(): Promise<void> {
       skipSizeCap: requiresSecureLink(sensitivityLevel),
     });
 
-    const filename = buildSecureFilename(
-      req.report_name_snapshot,
-      req.request_reference,
-    );
+    // The email cannot carry a file over the attachment limit. Fail now with an actionable message
+    // instead of storing it and failing later at delivery (which left the request looking stuck).
+    if (buffer.length > ATTACHMENT_MAX_BYTES) {
+      throw new XlsxFileSizeError(buffer.length, ATTACHMENT_MAX_BYTES);
+    }
+
+    const filename = buildSecureFilename(req.report_name_snapshot, req.request_reference);
 
     // ── Store file ─────────────────────────────────────────────────────────────
     const stored = await storeReportFile({
@@ -550,9 +541,13 @@ async function processOneRequest(): Promise<void> {
       },
     });
 
-    console.log(
-      `[${WORKER_NAME}] ${req.request_reference} — ${totalWritten} rows, ${buffer.length} bytes, delivery=${useAttachment ? "attachment" : "link"}`,
-    );
+    console.log(`[${WORKER_NAME}] ${req.request_reference} — ${totalWritten} rows, ${buffer.length} bytes, delivery=${useAttachment ? 'attachment' : 'link'}`);
+
+    // Hand over to the delivery worker immediately instead of waiting for its next poll.
+    void import('./report-email-delivery.worker.js')
+      .then((m) => m.triggerReportEmailDelivery())
+      .catch(() => undefined);
+
   } catch (err: unknown) {
     const isNoExecutor = err instanceof ReportExecutorNotFoundError;
     const isRowLimit = err instanceof XlsxRowLimitError;
@@ -572,9 +567,8 @@ async function processOneRequest(): Promise<void> {
       userMessage =
         "The report exceeds the maximum row limit. Please apply filters to reduce the dataset.";
     } else if (isFileSize) {
-      failureCode = "FILE_SIZE_EXCEEDED";
-      userMessage =
-        "The generated report file is too large. Please apply filters to reduce the dataset.";
+      failureCode = 'FILE_SIZE_EXCEEDED';
+      userMessage = `The report file (${((err as XlsxFileSizeError).bytes / 1_048_576).toFixed(1)} MB) is larger than the ${(ATTACHMENT_MAX_BYTES / 1_048_576).toFixed(0)} MB email limit. Narrow the filters (for example Employee Status = Active, or a date range) and request it again.`;
     }
 
     console.error(
@@ -614,6 +608,8 @@ async function processOneRequest(): Promise<void> {
       );
     }
   }
+
+  return true;
 }
 
 // ── Stale-lock recovery ────────────────────────────────────────────────────────
@@ -630,15 +626,49 @@ async function recoverStaleLocks(): Promise<void> {
 
 // ── Worker loop ────────────────────────────────────────────────────────────────
 
-async function runGenerationWorker(): Promise<void> {
+/** Races one job against a timeout so a hung report fails (and is retried or reported) instead of
+ *  holding the queue until the stale sweeper intervenes. */
+async function processOneWithTimeout(): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Report generation timed out after ${Math.round(JOB_TIMEOUT_MS / 60_000)} minutes`)), JOB_TIMEOUT_MS);
+  });
   try {
+    return await Promise.race([processOneRequest(), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function runGenerationWorker(): Promise<void> {
+  // Ticks never overlap inside this process, so a long report cannot cause a pile-up of
+  // "another instance holds the lock" attempts.
+  if (tickRunning) return;
+  tickRunning = true;
+  try {
+    // Cheap check first: with a 3s poll, taking the advisory lock (and logging it) on every empty
+    // tick would be pure noise and load. Only queued work or a stale PROCESSING row needs the lock.
+    const [pending] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 AS n FROM report_request
+       WHERE status = 'QUEUED'
+          OR (status = 'PROCESSING' AND processing_started_at < DATE_SUB(NOW(), INTERVAL ? MINUTE))
+       LIMIT 1`,
+      [STALE_PROCESSING_MINUTES]
+    );
+    if (!pending.length) return;
     await withWorkerLock(WORKER_NAME, async () => {
       await recoverStaleLocks();
-      await processOneRequest();
+      // Drain the queue (bounded) rather than one request per poll, so a burst finishes in one pass.
+      for (let i = 0; i < MAX_JOBS_PER_TICK; i++) {
+        const claimed = await processOneWithTimeout();
+        if (!claimed) break;
+      }
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[${WORKER_NAME}] Error:`, message);
+  } finally {
+    tickRunning = false;
   }
 }
 

@@ -20,6 +20,7 @@ import { canViewEmployee } from "../../shared/enterpriseScope.js";
 import { canReviewLeave } from "../leave/leave.secure.routes.js";
 import { leaveService } from "../leave/leave.service.js";
 import { manualReview } from "../ats/bgv-verification.service.js";
+import { canAccessCandidate } from "../ats/candidate-access.js";
 import { assertFinanceRecordBranch } from "../finance/finance-access-scope.js";
 import { resolveFinanceStageRole } from "../finance/finance-workflow-role.js";
 import { grnService } from "../finance/grn.service.js";
@@ -165,6 +166,10 @@ export async function decideDerivedItem(
     );
     const check = checkRows[0];
     if (!check) throw apiError(404, "BGV check not found");
+    // Branch scoping (owner ruling 2026-10-01): hr / admin act only on candidates of their own branch.
+    if (!(await canAccessCandidate(actorUserId, String(check.candidate_id)))) {
+      throw apiError(403, "This candidate is outside your branch / assigned scope");
+    }
     const status = decision === "approve" ? "verified" : "failed";
     return manualReview(
       String(check.candidate_id),
@@ -342,6 +347,9 @@ export async function getDerivedItemDetail(
       [entityId],
     );
     if (!rows[0]) throw apiError(404, "BGV check not found");
+    if (!(await canAccessCandidate(actorUserId, String(rows[0].candidate_id)))) {
+      throw apiError(403, "This candidate is outside your branch / assigned scope");
+    }
     return rows[0];
   }
 

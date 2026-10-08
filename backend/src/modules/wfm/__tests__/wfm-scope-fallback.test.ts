@@ -38,13 +38,19 @@ describe("resolveWfmScope", () => {
   });
 
   it("falls back to branch scope for a wfm user with only branch rows", async () => {
-    resolveMock.mockRejectedValue(
-      new DashboardScopeConfigurationError("no process"),
-    );
-    executeMock.mockResolvedValue([[{ branch_id: "b1" }, { branch_id: "b2" }]]);
+    resolveMock.mockRejectedValue(new DashboardScopeConfigurationError("no process"));
+    executeMock.mockImplementation(async (sql: string) =>
+      String(sql).includes("FROM employees") ? [[]] : [[{ branch_id: "b1" }, { branch_id: "b2" }]]);
     const scope = await resolveWfmScope({ id: "u", role: "wfm" });
     expect(scope.level).toBe("BRANCH_ALL");
     expect(scope.branchIds).toEqual(["b1", "b2"]);
+  });
+
+  it("is clamped to the branch on the user's own employee record (owner ruling 2026-10-01)", async () => {
+    resolveMock.mockRejectedValue(new DashboardScopeConfigurationError("no process"));
+    executeMock.mockImplementation(async (sql: string) =>
+      String(sql).includes("FROM employees") ? [[{ branch_id: "b2" }]] : [[{ branch_id: "b1" }, { branch_id: "b2" }]]);
+    expect((await resolveWfmScope({ id: "u", role: "wfm" })).branchIds).toEqual(["b2"]);
   });
 
   it("still fails closed when the wfm user has no branch rows", async () => {

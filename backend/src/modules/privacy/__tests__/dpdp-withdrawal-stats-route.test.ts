@@ -41,8 +41,12 @@ vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole: () => (_req: any, _res: any, next: any) => next(),
 }));
-vi.mock("../../../shared/roleResolver.js", () => ({
-  getUserRoleContext: vi.fn(async () => ({ primaryRole: "hr" })),
+vi.mock("../dpdp-withdrawal.scope.js", () => ({
+  buildRequesterScope: vi.fn(async () => null),
+  withdrawalScopeGuard: (_q: any, _s: any, next: any) => next(),
+}));
+vi.mock("../../../shared/accessGuard.js", () => ({
+  hasRole: vi.fn(async () => true),
 }));
 
 import { dpdpWithdrawalRouter } from "../dpdp-withdrawal.routes.js";

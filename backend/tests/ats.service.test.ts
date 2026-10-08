@@ -5,6 +5,9 @@ vi.mock("../src/db/mysql.js", () => ({
 }));
 
 vi.mock("../src/shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  getUserRoleKeys: vi.fn().mockResolvedValue(["super_admin"]),
+  getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   buildScopeWhereClause: vi.fn().mockResolvedValue({ sql: "1=1", params: [] }),
 }));
@@ -146,7 +149,12 @@ const fullCandidateInput = {
 };
 
 describe("atsService.createCandidate", () => {
-  beforeEach(resetDbMock);
+  beforeEach(() => {
+    resetDbMock();
+    // createCandidate opens with a rehire lookup (mobile owned only by departed
+    // employees re-opens the old row). Neither case here is a rehire.
+    mockExecute.mockResolvedValueOnce([[]]);
+  });
 
   it("throws when mobile already exists", async () => {
     mockExecute.mockResolvedValueOnce([

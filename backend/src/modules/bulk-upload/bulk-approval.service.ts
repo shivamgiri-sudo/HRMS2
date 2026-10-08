@@ -21,6 +21,7 @@ import { hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { emailService } from "../communication/email.service.js";
 import { withBulkLockRetry } from "./lock-retry.js";
+import { buildAppLink } from "../../shared/appLink.js";
 
 /** Upload types that must not apply until a branch head approves them. */
 export const APPROVAL_GATED_TYPES = new Set([
@@ -1349,7 +1350,7 @@ export async function sendPartialApplyEmail(params: {
     </div>
 
     <p style="margin-top:20px;font-size:13px;color:#64748b">
-      Log in to <a href="https://mcnhrms.teammas.in/bulk-upload" style="color:#4f46e5">PeopleOS Bulk Upload</a>, create a new batch with only the failed rows above (corrected), and submit for re-approval.
+      Log in to <a href="${buildAppLink("/bulk-upload")}" style="color:#4f46e5">PeopleOS Bulk Upload</a>, create a new batch with only the failed rows above (corrected), and submit for re-approval.
     </p>
     <hr style="border:none;border-top:1px solid #e2e8f0;margin:20px 0">
     <p style="font-size:11px;color:#94a3b8">MAS Callnet PeopleOS · Automated notification — do not reply</p>

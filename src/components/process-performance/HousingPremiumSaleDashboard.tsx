@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import {
   Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar,
-  formatINR, currentMonthRange,
+  formatINR, currentMonthRange, DrawerExcelButton, type DrawerSheet,
 } from "./DashboardKit";
 import { HousingPremiumAgentDrawer } from "./HousingPremiumAgentDrawer";
 import { HousingPremiumOutboundDashboard } from "./HousingPremiumOutboundDashboard";
@@ -41,11 +41,7 @@ const TOOLTIP_PROPS = {
 type TabKey = "dashboard" | "overview" | "daywise" | "agentwise" | "tqmqbq" | "tlTarget" | "team";
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "dashboard", label: "Dashboard" },
-  { key: "overview", label: "Metric Matrix" },
-  { key: "daywise", label: "Day Wise" },
   { key: "agentwise", label: "Agent Wise" },
-  { key: "tqmqbq", label: "Target Achievement" },
-  { key: "tlTarget", label: "TL Target" },
   { key: "team", label: "Team Details" },
 ];
 
@@ -537,6 +533,19 @@ function AgentWiseTab({ from, to, onOpen }: { from: string; to: string; onOpen: 
   const agentFilters = useColumnFilters(rows, AGENT_FILTER_COLS);
   const { sorted: sortedAgents, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: toggleAgentSort } = useSortableRows(agentFilters.filtered, agentColGetter);
 
+  const getSheets = (): DrawerSheet[] => [{
+    name: "Agent Wise Performance",
+    columns: [
+      "Agent", "Emp ID", "TL", "DOJ", "Tenure", "Bucket", "Status", "Target", "Total Calls", "Unique Calls",
+      "Connected", "Not Connected", "Connected %", "Avg Talk", "Sale Count", "Revenue", "AOV", "Present Count", "Avg Sale/Day", "Achieved %",
+    ],
+    rows: (data?.agents ?? []).map((a) => [
+      a.name, a.empId, a.tlName, a.doj ? fmtDate(a.doj) : "—", a.tenureDays ?? "—", a.bucket, a.status,
+      a.target, a.totalCalls, a.uniqueCalls, a.connected, a.notConnected, fmtPct(a.connectedPct),
+      a.avgTalkTimeSec ? secToHms(a.avgTalkTimeSec) : "—", a.saleCount, a.revenue, a.aov, a.presentCount, a.avgSalePerDay, fmtPct(a.achievedPct),
+    ]),
+  }];
+
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
@@ -572,6 +581,7 @@ function AgentWiseTab({ from, to, onOpen }: { from: string; to: string; onOpen: 
             className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm focus:border-indigo-400 focus:outline-none" />
         </div>
         <div className="flex items-center gap-2">
+          <DrawerExcelButton fileBase="Housing_Premium_Agent_Wise_Performance" getSheets={getSheets} disabled={!data || data.agents.length === 0} />
           <HintChip />
           <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-500"><ListFilter className="h-3 w-3" />{rows.length} of {data.agents.length}</span>
         </div>
@@ -1005,8 +1015,7 @@ export function HousingPremiumSaleDashboard() {
         gradient="from-indigo-700 via-blue-700 to-indigo-800"
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[11px] text-slate-400">Rebuilt from the reference Housing Premium MIS Excel workbook — every metric and formula is documented in the backend service.</span>
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           {/* The Outbound dashboard portals its TL / Agent / Week / Refresh controls in here, so they share this row with the date range. */}
           <div ref={setFilterSlot} className="flex flex-wrap items-center gap-2" />

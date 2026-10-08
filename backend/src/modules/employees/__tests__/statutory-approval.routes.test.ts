@@ -42,6 +42,13 @@ vi.mock("../../../shared/syncPiiEncryption.js", () => ({
   blindIndexAadhaar,
 }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
+// Branch scoping (owner ruling 2026-10-01): these tests are about the approve/reject mechanics, so the
+// caller is treated as org-wide here; the scoping itself is covered in shared/__tests__/branchScoping.batch1.
+vi.mock("../../../shared/enterpriseScope.js", () => ({
+  canViewEmployee: vi.fn(async () => true),
+  resolveUserBusinessScope: vi.fn(async () => ({})),
+  buildEmployeeScopeCondition: vi.fn(() => ({ sql: "1=1", params: [] })),
+}));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (
     req: express.Request,

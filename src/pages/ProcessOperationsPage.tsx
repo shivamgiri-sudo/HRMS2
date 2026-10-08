@@ -1,16 +1,19 @@
 import { Fragment, lazy, Suspense, useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { fetchConfigs as fetchProcessDashboardConfigs } from "@/components/process-dashboard/api";
 import { DiallerLivePanel, detectDiallerProcess } from "./DiallerLivePanel";
 
 // Onfido's dashboard lives only here (its old /onfido-process/dashboard URL
 // redirects in). Lazy: it is large and only one process ever opens it.
 const OnfidoProcessDashboard = lazy(() => import("./onfido-process/OnfidoProcessDashboard"));
+const ProcessDashboard = lazy(() => import("@/components/process-dashboard/ProcessDashboard"));
 const isOnfidoProcess = (name: string | null | undefined) => (name ?? "").toLowerCase().includes("onfido");
 import {
   BellavitaDashboard, GncDashboard, NeemansDashboard, AwDashboard,
   BvoDashboard, LpDashboard, ProcessDataPanel, DalmiaDashboard, UploadPanel,
 } from "./NativeSalesDashboard";
 import { HousingDashboardEmbed } from "./NativeHousingDashboards";
+import { SbiCardDashboard } from "@/components/process-performance/SbiCardDashboard";
 import BlaBliBluSalesDashboard from "./BlaBliBluSalesDashboard";
 import { KpiCommandDeck } from "@/components/process-operations/KpiCommandDeck";
 import { ProcessPortfolio } from "@/components/process-operations/ProcessPortfolio";
@@ -19,6 +22,7 @@ import { BusinessDatapoints } from "@/components/process-operations/BusinessData
 import { MetricDayGrid } from "@/components/process-operations/MetricDayGrid";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { MasmisUploaderGrid } from "@/components/process-operations/MasmisUploader";
+import { V2DashboardView, v2DashboardsForProcess, V2_COMPANY_LABELS } from "@/components/process-performance/v2Dashboards";
 
 /**
  * Real inline upload, keyed by processCode (not mapping.type, since Housing
@@ -80,6 +84,7 @@ const PROCESS_SALES_MAP: Record<string, { type: string; label: string }> = {
   CLOVIA:              { type: "clovia",    label: "Clovia" },
   DALMIA_CEMENT:       { type: "dalmia",    label: "Dalmia" },
   DU_DIGITAL:          { type: "du",        label: "DU Digital" },
+  SBI_CARD:            { type: "sbi_card",  label: "SBI Card Collections" },
   // LP = Lawyers Panel (owner, 2026-09-15). Worked by the Eresolution team (NOIDA):
   // the LP call records' agents who are HRMS employees are all active on
   // Eresolution. The LAWYER_PANEL process_master row is inactive, with no staff.
@@ -95,7 +100,28 @@ function currentMonthStr() {
 }
 
 // Inline sales dashboard view — renders the correct component for the selected process.
-function ProcessSalesDashboardView({ processCode, processName }: { processCode: string; processName: string }) {
+/** Unmapped process: render the config-driven Process Dashboard when an admin has registered+enabled it, else point to Dashboard Setup. */
+function ConfigDrivenSalesView({ processId, processName }: { processId: string; processName: string }) {
+  const { data: configs, isLoading } = useQuery({ queryKey: ["process-dashboard", "configs"], queryFn: fetchProcessDashboardConfigs, staleTime: 60_000 });
+  const cfg = configs?.find((c) => c.processId === processId);
+  if (isLoading) return <div className="flex items-center gap-2 py-8 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Checking dashboard setup…</div>;
+  if (cfg?.enabled && cfg.configured) {
+    return (
+      <Suspense fallback={<div className="flex items-center gap-2 py-8 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Loading dashboard…</div>}>
+        <ProcessDashboard processId={processId} embedded />
+      </Suspense>
+    );
+  }
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center shadow-sm">
+      <p className="text-sm font-semibold text-slate-700">No dashboard for {processName} yet</p>
+      <p className="mx-auto mt-1 max-w-md text-xs text-slate-600">Not configured yet — ask an admin to map the APR table and this process gets a dashboard automatically.</p>
+      <Link to={`/performance/process-dashboard-admin?process=${encodeURIComponent(processId)}`} className="mt-3 inline-flex min-h-[44px] items-center rounded-lg bg-blue-700 px-4 text-sm font-semibold text-white hover:bg-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2">Open Dashboard Setup</Link>
+    </div>
+  );
+}
+
+function LegacyProcessSalesDashboardView({ processId, processCode, processName }: { processId: string; processCode: string; processName: string }) {
   const [month, setMonth] = useState(currentMonthStr());
   // Match on the process name too, so the dashboard is found even if the process code is stored differently.
   const mapping = PROCESS_SALES_MAP[processCode] ?? (/\bbla\b.*\bbli\b|bla[\s_/-]*bli[\s_/-]*blu/i.test(processName) ? PROCESS_SALES_MAP.BLA_BLI_BLU : undefined);
@@ -104,19 +130,12 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
   // page's list, which offers the form to process_manager (who then gets 403).
   const canUpload = hasAnyRole("super_admin", "admin", "sales", "operations_manager");
 
-  if (!mapping) {
-    return (
-      <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center shadow-sm">
-        <p className="text-sm font-semibold text-slate-700">No sales dashboard for {processName}</p>
-        <p className="text-xs text-slate-400 mt-1">Sales data is only available for Bellavita, BLA / BLI / BLU, Neemans, GNC, AW, Clovia, Dalmia, DU Digital, Eresolution (Lawyers Panel), and Housing processes.</p>
-      </div>
-    );
-  }
+  if (!mapping) return <ConfigDrivenSalesView processId={processId} processName={processName} />;
 
   return (
     <div className="space-y-5">
       {/* Month selector — shared across all views that need it */}
-      {!["clovia", "du", "dalmia", "lp"].includes(mapping.type) && (
+      {!["clovia", "du", "dalmia", "sbi_card", "lp"].includes(mapping.type) && (
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Month</span>
           <input type="month" value={month} onChange={e => setMonth(e.target.value)}
@@ -135,6 +154,7 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
       {mapping.type === "clovia"    && <ProcessDataPanel process="Clovia" uploadTypes={["CLOVIA_EMAIL_DAILY","CLOVIA_CHAT_DAILY","CLOVIA_CRM_DISPOSITION","CLOVIA_QUALITY_AUDIT","CLOVIA_RECHURN_CALLS","CLOVIA_TEAM_ALIGNMENT"]} color="#E40B92" />}
       {mapping.type === "du"        && <ProcessDataPanel process="DU Digital" uploadTypes={["DU_APR_KOREA","DU_APR_THAILAND","DU_TEAM_MAPPING_KOREA","DU_TEAM_MAPPING_THAILAND"]} color="#003D6B" />}
       {mapping.type === "dalmia"    && <DalmiaDashboard />}
+      {mapping.type === "sbi_card"  && <SbiCardDashboard />}
       {mapping.type === "housing"   && <HousingDashboardEmbed subProcess="both" />}
 
       {/* This brand's sales uploads — the Brand Sales Analytics "Upload Data"
@@ -152,6 +172,54 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
           <MasmisUploaderGrid templates={PROCESS_MASMIS_UPLOADS[processCode]} />
         </div>
       )}
+    </div>
+  );
+}
+
+
+/** Process Performance V2 page-codes that gate a dashboard (Process Details = by explicit grant only). Mirrors ProcessPerformanceV2Page. */
+const V2_DASHBOARD_PAGE_CODE: Record<string, string> = { housing_owner_targets: "PP_HOUSING_OWNER_PROCESS_DETAILS", housing_premium_targets: "PP_HOUSING_PREMIUM_PROCESS_DETAILS" };
+
+/**
+ * Sales dashboard view. Every Process Performance V2 dashboard that belongs to this process is shown here as its own tab,
+ * drawn by the same V2DashboardView the V2 page uses, so an edit or a new dashboard in v2Dashboards.tsx appears in both pages.
+ * The older hand-built view (and the uploaders under it) stays as the last tab.
+ */
+function ProcessSalesDashboardView(props: { processId: string; processCode: string; processName: string }) {
+  const workforce = useWorkforceAccess();
+  const v2Tabs = useMemo(
+    () => v2DashboardsForProcess(props.processCode, props.processName, V2_COMPANY_LABELS)
+      .filter(({ dashboard }) => {
+        const code = V2_DASHBOARD_PAGE_CODE[dashboard.kind];
+        return !code || (workforce.isResolved && workforce.canViewPage(code));
+      })
+      .map((t) => ({ ...t, id: `${t.company}:${t.dashboard.key}` })),
+    [props.processCode, props.processName, workforce],
+  );
+  const LEGACY = "__classic";
+  const [picked, setPicked] = useState<string | null>(null);
+  if (!v2Tabs.length) return <LegacyProcessSalesDashboardView {...props} />;
+  const multiCompany = new Set(v2Tabs.map((t) => t.company)).size > 1;
+  const activeId = picked && (picked === LEGACY || v2Tabs.some((t) => t.id === picked)) ? picked : v2Tabs[0].id;
+  const active = v2Tabs.find((t) => t.id === activeId);
+  return (
+    <div className="space-y-4">
+      <div role="tablist" aria-label="Process dashboards" className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1">
+        {v2Tabs.map((t) => (
+          <button key={t.id} type="button" role="tab" aria-selected={activeId === t.id} onClick={() => setPicked(t.id)}
+            className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition-all ${activeId === t.id ? "bg-slate-900 text-amber-300" : "text-slate-500 hover:text-slate-800"}`}>
+            {multiCompany ? `${t.companyLabel} · ${t.dashboard.label}` : t.dashboard.label}
+          </button>
+        ))}
+        <button type="button" role="tab" aria-selected={activeId === LEGACY} onClick={() => setPicked(LEGACY)}
+          className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition-all ${activeId === LEGACY ? "bg-slate-900 text-amber-300" : "text-slate-500 hover:text-slate-800"}`}>
+          Classic view &amp; uploads
+        </button>
+      </div>
+      {active
+        ? <V2DashboardView key={active.id} company={active.company} dashboard={active.dashboard}
+            onOpenDashboard={(key) => { const t = v2Tabs.find((x) => x.company === active.company && x.dashboard.key === key); if (t) setPicked(t.id); }} />
+        : <LegacyProcessSalesDashboardView {...props} />}
     </div>
   );
 }
@@ -5180,7 +5248,10 @@ export default function ProcessOperationsPage() {
   const current = active ?? branchScopedProcesses[0]?.processId ?? null;
   const currentProcess = processes.find((p) => p.processId === current) ?? null;
   // Must be after currentProcess is declared (TDZ guard)
-  const hasSalesDashboard = !!(currentProcess && PROCESS_SALES_MAP[currentProcess.processCode ?? ""]);
+  const { data: pdConfigs } = useQuery({ queryKey: ["process-dashboard", "configs"], queryFn: fetchProcessDashboardConfigs, staleTime: 60_000, retry: false });
+  const hasConfigDashboard = !!(currentProcess && pdConfigs?.some((c) => c.processId === currentProcess.processId && c.enabled && c.configured));
+  const hasV2Dashboards = !!currentProcess && v2DashboardsForProcess(currentProcess.processCode ?? "", currentProcess.processName ?? "", V2_COMPANY_LABELS).length > 0;
+  const hasSalesDashboard = !!(currentProcess && PROCESS_SALES_MAP[currentProcess.processCode ?? ""]) || hasConfigDashboard || hasV2Dashboards;
 
   const { data: feedData } = useQuery({
     queryKey: ["process-operations", "feeds"],
@@ -5254,7 +5325,10 @@ export default function ProcessOperationsPage() {
       <div style={{ minHeight: "100vh", background: "radial-gradient(circle at 5% 2%,rgba(47,111,237,.09),transparent 24%),radial-gradient(circle at 96% 3%,rgba(15,159,143,.07),transparent 25%),linear-gradient(180deg,#f1f5fa 0,#f7f9fc 310px,#f4f7fa 100%)" }}>
 
         {/* ── Sticky shell: accent line + topbar ─────────────────────────── */}
-        <div className="md:sticky md:top-0" style={{ zIndex: 100, background: "#fff", boxShadow: "0 5px 22px rgba(10,34,55,.12)" }}>
+        {/* Stacks BELOW the app top bar (z-30), which holds the global search and its results list. At
+            zIndex 100 this header painted over that list, so searching from this page showed the
+            results behind the page. It also sticks under the top bar (not at 0) so the two don't overlap. */}
+        <div className="md:sticky md:top-[var(--topbar-height,64px)]" style={{ zIndex: 20, background: "#fff", boxShadow: "0 5px 22px rgba(10,34,55,.12)" }}>
           {/* Rainbow accent line */}
           <div style={{ height: 4, background: GAS_ACCENT }} />
 
@@ -5343,7 +5417,7 @@ export default function ProcessOperationsPage() {
                 {hasSalesDashboard && (
                   <button type="button" onClick={() => setView("sales")}
                     style={{ cursor: "pointer", borderRadius: 8, padding: "6px 11px", fontSize: 11, fontWeight: 900, border: 0, transition: "background .15s,color .15s", background: view === "sales" ? "#e89b19" : "transparent", color: view === "sales" ? "#fff" : "#d0e8f5", boxShadow: view === "sales" ? "0 3px 8px rgba(0,0,0,.20)" : "none" }}>
-                    Sales Dashboard
+                    {PROCESS_SALES_MAP[currentProcess?.processCode ?? ""]?.type === "sbi_card" ? "Collections Dashboard" : "Sales Dashboard"}
                   </button>
                 )}
                 <button type="button" onClick={() => setView("live")}
@@ -5397,6 +5471,7 @@ export default function ProcessOperationsPage() {
           ) : view === "sales" && currentProcess ? (
             /* ── Sales Dashboard view ────────────────────────────────────────── */
             <ProcessSalesDashboardView
+              processId={currentProcess.processId}
               processCode={currentProcess.processCode ?? ""}
               processName={currentProcess.processName}
             />

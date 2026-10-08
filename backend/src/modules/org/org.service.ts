@@ -555,6 +555,13 @@ export const departmentService = {
       .toUpperCase()
       .replace(/[^A-Z0-9]+/g, "_")
       .slice(0, 40);
+    const [dupDept] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM department_master WHERE UPPER(TRIM(dept_name)) = UPPER(?) LIMIT 1`,
+      [deptName]
+    );
+    if ((dupDept as RowDataPacket[]).length) {
+      throw Object.assign(new Error(`Department "${deptName}" already exists`), { statusCode: 409 });
+    }
     const id = randomUUID();
     try {
       await db.execute(
@@ -650,14 +657,15 @@ export const designationService = {
       ...options,
     }),
   getById: (id: string) => getById("designation_master", id),
-  setStatus: (id: string, status: number) =>
-    setStatus("designation_master", id, status),
-  async create(data: {
-    designation_code: string;
-    designation_name: string;
-    grade?: string;
-    grade_id?: string;
-  }) {
+  setStatus: (id: string, status: number) => setStatus("designation_master", id, status),
+  async create(data: { designation_code: string; designation_name: string; grade?: string; grade_id?: string }) {
+    const [dupDesig] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM designation_master WHERE UPPER(TRIM(designation_name)) = UPPER(TRIM(?)) LIMIT 1`,
+      [data.designation_name]
+    );
+    if ((dupDesig as RowDataPacket[]).length) {
+      throw Object.assign(new Error(`Designation "${data.designation_name}" already exists`), { statusCode: 409 });
+    }
     const id = randomUUID();
     await db.execute(
       "INSERT INTO designation_master (id, designation_code, designation_name, grade, grade_id) VALUES (?, ?, ?, ?, ?)",
@@ -1071,6 +1079,24 @@ export const costCentreService = {
       throw Object.assign(new Error("Process is required for cost centre"), {
         statusCode: 400,
       });
+    }
+
+    /**
+     * The process must belong to the chosen client. process_master.client_id is the link that
+     * says so; a process with no client yet is claimed by this client in syncCostCentreRelatedTables.
+     * Without this check a cost centre could be created under Client A against Client B's process,
+     * which is how the client/process/cost-centre split got out of step.
+     */
+    const [[procRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT client_id FROM process_master WHERE id = ? LIMIT 1`,
+      [data.process_id.trim()]
+    );
+    if (!procRow) {
+      throw Object.assign(new Error("Process not found"), { statusCode: 400 });
+    }
+    const procClientId = (procRow as { client_id?: string | null }).client_id;
+    if (procClientId && procClientId !== data.client_id.trim()) {
+      throw Object.assign(new Error("Selected process belongs to a different client"), { statusCode: 400 });
     }
 
     /**

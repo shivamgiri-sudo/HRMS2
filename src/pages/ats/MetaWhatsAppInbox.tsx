@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, Check, CheckCheck, ChevronLeft, Clock, Paperclip, RefreshCcw, Search, Send, X } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import HeWhatsAppInbox from "./HeWhatsAppInbox";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -222,6 +223,7 @@ function ChatBubble({ msg }: { msg: Message }) {
 // ── main component ────────────────────────────────────────────────────────────
 
 export function MetaWhatsAppInbox() {
+  const [source, setSource] = useState<"meta" | "he">(() => (typeof window !== "undefined" && window.location.hash === "#engine" ? "he" : "meta"));
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [search, setSearch] = useState("");
   const [loadingList, setLoadingList] = useState(true);
@@ -337,10 +339,9 @@ export function MetaWhatsAppInbox() {
       await fetchThread(selectedId);
       await fetchInbox();
     } catch (err: unknown) {
-      const msg = err && typeof err === "object" && "response" in err
-        ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
-        : undefined;
-      setSendError(msg ?? "Failed to send. Try again.");
+      // hrmsApi throws an Error carrying the server's message (e.g. "outside the 24-hour window"),
+      // not an axios-style err.response — reading only .response hid every real reason.
+      setSendError(err instanceof Error && err.message ? err.message : "Failed to send. Try again.");
     } finally { setSending(false); }
   }
 
@@ -370,7 +371,10 @@ export function MetaWhatsAppInbox() {
       await fetchThread(selectedId);
       await fetchInbox();
     } catch (err: unknown) {
-      setSendError(err instanceof Error ? err.message : "File send failed. Try again.");
+      const message = err instanceof Error ? err.message : "";
+      setSendError(err instanceof TypeError && /fetch/i.test(message)
+        ? "Could not reach the HRMS server. Check your connection and try again."
+        : message || "File send failed. Try again.");
     } finally { setSendingFile(false); }
   }
 
@@ -382,10 +386,28 @@ export function MetaWhatsAppInbox() {
 
   const grouped = groupByDate(messages);
 
+  const sourceTabs = (
+    <div role="tablist" aria-label="Conversation source" className="mb-2 flex gap-1">
+      {([["meta", "Meta campaign leads"], ["he", "Hiring Engine candidates"]] as const).map(([k, l]) => (
+        <button key={k} type="button" role="tab" aria-selected={source === k} onClick={() => { setSource(k); window.history.replaceState(null, "", k === "he" ? "#engine" : window.location.pathname); }}
+          className={`cursor-pointer rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${source === k ? "bg-[#00a884] text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}>{l}</button>
+      ))}
+    </div>
+  );
+  if (source === "he") {
+    return (
+      <DashboardLayout>
+        {sourceTabs}
+        <div className="flex flex-col overflow-hidden rounded-xl border border-[#d1d7db] shadow-md" style={{ height: "calc(100vh - 160px)" }}><HeWhatsAppInbox /></div>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout>
+      {sourceTabs}
       {/* Outer container — fill available height */}
-      <div className="flex flex-col rounded-xl overflow-hidden border border-[#d1d7db] shadow-md" style={{ height: "calc(100vh - 110px)" }}>
+      <div className="flex flex-col rounded-xl overflow-hidden border border-[#d1d7db] shadow-md" style={{ height: "calc(100vh - 160px)" }}>
 
         {/* ══ LEFT PANEL + RIGHT PANEL side by side ══ */}
         <div className="flex flex-1 min-h-0">

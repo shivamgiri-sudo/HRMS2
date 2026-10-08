@@ -544,11 +544,81 @@ describe("GET /api/wfm/productivity-upload/sources", () => {
     // Same gate function is not enough: it is handed out by a stubbed requireRole that ignores its
     // arguments. Every call must have named the identical role list, so /sources cannot be gated
     // on a list of its own that drifts from UPLOAD_ROLES.
-    expect(gateCalls.roleLists.length).toBeGreaterThanOrEqual(3);
-    const [firstList] = gateCalls.roleLists;
-    expect(firstList!.length).toBeGreaterThan(0);
-    for (const list of gateCalls.roleLists) {
-      expect(list).toEqual(firstList);
+    //
+    // requireRole is called once per route at registration, in the same order the routes land on
+    // the router stack, so the n-th recorded role list belongs to the n-th route. Since 7009660eb
+    // the router also carries the admin column-mapping route, which is gated on a narrower list of
+    // its own, so the lists are matched to their routes rather than all compared to the first.
+    const routeLayers = stack.filter((l) => l.route);
+    expect(gateCalls.roleLists.length).toBe(routeLayers.length);
+    const rolesFor = (path: string, method: string): string[] => {
+      const index = routeLayers.findIndex((l) => l.route.path === path && l.route.methods?.[method]);
+      expect(index, `no ${method.toUpperCase()} ${path} route registered`).toBeGreaterThan(-1);
+      return gateCalls.roleLists[index]!;
+    };
+
+    const uploadRoles = rolesFor('/sources', 'get');
+    expect(uploadRoles.length).toBeGreaterThan(0);
+    expect(rolesFor('/preview', 'post')).toEqual(uploadRoles);
+    expect(rolesFor('/commit', 'post')).toEqual(uploadRoles);
+
+    // Rewriting a source's column mapping is an admin action: gated, and never on a list wider
+    // than the upload roles it sits beside.
+    expect(handlersFor('/sources/:sourceId/column-mapping', 'post')).toContain(roleGateStub);
+    const mappingRoles = rolesFor('/sources/:sourceId/column-mapping', 'post');
+    expect(mappingRoles).toEqual(['super_admin', 'admin', 'wfm']);
+    for (const role of mappingRoles) {
+      expect(uploadRoles).toContain(role);
     }
+  });
+});
+
+describe('productivity upload branch scope (owner ruling 2026-10-01: admin is branch-scoped like hr)', () => {
+  const preview = (branchId: string) => request(buildApp())
+    .post('/api/wfm/productivity-upload/preview')
+    .field('diallerSourceId', 'ds-1')
+    .field('branchId', branchId)
+    .field('processId', 'process-1')
+    .field('dateFrom', '2026-07-01')
+    .field('dateTo', '2026-07-31')
+    .field('columnMappings', JSON.stringify({ 'Emp Code': 'employee_code', 'Report Date': 'report_date', 'Login Minutes': 'login_minutes' }))
+    .attach('file', Buffer.from(CSV_CONTENT), 'july.csv');
+  const scope = (roles: string[], over: Record<string, unknown> = {}) => ({
+    roles, branchId: 'branch-a', isSuperAdmin: roles.includes('super_admin'), isAdmin: roles.includes('admin'),
+    isHr: roles.includes('hr'), isPayroll: false, isFinance: false, assignments: [], ...over,
+  });
+  const allAssignment = { scopeType: 'all', branchId: null, processId: null };
+
+  beforeEach(() => {
+    buildUploadPreviewMock.mockReset();
+    commitUploadBatchMock.mockReset();
+    resolveUserBusinessScopeMock.mockReset();
+    buildUploadPreviewMock.mockResolvedValue({ accepted: [], rejected: [] });
+  });
+
+  it('admin (no longer org-wide) is refused for a branch outside its own', async () => {
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['admin'], { assignments: [{ scopeType: 'branch', branchId: 'branch-a', processId: null }] }));
+    expect((await preview('branch-b')).status).toBe(403);
+    expect(buildUploadPreviewMock).not.toHaveBeenCalled();
+  });
+  it('admin may upload for its own branch', async () => {
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['admin'], { assignments: [{ scopeType: 'branch', branchId: 'branch-a', processId: null }] }));
+    expect((await preview('branch-a')).status).toBe(200);
+  });
+  it("an 'all' assignment on a branch-scoped role means its own branch, not every branch", async () => {
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['hr'], { assignments: [allAssignment] }));
+    expect((await preview('branch-b')).status).toBe(403);
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['hr'], { assignments: [allAssignment] }));
+    expect((await preview('branch-a')).status).toBe(200);
+  });
+  it('an admin with no branch and no assignment uploads nothing (fail closed)', async () => {
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['admin'], { branchId: null }));
+    expect((await preview('branch-a')).status).toBe(403);
+  });
+  it('org-wide roles (super_admin, ceo, ...) upload for any branch', async () => {
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['super_admin']));
+    expect((await preview('branch-z')).status).toBe(200);
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['ceo']));
+    expect((await preview('branch-z')).status).toBe(200);
   });
 });

@@ -30,6 +30,12 @@ const read = (path: string) =>
  * already regressed once, use the FULL scoping call and not the weaker branch-only one.
  *
  * A ratchet, not a snapshot: CODES_REQUIRING_FULL_SCOPE may only grow.
+ *
+ * A code whose inline `case` block has since been deleted stays in that list and moves to
+ * SERVED_BY_EXECUTOR as well: its screen request now falls through to executeReport(), so
+ * screen and export run the one executor and cannot diverge. For those the guard is that the
+ * inline block stays gone — the last test below still holds the executor to
+ * appendScopeConditions.
  */
 const CODES_REQUIRING_FULL_SCOPE = [
   "employee-master",
@@ -41,6 +47,12 @@ const CODES_REQUIRING_FULL_SCOPE = [
   "clearance-status-register",
   "leave-trend-monthly",
 ] as const;
+
+/** Inline screen block deleted; the screen is served by the export executor itself. */
+const SERVED_BY_EXECUTOR: ReadonlySet<string> = new Set([
+  // 30ba902d9, 2026-09-14: the inline preview showed 13 of 74 columns and ignored the status filter.
+  "employee-master",
+]);
 
 describe("screen route matches export executor scoping for previously-mismatched reports", () => {
   const routes = read("src/modules/reporting/report-suite.routes.ts");
@@ -62,6 +74,19 @@ describe("screen route matches export executor scoping for previously-mismatched
   it.each(CODES_REQUIRING_FULL_SCOPE)(
     "%s: screen route calls addFullScopedEmployeeFilters, not the branch-only helper",
     (code) => {
+      if (SERVED_BY_EXECUTOR.has(code)) {
+        // No inline block may come back: one would shadow the executor and reopen the
+        // screen/export split, with whatever scoping it happened to hand-roll.
+        expect(
+          routes,
+          `${code}: an inline screen block is back — delete it so the code falls through to executeReport()`,
+        ).not.toContain(`case "${code}"`);
+        // ...and the screen route's fall-through must still hand the executor the full scope.
+        expect(routes).toMatch(/const execScope\s*=\s*await resolveFullScope\(/);
+        expect(routes).toContain("await executeReport(code, execFilters, execScope, execOptions)");
+        expect(read("src/modules/reporting/executors/index.ts")).toContain(`"${code}":`);
+        return;
+      }
       const body = screenBlock(code);
 
       expect(

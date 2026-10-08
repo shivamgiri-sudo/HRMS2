@@ -1,9 +1,12 @@
+import { employeeFulltextAvailable } from "./employee-search-index.js";
 import { Router } from "express";
 import { resolvePii } from "../../shared/piiCiphertext.js";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
+import { guardEmployeeScope } from "./employeeScopeGuard.js";
+import { buildEmployeeScopeCondition, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 import {
   buildScopeWhereClause,
   hasScopedAccess,
@@ -1074,12 +1077,19 @@ const hrProfileGate = [
   requireScopedRole(["hr"], resolveEmployeeScope),
 ];
 
+// Bank and statutory details are payroll data: branch payroll_hr may correct them for their own
+// branch (requireScopedRole enforces the branch), but not the personal / KYC / family steps.
+const payrollProfileGate = [
+  requireRole("super_admin", "admin", "hr", "payroll_hr"),
+  requireScopedRole(["hr", "payroll_hr"], resolveEmployeeScope),
+];
+
 // PUT /api/employees/:employeeId/bank-details — HR entry for a manually-onboarded employee.
 // Same direct-write/pending-verification shape as PUT /me/bank-details (no penny-drop here —
 // that's candidate-journey-specific verification infra, out of scope for field parity).
 router.put(
   "/:employeeId/bank-details",
-  ...hrProfileGate,
+  ...payrollProfileGate,
   h(async (req: any, res: any) => {
     const empId = req.params.employeeId;
     const {
@@ -1184,6 +1194,7 @@ router.put(
       entity_id: empId,
       change_summary: {
         fields_updated: fields.filter((f) => f !== "employee_id"),
+        acted_on_behalf: true,
       },
       req,
     });
@@ -1195,7 +1206,7 @@ router.put(
 // PUT /api/employees/:employeeId/statutory-details — HR entry, mirrors PUT /me/statutory-details
 router.put(
   "/:employeeId/statutory-details",
-  ...hrProfileGate,
+  ...payrollProfileGate,
   h(async (req: any, res: any) => {
     const empId = req.params.employeeId;
     const {
@@ -1676,7 +1687,7 @@ router.get(
       req.authUser!.id,
       ["hr", "manager", "branch_head"],
       { branchId: "e.branch_id", processId: "e.process_id" },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
     const scopeSql = scoped.sql === "1=1" ? "" : ` AND (${scoped.sql})`;
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -1738,7 +1749,7 @@ router.get(
         departmentId: "e.department_id",
         managerEmployeeId: "e.reporting_manager_id",
       },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
 
     const baseConditions = ["e.active_status = 1"];
@@ -1856,7 +1867,7 @@ router.get(
         "payroll_hr",
       ],
       { branchId: "e.branch_id", processId: "e.process_id" },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
     const scopeSql = scoped.sql === "1=1" ? "" : ` AND (${scoped.sql})`;
     /*
@@ -1969,7 +1980,7 @@ router.get(
         departmentId: "e.department_id",
         managerEmployeeId: "e.reporting_manager_id",
       },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
 
     const parsed = employeeFiltersSchema.safeParse(req.query);
@@ -2033,13 +2044,17 @@ router.get(
           // Below the FULLTEXT token floor — LIKE is the only thing that can match.
           conds.push(`(${derivedName} LIKE ? OR e.employee_code LIKE ?)`);
           params.push(`%${term}%`, `%${term}%`);
-        } else {
+        } else if (await employeeFulltextAvailable()) {
           conds.push(
             `(MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)
             OR e.employee_code LIKE ?
             OR ${derivedName} LIKE ?)`,
           );
           params.push(`${term}*`, `%${term}%`, `%${term}%`);
+        } else {
+          // No FULLTEXT index on this database (see employee-search-index.ts): plain LIKE, same matches.
+          conds.push(`(e.employee_code LIKE ? OR ${derivedName} LIKE ?)`);
+          params.push(`%${term}%`, `%${term}%`);
         }
       }
     }
@@ -2204,7 +2219,13 @@ router.get(
         departmentId: "e.department_id",
         managerEmployeeId: "e.reporting_manager_id",
       },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      {
+        allowAdminBypass: true,
+        allowCeoAllRead: true,
+        // HR users must always be branch-scoped. scope_type='all' gives org-wide access which
+        // is correct for admin/ceo (they bypass above) but HR should only see their own branch(es).
+        blockOrgWideForRoles: ["hr", "hr_admin"],
+      },
     );
 
     (req as any).scopeFilter = scoped;
@@ -2425,12 +2446,13 @@ router.patch(
 //
 // Still deliberately NOT open to 'manager': revoking someone's access is not a
 // line-manager action, and the reason is mandatory and audited either way.
-router.delete("/:id", requireRole("admin", "hr"), h(c.deactivateEmployee));
+router.delete("/:id", requireRole("admin", "hr"), guardEmployeeScope("id"), h(c.deactivateEmployee));
 
 // Journey log
 router.get(
   "/:id/journey",
   requireRole("admin", "hr", "manager"),
+  guardEmployeeScope("id", { allowReportingSpan: true }),
   async (req: any, res: any, next: any) => {
     try {
       const data = await listJourneyEvents(req.params.id, {
@@ -2449,6 +2471,7 @@ router.get(
 router.post(
   "/:id/journey",
   requireRole("admin", "hr"),
+  guardEmployeeScope("id"),
   async (req: any, res: any, next: any) => {
     try {
       const b = req.body;
@@ -2806,8 +2829,13 @@ router.get(
   "/bank-quality/corrupt",
   requireAuth,
   requireRole("hr", "hr_admin", "super_admin", "payroll", "finance"),
-  h(async (_req: any, res: any) => {
+  h(async (req: any, res: any) => {
     const SCIENTIFIC_RE = /[Ee][+-]/;
+    // Branch scoping (owner ruling 2026-10-01): hr / payroll see only their own branch's employees.
+    const rowScope = buildEmployeeScopeCondition(await resolveUserBusinessScope(req.authUser!), {
+      employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", lobId: "e.lob_id",
+      departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id",
+    });
     const VALID_ACCOUNT_RE = /^[0-9]{6,20}$/;
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -2819,7 +2847,9 @@ router.get(
       WHERE ebd.account_number_enc IS NULL
         AND ebd.account_number IS NOT NULL
         AND e.active_status = 1
+        AND (${rowScope.sql})
       ORDER BY e.employee_code ASC`,
+      rowScope.params,
     );
 
     const corruptRows = (rows as any[])
@@ -2872,6 +2902,7 @@ router.post(
   "/bank-quality/:employeeId/request-resubmission",
   requireAuth,
   requireRole("hr", "hr_admin", "super_admin"),
+  guardEmployeeScope("employeeId"),
   h(async (req: any, res: any) => {
     const { employeeId } = req.params;
 
@@ -2922,6 +2953,7 @@ router.post(
   "/:id/provision-account",
   requireAuth,
   requireRole("super_admin", "admin", "hr", "hr_admin"),
+  guardEmployeeScope("id"),
   h(async (req: any, res: any) => {
     const { id } = req.params;
     const [rows] = await db.execute<RowDataPacket[]>(

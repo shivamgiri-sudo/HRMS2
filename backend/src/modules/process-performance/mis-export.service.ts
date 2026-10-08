@@ -1,45 +1,31 @@
 import {
-  appendDashboardToWorkbook,
-  newWorkbookWriter,
-  writeNotesSheet,
-  safeSheetName,
-  isKnownDashboard,
-  type DashboardExcelRequest,
-  type ExportSlideInput,
-  type RawSheetResult,
+  appendDashboardToWorkbook, newWorkbookWriter, safeSheetName, isKnownDashboard,
+  type DashboardExcelRequest, type ExportSlideInput, type RawSheetResult,
 } from "./dashboard-export.service.js";
 
 import { getBellavitaSaleDashboard } from "./bellavita-sale-dashboard.service.js";
 import { getBellavitaChatOverview } from "./bellavita-chat-overview.service.js";
 import { getBellavitaCartDashboard } from "./bellavita-cart-dashboard.service.js";
-import { getGncSaleDashboard } from "./gnc-sale-dashboard.service.js";
+import { getGncSaleDashboard, getGncAbandonCartDaily } from "./gnc-sale-dashboard.service.js";
 import { getGncChatDashboard } from "./gnc-chat-dashboard.service.js";
 import { getNeemansPerformanceDashboard } from "./neemans-performance-dashboard.service.js";
 import { getNeemansCartDashboard } from "./neemans-cart-dashboard.service.js";
-import { getHousingOwnerDashboard } from "./housing-owner-dashboard.service.js";
+import { getHousingOwnerDashboard, getHousingOwnerEntityTrend, type HousingOwnerGroupRow } from "./housing-owner-dashboard.service.js";
+import { getDuDigitalDashboard, type DuDashboardLabel } from "./du-digital-dashboard.service.js";
 import {
-  getHousingPremiumOverview,
-  type OverviewValues,
+  getHousingPremiumOverview, getHousingPremiumDayWise, getHousingPremiumAgentWise, getHousingPremiumSlotWise, type OverviewValues,
 } from "./housing-premium-dashboard.service.js";
 import { getCloviaChannelsDashboard } from "./clovia-channels-dashboard.service.js";
 import { getBirlanuDashboard } from "./birlanu-dashboard.service.js";
 import { getLpFeedbackDashboard } from "./lp-feedback-dashboard.service.js";
 import { getLpOnboardingDashboard } from "./lp-onboarding-dashboard.service.js";
 import { getSatyaRetailDashboard } from "./satya-retail-dashboard.service.js";
-import {
-  getAppreciateWealthDashboard,
-  parseFilters as parseAwFilters,
-} from "./appreciate-wealth-dashboard.service.js";
-import {
-  getInboundInsights,
-  isInsightProject,
-} from "../call-master/inbound-insights.service.js";
-import {
-  buildPeriodColumns,
-  proratedTarget,
-  eachDay,
-  type PeriodColumn,
-} from "./mis-period-columns.js";
+import { buildSatyaMisWorkbook } from "./satya-retail-mis-workbook.service.js";
+import { buildLpMisWorkbook } from "./lp-mis-workbook.service.js";
+import { normalizeFilters } from "./satya-retail-report.service.js";
+import { getAppreciateWealthDashboard, parseFilters as parseAwFilters } from "./appreciate-wealth-dashboard.service.js";
+import { getInboundInsights, isInsightProject } from "../call-master/inbound-insights.service.js";
+import { buildPeriodColumns, proratedTarget, eachDay, type PeriodColumn } from "./mis-period-columns.js";
 
 /**
  * "MIS" -- one consolidated, formatted workbook per process/company, bundling
@@ -405,39 +391,94 @@ async function gncSaleSlides(
   to: string,
 ): Promise<ExportSlideInput[]> {
   const d = await getGncSaleDashboard(from, to);
-  return [
-    {
-      title: "Sale Performance",
-      kpis: [
-        { label: "Turn Over", value: fmtInr(d.headline.turnover) },
-        { label: "Sale Count", value: fmtNum(d.headline.saleCount) },
-        { label: "Prepaid %", value: fmtPct(d.headline.prepaidPct) },
-        { label: "AOV", value: fmtInr(d.headline.aov) },
-        { label: "Active Agents", value: fmtNum(d.headline.activeAgents) },
+  const abandonDaily = await getGncAbandonCartDaily(from, to);
+  const abandonSalesByDate = new Map(d.dateWiseBreakdown.map((r) => [r.date, r.byCampaign["Abandon Cart"]?.totalSaleCount ?? 0]));
+  return [{
+    title: "GNC Abandon Cart Allocation",
+    tables: [{
+      title: "GNC-Abandon Cart - Overall Allocation Overview",
+      columns: [
+        "Date", "Total Allocation", "Workable Case", "Gross Target", "Net Target", "Net Revenue", "Net Achv %",
+        "Connected", "Connect%", "Same Day Unique Attempt", "Same Day Connected Count", "Same Day Connected %",
+        "NC Connected Count", "NC Connected %", "Conversion %", "Total Allocation", "Workable Case", "Connected", "Connect% (L/I)", "Sale Count",
       ],
-      tables: [
-        {
-          title: "Campaign-wise Performance",
-          columns: ["Campaign", "Sale Count", "Revenue", "Prepaid %"],
-          rows: d.campaignRevenue.map((c) => [
-            c.campaign,
-            c.saleCount,
-            fmtInr(c.turnover),
-            `${c.paidPct}%`,
-          ]),
-        },
-        {
-          title: "Top Performers",
-          columns: ["Agent", "Campaign", "Revenue"],
-          rows: d.topPerformers.map((p) => [
-            p.empName,
-            p.campaign,
-            fmtInr(p.turnover),
-          ]),
-        },
+      rows: abandonDaily.map((r) => {
+        const sale = abandonSalesByDate.get(r.date) ?? 0;
+        return [
+          r.date, r.total, "—", "—", "—", "—", "—",
+          r.connected, fmtPct(pct(r.connected, r.total)),
+          r.attempted, r.sameDayConnected, fmtPct(pct(r.sameDayConnected, r.attempted)),
+          r.ncConnected, fmtPct(pct(r.ncConnected, r.total)), fmtPct(pct(sale, r.total)),
+          r.total, "—", r.connected, fmtPct(pct(r.connected, r.attempted)), sale,
+        ];
+      }),
+    }],
+  }, {
+    title: "GNC Overall",
+    kpis: [
+      { label: "Sale Count", value: fmtNum(d.headline.saleCount) },
+      { label: "Amount", value: fmtNum(d.headline.turnover) },
+      { label: "Prepaid %", value: fmtPct(d.headline.prepaidPct) },
+      { label: "COD %", value: fmtPct(d.headline.codPct) },
+      { label: "Ach %", value: "—" },
+      { label: "Total Allocation", value: fmtNum(d.headline.totalAllocation) },
+      { label: "Same Day Connected", value: fmtPct(d.headline.sameDayConnectedPct) },
+      { label: "Active", value: fmtNum(d.headline.activeAgents) },
+    ],
+    tables: [
+      {
+        title: "COD vs Prepaid (date-wise)",
+        columns: ["Date", "Prepaid", "COD", "Total Sales"],
+        rows: d.dateWiseTrend.map((r) => [r.date, r.prepaidCount, r.codCount, r.saleCount]),
+      },
+      {
+        title: "LOB (campaign-wise sale count)",
+        columns: ["Campaign", "Sale Count"],
+        rows: d.campaignRevenue.map((c) => [c.campaign, c.saleCount]),
+      },
+      {
+        title: "Revenue top 10 agents",
+        columns: ["Agent", "Revenue"],
+        rows: [...d.topPerformers].sort((a, b) => b.turnover - a.turnover).slice(0, 10).map((p) => [p.empName, fmtInr(p.turnover)]),
+      },
+      {
+        title: "Allocation funnel",
+        columns: ["Stage", "Count", "% of base"],
+        rows: d.funnel.map((f) => [f.stage, f.count, `${f.pctOfBase}%`]),
+      },
+    ],
+  }, {
+    title: "Date Wise Performance",
+    tables: [{
+      title: "Date Wise Performance",
+      columns: [
+        "Date",
+        ...d.campaigns.flatMap((c) => [`${c} COD Sale`, `${c} COD Top line`, `${c} Paid Sale`, `${c} Paid Top line`, `${c} Grand Total Sale`, `${c} Grand Total Top line`]),
+        "RTD & RTO Sale", "RTD & RTO Top line", "Net Sale", "Net Sale Amount",
       ],
-    },
-  ];
+      rows: d.dateWiseBreakdown.map((r) => [
+        r.date,
+        ...d.campaigns.flatMap((c) => {
+          const b = r.byCampaign[c];
+          return [b?.codSaleCount ?? 0, b?.codAmount ?? 0, b?.paidSaleCount ?? 0, b?.paidAmount ?? 0, b?.totalSaleCount ?? 0, b?.totalAmount ?? 0];
+        }),
+        "—", "—", "—", "—",
+      ]),
+    }],
+  }, {
+    title: "Sale Performance",
+    kpis: [
+      { label: "Turn Over", value: fmtInr(d.headline.turnover) },
+      { label: "Sale Count", value: fmtNum(d.headline.saleCount) },
+      { label: "Prepaid %", value: fmtPct(d.headline.prepaidPct) },
+      { label: "AOV", value: fmtInr(d.headline.aov) },
+      { label: "Active Agents", value: fmtNum(d.headline.activeAgents) },
+    ],
+    tables: [
+      { title: "Campaign-wise Performance", columns: ["Campaign", "Sale Count", "Revenue", "Prepaid %"], rows: d.campaignRevenue.map((c) => [c.campaign, c.saleCount, fmtInr(c.turnover), `${c.paidPct}%`]) },
+      { title: "Top Performers", columns: ["Agent", "Campaign", "Revenue"], rows: d.topPerformers.map((p) => [p.empName, p.campaign, fmtInr(p.turnover)]) },
+    ],
+  }];
 }
 
 async function gncChatSlides(
@@ -627,10 +668,30 @@ const OWNER_KPI_ROWS: Array<{
   { label: "AOV", get: (v) => (v.saleCount > 0 ? fmtInr(v.aov) : "—") },
 ];
 
-async function housingOwnerSlides(
-  from: string,
-  to: string,
-): Promise<ExportSlideInput[]> {
+/** "3-May-22" -- same DOJ display format the reference MIS workbook uses. Handles both a JS Date
+ * (what mysql2 hands back for a real DATE column) and an ISO string (the manual-agent path). */
+function fmtDoj(doj: unknown): string {
+  if (!doj) return "—";
+  const d = doj instanceof Date ? doj : new Date(String(doj));
+  if (Number.isNaN(d.getTime())) return String(doj);
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${d.getDate()}-${MONTHS[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
+}
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function ownerGroupRows(rows: HousingOwnerGroupRow[], firstColLabel: string): { title: string; columns: string[]; rows: Array<Array<string | number>> } {
+  return {
+    title: `${firstColLabel}-wise Performance Metrics`,
+    columns: [firstColLabel, "Agents", "Total Calls", "Connected %", "Sale Count", "Revenue", "Target", "Achievement %", "RPA", "TQ", "MQ", "BQ"],
+    rows: rows.map((r) => [
+      r.name, r.agentCount, r.totalCalls, fmtPct(r.connectedPct), r.saleCount, fmtInr(r.revenue),
+      r.target > 0 ? fmtInr(r.target) : "—", r.target > 0 ? fmtPct(r.achievementPct) : "—", r.agentCount > 0 ? fmtInr(r.rpa) : "—",
+      r.tqCount, r.mqCount, r.bqCount,
+    ]),
+  };
+}
+
+async function housingOwnerSlides(from: string, to: string): Promise<ExportSlideInput[]> {
   const d = await getHousingOwnerDashboard(from, to);
 
   // getHousingOwnerDashboard has no day/week/MTD column grid of its own (unlike Housing Premium's
@@ -673,9 +734,86 @@ async function housingOwnerSlides(
     };
   }
 
+  // One matrix per AM and per TL (same MTD / Week / Day layout as the Overall matrix), each built
+  // from that entity's own day-wise trend so its numbers reconcile with its drill-down.
+  const ownerEntityTables = async (type: "am" | "tl", names: string[]) => {
+    const tables: ReturnType<typeof kpiMatrixTable>[] = [];
+    for (const name of names) {
+      const t = await getHousingOwnerEntityTrend(from, to, type, name);
+      const trendByDate = new Map(t.dailyTrend.map((r) => [r.date, r]));
+      const values: Record<string, OwnerColVals> = {};
+      for (const col of columns) {
+        const span = eachDay(col.from, col.to);
+        let revenue = 0, saleCount = 0, totalCalls = 0, connected = 0;
+        for (const day of span) {
+          const r = trendByDate.get(day);
+          if (r) { revenue += r.revenue; saleCount += r.saleCount; totalCalls += r.totalCalls; connected += r.connectedCalls; }
+        }
+        const target = col.kind === "mtd" && col.from.endsWith("-01")
+          ? Math.round(t.target)
+          : proratedTarget(t.target, col.from, col.to);
+        const notConnected = totalCalls - connected;
+        values[col.key] = {
+          totalCalls, connected, notConnected, connectedPct: pct(connected, totalCalls),
+          saleCount, revenue: round2(revenue), target, achPct: pct(revenue, target), aov: saleCount > 0 ? Math.round(revenue / saleCount) : 0,
+        };
+      }
+      tables.push(kpiMatrixTable(name, columns, values, OWNER_KPI_ROWS));
+    }
+    return tables;
+  };
+  const amTables = await ownerEntityTables("am", d.byAm.map((g) => g.name));
+  const tlTables = await ownerEntityTables("tl", d.byTl.map((g) => g.name));
+
+  // Page 2: Date Wise Performance -- one row per calendar day (not the pivoted MTD/Week/Day
+  // matrix above), each day's own fair-share target from the same proration the matrix uses.
+  const dateWiseTable = {
+    title: "Date Wise Performance",
+    columns: ["Day", "Date", "Target", "Total Calls", "Connected Calls", "Not Connected Call", "Cont%", "Talk time", "Sale Count", "Revenue", "Achi%", "AOV", "Present Count", "Avg Sale per Agent"],
+    rows: d.dailyTrend.map((r) => {
+      const target = Math.round(proratedTarget(d.headline.totalTarget, r.date, r.date));
+      const achPct = target > 0 ? pct(r.revenue, target) : 0;
+      const aov = r.saleCount > 0 ? Math.round(r.revenue / r.saleCount) : 0;
+      const avgSalePerAgent = r.presentCount > 0 ? round2(r.saleCount / r.presentCount) : 0;
+      const dow = WEEKDAYS[new Date(`${r.date}T00:00:00`).getDay()];
+      return [
+        dow, r.date, target > 0 ? target : "—", r.totalCalls, r.connectedCalls, r.notConnectedCalls, fmtPct(pct(r.connectedCalls, r.totalCalls)),
+        fmtHms(r.avgTalkTimeSec), r.saleCount, fmtInr(r.revenue), target > 0 ? fmtPct(achPct) : "—", r.saleCount > 0 ? fmtInr(aov) : "—",
+        r.presentCount, avgSalePerAgent,
+      ];
+    }),
+  };
+
+  // Page 3: Agent Wise Performance -- agents are already sorted by revenue descending
+  // (getHousingOwnerDashboard's own sort), so index+1 is a real rank, not a re-derived one.
+  const totalAgentRevenue = d.agents.reduce((s, a) => s + a.revenue, 0);
+  const agentWiseTable = {
+    title: "Agent Wise Performance",
+    columns: [
+      "Overall", "TL Name", "AM", "DOJ", "Tenure", "Bucket", "Status", "Target", "MTD Reported", "Total Calls", "Connected Calls",
+      "Not Connected Call", "Cont%", "Avg. Talk time", "Sale Count", "Revenue", "Achi%", "Stage", "Present Count", "Rank", "Cov%",
+    ],
+    rows: d.agents.map((a, i) => [
+      a.name, a.tlName, a.am, fmtDoj(a.doj), a.tenureDays ?? "—", a.bucket ?? "—", a.status,
+      a.target > 0 ? fmtInr(a.target) : "—", fmtInr(a.mtdReported), a.totalCalls, a.connectedCalls, a.notConnectedCalls,
+      fmtPct(a.connectedPct), fmtHms(a.avgTalkTimeSec), a.saleCount, fmtInr(a.revenue), a.target > 0 ? fmtPct(a.achievementPct) : "—",
+      a.stage, a.presentCount, i + 1, totalAgentRevenue > 0 ? fmtPct(pct(a.revenue, totalAgentRevenue)) : "—",
+    ]),
+  };
+  const tqMqBqTable = {
+    title: "TQ MQ BQ Summary",
+    columns: ["Stage", "Agent Count", "Total Revenue", "Avg Achievement %"],
+    rows: (["TQ", "MQ", "BQ", "NA"] as const).map((stage) => {
+      const inStage = d.agents.filter((a) => a.stage === stage);
+      const targeted = inStage.filter((a) => a.target > 0);
+      const avgAch = targeted.length > 0 ? Math.round(targeted.reduce((s, a) => s + a.achievementPct, 0) / targeted.length) : 0;
+      return [stage === "NA" ? "No Target" : stage, inStage.length, fmtInr(inStage.reduce((s, a) => s + a.revenue, 0)), targeted.length > 0 ? `${avgAch}%` : "—"];
+    }),
+  };
+
   return [
     {
-      title: "Overview",
+      title: "Performance Summary",
       kpis: [
         { label: "Revenue", value: fmtInr(d.headline.totalRevenue) },
         { label: "Sale Count", value: fmtNum(d.headline.totalSaleCount) },
@@ -685,36 +823,15 @@ async function housingOwnerSlides(
         { label: "Active Agents", value: fmtNum(d.headline.activeAgents) },
       ],
       tables: [
-        kpiMatrixTable(
-          "KPI Summary (MTD, Weekly & Daily)",
-          columns,
-          overall,
-          OWNER_KPI_ROWS,
-        ),
-        {
-          title: "AM-wise",
-          columns: ["AM", "Sale Count", "Revenue", "Target", "Achievement %"],
-          rows: d.byAm.map((r) => [
-            r.name,
-            r.saleCount,
-            fmtInr(r.revenue),
-            r.target > 0 ? fmtInr(r.target) : "—",
-            r.target > 0 ? `${r.achievementPct.toFixed(0)}%` : "—",
-          ]),
-        },
-        {
-          title: "TL-wise",
-          columns: ["TL", "Sale Count", "Revenue", "Target", "Achievement %"],
-          rows: d.byTl.map((r) => [
-            r.name,
-            r.saleCount,
-            fmtInr(r.revenue),
-            r.target > 0 ? fmtInr(r.target) : "—",
-            r.target > 0 ? `${r.achievementPct.toFixed(0)}%` : "—",
-          ]),
-        },
+        kpiMatrixTable("Overall Performance Metrics", columns, overall, OWNER_KPI_ROWS),
+        ownerGroupRows(d.byAm, "AM"),
+        ownerGroupRows(d.byTl, "TL"),
       ],
     },
+    { title: "AM Wise Performance", tables: amTables },
+    { title: "TL wise Performance", tables: tlTables },
+    { title: "Date Wise Performance", tables: [dateWiseTable] },
+    { title: "Agent Wise Performance", tables: [agentWiseTable, tqMqBqTable] },
   ];
 }
 
@@ -741,69 +858,126 @@ const PREMIUM_KPI_ROWS: Array<{
   { label: "Avg Talk Time / Agent", get: (v) => fmtHms(v.avgTalkPerAgentSec) },
 ];
 
-async function housingPremiumSlides(
-  from: string,
-  to: string,
-): Promise<ExportSlideInput[]> {
-  const d = await getHousingPremiumOverview(from, to);
-  const mtdKey =
-    d.columns.find((c) => c.kind === "mtd")?.key ?? d.columns[0]?.key;
+async function housingPremiumSlides(from: string, to: string): Promise<ExportSlideInput[]> {
+  // fullCdr=true: an MIS export must show real CDR-derived figures (Connected, Not Connected,
+  // Present Count, etc.) for the WHOLE requested range, not just the live dashboard's
+  // 5-day-clamped window -- see getHousingPremiumOverview's own doc for why that clamp exists
+  // and why it must not reach this path.
+  const d = await getHousingPremiumOverview(from, to, undefined, true);
+  const dayWise = await getHousingPremiumDayWise(from, to);
+  const agentWise = await getHousingPremiumAgentWise(from, to);
+  const slotWise = await getHousingPremiumSlotWise(from, to);
+  const mtdKey = d.columns.find((c) => c.kind === "mtd")?.key ?? d.columns[0]?.key;
   const mtd = mtdKey ? d.overall[mtdKey] : undefined;
+  return [{
+    title: "Overview",
+    kpis: mtd ? [
+      { label: "Total Calls (MTD)", value: fmtNum(mtd.totalCalls) },
+      { label: "Connected %", value: fmtPct(mtd.connectedPct) },
+      { label: "Revenue", value: fmtInr(mtd.revenue) },
+      { label: "Sale Count", value: fmtNum(mtd.saleCount) },
+      { label: "Target", value: fmtInr(mtd.target) },
+      { label: "Achievement %", value: fmtPct(mtd.achievedPct) },
+      { label: "AOV", value: fmtInr(mtd.aov) },
+    ] : [],
+    tables: [
+      // Housing Premium's own Overview endpoint already computes this same MTD/Week/Day column grid
+      // (buildOverviewColumns / rollUpOverview), so this reuses its real per-column figures rather
+      // than re-deriving them -- week-wise and date-wise sit in the same sheet as the MTD total here.
+      kpiMatrixTable("KPI Summary (MTD, Weekly & Daily)", d.columns, d.overall, PREMIUM_KPI_ROWS),
+      {
+        title: "TL-wise (MTD)",
+        columns: ["TL", "Agents", "Calls", "Connected %", "Revenue", "Achievement %"],
+        rows: d.byTl.map((t) => {
+          const v = mtdKey ? t.values[mtdKey] : undefined;
+          return [t.tlName, t.agentCount, v?.totalCalls ?? 0, v ? `${v.connectedPct}%` : "—", v ? fmtInr(v.revenue) : "—", v ? `${v.achievedPct}%` : "—"];
+        }),
+      },
+    ],
+  }, {
+    title: "TL wise Performance",
+    tables: d.byTl.map((t) => kpiMatrixTable(t.tlName, d.columns, t.values, PREMIUM_KPI_ROWS)),
+  }, {
+    title: "Date Wise Performance",
+    tables: [{
+      title: "Date Wise Performance",
+      columns: ["Day", "Date", "Bucket", "Target", "Total Calls", "Unique Connected", "Connected Calls", "Not Connected Call", "Cont%", "Avg. Talk time", "Sale Count", "Revenue", "AOV", "Present Count", "Avg Sale per Agent"],
+      rows: dayWise.days.map((r) => [
+        r.dayName, r.date, "-", r.target, r.totalCalls, r.uniqueConnected, r.connected, r.notConnected, `${r.connectedPct}%`,
+        fmtHms(r.avgTalkTimeSec), r.saleCount, r.revenue, r.aov, r.presentCount, r.avgSalePerAgent,
+      ]),
+    }],
+  }, {
+    title: "Agent Wise Performance",
+    tables: [{
+      title: "Agent Wise Performance",
+      columns: ["Emp ID", "Overall", "CRM ID", "TL Name", "DOJ", "Tenure", "Bucket", "Status", "Target", "Total Calls", "Total Unique Calls", "Connected Calls", "Not Connected Call", "Cont%", "Avg. Talk time", "Sale Count", "Revenue", "Present Count", "Avg Sale per day"],
+      rows: agentWise.agents.map((a) => [
+        a.empId, a.name, a.name, a.tlName, a.doj ?? "—", a.tenureDays ?? "—", a.bucket, a.status, a.target, a.totalCalls, a.uniqueCalls,
+        a.connected, a.notConnected, `${a.connectedPct}%`, fmtHms(a.avgTalkTimeSec), a.saleCount, a.revenue, a.presentCount, a.avgSalePerDay,
+      ]),
+    }],
+  }, {
+    title: "Slot Wise Performance",
+    kpis: [{ label: "Note", value: "Target, Sale Count, Revenue, AOV and Achi% by hour are not captured in the uploaded data -- shown as —." }],
+    tables: [{
+      title: "Slot Wise Performance",
+      columns: ["SLOT", "Bucket", "Target", "Total Calls", "Connected Calls", "Not Connected Call", "Cont%", "Avg. Talk time", "Sale Count", "Revenue", "AOV", "Achi%"],
+      rows: [
+        ...slotWise.slots.filter((s) => s.totalCalls > 0).map((s) => [
+          s.hour, "-", "—", s.totalCalls, s.connected, s.notConnected, `${s.connectedPct}%`, fmtHms(s.avgTalkTimeSec), "—", "—", "—", "—",
+        ]),
+        [
+          "Total", "-", "—", slotWise.slots.reduce((s, x) => s + x.totalCalls, 0), slotWise.slots.reduce((s, x) => s + x.connected, 0),
+          slotWise.slots.reduce((s, x) => s + x.notConnected, 0), "—", "—", "—", "—", "—", "—",
+        ],
+      ],
+    }],
+  }];
+}
+
+async function duDigitalSlides(label: DuDashboardLabel, from: string, to: string): Promise<ExportSlideInput[]> {
+  const d = await getDuDigitalDashboard(label, from, to);
+  const k = d.kpis;
   return [
     {
       title: "Overview",
-      kpis: mtd
-        ? [
-            { label: "Total Calls (MTD)", value: fmtNum(mtd.totalCalls) },
-            { label: "Connected %", value: fmtPct(mtd.connectedPct) },
-            { label: "Revenue", value: fmtInr(mtd.revenue) },
-            { label: "Sale Count", value: fmtNum(mtd.saleCount) },
-            { label: "Target", value: fmtInr(mtd.target) },
-            { label: "Achievement %", value: fmtPct(mtd.achievedPct) },
-            { label: "AOV", value: fmtInr(mtd.aov) },
-          ]
-        : [],
-      tables: [
-        // Housing Premium's own Overview endpoint already computes this same MTD/Week/Day column grid
-        // (buildOverviewColumns / rollUpOverview), so this reuses its real per-column figures rather
-        // than re-deriving them -- week-wise and date-wise sit in the same sheet as the MTD total here.
-        kpiMatrixTable(
-          "KPI Summary (MTD, Weekly & Daily)",
-          d.columns,
-          d.overall,
-          PREMIUM_KPI_ROWS,
-        ),
-        {
-          title: "TL-wise (MTD)",
-          columns: [
-            "TL",
-            "Agents",
-            "Calls",
-            "Connected %",
-            "Revenue",
-            "Achievement %",
-          ],
-          rows: d.byTl.map((t) => {
-            const v = mtdKey ? t.values[mtdKey] : undefined;
-            return [
-              t.tlName,
-              t.agentCount,
-              v?.totalCalls ?? 0,
-              v ? `${v.connectedPct}%` : "—",
-              v ? fmtInr(v.revenue) : "—",
-              v ? `${v.achievedPct}%` : "—",
-            ];
-          }),
-        },
+      kpis: [
+        { label: "Offered", value: fmtNum(k.offered) },
+        { label: "Answered", value: fmtNum(k.answered) },
+        { label: "Abandoned", value: fmtNum(k.abandoned) },
+        { label: "SL %", value: `${k.slPct}%` },
+        { label: "AL %", value: `${k.alPct}%` },
+        { label: "Abandon %", value: `${k.abandonPct}%` },
+        { label: "AHT", value: k.aht },
+        { label: "Agents", value: fmtNum(k.agentCount) },
       ],
+      tables: [{
+        title: "Date Wise Performance",
+        columns: ["Date", "Offered", "Answered", "Answered within 20s", "Abandoned", "SL %", "AL %", "Abandon %", "AHT", "Agents"],
+        rows: d.daily.map((r) => [r.date, r.offered, r.answered, r.answeredWithin20, r.abandoned, `${r.slPct}%`, `${r.alPct}%`, `${r.abandonPct}%`, fmtHms(r.ahtSec), r.agentCount]),
+      }],
+    },
+    {
+      title: "Agent Wise Performance",
+      tables: [{
+        title: "Agent Wise Performance",
+        columns: ["Agent", "Offered", "Answered", "Abandoned", "AL %", "Calls", "Login", "Talk"],
+        rows: d.agents.map((a) => [a.agent, a.offered, a.answered, a.abandoned, `${a.alPct}%`, a.calls, a.login, a.talk]),
+      }],
+    },
+    {
+      title: "Slot Wise Performance",
+      tables: [{
+        title: "Slot Wise Performance",
+        columns: ["Date", "Slot", "Offered", "Answered", "Answered within 20s", "Abandoned", "SL %", "AL %", "AHT"],
+        rows: d.slots.map((s) => [s.date, s.hour, s.offered, s.answered, s.answeredWithin20, s.abandoned, `${s.slPct}%`, `${s.alPct}%`, fmtHms(s.ahtSec)]),
+      }],
     },
   ];
 }
 
-async function cloviaSlides(
-  from: string,
-  to: string,
-): Promise<ExportSlideInput[]> {
+async function cloviaSlides(from: string, to: string): Promise<ExportSlideInput[]> {
   const d = await getCloviaChannelsDashboard(from, to);
   return [
     flattenToSlide("Email", d.email as unknown as Record<string, unknown>),
@@ -1061,6 +1235,12 @@ async function buildRegistry(): Promise<Record<string, MisBundleEntry[]>> {
         build: housingPremiumSlides,
       },
     ],
+    du_thailand: [
+      { dashboardKey: "du_thailand", title: "DU Digital Thailand", build: (f, t) => duDigitalSlides("THAILAND", f, t) },
+    ],
+    du_korea: [
+      { dashboardKey: "du_korea", title: "DU Digital Korea", build: (f, t) => duDigitalSlides("KOREA", f, t) },
+    ],
     clovia: [
       { dashboardKey: "clovia", title: "Channels", build: cloviaSlides },
     ],
@@ -1153,6 +1333,17 @@ export async function buildMisExcel(
   toInput: string,
   filePath: string,
 ): Promise<MisBuildResult> {
+  // Satya Retail's MIS is the ops team's workbook layout (Dashboard, Snap, AGENT-WISE,
+  // DD Raw, Alloction), built from the same report data as the dashboard -- see
+  // satya-retail-mis-workbook.service.ts. Every other company keeps the slide bundle below.
+  if (companyKey === "satya_retail") {
+    return buildSatyaMisWorkbook(filePath, normalizeFilters({ from: fromInput, to: toInput }));
+  }
+  // LP Feedback / LP Onboarding MIS mirror their own workbooks' visible sheets -- see lp-mis-workbook.service.ts.
+  if (companyKey === "lp_feedback" || companyKey === "lp_onboarding") {
+    return buildLpMisWorkbook(companyKey, fromInput, toInput, filePath);
+  }
+
   const registry = await buildRegistry();
   const entries = registry[companyKey];
   if (!entries || entries.length === 0)
@@ -1164,7 +1355,6 @@ export async function buildMisExcel(
   const sections: string[] = [];
   const skipped: string[] = [];
   const deadline = Date.now() + 90_000; // MIS spans several dashboards, so a longer budget than a single-dashboard export
-
   for (const entry of entries) {
     if (!isKnownDashboard(entry.dashboardKey)) {
       skipped.push(
@@ -1212,7 +1402,6 @@ export async function buildMisExcel(
     for (const s of skipped) ws.addRow([s]).commit();
     ws.commit();
   }
-  if (allRaw.length > 0) writeNotesSheet(wb, allRaw, used);
   await wb.commit();
   return { raw: allRaw, sections, skipped };
 }

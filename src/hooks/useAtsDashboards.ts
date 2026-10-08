@@ -52,15 +52,15 @@ export interface CandidateJourney {
 
 const opts = { placeholderData: keepPreviousData, staleTime: 60_000, refetchOnWindowFocus: false } as const;
 
-export const useAtsInsights = (period: OverviewPeriod, branch: string) =>
+export const useAtsInsights = (period: OverviewPeriod, branch: string, enabled = true) =>
   useQuery({
-    queryKey: ["ats-insights", period, branch], ...opts,
+    queryKey: ["ats-insights", period, branch], enabled, ...opts,
     queryFn: async () => (await hrmsApi.get<{ data: AtsInsights }>(`/api/ats/dashboard/insights?${new URLSearchParams({ period, ...(branch ? { branch } : {}) })}`)).data,
   });
 
-export const useAtsSourcing = (period: OverviewPeriod) =>
+export const useAtsSourcing = (period: OverviewPeriod, enabled = true) =>
   useQuery({
-    queryKey: ["ats-sourcing", period], ...opts,
+    queryKey: ["ats-sourcing", period], enabled, ...opts,
     queryFn: async () => (await hrmsApi.get<{ data: AtsSourcing }>(`/api/ats/dashboard/sourcing?period=${period}`)).data,
   });
 
@@ -93,9 +93,9 @@ export interface AtsOperations {
   recoverable: { noShow30: number; hold30: number; list: { id: string; name: string; mobile: string; status: string; stage: string; process: string | null; at: string }[] };
 }
 
-export const useAtsOperations = () =>
+export const useAtsOperations = (enabled = true) =>
   useQuery({
-    queryKey: ["ats-operations"], placeholderData: keepPreviousData, staleTime: 15_000, refetchInterval: 30_000, refetchIntervalInBackground: false,
+    queryKey: ["ats-operations"], enabled, placeholderData: keepPreviousData, staleTime: 15_000, refetchInterval: 30_000, refetchIntervalInBackground: false,
     queryFn: async () => (await hrmsApi.get<{ data: AtsOperations }>("/api/ats/dashboard/operations")).data,
   });
 
@@ -105,13 +105,19 @@ export type DrillFilters = {
   gender?: string; idle?: string; hour?: number; dow?: number; experience?: string; education?: string; shift?: string; age?: string; voc?: string; interviewer?: string; search?: string;
 };
 
-export interface DrillSplit { name: string; total: number; selected: number; rejected: number; selRate: number }
+export interface DrillSplit {
+  name: string; total: number; selected: number; rejected: number; selRate: number;
+  /** Added with the Command Center upgrade; absent on an older backend, so treat as optional. */
+  noShow?: number; hold?: number; waiting?: number; joined?: number; rejRate?: number; noShowRate?: number; joinRate?: number;
+}
 export interface DrillData {
   total: number;
   kpis: { total: number; selected: number; rejected: number; noShow: number; hold: number; waiting: number; joined: number; selRate: number; rejRate: number; noShowRate: number; joinRate: number };
   trend: { date: string; total: number; selected: number; rejected: number }[]; weekly: boolean;
   weekday: { dow: number; total: number; selRate: number }[];
   splits: Record<"branch" | "process" | "source" | "recruiter" | "stage" | "status", DrillSplit[]>;
+  /** Arrival grid for the slice (dow 1=Sun..7=Sat, hour 0-23). Absent on an older backend. */
+  hourDow?: { dow: number; hour: number; total: number; selected: number }[];
 }
 
 const drillQs = (f: DrillFilters, extra: Record<string, string> = {}) => {
@@ -146,6 +152,6 @@ export interface TimeToHire { overall_avg_days: number | null; by_role: { role: 
 export interface HiringTrendPoint { month: string; registrations: number; interviews: number; selections: number }
 
 const analyticsOpts = { staleTime: 5 * 60_000, refetchOnWindowFocus: false, retry: 0 } as const;
-export const useSourceRoi = () => useQuery({ queryKey: ["ats-roi"], ...analyticsOpts, queryFn: async () => (await hrmsApi.get<{ data: SourceRoiRow[] }>("/api/ats/analytics/source-channel-roi")).data });
-export const useTimeToHire = () => useQuery({ queryKey: ["ats-tth"], ...analyticsOpts, queryFn: async () => (await hrmsApi.get<{ data: TimeToHire }>("/api/ats/analytics/time-to-hire")).data });
-export const useHiringTrend = (months = 6) => useQuery({ queryKey: ["ats-trend", months], ...analyticsOpts, queryFn: async () => (await hrmsApi.get<{ data: HiringTrendPoint[] }>(`/api/ats/analytics/hiring-trends?months=${months}`)).data });
+export const useSourceRoi = (enabled = true) => useQuery({ queryKey: ["ats-roi"], enabled, ...analyticsOpts, queryFn: async () => (await hrmsApi.get<{ data: SourceRoiRow[] }>("/api/ats/analytics/source-channel-roi")).data });
+export const useTimeToHire = (enabled = true) => useQuery({ queryKey: ["ats-tth"], enabled, ...analyticsOpts, queryFn: async () => (await hrmsApi.get<{ data: TimeToHire }>("/api/ats/analytics/time-to-hire")).data });
+export const useHiringTrend = (months = 6, enabled = true) => useQuery({ queryKey: ["ats-trend", months], enabled, ...analyticsOpts, queryFn: async () => (await hrmsApi.get<{ data: HiringTrendPoint[] }>(`/api/ats/analytics/hiring-trends?months=${months}`)).data });

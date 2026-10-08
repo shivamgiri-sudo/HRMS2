@@ -21,6 +21,8 @@ import { JournalVoucherLineEditor, computeLineTotals, emptyLine, type EditableLi
 type JvOptions = {
   expenseSubHeads: JvAccountOption[];
   payableAccounts: JvAccountOption[];
+  bankAccounts: JvAccountOption[];
+  vendors: JvAccountOption[];
   branches: { id: string; name: string; code: string | null }[];
   costCentres: { id: string; name: string; code: string | null; branchId: string | null; processId: string | null }[];
   processes: { id: string; name: string; branchId: string | null }[];
@@ -93,7 +95,10 @@ export function JournalVoucherFormDialog({
     if (processId && !processOptions.some((p) => p.id === processId)) setProcessId("");
   }, [branchId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const accounts: JvAccountOption[] = [...(options?.expenseSubHeads ?? []), ...(options?.payableAccounts ?? [])];
+  const accounts: JvAccountOption[] = [
+    ...(options?.expenseSubHeads ?? []), ...(options?.payableAccounts ?? []),
+    ...(options?.bankAccounts ?? []), ...(options?.vendors ?? []),
+  ];
   const totals = computeLineTotals(lines);
 
   function buildPayload() {
@@ -148,7 +153,7 @@ export function JournalVoucherFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] w-full max-w-4xl overflow-y-auto">
+      <DialogContent className="max-h-[92vh] w-full max-w-6xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEdit ? `Edit Journal Voucher ${voucher?.voucherNumber ?? ""}` : "New Journal Voucher"}</DialogTitle>
         </DialogHeader>
