@@ -510,9 +510,9 @@ heRouter.post("/call-results", requireAuth, requireRole(...WRITE_ROLES), async (
   }
 });
 
-/** Recruited through Meta campaigns, counted from the requisition side (selected / onboarding / joined), per campaign and in total. */
-heRouter.get("/meta-recruitment", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
-  try { res.json({ success: true, data: await getMetaRecruitment() }); }
+/** Recruited through Meta campaigns, counted from the requisition side (selected / onboarding / joined), per campaign and in total, in the caller's branch scope. */
+heRouter.get("/meta-recruitment", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try { res.json({ success: true, data: await getMetaRecruitment(await branchScopeOf(req as AuthenticatedRequest)) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] meta recruitment failed"); res.status(500).json({ success: false, message: "Could not load the recruitment numbers" }); }
 });
 

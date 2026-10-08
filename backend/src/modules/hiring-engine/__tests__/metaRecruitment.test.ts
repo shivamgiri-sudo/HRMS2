@@ -67,3 +67,52 @@ describe("meta recruitment counts (pinned before the branch scope and the scan c
     expect(r).toMatchSnapshot("all");
   });
 });
+
+describe("meta recruitment is branch scoped and reads the phone pass from the covering index", () => {
+  const zero = { leads: 0, qualified: 0, invited: 0, applied: 0, walkedIn: 0, selected: 0, onboarding: 0, joined: 0 };
+
+  it("a branch user sees only their branch's campaigns, and the total is theirs alone", async () => {
+    const all = await getMetaRecruitment({ all: true });
+    const r = await getMetaRecruitment({ all: false, branchName: "PUNE" });
+    expect(r.campaigns.map((c) => c.campaignId)).toEqual(["c1"]);
+    const { campaignId: _i, campaignName: _n, status: _s, requisitionCode: _r, branchName: _b, ...c1 } = all.campaigns[0];
+    expect(r.total).toEqual(c1);
+    const noida = await getMetaRecruitment({ all: false, branchName: "NOIDA-2" });
+    expect(noida.campaigns.map((c) => c.campaignId)).toEqual(["c2"]);
+    expect(noida.total.joined).toBe(1);
+  });
+
+  it("a scope with no branch gets nothing and runs no statement; an unknown branch gets nothing", async () => {
+    expect(await getMetaRecruitment({ all: false, branchName: null })).toEqual({ campaigns: [], total: zero });
+    expect(h.calls).toEqual([]);
+    expect(await getMetaRecruitment({ all: false, branchName: "NOWHERE" })).toEqual({ campaigns: [], total: zero });
+  });
+
+  it("the default (no scope) is org-wide, as he-meta-funnel uses it", async () => {
+    const a = await getMetaRecruitment();
+    const b = await getMetaRecruitment({ all: true });
+    expect(a).toEqual(b);
+    expect(a.campaigns).toHaveLength(3);
+  });
+
+  it("the full ats_candidate pass reads only id, mobile and walk_in_date (covering index), and stages only for matched ids by key", async () => {
+    await getMetaRecruitment();
+    const scan = h.calls.filter(([s]) => s.includes("FROM ats_candidate c WHERE c.mobile IS NOT NULL"));
+    expect(scan).toHaveLength(1);
+    expect(scan[0][0]).toBe("SELECT c.id, c.mobile, (c.walk_in_date IS NOT NULL) AS walked FROM ats_candidate c WHERE c.mobile IS NOT NULL AND c.mobile <> ''");
+    const byKey = h.calls.filter(([s]) => s.includes("FROM ats_candidate c WHERE c.id IN"));
+    // linked ids first (a1, a3), then the phone matches not yet loaded (a2, a4); never the unmatched a5
+    expect(byKey.map(([, p]) => [...p].sort())).toEqual([["a1", "a3"], ["a2", "a4"]]);
+  });
+
+  it("one cached computation serves every scope", async () => {
+    vi.resetModules();
+    process.env.HE_META_CACHE_MS = "60000";
+    const mod = await import("../he-meta-recruitment.service.js");
+    await mod.getMetaRecruitment({ all: true });
+    await mod.getMetaRecruitment({ all: false, branchName: "PUNE" });
+    await mod.getMetaRecruitment({ all: false, branchName: "NOIDA-2" });
+    expect(h.calls.filter(([s]) => s.includes("FROM meta_campaign c"))).toHaveLength(1);
+    process.env.HE_META_CACHE_MS = "0";
+  });
+});
