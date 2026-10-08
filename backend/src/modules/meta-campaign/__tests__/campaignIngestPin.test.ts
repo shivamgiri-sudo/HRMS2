@@ -40,7 +40,10 @@ vi.mock("../../hiring-engine/qualified-followup.schedule.js", () => ({ followupM
 import { metaCampaignService } from "../meta-campaign.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const shot = () => h.calls.map((c) => ({ sql: c.sql, params: c.params.map((p) => (typeof p === "string" && UUID.test(p) && !p.startsWith("0000") ? "<uuid>" : p)) }));
+// The many-requisitions model only ADDS link-table statements: they are listed apart, everything else must equal the pin.
+const LINK = /meta_campaign_requisition/;
+const linkSqls = () => h.calls.filter((c) => LINK.test(c.sql)).map((c) => c.sql);
+const shot = () => h.calls.filter((c) => !LINK.test(c.sql)).map((c) => ({ sql: c.sql, params: c.params.map((p) => (typeof p === "string" && UUID.test(p) && !p.startsWith("0000") ? "<uuid>" : p)) }));
 const REQ = "00000000-0000-4000-8000-0000000000r1".replace("r1", "a1");
 const REQ2 = "00000000-0000-4000-8000-0000000000b2";
 const CAMP = "00000000-0000-4000-8000-0000000000c1";
@@ -61,6 +64,7 @@ describe("campaign link pin (before many requisitions)", () => {
     h.rows = (sql) => (/FROM job_requisition WHERE id = \?/.test(sql) ? [{ id: REQ }] : /WHERE mc\.id = \?/.test(sql) ? [{ id: CAMP, requisition_id: REQ, campaign_name: "C" }] : []);
     await metaCampaignService.createCampaign({ requisitionId: REQ, campaignName: "C", metaFormId: "123" } as never, "u1");
     expect(shot()).toMatchSnapshot();
+    expect(linkSqls()[0]).toMatch(/^INSERT INTO meta_campaign_requisition/);
   });
 
   it("routing-code self-heal re-points a drifted campaign", async () => {
@@ -69,6 +73,7 @@ describe("campaign link pin (before many requisitions)", () => {
         : /FROM meta_campaign mc/.test(sql) ? [{ id: CAMP, requisition_id: REQ2, ...reqCols }] : []);
     await metaCampaignService.resolveCampaignByRoutingCode("form-1", "REQ-B2");
     expect(shot()).toMatchSnapshot();
+    expect(linkSqls()).toHaveLength(2); // primary upsert + demote the drifted link
   });
 
   it("routing-code self-heal auto-creates a campaign for an unknown form", async () => {
@@ -76,6 +81,7 @@ describe("campaign link pin (before many requisitions)", () => {
       : /FROM meta_campaign mc/.test(sql) ? [{ id: CAMP, requisition_id: REQ2, ...reqCols }] : []);
     await metaCampaignService.resolveCampaignByRoutingCode("form-9", "REQ-B2");
     expect(shot()).toMatchSnapshot();
+    expect(linkSqls()).toHaveLength(2);
   });
 
   it("ingest of a qualified lead for a single-requisition campaign", async () => {
@@ -85,6 +91,7 @@ describe("campaign link pin (before many requisitions)", () => {
     vi.spyOn(metaCampaignService, "createCandidateFromLead").mockResolvedValue("cand" as never);
     await metaCampaignService.ingestLead({ formId: "form-1", leadgenId: "lead-1" });
     expect(shot()).toMatchSnapshot();
+    expect(linkSqls()).toHaveLength(0);
     expect(h.enqueue).toHaveBeenCalledTimes(1);
     expect(h.notify).toHaveBeenCalledTimes(1);
   });

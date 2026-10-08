@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   sqls: [] as Array<[string, unknown[]]>, rows: [] as Array<Record<string, unknown>>, versions: [] as Array<Record<string, unknown>>,
-  campaign: [] as Array<Record<string, unknown>>, open: [] as string[], outOfScope: new Set<string>(),
+  campaign: [] as Array<Record<string, unknown>>, open: [] as string[], outOfScope: new Set<string>(), linked: [] as string[],
   run: null as Record<string, unknown> | null, counts: [] as Array<Record<string, unknown>>, standing: [] as Array<Record<string, unknown>>, latest: "v2" as string | null, blocker: null as string | null,
   cands: [] as Array<Record<string, unknown>>,
 }));
@@ -27,6 +27,7 @@ vi.mock("../../../db/mysql.js", () => ({
   },
 }));
 vi.mock("../../job-requisition/job-requisition.service.js", () => ({ jobRequisitionService: { isRequisitionVisible: vi.fn(async (_u: unknown, k: { id: string }) => !h.outOfScope.has(k.id)) } }));
+vi.mock("../../meta-campaign/campaign-requisition.service.js", () => ({ linkedRequisitionIds: vi.fn(async () => h.linked ?? []) }));
 vi.mock("../approval.service.js", async (orig) => ({ ...(await orig<typeof import("../approval.service.js")>()), approvalBlocker: vi.fn(async () => h.blocker) }));
 
 import { approvalState, campaignRequisitions, candidateMobiles, listCriteriaRequisitions, permissionsFor, runCandidates } from "../selection-ui.service.js";
@@ -84,6 +85,15 @@ describe("campaignRequisitions", () => {
     const out = await campaignRequisitions(user("hr"), "camp-1");
     expect(out.items.map((i) => [i.id, i.approvalStatus])).toEqual([["a", "closed"]]);
     expect(h.sqls.find(([s]) => s.startsWith("SELECT DISTINCT mc.requisition_id"))![1]).toEqual(["camp-1", "camp-1"]);
+  });
+
+  it("plus the campaign's own links (WS3 A2), once each", async () => {
+    h.campaign = [{ requisition_id: "a" }];
+    h.linked = ["b", "a"];
+    h.rows = [row("a"), row("b")];
+    const out = await campaignRequisitions(user("hr"), "camp-1");
+    expect(out.items.map((i) => i.id).sort()).toEqual(["a", "b"]);
+    h.linked = [];
   });
 });
 

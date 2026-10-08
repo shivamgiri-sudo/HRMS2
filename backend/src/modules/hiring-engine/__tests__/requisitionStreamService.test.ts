@@ -150,6 +150,14 @@ describe("createStream", () => {
     await expectErr(createStream(create(), hr, NOW), 409, "That campaign is linked to another requisition");
   });
 
+  it("accepts a campaign whose primary is another requisition when this one is one of its links (WS3 A2)", async () => {
+    h.execute.mockImplementation(async (sql: string, p: unknown[] = []) =>
+      sql.includes("FROM meta_campaign_requisition") ? [[{ campaign_id: "c-1", requisition_id: "r-9", is_primary: 1, removed_at: null }, { campaign_id: "c-1", requisition_id: "r-1", is_primary: 0, removed_at: null }]]
+        : sql.includes("FROM meta_campaign") ? [[{ id: "c-1", campaign_name: "n", requisition_id: "r-9" }]] : route(sql, p));
+    const v = await createStream(create(), hr, NOW);
+    expect(v.originLabel).toBe("n");
+  });
+
   it("names a he stream Pool: ATS history and a re-run stream after its drive", async () => {
     const v = await createStream(create({ sourceType: "he", originId: "pool" }), hr, NOW);
     expect(v.originLabel).toBe("Pool: ATS history");

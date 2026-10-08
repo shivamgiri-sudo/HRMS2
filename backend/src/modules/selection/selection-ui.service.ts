@@ -12,6 +12,7 @@ import { permissionsFor, type SelectionPermissions } from "./selection-roles.js"
 import type { Completeness, RuleKey, SourceKind } from "./selection-types.js";
 import { maskMobile } from "./preview.service.js";
 import { openRequisitionsInScope } from "./why-not.service.js";
+import { linkedRequisitionIds } from "../meta-campaign/campaign-requisition.service.js";
 
 export { permissionsFor };
 type User = NonNullable<AuthenticatedRequest["authUser"]>;
@@ -63,8 +64,11 @@ export async function campaignRequisitions(user: User, campaignId: string): Prom
     `SELECT DISTINCT mc.requisition_id FROM meta_campaign mc
       WHERE mc.requisition_id IS NOT NULL AND (mc.id = ? OR (mc.meta_campaign_id IS NOT NULL AND mc.meta_campaign_id = (SELECT x.meta_campaign_id FROM meta_campaign x WHERE x.id = ? LIMIT 1)))`,
     [campaignId, campaignId]);
+  // WS3 A2: plus the campaign's own links (many requisitions per campaign); absent before migration 2142.
+  const linked = await linkedRequisitionIds(campaignId).catch(() => [] as string[]);
+  const all = [...new Set([...linked, ...rows.map((r) => String(r.requisition_id)).filter(Boolean)])];
   const ids: string[] = [];
-  for (const r of rows) if (await jobRequisitionService.isRequisitionVisible(user, { id: String(r.requisition_id) })) ids.push(String(r.requisition_id));
+  for (const id of all) if (await jobRequisitionService.isRequisitionVisible(user, { id })) ids.push(id);
   return { items: await summaries(ids), permissions: permissionsFor(String(user.role ?? "")) };
 }
 

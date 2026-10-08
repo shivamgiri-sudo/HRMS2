@@ -12,6 +12,7 @@ import type { BranchScope } from "../meta-campaign/meta-access.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import { getRequisitionReadiness } from "./he-readiness.service.js";
 import { isBlocking, NEVER_OVERRIDE, type ReadinessProblem } from "./requisition-readiness.js";
+import { linkedRequisitionIds } from "../meta-campaign/campaign-requisition.service.js";
 import {
   MAX_CREATE_DAYS, WINDOW_MESSAGES, applyWindowChange, istToday, windowEnd, windowLabel, windowStatus,
   type StreamWindow, type WindowChange,
@@ -209,7 +210,10 @@ async function resolveOrigin(i: CreateStreamInput, branchName: string): Promise<
     if (!c[0]) return notFound;
     // meta_campaign has no branch of its own: only a campaign linked to this requisition is a safe audience for it
     if (c[0].requisition_id == null) return fail("conflict", 409, "Link this campaign to the requisition first");
-    if (String(c[0].requisition_id) !== i.requisitionId) return fail("conflict", 409, "That campaign is linked to another requisition");
+    // WS3 A2: a campaign may hold several requisitions; any active link (not only the primary mirror) is a safe audience.
+    if (String(c[0].requisition_id) !== i.requisitionId && !(await linkedRequisitionIds(i.originId)).includes(i.requisitionId)) {
+      return fail("conflict", 409, "That campaign is linked to another requisition");
+    }
     return { ok: true, label: String(c[0].campaign_name ?? "Campaign") };
   }
   const [d] = await db.execute<RowDataPacket[]>("SELECT id, requisition_id, branch_name, run_label, drive_date FROM he_drive WHERE id = ? AND source_kind <> 'pool' LIMIT 1", [i.originId]);

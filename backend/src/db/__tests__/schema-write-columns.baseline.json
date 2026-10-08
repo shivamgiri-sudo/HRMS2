@@ -85,5 +85,9 @@
   ],
   "workers/domains/leave-sync-handler.ts": [
     "leave_request.updated_at"
+  ],
+  "modules/meta-campaign/campaign-relink.service.ts": [
+    "meta_lead_raw.routed_at",
+    "meta_lead_raw.routed_by"
   ]
 }

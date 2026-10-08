@@ -269,6 +269,7 @@ import { jobRequisitionRouter } from "./modules/job-requisition/job-requisition.
 import { criteriaRouter } from "./modules/selection/criteria.routes.js";
 import { shortlistRouter } from "./modules/selection/shortlist.routes.js";
 import { metaCampaignRouter } from "./modules/meta-campaign/meta-campaign.routes.js";
+import { campaignRequisitionRouter } from "./modules/meta-campaign/campaign-requisition.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
 import {
@@ -695,6 +696,7 @@ app.use("/api/job-requisition", criteriaRouter); // selection criteria (versione
 // and VOICEBOT_CALLBACK_TOKEN respectively, and each REFUSES the request when its secret is
 // unset rather than falling open. Every other route in the router is requireAuth + requireRole.
 app.use("/api/meta", metaCampaignRouter);
+app.use("/api/meta", campaignRequisitionRouter); // a campaign's many requisitions + the HR relink (WS3 A2)
 // Hiring Engine capture webhooks: unauthenticated by design (Pinbot / email provider / voice bot cannot present a
 // session); every route is gated on HE_WEBHOOK_TOKEN and refuses when it is unset. Authenticated API is /api/he.
 app.use("/api/he-hook", heWebhookRouter);

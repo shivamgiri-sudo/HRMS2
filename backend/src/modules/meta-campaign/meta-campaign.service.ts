@@ -34,6 +34,7 @@ import { screenLead } from './lead-screener.service.js';
 import { loadCampaignScreeningConfig } from './campaign-screening.js';
 import { notifyQualifiedLead } from './lead-outreach.service.js';
 import { heOwnsCampaign } from '../hiring-engine/he-campaign-config.service.js';
+import { syncPrimaryLink } from './campaign-requisition.service.js';
 import { bridgeOneMetaLead } from '../hiring-engine/he-meta-bridge.service.js';
 import { enqueueMetaLeadFollowup } from '../hiring-engine/qualified-followup.service.js';
 import { followupMode } from '../hiring-engine/qualified-followup.schedule.js';
@@ -285,6 +286,8 @@ export const metaCampaignService = {
         userId,
       ]
     );
+    // WS3 A2: the campaign's requisition is also its primary link (many requisitions per campaign); never fails the create.
+    await syncPrimaryLink(db, id, input.requisitionId, userId);
     const created = await this.getCampaign(id);
     if (!created) throw new Error('Campaign insert did not persist');
     return created;
@@ -464,12 +467,14 @@ export const metaCampaignService = {
           requisition.id,
           existing[0].id,
         ]);
+        // WS3 A2: the link table follows the re-pointed primary (never throws).
+        await syncPrimaryLink(db, String(existing[0].id), String(requisition.id), null);
       }
     } else {
       // Auto-create the link. campaign_status 'active' (not 'draft') because a form actively
       // receiving leads is, by definition, live; the name records that it was self-registered.
       const newId = randomUUID();
-      await db
+      const created = await db
         .execute(
           `INSERT INTO meta_campaign
              (id, requisition_id, meta_form_id, campaign_name, campaign_status, notes, created_by)
@@ -487,7 +492,9 @@ export const metaCampaignService = {
           // row a millisecond earlier — harmless, adopt whatever is there now.
           const msg = e instanceof Error ? e.message : String(e);
           if (!/duplicate|ER_DUP_ENTRY/i.test(msg)) throw e;
+          return null;
         });
+      if (created) await syncPrimaryLink(db, newId, String(requisition.id), null);
     }
 
     // Return the campaign joined to the requisition's screening criteria, matching the exact shape
