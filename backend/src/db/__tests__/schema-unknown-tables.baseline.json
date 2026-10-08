@@ -28,6 +28,12 @@
     "tally_import_batch",
     "tally_import_voucher"
   ],
+  "modules/hiring-engine/he-best-offer.service.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/he-best-offer.ts": [
+    "qualified_followup"
+  ],
   "modules/hiring-engine/he-bulk-call.service.ts": [
     "he_call_batch",
     "he_call_job"

@@ -12,6 +12,9 @@ import { emptyCounts, ensureHeLead, loadSendContext, ROW_COLUMNS, toFollowupRow,
 import { rowTag, type FollowupSwitches, type RowTag } from "./qualified-followup.policy.js";
 import { afterFailure, chooseWaTemplate, nextStepDue, nextWorkingDayIst } from "./qualified-followup.rules.js";
 import { withinSendWindow } from "./qualified-followup.schedule.js";
+import { bestOfferSkipSql } from "./he-best-offer.js";
+import { offerHolds } from "./he-best-offer.service.js";
+import { valueAddOn } from "./he-valueadd-switches.js";
 
 const IST_MS = 5.5 * 3600_000;
 /** Provider text can echo an address or number; neither is stored or logged. */
@@ -34,15 +37,18 @@ export async function runWhatsappStep(s: FollowupSwitches, tag: RowTag, now: Dat
   if (tag === "test" && (s.testMisconfigured || !s.testPhone)) return counts;
   const take = Math.max(1, Math.floor(tag === "dry_run" ? limit : Math.min(limit, budget)));
   const paused = [...s.pausedSources];
+  const bestOffer = valueAddOn("best_offer");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
       WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
-        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'${bestOfferSkipSql(bestOffer)}
         ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}
       ORDER BY qf.wa_due_at LIMIT ${take}`,
     [tag, now, ...paused]);
-  for (const r of rows) {
-    const row = toFollowupRow(r);
+  const list = rows.map(toFollowupRow);
+  const holds = bestOffer ? await offerHolds(list, tag) : null;
+  for (const row of list) {
+    if (holds?.held.has(row.id)) { counts.held++; continue; }
     try {
       await processRow(s, tag, now, row, counts);
     } catch (err) {

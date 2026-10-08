@@ -14,6 +14,9 @@ import { dateLabel, timeLabel } from "./he-send.service.js";
 import { emptyCounts, ensureHeLead, loadSendContext, ROW_COLUMNS, toFollowupRow, type FollowupRow, type StepCounts } from "./qualified-followup.context.js";
 import { rowTag, type FollowupSwitches, type RowTag } from "./qualified-followup.policy.js";
 import { afterFailure, followupRef, nextStepDue } from "./qualified-followup.rules.js";
+import { bestOfferSkipSql } from "./he-best-offer.js";
+import { offerHolds } from "./he-best-offer.service.js";
+import { valueAddOn } from "./he-valueadd-switches.js";
 
 const env = (k: string, d: string) => (process.env[k]?.trim() ? process.env[k]!.trim() : d);
 /** SMTP errors echo the recipient; never log or store an address. */
@@ -63,15 +66,18 @@ export async function runEmailStep(s: FollowupSwitches, tag: RowTag, now: Date, 
   if (tag !== "dry_run" && s.sendsPaused) return counts;
   if (tag === "test" && (s.testMisconfigured || !s.testEmail)) return counts;
   const paused = [...s.pausedSources];
+  const bestOffer = valueAddOn("best_offer");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
       WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
-        AND qf.owner = 'pipeline'
+        AND qf.owner = 'pipeline'${bestOfferSkipSql(bestOffer)}
         ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}
       ORDER BY qf.email_due_at LIMIT ${Math.max(1, Math.floor(limit))}`,
     [tag, now, ...paused]);
-  for (const r of rows) {
-    const row = toFollowupRow(r);
+  const list = rows.map(toFollowupRow);
+  const holds = bestOffer ? await offerHolds(list, tag) : null;
+  for (const row of list) {
+    if (holds?.held.has(row.id)) { counts.held++; continue; }
     try {
       await processRow(s, tag, now, row, counts);
     } catch (err) {
