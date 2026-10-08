@@ -725,6 +725,21 @@ export async function toCompressedJpg(srcPath: string): Promise<Buffer> {
  *
  * Returns the manifest lines so the caller can also count what was found.
  */
+export type EsiPackDoc = EsiDocKind | "declaration";
+const ESI_PACK_DOCS: readonly EsiPackDoc[] = ["pan", "aadhaar", "photo", "passbook", "declaration"];
+
+/** Photo + passbook are what ESI registration needs; everything else is opt-in. */
+export const DEFAULT_ESI_PACK_DOCS: readonly EsiPackDoc[] = ["photo", "passbook"];
+
+/** Parse "photo,passbook" (query) or an array (body). Unknown/empty → default. */
+export function parseEsiPackDocs(raw: unknown): Set<EsiPackDoc> {
+  const list = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(",") : [];
+  const picked = list
+    .map((x) => String(x).trim().toLowerCase())
+    .filter((x): x is EsiPackDoc => (ESI_PACK_DOCS as readonly string[]).includes(x));
+  return new Set(picked.length ? picked : DEFAULT_ESI_PACK_DOCS);
+}
+
 export async function appendEsiPack(
   archive: ArchiverInstance,
   emp: {
@@ -735,6 +750,7 @@ export async function appendEsiPack(
     avatar_url?: string | null;
   },
   prefix: string,
+  include: Set<EsiPackDoc> = new Set(DEFAULT_ESI_PACK_DOCS),
 ): Promise<{ manifest: string[]; found: number; missing: number }> {
   const at = (n: string) => (prefix ? `${prefix}/${n}` : n);
   const manifest: string[] = [
@@ -756,7 +772,7 @@ export async function appendEsiPack(
   const safeName = emp.name.replace(/[^A-Za-z0-9 _-]/g, "").trim();
   const filePrefix = `${safeCode} - ${safeName}`;
 
-  for (const d of docs) {
+  for (const d of docs.filter((x) => include.has(x.kind))) {
     const localPath = await resolveEsiDocPath(emp, d.kind);
     if (fileExists(localPath)) {
       const entry = `${filePrefix} - ${d.label}.jpg`;
@@ -780,7 +796,7 @@ export async function appendEsiPack(
   // would otherwise have. Carries the actual ESI Declaration Form fields (DOB,
   // gender, marital status, father's/husband's name, address, mobile, nominee),
   // not just bank details — see generateEsiDeclarationPdf().
-  try {
+  if (include.has("declaration")) try {
     archive.append(await generateEsiDeclarationPdf(emp.id), {
       name: at(`${filePrefix} - ESI_Declaration_Form.pdf`),
     });
@@ -858,6 +874,7 @@ esiRegDocsRouter.get(
         avatar_url: empRow.avatar_url,
       },
       "",
+      parseEsiPackDocs(req.query.docs),
     );
 
     await archive.finalize();
@@ -936,6 +953,7 @@ esiRegDocsRouter.post(
     }
     const actorId = (req as any).authUser?.id ?? "unknown";
     const date = new Date().toISOString().slice(0, 10);
+    const include = parseEsiPackDocs((req.body as { docs?: unknown }).docs);
 
     res.setHeader("Content-Type", "application/zip");
     res.setHeader(
@@ -982,6 +1000,7 @@ esiRegDocsRouter.post(
           avatar_url: emp.avatar_url,
         },
         `${safeCode} - ${safeName}`,
+        include,
       );
       index.push(
         `${emp.employee_code},"${String(emp.name ?? "").replace(/"/g, '""')}",${packed.found},${packed.missing}`,

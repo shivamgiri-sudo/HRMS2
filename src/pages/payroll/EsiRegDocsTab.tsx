@@ -142,17 +142,84 @@ const REMINDER_SKIP_TEXT: Record<string, string> = {
   no_valid_link: "no valid link",
 };
 
-function KpiStrip({ employees, total }: { employees: EsiEmployee[]; total: number }) {
+type DocKey = "pan" | "aadhaar" | "photo" | "passbook" | "declaration";
+const DOC_OPTIONS: Array<{ key: DocKey; label: string }> = [
+  { key: "photo", label: "Employee Photo" },
+  { key: "passbook", label: "Bank Passbook" },
+  { key: "pan", label: "PAN Card" },
+  { key: "aadhaar", label: "Aadhaar" },
+  { key: "declaration", label: "ESI Declaration Form" },
+];
+const DEFAULT_DOCS: DocKey[] = ["photo", "passbook"];
+const DOCS_STORAGE_KEY = "esi-reg-docs:visible-docs";
+
+function loadDocs(): Set<DocKey> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DOCS_STORAGE_KEY) ?? "null");
+    if (Array.isArray(raw)) {
+      const ok = raw.filter((k): k is DocKey => DOC_OPTIONS.some((o) => o.key === k));
+      if (ok.length) return new Set(ok);
+    }
+  } catch { /* storage unavailable — fall through to default */ }
+  return new Set(DEFAULT_DOCS);
+}
+
+/** Master + per-document check boxes: controls the visible columns AND what the ZIP contains. */
+function DocSelector({ docs, onChange }: { docs: Set<DocKey>; onChange: (next: Set<DocKey>) => void }) {
+  const all = docs.size === DOC_OPTIONS.length;
+  const masterRef = useRef<HTMLInputElement>(null);
+  if (masterRef.current) masterRef.current.indeterminate = docs.size > 0 && !all;
+  const toggle = (k: DocKey) => {
+    const next = new Set(docs);
+    next.has(k) ? next.delete(k) : next.add(k);
+    onChange(next);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm">
+      <label className="flex items-center gap-2 font-semibold text-slate-800">
+        <input
+          ref={masterRef}
+          type="checkbox"
+          checked={all}
+          onChange={() => onChange(all ? new Set() : new Set(DOC_OPTIONS.map((o) => o.key)))}
+          className="rounded"
+        />
+        All documents
+      </label>
+      <span className="h-5 w-px bg-slate-200" />
+      {DOC_OPTIONS.map((o) => (
+        <label key={o.key} className="flex items-center gap-2 text-slate-700">
+          <input type="checkbox" checked={docs.has(o.key)} onChange={() => toggle(o.key)} className="rounded" />
+          {o.label}
+        </label>
+      ))}
+      <button
+        type="button"
+        className="ml-auto text-xs font-semibold text-blue-700 hover:underline"
+        onClick={() => onChange(new Set(DEFAULT_DOCS))}
+      >
+        Photo + Passbook only
+      </button>
+    </div>
+  );
+}
+
+function KpiStrip({ employees, total, docs }: { employees: EsiEmployee[]; total: number; docs: Set<DocKey> }) {
   const onPage = employees.length;
   const allReady = employees.filter(
-    (e) => e.pan_ready && e.aadhaar_ready && e.photo_ready && e.bank_ready && e.bank_passbook_ready
+    (e) =>
+      (!docs.has("pan") || e.pan_ready) &&
+      (!docs.has("aadhaar") || e.aadhaar_ready) &&
+      (!docs.has("photo") || e.photo_ready) &&
+      (!docs.has("declaration") || e.bank_ready) &&
+      (!docs.has("passbook") || e.bank_passbook_ready)
   ).length;
   const missing = onPage - allReady;
 
   const tiles = [
     { label: "Pending ESI Registration", value: total, icon: Users, tone: "blue" as const },
-    { label: `All Docs Ready (of ${onPage} shown)`, value: allReady, icon: CheckCircle2, tone: "green" as const },
-    { label: `Docs Missing (of ${onPage} shown)`, value: missing, icon: AlertTriangle, tone: "amber" as const },
+    { label: `Selected Docs Ready (of ${onPage} shown)`, value: allReady, icon: CheckCircle2, tone: "green" as const },
+    { label: `Selected Docs Missing (of ${onPage} shown)`, value: missing, icon: AlertTriangle, tone: "amber" as const },
   ];
 
   const toneMap = {
@@ -202,7 +269,9 @@ function EmployeeTable({
   onDownload,
   onOpenDrawer,
   downloading,
+  docs,
 }: {
+  docs: Set<DocKey>;
   employees: EsiEmployee[];
   selected: Set<string>;
   onToggle: (id: string) => void;
@@ -228,7 +297,15 @@ function EmployeeTable({
                   aria-label="Select all"
                 />
               </th>
-              {["Emp Code", "Name", "Branch", "ESIC No.", "PAN", "Aadhaar", "Photo", "Bank", "Passbook", "Actions"].map((h) => (
+              {[
+                "Emp Code", "Name", "Branch", "ESIC No.",
+                ...(docs.has("pan") ? ["PAN"] : []),
+                ...(docs.has("aadhaar") ? ["Aadhaar"] : []),
+                ...(docs.has("photo") ? ["Photo"] : []),
+                ...(docs.has("declaration") ? ["Bank"] : []),
+                ...(docs.has("passbook") ? ["Passbook"] : []),
+                "Actions",
+              ].map((h) => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
                   {h}
                 </th>
@@ -238,7 +315,7 @@ function EmployeeTable({
           <tbody>
             {employees.length === 0 && (
               <tr>
-                <td colSpan={11} className="px-4 py-8 text-center text-slate-400 text-sm">
+                <td colSpan={5 + docs.size + 1} className="px-4 py-8 text-center text-slate-400 text-sm">
                   No ESI-eligible employees pending registration.
                 </td>
               </tr>
@@ -262,17 +339,17 @@ function EmployeeTable({
                 <td className="px-4 py-3 font-semibold text-slate-800">{emp.name}</td>
                 <td className="px-4 py-3 text-slate-600">{emp.branch}</td>
                 <td className="px-4 py-3 text-xs text-slate-500">{emp.esic_number ?? "—"}</td>
-                <td className="px-4 py-3"><ReadyChip ready={emp.pan_ready} label="PAN" /></td>
-                <td className="px-4 py-3"><ReadyChip ready={emp.aadhaar_ready} label="Aadhaar" /></td>
-                <td className="px-4 py-3"><ReadyChip ready={emp.photo_ready} label="Photo" /></td>
-                <td className="px-4 py-3"><ReadyChip ready={emp.bank_ready} label="Bank" /></td>
-                <td className="px-4 py-3"><ReadyChip ready={emp.bank_passbook_ready} label="Passbook" /></td>
+                {docs.has("pan") && <td className="px-4 py-3"><ReadyChip ready={emp.pan_ready} label="PAN" /></td>}
+                {docs.has("aadhaar") && <td className="px-4 py-3"><ReadyChip ready={emp.aadhaar_ready} label="Aadhaar" /></td>}
+                {docs.has("photo") && <td className="px-4 py-3"><ReadyChip ready={emp.photo_ready} label="Photo" /></td>}
+                {docs.has("declaration") && <td className="px-4 py-3"><ReadyChip ready={emp.bank_ready} label="Bank" /></td>}
+                {docs.has("passbook") && <td className="px-4 py-3"><ReadyChip ready={emp.bank_passbook_ready} label="Passbook" /></td>}
                 <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                   <Button
                     size="sm"
                     variant="outline"
                     className="h-7 text-xs gap-1 border-blue-200 text-blue-700 hover:bg-blue-50"
-                    disabled={downloading === emp.employee_id}
+                    disabled={downloading === emp.employee_id || docs.size === 0}
                     onClick={() => onDownload(emp.employee_id)}
                   >
                     {downloading === emp.employee_id ? (
@@ -590,6 +667,12 @@ export default function EsiRegDocsTab() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [branchId, setBranchId] = useState("");
+  const [docs, setDocsState] = useState<Set<DocKey>>(loadDocs);
+  const setDocs = (next: Set<DocKey>) => {
+    setDocsState(next);
+    try { localStorage.setItem(DOCS_STORAGE_KEY, JSON.stringify([...next])); } catch { /* per-viewer convenience only */ }
+  };
+  const docsParam = [...docs].join(",");
   const [page] = useState(1);
   const branches = useBranches().data ?? [];
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -634,7 +717,7 @@ export default function EsiRegDocsTab() {
   async function downloadSingle(employeeId: string) {
     setDownloading(employeeId);
     try {
-      const blob = await hrmsApi.getBlob(`/api/payroll/esi-reg-docs/${employeeId}/download`);
+      const blob = await hrmsApi.getBlob(`/api/payroll/esi-reg-docs/${employeeId}/download?docs=${docsParam}`);
       const emp = employees.find((e) => e.employee_id === employeeId);
       const safeName = (emp?.name ?? "").replace(/[^A-Za-z0-9 _-]/g, "").trim();
       triggerBlobDownload(blob, emp ? `${emp.emp_code} - ${safeName}.zip` : `${employeeId}.zip`);
@@ -657,7 +740,7 @@ export default function EsiRegDocsTab() {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ employee_ids: Array.from(selected) }),
+        body: JSON.stringify({ employee_ids: Array.from(selected), docs: [...docs] }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
@@ -746,7 +829,9 @@ export default function EsiRegDocsTab() {
         </div>
       </div>
 
-      {!isLoading && <KpiStrip employees={employees} total={data?.total ?? employees.length} />}
+      <DocSelector docs={docs} onChange={setDocs} />
+
+      {!isLoading && <KpiStrip employees={employees} total={data?.total ?? employees.length} docs={docs} />}
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
@@ -779,7 +864,7 @@ export default function EsiRegDocsTab() {
         </Button>
         <Button
           className="gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-[0_4px_12px_rgba(37,99,235,0.3)] transition-all duration-200 disabled:opacity-50"
-          disabled={selected.size === 0 || bulkDownloading}
+          disabled={selected.size === 0 || bulkDownloading || docs.size === 0}
           onClick={downloadBulk}
         >
           {bulkDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
@@ -810,6 +895,7 @@ export default function EsiRegDocsTab() {
           onDownload={downloadSingle}
           onOpenDrawer={setDrawerEmp}
           downloading={downloading}
+          docs={docs}
         />
       )}
 

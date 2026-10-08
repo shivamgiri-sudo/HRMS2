@@ -176,7 +176,7 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
       });
 
       const res = await request(app)
-        .get("/api/payroll/esi-reg-docs/emp-1/download")
+        .get("/api/payroll/esi-reg-docs/emp-1/download?docs=pan,aadhaar")
         .buffer(true)
         .parse((res: any, cb: any) => {
           const chunks: Buffer[] = [];
@@ -195,6 +195,14 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
       fs.rmSync(pan, { force: true });
       fs.rmSync(aadhaar, { force: true });
     }
+  });
+
+  it("parseEsiPackDocs defaults to photo + passbook and ignores unknown values", async () => {
+    const { parseEsiPackDocs } = await import("../esi-reg-docs.routes.js");
+    expect([...parseEsiPackDocs(undefined)].sort()).toEqual(["passbook", "photo"]);
+    expect([...parseEsiPackDocs("bogus")].sort()).toEqual(["passbook", "photo"]);
+    expect([...parseEsiPackDocs("pan,Aadhaar,declaration")].sort()).toEqual(["aadhaar", "declaration", "pan"]);
+    expect([...parseEsiPackDocs(["photo"])]).toEqual(["photo"]);
   });
 
   it("returns 404 when employee not found", async () => {
