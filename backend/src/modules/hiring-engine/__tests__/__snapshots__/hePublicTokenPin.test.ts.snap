@@ -1,0 +1,90 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`public invitation API pin (match tokens) > answer later 1`] = `
+{
+  "calls": [
+    [
+      "M1",
+      "later",
+    ],
+  ],
+  "r": {
+    "ok": true,
+    "state": "confirmed",
+  },
+}
+`;
+
+exports[`public invitation API pin (match tokens) > answer no 1`] = `
+{
+  "calls": [
+    [
+      "M1",
+      "no",
+    ],
+  ],
+  "r": {
+    "ok": true,
+    "state": "confirmed",
+  },
+}
+`;
+
+exports[`public invitation API pin (match tokens) > answer yes 1`] = `
+{
+  "calls": [
+    [
+      "M1",
+      "yes",
+    ],
+  ],
+  "r": {
+    "ok": true,
+    "state": "confirmed",
+  },
+}
+`;
+
+exports[`public invitation API pin (match tokens) > context SQL and result 1`] = `
+{
+  "c": {
+    "address": "C-27 Sector 62",
+    "branchLat": 28.6,
+    "branchLng": 77.3,
+    "branchName": "NOIDA-2",
+    "docs": [
+      "Aadhaar",
+      "PAN",
+      "12th marksheet",
+    ],
+    "firstName": "Asha",
+    "leadId": "L1",
+    "mapsUrl": "https://maps.google.com/?q=28.6,77.3",
+    "matchId": "M1",
+    "open": false,
+    "optInOpen": true,
+    "reference": "HE-M1",
+    "role": "CSE",
+    "rsvpOpen": true,
+    "sharing": false,
+    "slotAt": "2026-10-09 11:00:00",
+    "state": "invited",
+    "waConsent": false,
+  },
+  "sqls": [
+    {
+      "p": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ],
+      "sql": "SELECT m.id, m.lead_id, m.state, m.slot_at, l.full_name, jr.branch_name, jr.designation_name,
+            ((m.state IN ('invited','confirmed','declined','slot_released') AND m.slot_at IS NOT NULL AND NOW() < m.slot_at) OR (m.state = 'no_show' AND m.slot_at > DATE_SUB(NOW(), INTERVAL 7 DAY))) AS rsvp_open, bm.address, bm.latitude, bm.longitude,
+            (m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL
+              AND NOW() BETWEEN DATE_SUB(m.slot_at, INTERVAL 6 HOUR) AND DATE_ADD(m.slot_at, INTERVAL 3 HOUR)) AS is_open,
+            (m.state IN ('suggested','invited','confirmed') AND (m.slot_at IS NULL OR NOW() < DATE_ADD(m.slot_at, INTERVAL 3 HOUR))) AS optin_open, l.status AS lead_status
+       FROM he_match m JOIN he_lead l ON l.id = m.lead_id JOIN job_requisition jr ON jr.id = m.requisition_id
+       LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
+      WHERE m.token = ? LIMIT 1",
+    },
+  ],
+}
+`;
