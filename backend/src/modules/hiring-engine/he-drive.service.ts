@@ -16,6 +16,8 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { rankRequisitions, scoreLead, type MatchRequisition } from "./he-matcher.js";
 import { legacyMatchRequisition, type MatchReqRow } from "./he-match-requisition.js";
+import { compileCriteria, fromMatchReqRow } from "../selection/compile-criteria.js";
+import { parseSelectionRules } from "../selection/selection-rules.schema.js";
 import { driveCapacity, generateSlots, inviteTarget, invitesForTarget, nextFreeSlot, nowIst, type SlotConfig } from "./he-slots.js";
 import { addEvent } from "./he-lead.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
@@ -45,9 +47,17 @@ export interface DriveInput {
   createdBy?: string | null;
 }
 
-export interface ReqRow extends RowDataPacket, MatchReqRow {}
+export interface ReqRow extends RowDataPacket, MatchReqRow { selection_rules?: unknown }
 
+/**
+ * Matcher shape of a requisition. With selection_rules (HR edited the criteria, S5) it is read through the compiled
+ * criteria; without them (or unreadable ones) it is today's builder, byte for byte (lineUpCriteriaPin).
+ */
 export function toMatchRequisition(r: ReqRow): MatchRequisition & { id: string } {
+  if (r.selection_rules != null) {
+    const p = parseSelectionRules(r.selection_rules);
+    if (p.ok && !p.legacy) return { ...compileCriteria(fromMatchReqRow(r, p.value)).matchReq, id: r.id };
+  }
   return legacyMatchRequisition(r);
 }
 

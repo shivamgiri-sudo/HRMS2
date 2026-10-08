@@ -4,7 +4,7 @@
 // Hiring Engine pool) come from today's line-up requisition with missing = review (the strict line-up leaves unknowns out).
 import { createHash } from "node:crypto";
 import type { MetaScreeningConfig } from "../job-requisition/job-requisition.types.js";
-import { legacyMatchRequisition } from "../hiring-engine/he-match-requisition.js";
+import { legacyMatchRequisition, type MatchReqRow } from "../hiring-engine/he-match-requisition.js";
 import type { MatchRequisition } from "../hiring-engine/he-matcher.js";
 import { eduRank, isSoftRequirement } from "../meta-campaign/lead-screener.service.js";
 import { catalogueEntry } from "./rule-catalogue.js";
@@ -45,6 +45,17 @@ export function toMatchReqRow(r: RequisitionCriteriaRow) {
     education_requirement: r.educationRequirement, experience_min_years: r.experienceMinYears, night_shift_required: Number(r.nightShiftRequired ?? 0),
     salary_max: r.salaryMax, meta_screening_config: r.screeningConfig, skills_required: r.skillsRequired,
     blat: r.branchLat ?? null, blng: r.branchLng ?? null, bcity: r.branchCity, bstate: r.branchState,
+  };
+}
+
+/** The drive line-up's requisition row (MatchReqRow) as a criteria row, for requisitions that carry selection_rules. */
+export function fromMatchReqRow(r: MatchReqRow, selectionRules: SelectionRules): RequisitionCriteriaRow {
+  return {
+    id: r.id, code: "", branchName: r.branch_name, branchCity: r.bcity ?? null, branchState: r.bstate ?? null, branchLat: n(r.blat), branchLng: n(r.blng), processName: r.process_name,
+    educationRequirement: r.education_requirement, skillsRequired: r.skills_required ?? null, experienceMinYears: n(r.experience_min_years), experienceMaxYears: null,
+    ageMin: n(r.meta_target_age_min), ageMax: n(r.meta_target_age_max), targetLocations: null, radiusKm: n(r.meta_target_radius_km), shiftRequirement: null,
+    nightShiftRequired: Number(r.night_shift_required ?? 0), rotationalShift: 0, salaryMin: null, salaryMax: n(r.salary_max),
+    preferredSources: null, screeningConfig: cfgOf({ screeningConfig: r.meta_screening_config } as RequisitionCriteriaRow), selectionRules, approvalStatus: r.approval_status,
   };
 }
 
