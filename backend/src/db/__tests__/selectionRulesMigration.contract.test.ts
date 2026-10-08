@@ -13,10 +13,13 @@ const statements = () => splitSql(sql);
 const createOf = (table: string) => statements().find((s) => s.includes(`CREATE TABLE IF NOT EXISTS ${table} (`)) ?? "";
 
 describe("migration 2145 selection rules", () => {
-  it("exists and is registered as the last manifest entry", () => {
+  it("exists and is registered after every earlier migration", () => {
     expect(sql).not.toBe("");
     const entries = [...manifest.matchAll(/^\s*"(migrations\/[^"]+\.sql)",/gm)].map((m) => m[1]);
-    expect(entries.at(-1)).toBe(`migrations/${FILE}`);
+    const at = entries.indexOf(`migrations/${FILE}`);
+    expect(at).toBeGreaterThan(-1);
+    // registered after everything that was present; only later-numbered migrations may follow it
+    for (const e of entries.slice(at + 1)) expect(Number(e.match(/migrations\/(\d+)_/)![1]), e).toBeGreaterThan(2145);
     expect(entries.filter((e) => e.includes("/2145_"))).toHaveLength(1);
   });
 

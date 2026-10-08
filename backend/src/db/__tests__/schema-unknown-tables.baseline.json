@@ -251,5 +251,8 @@
   "modules/selection/criteria.service.ts": [
     "job_requisition_criteria_audit",
     "job_requisition_criteria_version"
+  ],
+  "modules/selection/fact-cache.service.ts": [
+    "selection_person_fact"
   ]
 }
