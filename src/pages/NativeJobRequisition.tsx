@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { HeadcountShortagePanel } from '@/components/workforce/HeadcountShortagePanel';
 import RequisitionMetaPanel from '@/components/ats/RequisitionMetaPanel';
+import AssessmentLinkEditor from '@/components/requisition/AssessmentLinkEditor';
+import { canEditAssessmentLink } from '@/components/requisition/assessmentLink.model';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { formatISTDate } from '@/lib/utils';
 import { useApprovalFocus } from '@/hooks/useApprovalFocus';
@@ -1518,6 +1520,20 @@ export default function NativeJobRequisition() {
                     The age band and screening rules below auto-screen incoming META leads.
                   </p>
                   )}
+                  {!formData.meta_campaign_enabled && (
+                    <div className="mb-3">
+                      <label htmlFor="req-bmi-link-off" className="block text-sm font-medium text-gray-700 mb-1">BMI / Assessment Link</label>
+                      <input
+                        id="req-bmi-link-off"
+                        type="url"
+                        value={formData.bmi_assessment_url}
+                        onChange={(e) => field('bmi_assessment_url', e.target.value)}
+                        className="w-full min-h-[44px] px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="https://…"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Used in candidate invites even when no ad is run.</p>
+                    </div>
+                  )}
                   {formData.meta_campaign_enabled && <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="md:col-span-2">
                       <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1943,6 +1959,20 @@ export default function NativeJobRequisition() {
                       <div><span className="text-gray-500">Target Joining:</span> <span className="ml-2 font-medium">{selectedRequisition.target_joining_date ? formatISTDate(selectedRequisition.target_joining_date) : '—'}</span></div>
                     </div>
                   </div>
+                )}
+
+                {/* Per-requisition assessment link: editable on approved requisitions at any time (read per invite send). */}
+                {(selectedRequisition.approval_status === 'approved' || selectedRequisition.bmi_assessment_url) && (
+                  <AssessmentLinkEditor
+                    key={selectedRequisition.id}
+                    requisitionId={selectedRequisition.id}
+                    initialValue={selectedRequisition.bmi_assessment_url ?? null}
+                    canEdit={canEditAssessmentLink(currentUserRole, selectedRequisition.approval_status)}
+                    onSaved={(v) => {
+                      setSelectedRequisition((cur) => (cur ? { ...cur, bmi_assessment_url: v } : cur));
+                      loadRequisitions();
+                    }}
+                  />
                 )}
 
                 {/* META campaign link — the manual step that lets the Lead Gen webhook route an

@@ -19,6 +19,7 @@ import {
   type EnterpriseUser,
   type ScopeCondition,
 } from "../../shared/enterpriseScope.js";
+import { normalizeBmiLink } from "./job-requisition-bmi-link.rules.js";
 import { resolveHrBranchScope, branchInScope, requisitionBranchCondition, type HrBranchScope } from "./job-requisition-hr-scope.js";
 
 function userIdOf(actor: EnterpriseUser): string {
@@ -650,15 +651,29 @@ export const jobRequisitionService = {
     }
 
     if (existing.approval_status === "approved" || existing.approval_status === "closed") {
-      const allowedFields = ["owner_recruiter_id"];
+      // The assessment link is read per invite send, so it stays editable while the requisition is live
+      // (approved) but not once closed.
+      const allowedFields = existing.approval_status === "approved"
+        ? ["owner_recruiter_id", "bmi_assessment_url"]
+        : ["owner_recruiter_id"];
       const attemptedFields = Object.keys(input);
       const disallowedChanges = attemptedFields.filter((f) => !allowedFields.includes(f));
       if (disallowedChanges.length > 0) {
         throw Object.assign(
-          new Error(`Cannot modify approved/closed requisition. Only recruiter assignment is allowed.`),
+          new Error(
+            existing.approval_status === "approved"
+              ? "Cannot modify approved requisition. Only recruiter assignment and the assessment link can be changed."
+              : "Cannot modify closed requisition. Only recruiter assignment is allowed."
+          ),
           { statusCode: 409 }
         );
       }
+    }
+
+    if ("bmi_assessment_url" in input) {
+      const link = normalizeBmiLink(input.bmi_assessment_url);
+      if (!link.ok) throw Object.assign(new Error(link.message), { statusCode: 400 });
+      input = { ...input, bmi_assessment_url: link.value };
     }
 
     const sets: string[] = [];
@@ -714,6 +729,11 @@ export const jobRequisitionService = {
       `UPDATE job_requisition SET ${sets.join(", ")} WHERE id = ?`,
       params
     );
+
+    // Audit line only: the approval log's action enum has no value for this and the URL may carry a token.
+    if ("bmi_assessment_url" in input) {
+      console.info(`[JobRequisition] assessment link ${input.bmi_assessment_url ? "changed" : "cleared"} requisition=${id} actor=${actorId}`);
+    }
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
