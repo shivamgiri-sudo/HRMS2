@@ -208,7 +208,7 @@ export interface VoiceCallbackInput {
 }
 
 export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId: string; outcome: string } | null> {
-  let lead = p.leadId
+  const lead = p.leadId
     ? ((await db.execute<RowDataPacket[]>("SELECT id, mobile10, full_name, email, status, ats_candidate_id, meta_lead_id FROM he_lead WHERE id = ? LIMIT 1", [p.leadId]))[0][0] as never)
     : p.mobile ? await findLeadByMobile(p.mobile) : null;
   if (!lead) return null;
