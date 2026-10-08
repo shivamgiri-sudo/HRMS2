@@ -25,6 +25,7 @@ import { LIVE_FROM_DEFAULT, creditJoinsSql } from "./he-source-attribution.js";
 import { PersonFacts, TYPE_KEY_GROUP, typeKeyColsSql } from "./he-person-facts.service.js";
 import { loadLiveFrom } from "./he-source-attribution.service.js";
 import { readCostUsage } from "./he-cost.service.js";
+import { readResponseStats, type ResponseStats } from "./he-response-stats.service.js";
 import { evaluateInsights, type DriveInsight } from "./he-drive-insights.js";
 import { collectInsightFacts } from "./he-drive-insight-facts.service.js";
 import { loadInsightThresholds } from "./he-insight-params.service.js";
@@ -66,6 +67,8 @@ export interface DriveAnalytics {
   journey: Record<SourceType, PersonStages> | null;
   /** Open seats of every requisition in scope (0 when closed, inactive or full, with the outreach path's reason). */
   openSeats: OpenSeats[];
+  /** Responses (he-response-stats.service.ts): confirmed matches by channel and the response rate per channel, per type; null when not read. */
+  confirmedByChannel: ResponseStats["confirmedByChannel"] | null; responseRate: ResponseStats["responseRate"] | null;
   requisitionCount: number;
   truncated: boolean;
   partial: boolean;
@@ -73,11 +76,9 @@ export interface DriveAnalytics {
 }
 
 export const MAX_REQUISITIONS = 200;
-export const MAX_SPAN_DAYS = 92;
-export const MAX_AHEAD_DAYS = 14;
+export const MAX_SPAN_DAYS = 92, MAX_AHEAD_DAYS = 14;
 const DEFAULT_BACK = 13;
-const CACHE_MS = 60_000;
-const CACHE_MAX = 100;
+const CACHE_MS = 60_000, CACHE_MAX = 100;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 const hasReasons = (r: { no_show: object; declined: object }): boolean => Object.keys(r.no_show).length + Object.keys(r.declined).length > 0;
 const ph = (n: number): string => Array(n).fill("?").join(",");
@@ -337,8 +338,7 @@ async function build(
   const sec = <T>(name: string, fn: () => Promise<T>, fallback: T): Promise<T> => section(name, failed, fn, fallback, deadline);
   const today = istToday(now);
   const prev = { from: addDays(w.from, -w.days), to: addDays(w.from, -1) };
-  const dt = bounds(w.from, w.to);
-  const mode = followupMode();
+  const dt = bounds(w.from, w.to), mode = followupMode();
 
   // requisitions (+ the streams that decide which ones qualify and which windows the drive read must cover)
   const active = await sec("streams", () => tolerant(() => loadActiveStreams(), [] as StreamRow[]), [] as StreamRow[]);
@@ -371,6 +371,7 @@ async function build(
   // Reads that need nothing computed here start with the others (the read limiter keeps the pool safe); their results are used further down.
   const reasonsP = !none && valueAddOn("outcome_reasons") ? sec("reasons", () => outcomeReasonCounts(ids, w.from, w.to, liveFrom, pf), null) : Promise.resolve(null);
   const costP = !none && valueAddOn("cost_per_source") ? sec("cost", () => readCostUsage(ids, w, liveFrom, pf), null) : null;
+  const respP = none ? Promise.resolve(null) : sec("responses", () => readResponseStats(ids, w, pf), null as ResponseStats | null);
   // The previous window comes from the same statements as the window (persons, outcomes, follow-up stages; rows tagged by cur): its tiles
   // only need leads .. joined, so no separate previous-window reads. Every read goes through the shared read limiter (he-read-limit.ts).
   const noPersons = { byType: null as Record<SourceType, PersonStages> | null, campaigns: [] as CampaignProgressRow[], previous: null as Record<SourceType, PersonStageCounts> | null };
@@ -439,7 +440,7 @@ async function build(
   }
 
   // reasons: recorded no-show and decline reasons per type; its own statement only while HE_OUTCOME_REASONS is on (a missing table counts zero)
-  const reasons = await reasonsP;
+  const [reasons, resp] = await Promise.all([reasonsP, respP]);
 
   // cost per source: its own statements only while HE_COST_PER_SOURCE is on; a failed section counts 0 and flags the result as partial
   let cost: DriveAnalytics["cost"] = { available: false, note: "Cost per source arrives with Plan 5" };
@@ -491,6 +492,7 @@ async function build(
     campaigns,
     journey: none ? perType(() => ({ leads: 0, fills: 0, screened: 0, qualified: 0, contacted: 0, invited: 0, replied: 0, confirmed: 0, arrived: 0 })) : persons.byType,
     openSeats,
+    confirmedByChannel: resp?.confirmedByChannel ?? null, responseRate: resp?.responseRate ?? null,
     requisitionCount: ids.length,
     truncated,
     partial: failedSections.length > 0,

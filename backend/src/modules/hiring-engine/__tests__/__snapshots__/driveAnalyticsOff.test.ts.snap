@@ -52,6 +52,35 @@ exports[`drive analytics with the plan 5 switches off > matches the recorded out
       },
     },
   ],
+  "confirmedByChannel": {
+    "he": {
+      "call_file": 0,
+      "email": 0,
+      "hr": 0,
+      "unknown": 0,
+      "voice_bot": 0,
+      "web": 0,
+      "whatsapp": 0,
+    },
+    "meta_live": {
+      "call_file": 0,
+      "email": 0,
+      "hr": 0,
+      "unknown": 0,
+      "voice_bot": 0,
+      "web": 0,
+      "whatsapp": 0,
+    },
+    "meta_old": {
+      "call_file": 0,
+      "email": 0,
+      "hr": 0,
+      "unknown": 0,
+      "voice_bot": 0,
+      "web": 0,
+      "whatsapp": 0,
+    },
+  },
   "cost": {
     "available": false,
     "note": "Cost per source arrives with Plan 5",
@@ -1140,6 +1169,50 @@ exports[`drive analytics with the plan 5 switches off > matches the recorded out
   },
   "qualifiedTracked": true,
   "requisitionCount": 1,
+  "responseRate": {
+    "he": {
+      "email": {
+        "contacted": 0,
+        "responded": 0,
+      },
+      "voice_bot": {
+        "contacted": 0,
+        "responded": 0,
+      },
+      "whatsapp": {
+        "contacted": 0,
+        "responded": 0,
+      },
+    },
+    "meta_live": {
+      "email": {
+        "contacted": 0,
+        "responded": 0,
+      },
+      "voice_bot": {
+        "contacted": 0,
+        "responded": 0,
+      },
+      "whatsapp": {
+        "contacted": 0,
+        "responded": 0,
+      },
+    },
+    "meta_old": {
+      "email": {
+        "contacted": 0,
+        "responded": 0,
+      },
+      "voice_bot": {
+        "contacted": 0,
+        "responded": 0,
+      },
+      "whatsapp": {
+        "contacted": 0,
+        "responded": 0,
+      },
+    },
+  },
   "scatter": [
     {
       "branch": "Pune",
@@ -2695,9 +2768,14 @@ exports[`drive analytics with the plan 5 switches off > matches the recorded out
 
 exports[`drive analytics with the plan 5 switches off > matches the recorded output and statement list > statements 1`] = `
 [
+  "SELECT /*+ MAX_EXECUTION_TIME(8000) */ COALESCE(wi.drive_type, IF(ml.id IS NULL, 'he', IF(ml.created_at >= TIMESTAMP '2026-10-08 00:00:00' AND LEAST(ml.created_at, COALESCE(IF(ml.raw_payload->>'$.created_time' REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$', CONVERT_TZ(STR_TO_DATE(LEFT(ml.raw_payload->>'$.created_time', 19), '%Y-%m-%dT%H:%i:%s'), CONCAT(SUBSTRING(ml.raw_payload->>'$.created_time', 20, 3), ':', SUBSTRING(ml.raw_payload->>'$.created_time', 23, 2)), '+05:30'), NULL), ml.created_at)) >= TIMESTAMP '2026-10-08 00:00:00' AND IF(EXISTS (SELECT 1 FROM he_lead pl WHERE pl.mobile10 = RIGHT(REGEXP_REPLACE(ml.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci), EXISTS (SELECT 1 FROM he_lead pl LEFT JOIN meta_lead_raw plf ON plf.id = pl.meta_lead_id COLLATE utf8mb4_unicode_ci WHERE pl.mobile10 = RIGHT(REGEXP_REPLACE(ml.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci AND ((plf.id IS NULL OR (plf.created_at >= TIMESTAMP '2026-10-08 00:00:00' AND LEAST(plf.created_at, COALESCE(IF(plf.raw_payload->>'$.created_time' REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$', CONVERT_TZ(STR_TO_DATE(LEFT(plf.raw_payload->>'$.created_time', 19), '%Y-%m-%dT%H:%i:%s'), CONCAT(SUBSTRING(plf.raw_payload->>'$.created_time', 20, 3), ':', SUBSTRING(plf.raw_payload->>'$.created_time', 23, 2)), '+05:30'), NULL), plf.created_at)) >= TIMESTAMP '2026-10-08 00:00:00')) AND (plf.id IS NOT NULL OR EXISTS (SELECT 1 FROM he_lead_campaign aly WHERE aly.lead_id = pl.id)) AND NOT EXISTS (SELECT 1 FROM he_lead_campaign alc JOIN meta_lead_raw afr ON afr.id = alc.meta_lead_id COLLATE utf8mb4_unicode_ci WHERE alc.lead_id = pl.id AND (alc.form_filled_at < TIMESTAMP '2026-10-08 00:00:00' OR afr.created_at < TIMESTAMP '2026-10-08 00:00:00' OR LEAST(afr.created_at, COALESCE(IF(afr.raw_payload->>'$.created_time' REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$', CONVERT_TZ(STR_TO_DATE(LEFT(afr.raw_payload->>'$.created_time', 19), '%Y-%m-%dT%H:%i:%s'), CONCAT(SUBSTRING(afr.raw_payload->>'$.created_time', 20, 3), ':', SUBSTRING(afr.raw_payload->>'$.created_time', 23, 2)), '+05:30'), NULL), afr.created_at)) < TIMESTAMP '2026-10-08 00:00:00')))), NOT EXISTS (SELECT 1 FROM meta_lead_raw afx WHERE afx.parsed_phone = ml.parsed_phone AND (afx.created_at < TIMESTAMP '2026-10-08 00:00:00' OR LEAST(afx.created_at, COALESCE(IF(afx.raw_payload->>'$.created_time' REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$', CONVERT_TZ(STR_TO_DATE(LEFT(afx.raw_payload->>'$.created_time', 19), '%Y-%m-%dT%H:%i:%s'), CONCAT(SUBSTRING(afx.raw_payload->>'$.created_time', 20, 3), ':', SUBSTRING(afx.raw_payload->>'$.created_time', 23, 2)), '+05:30'), NULL), afx.created_at)) < TIMESTAMP '2026-10-08 00:00:00'))), 'meta_live', 'meta_old'))) AS t, wi.mobile10 AS mob FROM walkin_invite wi LEFT JOIN meta_lead_raw ml ON ml.id = wi.meta_lead_id COLLATE utf8mb4_unicode_ci WHERE wi.requisition_id IN (?) AND wi.last_sent_at >= ? AND wi.last_sent_at < ? AND wi.match_id IS NULL",
   "SELECT /*+ MAX_EXECUTION_TIME(8000) */ STRAIGHT_JOIN (d.drive_date >= ?) AS cur, m.lead_id AS tl, (COALESCE(rs.source_type, 'he') <> 'he' OR (d.source_kind IN ('meta','campaign') OR (d.source_kind = 'batch' AND EXISTS (SELECT 1 FROM he_import_batch hib WHERE hib.source = 'meta' AND JSON_CONTAINS(d.source_ids, JSON_QUOTE(hib.id)))))) AS tm, (d.drive_date >= TIMESTAMP '2026-10-08 00:00:00') AS tr, COUNT(DISTINCT CASE WHEN ((m.state IN ('arrived','selected') AND ((hl.status = 'joined' AND hl.status_at >= d.drive_date) OR (LOWER(ac.current_stage) IN ('joined','payroll_validated') AND (EXISTS (SELECT 1 FROM ats_candidate_stage_log sl WHERE sl.candidate_id = ac.id AND LOWER(sl.to_stage) IN ('joined','payroll_validated') AND sl.stage_date >= d.drive_date) OR EXISTS (SELECT 1 FROM ats_onboarding_bridge ob WHERE ob.candidate_id = ac.id AND ob.joining_date >= d.drive_date))))) OR (m.state IN ('arrived','selected') AND ((m.state = 'selected' AND m.updated_at >= d.drive_date) OR (LOWER(ac.current_stage) IN ('selected','offered','offer','offer_approved','onboarded','converted') AND EXISTS (SELECT 1 FROM ats_candidate_stage_log sl WHERE sl.candidate_id = ac.id AND LOWER(sl.to_stage) IN ('selected','offered','offer','offer_approved','onboarded','converted','joined','payroll_validated') AND sl.stage_date >= d.drive_date))))) THEN m.id END) AS selected, COUNT(DISTINCT CASE WHEN (m.state IN ('arrived','selected') AND ((hl.status = 'joined' AND hl.status_at >= d.drive_date) OR (LOWER(ac.current_stage) IN ('joined','payroll_validated') AND (EXISTS (SELECT 1 FROM ats_candidate_stage_log sl WHERE sl.candidate_id = ac.id AND LOWER(sl.to_stage) IN ('joined','payroll_validated') AND sl.stage_date >= d.drive_date) OR EXISTS (SELECT 1 FROM ats_onboarding_bridge ob WHERE ob.candidate_id = ac.id AND ob.joining_date >= d.drive_date))))) THEN m.id END) AS joined, COUNT(DISTINCT CASE WHEN m.state = 'slot_released' THEN m.id END) AS slot_released FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id LEFT JOIN he_lead hl ON hl.id = m.lead_id LEFT JOIN ats_candidate ac ON ac.id = hl.ats_candidate_id COLLATE utf8mb4_unicode_ci WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? GROUP BY cur, tl, tm, tr",
+  "SELECT /*+ MAX_EXECUTION_TIME(8000) */ STRAIGHT_JOIN m.lead_id AS tl, (COALESCE(rs.source_type, 'he') <> 'he' OR (d.source_kind IN ('meta','campaign') OR (d.source_kind = 'batch' AND EXISTS (SELECT 1 FROM he_import_batch hib WHERE hib.source = 'meta' AND JSON_CONTAINS(d.source_ids, JSON_QUOTE(hib.id)))))) AS tm, (COALESCE(d.drive_date, DATE(hc.created_at)) >= TIMESTAMP '2026-10-08 00:00:00') AS tr, l.mobile10 AS mob FROM he_call hc JOIN he_match m ON m.id = hc.match_id JOIN he_lead l ON l.id = hc.lead_id LEFT JOIN he_drive d ON d.id = m.drive_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = m.requisition_id WHERE hc.requisition_id IN (?) AND hc.created_at >= ? AND hc.created_at < ? GROUP BY tl, tm, tr, mob",
+  "SELECT /*+ MAX_EXECUTION_TIME(8000) */ STRAIGHT_JOIN m.lead_id AS tl, (COALESCE(rs.source_type, 'he') <> 'he' OR (d.source_kind IN ('meta','campaign') OR (d.source_kind = 'batch' AND EXISTS (SELECT 1 FROM he_import_batch hib WHERE hib.source = 'meta' AND JSON_CONTAINS(d.source_ids, JSON_QUOTE(hib.id)))))) AS tm, (COALESCE(d.drive_date, DATE(hm.created_at)) >= TIMESTAMP '2026-10-08 00:00:00') AS tr, hm.channel AS ch, hm.mobile10 AS mob FROM he_message hm JOIN he_match m ON m.lead_id = hm.lead_id AND m.requisition_id = hm.requisition_id LEFT JOIN he_drive d ON d.id = m.drive_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = m.requisition_id WHERE hm.requisition_id IN (?) AND hm.created_at >= ? AND hm.created_at < ? AND hm.direction = 'out' AND hm.channel IN ('email','whatsapp') GROUP BY tl, tm, tr, ch, mob",
+  "SELECT /*+ MAX_EXECUTION_TIME(8000) */ STRAIGHT_JOIN m.lead_id AS tl, (COALESCE(rs.source_type, 'he') <> 'he' OR (d.source_kind IN ('meta','campaign') OR (d.source_kind = 'batch' AND EXISTS (SELECT 1 FROM he_import_batch hib WHERE hib.source = 'meta' AND JSON_CONTAINS(d.source_ids, JSON_QUOTE(hib.id)))))) AS tm, (d.drive_date >= TIMESTAMP '2026-10-08 00:00:00') AS tr, COALESCE(m.confirmed_via, 'unknown') AS via, COUNT(DISTINCT m.id) AS n FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = m.requisition_id WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? AND (m.confirmed_at IS NOT NULL OR m.state IN ('confirmed','arrived','no_show')) GROUP BY tl, tm, tr, via",
   "SELECT /*+ MAX_EXECUTION_TIME(8000) */ STRAIGHT_JOIN m.lead_id AS tl, (COALESCE(rs.source_type, 'he') <> 'he' OR (d.source_kind IN ('meta','campaign') OR (d.source_kind = 'batch' AND EXISTS (SELECT 1 FROM he_import_batch hib WHERE hib.source = 'meta' AND JSON_CONTAINS(d.source_ids, JSON_QUOTE(hib.id)))))) AS tm, (d.drive_date >= TIMESTAMP '2026-10-08 00:00:00') AS tr, WEEKDAY(ev.created_at) AS wd, HOUR(ev.created_at) AS hr, COUNT(DISTINCT m.id) AS n FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id JOIN he_lead_event ev ON ev.drive_id = d.id AND ev.lead_id = m.lead_id AND ev.event_type = 'arrived' WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? GROUP BY tl, tm, tr, wd, hr",
   "SELECT /*+ MAX_EXECUTION_TIME(8000) */ STRAIGHT_JOIN m.lead_id AS tl, (COALESCE(rs.source_type, 'he') <> 'he' OR (d.source_kind IN ('meta','campaign') OR (d.source_kind = 'batch' AND EXISTS (SELECT 1 FROM he_import_batch hib WHERE hib.source = 'meta' AND JSON_CONTAINS(d.source_ids, JSON_QUOTE(hib.id)))))) AS tm, (d.drive_date >= TIMESTAMP '2026-10-08 00:00:00') AS tr, hm.id AS hid, WEEKDAY(hm.created_at) AS wd, HOUR(hm.created_at) AS hr FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream rs ON rs.id = sm.stream_id AND rs.requisition_id = d.requisition_id JOIN he_message hm ON hm.lead_id = m.lead_id AND hm.direction = 'in' AND hm.created_at >= ? AND hm.created_at < ? WHERE d.requisition_id IN (?) AND d.drive_date BETWEEN ? AND ? GROUP BY tl, tm, tr, hm.id",
+  "SELECT /*+ MAX_EXECUTION_TIME(8000) */ cr.channel AS ch, cr.mobile10 AS mob FROM candidate_response cr WHERE cr.requisition_id IN (?) AND cr.occurred_at >= ? AND cr.occurred_at < ? AND cr.answer <> 'no_answer' AND cr.channel IN ('email','web','whatsapp','voice_bot','call_file') GROUP BY cr.channel, cr.mobile10",
   "SELECT /*+ MAX_EXECUTION_TIME(8000) */ hl.id AS tl, ((qd.source_kind IN ('meta','campaign') OR (qd.source_kind = 'batch' AND EXISTS (SELECT 1 FROM he_import_batch hib WHERE hib.source = 'meta' AND JSON_CONTAINS(qd.source_ids, JSON_QUOTE(hib.id))))) OR qf.meta_lead_id IS NOT NULL) AS tm, (qf.qualified_at >= TIMESTAMP '2026-10-08 00:00:00') AS tr, IF(hl.meta_lead_id IS NULL, ((hlf.id IS NULL OR (hlf.created_at >= TIMESTAMP '2026-10-08 00:00:00' AND LEAST(hlf.created_at, COALESCE(IF(hlf.raw_payload->>'$.created_time' REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$', CONVERT_TZ(STR_TO_DATE(LEFT(hlf.raw_payload->>'$.created_time', 19), '%Y-%m-%dT%H:%i:%s'), CONCAT(SUBSTRING(hlf.raw_payload->>'$.created_time', 20, 3), ':', SUBSTRING(hlf.raw_payload->>'$.created_time', 23, 2)), '+05:30'), NULL), hlf.created_at)) >= TIMESTAMP '2026-10-08 00:00:00')) AND (hlf.id IS NOT NULL OR EXISTS (SELECT 1 FROM he_lead_campaign aly WHERE aly.lead_id = hl.id)) AND NOT EXISTS (SELECT 1 FROM he_lead_campaign alc JOIN meta_lead_raw afr ON afr.id = alc.meta_lead_id COLLATE utf8mb4_unicode_ci WHERE alc.lead_id = hl.id AND (alc.form_filled_at < TIMESTAMP '2026-10-08 00:00:00' OR afr.created_at < TIMESTAMP '2026-10-08 00:00:00' OR LEAST(afr.created_at, COALESCE(IF(afr.raw_payload->>'$.created_time' REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$', CONVERT_TZ(STR_TO_DATE(LEFT(afr.raw_payload->>'$.created_time', 19), '%Y-%m-%dT%H:%i:%s'), CONCAT(SUBSTRING(afr.raw_payload->>'$.created_time', 20, 3), ':', SUBSTRING(afr.raw_payload->>'$.created_time', 23, 2)), '+05:30'), NULL), afr.created_at)) < TIMESTAMP '2026-10-08 00:00:00'))), NULL) AS tx, qf.stopped_reason, COUNT(*) AS n FROM qualified_followup qf LEFT JOIN he_match m ON m.lead_id = qf.he_lead_id AND m.requisition_id = qf.requisition_id LEFT JOIN he_lead hl ON hl.id = qf.he_lead_id LEFT JOIN he_drive qd ON qd.id = COALESCE(qf.drive_id, m.drive_id) LEFT JOIN meta_lead_raw hlf ON hlf.id = COALESCE(hl.meta_lead_id, qf.meta_lead_id) COLLATE utf8mb4_unicode_ci WHERE qf.requisition_id IN (?) AND qf.qualified_at >= ? AND qf.qualified_at < ? AND qf.stopped_reason IN ('opted_out','requisition_closed','no_contact_details') GROUP BY tl, tm, tr, tx, qf.stopped_reason",
   "SELECT /*+ MAX_EXECUTION_TIME(8000) */ jr.id AS requisition_id, jr.requisition_code, jr.designation_name, d.branch_name, d.id, d.drive_date, d.status, d.target_shows, s.id AS stream_id, m.lead_id AS tl, (COALESCE(s.source_type, 'he') <> 'he' OR (d.source_kind IN ('meta','campaign') OR (d.source_kind = 'batch' AND EXISTS (SELECT 1 FROM he_import_batch hib WHERE hib.source = 'meta' AND JSON_CONTAINS(d.source_ids, JSON_QUOTE(hib.id)))))) AS tm, (d.drive_date >= TIMESTAMP '2026-10-08 00:00:00') AS tr, COUNT(m.id) AS lined, SUM(m.state IN ('invited','confirmed','slot_released','arrived','no_show','selected')) AS invited, SUM(m.state IN ('confirmed','arrived','selected')) AS confirmed, SUM(m.state IN ('arrived','selected')) AS arrived, SUM(m.state = 'no_show') AS no_show, SUM(m.state = 'declined') AS declined, SUM((m.state IN ('arrived','selected') AND m.slot_at IS NULL)) AS unplanned FROM job_requisition jr LEFT JOIN he_drive d ON d.requisition_id = jr.id COLLATE utf8mb4_unicode_ci AND d.drive_date BETWEEN ? AND ? LEFT JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id LEFT JOIN requisition_stream s ON s.id = sm.stream_id AND s.requisition_id = d.requisition_id WHERE jr.id IN (?) GROUP BY jr.id, d.id, s.id, tl, tm, tr",
   "SELECT /*+ MAX_EXECUTION_TIME(8000) */ jr.id, jr.requisition_code, jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, MAX(x.last_drive) AS last_drive FROM ( SELECT d.requisition_id COLLATE utf8mb4_unicode_ci AS rid, MAX(d.drive_date) AS last_drive FROM he_drive d WHERE d.drive_date BETWEEN ? AND ? GROUP BY d.requisition_id UNION ALL SELECT mc.requisition_id COLLATE utf8mb4_unicode_ci, NULL FROM meta_campaign mc WHERE mc.campaign_status = 'active' AND mc.requisition_id IS NOT NULL ) x JOIN job_requisition jr ON jr.id = x.rid COLLATE utf8mb4_unicode_ci WHERE 1 = 1 GROUP BY jr.id, jr.requisition_code, jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount ORDER BY MAX(x.last_drive) IS NULL, MAX(x.last_drive) DESC, jr.id LIMIT 201",

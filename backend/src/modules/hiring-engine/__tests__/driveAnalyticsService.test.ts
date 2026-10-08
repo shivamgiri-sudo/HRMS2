@@ -38,7 +38,7 @@ const personRow = (source_type: string, leads: number, invited: number, confirme
 type Impl = { discovery?: unknown[]; header?: unknown[]; drives?: unknown[]; outcomes?: unknown[]; persons?: unknown[]; campaigns?: unknown[]; fail?: Record<string, string>; sources?: unknown; branchKnown?: boolean };
 let impl: Impl;
 const kindOf = (q: string): string =>
-  q.includes("AS lead_rows") ? "persons" : q.includes("FROM meta_campaign mc LEFT JOIN job_requisition jr") ? "campaignNames"
+  q.includes("AS lead_rows") ? "persons" : q.includes(" AS via") || q.includes(" AS mob") ? "responses" : q.includes("FROM meta_campaign mc LEFT JOIN job_requisition jr") ? "campaignNames"
     : q.includes("FROM job_requisition WHERE id") ? "header" : q.includes("FROM he_drive d WHERE d.drive_date BETWEEN") ? "discovery" : q.includes("LEFT JOIN he_drive d ON") ? "drives"
     : q.includes("AS slot_released") ? "outcomes" : q.includes("FROM qualified_followup qf") ? "stops" : q.includes("JOIN he_message hm") ? "replies" : q.includes("JOIN he_lead_event ev") ? "arrivals" : "other";
 const sqlOf = () => execute.mock.calls.map((c) => [String(c[0]), (c[1] ?? []) as unknown[]] as const);
@@ -347,7 +347,8 @@ describe("getDriveAnalytics", () => {
     // the source rule's form-fill subqueries are keyed (sourceAttribution.test.ts) and folded away here
     // the persons read starts from he_message / he_lead_event / meta_lead_raw on purpose, each by an index range bounded by requisition
     // ids and the window (asserted in drivePersons.test.ts); every other statement reaches them by key only
-    for (const [q] of sqlOf().filter(([x]) => kindOf(x) !== "persons")) for (const t of ["he_lead", "he_message", "he_lead_event", "meta_lead_raw"]) expect(stripRule(q)).not.toContain(`FROM ${t} `);
+    // the responses reads (he-response-stats.service.ts) start from he_message / he_call / candidate_response by (requisition_id, time), asserted in responseStats.test.ts
+    for (const [q] of sqlOf().filter(([x]) => kindOf(x) !== "persons" && kindOf(x) !== "responses")) for (const t of ["he_lead", "he_message", "he_lead_event", "meta_lead_raw"]) expect(stripRule(q)).not.toContain(`FROM ${t} `);
   });
 });
 
