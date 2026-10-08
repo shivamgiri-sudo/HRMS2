@@ -10,10 +10,12 @@ const manifest = fs.readFileSync(path.resolve(__dirname, "../runPendingMigration
 const sql = fs.existsSync(sqlPath) ? fs.readFileSync(sqlPath, "utf8") : "";
 
 describe("migration 2146 selection_person_fact", () => {
-  it("exists and is registered as the last manifest entry, after 2145", () => {
+  it("exists and is registered right after 2145", () => {
     expect(sql).not.toBe("");
     const entries = [...manifest.matchAll(/^\s*"(migrations\/[^"]+\.sql)",/gm)].map((m) => m[1]);
-    expect(entries.slice(-2)).toEqual(["migrations/2145_requisition_selection_rules.sql", `migrations/${FILE}`]);
+    const at = entries.indexOf(`migrations/${FILE}`);
+    expect(entries[at - 1]).toBe("migrations/2145_requisition_selection_rules.sql");
+    for (const e of entries.slice(at + 1)) expect(Number(e.match(/migrations\/(\d+)_/)![1]), e).toBeGreaterThan(2146);
   });
   it("creates the cache table only if missing: one row per person and source kind, indexed for the preview read", () => {
     const st = splitSql(sql);
