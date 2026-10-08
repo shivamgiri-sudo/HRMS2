@@ -4,6 +4,7 @@ const h = vi.hoisted(() => ({
   sqls: [] as Array<[string, unknown[]]>, rows: [] as Array<Record<string, unknown>>, versions: [] as Array<Record<string, unknown>>,
   campaign: [] as Array<Record<string, unknown>>, open: [] as string[], outOfScope: new Set<string>(),
   run: null as Record<string, unknown> | null, counts: [] as Array<Record<string, unknown>>, standing: [] as Array<Record<string, unknown>>, latest: "v2" as string | null, blocker: null as string | null,
+  cands: [] as Array<Record<string, unknown>>,
 }));
 vi.mock("../../../db/mysql.js", () => ({
   db: {
@@ -18,6 +19,9 @@ vi.mock("../../../db/mysql.js", () => ({
       if (s.startsWith("SELECT status, COUNT(*) AS n FROM shortlist_candidate")) return [h.counts, []];
       if (s.startsWith("SELECT id, valid_until, criteria_version_id, approved_by, approved_at FROM shortlist_approval")) return [h.standing, []];
       if (s.startsWith("SELECT id, version_no FROM job_requisition_criteria_version")) return [h.latest ? [{ id: h.latest, version_no: 2 }] : [], []];
+      if (s.startsWith("SELECT requisition_id, source_kind FROM shortlist_run")) return [h.run ? [h.run] : [], []];
+      if (s.startsWith("SELECT id, mobile10, sub_source, verdict, score, status, review_json FROM shortlist_candidate")) return [h.cands, []];
+      if (s.startsWith("SELECT id, mobile10 FROM shortlist_candidate")) return [h.cands.filter((c) => (p as unknown[]).slice(1).includes(String(c.id))), []];
       return [[], []];
     }),
   },
@@ -25,7 +29,7 @@ vi.mock("../../../db/mysql.js", () => ({
 vi.mock("../../job-requisition/job-requisition.service.js", () => ({ jobRequisitionService: { isRequisitionVisible: vi.fn(async (_u: unknown, k: { id: string }) => !h.outOfScope.has(k.id)) } }));
 vi.mock("../approval.service.js", async (orig) => ({ ...(await orig<typeof import("../approval.service.js")>()), approvalBlocker: vi.fn(async () => h.blocker) }));
 
-import { approvalState, campaignRequisitions, listCriteriaRequisitions, permissionsFor } from "../selection-ui.service.js";
+import { approvalState, campaignRequisitions, candidateMobiles, listCriteriaRequisitions, permissionsFor, runCandidates } from "../selection-ui.service.js";
 
 const user = (role: string) => ({ id: "u1", role }) as never;
 const row = (id: string, o: Record<string, unknown> = {}) => ({ id, requisition_code: `REQ-${id}`, branch_name: "NOIDA-2", process_name: "Onfido", designation_name: "CSE", approval_status: "approved",
@@ -33,7 +37,7 @@ const row = (id: string, o: Record<string, unknown> = {}) => ({ id, requisition_
   meta_target_radius_km: null, shift_requirement: null, night_shift_required: 0, rotational_shift: 0, salary_min: null, salary_max: 18000, preferred_sources: null, meta_screening_config: null,
   selection_rules: null, bcity: "Noida", bstate: null, ...o });
 
-beforeEach(() => { Object.assign(h, { rows: [], versions: [], campaign: [], open: [], run: null, counts: [], standing: [], latest: "v2", blocker: null }); h.sqls.length = 0; h.outOfScope.clear(); });
+beforeEach(() => { Object.assign(h, { rows: [], versions: [], campaign: [], open: [], run: null, counts: [], standing: [], latest: "v2", blocker: null, cands: [] }); h.sqls.length = 0; h.outOfScope.clear(); });
 
 describe("permissionsFor (what the UI may show; the server still refuses)", () => {
   it.each([
@@ -92,5 +96,28 @@ describe("approvalState", () => {
     expect((await approvalState(user("hr"), "r1", "he")).blocker).toMatch(/criteria_incomplete/);
     h.outOfScope.add("r1");
     await expect(approvalState(user("hr"), "r1", "he")).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe("run candidates (the approve bar's untick list)", () => {
+  it("masked mobiles and an opaque row id; never the full mobile", async () => {
+    h.run = { requisition_id: "r1", source_kind: "he" };
+    h.cands = [{ id: 7, mobile10: "9876543210", sub_source: "naukri_import", verdict: "pass", score: "62.5", status: "picked", review_json: null },
+      { id: 8, mobile10: "9123456789", sub_source: "candidate", verdict: "review", score: "0", status: "review", review_json: ["Age: not known"] }];
+    const out = await runCandidates(user("hr"), "run-1");
+    expect(out).toEqual({ requisitionId: "r1", items: [
+      { id: "7", maskedMobile: "98xxxxxx10", subSource: "naukri_import", verdict: "pass", score: 62.5, status: "picked", reasons: [] },
+      { id: "8", maskedMobile: "91xxxxxx89", subSource: "candidate", verdict: "review", score: 0, status: "review", reasons: ["Age: not known"] }] });
+    expect(JSON.stringify(out)).not.toMatch(/\d{10}/);
+  });
+  it("unknown run or out-of-scope requisition is 404", async () => {
+    await expect(runCandidates(user("hr"), "nope")).rejects.toMatchObject({ statusCode: 404 });
+    h.run = { requisition_id: "r1", source_kind: "he" }; h.outOfScope.add("r1");
+    await expect(runCandidates(user("hr"), "run-1")).rejects.toMatchObject({ statusCode: 404 });
+  });
+  it("candidateMobiles resolves row ids of that run only", async () => {
+    h.cands = [{ id: 7, mobile10: "9876543210" }, { id: 8, mobile10: "9123456789" }];
+    expect(await candidateMobiles("run-1", ["7"])).toEqual(["9876543210"]);
+    expect(await candidateMobiles("run-1", [])).toEqual([]);
   });
 });

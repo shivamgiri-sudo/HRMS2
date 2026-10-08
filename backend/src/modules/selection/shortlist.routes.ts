@@ -13,7 +13,7 @@ import { bookedMismatch, releaseCriteriaHold } from "./reevaluate.service.js";
 import { OVERRIDE_ROLES, overrideHistory, removeOverride, setOverride, type OverrideActor } from "./override.service.js";
 import { SOURCE_KINDS, type SourceKind } from "./selection-types.js";
 import { CRITERIA_READ_ROLES } from "./selection-roles.js";
-import { approvalState } from "./selection-ui.service.js";
+import { approvalState, candidateMobiles, runCandidates } from "./selection-ui.service.js";
 
 export const shortlistRouter = Router();
 
@@ -53,13 +53,21 @@ shortlistRouter.post("/run", requireAuth, requireRole(...APPROVAL_ROLES), handle
   return res.json({ success: true, data: await createShortlistRun({ requisitionId: str(req.body.requisitionId), sourceKind: k, actor: actorOf(req) }) });
 }));
 
+const idsOf = (v: unknown): string[] | null => (v === undefined ? [] : Array.isArray(v) && v.length <= 500 && v.every((m) => typeof m === "string" && /^\d{1,20}$/.test(m)) ? (v as string[]) : null);
+
+// The approve bar's untick list: masked people of a run and opaque row ids (the screen never holds full mobiles)
+shortlistRouter.get("/run/:runId/candidates", requireAuth, requireRole(...APPROVAL_ROLES), handle(async (req, res) =>
+  res.json({ success: true, data: await runCandidates(req.authUser!, String(req.params.runId)) })));
+
 shortlistRouter.post("/approve", requireAuth, requireRole(...APPROVAL_ROLES), handle(async (req, res) => {
   const b = req.body ?? {};
-  const k = kindOf(b.sourceKind), untick = mobilesOf(b.untick), review = mobilesOf(b.approveReview);
-  if (!str(b.requisitionId) || !str(b.runId) || !k || !untick || !review || (b.note != null && (typeof b.note !== "string" || b.note.length > 300))) {
-    return bad(res, "requisitionId, sourceKind, runId are required; untick / approveReview are lists of mobiles; note up to 300 characters");
+  const k = kindOf(b.sourceKind), untick = mobilesOf(b.untick), review = mobilesOf(b.approveReview), untickIds = idsOf(b.untickIds), reviewIds = idsOf(b.approveReviewIds);
+  if (!str(b.requisitionId) || !str(b.runId) || !k || !untick || !review || !untickIds || !reviewIds || (b.note != null && (typeof b.note !== "string" || b.note.length > 300))) {
+    return bad(res, "requisitionId, sourceKind, runId are required; untick / approveReview are lists of mobiles (or untickIds / approveReviewIds of the run); note up to 300 characters");
   }
-  return res.json({ success: true, data: await approveBatch({ requisitionId: b.requisitionId, sourceKind: k, runId: b.runId, untick, approveReview: review, note: b.note ?? null, actor: actorOf(req) }) });
+  const byId = async (ids: string[]) => candidateMobiles(String(b.runId), ids);
+  return res.json({ success: true, data: await approveBatch({ requisitionId: b.requisitionId, sourceKind: k, runId: b.runId, untick: [...untick, ...(await byId(untickIds))],
+    approveReview: [...review, ...(await byId(reviewIds))], note: b.note ?? null, actor: actorOf(req) }) });
 }));
 
 shortlistRouter.post("/approve-standing", requireAuth, requireRole(...APPROVAL_ROLES), handle(async (req, res) => {

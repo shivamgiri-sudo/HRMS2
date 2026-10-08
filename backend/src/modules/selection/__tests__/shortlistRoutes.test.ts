@@ -52,6 +52,11 @@ describe("approval routes", () => {
     expect((await request(a).post("/api/he/shortlist/approve").send({ requisitionId: "r1", sourceKind: "he", runId: "x", untick: ["123"] })).status).toBe(400);
     expect((await request(a).post("/api/he/shortlist/approve-standing").send({ requisitionId: "r1", versionId: "v", days: 2.5 })).status).toBe(400);
     expect((await request(a).post("/api/he/shortlist/reject").send({ requisitionId: "r1", mobiles: [] })).status).toBe(400);
+    expect((await request(a).post("/api/he/shortlist/approve").send({ requisitionId: "r1", sourceKind: "he", runId: "x", untickIds: ["7; DROP"] })).status).toBe(400);
+  });
+  it.each(["recruiter", "ceo", "admin"])("%s cannot list a run's people (403)", async (role) => {
+    h.user.role = role;
+    expect((await request(await app()).get("/api/he/shortlist/run/run-1/candidates")).status).toBe(403);
   });
 });
 

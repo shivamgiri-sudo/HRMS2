@@ -10,6 +10,7 @@ import { LOAD_ROW_SQL, toCriteriaRow } from "./criteria-row.js";
 import { istText } from "./facts-loader.service.js";
 import { permissionsFor, type SelectionPermissions } from "./selection-roles.js";
 import type { Completeness, RuleKey, SourceKind } from "./selection-types.js";
+import { maskMobile } from "./preview.service.js";
 import { openRequisitionsInScope } from "./why-not.service.js";
 
 export { permissionsFor };
@@ -87,4 +88,26 @@ export async function approvalState(user: User, requisitionId: string, sourceKin
     standing: standing.map((s) => ({ id: String(s.id), validUntil: String(s.valid_until), versionId: s.criteria_version_id ?? null, approvedBy: String(s.approved_by), approvedAt: String(s.approved_at) })),
     permissions: permissionsFor(String(user.role ?? "")),
   };
+}
+
+/** The people of one shortlist run for the approve bar's untick list: masked mobile and an opaque row id (never the full mobile). */
+export async function runCandidates(user: User, runId: string) {
+  const [runs] = await db.execute<RowDataPacket[]>("SELECT requisition_id, source_kind FROM shortlist_run WHERE id = ? LIMIT 1", [runId]);
+  const run = runs[0];
+  if (!run || !(await jobRequisitionService.isRequisitionVisible(user, { id: String(run.requisition_id) }))) throw fail(404, "Shortlist run not found");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, mobile10, sub_source, verdict, score, status, review_json FROM shortlist_candidate
+      WHERE run_id = ? AND status IN ('picked', 'review', 'unticked', 'approved') ORDER BY FIELD(status, 'picked', 'review', 'unticked', 'approved'), score DESC LIMIT 500`, [runId]);
+  const list = (v: unknown): string[] => { const x = typeof v === "string" ? (() => { try { return JSON.parse(v); } catch { return []; } })() : v; return Array.isArray(x) ? x.map(String).slice(0, 3) : []; };
+  return {
+    requisitionId: String(run.requisition_id),
+    items: rows.map((r) => ({ id: String(r.id), maskedMobile: maskMobile(String(r.mobile10)), subSource: String(r.sub_source), verdict: String(r.verdict), score: Number(r.score), status: String(r.status), reasons: list(r.review_json) })),
+  };
+}
+
+/** Row ids of one run to mobiles (server side only), for untick / approve-review by id. */
+export async function candidateMobiles(runId: string, ids: string[]): Promise<string[]> {
+  if (!ids.length) return [];
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT id, mobile10 FROM shortlist_candidate WHERE run_id = ? AND id IN (${ph(ids.length)})`, [runId, ...ids]);
+  return rows.map((r) => String(r.mobile10));
 }
