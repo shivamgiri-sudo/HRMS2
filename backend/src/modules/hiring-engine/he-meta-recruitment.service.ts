@@ -93,9 +93,9 @@ async function computeBase(): Promise<Base> {
   const cand = new Map<string, { m: string | null; walked: boolean; stage: string }>();
   const byPhone = new Map<string, string[]>();
   const load = async (ids: string[]) => {
-    for (const c of chunks(ids)) {
+    for (const part of chunks(ids)) {
       const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT c.id, RIGHT(REGEXP_REPLACE(c.mobile, '[^0-9]', ''), 10) AS m, (c.walk_in_date IS NOT NULL) AS walked, c.current_stage FROM ats_candidate c WHERE c.id IN (${ph(c.length)})`, c);
+        `SELECT c.id, RIGHT(REGEXP_REPLACE(c.mobile, '[^0-9]', ''), 10) AS m, (c.walk_in_date IS NOT NULL) AS walked, c.current_stage FROM ats_candidate c WHERE c.id IN (${ph(part.length)})`, part);
       for (const r of rows) {
         cand.set(r.id as string, { m: (r.m as string | null) ?? null, walked: Number(r.walked) === 1, stage: String(r.current_stage ?? "").toLowerCase() });
         if (r.m) byPhone.set(r.m as string, [...(byPhone.get(r.m as string) ?? []), r.id as string]);
