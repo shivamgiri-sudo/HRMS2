@@ -31,7 +31,7 @@ import { collectInsightFacts } from "./he-drive-insight-facts.service.js";
 import { loadInsightThresholds } from "./he-insight-params.service.js";
 import { buildDriveGroups, readAgg, readDriveAggRows, type DriveGroup, type DriveGroupInput } from "./he-drive-trend.service.js";
 import { getSourcesForRequisitions, type RequisitionSourceRows } from "./he-sources-window.service.js";
-import { campaignProgress, readPersonStages, seatsOf, type CampaignProgress, type CampaignProgressRow, type OpenSeats, type PersonStages } from "./he-drive-persons.service.js";
+import { campaignProgress, readPersonStages, seatsOf, type CampaignProgress, type CampaignProgressRow, type OpenSeats, type PersonStages, type RequisitionStagesRow } from "./he-drive-persons.service.js";
 import { outcomeReasonCounts } from "./he-outcome-reason.service.js";
 import { QF_TYPE_FROM_SQL, qfTypeKeysSql } from "./he-requisition-sources.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
@@ -63,6 +63,8 @@ export interface DriveAnalytics {
   insights: DriveInsight[];
   /** Per Meta campaign and requisition: people at each stage in the window (events-based, same rules as `types`). */
   campaigns: CampaignProgress[];
+  /** WS3 C3: per requisition and type (every type, Hiring Engine included), people at each stage from the same persons read. */
+  byRequisition: Array<RequisitionStagesRow & { code: string; branch: string }>;
   /** Per type: people at each journey stage (form fills, screened, qualified, contacted, replied ...) from the persons read; null when it failed. */
   journey: Record<SourceType, PersonStages> | null;
   /** Open seats of every requisition in scope (0 when closed, inactive or full, with the outreach path's reason). */
@@ -374,7 +376,7 @@ async function build(
   const respP = none ? Promise.resolve(null) : sec("responses", () => readResponseStats(ids, w, pf), null as ResponseStats | null);
   // The previous window comes from the same statements as the window (persons, outcomes, follow-up stages; rows tagged by cur): its tiles
   // only need leads .. joined, so no separate previous-window reads. Every read goes through the shared read limiter (he-read-limit.ts).
-  const noPersons = { byType: null as Record<SourceType, PersonStages> | null, campaigns: [] as CampaignProgressRow[], previous: null as Record<SourceType, PersonStageCounts> | null };
+  const noPersons = { byType: null as Record<SourceType, PersonStages> | null, campaigns: [] as CampaignProgressRow[], requisitions: [] as RequisitionStagesRow[], previous: null as Record<SourceType, PersonStageCounts> | null };
   const empty = { outcomes: [] as MatchOutcome[], slotReleased: perType(() => 0), previous: [] as MatchOutcome[] };
   const [sources, driveRows, outcomeRead, stops, repliesRows, arrivalsRows, persons] = await Promise.all([
     none ? null : sec("sources", async () => {
@@ -490,6 +492,7 @@ async function build(
     cost,
     insights,
     campaigns,
+    byRequisition: persons.requisitions.map((r) => ({ ...r, code: headOf.get(r.requisitionId)?.code ?? "", branch: headOf.get(r.requisitionId)?.branch ?? "" })),
     journey: none ? perType(() => ({ leads: 0, fills: 0, screened: 0, qualified: 0, contacted: 0, invited: 0, replied: 0, confirmed: 0, arrived: 0 })) : persons.byType,
     openSeats,
     confirmedByChannel: resp?.confirmedByChannel ?? null, responseRate: resp?.responseRate ?? null,

@@ -113,6 +113,38 @@ describe("personType: the person rule over a person's signals, as typing each ro
   });
 });
 
+describe("funnel per campaign x requisition x drive (WS3 C3)", () => {
+  it("a Meta fill counts under the requisition it was routed to (the campaign's primary only when the fill has none)", () => {
+    const flat = personsSql(2, true, "2026-10-08").replace(/\s+/g, " ");
+    expect(flat).toContain("COALESCE(r.requisition_id, mc.requisition_id) COLLATE utf8mb4_unicode_ci AS requisition_id");
+    expect(flat).toContain("WHERE COALESCE(r.requisition_id, mc.requisition_id) IN (?,?) AND r.parsed_phone IS NOT NULL");
+    expect(flat).not.toContain("(r.requisition_id IS NULL OR r.requisition_id = mc.requisition_id)");
+  });
+
+  it("requisition rows: every type per requisition from the same person rows; their sums equal the journey per type", () => {
+    const out = aggregatePersons([
+      row({ source_type: "meta_old", campaign_id: "c1", leads: 10, contacted: 8 }),
+      row({ source_type: "meta_old", campaign_id: "c2", leads: 2, contacted: 1 }),
+      row({ requisition_id: "r2", source_type: "meta_live", campaign_id: "c2", leads: 5, contacted: 1 }),
+      row({ source_type: "he", leads: 20, invited: 9 }),
+      row({ requisition_id: "r2", source_type: "he", leads: 3, invited: 1 }),
+    ]);
+    const z = { fills: 0, screened: 0, qualified: 0, contacted: 0, invited: 0, replied: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0 };
+    expect(out.requisitions).toEqual([
+      { requisitionId: "r2", sourceType: "meta_live", stages: { ...z, leads: 5, contacted: 1 } },
+      { requisitionId: "r1", sourceType: "meta_old", stages: { ...z, leads: 12, contacted: 9 } },
+      { requisitionId: "r1", sourceType: "he", stages: { ...z, leads: 20, invited: 9 } },
+      { requisitionId: "r2", sourceType: "he", stages: { ...z, leads: 3, invited: 1 } },
+    ]);
+    for (const t of ["meta_live", "meta_old", "he"] as const) {
+      const sum = out.requisitions.filter((x) => x.sourceType === t).reduce((a, x) => a + x.stages.leads, 0);
+      expect(sum).toBe(out.byType[t].leads);
+    }
+    // a Hiring Engine person never shows in a campaign row, a Meta person never in an he row
+    expect(out.campaigns.every((c) => c.sourceType !== ("he" as never))).toBe(true);
+  });
+});
+
 describe("aggregatePersons", () => {
   it("adds rows per type and keeps per-campaign rows for Meta types only", () => {
     const out = aggregatePersons([

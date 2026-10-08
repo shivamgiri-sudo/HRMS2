@@ -71,13 +71,13 @@ export const personsSql = (n: number, streams: boolean, liveFrom: string, replie
            NULLIF(SUBSTRING(MAX(CONCAT(u.cpri, COALESCE(u.campaign_id, ''))), 2), '') AS campaign_id,
            MAX(u.stage) AS stage, MAX(u.q) AS q, MAX(u.sel) AS sel, MAX(u.joi) AS joi, MAX(u.ft IS NOT NULL) AS fill, MAX(u.scr) AS scr
       FROM (
-        SELECT (r.created_at >= ?) AS cur, ${fillPhoneSql("r")} ${CI} AS person, mc.requisition_id ${CI} AS requisition_id,
+        SELECT (r.created_at >= ?) AS cur, ${fillPhoneSql("r")} ${CI} AS person, COALESCE(r.requisition_id, mc.requisition_id) ${CI} AS requisition_id,
                FIELD(${fillTypeSql("r", liveFrom)}, 'meta_live', 'meta_old', 'he') AS ft, NULL AS tl, 0 AS tm, 0 AS tr,
                IF(r.created_at >= ?, ${fillFirstCampaignSql("r")}, NULL) ${CI} AS campaign_id, 1 AS cpri,
                CASE WHEN r.interview_date IS NOT NULL THEN 2 WHEN r.notification_sent_at IS NOT NULL THEN 1 ELSE 0 END AS stage,
                (r.screening_result = 'qualified') AS q, 0 AS sel, 0 AS joi, (r.screening_result IN ('qualified','disqualified')) AS scr
           FROM meta_lead_raw r FORCE INDEX (idx_ml_created) STRAIGHT_JOIN meta_campaign mc ON mc.id = r.campaign_id ${CI}
-         WHERE mc.requisition_id IN (${ids}) AND (r.requisition_id IS NULL OR r.requisition_id = mc.requisition_id) AND r.parsed_phone IS NOT NULL
+         WHERE COALESCE(r.requisition_id, mc.requisition_id) IN (${ids}) AND r.parsed_phone IS NOT NULL
            AND r.created_at >= ? AND r.created_at < ?
         UNION ALL
         SELECT (d.drive_date >= ?), al.mobile10 ${CI}, d.requisition_id ${CI}, NULL, ${keys("m.lead_id", "d.drive_date")}, alf.campaign_id ${CI}, 1,
@@ -159,15 +159,21 @@ const TYPES: readonly SourceType[] = ["meta_live", "meta_old", "he"];
 const n0 = (v: unknown): number => { const x = Number(v ?? 0); return Number.isFinite(x) && x > 0 ? x : 0; };
 
 /** Rows of one window (cur = 1) or all rows when no cur column is present. */
-export function aggregatePersons(rows: RowDataPacket[] | Array<Record<string, unknown>>): { byType: Record<SourceType, PersonStages>; campaigns: CampaignProgressRow[] } {
+export function aggregatePersons(rows: RowDataPacket[] | Array<Record<string, unknown>>): { byType: Record<SourceType, PersonStages>; campaigns: CampaignProgressRow[]; requisitions: RequisitionStagesRow[] } {
   const zero = (): PersonStages => ({ leads: 0, fills: 0, screened: 0, qualified: 0, contacted: 0, invited: 0, replied: 0, confirmed: 0, arrived: 0 });
   const byType: Record<SourceType, PersonStages> = { meta_live: zero(), meta_old: zero(), he: zero() };
   const campaigns: CampaignProgressRow[] = [];
+  const byReq = new Map<string, RequisitionStagesRow>();
   for (const r of rows) {
     const t = TYPES.find((x) => x === r.source_type);
     if (!t) continue;
     const s = byType[t];
     for (const k of Object.keys(s) as Array<keyof PersonStages>) s[k] += n0(r[k]);
+    // WS3 C3: every type per requisition (campaign-agnostic), from the same person rows
+    const rk = `${t}|${String(r.requisition_id)}`;
+    let q = byReq.get(rk);
+    if (!q) { q = { requisitionId: String(r.requisition_id), sourceType: t, stages: { ...zero(), selected: 0, joined: 0 } }; byReq.set(rk, q); }
+    for (const k of Object.keys(q.stages) as Array<keyof RequisitionStagesRow["stages"]>) q.stages[k] += n0(r[k]);
     if (t === "he") continue;
     campaigns.push({
       campaignId: r.campaign_id == null ? null : String(r.campaign_id), requisitionId: String(r.requisition_id), sourceType: t,
@@ -175,8 +181,12 @@ export function aggregatePersons(rows: RowDataPacket[] | Array<Record<string, un
       replied: n0(r.replied), confirmed: n0(r.confirmed), arrived: n0(r.arrived), selected: n0(r.selected), joined: n0(r.joined),
     });
   }
-  return { byType, campaigns };
+  const order = (t: SourceType) => TYPES.indexOf(t);
+  const requisitions = [...byReq.values()].sort((a, b) => order(a.sourceType) - order(b.sourceType));
+  return { byType, campaigns, requisitions };
 }
+/** One requisition and drive type: people at each stage (WS3 C3; the matrix drill-down reads it). */
+export interface RequisitionStagesRow { requisitionId: string; sourceType: SourceType; stages: PersonStages & { selected: number; joined: number } }
 
 /** Why a campaign's qualified leads may get no outreach, from the campaign row and its own requisition (read by key with the names). */
 export type CampaignBlockerCode = "no_requisition" | "requisition_closed" | "no_bmi_link" | "no_form" | "campaign_not_active";
