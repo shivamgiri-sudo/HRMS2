@@ -3,7 +3,7 @@
  * type, so the numbers are the Summary's. Holds: the scoping, the honest zero notes, the "historic" rule for Old Meta data with the
  * one-tap widen, and the campaign mapping rows. No I/O, no regex literals.
  */
-import { STAGES, type DriveAnalytics, type SourceType, type StageCounts, type TypeAnalytics } from "./driveCommandTypes";
+import { STAGES, type DriveAnalytics, type SourceType, type Stage, type StageCounts, type TypeAnalytics } from "./driveCommandTypes";
 import { SOURCE_TYPES, STAGE_LABEL, TYPE_LABEL, countText, defaultFilters, type Filters } from "./driveCommandModel";
 import { applyDateChange, dateBounds } from "./commandData";
 
@@ -74,8 +74,8 @@ export function zeroNotes(a: DriveAnalytics, type: SourceType, f: Filters, now: 
   if (!tracked) out.push({ id: "untracked", text: "Qualified is not tracked yet: the follow-up pipeline is off, so it shows a dash instead of a zero." });
   // Selected and joined are credited to a drive only after a recorded arrival there, so their zero says that, not "no activity".
   const credited = zeros.filter((z) => z === "selected" || z === "joined");
-  const plain = zeros.filter((z) => !credited.includes(z));
-  const names = (xs: typeof zeros): string => xs.map((z) => STAGE_LABEL[z]).join(", ");
+  const plain = zeros.filter((z) => z !== "selected" && z !== "joined");
+  const names = (xs: readonly Stage[]): string => xs.map((z) => STAGE_LABEL[z]).join(", ");
   if (plain.length) out.push({ id: "no-activity", text: `${names(plain)}: no activity in this range yet.` });
   if (credited.length) {
     out.push({ id: "no-credit", text: s.arrived === 0
