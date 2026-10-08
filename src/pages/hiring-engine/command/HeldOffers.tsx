@@ -22,7 +22,7 @@ export default function HeldOffers({ held, now }: { held: HeldData | null | unde
       <summary className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg px-2 text-sm font-bold text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-100">
         <PauseCircle className="h-4 w-4 shrink-0" aria-hidden />{heldTitle(s.total)}
       </summary>
-      {s.truncated && <p className="px-2 text-xs text-slate-700 dark:text-slate-200">Showing the first {s.total}; more are held.</p>}
+      {s.truncated && <p className="px-2 text-xs text-slate-700 dark:text-slate-200">The list is capped; more offers may be held.</p>}
       <ul className="divide-y divide-slate-200 dark:divide-slate-700">
         {s.rows.map((r) => (
           <li key={r.id} className="space-y-0.5 px-2 py-2">

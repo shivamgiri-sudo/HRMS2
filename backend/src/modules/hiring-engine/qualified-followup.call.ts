@@ -17,7 +17,7 @@ import { rowTag, type FollowupSwitches, type RowTag } from "./qualified-followup
 import { afterFailure, followupRef } from "./qualified-followup.rules.js";
 import { withinSendWindow } from "./qualified-followup.schedule.js";
 import { bestOfferSkipSql } from "./he-best-offer.js";
-import { offerHolds } from "./he-best-offer.service.js";
+import { notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
 
 /** Provider text can echo the number; never store a full phone. */
@@ -30,19 +30,23 @@ export async function runCallStep(s: FollowupSwitches, tag: RowTag, now: Date, l
   if (tag === "test" && (s.testMisconfigured || !s.testPhone)) return counts;
   const paused = [...s.pausedSources];
   const bestOffer = valueAddOn("best_offer");
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
+  const select = async (ids: string[], lim: number) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
       WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
         AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'${bestOfferSkipSql(bestOffer)}
         AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
-        ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}
-      ORDER BY qf.call_due_at LIMIT ${Math.max(1, Math.floor(limit))}`,
-    [tag, now, ...paused]);
-  const list = rows.map(toFollowupRow);
-  const holds = bestOffer ? await offerHolds(list, tag) : null;
+        ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}${ids.length ? notInIdsSql(ids) : ""}
+      ORDER BY qf.call_due_at LIMIT ${lim}`,
+      [tag, now, ...paused, ...ids]);
+    return rows.map(toFollowupRow);
+  };
+  let list = await select([], Math.max(1, Math.floor(limit)));
+  let held: Set<string> | null = null;
+  if (bestOffer) ({ rows: list, held } = await selectWithOfferHolds(list, tag, paused, select));
   const botOn = tag !== "dry_run" && s.botSources.size > 0 && (await superbotConfig()) !== null;
   for (const row of list) {
-    if (holds?.held.has(row.id)) { counts.held++; continue; }
+    if (held?.has(row.id)) { counts.held++; continue; }
     try {
       await processRow(s, tag, now, row, botOn, counts);
     } catch (err) {

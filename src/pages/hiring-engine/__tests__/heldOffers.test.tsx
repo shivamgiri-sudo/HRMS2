@@ -75,6 +75,6 @@ describe("Follow-up panel: held offers", () => {
     expect(failed).toContain("could not load the held offers");
     expect(failed).not.toContain("<details");
   });
-  it("a truncated list says so", () => expect(view(data(held({ truncated: true })))).toContain("more are held"));
+  it("a truncated list says so", () => expect(view(data(held({ truncated: true })))).toContain("The list is capped; more offers may be held."));
   it("data without the held field (older callers) renders nothing for it", () => expect(view(data(undefined))).not.toContain("Held"));
 });

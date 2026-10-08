@@ -60,6 +60,12 @@ describe("listHeldOffers", () => {
     expect(JSON.stringify(r)).not.toMatch(/\d{10}/);
   });
 
+  it("a zone-less IST DATETIME string gets an explicit +05:30 offset", async () => {
+    candidates = [{ ...(candidates[0] as object), qualified_at: "2026-10-07 09:30:00" }];
+    const r = await listHeldOffers(ALL, ON);
+    expect(r.rows[0].qualifiedAt).toBe("2026-10-07T09:30:00+05:30");
+  });
+
   it("the Pune scope puts the branch on the held row with the collation on the parameter side", async () => {
     await listHeldOffers(PUNE, ON);
     const q = sqls().find((s) => s.includes("qf.branch_name"))!;

@@ -2,7 +2,7 @@
  * Pure model of the held-offers list (GET /api/he/qualified-followup/held, backend he-best-offer.service.ts listHeldOffers).
  * A person qualified for several requisitions gets one offer at a time; the other rows wait ("held"). No I/O, no React, no regex literals.
  */
-import { DASH, maskedMobile, orDash, scrubText } from "./followupPanelModel";
+import { DASH, maskedMobile, orDash } from "./followupPanelModel";
 import type { SourceType } from "./driveCommandTypes";
 
 export const HELD_PATH = "/api/he/qualified-followup/held";
@@ -56,4 +56,3 @@ export function heldState(h: unknown, now: number = Date.now()): HeldState | nul
   };
 }
 export const heldTitle = (n: number): string => `Held: another offer is in progress (${n})`;
-export const heldNote = (s: string): string => scrubText(s);

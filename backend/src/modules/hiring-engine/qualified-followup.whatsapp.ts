@@ -13,7 +13,7 @@ import { rowTag, type FollowupSwitches, type RowTag } from "./qualified-followup
 import { afterFailure, chooseWaTemplate, nextStepDue, nextWorkingDayIst } from "./qualified-followup.rules.js";
 import { withinSendWindow } from "./qualified-followup.schedule.js";
 import { bestOfferSkipSql } from "./he-best-offer.js";
-import { offerHolds } from "./he-best-offer.service.js";
+import { notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
 
 const IST_MS = 5.5 * 3600_000;
@@ -38,17 +38,22 @@ export async function runWhatsappStep(s: FollowupSwitches, tag: RowTag, now: Dat
   const take = Math.max(1, Math.floor(tag === "dry_run" ? limit : Math.min(limit, budget)));
   const paused = [...s.pausedSources];
   const bestOffer = valueAddOn("best_offer");
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
+  // Backfill refills held slots only: the merged set never exceeds `take`, so the daily budget still bounds the sends.
+  const select = async (ids: string[], lim: number) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
       WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
         AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'${bestOfferSkipSql(bestOffer)}
-        ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}
-      ORDER BY qf.wa_due_at LIMIT ${take}`,
-    [tag, now, ...paused]);
-  const list = rows.map(toFollowupRow);
-  const holds = bestOffer ? await offerHolds(list, tag) : null;
+        ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}${ids.length ? notInIdsSql(ids) : ""}
+      ORDER BY qf.wa_due_at LIMIT ${lim}`,
+      [tag, now, ...paused, ...ids]);
+    return rows.map(toFollowupRow);
+  };
+  let list = await select([], take);
+  let held: Set<string> | null = null;
+  if (bestOffer) ({ rows: list, held } = await selectWithOfferHolds(list, tag, paused, select));
   for (const row of list) {
-    if (holds?.held.has(row.id)) { counts.held++; continue; }
+    if (held?.has(row.id)) { counts.held++; continue; }
     try {
       await processRow(s, tag, now, row, counts);
     } catch (err) {

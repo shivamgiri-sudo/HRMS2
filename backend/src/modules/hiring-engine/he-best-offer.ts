@@ -15,6 +15,7 @@ export interface OfferRow {
   distanceKm: number | null;
   score: number | null;
   headcountRemaining: number | null;
+  sourceType?: string;
 }
 
 export type OfferWhy = "already_offered" | "nearer" | "higher_score" | "more_urgent" | "earlier";

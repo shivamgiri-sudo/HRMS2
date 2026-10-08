@@ -11,10 +11,6 @@ vi.mock("../he-meta-bridge.service.js", () => ({ bridgeOneMetaLead: vi.fn() }));
 vi.mock("../../meta-campaign/interview-slot.service.js", () => ({ assignInterviewSlot: vi.fn() }));
 vi.mock("../he-send.service.js", async (orig) => ({ ...(await orig<typeof import("../he-send.service.js")>()), sendTemplateToLead: sendTpl }));
 vi.mock("../he-secrets.service.js", () => ({ superbotConfig: vi.fn(async () => null) }));
-vi.mock("../he-best-offer.service.js", async (orig) => {
-  const m = await orig<typeof import("../he-best-offer.service.js")>();
-  return { ...m, offerHolds: vi.fn(m.offerHolds) };
-});
 
 import { bestOfferSkipSql, DISTANCE_BAND_KM, heldOffers, rankOffers, type OfferRow } from "../he-best-offer.js";
 import { offerHolds } from "../he-best-offer.service.js";
@@ -116,7 +112,7 @@ const MOB = "9876543210";
 const qfRow = (id: string, requisitionId: string, o: Record<string, unknown> = {}) => ({
   id, source_type: "meta_live", meta_lead_id: `m-${id}`, he_lead_id: "lead-1", ats_candidate_id: null, requisition_id: requisitionId, drive_id: null, mobile10: MOB,
   email: "c@x.com", full_name: "asha rao", branch_name: "Noida", role_name: "Customer Support", qualified_at: "2026-10-14 09:00:00",
-  email_due_at: "2026-10-14 09:10:00", email_status: "skipped", email_attempts: 0, wa_due_at: "2026-10-14 10:00:00", wa_status: null, wa_attempts: 0,
+  email_due_at: null, email_status: null, email_attempts: 0, wa_due_at: "2026-10-14 10:00:00", wa_status: null, wa_attempts: 0,
   call_due_at: null, call_state: "pending", call_attempts: 0, ...o,
 });
 const offerDb = (id: string, requisitionId: string, o: Record<string, unknown> = {}) => ({
@@ -132,6 +128,7 @@ function world(w: World) {
       if (w.offersFail) throw Object.assign(new Error(`read failed for ${MOB}`), { code: "ER_LOCK_WAIT_TIMEOUT" });
       return [w.offers ?? []];
     }
+    if (q.includes("FROM qualified_followup qf") && q.includes("qf.id NOT IN")) return [[]]; // the backfill: nothing more is due
     if (q.includes("FROM qualified_followup qf")) return [w.rows];
     if (q.startsWith("UPDATE")) return [{ affectedRows: 1 }];
     if (q.startsWith("INSERT")) return [{ affectedRows: 1 }];
@@ -147,7 +144,7 @@ const stepSelect = (marker: string) => String(execute.mock.calls.find(([sql]) =>
 
 describe("steps with HE_BEST_OFFER on", () => {
   beforeEach(() => {
-    execute.mockReset(); sendTpl.mockReset(); send.mockReset(); warn.mockReset(); vi.mocked(offerHolds).mockClear();
+    execute.mockReset(); sendTpl.mockReset(); send.mockReset(); warn.mockReset();
     sendTpl.mockResolvedValue({ status: "sent", messageId: "msg-1", providerMessageId: "p1" });
     send.mockResolvedValue({ messageId: "mail-1" });
     process.env.HE_BEST_OFFER = " TRUE ";
@@ -175,12 +172,11 @@ describe("steps with HE_BEST_OFFER on", () => {
     expect(sendTpl).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls.some(([sql, p]) => String(sql).includes("SET wa_status = 'sending'") && (p as unknown[])[0] === "r2")).toBe(true);
     expect(execute.mock.calls.some(([sql, p]) => String(sql).includes("SET wa_status = 'sending'") && (p as unknown[])[0] === "r1")).toBe(false);
-    expect(offerReads()).toHaveLength(1);
+    expect(offerReads()).toHaveLength(1); // the single backfill finds nothing, so no second sibling read
     const [sql, params] = offerReads()[0];
     expect(String(sql)).toContain("JOIN job_requisition jr ON jr.id = qf.requisition_id COLLATE utf8mb4_unicode_ci");
     expect(String(sql)).toContain("qf.mobile10 IN (?)");
     expect(params).toEqual([MOB, "live"]);
-    expect(offerHolds).toHaveBeenCalledTimes(1);
   });
 
   it("a sibling read failure processes nothing: every selected row is held and retried next run, logged by code only", async () => {
@@ -201,7 +197,7 @@ describe("steps with HE_BEST_OFFER on", () => {
 
   it("the email step holds the same way and never claims a held row", async () => {
     world({
-      rows: [qfRow("r1", "q1", { email_status: null, wa_due_at: null }), qfRow("r2", "q2", { email_status: null, wa_due_at: null })],
+      rows: [qfRow("r1", "q1", { email_due_at: "2026-10-14 09:10:00", wa_due_at: null }), qfRow("r2", "q2", { email_due_at: "2026-10-14 09:10:00", wa_due_at: null })],
       offers: [offerDb("r1", "q1", { score: 90 }), offerDb("r2", "q2", { score: 40 })],
     });
     const c = await runEmailStep(readSwitches(liveEnv), "live", now);
@@ -221,6 +217,69 @@ describe("steps with HE_BEST_OFFER on", () => {
     expect(execute.mock.calls.some(([sql, p]) => String(sql).includes("call_state = 'in_file'") && (p as unknown[])[1] === "r1")).toBe(false);
   });
 
+  it("a row whose requisition the candidate declined is skipped (held, not stopped) and releases the next row", async () => {
+    world({
+      rows: [qfRow("r1", "q1"), qfRow("r2", "q2")],
+      offers: [offerDb("r1", "q1", { declined: 1, started: 1, distance_km: "1" }), offerDb("r2", "q2", { distance_km: "30" })],
+    });
+    const c = await runWhatsappStep(readSwitches(liveEnv), "live", now, 10);
+    expect(c).toMatchObject({ processed: 1, sent: 1, held: 1 });
+    expect(execute.mock.calls.some(([sql, p]) => String(sql).includes("SET wa_status = 'sending'") && (p as unknown[])[0] === "r1")).toBe(false);
+    expect(execute.mock.calls.some(([sql, p]) => String(sql).includes("SET wa_status = 'sending'") && (p as unknown[])[0] === "r2")).toBe(true);
+    expect(execute.mock.calls.some(([sql]) => /stopped_reason = /.test(String(sql)) && String(sql).startsWith("UPDATE"))).toBe(false);
+  });
+
+  it("a lone declined row is skipped too", async () => {
+    world({ rows: [qfRow("r1", "q1")], offers: [offerDb("r1", "q1", { declined: 1 })] });
+    const c = await runWhatsappStep(readSwitches(liveEnv), "live", now, 10);
+    expect(c).toMatchObject({ processed: 0, sent: 0, held: 1 });
+  });
+
+  it("offerHolds ignores siblings of a paused source: a better paused sibling holds nobody", async () => {
+    world({ rows: [], offers: [offerDb("r1", "q1", { distance_km: "1", source_type: "walkin" }), offerDb("r2", "q2", { distance_km: "30" })] });
+    const rows = [{ id: "r2", mobile10: MOB }] as never;
+    expect((await offerHolds(rows, "live", [])).held.has("r2")).toBe(true);
+    expect((await offerHolds(rows, "live", ["walkin"])).held.has("r2")).toBe(false);
+  });
+
+  it("held rows ahead of their best sibling do not starve the step: one backfill select brings the best row in", async () => {
+    // LIMIT 2 window holds h1,h2 (their best sibling b is outside it); the backfill returns b, which is processed.
+    const mob = (id: string, m: string, q: string, o: Record<string, unknown> = {}) => qfRow(id, q, { mobile10: m, ...o });
+    const window = [mob("h1", "9000000001", "q1"), mob("h2", "9000000002", "q2")];
+    const best = [mob("b1", "9000000001", "q9"), mob("b2", "9000000002", "q8")];
+    const offers = [
+      offerDb("h1", "q1", { mobile10: "9000000001", distance_km: "20" }), offerDb("b1", "q9", { mobile10: "9000000001", distance_km: "1" }),
+      offerDb("h2", "q2", { mobile10: "9000000002", distance_km: "20" }), offerDb("b2", "q8", { mobile10: "9000000002", distance_km: "1" }),
+    ];
+    execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      const q = String(sql);
+      if (q.includes("hm.state = 'declined' AS declined")) return [offers.filter((o) => (params as string[]).includes(o.mobile10 as string))];
+      if (q.includes("FROM qualified_followup qf") && q.includes("qf.id NOT IN")) return [best];
+      if (q.includes("FROM qualified_followup qf")) return [window];
+      if (q.startsWith("UPDATE") || q.startsWith("INSERT")) return [{ affectedRows: 1 }];
+      if (q.includes("SELECT status FROM he_lead")) return [[{ status: "new" }]];
+      if (q.includes("FROM branch_master")) return [[{ address: "x", latitude: null, longitude: null }]];
+      if (q.includes("FROM job_requisition")) return [[{ bmi_assessment_url: "https://bmi.example/x" }]];
+      if (q.includes("FROM meta_lead_raw")) return [[{ interview_date: "2026-10-15", interview_time: "10:30:00" }]];
+      return [[]];
+    });
+    const c = await runWhatsappStep(readSwitches(liveEnv), "live", now, 2);
+    expect(c).toMatchObject({ processed: 2, sent: 2, held: 2 });
+    const backfills = execute.mock.calls.filter(([sql]) => String(sql).includes("qf.id NOT IN"));
+    expect(backfills).toHaveLength(1);
+    expect(String(backfills[0][0])).toContain("qf.id NOT IN (?,?)");
+    expect(String(backfills[0][0])).toMatch(/LIMIT 2$/);
+    expect(backfills[0][1]).toEqual(["live", now, "h1", "h2"]);
+    const claimed = execute.mock.calls.filter(([sql]) => String(sql).includes("SET wa_status = 'sending'")).map(([, p]) => (p as unknown[])[0]);
+    expect(claimed.sort()).toEqual(["b1", "b2"]);
+  });
+
+  it("nothing held: no backfill statement", async () => {
+    world({ rows: [qfRow("r1", "q1")], offers: [offerDb("r1", "q1")] });
+    await runWhatsappStep(readSwitches(liveEnv), "live", now, 10);
+    expect(execute.mock.calls.some(([sql]) => String(sql).includes("qf.id NOT IN"))).toBe(false);
+  });
+
   it("stop checks are untouched by the switch: no sibling read, held rows are never stopped for being held", async () => {
     world({ rows: [] });
     await runStopChecks("live");
@@ -234,7 +293,7 @@ describe("steps with HE_BEST_OFFER on", () => {
 });
 
 describe("steps with HE_BEST_OFFER off", () => {
-  beforeEach(() => { execute.mockReset(); vi.mocked(offerHolds).mockClear(); sendTpl.mockResolvedValue({ status: "sent", messageId: "msg-1" }); send.mockResolvedValue({ messageId: "m" }); });
+  beforeEach(() => { execute.mockReset(); sendTpl.mockResolvedValue({ status: "sent", messageId: "msg-1" }); send.mockResolvedValue({ messageId: "m" }); });
 
   it.each([undefined, "", "1", "yes", "false"])("value %j: no fragment, no holds call, both rows processed", async (v) => {
     if (v === undefined) delete process.env.HE_BEST_OFFER; else process.env.HE_BEST_OFFER = v;
@@ -242,7 +301,6 @@ describe("steps with HE_BEST_OFFER off", () => {
       world({ rows: [qfRow("r1", "q1"), qfRow("r2", "q2")] });
       const c = await runWhatsappStep(readSwitches(liveEnv), "live", now, 10);
       expect(c).toMatchObject({ processed: 2, held: 0 });
-      expect(offerHolds).not.toHaveBeenCalled();
       expect(offerReads()).toHaveLength(0);
       expect(execute.mock.calls.some(([sql]) => String(sql).includes("FROM qualified_followup o"))).toBe(false);
     } finally { delete process.env.HE_BEST_OFFER; }

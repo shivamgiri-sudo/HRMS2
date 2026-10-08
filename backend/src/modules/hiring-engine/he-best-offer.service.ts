@@ -27,7 +27,7 @@ export async function loadOfferRows(mobiles: string[], tag: RowTag): Promise<Map
   if (!list.length) return out;
   // he_match is unique per (lead, requisition) and he_lead per mobile, so each follow-up row yields one result row.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT qf.id, qf.mobile10, qf.requisition_id, jr.requisition_code, qf.qualified_at,
+    `SELECT qf.id, qf.mobile10, qf.requisition_id, qf.source_type, jr.requisition_code, qf.qualified_at,
             ${OFFER_STARTED_SQL} AS started, hm.state = 'declined' AS declined,
             hm.distance_km, hm.score, jr.requested_headcount - jr.fulfilled_headcount AS remaining
        FROM qualified_followup qf
@@ -42,6 +42,7 @@ export async function loadOfferRows(mobiles: string[], tag: RowTag): Promise<Map
       rowId: String(r.id),
       requisitionId: String(r.requisition_id),
       requisitionCode: String(r.requisition_code ?? ""),
+      sourceType: r.source_type == null ? undefined : String(r.source_type),
       qualifiedAt: String(r.qualified_at ?? ""),
       started: Number(r.started) === 1,
       declined: Number(r.declined) === 1,
@@ -55,13 +56,19 @@ export async function loadOfferRows(mobiles: string[], tag: RowTag): Promise<Map
   return out;
 }
 
-/** Which of the selected rows wait for another offer this run. Never throws: a read error holds them all (`failed: true`). */
-export async function offerHolds(rows: FollowupRow[], tag: RowTag): Promise<{ held: Set<string>; failed: boolean }> {
+/**
+ * Which of the selected rows are skipped this run. Never throws: a read error holds them all (`failed: true`). Siblings from a paused source
+ * are ignored (they cannot start, so they must not hold anyone); a selected row whose requisition the candidate declined is skipped too.
+ */
+export async function offerHolds(rows: FollowupRow[], tag: RowTag, pausedSources: Iterable<string> = []): Promise<{ held: Set<string>; failed: boolean }> {
   const held = new Set<string>();
   if (!rows.length) return { held, failed: false };
+  const paused = new Set(pausedSources);
   try {
     const byMobile = await loadOfferRows(rows.map((r) => r.mobile10), tag);
-    for (const list of byMobile.values()) {
+    for (const all of byMobile.values()) {
+      for (const r of all) if (r.declined) held.add(r.rowId);
+      const list = all.filter((r) => !(r.sourceType && paused.has(r.sourceType)));
       if (list.length < 2) continue;
       for (const d of rankOffers(list)) if (d.held) held.add(d.rowId);
     }
@@ -70,6 +77,30 @@ export async function offerHolds(rows: FollowupRow[], tag: RowTag): Promise<{ he
     logger.warn({ code: (err as { code?: string })?.code ?? "unknown" }, "[he-best-offer] sibling read failed; selected rows wait for the next run");
     return { held: new Set(rows.map((r) => r.id)), failed: true };
   }
+}
+
+/** ` AND qf.id NOT IN (?,?)` for the backfill select (ids are bound parameters). */
+export const notInIdsSql = (ids: string[]): string => ` AND qf.id NOT IN (${ids.map(() => "?").join(",")})`;
+
+/**
+ * Switch-on selection for a step: holds apply after the step's LIMIT, so each held row would waste a slot. When some are held, ONE backfill
+ * select (the step's own predicates and order, excluding every id already selected, LIMIT = slots freed) refills them and the holds are
+ * evaluated once more on the merged set. `slots` caps the refill (WhatsApp: the daily budget already bounds the LIMIT, so the merged set
+ * never exceeds the original take). A failed read holds everything and backfills nothing.
+ */
+export async function selectWithOfferHolds(
+  rows: FollowupRow[], tag: RowTag, pausedSources: Iterable<string>,
+  backfill: (excludeIds: string[], limit: number) => Promise<FollowupRow[]>,
+): Promise<{ rows: FollowupRow[]; held: Set<string> }> {
+  const first = await offerHolds(rows, tag, pausedSources);
+  if (first.failed || first.held.size === 0) return { rows, held: first.held };
+  const freed = rows.reduce((n, r) => n + (first.held.has(r.id) ? 1 : 0), 0);
+  const more = freed > 0 ? await backfill(rows.map((r) => r.id), freed) : [];
+  const fresh = more.filter((m) => !rows.some((r) => r.id === m.id));
+  if (!fresh.length) return { rows, held: first.held };
+  const merged = [...rows, ...fresh];
+  const second = await offerHolds(merged, tag, pausedSources);
+  return { rows: merged, held: second.held };
 }
 
 // ---- held list (read-only, Follow-up panel) ----------------------------------------------------------------------------------------------
@@ -83,7 +114,12 @@ const HELD_MAX = 500;
 const HELD_CACHE_MS = 60_000;
 const heldCache = new Map<string, { at: number; data: HeldOffers }>();
 export function clearHeldOffersCache(): void { heldCache.clear(); }
-const iso = (v: unknown): string => (v instanceof Date ? v.toISOString() : String(v ?? ""));
+// DATETIME strings are IST wall-clock (pool has dateStrings): give them an explicit offset so the browser reads the right instant.
+const iso = (v: unknown): string => {
+  if (v instanceof Date) return v.toISOString();
+  const s = String(v ?? "");
+  return /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(s) && !/(Z|[+-]\d{2}:?\d{2})$/i.test(s) ? `${s.replace(" ", "T")}+05:30` : s;
+};
 
 /**
  * Held rows of the current tag: open pipeline rows whose person has another open row, ranked by the same rules as the sends (loadOfferRows +
