@@ -7,9 +7,11 @@ import { Sparkles } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import MetaRecruitmentStrip from "./MetaRecruitmentStrip";
 import { tabFromHash } from "./hiringEngineTabs";
+import { useQueueCount } from "./responses/useQueueCount";
 
 const loaders = {
   board: () => import("./BoardTab"),
+  responses: () => import("./responses/ResponsesTab"),
   drives: () => import("./command/DriveCommandCenter"),
   leads: () => import("./LeadsTab"),
   master: () => import("./MasterTab"),
@@ -20,6 +22,7 @@ const loaders = {
 const LeadsTab = lazy(loaders.leads);
 const DrivesTab = lazy(loaders.drives);
 const BoardTab = lazy(loaders.board);
+const ResponsesTab = lazy(loaders.responses);
 const TemplatesTab = lazy(loaders.templates);
 const BulkCallsTab = lazy(loaders.calls);
 const MasterTab = lazy(loaders.master);
@@ -27,6 +30,7 @@ const PlannerTab = lazy(loaders.planner);
 
 const TABS = [
   { id: "board", label: "Walk-in board" },
+  { id: "responses", label: "Responses" },
   { id: "drives", label: "Drives" },
   { id: "leads", label: "Lead pool" },
   { id: "master", label: "Master" },
@@ -40,6 +44,7 @@ const fromHash = (): TabId => tabFromHash(window.location.hash, TAB_IDS, "board"
 
 export default function HiringEnginePage() {
   const [tab, setTab] = useState<TabId>(fromHash);
+  const waiting = useQueueCount();
   useEffect(() => { const h = () => setTab(fromHash()); window.addEventListener("hashchange", h); return () => window.removeEventListener("hashchange", h); }, []);
   const go = (id: TabId) => { window.location.hash = id; startTransition(() => setTab(id)); };
   // Warm every other tab's code once the page is idle so switching is instant.
@@ -63,11 +68,13 @@ export default function HiringEnginePage() {
             <button key={t.id} role="tab" type="button" aria-selected={tab === t.id} onClick={() => go(t.id)} onPointerEnter={() => { void loaders[t.id](); }} onFocus={() => { void loaders[t.id](); }}
               className={`-mb-px cursor-pointer whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${tab === t.id ? "border-blue-600 text-blue-700" : "border-transparent text-slate-500 hover:text-slate-800"}`}>
               {t.label}
+              {t.id === "responses" && waiting != null && waiting > 0 && <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-amber-900 dark:bg-amber-900 dark:text-amber-100" aria-label={`${waiting} waiting for review`}>{waiting}</span>}
             </button>
           ))}
         </nav>
         <Suspense fallback={<div className="space-y-3" aria-busy="true"><div className="h-24 animate-pulse rounded-xl bg-slate-100 motion-reduce:animate-none" /><div className="h-48 animate-pulse rounded-xl bg-slate-100 motion-reduce:animate-none" /></div>}>
           {tab === "board" && <BoardTab />}
+          {tab === "responses" && <ResponsesTab />}
           {tab === "drives" && <DrivesTab />}
           {tab === "leads" && <LeadsTab />}
           {tab === "master" && <MasterTab />}
