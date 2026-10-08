@@ -1321,6 +1321,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2133_qualified_followup.sql", // Registered 2026-10-07. qualified_followup (per mobile+requisition email/WhatsApp/call schedule and outcomes) and qualified_followup_call_batch. CREATE TABLE IF NOT EXISTS only, additive.
   "migrations/2134_qualified_followup_attempts.sql", // Registered 2026-10-07. qualified_followup: per-channel attempts/errors, wa_message_id, missing_details, step_claimed_at, test row tag, idx_qfu_callfile. information_schema-guarded, re-runnable.
   "migrations/2135_requisition_streams.sql", // Registered 2026-10-07. requisition_stream (+ _day, _event, _plan, _match), requisition_stream.version, created_at/updated_at DATETIME(6), requisition_stream_plan.idx_rsp_date and qualified_followup.owner. CREATE TABLE IF NOT EXISTS plus information_schema-guarded ALTERs, re-runnable.
+  "migrations/2136_he_match_outcome_reason.sql", // Registered 2026-10-08. he_match_outcome_reason (one no-show/decline reason per he_match, last tap wins). CREATE TABLE IF NOT EXISTS only, re-runnable.
 ];
 
 export type MigrationHealth = {

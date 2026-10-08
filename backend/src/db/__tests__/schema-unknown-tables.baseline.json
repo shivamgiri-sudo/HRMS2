@@ -37,6 +37,9 @@
   "modules/hiring-engine/he-best-offer.ts": [
     "qualified_followup"
   ],
+  "modules/hiring-engine/he-outcome-reason.service.ts": [
+    "he_match_outcome_reason"
+  ],
   "modules/hiring-engine/he-bulk-call.service.ts": [
     "he_call_batch",
     "he_call_job"

@@ -48,6 +48,7 @@ import { getInboxThread, listInbox, replyToCandidate } from "./he-inbox.service.
 import { branchScopeOf, registerStreamRoutes } from "./he-stream.routes.js";
 import { registerCommandRoutes } from "./he-command.routes.js";
 import { registerActionRoutes } from "./he-action.routes.js";
+import { registerOutcomeRoutes } from "./he-outcome.routes.js";
 import { DRIVE_STREAM_FED, STREAM_CHECK_FAILED, driveStreamCheck } from "./he-stream-guard.service.js";
 import { followupSummary } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
@@ -64,6 +65,7 @@ const WRITE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr"]
 registerStreamRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES, admin: ADMIN_ROLES });
 registerCommandRoutes(heRouter, { view: VIEW_ROLES }); // before /qualified-followup/:id, which would answer /qualified-followup/status with 400
 registerActionRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES });
+registerOutcomeRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES });
 
 heRouter.get("/summary", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try {
