@@ -254,5 +254,8 @@
   ],
   "modules/selection/fact-cache.service.ts": [
     "selection_person_fact"
+  ],
+  "modules/selection/override.service.ts": [
+    "shortlist_override"
   ]
 }

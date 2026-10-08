@@ -267,6 +267,7 @@ import { kpiStudioRouter } from "./modules/kpi/kpi-studio.routes.js";
 import { kpiCatalogueRouter } from "./modules/kpi-catalogue/kpi-catalogue.routes.js";
 import { jobRequisitionRouter } from "./modules/job-requisition/job-requisition.routes.js";
 import { criteriaRouter } from "./modules/selection/criteria.routes.js";
+import { shortlistRouter } from "./modules/selection/shortlist.routes.js";
 import { metaCampaignRouter } from "./modules/meta-campaign/meta-campaign.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
@@ -699,6 +700,7 @@ app.use("/api/meta", metaCampaignRouter);
 app.use("/api/he-hook", heWebhookRouter);
 // Candidate live-location page API. Unauthenticated: the per-match token is the credential (see he-public.routes.ts).
 app.use("/api/he-public", hePublicRouter);
+app.use("/api/he/shortlist", shortlistRouter); // selection: overrides, approvals, booked-mismatch (before the HE router)
 app.use("/api/he", heRouter);
 app.use("/api/ats", atsFormConfigRouter);
 // Unauthenticated by design so a walk-in can self-register. Rate limiting is
