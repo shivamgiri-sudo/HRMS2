@@ -137,7 +137,7 @@ describe("getActionQueue", () => {
       expect(q).not.toContain("FROM he_message");
       expect(q).not.toContain("FROM he_lead ");
       // the drive window leads the join (measured: left alone the optimizer sometimes scans all of he_match first)
-      if (/FROM he_drive d/.test(q)) expect(q).toMatch(/^SELECT STRAIGHT_JOIN /);
+      if (/FROM he_drive d/.test(q)) { expect(q).toMatch(/^SELECT STRAIGHT_JOIN /); expect(q).toContain("JOIN he_match m FORCE INDEX (idx_he_match_drive) ON"); }
     }
   });
   it("Pune scope carries COLLATE on the branch compare", async () => {

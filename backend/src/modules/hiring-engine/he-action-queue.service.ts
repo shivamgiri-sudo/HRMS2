@@ -49,12 +49,13 @@ interface Filter { requisitionId: string | null; branch: string | null }
 
 /**
  * Drive-based statements: window and drive status first, then the requisition / branch filter through job_requisition. STRAIGHT_JOIN keeps
- * that order: left to itself the optimizer sometimes scans all of he_match first (seen on the throwaway MySQL check), which grows with the table.
+ * that order, and FORCE INDEX keeps the match lookup on its drive index: left to itself the optimizer sometimes scans all of he_match (seen on the throwaway
+ * MySQL check, worst when the other joins cannot use their keys), which grows with the table.
  */
 function driveSql(select: string, joins: string, where: string, group: string, f: Filter): string {
   return `SELECT STRAIGHT_JOIN ${select}
   FROM he_drive d
-  JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
+  JOIN he_match m FORCE INDEX (idx_he_match_drive) ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
   JOIN he_lead l ON l.id = m.lead_id
   JOIN job_requisition jr ON jr.id = d.requisition_id ${COLL}
   LEFT JOIN ats_candidate ac ON ac.id = l.ats_candidate_id ${COLL}
