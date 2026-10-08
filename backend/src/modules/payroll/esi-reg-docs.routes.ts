@@ -858,7 +858,7 @@ export async function appendEsiPack(
   }
 
   manifest.push(`\n${found} document(s) included, ${missing} missing.`);
-  archive.append(manifest.join("\n"), { name: at("manifest.txt") });
+  // No manifest.txt / INDEX.csv in the ZIP: Payroll HR wants only the document files.
   return { manifest, found, missing };
 }
 
@@ -1027,9 +1027,6 @@ esiRegDocsRouter.post(
 
     // One folder per employee inside the single zip, named "EmpCode - Name" so
     // Payroll HR can identify each folder without guessing.
-    const index: string[] = [
-      "Employee Code,Employee Name,Documents Included,Documents Missing",
-    ];
     for (const emp of rows as RowDataPacket[]) {
       // Sanitised, because an employee name reaches a zip ENTRY PATH here: a
       // name carrying "/" or ".." would place the file outside its own folder.
@@ -1040,7 +1037,7 @@ esiRegDocsRouter.post(
         /[^A-Za-z0-9_-]/g,
         "",
       );
-      const packed = await appendEsiPack(
+      await appendEsiPack(
         archive,
         {
           id: String(emp.id),
@@ -1052,14 +1049,7 @@ esiRegDocsRouter.post(
         `${safeCode} - ${safeName}`,
         include,
       );
-      index.push(
-        `${emp.employee_code},"${String(emp.name ?? "").replace(/"/g, '""')}",${packed.found},${packed.missing}`,
-      );
     }
-
-    // A top-level index, so a 200-employee archive can be checked without
-    // opening 200 manifests to find which packs are short of a document.
-    archive.append(index.join("\n"), { name: "INDEX.csv" });
 
     await archive.finalize();
 
