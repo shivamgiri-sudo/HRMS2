@@ -44,7 +44,7 @@ export async function applySuperbotReport(rows: Array<Record<string, unknown>>, 
     if (mapped.humanFollowUp) sum.humanFollowUps++;
     if (o.dryRun) continue;
     try {
-      const out = await recordVoiceResult({ leadId: lead.id, providerCallId, attemptNo: rr.attemptNo ?? 1, startedAt: rr.dialTime, result: mapped.result, summary: mapped.summary, recordingUrl: mapped.recordingUrl, incomplete: mapped.incomplete, source: "superbot_report" });
+      const out = await recordVoiceResult({ leadId: lead.id, providerCallId, attemptNo: rr.attemptNo ?? 1, startedAt: rr.dialTime, result: mapped.result, summary: mapped.summary, recordingUrl: mapped.recordingUrl, incomplete: mapped.incomplete, source: "superbot_report", reference: rr.feedback.reference_id ?? null });
       if (mapped.humanFollowUp && out && out.outcome !== "duplicate") await addEvent(lead.id, "human_followup_needed", { channel: "voice", detail: mapped.humanFollowUp, meta: { matchId, disposition: rr.feedback.disposition ?? null, source: "report_upload", by: o.actor } });
     } catch (e) { sum.problems.push({ row: i + 2, reason: (e instanceof Error ? e.message : String(e)).slice(0, 120) }); }
   }

@@ -7,6 +7,7 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { maskMobile, metaErrorCode, OUTCOME_UNKNOWN_ERROR } from "./qualified-followup.rules.js";
 import { readSwitches, rowTag } from "./qualified-followup.policy.js";
+import { stampFollowupCallResult, type CallResultCode } from "./qualified-followup.callresult.js";
 import type { SourceType } from "./qualified-followup.types.js";
 
 export type AttentionChannel = "email" | "whatsapp" | "call";
@@ -103,7 +104,9 @@ export async function retryFollowupStep(id: string, channel: AttentionChannel): 
 }
 
 /** A call result came back for this number (or an operator confirmed it): only rows handed to a calling file or the bot move on. */
-export async function markFollowupCalled(mobile10: string, id?: string): Promise<number> {
+export async function markFollowupCalled(mobile10: string, id?: string, result?: { result: CallResultCode; reference: string | null; at: Date }): Promise<number> {
+  // A call result from any channel (file import, Superbot report or webhook): the unified stamp (retry, T9, do-not-call).
+  if (result && !id) return stampFollowupCallResult({ mobile10, ...result });
   // A call result only moves rows of the mode now running (never dry_run/test rows, nothing at all while off); an operator naming one row decides for it.
   const tag = id ? null : rowTag(readSwitches());
   if (!id && !tag) return 0;

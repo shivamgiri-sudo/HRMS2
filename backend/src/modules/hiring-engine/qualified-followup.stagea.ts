@@ -60,7 +60,7 @@ async function branchCapLeft(s: FollowupSwitches, tag: RowTag, row: FollowupRow,
 /** One guard decision for a stage A step; applies hold / end itself, returns skip for the step to record. */
 export async function gate(
   s: FollowupSwitches, tag: RowTag, row: FollowupRow, step: Exclude<GuardStep, "call_file">, now: Date, scope: StepScope,
-  o: { firstContact: boolean; templateKey: string | null },
+  o: { firstContact: boolean; templateKey: string | null; dueColumn?: "missed_call_due_at" },
 ): Promise<GateResult> {
   const facts = await loadGuardFacts({
     row, step, now, transactional: false, firstContact: o.firstContact, cadenceStep: true, stage: "A",
@@ -75,7 +75,7 @@ export async function gate(
   if (v.ok) return { action: "send" };
   await recordGuardSkip(row.id, row.heLeadId, step, v.reason, now).catch((err: unknown) => logger.warn({ rowId: row.id, err: (err as Error).message }, "[qualified-followup] skip audit failed"));
   if (v.kind === "hold") {
-    await db.execute(`UPDATE qualified_followup SET ${DUE[step]} = ? WHERE id = ?`, [v.retryAt ?? new Date(now.getTime() + RETRY_MIN * 60_000), row.id]);
+    await db.execute(`UPDATE qualified_followup SET ${o.dueColumn ?? DUE[step]} = ? WHERE id = ?`, [v.retryAt ?? new Date(now.getTime() + RETRY_MIN * 60_000), row.id]);
     return { action: "held", reason: v.reason };
   }
   if (v.kind === "end_journey") {

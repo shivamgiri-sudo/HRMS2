@@ -12,6 +12,7 @@ import { emptyCounts, ensureHeLead, loadSendContext, ROW_COLUMNS, toFollowupRow,
 import { rowTag, type FollowupSwitches, type RowTag } from "./qualified-followup.policy.js";
 import { afterFailure, chooseWaTemplate, nextStepDue, nextWorkingDayIst } from "./qualified-followup.rules.js";
 import { assessmentText } from "./qualified-followup.cadence.js";
+import { releasePerson } from "./followup-person.service.js";
 import { withinSendWindow } from "./qualified-followup.schedule.js";
 import { bestOfferSkipSql } from "./he-best-offer.js";
 import { markHeldBestOffer, notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
@@ -75,7 +76,45 @@ export async function runWhatsappStep(s: FollowupSwitches, tag: RowTag, now: Dat
       logger.warn({ rowId: row.id, err: scrub((err as Error).message) }, "[qualified-followup] whatsapp step failed for row");
     }
   }
+  if (scope) await runMissedCallT9(s, tag, now, scope, counts, limit, sc);
   return counts;
+}
+
+/**
+ * T9 ("we tried to call you") once for a journey whose call was missed twice, then stage A is over: no more cadence touches, the person
+ * is released for other requisitions and the journey waits for a re-invite (unless they replied meanwhile). Sent or not, it is not retried.
+ */
+async function runMissedCallT9(s: FollowupSwitches, tag: RowTag, now: Date, scope: StepScope, counts: StepCounts, limit: number, sc: { sql: string; params: string[] }): Promise<void> {
+  const isDry = tag === "dry_run";
+  if (!isDry && scope.budget.waLeft <= 0) return;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
+      WHERE qf.mode_at_enqueue = ? AND qf.missed_call_due_at IS NOT NULL AND qf.missed_call_due_at <= ? AND qf.stopped_reason IS NULL AND qf.owner = 'pipeline'${sc.sql}
+      ORDER BY qf.missed_call_due_at LIMIT ${Math.max(1, Math.floor(isDry ? limit : Math.min(limit, scope.budget.waLeft)))}`,
+    [tag, now, ...sc.params]);
+  for (const row of rows.map(toFollowupRow)) {
+    try {
+      const g = await gate(s, tag, row, "whatsapp", now, scope, { firstContact: false, templateKey: "he_missed_call", dueColumn: "missed_call_due_at" });
+      if (g.action === "held" || g.action === "ended") { counts.held += g.action === "held" ? 1 : 0; continue; }
+      if (g.action === "send") {
+        const leadId = row.heLeadId ?? (tag === "test" ? null : await ensureHeLead(row));
+        if (leadId) {
+          const r = await sendTemplateToLead({
+            leadId, key: "he_missed_call", matchId: row.matchId, requisitionId: row.requisitionId, followupStep: true, sentBy: "followup",
+            redirectTo: tag === "test" ? (s.testPhone ?? "") : undefined,
+          });
+          if (r.status === "sent") { counts.sent++; scope.budget.waLeft--; } else if (r.status === "failed") counts.failed++; else counts.blocked++;
+        }
+      } else counts.dryRun++;
+      await db.execute(
+        "UPDATE qualified_followup SET missed_call_due_at = NULL, stage_a_ended_at = ?, journey_state = IF(journey_state IN ('enrolled','reach'), 'reinvite_wait', journey_state) WHERE id = ?",
+        [now, row.id]);
+      if (!isDry) await releasePerson(row.mobile10, row.id);
+      counts.processed++;
+    } catch (err) {
+      logger.warn({ rowId: row.id, err: scrub((err as Error).message) }, "[qualified-followup] missed-call message failed for row");
+    }
+  }
 }
 
 function buildExtra(row: FollowupRow, ctx: SendContext, key: "he_walkin_invite" | "he_winback" | "he_reinvite", now: Date, placeholderSlot: boolean) {

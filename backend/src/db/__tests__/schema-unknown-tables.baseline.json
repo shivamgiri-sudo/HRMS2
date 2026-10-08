@@ -40,6 +40,9 @@
   "modules/hiring-engine/qualified-followup.stagea.ts": [
     "qualified_followup"
   ],
+  "modules/hiring-engine/qualified-followup.callresult.ts": [
+    "qualified_followup"
+  ],
   "modules/hiring-engine/he-action-queue.service.ts": [
     "qualified_followup"
   ],

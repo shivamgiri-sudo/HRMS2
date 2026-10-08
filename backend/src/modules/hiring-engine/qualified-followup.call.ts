@@ -19,6 +19,7 @@ import { withinSendWindow } from "./qualified-followup.schedule.js";
 import { bestOfferSkipSql } from "./he-best-offer.js";
 import { markHeldBestOffer, notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
 import { afterFirstSend, beginJourney, gate, scopeFilter, type StepScope } from "./qualified-followup.stagea.js";
+import { callReference } from "./qualified-followup.callresult.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
 
 /** Provider text can echo the number; never store a full phone. */
@@ -89,7 +90,8 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row0: Fol
   }
   if (tag === "dry_run" || !botOn || !s.botSources.has(row.sourceType)) return toFile(row, null, counts, tag === "dry_run");
   const isTest = tag === "test";
-  const useVoice = row.sourceType === "he";
+  // The unified method calls every source through Superbot with the booking's HRMS reference; Vapi (placeVoiceCall) is never used (D9).
+  const useVoice = !scope && row.sourceType === "he";
   // Test mode cannot redirect placeVoiceCall (it calls the match's own lead), so he rows go to the file instead.
   if (useVoice && isTest) return toFile(row, null, counts, false);
 
@@ -123,7 +125,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row0: Fol
       else if (/^lead_|^requisition_closed$|^no_consent$/.test(p.reason)) result = { kind: "skip", reason: p.reason };
       else result = { kind: "fail", error: p.reason, transient: false };
     } else {
-      const q = await queueSuperbotCall({ referenceId: followupRef(row.id), mobile10: isTest ? (s.testPhone as string) : row.mobile10, params: params! });
+      const q = await queueSuperbotCall({ referenceId: scope ? await callReference(row) : followupRef(row.id), mobile10: isTest ? (s.testPhone as string) : row.mobile10, params: params! });
       result = q.ok ? { kind: "placed" } : { kind: "fail", error: `${q.reason}: ${q.error}`, transient: q.reason === "provider_error" };
     }
   } catch (err) {

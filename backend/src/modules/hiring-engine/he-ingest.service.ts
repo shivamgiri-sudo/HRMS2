@@ -20,6 +20,7 @@ import { recomputeInsight } from "./he-insight.service.js";
 import { sendTemplateToLead } from "./he-send.service.js";
 import type { TemplateKey } from "./he-template-catalog.js";
 import { markFollowupCalled } from "./qualified-followup.attention.js";
+import { callResultCode } from "./qualified-followup.callresult.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
 import { recordResponseSafe } from "./candidate-response.service.js";
 import { classifyReply } from "./response-classifier.js";
@@ -209,6 +210,8 @@ export interface VoiceCallbackInput {
   incomplete?: boolean;
   /** Where the result came from, for the response record (one row per source + call id). */
   source?: "superbot_hook" | "superbot_report" | "vapi" | "call_import" | "voice_hook";
+  /** The reference the call carried (HRMS-... match reference, or QF-... for older follow-up rows), so the result finds its journey. */
+  reference?: string | null;
 }
 
 export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId: string; outcome: string } | null> {
@@ -246,11 +249,11 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
     if (isDuplicateKey(err)) return { leadId: l.id, outcome: "duplicate" };
     throw err;
   }
-  // A call result exists for this number, so a row waiting in a calling file or the bot queue is done (never blocks the result).
-  // A failed call (not reached) leaves the row waiting; an incomplete one reached the person.
+  // A call result for this number stamps the follow-up journey (called, or re-queued once after a miss, then T9; do-not-call stops it).
+  // Never blocks the result.
   const callMobile = (lead as { mobile10?: string | null }).mobile10;
-  if (callMobile && !r.failedReason) {
-    try { await markFollowupCalled(callMobile); }
+  if (callMobile) {
+    try { await markFollowupCalled(callMobile, undefined, { result: callResultCode(r, { incomplete: p.incomplete }), reference: p.reference ?? null, at: new Date() }); }
     catch (err) { logger.warn({ leadId: l.id, err: (err as Error).message }, "[hiring-engine] mark follow-up called failed"); }
   }
   await persistSignals(l.id, signalsFromVoice(r), p.providerCallId ?? null);

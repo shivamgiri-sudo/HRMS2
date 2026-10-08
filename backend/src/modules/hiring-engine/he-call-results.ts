@@ -55,7 +55,7 @@ export interface ResultRowOut {
   rowNo: number; ok: boolean; errors: string[]; warnings: string[];
   display: { phone: string; result: string };
   mobile10?: string; outcome?: CallOutcome | "CALL_FAILED"; failedReason?: string; callId?: string;
-  newInterviewAt?: string; durationS?: number; startedAt?: string; remarks?: string;
+  newInterviewAt?: string; durationS?: number; startedAt?: string; remarks?: string; referenceId?: string;
   voice?: VoiceResult;
 }
 
@@ -109,6 +109,7 @@ export function parseResultRows(rawRows: Array<Record<string, unknown>>): { rows
     return {
       rowNo, ok, errors, warnings, display: { phone: text(cell(r, "phone")), result: resultText },
       mobile10: mobile10 ?? undefined, outcome: outcome ?? undefined, callId, newInterviewAt, remarks: remarks || undefined,
+      referenceId: text(cell(r, "reference_id")).slice(0, 40) || undefined,
       durationS: voice?.durationS, startedAt: /^\d{4}-\d{2}-\d{2}/.test(ct) ? ct.slice(0, 19).replace("T", " ") : undefined, voice,
     };
   });

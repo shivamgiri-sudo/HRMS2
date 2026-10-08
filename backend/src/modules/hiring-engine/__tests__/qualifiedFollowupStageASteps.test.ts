@@ -7,13 +7,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   sqls: [] as Array<{ sql: string; p: unknown[] }>,
   rows: [] as Array<Record<string, unknown>>,
+  t9: [] as Array<Record<string, unknown>>,
   sendTpl: vi.fn(), mailSend: vi.fn(), book: vi.fn(), claim: vi.fn(), facts: vi.fn(),
+  queueSb: vi.fn(), placeVoice: vi.fn(), sbConfig: vi.fn(), release: vi.fn(),
 }));
+vi.mock("../he-superbot.service.js", () => ({ queueSuperbotCall: h.queueSb }));
+vi.mock("../he-voice.service.js", () => ({ placeVoiceCall: h.placeVoice }));
+vi.mock("../he-secrets.service.js", () => ({ superbotConfig: h.sbConfig }));
+vi.mock("../he-call-ref.service.js", () => ({ refForMatch: vi.fn(async () => "HRMS-041"), matchForRef: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({
   db: {
     execute: vi.fn(async (sql: string, p: unknown[] = []) => {
       const q = sql.replace(/\s+/g, " ").trim();
       h.sqls.push({ sql: q, p });
+      if (q.startsWith("SELECT") && q.includes("qf.missed_call_due_at IS NOT NULL")) return [h.t9];
       if (q.startsWith("SELECT") && q.includes("FROM qualified_followup qf")) return [h.rows];
       if (q.includes("FROM he_match WHERE id = ?")) return [[{ id: "M1", slot_at: "2026-10-09 11:00:00", token: "tok-m1" }]];
       if (q.includes("FROM branch_master")) return [[{ address: "Jaldarshan, Ahmedabad", latitude: null, longitude: null }]];
@@ -28,7 +35,7 @@ vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), e
 vi.mock("../he-send.service.js", async (orig) => ({ ...(await orig<typeof import("../he-send.service.js")>()), sendTemplateToLead: h.sendTpl }));
 vi.mock("../../communication/email.service.js", () => ({ emailService: { isConfigured: () => true, send: h.mailSend } }));
 vi.mock("../followup-booking.service.js", () => ({ bookJourney: h.book, markInvitedAfterSend: vi.fn() }));
-vi.mock("../followup-person.service.js", () => ({ claimPerson: h.claim, notePersonFirstContact: vi.fn(), releasePerson: vi.fn(), personFacts: vi.fn(async () => ({ activeFollowupId: null })) }));
+vi.mock("../followup-person.service.js", () => ({ claimPerson: h.claim, notePersonFirstContact: vi.fn(), releasePerson: h.release, personFacts: vi.fn(async () => ({ activeFollowupId: null })) }));
 vi.mock("../followup-guard-facts.service.js", () => ({ loadGuardFacts: h.facts }));
 vi.mock("../he-best-offer.service.js", async (orig) => ({
   ...(await orig<typeof import("../he-best-offer.service.js")>()),
@@ -37,6 +44,7 @@ vi.mock("../he-best-offer.service.js", async (orig) => ({
 
 import { runEmailStep } from "../qualified-followup.email.js";
 import { runWhatsappStep } from "../qualified-followup.whatsapp.js";
+import { runCallStep } from "../qualified-followup.call.js";
 import { newBudget, type StepScope } from "../qualified-followup.stagea.js";
 import { readSwitches } from "../qualified-followup.policy.js";
 import type { GuardFacts } from "../followup-guards.js";
@@ -60,8 +68,10 @@ const scope = (waLeft = 100, sources: StepScope["sources"] = ["meta_live"]): Ste
 const find = (re: RegExp) => h.sqls.filter((s) => re.test(s.sql));
 
 beforeEach(() => {
-  h.sqls = []; h.rows = [row()];
-  for (const f of [h.sendTpl, h.mailSend, h.book, h.claim, h.facts]) f.mockReset();
+  h.sqls = []; h.rows = [row()]; h.t9 = [];
+  for (const f of [h.sendTpl, h.mailSend, h.book, h.claim, h.facts, h.queueSb, h.placeVoice, h.sbConfig, h.release]) f.mockReset();
+  h.queueSb.mockResolvedValue({ ok: true });
+  h.sbConfig.mockResolvedValue({ apiKey: "k" });
   h.sendTpl.mockResolvedValue({ status: "sent", messageId: "msg-1", providerMessageId: "p1" });
   h.mailSend.mockResolvedValue({ messageId: "mail-1" });
   h.book.mockResolvedValue({ status: "booked", matchId: "M1", driveId: "D1", slotAt: "2026-10-09 11:00:00" });
@@ -150,5 +160,46 @@ describe("unified WhatsApp step", () => {
     expect(c.failed).toBe(0);
     expect(find(/^UPDATE qualified_followup SET wa_due_at = \?/)[0].p[0]).toEqual(new Date("2026-10-12T03:30:00Z"));
     expect(h.sendTpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("unified call step (Task 10)", () => {
+  const BOT = readSwitches({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_BOT_SOURCES: "he,meta_live" } as NodeJS.ProcessEnv, new Map([["policy.followup.meta_live", 4], ["policy.followup.he", 4]]));
+  const callRow = (o: Record<string, unknown> = {}) => row({ wa_status: "sent", call_due_at: "2026-10-08 10:00:00", journey_state: "reach", match_id: "M1", ...o });
+  it("Superbot for a bot source with the HRMS match reference; Vapi (placeVoiceCall) never, also for he rows", async () => {
+    h.rows = [callRow({ source_type: "he", meta_lead_id: null })];
+    const c = await runCallStep(BOT, "live", NOW, scope(100, ["he"]));
+    expect(c.sent).toBe(1);
+    expect(h.placeVoice).not.toHaveBeenCalled();
+    expect(h.queueSb).toHaveBeenCalledWith(expect.objectContaining({ referenceId: "HRMS-041", mobile10: "9876543210" }));
+  });
+  it("a source not in the bot list goes to the calling file", async () => {
+    h.rows = [callRow({ source_type: "meta_old" })];
+    await runCallStep(BOT, "live", NOW, scope(100, ["meta_old"]));
+    expect(h.queueSb).not.toHaveBeenCalled();
+    expect(find(/SET call_state = 'in_file'/)).toHaveLength(1);
+  });
+  it("Superbot not configured: calling file", async () => {
+    h.sbConfig.mockResolvedValue(null);
+    h.rows = [callRow()];
+    await runCallStep(BOT, "live", NOW, scope());
+    expect(h.queueSb).not.toHaveBeenCalled();
+    expect(find(/SET call_state = 'in_file'/)).toHaveLength(1);
+  });
+});
+
+describe("T9 after two missed calls (Task 10)", () => {
+  it("T9 goes once, then stage A ends (reinvite_wait) and the person is released", async () => {
+    h.rows = [];
+    h.t9 = [row({ wa_status: "sent", call_state: "called", journey_state: "reach", match_id: "M1", missed_call_due_at: "2026-10-08 10:00:00" })];
+    const c = await runWhatsappStep(S, "live", NOW, scope());
+    expect(h.sendTpl).toHaveBeenCalledTimes(1);
+    expect(h.sendTpl.mock.calls[0][0]).toMatchObject({ key: "he_missed_call", matchId: "M1", sentBy: "followup" });
+    const end = find(/SET missed_call_due_at = NULL, stage_a_ended_at = \?/)[0];
+    expect(end.sql).toContain("journey_state = IF(journey_state IN ('enrolled','reach'), 'reinvite_wait', journey_state)");
+    expect(h.release).toHaveBeenCalledWith("9876543210", "F1");
+    expect(c.sent).toBe(1);
+    const t9sel = find(/qf.missed_call_due_at IS NOT NULL AND qf.missed_call_due_at <= \?/);
+    expect(t9sel).toHaveLength(1);
   });
 });
