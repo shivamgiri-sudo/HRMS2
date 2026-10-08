@@ -15,7 +15,8 @@ import { emptyCounts, ensureHeLead, loadSendContext, ROW_COLUMNS, toFollowupRow,
 import { rowTag, type FollowupSwitches, type RowTag } from "./qualified-followup.policy.js";
 import { afterFailure, followupRef, nextStepDue } from "./qualified-followup.rules.js";
 import { bestOfferSkipSql } from "./he-best-offer.js";
-import { notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
+import { markHeldBestOffer, notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
+import { afterFirstSend, beginJourney, gate, scopeFilter, type StepScope } from "./qualified-followup.stagea.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
 import { EMAIL_BUTTONS_OFF, replyToFor, type EmailButtonSwitches } from "./email-buttons.policy.js";
 import { answerUrlFor, DEMO_TOKEN } from "./he-email-parts.js";
@@ -63,31 +64,38 @@ async function finish(row: FollowupRow, status: Outcome, error: string | null, n
     [status, error, ...(o.advanceWa ? [nextStepDue(now)] : []), row.id]);
 }
 
-/** `buttons` is read once per tick by the worker; callers that pass nothing get today's email (and no extra query). */
-export async function runEmailStep(s: FollowupSwitches, tag: RowTag, now: Date, limit = 200, buttons: EmailButtonSwitches = EMAIL_BUTTONS_OFF): Promise<StepCounts> {
+/** `buttons` is read once per tick by the worker; callers that pass nothing get today's email (and no extra query).
+ *  A StepScope (the unified worker) selects this tick's sources in stage A and runs the guard chain; a number is the legacy limit. */
+export async function runEmailStep(s: FollowupSwitches, tag: RowTag, now: Date, o: number | StepScope = 200, buttons: EmailButtonSwitches = EMAIL_BUTTONS_OFF): Promise<StepCounts> {
   const counts = emptyCounts();
-  if (rowTag(s) !== tag) return counts;
+  const scope = typeof o === "object" ? o : null;
+  const limit = scope ? scope.limit ?? 200 : (o as number);
+  if (scope) { if (tag !== "dry_run" && s.killSwitch) return counts; }
+  else if (rowTag(s) !== tag) return counts;
   if (tag !== "dry_run" && s.sendsPaused) return counts;
   if (tag === "test" && (s.testMisconfigured || !s.testEmail)) return counts;
   const paused = [...s.pausedSources];
-  const bestOffer = valueAddOn("best_offer");
+  // Best offer is mandatory in the unified method (one owner per person).
+  const bestOffer = scope ? true : valueAddOn("best_offer");
+  const sc = scope ? scopeFilter(scope) : { sql: "", params: [] as string[] };
   const select = async (ids: string[], lim: number) => {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
       WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
-        AND qf.owner = 'pipeline'${bestOfferSkipSql(bestOffer)}
+        AND qf.owner = 'pipeline'${bestOfferSkipSql(bestOffer)}${sc.sql}
         ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}${ids.length ? notInIdsSql(ids) : ""}
       ORDER BY qf.email_due_at LIMIT ${lim}`,
-      [tag, now, ...paused, ...ids]);
+      [tag, now, ...sc.params, ...paused, ...ids]);
     return rows.map(toFollowupRow);
   };
   let list = await select([], Math.max(1, Math.floor(limit)));
   let held: Set<string> | null = null;
   if (bestOffer) ({ rows: list, held } = await selectWithOfferHolds(list, tag, paused, select));
+  if (scope && held && tag !== "dry_run") await markHeldBestOffer(held);
   for (const row of list) {
     if (held?.has(row.id)) { counts.held++; continue; }
     try {
-      await processRow(s, tag, now, row, counts, buttons);
+      await processRow(s, tag, now, row, counts, buttons, scope);
     } catch (err) {
       logger.warn({ rowId: row.id, err: (err as Error).message }, "[qualified-followup] email step failed for row");
     }
@@ -95,7 +103,18 @@ export async function runEmailStep(s: FollowupSwitches, tag: RowTag, now: Date, 
   return counts;
 }
 
-async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: FollowupRow, counts: StepCounts, buttons: EmailButtonSwitches): Promise<void> {
+async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row0: FollowupRow, counts: StepCounts, buttons: EmailButtonSwitches, scope: StepScope | null): Promise<void> {
+  let row = row0;
+  if (scope) {
+    const firstContact = row.journeyState !== "reach";
+    const begun = await beginJourney(s, tag, row, now);
+    if (begun.held) { counts.held++; return; }
+    row = begun.row;
+    const g = await gate(s, tag, row, "email", now, scope, { firstContact, templateKey: INVITE_EMAIL_KEY });
+    if (g.action === "held") { counts.held++; return; }
+    if (g.action === "ended") { counts.processed++; counts.blocked++; return; }
+    if (g.action === "skipped") { await finish(row, "skipped", g.reason, now, { advanceWa: true, sent: false }); counts.processed++; counts.blocked++; return; }
+  }
   if (tag === "dry_run") {
     const [res] = await db.execute<any>(
       "UPDATE qualified_followup SET email_status = 'dry_run', wa_due_at = ? WHERE id = ? AND email_status IS NULL", [nextStepDue(now), row.id]);
@@ -201,10 +220,11 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
   try {
     if (!isTest) {
       await db.execute(
-        "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        [randomUUID(), heLeadId, row.mobile10, "out", "email", INVITE_EMAIL_KEY, mail.subject.slice(0, 2000), providerId, "sent", row.requisitionId, row.driveId]);
+        `INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id${scope ? ", sent_by" : ""}) VALUES (?,?,?,?,?,?,?,?,?,?,?${scope ? ",?" : ""})`,
+        [randomUUID(), heLeadId, row.mobile10, "out", "email", INVITE_EMAIL_KEY, mail.subject.slice(0, 2000), providerId, "sent", row.requisitionId, row.driveId, ...(scope ? ["followup"] : [])]);
     }
     await finish(row, isTest ? "test_sent" : "sent", null, now, { advanceWa: true, sent: true });
+    if (scope) await afterFirstSend(s, tag, row, "email", now, scope);
   } catch (err) {
     logger.warn({ rowId: row.id, err: scrub((err as Error).message) }, "[qualified-followup] email sent but recording failed");
     try { await finish(row, isTest ? "test_sent" : "sent", null, now, { advanceWa: true, sent: true }); }

@@ -14,7 +14,8 @@ import { afterFailure, chooseWaTemplate, nextStepDue, nextWorkingDayIst } from "
 import { assessmentText } from "./qualified-followup.cadence.js";
 import { withinSendWindow } from "./qualified-followup.schedule.js";
 import { bestOfferSkipSql } from "./he-best-offer.js";
-import { notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
+import { markHeldBestOffer, notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
+import { afterFirstSend, beginJourney, gate, scopeFilter, type StepScope } from "./qualified-followup.stagea.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
 
 const IST_MS = 5.5 * 3600_000;
@@ -30,24 +31,31 @@ export async function pipelineWaSentToday(tag: RowTag, now: Date): Promise<numbe
   return Number(r[0]?.n ?? 0);
 }
 
-export async function runWhatsappStep(s: FollowupSwitches, tag: RowTag, now: Date, budget: number, limit = 200): Promise<StepCounts> {
+/** `o` is the legacy daily budget (number) or the unified worker's StepScope (shared budget, this tick's sources, guard chain). */
+export async function runWhatsappStep(s: FollowupSwitches, tag: RowTag, now: Date, o: number | StepScope, limit = 200): Promise<StepCounts> {
   const counts = emptyCounts();
-  // Inert unless the effective mode owns this tag; sends also need the window, budget and an unpaused kill switch.
-  if (rowTag(s) !== tag || !withinSendWindow(now)) return counts;
+  const scope = typeof o === "object" ? o : null;
+  const budget = scope ? scope.budget.waLeft : (o as number);
+  if (scope) limit = scope.limit ?? limit;
+  // Inert unless the effective mode owns this tag; sends also need the window, budget and an unpaused kill switch. In the unified
+  // method the guard chain holds out-of-window rows to the next opening instead.
+  if (scope) { if (tag !== "dry_run" && s.killSwitch) return counts; }
+  else if (rowTag(s) !== tag || !withinSendWindow(now)) return counts;
   if (tag !== "dry_run" && (s.sendsPaused || budget <= 0)) return counts;
   if (tag === "test" && (s.testMisconfigured || !s.testPhone)) return counts;
   const take = Math.max(1, Math.floor(tag === "dry_run" ? limit : Math.min(limit, budget)));
   const paused = [...s.pausedSources];
-  const bestOffer = valueAddOn("best_offer");
+  const bestOffer = scope ? true : valueAddOn("best_offer");
+  const sc = scope ? scopeFilter(scope) : { sql: "", params: [] as string[] };
   // Backfill refills held slots only: the merged set never exceeds `take`, so the daily budget still bounds the sends.
   const select = async (ids: string[], lim: number) => {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
       WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
-        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'${bestOfferSkipSql(bestOffer)}
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'${bestOfferSkipSql(bestOffer)}${sc.sql}
         ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}${ids.length ? notInIdsSql(ids) : ""}
       ORDER BY qf.wa_due_at LIMIT ${lim}`,
-      [tag, now, ...paused, ...ids]);
+      [tag, now, ...sc.params, ...paused, ...ids]);
     return rows.map(toFollowupRow);
   };
   // T12 (re-invite) approval: read once per step run, and only when a re-invite row is due.
@@ -58,10 +66,11 @@ export async function runWhatsappStep(s: FollowupSwitches, tag: RowTag, now: Dat
   let list = await select([], take);
   let held: Set<string> | null = null;
   if (bestOffer) ({ rows: list, held } = await selectWithOfferHolds(list, tag, paused, select));
+  if (scope && held && tag !== "dry_run") await markHeldBestOffer(held);
   for (const row of list) {
     if (held?.has(row.id)) { counts.held++; continue; }
     try {
-      await processRow(s, tag, now, row, counts, t12Approved);
+      await processRow(s, tag, now, row, counts, t12Approved, scope);
     } catch (err) {
       logger.warn({ rowId: row.id, err: scrub((err as Error).message) }, "[qualified-followup] whatsapp step failed for row");
     }
@@ -80,7 +89,14 @@ function buildExtra(row: FollowupRow, ctx: SendContext, key: "he_walkin_invite" 
   };
 }
 
-async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: FollowupRow, counts: StepCounts, t12Approved: () => Promise<boolean>): Promise<void> {
+async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row0: FollowupRow, counts: StepCounts, t12Approved: () => Promise<boolean>, scope: StepScope | null): Promise<void> {
+  let row = row0;
+  const firstContact = row.journeyState !== "reach";
+  if (scope) {
+    const begun = await beginJourney(s, tag, row, now);
+    if (begun.held) { counts.held++; return; }
+    row = begun.row;
+  }
   const isDry = tag === "dry_run";
   const isTest = tag === "test";
   if (!isDry) {
@@ -115,6 +131,17 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
   const missing = pick.missing.join(",") || null;
   const extra = buildExtra(row, ctx, pick.key, now, wouldAssign);
   const next = nextStepDue(now);
+
+  if (scope) {
+    const g = await gate(s, tag, row, "whatsapp", now, scope, { firstContact, templateKey: pick.key });
+    if (g.action === "held") { counts.held++; return; }
+    if (g.action === "ended") { counts.processed++; counts.blocked++; return; }
+    if (g.action === "skipped") {
+      const [b] = await db.execute<any>("UPDATE qualified_followup SET wa_status = 'skipped', wa_error = ?, call_due_at = ? WHERE id = ? AND wa_status IS NULL", [g.reason, next, row.id]);
+      if (Number(b?.affectedRows ?? 0) > 0) { counts.processed++; counts.blocked++; }
+      return;
+    }
+  }
 
   if (isDry) {
     let error: string | null = null;
@@ -152,11 +179,12 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
 
   const r = await sendTemplateToLead({
     leadId, key: pick.key, matchId: ctx.matchId, requisitionId: row.requisitionId, followupStep: true, extra,
-    redirectTo: isTest ? (s.testPhone ?? "") : undefined,
+    redirectTo: isTest ? (s.testPhone ?? "") : undefined, ...(scope ? { sentBy: "followup" as const } : {}),
   });
   if (r.status === "sent") {
     await final(isTest ? "test_sent" : "sent", null, true, r.messageId || null);
     counts.sent++;
+    if (scope) { scope.budget.waLeft--; await afterFirstSend(s, tag, row, "whatsapp", now, scope); }
   } else if (r.status === "blocked") {
     if (r.reason === "quiet_hours" || r.reason === "paused") {
       await db.execute("UPDATE qualified_followup SET wa_status = NULL, step_claimed_at = NULL WHERE id = ? AND wa_status = 'sending'", [row.id]);

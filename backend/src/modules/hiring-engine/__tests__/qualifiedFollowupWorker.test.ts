@@ -22,10 +22,16 @@ vi.mock("../../communication/email.service.js", () => ({ emailService: { send: h
 
 import { followupWorkerStatus, runQualifiedFollowupTick, startQualifiedFollowupWorker, stopQualifiedFollowupWorker, LOCK_NAME } from "../qualified-followup.worker.js";
 import { emptyCounts } from "../qualified-followup.context.js";
+import { readSwitches } from "../qualified-followup.policy.js";
 
 const live = { QUAL_FOLLOWUP_MODE: "live" } as NodeJS.ProcessEnv;
 const at = (hhmm: string, day = "2026-10-07") => new Date(`${day}T${hhmm}:00+05:30`);
-const tick = (env: NodeJS.ProcessEnv, now: Date, deps: Record<string, unknown> = {}) => runQualifiedFollowupTick({ env, now, deps: deps as never });
+// Screen switches: every source at `code` (4 live -> a live pass and a canary pass; 3 canary -> one canary pass). The env stays the ceiling.
+const switchesAt = (code: number) => async (env: NodeJS.ProcessEnv) =>
+  readSwitches(env, new Map([["policy.followup.meta_live", code], ["policy.followup.meta_old", code], ["policy.followup.he", code]]));
+const tick = (env: NodeJS.ProcessEnv, now: Date, deps: Record<string, unknown> = {}, code = 4) =>
+  runQualifiedFollowupTick({ env, now, deps: { loadSwitches: switchesAt(code), sharedWaSentToday: h.waSent, ...deps } as never });
+const PASS = ["expire", "sync", "stops", "email", "wa", "call"];
 
 function lockOk(got = 1) {
   h.conn.execute.mockImplementation(async (sql: string) => (String(sql).includes("GET_LOCK") ? [[{ got }]] : [[{ r: 1 }]]));
@@ -60,7 +66,8 @@ describe("tick gates", () => {
   });
   it("overlapping tick in the same process is skipped running", async () => {
     let unblock!: () => void;
-    h.expire.mockImplementation(() => new Promise((res) => { unblock = () => res(0); }));
+    let open = false; // the first expire waits; later ones (the canary pass) do not
+    h.expire.mockImplementation(() => (open ? Promise.resolve(0) : new Promise((res) => { unblock = () => { open = true; res(0); }; })));
     const first = tick(live, at("11:00"));
     await vi.waitFor(() => expect(h.expire).toHaveBeenCalled());
     expect((await tick(live, at("11:00"))).skipped).toBe("running");
@@ -78,7 +85,9 @@ describe("tick gates", () => {
 describe("live tick", () => {
   it("runs steps in order with tag live and releases the lock", async () => {
     await tick(live, at("11:00"));
-    expect(h.calls).toEqual(["expire", "sync", "stops", "email", "wa", "call"]);
+    expect(h.calls).toEqual([...PASS, ...PASS]); // live rows, then canary rows (live runs both)
+    expect(h.expire.mock.calls.map((c) => c[0])).toEqual(["live", "canary"]);
+    expect(h.email.mock.calls[0][3]).toMatchObject({ sources: ["meta_live", "meta_old", "he"] });
     expect(h.expire.mock.calls[0][0]).toBe("live");
     expect(h.sync.mock.calls[0][0]).toBe("live");
     expect(h.stops.mock.calls[0][0]).toBe("live");
@@ -90,36 +99,36 @@ describe("live tick", () => {
   it("reads the answer-button switches once per tick and hands them to the email step", async () => {
     h.execute.mockImplementation(async (sql: string) => (String(sql).includes("policy.email_buttons") ? [[{ param_key: "policy.email_buttons.pipeline_meta", value: 1 }]] : [[]]));
     await tick(live, at("11:00"));
-    expect(h.execute.mock.calls.filter((c) => String(c[0]).includes("policy.email_buttons"))).toHaveLength(1);
+    expect(h.execute.mock.calls.filter((c) => String(c[0]).includes("policy.email_buttons"))).toHaveLength(2); // once per tag pass
     expect(h.email.mock.calls[0][4]).toMatchObject({ pipelineMeta: true, legacyMeta: false });
   });
   it("test mode uses tag test", async () => {
     const env = { ...live, QUAL_FOLLOWUP_TEST_MODE: "true", QUAL_FOLLOWUP_TEST_TO_PHONE: "9123456789", QUAL_FOLLOWUP_TEST_TO_EMAIL: "o@x.in" } as NodeJS.ProcessEnv;
     await tick(env, at("11:00"));
-    expect(h.calls).toEqual(["expire", "sync", "stops", "email", "wa", "call"]);
+    expect(h.calls).toEqual(PASS); // the test flag caps every source at test: one pass
     for (const m of [h.expire, h.stops]) expect(m.mock.calls[0][0]).toBe("test");
     for (const m of [h.email, h.wa, h.call]) expect(m.mock.calls[0][1]).toBe("test");
   });
   it("HE_SENDS_PAUSED: stop checks run, no email, WhatsApp or call step, no provider call", async () => {
     await tick({ ...live, HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv, at("11:00"));
-    expect(h.calls).toEqual(["expire", "sync", "stops"]);
+    expect(h.calls).toEqual(["expire", "sync", "stops", "expire", "sync", "stops"]);
     expect(h.emailSend).not.toHaveBeenCalled();
     expect(h.sendTemplate).not.toHaveBeenCalled();
     expect(h.voice).not.toHaveBeenCalled();
   });
   it("Pinbot RED gives WhatsApp budget 0", async () => {
     await tick(live, at("11:00"), { getPinbotQuality: async () => "RED" });
-    expect(h.wa.mock.calls[0][3]).toBe(0);
+    expect(h.wa.mock.calls[0][3].budget.waLeft).toBe(0);
   });
   it("YELLOW with max 100 and 30 sent today gives budget 20", async () => {
     h.waSent.mockResolvedValue(30);
     await tick({ ...live, QUAL_FOLLOWUP_WA_DAILY_MAX: "100" } as NodeJS.ProcessEnv, at("11:00"), { getPinbotQuality: async () => "YELLOW" });
-    expect(h.wa.mock.calls[0][3]).toBe(20);
+    expect(h.wa.mock.calls[0][3].budget.waLeft).toBe(20);
   });
   it("budget never goes below 0", async () => {
     h.waSent.mockResolvedValue(900);
     await tick(live, at("11:00"), { getPinbotQuality: async () => "GREEN" });
-    expect(h.wa.mock.calls[0][3]).toBe(0);
+    expect(h.wa.mock.calls[0][3].budget.waLeft).toBe(0);
   });
   it("a throwing step does not stop the next ones", async () => {
     h.email.mockRejectedValue(new Error("smtp down"));
@@ -133,8 +142,8 @@ describe("live tick", () => {
 describe("slots", () => {
   it("calling file runs once per slot, not outside the grace window", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
-    await tick(live, at("10:02", "2026-11-02"), { runCallFileBatch });
-    await tick(live, at("10:07", "2026-11-02"), { runCallFileBatch });
+    await tick(live, at("10:02", "2026-11-02"), { runCallFileBatch }, 3);
+    await tick(live, at("10:07", "2026-11-02"), { runCallFileBatch }, 3);
     expect(runCallFileBatch).toHaveBeenCalledTimes(1);
     const late = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
     await tick(live, at("21:00", "2026-11-03"), { runCallFileBatch: late });
@@ -142,39 +151,39 @@ describe("slots", () => {
   });
   it("calling file every 2 hours: 10, 12, 14, 16 and 18 IST, never 20:00; the slot key is passed so the batch can claim it", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
-    for (const m of ["10:01", "12:01", "14:01", "16:01", "18:01", "20:01"]) await tick(live, at(m, "2026-09-20"), { runCallFileBatch });
+    for (const m of ["10:01", "12:01", "14:01", "16:01", "18:01", "20:01"]) await tick(live, at(m, "2026-09-20"), { runCallFileBatch }, 3);
     expect(runCallFileBatch.mock.calls.map((c) => (c as unknown[])[3])).toEqual(
       ["10:00", "12:00", "14:00", "16:00", "18:00"].map((t) => ({ slotKey: `2026-09-20 ${t}`, config: expect.objectContaining({ slots: expect.any(Array) }) })));
   });
   it("slots come from the calling-file settings (he_model_param / env override)", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
     const callFileConfig = vi.fn(async () => ({ slots: ["11:30"], coolDays: 0, emptyNote: false }));
-    for (const m of ["10:01", "11:31", "12:01"]) await tick(live, at(m, "2026-09-21"), { runCallFileBatch, callFileConfig });
+    for (const m of ["10:01", "11:31", "12:01"]) await tick(live, at(m, "2026-09-21"), { runCallFileBatch, callFileConfig }, 3);
     expect(runCallFileBatch).toHaveBeenCalledTimes(1);
     expect((runCallFileBatch.mock.calls[0] as unknown[])[3]).toMatchObject({ slotKey: "2026-09-21 11:30" });
   });
   it("a slot another process already filed (already_done) is not tried again", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "already_done" as const, rows: 0, files: 0 }));
-    for (const m of ["10:02", "10:07"]) await tick(live, at(m, "2026-09-22"), { runCallFileBatch });
+    for (const m of ["10:02", "10:07"]) await tick(live, at(m, "2026-09-22"), { runCallFileBatch }, 3);
     expect(runCallFileBatch).toHaveBeenCalledTimes(1);
   });
   it("a failed batch leaves the slot open, capped at 3 attempts", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "failed" as const, rows: 0, files: 0, error: "smtp" }));
-    for (const m of ["10:02", "10:07", "10:12", "10:17", "10:22"]) await tick(live, at(m, "2026-11-10"), { runCallFileBatch });
+    for (const m of ["10:02", "10:07", "10:12", "10:17", "10:22"]) await tick(live, at(m, "2026-11-10"), { runCallFileBatch }, 3);
     expect(runCallFileBatch).toHaveBeenCalledTimes(3);
   });
   it("a failed daily report leaves the 08:30 slot open, capped at 3 attempts a day", async () => {
     const runDailyReport = vi.fn(async () => false);
-    for (const m of ["08:32", "08:37", "08:42", "08:47"]) await tick(live, at(m, "2026-11-12"), { runDailyReport });
+    for (const m of ["08:32", "08:37", "08:42", "08:47"]) await tick(live, at(m, "2026-11-12"), { runDailyReport }, 3);
     expect(runDailyReport).toHaveBeenCalledTimes(3);
     const ok = vi.fn(async () => true);
-    for (const m of ["08:32", "08:37"]) await tick(live, at(m, "2026-11-13"), { runDailyReport: ok });
+    for (const m of ["08:32", "08:37"]) await tick(live, at(m, "2026-11-13"), { runDailyReport: ok }, 3);
     expect(ok).toHaveBeenCalledTimes(1);
   });
   it("followupWorkerStatus records the report outcome per slot: fails twice then succeeds is 3 tries, ok", async () => {
     let n = 0;
     const runDailyReport = vi.fn(async () => ++n >= 3);
-    for (const m of ["08:32", "08:37", "08:42"]) await tick(live, at(m, "2026-10-08"), { runDailyReport });
+    for (const m of ["08:32", "08:37", "08:42"]) await tick(live, at(m, "2026-10-08"), { runDailyReport }, 3);
     expect(followupWorkerStatus().reports.find((r) => r.slot === "2026-10-08 08:30")).toEqual({ slot: "2026-10-08 08:30", ok: true, tries: 3 });
     const slots = followupWorkerStatus().reports.map((r) => r.slot);
     expect(slots.length).toBeLessThanOrEqual(5);
@@ -192,9 +201,9 @@ describe("slots", () => {
   it("calling file and daily report still run while sends are paused", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
     const runDailyReport = vi.fn(async () => true);
-    const r = await tick({ ...live, HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv, at("10:02", "2026-11-04"), { runCallFileBatch });
+    const r = await tick({ ...live, HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv, at("10:02", "2026-11-04"), { runCallFileBatch }, 3);
     expect(runCallFileBatch).toHaveBeenCalledTimes(1);
-    const r2 = await tick({ ...live, HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv, at("08:31", "2026-11-05"), { runDailyReport });
+    const r2 = await tick({ ...live, HE_SENDS_PAUSED: "true" } as NodeJS.ProcessEnv, at("08:31", "2026-11-05"), { runDailyReport }, 3);
     expect(runDailyReport).toHaveBeenCalledTimes(1);
     expect(r.callFile?.status).toBe("empty");
     expect(r2.report).toBe(true);
@@ -207,7 +216,7 @@ describe("quiet hours through the real WhatsApp step", () => {
     h.wa.mockImplementation(actual.runWhatsappStep);
     const rows = [1, 2, 3].map((i) => ({ id: `id-${i}`, source_type: "he", mobile10: "9876543210", requisition_id: "r", wa_due_at: "2026-10-07 20:00:00", qualified_at: "2026-10-07 09:00:00" }));
     h.execute.mockImplementation(async (sql: string) => (String(sql).includes("FROM qualified_followup") ? [rows] : [{ affectedRows: 1 }]));
-    await tick(live, at("21:00"), { getPinbotQuality: async () => "GREEN" });
+    await tick(live, at("21:00"), { getPinbotQuality: async () => "GREEN" }, 3);
     expect(h.wa).toHaveBeenCalled();
     expect(h.sendTemplate).not.toHaveBeenCalled();
     expect(h.execute.mock.calls.filter((c) => /UPDATE[\s\S]*wa_status/.test(String(c[0])))).toHaveLength(0);
@@ -243,5 +252,38 @@ describe("start and stop", () => {
       await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
       expect(h.getConnection).toHaveBeenCalledTimes(2);
     } finally { delete process.env.QUAL_FOLLOWUP_MODE; vi.useRealTimers(); }
+  });
+});
+
+describe("unified tick (Task 9)", () => {
+  const sw = (codes: Record<string, number>) => async (env: NodeJS.ProcessEnv) => readSwitches(env, new Map(Object.entries(codes).map(([k, v]) => [`policy.followup.${k}`, v])));
+  it("one tick runs live and dry_run sources with their own tags", async () => {
+    await runQualifiedFollowupTick({ env: live, now: at("11:00"), deps: { loadSwitches: sw({ meta_live: 4, he: 1 }), sharedWaSentToday: h.waSent } as never });
+    expect(h.email.mock.calls.map((c) => [c[1], c[3].sources])).toEqual([["live", ["meta_live"]], ["canary", ["meta_live"]], ["dry_run", ["he"]]]);
+  });
+  it("every source off on the screen: rows frozen, no step, no stop check", async () => {
+    const r = await runQualifiedFollowupTick({ env: live, now: at("11:00"), deps: { loadSwitches: sw({}), sharedWaSentToday: h.waSent } as never });
+    expect(r.skipped).toBe("no_sources");
+    expect(h.calls).toEqual([]);
+  });
+  it("shared budget counts engine sends too: 498 of 500 sent today -> 2 left, shared by every tag pass", async () => {
+    h.waSent.mockResolvedValue(498);
+    await tick(live, at("11:00"), { getPinbotQuality: async () => "GREEN" });
+    expect(h.wa.mock.calls[0][3].budget.waLeft).toBe(2);
+    expect(h.wa.mock.calls[1][3].budget).toBe(h.wa.mock.calls[0][3].budget);
+  });
+  it("RED quality: WhatsApp budget 0 but email continues", async () => {
+    await tick(live, at("11:00"), { getPinbotQuality: async () => "RED" });
+    expect(h.wa.mock.calls[0][3].budget.waLeft).toBe(0);
+    expect(h.email).toHaveBeenCalled();
+  });
+  it("kill switch from the screen: stops and receipts still run, no step", async () => {
+    await runQualifiedFollowupTick({ env: live, now: at("11:00"), deps: { loadSwitches: sw({ he: 4, paused: 1 }), sharedWaSentToday: h.waSent } as never });
+    expect(h.calls).toEqual(["expire", "sync", "stops", "expire", "sync", "stops"]);
+  });
+  it("stage B runs before stage A in each pass, on the same scope", async () => {
+    const runStageB = vi.fn(async () => { h.calls.push("stageB"); return null; });
+    await tick(live, at("11:00"), { runStageB }, 3);
+    expect(h.calls).toEqual(["expire", "sync", "stops", "stageB", "email", "wa", "call"]);
   });
 });

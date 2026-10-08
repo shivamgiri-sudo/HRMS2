@@ -31,6 +31,15 @@
   "modules/hiring-engine/followup-person.service.ts": [
     "followup_person"
   ],
+  "modules/hiring-engine/he-send.service.ts": [
+    "he_message"
+  ],
+  "modules/hiring-engine/qualified-followup.shadow.ts": [
+    "followup_shadow"
+  ],
+  "modules/hiring-engine/qualified-followup.stagea.ts": [
+    "qualified_followup"
+  ],
   "modules/hiring-engine/he-action-queue.service.ts": [
     "qualified_followup"
   ],
@@ -154,6 +163,7 @@
     "qualified_followup"
   ],
   "modules/hiring-engine/qualified-followup.email.ts": [
+    "he_message",
     "qualified_followup"
   ],
   "modules/hiring-engine/qualified-followup.service.ts": [

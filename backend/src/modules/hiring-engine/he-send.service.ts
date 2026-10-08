@@ -45,6 +45,8 @@ export interface SendOpts {
   followupStep?: boolean;
   /** Test mode: a 10-digit number that receives the message instead of the lead. Nothing is recorded (no he_message, event, contact time or status). */
   redirectTo?: string | null;
+  /** The unified follow-up worker's sends are tagged (he_message.sent_by) so reports can tell mechanisms apart. */
+  sentBy?: "followup";
 }
 
 const FIRST_CONTACT = new Set<TemplateKey>(["he_walkin_invite", "he_winback", "he_other_role_offer"]);
@@ -196,8 +198,8 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   const [idr] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
   const messageId = idr[0].id as string;
   await db.execute(
-    "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, error_message, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-    [messageId, o.leadId, lead.mobile10, "out", "whatsapp", `${o.key}:${lang}`, body.slice(0, 2000), res.success ? res.message_id ?? null : null, res.success ? "sent" : "failed", res.success ? null : String(res.error ?? "").slice(0, 500), m?.requisition_id ?? o.requisitionId ?? null, m?.drive_id ?? null]);
+    `INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, error_message, requisition_id, drive_id${o.sentBy ? ", sent_by" : ""}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?${o.sentBy ? ",?" : ""})`,
+    [messageId, o.leadId, lead.mobile10, "out", "whatsapp", `${o.key}:${lang}`, body.slice(0, 2000), res.success ? res.message_id ?? null : null, res.success ? "sent" : "failed", res.success ? null : String(res.error ?? "").slice(0, 500), m?.requisition_id ?? o.requisitionId ?? null, m?.drive_id ?? null, ...(o.sentBy ? [o.sentBy] : [])]);
   if (!res.success) {
     await addEvent(o.leadId, "send_failed", { channel: "whatsapp", detail: `${o.key}: ${res.error}`, driveId: m?.drive_id });
     logger.warn({ leadId: o.leadId, key: o.key, error: res.error }, "[he-send] failed");
