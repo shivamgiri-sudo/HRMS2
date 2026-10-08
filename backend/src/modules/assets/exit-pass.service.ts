@@ -280,9 +280,12 @@ export async function branchHeadDecision(
   await assertCanActOnOwnBehalf(pass, actor.employeeId);
 
   const isAssignedHead = pass.branch_head_employee_id === actor.employeeId;
-  const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
+  // Owner policy: admin is branch-scoped. Only the global roles override across branches; an admin only for this pass's own branch.
+  const sameBranch = Boolean(actor.branchId) && actor.branchId === pass.branch_id;
+  const isOverride = actorRoles.some((r) => ADMIN_STAGE_GLOBAL_ROLES.includes(r))
+    || (actorRoles.includes('admin') && sameBranch);
   if (!isAssignedHead && !isOverride) {
-    throw new ExitPassError(403, 'Only the assigned Branch Head (or Super Admin/Admin) can decide this pass.');
+    throw new ExitPassError(403, 'Only the assigned Branch Head, a Super Admin / IT Head, or this branch\'s Admin can decide this pass.');
   }
   if ((decision === 'rejected' || decision === 'returned') && !remarks?.trim()) {
     throw new ExitPassError(400, 'Remarks are required for a rejection or return-for-correction.');
