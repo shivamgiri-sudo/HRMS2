@@ -38,7 +38,7 @@ export default function TimingHeatmap({ analytics, initialType, initialKind = "r
         </div>
       )}
     >
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table aria-label={v.aria} className="min-w-max border-separate border-spacing-0.5 text-xs">
           <thead>
             <tr>

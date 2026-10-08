@@ -44,7 +44,7 @@ export function Segmented<T extends string>({ label, options, value, onChange }:
 
 export function TextTableView({ table, id }: { table: TextTable; id?: string }) {
   return (
-    <div id={id} className="overflow-x-auto">
+    <div id={id} className="relative overflow-x-auto">
       <table className="w-full min-w-max border-collapse text-left text-xs text-slate-800 dark:text-slate-100">
         <caption className="mb-1 text-left text-xs text-slate-600 dark:text-slate-300">{table.caption}</caption>
         <thead>

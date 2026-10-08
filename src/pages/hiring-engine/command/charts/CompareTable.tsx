@@ -40,7 +40,7 @@ export default function CompareTable({ analytics }: { analytics: DriveAnalytics 
       {v.empty && <Note>{EMPTY_TEXT}</Note>}
       {costOn && <Note>{costNoteFor(analytics)}</Note>}
       <Note>{CREDIT_NOTE}</Note>
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table className="w-full min-w-max border-collapse text-xs text-slate-800 dark:text-slate-100">
           <caption className="sr-only">Drive types compared stage by stage, {range}{costOn ? ". Costs are estimated" : ""}</caption>
           <thead>

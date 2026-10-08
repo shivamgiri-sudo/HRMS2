@@ -72,7 +72,7 @@ function Funnel({ data }: { data: PanelData }) {
   const withSources = !!data.sources;
   return (
     <div className="space-y-1">
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table className="min-w-full">
           <caption className="pb-1 text-left text-xs text-slate-700 dark:text-slate-200">
             {withSources ? "Follow-up rows and the filtered requisition's sources, by source type" : "Follow-up rows by source type"}
@@ -148,7 +148,7 @@ function CallFiles({ status }: { status: FollowupStatus | null }) {
   return (
     <div className="space-y-2">
       {files.length === 0 ? <p className="text-sm text-slate-700 dark:text-slate-200">No calling files yet.</p> : (
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="min-w-full">
             <caption className="sr-only">Last calling-file batches</caption>
             <thead><tr><th scope="col" className={TH}>Time</th><th scope="col" className={TH}>Rows</th><th scope="col" className={TH}>Status</th><th scope="col" className={TH}>Error</th></tr></thead>

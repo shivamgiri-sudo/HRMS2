@@ -24,7 +24,7 @@ export default function PlanCalendar({ plan }: { plan: Pick<DrivePlan, "days" | 
       <p className="text-xs text-slate-700 dark:text-slate-200">
         Each cell: people lined up from that stream / seats on the day. The word says how full the day is across all streams (empty, low under 25%, good under 75%, full, over).
       </p>
-      <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+      <div className="relative overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
         <table className="min-w-full border-collapse text-sm">
           <caption className="sr-only">Seats lined up per stream and day against the day&apos;s capacity, with the day&apos;s fill level</caption>
           <thead className="bg-slate-50 dark:bg-slate-800">

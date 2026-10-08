@@ -132,6 +132,18 @@ describe("InsightsPanel owner action", () => {
   });
 });
 
+describe("375 px: no sideways page scroll", () => {
+  // A scroll box that is not positioned lets absolutely placed text inside it (sr-only headers, captions) escape it and widen the page.
+  it("every table scroll box in the Summary and the drive sections is positioned, so it contains its screen-reader text", () => {
+    for (const s of ["summary", "live", "old", "he"] as const) {
+      const html = renderToStaticMarkup(<>{sectionParts(s, prod(), null, undefined, undefined, 0, filters, noop).gated}</>);
+      const boxes = [...html.matchAll(/class="([^"]*\boverflow-(?:x-)?auto\b[^"]*)"/g)].map((m) => m[1]);
+      expect(boxes.length).toBeGreaterThan(0);
+      for (const c of boxes) expect(c.split(" ").some((k) => k === "relative" || k === "sticky"), `${s}: ${c}`).toBe(true);
+    }
+  });
+});
+
 describe("placement", () => {
   const typeInsights = (t: "meta_live" | "meta_old" | "he") => <InsightsPanel analytics={{ insights: prod().insights.filter((i) => i.sourceType === t), partial: false }} title={`Insights for ${t}`}
     dismissed={new Set()} onDismiss={noop} onRestore={noop} onAction={noop} />;

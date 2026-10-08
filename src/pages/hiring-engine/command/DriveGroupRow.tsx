@@ -32,7 +32,7 @@ export function TypeBadge({ type, compact }: { type: DriveGroup["sourceType"]; c
 export function DayTable({ trend, today }: { trend: DriveTrend; today: string }) {
   const rows = dayRows(trend.points, today);
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="w-full min-w-max border-collapse text-left text-xs text-slate-800 dark:text-slate-100">
         <caption className="mb-1 text-left text-xs text-slate-600 dark:text-slate-300">Day by day across the whole window; days still to come show wanted, lined up, invited and confirmed only</caption>
         <thead>

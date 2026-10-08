@@ -64,7 +64,7 @@ export default function JourneyCompare({ analytics }: { analytics: DriveAnalytic
       {anySmall && <Note>{SAMPLE_NOTE}</Note>}
       {anyOdd && <Note>{SUBSET_NOTE}</Note>}
       {v.empty ? <EmptyBlock text="No drive activity in this range" /> : (
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="w-full min-w-max border-collapse text-xs text-slate-800 dark:text-slate-100">
             <caption className="sr-only">{v.aria}</caption>
             <thead>

@@ -21,7 +21,7 @@ export default function ConversionHeatmap({ analytics }: { analytics: DriveAnaly
       table={v.table} empty={v.empty} aria={v.aria} kind="grid"
       note={v.untracked ? <Note>{UNTRACKED_NOTE}</Note> : null}
     >
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table aria-label={v.aria} className="w-full min-w-max border-separate border-spacing-1 text-xs">
           <thead>
             <tr>

@@ -178,7 +178,7 @@ function DaysTable({ plan }: { plan: DrivePlan }) {
   return (
     <section aria-labelledby="plan-days-heading" className="space-y-2">
       <h4 id="plan-days-heading" className={H4}>Target vs expected arrivals</h4>
-      <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+      <div className="relative overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
         <table className="min-w-full text-sm">
           <caption className="sr-only">Per day: target arrivals, expected arrivals from the people lined up, the gap and seats used of capacity</caption>
           <thead className="bg-slate-50 dark:bg-slate-800">
@@ -210,7 +210,7 @@ function StreamsTable({ day, streamActions, calibrated, windowDays }: { day: Pla
       {calibrated && (
         <p className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-200"><Gauge className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /><span>{calibrationNote(windowDays)}</span></p>
       )}
-      <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+      <div className="relative overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
         <table className="min-w-full text-sm">
           <caption className="sr-only">Per stream: people lined up, show rate and its basis, expected arrivals, recommended invites and why</caption>
           <thead className="bg-slate-50 dark:bg-slate-800">

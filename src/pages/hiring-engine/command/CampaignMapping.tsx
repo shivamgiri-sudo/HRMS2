@@ -9,7 +9,7 @@ export function CampaignMappingTable({ view: v }: { view: CampaignMappingView })
   return (
     <>
       {v.unmapped > 0 && <p className="text-xs font-medium text-amber-900 dark:text-amber-200">{v.unmapped} of {v.total} campaigns are not linked to a requisition.</p>}
-      <div className="max-h-72 overflow-auto">
+      <div className="relative max-h-72 overflow-auto">
         <table className="w-full min-w-max border-collapse text-left text-xs text-slate-800 dark:text-slate-100">
           <caption className="sr-only">Meta campaigns with the requisition each feeds and their all-time lead and qualified counts</caption>
           <thead><tr className="border-b border-slate-200 dark:border-slate-700">

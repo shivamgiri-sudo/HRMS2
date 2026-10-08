@@ -18,7 +18,7 @@ export default function FootfallPlan({ analytics, type, planHref }: { analytics:
             <>
               <Note>{p.targetText}</Note>
               <Note>{SHARED_SEATS_NOTE}</Note>
-              <div className="overflow-x-auto">
+              <div className="relative overflow-x-auto">
                 <table className="w-full min-w-max border-collapse text-left text-xs text-slate-800 dark:text-slate-100">
                   <caption className="sr-only">{p.table.caption}</caption>
                   <thead><tr className="border-b border-slate-200 dark:border-slate-700">

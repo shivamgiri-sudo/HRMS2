@@ -53,7 +53,7 @@ export default function CampaignProgressTable({ analytics, only, title = "Campai
             <Note>{STALLED_NOTE}</Note>
             <Note>{`Rates need at least ${MIN_SAMPLE} people at the stage they start from. Qualified counts screening passes of form fills in this range.`}</Note>
           </div>
-          <div className="max-h-[32rem] overflow-auto">
+          <div className="relative max-h-[32rem] overflow-auto">
             <table className="w-full min-w-max border-collapse text-xs text-slate-800 dark:text-slate-100">
               <caption className="sr-only">Meta campaigns in this range with people at each stage, the largest drop-off of each and whether qualified people are stalled</caption>
               <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
