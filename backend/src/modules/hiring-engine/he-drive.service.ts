@@ -16,8 +16,12 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { eduRank } from "../meta-campaign/lead-screener.service.js";
 import { industriesForProcess, rankRequisitions, scoreLead, type MatchRequisition } from "./he-matcher.js";
-import { driveCapacity, inviteTarget, invitesForTarget, nextFreeSlot, nowIst, type SlotConfig } from "./he-slots.js";
+import { driveCapacity, generateSlots, inviteTarget, invitesForTarget, nextFreeSlot, nowIst, type SlotConfig } from "./he-slots.js";
 import { addEvent } from "./he-lead.service.js";
+import { valueAddOn } from "./he-valueadd-switches.js";
+import { chooseSlot } from "./he-smart-slots.js";
+import { readMatchPrefs } from "./he-smart-slots.service.js";
+import { loadInsightThresholds } from "./he-insight-params.service.js";
 import { logger } from "../../logger.js";
 import { enqueueMatchedFollowups } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
@@ -436,6 +440,8 @@ export async function alternativeRequisitions(leadId: string, excludeRequisition
  * human, so the first invite slot must not count (it logs `slot_assigned`).
  */
 export async function reserveSlot(matchId: string, isReplacement = false): Promise<string | null> {
+  // HE_SMART_SLOTS: read the preferences before the transaction so the drive lock is held only for the booking.
+  const smart = valueAddOn("smart_slots") ? { prefs: await readMatchPrefs(matchId), bandKm: (await loadInsightThresholds())["insight.distance_band_km"] } : null;
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -448,7 +454,10 @@ export async function reserveSlot(matchId: string, isReplacement = false): Promi
       "SELECT slot_at, COUNT(*) AS n FROM he_match WHERE drive_id = ? AND slot_at IS NOT NULL AND state IN ('invited','confirmed') AND id <> ? GROUP BY slot_at", [drive.id, matchId]);
     const booked: Record<string, number> = {};
     for (const r of b) booked[String(r.slot_at).slice(0, 19)] = Number(r.n);
-    const slot = nextFreeSlot(slotCfg(drive), booked, nowIst());
+    const cfg = slotCfg(drive);
+    const slot = smart
+      ? chooseSlot({ slots: generateSlots(cfg), capacity: cfg.capacity, booked, nowIst: nowIst(), leadMinutes: 60, prefs: smart.prefs, bandKm: smart.bandKm })
+      : nextFreeSlot(cfg, booked, nowIst());
     if (!slot) { await conn.rollback(); return null; }
     await conn.execute("UPDATE he_match SET slot_at = ? WHERE id = ?", [slot, matchId]);
     await conn.commit();
