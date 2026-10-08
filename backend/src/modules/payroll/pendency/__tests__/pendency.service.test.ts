@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../../../config/env.js', () => ({ env: { FRONTEND_URL: 'https://hrms.example.com' } }));
 vi.mock('../../../../db/mysql.js', () => ({ db: { execute: vi.fn() } }));
 vi.mock('../../../communication/email.service.js', () => ({ emailService: { send: vi.fn() } }));
-vi.mock('../../esi-pending.query.js', () => ({ fetchEsiPendingRows: vi.fn() }));
+vi.mock('../../esi-pending.query.js', () => ({ fetchEsiPendingRows: vi.fn(), ESI_STILL_APPLICABLE_SQL: '1=1' }));
 
 import { db } from '../../../../db/mysql.js';
 import { emailService } from '../../../communication/email.service.js';

@@ -18,7 +18,7 @@ import PDFDocument from "pdfkit";
 import sharp from "sharp";
 import { ZipArchive } from "archiver";
 import type { Archiver as ArchiverInstance } from "archiver";
-import { fetchEsiPendingRows } from "./esi-pending.query.js";
+import { fetchEsiPendingRows, ESI_STILL_APPLICABLE_SQL } from "./esi-pending.query.js";
 import { resolveOnboardingDocumentFile } from "../ats/onboardingDocumentPath.js";
 
 /**
@@ -212,6 +212,7 @@ esiRegDocsRouter.get(
     const whereParts: string[] = [
       `e.active_status = 1`,
       `esi.esi_eligible = 1`,
+      ESI_STILL_APPLICABLE_SQL,
       `COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL`,
       `e.employment_status != 'terminated'`,
     ];
@@ -1084,6 +1085,7 @@ esiRegDocsRouter.get(
     const whereParts = [
       `e.active_status = 1`,
       `esi.esi_eligible = 1`,
+      ESI_STILL_APPLICABLE_SQL,
       `COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL`,
       `e.employment_status != 'terminated'`,
     ];

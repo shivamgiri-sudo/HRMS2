@@ -2,6 +2,41 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
 /**
+ * "ESI can still apply to this employee" — the part of the ESI-registration population
+ * that the `esi_eligible` flag alone gets wrong.
+ *
+ * Why the flag is not enough (found 2026-10-08, MAS63459): employee_statutory_info.esi_eligible
+ * is written as 1 for EVERY new employee (employee-creation-orchestrator hard-codes it) and the
+ * ATS offer defaults it to 1 when the field is omitted. So a joiner on a ₹5.4 lakh CTC, whose own
+ * offer carries esic_employee = 0, was queued for ESI registration.
+ *
+ * Two exclusions, both uses the data payroll itself honours:
+ *   1. an APPROVED `esic_opt_out` in employee_statutory_override (same table the payroll
+ *      applicability resolver reads);
+ *   2. salary clearly above the ESI wage ceiling. Only CTC is reliably stored per employee
+ *      (employee_salary_assignment.ctc_annual, else the joining snapshot's ctc_offered), and CTC
+ *      exceeds gross by employer PF/ESI/bonus/gratuity (up to roughly a third). So the cut is
+ *      ceiling x 1.35 on monthly CTC: above it, gross cannot be under the ceiling; inside the
+ *      band the person stays listed rather than being wrongly hidden. Ceiling comes from
+ *      statutory_config.esic_wage_limit (default 21000), as payroll reads it.
+ *
+ * Expects the employees table aliased `e`. No parameters.
+ */
+export const ESI_STILL_APPLICABLE_SQL = `
+  NOT EXISTS (
+    SELECT 1 FROM employee_statutory_override eso
+     WHERE eso.employee_id = e.id AND eso.override_type = 'esic_opt_out' AND eso.status = 'approved')
+  AND COALESCE(
+        (SELECT esa.ctc_annual FROM employee_salary_assignment esa
+          WHERE esa.employee_id = e.id AND esa.active_status = 1
+          ORDER BY esa.effective_from DESC, esa.created_at DESC LIMIT 1),
+        (SELECT ss.ctc_offered FROM employee_salary_snapshot ss
+          WHERE ss.employee_id = e.id ORDER BY ss.effective_date DESC LIMIT 1),
+        0) / 12
+      <= 1.35 * (SELECT COALESCE(MAX(sc.config_value), 21000) FROM statutory_config sc
+                  WHERE LOWER(sc.config_key) = 'esic_wage_limit' AND sc.is_active = 1)`;
+
+/**
  * The ESI-registration pendency query, shared by the ESI screen and the reminder
  * emails so "missing" means exactly the same thing in both. Rows carry the readiness
  * flags (pan, photo, bank, passbook) the screen renders.

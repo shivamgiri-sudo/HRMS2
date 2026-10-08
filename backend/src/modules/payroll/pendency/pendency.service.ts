@@ -3,7 +3,7 @@ import type { RowDataPacket } from 'mysql2';
 import { db } from '../../../db/mysql.js';
 import { emailService } from '../../communication/email.service.js';
 import { buildAppLink } from '../../../shared/appLink.js';
-import { fetchEsiPendingRows } from '../esi-pending.query.js';
+import { fetchEsiPendingRows, ESI_STILL_APPLICABLE_SQL } from '../esi-pending.query.js';
 import { buildPendencyEmail } from './pendency-email.template.js';
 import { NUDGE_ISSUE_FOR_PENDENCY_KIND } from '../../ops-control-tower/ops-nudge.logic.js';
 
@@ -159,6 +159,7 @@ export async function pendingEsi(ids: string[]): Promise<Map<string, PendingItem
   const whereClause = [
     'e.active_status = 1',
     'esi.esi_eligible = 1',
+    ESI_STILL_APPLICABLE_SQL,
     "COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL",
     "e.employment_status != 'terminated'",
     `e.id IN (${ids.map(() => '?').join(',')})`,
@@ -337,7 +338,7 @@ export async function listPendingEmployeeIds(kind: PendencyKind, limit: number):
     case 'esi_docs':
       sql = `SELECT e.id FROM employees e
                JOIN employee_statutory_info esi ON esi.employee_id = e.id
-              WHERE e.active_status = 1 AND esi.esi_eligible = 1
+              WHERE e.active_status = 1 AND esi.esi_eligible = 1 AND ${ESI_STILL_APPLICABLE_SQL}
                 AND COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL
                 AND e.employment_status != 'terminated'
               ORDER BY e.employee_code LIMIT ${cap}`;
