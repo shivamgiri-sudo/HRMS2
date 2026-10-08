@@ -18,6 +18,7 @@ import { rankRequisitions, scoreLead, type MatchRequisition } from "./he-matcher
 import { legacyMatchRequisition, type MatchReqRow } from "./he-match-requisition.js";
 import { compileCriteria, fromMatchReqRow } from "../selection/compile-criteria.js";
 import { parseSelectionRules } from "../selection/selection-rules.schema.js";
+import { lineupReadsCriteria } from "../selection/selection-switches.js";
 import { driveCapacity, generateSlots, inviteTarget, invitesForTarget, nextFreeSlot, nowIst, type SlotConfig } from "./he-slots.js";
 import { addEvent } from "./he-lead.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
@@ -79,6 +80,21 @@ function withJdDocText<T extends ReturnType<typeof toMatchRequisition>>(base: T,
     minEducationRank: base.minEducationRank ?? jd.minEducationRank,
     streams: base.streams?.length ? base.streams : jd.streams.length ? jd.streams : base.streams,
   };
+}
+
+/**
+ * HR's saved criteria (S5) reach the line-up only when SELECTION_CRITERIA_LINEUP names this requisition (or "all"); default off.
+ * A separate read so the pinned requisition SELECT is unchanged; a missing column (before migration 2145) or NULL keeps today's rules.
+ */
+async function withSelectionRules(req: ReqRow | null): Promise<ReqRow | null> {
+  if (!req || !lineupReadsCriteria(req.id)) return req;
+  try {
+    const [r] = await db.execute<RowDataPacket[]>("SELECT selection_rules FROM job_requisition WHERE id = ? LIMIT 1", [req.id]);
+    return r[0]?.selection_rules != null ? ({ ...req, selection_rules: r[0].selection_rules } as ReqRow) : req;
+  } catch (err) {
+    logger.warn({ requisitionId: req.id, err: String((err as Error).message).slice(0, 120) }, "[selection] saved criteria not read for the line-up");
+    return req;
+  }
 }
 
 async function loadRequisition(id: string): Promise<ReqRow | null> {
@@ -196,7 +212,7 @@ export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): 
   const [dr] = await db.execute<DriveRow[]>("SELECT * FROM he_drive WHERE id = ? LIMIT 1", [driveId]);
   const drive = dr[0];
   if (!drive) throw new Error("Drive not found");
-  const req = await loadRequisition(drive.requisition_id);
+  const req = await withSelectionRules(await loadRequisition(drive.requisition_id));
   if (!req) throw new Error("Requisition not found");
   // JD (uploaded document in BMS format, else the requisition's own text) adds skills and fills gaps in the form fields.
   const jd = await getRequisitionJd(req.id);
@@ -337,7 +353,7 @@ export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): 
 /** Other open requisitions a declined lead fits (feeds the "other role" offer). Same branch ranked first by score. */
 /** The rules a drive for this requisition applies (form fields + screening config + JD text/document), for display. */
 export async function loadRequisitionForMatching(requisitionId: string) {
-  const req = await loadRequisition(requisitionId);
+  const req = await withSelectionRules(await loadRequisition(requisitionId));
   if (!req) return null;
   const jd = await getRequisitionJd(requisitionId);
   const base = withJdDocText(toMatchRequisition(req), jd?.text);
