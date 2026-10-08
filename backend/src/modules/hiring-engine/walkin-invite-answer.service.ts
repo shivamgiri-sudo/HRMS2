@@ -104,7 +104,7 @@ export async function answerInviteToken(inv: WalkinInviteRow, answer: InviteToke
       branch = jr[0]?.branch_name ? String(jr[0].branch_name) : "";
     }
     booked = await bookLeadOnDrive({ leadId: lead.id, requisitionId: inv.requisition_id, branchName: branch, preferredSlotAt: inv.slot_at, now: o.now, state: "invited" });
-    if (booked.status === "booked") state = (await recordInviteAnswer(booked.matchId, answer, { channel: o.channel, actor: o.actor ?? null }))?.state ?? "";
+    if (booked.status === "booked") state = (await recordInviteAnswer(booked.matchId, answer, { channel: o.channel, actor: o.actor ?? null, inviteId: inv.id }))?.state ?? "";
   } finally {
     await releaseEngineLock(lock);
   }

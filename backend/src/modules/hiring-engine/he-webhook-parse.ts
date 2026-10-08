@@ -1,5 +1,5 @@
 /** Parses the WhatsApp Cloud-API style payload Pinbot forwards (messages + statuses). Pure. */
-export interface InboundMsg { from: string; id: string; text: string }
+export interface InboundMsg { from: string; id: string; text: string; buttonId?: string | null }
 export interface StatusEvt { id: string; status: "sent" | "delivered" | "read" | "failed"; error?: string }
 
 const STATUS = new Set(["sent", "delivered", "read", "failed"]);
@@ -28,7 +28,9 @@ export function parseWhatsAppWebhook(body: unknown): { inbound: InboundMsg[]; st
       if (!isObj(m)) continue;
       // Quick-reply buttons arrive as button.text (template) or interactive.button_reply.title; typed replies as text.body.
       const text = m.text?.body ?? m.button?.text ?? m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title ?? "";
-      if (m.from && m.id) inbound.push({ from: String(m.from), id: String(m.id), text: String(text) });
+      // The button's payload id (template quick reply) or reply id (interactive) lets the answer be read exactly, whatever the title says.
+      const buttonId = m.button?.payload ?? m.interactive?.button_reply?.id ?? null;
+      if (m.from && m.id) inbound.push({ from: String(m.from), id: String(m.id), text: String(text), ...(buttonId != null && buttonId !== "" ? { buttonId: String(buttonId) } : {}) });
     }
     for (const s of (Array.isArray(v.statuses) ? v.statuses : []) as Array<Record<string, any>>) {
       if (!isObj(s) || !s.id || !STATUS.has(String(s.status))) continue;

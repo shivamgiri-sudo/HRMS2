@@ -62,7 +62,7 @@ heWebhookRouter.post("/whatsapp", async (req, res) => {
   // safely redelivers the whole batch.
   try {
     for (const s of statuses) await recordDeliveryStatus(s.id, s.status, s.error);
-    for (const m of inbound) await recordInboundReply({ mobile: m.from, text: m.text, providerMessageId: m.id });
+    for (const m of inbound) await recordInboundReply({ mobile: m.from, text: m.text, providerMessageId: m.id, ...(m.buttonId ? { buttonId: m.buttonId } : {}) });
     return res.status(200).json({ success: true, inbound: inbound.length, statuses: statuses.length });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he-hook] whatsapp batch failed - asking the provider to retry");
@@ -92,7 +92,7 @@ heWebhookRouter.post("/voice", async (req, res) => {
     return res.status(400).json({ success: false, message: "result.answered and leadId or mobile are required" });
   }
   try {
-    const r = await recordVoiceResult(b);
+    const r = await recordVoiceResult({ ...b, source: "voice_hook" });
     return r ? res.status(200).json({ success: true, ...r }) : res.status(404).json({ success: false, message: "lead not found" });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he-hook] voice failed");
@@ -134,7 +134,7 @@ heWebhookRouter.post("/voice-vapi", async (req, res) => {
         leadId = r[0]?.lead_id as string | undefined;
       }
       if (!leadId) return res.status(200).json({ success: true, ignored: "lead not found" });
-      const out = await recordVoiceResult({ leadId, providerCallId: merged.providerCallId, attemptNo: merged.attempt, startedAt: merged.startedAt, result: merged.result, transcript: merged.transcript, summary: merged.summary, recordingUrl: merged.recordingUrl });
+      const out = await recordVoiceResult({ leadId, providerCallId: merged.providerCallId, attemptNo: merged.attempt, startedAt: merged.startedAt, result: merged.result, transcript: merged.transcript, summary: merged.summary, recordingUrl: merged.recordingUrl, source: "vapi" });
       // Manual bulk upload: close the row (or put it back for the one allowed retry).
       if (merged.jobId && out && out.outcome !== "duplicate") await completeBulkJob(merged.jobId, out.outcome);
       return res.status(200).json({ success: true, ...out });
@@ -182,7 +182,7 @@ heWebhookRouter.post("/superbot", async (req, res) => {
     }
     const mobile = !leadId && mapped.phone ? mapped.phone.replace(/\D/g, "").slice(-10) : undefined;
     if (!leadId && !mobile) return res.status(200).json({ success: true, ignored: "lead not found" });
-    const out = await recordVoiceResult({ leadId, mobile, providerCallId: mapped.providerCallId, startedAt: mapped.startedAt, result: mapped.result, summary: mapped.summary, recordingUrl: mapped.recordingUrl, incomplete: mapped.incomplete });
+    const out = await recordVoiceResult({ leadId, mobile, providerCallId: mapped.providerCallId, startedAt: mapped.startedAt, result: mapped.result, summary: mapped.summary, recordingUrl: mapped.recordingUrl, incomplete: mapped.incomplete, source: "superbot_hook" });
     if (!out) return res.status(200).json({ success: true, ignored: "lead not found" });
     if (mapped.humanFollowUp && out.outcome !== "duplicate") await addEvent(out.leadId, "human_followup_needed", { channel: "voice", detail: mapped.humanFollowUp, meta: { matchId, disposition: f.disposition ?? null } });
     return res.status(200).json({ success: true, ...out });

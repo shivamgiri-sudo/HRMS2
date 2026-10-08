@@ -21,17 +21,22 @@ import { sendTemplateToLead } from "./he-send.service.js";
 import type { TemplateKey } from "./he-template-catalog.js";
 import { markFollowupCalled } from "./qualified-followup.attention.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
+import { recordResponseSafe } from "./candidate-response.service.js";
+import { answerFromCallOutcome, answerFromIntent, answerFromInviteTap, intentFromButtonId, type ResponseChannel } from "./response-normalise.js";
 
 const isDuplicateKey = (e: unknown) => (e as { code?: string; errno?: number })?.code === "ER_DUP_ENTRY" || (e as { errno?: number })?.errno === 1062;
 
-async function activeMatch(leadId: string): Promise<{ id: string; slotOffers: number } | null> {
+async function activeMatch(leadId: string): Promise<{ id: string; slotOffers: number; requisitionId: string | null; driveId: string | null } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM he_match WHERE lead_id = ? AND state IN ('invited','confirmed','slot_released') ORDER BY updated_at DESC LIMIT 1`, [leadId]);
+    `SELECT id, requisition_id, drive_id FROM he_match WHERE lead_id = ? AND state IN ('invited','confirmed','slot_released') ORDER BY updated_at DESC LIMIT 1`, [leadId]);
   if (!rows[0]) return null;
   const [o] = await db.execute<RowDataPacket[]>(
     "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'", [leadId]);
-  return { id: rows[0].id as string, slotOffers: Number(o[0].n) };
+  return { id: rows[0].id as string, slotOffers: Number(o[0].n), requisitionId: (rows[0].requisition_id as string | null) ?? null, driveId: (rows[0].drive_id as string | null) ?? null };
 }
+
+/** A plan changed something (lead status, match state or consent): the response is "applied". */
+const planApplied = (plan: TransitionPlan) => Boolean(plan.matchState || plan.leadStatus || plan.revokeConsent);
 
 /** Mirror outcomes onto the Meta lead row so /ats/meta-leads and the WhatsApp inbox stay truthful. */
 async function mirrorToMeta(metaLeadId: string | null, plan: TransitionPlan): Promise<void> {
@@ -90,7 +95,7 @@ async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPl
   }
 }
 
-export async function recordInboundReply(p: { mobile: string; text: string; providerMessageId?: string | null; channel?: "whatsapp" | "email" }): Promise<{ leadId: string; intent: string } | null> {
+export async function recordInboundReply(p: { mobile: string; text: string; providerMessageId?: string | null; channel?: "whatsapp" | "email"; buttonId?: string | null }): Promise<{ leadId: string; intent: string } | null> {
   const mobile10 = normalizeMobile10(p.mobile);
   if (!mobile10) return null;
   const channel = p.channel ?? "whatsapp";
@@ -106,13 +111,19 @@ export async function recordInboundReply(p: { mobile: string; text: string; prov
     const [dup] = await db.execute<RowDataPacket[]>("SELECT 1 FROM he_message WHERE provider_message_id = ? AND direction = 'in' LIMIT 1", [p.providerMessageId]);
     if (dup.length) return { leadId: lead.id, intent: "duplicate" };
   }
-  const { intent, signals } = signalsFromReply(p.text, channel);
+  const parsed = signalsFromReply(p.text, channel);
+  // A Pinbot quick-reply payload id we know decides the intent exactly; otherwise the words do (unchanged).
+  const buttonIntent = intentFromButtonId(p.buttonId);
+  const intent = buttonIntent ?? parsed.intent;
+  const signals = parsed.signals;
   const [msg] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
   const messageId = msg[0].id as string;
+  // The in-row carries the requisition / drive of the match the reply is applied to (same pick as below), so it is never context-less.
+  const match = await activeMatch(lead.id);
   try {
     await db.execute(
-      "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, provider_message_id, intent) VALUES (?,?,?,?,?,?,?,?)",
-      [messageId, lead.id, mobile10, "in", channel, p.text.slice(0, 2000), p.providerMessageId ?? null, intent]);
+      "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, provider_message_id, intent, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      [messageId, lead.id, mobile10, "in", channel, p.text.slice(0, 2000), p.providerMessageId ?? null, intent, match?.requisitionId ?? null, match?.driveId ?? null]);
   } catch (err) {
     // A concurrent retry of the same provider message won the insert (UNIQUE provider_message_id+direction): not an error.
     if (isDuplicateKey(err)) return { leadId: lead.id, intent: "duplicate" };
@@ -124,9 +135,12 @@ export async function recordInboundReply(p: { mobile: string; text: string; prov
   if (lastOut[0]) await db.execute("INSERT INTO he_message_event (message_id, lead_id, channel, event_type) VALUES (?,?,?, 'replied')", [lastOut[0].id, lead.id, channel]);
 
   await persistSignals(lead.id, signals, messageId);
-  const match = await activeMatch(lead.id);
   const plan = planFromReply(lead.status, intent, match?.slotOffers ?? 0);
   await applyPlan(lead.id, lead.status, plan, { matchId: match?.id ?? null, channel, detail: p.text, metaLeadId: lead.meta_lead_id, replyText: p.text });
+  await recordResponseSafe({
+    occurredAt: new Date(), channel: channel as ResponseChannel, mode: buttonIntent ? "button" : "text", answer: answerFromIntent(intent), mobile10, leadId: lead.id,
+    metaLeadId: lead.meta_lead_id, matchId: match?.id ?? null, sourceKind: "he_message", sourceRef: messageId, rawText: p.text, applied: planApplied(plan),
+  });
   await recomputeInsight(lead.id);
   await refreshLeadHistoryById(lead.id);
   // Questions ("office kahan hai?", "kya laana hai?") get an instant answer from the invitation; the rest go to a human.
@@ -185,6 +199,8 @@ export interface VoiceCallbackInput {
   recordingUrl?: string | null;
   /** The call connected and the person was right, but ended before they answered the walk-in question: recorded, nobody is marked declined. */
   incomplete?: boolean;
+  /** Where the result came from, for the response record (one row per source + call id). */
+  source?: "superbot_hook" | "superbot_report" | "vapi" | "call_import" | "voice_hook";
 }
 
 export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId: string; outcome: string } | null> {
@@ -211,13 +227,13 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
   try { await db.execute(
     `INSERT INTO he_call (lead_id, match_id, provider_call_id, attempt_no, started_at, duration_s, identity_confirmed, language_used, email_received,
                           assessment_done, original_slot_answer, offered_slot_at, offered_slot_answer, outcome, decline_reason, sentiment, handoff_reason,
-                          transcript, summary, recording_url)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                          transcript, summary, recording_url, requisition_id, drive_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [l.id, match?.id ?? null, p.providerCallId ?? null, p.attemptNo ?? 1, p.startedAt ?? null, r.durationS ?? null, r.identityConfirmed ?? null, r.language ?? null,
       r.emailReceived ?? null, r.assessmentDone ?? null, r.originalSlotAnswer ?? null, offeredSlotAt, r.offeredSlotAnswer ?? null,
       outcomeText.slice(0, 60), r.declineReason ?? null, r.sentiment ?? null,
       outcome === "WALKIN_DECLINED_NEEDS_FOLLOWUP" ? "declined original and offered slot" : null,
-      p.transcript ?? null, p.summary?.slice(0, 1000) ?? null, p.recordingUrl ?? null]);
+      p.transcript ?? null, p.summary?.slice(0, 1000) ?? null, p.recordingUrl ?? null, match?.requisitionId ?? null, match?.driveId ?? null]);
   } catch (err) {
     if (isDuplicateKey(err)) return { leadId: l.id, outcome: "duplicate" };
     throw err;
@@ -230,16 +246,24 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
     catch (err) { logger.warn({ leadId: l.id, err: (err as Error).message }, "[hiring-engine] mark follow-up called failed"); }
   }
   await persistSignals(l.id, signalsFromVoice(r), p.providerCallId ?? null);
+  const callResponse = (applied: boolean) => recordResponseSafe({
+    occurredAt: new Date(), channel: p.source === "call_import" ? "call_file" : "voice_bot", mode: "call",
+    answer: p.incomplete ? "no_answer" : answerFromCallOutcome(outcomeText), mobile10: String((lead as { mobile10?: string | null }).mobile10 ?? ""), leadId: l.id,
+    metaLeadId: l.meta_lead_id, matchId: match?.id ?? null, sourceKind: p.source ?? "voice_hook",
+    sourceRef: p.providerCallId ?? `call:${l.id}:${p.startedAt ?? Date.now()}`, rawText: p.summary ?? null, applied,
+  });
   if (p.incomplete) {
     // No answer to the walk-in question, so no state change (and above all no "declined"): just note it and keep the Meta mirror current.
     await addEvent(l.id, "call_incomplete", { channel: "voice", detail: (p.summary ?? "ended before the walk-in question").slice(0, 200) });
     if (l.meta_lead_id) await db.execute("UPDATE meta_lead_raw SET voice_call_outcome = ?, voice_called_at = COALESCE(?, NOW()) WHERE id = ?", [outcomeText, p.startedAt ?? null, l.meta_lead_id]);
+    await callResponse(false);
     await recomputeInsight(l.id);
     await refreshLeadHistoryById(l.id);
     return { leadId: l.id, outcome: outcomeText };
   }
   const plan = planFromCallOutcome(l.status, outcome);
   await applyPlan(l.id, l.status, plan, { matchId: match?.id ?? null, channel: "voice", detail: outcomeText, metaLeadId: l.meta_lead_id, replyText: null });
+  await callResponse(planApplied(plan));
   // A rescheduled call moves the slot to the one the slot service reserved mid-call (never invented here).
   if (outcome === "WALKIN_RESCHEDULED" && offeredSlotAt) {
     if (match) await db.execute("UPDATE he_match SET slot_at = ? WHERE id = ?", [offeredSlotAt, match.id]);
@@ -268,7 +292,7 @@ const ANSWER_TEXT: Record<InviteAnswer, string> = { yes: "Tapped: Yes, I will co
  * "later" releases the slot and asks a recruiter to call with a new time.
  */
 export interface InviteAnswerOptions { channel?: "web" | "hr"; actor?: string | null; inviteId?: string | null }
-export async function recordInviteAnswer(matchId: string, answer: InviteAnswer, _o: InviteAnswerOptions = {}): Promise<{ state: string } | null> {
+export async function recordInviteAnswer(matchId: string, answer: InviteAnswer, opts: InviteAnswerOptions = {}): Promise<{ state: string } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, l.mobile10, l.status, l.meta_lead_id
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1`, [matchId]);
@@ -286,6 +310,12 @@ export async function recordInviteAnswer(matchId: string, answer: InviteAnswer, 
   const [o] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'", [r.lead_id]);
   const plan = planFromReply(r.status as LeadStatus, intent, Number(o[0].n));
   await applyPlan(String(r.lead_id), r.status as LeadStatus, plan, { matchId, channel: "email", detail: ANSWER_TEXT[answer], metaLeadId: r.meta_lead_id ?? null, replyText: null });
+  // The tap is recorded as web (the page), not email; an HR answer as hr / manual. The he_message row above is unchanged.
+  await recordResponseSafe({
+    occurredAt: new Date(), channel: opts.channel ?? "web", mode: opts.channel === "hr" ? "manual" : "button", answer: answerFromInviteTap(answer),
+    mobile10: String(r.mobile10), leadId: String(r.lead_id), metaLeadId: r.meta_lead_id ?? null, matchId, inviteId: opts.inviteId ?? null,
+    sourceKind: opts.channel === "hr" ? "hr_action" : "public_answer", sourceRef: messageId, handledBy: opts.actor ?? undefined, applied: planApplied(plan),
+  });
   if (answer === "later" && !plan.humanHandoff) await addEvent(String(r.lead_id), "needs_human_followup", { channel: "email", detail: "asked for another walk-in time", driveId: r.drive_id ?? undefined });
   await recomputeInsight(String(r.lead_id));
   await refreshLeadHistoryById(String(r.lead_id));
