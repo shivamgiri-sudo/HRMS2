@@ -22,6 +22,8 @@ import { runWhatsappStep } from "../qualified-followup.whatsapp.js";
 import { runCallStep } from "../qualified-followup.call.js";
 
 const now = new Date("2026-10-14T05:00:00Z"); // Wed 10:30 IST, inside the send window
+// Journey columns read since the unified follow-up (2138); not part of this pin.
+const JOURNEY_COLUMNS = ", qf.match_id, qf.journey_state, qf.reinvite_no, qf.held_reason, qf.mode_at_enqueue";
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 
 const base = {
@@ -61,7 +63,7 @@ async function run(withRows: boolean) {
   const wa = await runWhatsappStep(s, "live", now, 10);
   const call = await runCallStep(s, "live", now);
   const statements = execute.mock.calls.map(([sql, params]) => ({
-    sql: String(sql),
+    sql: String(sql).replace(JOURNEY_COLUMNS, ""),
     params: JSON.parse(JSON.stringify(params ?? []).replace(UUID, (u) => (Object.values(ROWS).some((r) => r.id === u) ? u : "<uuid>"))),
   }));
   return { counts: { email, wa, call }, statements, sends: { email: send.mock.calls.length, wa: sendTpl.mock.calls.length } };

@@ -2,7 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { bridgeOneMetaLead } from "./he-meta-bridge.service.js";
 import { assignInterviewSlot } from "../meta-campaign/interview-slot.service.js";
-import type { SourceType } from "./qualified-followup.types.js";
+import type { JourneyState, RowTag, SourceType } from "./qualified-followup.types.js";
 import type { CallFileSummary } from "./qualified-followup.callfile-plan.js";
 
 const C = "COLLATE utf8mb4_unicode_ci";
@@ -39,12 +39,18 @@ export interface FollowupRow {
   callDueAt: Date | null;
   callState: "pending" | "in_file" | "queued" | "called" | "skipped";
   callAttempts: number;
+  /** The journey's booking (he_match); null until booked, and for rows enrolled before the unified method. */
+  matchId: string | null;
+  journeyState: JourneyState;
+  reinviteNo: number;
+  heldReason: string | null;
+  modeAtEnqueue: RowTag;
 }
 
 export const ROW_COLUMNS = `qf.id, qf.source_type, qf.meta_lead_id, qf.he_lead_id, qf.ats_candidate_id, qf.requisition_id, qf.drive_id,
   qf.mobile10, qf.email, qf.full_name, qf.branch_name, qf.role_name, qf.qualified_at,
   qf.email_due_at, qf.email_status, qf.email_attempts, qf.wa_due_at, qf.wa_status, qf.wa_attempts,
-  qf.call_due_at, qf.call_state, qf.call_attempts`;
+  qf.call_due_at, qf.call_state, qf.call_attempts, qf.match_id, qf.journey_state, qf.reinvite_no, qf.held_reason, qf.mode_at_enqueue`;
 
 // DATETIME columns are IST wall-clock strings (pool has dateStrings), same reading as he-engine.service.ts.
 function ist(v: unknown): Date | null {
@@ -77,6 +83,11 @@ export function toFollowupRow(r: RowDataPacket): FollowupRow {
     callDueAt: ist(r.call_due_at),
     callState: (r.call_state ?? "pending") as FollowupRow["callState"],
     callAttempts: Number(r.call_attempts ?? 0),
+    matchId: r.match_id ?? null,
+    journeyState: (r.journey_state ?? "enrolled") as JourneyState,
+    reinviteNo: Number(r.reinvite_no ?? 0),
+    heldReason: r.held_reason ?? null,
+    modeAtEnqueue: (r.mode_at_enqueue ?? "dry_run") as RowTag,
   };
 }
 
@@ -126,7 +137,15 @@ export async function loadSendContext(row: FollowupRow, o: { assignSlot: boolean
   let slot: SendContext["slot"] = null;
   let matchId: string | null = null;
   let matchToken: string | null = null;
-  if (row.sourceType === "he") {
+  if (row.matchId) {
+    // The journey's booking, for every source (D2).
+    const [m] = await db.execute<RowDataPacket[]>("SELECT id, slot_at, token FROM he_match WHERE id = ? LIMIT 1", [row.matchId]);
+    if (m[0]) {
+      matchId = String(m[0].id);
+      matchToken = m[0].token ?? null;
+      if (m[0].slot_at) { const s = String(m[0].slot_at); slot = { date: s.slice(0, 10), time: s.slice(11, 19) }; }
+    }
+  } else if (row.sourceType === "he") {
     if (heLeadId && row.driveId) {
       const [m] = await db.execute<RowDataPacket[]>("SELECT id, slot_at, token FROM he_match WHERE lead_id = ? AND drive_id = ? LIMIT 1", [heLeadId, row.driveId]);
       if (m[0]) {
@@ -136,6 +155,7 @@ export async function loadSendContext(row: FollowupRow, o: { assignSlot: boolean
       }
     }
   } else if (row.metaLeadId) {
+    // Rows without a booking (enrolled before the unified method): the Meta rolling slot, as before.
     const [r] = await db.execute<RowDataPacket[]>("SELECT interview_date, interview_time FROM meta_lead_raw WHERE id = ? LIMIT 1", [row.metaLeadId]);
     // A slot already in the past (IST) is no slot: it is re-assigned when allowed, else the no-slot template is used.
     const stored = r[0]?.interview_date && r[0]?.interview_time

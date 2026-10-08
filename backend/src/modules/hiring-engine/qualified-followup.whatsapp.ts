@@ -50,13 +50,18 @@ export async function runWhatsappStep(s: FollowupSwitches, tag: RowTag, now: Dat
       [tag, now, ...paused, ...ids]);
     return rows.map(toFollowupRow);
   };
+  // T12 (re-invite) approval: read once per step run, and only when a re-invite row is due.
+  let t12: Promise<boolean> | null = null;
+  const t12Approved = () => (t12 ??= db.execute<RowDataPacket[]>(
+    "SELECT 1 AS hit FROM he_template WHERE template_key LIKE 'he_reinvite:%' AND approval_state = 'approved' AND pinbot_name IS NOT NULL LIMIT 1")
+    .then(([r]) => r.length > 0, () => false));
   let list = await select([], take);
   let held: Set<string> | null = null;
   if (bestOffer) ({ rows: list, held } = await selectWithOfferHolds(list, tag, paused, select));
   for (const row of list) {
     if (held?.has(row.id)) { counts.held++; continue; }
     try {
-      await processRow(s, tag, now, row, counts);
+      await processRow(s, tag, now, row, counts, t12Approved);
     } catch (err) {
       logger.warn({ rowId: row.id, err: scrub((err as Error).message) }, "[qualified-followup] whatsapp step failed for row");
     }
@@ -75,7 +80,7 @@ function buildExtra(row: FollowupRow, ctx: SendContext, key: "he_walkin_invite" 
   };
 }
 
-async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: FollowupRow, counts: StepCounts): Promise<void> {
+async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: FollowupRow, counts: StepCounts, t12Approved: () => Promise<boolean>): Promise<void> {
   const isDry = tag === "dry_run";
   const isTest = tag === "test";
   if (!isDry) {
@@ -105,7 +110,8 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
   // Dry run does not assign a slot; live would when the address and BMI link exist.
   const wouldAssign = isDry && !ctx.slot && row.sourceType !== "he" && Boolean(ctx.branchAddress && ctx.bmiLink);
   // One meaning for every source: T1 when booked with a branch address (assessment = BMI link or "given at the branch"), else T8.
-  const pick = chooseWaTemplate({ booked: Boolean(ctx.slot) || wouldAssign, hasBranchAddress: Boolean(ctx.branchAddress), reinvite: false, t12Approved: false });
+  const reinvite = row.reinviteNo > 0;
+  const pick = chooseWaTemplate({ booked: Boolean(ctx.slot) || wouldAssign, hasBranchAddress: Boolean(ctx.branchAddress), reinvite, t12Approved: reinvite && (await t12Approved()) });
   const missing = pick.missing.join(",") || null;
   const extra = buildExtra(row, ctx, pick.key, now, wouldAssign);
   const next = nextStepDue(now);
