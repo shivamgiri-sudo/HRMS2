@@ -1,0 +1,19 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`calling file pin > SQL of one live batch, in order 1`] = `
+[
+  "SELECT id, TIMESTAMPDIFF(MINUTE, created_at, NOW()) AS age_min FROM qualified_followup_call_batch WHERE status = 'pending'",
+  "SELECT qf.id, qf.source_type, qf.mobile10, qf.full_name, qf.role_name, (SELECT bm.address FROM branch_master bm WHERE bm.branch_name COLLATE utf8mb4_unicode_ci = qf.branch_name COLLATE utf8mb4_unicode_ci AND bm.active_status = 1 LIMIT 1) AS address, CASE WHEN qf.source_type = 'he' THEN DATE_FORMAT(hm.slot_at, '%Y-%m-%d') ELSE mr.interview_date END AS slot_date, CASE WHEN qf.source_type = 'he' THEN DATE_FORMAT(hm.slot_at, '%H:%i') ELSE mr.interview_time END AS slot_time FROM qualified_followup qf LEFT JOIN meta_lead_raw mr ON mr.id COLLATE utf8mb4_unicode_ci = qf.meta_lead_id COLLATE utf8mb4_unicode_ci LEFT JOIN he_match hm ON hm.lead_id COLLATE utf8mb4_unicode_ci = qf.he_lead_id COLLATE utf8mb4_unicode_ci AND hm.drive_id COLLATE utf8mb4_unicode_ci = qf.drive_id COLLATE utf8mb4_unicode_ci WHERE qf.call_state = 'in_file' AND qf.call_file_batch_id IS NULL AND qf.stopped_reason IS NULL AND qf.mode_at_enqueue = ? AND qf.owner = 'pipeline' ORDER BY qf.created_at, qf.id LIMIT 5000",
+  "INSERT INTO qualified_followup_call_batch (id, row_count, sent_to, status) VALUES (?, ?, ?, 'pending')",
+  "UPDATE qualified_followup SET call_file_batch_id = ? WHERE id IN (?) AND call_file_batch_id IS NULL AND call_state = 'in_file' AND stopped_reason IS NULL",
+  "UPDATE qualified_followup_call_batch SET status = 'sent', row_count = ? WHERE id = ?",
+]
+`;
+
+exports[`calling file pin > batch schedule 1`] = `
+[
+  "10:00",
+  "14:00",
+  "18:00",
+]
+`;
