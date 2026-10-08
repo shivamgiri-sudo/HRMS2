@@ -14,6 +14,8 @@ import type { ChartOpts, HeatCell, TextTable } from "../driveChartModel";
 
 export const DASH = "–";
 export const UNTRACKED_NOTE = "Qualified is tracked once the follow-up pipeline is on";
+/** The backend drive credit rule (he-drive-credit.ts), shown wherever selected or joined appear. */
+export const CREDIT_NOTE = "Selected and joined count only people who arrived at the drive and were selected on or after the drive date.";
 export const EMPTY_TEXT = "No drive activity in this range";
 
 const isTracked = (a: DriveAnalytics): boolean => a?.qualifiedTracked !== false;

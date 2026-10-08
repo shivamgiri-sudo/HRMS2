@@ -7,7 +7,7 @@ import { compareColumnsFor, costNoteFor } from "./costView";
 import { useIsDark } from "../chartTheme";
 import { BTN, Note } from "./ChartFrame";
 import { ShapeGlyph } from "./TypePatterns";
-import { EMPTY_TEXT, UNTRACKED_NOTE, compareCellText, compareCsvName, compareCsvRows, compareView, csvColumnsFor } from "./summaryView";
+import { CREDIT_NOTE, EMPTY_TEXT, UNTRACKED_NOTE, compareCellText, compareCsvName, compareCsvRows, compareView, csvColumnsFor } from "./summaryView";
 
 type Dir = "asc" | "desc";
 const COMPARE_BASE = COMPARE_COLUMNS.length;
@@ -49,6 +49,7 @@ export default function CompareTable({ analytics }: { analytics: DriveAnalytics 
       {v.untracked && <Note>{UNTRACKED_NOTE}</Note>}
       {v.empty && <Note>{EMPTY_TEXT}</Note>}
       {costOn && <Note>{costNoteFor(analytics)}</Note>}
+      <Note>{CREDIT_NOTE}</Note>
       <div className="overflow-x-auto">
         <table className="w-full min-w-max border-collapse text-xs text-slate-800 dark:text-slate-100">
           <caption className="sr-only">Drive types compared stage by stage, {range}{costOn ? ". Costs are estimated" : ""}</caption>

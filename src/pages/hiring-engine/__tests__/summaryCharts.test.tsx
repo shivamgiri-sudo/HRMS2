@@ -16,7 +16,7 @@ import DropOffWaterfall from "../command/charts/DropOffWaterfall";
 import CompareTable from "../command/charts/CompareTable";
 import { typePatternDefs } from "../command/charts/TypePatterns";
 import {
-  CSV_COLUMNS, EMPTY_TEXT, UNTRACKED_NOTE, compareCsvName, compareCsvRows, cellInk, compareView, contrastRatio, conversionView, funnelView, inkOn,
+  CREDIT_NOTE, CSV_COLUMNS, EMPTY_TEXT, UNTRACKED_NOTE, compareCsvName, compareCsvRows, cellInk, compareView, contrastRatio, conversionView, funnelView, inkOn,
   funnelLayout, kpiView, scatterView, timingView, waterfallView, yieldView,
 } from "../command/charts/summaryView";
 import { sectionParts } from "../command/DriveCommandCenter";
@@ -168,6 +168,14 @@ describe("KPI strip", () => {
   });
   it("a type without data says so in words", () => {
     expect(render(KpiStrip, fixture())).toContain("No activity in this range");
+  });
+});
+
+describe("selected / joined credit footnote", () => {
+  it("states the drive credit rule wherever selected or joined are shown", () => {
+    expect(CREDIT_NOTE).toBe("Selected and joined count only people who arrived at the drive and were selected on or after the drive date.");
+    for (const C of [KpiStrip, FunnelCompare, DropOffWaterfall, CompareTable]) expect(render(C, fixture())).toContain(CREDIT_NOTE);
+    expect(render(KpiStrip, untracked())).toContain(CREDIT_NOTE);
   });
 });
 

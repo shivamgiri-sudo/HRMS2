@@ -16,6 +16,7 @@ vi.mock("../he-insight-params.service.js", async () => ({ loadInsightThresholds:
 
 import { clearDriveAnalyticsCache, getDriveAnalytics, resolveWindow, type DriveAnalytics } from "../he-drive-analytics.service.js";
 import { getDriveTrend } from "../he-drive-trend.service.js";
+import { driveCreditSql } from "../he-drive-credit.js";
 
 const NOW = new Date("2026-10-14T06:00:00Z");
 const Q = { from: "2026-10-01", to: "2026-10-14" };
@@ -132,6 +133,17 @@ describe("getDriveAnalytics", () => {
     expect(callsOf("arrivals")[0][1]).toEqual(["r1", "2026-10-01", "2026-10-14"]);
     expect(callsOf("stops")[0][1]).toEqual(["r1", "2026-10-01 00:00:00", "2026-10-15 00:00:00"]);
     expect(callsOf("outcomes")).toHaveLength(2); // window and previous window
+  });
+
+  it("counts selected / joined per drive only for people who arrived and were selected or joined on or after its drive date", async () => {
+    impl.discovery = [head("r1")];
+    await getDriveAnalytics(Q, ALL, NOW);
+    const rule = driveCreditSql({ m: "m", d: "d", hl: "hl", ac: "ac" });
+    for (const [q] of callsOf("outcomes")) {
+      expect(q).toContain(`COUNT(DISTINCT CASE WHEN ${rule.selected} THEN m.id END) AS selected`);
+      expect(q).toContain(`COUNT(DISTINCT CASE WHEN ${rule.joined} THEN m.id END) AS joined`);
+      expect(q).toContain("JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id");
+    }
   });
 
   it("caps at 200 requisitions, flags truncated and reads them in one batched statement", async () => {

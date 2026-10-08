@@ -5,7 +5,7 @@ import { sparklinePath } from "../driveChartModel";
 import { seriesColor, useIsDark } from "../chartTheme";
 import ChartFrame, { Note } from "./ChartFrame";
 import { ShapeGlyph } from "./TypePatterns";
-import { UNTRACKED_NOTE, kpiView } from "./summaryView";
+import { CREDIT_NOTE, UNTRACKED_NOTE, kpiView } from "./summaryView";
 import { COST_TITLE, costNoteFor, costTiles } from "./costView";
 
 const SPARK_W = 96;
@@ -22,7 +22,7 @@ export default function KpiStrip({ analytics }: { analytics: DriveAnalytics }) {
       title="Drive types at a glance"
       subtitle={`${analytics?.window?.from ?? ""} to ${analytics?.window?.to ?? ""}, change in arrivals against the previous period of the same length`}
       table={v.table} empty={v.empty} aria={v.table.caption} kind="grid"
-      note={v.untracked ? <Note>{UNTRACKED_NOTE}</Note> : null}
+      note={<div className="space-y-1">{v.untracked && <Note>{UNTRACKED_NOTE}</Note>}<Note>{CREDIT_NOTE}</Note></div>}
     >
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {v.tiles.map((t) => {

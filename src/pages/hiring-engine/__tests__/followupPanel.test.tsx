@@ -9,6 +9,7 @@ import FollowupPanel, { FollowupPanelView, type PanelData } from "../command/Fol
 import {
   OFF_SENTENCE, attentionView, callFileRows, markCalledText, retryOkText, rowName, isFollowupOff, maskedMobile, modeText, reportText, retryErrorText, retryHint, scrubText, showRetry, sourceFunnelRows, stateLabel,
 } from "../command/followupPanelModel";
+import { CREDIT_NOTE } from "../command/charts/summaryView";
 import type { AttentionGroup, AttentionRow, FollowupStatus, RequisitionSources } from "../command/driveCommandTypes";
 
 const row = (over: Partial<AttentionRow> = {}): AttentionRow => ({
@@ -109,6 +110,11 @@ describe("callFileRows / sourceFunnelRows / attentionView", () => {
     const out = sourceFunnelRows(src, summary);
     expect(out[0].cells).toMatchObject({ total: 10, qualified: 5, emailed: 5, confirmed: 2 });
     expect(sourceFunnelRows(null, [])).toEqual([]);
+  });
+  it("funnel: the credit footnote shows with the requisition's selected / joined columns only", () => {
+    const mk = { sourceType: "meta_live", qualified: 2, emailed: 2, whatsapped: 0, replied: 0, confirmed: 1, called: 0, arrived: 0, selected: 0, joined: 0, leads: 2 };
+    expect(view(data({ sources: { rows: [mk] } as unknown as RequisitionSources }))).toContain(CREDIT_NOTE);
+    expect(view(data())).not.toContain(CREDIT_NOTE);
   });
   it("attention view tolerates junk", () => {
     expect(attentionView(null)).toEqual([]);

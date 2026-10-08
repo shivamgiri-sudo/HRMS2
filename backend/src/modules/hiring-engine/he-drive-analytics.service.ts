@@ -2,6 +2,8 @@
  * Drive analytics for the Command Center (GET /drive-analytics). Read-only, branch-scoped, cached 60 s per scope + filters.
  *
  * Reuses the read models: leads / qualified / selected / joined from getSourcesForRequisitions (he-sources-window.service.ts),
+ * (selected / joined there and in the outcomes read follow the drive credit rule of he-drive-credit.ts: arrived at the drive, and
+ * selected / joined on or after its drive date),
  * invited / confirmed / arrived from the drive state buckets (readDriveAggRows), so nothing the sources model already provides is re-queried.
  * New reads (each its own section, never one per requisition): requisitions, streams, outcomes, stops, replies, arrivals, previous.
  * Every statement starts from he_drive / qualified_followup / requisition_stream / meta_campaign; he_lead, he_message, he_lead_event and
@@ -18,6 +20,7 @@ import {
   type Conversion, type DailyPoint, type Grid, type MatchOutcome, type ScatterPoint, type StageCounts, type TaggedAggRow, type TimingCell, type TypedStageCounts, type WaterfallStep,
 } from "./he-drive-analytics.js";
 import { costBlock, type CostBlock } from "./he-cost.js";
+import { driveCreditSql } from "./he-drive-credit.js";
 import { readCostUsage } from "./he-cost.service.js";
 import { evaluateInsights, type DriveInsight } from "./he-drive-insights.js";
 import { collectInsightFacts } from "./he-drive-insight-facts.service.js";
@@ -110,8 +113,8 @@ async function tolerant<T>(fn: () => Promise<T>, empty: T): Promise<T> {
 }
 
 // ---- SQL ---------------------------------------------------------------------------------------------------------------------------------
-const FLAG_JOINED = "(hl.status = 'joined' OR LOWER(ac.current_stage) IN ('joined','payroll_validated'))";
-const FLAG_SELECTED = `(${FLAG_JOINED} OR m.state = 'selected' OR LOWER(ac.current_stage) IN ('selected','offered','offer','offer_approved','onboarded','converted'))`;
+// Selected / joined only for people who arrived at the drive and were selected / joined on or after its drive date (he-drive-credit.ts).
+const { joined: FLAG_JOINED, selected: FLAG_SELECTED } = driveCreditSql({ m: "m", d: "d", hl: "hl", ac: "ac" });
 // Credit goes through he_match.id (the credit's own drive_id is ignored); an uncredited match counts as `he`.
 const creditJoin = (streams: boolean): string => (streams
   ? `LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id
@@ -121,7 +124,8 @@ const DRIVE_MATCH = `FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id`;
 
 // STRAIGHT_JOIN on the three he_match readers: always drive from he_drive (window + requisition) and reach he_message / he_lead_event / he_lead by key,
-// whatever the table statistics say. Same predicates as the header of he-requisition-sources.service.ts; he_lead and ats_candidate by primary key only.
+// whatever the table statistics say. Same predicates as the header of he-requisition-sources.service.ts; he_lead and ats_candidate by primary key only,
+// the ATS stage log and onboarding bridge by candidate id inside the credit rule.
 const outcomesSql = (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(streams)} AS source_type,
        COUNT(DISTINCT CASE WHEN ${FLAG_SELECTED} THEN m.id END) AS selected, COUNT(DISTINCT CASE WHEN ${FLAG_JOINED} THEN m.id END) AS joined,
        COUNT(DISTINCT CASE WHEN m.state = 'slot_released' THEN m.id END) AS slot_released

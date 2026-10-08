@@ -1,14 +1,15 @@
 /**
  * Sources read model over MANY requisitions and a day window (Plan 4 command center). Same stage definitions as the header of
  * he-requisition-sources.service.ts, with the window applied to the populations that carry a date:
- * - qualified .. joined: qualified_followup rows with qualified_at in [from 00:00:00, to+1 00:00:00) (IST wall clock);
+ * - qualified .. joined: qualified_followup rows with qualified_at in [from 00:00:00, to+1 00:00:00) (IST wall clock); selected /
+ *   joined additionally follow the drive credit rule (arrived at the drive, selected / joined on or after its drive date);
  * - leads of meta_old / he: people lined up on drives with drive_date BETWEEN from AND to;
  * - leads of meta_live: form fills of the requisitions' campaigns with created_at in the same bounds.
  * Streams add zero rows (origin with no data). Shares are per requisition. leads = max(leads, qualified) per row.
  *
  * One statement per section and batch of 200 requisitions (never one per requisition). Every statement starts from
  * qualified_followup / he_drive / requisition_stream / meta_campaign filtered by requisition_id IN (...), or from meta_lead_raw filtered by
- * campaign_id IN (...); he_lead / ats_candidate / he_match are reached through key joins only. A failing statement flags its section
+ * campaign_id IN (...); he_lead / ats_candidate / he_match / he_drive are reached through key joins only. A failing statement flags its section
  * (logged as section + code only) and the other rows survive; a missing qualified_followup / requisition_stream table reads as empty.
  * A form fill of a campaign counts when its requisition_id is NULL or one of the requisitions that own a campaign of the same batch
  * (a campaign belongs to one requisition, so this equals the single-requisition rule except for a lead tagged with another requisition

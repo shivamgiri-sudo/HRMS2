@@ -18,6 +18,8 @@ import {
   markCalledText, modeText, reportText, retryErrorText, retryOkText, retryPath, rowName, scrubText, sourceFunnelRows, sourcesPath, type SummaryRow,
 } from "./followupPanelModel";
 import { createInFlightGuard } from "./inFlight";
+import { Note } from "./charts/ChartFrame";
+import { CREDIT_NOTE } from "./charts/summaryView";
 import HeldOffers from "./HeldOffers";
 import { HELD_PATH, type HeldOffers as HeldData } from "./heldOffersModel";
 import { FOLLOWUP_STATUS_PATH } from "./driveCommandModel";
@@ -69,25 +71,28 @@ function Funnel({ data }: { data: PanelData }) {
   if (rows.length === 0) return <p className="text-sm text-slate-700 dark:text-slate-200">No follow-up rows yet.</p>;
   const withSources = !!data.sources;
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full">
-        <caption className="pb-1 text-left text-xs text-slate-700 dark:text-slate-200">
-          {withSources ? "Follow-up rows and the filtered requisition's sources, by source type" : "Follow-up rows by source type"}
-        </caption>
-        <thead><tr>
-          <th scope="col" className={TH}>Source</th><th scope="col" className={TH}>Total</th><th scope="col" className={TH}>Open</th><th scope="col" className={TH}>Stopped</th>
-          {withSources && SOURCE_COLUMNS.map((c) => <th key={c.key} scope="col" className={TH}>{c.label}</th>)}
-        </tr></thead>
-        <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-          {rows.map((r) => (
-            <tr key={r.sourceType}>
-              <th scope="row" className={`${TD} font-semibold`}>{r.label}</th>
-              <td className={TD}>{r.cells.total}</td><td className={TD}>{r.cells.open}</td><td className={TD}>{r.cells.stopped}</td>
-              {withSources && SOURCE_COLUMNS.map((c) => <td key={c.key} className={TD}>{r.cells[c.key]}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-1">
+      <div className="overflow-x-auto">
+        <table className="min-w-full">
+          <caption className="pb-1 text-left text-xs text-slate-700 dark:text-slate-200">
+            {withSources ? "Follow-up rows and the filtered requisition's sources, by source type" : "Follow-up rows by source type"}
+          </caption>
+          <thead><tr>
+            <th scope="col" className={TH}>Source</th><th scope="col" className={TH}>Total</th><th scope="col" className={TH}>Open</th><th scope="col" className={TH}>Stopped</th>
+            {withSources && SOURCE_COLUMNS.map((c) => <th key={c.key} scope="col" className={TH}>{c.label}</th>)}
+          </tr></thead>
+          <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+            {rows.map((r) => (
+              <tr key={r.sourceType}>
+                <th scope="row" className={`${TD} font-semibold`}>{r.label}</th>
+                <td className={TD}>{r.cells.total}</td><td className={TD}>{r.cells.open}</td><td className={TD}>{r.cells.stopped}</td>
+                {withSources && SOURCE_COLUMNS.map((c) => <td key={c.key} className={TD}>{r.cells[c.key]}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {withSources && <Note>{CREDIT_NOTE}</Note>}
     </div>
   );
 }

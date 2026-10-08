@@ -6,7 +6,7 @@ import { SOURCE_TYPES, TYPE_LABEL } from "../driveCommandModel";
 import { seriesColor, useIsDark, usePrefersReducedMotion } from "../chartTheme";
 import ChartFrame, { Note, Segmented, TOOLTIP_CURSOR, TooltipCard, axisTick, gridProps } from "./ChartFrame";
 import { patternFill, typePatternDefs, usePatternPrefix } from "./TypePatterns";
-import { UNTRACKED_NOTE, defaultType, waterfallView } from "./summaryView";
+import { CREDIT_NOTE, UNTRACKED_NOTE, defaultType, waterfallView } from "./summaryView";
 
 const TYPES = SOURCE_TYPES.map((t) => ({ id: t, label: TYPE_LABEL[t] }));
 type Datum = { label: string; base: number; lost: number; reasons: string; lostText: string };
@@ -25,7 +25,7 @@ export default function DropOffWaterfall({ analytics, initialType }: { analytics
       subtitle={`${TYPE_LABEL[type]}: for each step, the people who continued (left, unfilled) and the people lost (textured).`}
       table={v.table} empty={v.empty} aria={v.aria}
       controls={!allEmpty && <Segmented<SourceType> label="Drive type" options={TYPES} value={type} onChange={setType} />}
-      note={v.untracked ? <Note>{UNTRACKED_NOTE}</Note> : null}
+      note={<div className="space-y-1">{v.untracked && <Note>{UNTRACKED_NOTE}</Note>}<Note>{CREDIT_NOTE}</Note></div>}
     >
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} layout="vertical" margin={{ top: 4, right: 64, bottom: 4, left: 4 }} barCategoryGap="22%">

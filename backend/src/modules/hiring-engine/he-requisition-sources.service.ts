@@ -13,10 +13,12 @@
  * - called: qf.call_state = 'called' or an he_call whose match_id is the person's he_match for this requisition.
  * - confirmed / arrived: the person's he_match (lead_id = qf.he_lead_id, same requisition; unique, so no duplication) in
  *   ('confirmed','arrived','selected') / ('arrived','selected').
- * - joined: he_lead.status = 'joined' or LOWER(ats_candidate.current_stage) IN ('joined','payroll_validated') (same rule as the Plan 2
- *   stop check), ATS id COALESCE(qf.ats_candidate_id, he_lead.ats_candidate_id).
- * - selected: joined, or he_match.state = 'selected', or LOWER(current_stage) IN
- *   ('selected','offered','offer','offer_approved','onboarded','converted').
+ * - joined / selected: the drive credit rule of he-drive-credit.ts over the person's he_match and its drive (he_drive by
+ *   he_match.drive_id): the match is 'arrived' / 'selected' (arrival proven) AND the joining / selection event is on or after the
+ *   drive_date: he_lead.status 'joined' by status_at; ATS stage joined / payroll_validated by a stage log row or the onboarding
+ *   joining_date; he_match 'selected' by its updated_at; ATS stage selected / offered / offer / offer_approved / onboarded / converted
+ *   by a stage log row. A stage label with no such time is not counted. ATS id COALESCE(qf.ats_candidate_id, he_lead.ats_candidate_id).
+ *   (The Plan 2 stop check keeps its own stage-only joined rule: it stops follow-ups, it does not credit a source.)
  * - leads: meta_live (origin = campaign): distinct RIGHT(REGEXP_REPLACE(parsed_phone,'[^0-9]',''),10) of meta_lead_raw with that
  *   campaign_id and (requisition_id NULL or this requisition), for every meta_campaign with requisition_id = this requisition;
  *   meta_old and he: distinct he_match.lead_id of this requisition's drives attributed to the origin (credited match: its stream's type
@@ -36,6 +38,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
+import { driveCreditSql } from "./he-drive-credit.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
 import type { StreamStatus } from "./requisition-stream.service.js";
@@ -69,9 +72,10 @@ export function computeShares(rows: RawRow[]): SourceRow[] {
 }
 
 // Per qualified_followup row of the requisition: one 0/1 flag per stage, then summed per origin.
-// he_lead / ats_candidate / he_match are reached by their keys through LEFT JOINs (never scanned; the non-HE tables are compared under an
+// he_lead / ats_candidate / he_match / he_drive are reached by their keys through LEFT JOINs (never scanned; the non-HE tables are compared under an
 // explicit utf8mb4_unicode_ci so a table on another collation cannot fail the read); he_message is keyed by
 // (requisition_id, lead_id) or lead_id and he_call by lead_id, both indexed.
+const CREDIT = driveCreditSql({ m: "m", d: "md", hl: "hl", ac: "ac" });
 /** Per-row stage flags of a qualified_followup row `qf` (select-list text, no leading/trailing newline). Shared with the window read model. */
 export const STAGE_FLAGS_SQL = `CASE WHEN qf.email_status = 'sent' OR EXISTS (SELECT 1 FROM he_message hm WHERE hm.requisition_id = qf.requisition_id AND hm.lead_id = qf.he_lead_id
                   AND hm.channel = 'email' AND hm.direction = 'out' AND hm.delivery_status <> 'failed') THEN 1 ELSE 0 END AS emailed,
@@ -84,12 +88,12 @@ export const STAGE_FLAGS_SQL = `CASE WHEN qf.email_status = 'sent' OR EXISTS (SE
            CASE WHEN qf.call_state = 'called' OR (m.id IS NOT NULL AND EXISTS (SELECT 1 FROM he_call c WHERE c.lead_id = m.lead_id AND c.match_id = m.id)) THEN 1 ELSE 0 END AS called,
            CASE WHEN m.state IN ('confirmed','arrived','selected') THEN 1 ELSE 0 END AS confirmed,
            CASE WHEN m.state IN ('arrived','selected') THEN 1 ELSE 0 END AS arrived,
-           CASE WHEN hl.status = 'joined' OR LOWER(ac.current_stage) IN ('joined','payroll_validated') THEN 1 ELSE 0 END AS joined,
-           CASE WHEN hl.status = 'joined' OR LOWER(ac.current_stage) IN ('joined','payroll_validated')
-                  OR m.state = 'selected' OR LOWER(ac.current_stage) IN ('selected','offered','offer','offer_approved','onboarded','converted') THEN 1 ELSE 0 END AS selected`;
+           CASE WHEN ${CREDIT.joined} THEN 1 ELSE 0 END AS joined,
+           CASE WHEN ${CREDIT.selected} THEN 1 ELSE 0 END AS selected`;
 /** FROM / JOIN part that goes with STAGE_FLAGS_SQL (the caller adds the WHERE). */
 export const STAGE_FROM_SQL = `      FROM qualified_followup qf
       LEFT JOIN he_match m ON m.lead_id = qf.he_lead_id AND m.requisition_id = qf.requisition_id
+      LEFT JOIN he_drive md ON md.id = m.drive_id AND md.requisition_id = m.requisition_id
       LEFT JOIN he_lead hl ON hl.id = qf.he_lead_id
       LEFT JOIN ats_candidate ac ON ac.id = COALESCE(qf.ats_candidate_id, hl.ats_candidate_id) COLLATE utf8mb4_unicode_ci`;
 const STAGES_SQL = `

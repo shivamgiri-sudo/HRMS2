@@ -5,7 +5,7 @@ import { SOURCE_TYPES, TYPE_LABEL, pctText } from "../driveCommandModel";
 import { seriesColor, useIsDark, useIsNarrow, usePrefersReducedMotion } from "../chartTheme";
 import ChartFrame, { Note, TOOLTIP_CURSOR, TooltipCard, axisTick, gridProps } from "./ChartFrame";
 import { SeriesLegend, patternFill, typePatternDefs, usePatternPrefix } from "./TypePatterns";
-import { UNTRACKED_NOTE, funnelLayout, funnelView, presentTypes, type FunnelRow } from "./summaryView";
+import { CREDIT_NOTE, UNTRACKED_NOTE, funnelLayout, funnelView, presentTypes, type FunnelRow } from "./summaryView";
 
 type Datum = { label: string; conv: string; row: FunnelRow } & Partial<Record<SourceType, number | null>> & Record<string, unknown>;
 
@@ -41,7 +41,7 @@ export default function FunnelCompare({ analytics }: { analytics: DriveAnalytics
       title="Funnel by drive type"
       subtitle="People at each stage. Under each stage: conversion from the stage before, as Live Meta / Old Meta data / Hiring Engine."
       table={v.table} empty={v.empty} aria={v.aria} size="tall"
-      note={<div className="space-y-1"><SeriesLegend dark={dark} present={presentTypes(analytics)} />{v.untracked && <Note>{UNTRACKED_NOTE}</Note>}</div>}
+      note={<div className="space-y-1"><SeriesLegend dark={dark} present={presentTypes(analytics)} />{v.untracked && <Note>{UNTRACKED_NOTE}</Note>}<Note>{CREDIT_NOTE}</Note></div>}
     >
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} layout="vertical" margin={layout.margin} barCategoryGap="16%" barGap={1}>

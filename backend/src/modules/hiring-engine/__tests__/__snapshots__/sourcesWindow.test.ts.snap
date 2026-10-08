@@ -32,11 +32,11 @@ SELECT f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
            CASE WHEN qf.call_state = 'called' OR (m.id IS NOT NULL AND EXISTS (SELECT 1 FROM he_call c WHERE c.lead_id = m.lead_id AND c.match_id = m.id)) THEN 1 ELSE 0 END AS called,
            CASE WHEN m.state IN ('confirmed','arrived','selected') THEN 1 ELSE 0 END AS confirmed,
            CASE WHEN m.state IN ('arrived','selected') THEN 1 ELSE 0 END AS arrived,
-           CASE WHEN hl.status = 'joined' OR LOWER(ac.current_stage) IN ('joined','payroll_validated') THEN 1 ELSE 0 END AS joined,
-           CASE WHEN hl.status = 'joined' OR LOWER(ac.current_stage) IN ('joined','payroll_validated')
-                  OR m.state = 'selected' OR LOWER(ac.current_stage) IN ('selected','offered','offer','offer_approved','onboarded','converted') THEN 1 ELSE 0 END AS selected
+           CASE WHEN (m.state IN ('arrived','selected') AND ((hl.status = 'joined' AND hl.status_at >= md.drive_date) OR (LOWER(ac.current_stage) IN ('joined','payroll_validated') AND (EXISTS (SELECT 1 FROM ats_candidate_stage_log sl WHERE sl.candidate_id = ac.id AND LOWER(sl.to_stage) IN ('joined','payroll_validated') AND sl.stage_date >= md.drive_date) OR EXISTS (SELECT 1 FROM ats_onboarding_bridge ob WHERE ob.candidate_id = ac.id AND ob.joining_date >= md.drive_date))))) THEN 1 ELSE 0 END AS joined,
+           CASE WHEN ((m.state IN ('arrived','selected') AND ((hl.status = 'joined' AND hl.status_at >= md.drive_date) OR (LOWER(ac.current_stage) IN ('joined','payroll_validated') AND (EXISTS (SELECT 1 FROM ats_candidate_stage_log sl WHERE sl.candidate_id = ac.id AND LOWER(sl.to_stage) IN ('joined','payroll_validated') AND sl.stage_date >= md.drive_date) OR EXISTS (SELECT 1 FROM ats_onboarding_bridge ob WHERE ob.candidate_id = ac.id AND ob.joining_date >= md.drive_date))))) OR (m.state IN ('arrived','selected') AND ((m.state = 'selected' AND m.updated_at >= md.drive_date) OR (LOWER(ac.current_stage) IN ('selected','offered','offer','offer_approved','onboarded','converted') AND EXISTS (SELECT 1 FROM ats_candidate_stage_log sl WHERE sl.candidate_id = ac.id AND LOWER(sl.to_stage) IN ('selected','offered','offer','offer_approved','onboarded','converted','joined','payroll_validated') AND sl.stage_date >= md.drive_date))))) THEN 1 ELSE 0 END AS selected
       FROM qualified_followup qf
       LEFT JOIN he_match m ON m.lead_id = qf.he_lead_id AND m.requisition_id = qf.requisition_id
+      LEFT JOIN he_drive md ON md.id = m.drive_id AND md.requisition_id = m.requisition_id
       LEFT JOIN he_lead hl ON hl.id = qf.he_lead_id
       LEFT JOIN ats_candidate ac ON ac.id = COALESCE(qf.ats_candidate_id, hl.ats_candidate_id) COLLATE utf8mb4_unicode_ci
      WHERE qf.requisition_id = ?
