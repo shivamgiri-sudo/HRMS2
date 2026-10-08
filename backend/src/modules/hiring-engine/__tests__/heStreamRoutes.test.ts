@@ -262,6 +262,8 @@ describe("inbox scope refactor", () => {
 describe("POST /drives/:id/suggest on a stream-fed drive", () => {
   const route = (fed: "yes" | "no" | "no_table" | "error") => execute.mockImplementation(async (sql: string, params: unknown[]) => {
     const q = String(sql);
+    // the hr caller's branch and the drive's branch (drive routes are branch-scoped)
+    if (q.includes("FROM employees e") || (q.includes("WHERE d.id = ?") && q.includes("jr.branch_name"))) return [[{ branch_name: "PUNE" }]];
     if (q.includes("FROM requisition_stream_plan WHERE drive_id = ?")) {
       if (fed === "no_table") throw Object.assign(new Error("Table 'x.requisition_stream_plan' doesn't exist"), { code: "ER_NO_SUCH_TABLE" });
       if (fed === "error") throw Object.assign(new Error("lock wait"), { code: "ER_LOCK_WAIT_TIMEOUT" });

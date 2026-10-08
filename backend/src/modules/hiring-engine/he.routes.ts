@@ -50,6 +50,7 @@ import { registerCommandRoutes } from "./he-command.routes.js";
 import { registerActionRoutes } from "./he-action.routes.js";
 import { registerOutcomeRoutes } from "./he-outcome.routes.js";
 import { registerResponseRoutes } from "./response.routes.js";
+import { bodyRequisitionScoped, driveScoped } from "./he-drive-scope.js";
 import { DRIVE_STREAM_FED, STREAM_CHECK_FAILED, driveStreamCheck } from "./he-stream-guard.service.js";
 import { followupSummary } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
@@ -266,16 +267,18 @@ heRouter.get("/requisitions/open", requireAuth, requireRole(...VIEW_ROLES), asyn
   }
 });
 
-heRouter.get("/drives", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+heRouter.get("/drives", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
   try {
+    const scope = await branchScopeOf(req as AuthenticatedRequest); // org-wide: the statement is unchanged; a branch user: own branch only
+    if (!scope.all && !scope.branchName) return void res.json({ success: true, data: [] });
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT d.id, d.requisition_id, d.branch_name, d.drive_date, d.slot_start, d.slot_end, d.slot_capacity, d.target_shows, d.show_rate_pct, d.status, d.auto_send,
               jr.designation_name, jr.requisition_code, (jr.requested_headcount - jr.fulfilled_headcount) AS open_positions,
               SUM(m.state = 'suggested') AS suggested, SUM(m.state = 'invited') AS invited, SUM(m.state = 'confirmed') AS confirmed,
               SUM(m.state = 'arrived') AS arrived, SUM(m.state = 'no_show') AS no_show, SUM(m.state = 'declined') AS declined
          FROM he_drive d JOIN job_requisition jr ON jr.id = d.requisition_id LEFT JOIN he_match m ON m.drive_id = d.id
-        WHERE d.drive_date >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
-        GROUP BY d.id ORDER BY d.drive_date DESC, d.branch_name LIMIT 200`);
+        WHERE d.drive_date >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)${scope.all ? "" : " AND jr.branch_name = ?"}
+        GROUP BY d.id ORDER BY d.drive_date DESC, d.branch_name LIMIT 200`, ...(scope.all ? [] : [[scope.branchName]]));
     res.json({ success: true, data: rows });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] drives failed");
@@ -283,7 +286,7 @@ heRouter.get("/drives", requireAuth, requireRole(...VIEW_ROLES), async (_req, re
   }
 });
 
-heRouter.post("/drives", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+heRouter.post("/drives", requireAuth, requireRole(...WRITE_ROLES), bodyRequisitionScoped, async (req, res) => {
   const b = (req.body ?? {}) as Record<string, unknown>;
   if (typeof b.requisitionId !== "string" || typeof b.driveDate !== "string" || !DATE_RE.test(b.driveDate)) {
     return res.status(400).json({ success: false, message: "requisitionId and driveDate (YYYY-MM-DD) are required" });
@@ -302,14 +305,14 @@ heRouter.post("/drives", requireAuth, requireRole(...WRITE_ROLES), async (req, r
   }
 });
 
-heRouter.post("/drives/:id/status", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+heRouter.post("/drives/:id/status", requireAuth, requireRole(...WRITE_ROLES), driveScoped, async (req, res) => {
   const status = String((req.body ?? {}).status);
   if (!["draft", "active", "paused", "closed"].includes(status)) return res.status(400).json({ success: false, message: "invalid status" });
   try { await setDriveStatus(String(req.params.id), status as "draft"); res.json({ success: true }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] drive status failed"); res.status(500).json({ success: false }); }
 });
 
-heRouter.post("/drives/:id/suggest", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+heRouter.post("/drives/:id/suggest", requireAuth, requireRole(...WRITE_ROLES), driveScoped, async (req, res) => {
   // a stream-fed drive is lined up per stream (Plan now); the whole-audience line-up would delete the other streams' suggestions
   const streams = await driveStreamCheck(String(req.params.id));
   if (streams === "streams") return void res.status(409).json({ success: false, message: DRIVE_STREAM_FED });
@@ -318,7 +321,7 @@ heRouter.post("/drives/:id/suggest", requireAuth, requireRole(...WRITE_ROLES), a
   catch (err) { res.status(400).json({ success: false, message: (err as Error).message }); }
 });
 
-heRouter.get("/drives/:id/matches", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+heRouter.get("/drives/:id/matches", requireAuth, requireRole(...VIEW_ROLES), driveScoped, async (req, res) => {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT m.id, m.state, m.score, m.slot_at, m.distance_km, l.id AS lead_id, l.full_name, l.mobile10,
@@ -639,7 +642,7 @@ heRouter.get("/master/recruiters", requireAuth, requireRole(...VIEW_ROLES), asyn
 });
 
 // Drive launch panel: readiness, preview (dry run), send invites now (email first), and follow-ups on demand.
-heRouter.get("/drives/:id/readiness", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+heRouter.get("/drives/:id/readiness", requireAuth, requireRole(...VIEW_ROLES), driveScoped, async (req, res) => {
   try {
     const r = await getDriveReadiness(String(req.params.id));
     if (!r) return res.status(404).json({ message: "Drive not found" });
@@ -647,7 +650,7 @@ heRouter.get("/drives/:id/readiness", requireAuth, requireRole(...VIEW_ROLES), a
   } catch (err) { logger.error({ err: (err as Error).message }, "[he] readiness failed"); res.status(500).json({ message: "Could not check readiness" }); }
 });
 
-heRouter.post("/drives/:id/launch", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+heRouter.post("/drives/:id/launch", requireAuth, requireRole(...WRITE_ROLES), driveScoped, async (req, res) => {
   try {
     const b = (req.body ?? {}) as { dryRun?: unknown; limit?: unknown };
     const dryRun = b.dryRun !== false;
@@ -671,7 +674,7 @@ heRouter.post("/engine/follow-ups", requireAuth, requireRole(...WRITE_ROLES), as
 });
 
 // Shortlist for a drive: fit + reasons, outreach status per channel, and other requisitions each candidate also fits.
-heRouter.get("/drives/:id/shortlist", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+heRouter.get("/drives/:id/shortlist", requireAuth, requireRole(...VIEW_ROLES), driveScoped, async (req, res) => {
   try {
     const q = req.query as Record<string, string | undefined>;
     const filter = (SHORTLIST_FILTERS as readonly string[]).includes(q.filter ?? "") ? (q.filter as ShortlistFilter) : "all";
@@ -847,7 +850,7 @@ heRouter.post("/integrations/superbot/test", requireAuth, requireRole(...ADMIN_R
 });
 
 /** Call sheet (CSV) for uploading to the Superbot portal: pending = invited, not yet confirmed; all = also confirmed. */
-heRouter.get("/drives/:id/superbot-sheet", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+heRouter.get("/drives/:id/superbot-sheet", requireAuth, requireRole(...WRITE_ROLES), driveScoped, async (req, res) => {
   try {
     const r = await buildSuperbotSheet(String(req.params.id), req.query.which === "all" ? "all" : "pending");
     if (!r) return res.status(404).json({ message: "Drive not found" });
