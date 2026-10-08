@@ -134,13 +134,18 @@ async function readSources(f: string, t: string): Promise<{ sections: SourceDayR
 }
 
 const LEGACY_MOBILE = "RIGHT(REGEXP_REPLACE(COALESCE(r.parsed_phone, ''), '[^0-9]', ''), 10)";
+// The worker mirrors its own first send into notification_sent_at ("Notified" in the Meta funnel) of the lead it owns, so a stamp on a lead
+// with a live/canary row is the worker's; the legacy path never sends to such a lead (legacyOutreachDecision). Stamps on any other lead of
+// the person (another form, another requisition) are the legacy path's.
+const NOT_MIRRORED = `NOT EXISTS (SELECT 1 FROM qualified_followup f WHERE f.meta_lead_id ${C} = r.id ${C} AND f.mode_at_enqueue IN ('live','canary'))`;
 
 async function readMultiPath(f: string, t: string): Promise<UnifiedReport["multiPath"]> {
   const ps = await rows(`/* uf:multipath */ SELECT DISTINCT w.mobile10 FROM he_message w
      WHERE w.direction = 'out' AND w.sent_by = 'followup' AND COALESCE(w.delivery_status, '') <> 'failed' AND w.created_at >= ? AND w.created_at < ?
        AND (EXISTS (SELECT 1 FROM he_message o WHERE o.mobile10 = w.mobile10 AND o.direction = 'out' AND (o.sent_by IS NULL OR o.sent_by <> 'followup')
                       AND COALESCE(o.delivery_status, '') <> 'failed' AND o.created_at >= ? AND o.created_at < ?)
-         OR EXISTS (SELECT 1 FROM meta_lead_raw r WHERE r.notification_sent_at >= ? AND r.notification_sent_at < ? AND ${LEGACY_MOBILE} ${C} = w.mobile10 ${C})
+         OR EXISTS (SELECT 1 FROM meta_lead_raw r WHERE r.notification_sent_at >= ? AND r.notification_sent_at < ? AND ${LEGACY_MOBILE} ${C} = w.mobile10 ${C}
+                     AND ${NOT_MIRRORED})
          OR EXISTS (SELECT 1 FROM meta_lead_messages mm JOIN meta_lead_raw r ON r.id ${C} = mm.lead_id ${C}
                      WHERE mm.direction = 'outbound' AND mm.created_at >= ? AND mm.created_at < ? AND ${LEGACY_MOBILE} ${C} = w.mobile10 ${C}))
      LIMIT 1000`, [f, t, f, t, f, t, f, t]);

@@ -105,6 +105,8 @@ describe("collectUnifiedReport", () => {
     expect(sql).toMatch(/sent_by IS NULL OR \w+\.sent_by <> 'followup'/);
     expect(sql).toContain("notification_sent_at");
     expect(sql).toContain("meta_lead_messages");
+    // the worker's own "Notified" mirror on a lead it owns is not a second path
+    expect(sql).toMatch(/notification_sent_at < \? AND [^)]*\)[^]*NOT EXISTS \(SELECT 1 FROM qualified_followup f WHERE f\.meta_lead_id/);
     route({ multipath: [] });
     expect((await collectUnifiedReport(from, to, s, "GREEN")).multiPath).toEqual({ people: 0, samples: [] });
   });
