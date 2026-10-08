@@ -244,5 +244,8 @@
   ],
   "modules/hiring-engine/walkin-booking.service.ts": [
     "he_drive"
+  ],
+  "modules/hiring-engine/candidate-response.service.ts": [
+    "candidate_response"
   ]
 }
