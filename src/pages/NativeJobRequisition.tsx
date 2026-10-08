@@ -7,6 +7,7 @@ import { canEditAssessmentLink } from '@/components/requisition/assessmentLink.m
 import { hrmsApi } from '@/lib/hrmsApi';
 import { formatISTDate } from '@/lib/utils';
 import { useApprovalFocus } from '@/hooks/useApprovalFocus';
+import { emptyForm, buildRequisitionPayload, formFromRequisition, type MetaScreeningConfig } from './requisition/criteriaFormModel';
 import {
   Users, Target, Clock, CheckCircle, AlertCircle,
   Plus, Search, Briefcase, Calendar,
@@ -22,16 +23,6 @@ type ApprovalStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected' | '
 type RequisitionPriority = 'low' | 'normal' | 'high' | 'urgent';
 type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'intern' | 'trainee';
 type SortKey = 'deadline_asc' | 'deadline_desc' | 'priority' | 'aging_desc' | 'created_desc' | 'fill_rate';
-
-interface MetaScreeningConfig {
-  auto_notify?: boolean;
-  gender?: 'any' | 'male' | 'female';
-  certifications?: string[];
-  language_requirements?: Array<{ language: string; skills: Array<'speak' | 'read' | 'write'> }>;
-  min_typing_speed_wpm?: number | null;
-  written_english_level?: 'basic' | 'intermediate' | 'advanced' | null;
-  custom_field_rules?: Array<{ field: string; op: string; value: string; label?: string }>;
-}
 
 interface JobRequisition {
   id: string;
@@ -182,47 +173,6 @@ const PRIORITY_COLORS: Record<RequisitionPriority, string> = {
 };
 
 const PRIORITY_ORDER: Record<RequisitionPriority, number> = { urgent: 1, high: 2, normal: 3, low: 4 };
-
-const emptyForm = {
-  designation_name: '',
-  department_name: '',
-  branch_name: '',
-  process_name: '',
-  process_id: '',
-  requested_headcount: 1,
-  employment_type: 'full_time' as EmploymentType,
-  salary_min: '',
-  salary_max: '',
-  experience_min_years: '',
-  experience_max_years: '',
-  priority: 'normal' as RequisitionPriority,
-  requisition_type: 'new_position',
-  business_justification: '',
-  skills_required: '',
-  job_description: '',
-  planned_batch_no: '',
-  training_start_date: '',
-  target_joining_date: '',
-  requisition_validity: '',
-  // META campaign targeting (migration 1810). These are read by the campaign brief email sent to
-  // marketing on approval, and the age band is also what lead-screener.service.ts screens incoming
-  // Lead Gen leads against — so leaving the band blank means age is not screened at all, not that
-  // every age is rejected.
-  meta_campaign_enabled: true,   // saved as ad_required; if false, META fields are hidden and the marketing brief says NO AD NEEDED
-  bmi_assessment_url: '',
-  meta_target_age_min: '',
-  meta_target_age_max: '',
-  meta_target_locations: '',
-  meta_target_radius_km: '',
-  // META screening config (migration 1829)
-  meta_screening_auto_notify: true,
-  meta_screening_gender: 'any' as 'any' | 'male' | 'female',
-  meta_screening_certifications: [] as string[],
-  meta_screening_language_requirements: [] as Array<{ language: string; skills: string[] }>,
-  meta_screening_min_typing_wpm: '',
-  meta_screening_written_english: '' as '' | 'basic' | 'intermediate' | 'advanced',
-  meta_screening_custom_rules: [] as Array<{ field: string; op: string; value: string; label: string }>,
-};
 
 // ── Main Component ─────────────────────────────────────────────────────────────
 
@@ -421,51 +371,7 @@ export default function NativeJobRequisition() {
 
     setSaving(true);
     try {
-      const payload = {
-        ...formData,
-        salary_min: formData.salary_min ? Number(formData.salary_min) : null,
-        salary_max: formData.salary_max ? Number(formData.salary_max) : null,
-        experience_min_years: formData.experience_min_years ? Number(formData.experience_min_years) : null,
-        experience_max_years: formData.experience_max_years ? Number(formData.experience_max_years) : null,
-        planned_batch_no: formData.planned_batch_no || null,
-        training_start_date: formData.training_start_date || null,
-        target_joining_date: formData.target_joining_date || null,
-        requisition_validity: formData.requisition_validity || null,
-        process_id: formData.process_id || null,
-        // META campaign targeting. Locations are sent as a real array — the column is JSON, and
-        // the backend stringifies it; sending the raw comma string would store a JSON string
-        // rather than a JSON array and every reader that expects to iterate it would get characters.
-        ad_required: formData.meta_campaign_enabled,
-        bmi_assessment_url: formData.bmi_assessment_url || null,
-        meta_target_age_min: formData.meta_target_age_min ? Number(formData.meta_target_age_min) : null,
-        meta_target_age_max: formData.meta_target_age_max ? Number(formData.meta_target_age_max) : null,
-        meta_target_locations: formData.meta_target_locations
-          ? formData.meta_target_locations.split(',').map((s) => s.trim()).filter(Boolean)
-          : null,
-        meta_target_radius_km: formData.meta_target_radius_km ? Number(formData.meta_target_radius_km) : null,
-        // META screening config — build the JSON object
-        meta_screening_config: {
-          auto_notify: formData.meta_screening_auto_notify,
-          gender: formData.meta_screening_gender !== 'any' ? formData.meta_screening_gender : undefined,
-          certifications: formData.meta_screening_certifications.length > 0 ? formData.meta_screening_certifications : undefined,
-          language_requirements: formData.meta_screening_language_requirements.length > 0
-            ? formData.meta_screening_language_requirements
-            : undefined,
-          min_typing_speed_wpm: formData.meta_screening_min_typing_wpm ? Number(formData.meta_screening_min_typing_wpm) : undefined,
-          written_english_level: formData.meta_screening_written_english || undefined,
-          custom_field_rules: formData.meta_screening_custom_rules.length > 0
-            ? formData.meta_screening_custom_rules
-            : undefined,
-        },
-        // Strip UI-only keys from payload spread
-        meta_screening_auto_notify: undefined,
-        meta_screening_gender: undefined,
-        meta_screening_certifications: undefined,
-        meta_screening_language_requirements: undefined,
-        meta_screening_min_typing_wpm: undefined,
-        meta_screening_written_english: undefined,
-        meta_screening_custom_rules: undefined,
-      };
+      const payload = buildRequisitionPayload(formData);
 
       if (editingRequisition) {
         await hrmsApi.patch(`/api/job-requisition/${editingRequisition.id}`, payload);
@@ -672,46 +578,7 @@ export default function NativeJobRequisition() {
 
   const openEdit = (req: JobRequisition) => {
     setEditingRequisition(req);
-    setFormData({
-      designation_name: req.designation_name,
-      department_name: req.department_name || '',
-      branch_name: req.branch_name,
-      process_name: req.process_name || '',
-      process_id: req.process_id || '',
-      requested_headcount: req.requested_headcount,
-      employment_type: req.employment_type,
-      salary_min: req.salary_min?.toString() || '',
-      salary_max: req.salary_max?.toString() || '',
-      experience_min_years: '',
-      experience_max_years: '',
-      priority: req.priority,
-      requisition_type: req.requisition_type,
-      business_justification: req.business_justification || '',
-      skills_required: '',
-      job_description: '',
-      planned_batch_no: req.planned_batch_no || '',
-      training_start_date: req.training_start_date ? req.training_start_date.substring(0, 10) : '',
-      target_joining_date: req.target_joining_date ? req.target_joining_date.substring(0, 10) : '',
-      requisition_validity: req.requisition_validity ? req.requisition_validity.substring(0, 10) : '',
-      bmi_assessment_url: req.bmi_assessment_url || '',
-      meta_target_age_min: req.meta_target_age_min?.toString() || '',
-      meta_target_age_max: req.meta_target_age_max?.toString() || '',
-      meta_target_locations: Array.isArray(req.meta_target_locations) ? req.meta_target_locations.join(', ') : '',
-      meta_target_radius_km: req.meta_target_radius_km?.toString() || '',
-      meta_campaign_enabled: req.ad_required != null ? Number(req.ad_required) !== 0 : !!(req.meta_target_age_min || req.meta_target_age_max || req.bmi_assessment_url || req.meta_screening_config),
-      meta_screening_auto_notify: req.meta_screening_config?.auto_notify !== false,
-      meta_screening_gender: (req.meta_screening_config?.gender as 'any' | 'male' | 'female') || 'any',
-      meta_screening_certifications: req.meta_screening_config?.certifications ?? [],
-      meta_screening_language_requirements: (req.meta_screening_config?.language_requirements ?? []).map(lr => ({
-        language: lr.language,
-        skills: lr.skills as string[],
-      })),
-      meta_screening_min_typing_wpm: req.meta_screening_config?.min_typing_speed_wpm?.toString() || '',
-      meta_screening_written_english: (req.meta_screening_config?.written_english_level as '' | 'basic' | 'intermediate' | 'advanced') || '',
-      meta_screening_custom_rules: (req.meta_screening_config?.custom_field_rules ?? []).map(r => ({
-        field: r.field, op: r.op, value: r.value, label: r.label || '',
-      })),
-    });
+    setFormData(formFromRequisition(req));
     setFormError('');
     setShowModal(true);
   };
