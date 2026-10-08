@@ -664,11 +664,12 @@ export async function resolveEsiDocPath(
 
 /**
  * Re-encode any ESI document image (jpg/png/webp/gif/heic/…, or the first page
- * of a PDF) as a JPG of at most 90 KB. Picks the largest dimension + highest
- * quality that still fits, so output lands as close to 90 KB as possible.
- * Sources already small are not upscaled.
+ * of a PDF) as a JPG of 50–90 KB. Binary-searches quality for the largest file
+ * that fits 90 KB; shrinks the image when nothing fits, enlarges it when the
+ * result is under 50 KB (small sources).
  */
 const ESI_JPG_MAX_BYTES = 90 * 1024;
+const ESI_JPG_MIN_BYTES = 50 * 1024;
 
 /**
  * First page of a PDF as a JPG buffer. Pure Node (pdfjs-dist + @napi-rs/canvas,
@@ -702,19 +703,45 @@ export async function toCompressedJpg(srcPath: string): Promise<Buffer> {
     path.extname(srcPath).toLowerCase() === ".pdf"
       ? await pdfFirstPageToJpg(srcPath)
       : await fs.promises.readFile(srcPath);
-  let last: Buffer = input;
-  for (const width of [1600, 1400, 1200, 1000, 800, 640, 480, 360]) {
-    for (const quality of [85, 78, 70, 62, 54, 46, 38]) {
-      last = await sharp(input)
-        .rotate()
-        .flatten({ background: "#ffffff" })
-        .resize({ width, withoutEnlargement: true })
-        .jpeg({ quality, mozjpeg: true })
-        .toBuffer();
-      if (last.length <= ESI_JPG_MAX_BYTES) return last;
+  const srcWidth = (await sharp(input).rotate().metadata()).width ?? 1600;
+
+  const encode = (width: number, quality: number, sharpChroma: boolean) =>
+    sharp(input)
+      .rotate()
+      .flatten({ background: "#ffffff" })
+      .resize({ width })
+      .jpeg({ quality, mozjpeg: true, chromaSubsampling: sharpChroma ? "4:4:4" : "4:2:0" })
+      .toBuffer();
+
+  /** Highest quality at this width that stays <= 90 KB; null if even q30 is too big. */
+  const bestAtWidth = async (width: number, chroma: boolean) => {
+    let lo = 30, hi = 95;
+    let best: Buffer | null = null;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const buf = await encode(width, mid, chroma);
+      if (buf.length <= ESI_JPG_MAX_BYTES) { best = buf; lo = mid + 1; }
+      else hi = mid - 1;
     }
+    return best;
+  };
+
+  // Too big → shrink the image; too small → enlarge it (a small source cannot
+  // reach 50 KB at its own size) until the result lands inside 50–90 KB.
+  let width = Math.min(srcWidth, 1600);
+  let best: Buffer | null = null;
+  for (let i = 0; i < 14; i++) {
+    const buf = await bestAtWidth(width, i > 8);
+    if (!buf) {
+      width = Math.max(240, Math.floor(width * 0.8)); // nothing fits → smaller
+      continue;
+    }
+    best = buf;
+    if (buf.length >= ESI_JPG_MIN_BYTES) return buf;
+    width = Math.min(3200, Math.ceil(width * 1.3)); // fits but < 50 KB → bigger
+    if (width >= 3200 && i > 10) break;
   }
-  return last;
+  return best ?? (await encode(360, 40, false));
 }
 
 /**

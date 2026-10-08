@@ -26,3 +26,24 @@ it("renders a PDF's first page to a JPG within 90 KB", async () => {
     fs.rmSync(file, { force: true });
   }
 }, 60000);
+
+it.each([
+  ["small source", 200, 150, 60],
+  ["large source", 3000, 2000, 200],
+])("keeps %s inside the 50–90 KB window", async (_n, w, h, amp) => {
+  const raw = Buffer.alloc(w * h * 3);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      for (let c = 0; c < 3; c++)
+        raw[(y * w + x) * 3 + c] = Math.max(0, Math.min(255, ((x * 255) / w + (y * 80) / h + (Math.random() - 0.5) * amp) | 0));
+  const file = path.join(os.tmpdir(), `esi-range-${Date.now()}-${w}.png`);
+  await sharp(raw, { raw: { width: w, height: h, channels: 3 } }).png().toFile(file);
+  try {
+    const jpg = await toCompressedJpg(file);
+    expect((await sharp(jpg).metadata()).format).toBe("jpeg");
+    expect(jpg.length).toBeGreaterThanOrEqual(50 * 1024);
+    expect(jpg.length).toBeLessThanOrEqual(90 * 1024);
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+}, 120000);
