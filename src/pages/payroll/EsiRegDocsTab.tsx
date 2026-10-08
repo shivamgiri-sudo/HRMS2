@@ -2,6 +2,7 @@ import { useState, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
+import { useBranches } from "@/hooks/useOrgMasters";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -588,14 +589,16 @@ export default function EsiRegDocsTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [branchId, setBranchId] = useState("");
   const [page] = useState(1);
+  const branches = useBranches().data ?? [];
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drawerEmp, setDrawerEmp] = useState<EsiEmployee | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [bulkDownloading, setBulkDownloading] = useState(false);
   const [reminding, setReminding] = useState(false);
 
-  const { data, isLoading } = useEsiList({ search, branchId: "", page });
+  const { data, isLoading } = useEsiList({ search, branchId, page });
   const employees = data?.employees ?? [];
 
   const allSelected = useMemo(
@@ -700,7 +703,9 @@ export default function EsiRegDocsTab() {
 
   async function exportCsv() {
     try {
-      const blob = await hrmsApi.getBlob("/api/payroll/esi-reg-docs/export-csv");
+      const blob = await hrmsApi.getBlob(
+        `/api/payroll/esi-reg-docs/export-csv${branchId ? `?branch_id=${encodeURIComponent(branchId)}` : ""}`,
+      );
       triggerBlobDownload(blob, `ESI_Reg_${new Date().toISOString().slice(0, 10)}.csv`);
     } catch {
       toast({ title: "CSV export failed", variant: "destructive" });
@@ -709,7 +714,7 @@ export default function EsiRegDocsTab() {
 
   function handleUploaded(employeeId: string, patch: Partial<EsiEmployee>) {
     queryClient.setQueryData<ListResponse>(
-      ["esi-reg-docs", { search, branchId: "", page }],
+      ["esi-reg-docs", { search, branchId, page }],
       (old) => {
         if (!old) return old;
         return {
@@ -753,6 +758,17 @@ export default function EsiRegDocsTab() {
             className="pl-9 rounded-xl border-blue-200"
           />
         </div>
+        <select
+          value={branchId}
+          onChange={(e) => { setBranchId(e.target.value); setSelected(new Set()); }}
+          aria-label="Filter by branch"
+          className="h-10 rounded-xl border border-blue-200 bg-white px-3 text-sm text-slate-700"
+        >
+          <option value="">All branches</option>
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>{b.branch_name ?? b.name}</option>
+          ))}
+        </select>
         <Button
           variant="outline"
           className="gap-2 rounded-xl border-blue-200 text-blue-700 hover:bg-blue-50"

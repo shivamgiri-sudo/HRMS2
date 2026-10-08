@@ -15,6 +15,9 @@ import { randomUUID } from "crypto";
 import multer from "multer";
 import { registerUpload } from "../document-vault/documentVault.service.js";
 import PDFDocument from "pdfkit";
+import sharp from "sharp";
+import { execFile } from "child_process";
+import os from "os";
 import { ZipArchive } from "archiver";
 import type { Archiver as ArchiverInstance } from "archiver";
 import { fetchEsiPendingRows } from "./esi-pending.query.js";
@@ -662,6 +665,52 @@ export async function resolveEsiDocPath(
 }
 
 /**
+ * Re-encode any ESI document image (jpg/png/webp/gif/heic/…, or the first page
+ * of a PDF) as a JPG of at most 90 KB. Picks the largest dimension + highest
+ * quality that still fits, so output lands as close to 90 KB as possible.
+ * Sources already small are not upscaled.
+ */
+const ESI_JPG_MAX_BYTES = 90 * 1024;
+
+async function pdfFirstPageToJpg(pdfPath: string): Promise<Buffer> {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "esi-pdf-"));
+  try {
+    const out = path.join(dir, "p");
+    await new Promise<void>((resolve, reject) =>
+      execFile(
+        "pdftoppm",
+        ["-jpeg", "-r", "150", "-f", "1", "-l", "1", "-singlefile", pdfPath, out],
+        { timeout: 30_000 },
+        (err) => (err ? reject(err) : resolve()),
+      ),
+    );
+    return await fs.promises.readFile(`${out}.jpg`);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+export async function toCompressedJpg(srcPath: string): Promise<Buffer> {
+  const input =
+    path.extname(srcPath).toLowerCase() === ".pdf"
+      ? await pdfFirstPageToJpg(srcPath)
+      : await fs.promises.readFile(srcPath);
+  let last: Buffer = input;
+  for (const width of [1600, 1400, 1200, 1000, 800, 640, 480, 360]) {
+    for (const quality of [85, 78, 70, 62, 54, 46, 38]) {
+      last = await sharp(input)
+        .rotate()
+        .flatten({ background: "#ffffff" })
+        .resize({ width, withoutEnlargement: true })
+        .jpeg({ quality, mozjpeg: true })
+        .toBuffer();
+      if (last.length <= ESI_JPG_MAX_BYTES) return last;
+    }
+  }
+  return last;
+}
+
+/**
  * Build one employee's ESI registration pack into `archive`, under `prefix`.
  *
  * Single and bulk download used to carry two copies of this, which is how they
@@ -701,14 +750,25 @@ export async function appendEsiPack(
     { label: "Bank_Passbook", kind: "passbook", note: "Bank passbook photo not uploaded" },
   ];
 
+  // Every file is named "EmpCode - Name - Doc.jpg" (same label as the folder)
+  // so a file dragged out of the pack still says whose it is.
+  const safeCode = emp.employee_code.replace(/[^A-Za-z0-9_-]/g, "");
+  const safeName = emp.name.replace(/[^A-Za-z0-9 _-]/g, "").trim();
+  const filePrefix = `${safeCode} - ${safeName}`;
+
   for (const d of docs) {
     const localPath = await resolveEsiDocPath(emp, d.kind);
     if (fileExists(localPath)) {
-      archive.file(localPath!, {
-        name: at(`${d.label}${path.extname(localPath!)}`),
-      });
-      manifest.push(`OK  ${d.label}${path.extname(localPath!)}`);
-      found++;
+      const entry = `${filePrefix} - ${d.label}.jpg`;
+      try {
+        archive.append(await toCompressedJpg(localPath!), { name: at(entry) });
+        manifest.push(`OK  ${entry}`);
+        found++;
+      } catch (err) {
+        console.error("[esi-reg-docs] jpg conversion failed", d.kind, err);
+        manifest.push(`--  ${d.label}: file exists but could not be converted to JPG`);
+        missing++;
+      }
     } else {
       manifest.push(`--  ${d.note}`);
       missing++;
@@ -722,9 +782,9 @@ export async function appendEsiPack(
   // not just bank details — see generateEsiDeclarationPdf().
   try {
     archive.append(await generateEsiDeclarationPdf(emp.id), {
-      name: at("ESI_Declaration_Form.pdf"),
+      name: at(`${filePrefix} - ESI_Declaration_Form.pdf`),
     });
-    manifest.push("OK  ESI_Declaration_Form.pdf");
+    manifest.push(`OK  ${filePrefix} - ESI_Declaration_Form.pdf`);
     found++;
   } catch {
     manifest.push("--  ESI Declaration Form could not be generated");

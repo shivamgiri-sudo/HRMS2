@@ -71,6 +71,7 @@ vi.mock("../payroll-branch-scope.js", () => ({
 }));
 
 import { db } from "../../../db/mysql.js";
+import sharp from "sharp";
 
 const app = express();
 app.use(express.json());
@@ -152,8 +153,9 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
     fs.mkdirSync(onboardingRoot, { recursive: true });
     const pan = path.join(onboardingRoot, "esi-test-pan.jpg");
     const aadhaar = path.join(onboardingRoot, "esi-test-aadhaar.jpg");
-    fs.writeFileSync(pan, "fake-pan-bytes");
-    fs.writeFileSync(aadhaar, "fake-aadhaar-bytes");
+    const png = await sharp({ create: { width: 40, height: 40, channels: 3, background: "#888" } }).png().toBuffer();
+    fs.writeFileSync(pan, png);
+    fs.writeFileSync(aadhaar, png);
 
     try {
       vi.mocked(db.execute).mockImplementation(async (sql: unknown) => {
@@ -186,9 +188,9 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
       // The mock ZipArchive records every archive.file() call; both real files
       // must have reached it under the labels the pack promises.
       const archived = lastArchive();
-      const namedFiles = archived.file.mock.calls.map((c: any[]) => c[1]?.name);
-      expect(namedFiles).toContain("PAN_Card.jpg");
-      expect(namedFiles).toContain("Aadhaar.jpg");
+      const namedFiles = archived.append.mock.calls.map((c: any[]) => c[1]?.name);
+      expect(namedFiles.some((n: string) => /PAN_Card\.jpg$/.test(n))).toBe(true);
+      expect(namedFiles.some((n: string) => /Aadhaar\.jpg$/.test(n))).toBe(true);
     } finally {
       fs.rmSync(pan, { force: true });
       fs.rmSync(aadhaar, { force: true });
