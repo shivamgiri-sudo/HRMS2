@@ -30,7 +30,8 @@ import { collectInsightFacts } from "./he-drive-insight-facts.service.js";
 import { loadInsightThresholds } from "./he-insight-params.service.js";
 import { buildDriveGroups, readAgg, readDriveAggRows, type DriveGroup, type DriveGroupInput } from "./he-drive-trend.service.js";
 import { getSourcesForRequisitions, type RequisitionSourceRows } from "./he-sources-window.service.js";
-import { campaignProgress, readPersonStages, type CampaignProgress, type CampaignProgressRow } from "./he-drive-persons.service.js";
+import { campaignProgress, readPersonStages, type CampaignProgress, type CampaignProgressRow, type PersonStages } from "./he-drive-persons.service.js";
+import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.js";
 import { outcomeReasonCounts } from "./he-outcome-reason.service.js";
 import { QF_TYPE_FROM_SQL, qfTypeKeysSql } from "./he-requisition-sources.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
@@ -62,12 +63,17 @@ export interface DriveAnalytics {
   insights: DriveInsight[];
   /** Per Meta campaign and requisition: people at each stage in the window (events-based, same rules as `types`). */
   campaigns: CampaignProgress[];
+  /** Per type: people at each journey stage (form fills, screened, qualified, contacted, replied ...) from the persons read; null when it failed. */
+  journey: Record<SourceType, PersonStages> | null;
+  /** Open seats of every requisition in scope (0 when closed, inactive or full, with the outreach path's reason). */
+  openSeats: OpenSeats[];
   requisitionCount: number;
   truncated: boolean;
   partial: boolean;
   failedSections: string[];
 }
 
+export interface OpenSeats { requisitionId: string; code: string; branch: string; open: number; closedReason: string | null }
 export const MAX_REQUISITIONS = 200;
 export const MAX_SPAN_DAYS = 92;
 export const MAX_AHEAD_DAYS = 14;
@@ -188,7 +194,8 @@ const arrivalsSql = (liveFrom: string) => (n: number, streams: boolean): string 
 
 // One statement: drives in the window, plus requisitions of overlapping open / paused streams, active campaigns and the requested requisition.
 // Every id is cast to one collation so the UNION cannot mix collations; the branch filter compares under utf8mb4_unicode_ci.
-const discoverSql = (o: { streamIds: number; branch: boolean; requisition: boolean }): string => `SELECT jr.id, jr.requisition_code, jr.designation_name, jr.branch_name, MAX(x.last_drive) AS last_drive
+const discoverSql = (o: { streamIds: number; branch: boolean; requisition: boolean }): string => `SELECT jr.id, jr.requisition_code, jr.designation_name, jr.branch_name,
+       jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, MAX(x.last_drive) AS last_drive
   FROM (
     SELECT d.requisition_id COLLATE utf8mb4_unicode_ci AS rid, MAX(d.drive_date) AS last_drive FROM he_drive d WHERE d.drive_date BETWEEN ? AND ? GROUP BY d.requisition_id
     UNION ALL
@@ -200,14 +207,22 @@ const discoverSql = (o: { streamIds: number; branch: boolean; requisition: boole
   ) x
   JOIN job_requisition jr ON jr.id = x.rid COLLATE utf8mb4_unicode_ci
  WHERE 1 = 1${o.branch ? " AND jr.branch_name COLLATE utf8mb4_unicode_ci = ?" : ""}${o.requisition ? " AND jr.id = ? COLLATE utf8mb4_unicode_ci" : ""}
- GROUP BY jr.id, jr.requisition_code, jr.designation_name, jr.branch_name
+ GROUP BY jr.id, jr.requisition_code, jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount
  ORDER BY MAX(x.last_drive) IS NULL, MAX(x.last_drive) DESC, jr.id
  LIMIT ${MAX_REQUISITIONS + 1}`;
 const BRANCH_SQL = "SELECT 1 FROM job_requisition WHERE branch_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1";
 const HEADER_SQL = "SELECT branch_name FROM job_requisition WHERE id = ? LIMIT 1";
 
 // ---- reads ------------------------------------------------------------------------------------------------------------------------------
-interface Head { id: string; code: string; role: string; branch: string }
+interface Head { id: string; code: string; role: string; branch: string; open: number; closedReason: string | null }
+const nOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
+/** Open seats by the outreach path's own rule (lead-screener requisitionClosedReason): a closed, inactive or full requisition has none. */
+const seatsOf = (r: RowDataPacket): { open: number; closedReason: string | null } => {
+  const closedReason = requisitionClosedReason({ approvalStatus: r.approval_status == null ? null : String(r.approval_status), activeStatus: nOrNull(r.active_status),
+    closedAt: r.closed_at == null ? null : String(r.closed_at), requestedHeadcount: nOrNull(r.requested_headcount), fulfilledHeadcount: nOrNull(r.fulfilled_headcount) });
+  const open = Math.max(0, Math.floor((Number(r.requested_headcount) || 0) - (Number(r.fulfilled_headcount) || 0)));
+  return { open: closedReason ? 0 : open, closedReason };
+};
 const batchesOf = (ids: string[]): string[][] => { const out: string[][] = []; for (let i = 0; i < ids.length; i += 200) out.push(ids.slice(i, i + 200)); return out; };
 /** One statement per 200 ids; `streams` false is the same read before the stream tables exist. */
 const runBatched = async (ids: string[], sqlOf: (n: number, streams: boolean) => string, params: (b: string[]) => unknown[]): Promise<RowDataPacket[]> =>
@@ -345,7 +360,7 @@ async function build(
     const params: unknown[] = [w.from, w.to, ...streamIds, ...(requisitionId ? [requisitionId] : []), ...(branch ? [branch] : []), ...(requisitionId ? [requisitionId] : [])];
     const [rows] = await limitedDb.execute<RowDataPacket[]>(discoverSql({ streamIds: streamIds.length, branch: !!branch, requisition: !!requisitionId }), params);
     truncated = rows.length > MAX_REQUISITIONS;
-    for (const r of rows.slice(0, MAX_REQUISITIONS)) heads.push({ id: String(r.id), code: String(r.requisition_code ?? ""), role: String(r.designation_name ?? ""), branch: String(r.branch_name ?? "") });
+    for (const r of rows.slice(0, MAX_REQUISITIONS)) heads.push({ id: String(r.id), code: String(r.requisition_code ?? ""), role: String(r.designation_name ?? ""), branch: String(r.branch_name ?? ""), ...seatsOf(r) });
     return null;
   }, null);
   const ids = heads.map((h) => h.id);
@@ -367,7 +382,7 @@ async function build(
   const costP = !none && valueAddOn("cost_per_source") ? sec("cost", () => readCostUsage(ids, w, liveFrom, pf), null) : null;
   // The previous window comes from the same statements as the window (persons, outcomes, follow-up stages; rows tagged by cur): its tiles
   // only need leads .. joined, so no separate previous-window reads. Every read goes through the shared read limiter (he-read-limit.ts).
-  const noPersons = { byType: null as Record<SourceType, PersonStageCounts> | null, campaigns: [] as CampaignProgressRow[], previous: null as Record<SourceType, PersonStageCounts> | null };
+  const noPersons = { byType: null as Record<SourceType, PersonStages> | null, campaigns: [] as CampaignProgressRow[], previous: null as Record<SourceType, PersonStageCounts> | null };
   const empty = { outcomes: [] as MatchOutcome[], slotReleased: perType(() => 0), previous: [] as MatchOutcome[] };
   const [sources, driveRows, outcomeRead, stops, repliesRows, arrivalsRows, persons] = await Promise.all([
     none ? null : sec("sources", async () => {
@@ -479,6 +494,8 @@ async function build(
     cost,
     insights,
     campaigns,
+    journey: none ? perType(() => ({ leads: 0, fills: 0, screened: 0, qualified: 0, contacted: 0, invited: 0, replied: 0, confirmed: 0, arrived: 0 })) : persons.byType,
+    openSeats: heads.map((h) => ({ requisitionId: h.id, code: h.code, branch: h.branch, open: h.open, closedReason: h.closedReason })),
     requisitionCount: ids.length,
     truncated,
     partial: failedSections.length > 0,
