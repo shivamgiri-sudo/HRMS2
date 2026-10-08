@@ -25,6 +25,7 @@ import { clearCampaignDashboardCache, getCampaignDashboard } from "../he-campaig
 import { istToday, addDays } from "../requisition-stream.window.js";
 import type { StreamRow } from "../requisition-stream.service.js";
 import { heRouter } from "../he.routes.js";
+import { UNPLANNED_ARRIVAL } from "../he-rate-buckets.js";
 
 const RID = "0f1e2d3c-aaaa-bbbb-cccc-0000000abcde";
 const SID = "1f1e2d3c-aaaa-bbbb-cccc-0000000abcde";
@@ -38,6 +39,26 @@ const agg = (date: string, o: Partial<DriveAggRow> = {}): DriveAggRow => ({
 const stream = (o: Partial<StreamRow> = {}): StreamRow => ({
   id: SID, requisitionId: RID, branchName: "Pune", sourceType: "meta_live", originId: "c1", originLabel: "Ad", openFrom: "2026-10-09", openDays: 3,
   dailyInvites: null, status: "open", closedReason: null, createdBy: null, createdAt: "2026-10-01 10:00:00", add: [], skip: [], ...o,
+});
+
+describe("unplanned arrivals count as arrivals but not in the show rate", () => {
+  it("a point keeps the counts and rates (arrived - unplanned) / (confirmed - unplanned)", () => {
+    const [p] = zeroFillPoints(["2026-10-10"], [agg("2026-10-10", { lined: 6, invited: 4, confirmed: 3, arrived: 2, unplanned: 1 })], null);
+    expect(p).toMatchObject({ invited: 4, confirmed: 3, arrived: 2, showRate: 0.5 });
+    expect(p).not.toHaveProperty("unplanned");
+  });
+  it("group totals rate the same way, only over the group's type and dates", () => {
+    const rows = [agg("2026-10-08", { lined: 5, confirmed: 3, arrived: 2, unplanned: 1 }), agg("2026-10-09", { lined: 7, confirmed: 2, arrived: 1 })];
+    const [g] = buildDriveGroups([{ requisitionId: RID, branch: "Pune", requisition: "REQ-7", role: "Agent", streams: [], rows, today: "2026-10-09" }]);
+    expect(g.totals).toMatchObject({ confirmed: 5, arrived: 3, showRate: 0.5 });
+    expect(g.totals).not.toHaveProperty("unplanned");
+  });
+  it("the drive read carries the unplanned bucket", async () => {
+    execute.mockClear();
+    await getDriveTrend({ requisitionId: RID }, ALL, new Date("2026-10-09T06:00:00Z"));
+    const read = execute.mock.calls.map((c) => String(c[0]).replace(/\s+/g, " ")).find((q) => q.includes("AS lined"));
+    expect(read).toContain(`SUM(${UNPLANNED_ARRIVAL}) AS unplanned`);
+  });
 });
 
 describe("showRate", () => {

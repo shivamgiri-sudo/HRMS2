@@ -20,6 +20,7 @@ import { loadActiveStreams, loadStreamsOfType, toWindow, type StreamRow } from "
 import { addDays, isSunday, istToday, windowDays } from "./requisition-stream.window.js";
 import type { DriveDayRow } from "./he-campaign-dashboard.service.js";
 import type { TaggedAggRow } from "./he-drive-analytics.js";
+import { UNPLANNED_ARRIVAL } from "./he-rate-buckets.js";
 
 export interface DriveTotals { wanted: number; lined: number; invited: number; confirmed: number; arrived: number; noShow: number; declined: number; showRate: number }
 export interface WindowInfo { from: string; to: string; dayIndex: number; days: number }
@@ -39,6 +40,8 @@ export interface DriveGroup {
 export interface DriveAggRow {
   driveId: string; date: string; status: string; wanted: number; streamId: string | null; streamType: SourceType | null;
   lined: number; invited: number; confirmed: number; arrived: number; noShow: number; declined: number;
+  /** Of `arrived`: walk-ins never booked (UNPLANNED_ARRIVAL). Counted as arrivals, left out of the show rate. */
+  unplanned?: number;
 }
 export interface DriveGroupInput { requisitionId: string; branch: string; requisition: string; role: string; streams: StreamRow[]; rows: DriveAggRow[]; today: string }
 
@@ -56,7 +59,7 @@ const byDate = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const BUCKETS_SQL = `COUNT(m.id) AS lined,
        SUM(m.state IN ('invited','confirmed','slot_released','arrived','no_show','selected')) AS invited,
        SUM(m.state IN ('confirmed','arrived','selected')) AS confirmed, SUM(m.state IN ('arrived','selected')) AS arrived,
-       SUM(m.state = 'no_show') AS no_show, SUM(m.state = 'declined') AS declined`;
+       SUM(m.state = 'no_show') AS no_show, SUM(m.state = 'declined') AS declined, SUM(${UNPLANNED_ARRIVAL}) AS unplanned`;
 // `streams` false: the same read before 2135 is applied (no stream tables), every match counted as `he`.
 const joinsSql = (streams: boolean): string => `LEFT JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id${streams ? `
   LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id
@@ -98,7 +101,7 @@ function parseAgg(r: RowDataPacket): DriveAggRow {
     driveId: String(r.id), date: String(r.drive_date).slice(0, 10), status: String(r.status), wanted: Number(r.target_shows ?? 0),
     streamId: r.stream_id == null ? null : String(r.stream_id), streamType: r.source_type == null ? null : (String(r.source_type) as SourceType),
     lined: Number(r.lined ?? 0), invited: Number(r.invited ?? 0), confirmed: Number(r.confirmed ?? 0), arrived: Number(r.arrived ?? 0),
-    noShow: Number(r.no_show ?? 0), declined: Number(r.declined ?? 0),
+    noShow: Number(r.no_show ?? 0), declined: Number(r.declined ?? 0), unplanned: Number(r.unplanned ?? 0),
   };
 }
 
@@ -125,36 +128,46 @@ export function streamWindowDates(streams: StreamRow[], driveDates: string[]): s
 
 /** One point per date (zero-filled: driveId null, status "no_drive"); counts only matches attributed to `sourceType` when given. */
 export function zeroFillPoints(dates: string[], rows: DriveAggRow[], sourceType: SourceType | null): TrendPoint[] {
+  return fillPoints(dates, rows, sourceType).points;
+}
+
+/** The points plus, per point, the unplanned arrivals left out of its show rate (kept off the output). */
+function fillPoints(dates: string[], rows: DriveAggRow[], sourceType: SourceType | null): { points: TrendPoint[]; unplanned: number } {
+  let unplannedAll = 0;
   const perDate = new Map<string, DriveAggRow[]>();
   for (const r of rows) { const l = perDate.get(r.date); if (l) l.push(r); else perDate.set(r.date, [r]); }
-  return [...new Set(dates)].sort(byDate).map((date) => {
+  const points = [...new Set(dates)].sort(byDate).map((date) => {
     const mine = perDate.get(date) ?? [];
     const t = emptyTotals();
     const wantedSeen = new Set<string>();
     const streams = new Map<string, TrendPoint["streams"][number]>();
+    let unplanned = 0;
     for (const r of mine) {
       if (!wantedSeen.has(r.driveId)) { wantedSeen.add(r.driveId); t.wanted += r.wanted; }
       if (sourceType && typeOf(r) !== sourceType) continue;
       t.lined += r.lined; t.invited += r.invited; t.confirmed += r.confirmed; t.arrived += r.arrived; t.noShow += r.noShow; t.declined += r.declined;
+      unplanned += r.unplanned ?? 0;
       if (r.streamId) {
         const s = streams.get(r.streamId) ?? { streamId: r.streamId, lined: 0, invited: 0, confirmed: 0, arrived: 0 };
         s.lined += r.lined; s.invited += r.invited; s.confirmed += r.confirmed; s.arrived += r.arrived;
         streams.set(r.streamId, s);
       }
     }
-    t.showRate = showRate(t.arrived, t.confirmed);
+    t.showRate = showRate(t.arrived - unplanned, t.confirmed - unplanned);
+    unplannedAll += unplanned;
     return { date, driveId: mine[0]?.driveId ?? null, status: mine[0]?.status ?? "no_drive", ...t, streams: [...streams.values()] };
   });
+  return { points, unplanned: unplannedAll };
 }
 
 function windowOf(points: TrendPoint[], today: string): WindowInfo {
   return { from: points[0]?.date ?? today, to: points[points.length - 1]?.date ?? today, dayIndex: points.filter((p) => p.date <= today).length, days: points.length };
 }
 
-function totalsOf(points: TrendPoint[]): DriveTotals {
+function totalsOf(points: TrendPoint[], unplanned = 0): DriveTotals {
   const t = emptyTotals();
   for (const p of points) { t.wanted += p.wanted; t.lined += p.lined; t.invited += p.invited; t.confirmed += p.confirmed; t.arrived += p.arrived; t.noShow += p.noShow; t.declined += p.declined; }
-  t.showRate = showRate(t.arrived, t.confirmed);
+  t.showRate = showRate(t.arrived - unplanned, t.confirmed - unplanned);
   return t;
 }
 
@@ -174,10 +187,10 @@ export function buildDriveGroups(input: DriveGroupInput[]): DriveGroup[] {
       const ofType = g.streams.filter((s) => s.sourceType === type && s.status !== "draft");
       const creditedDates = g.rows.filter((r) => r.streamType === type && r.lined > 0).map((r) => r.date);
       const dates = ofType.length ? [...new Set([...streamWindowDates(ofType, driveDates), ...creditedDates])].sort(byDate) : defaultTrendDates(addDays(g.today, -DEFAULT_BACK), addDays(g.today, DEFAULT_AHEAD), driveDates);
-      const points = zeroFillPoints(dates, g.rows, type);
+      const { points, unplanned } = fillPoints(dates, g.rows, type);
       out.push({
         requisitionId: g.requisitionId, branch: g.branch, requisition: g.requisition, role: g.role, sourceType: type, types, streamIds: mine.map((s) => s.id),
-        window: windowOf(points, g.today), totals: totalsOf(points),
+        window: windowOf(points, g.today), totals: totalsOf(points, unplanned),
         days: points.map((p) => ({
           driveId: p.driveId ?? "", date: p.date, branch: g.branch, requisition: g.requisition, role: g.role, status: p.status, wanted: p.wanted, lined: p.lined,
           invited: p.invited, confirmed: p.confirmed, arrived: p.arrived, noShow: p.noShow, declined: p.declined,
