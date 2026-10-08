@@ -1,6 +1,7 @@
 /** DB facts for the follow-up guard chain (followup-guards.ts): shared WhatsApp budget, canary first contacts, requisition, skip audit. */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { endDateEnforcementAllowed } from "./requisition-criteria.js";
 import type { GuardReason, GuardStep, RequisitionFacts } from "./followup-guards.js";
 
 const IST_MS = 5.5 * 3600_000;
@@ -36,10 +37,12 @@ export async function branchFirstContactsToday(branchPrefix: string, now: Date):
   return Number(r[0]?.n ?? 0);
 }
 
-// policy.req_end_date_enforced = 1 makes a passed requisition end date skip stage A steps (D8); a missing row is off. Cached a minute.
+// A passed requisition end date skips stage A steps (D8) only with both WS3 E1 keys, the same rule as Notify and the engine's line-up
+// invites: REQ_END_DATE_ENFORCEMENT=policy (env; off = no read) and policy.req_end_date_enforced = 1 (a missing row is off). Cached a minute.
 let endDatePolicy: { at: number; on: boolean } | null = null;
 export function resetEndDatePolicyCache(): void { endDatePolicy = null; }
 export async function reqEndDateEnforced(now: Date = new Date()): Promise<boolean> {
+  if (!endDateEnforcementAllowed()) return false;
   if (endDatePolicy && now.getTime() - endDatePolicy.at < 60_000) return endDatePolicy.on;
   const [r] = await db.execute<RowDataPacket[]>("SELECT value FROM he_model_param WHERE param_key = 'policy.req_end_date_enforced' LIMIT 1");
   endDatePolicy = { at: now.getTime(), on: Number(r[0]?.value ?? 0) === 1 };

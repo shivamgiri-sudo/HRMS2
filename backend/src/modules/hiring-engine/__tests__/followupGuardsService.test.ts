@@ -55,7 +55,8 @@ describe("followup-guards.service", () => {
     expect(await loadRequisitionFacts("R1")).toEqual({ approvalStatus: "approved", activeStatus: 1, closedAt: null, requestedHeadcount: 5, fulfilledHeadcount: 1, validityDate: "2026-10-31" });
   });
 
-  it("the end date only counts while policy.req_end_date_enforced = 1 (missing row = off), read at most once a minute", async () => {
+  it("the end date only counts with both WS3 E1 keys: REQ_END_DATE_ENFORCEMENT=policy and policy.req_end_date_enforced = 1 (read at most once a minute)", async () => {
+    process.env.REQ_END_DATE_ENFORCEMENT = "policy";
     expect(await reqEndDateEnforced(THU_11)).toBe(false);
     resetEndDatePolicyCache();
     h.endDate = 1;
@@ -63,6 +64,13 @@ describe("followup-guards.service", () => {
     h.endDate = 0;
     expect(await reqEndDateEnforced(new Date(THU_11.getTime() + 30_000))).toBe(true); // cached
     expect(await reqEndDateEnforced(new Date(THU_11.getTime() + 61_000))).toBe(false);
+  });
+
+  it("env key off: the policy row is never read and the end date never counts (one end-date rule with Notify and the engine)", async () => {
+    delete process.env.REQ_END_DATE_ENFORCEMENT;
+    h.endDate = 1;
+    expect(await reqEndDateEnforced(THU_11)).toBe(false);
+    expect(h.calls.some((c) => c.sql.includes("req_end_date_enforced"))).toBe(false);
   });
 
   it("recordGuardSkip writes once per row+step+reason per IST day", async () => {
