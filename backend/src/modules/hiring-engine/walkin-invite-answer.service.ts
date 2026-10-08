@@ -19,8 +19,8 @@ import { bookLeadOnDrive } from "./walkin-booking.service.js";
 import { markInviteAnswered, type WalkinInviteRow } from "./walkin-invite.service.js";
 
 export type InviteTokenAnswer = "yes" | "later" | "no" | "stop";
-export interface InviteAnswerResult { state: string; matchToken?: string; booked: boolean; reason?: string }
-export interface InviteAnswerOptions { now: Date; channel: "web" | "hr"; actor?: string | null; responseId?: number | null }
+export interface InviteAnswerResult { state: string; matchToken?: string; booked: boolean; reason?: string; responseId?: number }
+export interface InviteAnswerOptions { now: Date; channel: "web" | "hr"; actor?: string | null; note?: string | null }
 
 const ENGINE_LOCK = "he_engine_tick";
 
@@ -54,22 +54,21 @@ export async function answerInviteToken(inv: WalkinInviteRow, answer: InviteToke
     occurredAt: o.now, channel: o.channel, mode: o.channel === "hr" ? "manual" : "button", answer: answerFromInviteTap(answer), mobile10: inv.mobile10,
     leadId: extra.leadId ?? inv.lead_id, metaLeadId: inv.meta_lead_id, matchId: extra.matchId ?? null, inviteId: inv.id, followupId: inv.followup_id,
     sourceKind: o.channel === "hr" ? "hr_action" : "public_answer", sourceRef: `wi:${inv.id}:${answer}:${o.now.getTime()}`, handledBy: o.actor ?? undefined, applied,
-  });
+    rawText: o.note ?? null,
+  }).then((r) => (r.id ? { responseId: r.id } : {}));
 
   if (answer === "no") {
     await markInviteAnswered(inv.id, "declined", null);
     if (inv.meta_lead_id) {
       await db.execute("UPDATE meta_lead_raw SET walkin_declined = 1, walkin_reply = 'not_interested', walkin_reply_at = NOW() WHERE id = ?", [inv.meta_lead_id]);
     }
-    await respond(true);
-    return { state: "declined", booked: false };
+    return { state: "declined", booked: false, ...(await respond(true)) };
   }
 
   const lead = await ensureLead(inv);
   if (!lead) {
     logger.warn({ inviteId: inv.id }, "[walkin-invite] no lead for the answer");
-    await respond(false);
-    return { state: "unavailable", booked: false, reason: "no_lead" };
+    return { state: "unavailable", booked: false, reason: "no_lead", ...(await respond(false)) };
   }
 
   if (answer === "stop") {
@@ -77,26 +76,24 @@ export async function answerInviteToken(inv: WalkinInviteRow, answer: InviteToke
     await revokeConsent(lead.id, "whatsapp_contact");
     await addEvent(lead.id, "opted_out", { channel: o.channel, detail: "Stop messages on the invitation page", actor: o.actor ?? null });
     await markInviteAnswered(inv.id, "stopped", null);
-    await respond(true, { leadId: lead.id });
-    return { state: "stopped", booked: false };
+    return { state: "stopped", booked: false, ...(await respond(true, { leadId: lead.id })) };
   }
 
   const human = (detail: string) => addEvent(lead.id, "needs_human_followup", { channel: o.channel, detail, actor: o.actor ?? null });
   if (!(await loadResponseSwitches()).bookOnYes) {
     await markInviteAnswered(inv.id, answer === "yes" ? "answered_yes" : "answered_later", null);
     await human(answer === "yes" ? "said yes on the invitation link: book a slot" : "asked for another time on the invitation link");
-    await respond(false, { leadId: lead.id });
-    return { state: "recorded", booked: false, reason: "booking_off" };
+    return { state: "recorded", booked: false, reason: "booking_off", ...(await respond(false, { leadId: lead.id })) };
   }
 
   const lock = await takeEngineLock();
   if (!lock) {
     await human(`answered ${answer} on the invitation link while the engine was busy: book by hand`);
-    await respond(false, { leadId: lead.id });
-    return { state: "pending", booked: false, reason: "busy" };
+    return { state: "pending", booked: false, reason: "busy", ...(await respond(false, { leadId: lead.id })) };
   }
   let booked: Awaited<ReturnType<typeof bookLeadOnDrive>>;
   let state = "";
+  let responseId: number | undefined;
   try {
     let branch = inv.branch_name;
     if (!branch) {
@@ -104,19 +101,22 @@ export async function answerInviteToken(inv: WalkinInviteRow, answer: InviteToke
       branch = jr[0]?.branch_name ? String(jr[0].branch_name) : "";
     }
     booked = await bookLeadOnDrive({ leadId: lead.id, requisitionId: inv.requisition_id, branchName: branch, preferredSlotAt: inv.slot_at, now: o.now, state: "invited" });
-    if (booked.status === "booked") state = (await recordInviteAnswer(booked.matchId, answer, { channel: o.channel, actor: o.actor ?? null, inviteId: inv.id }))?.state ?? "";
+    if (booked.status === "booked") {
+      const ra = await recordInviteAnswer(booked.matchId, answer, { channel: o.channel, actor: o.actor ?? null, inviteId: inv.id, note: o.note ?? null });
+      state = ra?.state ?? "";
+      responseId = ra?.responseId;
+    }
   } finally {
     await releaseEngineLock(lock);
   }
   if (booked.status !== "booked") {
     await markInviteAnswered(inv.id, answer === "yes" ? "answered_yes" : "answered_later", null);
     await human(`answered ${answer} on the invitation link but no slot could be booked (${booked.reason}): call to fix a time`);
-    await respond(false, { leadId: lead.id });
-    return { state: "unavailable", booked: false, reason: booked.reason };
+    return { state: "unavailable", booked: false, reason: booked.reason, ...(await respond(false, { leadId: lead.id })) };
   }
   await markInviteAnswered(inv.id, answer === "yes" ? "answered_yes" : "answered_later", booked.matchId);
   if (inv.meta_lead_id && booked.slotAt !== (inv.slot_at ? String(inv.slot_at).slice(0, 19) : null)) {
     await db.execute("UPDATE meta_lead_raw SET interview_date = DATE(?), interview_time = TIME(?) WHERE id = ?", [booked.slotAt, booked.slotAt, inv.meta_lead_id]);
   }
-  return { state, matchToken: booked.token, booked: true };
+  return { state, matchToken: booked.token, booked: true, ...(responseId ? { responseId } : {}) };
 }

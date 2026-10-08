@@ -115,7 +115,7 @@ describe("answerInviteToken", () => {
 
   it("no books nothing and mirrors walkin_declined", async () => {
     const r = await answerInviteToken(invite(), "no", { now, channel: "web" });
-    expect(r).toEqual({ state: "declined", booked: false });
+    expect(r).toEqual({ state: "declined", booked: false, responseId: 1 });
     expect(h.log).not.toContain("book");
     expect(h.sqls.some((s) => s.sql.includes("walkin_declined = 1"))).toBe(true);
     expect(h.sqls.find((s) => s.sql.startsWith("UPDATE walkin_invite"))!.p).toEqual(["declined", null, "I1"]);
@@ -124,7 +124,7 @@ describe("answerInviteToken", () => {
 
   it("stop opts out without any he_match", async () => {
     const r = await answerInviteToken(invite(), "stop", { now, channel: "web" });
-    expect(r).toEqual({ state: "stopped", booked: false });
+    expect(r).toEqual({ state: "stopped", booked: false, responseId: 1 });
     expect(h.log).toEqual(expect.arrayContaining(["setLeadStatus:opted_out", "revokeConsent:whatsapp_contact"]));
     expect(h.events.some((e) => e[1] === "opted_out")).toBe(true);
     expect(h.sqls.some((s) => s.sql.includes("meta_lead_raw"))).toBe(false);

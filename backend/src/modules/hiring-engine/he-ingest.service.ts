@@ -291,8 +291,8 @@ const ANSWER_TEXT: Record<InviteAnswer, string> = { yes: "Tapped: Yes, I will co
  * email channel, so the shortlist's Reply / Status columns, the cadence stop rule and the 360 view all see it.
  * "later" releases the slot and asks a recruiter to call with a new time.
  */
-export interface InviteAnswerOptions { channel?: "web" | "hr"; actor?: string | null; inviteId?: string | null }
-export async function recordInviteAnswer(matchId: string, answer: InviteAnswer, opts: InviteAnswerOptions = {}): Promise<{ state: string } | null> {
+export interface InviteAnswerOptions { channel?: "web" | "hr"; actor?: string | null; inviteId?: string | null; /** HR's note, kept on the response record. */ note?: string | null }
+export async function recordInviteAnswer(matchId: string, answer: InviteAnswer, opts: InviteAnswerOptions = {}): Promise<{ state: string; responseId?: number } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, l.mobile10, l.status, l.meta_lead_id
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1`, [matchId]);
@@ -311,16 +311,17 @@ export async function recordInviteAnswer(matchId: string, answer: InviteAnswer, 
   const plan = planFromReply(r.status as LeadStatus, intent, Number(o[0].n));
   await applyPlan(String(r.lead_id), r.status as LeadStatus, plan, { matchId, channel: "email", detail: ANSWER_TEXT[answer], metaLeadId: r.meta_lead_id ?? null, replyText: null });
   // The tap is recorded as web (the page), not email; an HR answer as hr / manual. The he_message row above is unchanged.
-  await recordResponseSafe({
+  const resp = await recordResponseSafe({
     occurredAt: new Date(), channel: opts.channel ?? "web", mode: opts.channel === "hr" ? "manual" : "button", answer: answerFromInviteTap(answer),
     mobile10: String(r.mobile10), leadId: String(r.lead_id), metaLeadId: r.meta_lead_id ?? null, matchId, inviteId: opts.inviteId ?? null,
     sourceKind: opts.channel === "hr" ? "hr_action" : "public_answer", sourceRef: messageId, handledBy: opts.actor ?? undefined, applied: planApplied(plan),
+    rawText: opts.note ?? null,
   });
   if (answer === "later" && !plan.humanHandoff) await addEvent(String(r.lead_id), "needs_human_followup", { channel: "email", detail: "asked for another walk-in time", driveId: r.drive_id ?? undefined });
   await recomputeInsight(String(r.lead_id));
   await refreshLeadHistoryById(String(r.lead_id));
   const [s] = await db.execute<RowDataPacket[]>("SELECT state FROM he_match WHERE id = ?", [matchId]);
-  return { state: String(s[0]?.state ?? "") };
+  return resp.id ? { state: String(s[0]?.state ?? ""), responseId: resp.id } : { state: String(s[0]?.state ?? "") };
 }
 
 /** "Stop messages" tapped on the invitation page of a match: the same opt-out plan as a STOP reply, without the WhatsApp acknowledgement. */
