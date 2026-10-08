@@ -395,3 +395,44 @@ describe("insights in getDriveAnalytics", () => {
     expect(factsFn).not.toHaveBeenCalled();
   });
 });
+
+describe("funnel-depth facts", () => {
+  it("collectInsightFacts passes the build's funnel inputs through (no read without a low-qualification campaign)", async () => {
+    const j = { leads: 9, fills: 9, screened: 9, qualified: 8, contacted: 0, invited: 0, replied: 0, confirmed: 0, arrived: 0 };
+    const { facts, failedSections } = await collectInsightFacts(ctxOf({
+      funnel: { journey: { meta_live: j, meta_old: j, he: j }, campaigns: [], openSeats: [{ requisitionId: "r1", code: "REQ-1", branch: "Pune", open: 4, closedReason: null }],
+        replies: { meta_live: grid(), meta_old: grid(), he: grid() }, cost: null },
+    }), ALL);
+    expect(failedSections).toEqual([]);
+    expect(facts.funnel?.journey?.meta_live.qualified).toBe(8);
+    expect(facts.funnel?.openSeats).toEqual([{ requisitionId: "r1", code: "REQ-1", branch: "Pune", open: 4 }]);
+    expect(sqls().some((s) => s.sql.includes("disqualification_reason"))).toBe(false);
+  });
+  it("without funnel inputs (older callers) there are no funnel facts", async () => {
+    const { facts } = await collectInsightFacts(ctxOf(), ALL);
+    expect(facts.funnel).toBeUndefined();
+  });
+  it("getDriveAnalytics hands the journey, campaigns, open seats, reply grid and cost to the facts", async () => {
+    const seen: unknown[] = [];
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.includes("FROM he_drive d WHERE d.drive_date BETWEEN")) return [[{ id: "r1", requisition_code: "REQ-1", designation_name: "Agent", branch_name: "Pune", last_drive: "2026-10-12",
+        approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 10, fulfilled_headcount: 4 }]];
+      // the persons read (window only: the previous-window read carries no reply lookup)
+      if (q.includes("AS lead_rows")) return q.includes("hr.lead_id") ? [[{ cur: 1, requisition_id: "r1", source_type: "meta_live", campaign_id: null, leads: 5, fills: 5, screened: 5, qualified: 4, contacted: 0, invited: 0, replied: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0 }]] : [[]];
+      return [[]];
+    });
+    loadActiveStreams.mockResolvedValue([]);
+    getSources.mockImplementation(async (ids: string[]) => ({ byRequisition: ids.map((requisitionId) => ({ requisitionId, rows: [] })), partial: false, failedSections: [] }));
+    thresholds.mockResolvedValue(T);
+    evaluate.mockReturnValue([]);
+    factsOverride.fn = async (ctx: unknown) => { seen.push(ctx); return { facts: { today: "2026-10-14" }, failedSections: [] }; };
+    await getDriveAnalytics({ from: "2026-10-01", to: "2026-10-14" }, ALL, NOW);
+    const f = (seen[0] as { funnel: Record<string, unknown> }).funnel;
+    expect(f.journey).toMatchObject({ meta_live: { leads: 5, qualified: 4 } });
+    expect(f.campaigns).toEqual([expect.objectContaining({ campaignName: "No campaign", sourceType: "meta_live" })]);
+    expect(f.openSeats).toEqual([expect.objectContaining({ requisitionId: "r1", open: 6 })]);
+    expect(f.replies).toHaveProperty("he");
+    expect(f.cost).toBeNull(); // cost per source is off
+  });
+});
