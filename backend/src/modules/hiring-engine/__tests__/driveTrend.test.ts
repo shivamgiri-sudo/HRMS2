@@ -278,7 +278,7 @@ describe("getDriveGroups", () => {
     execute.mockImplementation(async (sql: string) => {
       const q = String(sql);
       if (q.includes("FROM requisition_stream WHERE")) return [[]];
-      if (q.includes("SELECT DISTINCT d.requisition_id")) return [[{ requisition_id: RID, branch_name: "Pune" }, { requisition_id: R2, branch_name: "Delhi" }]];
+      if (q.includes("DISTINCT d.requisition_id, d.branch_name FROM he_drive")) return [[{ requisition_id: RID, branch_name: "Pune" }, { requisition_id: R2, branch_name: "Delhi" }]];
       if (q.includes("FROM job_requisition jr")) return [[
         { requisition_id: RID, branch_name: "Pune", requisition_code: "REQ-7", designation_name: "Agent", ...dbRow(today, { lined: 4, confirmed: 2, arrived: 1 }) },
         { requisition_id: R2, branch_name: "Delhi", requisition_code: "REQ-8", designation_name: "TL", ...dbRow(today, { id: "d-r2", lined: 1 }) },
@@ -301,7 +301,7 @@ describe("campaign dashboard: driveGroups beside drives", () => {
     const dashRow = { id: "dr1", drive_date: today, branch_name: "Pune", status: "active", target_shows: 9, requisition_code: "REQ-7", designation_name: "Agent", lined: 4, invited: 3, confirmed: 2, arrived: 1, no_show: 0, declined: 0 };
     execute.mockImplementation(async (sql: string) => {
       const q = String(sql);
-      if (q.includes("SELECT DISTINCT d.requisition_id")) return [[{ requisition_id: RID, branch_name: "Pune" }]];
+      if (q.includes("DISTINCT d.requisition_id, d.branch_name FROM he_drive")) return [[{ requisition_id: RID, branch_name: "Pune" }]];
       if (q.includes("FROM job_requisition jr")) return [[{ requisition_id: RID, branch_name: "Pune", requisition_code: "REQ-7", designation_name: "Agent", ...dbRow(today, { id: "dr1", lined: 4 }) }]];
       if (q.includes("FROM requisition_stream WHERE")) return [[]];
       if (q.includes("FROM he_drive d JOIN job_requisition")) return [[dashRow]];
@@ -325,7 +325,7 @@ describe("campaign dashboard: driveGroups beside drives", () => {
     execute.mockImplementation(async (sql: string) => {
       const q = String(sql);
       if (q.includes("FROM requisition_stream WHERE")) return [[]];
-      if (q.includes("SELECT DISTINCT d.requisition_id")) return [[{ requisition_id: RID, branch_name: "Pune" }]];
+      if (q.includes("DISTINCT d.requisition_id, d.branch_name FROM he_drive")) return [[{ requisition_id: RID, branch_name: "Pune" }]];
       // parsing a row throws outside every guarded sub-query
       if (q.includes("FROM job_requisition jr")) return [[{ requisition_id: RID, branch_name: "Pune", requisition_code: "R", designation_name: "A", id: "d1", drive_date: { toString() { throw new Error("bad row"); } } }]];
       if (q.includes("FROM he_drive d JOIN job_requisition")) return [[{ id: "dr1", drive_date: today, branch_name: "Pune", status: "active", target_shows: 9, requisition_code: "REQ-7", designation_name: "Agent", lined: 1, invited: 0, confirmed: 0, arrived: 0, no_show: 0, declined: 0 }]];
@@ -343,7 +343,7 @@ describe("campaign dashboard: driveGroups beside drives", () => {
       const q = String(sql);
       if (q.includes("requisition_stream")) throw Object.assign(new Error("Table 'mas_hrms.requisition_stream' doesn't exist"), { code: "ER_NO_SUCH_TABLE" });
       if (q.includes("FROM job_requisition WHERE id")) return [[{ branch_name: "Pune" }]];
-      if (q.includes("SELECT DISTINCT d.requisition_id")) return [[{ requisition_id: RID, branch_name: "Pune" }]];
+      if (q.includes("DISTINCT d.requisition_id, d.branch_name FROM he_drive")) return [[{ requisition_id: RID, branch_name: "Pune" }]];
       if (q.includes("FROM job_requisition jr")) return [[{ requisition_id: RID, branch_name: "Pune", requisition_code: "REQ-7", designation_name: "Agent", ...dbRow(today, { id: "dr1", lined: 4 }) }]];
       return [[]];
     });
@@ -360,7 +360,7 @@ describe("campaign dashboard: driveGroups beside drives", () => {
   it("keeps drives working and reports failedSections when the grouped read fails", async () => {
     execute.mockImplementation(async (sql: string) => {
       const q = String(sql);
-      if (q.includes("SELECT DISTINCT d.requisition_id")) throw new Error("boom");
+      if (q.includes("DISTINCT d.requisition_id, d.branch_name FROM he_drive")) throw new Error("boom");
       if (q.includes("FROM requisition_stream WHERE")) return [[]];
       return [[]];
     });

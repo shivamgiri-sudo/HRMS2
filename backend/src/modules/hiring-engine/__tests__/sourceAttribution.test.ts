@@ -140,7 +140,9 @@ describe("SQL fragment (mirrors attributeSource)", () => {
   it("a raw fill is Live only when it and the person's first fill are on or after the cutoff; with no pool person, by the same parsed_phone", () => {
     const f = fillTypeSql("r", "2026-10-08");
     expect(f.startsWith("IF(r.created_at >= TIMESTAMP '2026-10-08 00:00:00' AND LEAST(r.created_at, COALESCE(")).toBe(true);
-    expect(f).toContain(`IF(pl.id IS NOT NULL, ${liveFirstFillSql("pl", "plf", "2026-10-08")}, NOT EXISTS (SELECT 1 FROM meta_lead_raw afx WHERE afx.parsed_phone = r.parsed_phone`);
+    const phone = "RIGHT(REGEXP_REPLACE(r.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci";
+    expect(f).toContain(`AND IF(EXISTS (SELECT 1 FROM he_lead pl WHERE pl.mobile10 = ${phone}), EXISTS (SELECT 1 FROM he_lead pl LEFT JOIN meta_lead_raw plf ON plf.id = pl.meta_lead_id COLLATE utf8mb4_unicode_ci WHERE pl.mobile10 = ${phone} AND ${liveFirstFillSql("pl", "plf", "2026-10-08")}), NOT EXISTS (SELECT 1 FROM meta_lead_raw afx WHERE afx.parsed_phone = r.parsed_phone`);
+    expect(f).not.toContain("LEFT JOIN he_lead pl ON"); // no join: the person lookups run only for fills on or after the cutoff
   });
   it("the first-fill specification reaches every table by key", () => {
     const f = personFirstFillSql("al");

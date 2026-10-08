@@ -364,7 +364,7 @@ describe("insights in getDriveAnalytics", () => {
     wire();
     const [a, b] = await Promise.all([getDriveAnalytics(Q, ALL, NOW), getDriveAnalytics(Q, ALL, NOW)]);
     expect(thresholds).toHaveBeenCalledTimes(1);
-    expect(getSources).toHaveBeenCalledTimes(2); // current + previous period of ONE build
+    expect(getSources).toHaveBeenCalledTimes(1); // ONE build reads the window and the previous window together
     expect(a).toEqual(b);
     expect(a).not.toBe(b); // each caller gets its own copy
     clearDriveAnalyticsCache();

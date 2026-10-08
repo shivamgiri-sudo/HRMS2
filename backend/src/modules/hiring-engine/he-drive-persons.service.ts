@@ -18,10 +18,10 @@
  * everything else by key. Counts and ids only.
  */
 import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import { limitedDb } from "./he-read-limit.js";
 import { driveCreditSql } from "./he-drive-credit.js";
 import { readAgg } from "./he-drive-trend.service.js";
-import { attributionJoinsSql, fillPersonJoinsSql, fillPhoneSql, fillTypeSql, sourceTypeSql } from "./he-source-attribution.js";
+import { attributionJoinsSql, fillFirstCampaignSql, fillPhoneSql, fillTypeSql, sourceTypeSql } from "./he-source-attribution.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import { addDays } from "./requisition-stream.window.js";
 
@@ -35,27 +35,30 @@ const ph = (n: number): string => Array(n).fill("?").join(",");
 const CI = "COLLATE utf8mb4_unicode_ci";
 const { joined: FLAG_JOINED, selected: FLAG_SELECTED } = driveCreditSql({ m: "m", d: "d", hl: "al", ac: "ac" });
 
-/** Every part yields: person, requisition_id, source_type, campaign_id, cpri (campaign tie-break), stage, q, sel, joi. */
+/**
+ * Every part yields: cur (1 = the window, 0 = the previous window), person, requisition_id, source_type, campaign_id, cpri (campaign
+ * tie-break), stage, q, sel, joi. One statement covers the window and the previous window together (`cur` is the first column of each
+ * part, so its parameter comes first); the campaign of a fill's person is looked up for the window's rows only.
+ */
 export const personsSql = (n: number, streams: boolean, liveFrom: string): string => {
   const type = (ref: string): string => sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, ref });
   const joins = (leadId: string, requisition: string): string => attributionJoinsSql({ streams, match: "m", requisition, lead: "al", leadId });
   const ids = ph(n);
-  return `SELECT p.requisition_id, p.source_type, p.campaign_id, COUNT(*) AS leads, SUM(p.q) AS qualified, SUM(p.stage >= 1) AS contacted,
+  return `SELECT p.cur, p.requisition_id, p.source_type, p.campaign_id, COUNT(*) AS leads, SUM(p.q) AS qualified, SUM(p.stage >= 1) AS contacted,
        SUM(p.stage >= 2) AS invited, SUM(p.stage >= 3) AS confirmed, SUM(p.stage >= 4) AS arrived, SUM(p.sel) AS selected, SUM(p.joi) AS joined
   FROM (
-    SELECT u.person, u.requisition_id, SUBSTRING(MIN(CONCAT(FIELD(u.source_type, 'meta_live', 'meta_old', 'he'), u.source_type)), 2) AS source_type,
+    SELECT u.cur, u.person, u.requisition_id, SUBSTRING(MIN(CONCAT(FIELD(u.source_type, 'meta_live', 'meta_old', 'he'), u.source_type)), 2) AS source_type,
            NULLIF(SUBSTRING(MAX(CONCAT(u.cpri, COALESCE(u.campaign_id, ''))), 2), '') AS campaign_id,
            MAX(u.stage) AS stage, MAX(u.q) AS q, MAX(u.sel) AS sel, MAX(u.joi) AS joi
       FROM (
-        SELECT ${fillPhoneSql("r")} ${CI} AS person, mc.requisition_id ${CI} AS requisition_id,
-               ${fillTypeSql("r", liveFrom)} AS source_type, COALESCE(plf.campaign_id, r.campaign_id) ${CI} AS campaign_id, 1 AS cpri, 0 AS stage,
+        SELECT (r.created_at >= ?) AS cur, ${fillPhoneSql("r")} ${CI} AS person, mc.requisition_id ${CI} AS requisition_id,
+               ${fillTypeSql("r", liveFrom)} AS source_type, IF(r.created_at >= ?, ${fillFirstCampaignSql("r")}, NULL) ${CI} AS campaign_id, 1 AS cpri, 0 AS stage,
                (r.screening_result = 'qualified') AS q, 0 AS sel, 0 AS joi
           FROM meta_campaign mc JOIN meta_lead_raw r ON r.campaign_id = mc.id ${CI}
-          ${fillPersonJoinsSql("r")}
          WHERE mc.requisition_id IN (${ids}) AND (r.requisition_id IS NULL OR r.requisition_id = mc.requisition_id) AND r.parsed_phone IS NOT NULL
            AND r.created_at >= ? AND r.created_at < ?
         UNION ALL
-        SELECT al.mobile10 ${CI}, d.requisition_id ${CI}, ${type("d.drive_date")}, alf.campaign_id ${CI}, 1,
+        SELECT (d.drive_date >= ?), al.mobile10 ${CI}, d.requisition_id ${CI}, ${type("d.drive_date")}, alf.campaign_id ${CI}, 1,
                CASE WHEN m.state IN ('arrived','selected') THEN 4 WHEN m.state = 'confirmed' THEN 3 WHEN m.state IN ('invited','slot_released','no_show') THEN 2 ELSE 0 END,
                0, ${FLAG_SELECTED}, ${FLAG_JOINED}
           FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
@@ -63,17 +66,17 @@ export const personsSql = (n: number, streams: boolean, liveFrom: string): strin
           LEFT JOIN ats_candidate ac ON ac.id = al.ats_candidate_id ${CI}
          WHERE d.requisition_id IN (${ids}) AND d.drive_date BETWEEN ? AND ?
         UNION ALL
-        SELECT x.mobile10 ${CI}, x.requisition_id ${CI}, ${type("x.last_at")}, alf.campaign_id ${CI}, 1, x.stage, 0, 0, 0
-          FROM (SELECT hm.mobile10, hm.requisition_id, hm.lead_id, hm.drive_id, MAX(IF(hm.template_key LIKE 'he_walkin_invite%', 2, 1)) AS stage,
-                       MAX(hm.created_at) AS last_at
+        SELECT x.cur, x.mobile10 ${CI}, x.requisition_id ${CI}, ${type("x.last_at")}, alf.campaign_id ${CI}, 1, x.stage, 0, 0, 0
+          FROM (SELECT (hm.created_at >= ?) AS cur, hm.mobile10, hm.requisition_id, hm.lead_id, hm.drive_id,
+                       MAX(IF(hm.template_key LIKE 'he_walkin_invite%', 2, 1)) AS stage, MAX(hm.created_at) AS last_at
                   FROM he_message hm FORCE INDEX (idx_he_msg_req) WHERE hm.requisition_id IN (${ids}) AND hm.created_at >= ? AND hm.created_at < ? AND hm.direction = 'out'
                    AND (hm.delivery_status IS NULL OR hm.delivery_status <> 'failed')
-                 GROUP BY hm.mobile10, hm.requisition_id, hm.lead_id, hm.drive_id) x
+                 GROUP BY 1, hm.mobile10, hm.requisition_id, hm.lead_id, hm.drive_id) x
           LEFT JOIN he_drive d ON d.id = x.drive_id
           LEFT JOIN he_match m ON m.lead_id = x.lead_id AND m.requisition_id = x.requisition_id
           ${joins("x.lead_id", "x.requisition_id")}
         UNION ALL
-        SELECT al.mobile10 ${CI}, x.requisition_id ${CI}, ${type("ev.created_at")}, alf.campaign_id ${CI}, 1, 3, 0, 0, 0
+        SELECT (ev.created_at >= ?), al.mobile10 ${CI}, x.requisition_id ${CI}, ${type("ev.created_at")}, alf.campaign_id ${CI}, 1, 3, 0, 0, 0
           FROM he_lead_event ev JOIN he_message x ON x.id = (SELECT h.id FROM he_message h WHERE h.lead_id = ev.lead_id AND h.direction = 'out'
                  AND h.requisition_id IS NOT NULL AND (h.delivery_status IS NULL OR h.delivery_status <> 'failed') AND h.created_at <= ev.created_at
                  ORDER BY h.created_at DESC, h.id DESC LIMIT 1)
@@ -82,21 +85,22 @@ export const personsSql = (n: number, streams: boolean, liveFrom: string): strin
           ${joins("ev.lead_id", "x.requisition_id")}
          WHERE ev.event_type IN ('confirmed','call_confirmed') AND ev.created_at >= ? AND ev.created_at < ? AND x.requisition_id IN (${ids})
         UNION ALL
-        SELECT al.mobile10 ${CI}, d.requisition_id ${CI}, ${type("d.drive_date")}, alf.campaign_id ${CI}, 1, 4, 0, 0, 0
+        SELECT (d.drive_date >= ?), al.mobile10 ${CI}, d.requisition_id ${CI}, ${type("d.drive_date")}, alf.campaign_id ${CI}, 1, 4, 0, 0, 0
           FROM he_drive d JOIN he_lead_event ev ON ev.drive_id = d.id AND ev.event_type = 'arrived'
           LEFT JOIN he_match m ON m.lead_id = ev.lead_id AND m.requisition_id = d.requisition_id
           ${joins("ev.lead_id", "d.requisition_id")}
          WHERE d.requisition_id IN (${ids}) AND d.drive_date BETWEEN ? AND ?
       ) u
      WHERE u.person IS NOT NULL AND u.person <> ''
-     GROUP BY u.person, u.requisition_id
+     GROUP BY u.cur, u.person, u.requisition_id
   ) p
- GROUP BY p.requisition_id, p.source_type, p.campaign_id`;
+ GROUP BY p.cur, p.requisition_id, p.source_type, p.campaign_id`;
 };
 
 const TYPES: readonly SourceType[] = ["meta_live", "meta_old", "he"];
 const n0 = (v: unknown): number => { const x = Number(v ?? 0); return Number.isFinite(x) && x > 0 ? x : 0; };
 
+/** Rows of one window (cur = 1) or all rows when no cur column is present. */
 export function aggregatePersons(rows: RowDataPacket[] | Array<Record<string, unknown>>): { byType: Record<SourceType, PersonStages>; campaigns: CampaignProgressRow[] } {
   const zero = (): PersonStages => ({ leads: 0, invited: 0, confirmed: 0, arrived: 0 });
   const byType: Record<SourceType, PersonStages> = { meta_live: zero(), meta_old: zero(), he: zero() };
@@ -136,7 +140,7 @@ export async function campaignProgress(rows: CampaignProgressRow[], heads: Map<s
   const info = new Map<string, RowDataPacket>();
   for (let i = 0; i < ids.length; i += 200) {
     const b = ids.slice(i, i + 200);
-    for (const r of (await db.execute<RowDataPacket[]>(campaignsSql(b.length), b))[0]) info.set(String(r.id), r);
+    for (const r of (await limitedDb.execute<RowDataPacket[]>(campaignsSql(b.length), b))[0]) info.set(String(r.id), r);
   }
   const out = new Map<string, CampaignProgress>();
   for (const r of rows) {
@@ -162,14 +166,24 @@ export async function campaignProgress(rows: CampaignProgressRow[], heads: Map<s
     || a.campaignName.localeCompare(b.campaignName));
 }
 
-/** One statement per 200 requisitions; throws on failure (the caller's section handles it). */
-export async function readPersonStages(ids: string[], w: { from: string; to: string }, liveFrom: string): Promise<ReturnType<typeof aggregatePersons>> {
+/**
+ * The window and, with `prev`, the previous window (the days just before it) in one statement per 200 requisitions; throws on failure
+ * (the caller's section handles it). `previous` is the previous window's per-type counts (no campaign rows).
+ */
+export async function readPersonStages(ids: string[], w: { from: string; to: string }, liveFrom: string, prev?: { from: string; to: string } | null)
+  : Promise<ReturnType<typeof aggregatePersons> & { previous: Record<SourceType, PersonStages> }> {
   const unique = [...new Set(ids)];
-  const b = [`${w.from} 00:00:00`, `${addDays(w.to, 1)} 00:00:00`], d = [w.from, w.to];
+  const lo = prev ? prev.from : w.from;
+  const b = [`${lo} 00:00:00`, `${addDays(w.to, 1)} 00:00:00`], d = [lo, w.to];
+  const curAt = `${w.from} 00:00:00`;
   const parts: RowDataPacket[][] = [];
   for (let i = 0; i < unique.length; i += 200) {
     const x = unique.slice(i, i + 200);
-    parts.push(await readAgg((st) => personsSql(x.length, st, liveFrom), [...x, ...b, ...x, ...d, ...x, ...b, ...b, ...x, ...x, ...d]));
+    parts.push(await readAgg((st) => personsSql(x.length, st, liveFrom),
+      [curAt, curAt, ...x, ...b, w.from, ...x, ...d, curAt, ...x, ...b, curAt, ...b, ...x, w.from, ...x, ...d]));
   }
-  return aggregatePersons(parts.flat());
+  const rows = parts.flat();
+  const isCur = (r: RowDataPacket): boolean => r.cur === undefined || Number(r.cur) === 1;
+  const cur = aggregatePersons(rows.filter(isCur));
+  return { ...cur, previous: aggregatePersons(rows.filter((r) => !isCur(r))).byType };
 }

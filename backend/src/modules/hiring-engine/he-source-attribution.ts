@@ -146,18 +146,21 @@ export function sourceTypeSql(o: TypeSqlOpts): string {
 
 /**
  * Type of a raw form fill row `r` (always Meta): Live when the fill is on or after the cutoff and it is the person's first. The person is
- * the he_lead of the same mobile (`pl`, first fill `plf`, from fillPersonJoinsSql); with no he_lead, the other raw fills of the same
- * parsed_phone (idx_ml_phone). Only fills imported on or after the cutoff reach a subquery.
+ * the he_lead of the same mobile (uq_he_lead_mobile) with their first fill; with no he_lead, the other raw fills of the same parsed_phone
+ * (idx_ml_phone). The person lookups are correlated subqueries that run only for fills imported on or after the cutoff, so the bulk of old
+ * fills costs no lookup at all.
  */
 export function fillTypeSql(r: string, liveFrom: string): string {
   const c = cutoffSql(liveFrom);
-  return `IF(${r}.created_at >= ${c} AND ${rawFillSql(r)} >= ${c} AND IF(pl.id IS NOT NULL, ${liveFirstFillSql("pl", "plf", liveFrom)}, `
+  const phone = `${fillPhoneSql(r)} ${CI}`;
+  return `IF(${r}.created_at >= ${c} AND ${rawFillSql(r)} >= ${c} AND IF(EXISTS (SELECT 1 FROM he_lead pl WHERE pl.mobile10 = ${phone}), `
+    + `EXISTS (SELECT 1 FROM he_lead pl LEFT JOIN meta_lead_raw plf ON plf.id = pl.meta_lead_id ${CI} WHERE pl.mobile10 = ${phone} AND ${liveFirstFillSql("pl", "plf", liveFrom)}), `
     + `NOT EXISTS (SELECT 1 FROM meta_lead_raw afx WHERE afx.parsed_phone = ${r}.parsed_phone AND (afx.created_at < ${c} OR ${rawFillSql("afx")} < ${c}))), 'meta_live', 'meta_old')`;
 }
 export const fillPhoneSql = (r: string): string => `RIGHT(REGEXP_REPLACE(${r}.parsed_phone, '[^0-9]', ''), 10)`;
-/** he_lead of a raw fill's mobile (uq_he_lead_mobile) and that person's first fill, for fillTypeSql. */
-export const fillPersonJoinsSql = (r: string): string => `LEFT JOIN he_lead pl ON pl.mobile10 = ${fillPhoneSql(r)} ${CI}
-  LEFT JOIN meta_lead_raw plf ON plf.id = pl.meta_lead_id ${CI}`;
+/** Campaign of the first fill of the person behind raw fill `r` (their he_lead's meta_lead_id row), else the fill's own campaign. */
+export const fillFirstCampaignSql = (r: string): string =>
+  `COALESCE((SELECT plf.campaign_id FROM he_lead pl JOIN meta_lead_raw plf ON plf.id = pl.meta_lead_id ${CI} WHERE pl.mobile10 = ${fillPhoneSql(r)} ${CI}), ${r}.campaign_id)`;
 
 /** Sort key over already computed columns, for picking ONE type per person: Live, Old, he. SUBSTRING(MIN(key), 2) is the type. */
 export function typeKeySql(type: string): string {

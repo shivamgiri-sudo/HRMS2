@@ -34,7 +34,7 @@ beforeEach(async () => {
   execute.mockImplementation(async (sql: string) => {
     const q = String(sql);
     if (q.includes("FROM job_requisition WHERE id")) return [[{ branch_name: "Pune", requisition_code: "R", designation_name: "A" }]];
-    if (q.includes("SELECT DISTINCT d.requisition_id, d.branch_name FROM he_drive d")) return [[{ requisition_id: "r1", branch_name: "Pune" }]];
+    if (q.includes("DISTINCT d.requisition_id, d.branch_name FROM he_drive d")) return [[{ requisition_id: "r1", branch_name: "Pune" }]];
     return [[]];
   });
 });

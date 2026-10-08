@@ -39,7 +39,7 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
 import { driveCreditSql } from "./he-drive-credit.js";
-import { attributionJoinsSql, fillPersonJoinsSql, fillPhoneSql, fillTypeSql, sourceTypeSql } from "./he-source-attribution.js";
+import { attributionJoinsSql, fillPhoneSql, fillTypeSql, sourceTypeSql } from "./he-source-attribution.js";
 import { loadLiveFrom } from "./he-source-attribution.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
@@ -150,7 +150,6 @@ SELECT p.requisition_id, p.source_type, p.origin_kind, p.origin_id, MAX(p.origin
           FROM (SELECT ${fillPhoneSql("r")} ${CI} AS person, mc.requisition_id ${CI} AS requisition_id, ${fillTypeSql("r", liveFrom)} AS source_type,
                        mc.id AS campaign_id, mc.campaign_name
                   FROM meta_campaign mc JOIN meta_lead_raw r ON r.campaign_id = mc.id ${CI}
-                  ${fillPersonJoinsSql("r")}
                  WHERE mc.requisition_id IN (${ids}) AND (r.requisition_id IS NULL OR r.requisition_id = mc.requisition_id) AND r.parsed_phone IS NOT NULL${bounded ? `
                    AND r.created_at >= ? AND r.created_at < ?` : ""}) f
         UNION ALL

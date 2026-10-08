@@ -123,7 +123,7 @@ describe("getSourcesForRequisitions", () => {
     const ids = Array.from({ length: 450 }, (_, i) => `r${i}`);
     await getSourcesForRequisitions(ids, W);
     const stages = calls().filter(([q]) => kindOf(q) === "stages");
-    expect(stages.map(([, p]) => p.length - 2)).toEqual([200, 200, 50]);
+    expect(stages.map(([, p]) => p.length - 3)).toEqual([200, 200, 50]); // cur start, ids, window bounds
     expect(calls().filter(([q]) => kindOf(q) === "driveLeads")).toHaveLength(3);
   });
 

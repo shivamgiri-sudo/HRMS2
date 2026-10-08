@@ -15,7 +15,7 @@
  * No candidate data leaves this module: counts, labels and ids only.
  */
 import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import { limitedDb } from "./he-read-limit.js";
 import { logger } from "../../logger.js";
 import { STAGE_FLAGS_SQL, STAGE_FROM_SQL, computeShares, qfTypeSql, readSection, sourcesLeadsSql, type SourceCounts, type SourceRow } from "./he-requisition-sources.service.js";
 import { loadLiveFrom } from "./he-source-attribution.service.js";
@@ -25,7 +25,11 @@ import { addDays } from "./requisition-stream.window.js";
 
 export interface DayWindow { from: string; to: string }
 export interface RequisitionSourceRows { requisitionId: string; rows: SourceRow[] }
-export interface SourcesSlice { byRequisition: RequisitionSourceRows[]; partial: boolean; failedSections: string[] }
+export interface SourcesSlice {
+  byRequisition: RequisitionSourceRows[]; partial: boolean; failedSections: string[];
+  /** With a previous window: its follow-up stage counts (qualified .. joined; leads 0) per requisition, type and origin, read by the same statement. */
+  previousStages?: SourceRow[];
+}
 
 const BATCH = 200;
 const COUNT_KEYS: ReadonlyArray<keyof SourceCounts> = ["leads", "qualified", "emailed", "whatsapped", "replied", "confirmed", "called", "arrived", "selected", "joined"];
@@ -37,17 +41,18 @@ const isRealDay = (x: unknown): x is string => {
 };
 const ph = (n: number): string => Array(n).fill("?").join(",");
 
+// cur (the derived table's first column, so its parameter comes first) tells the window from the previous window.
 const stagesSql = (liveFrom: string) => (n: number): string => `
-SELECT f.requisition_id, f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
+SELECT f.cur, f.requisition_id, f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
        COUNT(*) AS qualified, SUM(f.emailed) AS emailed, SUM(f.whatsapped) AS whatsapped, SUM(f.replied) AS replied, SUM(f.called) AS called,
        SUM(f.confirmed) AS confirmed, SUM(f.arrived) AS arrived, SUM(f.selected) AS selected, SUM(f.joined) AS joined
   FROM (
-    SELECT qf.requisition_id, ${qfTypeSql(liveFrom)} AS source_type, qf.origin_id, qf.origin_label,
+    SELECT (qf.qualified_at >= ?) AS cur, qf.requisition_id, ${qfTypeSql(liveFrom)} AS source_type, qf.origin_id, qf.origin_label,
            ${STAGE_FLAGS_SQL}
 ${STAGE_FROM_SQL}
      WHERE qf.requisition_id IN (${ph(n)}) AND qf.qualified_at >= ? AND qf.qualified_at < ?
   ) f
- GROUP BY f.requisition_id, f.source_type, f.origin_id`;
+ GROUP BY f.requisition_id, f.source_type, f.origin_id, f.cur`;
 
 const streamsSql = (n: number): string => `SELECT requisition_id, id, source_type, origin_id, origin_label, status FROM requisition_stream WHERE requisition_id IN (${ph(n)})`;
 const campaignsSql = (n: number): string => `SELECT id, requisition_id, campaign_name FROM meta_campaign WHERE requisition_id IN (${ph(n)})`;
@@ -56,7 +61,7 @@ const zero = (): SourceCounts => ({ leads: 0, qualified: 0, emailed: 0, whatsapp
 type Rows = RowDataPacket[];
 type Cell = Omit<SourceRow, "shareOfLeads" | "shareOfJoined" | "leadToJoinRate"> & { _rank: number };
 
-export async function getSourcesForRequisitions(ids: string[], w: DayWindow, liveFrom?: string): Promise<SourcesSlice> {
+export async function getSourcesForRequisitions(ids: string[], w: DayWindow, liveFrom?: string, prev?: DayWindow | null): Promise<SourcesSlice> {
   const unique = [...new Set(ids)];
   if (!unique.length) return { byRequisition: [], partial: false, failedSections: [] };
   const failed: string[] = [];
@@ -74,20 +79,22 @@ export async function getSourcesForRequisitions(ids: string[], w: DayWindow, liv
   for (let i = 0; i < unique.length; i += BATCH) batches.push(unique.slice(i, i + BATCH));
 
   // `tolerant`: a table that is not deployed yet reads as empty instead of failing the section.
-  const run = async (name: string, sql: (n: number) => string, extra: unknown[], tolerant: boolean, list: string[][] = batches): Promise<Rows> => {
+  const run = async (name: string, sql: (n: number) => string, extra: unknown[], tolerant: boolean, list: string[][] = batches, paramsOf?: (b: string[]) => unknown[]): Promise<Rows> => {
     const parts = await Promise.all(list.map((b) => readSection<Rows>(name, failed, async () => {
-      try { return (await db.execute<Rows>(sql(b.length), [...b, ...extra]))[0]; } catch (err) { if (tolerant && noTable(err)) return []; throw err; }
+      try { return (await limitedDb.execute<Rows>(sql(b.length), paramsOf ? paramsOf(b) : [...b, ...extra]))[0]; } catch (err) { if (tolerant && noTable(err)) return []; throw err; }
     }, [])));
     return parts.flat();
   };
+  // Follow-up stages of the window and, with `prev`, of the previous window: one statement (rows tagged by cur).
+  const stagesLo = prev && isRealDay(prev.from) ? `${prev.from} 00:00:00` : dt[0];
 
   // A missing stream table reads as no leads (tolerant), as before.
   const leadsOf = async (): Promise<Rows> => (await Promise.all(batches.map((b) => readSection<Rows>("driveLeads", failed, async () => {
-    try { return (await db.execute<Rows>(sourcesLeadsSql(b.length, lf, true), [...b, ...dt, ...b, w.from, w.to]))[0]; } catch (err) { if (noTable(err)) return []; throw err; }
+    try { return (await limitedDb.execute<Rows>(sourcesLeadsSql(b.length, lf, true), [...b, ...dt, ...b, w.from, w.to]))[0]; } catch (err) { if (noTable(err)) return []; throw err; }
   }, [])))).flat();
   const [streams, stages, matchLeads, campaigns] = await Promise.all([
     run("streams", streamsSql, [], true),
-    run("stages", stagesSql(lf), dt, true),
+    run("stages", stagesSql(lf), dt, true, batches, (b) => [dt[0], ...b, stagesLo, dt[1]]),
     leadsOf(),
     run("campaigns", campaignsSql, [], false),
   ]);
@@ -107,10 +114,17 @@ export async function getSourcesForRequisitions(ids: string[], w: DayWindow, liv
     const c = cell(String(s.requisition_id), String(s.source_type) as SourceType, String(s.origin_id), String(s.origin_label ?? ""), 2);
     if (c) { c.streamId = String(s.id); c.streamStatus = String(s.status) as StreamStatus; }
   }
-  for (const r of stages) {
+  const isCur = (r: RowDataPacket): boolean => r.cur === undefined || Number(r.cur) === 1;
+  for (const r of stages.filter(isCur)) {
     const c = cell(String(r.requisition_id), String(r.source_type) as SourceType, String(r.origin_id), String(r.origin_label ?? ""), 1);
     if (c) for (const k of COUNT_KEYS) if (k !== "leads") c[k] += Number(r[k] ?? 0);
   }
+  const previousStages: SourceRow[] = stages.filter((r) => !isCur(r)).map((r) => {
+    const counts = zero();
+    for (const k of COUNT_KEYS) if (k !== "leads") counts[k] = Number(r[k] ?? 0);
+    return { sourceType: String(r.source_type) as SourceType, originId: String(r.origin_id), originLabel: String(r.origin_label ?? ""), streamId: null, streamStatus: null,
+      ...counts, leads: counts.qualified, shareOfLeads: 0, shareOfJoined: 0, leadToJoinRate: 0 };
+  });
   for (const c of campaigns) cell(String(c.requisition_id), "meta_live", String(c.id), String(c.campaign_name ?? ""), 3);
   // One origin and one type per person (sourcesLeadsSql): a campaign fill and a re-run line-up of the same person count once.
   for (const r of matchLeads) {
@@ -124,5 +138,5 @@ export async function getSourcesForRequisitions(ids: string[], w: DayWindow, liv
     return { requisitionId, rows: computeShares(raw) };
   });
   const failedSections = [...new Set(failed)];
-  return { byRequisition, partial: failedSections.length > 0, failedSections };
+  return { byRequisition, partial: failedSections.length > 0, failedSections, ...(prev ? { previousStages } : {}) };
 }

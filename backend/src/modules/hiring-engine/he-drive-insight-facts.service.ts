@@ -7,7 +7,7 @@
  * he-drive-analytics.service.ts. Counts, ids and labels only: error texts are folded to a Meta error code in code and never stored.
  */
 import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import { limitedDb } from "./he-read-limit.js";
 import { logger } from "../../logger.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
@@ -141,9 +141,9 @@ async function group<T>(name: string, failed: Failed, fn: () => Promise<T>, fall
 /** One statement per 200 requisitions; `streams` false is the same read before the stream tables exist. */
 async function read(ids: string[], sqlOf: (n: number, streams: boolean, liveFrom: string) => string, params: (b: string[]) => unknown[], liveFrom: string): Promise<RowDataPacket[]> {
   const one = async (b: string[]): Promise<RowDataPacket[]> => {
-    try { return (await db.execute<RowDataPacket[]>(sqlOf(b.length, true, liveFrom), params(b)))[0]; } catch (err) {
+    try { return (await limitedDb.execute<RowDataPacket[]>(sqlOf(b.length, true, liveFrom), params(b)))[0]; } catch (err) {
       if (!noTable(err)) throw err;
-      return (await db.execute<RowDataPacket[]>(sqlOf(b.length, false, liveFrom), params(b)))[0];
+      return (await limitedDb.execute<RowDataPacket[]>(sqlOf(b.length, false, liveFrom), params(b)))[0];
     }
   };
   return (await Promise.all(batchesOf(ids).map(one))).flat();
@@ -372,6 +372,6 @@ export async function collectInsightFacts(ctx: InsightFactsCtx, scope: BranchSco
   return { facts, failedSections: [...new Set(failed)] };
 
   async function readPlain(list: string[], sqlOf: (n: number) => string, ...tail: unknown[]): Promise<RowDataPacket[]> {
-    return (await Promise.all(batchesOf(list).map(async (b) => (await db.execute<RowDataPacket[]>(sqlOf(b.length), [...b, ...tail]))[0]))).flat();
+    return (await Promise.all(batchesOf(list).map(async (b) => (await limitedDb.execute<RowDataPacket[]>(sqlOf(b.length), [...b, ...tail]))[0]))).flat();
   }
 }
