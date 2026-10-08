@@ -49,3 +49,24 @@ exports[`arrival sync and no-show marking (pinned before the late-arrival change
   ],
 ]
 `;
+
+exports[`runFollowUps state hygiene (pinned before arrival sync was added to it) > sends paused: only the no-show pass runs > sql 1`] = `
+[
+  [
+    "SELECT m.id, m.lead_id, m.drive_id FROM he_match m WHERE m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL AND m.slot_at < DATE_SUB(NOW(), INTERVAL 120 MINUTE) AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY)",
+    [],
+  ],
+  [
+    "UPDATE he_match SET state = 'no_show' WHERE id = ?",
+    [
+      "m2",
+    ],
+  ],
+  [
+    "SELECT COUNT(*) AS n FROM he_match WHERE lead_id = ? AND state = 'no_show'",
+    [
+      "L2",
+    ],
+  ],
+]
+`;

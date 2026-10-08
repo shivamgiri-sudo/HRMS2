@@ -46,7 +46,7 @@ vi.mock("../he-meta-bridge.service.js", () => ({ sweepOwnedCampaigns: vi.fn(), b
 vi.mock("../he-followup-email.service.js", () => ({ sendFollowUpEmail: h.sendFollowUpEmail }));
 vi.mock("../he-readiness.service.js", () => ({ getRequisitionReadiness: vi.fn(async () => null) }));
 
-import { runEngineTick } from "../he-engine.service.js";
+import { runEngineTick, runFollowUps } from "../he-engine.service.js";
 import { countedNoShow } from "../he-no-show-events.js";
 
 const hygiene = () => h.calls.filter(([s]) => !s.startsWith("SELECT COUNT(*) AS n FROM he_lead l") && !s.startsWith("UPDATE he_lead l"));
@@ -145,5 +145,14 @@ describe("late and unplanned walk-ins are recorded as arrivals", () => {
 describe("a no-show event corrected by an arrival at the same drive is not counted", () => {
   it("countedNoShow excludes no_show events with an arrived event for the same lead and drive (idx_he_event_drive)", () => {
     expect(countedNoShow("e")).toBe("e.event_type = 'no_show' AND NOT EXISTS (SELECT 1 FROM he_lead_event ax WHERE ax.drive_id = e.drive_id AND ax.event_type = 'arrived' AND ax.lead_id = e.lead_id)");
+  });
+});
+
+describe("runFollowUps state hygiene (pinned before arrival sync was added to it)", () => {
+  it("sends paused: only the no-show pass runs", async () => {
+    h.noShowRows = [{ id: "m2", lead_id: "L2", drive_id: "d2" }];
+    const r = await runFollowUps({ dryRun: false });
+    expect(r.noShows).toBe(1);
+    expect(h.calls).toMatchSnapshot("sql");
   });
 });
