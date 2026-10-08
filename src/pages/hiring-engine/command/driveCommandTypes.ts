@@ -75,7 +75,8 @@ export interface RequisitionSources {
 }
 
 // backend/src/modules/hiring-engine/he-drive-insights.ts
-export type InsightRule = "under_target" | "weak_stage" | "contact_timing" | "reminder_gap" | "distance" | "channel_gap" | "language" | "overbooking" | "stream_dry" | "best_source" | "weekday" | "outcome_reason";
+export type InsightRule = "under_target" | "weak_stage" | "contact_timing" | "reminder_gap" | "distance" | "channel_gap" | "language" | "overbooking" | "stream_dry" | "best_source" | "weekday" | "outcome_reason"
+  | "stalled_leads" | "contact_confirm" | "no_show_leak" | "low_qualification" | "best_campaign" | "branch_concentration" | "cost_per_join";
 export type InsightSeverity = "critical" | "warn" | "info";
 export type EffectUnit = "arrivals_per_day" | "replies_per_day" | "joins_per_day" | "people" | "seats";
 export type InsightAction =
@@ -90,6 +91,8 @@ export interface DriveInsight {
   id: string; rule: InsightRule; severity: InsightSeverity; sourceType: SourceType | null; requisitionId: string | null;
   title: string; evidence: Array<{ label: string; value: string }>; suggestion: string;
   effect: { value: number; unit: EffectUnit; text: string } | null; action: InsightAction;
+  /** Who does what, in plain words (funnel-depth rules). */
+  ownerAction?: string;
 }
 
 // backend/src/modules/hiring-engine/he-drive-analytics.service.ts
@@ -104,11 +107,20 @@ export interface TypeCost {
 export interface CostBlock { available: boolean; note: string; estimated: boolean; ratesConfigured: boolean; rates: CostRates; byType: Record<SourceType, TypeCost> | null }
 
 // backend/src/modules/hiring-engine/he-drive-persons.service.ts
+export type CampaignBlockerCode = "no_requisition" | "requisition_closed" | "no_bmi_link" | "no_form" | "campaign_not_active";
+export interface CampaignBlocker { code: CampaignBlockerCode; text: string }
 export interface CampaignProgress {
   campaignId: string | null; campaignName: string; campaignStatus: string | null; campaignRequisitionCode: string | null;
   requisitionId: string; requisitionCode: string; branch: string; sourceType: "meta_live" | "meta_old";
-  stages: { leads: number; qualified: number; contacted: number; invited: number; confirmed: number; arrived: number; selected: number; joined: number };
+  /** Why qualified leads may get no outreach. Absent on older servers. */
+  blockers?: CampaignBlocker[];
+  stages: { leads: number; qualified: number; contacted: number; invited: number; confirmed: number; arrived: number; selected: number; joined: number;
+    /** Absent on older servers. */ fills?: number; screened?: number; replied?: number };
 }
+/** People at each journey stage of one drive type (PersonStages). */
+export interface JourneyCounts { leads: number; fills: number; screened: number; qualified: number; contacted: number; invited: number; replied: number; confirmed: number; arrived: number }
+// backend/src/modules/hiring-engine/he-drive-analytics.service.ts (OpenSeats)
+export interface OpenSeats { requisitionId: string; code: string; branch: string; open: number; closedReason: string | null }
 export interface TypeAnalytics { stages: StageCounts; previous: StageCounts; noShow: number; declined: number; conversions: Conversion[]; sparkline: number[] }
 export interface DriveAnalytics {
   generatedAt: string;
@@ -130,6 +142,10 @@ export interface DriveAnalytics {
   liveFrom?: string;
   /** Per Meta campaign and requisition progress in the window (events-based, same rules as `types`). Absent on older servers. */
   campaigns?: CampaignProgress[];
+  /** Journey per drive type from the persons read; null when that read failed. Absent on older servers. */
+  journey?: Record<SourceType, JourneyCounts> | null;
+  /** Open seats per requisition in scope. Absent on older servers. */
+  openSeats?: OpenSeats[];
   requisitionCount: number;
   truncated: boolean;
   partial: boolean;
