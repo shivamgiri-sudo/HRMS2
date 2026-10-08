@@ -23,6 +23,7 @@ vi.mock("../../../middleware/requireRole.js", () => ({ requireRole: () => (_q: a
 vi.mock("../dpdp-withdrawal.scope.js", () => ({
   buildRequesterScope: vi.fn(async () => null),
   withdrawalScopeGuard: (_q: any, _s: any, next: any) => next(),
+  withdrawalDecideGuard: (_q: any, _s: any, next: any) => next(),
 }));
 vi.mock("../../../shared/accessGuard.js", () => ({ hasRole: vi.fn(async () => m.isHr) }));
 

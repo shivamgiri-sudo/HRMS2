@@ -5,7 +5,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import * as svc from "./dpdp-withdrawal.service.js";
 import { hasRole } from "../../shared/accessGuard.js";
-import { buildRequesterScope, withdrawalScopeGuard } from "./dpdp-withdrawal.scope.js";
+import { buildRequesterScope, withdrawalDecideGuard, withdrawalScopeGuard } from "./dpdp-withdrawal.scope.js";
 
 export const dpdpWithdrawalRouter = Router();
 
@@ -108,6 +108,7 @@ dpdpWithdrawalRouter.post(
   "/dpdp-withdrawal/:id/start-review",
   requireAuth,
   requireRole("hr", "admin", "dpo", "compliance"),
+  withdrawalDecideGuard,
   h(async (req: AuthenticatedRequest, res: Response) => {
     await svc.startReview(req.params.id, req.authUser!.id);
     return res.json({ success: true, message: "Review started and processing hold applied" });
@@ -119,6 +120,7 @@ dpdpWithdrawalRouter.post(
   "/dpdp-withdrawal/:id/approve",
   requireAuth,
   requireRole("hr", "admin", "dpo", "compliance"),
+  withdrawalDecideGuard,
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { remarks } = req.body as { remarks?: string };
     await svc.approve(req.params.id, req.authUser!.id, remarks);
@@ -131,6 +133,7 @@ dpdpWithdrawalRouter.post(
   "/dpdp-withdrawal/:id/reject",
   requireAuth,
   requireRole("hr", "admin", "dpo", "compliance"),
+  withdrawalDecideGuard,
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { reason } = req.body as { reason?: string };
     if (!reason?.trim()) {

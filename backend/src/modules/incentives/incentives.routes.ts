@@ -5,6 +5,7 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import { writeAuditLog as writeEnterpriseAuditLog } from '../../shared/auditLog.js';
+import { loadBranchPolicy } from '../../shared/branchDecisionScope.js';
 import type { RowDataPacket } from 'mysql2';
 import multer from 'multer';
 
@@ -39,6 +40,24 @@ async function visibleBatchIds(req: AuthenticatedRequest): Promise<Set<string> |
 async function guardBatch(req: AuthenticatedRequest, res: any, batchId: string): Promise<boolean> {
   const ids = await visibleBatchIds(req);
   if (ids === null || ids.has(String(batchId))) return true;
+  res.status(403).json({ success: false, error: 'Forbidden: this incentive batch is outside your branch / assigned scope', message: 'Forbidden: this incentive batch is outside your branch / assigned scope' });
+  return false;
+}
+
+// DECIDE guard (owner policy 2026-10-01, same predicate as the Approval Center popup): org-wide roles, or the batch branch
+// equals the caller's OWN employees.branch_id. No assignment-scope widening, no "uploader sees it" exception, fail closed
+// when the batch has no branch. Nobody (org-wide included) decides a batch they uploaded themself (maker-checker).
+async function guardBatchDecide(req: AuthenticatedRequest, res: any, batchId: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>('SELECT branch_id, uploaded_by FROM incentive_upload_batch WHERE id = ? LIMIT 1', [batchId]);
+  const b = (rows as RowDataPacket[])[0];
+  if (!b) { res.status(404).json({ success: false, message: 'Incentive batch not found' }); return false; }
+  const userId = req.authUser!.id;
+  if (b.uploaded_by && String(b.uploaded_by) === String(userId)) {
+    res.status(403).json({ success: false, error: 'Forbidden: you cannot approve or reject an incentive batch you uploaded', message: 'Forbidden: you cannot approve or reject an incentive batch you uploaded' });
+    return false;
+  }
+  const policy = await loadBranchPolicy(userId);
+  if (policy.allows(b.branch_id)) return true;
   res.status(403).json({ success: false, error: 'Forbidden: this incentive batch is outside your branch / assigned scope', message: 'Forbidden: this incentive batch is outside your branch / assigned scope' });
   return false;
 }
@@ -240,7 +259,10 @@ incentivesRouter.get('/batches', h(async (req, res) => {
   const { month } = req.query as Record<string, string>;
   const all = (await svc.listBatches(month)) as any[];
   const ids = await visibleBatchIds(req);
-  res.json({ success: true, data: ids ? all.filter((b) => ids.has(String(b.id))) : all });
+  const seen = ids ? all.filter((b) => ids.has(String(b.id))) : all;
+  // Clamp to the caller's OWN branch (never an assignment-scope branch); org-wide roles keep everything, uploaders keep their own.
+  const policy = await loadBranchPolicy(req.authUser!.id);
+  res.json({ success: true, data: policy.orgWide ? seen : seen.filter((b) => policy.allows(b.branch_id) || String(b.uploaded_by ?? '') === String(req.authUser!.id)) });
 }));
 
 incentivesRouter.post('/batches', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
@@ -321,12 +343,14 @@ incentivesRouter.post('/batches/:id/submit', requireRole('admin', 'hr', 'finance
 }));
 
 incentivesRouter.post('/batches/:id/approve', requireRole('admin', 'finance'), h(async (req, res) => {
+  if (!(await guardBatchDecide(req, res, req.params.id))) return;
   const parsed = ApproveRejectSchema.parse(req.body);
   const data = await svc.approveBatch(req.params.id, req.authUser?.id ?? '', parsed.remarks);
   res.json({ success: true, data });
 }));
 
 incentivesRouter.post('/batches/:id/reject', requireRole('admin', 'finance'), h(async (req, res) => {
+  if (!(await guardBatchDecide(req, res, req.params.id))) return;
   const parsed = ApproveRejectSchema.parse(req.body);
   const data = await svc.rejectBatch(req.params.id, req.authUser?.id ?? '', parsed.remarks);
   res.json({ success: true, data });
@@ -460,7 +484,7 @@ incentivesRouter.post('/batches/:batchId/step-approve',
     const { batchId } = req.params;
     const userId = req.authUser!.id;
     const { remarks } = req.body as { remarks?: string };
-    if (!(await guardBatch(req, res, batchId))) return;
+    if (!(await guardBatchDecide(req, res, batchId))) return;
 
     // Find the current pending step
     const [pendingRows] = await db.execute<RowDataPacket[]>(
@@ -547,7 +571,7 @@ incentivesRouter.post('/batches/:batchId/step-reject',
     const { batchId } = req.params;
     const userId = req.authUser!.id;
     const { reason } = req.body as { reason?: string };
-    if (!(await guardBatch(req, res, batchId))) return;
+    if (!(await guardBatchDecide(req, res, batchId))) return;
 
     if (!reason?.trim()) {
       return res.status(400).json({ success: false, message: 'reason is required for rejection' });

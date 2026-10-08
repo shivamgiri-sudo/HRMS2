@@ -9,6 +9,7 @@ import {
   resolveFinanceBranchScope,
 } from "./finance-access-scope.js";
 import { costCentreManagementService } from "./cost-centre-management.service.js";
+import { costCentreBranchId, loadBranchPolicy } from "../../shared/branchDecisionScope.js";
 import type { RoleKey } from "../../platform/policy/index.js";
 
 // ============================================================================
@@ -71,6 +72,19 @@ async function assertRecordBranch(req: AuthenticatedRequest, branchId: unknown) 
     userRoles: req.userRoles,
     recordBranchId: String(branchId ?? ""),
   });
+}
+
+/**
+ * DECIDE guard (owner policy 2026-10-01; same predicate as the Approval Center popup): org-wide roles
+ * (super_admin / finance_head / accounts_head ...) decide any cost centre; `admin` and every other role only the ones in
+ * the branch of their OWN employees record. Fails closed when the cost centre has no branch. Sends 403 and returns false.
+ */
+async function guardDecide(req: AuthenticatedRequest, res: Response): Promise<boolean> {
+  const policy = await loadBranchPolicy(req.authUser!.id);
+  if (policy.orgWide) return true;
+  if (policy.allows(await costCentreBranchId(req.params.id))) return true;
+  res.status(403).json({ error: "Forbidden: this cost centre is outside your branch / assigned scope" });
+  return false;
 }
 
 function actor(req: AuthenticatedRequest) {
@@ -143,7 +157,8 @@ router.get(
   h(async (req, res) => {
     const role = primaryRole(req);
     const queue = await costCentreManagementService.getApprovalQueue(role);
-    res.json({ data: queue });
+    const policy = await loadBranchPolicy(req.authUser!.id);
+    res.json({ data: policy.orgWide ? queue : (queue as Array<{ branch_id?: unknown }>).filter((q) => policy.allows(q.branch_id)) });
   })
 );
 
@@ -230,6 +245,7 @@ router.post(
   "/:id/approve-l1",
   requireRole(...CC_L1_APPROVAL_ROLES),
   h(async (req, res) => {
+    if (!(await guardDecide(req, res))) return;
     const { remarks } = req.body;
     const item = await costCentreManagementService.approveL1(req.params.id, actor(req), remarks);
     res.json({ data: item });
@@ -244,6 +260,7 @@ router.post(
   "/:id/approve-l2",
   requireRole(...CC_L2_APPROVAL_ROLES),
   h(async (req, res) => {
+    if (!(await guardDecide(req, res))) return;
     const { remarks } = req.body;
     const item = await costCentreManagementService.approveL2(req.params.id, actor(req), remarks);
     res.json({ data: item });
@@ -258,6 +275,7 @@ router.post(
   "/:id/reject",
   requireRole(...CC_L1_APPROVAL_ROLES),
   h(async (req, res) => {
+    if (!(await guardDecide(req, res))) return;
     const { reason } = req.body;
     if (!reason?.trim()) {
       return res.status(400).json({ error: "Rejection reason is required" });
