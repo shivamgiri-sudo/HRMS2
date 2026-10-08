@@ -8,6 +8,8 @@ vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), e
 import { clearRequisitionSourcesCache, getRequisitionSources } from "../he-requisition-sources.service.js";
 import { getSourcesForRequisitions } from "../he-sources-window.service.js";
 import { stripRule } from "./attributionSql.js";
+import { qfTypeSql } from "../he-requisition-sources.service.js";
+import { fillTypeSql } from "../he-source-attribution.js";
 
 describe("getRequisitionSources SQL (pinned)", () => {
   beforeEach(() => { vi.clearAllMocks(); clearRequisitionSourcesCache(); });
@@ -29,7 +31,7 @@ const zeros = { qualified: 0, emailed: 0, whatsapped: 0, replied: 0, called: 0, 
 let failOn: { section: string; code: string } | null;
 const calls = (): Array<[string, unknown[]]> => execute.mock.calls.map((c) => [String(c[0]), c[1] as unknown[]]);
 const kindOf = (q: string): string =>
-  q.includes("FROM qualified_followup qf") ? "stages" : q.includes("FROM he_drive d") ? "driveLeads" : q.includes("FROM meta_lead_raw") ? "campaignLeads"
+  q.includes("FROM qualified_followup qf") ? "stages" : q.includes("FROM he_drive d") ? "driveLeads"
     : q.includes("FROM meta_campaign") ? "campaigns" : q.includes("FROM requisition_stream") ? "streams" : "other";
 
 describe("getSourcesForRequisitions", () => {
@@ -40,12 +42,13 @@ describe("getSourcesForRequisitions", () => {
       const k = kindOf(String(sql));
       if (failOn && failOn.section === k) throw Object.assign(new Error("SELECT boom WHERE mobile = 9876543210"), { code: failOn.code });
       if (k === "stages") return [[{ requisition_id: "r1", source_type: "meta_live", origin_id: "c9", origin_label: "x", ...zeros, qualified: 20, joined: 2 }]];
+      // one leads statement (sourcesLeadsSql): campaign fills and drive line-ups, one origin per person
       if (k === "driveLeads") return [[
+        { requisition_id: "r1", source_type: "meta_live", origin_kind: "campaign", origin_id: "c9", origin_label: "Ad", leads: 60 },
         { requisition_id: "r1", source_type: "he", origin_id: "pool", origin_label: "Pool: ATS history", leads: 10 },
         { requisition_id: "r2", source_type: "meta_old", origin_id: "d7", origin_label: "Launch 7", leads: 30 },
       ]];
       if (k === "campaigns") return [[{ id: "c9", requisition_id: "r1", campaign_name: "Ad" }]];
-      if (k === "campaignLeads") return [[{ campaign_id: "c9", leads: 60 }]];
       return [[]];
     });
   });
@@ -71,12 +74,47 @@ describe("getSourcesForRequisitions", () => {
     expect(out.byRequisition[0].rows[0].leads).toBe(12);
   });
 
+  it("types qualified .. joined by the person rule, never by qualified_followup.source_type (the pipeline's enqueue-time type)", async () => {
+    await getSourcesForRequisitions(["r1"], W);
+    const stages = calls().find(([q]) => kindOf(q) === "stages")![0];
+    expect(stages).toContain(`${qfTypeSql("2026-10-08")} AS source_type`);
+    expect(stages).not.toMatch(/qf\.source_type/);
+  });
+
+  it("counts a person once: one type and one origin per person and requisition (a campaign fill plus a re-run line-up is one lead)", async () => {
+    await getSourcesForRequisitions(["r1"], W);
+    const q = calls().find(([x]) => kindOf(x) === "driveLeads")![0].replace(/\s+/g, " ");
+    expect(q).toContain("GROUP BY u.person, u.requisition_id");
+    expect(q).toContain("SUBSTRING(MIN(CONCAT(FIELD(u.source_type, 'meta_live', 'meta_old', 'he'), u.source_type)), 2) AS source_type");
+    // origin precedence stream (4) > campaign (3) > drive (2) > pool (1), behind the person's type
+    expect(q).toContain("CONCAT(4 - FIELD(f.source_type, 'meta_live', 'meta_old', 'he'), 3, CHAR(31), 'campaign'");
+    expect(q).toContain("IF(y.sid IS NOT NULL, 4, IF(y.source_type = 'he', 1, 2))");
+    expect(q).toContain(fillTypeSql("r", "2026-10-08").replace(/\s+/g, " "));
+    expect(q).toContain("GROUP BY p.requisition_id, p.source_type, p.origin_kind, p.origin_id");
+  });
+
+  it("adds the leads rows per origin and never lets a person-typed origin double", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      const k = kindOf(String(sql));
+      if (k === "driveLeads") return [[
+        { requisition_id: "r1", source_type: "meta_old", origin_kind: "campaign", origin_id: "c9", origin_label: "Ad", leads: 5 },
+        { requisition_id: "r1", source_type: "meta_old", origin_kind: "drive", origin_id: "d7", origin_label: "Re-run 2026-10-07", leads: 3 },
+      ]];
+      if (k === "campaigns") return [[{ id: "c9", requisition_id: "r1", campaign_name: "Ad" }]];
+      return [[]];
+    });
+    const rows = (await getSourcesForRequisitions(["r1"], W)).byRequisition[0].rows;
+    expect(rows.map((r) => [r.sourceType, r.originId, r.leads])).toEqual([["meta_live", "c9", 0], ["meta_old", "c9", 5], ["meta_old", "d7", 3]]);
+  });
+
   it("binds the window as IST day bounds on the follow-up, drive and form-fill statements", async () => {
     await getSourcesForRequisitions(["r1", "r2"], W);
     const by = (k: string) => calls().filter(([q]) => kindOf(q) === k);
     expect(by("stages")[0][1].slice(-2)).toEqual(["2026-10-01 00:00:00", "2026-10-15 00:00:00"]);
     expect(by("driveLeads")[0][1].slice(-2)).toEqual(["2026-10-01", "2026-10-14"]);
-    expect(by("campaignLeads")[0][1].slice(-2)).toEqual(["2026-10-01 00:00:00", "2026-10-15 00:00:00"]);
+    // form fills by import time, line-ups by drive date, in one statement: ids, bounds, ids, dates
+    expect(by("driveLeads")[0][1]).toEqual(["r1", "r2", "2026-10-01 00:00:00", "2026-10-15 00:00:00", "r1", "r2", "2026-10-01", "2026-10-14"]);
+    expect(by("driveLeads")[0][0]).toContain("r.created_at >= ? AND r.created_at < ?");
     expect(by("stages")[0][0]).toContain("qf.qualified_at >= ? AND qf.qualified_at < ?");
     expect(by("driveLeads")[0][0]).toContain("d.drive_date BETWEEN ? AND ?");
   });

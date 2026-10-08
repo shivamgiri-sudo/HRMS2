@@ -18,6 +18,7 @@ import { clearDriveAnalyticsCache, getDriveAnalytics, resolveWindow, type DriveA
 import { getDriveTrend } from "../he-drive-trend.service.js";
 import { driveCreditSql } from "../he-drive-credit.js";
 import { stripRule } from "./attributionSql.js";
+import { qfTypeSql } from "../he-requisition-sources.service.js";
 
 const NOW = new Date("2026-10-14T06:00:00Z");
 const Q = { from: "2026-10-01", to: "2026-10-14" };
@@ -346,6 +347,13 @@ describe("getDriveAnalytics", () => {
 });
 
 describe("events-based stages and per-campaign progress", () => {
+  it("types the stop reasons by the person rule, never by qualified_followup.source_type", async () => {
+    impl.discovery = [head("r1")];
+    await getDriveAnalytics(Q, ALL, NOW);
+    const stops = callsOf("stops")[0][0];
+    expect(stops).toContain(`SELECT ${qfTypeSql("2026-10-08")} AS source_type, qf.stopped_reason`);
+    expect(stops).not.toMatch(/qf\.source_type/);
+  });
   const p = (o: Record<string, unknown>) => ({ requisition_id: "r1", source_type: "he", campaign_id: null, leads: 0, qualified: 0, contacted: 0, invited: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0, ...o });
   it("takes leads / invited / confirmed / arrived per type from the persons read, selected / joined still from the drive credit", async () => {
     impl.discovery = [head("r1")];

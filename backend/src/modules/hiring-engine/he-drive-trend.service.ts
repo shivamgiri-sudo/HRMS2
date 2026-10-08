@@ -69,7 +69,7 @@ const joinsSql = (streams: boolean): string => `LEFT JOIN he_match m ON m.drive_
   ${attributionJoinsSql({ streams, match: "m", requisition: "d.requisition_id", lead: "al", leadId: "m.lead_id", stream: "s" })}`;
 // source_type: the shared rule, NULL for a `he` match (and for a drive with no match), so `streamType` keeps meaning "typed other than he".
 const typeSql = (streams: boolean, liveFrom: string): string =>
-  `IF(m.id IS NULL, NULL, NULLIF(${sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, stream: "s" })}, 'he'))`;
+  `IF(m.id IS NULL, NULL, NULLIF(${sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, stream: "s", ref: "d.drive_date" })}, 'he'))`;
 // source_type is column 6 of the trend read and 10 of the groups read: GROUP BY uses the position, because a bare name would bind to s.source_type.
 const streamCols = (streams: boolean, liveFrom: string): string => `${streams ? "s.id" : "NULL"} AS stream_id, ${typeSql(streams, liveFrom)} AS source_type`;
 const trendSql = (liveFrom: string) => (streams: boolean): string => `SELECT d.id, d.drive_date, d.status, d.target_shows, ${streamCols(streams, liveFrom)}, ${BUCKETS_SQL}

@@ -55,12 +55,14 @@ describe("every source-typed reader uses the shared rule", () => {
     await outcomeReasonCounts(["r1"], W.from, W.to);
     const list = typed();
     expect(list.length).toBeGreaterThanOrEqual(11);
-    const origin = (attribution as { metaOriginSql?: (l: string) => string }).metaOriginSql?.("al") ?? "<missing shared rule>";
+    void attribution;
     for (const q of list) {
-      expect(q).toContain(origin);
+      // the shared rule's Meta-origin check (the person: he_lead al / hl, or the fill's pool person pl) and the cutoff
+      expect(q).toMatch(/\((al|hl|pl)\.meta_lead_id IS NOT NULL OR EXISTS \(SELECT 1 FROM he_lead_campaign alx/);
       expect(q).toContain("TIMESTAMP '2026-10-08 00:00:00'");
       expect(q).not.toContain("run_label IS NOT NULL");
       expect(q).not.toContain("COALESCE(rs.source_type, 'he') AS source_type");
+      expect(q).not.toMatch(/qf\.source_type/);
     }
   });
 });

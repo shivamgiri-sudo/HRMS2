@@ -94,7 +94,7 @@ type Counts = Partial<Record<OutcomeReasonCode, number>>;
 export type ReasonCounts = Record<SourceType, { no_show: Counts; declined: Counts }>;
 
 // Typed by the shared source rule (he-source-attribution.ts).
-const countsSql = (n: number, streams: boolean, liveFrom: string): string => `SELECT ${sourceTypeSql({ streams, d: "d", lead: "al", liveFrom })} AS source_type, r.outcome, r.reason_code, COUNT(*) AS n
+const countsSql = (n: number, streams: boolean, liveFrom: string): string => `SELECT ${sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, ref: "d.drive_date" })} AS source_type, r.outcome, r.reason_code, COUNT(*) AS n
   FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id AND m.state IN ('no_show','declined')
   JOIN he_match_outcome_reason r ON r.match_id = m.id

@@ -42,6 +42,16 @@ describe("stageCountsByType", () => {
   });
 });
 
+describe("stageCountsByType with the persons read", () => {
+  it("never lifts a section's leads with qualified (a September window keeps Live Meta leads at 0)", () => {
+    const persons = { meta_live: { leads: 0, invited: 0, confirmed: 0, arrived: 0 }, meta_old: { leads: 50, invited: 9, confirmed: 2, arrived: 1 }, he: { leads: 7, invited: 3, confirmed: 1, arrived: 0 } };
+    const out = stageCountsByType([src({ sourceType: "meta_live", qualified: 40 }), src({ sourceType: "meta_old", qualified: 60 })], [], [], persons);
+    expect(out.meta_live.leads).toBe(0);
+    expect(out.meta_old.leads).toBe(50);
+    expect(out.he).toMatchObject({ leads: 7, invited: 3, confirmed: 1, arrived: 0 });
+  });
+});
+
 describe("unknown stream type (M6)", () => {
   it("is ignored by stageCountsByType and dailySeries", () => {
     const bad = { driveId: "d1", date: "2026-10-01", status: "active", wanted: 5, streamId: "s", streamType: "bogus" as never, lined: 3, invited: 3, confirmed: 2, arrived: 1, noShow: 0, declined: 0 };

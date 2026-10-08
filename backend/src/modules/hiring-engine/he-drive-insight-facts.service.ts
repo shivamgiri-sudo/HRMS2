@@ -54,7 +54,7 @@ const batchesOf = (ids: string[]): string[][] => { const out: string[][] = []; f
 // ---- SQL ---------------------------------------------------------------------------------------------------------------------------------
 // The shared source rule (he-source-attribution.ts), credit through he_match.id. requisition_stream* may not exist yet (ER_NO_SUCH_TABLE => no credit).
 const creditJoin = (streams: boolean): string => attributionJoinsSql({ streams, match: "m", requisition: "d.requisition_id", lead: "al", leadId: "m.lead_id" });
-const typeCol = (streams: boolean, liveFrom: string): string => sourceTypeSql({ streams, d: "d", lead: "al", liveFrom });
+const typeCol = (streams: boolean, liveFrom: string): string => sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, ref: "d.drive_date" });
 const FROM_MATCH = `FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id`;
 const DRIVE_WHERE = (n: number): string => `d.requisition_id IN (${ph(n)}) AND d.drive_date BETWEEN ? AND ?`;
