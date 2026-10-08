@@ -18,6 +18,7 @@ import { istHour } from "./he-guardrails.js";
 import { displayFirstName } from "./he-name.js";
 import { dateLabel, sendsPaused, timeLabel, type SendResult } from "./he-send.service.js";
 import { escHtml, publicBaseUrl } from "./he-email-parts.js";
+import { replyToFor } from "./email-buttons.policy.js";
 
 export type FollowKind = "confirmed" | "reminder_1d" | "reschedule_offer" | "no_show";
 export const followKey = (k: FollowKind) => `he_email_${k}`;
@@ -119,7 +120,8 @@ export async function sendFollowUpEmail(kind: FollowKind, matchId: string, o: { 
   if (o.dryRun) return { status: "dry_run", body: mail.subject, lang: "en", params: [] };
   const messageId = randomUUID();
   try {
-    const r = await emailService.send({ to, subject: mail.subject, html: mail.html, text: mail.text });
+    const replyTo = replyToFor(m.token ? String(m.token) : null);
+    const r = await emailService.send({ to, subject: mail.subject, html: mail.html, text: mail.text, ...(replyTo ? { replyTo } : {}) });
     await db.execute("INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
       [messageId, m.lead_id, m.mobile10, "out", "email", followKey(kind), mail.subject.slice(0, 2000), r?.messageId ?? null, "sent", m.requisition_id, m.drive_id ?? null]);
     await addEvent(String(m.lead_id), `sent_${followKey(kind)}`, { channel: "email", driveId: m.drive_id, detail: to.replace(/^(.).*(@.*)$/, "$1***$2") });

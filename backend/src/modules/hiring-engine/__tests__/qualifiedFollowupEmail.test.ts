@@ -303,3 +303,15 @@ describe("answer buttons on pipeline emails for Meta rows without a match (polic
     expect(inviteInserts()).toHaveLength(0);
   });
 });
+
+describe("Reply-To on pipeline emails", () => {
+  it("absent unless INBOUND_EMAIL_REPLY_TO is set; then it carries the answer token", async () => {
+    world();
+    await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(send.mock.calls[0][0]).not.toHaveProperty("replyTo");
+    send.mockClear(); world();
+    vi.stubEnv("INBOUND_EMAIL_REPLY_TO", "replies@x.in");
+    await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(send.mock.calls[0][0].replyTo).toBe("replies@x.in");
+  });
+});

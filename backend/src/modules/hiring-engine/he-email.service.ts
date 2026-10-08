@@ -15,6 +15,7 @@ import { displayFirstName } from "./he-name.js";
 import { dateLabel, metaFlowNotifiedRecently, sendsPaused, timeLabel, type SendResult } from "./he-send.service.js";
 import { channelAllowed } from "./he-campaign-config.service.js";
 import { answerButtonsHtml, answerButtonsText, escHtml, publicBaseUrl, stopLinkHtml, stopLinkText } from "./he-email-parts.js";
+import { loadEmailButtonSwitches, replyToFor } from "./email-buttons.policy.js";
 
 export const INVITE_EMAIL_KEY = "he_walkin_invite_email";
 const env = (k: string, d: string) => (process.env[k]?.trim() ? process.env[k]!.trim() : d);
@@ -106,18 +107,21 @@ export async function sendInviteEmail(matchId: string, o: { dryRun?: boolean } =
   const maps = m.latitude != null && m.longitude != null ? `https://maps.google.com/?q=${m.latitude},${m.longitude}` : m.address ? `https://maps.google.com/?q=${encodeURIComponent(String(m.address))}` : null;
   const phone = env("HE_HR_CONTACT_PHONE", ""), cname = env("HE_HR_CONTACT_NAME", "");
   const base = publicBaseUrl();
+  const stopLink = m.token ? (await loadEmailButtonSwitches()).stopLink : false;
   const mail = buildInviteEmail({
     name: displayFirstName(m.full_name), role: String(m.designation_name ?? "the role"), company: env("HE_COMPANY_NAME", "MAS Callnet"),
     branch: String(m.branch_name ?? ""), address: String(m.address ?? ""), date: m.drive_date ? dateLabel(String(m.drive_date)) : slot.slice(0, 10), time: timeLabel(slot), maps,
     docs: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"), reference: `HE-${String(m.id).replace(/-/g, "").slice(0, 6).toUpperCase()}`, contact: [cname, phone].filter(Boolean).join(" "),
     answerUrl: m.token ? `${base}/w/${m.token}` : null,
     optInUrl: m.token ? `${base}/w/${m.token}` : null,
+    ...(stopLink ? { stopUrl: `${base}/w/${m.token}` } : {}),
   });
   if (o.dryRun) return { status: "dry_run", body: mail.subject, lang: "en", params: [] };
 
   const messageId = randomUUID();
   try {
-    const r = await emailService.send({ to, subject: mail.subject, html: mail.html, text: mail.text });
+    const replyTo = replyToFor(m.token ? String(m.token) : null);
+    const r = await emailService.send({ to, subject: mail.subject, html: mail.html, text: mail.text, ...(replyTo ? { replyTo } : {}) });
     await db.execute(
       "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
       [messageId, m.lead_id, m.mobile10, "out", "email", INVITE_EMAIL_KEY, mail.subject.slice(0, 2000), r?.messageId ?? null, "sent", m.requisition_id, m.drive_id ?? null]);

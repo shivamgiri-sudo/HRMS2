@@ -17,7 +17,7 @@ import { afterFailure, followupRef, nextStepDue } from "./qualified-followup.rul
 import { bestOfferSkipSql } from "./he-best-offer.js";
 import { notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
-import { loadEmailButtonSwitches } from "./email-buttons.policy.js";
+import { loadEmailButtonSwitches, replyToFor } from "./email-buttons.policy.js";
 import { answerUrlFor, DEMO_TOKEN } from "./he-email-parts.js";
 import { inviteLinkFor, newInviteToken, type InviteLink, type InviteLinkInput } from "./walkin-invite.service.js";
 
@@ -119,6 +119,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
   let heLeadId: string | null;
   let mail: { subject: string; html: string; text: string };
   let invite: { input: InviteLinkInput; link: InviteLink } | null = null;
+  let answerToken: string | null = null;
   try {
     // Test mode must not write he_lead, so it never bridges.
     heLeadId = isTest ? row.heLeadId : await ensureHeLead(row);
@@ -149,6 +150,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
       invite = { input, link };
     }
     const answerUrl = ctx.matchToken ? `${base}/w/${ctx.matchToken}` : invite?.link.answerUrl ?? null;
+    answerToken = isTest ? null : ctx.matchToken ?? invite?.link.token ?? null;
     mail = ctx.slot
       ? buildInviteEmail({
           name, role, company, branch, address: ctx.branchAddress ?? "", date: dateLabel(ctx.slot.date), time: timeLabel(`${ctx.slot.date}T${ctx.slot.time}`), maps: ctx.mapsLink,
@@ -168,7 +170,8 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
   const target = isTest ? (s.testEmail as string) : to;
   let providerId: string | null = null;
   try {
-    const r = await emailService.send({ to: target, subject: isTest ? `[TEST] ${mail.subject}` : mail.subject, html: mail.html, text: mail.text });
+    const replyTo = replyToFor(answerToken);
+    const r = await emailService.send({ to: target, subject: isTest ? `[TEST] ${mail.subject}` : mail.subject, html: mail.html, text: mail.text, ...(replyTo ? { replyTo } : {}) });
     providerId = r?.messageId ?? null;
   } catch (err) {
     const msg = scrub(err instanceof Error ? err.message : String(err));
