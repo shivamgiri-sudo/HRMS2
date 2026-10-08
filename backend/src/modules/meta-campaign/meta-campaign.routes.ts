@@ -40,6 +40,7 @@ import { leadVerifyToken, isMetaConfigured } from './meta-api.client.js';
 import { runMetaLeadSyncNow } from '../../cron/metaLeadSync.cron.js';
 import { parseVapiCallback, isVapiConfigured } from './vapi-voicebot.provider.js';
 import type { VapiCallbackPayload } from './vapi-voicebot.provider.js';
+import { recordMetaVoiceResponse } from './meta-response-bridge.service.js';
 import {
   isWassengerConfigured,
   parseWassengerWebhook,
@@ -251,6 +252,8 @@ metaCampaignRouter.post('/voice-callback', (req: Request, res: Response) => {
   void recordVoiceCallback(referenceId, status, outcome)
     .then((matched) => {
       if (!matched) console.warn('[meta voice-callback] no lead matched reference_id', referenceId);
+      else void recordMetaVoiceResponse({ metaLeadId: referenceId, status, outcome, callId: null, source: 'meta_voice', at: new Date() })
+        .catch((e: unknown) => console.error('[meta voice-callback] response record failed', e));
     })
     .catch((e: unknown) => console.error('[meta voice-callback] failed', e));
 
@@ -314,6 +317,8 @@ metaCampaignRouter.post('/vapi-callback', (req: Request, res: Response) => {
       if (!matched) {
         console.warn('[vapi-callback] no lead matched reference_id', parsed.referenceId);
       } else {
+        void recordMetaVoiceResponse({ metaLeadId: parsed.referenceId!, status: statusMap[parsed.outcome] ?? 'completed', outcome: outcomeText, callId: payload.call?.id ? String(payload.call.id) : null, source: 'vapi', at: new Date() })
+          .catch((e: unknown) => console.error('[vapi-callback] response record failed', e));
         console.log('[vapi-callback] recorded outcome', {
           referenceId: parsed.referenceId,
           outcome: parsed.outcome,

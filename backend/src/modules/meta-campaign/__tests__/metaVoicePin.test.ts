@@ -62,6 +62,14 @@ describe("Meta voice callbacks pin", () => {
     await flush();
     expect({ status: r.status, body: r.body, calls: (recordVoiceCallback as unknown as { mock: { calls: unknown[] } }).mock.calls }).toMatchSnapshot();
   });
+  it("a matched callback also writes a response record (reads the lead's phone), the reply is unchanged", async () => {
+    const a = await app();
+    await request(a).post("/api/meta/voice-callback").set("x-voicebot-token", "vb-tok").send({ reference_id: "ML1", status: "no_answer" });
+    await request(a).post("/api/meta/vapi-callback").send({ call: { id: "vapi-2", endedReason: "no-answer", metadata: { referenceId: "ML1" } } });
+    await flush();
+    const reads = dbExecute.mock.calls.filter((c) => String(c[0]).includes("SELECT parsed_phone FROM meta_lead_raw WHERE id = ?"));
+    expect(reads.map((c) => (c[1] as unknown[])[0])).toEqual(["ML1", "ML1"]);
+  });
   it("bad token and missing reference", async () => {
     const a = await app();
     expect((await request(a).post("/api/meta/voice-callback").set("x-voicebot-token", "nope").send({ reference_id: "ML1" })).status).toBe(403);
