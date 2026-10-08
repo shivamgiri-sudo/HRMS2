@@ -5,6 +5,7 @@ import { BANK_ACCOUNT_READ_ROLES } from "./company-bank-account.routes.js";
 import { callerBranchScope } from "./finance-branch-guard.js";
 import { ledgerReportsService, startTrialBalanceWarmer } from "./ledger-reports.service.js";
 import { financialStatements } from "./financial-statements.service.js";
+import { journalBookService } from "./journal-book.service.js";
 
 /**
  * Own prefix (/api/finance/ledger-reports), same rationale as every other finance router that
@@ -101,6 +102,37 @@ ledgerReportsRouter.get(
     const scope = await callerBranchScope(req, filters.branchId);
     const result = await ledgerReportsService.headSubHeadLedger(from, to, filters, scope);
     res.json({ success: true, data: result });
+  }),
+);
+
+/** Day book: every posted entry in a date range, with debit and credit totals. */
+ledgerReportsRouter.get(
+  "/day-book",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (req, res) => {
+    const scope = await callerBranchScope(req);
+    const data = await journalBookService.dayBook(
+      {
+        from: req.query.from ? String(req.query.from) : undefined,
+        to: req.query.to ? String(req.query.to) : undefined,
+        sourceType: req.query.sourceType ? String(req.query.sourceType) : undefined,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      },
+      scope,
+    );
+    res.json({ success: true, data });
+  }),
+);
+
+/** One posted entry in Particulars / Debit / Credit form. 404 when it does not exist or is outside the caller's branches. */
+ledgerReportsRouter.get(
+  "/voucher/:id",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (req, res) => {
+    const data = await journalBookService.voucher(String(req.params.id), await callerBranchScope(req));
+    if (!data) return res.status(404).json({ success: false, message: "Voucher not found" });
+    res.json({ success: true, data });
   }),
 );
 

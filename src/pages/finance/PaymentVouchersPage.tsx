@@ -552,8 +552,7 @@ export function PaymentVouchersContent() {
                 {raiseForm.sourceType === "vendor_advance" && (
                   <p className="text-xs text-slate-500">
                     Not tied to any GRN — the amount below is paid to the vendor as an advance and
-                    becomes available to apply against their future dues (raise a separate "Apply
-                    Vendor Advance" voucher when a due comes in).
+                    becomes available to apply against their future dues (Accounts applies it against a due later).
                   </p>
                 )}
               </div>

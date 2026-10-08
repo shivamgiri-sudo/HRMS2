@@ -26,6 +26,7 @@ import { BankReconciliationContent } from "./BankReconciliationPage";
 import { FinanceAnalyticsContent } from "./FinanceAnalyticsPage";
 import { JournalVouchersContent } from "./JournalVouchersPage";
 import { FinancialStatementsContent } from "@/components/finance/ledger/FinancialStatementsContent";
+import { DayBookContent } from "@/components/finance/ledger/DayBookContent";
 import { TdsContent } from "@/components/finance/tds/TdsContent";
 
 const TABS = [
@@ -36,6 +37,7 @@ const TABS = [
   { key: "bank-ledger", label: "Bank Ledger" },
   { key: "reconciliation", label: "Reconciliation" },
   { key: "ledger-reports", label: "Ledger Reports" },
+  { key: "day-book", label: "Day Book" },
   { key: "statements", label: "Financial Statements" },
   { key: "tds", label: "TDS" },
   { key: "ledger-heads", label: "Ledger Heads" },
@@ -96,6 +98,7 @@ export default function FinanceLedgerHubPage() {
           <TabsContent value="bank-ledger"><BankLedgerReportContent /></TabsContent>
           <TabsContent value="reconciliation"><BankReconciliationContent /></TabsContent>
           <TabsContent value="ledger-reports"><LedgerReportsContent /></TabsContent>
+          <TabsContent value="day-book"><DayBookContent /></TabsContent>
           <TabsContent value="statements"><FinancialStatementsContent /></TabsContent>
           <TabsContent value="tds"><TdsContent /></TabsContent>
           <TabsContent value="ledger-heads"><LedgerHeadsContent /></TabsContent>
