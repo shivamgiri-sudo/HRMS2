@@ -38,13 +38,18 @@ describe("criteria routes: roles", () => {
     expect(res.status).toBe(403);
     expect(h.svc.saveRequisitionCriteria).not.toHaveBeenCalled();
   });
-  it.each(["recruiter", "ceo", "hr_admin"])("%s can read", async (role) => {
+  it.each(["ceo", "hr_admin", "admin"])("%s can read", async (role) => {
     h.user.role = role;
     expect((await request(await app()).get("/api/job-requisition/r1/criteria")).status).toBe(200);
   });
-  it("employee cannot read", async () => {
-    h.user.role = "employee";
+  it.each(["employee", "recruiter"])("%s cannot read (recruiters see nothing of selection)", async (role) => {
+    h.user.role = role;
     expect((await request(await app()).get("/api/job-requisition/r1/criteria")).status).toBe(403);
+  });
+  it("the criteria read carries the caller's permissions", async () => {
+    h.user.role = "ceo";
+    const res = await request(await app()).get("/api/job-requisition/r1/criteria");
+    expect(res.body.data.permissions).toEqual({ read: true, edit: false, export: false, approve: false, override: false });
   });
 });
 

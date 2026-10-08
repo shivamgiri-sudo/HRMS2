@@ -12,6 +12,8 @@ import { currentFollowupPort } from "./enrolment-port.js";
 import { bookedMismatch, releaseCriteriaHold } from "./reevaluate.service.js";
 import { OVERRIDE_ROLES, overrideHistory, removeOverride, setOverride, type OverrideActor } from "./override.service.js";
 import { SOURCE_KINDS, type SourceKind } from "./selection-types.js";
+import { CRITERIA_READ_ROLES } from "./selection-roles.js";
+import { approvalState } from "./selection-ui.service.js";
 
 export const shortlistRouter = Router();
 
@@ -84,6 +86,13 @@ shortlistRouter.post("/enrol", requireAuth, requireRole(...APPROVAL_ROLES), hand
   if (!str(req.body?.requisitionId) || !k) return bad(res, "requisitionId and sourceKind are required");
   if (!(await jobRequisitionService.isRequisitionVisible(req.authUser!, { id: str(req.body.requisitionId) }))) return res.status(404).json({ success: false, message: "Requisition not found" });
   return res.json({ success: true, data: await enrolApproved({ requisitionId: str(req.body.requisitionId), sourceKind: k, port: currentFollowupPort }) });
+}));
+
+// The approve bar's state (read roles; the bar shows write controls only when permissions.approve)
+shortlistRouter.get("/approval-state", requireAuth, requireRole(...CRITERIA_READ_ROLES), handle(async (req, res) => {
+  const k = kindOf(req.query.sourceKind);
+  if (!str(req.query.requisitionId) || !k) return bad(res, "requisitionId and sourceKind are required");
+  return res.json({ success: true, data: await approvalState(req.authUser!, str(req.query.requisitionId), k) });
 }));
 
 // ── After a criteria change (S14) ──

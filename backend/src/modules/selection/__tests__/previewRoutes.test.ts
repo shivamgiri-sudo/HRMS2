@@ -44,7 +44,13 @@ describe("preview routes", () => {
     expect((await request(a).get("/api/job-requisition/r1/selection/preview?sub=bogus")).status).toBe(400);
     expect((await request(a).post("/api/job-requisition/r1/selection/preview").send({ draft: "x" })).status).toBe(400);
   });
-  it.each(["recruiter", "ceo", "branch_head"])("%s may read the preview but not export the CSV", async (role) => {
+  it("a recruiter sees nothing of selection (403)", async () => {
+    h.user.role = "recruiter";
+    const a = await app();
+    expect((await request(a).get("/api/job-requisition/r1/selection/preview")).status).toBe(403);
+    expect((await request(a).get("/api/job-requisition/selection/why?q=abc")).status).toBe(403);
+  });
+  it.each(["ceo", "branch_head"])("%s may read the preview but not export the CSV", async (role) => {
     h.user.role = role;
     const a = await app();
     expect((await request(a).get("/api/job-requisition/r1/selection/preview")).status).toBe(200);

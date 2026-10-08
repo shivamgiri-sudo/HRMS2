@@ -65,11 +65,11 @@ function cfgOf(r: RequisitionCriteriaRow): MetaScreeningConfig {
   return (c && typeof c === "object" ? c : {}) as MetaScreeningConfig;
 }
 
-type Draft = { key: RuleKey; required: unknown; mode: "must" | "prefer"; weight: number; missing: MissingPolicy; missingBySource?: CompiledRule["missingBySource"]; origin: string; only?: SourceKind[] };
+type Draft = { key: RuleKey; required: unknown; mode: "must" | "prefer"; weight: number; missing: MissingPolicy; missingBySource?: CompiledRule["missingBySource"]; origin: string; only?: SourceKind[]; defaulted?: true };
 const finish = (d: Draft): CompiledRule => ({
   key: d.key, label: catalogueEntry(d.key).label, op: catalogueEntry(d.key).ops[0], required: d.required, requiredText: requiredText(d.key, d.required),
   mode: d.mode, weight: d.mode === "prefer" ? d.weight : 0, missing: d.missing, ...(d.missingBySource && Object.keys(d.missingBySource).length ? { missingBySource: d.missingBySource } : {}),
-  origin: d.origin, ...(d.only ? { only: d.only } : {}),
+  origin: d.origin, ...(d.only ? { only: d.only } : {}), ...(d.defaulted ? { defaulted: true as const } : {}),
 });
 
 /** The value each column/config-backed key has on the row, or null when blank. */
@@ -164,7 +164,7 @@ function compileRules(r: RequisitionCriteriaRow, cfg: MetaScreeningConfig, sr: S
     if (!s) {
       if (col && entry.home !== "selection_rules" && key !== "location_region") {
         decided.add(key);
-        for (const required of col) out.push(draftOf(key, required, { mode: entry.defaultMode === "off" ? "must" : entry.defaultMode }, entry.home));
+        for (const required of col) out.push({ ...draftOf(key, required, { mode: entry.defaultMode === "off" ? "must" : entry.defaultMode }, entry.home), defaulted: true });
       }
       continue;
     }

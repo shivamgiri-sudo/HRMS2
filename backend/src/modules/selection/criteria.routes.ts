@@ -12,16 +12,14 @@ import {
 } from "./criteria.service.js";
 import { previewCsv, previewRequisition } from "./preview.service.js";
 import { whyNot } from "./why-not.service.js";
+import { campaignRequisitions, listCriteriaRequisitions } from "./selection-ui.service.js";
 import { RULE_KEYS, SOURCE_KINDS, SUB_SOURCES, type RuleKey, type SourceKind, type SubSource } from "./selection-types.js";
 import { TEMPLATES, type CriteriaPatch } from "./templates.js";
 
 export const criteriaRouter = Router();
 
-/** Requisition readers plus Hiring Engine viewers (S-O2: everyone who can see the requisition or the engine sees its criteria). */
-export const CRITERIA_READ_ROLES = [
-  "super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management", "manager", "assistant_manager", "recruiter",
-  "admin", "hr_admin", "ceo",
-] as const;
+export { CRITERIA_READ_ROLES, PREVIEW_EXPORT_ROLES } from "./selection-roles.js";
+import { CRITERIA_READ_ROLES, PREVIEW_EXPORT_ROLES, permissionsFor } from "./selection-roles.js";
 const MAX_IDS = 200;
 
 type Handler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -81,7 +79,13 @@ criteriaRouter.get("/selection/why", requireAuth, requireRole(...CRITERIA_READ_R
 }));
 
 criteriaRouter.get("/:id/criteria", requireAuth, requireRole(...CRITERIA_READ_ROLES), inScope, h(async (req, res) =>
-  res.json({ success: true, data: await getRequisitionCriteria(req.params.id) })));
+  res.json({ success: true, data: { ...(await getRequisitionCriteria(req.params.id)), permissions: permissionsFor(String(req.authUser!.role ?? "")) } })));
+
+// Read models for the selection screens (S15-S20)
+criteriaRouter.get("/selection/requisitions", requireAuth, requireRole(...CRITERIA_READ_ROLES), h(async (req, res) =>
+  res.json({ success: true, data: await listCriteriaRequisitions(req.authUser!, { onlyIncomplete: req.query.onlyIncomplete === "1" }) })));
+criteriaRouter.get("/selection/campaign/:campaignId/requisitions", requireAuth, requireRole(...CRITERIA_READ_ROLES), h(async (req, res) =>
+  res.json({ success: true, data: await campaignRequisitions(req.authUser!, req.params.campaignId) })));
 
 criteriaRouter.put("/:id/criteria", requireAuth, requireRole(...CRITERIA_EDIT_ROLES), inScope, h(async (req, res) => {
   const b = req.body;
@@ -105,7 +109,6 @@ criteriaRouter.get("/:id/criteria/audit", requireAuth, requireRole(...CRITERIA_R
 }));
 
 // ── Shortlist preview (S10): read roles, requisition scope; the CSV is masked and limited to the export roles ──
-export const PREVIEW_EXPORT_ROLES = ["super_admin", "hr", "recruitment_hr"] as const;
 const sourceOf = (v: unknown): SourceKind | null => ((SOURCE_KINDS as readonly string[]).includes(String(v)) ? (v as SourceKind) : null);
 const subOf = (v: unknown): SubSource | "all" | null => (v === undefined || v === "" || v === "all" ? "all" : (SUB_SOURCES as readonly string[]).includes(String(v)) ? (v as SubSource) : null);
 const SOURCE_HELP = "source must be meta_live, meta_old or he; sub must be all or a sub-source";

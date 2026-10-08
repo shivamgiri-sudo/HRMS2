@@ -102,6 +102,8 @@ export interface CompiledRule {
   missingBySource?: Partial<Record<SubSource | SourceKind, MissingPolicy>>; origin: string;
   /** Legacy compile only: the rule belongs to today's screener of these sources (Meta screening or the drive line-up). */
   only?: SourceKind[];
+  /** The requisition has selection rules but HR never decided this one: it applies with the catalogue default (S16 banner). */
+  defaulted?: true;
 }
 
 export interface Completeness {

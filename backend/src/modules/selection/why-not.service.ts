@@ -66,7 +66,7 @@ async function resolvePeople(q: string): Promise<{ mobiles: Array<{ m: string; n
   return { mobiles: [...seen].map(([m, name]) => ({ m, name })).slice(0, 10), searchedMobile: null };
 }
 
-async function openRequisitionsInScope(user: NonNullable<AuthenticatedRequest["authUser"]>, requisitionId?: string): Promise<string[]> {
+export async function openRequisitionsInScope(user: NonNullable<AuthenticatedRequest["authUser"]>, requisitionId?: string): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT jr.id FROM job_requisition jr WHERE jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.closed_at IS NULL
         AND jr.fulfilled_headcount < jr.requested_headcount${requisitionId ? " AND jr.id = ?" : ""} ORDER BY jr.created_at DESC LIMIT 200`, requisitionId ? [requisitionId] : []);

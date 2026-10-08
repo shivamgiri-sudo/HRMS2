@@ -22,7 +22,7 @@ export const COLUMN_TO_PATCH = Object.fromEntries(Object.entries(PATCH_TO_COLUMN
 const JSON_COLUMNS = new Set<CriteriaColumn>(["meta_target_locations", "meta_screening_config", "selection_rules"]);
 const NUMBER_COLUMNS = new Set<CriteriaColumn>(["experience_min_years", "experience_max_years", "meta_target_age_min", "meta_target_age_max", "meta_target_radius_km", "night_shift_required", "rotational_shift"]);
 
-export const LOAD_ROW_SQL = `SELECT jr.id, jr.requisition_code, jr.branch_name, jr.process_name, jr.education_requirement, jr.skills_required,
+export const LOAD_ROW_SQL = `SELECT jr.id, jr.requisition_code, jr.branch_name, jr.process_name, jr.designation_name, jr.education_requirement, jr.skills_required,
        jr.experience_min_years, jr.experience_max_years, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_locations, jr.meta_target_radius_km,
        jr.shift_requirement, jr.night_shift_required, jr.rotational_shift, jr.salary_min, jr.salary_max, jr.preferred_sources,
        jr.meta_screening_config, jr.selection_rules, jr.approval_status,

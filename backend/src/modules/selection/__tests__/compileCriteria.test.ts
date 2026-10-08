@@ -82,6 +82,14 @@ describe("compile with selection_rules", () => {
     expect(c.rules.find((r) => r.key === "age")).toMatchObject({ mode: "must", missing: "review", missingBySource: { meta_live: "pass", meta_old: "pass" } });
   });
 
+  it("rules that apply only because HR has not decided them are flagged defaulted (they act as MUST, unknown -> review)", () => {
+    const c = compileCriteria(onfidoRow({ ageMin: 18, rotationalShift: 1, screeningConfig: { written_english_level: "basic" } as never,
+      selectionRules: rulesOf({ age: { mode: "must", missing: "review" } }) }));
+    expect(c.rules.filter((r) => r.defaulted).map((r) => [r.key, r.mode, r.missing])).toEqual([["rotational_shift", "must", "review"], ["english", "must", "review"], ["salary_fit", "prefer", "pass"], ["skills", "prefer", "pass"]]);
+    expect(c.rules.find((r) => r.key === "age")?.defaulted).toBeUndefined();
+    expect(compileCriteria(onfidoRow({ rotationalShift: 1 })).rules.some((r) => r.defaulted)).toBe(false); // legacy: never
+  });
+
   it("matchReq follows the compiled rules: education MUST graduate -> minEducationRank 5; an age switched off -> no band", () => {
     const c = compileCriteria(onfidoRow({ educationRequirement: "Graduate", ageMin: 18, ageMax: 35, selectionRules: rulesOf({ education_min: { mode: "must" }, age: { mode: "off", decided: true } }) }));
     expect(c.matchReq.minEducationRank).toBe(5);

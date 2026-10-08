@@ -58,6 +58,11 @@ async function gates(requisitionId: string, now: Date) {
   return { ...st, compiled: c };
 }
 
+/** Why approval is refused right now (not open, criteria incomplete, enrolment off), or null. */
+export async function approvalBlocker(requisitionId: string, now = new Date()): Promise<string | null> {
+  try { await gates(requisitionId, now); return null; } catch (e) { return (e as Error).message; }
+}
+
 export async function createShortlistRun(a: { requisitionId: string; sourceKind: SourceKind; actor: OverrideActor; now?: Date }) {
   const now = a.now ?? new Date();
   await inScope(a.actor, a.requisitionId);
