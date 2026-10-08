@@ -35,7 +35,7 @@ export interface EnqueueInput {
   eligibilityChecked?: boolean;
   /** Live Meta: the lead's own location answer for the location rule. */
   location?: { text: string | null; branchName: string | null; branchCity: string | null; branchState: string | null } | null;
-  /** Accepted for WS3 shortlists / the criteria engine; stored once their columns exist (2143 / 2145). */
+  /** The approved shortlist decision (shortlist_candidate.id) and its criteria version; stored on the row (2148 / 2145). */
   shortlistId?: string | null;
   criteriaVersionId?: string | null;
 }

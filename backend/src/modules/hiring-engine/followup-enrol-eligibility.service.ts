@@ -1,7 +1,8 @@
 /**
  * Eligibility at enrolment for people who did not come through a drive line-up (Live Meta leads): the line-up gate
  * (he-eligibility.ts: cooling-off, 6 approaches / 30 days, 3 no-shows here, ex-employees, hard rejects, ...) plus the Meta
- * location rule (he-location-match.ts, the one the legacy outreach applies). Line-ups are already gated and skip this.
+ * location rule (he-location-match.ts, the one the legacy outreach applies). Line-ups are already gated and skip this; people from an
+ * approved shortlist run the caps only.
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -17,14 +18,20 @@ const CODE: Record<string, string> = {
   ex_employee_not_eligible: "ex_employee", hard_rejected_in_process: "hard_reject",
 };
 
-/** The stopped_reason suffix for the first block (gate order), or location_elsewhere; null = eligible. */
-export function ineligibleCode(blocks: readonly string[], locationElsewhere: boolean): string | null {
-  if (blocks.length) return CODE[blocks[0]] ?? blocks[0];
-  return locationElsewhere ? "location_elsewhere" : null;
+/** The caps that change from day to day; a shortlisted person still meets them at enrolment (the rest the criteria already checked). */
+export const CAP_BLOCKS: readonly string[] = ["contact_cap_30d", "no_show_cap_here"];
+
+/** The stopped_reason suffix for the first block (gate order), or location_elsewhere; null = eligible. capsOnly: approach / no-show caps only. */
+export function ineligibleCode(blocks: readonly string[], locationElsewhere: boolean, o: { capsOnly?: boolean } = {}): string | null {
+  const b = o.capsOnly ? blocks.filter((x) => CAP_BLOCKS.includes(x)) : blocks;
+  if (b.length) return CODE[b[0]] ?? b[0];
+  return locationElsewhere && !o.capsOnly ? "location_elsewhere" : null;
 }
 
 export async function enrolIneligibility(i: {
   mobile10: string; heLeadId: string | null; atsCandidateId: string | null; requisitionId: string; location?: EnrolLocation | null; now?: Date;
+  /** A person from an approved shortlist: the criteria made the eligibility and location checks; only the caps run again. */
+  capsOnly?: boolean;
 }): Promise<string | null> {
   const now = i.now ?? new Date();
   const [l] = await db.execute<RowDataPacket[]>(
@@ -40,5 +47,5 @@ export async function enrolIneligibility(i: {
   const blocks = facts ? evaluateEligibility(facts, { coolingDays: await getCoolingOffDays() }).blocks : [];
   const loc = i.location;
   const elsewhere = Boolean(loc?.branchName) && locationVerdict(loc?.text, loc?.branchName, loc?.branchCity, loc?.branchState) === "elsewhere";
-  return ineligibleCode(blocks, elsewhere);
+  return ineligibleCode(blocks, elsewhere, { capsOnly: i.capsOnly === true });
 }

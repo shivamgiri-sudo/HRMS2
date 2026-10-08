@@ -51,6 +51,7 @@ async function enrol(input: EnqueueInput, tag: RowTag, mobile10: string): Promis
   if (found) return onExisting(found, input, tag);
   const ineligible = input.eligibilityChecked ? null : await enrolIneligibility({
     mobile10, heLeadId: input.heLeadId ?? null, atsCandidateId: input.atsCandidateId ?? null, requisitionId: input.requisitionId, location: input.location ?? null,
+    capsOnly: Boolean(input.shortlistId),
   });
   const held = ineligible ? null : input.heldReason ?? null;
   const now = input.qualifiedAt ?? new Date();
@@ -58,16 +59,18 @@ async function enrol(input: EnqueueInput, tag: RowTag, mobile10: string): Promis
   const due = ineligible || held ? { emailDueAt: null, waDueAt: null } : dueTimes({ enrolledAt: now, hasEmail: !!email });
   // The id is generated here: with mysql2's default FOUND_ROWS flag affectedRows cannot tell a new row from an existing one.
   const id = randomUUID();
+  // The shortlist link (2148) only when there is one, so every other enrolment issues the statement it always did.
+  const link = input.shortlistId ? { cols: ", shortlist_id, criteria_version_id", ph: ", ?, ?", args: [input.shortlistId, input.criteriaVersionId ?? null] } : { cols: "", ph: "", args: [] };
   await db.execute(
     `INSERT INTO qualified_followup (id, source_type, meta_lead_id, he_lead_id, ats_candidate_id, requisition_id, campaign_id, drive_id, origin_id, origin_label,
        mobile10, email, full_name, branch_name, role_name, qualified_at, email_due_at, wa_due_at, journey_state, held_reason, stopped_reason, stopped_at, match_id,
-       owner, call_state, mode_at_enqueue)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       owner, call_state, mode_at_enqueue${link.cols})
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${link.ph})
      ON DUPLICATE KEY UPDATE id = id`,
     [id, input.sourceType, input.metaLeadId ?? null, input.heLeadId ?? null, input.atsCandidateId ?? null, input.requisitionId, input.campaignId ?? null,
      input.driveId ?? null, input.originId, input.originLabel, mobile10, email, input.fullName ?? null, input.branchName ?? null, input.roleName ?? null,
      now, due.emailDueAt, due.waDueAt, ineligible ? "stopped" : held ? "held_manual" : "enrolled", held, ineligible ? `ineligible_${ineligible}` : null,
-     ineligible ? now : null, input.matchId ?? null, "pipeline", "pending", tag]);
+     ineligible ? now : null, input.matchId ?? null, "pipeline", "pending", tag, ...link.args]);
   const row = await findRow(mobile10, input.requisitionId);
   if (!row) return { status: "invalid" };
   if (row.id !== id) return onExisting(row, input, tag); // a concurrent enrolment won the insert
@@ -84,6 +87,10 @@ async function onExisting(row: ExistingRow, input: EnqueueInput, tag: RowTag): P
       also.push(input.sourceType);
       await db.execute("UPDATE qualified_followup SET also_in_sources = ? WHERE id = ?", [JSON.stringify(also), row.id]);
     }
+  }
+  if (input.shortlistId) {
+    await db.execute("UPDATE qualified_followup SET shortlist_id = COALESCE(shortlist_id, ?), criteria_version_id = COALESCE(criteria_version_id, ?) WHERE id = ?",
+      [input.shortlistId, input.criteriaVersionId ?? null, row.id]);
   }
   let linked = false;
   if (input.matchId && !row.match_id) {
