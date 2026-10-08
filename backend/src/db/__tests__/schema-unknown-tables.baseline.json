@@ -257,5 +257,10 @@
   ],
   "modules/selection/override.service.ts": [
     "shortlist_override"
+  ],
+  "modules/selection/approval.service.ts": [
+    "shortlist_approval",
+    "shortlist_candidate",
+    "shortlist_run"
   ]
 }

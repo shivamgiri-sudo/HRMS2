@@ -39,3 +39,18 @@ describe("override routes", () => {
     expect(h.history).toHaveBeenCalledWith("9876543210", expect.objectContaining({ id: "u1" }));
   });
 });
+
+describe("approval routes", () => {
+  it.each(["recruiter", "ceo", "admin", "branch_head"])("%s cannot approve (403)", async (role) => {
+    h.user.role = role;
+    expect((await request(await app()).post("/api/he/shortlist/approve").send({})).status).toBe(403);
+    expect((await request(await app()).post("/api/he/shortlist/run").send({})).status).toBe(403);
+  });
+  it("bad bodies are 400", async () => {
+    const a = await app();
+    expect((await request(a).post("/api/he/shortlist/run").send({ requisitionId: "r1", sourceKind: "linkedin" })).status).toBe(400);
+    expect((await request(a).post("/api/he/shortlist/approve").send({ requisitionId: "r1", sourceKind: "he", runId: "x", untick: ["123"] })).status).toBe(400);
+    expect((await request(a).post("/api/he/shortlist/approve-standing").send({ requisitionId: "r1", versionId: "v", days: 2.5 })).status).toBe(400);
+    expect((await request(a).post("/api/he/shortlist/reject").send({ requisitionId: "r1", mobiles: [] })).status).toBe(400);
+  });
+});
