@@ -30,8 +30,7 @@ import { collectInsightFacts } from "./he-drive-insight-facts.service.js";
 import { loadInsightThresholds } from "./he-insight-params.service.js";
 import { buildDriveGroups, readAgg, readDriveAggRows, type DriveGroup, type DriveGroupInput } from "./he-drive-trend.service.js";
 import { getSourcesForRequisitions, type RequisitionSourceRows } from "./he-sources-window.service.js";
-import { campaignProgress, readPersonStages, type CampaignProgress, type CampaignProgressRow, type PersonStages } from "./he-drive-persons.service.js";
-import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.js";
+import { campaignProgress, readPersonStages, seatsOf, type CampaignProgress, type CampaignProgressRow, type OpenSeats, type PersonStages } from "./he-drive-persons.service.js";
 import { outcomeReasonCounts } from "./he-outcome-reason.service.js";
 import { QF_TYPE_FROM_SQL, qfTypeKeysSql } from "./he-requisition-sources.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
@@ -73,7 +72,6 @@ export interface DriveAnalytics {
   failedSections: string[];
 }
 
-export interface OpenSeats { requisitionId: string; code: string; branch: string; open: number; closedReason: string | null }
 export const MAX_REQUISITIONS = 200;
 export const MAX_SPAN_DAYS = 92;
 export const MAX_AHEAD_DAYS = 14;
@@ -215,14 +213,6 @@ const HEADER_SQL = "SELECT branch_name FROM job_requisition WHERE id = ? LIMIT 1
 
 // ---- reads ------------------------------------------------------------------------------------------------------------------------------
 interface Head { id: string; code: string; role: string; branch: string; open: number; closedReason: string | null }
-const nOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
-/** Open seats by the outreach path's own rule (lead-screener requisitionClosedReason): a closed, inactive or full requisition has none. */
-const seatsOf = (r: RowDataPacket): { open: number; closedReason: string | null } => {
-  const closedReason = requisitionClosedReason({ approvalStatus: r.approval_status == null ? null : String(r.approval_status), activeStatus: nOrNull(r.active_status),
-    closedAt: r.closed_at == null ? null : String(r.closed_at), requestedHeadcount: nOrNull(r.requested_headcount), fulfilledHeadcount: nOrNull(r.fulfilled_headcount) });
-  const open = Math.max(0, Math.floor((Number(r.requested_headcount) || 0) - (Number(r.fulfilled_headcount) || 0)));
-  return { open: closedReason ? 0 : open, closedReason };
-};
 const batchesOf = (ids: string[]): string[][] => { const out: string[][] = []; for (let i = 0; i < ids.length; i += 200) out.push(ids.slice(i, i + 200)); return out; };
 /** One statement per 200 ids; `streams` false is the same read before the stream tables exist. */
 const runBatched = async (ids: string[], sqlOf: (n: number, streams: boolean) => string, params: (b: string[]) => unknown[]): Promise<RowDataPacket[]> =>
