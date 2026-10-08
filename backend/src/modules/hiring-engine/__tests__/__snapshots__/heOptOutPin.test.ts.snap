@@ -1,0 +1,83 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`opt-out pin, non-enrolled lead > email unsubscribe 1`] = `
+{
+  "events": [],
+  "sqls": [
+    {
+      "p": [
+        "smtp-1",
+      ],
+      "sql": "SELECT id, lead_id FROM he_message WHERE provider_message_id = ? AND channel = 'email' LIMIT 1",
+    },
+    {
+      "p": [
+        "MSG1",
+        "L1",
+        "unsubscribed",
+        null,
+      ],
+      "sql": "INSERT INTO he_message_event (message_id, lead_id, channel, event_type, detail) VALUES (?,?,'email',?,?)",
+    },
+  ],
+}
+`;
+
+exports[`opt-out pin, non-enrolled lead > web Stop on the invitation page 1`] = `
+{
+  "events": [
+    [
+      "L1",
+      "opted_out",
+      {
+        "channel": "web",
+        "detail": "Stop messages on the invitation page",
+      },
+    ],
+  ],
+  "sends": [],
+  "sqls": [
+    {
+      "p": [
+        "M1",
+      ],
+      "sql": "SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, l.mobile10, l.status, l.meta_lead_id FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1",
+    },
+    {
+      "p": [],
+      "sql": "SELECT UUID() AS id",
+    },
+    {
+      "p": [
+        "uuid-1",
+        "L1",
+        "9876543210",
+        "in",
+        "email",
+        "Tapped: Stop messages",
+        "opt_out",
+        "R1",
+        "D1",
+      ],
+      "sql": "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, intent, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "p": [
+        "declined",
+        "M1",
+      ],
+      "sql": "UPDATE he_match SET state = ? WHERE id = ?",
+    },
+    {
+      "p": [
+        null,
+        null,
+        1,
+        "not_interested",
+        "ML1",
+      ],
+      "sql": "UPDATE meta_lead_raw SET walkin_confirmed = COALESCE(?, walkin_confirmed), walkin_reschedule_requested = COALESCE(?, walkin_reschedule_requested), walkin_declined = COALESCE(?, walkin_declined), walkin_reply = COALESCE(?, walkin_reply), walkin_reply_at = NOW() WHERE id = ?",
+    },
+  ],
+}
+`;
