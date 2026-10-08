@@ -82,6 +82,14 @@ describe("meta recruitment is branch scoped and reads the phone pass from the co
     expect(noida.total.joined).toBe(1);
   });
 
+  it("branch names match ignoring case and surrounding spaces", async () => {
+    const r = await getMetaRecruitment({ all: false, branchName: "  pune " });
+    expect(r.campaigns.map((c) => c.campaignId)).toEqual(["c1"]);
+    expect((await getMetaRecruitment({ all: false, branchName: "noida-2" })).campaigns.map((c) => c.campaignId)).toEqual(["c2"]);
+    // a blank branch never matches the unlinked campaign (whose branch is null)
+    expect((await getMetaRecruitment({ all: false, branchName: "   " })).campaigns).toEqual([]);
+  });
+
   it("a scope with no branch gets nothing and runs no statement; an unknown branch gets nothing", async () => {
     expect(await getMetaRecruitment({ all: false, branchName: null })).toEqual({ campaigns: [], total: zero });
     expect(h.calls).toEqual([]);

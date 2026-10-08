@@ -53,8 +53,12 @@ async function loadBase(): Promise<Base> {
   return _inflight;
 }
 
+const branchKey = (v: string | null | undefined): string => String(v ?? "").trim().toLowerCase();
+
 function project(base: Base, scope: BranchScope): MetaRecruitment {
-  const shown = base.camps.filter((c) => scope.all || (scope.branchName != null && c.meta.branchName === scope.branchName));
+  // Branch names are compared trimmed and case-insensitively (the user's branch_master name vs the requisition's); a blank one matches nothing.
+  const want = scope.all ? "" : branchKey(scope.branchName);
+  const shown = base.camps.filter((c) => scope.all || (want !== "" && branchKey(c.meta.branchName) === want));
   const fill = (n: RecruitmentCounts, ids: Iterable<string>) => {
     for (const id of ids) {
       const f = base.facts.get(id);
