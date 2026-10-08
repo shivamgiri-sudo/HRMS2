@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { SecureDocumentList } from "@/components/documents/SecureDocumentList";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
+import { DraCertificatePanel, DraOverview } from "@/components/onboarding/DraCertificatePanel";
 import { AddressBgvPanel } from "@/components/bgv/AddressBgvPanel";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { useDateLockMin } from "@/hooks/useDateLockMin";
@@ -619,6 +620,7 @@ export default function NativeJoiningControlRoom() {
         </div>
 
         <OnboardingTabBar />
+        <DraOverview onSelect={setSelectedId} />
 
         {error && <ErrorState title="Couldn't load joining queue" description={error} onRetry={() => void loadQueue()} className="mb-3" />}
         {message && <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>}
@@ -744,6 +746,7 @@ export default function NativeJoiningControlRoom() {
                       ["offer", "Offer Details"],
                       ["dates", "Effective Dates"],
                       ["documents", "Documents"],
+                      ["dra", "DRA Certificate"],
                       ["esign", "E-Sign Status"],
                       ["bgv", "BGV"],
                       ["jclr", "JCLR Logistics"],
@@ -1110,6 +1113,8 @@ export default function NativeJoiningControlRoom() {
                   </TabsContent>
 
                   <TabsContent value="documents"><SecureDocumentList candidateId={selectedId} /></TabsContent>
+
+                  <TabsContent value="dra"><DraCertificatePanel candidateId={selectedId} /></TabsContent>
 
                   <TabsContent value="bgv" className="grid gap-4">
                     {/* PDF shortcut — same button present in BGV Verification Center */}

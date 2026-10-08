@@ -21,6 +21,7 @@ import { hashPiiForMatch } from "../../shared/piiHash.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
+import { isDraRequired, isDraDocType, processDraUpload, getDraPortalState, draBlocksSubmission } from "./dra-certificate.service.js";
 import { assertEmployableAge, persistMinorFlag, resolveVerifiedDob } from "./ageVerification.service.js";
 import { toStoredName } from "../../shared/nameFormat.js";
 import { propagateIdentityVerification } from "../../shared/identityVerificationPropagation.js";
@@ -1361,6 +1362,7 @@ export async function getFullOnboardingStatus(token: string) {
     [languageRows],
     digilocker,
     esign,
+    dra,
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT id, doc_type, doc_name, page_no, file_original_name, file_url, mime_type, file_size_bytes,
@@ -1396,6 +1398,7 @@ export async function getFullOnboardingStatus(token: string) {
     ),
     getLatestDigilockerStatus(candidateId),
     getLatestEsignStatus(candidateId),
+    getDraPortalState(candidateId),
   ]);
 
   const sanitizedDocuments = (documents as RowDataPacket[])
@@ -1413,6 +1416,7 @@ export async function getFullOnboardingStatus(token: string) {
     experience: experienceRows[0] ?? null,
     digilocker,
     esign,
+    dra,
   };
 }
 
@@ -2076,7 +2080,13 @@ export async function findMissingMandatoryDocuments(candidateId: string): Promis
   );
   const digilockerVerified = new Set(verifiedRows.map((r) => String(r.check_type)));
 
-  return MANDATORY_DOCUMENTS.filter((req) => {
+  // DRA Certificate: mandatory only for the SBI Credit Card cost centre. Its own rule so every other
+  // candidate's list is exactly as before.
+  const rules = (await isDraRequired(candidateId))
+    ? [...MANDATORY_DOCUMENTS, { label: "DRA Certificate", matches: ["dra certificate"] }]
+    : MANDATORY_DOCUMENTS;
+
+  return rules.filter((req) => {
     if (digilockerVerified.has("aadhaar") && req.matches.includes("aadhaar")) return false;
     if (digilockerVerified.has("pan") && req.matches.includes("pan")) return false;
     // "photo" must not be satisfied by "Photocopy of ..." style names, so compare
@@ -2176,6 +2186,9 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
       { statusCode: 400, code: "MISSING_REQUIRED_DOCUMENTS" },
     );
   }
+
+  const draBlock = await draBlocksSubmission(candidateId);
+  if (draBlock) throw Object.assign(new Error(draBlock), { statusCode: 400, code: "DRA_CERTIFICATE_NOT_ACCEPTED" });
 
   // Aadhaar NUMBER is required, not just the card document above -- those are
   // different things. findMissingMandatoryDocuments only proves the card image
@@ -2342,7 +2355,7 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
   // if the insert fails. Non-identity types (education certs, experience letters,
   // etc.) are untouched — those can legitimately have more than one active document
   // of the same doc_type, and this never runs for them.
-  const supersedesPriorDocument = isFaceImage || isIdImage;
+  const supersedesPriorDocument = isFaceImage || isIdImage || isDraDocType(docType);
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -2379,6 +2392,11 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
     conn.release();
   }
   await logCandidateAction(candidateId, "UPLOAD_DOCUMENT", { documentId: id, docType: docTypeRaw }, meta);
+
+  // DRA certificate (SBI Credit Card): read + auto-check in the background, history row per upload.
+  if (isDraDocType(docType)) {
+    processDraUpload(candidateId, id).catch(e => console.error("[DRA] processing failed for document", id, ":", (e as Error).message));
+  }
 
   // Async OCR extraction and cross-validation (non-blocking — never delays upload response)
   const isIdentityDoc = docType.includes("aadhaar") || docType.includes("aadhar") || docType.includes("pan") || docType.includes("cheque") || docType.includes("passbook") || docType.includes("bank");

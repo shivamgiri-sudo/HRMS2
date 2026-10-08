@@ -49,6 +49,16 @@ export type StatusData = {
     client_transaction_id?: string | null;
     stale?: boolean;
   };
+  /** SBI Credit Card only: is the DRA certificate mandatory, and where does the current upload stand. */
+  dra?: {
+    required: boolean;
+    current: null | {
+      status: "pending" | "verified" | "invalid" | "expired" | "mismatch";
+      reason: string | null;
+      uploadedAt: string;
+      verifiedAt: string | null;
+    };
+  };
   esign?: {
     status?: string;
     verification_url?: string | null;

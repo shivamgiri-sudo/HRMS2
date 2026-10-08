@@ -895,7 +895,7 @@ export function Step4Documents({
   // "Diploma Certificate" upload satisfies the backend's 12th/diploma rule
   // but would still show as missing under an exact match).
   const digilockerDone = status?.digilocker?.status === "documents_received";
-  const requiredMissing = findMissingMandatoryDocs(status?.documents, digilockerDone);
+  const requiredMissing = findMissingMandatoryDocs(status?.documents, digilockerDone, !!status?.dra?.required);
   const optionalDocs = REQUIRED_DOCS.filter((d) => !d.required);
 
   return (
