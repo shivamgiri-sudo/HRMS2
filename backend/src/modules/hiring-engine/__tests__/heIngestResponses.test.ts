@@ -77,7 +77,7 @@ describe("WhatsApp replies", () => {
   });
   it("free text question → answer question, not applied, no state change", async () => {
     await recordInboundReply({ mobile: "919876543210", text: "what is the salary", providerMessageId: "wamid.4" });
-    expect(h.responses[0]).toMatchObject({ answer: "question", applied: false });
+    expect(h.responses[0]).toMatchObject({ answer: "question", applied: false, suggested: { answer: "question", confidence: 0.8 } });
     expect(h.sqls.some((s) => s.sql.startsWith("UPDATE he_match SET state"))).toBe(false);
   });
   it("the in-row he_message now carries requisition_id and drive_id of the active match", async () => {

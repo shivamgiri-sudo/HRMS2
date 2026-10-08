@@ -22,6 +22,7 @@ import type { TemplateKey } from "./he-template-catalog.js";
 import { markFollowupCalled } from "./qualified-followup.attention.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
 import { recordResponseSafe } from "./candidate-response.service.js";
+import { classifyReply } from "./response-classifier.js";
 import { answerFromCallOutcome, answerFromIntent, answerFromInviteTap, intentFromButtonId, type ResponseChannel } from "./response-normalise.js";
 
 const isDuplicateKey = (e: unknown) => (e as { code?: string; errno?: number })?.code === "ER_DUP_ENTRY" || (e as { errno?: number })?.errno === 1062;
@@ -137,9 +138,12 @@ export async function recordInboundReply(p: { mobile: string; text: string; prov
   await persistSignals(lead.id, signals, messageId);
   const plan = planFromReply(lead.status, intent, match?.slotOffers ?? 0);
   await applyPlan(lead.id, lead.status, plan, { matchId: match?.id ?? null, channel, detail: p.text, metaLeadId: lead.meta_lead_id, replyText: p.text });
+  const suggestion = intent === "unknown" ? classifyReply(p.text, { channel }) : null;
   await recordResponseSafe({
     occurredAt: new Date(), channel: channel as ResponseChannel, mode: buttonIntent ? "button" : "text", answer: answerFromIntent(intent), mobile10, leadId: lead.id,
     metaLeadId: lead.meta_lead_id, matchId: match?.id ?? null, sourceKind: "he_message", sourceRef: messageId, rawText: p.text, applied: planApplied(plan),
+    // Words the reply rules could not read get a suggested class for the HR review queue (never applied automatically).
+    suggested: suggestion ? { answer: suggestion.answer, confidence: suggestion.confidence } : null,
   });
   await recomputeInsight(lead.id);
   await refreshLeadHistoryById(lead.id);
