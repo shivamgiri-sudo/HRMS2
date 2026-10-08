@@ -40,7 +40,8 @@ export function mapResultHeaders(headers: string[]): { map: Partial<Record<Col, 
 const has = (t: string, re: RegExp) => re.test(t);
 /** Free-text disposition -> BRD outcome. Order matters: negatives and "wrong person" before "yes". null = cannot tell. */
 export function classifyOutcome(raw: unknown): CallOutcome | "CALL_FAILED" | null {
-  const t = String(raw ?? "").toLowerCase().replace(/[^a-z0-9ऀ-ॿ ]+/g, " ").replace(/\s+/g, " ").trim();
+  // eslint-disable-next-line no-misleading-character-class -- the whole Devanagari block as a range, not a combined character
+  const t = String(raw ?? "").toLowerCase().replace(/[^a-z0-9\u0900-\u097f ]+/g, " ").replace(/\s+/g, " ").trim();
   if (!t) return null;
   if (has(t, /\bwrong (person|number|no)\b|not the candidate|someone else|galat/)) return "WRONG_PERSON_REACHED";
   if (has(t, /invalid|not exist|does not exist|disconnect|switched off|switch off|out of (coverage|service)|not reachable|unreachable|barred|not in service|number busy|network|failed|dnd|do not call/)) return "CALL_FAILED";
@@ -84,7 +85,7 @@ export function parseResultRows(rawRows: Array<Record<string, unknown>>): { rows
     let newInterviewAt: string | undefined;
     if (outcome === "WALKIN_RESCHEDULED") {
       if (nd && nt) newInterviewAt = `${nd} ${nt}`;
-      else if (nd) newInterviewAt = `${nd} 10:00:00`, warnings.push("no new time given - assumed 10:00");
+      else if (nd) { newInterviewAt = `${nd} 10:00:00`; warnings.push("no new time given - assumed 10:00"); }
       else warnings.push("rescheduled but no new date given - the interview date is left unchanged");
     }
     const dur = Number(cell(r, "duration"));
