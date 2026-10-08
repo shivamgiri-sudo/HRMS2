@@ -126,6 +126,8 @@ export interface StreamLine { streamId: string; sourceType: SourceType; originLa
 export interface StreamDayPlan {
   requisitionId: string; code: string; branch: string; date: string; driveId: string | null;
   drive: "created" | "exists" | "would_create" | "skipped"; reason?: string; streams: StreamLine[];
+  /** Set only with HE_SHOWRATE_CALIBRATION on. */
+  rates?: Array<{ streamId: string; rate: number; basis: StreamRate["basis"] }>;
 }
 
 // backend/src/modules/hiring-engine/he-drive-plan.service.ts
@@ -135,6 +137,8 @@ export interface DrivePlan {
   days: PlanDay[]; calendar: CalendarCell[]; rates: StreamRate[];
   /** Present only when the server calibrated the show rates (HE_SHOWRATE_CALIBRATION on). */
   showRateMode?: "calibrated";
+  /** With showRateMode: the trailing window (days) the rates were measured over. */
+  showRateWindowDays?: number;
   checklist: { date: string; preview: StreamDayPlan | null; items: ChecklistItem[] };
   partial: boolean; failedSections: string[];
 }

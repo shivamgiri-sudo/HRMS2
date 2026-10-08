@@ -15,7 +15,7 @@ import { nextWorkingDay } from "./he-plan.service.js";
 import { getRequisitionReadiness } from "./he-readiness.service.js";
 import { getDailyPlan } from "./he-policy.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
-import { calibratedCaps } from "./he-showrate-calibration.js";
+import { calibratedCaps, calibratedPerSlot } from "./he-showrate-calibration.js";
 import { loadRateBook, rateForStream, type RateBook } from "./he-showrate-calibration.service.js";
 import { driveCapacity, dailyPlanNumbers, DEFAULT_DAILY_PLAN, type DailyPlan } from "./he-slots.js";
 import { planStreamsForDay, streamCaps, type StreamDayPlan } from "./he-stream-plan.service.js";
@@ -30,6 +30,8 @@ export interface DrivePlan {
   days: PlanDay[]; calendar: CalendarCell[]; rates: StreamRate[];
   /** Present only with HE_SHOWRATE_CALIBRATION on and measured: the day lines and caps use the planner's calibrated rates. */
   showRateMode?: "calibrated";
+  /** With showRateMode: the trailing window the rates were measured over (insight.plan_trailing_days). */
+  showRateWindowDays?: number;
   checklist: { date: string; preview: StreamDayPlan | null; items: ChecklistItem[] };
   partial: boolean; failedSections: string[];
 }
@@ -261,7 +263,7 @@ async function build(
     });
     const day = planDay({
       date, driveId: drive?.id ?? null, target: drive && drive.target > 0 ? drive.target : nums.targetShows,
-      capacity: drive ? driveCapacity(drive.cfg) : nums.capacity, streams: inputs, extraSeatsUsed: orphanSeats,
+      capacity: drive ? driveCapacity(drive.cfg) : calibrated ? nums.slots * calibratedPerSlot(plan, [...caps.values()].reduce((a, b) => a + b, 0)) : nums.capacity, streams: inputs, extraSeatsUsed: orphanSeats,
       extraExpected: orphanSeats * planRate, // they come at the plan default rate whether or not a stream covers the day
     });
     for (const l of day.streams) { const p = poolLeft.get(l.streamId); if (p != null) poolLeft.set(l.streamId, Math.max(0, p - l.recommended)); }
@@ -272,7 +274,7 @@ async function build(
   const failedSections = [...new Set(failed)];
   return {
     requisitionId, code: String(o.head?.requisition_code ?? requisitionId), branch: String(o.head?.branch_name ?? ""), generatedAt: now.toISOString(), from,
-    days: planDays, calendar: calendarCells(planDays), rates, ...(calibrated ? { showRateMode: "calibrated" as const } : {}), checklist, partial: failedSections.length > 0, failedSections,
+    days: planDays, calendar: calendarCells(planDays), rates, ...(calibrated ? { showRateMode: "calibrated" as const, showRateWindowDays: Math.max(1, Math.floor(thresholds["insight.plan_trailing_days"])) } : {}), checklist, partial: failedSections.length > 0, failedSections,
   };
 }
 

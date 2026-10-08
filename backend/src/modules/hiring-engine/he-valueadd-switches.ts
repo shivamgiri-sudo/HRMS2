@@ -1,4 +1,7 @@
-/** Plan 5 switches. Environment only (a database read would add a statement to the legacy paths); on only when the value is exactly "true". */
+/**
+ * Plan 5 switches. Environment only (a database read would add a statement to the legacy paths). On only when the value, trimmed and
+ * lower-cased, is "true" ("true", "TRUE", " true "); anything else ("1", "yes", "on", empty, unset) is off.
+ */
 export const VALUE_ADD_ENV = {
   showrate_calibration: "HE_SHOWRATE_CALIBRATION",
   best_offer: "HE_BEST_OFFER",

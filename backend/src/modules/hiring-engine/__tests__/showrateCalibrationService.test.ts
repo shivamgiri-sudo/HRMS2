@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   rateRows: [] as Array<Record<string, unknown>>,
   rateError: null as null | { code: string; message?: string },
   streams: [] as StreamRow[],
+  existing: null as null | Record<string, unknown>,
   createDrive: vi.fn(async (i: { requisitionId: string; driveDate: string }) => ({ id: `d-${i.requisitionId}-${i.driveDate}`, invites: 1, targetShows: 1, capacity: 1 })),
   warn: vi.fn(), error: vi.fn(),
 }));
@@ -24,6 +25,7 @@ vi.mock("../../../db/mysql.js", () => ({
       h.calls.push([q, params]);
       if (q.includes("WEEKDAY(")) { if (h.rateError) throw Object.assign(new Error(h.rateError.message ?? "boom"), h.rateError); return [h.rateRows]; }
       if (q.includes("FROM job_requisition WHERE id = ?")) return [[{ id: "r1", requisition_code: "REQ-1", designation_name: "Agent", branch_name: "Noida", approval_status: "approved", active_status: 1, requested_headcount: 10, fulfilled_headcount: 2 }]];
+      if (q.includes("FROM he_drive WHERE requisition_id = ? AND branch_name = ? AND drive_date = ?")) return [h.existing ? [h.existing] : []];
       if (q.startsWith("SELECT status, run_label")) return [[{ status: "draft", run_label: "Streams", source_kind: "pool", created_by: null }]];
       if (q.includes("COUNT(*) AS n")) return [[{ n: 0 }]];
       if (q.startsWith("INSERT") || q.startsWith("UPDATE")) return [{ affectedRows: 1 }];
@@ -55,7 +57,7 @@ vi.mock("../he-policy.service.js", () => ({
   getPlanMetaOnly: vi.fn(async () => false), getPlanRequisitions: vi.fn(async () => ["r1"]),
 }));
 
-import { loadRateBook, rateForStream, type RateBook } from "../he-showrate-calibration.service.js";
+import { clearRateBookCache, loadRateBook, rateForStream, type RateBook } from "../he-showrate-calibration.service.js";
 import { calibratedPlanNumbers } from "../he-showrate-calibration.js";
 import { planStreamsForDay } from "../he-stream-plan.service.js";
 import { planNextDay } from "../he-plan.service.js";
@@ -69,6 +71,8 @@ beforeEach(() => {
   h.rateRows = [];
   h.rateError = null;
   h.streams = [];
+  h.existing = null;
+  clearRateBookCache();
   h.createDrive.mockClear(); h.warn.mockClear(); h.error.mockClear();
 });
 afterEach(() => { delete process.env.HE_SHOWRATE_CALIBRATION; });
@@ -132,11 +136,71 @@ describe("loadRateBook", () => {
   });
 });
 
+describe("rate book cache (10 minutes, keyed by ids, IST day and window)", () => {
+  const read = (o: Partial<{ requisitionIds: string[]; today: string; trailingDays: number }> = {}) =>
+    loadRateBook({ requisitionIds: ["r2", "r1"], today: "2026-10-14", trailingDays: 14, heStreamOf: new Map(), ...o });
+
+  it("a second read of the same ids (any order) is served from the cache, as a copy", async () => {
+    h.rateRows = [{ requisition_id: "r1", stream_id: null, wd: 2, invited: 10, arrived: 4 }];
+    const a = await read();
+    a!.byRequisition.get("r1")!.overall.invited = 999; // a caller editing its copy
+    const b = await read({ requisitionIds: ["r1", "r2"] });
+    expect(rateStatements()).toHaveLength(1);
+    expect(b!.byRequisition.get("r1")!.overall).toEqual({ invited: 10, arrived: 4 });
+  });
+
+  it("the stream mapping is applied per call, not cached", async () => {
+    h.rateRows = [{ requisition_id: "r1", stream_id: null, wd: 2, invited: 10, arrived: 4 }];
+    await read();
+    const b = await loadRateBook({ requisitionIds: ["r1", "r2"], today: "2026-10-14", trailingDays: 14, heStreamOf: new Map([["r1", "s-he"]]) });
+    expect(rateStatements()).toHaveLength(1);
+    expect(b!.byStream.get("s-he")!.overall).toEqual({ invited: 10, arrived: 4 });
+  });
+
+  it("another day, other ids or another window read again", async () => {
+    await read();
+    await read({ today: "2026-10-15" });
+    await read({ requisitionIds: ["r1"] });
+    await read({ trailingDays: 7 });
+    expect(rateStatements()).toHaveLength(4);
+  });
+
+  it("expires after 10 minutes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-14T10:00:00Z"));
+      await read();
+      vi.setSystemTime(new Date("2026-10-14T10:09:59Z"));
+      await read();
+      expect(rateStatements()).toHaveLength(1);
+      vi.setSystemTime(new Date("2026-10-14T10:10:01Z"));
+      await read();
+      expect(rateStatements()).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("never caches a failed read", async () => {
+    h.rateError = { code: "ER_LOCK_WAIT_TIMEOUT" };
+    expect(await read()).toBeNull();
+    h.rateError = null;
+    expect(await read()).not.toBeNull();
+    expect(rateStatements()).toHaveLength(2);
+  });
+});
+
 describe("rateForStream", () => {
   it("uses the same-weekday sample of the target date", () => {
     const book: RateBook = { byStream: new Map([["s1", { byWeekday: new Map([[2, { invited: 30, arrived: 15 }]]), overall: { invited: 60, arrived: 18 } }]]), byRequisition: new Map() };
     expect(rateForStream(book, "s1", "2026-10-14", 0.25, 30)).toMatchObject({ rate: 0.5, basis: "actual_weekday" });
     expect(rateForStream(null, "s1", "2026-10-14", 0.25, 30)).toMatchObject({ rate: 0.25, basis: "plan_default" });
+  });
+
+  it("clamps a measured 4% to 5% and a measured 96% to 95%", () => {
+    const book = (invited: number, arrived: number): RateBook => ({ byStream: new Map([["s1", { byWeekday: new Map(), overall: { invited, arrived } }]]), byRequisition: new Map() });
+    expect(rateForStream(book(100, 4), "s1", "2026-10-14", 0.25, 30)).toMatchObject({ rate: 0.05, basis: "actual", invited: 100, arrived: 4 });
+    expect(rateForStream(book(100, 96), "s1", "2026-10-14", 0.25, 30)).toMatchObject({ rate: 0.95, basis: "actual", invited: 100, arrived: 96 });
+    expect(rateForStream(book(100, 5), "s1", "2026-10-14", 0.25, 30).rate).toBe(0.05);
+    expect(rateForStream(book(100, 95), "s1", "2026-10-14", 0.25, 30).rate).toBe(0.95);
   });
 });
 
@@ -163,6 +227,36 @@ describe("planStreamsForDay with HE_SHOWRATE_CALIBRATION=true", () => {
     expect(r.plans[0].rates).toEqual([{ streamId: "a", rate: 0.4, basis: "actual" }, { streamId: "b", rate: 0.25, basis: "plan_default" }]);
     expect(rateStatements()).toHaveLength(1);
     expect(rateStatements()[0][1].slice(0, 1)).toEqual(["r1"]);
+  });
+
+  it("seats grow with the calibrated caps (rate 10%: caps 800 + 40 at 405 seats), at most 50 a slot", async () => {
+    process.env.HE_SHOWRATE_CALIBRATION = "true";
+    h.rateRows = [{ requisition_id: "r1", stream_id: "a", wd: 0, invited: 40, arrived: 4 }];
+    const r = await planStreamsForDay({ date: "2026-10-15", dryRun: false });
+    expect(r.plans[0].streams.map((l) => l.cap)).toEqual([800, 40]);
+    const created = h.createDrive.mock.calls[0][0] as unknown as Record<string, number>;
+    expect(created.slotCapacity).toBe(Math.min(50, Math.max(27, Math.ceil(840 / 15)))); // 50: the hard limit; the send loop stops at "drive full"
+  });
+
+  it("seats cover every invite the caps line up when they fit under 50 a slot", async () => {
+    process.env.HE_SHOWRATE_CALIBRATION = "true";
+    h.rateRows = [{ requisition_id: "r1", stream_id: "a", wd: 0, invited: 40, arrived: 6 }]; // 15%
+    const r = await planStreamsForDay({ date: "2026-10-15", dryRun: false });
+    const lined = r.plans[0].streams.reduce((a, l) => a + l.cap, 0);
+    expect(lined).toBe(667 + 40);
+    const created = h.createDrive.mock.calls[0][0] as unknown as Record<string, number>;
+    expect(created.slotCapacity).toBe(48);
+    expect(lined).toBeLessThanOrEqual(created.slotCapacity * 15);
+  });
+
+  it("never changes an existing drive's seats", async () => {
+    process.env.HE_SHOWRATE_CALIBRATION = "true";
+    h.existing = { id: "hr-drive", status: "active", run_label: null, source_kind: "pool", created_by: "u1" };
+    h.rateRows = [{ requisition_id: "r1", stream_id: "a", wd: 0, invited: 40, arrived: 4 }];
+    const r = await planStreamsForDay({ date: "2026-10-15", dryRun: false });
+    expect(r.plans[0].drive).toBe("exists");
+    expect(h.createDrive).not.toHaveBeenCalled();
+    expect(h.calls.some(([q]) => /UPDATE he_drive|slot_capacity/.test(q))).toBe(false);
   });
 
   it("a failed sample read keeps today's caps and drive numbers", async () => {

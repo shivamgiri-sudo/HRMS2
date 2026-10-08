@@ -11,7 +11,7 @@ import { dayLabel } from "./driveChartModel";
 import { istTodayClient, sectionLabels } from "./driveCommandModel";
 import type { DriveGroup, DrivePlan, PlanDay, StreamView } from "./driveCommandTypes";
 import {
-  CALIBRATION_NOTE, EMPTY_PLAN_TEXT, NOT_ENOUGH_HISTORY, PICK_LABEL, QUOTA_MAX, clampQuota, coversDay, clampShowRate, dayRows, hasEdits, planPickList, planState, recomputeDay, sliderValues, streamRows,
+  calibrationNote, EMPTY_PLAN_TEXT, NOT_ENOUGH_HISTORY, PICK_LABEL, QUOTA_MAX, clampQuota, coversDay, clampShowRate, dayRows, hasEdits, planPickList, planState, recomputeDay, sliderValues, streamRows,
   whatIfAnnouncement, type WhatIf,
 } from "./planModel";
 import { useDrivePlan } from "./useCommandData";
@@ -161,7 +161,7 @@ export function PlanSectionView(p: PlanSectionViewProps) {
                   {days.map((d) => <option key={d.date} value={d.date}>{dayLabel(d.date)}</option>)}
                 </select>
               </div>
-              <StreamsTable day={current} streamActions={p.streamActions} calibrated={plan?.showRateMode === "calibrated"} />
+              <StreamsTable day={current} streamActions={p.streamActions} calibrated={plan?.showRateMode === "calibrated"} windowDays={plan?.showRateWindowDays} />
               <WhatIfPanel day={current} />
               <PlanCalendar plan={plan} />
             </>
@@ -202,13 +202,13 @@ function DaysTable({ plan }: { plan: DrivePlan }) {
   );
 }
 
-function StreamsTable({ day, streamActions, calibrated }: { day: PlanDay; streamActions?: (streamId: string) => ReactNode; calibrated: boolean }) {
+function StreamsTable({ day, streamActions, calibrated, windowDays }: { day: PlanDay; streamActions?: (streamId: string) => ReactNode; calibrated: boolean; windowDays?: number }) {
   const rows = streamRows(day, calibrated);
   return (
     <section aria-labelledby="plan-rec-heading" className="space-y-2">
       <h4 id="plan-rec-heading" className={H4}>Recommended invites for {dayLabel(day.date)}</h4>
       {calibrated && (
-        <p className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-200"><Gauge className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /><span>{CALIBRATION_NOTE}</span></p>
+        <p className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-200"><Gauge className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /><span>{calibrationNote(windowDays)}</span></p>
       )}
       <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
         <table className="min-w-full text-sm">

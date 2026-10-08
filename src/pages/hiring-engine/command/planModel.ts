@@ -124,7 +124,11 @@ export function dayRows(plan: Pick<DrivePlan, "days">): DayRow[] {
 export function basisLabel(b: StreamRate["basis"], _weekday?: number): string {
   return b === "actual_weekday" ? "Same weekday, 14-day actual" : b === "actual" ? "14-day actual" : "Plan default";
 }
-export const CALIBRATION_NOTE = "Show rates are calibrated from the last 14 days (kept between 5% and 95%)";
+/** The calibration line, naming the server's real trailing window (insight.plan_trailing_days). */
+export function calibrationNote(days?: number): string {
+  const n = typeof days === "number" && Number.isFinite(days) && days >= 1 ? Math.floor(days) : null;
+  return `Show rates are calibrated from ${n == null ? "recent days" : `the last ${n} ${n === 1 ? "day" : "days"}`} (kept between 5% and 95%)`;
+}
 export const NOT_ENOUGH_HISTORY = "Plan default (not enough history)";
 
 export interface StreamRowView { streamId: string; label: string; typeLabel: string; lined: number; rate: string; basis: string; /** Calibration is on but this stream has too little history: shown as "Plan default (not enough history)". */ notEnough: boolean; expected: string; recommended: number; reasoning: string; open: boolean }

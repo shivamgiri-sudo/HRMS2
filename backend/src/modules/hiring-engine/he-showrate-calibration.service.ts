@@ -24,6 +24,14 @@ const sampleSql = (n: number) => (streams: boolean): string => `SELECT STRAIGHT_
  WHERE d.requisition_id IN (${ph(n)}) AND d.drive_date BETWEEN ? AND ?
  GROUP BY 1, 2, 3`;
 
+interface SampleRow { requisition_id: string; stream_id: string | null; wd: number | null; invited: number; arrived: number }
+// The rows (not the book: the stream mapping is applied per call) cached in-process for 10 minutes per (ids, IST day, window). The
+// 5-minute top-up and /drive-plan reuse them; a failed read is never cached.
+const CACHE_MS = 10 * 60_000;
+const CACHE_MAX = 50;
+const cache = new Map<string, { at: number; rows: SampleRow[] }>();
+export function clearRateBookCache(): void { cache.clear(); }
+
 const count = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0; };
 
 function add(book: Map<string, RateBucket>, key: string, wd: number | null, invited: number, arrived: number): void {
@@ -44,24 +52,37 @@ export async function loadRateBook(o: { requisitionIds: string[]; today: string;
   if (!ids.length) return book;
   const days = Math.max(1, Math.floor(Number(o.trailingDays) || 0));
   const from = addDays(o.today, -days), to = addDays(o.today, -1);
-  try {
-    for (let i = 0; i < ids.length; i += BATCH) {
-      const batch = ids.slice(i, i + BATCH);
-      const rows: RowDataPacket[] = await readAgg(sampleSql(batch.length), [...batch, from, to]);
-      for (const r of rows) {
-        const req = String(r.requisition_id);
-        const wdRaw = Number(r.wd);
-        const wd = r.wd != null && Number.isInteger(wdRaw) && wdRaw >= 0 && wdRaw <= 6 ? wdRaw : null;
-        const invited = count(r.invited), arrived = count(r.arrived);
-        add(book.byRequisition, req, wd, invited, arrived);
-        // an uncredited match counts for the requisition's Hiring Engine stream
-        const sid = r.stream_id == null ? o.heStreamOf.get(req) : String(r.stream_id);
-        if (sid) add(book.byStream, sid, wd, invited, arrived);
+  const key = `${[...ids].sort().join(",")}|${o.today}|${days}`;
+  const hit = cache.get(key);
+  let rows: SampleRow[];
+  if (hit && Date.now() - hit.at < CACHE_MS) rows = structuredClone(hit.rows);
+  else {
+    if (hit) cache.delete(key);
+    rows = [];
+    try {
+      for (let i = 0; i < ids.length; i += BATCH) {
+        const batch = ids.slice(i, i + BATCH);
+        const got: RowDataPacket[] = await readAgg(sampleSql(batch.length), [...batch, from, to]);
+        for (const r of got) {
+          const wdRaw = Number(r.wd);
+          rows.push({
+            requisition_id: String(r.requisition_id), stream_id: r.stream_id == null ? null : String(r.stream_id),
+            wd: r.wd != null && Number.isInteger(wdRaw) && wdRaw >= 0 && wdRaw <= 6 ? wdRaw : null, invited: count(r.invited), arrived: count(r.arrived),
+          });
+        }
       }
+    } catch (err) {
+      logger.warn({ code: (err as { code?: string })?.code ?? "unknown" }, "[he-calibration] show-rate sample read failed; using the plan default");
+      return null;
     }
-  } catch (err) {
-    logger.warn({ code: (err as { code?: string })?.code ?? "unknown" }, "[he-calibration] show-rate sample read failed; using the plan default");
-    return null;
+    if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
+    cache.set(key, { at: Date.now(), rows: structuredClone(rows) });
+  }
+  for (const r of rows) {
+    add(book.byRequisition, r.requisition_id, r.wd, r.invited, r.arrived);
+    // an uncredited match counts for the requisition's Hiring Engine stream
+    const sid = r.stream_id ?? o.heStreamOf.get(r.requisition_id);
+    if (sid) add(book.byStream, sid, r.wd, r.invited, r.arrived);
   }
   return book;
 }

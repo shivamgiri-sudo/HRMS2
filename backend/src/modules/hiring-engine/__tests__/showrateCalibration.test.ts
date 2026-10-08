@@ -1,7 +1,7 @@
 process.env.TZ = "America/Los_Angeles";
 import { describe, expect, it } from "vitest";
 import { valueAddOn, VALUE_ADD_ENV, type ValueAdd } from "../he-valueadd-switches.js";
-import { calibrateShowRate, calibratedCaps, calibratedPlanNumbers, weekdayOf } from "../he-showrate-calibration.js";
+import { calibrateShowRate, calibratedCaps, calibratedPerSlot, calibratedPlanNumbers, weekdayOf } from "../he-showrate-calibration.js";
 import { dailyPlanNumbers, type DailyPlan } from "../he-slots.js";
 import { streamCaps } from "../he-stream-plan.service.js";
 
@@ -107,5 +107,16 @@ describe("calibratedCaps", () => {
     expect(caps.get("b")).toBe(200);
     expect(caps.get("c")).toBe(40);
     noNaN([...caps.entries()]);
+  });
+});
+
+describe("calibratedPerSlot", () => {
+  const p: DailyPlan = { walkInsPerDay: 100, minOutreachPerDay: 0, showRatePct: 25, slotStart: "10:00", slotEnd: "17:30", slotMinutes: 30 };
+  it("never below today's seats, enough for the caps, at most 50", () => {
+    expect(calibratedPerSlot(p, 290)).toBe(27);
+    expect(calibratedPerSlot(p, 707)).toBe(48);
+    expect(calibratedPerSlot(p, 840)).toBe(50);
+    expect(calibratedPerSlot(p, Number.NaN)).toBe(27);
+    expect(calibratedPerSlot(p, -5)).toBe(27);
   });
 });

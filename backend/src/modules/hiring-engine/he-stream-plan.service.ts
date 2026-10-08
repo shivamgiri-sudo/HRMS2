@@ -18,7 +18,7 @@ import { coversDay, istToday, windowEnd } from "./requisition-stream.window.js";
 import { enqueueMatchedFollowups } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
-import { calibratedCaps, type CalibratedRate, type CalibrationBasis } from "./he-showrate-calibration.js";
+import { calibratedCaps, calibratedPerSlot, type CalibratedRate, type CalibrationBasis } from "./he-showrate-calibration.js";
 import { loadRateBook, rateForStream, type RateBook } from "./he-showrate-calibration.service.js";
 import { loadInsightThresholds } from "./he-insight-params.service.js";
 
@@ -146,7 +146,10 @@ interface Ctx {
   rates?: Map<string, CalibratedRate>; measured?: boolean;
 }
 
-/** Calibrated caps; today's caps when the sample read failed. */
+/**
+ * Calibrated caps; today's caps when the sample read failed. Each pass (and each 5-minute top-up) re-derives them from the current rate
+ * book, so a stream's cap can move after its drive was created; it always stays within half to twice today's.
+ */
 function capsOf(streams: StreamRow[], c: Ctx): Map<string, number> {
   const rates = c.rates;
   if (!rates || !c.measured) return streamCaps(streams, c.invites);
@@ -154,12 +157,13 @@ function capsOf(streams: StreamRow[], c: Ctx): Map<string, number> {
 }
 
 /** The created drive's show-up rate and target: cap-weighted over the streams; today's plan numbers when not measured. */
-function driveTargetOf(caps: Map<string, number>, c: Ctx): { showRatePct: number; targetShows: number } {
+function driveTargetOf(caps: Map<string, number>, c: Ctx): { showRatePct: number; targetShows: number; slotCapacity: number } {
   const sum = [...caps.values()].reduce((a, b) => a + b, 0);
-  const legacy = { showRatePct: c.plan.showRatePct, targetShows: Math.max(1, Math.round((sum * c.plan.showRatePct) / 100)) };
+  const legacy = { showRatePct: c.plan.showRatePct, targetShows: Math.max(1, Math.round((sum * c.plan.showRatePct) / 100)), slotCapacity: c.perSlot };
   if (!c.rates || !c.measured || sum <= 0) return legacy;
   const shows = [...caps].reduce((a, [id, cap]) => a + cap * (c.rates?.get(id)?.rate ?? c.plan.showRatePct / 100), 0);
-  return { showRatePct: Math.round((shows / sum) * 100), targetShows: Math.max(1, Math.round(shows)) };
+  // every invite takes a seat when it is sent, so a drive created for calibrated caps gets the seats for them (up to 50 a slot)
+  return { showRatePct: Math.round((shows / sum) * 100), targetShows: Math.max(1, Math.round(shows)), slotCapacity: calibratedPerSlot(c.plan, sum) };
 }
 
 interface DriveRef { id: string; requisitionId: string; sourceKind: string; runLabel: string | null }
@@ -260,7 +264,7 @@ async function planRequisition(requisitionId: string, streams: StreamRow[], c: C
       const sum = [...caps.values()].reduce((a, b) => a + b, 0);
       const t = c.rates ? driveTargetOf(caps, c) : null;
       const d = await createDrive({
-        requisitionId, driveDate: c.date, slotStart: c.plan.slotStart, slotEnd: c.plan.slotEnd, slotMinutes: c.plan.slotMinutes, slotCapacity: c.perSlot,
+        requisitionId, driveDate: c.date, slotStart: c.plan.slotStart, slotEnd: c.plan.slotEnd, slotMinutes: c.plan.slotMinutes, slotCapacity: t ? t.slotCapacity : c.perSlot,
         showRatePct: t ? t.showRatePct : c.plan.showRatePct, targetShows: t ? t.targetShows : Math.max(1, Math.round((sum * c.plan.showRatePct) / 100)), autoSend: true, audience: { kind: "pool", label: "Streams" },
       });
       const [after] = await db.execute<RowDataPacket[]>("SELECT status, run_label, source_kind, created_by FROM he_drive WHERE id = ?", [d.id]);

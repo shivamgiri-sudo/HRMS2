@@ -25,6 +25,7 @@ vi.mock("../he-showrate-calibration.js", async (orig) => {
 
 import { clearDrivePlanCache, getDrivePlan, type DrivePlan } from "../he-drive-plan.service.js";
 import type { StreamRow } from "../requisition-stream.service.js";
+import { clearRateBookCache } from "../he-showrate-calibration.service.js";
 
 const NOW = new Date("2026-10-14T06:00:00Z"); // Wed 14 Oct, 11:30 IST
 const ALL = { all: true } as never;
@@ -38,6 +39,7 @@ let sampleFails = false;
 beforeEach(() => {
   vi.clearAllMocks();
   clearDrivePlanCache();
+  clearRateBookCache();
   guard.throwing = false; sampleFails = false;
   sample = [];
   delete process.env.HE_SHOWRATE_CALIBRATION;
@@ -64,6 +66,7 @@ describe("drive plan with HE_SHOWRATE_CALIBRATION on", () => {
     sample = [{ requisition_id: "r1", stream_id: "a", wd: 2, invited: 30, arrived: 12 }, { requisition_id: "r1", stream_id: "a", wd: 3, invited: 5, arrived: 1 }];
     const r = await run();
     expect(r.showRateMode).toBe("calibrated");
+    expect(r.showRateWindowDays).toBe(14); // insight.plan_trailing_days, for the UI note
     expect(line(r, "2026-10-14")).toMatchObject({ rate: 0.4, basis: "actual_weekday" });
     expect(line(r, "2026-10-14").reasoning).toContain("(Wed 14-day actual, 30 invited)");
     // Thursday has only 5 invited, the whole window 35: 13 / 35
@@ -88,6 +91,25 @@ describe("drive plan with HE_SHOWRATE_CALIBRATION on", () => {
     expect(on).toBeLessThanOrEqual(off * 2);
   });
 
+  it("a day with no drive yet shows the seats the planner would create (rate 10%: 50 a slot)", async () => {
+    sample = [{ requisition_id: "r1", stream_id: "a", wd: 2, invited: 40, arrived: 4 }];
+    const day = (await run()).days.find((d) => d.date === "2026-10-14")!;
+    expect(line({ days: [day] } as DrivePlan, "2026-10-14").cap).toBe(800);
+    expect(day.capacity).toBe(15 * Math.min(50, Math.max(27, Math.ceil(800 / 15))));
+    delete process.env.HE_SHOWRATE_CALIBRATION;
+    clearRateBookCache();
+    expect((await run()).days.find((d) => d.date === "2026-10-14")!.capacity).toBe(405);
+  });
+
+  it("an existing drive keeps its own seats", async () => {
+    sample = [{ requisition_id: "r1", stream_id: "a", wd: 2, invited: 40, arrived: 4 }];
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, params: unknown[]) => String(sql).includes("FROM he_drive WHERE requisition_id = ? AND drive_date BETWEEN")
+      ? [[{ id: "d1", drive_date: "2026-10-14", status: "active", target_shows: 20, slot_start: "10:00", slot_end: "12:00", slot_minutes: 30, slot_capacity: 5 }]]
+      : base(sql, params));
+    expect((await run()).days.find((d) => d.date === "2026-10-14")!.capacity).toBe(20);
+  });
+
   it("keeps today's numbers and flags the section when the sample read fails", async () => {
     sampleFails = true;
     const r = await run();
@@ -105,6 +127,7 @@ describe("drive plan with the switch off", () => {
     const guarded = await run();
     expect(guarded).toEqual(plain);
     expect("showRateMode" in guarded).toBe(false);
+    expect("showRateWindowDays" in guarded).toBe(false);
     expect(JSON.stringify(guarded)).toBe(JSON.stringify(plain));
     expect(execute.mock.calls.some((c) => String(c[0]).includes("WEEKDAY("))).toBe(false);
     for (const d of guarded.days) for (const s of d.streams) expect(["actual", "plan_default"]).toContain(s.basis);

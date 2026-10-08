@@ -56,3 +56,13 @@ export function calibratedCaps(
     s.dailyInvites ?? Math.max(1, Math.ceil(calibratedPlanNumbers(plan, rateOf(s.id)).invites / shared)),
   ]));
 }
+
+/**
+ * Seats per slot for a drive the calibrated pass creates: enough for every capped invite, never fewer than today's, at most 50 (the hard
+ * limit; past it the send loop stops at "drive full"). Existing drives are never resized.
+ */
+export function calibratedPerSlot(plan: DailyPlan, capsTotal: number): number {
+  const legacy = dailyPlanNumbers(plan);
+  const total = Number(capsTotal);
+  return Math.min(50, Math.max(legacy.perSlot, Math.ceil((Number.isFinite(total) && total > 0 ? total : 0) / legacy.slots)));
+}

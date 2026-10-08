@@ -7,7 +7,7 @@ vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => 
 
 import { calendarCells, invitesToClose, planDay, streamRate, whatIf, type PlanStreamInput } from "../command/planMath";
 import {
-  basisLabel, EMPTY_PLAN_TEXT, PLAN_FORBIDDEN_TEXT, PLAN_GENERIC_TEXT, PLAN_GONE_TEXT, calendarView, checklistGroups, fillLevel, hasEdits, planNowBody, planNowErrorText,
+  basisLabel, calibrationNote, EMPTY_PLAN_TEXT, PLAN_FORBIDDEN_TEXT, PLAN_GENERIC_TEXT, PLAN_GONE_TEXT, calendarView, checklistGroups, fillLevel, hasEdits, planNowBody, planNowErrorText,
   coversDay, planNowLines, planNowSummary, planPickList, planState, recomputeDay, streamRows,
 } from "../command/planModel";
 import { PlanSectionView, WhatIfPanel, type PlanSectionViewProps } from "../command/PlanSection";
@@ -306,7 +306,7 @@ describe("calibrated show rates in the Plan section", () => {
   const WED = input({ streamId: "s1", label: "Oct ads", lined: 20, rate: rate("s1", 0.4, "actual_weekday", 30, 2) });
   const THIN = input({ streamId: "s2", sourceType: "he", label: "Pool: ATS history", lined: 10, rate: { ...rate("s2", 0.25, "plan_default"), sourceType: "he" }, poolRemaining: 3 });
   const dayC = planDay({ date: "2026-10-14", driveId: "d1", target: 20, capacity: 60, streams: [WED, THIN] });
-  const calibrated = planOf([dayC], { showRateMode: "calibrated", checklist: { date: "2026-10-14", preview: null, items: [] } });
+  const calibrated = planOf([dayC], { showRateMode: "calibrated", showRateWindowDays: 14, checklist: { date: "2026-10-14", preview: null, items: [] } });
 
   it("labels the three bases", () => {
     expect(basisLabel("actual_weekday", 2)).toBe("Same weekday, 14-day actual");
@@ -327,6 +327,13 @@ describe("calibrated show rates in the Plan section", () => {
     expect(html).toContain("(Same weekday, 14-day actual)");
     expect(html).toContain("Plan default (not enough history)");
     expect(html).not.toMatch(NOT_NUMBER);
+  });
+  it("the note names the server's real window", () => {
+    expect(view({ plan: { ...calibrated, showRateWindowDays: 7 }, checklist: null })).toContain("Show rates are calibrated from the last 7 days (kept between 5% and 95%)");
+    const unknown = view({ plan: { ...calibrated, showRateWindowDays: undefined }, checklist: null });
+    expect(unknown).toContain("Show rates are calibrated from recent days (kept between 5% and 95%)");
+    expect(calibrationNote(Number.NaN)).toBe("Show rates are calibrated from recent days (kept between 5% and 95%)");
+    expect(calibrationNote(1)).toBe("Show rates are calibrated from the last 1 day (kept between 5% and 95%)");
   });
   it("a fixed plan shows neither the line nor the new labels", () => {
     const html = view({ plan: NORMAL });
