@@ -21,22 +21,11 @@ vi.mock("../src/db/mysql.js", () => ({
   },
   pingDb: vi.fn(),
 }));
-vi.mock("../src/modules/engagement/badge.service.js", () => ({
-  queueAutoAwards: vi.fn(),
+vi.mock("../src/modules/engagement/badge.service.js", () => ({ queueAutoAwards: vi.fn() }));
+vi.mock("../src/modules/payroll/payroll-targeted-recalculation.service.js", () => ({
+  recalculateOpenPayrollForEmployee: vi.fn().mockResolvedValue({ status: "recalculated", runId: "run-1", message: "ok" }),
+  queuePayrollRecalculation: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock(
-  "../src/modules/payroll/payroll-targeted-recalculation.service.js",
-  () => ({
-    recalculateOpenPayrollForEmployee: vi
-      .fn()
-      .mockResolvedValue({
-        status: "recalculated",
-        runId: "run-1",
-        message: "ok",
-      }),
-    queuePayrollRecalculation: vi.fn().mockResolvedValue(undefined),
-  }),
-);
 
 import { db } from "../src/db/mysql.js";
 import {
@@ -50,42 +39,24 @@ const exec = db.execute as ReturnType<typeof vi.fn>;
 const recalc = recalculateOpenPayrollForEmployee as ReturnType<typeof vi.fn>;
 
 const fakeShift = {
-  id: "shift-1",
-  shift_code: "GEN",
-  shift_name: "General",
-  start_time: "09:00",
-  end_time: "18:00",
-  required_minutes: 540,
-  branch_name: null,
-  process_name: null,
-  active_status: 1,
-  created_at: "2026-05-01T00:00:00Z",
-  updated_at: "2026-05-01T00:00:00Z",
+  id: "shift-1", shift_code: "GEN", shift_name: "General",
+  start_time: "09:00", end_time: "18:00", required_minutes: 540,
+  branch_name: null, process_name: null, active_status: 1,
+  created_at: "2026-05-01T00:00:00Z", updated_at: "2026-05-01T00:00:00Z",
 };
 
 const fakeSession = {
-  id: "sess-1",
-  employee_id: "emp-1",
-  session_date: "2026-05-21",
-  login_time: "2026-05-21T09:00:00Z",
-  logout_time: null,
-  total_login_minutes: 0,
-  current_status: "Logged In",
-  punch_source: "MANUAL",
-  branch_name: null,
-  process_name: null,
-  created_at: "2026-05-21T09:00:00Z",
-  updated_at: "2026-05-21T09:00:00Z",
+  id: "sess-1", employee_id: "emp-1", session_date: "2026-05-21",
+  login_time: "2026-05-21T09:00:00Z", logout_time: null,
+  total_login_minutes: 0, current_status: "Logged In",
+  punch_source: "MANUAL", branch_name: null, process_name: null,
+  created_at: "2026-05-21T09:00:00Z", updated_at: "2026-05-21T09:00:00Z",
 };
 
 const fakeReg = {
-  id: "reg-1",
-  employee_id: "emp-1",
-  session_date: "2026-05-20",
-  reason: "Was present",
-  status: "pending",
-  created_at: "2026-05-21T00:00:00Z",
-  updated_at: "2026-05-21T00:00:00Z",
+  id: "reg-1", employee_id: "emp-1", session_date: "2026-05-20",
+  reason: "Was present", status: "pending",
+  created_at: "2026-05-21T00:00:00Z", updated_at: "2026-05-21T00:00:00Z",
 };
 
 /**
@@ -147,9 +118,7 @@ describe("wfmService.getShift", () => {
 
   it("throws when not found", async () => {
     exec.mockResolvedValueOnce([[], []]);
-    await expect(wfmService.getShift("nope")).rejects.toThrow(
-      "Shift not found",
-    );
+    await expect(wfmService.getShift("nope")).rejects.toThrow("Shift not found");
   });
 });
 
@@ -157,16 +126,7 @@ describe("wfmService.createShift", () => {
   it("throws when shift_code already exists", async () => {
     exec.mockResolvedValueOnce([[fakeShift], []]);
     await expect(
-      wfmService.createShift(
-        {
-          shiftCode: "GEN",
-          shiftName: "General",
-          startTime: "09:00",
-          endTime: "18:00",
-          requiredMinutes: 540,
-        },
-        "user-1",
-      ),
+      wfmService.createShift({ shiftCode: "GEN", shiftName: "General", startTime: "09:00", endTime: "18:00", requiredMinutes: 540 }, "user-1")
     ).rejects.toThrow("Shift code already exists");
   });
 
@@ -175,14 +135,7 @@ describe("wfmService.createShift", () => {
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT
     exec.mockResolvedValueOnce([[fakeShift], []]); // re-fetch
     const r = await wfmService.createShift(
-      {
-        shiftCode: "GEN",
-        shiftName: "General",
-        startTime: "09:00",
-        endTime: "18:00",
-        requiredMinutes: 540,
-      },
-      "user-1",
+      { shiftCode: "GEN", shiftName: "General", startTime: "09:00", endTime: "18:00", requiredMinutes: 540 }, "user-1"
     );
     expect(r.shift_code).toBe("GEN");
   });
@@ -191,20 +144,14 @@ describe("wfmService.createShift", () => {
 describe("wfmService.updateShift", () => {
   it("throws when not found", async () => {
     exec.mockResolvedValueOnce([[], []]);
-    await expect(
-      wfmService.updateShift("nope", { shiftName: "X" }, "user-1"),
-    ).rejects.toThrow("Shift not found");
+    await expect(wfmService.updateShift("nope", { shiftName: "X" }, "user-1")).rejects.toThrow("Shift not found");
   });
 
   it("updates and returns shift", async () => {
     exec.mockResolvedValueOnce([[fakeShift], []]); // getShift
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
     exec.mockResolvedValueOnce([[{ ...fakeShift, shift_name: "Night" }], []]); // re-fetch
-    const r = await wfmService.updateShift(
-      "shift-1",
-      { shiftName: "Night" },
-      "user-1",
-    );
+    const r = await wfmService.updateShift("shift-1", { shiftName: "Night" }, "user-1");
     expect(r.shift_name).toBe("Night");
   });
 });
@@ -215,14 +162,7 @@ describe("wfmService.clockIn", () => {
   it("throws when session already exists for that date", async () => {
     exec.mockResolvedValueOnce([[fakeSession], []]);
     await expect(
-      wfmService.clockIn(
-        {
-          employeeId: "emp-1",
-          sessionDate: "2026-05-21",
-          punchSource: "MANUAL",
-        },
-        "user-1",
-      ),
+      wfmService.clockIn({ employeeId: "emp-1", sessionDate: "2026-05-21", punchSource: "MANUAL" }, "user-1")
     ).rejects.toThrow("Session already exists");
   });
 
@@ -231,8 +171,7 @@ describe("wfmService.clockIn", () => {
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT
     exec.mockResolvedValueOnce([[fakeSession], []]); // re-fetch
     const r = await wfmService.clockIn(
-      { employeeId: "emp-1", sessionDate: "2026-05-21", punchSource: "MANUAL" },
-      "user-1",
+      { employeeId: "emp-1", sessionDate: "2026-05-21", punchSource: "MANUAL" }, "user-1"
     );
     expect(r.current_status).toBe("Logged In");
   });
@@ -241,28 +180,14 @@ describe("wfmService.clockIn", () => {
 describe("wfmService.clockOut", () => {
   it("throws when session not found", async () => {
     exec.mockResolvedValueOnce([[], []]);
-    await expect(wfmService.clockOut("nope", "user-1")).rejects.toThrow(
-      "Session not found",
-    );
+    await expect(wfmService.clockOut("nope", "user-1")).rejects.toThrow("Session not found");
   });
 
   it("sets logout_time and calculates total_login_minutes", async () => {
     const loginAt = new Date("2026-05-21T09:00:00Z");
-    exec.mockResolvedValueOnce([
-      [{ ...fakeSession, login_time: loginAt.toISOString() }],
-      [],
-    ]); // get session
+    exec.mockResolvedValueOnce([[{ ...fakeSession, login_time: loginAt.toISOString() }], []]); // get session
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
-    exec.mockResolvedValueOnce([
-      [
-        {
-          ...fakeSession,
-          logout_time: new Date().toISOString(),
-          current_status: "Logged Out",
-        },
-      ],
-      [],
-    ]); // re-fetch
+    exec.mockResolvedValueOnce([[{ ...fakeSession, logout_time: new Date().toISOString(), current_status: "Logged Out" }], []]); // re-fetch
     const r = await wfmService.clockOut("sess-1", "user-1");
     expect(r.current_status).toBe("Logged Out");
   });
@@ -295,8 +220,7 @@ describe("wfmService.submitRegularization", () => {
     exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
     exec.mockResolvedValueOnce([[fakeReg], []]);
     const r = await wfmService.submitRegularization(
-      { employeeId: "emp-1", sessionDate: "2026-05-20", reason: "Was present" },
-      "emp-1",
+      { employeeId: "emp-1", sessionDate: "2026-05-20", reason: "Was present" }, "emp-1"
     );
     expect(r.status).toBe("pending");
   });
@@ -306,7 +230,7 @@ describe("wfmService.reviewRegularization", () => {
   it("throws when not found", async () => {
     exec.mockResolvedValueOnce([[], []]);
     await expect(
-      wfmService.reviewRegularization("nope", { status: "approved" }, "mgr-1"),
+      wfmService.reviewRegularization("nope", { status: "approved" }, "mgr-1")
     ).rejects.toThrow("Regularization not found");
   });
 
@@ -316,15 +240,8 @@ describe("wfmService.reviewRegularization", () => {
     mocks.connExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // regularization status UPDATE
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // inbox alert close
     exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
-    exec.mockResolvedValueOnce([
-      [{ ...fakeApprovableReg, status: "approved" }],
-      [],
-    ]); // re-fetch
-    const r = await wfmService.reviewRegularization(
-      "reg-1",
-      { status: "approved" },
-      "mgr-1",
-    );
+    exec.mockResolvedValueOnce([[{ ...fakeApprovableReg, status: "approved" }], []]); // re-fetch
+    const r = await wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1");
     expect(r.status).toBe("approved");
   });
 
@@ -334,26 +251,18 @@ describe("wfmService.reviewRegularization", () => {
     // at all, so the audit trail recorded a correction that never happened.
     exec.mockResolvedValueOnce([[fakeReg], []]); // get
     await expect(
-      wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1"),
+      wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1")
     ).rejects.toThrow(/would not change the attendance record/);
   });
 
   it("approves a punch-only correction, which carries no requested status", async () => {
     // The default category on /attendance-regularization. The correction lives in
     // the times, not in a status, and used to be discarded on approval.
-    const punchOnly = {
-      ...fakeReg,
-      new_punch_in: "09:00",
-      new_punch_out: "18:00",
-    };
+    const punchOnly = { ...fakeReg, new_punch_in: "09:00", new_punch_out: "18:00" };
     exec.mockResolvedValueOnce([[punchOnly], []]); // get
     mocks.connExecute.mockResolvedValue([[{}], []]);
     exec.mockResolvedValue([[{ ...punchOnly, status: "approved" }], []]);
-    const r = await wfmService.reviewRegularization(
-      "reg-1",
-      { status: "approved" },
-      "mgr-1",
-    );
+    const r = await wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1");
     expect(r.status).toBe("approved");
   });
 
@@ -365,19 +274,12 @@ describe("wfmService.reviewRegularization", () => {
     mocks.connExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     exec.mockResolvedValueOnce([{ affectedRows: 2 }, []]); // inbox alert close
     exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
-    exec.mockResolvedValueOnce([
-      [{ ...fakeApprovableReg, status: "approved" }],
-      [],
-    ]);
+    exec.mockResolvedValueOnce([[{ ...fakeApprovableReg, status: "approved" }], []]);
 
-    await wfmService.reviewRegularization(
-      "reg-1",
-      { status: "approved" },
-      "mgr-1",
-    );
+    await wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1");
 
     const closeCall = exec.mock.calls.find(([sql]) =>
-      String(sql).includes("UPDATE work_inbox_item"),
+      String(sql).includes("UPDATE work_inbox_item")
     );
     expect(closeCall).toBeTruthy();
     expect(String(closeCall?.[0])).toContain("is_actioned = 1");
@@ -393,14 +295,10 @@ describe("wfmService.reviewRegularization", () => {
     // lookups in between are satisfied by the same stub.
     exec.mockResolvedValue([[{ ...fakeReg, status: "manager_approved" }], []]);
 
-    await wfmService.reviewRegularization(
-      "reg-1",
-      { status: "manager_approved" } as never,
-      "mgr-1",
-    );
+    await wfmService.reviewRegularization("reg-1", { status: "manager_approved" } as never, "mgr-1");
 
     const closeCall = exec.mock.calls.find(([sql]) =>
-      String(sql).includes("UPDATE work_inbox_item"),
+      String(sql).includes("UPDATE work_inbox_item")
     );
     expect(closeCall).toBeUndefined();
   });
@@ -423,57 +321,45 @@ describe("wfmService.reviewRegularization", () => {
     exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
     exec.mockResolvedValueOnce([[{ ...fakeReg, status: "approved" }], []]);
 
-    await wfmService.reviewRegularization(
-      "reg-1",
-      { status: "approved" },
-      "mgr-1",
-    );
+    await wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1");
 
     const adrUpsertCall = mocks.connExecute.mock.calls.find(([sql]) =>
-      String(sql).includes("INSERT INTO attendance_daily_record"),
+      String(sql).includes("INSERT INTO attendance_daily_record")
     );
     expect(adrUpsertCall).toBeTruthy();
     expect(adrUpsertCall?.[1]).toContain("apr_regularization");
     expect(adrUpsertCall?.[1]).toContain(480);
     expect(mocks.conn.commit).toHaveBeenCalledTimes(1);
-    expect(recalc).toHaveBeenCalledWith(
-      expect.objectContaining({
-        employeeId: "emp-1",
-        payrollMonth: "2026-05",
-        sourceEventType: "attendance_regularization",
-        sourceEventId: "reg-1",
-      }),
-    );
+    expect(recalc).toHaveBeenCalledWith(expect.objectContaining({
+      employeeId: "emp-1",
+      payrollMonth: "2026-05",
+      sourceEventType: "attendance_regularization",
+      sourceEventId: "reg-1",
+    }));
   });
 
   it("rejects approval when ADR is locked by another correction", async () => {
-    exec.mockResolvedValueOnce([
-      [
-        {
-          ...fakeReg,
-          requested_status: "present",
-          reason_code: "DIALLER_NOT_LOGGED",
-        },
-      ],
-      [],
-    ]);
+    exec.mockResolvedValueOnce([[
+      {
+        ...fakeReg,
+        requested_status: "present",
+        reason_code: "DIALLER_NOT_LOGGED",
+      },
+    ], []]);
     mocks.connExecute
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
-      .mockResolvedValueOnce([
-        [
-          {
-            attendance_status: "absent",
-            lwp_value: 1,
-            is_locked: 1,
-            regularization_id: "other-reg",
-            override_by: null,
-          },
-        ],
-        [],
-      ]);
+      .mockResolvedValueOnce([[
+        {
+          attendance_status: "absent",
+          lwp_value: 1,
+          is_locked: 1,
+          regularization_id: "other-reg",
+          override_by: null,
+        },
+      ], []]);
 
     await expect(
-      wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1"),
+      wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1")
     ).rejects.toThrow("already locked by another correction");
     expect(mocks.conn.rollback).toHaveBeenCalledTimes(1);
   });

@@ -1,7 +1,7 @@
-import { db } from "../../db/mysql.js";
-import { DomainSyncBase } from "./domain-sync-base.js";
+import { db } from '../../db/mysql.js';
+import { DomainSyncBase } from './domain-sync-base.js';
 
-const SYNC_MAP_ID = "a1000000-0000-0000-0000-000000000006";
+const SYNC_MAP_ID = 'a1000000-0000-0000-0000-000000000006';
 
 interface LegacyLeave {
   id: number;
@@ -18,22 +18,19 @@ interface LegacyLeave {
 
 // Maps db_bill leave column → mas_hrms leave_code
 const LEAVE_MAP: Record<string, string> = {
-  CL: "CL",
-  ML: "ML",
-  DL: "DL",
-  EL: "EL",
-  PTRL: "PL",
+  CL:   'CL',
+  ML:   'ML',
+  DL:   'DL',
+  EL:   'EL',
+  PTRL: 'PL',
 };
 
 export class LeaveBalanceSyncHandler extends DomainSyncBase {
   constructor() {
-    super("leave_balance", SYNC_MAP_ID);
+    super('leave_balance', SYNC_MAP_ID);
   }
 
-  protected async fetchBatch(
-    lastWatermark: string,
-    batchSize: number,
-  ): Promise<LegacyLeave[]> {
+  protected async fetchBatch(lastWatermark: string, batchSize: number): Promise<LegacyLeave[]> {
     const pool = await this.getLegacy();
     const [rows] = await pool.execute<any[]>(
       `SELECT id, EmpCode, CL, ML, DL, EL, PTRL, LWP, TotalLeave, CreateDate
@@ -41,38 +38,29 @@ export class LeaveBalanceSyncHandler extends DomainSyncBase {
        WHERE CreateDate >= ? OR CreateDate IS NULL
        ORDER BY CreateDate ASC
        LIMIT ?`,
-      [lastWatermark, batchSize],
+      [lastWatermark, batchSize]
     );
     return rows as LegacyLeave[];
   }
 
   protected extractWatermark(rows: LegacyLeave[]): string | null {
-    const last = [...rows].reverse().find((r) => r.CreateDate);
+    const last = [...rows].reverse().find(r => r.CreateDate);
     if (!last?.CreateDate) return null;
     const d = new Date(last.CreateDate);
     d.setSeconds(d.getSeconds() + 1);
-    return d.toISOString().slice(0, 19).replace("T", " ");
+    return d.toISOString().slice(0, 19).replace('T', ' ');
   }
 
   protected async processBatch(rows: LegacyLeave[]): Promise<{
-    inserted: number;
-    updated: number;
-    skipped: number;
-    failed: number;
+    inserted: number; updated: number; skipped: number; failed: number;
   }> {
     const empMap = await this.loadEmployeeMap();
     const leaveTypeMap = await this.loadLeaveTypeMap();
-    let inserted = 0,
-      updated = 0,
-      skipped = 0,
-      failed = 0;
+    let inserted = 0, updated = 0, skipped = 0, failed = 0;
 
     for (const row of rows) {
       const empId = this.resolveEmployeeId(empMap, row.EmpCode);
-      if (!empId) {
-        skipped++;
-        continue;
-      }
+      if (!empId) { skipped++; continue; }
 
       const year = row.CreateDate
         ? new Date(row.CreateDate).getFullYear()
@@ -93,7 +81,7 @@ export class LeaveBalanceSyncHandler extends DomainSyncBase {
              AND lr.leave_type_id = ?
              AND lr.status = 'approved'
              AND YEAR(lr.from_date) = ?`,
-          [empId, leaveTypeId, year],
+          [empId, leaveTypeId, year]
         );
         const usedDays = Number(usedRow?.used_days ?? 0);
 
@@ -139,7 +127,7 @@ export class LeaveBalanceSyncHandler extends DomainSyncBase {
 
   private async loadLeaveTypeMap(): Promise<Map<string, string>> {
     const [rows] = await db.execute<any[]>(
-      `SELECT id, leave_code FROM leave_type_master`,
+      `SELECT id, leave_code FROM leave_type_master`
     );
     const m = new Map<string, string>();
     for (const r of rows) m.set(r.leave_code, r.id);

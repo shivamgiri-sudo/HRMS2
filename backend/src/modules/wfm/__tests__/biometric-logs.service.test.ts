@@ -57,16 +57,14 @@ describe("biometric logs service helpers", () => {
   });
 
   it("adds current NCOSEC rows while de-duplicating rows already synced locally", () => {
-    const local = [
-      {
-        cosec_index: 10,
-        user_id: "MAS47814",
-        punch_time: "2026-07-18 12:54:40",
-        io_type: 0,
-        device_id: 15,
-        synced_at: "2026-07-18 15:00:25",
-      },
-    ];
+    const local = [{
+      cosec_index: 10,
+      user_id: "MAS47814",
+      punch_time: "2026-07-18 12:54:40",
+      io_type: 0,
+      device_id: 15,
+      synced_at: "2026-07-18 15:00:25",
+    }];
     const live = [
       {
         ...local[0],
@@ -82,6 +80,9 @@ describe("biometric logs service helpers", () => {
       },
     ];
 
-    expect(mergeRawPunchRows(local, live)).toEqual([local[0], live[1]]);
+    expect(mergeRawPunchRows(local, live)).toEqual([
+      local[0],
+      live[1],
+    ]);
   });
 });

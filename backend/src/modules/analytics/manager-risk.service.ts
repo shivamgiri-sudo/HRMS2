@@ -14,15 +14,15 @@
  * Risk level: CRITICAL >= 60, HIGH >= 40, MEDIUM >= 20, LOW < 20
  */
 
-import { Request, Response } from "express";
-import type { RowDataPacket } from "mysql2";
-import { db as pool } from "../../db/mysql.js";
+import { Request, Response } from 'express';
+import type { RowDataPacket } from 'mysql2';
+import { db as pool } from '../../db/mysql.js';
 
 function resolveRiskLevel(score: number): string {
-  if (score >= 60) return "CRITICAL";
-  if (score >= 40) return "HIGH";
-  if (score >= 20) return "MEDIUM";
-  return "LOW";
+  if (score >= 60) return 'CRITICAL';
+  if (score >= 40) return 'HIGH';
+  if (score >= 20) return 'MEDIUM';
+  return 'LOW';
 }
 
 /**
@@ -197,28 +197,20 @@ const LEVEL_EXPR = `
 export async function getManagerRiskLeaderboard(req: Request, res: Response) {
   try {
     const { branchId, processId, limit = 50, riskLevel } = req.query;
-    const callerRoles: string[] = (req as any).authUser?.roles ?? [
-      (req as any).authUser?.role ?? "",
-    ];
+    const callerRoles: string[] = (req as any).authUser?.roles ?? [(req as any).authUser?.role ?? ''];
     const callerId: string | undefined = (req as any).authUser?.id;
-    const isManagerOnly =
-      callerRoles.every((r) => !["super_admin", "admin", "hr"].includes(r)) &&
-      callerRoles.some((r) => r === "manager");
+    const isManagerOnly = callerRoles.every(r =>
+      !['super_admin', 'admin', 'hr'].includes(r)
+    ) && callerRoles.some(r => r === 'manager');
 
     const whereParts: string[] = [];
     const params: unknown[] = [];
 
-    if (branchId) {
-      whereParts.push("AND mgr.branch_id = ?");
-      params.push(branchId);
-    }
-    if (processId) {
-      whereParts.push("AND mgr.process_id = ?");
-      params.push(processId);
-    }
+    if (branchId) { whereParts.push('AND mgr.branch_id = ?'); params.push(branchId); }
+    if (processId) { whereParts.push('AND mgr.process_id = ?'); params.push(processId); }
     // Managers can only see their own row in the leaderboard
     if (isManagerOnly && callerId) {
-      whereParts.push("AND mgr.id = ?");
+      whereParts.push('AND mgr.id = ?');
       params.push(callerId);
     }
 
@@ -252,24 +244,19 @@ export async function getManagerRiskLeaderboard(req: Request, res: Response) {
     const [rows] = await pool.query<RowDataPacket[]>(query, params);
 
     const filtered = riskLevel
-      ? rows.filter((r) => r.risk_level === (riskLevel as string).toUpperCase())
+      ? rows.filter(r => r.risk_level === (riskLevel as string).toUpperCase())
       : rows;
 
     res.json({
       success: true,
-      analysis_type: "MANAGER_RISK_LEADERBOARD",
+      analysis_type: 'MANAGER_RISK_LEADERBOARD',
       count: filtered.length,
       data: filtered,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error("Error in getManagerRiskLeaderboard:", error);
-    res
-      .status(500)
-      .json({
-        success: false,
-        error: "Failed to fetch manager risk leaderboard",
-      });
+    console.error('Error in getManagerRiskLeaderboard:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch manager risk leaderboard' });
   }
 }
 
@@ -304,16 +291,14 @@ export async function getCriticalManagers(req: Request, res: Response) {
 
     res.json({
       success: true,
-      analysis_type: "CRITICAL_MANAGERS",
+      analysis_type: 'CRITICAL_MANAGERS',
       count: rows.length,
       data: rows,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error("Error in getCriticalManagers:", error);
-    res
-      .status(500)
-      .json({ success: false, error: "Failed to fetch critical managers" });
+    console.error('Error in getCriticalManagers:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch critical managers' });
   }
 }
 
@@ -385,13 +370,11 @@ export async function getManagerTeamDrilldown(req: Request, res: Response) {
          AND cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 60 DAY)
        WHERE (mgr.id = ? OR mgr.employee_code = ?)
        GROUP BY mgr.id`,
-      [managerId, managerId],
+      [managerId, managerId]
     );
 
     if (!mgrRows.length) {
-      return res
-        .status(404)
-        .json({ success: false, error: "Manager not found" });
+      return res.status(404).json({ success: false, error: 'Manager not found' });
     }
 
     const managerSummary = mgrRows[0] as any;
@@ -495,29 +478,24 @@ export async function getManagerTeamDrilldown(req: Request, res: Response) {
          AND e.active_status = 1
          AND e.employment_status = 'Active'
        ORDER BY prediction_score DESC`,
-      [managerId, managerId],
+      [managerId, managerId]
     );
 
     const riskScore = Number(managerSummary.manager_risk_score ?? 0);
 
     res.json({
       success: true,
-      analysis_type: "MANAGER_TEAM_DRILLDOWN",
+      analysis_type: 'MANAGER_TEAM_DRILLDOWN',
       manager: {
         ...managerSummary,
-        risk_level: resolveRiskLevel(riskScore),
+        risk_level: resolveRiskLevel(riskScore)
       },
       team_count: teamRows.length,
       team_members: teamRows,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error("Error in getManagerTeamDrilldown:", error);
-    res
-      .status(500)
-      .json({
-        success: false,
-        error: "Failed to fetch manager team drilldown",
-      });
+    console.error('Error in getManagerTeamDrilldown:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch manager team drilldown' });
   }
 }

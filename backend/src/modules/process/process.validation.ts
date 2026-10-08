@@ -3,10 +3,7 @@ import { z } from "zod";
 export const processFiltersSchema = z.object({
   search: z.string().optional(),
   departmentId: z.string().uuid().optional(),
-  activeStatus: z
-    .enum(["all", "active", "inactive"])
-    .optional()
-    .default("active"),
+  activeStatus: z.enum(["all", "active", "inactive"]).optional().default("active")
 });
 
 export const createProcessSchema = z.object({
@@ -26,7 +23,7 @@ export const createProcessSchema = z.object({
   locationName: z.string().trim().max(120).nullable().optional(),
   processOwnerEmployeeId: z.string().uuid().nullable().optional(),
   processManagerEmployeeId: z.string().uuid().nullable().optional(),
-  description: z.string().trim().nullable().optional(),
+  description: z.string().trim().nullable().optional()
 });
 
 export const updateProcessSchema = z.object({
@@ -38,9 +35,9 @@ export const updateProcessSchema = z.object({
   processOwnerEmployeeId: z.string().uuid().nullable().optional(),
   processManagerEmployeeId: z.string().uuid().nullable().optional(),
   activeStatus: z.boolean().optional(),
-  description: z.string().trim().nullable().optional(),
+  description: z.string().trim().nullable().optional()
 });
 
 export const updateProcessStatusSchema = z.object({
-  activeStatus: z.boolean(),
+  activeStatus: z.boolean()
 });

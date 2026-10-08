@@ -13,9 +13,9 @@
  * removed, and the old path retires itself the moment resignation_submitted is switched
  * live. A strangler, not a rewrite.
  */
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { notificationGateway } from "../communication/notification.gateway.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { notificationGateway } from '../communication/notification.gateway.js';
 
 interface ExitContextRow extends RowDataPacket {
   employee_id: string;
@@ -37,9 +37,7 @@ interface ExitContextRow extends RowDataPacket {
   last_working_day_confirmed: string | null;
 }
 
-async function loadExitContext(
-  exitRequestId: string,
-): Promise<ExitContextRow | null> {
+async function loadExitContext(exitRequestId: string): Promise<ExitContextRow | null> {
   const [rows] = await db.execute<ExitContextRow[]>(
     `SELECT er.employee_id,
             e.employee_code,
@@ -69,11 +67,7 @@ function tenureYears(dateOfJoining: string | null): number | null {
   if (!dateOfJoining) return null;
   const doj = new Date(dateOfJoining);
   if (Number.isNaN(doj.getTime())) return null;
-  return (
-    Math.round(
-      ((Date.now() - doj.getTime()) / (365.25 * 24 * 3600 * 1000)) * 10,
-    ) / 10
-  );
+  return Math.round(((Date.now() - doj.getTime()) / (365.25 * 24 * 3600 * 1000)) * 10) / 10;
 }
 
 function daysUntil(date: string | null): number | null {
@@ -90,21 +84,15 @@ function daysUntil(date: string | null): number | null {
  * undeliverable all return false, so the caller keeps its legacy fallback until this
  * event is switched live — and does not double-send once it is.
  */
-export async function notifyResignationSubmitted(
-  exitRequestId: string,
-): Promise<boolean> {
+export async function notifyResignationSubmitted(exitRequestId: string): Promise<boolean> {
   try {
     const ctx = await loadExitContext(exitRequestId);
     if (!ctx) return false;
     const outcome = await notificationGateway.notify({
-      eventCode: "resignation_submitted",
+      eventCode: 'resignation_submitted',
       dedupeKey: `exit_request:${exitRequestId}:submitted`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "exit_request",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'exit_request',
       entityId: exitRequestId,
       correlationId: `exit:${exitRequestId}`,
       data: {
@@ -122,12 +110,9 @@ export async function notifyResignationSubmitted(
         days_to_proposed_lwd: daysUntil(ctx.last_working_day_proposed),
       },
     });
-    return outcome.outcome === "sent";
+    return outcome.outcome === 'sent';
   } catch (err) {
-    console.error(
-      `[exit-notify] submitted ${exitRequestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[exit-notify] submitted ${exitRequestId}:`, (err as Error).message);
     return false;
   }
 }
@@ -135,23 +120,18 @@ export async function notifyResignationSubmitted(
 /** Accepted / rejected / revoked. Revocation routes to its own event. */
 export async function notifyResignationDecision(
   exitRequestId: string,
-  decision: "accepted" | "rejected" | "revoked",
+  decision: 'accepted' | 'rejected' | 'revoked',
 ): Promise<void> {
   try {
     const ctx = await loadExitContext(exitRequestId);
     if (!ctx) return;
     await notificationGateway.notify({
-      eventCode:
-        decision === "revoked" ? "resignation_revoked" : "resignation_decision",
+      eventCode: decision === 'revoked' ? 'resignation_revoked' : 'resignation_decision',
       // Decision in the key: an accept followed by a revoke is two legitimate
       // notifications, each firing exactly once.
       dedupeKey: `exit_request:${exitRequestId}:${decision}`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "exit_request",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'exit_request',
       entityId: exitRequestId,
       correlationId: `exit:${exitRequestId}`,
       data: {
@@ -162,16 +142,11 @@ export async function notifyResignationDecision(
         decision,
         confirmed_lwd: ctx.last_working_day_confirmed,
         notice_period_days: ctx.notice_period_days,
-        days_to_lwd: daysUntil(
-          ctx.last_working_day_confirmed ?? ctx.last_working_day_proposed,
-        ),
+        days_to_lwd: daysUntil(ctx.last_working_day_confirmed ?? ctx.last_working_day_proposed),
       },
     });
   } catch (err) {
-    console.error(
-      `[exit-notify] decision ${exitRequestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[exit-notify] decision ${exitRequestId}:`, (err as Error).message);
   }
 }
 
@@ -194,9 +169,7 @@ interface FfContextRow extends RowDataPacket {
  * resolves zero recipients regardless. That is a resolver-level question affecting all
  * employee-kind consumers, not fixed here.
  */
-export async function notifyFullFinalReady(
-  exitRequestId: string,
-): Promise<void> {
+export async function notifyFullFinalReady(exitRequestId: string): Promise<void> {
   try {
     const ctx = await loadExitContext(exitRequestId);
     if (!ctx) return;
@@ -209,14 +182,10 @@ export async function notifyFullFinalReady(
     const ff = rows[0];
     if (!ff) return;
     await notificationGateway.notify({
-      eventCode: "full_final_ready",
+      eventCode: 'full_final_ready',
       dedupeKey: `exit_request:${exitRequestId}:ff_ready`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "exit_request",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'exit_request',
       entityId: exitRequestId,
       correlationId: `exit:${exitRequestId}`,
       data: {
@@ -225,24 +194,15 @@ export async function notifyFullFinalReady(
         process_name: ctx.process_name,
         reporting_manager_name: ctx.reporting_manager_name,
         net_payable: ff.net_payable == null ? null : Number(ff.net_payable),
-        gratuity_amount:
-          ff.gratuity_amount == null ? null : Number(ff.gratuity_amount),
-        notice_recovery:
-          ff.notice_recovery == null ? null : Number(ff.notice_recovery),
-        earned_leave_encashment:
-          ff.earned_leave_encashment == null
-            ? null
-            : Number(ff.earned_leave_encashment),
+        gratuity_amount: ff.gratuity_amount == null ? null : Number(ff.gratuity_amount),
+        notice_recovery: ff.notice_recovery == null ? null : Number(ff.notice_recovery),
+        earned_leave_encashment: ff.earned_leave_encashment == null ? null : Number(ff.earned_leave_encashment),
         salary_hold: ff.salary_hold == null ? null : Number(ff.salary_hold),
-        advances_recovery:
-          ff.advances_recovery == null ? null : Number(ff.advances_recovery),
+        advances_recovery: ff.advances_recovery == null ? null : Number(ff.advances_recovery),
       },
     });
   } catch (err) {
-    console.error(
-      `[exit-notify] full_final_ready ${exitRequestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[exit-notify] full_final_ready ${exitRequestId}:`, (err as Error).message);
   }
 }
 
@@ -260,9 +220,7 @@ export async function notifyFullFinalReady(
  * this doc comment says it wants to avoid. The exit module actually writes
  * exit_clearance_task (24 live rows); switched to that.
  */
-export async function notifyLastWorkingDayApproaching(
-  exitRequestId: string,
-): Promise<void> {
+export async function notifyLastWorkingDayApproaching(exitRequestId: string): Promise<void> {
   try {
     const ctx = await loadExitContext(exitRequestId);
     if (!ctx) return;
@@ -289,19 +247,13 @@ export async function notifyLastWorkingDayApproaching(
       );
       pending = rows[0]?.pending == null ? null : Number(rows[0].pending);
       departments = (rows[0]?.departments as string) ?? null;
-    } catch {
-      /* checklist unreadable — report null, not zero */
-    }
+    } catch { /* checklist unreadable — report null, not zero */ }
 
     await notificationGateway.notify({
-      eventCode: "exit_lwd_approaching",
+      eventCode: 'exit_lwd_approaching',
       dedupeKey: `exit_request:${exitRequestId}:lwd`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "exit_request",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'exit_request',
       entityId: exitRequestId,
       correlationId: `exit:${exitRequestId}`,
       data: {
@@ -316,47 +268,32 @@ export async function notifyLastWorkingDayApproaching(
       },
     });
   } catch (err) {
-    console.error(
-      `[exit-notify] lwd ${exitRequestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[exit-notify] lwd ${exitRequestId}:`, (err as Error).message);
   }
 }
 
 /**
  * Notify manager when an employee submits resignation.
  */
-export async function notifyResignationSubmittedToManager(
-  exitRequestId: string,
-): Promise<void> {
+export async function notifyResignationSubmittedToManager(exitRequestId: string): Promise<void> {
   try {
     const ctx = await loadExitContext(exitRequestId);
     if (!ctx?.manager_user_id) return;
     await notificationGateway.notify({
-      eventCode: "exit_resignation_submitted",
+      eventCode: 'exit_resignation_submitted',
       dedupeKey: `exit_request:${exitRequestId}:resignation_submitted`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "exit_request",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'exit_request',
       entityId: exitRequestId,
       correlationId: `exit:${exitRequestId}`,
       data: {
         employee_name: ctx.employee_name,
-        lwd:
-          ctx.last_working_day_confirmed ??
-          ctx.last_working_day_proposed ??
-          "TBD",
+        lwd: ctx.last_working_day_confirmed ?? ctx.last_working_day_proposed ?? 'TBD',
         exit_request_id: exitRequestId,
       },
     });
   } catch (err) {
-    console.error(
-      `[exit-notify] resignation_submitted_to_manager ${exitRequestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[exit-notify] resignation_submitted_to_manager ${exitRequestId}:`, (err as Error).message);
   }
 }
 
@@ -365,40 +302,27 @@ export async function notifyResignationSubmittedToManager(
  */
 export async function notifyManagerDecision(
   exitRequestId: string,
-  decision: "approved" | "returned",
-  returnReason?: string,
+  decision: 'approved' | 'returned',
+  returnReason?: string
 ): Promise<void> {
   try {
     const ctx = await loadExitContext(exitRequestId);
     if (!ctx?.employee_user_id) return;
-    const eventKey =
-      decision === "approved"
-        ? "exit_manager_approved"
-        : "exit_manager_returned";
+    const eventKey = decision === 'approved' ? 'exit_manager_approved' : 'exit_manager_returned';
     await notificationGateway.notify({
       eventCode: eventKey,
       dedupeKey: `exit_request:${exitRequestId}:${decision}`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "exit_request",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'exit_request',
       entityId: exitRequestId,
       correlationId: `exit:${exitRequestId}`,
       data: {
-        lwd:
-          ctx.last_working_day_confirmed ??
-          ctx.last_working_day_proposed ??
-          "TBD",
-        return_reason: returnReason ?? "",
+        lwd: ctx.last_working_day_confirmed ?? ctx.last_working_day_proposed ?? 'TBD',
+        return_reason: returnReason ?? '',
       },
     });
   } catch (err) {
-    console.error(
-      `[exit-notify] manager_decision ${decision} ${exitRequestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[exit-notify] manager_decision ${decision} ${exitRequestId}:`, (err as Error).message);
   }
 }
 
@@ -412,14 +336,10 @@ export async function notifyAutoExited(exitRequestId: string): Promise<void> {
     // Notify manager if available (HR role-based notification can be added later)
     if (ctx.manager_user_id) {
       await notificationGateway.notify({
-        eventCode: "exit_auto_exited",
+        eventCode: 'exit_auto_exited',
         dedupeKey: `exit_request:${exitRequestId}:auto_exited`,
-        context: {
-          employeeId: ctx.employee_id,
-          branchId: ctx.branch_id,
-          processId: ctx.process_id,
-        },
-        entityType: "exit_request",
+        context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+        entityType: 'exit_request',
         entityId: exitRequestId,
         correlationId: `exit:${exitRequestId}`,
         data: {
@@ -428,66 +348,46 @@ export async function notifyAutoExited(exitRequestId: string): Promise<void> {
       });
     }
   } catch (err) {
-    console.error(
-      `[exit-notify] auto_exited ${exitRequestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[exit-notify] auto_exited ${exitRequestId}:`, (err as Error).message);
   }
 }
 
 /**
  * Notify employee and manager when F&F is approved.
  */
-export async function notifyFFApproved(
-  exitRequestId: string,
-  netPayable: number,
-): Promise<void> {
+export async function notifyFFApproved(exitRequestId: string, netPayable: number): Promise<void> {
   try {
     const ctx = await loadExitContext(exitRequestId);
     if (!ctx?.employee_user_id) return;
     await notificationGateway.notify({
-      eventCode: "exit_ff_approved",
+      eventCode: 'exit_ff_approved',
       dedupeKey: `exit_request:${exitRequestId}:ff_approved`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "exit_request",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'exit_request',
       entityId: exitRequestId,
       correlationId: `exit:${exitRequestId}`,
       data: {
-        net_payable: netPayable.toLocaleString("en-IN"),
+        net_payable: netPayable.toLocaleString('en-IN'),
       },
     });
   } catch (err) {
-    console.error(
-      `[exit-notify] ff_approved ${exitRequestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[exit-notify] ff_approved ${exitRequestId}:`, (err as Error).message);
   }
 }
 
 /**
  * Notify manager when resignation is revoked.
  */
-export async function notifyResignationRevoked(
-  exitRequestId: string,
-  revokeReason: string,
-): Promise<void> {
+export async function notifyResignationRevoked(exitRequestId: string, revokeReason: string): Promise<void> {
   try {
     const ctx = await loadExitContext(exitRequestId);
     if (!ctx) return;
     if (ctx.manager_user_id) {
       await notificationGateway.notify({
-        eventCode: "exit_revoked",
+        eventCode: 'exit_revoked',
         dedupeKey: `exit_request:${exitRequestId}:revoked`,
-        context: {
-          employeeId: ctx.employee_id,
-          branchId: ctx.branch_id,
-          processId: ctx.process_id,
-        },
-        entityType: "exit_request",
+        context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+        entityType: 'exit_request',
         entityId: exitRequestId,
         correlationId: `exit:${exitRequestId}`,
         data: {
@@ -497,9 +397,6 @@ export async function notifyResignationRevoked(
       });
     }
   } catch (err) {
-    console.error(
-      `[exit-notify] revoked ${exitRequestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[exit-notify] revoked ${exitRequestId}:`, (err as Error).message);
   }
 }

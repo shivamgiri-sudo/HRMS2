@@ -33,17 +33,8 @@ export type MonthCoverage = {
   month: string;
   complete: boolean;
   costCentres: CoverageCostCentre[];
-  uncoveredEmployees: Array<{
-    employeeId: string;
-    employeeCode: string;
-    reason: string;
-  }>;
-  totals: {
-    paid: number;
-    inRun: number;
-    notStarted: number;
-    uncovered: number;
-  };
+  uncoveredEmployees: Array<{ employeeId: string; employeeCode: string; reason: string }>;
+  totals: { paid: number; inRun: number; notStarted: number; uncovered: number };
 };
 
 /**
@@ -132,10 +123,7 @@ export async function getMonthCoverage(
       ORDER BY e.employee_code`,
     [month],
   );
-  const [[ccRows], [uncovered]] = await Promise.all([
-    ccRowsPromise,
-    uncoveredPromise,
-  ]);
+  const [[ccRows], [uncovered]] = await Promise.all([ccRowsPromise, uncoveredPromise]);
 
   const allCostCentres: CoverageCostCentre[] = ccRows.map((r) => ({
     costCentreId: String(r.cost_centre_id),
@@ -146,11 +134,7 @@ export async function getMonthCoverage(
     runId: r.run_id ? String(r.run_id) : null,
     // "paid" means the run is closed to recomputation — finalized, locked or disbursed. Anything
     // earlier is still in flight, however far along it looks.
-    status: (!r.run_id
-      ? "not_started"
-      : isRunClosed(r.run_status)
-        ? "paid"
-        : "in_run") as CoverageStatus,
+    status: (!r.run_id ? "not_started" : isRunClosed(r.run_status) ? "paid" : "in_run") as CoverageStatus,
   }));
 
   /*
@@ -174,9 +158,7 @@ export async function getMonthCoverage(
    * one answer disagreeing about who the answer is about.
    */
   const visibleUncovered = visibleBranchIds
-    ? uncovered.filter(
-        (r) => r.branch_id && visibleBranchIds.has(String(r.branch_id)),
-      )
+    ? uncovered.filter((r) => r.branch_id && visibleBranchIds.has(String(r.branch_id)))
     : uncovered;
   const uncoveredEmployees = visibleUncovered.map((r) => ({
     employeeId: String(r.id),

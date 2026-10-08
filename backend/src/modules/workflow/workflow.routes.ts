@@ -23,46 +23,28 @@ async function assertRequestInScope(req: AuthenticatedRequest, res: Response): P
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
 // List workflow definitions — admin/hr
-router.get(
-  "/",
-  requireRole("admin", "hr"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    res.json({ data: await workflowService.listWorkflows() });
-  }),
-);
+router.get("/", requireRole("admin", "hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  res.json({ data: await workflowService.listWorkflows() });
+}));
 
 // Create an approval request (any authenticated user for their own entity)
-router.post(
-  "/requests",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { workflow_code, module_key, entity_type, entity_id, summary_text } =
-      req.body;
-    if (!workflow_code || !module_key || !entity_type || !entity_id) {
-      return res
-        .status(400)
-        .json({
-          error: "workflow_code, module_key, entity_type, entity_id required",
-        });
-    }
-    const request = await workflowService.createRequest({
-      workflow_code,
-      module_key,
-      entity_type,
-      entity_id,
-      requested_by: req.authUser!.id,
-      summary_text,
-    });
-    res.status(201).json({ data: request });
-  }),
-);
+router.post("/requests", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { workflow_code, module_key, entity_type, entity_id, summary_text } = req.body;
+  if (!workflow_code || !module_key || !entity_type || !entity_id) {
+    return res.status(400).json({ error: "workflow_code, module_key, entity_type, entity_id required" });
+  }
+  const request = await workflowService.createRequest({
+    workflow_code, module_key, entity_type, entity_id,
+    requested_by: req.authUser!.id,
+    summary_text,
+  });
+  res.status(201).json({ data: request });
+}));
 
 // Pending requests for caller's role (approver inbox)
 // Role is derived from the authenticated user's roles, not a query param
@@ -95,19 +77,13 @@ router.post("/requests/:id/act", requireRole("admin", "hr", "manager", "team_lea
 }));
 
 // My submitted requests (all authenticated users)
-router.get(
-  "/requests/my",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 25;
-    const status = req.query.status as string | undefined;
-    const requests = await workflowService.listRequestsByUser(
-      req.authUser!.id,
-      { status, page, limit },
-    );
-    res.json({ data: requests });
-  }),
-);
+router.get("/requests/my", h(async (req: AuthenticatedRequest, res: Response) => {
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 25;
+  const status = req.query.status as string | undefined;
+  const requests = await workflowService.listRequestsByUser(req.authUser!.id, { status, page, limit });
+  res.json({ data: requests });
+}));
 
 // All requests — admin/hr
 router.get("/requests", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {

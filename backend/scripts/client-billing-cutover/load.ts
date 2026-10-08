@@ -77,11 +77,7 @@
  * cost of losing per-line granularity legacy never had in the first place.
  */
 import { randomUUID } from "node:crypto";
-import type {
-  PoolConnection,
-  ResultSetHeader,
-  RowDataPacket,
-} from "mysql2/promise";
+import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { buildDescription } from "./extract.transforms.js";
 import { mapInvoiceStatus, mapCreditStatus } from "./validate.transforms.js";
 
@@ -199,9 +195,7 @@ export function parseLegacyDate(raw: string | null): string {
     const [, d, m, y] = dmy;
     return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
   }
-  throw new Error(
-    `date "${raw}" does not match a recognized format (ISO or DD-MM-YYYY/DD/MM/YYYY)`,
-  );
+  throw new Error(`date "${raw}" does not match a recognized format (ISO or DD-MM-YYYY/DD/MM/YYYY)`);
 }
 
 const INVOICE_INSERT_SQL = `
@@ -258,11 +252,7 @@ async function loadOneInvoice(
     // cost centre as 'error', so a 'valid' row reaching here should always carry
     // target_cost_centre_id — this branch exists so a future validate.ts
     // regression fails loudly here too, not just silently NULLs an INSERT.
-    return {
-      legacyId: row.src_id,
-      outcome: "failed",
-      error: "target_cost_centre_id missing on a 'valid' row",
-    };
+    return { legacyId: row.src_id, outcome: "failed", error: "target_cost_centre_id missing on a 'valid' row" };
   }
 
   const conn = await loadDb.getConnection();
@@ -275,32 +265,14 @@ async function loadOneInvoice(
     const sgstAmount = parseAmount(row.src_sgst);
     const grandTotal = parseAmount(row.src_grnd);
     const invoiceDate = parseLegacyDate(row.src_invoicedate);
-    const description = buildDescription(
-      row.src_invoicedescription,
-      row.src_invoicedeleteremarks,
-    );
+    const description = buildDescription(row.src_invoicedescription, row.src_invoicedeleteremarks);
     const invoiceStatus = mapInvoiceStatus(row.src_bill_no);
 
     const [result] = await conn.execute<ResultSetHeader>(INVOICE_INSERT_SQL, [
-      row.target_id,
-      row.target_cost_centre_id,
-      invoiceStatus,
-      row.src_category,
-      row.src_finance_year,
-      row.src_month,
-      invoiceDate,
-      description,
-      row.src_proforma_bill_no,
-      row.src_bill_no,
-      row.target_gst_type,
-      row.target_apply_gst ?? 0,
-      totalAmount,
-      igstAmount,
-      cgstAmount,
-      sgstAmount,
-      grandTotal,
-      options.createdBy,
-      row.src_id,
+      row.target_id, row.target_cost_centre_id, invoiceStatus, row.src_category, row.src_finance_year,
+      row.src_month, invoiceDate, description, row.src_proforma_bill_no, row.src_bill_no,
+      row.target_gst_type, row.target_apply_gst ?? 0, totalAmount, igstAmount, cgstAmount, sgstAmount,
+      grandTotal, options.createdBy, row.src_id,
     ]);
 
     // affectedRows === 1 -> fresh INSERT; === 2 -> ON DUPLICATE KEY UPDATE branch ran
@@ -318,23 +290,13 @@ async function loadOneInvoice(
         await conn.execute(
           `INSERT INTO client_invoice_line (id, invoice_id, line_type, particulars, qty, rate, amount)
            VALUES (?, ?, 'charge', ?, 1, ?, ?)`,
-          [
-            randomUUID(),
-            row.target_id,
-            `Migrated historical invoice total (legacy id ${row.src_id})`,
-            totalAmount,
-            totalAmount,
-          ],
+          [randomUUID(), row.target_id, `Migrated historical invoice total (legacy id ${row.src_id})`, totalAmount, totalAmount],
         );
       }
     }
 
     await conn.commit();
-    return {
-      legacyId: row.src_id,
-      outcome: isFreshInsert ? "loaded" : "already_loaded",
-      targetId: row.target_id,
-    };
+    return { legacyId: row.src_id, outcome: isFreshInsert ? "loaded" : "already_loaded", targetId: row.target_id };
   } catch (err) {
     await conn.rollback();
     const message = err instanceof Error ? err.message : String(err);
@@ -373,30 +335,12 @@ async function loadOneCreditNote(
     const description = buildDescription(row.src_creditdescription, null);
     const creditStatus = mapCreditStatus(row.src_credit_approve);
 
-    const [result] = await conn.execute<ResultSetHeader>(
-      CREDIT_NOTE_INSERT_SQL,
-      [
-        row.target_id,
-        row.target_invoice_id,
-        row.target_cost_centre_id,
-        row.src_category,
-        row.src_finance_year,
-        row.src_month,
-        creditDate,
-        description,
-        row.src_credit_no,
-        creditStatus,
-        row.target_gst_type,
-        row.target_apply_gst ?? 0,
-        totalAmount,
-        igstAmount,
-        cgstAmount,
-        sgstAmount,
-        grandTotal,
-        options.createdBy,
-        row.src_id,
-      ],
-    );
+    const [result] = await conn.execute<ResultSetHeader>(CREDIT_NOTE_INSERT_SQL, [
+      row.target_id, row.target_invoice_id, row.target_cost_centre_id, row.src_category, row.src_finance_year,
+      row.src_month, creditDate, description, row.src_credit_no, creditStatus,
+      row.target_gst_type, row.target_apply_gst ?? 0, totalAmount, igstAmount, cgstAmount, sgstAmount,
+      grandTotal, options.createdBy, row.src_id,
+    ]);
 
     const isFreshInsert = (result as ResultSetHeader).affectedRows === 1;
     if (isFreshInsert) {
@@ -409,23 +353,13 @@ async function loadOneCreditNote(
         await conn.execute(
           `INSERT INTO client_credit_note_line (id, credit_note_id, particulars, qty, rate, amount)
            VALUES (?, ?, ?, 1, ?, ?)`,
-          [
-            randomUUID(),
-            row.target_id,
-            `Migrated historical credit note total (legacy id ${row.src_id})`,
-            totalAmount,
-            totalAmount,
-          ],
+          [randomUUID(), row.target_id, `Migrated historical credit note total (legacy id ${row.src_id})`, totalAmount, totalAmount],
         );
       }
     }
 
     await conn.commit();
-    return {
-      legacyId: row.src_id,
-      outcome: isFreshInsert ? "loaded" : "already_loaded",
-      targetId: row.target_id,
-    };
+    return { legacyId: row.src_id, outcome: isFreshInsert ? "loaded" : "already_loaded", targetId: row.target_id };
   } catch (err) {
     await conn.rollback();
     const message = err instanceof Error ? err.message : String(err);
@@ -447,10 +381,7 @@ async function loadOneCreditNote(
  */
 export async function loadValidatedRows(
   loadDb: LoadDb,
-  stagingRows: {
-    invoiceRows: StagingInvoiceRow[];
-    creditNoteRows: StagingCreditNoteRow[];
-  },
+  stagingRows: { invoiceRows: StagingInvoiceRow[]; creditNoteRows: StagingCreditNoteRow[] },
   options: LoadOptions,
 ): Promise<LoadStats> {
   const invoiceResults: RowLoadResult[] = [];

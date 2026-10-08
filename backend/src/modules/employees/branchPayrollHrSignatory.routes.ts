@@ -18,10 +18,7 @@ import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import type { Response } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { COMPANY_ASSET_CATEGORY } from "./companySeal.service.js";
 import {
@@ -45,17 +42,11 @@ const upload = multer({
       fs.mkdirSync(ASSET_DIR, { recursive: true });
       cb(null, ASSET_DIR);
     },
-    filename: (_req, file, cb) =>
-      cb(
-        null,
-        `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`,
-      ),
+    filename: (_req, file, cb) => cb(null, `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`),
   }),
   limits: { fileSize: MAX_BYTES },
   fileFilter: (_req, file, cb) => {
-    const ok = [".png", ".jpg", ".jpeg"].includes(
-      path.extname(file.originalname).toLowerCase(),
-    );
+    const ok = [".png", ".jpg", ".jpeg"].includes(path.extname(file.originalname).toLowerCase());
     if (!ok) return cb(new Error("Only PNG or JPEG images are accepted."));
     cb(null, true);
   },
@@ -63,24 +54,15 @@ const upload = multer({
 
 /** The extension can be anything; the bytes cannot. */
 function looksLikeImage(buffer: Buffer) {
-  const png =
-    buffer.length > 8 &&
-    buffer[0] === 0x89 &&
-    buffer[1] === 0x50 &&
-    buffer[2] === 0x4e &&
-    buffer[3] === 0x47;
+  const png = buffer.length > 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
   const jpg = buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8;
   return png || jpg;
 }
 
 /** Every branch, including those with nobody configured — that is the point. */
-router.get(
-  "/",
-  requireRole("admin", "super_admin"),
-  async (_req, res: Response) => {
-    res.json({ success: true, data: await listBranchPayrollHrSignatories() });
-  },
-);
+router.get("/", requireRole("admin", "super_admin"), async (_req, res: Response) => {
+  res.json({ success: true, data: await listBranchPayrollHrSignatories() });
+});
 
 /**
  * Save a branch's Payroll HR, with an optional signature image.
@@ -95,29 +77,17 @@ router.post(
   upload.single("signature"),
   async (req: AuthenticatedRequest, res: Response) => {
     const branchId = String(req.params.branchId || "").trim();
-    if (!branchId)
-      return res
-        .status(400)
-        .json({ success: false, error: "A branch is required." });
+    if (!branchId) return res.status(400).json({ success: false, error: "A branch is required." });
 
-    const hrName =
-      typeof req.body?.hrName === "string" ? req.body.hrName.trim() : "";
-    if (!hrName)
-      return res
-        .status(400)
-        .json({ success: false, error: "The Payroll HR name is required." });
+    const hrName = typeof req.body?.hrName === "string" ? req.body.hrName.trim() : "";
+    if (!hrName) return res.status(400).json({ success: false, error: "The Payroll HR name is required." });
 
     let signatureFile: string | undefined;
     if (req.file) {
       const bytes = fs.readFileSync(req.file.path);
       if (!looksLikeImage(bytes)) {
         fs.unlinkSync(req.file.path);
-        return res
-          .status(400)
-          .json({
-            success: false,
-            error: "That file is not a valid PNG or JPEG image.",
-          });
+        return res.status(400).json({ success: false, error: "That file is not a valid PNG or JPEG image." });
       }
       signatureFile = req.file.filename;
     }
@@ -125,14 +95,8 @@ router.post(
     await upsertBranchPayrollHrSignatory({
       branchId,
       hrName,
-      hrDesignation:
-        typeof req.body?.hrDesignation === "string"
-          ? req.body.hrDesignation
-          : null,
-      employeeId:
-        typeof req.body?.employeeId === "string" && req.body.employeeId
-          ? req.body.employeeId
-          : null,
+      hrDesignation: typeof req.body?.hrDesignation === "string" ? req.body.hrDesignation : null,
+      employeeId: typeof req.body?.employeeId === "string" && req.body.employeeId ? req.body.employeeId : null,
       // undefined leaves any existing image alone, so fixing a typo in the name
       // does not silently drop the signature.
       signatureFile,
@@ -149,28 +113,12 @@ router.post(
  * Answers "which branch has whose signature" without anyone opening the
  * uploads directory.
  */
-router.get(
-  "/:branchId/signature",
-  requireRole("admin", "super_admin"),
-  async (req: AuthenticatedRequest, res: Response) => {
-    const signatory = await getBranchPayrollHrSignatory(
-      String(req.params.branchId),
-      { withImage: true },
-    );
-    if (!signatory?.signature)
-      return res
-        .status(404)
-        .json({
-          success: false,
-          error: "No signature on file for this branch.",
-        });
-    res.setHeader(
-      "Content-Type",
-      signatory.signatureFile?.endsWith(".png") ? "image/png" : "image/jpeg",
-    );
-    res.setHeader("Cache-Control", "no-store");
-    res.send(signatory.signature);
-  },
-);
+router.get("/:branchId/signature", requireRole("admin", "super_admin"), async (req: AuthenticatedRequest, res: Response) => {
+  const signatory = await getBranchPayrollHrSignatory(String(req.params.branchId), { withImage: true });
+  if (!signatory?.signature) return res.status(404).json({ success: false, error: "No signature on file for this branch." });
+  res.setHeader("Content-Type", signatory.signatureFile?.endsWith(".png") ? "image/png" : "image/jpeg");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(signatory.signature);
+});
 
 export default router;

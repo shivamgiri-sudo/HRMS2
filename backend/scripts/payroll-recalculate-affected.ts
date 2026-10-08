@@ -16,18 +16,14 @@ const to = arg("to");
 const source = arg("source") ?? "ledger";
 
 if (!runId) {
-  throw new Error(
-    "Usage: npm run payroll:recalculate-affected -- --run-id=<salary_prep_run_id> [--chunk-size=25]",
-  );
+  throw new Error("Usage: npm run payroll:recalculate-affected -- --run-id=<salary_prep_run_id> [--chunk-size=25]");
 }
 
 try {
   let rows: RowDataPacket[];
   if (source === "current-mismatch") {
     if (!from || !to) {
-      throw new Error(
-        "Usage for current-mismatch: add --from=YYYY-MM-DD --to=YYYY-MM-DD",
-      );
+      throw new Error("Usage for current-mismatch: add --from=YYYY-MM-DD --to=YYYY-MM-DD");
     }
     const [currentRows] = await db.query<RowDataPacket[]>(
       `SELECT spl.employee_id
@@ -60,51 +56,25 @@ try {
     );
     rows = ledgerRows;
   }
-  let employeeIds = (rows as any[])
-    .map((row) => String(row.employee_id))
-    .filter(Boolean);
+  let employeeIds = (rows as any[]).map((row) => String(row.employee_id)).filter(Boolean);
   if (limit > 0) employeeIds = employeeIds.slice(0, limit);
-  const chunks: Array<{ index: number; employees: number; total_net: number }> =
-    [];
+  const chunks: Array<{ index: number; employees: number; total_net: number }> = [];
 
   for (let i = 0; i < employeeIds.length; i += chunkSize) {
     const chunk = employeeIds.slice(i, i + chunkSize);
     const index = chunks.length + 1;
-    console.log(
-      JSON.stringify({ event: "chunk_start", index, employees: chunk.length }),
-    );
-    const result = await calculatePayrollRunScoped(
-      runId,
-      "payroll_recalculate_affected",
-      { employeeIds: chunk },
-    );
-    chunks.push({
-      index,
-      employees: chunk.length,
-      total_net: result.total_net,
-    });
-    console.log(
-      JSON.stringify({
-        event: "chunk_done",
-        index,
-        employees: chunk.length,
-        total_net: result.total_net,
-      }),
-    );
+    console.log(JSON.stringify({ event: "chunk_start", index, employees: chunk.length }));
+    const result = await calculatePayrollRunScoped(runId, "payroll_recalculate_affected", { employeeIds: chunk });
+    chunks.push({ index, employees: chunk.length, total_net: result.total_net });
+    console.log(JSON.stringify({ event: "chunk_done", index, employees: chunk.length, total_net: result.total_net }));
   }
 
-  console.log(
-    JSON.stringify(
-      {
-        run_id: runId,
-        affected_employees: employeeIds.length,
-        chunk_size: chunkSize,
-        chunks,
-      },
-      null,
-      2,
-    ),
-  );
+  console.log(JSON.stringify({
+    run_id: runId,
+    affected_employees: employeeIds.length,
+    chunk_size: chunkSize,
+    chunks,
+  }, null, 2));
 } finally {
   await closePool();
 }

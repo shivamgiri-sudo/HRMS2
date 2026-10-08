@@ -1,12 +1,12 @@
-import { readFile } from "fs/promises";
+import { readFile } from 'fs/promises';
 
 export interface AdLogResult {
-  logType: "creation" | "deletion";
+  logType: 'creation' | 'deletion';
   eventId: string;
-  accountName: string | null; // SAM account name of the target (new/deleted account)
-  displayName: string | null; // Display Name of the target (creation only)
-  actionedByIt: string | null; // Account Name of the subject (IT admin who did the action)
-  eventTime: Date | null; // TimeGenerated from the log
+  accountName: string | null;   // SAM account name of the target (new/deleted account)
+  displayName: string | null;   // Display Name of the target (creation only)
+  actionedByIt: string | null;  // Account Name of the subject (IT admin who did the action)
+  eventTime: Date | null;       // TimeGenerated from the log
 }
 
 /**
@@ -14,12 +14,10 @@ export interface AdLogResult {
  * Handles EventID 4720 (account created) and 4726 (account deleted).
  * Returns null if the file is not a recognisable AD event log.
  */
-export async function parseAdEventLog(
-  filePath: string,
-): Promise<AdLogResult | null> {
+export async function parseAdEventLog(filePath: string): Promise<AdLogResult | null> {
   let text: string;
   try {
-    text = await readFile(filePath, "utf8");
+    text = await readFile(filePath, 'utf8');
   } catch {
     return null;
   }
@@ -29,20 +27,18 @@ export async function parseAdEventLog(
   if (!eventIdMatch) return null;
   const eventId = eventIdMatch[1].trim();
 
-  let logType: "creation" | "deletion";
-  if (eventId === "4720") {
-    logType = "creation";
-  } else if (eventId === "4726") {
-    logType = "deletion";
+  let logType: 'creation' | 'deletion';
+  if (eventId === '4720') {
+    logType = 'creation';
+  } else if (eventId === '4726') {
+    logType = 'deletion';
   } else {
     return null; // Not an AD account event we handle
   }
 
   // Extract Subject Account Name (IT admin who performed the action)
   // The Subject block appears before New Account / Target Account blocks
-  const subjectMatch = text.match(
-    /Subject:\s*[\s\S]*?Account Name:\s*([^\r\n]+)/i,
-  );
+  const subjectMatch = text.match(/Subject:\s*[\s\S]*?Account Name:\s*([^\r\n]+)/i);
   const actionedByIt = subjectMatch ? subjectMatch[1].trim() : null;
 
   // Extract target account SAM name
@@ -51,10 +47,8 @@ export async function parseAdEventLog(
   let accountName: string | null = null;
   let displayName: string | null = null;
 
-  if (logType === "creation") {
-    const newAccBlock = text.match(
-      /New Account:\s*([\s\S]*?)(?:Attributes:|Additional Information:|$)/i,
-    );
+  if (logType === 'creation') {
+    const newAccBlock = text.match(/New Account:\s*([\s\S]*?)(?:Attributes:|Additional Information:|$)/i);
     if (newAccBlock) {
       const samMatch = newAccBlock[1].match(/Account Name:\s*([^\r\n]+)/i);
       if (samMatch) accountName = samMatch[1].trim();
@@ -67,9 +61,7 @@ export async function parseAdEventLog(
       if (samAttr) accountName = samAttr[1].trim();
     }
   } else {
-    const targetBlock = text.match(
-      /Target Account:\s*([\s\S]*?)(?:Additional Information:|$)/i,
-    );
+    const targetBlock = text.match(/Target Account:\s*([\s\S]*?)(?:Additional Information:|$)/i);
     if (targetBlock) {
       const samMatch = targetBlock[1].match(/Account Name:\s*([^\r\n]+)/i);
       if (samMatch) accountName = samMatch[1].trim();
@@ -77,8 +69,8 @@ export async function parseAdEventLog(
   }
 
   // Clean up account names that are just dashes or empty
-  if (accountName === "-" || accountName === "") accountName = null;
-  if (actionedByIt === "-" || actionedByIt === "") {
+  if (accountName === '-' || accountName === '') accountName = null;
+  if (actionedByIt === '-' || actionedByIt === '') {
     // Do nothing — keep null
   }
 
@@ -90,12 +82,5 @@ export async function parseAdEventLog(
     if (!isNaN(parsed.getTime())) eventTime = parsed;
   }
 
-  return {
-    logType,
-    eventId,
-    accountName,
-    displayName,
-    actionedByIt,
-    eventTime,
-  };
+  return { logType, eventId, accountName, displayName, actionedByIt, eventTime };
 }

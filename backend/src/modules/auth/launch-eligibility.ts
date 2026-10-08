@@ -36,13 +36,7 @@ import { db } from "../../db/mysql.js";
  */
 
 /** Employment-status values that mean "do not provision a login at launch". */
-const BLOCKED_EMPLOYMENT_STATUSES = new Set([
-  "resigned",
-  "exited",
-  "terminated",
-  "absconded",
-  "suspended",
-]);
+const BLOCKED_EMPLOYMENT_STATUSES = new Set(["resigned", "exited", "terminated", "absconded", "suspended"]);
 
 const DEFAULT_COMPANY_EMAIL_DOMAINS = "teammas.co.in,teammas.in,mascallnet.com";
 
@@ -51,8 +45,7 @@ const DEFAULT_COMPANY_EMAIL_DOMAINS = "teammas.co.in,teammas.in,mascallnet.com";
  * change; the default is what the live data actually contains.
  */
 export function companyEmailDomains(): string[] {
-  const raw =
-    process.env.LAUNCH_COMPANY_EMAIL_DOMAINS || DEFAULT_COMPANY_EMAIL_DOMAINS;
+  const raw = process.env.LAUNCH_COMPANY_EMAIL_DOMAINS || DEFAULT_COMPANY_EMAIL_DOMAINS;
   return raw
     .split(",")
     .map((d) => d.trim().toLowerCase().replace(/^@/, ""))
@@ -60,9 +53,7 @@ export function companyEmailDomains(): string[] {
 }
 
 export function normalizeEmail(value: unknown): string | null {
-  const email = String(value ?? "")
-    .trim()
-    .toLowerCase();
+  const email = String(value ?? "").trim().toLowerCase();
   return email.includes("@") ? email : null;
 }
 
@@ -103,33 +94,14 @@ export function resolveLoginEmail(row: LaunchEmailColumns): ResolvedLoginEmail {
   const present = candidates.filter(([, v]) => String(v ?? "").trim() !== "");
   const parsed = present
     .map(([source, v]) => ({ source, email: normalizeEmail(v) }))
-    .filter(
-      (c): c is { source: EmailSource; email: string } => c.email !== null,
-    );
+    .filter((c): c is { source: EmailSource; email: string } => c.email !== null);
 
   const official = parsed.find((c) => isCompanyDomain(c.email));
-  if (official)
-    return {
-      email: official.email,
-      source: official.source,
-      company: true,
-      hadUnusableValue: false,
-    };
+  if (official) return { email: official.email, source: official.source, company: true, hadUnusableValue: false };
 
-  if (parsed[0])
-    return {
-      email: parsed[0].email,
-      source: parsed[0].source,
-      company: false,
-      hadUnusableValue: false,
-    };
+  if (parsed[0]) return { email: parsed[0].email, source: parsed[0].source, company: false, hadUnusableValue: false };
 
-  return {
-    email: null,
-    source: null,
-    company: false,
-    hadUnusableValue: present.length > 0,
-  };
+  return { email: null, source: null, company: false, hadUnusableValue: present.length > 0 };
 }
 
 export type LaunchEligibilityState =
@@ -147,20 +119,19 @@ export type LaunchEligibilityState =
   | "INVITE_FAILED";
 
 /** States that mean the employee cannot log in on day one. */
-export const BLOCKING_STATES: ReadonlySet<LaunchEligibilityState> =
-  new Set<LaunchEligibilityState>([
-    "BLOCKED",
-    "NO_EMPLOYEE_CODE",
-    "NO_LOGIN_IDENTITY",
-    "INVALID_EMAIL",
-    "EMAIL_NEEDS_APPROVAL",
-    "DANGLING_USER_ID",
-    "NO_AUTH_ACCOUNT",
-    "ROLE_UNMAPPED",
-    "SCOPE_UNMAPPED",
-    "INVITE_NOT_PREPARED",
-    "INVITE_FAILED",
-  ]);
+export const BLOCKING_STATES: ReadonlySet<LaunchEligibilityState> = new Set<LaunchEligibilityState>([
+  "BLOCKED",
+  "NO_EMPLOYEE_CODE",
+  "NO_LOGIN_IDENTITY",
+  "INVALID_EMAIL",
+  "EMAIL_NEEDS_APPROVAL",
+  "DANGLING_USER_ID",
+  "NO_AUTH_ACCOUNT",
+  "ROLE_UNMAPPED",
+  "SCOPE_UNMAPPED",
+  "INVITE_NOT_PREPARED",
+  "INVITE_FAILED",
+]);
 
 export type LaunchEmployeeRow = RowDataPacket & {
   id: string;
@@ -216,25 +187,21 @@ const n = (v: unknown): number => Number(v ?? 0);
 export function classifyLaunchEmployee(
   row: LaunchEmployeeRow,
   authUserEmails: Map<string, string>,
-  options: { allowPersonalEmailFallback?: boolean } = {},
+  options: { allowPersonalEmailFallback?: boolean } = {}
 ): LaunchEligibility {
-  const allowPersonalEmailFallback =
-    options.allowPersonalEmailFallback ?? false;
+  const allowPersonalEmailFallback = options.allowPersonalEmailFallback ?? false;
   const resolved = resolveLoginEmail(row);
   const employeeCode = String(row.employee_code ?? "").trim();
 
   // employees.user_id is only trustworthy when the row it names actually exists.
   const linkedAuthUserId = row.auth_user_id ? String(row.auth_user_id) : null;
-  const byEmail = resolved.email
-    ? (authUserEmails.get(resolved.email) ?? null)
-    : null;
+  const byEmail = resolved.email ? authUserEmails.get(resolved.email) ?? null : null;
   const authUserId = linkedAuthUserId ?? byEmail;
 
   const base = {
     employeeId: String(row.id),
     employeeCode,
-    name:
-      `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() || "Team Member",
+    name: `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() || "Team Member",
     loginEmail: resolved.email,
     emailSource: resolved.source,
     companyEmail: resolved.company,
@@ -245,77 +212,46 @@ export function classifyLaunchEmployee(
     department: row.department_name ?? null,
   };
 
-  const at = (
-    state: LaunchEligibilityState,
-    reason: string,
-  ): LaunchEligibility => ({ ...base, state, reason });
+  const at = (state: LaunchEligibilityState, reason: string): LaunchEligibility => ({ ...base, state, reason });
 
-  const employmentStatus = String(row.employment_status ?? "")
-    .trim()
-    .toLowerCase();
+  const employmentStatus = String(row.employment_status ?? "").trim().toLowerCase();
   if (BLOCKED_EMPLOYMENT_STATUSES.has(employmentStatus)) {
-    return at(
-      "BLOCKED",
-      `Employment status is '${employmentStatus}' — no launch login should be issued`,
-    );
+    return at("BLOCKED", `Employment status is '${employmentStatus}' — no launch login should be issued`);
   }
 
-  if (!employeeCode)
-    return at("NO_EMPLOYEE_CODE", "Employee has no employee_code");
+  if (!employeeCode) return at("NO_EMPLOYEE_CODE", "Employee has no employee_code");
 
   if (!resolved.email) {
     return resolved.hadUnusableValue
-      ? at(
-          "INVALID_EMAIL",
-          "An address is recorded but none of office/official/personal parses as an email",
-        )
-      : at(
-          "NO_LOGIN_IDENTITY",
-          "No email recorded in office_email, official_email or email",
-        );
+      ? at("INVALID_EMAIL", "An address is recorded but none of office/official/personal parses as an email")
+      : at("NO_LOGIN_IDENTITY", "No email recorded in office_email, official_email or email");
   }
 
   if (!resolved.company && !allowPersonalEmailFallback) {
     return at(
       "EMAIL_NEEDS_APPROVAL",
-      `Only a non-company address is on file (${resolved.source}) — needs explicit approval before an invite is sent`,
+      `Only a non-company address is on file (${resolved.source}) — needs explicit approval before an invite is sent`
     );
   }
 
   // Dangling is reported separately from "no account" because the fix differs:
   // this row needs its stale pointer cleared, not just an account created.
   if (row.user_id && !linkedAuthUserId) {
-    return at(
-      "DANGLING_USER_ID",
-      `employees.user_id references auth_user ${String(row.user_id)}, which does not exist`,
-    );
+    return at("DANGLING_USER_ID", `employees.user_id references auth_user ${String(row.user_id)}, which does not exist`);
   }
 
-  if (!authUserId)
-    return at("NO_AUTH_ACCOUNT", "No auth_user row backs this employee");
+  if (!authUserId) return at("NO_AUTH_ACCOUNT", "No auth_user row backs this employee");
 
-  if (n(row.active_role_count) === 0)
-    return at("ROLE_UNMAPPED", "Account holds no active role");
+  if (n(row.active_role_count) === 0) return at("ROLE_UNMAPPED", "Account holds no active role");
 
   if (n(row.privileged_role_count) > 0 && n(row.scope_row_count) === 0) {
-    return at(
-      "SCOPE_UNMAPPED",
-      "Account holds a privileged role with no user_assignment_scope row",
-    );
+    return at("SCOPE_UNMAPPED", "Account holds a privileged role with no user_assignment_scope row");
   }
 
-  const invite = String(row.invite_status ?? "")
-    .trim()
-    .toLowerCase();
-  if (!invite)
-    return at(
-      "INVITE_NOT_PREPARED",
-      "No invite has been prepared for this account",
-    );
-  if (invite === "failed")
-    return at("INVITE_FAILED", "The most recent invite attempt failed");
-  if (invite === "skipped")
-    return at("INVITE_NOT_PREPARED", "The most recent invite was skipped");
+  const invite = String(row.invite_status ?? "").trim().toLowerCase();
+  if (!invite) return at("INVITE_NOT_PREPARED", "No invite has been prepared for this account");
+  if (invite === "failed") return at("INVITE_FAILED", "The most recent invite attempt failed");
+  if (invite === "skipped") return at("INVITE_NOT_PREPARED", "The most recent invite was skipped");
 
   return at("READY", "Account, role and invite are all in place");
 }
@@ -362,34 +298,23 @@ export async function loadLaunchPopulation(): Promise<LaunchEmployeeRow[]> {
 
 /** Lowercased auth_user.email -> id, for adopting accounts that were never linked. */
 export async function loadAuthUserEmailIndex(): Promise<Map<string, string>> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT id, email FROM auth_user WHERE email IS NOT NULL",
-  );
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT id, email FROM auth_user WHERE email IS NOT NULL");
   const index = new Map<string, string>();
   for (const row of rows) {
     const email = normalizeEmail((row as { email?: unknown }).email);
-    if (email && !index.has(email))
-      index.set(email, String((row as { id: unknown }).id));
+    if (email && !index.has(email)) index.set(email, String((row as { id: unknown }).id));
   }
   return index;
 }
 
 export async function resolveLaunchEligibility(
-  options: { allowPersonalEmailFallback?: boolean } = {},
+  options: { allowPersonalEmailFallback?: boolean } = {}
 ): Promise<LaunchEligibility[]> {
-  const [rows, authUserEmails] = await Promise.all([
-    loadLaunchPopulation(),
-    loadAuthUserEmailIndex(),
-  ]);
-  return rows.map((row) =>
-    classifyLaunchEmployee(row, authUserEmails, options),
-  );
+  const [rows, authUserEmails] = await Promise.all([loadLaunchPopulation(), loadAuthUserEmailIndex()]);
+  return rows.map((row) => classifyLaunchEmployee(row, authUserEmails, options));
 }
 
-function groupCount(
-  rows: LaunchEligibility[],
-  pick: (r: LaunchEligibility) => string | null,
-) {
+function groupCount(rows: LaunchEligibility[], pick: (r: LaunchEligibility) => string | null) {
   const counts = new Map<string, { total: number; blocked: number }>();
   for (const row of rows) {
     const key = pick(row) ?? "(unassigned)";

@@ -10,15 +10,10 @@
 import { describe, it, expect, vi } from "vitest";
 
 // The service reads org_settings; these tests drive it with explicit seals.
-vi.mock("../src/db/mysql.js", () => ({
-  db: { query: vi.fn().mockResolvedValue([[], []]) },
-}));
+vi.mock("../src/db/mysql.js", () => ({ db: { query: vi.fn().mockResolvedValue([[], []]) } }));
 
 import { PDFDocument, rgb } from "pdf-lib";
-import {
-  applyCompanySeal,
-  documentAcceptsCompanySeal,
-} from "../src/modules/employees/companySeal.service.js";
+import { applyCompanySeal, documentAcceptsCompanySeal } from "../src/modules/employees/companySeal.service.js";
 import { buildEpfDeclarationPdf } from "../src/modules/employees/epfDeclarationForm.js";
 import { buildEpfNominationPdf } from "../src/modules/employees/epfNominationForm.js";
 
@@ -26,13 +21,7 @@ import { buildEpfNominationPdf } from "../src/modules/employees/epfNominationFor
 async function pngBytes(r: number, g: number, b: number): Promise<Buffer> {
   const doc = await PDFDocument.create();
   const page = doc.addPage([60, 30]);
-  page.drawRectangle({
-    x: 0,
-    y: 0,
-    width: 60,
-    height: 30,
-    color: rgb(r, g, b),
-  });
+  page.drawRectangle({ x: 0, y: 0, width: 60, height: 30, color: rgb(r, g, b) });
   // pdf-lib cannot encode PNG, so build the smallest valid one by hand:
   // a 1x1 opaque pixel is enough to prove embedding and placement.
   return Buffer.from(
@@ -62,12 +51,7 @@ describe("company seal", () => {
   it("TC-SEAL-02: the mark lands on the employer page and the field is removed", async () => {
     const blank = await buildEpfDeclarationPdf();
     const before = await PDFDocument.load(blank);
-    expect(
-      before
-        .getForm()
-        .getFields()
-        .some((f) => f.getName() === "employer_signature"),
-    ).toBe(true);
+    expect(before.getForm().getFields().some((f) => f.getName() === "employer_signature")).toBe(true);
     const employerPage = before.getPageCount() - 1; // employer block is on the last page
     expect(imageCount(before.getPage(employerPage))).toBe(0);
 
@@ -79,24 +63,13 @@ describe("company seal", () => {
     });
 
     const after = await PDFDocument.load(sealed);
-    expect(
-      imageCount(after.getPage(employerPage)),
-      "seal did not land on the employer page",
-    ).toBeGreaterThan(0);
+    expect(imageCount(after.getPage(employerPage)), "seal did not land on the employer page").toBeGreaterThan(0);
     // No other page should have been stamped.
     for (let p = 0; p < employerPage; p++) {
-      expect(
-        imageCount(after.getPage(p)),
-        `page ${p + 1} was stamped by mistake`,
-      ).toBe(0);
+      expect(imageCount(after.getPage(p)), `page ${p + 1} was stamped by mistake`).toBe(0);
     }
     // The field is gone, so the mark cannot be edited in a reader.
-    expect(
-      after
-        .getForm()
-        .getFields()
-        .some((f) => f.getName() === "employer_signature"),
-    ).toBe(false);
+    expect(after.getForm().getFields().some((f) => f.getName() === "employer_signature")).toBe(false);
   });
 
   it("TC-SEAL-03: Form 2 is sealed on its employer page too", async () => {
@@ -115,10 +88,7 @@ describe("company seal", () => {
   it("TC-SEAL-04: nothing uploaded yet leaves the document untouched", async () => {
     const blank = await buildEpfDeclarationPdf();
     const out = await applyCompanySeal(blank, "EPF_DECLARATION", {
-      signature: null,
-      stamp: null,
-      signatoryName: null,
-      signatoryDesignation: null,
+      signature: null, stamp: null, signatoryName: null, signatoryDesignation: null,
     });
     // Byte-identical: an unconfigured seal must not even re-save the PDF.
     expect(Buffer.from(out).equals(Buffer.from(blank))).toBe(true);
@@ -128,9 +98,7 @@ describe("company seal", () => {
     const blank = await buildEpfDeclarationPdf();
     const out = await applyCompanySeal(blank, "EPF_DECLARATION", {
       signature: Buffer.from("this is not an image"),
-      stamp: null,
-      signatoryName: null,
-      signatoryDesignation: null,
+      stamp: null, signatoryName: null, signatoryDesignation: null,
     });
     // Falls back to the unsealed document rather than throwing.
     expect(out.byteLength).toBeGreaterThan(0);

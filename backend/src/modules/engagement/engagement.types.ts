@@ -8,41 +8,49 @@
 // ENUMS
 // =====================================================
 
-export type BadgeCategory = "performance" | "activity" | "tenure" | "social";
+export type BadgeCategory = 'performance' | 'activity' | 'tenure' | 'social';
 
 export type TransactionType =
-  | "badge_earned"
-  | "kudos_sent"
-  | "kudos_received"
-  | "survey_completed"
-  | "pulse_completed"
-  | "manual_adjustment"
-  | "tier_bonus"
-  | "activity_bonus"
+  | 'badge_earned'
+  | 'kudos_sent'
+  | 'kudos_received'
+  | 'survey_completed'
+  | 'pulse_completed'
+  | 'manual_adjustment'
+  | 'tier_bonus'
+  | 'activity_bonus'
   // Daily engagement activities
-  | "daily_login"
-  | "login_streak_bonus"
-  | "wheel_spin"
-  | "wheel_jackpot"
-  | "trivia_correct"
-  | "trivia_participate"
-  | "puzzle_solved"
-  | "puzzle_participate"
-  | "tip_read"
-  | "quiz_completed"
-  | "poll_voted"
-  | "contest_entry"
-  | "contest_winner"
-  | "teaser_correct"
-  | "spotlight_featured";
+  | 'daily_login'
+  | 'login_streak_bonus'
+  | 'wheel_spin'
+  | 'wheel_jackpot'
+  | 'trivia_correct'
+  | 'trivia_participate'
+  | 'puzzle_solved'
+  | 'puzzle_participate'
+  | 'tip_read'
+  | 'quiz_completed'
+  | 'poll_voted'
+  | 'contest_entry'
+  | 'contest_winner'
+  | 'teaser_correct'
+  | 'spotlight_featured';
 
-export type SurveyType = "engagement" | "feedback" | "pulse" | "custom";
+export type SurveyType = 'engagement' | 'feedback' | 'pulse' | 'custom';
 
 export type QuestionType =
-  "text" | "rating" | "multiple_choice" | "single_choice" | "yes_no" | "scale";
+  | 'text'
+  | 'rating'
+  | 'multiple_choice'
+  | 'single_choice'
+  | 'yes_no'
+  | 'scale';
 
 export type WorkloadPerception =
-  "too_light" | "manageable" | "heavy" | "overwhelming";
+  | 'too_light'
+  | 'manageable'
+  | 'heavy'
+  | 'overwhelming';
 
 // =====================================================
 // DATABASE TABLE INTERFACES
@@ -439,7 +447,7 @@ export interface PulseCheckFilters {
 // UTILITY TYPES
 // =====================================================
 
-export * from "./company-posts.types.js";
+export * from './company-posts.types.js';
 
 export interface PaginatedResult<T> {
   data: T[];

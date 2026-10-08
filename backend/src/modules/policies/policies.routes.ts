@@ -90,21 +90,25 @@ policiesRouter.post(
   wrap(async (req, res) => {
     const employee = await getEmployeeForUser(req.authUser.id);
     if (!employee?.id)
-      return res.status(403).json({
-        success: false,
-        message: "Only employees can acknowledge a policy.",
-      });
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "Only employees can acknowledge a policy.",
+        });
     const id = String(req.params.id).slice(0, 36);
     const [policy] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM company_policy WHERE id = ? AND is_active = 1 LIMIT 1",
       [id],
     );
     if (policy.length === 0)
-      return res.status(404).json({
-        success: false,
-        message:
-          "This policy is no longer current. Refresh to see the latest version.",
-      });
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message:
+            "This policy is no longer current. Refresh to see the latest version.",
+        });
     await db.execute(
       "INSERT IGNORE INTO company_policy_acknowledgement (id, policy_id, employee_id) VALUES (UUID(), ?, ?)",
       [id, employee.id],
@@ -167,10 +171,12 @@ policiesRouter.post(
         .json({ success: false, message: "HR access required." });
     const parsed = publishSchema.safeParse(req.body);
     if (!parsed.success)
-      return res.status(400).json({
-        success: false,
-        message: parsed.error.issues[0]?.message ?? "Invalid policy",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: parsed.error.issues[0]?.message ?? "Invalid policy",
+        });
     const input = parsed.data;
     const [latest] = await db.execute<RowDataPacket[]>(
       "SELECT COALESCE(MAX(version), 0) AS v FROM company_policy WHERE policy_key = ?",

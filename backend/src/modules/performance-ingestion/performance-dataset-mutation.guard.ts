@@ -16,18 +16,14 @@ const EXCEPTIONAL_PUBLICATION_FLAGS = [
 ] as const;
 
 function actorRoles(req: AuthenticatedRequest): Set<string> {
-  return new Set(
-    normalizeRoleInputs(
-      [req.authUser?.role, ...(req.authUser?.roles ?? [])].filter(
-        (role): role is string => Boolean(role),
-      ),
-    ),
-  );
+  return new Set(normalizeRoleInputs(
+    [req.authUser?.role, ...(req.authUser?.roles ?? [])]
+      .filter((role): role is string => Boolean(role)),
+  ));
 }
 
 function flagValue(config: unknown, flag: string): boolean {
-  if (!config || typeof config !== "object" || Array.isArray(config))
-    return false;
+  if (!config || typeof config !== "object" || Array.isArray(config)) return false;
   return (config as Record<string, unknown>)[flag] === true;
 }
 
@@ -51,10 +47,7 @@ export async function performanceDatasetMutationGuard(
     };
     const isAdmin = [...roles].some((role) => ADMIN_ROLES.has(role));
     const existing = input.id
-      ? await performanceGovernanceService.getDataset(
-          req.authUser!.id,
-          input.id,
-        )
+      ? await performanceGovernanceService.getDataset(req.authUser!.id, input.id)
       : null;
 
     if (
@@ -63,8 +56,7 @@ export async function performanceDatasetMutationGuard(
     ) {
       return res.status(409).json({
         success: false,
-        error:
-          "Dataset key is immutable after creation because mappings, exceptions, and lineage depend on it.",
+        error: "Dataset key is immutable after creation because mappings, exceptions, and lineage depend on it.",
         code: "PERFORMANCE_DATASET_KEY_IMMUTABLE",
       });
     }

@@ -11,7 +11,10 @@ function validTemplate() {
     durationMinutes: 30,
     passingPercentage: 60,
     difficulty: "intermediate",
-    instructions: ["Submit the assessment only once.", "Do not copy or paste."],
+    instructions: [
+      "Submit the assessment only once.",
+      "Do not copy or paste.",
+    ],
     typing: {
       required: true,
       durationSeconds: 180,
@@ -27,14 +30,8 @@ function validTemplate() {
         sectionKey: "email",
         sectionTitle: "Email Handling",
         type: "single",
-        prompt:
-          "Which response provides the clearest next step for the customer?",
-        options: [
-          "Wait.",
-          "We will update you by Friday at 4 PM.",
-          "Soon.",
-          "Try later.",
-        ],
+        prompt: "Which response provides the clearest next step for the customer?",
+        options: ["Wait.", "We will update you by Friday at 4 PM.", "Soon.", "Try later."],
         correctAnswer: "We will update you by Friday at 4 PM.",
         marks: 10,
         difficulty: "intermediate",

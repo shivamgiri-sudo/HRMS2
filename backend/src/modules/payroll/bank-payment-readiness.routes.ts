@@ -76,10 +76,8 @@ import { autoAssignBankExceptionsToPayrollHr } from "./bank-exception-auto-assig
 
 export const bankPaymentReadinessRouter = Router();
 
-const h =
-  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 /**
  * Read roles: everyone who has to clear an exception or answer for one.
@@ -90,28 +88,12 @@ const h =
  * role expected to clear the exceptions could open the page and have every request 403.
  */
 const READ_ROLES = [
-  "super_admin",
-  "admin",
-  "payroll_head",
-  "payroll",
-  "payroll_admin",
-  "payroll_branch",
-  "payroll_hr",
-  "finance",
-  "finance_head",
-  "hr",
-  "branch_head",
-  "branch_admin",
+  "super_admin", "admin", "payroll_head", "payroll", "payroll_admin", "payroll_branch",
+  "payroll_hr", "finance", "finance_head", "hr", "branch_head", "branch_admin",
 ];
 
 /** Same list the existing NEFT/bank-file endpoints gate on. */
-const PAYROLL_EXPORT_ROLES = [
-  "finance",
-  "payroll",
-  "finance_head",
-  "payroll_head",
-  "payroll_admin",
-];
+const PAYROLL_EXPORT_ROLES = ["finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
 
 const ORG_WIDE_REQUIRED_MSG =
   "Organisation-wide payroll scope is required to read full bank account numbers. " +
@@ -163,23 +145,9 @@ async function hasExportScope(userId: string): Promise<boolean> {
 }
 
 /** Who may change an exception's owner or status. */
-const MANAGE_ROLES = [
-  "super_admin",
-  "admin",
-  "payroll_head",
-  "payroll",
-  "payroll_admin",
-  "finance_head",
-  "hr",
-];
+const MANAGE_ROLES = ["super_admin", "admin", "payroll_head", "payroll", "payroll_admin", "finance_head", "hr"];
 
-const WORKFLOW_STATUSES = [
-  "open",
-  "in_progress",
-  "awaiting_employee",
-  "resolved",
-  "waived",
-] as const;
+const WORKFLOW_STATUSES = ["open", "in_progress", "awaiting_employee", "resolved", "waived"] as const;
 type WorkflowStatus = (typeof WORKFLOW_STATUSES)[number];
 
 bankPaymentReadinessRouter.use(requireAuth);
@@ -304,26 +272,18 @@ bankPaymentReadinessRouter.get(
     const summaryRunId = String(req.query.run_id ?? "").trim() || null;
     const report = await buildBankReadinessReport(summaryRunId);
     const visible = await resolveVisibleBranchIds(req.authUser!.id);
-    const rows = visible
-      ? report.rows.filter((r) => r.branch_id && visible.has(r.branch_id))
-      : report.rows;
+    const rows = visible ? report.rows.filter((r) => r.branch_id && visible.has(r.branch_id)) : report.rows;
 
-    const totals = Object.fromEntries(
-      BANK_READINESS_CLASSES.map((c) => [c, 0]),
-    ) as Record<BankReadinessClass, number>;
+    const totals = Object.fromEntries(BANK_READINESS_CLASSES.map((c) => [c, 0])) as Record<BankReadinessClass, number>;
     for (const r of rows) totals[r.readiness_class]++;
 
     const recoverable = rows.filter((r) => r.recoverable_from_db_bill).length;
-    const beneficiaryUnconfirmed = rows.filter(
-      (r) => r.beneficiary_unconfirmed,
-    ).length;
+    const beneficiaryUnconfirmed = rows.filter((r) => r.beneficiary_unconfirmed).length;
 
     return res.json({
       success: true,
       as_of: report.as_of,
-      scope: visible
-        ? { restricted: true, branch_count: visible.size }
-        : { restricted: false },
+      scope: visible ? { restricted: true, branch_count: visible.size } : { restricted: false },
       verification_source: report.verification_source,
       totals,
       total_employees: rows.length,
@@ -347,19 +307,12 @@ bankPaymentReadinessRouter.get(
   "/exceptions",
   requireRole(...READ_ROLES),
   h(async (req, res) => {
-    const wanted = String(req.query.class ?? "")
-      .trim()
-      .toUpperCase();
+    const wanted = String(req.query.class ?? "").trim().toUpperCase();
     const branchFilter = String(req.query.branch_id ?? "").trim();
-    const search = String(req.query.q ?? "")
-      .trim()
-      .toLowerCase();
+    const search = String(req.query.q ?? "").trim().toLowerCase();
     const includeReady = String(req.query.include_ready ?? "") === "1";
 
-    if (
-      wanted &&
-      !(BANK_READINESS_CLASSES as readonly string[]).includes(wanted)
-    ) {
+    if (wanted && !(BANK_READINESS_CLASSES as readonly string[]).includes(wanted)) {
       return res.status(400).json({
         success: false,
         message: `class must be one of ${BANK_READINESS_CLASSES.join(", ")}`,
@@ -385,16 +338,11 @@ bankPaymentReadinessRouter.get(
     const visible = await resolveVisibleBranchIds(req.authUser!.id);
     const rows = report.rows
       .filter((r) => (visible ? r.branch_id && visible.has(r.branch_id) : true))
-      .filter((r) =>
-        wanted
-          ? r.readiness_class === wanted
-          : includeReady || r.readiness_class !== "READY",
-      )
+      .filter((r) => (wanted ? r.readiness_class === wanted : includeReady || r.readiness_class !== "READY"))
       .filter((r) => (branchFilter ? r.branch_id === branchFilter : true))
       .filter((r) =>
         search
-          ? r.employee_code.toLowerCase().includes(search) ||
-            r.employee_name.toLowerCase().includes(search)
+          ? r.employee_code.toLowerCase().includes(search) || r.employee_name.toLowerCase().includes(search)
           : true,
       )
       .map((r) => {
@@ -455,10 +403,7 @@ bankPaymentReadinessRouter.get(
   "/remediation-list",
   requireRole(...READ_ROLES),
   h(async (req, res) => {
-    const [report, overlay] = await Promise.all([
-      buildBankReadinessReport(),
-      loadOverlay(),
-    ]);
+    const [report, overlay] = await Promise.all([buildBankReadinessReport(), loadOverlay()]);
     const visible = await resolveVisibleBranchIds(req.authUser!.id);
 
     const rows = report.rows
@@ -501,23 +446,15 @@ bankPaymentReadinessRouter.get(
   requireRole(...READ_ROLES),
   h(async (req, res) => {
     const runId = String(req.query.run_id ?? "").trim();
-    if (!runId)
-      return res
-        .status(400)
-        .json({ success: false, message: "run_id is required" });
+    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
     const [runRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM salary_prep_run WHERE id = ? LIMIT 1`,
       [runId],
     );
     if (!(runRows as unknown[])[0]) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Payroll run not found" });
+      return res.status(404).json({ success: false, message: "Payroll run not found" });
     }
-    return res.json({
-      success: true,
-      data: await getPaymentSourceDivergence(runId),
-    });
+    return res.json({ success: true, data: await getPaymentSourceDivergence(runId) });
   }),
 );
 
@@ -534,10 +471,7 @@ bankPaymentReadinessRouter.patch(
       notes?: string | null;
     };
 
-    if (
-      workflow_status &&
-      !(WORKFLOW_STATUSES as readonly string[]).includes(workflow_status)
-    ) {
+    if (workflow_status && !(WORKFLOW_STATUSES as readonly string[]).includes(workflow_status)) {
       return res.status(400).json({
         success: false,
         message: `workflow_status must be one of ${WORKFLOW_STATUSES.join(", ")}`,
@@ -549,9 +483,7 @@ bankPaymentReadinessRouter.patch(
       [employeeId],
     );
     if (!(empRows as unknown[])[0]) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Employee not found" });
+      return res.status(404).json({ success: false, message: "Employee not found" });
     }
     if (!(await employeeIdsInScope([employeeId], await resolveVisibleBranchIds(req.authUser!.id))).has(employeeId)) {
       return res.status(403).json(OUT_OF_BRANCH);
@@ -563,12 +495,7 @@ bankPaymentReadinessRouter.patch(
         [owner_user_id],
       );
       if (!(ownerRows as unknown[])[0]) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "owner_user_id is not a known user",
-          });
+        return res.status(400).json({ success: false, message: "owner_user_id is not a known user" });
       }
     }
 
@@ -599,10 +526,7 @@ bankPaymentReadinessRouter.patch(
       module_key: "payroll",
       entity_type: "employee",
       entity_id: employeeId,
-      change_summary: {
-        owner_user_id: owner_user_id ?? null,
-        workflow_status: workflow_status ?? null,
-      },
+      change_summary: { owner_user_id: owner_user_id ?? null, workflow_status: workflow_status ?? null },
       req: req as never,
     });
 
@@ -670,15 +594,10 @@ bankPaymentReadinessRouter.get(
   requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
   h(async (req, res) => {
     const runId = String(req.query.run_id ?? "").trim();
-    if (!runId)
-      return res
-        .status(400)
-        .json({ success: false, message: "run_id is required" });
+    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
 
     if (!(await hasExportScope(req.authUser!.id))) {
-      return res
-        .status(403)
-        .json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
 
     const [runRows] = await db.execute<RowDataPacket[]>(
@@ -686,17 +605,12 @@ bankPaymentReadinessRouter.get(
       [runId],
     );
     const run = (runRows as any[])[0];
-    if (!run)
-      return res
-        .status(404)
-        .json({ success: false, message: "Payroll run not found" });
+    if (!run) return res.status(404).json({ success: false, message: "Payroll run not found" });
 
     // A payment file from an uncommitted run is a fully formed instruction to move money.
     // neft-transfer-file already refuses draft/cancelled; this refuses the same states rather
     // than inventing a different rule.
-    if (
-      ["draft", "cancelled"].includes(String(run.status ?? "").toLowerCase())
-    ) {
+    if (["draft", "cancelled"].includes(String(run.status ?? "").toLowerCase())) {
       return res.status(409).json({
         success: false,
         message: `Run is '${run.status}'. A payment file cannot be generated from an uncommitted run.`,
@@ -734,12 +648,9 @@ bankPaymentReadinessRouter.get(
       [runId],
     );
 
-    const readyById = new Map(
-      report.rows.filter((r) => r.payable).map((r) => [r.employee_id, r]),
-    );
+    const readyById = new Map(report.rows.filter((r) => r.payable).map((r) => [r.employee_id, r]));
     const included: string[] = [];
-    const excluded: Array<{ code: string; status: string; reason: string }> =
-      [];
+    const excluded: Array<{ code: string; status: string; reason: string }> = [];
     const csv: string[] = [
       "Serial,Employee Code,Beneficiary Name,Account Number,IFSC Code,Bank Name,Amount,Narration",
     ];
@@ -749,15 +660,11 @@ bankPaymentReadinessRouter.get(
     for (const line of lineRows as any[]) {
       const ready = readyById.get(line.employee_id);
       if (!ready) {
-        const known = report.rows.find(
-          (r) => r.employee_id === line.employee_id,
-        );
+        const known = report.rows.find((r) => r.employee_id === line.employee_id);
         excluded.push({
           code: String(line.employee_code ?? ""),
           status: known?.readiness_class ?? "NOT_ACTIVE",
-          reason:
-            known?.reason_detail ??
-            "employee is not in the active payable population",
+          reason: known?.reason_detail ?? "employee is not in the active payable population",
         });
         continue;
       }
@@ -772,17 +679,13 @@ bankPaymentReadinessRouter.get(
         excluded.push({
           code: String(line.employee_code ?? ""),
           status: "CONFLICT",
-          reason:
-            "account resolved during classification but not during export — do not pay, raise this",
+          reason: "account resolved during classification but not during export — do not pay, raise this",
         });
         continue;
       }
       serial++;
       included.push(String(line.employee_code ?? ""));
-      const clean = (v: unknown) =>
-        String(v ?? "")
-          .replace(/[",\r\n]/g, " ")
-          .trim();
+      const clean = (v: unknown) => String(v ?? "").replace(/[",\r\n]/g, " ").trim();
       csv.push(
         [
           serial,
@@ -799,11 +702,8 @@ bankPaymentReadinessRouter.get(
 
     if (excluded.length) {
       csv.push("");
-      csv.push(
-        `# ${excluded.length} payable employee(s) EXCLUDED — not payment-ready:`,
-      );
-      for (const e of excluded)
-        csv.push(`# ${e.code},${e.status},${e.reason.replace(/,/g, ";")}`);
+      csv.push(`# ${excluded.length} payable employee(s) EXCLUDED — not payment-ready:`);
+      for (const e of excluded) csv.push(`# ${e.code},${e.status},${e.reason.replace(/,/g, ";")}`);
     }
 
     void logSensitiveAction({
@@ -863,9 +763,7 @@ bankPaymentReadinessRouter.get(
     return res.json({
       success: true,
       as_of: summary.as_of,
-      scope: visible
-        ? { restricted: true, branch_count: visible.size }
-        : { restricted: false },
+      scope: visible ? { restricted: true, branch_count: visible.size } : { restricted: false },
       data: summary.rows,
       totals: summary.totals,
       // Says what Verified means on this screen, so it is not mistaken for the stronger claim the
@@ -886,9 +784,7 @@ bankPaymentReadinessRouter.get(
   h(async (req, res) => {
     const branchId = String(req.query.branch_id ?? "").trim() || null;
     const search = String(req.query.q ?? "").trim() || null;
-    const rawBucket = String(req.query.bucket ?? "")
-      .trim()
-      .toLowerCase();
+    const rawBucket = String(req.query.bucket ?? "").trim().toLowerCase();
 
     if (rawBucket && !(MIS_BUCKETS as readonly string[]).includes(rawBucket)) {
       return res.status(400).json({
@@ -928,9 +824,7 @@ bankPaymentReadinessRouter.get(
   requireRole(...READ_ROLES),
   h(async (req, res) => {
     const branchId = String(req.query.branch_id ?? "").trim() || null;
-    const rawBucket = String(req.query.bucket ?? "")
-      .trim()
-      .toLowerCase();
+    const rawBucket = String(req.query.bucket ?? "").trim().toLowerCase();
 
     if (rawBucket && !(MIS_BUCKETS as readonly string[]).includes(rawBucket)) {
       return res.status(400).json({
@@ -949,20 +843,13 @@ bankPaymentReadinessRouter.get(
     // Quote every field and double any embedded quote. Cost centre values carry slashes and
     // commas (e.g. "BSS/BO/AHMH-JD/560") and Remarks carries free text, so an unquoted join would
     // shift columns.
-    const esc = (v: unknown) =>
-      `"${String(v ?? "")
-        .replace(/"/g, '""')
-        .replace(/\r?\n/g, " ")}"`;
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""').replace(/\r?\n/g, " ")}"`;
     const lines = [
       MIS_DETAIL_COLUMNS.map((c) => esc(c.label)).join(","),
-      ...detail.rows.map((r) =>
-        MIS_DETAIL_COLUMNS.map((c) => esc(r[c.key])).join(","),
-      ),
+      ...detail.rows.map((r) => MIS_DETAIL_COLUMNS.map((c) => esc(r[c.key])).join(",")),
     ];
 
-    const label = rawBucket
-      ? MIS_BUCKET_LABELS[rawBucket as MisBucket].replace(/\s+/g, "")
-      : "All";
+    const label = rawBucket ? MIS_BUCKET_LABELS[rawBucket as MisBucket].replace(/\s+/g, "") : "All";
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
@@ -982,11 +869,7 @@ bankPaymentReadinessRouter.get(
 // restricted further, since an incorrect value here silently redirects every future
 // outbound payroll payment.
 
-const DEBIT_ACCOUNT_WRITE_ROLES = [
-  "super_admin",
-  "finance_head",
-  "payroll_head",
-];
+const DEBIT_ACCOUNT_WRITE_ROLES = ["super_admin", "finance_head", "payroll_head"];
 
 /** GET /debit-account-config */
 bankPaymentReadinessRouter.get(
@@ -1027,23 +910,13 @@ bankPaymentReadinessRouter.patch(
       entity_type: "payroll_debit_account_config",
       entity_id: "1",
       change_summary: {
-        before: {
-          debit_account_number: before.debit_account_number,
-          bank_name: before.bank_name,
-        },
-        after: {
-          debit_account_number: value,
-          bank_name: bank_name?.trim() || null,
-        },
+        before: { debit_account_number: before.debit_account_number, bank_name: before.bank_name },
+        after: { debit_account_number: value, bank_name: bank_name?.trim() || null },
       },
       req: req as never,
     });
 
-    return res.json({
-      success: true,
-      message: "Debit account updated",
-      data: await getDebitAccountConfig(),
-    });
+    return res.json({ success: true, message: "Debit account updated", data: await getDebitAccountConfig() });
   }),
 );
 
@@ -1055,10 +928,7 @@ bankPaymentReadinessRouter.patch(
 // same org-wide-payroll gate /payment-file already requires — since this endpoint emits full
 // account numbers in the generated file exactly as that one does.
 
-const csvUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
-});
+const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 /**
  * GET /salary-transfer/eligible?run_id=&branch_id=&process_id=&cost_centre_id=&status=
@@ -1073,33 +943,20 @@ bankPaymentReadinessRouter.get(
   requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
   h(async (req, res) => {
     const runId = String(req.query.run_id ?? "").trim();
-    if (!runId)
-      return res
-        .status(400)
-        .json({ success: false, message: "run_id is required" });
+    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
     if (!(await hasExportScope(req.authUser!.id))) {
-      return res
-        .status(403)
-        .json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
-    const status = String(req.query.status ?? "active")
-      .trim()
-      .toLowerCase();
+    const status = String(req.query.status ?? "active").trim().toLowerCase();
     if (!["active", "inactive", "both"].includes(status)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "status must be active, inactive or both",
-        });
+      return res.status(400).json({ success: false, message: "status must be active, inactive or both" });
     }
-    const { rows, excludedByNoc } =
-      await getFilteredEligibleTransferRowsWithNocExclusions(runId, {
-        branchId: String(req.query.branch_id ?? "").trim() || null,
-        processId: String(req.query.process_id ?? "").trim() || null,
-        costCentreId: String(req.query.cost_centre_id ?? "").trim() || null,
-        status: status as "active" | "inactive" | "both",
-      });
+    const { rows, excludedByNoc } = await getFilteredEligibleTransferRowsWithNocExclusions(runId, {
+      branchId: String(req.query.branch_id ?? "").trim() || null,
+      processId: String(req.query.process_id ?? "").trim() || null,
+      costCentreId: String(req.query.cost_centre_id ?? "").trim() || null,
+      status: status as "active" | "inactive" | "both",
+    });
     return res.json({
       success: true,
       count: rows.length,
@@ -1137,25 +994,16 @@ bankPaymentReadinessRouter.get(
  * supported (small selections, and matches the existing /payment-file anchor-tag download
  * convention), but the frontend now uses POST once a selection is large.
  */
-function readExportParams(req: any): {
-  runId: string;
-  employeeIds: string[] | null;
-} {
+function readExportParams(req: any): { runId: string; employeeIds: string[] | null } {
   const runId = String(req.query.run_id ?? req.body?.run_id ?? "").trim();
   const rawIds = req.query.employee_ids ?? req.body?.employee_ids;
   let employeeIds: string[] | null = null;
   if (Array.isArray(rawIds)) {
     employeeIds = rawIds.map((s) => String(s).trim()).filter(Boolean);
   } else if (typeof rawIds === "string" && rawIds.trim()) {
-    employeeIds = rawIds
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    employeeIds = rawIds.split(",").map((s) => s.trim()).filter(Boolean);
   }
-  return {
-    runId,
-    employeeIds: employeeIds && employeeIds.length ? employeeIds : null,
-  };
+  return { runId, employeeIds: employeeIds && employeeIds.length ? employeeIds : null };
 }
 
 /**
@@ -1169,14 +1017,9 @@ function readExportParams(req: any): {
 function handleSalaryTransferExport(reexport: boolean) {
   return h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId, employeeIds } = readExportParams(req);
-    if (!runId)
-      return res
-        .status(400)
-        .json({ success: false, message: "run_id is required" });
+    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
     if (!(await hasExportScope(req.authUser!.id))) {
-      return res
-        .status(403)
-        .json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
 
     // A bank file is a formed instruction to move money, so the run must have been approved (by a second
@@ -1203,12 +1046,7 @@ function handleSalaryTransferExport(reexport: boolean) {
 
     let result;
     try {
-      result = await generateSalaryTransferBatch({
-        runId,
-        userId: req.authUser!.id,
-        employeeIds,
-        reexport,
-      });
+      result = await generateSalaryTransferBatch({ runId, userId: req.authUser!.id, employeeIds, reexport });
     } catch (err: any) {
       if (err?.code === "NO_ELIGIBLE_ROWS") {
         return res.status(409).json({
@@ -1223,26 +1061,16 @@ function handleSalaryTransferExport(reexport: boolean) {
 
     void logSensitiveAction({
       actor_user_id: req.authUser!.id,
-      action_type: reexport
-        ? "SALARY_TRANSFER_FILE_REEXPORTED"
-        : "SALARY_TRANSFER_FILE_GENERATED",
+      action_type: reexport ? "SALARY_TRANSFER_FILE_REEXPORTED" : "SALARY_TRANSFER_FILE_GENERATED",
       module_key: "payroll",
       entity_type: "salary_transfer_batch",
       entity_id: result.batch_id,
-      change_summary: {
-        run_id: runId,
-        row_count: result.row_count,
-        total_amount: result.total_amount,
-        excluded: result.excluded,
-      },
+      change_summary: { run_id: runId, row_count: result.row_count, total_amount: result.total_amount, excluded: result.excluded },
       req: req as never,
     });
 
     res.setHeader("Content-Type", "application/vnd.ms-excel");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${result.file_name}"`,
-    );
+    res.setHeader("Content-Disposition", `attachment; filename="${result.file_name}"`);
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Batch-Number", result.batch_number);
@@ -1304,28 +1132,17 @@ bankPaymentReadinessRouter.get(
     // never re-implements this mapping in two places. corrected_ready groups under
     // ready_for_disbursal -- it is functionally waiting to be picked up by the next transfer
     // number match, same as a fresh export.
-    const bucketOf = (
-      status: string,
-    ): "ready_for_disbursal" | "disbursed" | "rejected" =>
-      status === "confirmed"
-        ? "disbursed"
-        : status === "rejected"
-          ? "rejected"
-          : "ready_for_disbursal";
+    const bucketOf = (status: string): "ready_for_disbursal" | "disbursed" | "rejected" =>
+      status === "confirmed" ? "disbursed" : status === "rejected" ? "rejected" : "ready_for_disbursal";
 
     return res.json({
       success: true,
       data: (rows as any[]).map((r) => ({
         ...r,
         bucket: bucketOf(r.status),
-        rejection_reason_label: r.rejection_reason
-          ? rejectionReasonLabel(r.rejection_reason)
-          : null,
+        rejection_reason_label: r.rejection_reason ? rejectionReasonLabel(r.rejection_reason) : null,
       })),
-      rejection_reasons: REJECTION_REASONS.map((r) => ({
-        value: r,
-        label: rejectionReasonLabel(r),
-      })),
+      rejection_reasons: REJECTION_REASONS.map((r) => ({ value: r, label: rejectionReasonLabel(r) })),
     });
   }),
 );
@@ -1335,26 +1152,12 @@ bankPaymentReadinessRouter.patch(
   "/salary-transfer/items/reject",
   requireRole(...MANAGE_ROLES),
   h(async (req, res) => {
-    const { item_ids, reason, note } = req.body as {
-      item_ids?: string[];
-      reason?: string;
-      note?: string | null;
-    };
+    const { item_ids, reason, note } = req.body as { item_ids?: string[]; reason?: string; note?: string | null };
     if (!Array.isArray(item_ids) || item_ids.length === 0) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "item_ids must be a non-empty array",
-        });
+      return res.status(400).json({ success: false, message: "item_ids must be a non-empty array" });
     }
     if (!REJECTION_REASONS.includes(reason as any)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: `reason must be one of ${REJECTION_REASONS.join(", ")}`,
-        });
+      return res.status(400).json({ success: false, message: `reason must be one of ${REJECTION_REASONS.join(", ")}` });
     }
     {
       const visibleBranches = await resolveVisibleBranchIds(req.authUser!.id);
@@ -1371,20 +1174,10 @@ bankPaymentReadinessRouter.patch(
     }
     let result;
     try {
-      result = await rejectTransferItems({
-        itemIds: item_ids,
-        reason: reason as any,
-        note: note ?? null,
-        userId: req.authUser!.id,
-      });
+      result = await rejectTransferItems({ itemIds: item_ids, reason: reason as any, note: note ?? null, userId: req.authUser!.id });
     } catch (err: any) {
       if (err?.code === "NOTE_REQUIRED") {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "A note is required when reason is 'other'",
-          });
+        return res.status(400).json({ success: false, message: "A note is required when reason is 'other'" });
       }
       throw err;
     }
@@ -1399,11 +1192,7 @@ bankPaymentReadinessRouter.patch(
       req: req as never,
     });
 
-    return res.json({
-      success: true,
-      message: `${result.updated} item(s) marked rejected`,
-      data: result,
-    });
+    return res.json({ success: true, message: `${result.updated} item(s) marked rejected`, data: result });
   }),
 );
 
@@ -1440,10 +1229,7 @@ bankPaymentReadinessRouter.patch(
       change_summary: {},
       req: req as never,
     });
-    return res.json({
-      success: true,
-      message: "Item marked ready for re-export",
-    });
+    return res.json({ success: true, message: "Item marked ready for re-export" });
   }),
 );
 
@@ -1465,26 +1251,16 @@ bankPaymentReadinessRouter.post(
     const file = req.file as { buffer: Buffer; originalname: string } | undefined;
     if (!file) return res.status(400).json({ success: false, message: "file is required" });
     const runId = String(req.body?.run_id ?? "").trim();
-    if (!runId)
-      return res
-        .status(400)
-        .json({ success: false, message: "run_id is required" });
+    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
     const text = file.buffer.toString("utf8");
     let rows;
     try {
       rows = parseTransferNumberCsv(text);
     } catch (err: any) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: err?.message ?? "Could not parse CSV",
-        });
+      return res.status(400).json({ success: false, message: err?.message ?? "Could not parse CSV" });
     }
     if (rows.length === 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "No data rows found" });
+      return res.status(400).json({ success: false, message: "No data rows found" });
     }
     const preview = await previewTransferNumberImport(rows, runId);
     const sha256 = createHash("sha256").update(file.buffer).digest("hex");
@@ -1492,18 +1268,10 @@ bankPaymentReadinessRouter.post(
       total: preview.length,
       will_confirm: preview.filter((r) => r.outcome === "will_confirm").length,
       unmatched: preview.filter((r) => r.outcome === "unmatched").length,
-      already_confirmed: preview.filter(
-        (r) => r.outcome === "already_confirmed",
-      ).length,
+      already_confirmed: preview.filter((r) => r.outcome === "already_confirmed").length,
       invalid: preview.filter((r) => r.outcome === "invalid").length,
     };
-    return res.json({
-      success: true,
-      file_name: file.originalname,
-      file_sha256: sha256,
-      summary,
-      data: preview,
-    });
+    return res.json({ success: true, file_name: file.originalname, file_sha256: sha256, summary, data: preview });
   }),
 );
 
@@ -1521,12 +1289,7 @@ bankPaymentReadinessRouter.post(
       preview?: TransferImportPreviewRow[];
     };
     if (!file_sha256 || !Array.isArray(preview) || preview.length === 0) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "file_sha256 and preview are required",
-        });
+      return res.status(400).json({ success: false, message: "file_sha256 and preview are required" });
     }
     const result = await commitTransferNumberImport({
       preview,
@@ -1547,10 +1310,9 @@ bankPaymentReadinessRouter.post(
 
     return res.json({
       success: true,
-      message:
-        result.skipped > 0 && result.confirmed === 0
-          ? "This file was already imported — no changes made (idempotent re-upload)."
-          : `${result.confirmed} transfer number(s) recorded, ${result.payslips_unlocked} payslip(s) unlocked`,
+      message: result.skipped > 0 && result.confirmed === 0
+        ? "This file was already imported — no changes made (idempotent re-upload)."
+        : `${result.confirmed} transfer number(s) recorded, ${result.payslips_unlocked} payslip(s) unlocked`,
       data: result,
     });
   }),
@@ -1594,22 +1356,10 @@ bankPaymentReadinessRouter.patch(
     const result = await approveManualReviewBankDetail({ employeeId });
 
     if (result.status === "no_manual_review_row") {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message:
-            "No manual_review bank verification found for this employee.",
-        });
+      return res.status(404).json({ success: false, message: "No manual_review bank verification found for this employee." });
     }
     if (result.status === "already_has_primary") {
-      return res
-        .status(409)
-        .json({
-          success: false,
-          message:
-            "This employee already has an active primary bank record — nothing to approve.",
-        });
+      return res.status(409).json({ success: false, message: "This employee already has an active primary bank record — nothing to approve." });
     }
     if (result.status === "account_changed") {
       return res.status(409).json({
@@ -1628,10 +1378,7 @@ bankPaymentReadinessRouter.patch(
       req: req as never,
     });
 
-    return res.json({
-      success: true,
-      message: "Bank account approved and copied to the employee record.",
-    });
+    return res.json({ success: true, message: "Bank account approved and copied to the employee record." });
   }),
 );
 

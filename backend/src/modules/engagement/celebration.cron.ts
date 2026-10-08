@@ -33,9 +33,7 @@ const MAX_ATTEMPTS = 6; // ~30 minutes of cover, then wait for tomorrow
 
 let nextRun: NodeJS.Timeout | undefined;
 
-export function millisecondsUntilNextCelebrationSweep(
-  now = new Date(),
-): number {
+export function millisecondsUntilNextCelebrationSweep(now = new Date()): number {
   const next = new Date(now);
   next.setHours(RUN_HOUR, 0, 0, 0);
   if (next <= now) next.setDate(next.getDate() + 1);

@@ -26,31 +26,14 @@ const SERVICE = readFileSync(
 
 /** A distinctive fragment of each refusal, and the status it must be thrown with. */
 const REFUSALS: Array<{ fragment: string; status: number }> = [
-  {
-    fragment: "This leave type is not available for your profile",
-    status: 400,
-  },
+  { fragment: "This leave type is not available for your profile", status: 400 },
   { fragment: "can only be applied for up to 2 continuous days", status: 400 },
   { fragment: "Monthly leave limit reached for", status: 400 },
   { fragment: "Earned Leave cannot exceed", status: 400 },
-  {
-    fragment: "Only one EL application per calendar month is allowed",
-    status: 400,
-  },
-  {
-    fragment:
-      "Another leave submission for this employee is already in progress",
-    status: 409,
-  },
-  {
-    fragment:
-      "A leave request already exists for one or more dates in the range",
-    status: 409,
-  },
-  {
-    fragment: "already has an approved leave request overlapping",
-    status: 409,
-  },
+  { fragment: "Only one EL application per calendar month is allowed", status: 400 },
+  { fragment: "Another leave submission for this employee is already in progress", status: 409 },
+  { fragment: "A leave request already exists for one or more dates in the range", status: 409 },
+  { fragment: "already has an approved leave request overlapping", status: 409 },
   { fragment: "would exceed the annual limit of", status: 400 },
   { fragment: "Insufficient leave balance for", status: 400 },
   // Deliberately includes the clause after the comma: the phrase alone also appears in the
@@ -62,23 +45,16 @@ describe("leave policy refusals carry an HTTP status", () => {
   for (const { fragment, status } of REFUSALS) {
     it(`"${fragment}" is thrown with ${status}`, () => {
       const at = SERVICE.indexOf(fragment);
-      expect(
-        at,
-        `refusal message not found in leave.service.ts: ${fragment}`,
-      ).toBeGreaterThan(-1);
+      expect(at, `refusal message not found in leave.service.ts: ${fragment}`).toBeGreaterThan(-1);
 
       // The message and its `{ statusCode: N }` are part of one Object.assign call, so the
       // status always lands within a few lines of the message it belongs to. Ten lines is
       // wide enough for the longest of these (a three-line template) and far too narrow to
       // accidentally match a neighbouring throw.
-      const window = SERVICE.slice(at, at + 600)
-        .split("\n")
-        .slice(0, 10)
-        .join("\n");
-      expect(
-        window,
-        `refusal is thrown without a statusCode: ${fragment}`,
-      ).toMatch(new RegExp(`statusCode:\\s*${status}`));
+      const window = SERVICE.slice(at, at + 600).split("\n").slice(0, 10).join("\n");
+      expect(window, `refusal is thrown without a statusCode: ${fragment}`).toMatch(
+        new RegExp(`statusCode:\\s*${status}`),
+      );
     });
   }
 

@@ -31,11 +31,7 @@ import path from "path";
  *
  * Names are UUID-based and unique, so recovering by file name is unambiguous.
  */
-export const ONBOARDING_DOCUMENT_ROOT = path.resolve(
-  process.cwd(),
-  "private-storage",
-  "onboarding-documents",
-);
+export const ONBOARDING_DOCUMENT_ROOT = path.resolve(process.cwd(), "private-storage", "onboarding-documents");
 
 /**
  * Resolve a stored document path to a file that exists here, or null.
@@ -43,9 +39,7 @@ export const ONBOARDING_DOCUMENT_ROOT = path.resolve(
  * Tries the stored value, then its file name inside the canonical directory, so a
  * row written under a different OS or working directory still reads.
  */
-export function resolveOnboardingDocumentFile(
-  storedPath: unknown,
-): string | null {
+export function resolveOnboardingDocumentFile(storedPath: unknown): string | null {
   const raw = String(storedPath ?? "").trim();
   if (!raw) return null;
 

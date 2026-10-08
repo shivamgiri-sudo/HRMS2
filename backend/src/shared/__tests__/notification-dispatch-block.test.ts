@@ -20,23 +20,18 @@
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const rows = vi.hoisted(() => ({
-  value: [] as Array<{ scope: string; blocked: number; reason: string | null }>,
-  fail: false,
-}));
+const rows = vi.hoisted(() => ({ value: [] as Array<{ scope: string; blocked: number; reason: string | null }>, fail: false }));
 
 vi.mock("../../db/mysql.js", () => ({
   db: {
     query: vi.fn(async () => {
-      if (rows.fail)
-        throw new Error("ER_NO_SUCH_TABLE: notification_dispatch_block");
+      if (rows.fail) throw new Error("ER_NO_SUCH_TABLE: notification_dispatch_block");
       return [rows.value, []];
     }),
   },
 }));
 
-const { getDispatchBlock, clearDispatchBlockCache } =
-  await import("../notification-dispatch-block.js");
+const { getDispatchBlock, clearDispatchBlockCache } = await import("../notification-dispatch-block.js");
 
 beforeEach(() => {
   rows.value = [];
@@ -46,9 +41,7 @@ beforeEach(() => {
 
 describe("notification dispatch block", () => {
   it("allows everything when no row is blocked", async () => {
-    await expect(getDispatchBlock("esign_reminder")).resolves.toMatchObject({
-      blocked: false,
-    });
+    await expect(getDispatchBlock("esign_reminder")).resolves.toMatchObject({ blocked: false });
   });
 
   it("stops one event without touching the others", async () => {
@@ -61,15 +54,11 @@ describe("notification dispatch block", () => {
 
     // payslip_ready must still go out — that is the whole point of not using
     // `pm2 stop hrms2-workers`.
-    await expect(getDispatchBlock("payslip_ready")).resolves.toMatchObject({
-      blocked: false,
-    });
+    await expect(getDispatchBlock("payslip_ready")).resolves.toMatchObject({ blocked: false });
   });
 
   it("global stops everything, including events with no code", async () => {
-    rows.value = [
-      { scope: "global", blocked: 1, reason: "incident 2026-08-08" },
-    ];
+    rows.value = [{ scope: "global", blocked: 1, reason: "incident 2026-08-08" }];
 
     for (const code of ["esign_reminder", "payslip_ready", undefined]) {
       const stop = await getDispatchBlock(code);
@@ -81,9 +70,7 @@ describe("notification dispatch block", () => {
   it("FAILS OPEN when the table is missing or the query errors", async () => {
     rows.fail = true;
     // Before the migration lands, and during any DB blip, mail must keep flowing.
-    await expect(getDispatchBlock("esign_reminder")).resolves.toMatchObject({
-      blocked: false,
-    });
+    await expect(getDispatchBlock("esign_reminder")).resolves.toMatchObject({ blocked: false });
     await expect(getDispatchBlock()).resolves.toMatchObject({ blocked: false });
   });
 
@@ -104,13 +91,8 @@ describe("dispatch.service honours the stop", () => {
     const path = await import("path");
     const { fileURLToPath } = await import("url");
     const dir = path.dirname(fileURLToPath(import.meta.url));
-    const src = fs.readFileSync(
-      path.resolve(dir, "../../modules/communication/dispatch.service.ts"),
-      "utf8",
-    );
-    const code = src
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^\s*\/\/.*$/gm, "");
+    const src = fs.readFileSync(path.resolve(dir, "../../modules/communication/dispatch.service.ts"), "utf8");
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
     expect(code).toContain("getDispatchBlock(dto.event_code)");
     // The stop clears the channel list outright; it must not be reachable only

@@ -27,10 +27,7 @@ import * as path from "path";
  * checked on every test run, not one file someone happened to already suspect.
  */
 
-const SCRIPT_PATH = path.resolve(
-  __dirname,
-  "../../../scripts/audit-migration-collations.mjs",
-);
+const SCRIPT_PATH = path.resolve(__dirname, "../../../scripts/audit-migration-collations.mjs");
 
 /**
  * Ratchet baseline, not an exemption list.
@@ -119,10 +116,7 @@ const KNOWN_LEGACY_VIOLATIONS = new Set([
   "999_create_missing_engagement_tables.sql",
 ]);
 
-function runAudit(): {
-  exitCode: number;
-  findings: Array<{ file: string; detail: string }>;
-} {
+function runAudit(): { exitCode: number; findings: Array<{ file: string; detail: string }> } {
   let stdout = "";
   let exitCode = 0;
   try {
@@ -145,19 +139,15 @@ describe("migration DDL syntax & collation compatibility (production MySQL 8.0.4
   const { findings } = runAudit();
 
   it("introduces no NEW migration with unsupported DDL syntax or collation drift", () => {
-    const newViolations = findings.filter(
-      (f) => !KNOWN_LEGACY_VIOLATIONS.has(f.file),
-    );
+    const newViolations = findings.filter((f) => !KNOWN_LEGACY_VIOLATIONS.has(f.file));
     if (newViolations.length > 0) {
-      const report = newViolations
-        .map((v) => `  ${v.file} — ${v.detail}`)
-        .join("\n");
+      const report = newViolations.map((v) => `  ${v.file} — ${v.detail}`).join("\n");
       // eslint-disable-next-line no-console
       console.error(
         `\n${newViolations.length} migration(s) introduce a NEW compatibility problem:\n${report}\n` +
-          `Run \`node scripts/audit-migration-collations.mjs\` for full detail. Guard conditional DDL with ` +
-          `information_schema + PREPARE/EXECUTE (see backend/sql/1006_payroll_process_readiness_extend.sql), ` +
-          `and always name COLLATE=utf8mb4_unicode_ci alongside DEFAULT CHARSET=utf8mb4.`,
+        `Run \`node scripts/audit-migration-collations.mjs\` for full detail. Guard conditional DDL with ` +
+        `information_schema + PREPARE/EXECUTE (see backend/sql/1006_payroll_process_readiness_extend.sql), ` +
+        `and always name COLLATE=utf8mb4_unicode_ci alongside DEFAULT CHARSET=utf8mb4.`
       );
     }
     expect(newViolations).toEqual([]);
@@ -165,14 +155,12 @@ describe("migration DDL syntax & collation compatibility (production MySQL 8.0.4
 
   it("does not grow the legacy baseline — fixed files must be removed from it, not re-added", () => {
     const stillViolating = new Set(findings.map((f) => f.file));
-    const staleBaselineEntries = [...KNOWN_LEGACY_VIOLATIONS].filter(
-      (f) => !stillViolating.has(f),
-    );
+    const staleBaselineEntries = [...KNOWN_LEGACY_VIOLATIONS].filter((f) => !stillViolating.has(f));
     if (staleBaselineEntries.length > 0) {
       // eslint-disable-next-line no-console
       console.log(
         `${staleBaselineEntries.length} file(s) in KNOWN_LEGACY_VIOLATIONS no longer violate — ` +
-          `remove them from the baseline: ${staleBaselineEntries.join(", ")}`,
+        `remove them from the baseline: ${staleBaselineEntries.join(", ")}`
       );
     }
     // Informational, not a failure: fixing a file ahead of removing it from the list is fine.

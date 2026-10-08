@@ -25,26 +25,20 @@ export async function cachedReadinessSummary<T>(
   cacheable: (value: T) => boolean = () => true,
 ): Promise<T> {
   const hit = readinessSummaryCache.get(key);
-  if (hit && Date.now() - hit.at < READINESS_SUMMARY_TTL_MS)
-    return structuredClone(hit.value) as T;
+  if (hit && Date.now() - hit.at < READINESS_SUMMARY_TTL_MS) return structuredClone(hit.value) as T;
   const value = await sharedInFlight(key, async () => {
     const v = await compute();
     if (!cacheable(v)) return v as unknown as Record<string, unknown>;
     readinessSummaryCache.set(key, { at: Date.now(), value: v });
     if (readinessSummaryCache.size > READINESS_SUMMARY_CACHE_MAX) {
-      const oldest = [...readinessSummaryCache.entries()].sort(
-        (a, b) => a[1].at - b[1].at,
-      );
-      for (const [k] of oldest.slice(
-        0,
-        readinessSummaryCache.size - READINESS_SUMMARY_CACHE_MAX,
-      ))
-        readinessSummaryCache.delete(k);
+      const oldest = [...readinessSummaryCache.entries()].sort((a, b) => a[1].at - b[1].at);
+      for (const [k] of oldest.slice(0, readinessSummaryCache.size - READINESS_SUMMARY_CACHE_MAX)) readinessSummaryCache.delete(k);
     }
     return v as unknown as Record<string, unknown>;
   });
   return structuredClone(value) as unknown as T;
 }
+
 
 /**
  * ensureMonthGrid() is an idempotent INSERT IGNORE of the whole (branch x process) grid and the
@@ -54,11 +48,7 @@ export async function cachedReadinessSummary<T>(
 export const GRID_SEED_TTL_MS = 300_000;
 const gridSeededAt = new Map<string, number>();
 
-export async function seedMonthGridOnce(
-  month: string,
-  seed: () => Promise<unknown>,
-  ttlMs = GRID_SEED_TTL_MS,
-): Promise<void> {
+export async function seedMonthGridOnce(month: string, seed: () => Promise<unknown>, ttlMs = GRID_SEED_TTL_MS): Promise<void> {
   const at = gridSeededAt.get(month);
   if (at !== undefined && Date.now() - at < ttlMs) return;
   await seed();

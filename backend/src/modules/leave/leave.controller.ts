@@ -18,17 +18,13 @@ export const leaveController = {
   async createLeaveType(req: AuthenticatedRequest, res: Response) {
     const input = createLeaveTypeSchema.parse(req.body);
     const data = await leaveService.createLeaveType(input);
-    return res
-      .status(201)
-      .json({ success: true, data, message: "Leave type created" });
+    return res.status(201).json({ success: true, data, message: "Leave type created" });
   },
 
   async submitRequest(req: AuthenticatedRequest, res: Response) {
     const input = leaveRequestSchema.parse(req.body);
     const data = await leaveService.submitRequest(input, req.authUser!.id);
-    return res
-      .status(201)
-      .json({ success: true, data, message: "Leave request submitted" });
+    return res.status(201).json({ success: true, data, message: "Leave request submitted" });
   },
 
   async listRequests(req: AuthenticatedRequest, res: Response) {
@@ -48,9 +44,7 @@ export const leaveController = {
   // called this method any more; confirmed zero references repo-wide before removing.
 
   async getBalance(req: AuthenticatedRequest, res: Response) {
-    const year = req.query.year
-      ? Number(req.query.year)
-      : new Date().getFullYear();
+    const year = req.query.year ? Number(req.query.year) : new Date().getFullYear();
     const data = await leaveService.getBalance(req.params.employeeId, year);
     return res.json({ success: true, data });
   },
@@ -63,33 +57,20 @@ export const leaveController = {
 
   async createHoliday(req: AuthenticatedRequest, res: Response) {
     const input = createHolidaySchema.parse(req.body);
-    const data = await leaveService.createHoliday(
-      input,
-      req.authUser?.id ?? null,
-    );
-    return res
-      .status(201)
-      .json({ success: true, data, message: "Holiday created" });
+    const data = await leaveService.createHoliday(input, req.authUser?.id ?? null);
+    return res.status(201).json({ success: true, data, message: "Holiday created" });
   },
 
   async updateHolidayScope(req: AuthenticatedRequest, res: Response) {
     const input = updateHolidayScopeSchema.parse(req.body);
     try {
       const data = await leaveService.updateHolidayScope(
-        req.params.id!,
-        input,
-        req.authUser?.id ?? null,
+        req.params.id!, input, req.authUser?.id ?? null
       );
-      return res.json({
-        success: true,
-        data,
-        message: "Holiday scope updated",
-      });
+      return res.json({ success: true, data, message: "Holiday scope updated" });
     } catch (err) {
       if (err instanceof Error && err.message === "Holiday not found") {
-        return res
-          .status(404)
-          .json({ success: false, error: "Holiday not found" });
+        return res.status(404).json({ success: false, error: "Holiday not found" });
       }
       throw err;
     }

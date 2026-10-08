@@ -25,10 +25,7 @@ const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = { id: ACTOR };
-    next();
-  },
+  requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: ACTOR }; next(); },
 }));
 vi.mock("../../../shared/scopeAccess.js", () => ({
   hasAnyRole: vi.fn().mockResolvedValue(true),
@@ -49,16 +46,8 @@ const batch = {
 };
 
 const {
-  getBatch,
-  assertCanApprove,
-  markDecided,
-  markStageDecided,
-  markStageRejected,
-  claimForDecision,
-  releaseClaim,
-  releaseStuckClaim,
-  auditBatchAction,
-  sendPartialApplyEmail,
+  getBatch, assertCanApprove, markDecided, markStageDecided, markStageRejected,
+  claimForDecision, releaseClaim, releaseStuckClaim, auditBatchAction, sendPartialApplyEmail,
 } = vi.hoisted(() => ({
   getBatch: vi.fn(),
   assertCanApprove: vi.fn(),
@@ -76,39 +65,23 @@ const {
 // reads STAGE_RULES[stage].from to place its claim and its optimistic guard — a stub that
 // returned a bare object would let a broken guard pass these tests.
 const STAGE_RULES = {
-  branch: {
-    from: "pending_branch_head",
-    to: "pending_payroll_head",
-    roles: ["branch_head"],
-    label: "Branch Head",
-    applies: false,
-  },
-  payroll: {
-    from: "pending_payroll_head",
-    to: "approved",
-    roles: ["payroll_head"],
-    label: "Payroll Head",
-    applies: true,
-  },
+  branch: { from: "pending_branch_head", to: "pending_payroll_head", roles: ["branch_head"], label: "Branch Head", applies: false },
+  payroll: { from: "pending_payroll_head", to: "approved", roles: ["payroll_head"], label: "Payroll Head", applies: true },
 };
 const TWO_STAGE_TYPES = new Set(["INCENTIVE_BULK", "DEDUCTION_BULK"]);
 
 vi.mock("../bulk-approval.service.js", () => ({
   APPROVAL_GATED_TYPES: new Set([
-    "ATTENDANCE_REGULARIZATION_BULK",
-    "LEAVE_APPLICATION_BULK",
-    "INCENTIVE_BULK",
-    "DEDUCTION_BULK",
+    "ATTENDANCE_REGULARIZATION_BULK", "LEAVE_APPLICATION_BULK",
+    "INCENTIVE_BULK", "DEDUCTION_BULK",
   ]),
   APPROVER_ROLES: ["branch_head"],
   PAYROLL_APPROVER_ROLES: ["payroll_head"],
   TWO_STAGE_TYPES,
   STAGE_RULES,
   resolveStage: (b: { approval_status: string | null }) =>
-    b.approval_status === "pending_branch_head"
-      ? "branch"
-      : b.approval_status === "pending_payroll_head"
-        ? "payroll"
+    b.approval_status === "pending_branch_head" ? "branch"
+      : b.approval_status === "pending_payroll_head" ? "payroll"
         : null,
   stageOutcome: (stage: "branch" | "payroll", typeCode: string) =>
     stage === "branch" && !TWO_STAGE_TYPES.has(typeCode)
@@ -117,67 +90,37 @@ vi.mock("../bulk-approval.service.js", () => ({
   // A real class: the route's error handler branches on `instanceof`.
   BulkUploadError: class BulkUploadError extends Error {
     statusCode: number;
-    constructor(message: string, statusCode = 400) {
-      super(message);
-      this.statusCode = statusCode;
-    }
+    constructor(message: string, statusCode = 400) { super(message); this.statusCode = statusCode; }
   },
-  getBatch,
-  assertCanApprove,
-  markDecided,
-  markStageDecided,
-  markStageRejected,
-  claimForDecision,
-  releaseClaim,
-  releaseStuckClaim,
-  auditBatchAction,
-  sendPartialApplyEmail,
+  getBatch, assertCanApprove, markDecided, markStageDecided, markStageRejected,
+  claimForDecision, releaseClaim, releaseStuckClaim, auditBatchAction, sendPartialApplyEmail,
   // Present only so the route's named import resolves under vi.mock — see the same
   // note in bulk-approval-two-stage.contract.test.ts.
-  verifyRowsActuallyApplied: vi
-    .fn()
-    .mockResolvedValue({ checked: 0, confirmed: 0, mismatched: 0 }),
+  verifyRowsActuallyApplied: vi.fn().mockResolvedValue({ checked: 0, confirmed: 0, mismatched: 0 }),
 }));
 
 // Collaborators the two-stage chain added. None of them may influence the decision path,
 // so they are stubbed to no-ops here and asserted properly in the two-stage suite.
 vi.mock("../bulk-approval-review.service.js", () => ({
-  getBatchReview: vi.fn(),
-  getBatchEmployees: vi.fn(),
-  discardRows: vi.fn(),
+  getBatchReview: vi.fn(), getBatchEmployees: vi.fn(), discardRows: vi.fn(),
   isReviewable: (t: string) => t === "INCENTIVE_BULK" || t === "DEDUCTION_BULK",
   BATCH_ENTITY_TYPE: "bulk_upload_batch",
 }));
-vi.mock("../bulk-approval-notify.service.js", () => ({
-  notifyBatchCreator: vi.fn().mockResolvedValue({}),
-}));
-vi.mock("../../work-inbox/work-inbox.triggers.js", () => ({
-  triggerBulkBatchApproval: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock("../bulk-approval-notify.service.js", () => ({ notifyBatchCreator: vi.fn().mockResolvedValue({}) }));
+vi.mock("../../work-inbox/work-inbox.triggers.js", () => ({ triggerBulkBatchApproval: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("../../../shared/financeApprovalEvent.js", () => ({
   recordFinanceApprovalEvent: vi.fn().mockResolvedValue(undefined),
   listFinanceApprovalEvents: vi.fn().mockResolvedValue([]),
 }));
 
-const { applyRegularizationBatch } = vi.hoisted(() => ({
-  applyRegularizationBatch: vi.fn(),
-}));
+const { applyRegularizationBatch } = vi.hoisted(() => ({ applyRegularizationBatch: vi.fn() }));
 vi.mock("../attendance-regularization-bulk.service.js", () => ({
   applyRegularizationBatch,
   rejectRegularizationBatch: vi.fn(),
 }));
-vi.mock("../leave-application-bulk.service.js", () => ({
-  applyLeaveBatch: vi.fn(),
-  rejectLeaveBatch: vi.fn(),
-}));
-vi.mock("../incentive-bulk.service.js", () => ({
-  applyIncentiveBatch: vi.fn(),
-  rejectIncentiveBatch: vi.fn(),
-}));
-vi.mock("../deduction-bulk.service.js", () => ({
-  applyDeductionBatch: vi.fn(),
-  rejectDeductionBatch: vi.fn(),
-}));
+vi.mock("../leave-application-bulk.service.js", () => ({ applyLeaveBatch: vi.fn(), rejectLeaveBatch: vi.fn() }));
+vi.mock("../incentive-bulk.service.js", () => ({ applyIncentiveBatch: vi.fn(), rejectIncentiveBatch: vi.fn() }));
+vi.mock("../deduction-bulk.service.js", () => ({ applyDeductionBatch: vi.fn(), rejectDeductionBatch: vi.fn() }));
 
 const { bulkApprovalRouter } = await import("../bulk-approval.routes.js");
 
@@ -197,16 +140,13 @@ beforeEach(() => {
   claimForDecision.mockReset().mockResolvedValue(true);
   releaseClaim.mockReset().mockResolvedValue(undefined);
   auditBatchAction.mockReset().mockResolvedValue(undefined);
-  applyRegularizationBatch
-    .mockReset()
-    .mockResolvedValue({ applied: 217, failed: 0, errors: [] });
+  applyRegularizationBatch.mockReset().mockResolvedValue({ applied: 217, failed: 0, errors: [] });
 
   // Route the progress/approver queries by SQL rather than by call order, so the
   // tests do not have to know how many statements each path issues. total/failed/
   // succeeded all come from one JOIN query now (readBatchProgress's "approve" branch).
   execute.mockReset().mockImplementation(async (sql: string) => {
-    if (/FROM upload_batch_row/.test(sql))
-      return [[{ total: 217, failed: 0, succeeded: 217 }], []];
+    if (/FROM upload_batch_row/.test(sql)) return [[{ total: 217, failed: 0, succeeded: 217 }], []];
     return [[{ display: "Branch Head" }], []];
   });
 });
@@ -224,19 +164,12 @@ describe("POST /approvals/batches/:id/approve", () => {
     // Claimed before the answer — a retry must not be able to apply the batch twice.
     // Claimed against the stage the batch is ON, not just its id. Without the second
     // argument a stage-2 approval could claim a batch still sitting at stage 1.
-    expect(claimForDecision).toHaveBeenCalledWith(
-      BATCH_ID,
-      "pending_branch_head",
-    );
+    expect(claimForDecision).toHaveBeenCalledWith(BATCH_ID, "pending_branch_head");
 
     await vi.waitFor(() => expect(applyRegularizationBatch).toHaveBeenCalled());
     await vi.waitFor(() =>
       expect(markDecided).toHaveBeenCalledWith(
-        BATCH_ID,
-        "approved",
-        ACTOR,
-        expect.any(String),
-        expect.stringContaining("217 row(s) applied"),
+        BATCH_ID, "approved", ACTOR, expect.any(String), expect.stringContaining("217 row(s) applied"),
         { applied: 217, failed: 0 },
       ),
     );
@@ -283,31 +216,22 @@ describe("GET /approvals/batches/:id/job-status", () => {
     // total/failed/succeeded now come from one JOIN query (see readBatchProgress's
     // "approve" branch) instead of two separate ones, so a single row carries all three.
     execute.mockImplementation(async (sql: string) => {
-      if (/FROM upload_batch_row/.test(sql))
-        return [[{ total: 217, failed: 0, succeeded: 128 }], []];
+      if (/FROM upload_batch_row/.test(sql)) return [[{ total: 217, failed: 0, succeeded: 128 }], []];
       return [[], []];
     });
 
-    const res = await request(app()).get(
-      `/api/bulk-upload/approvals/batches/${BATCH_ID}/job-status`,
-    );
+    const res = await request(app()).get(`/api/bulk-upload/approvals/batches/${BATCH_ID}/job-status`);
 
     expect(res.status).toBe(200);
     expect(res.body.phase).toBe("running");
-    expect(res.body.progress).toMatchObject({
-      total: 217,
-      processed: 128,
-      succeeded: 128,
-    });
+    expect(res.body.progress).toMatchObject({ total: 217, processed: 128, succeeded: 128 });
   });
 
   it("reports the outcome once the batch has been decided", async () => {
     batch.batch_status = "imported";
     batch.approval_status = "approved";
 
-    const res = await request(app()).get(
-      `/api/bulk-upload/approvals/batches/${BATCH_ID}/job-status`,
-    );
+    const res = await request(app()).get(`/api/bulk-upload/approvals/batches/${BATCH_ID}/job-status`);
 
     expect(res.status).toBe(200);
     expect(res.body.phase).toBe("done");
@@ -325,29 +249,20 @@ describe("GET /approvals/batches/:id/job-status", () => {
    */
   it("still refuses a caller who is neither an approver nor the uploader", async () => {
     const { hasAnyRole } = await import("../../../shared/scopeAccess.js");
-    (hasAnyRole as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
-      false,
-    );
+    (hasAnyRole as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
-    const res = await request(app()).get(
-      `/api/bulk-upload/approvals/batches/${BATCH_ID}/job-status`,
-    );
+    const res = await request(app()).get(`/api/bulk-upload/approvals/batches/${BATCH_ID}/job-status`);
 
     expect(res.status).toBe(403);
   });
 
   it("lets the Branch Head who released it keep watching after it moves to stage 2", async () => {
-    getBatch.mockResolvedValue({
-      ...batch,
-      approval_status: "pending_payroll_head",
-    });
+    getBatch.mockResolvedValue({ ...batch, approval_status: "pending_payroll_head" });
     // Holds branch_head only — assertCanApprove for the payroll stage would refuse them.
     const { hasAnyRole } = await import("../../../shared/scopeAccess.js");
     (hasAnyRole as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
-    const res = await request(app()).get(
-      `/api/bulk-upload/approvals/batches/${BATCH_ID}/job-status`,
-    );
+    const res = await request(app()).get(`/api/bulk-upload/approvals/batches/${BATCH_ID}/job-status`);
 
     expect(res.status).toBe(200);
   });

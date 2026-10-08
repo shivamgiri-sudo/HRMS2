@@ -21,41 +21,27 @@ import {
   getMonthlyAttendanceFromNcosec,
   getRealTimePunchesToday,
   type NcosecMonthlyRecord,
-} from "./attendance-realtime-ncosec.service.js";
+} from './attendance-realtime-ncosec.service.js';
 
 const router = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 const DB_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,35}$/;
 
 router.use(requireAuth);
 
-function parsePositiveInt(
-  value: unknown,
-  fallback: number,
-  max: number,
-): number {
+function parsePositiveInt(value: unknown, fallback: number, max: number): number {
   const parsed = Number(value ?? fallback);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(Math.floor(parsed), max);
 }
 
-async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  label: string,
-): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
-          timeoutMs,
-        );
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
       }),
     ]);
   } finally {
@@ -64,12 +50,10 @@ async function withTimeout<T>(
 }
 
 function safeId(value: unknown, field: string): string | null {
-  if (value === undefined || value === null || value === "") return null;
+  if (value === undefined || value === null || value === '') return null;
   const text = String(value).trim();
   if (!DB_ID_REGEX.test(text)) {
-    const error = new Error(`Invalid ${field}`) as Error & {
-      statusCode?: number;
-    };
+    const error = new Error(`Invalid ${field}`) as Error & { statusCode?: number };
     error.statusCode = 400;
     throw error;
   }
@@ -77,23 +61,22 @@ function safeId(value: unknown, field: string): string | null {
 }
 
 function istNowParts(date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23", // NOT hour12:false — that selects h24 and renders midnight as '24'
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23', // NOT hour12:false — that selects h24 and renders midnight as '24'
   }).formatToParts(date);
-  const pick = (type: string) =>
-    parts.find((part) => part.type === type)?.value ?? "";
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
   return {
-    year: pick("year"),
-    month: pick("month"),
-    day: pick("day"),
-    hour: Number(pick("hour") || "0"),
+    year: pick('year'),
+    month: pick('month'),
+    day: pick('day'),
+    hour: Number(pick('hour') || '0'),
   };
 }
 
@@ -188,27 +171,17 @@ async function listScopedEmployees(req: AuthenticatedRequest): Promise<ScopedEmp
   const userId = req.authUser!.id;
 
   // Single DB round-trip for all roles, then derive access flags in memory
-  const [roleRows] = await (db as any)
-    .execute(
-      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1
+  const [roleRows] = await (db as any).execute(
+    `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1
      UNION
      SELECT role_key FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
-      [userId, userId],
-    )
-    .catch(() =>
-      (db as any).execute(
-        `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
-        [userId],
-      ),
-    );
+    [userId, userId]
+  ).catch(() => (db as any).execute(
+    `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
+    [userId]
+  ));
   const userRoleSet = new Set<string>(
-    (roleRows as { role_key: string }[])
-      .map((r) =>
-        String(r.role_key ?? "")
-          .trim()
-          .toLowerCase(),
-      )
-      .filter(Boolean),
+    (roleRows as { role_key: string }[]).map((r) => String(r.role_key ?? '').trim().toLowerCase()).filter(Boolean)
   );
   // admin is branch-scoped like hr (owner ruling 2026-10-01): only super_admin / ceo read platform-wide; admin still
   // passes the reader gate and then goes through buildScopeWhereClause below (own branch).
@@ -218,47 +191,34 @@ async function listScopedEmployees(req: AuthenticatedRequest): Promise<ScopedEmp
 
   const callerEmp = await getEmployeeForUser(userId);
 
-  const where: string[] = ["e.active_status = 1"];
+  const where: string[] = ['e.active_status = 1'];
   const params: unknown[] = [];
 
-  const employeeId = safeId(req.query.employeeId, "employeeId");
-  const branchId = safeId(req.query.branchId, "branchId");
-  const processId = safeId(req.query.processId, "processId");
-  const departmentId = safeId(req.query.departmentId, "departmentId");
-  const costCentreId = safeId(
-    req.query.costCentreId ?? req.query.costCenterId,
-    "costCentreId",
-  );
-  const managerId = safeId(req.query.managerId, "managerId");
-  const search = String(req.query.search ?? "").trim();
+  const employeeId = safeId(req.query.employeeId, 'employeeId');
+  const branchId = safeId(req.query.branchId, 'branchId');
+  const processId = safeId(req.query.processId, 'processId');
+  const departmentId = safeId(req.query.departmentId, 'departmentId');
+  const costCentreId = safeId(req.query.costCentreId ?? req.query.costCenterId, 'costCentreId');
+  const managerId = safeId(req.query.managerId, 'managerId');
+  const search = String(req.query.search ?? '').trim();
 
   if (!isPlatformWide && !isScopedReader) {
     if (!callerEmp) {
-      const error = new Error("No employee record") as Error & {
-        statusCode?: number;
-      };
+      const error = new Error('No employee record') as Error & { statusCode?: number };
       error.statusCode = 403;
       throw error;
     }
-    where.push("e.id = ?");
+    where.push('e.id = ?');
     params.push(callerEmp.id);
   } else if (!isPlatformWide) {
     const scoped = await buildScopeWhereClause(
       userId,
-      [
-        "hr",
-        "wfm",
-        "manager",
-        "assistant_manager",
-        "tl",
-        "payroll_head",
-        "payroll_admin",
-      ],
+      ['hr', 'wfm', 'manager', 'assistant_manager', 'tl', 'payroll_head', 'payroll_admin'],
       {
-        branchId: "e.branch_id",
-        processId: "e.process_id",
-        departmentId: "e.department_id",
-        managerEmployeeId: "COALESCE(e.reporting_manager_id, e.manager_id)",
+        branchId: 'e.branch_id',
+        processId: 'e.process_id',
+        departmentId: 'e.department_id',
+        managerEmployeeId: 'COALESCE(e.reporting_manager_id, e.manager_id)',
       },
       { allowAdminBypass: true, allowCeoAllRead: true },
     );
@@ -266,28 +226,13 @@ async function listScopedEmployees(req: AuthenticatedRequest): Promise<ScopedEmp
     params.push(...scoped.params);
   }
 
-  if (employeeId) {
-    where.push("e.id = ?");
-    params.push(employeeId);
-  }
-  if (branchId) {
-    where.push("e.branch_id = ?");
-    params.push(branchId);
-  }
-  if (processId) {
-    where.push("e.process_id = ?");
-    params.push(processId);
-  }
-  if (departmentId) {
-    where.push("e.department_id = ?");
-    params.push(departmentId);
-  }
-  if (costCentreId) {
-    where.push("e.cost_centre_id = ?");
-    params.push(costCentreId);
-  }
+  if (employeeId) { where.push('e.id = ?'); params.push(employeeId); }
+  if (branchId) { where.push('e.branch_id = ?'); params.push(branchId); }
+  if (processId) { where.push('e.process_id = ?'); params.push(processId); }
+  if (departmentId) { where.push('e.department_id = ?'); params.push(departmentId); }
+  if (costCentreId) { where.push('e.cost_centre_id = ?'); params.push(costCentreId); }
   if (managerId) {
-    where.push("(e.reporting_manager_id = ? OR e.manager_id = ?)");
+    where.push('(e.reporting_manager_id = ? OR e.manager_id = ?)');
     params.push(managerId, managerId);
   }
   if (search) {
@@ -332,7 +277,7 @@ async function listScopedEmployees(req: AuthenticatedRequest): Promise<ScopedEmp
        LEFT JOIN process_master pm ON pm.id = e.process_id
        LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
        LEFT JOIN designation_master dsg ON dsg.id = e.designation_id
-      WHERE ${where.join(" AND ")}
+      WHERE ${where.join(' AND ')}
       ORDER BY e.employee_code ASC`,
     params,
   );
@@ -340,13 +285,9 @@ async function listScopedEmployees(req: AuthenticatedRequest): Promise<ScopedEmp
   return rows as ScopedEmployeeRow[];
 }
 
-async function getBreakSummaryRows(
-  employeeIds: string[],
-  fromDate: string,
-  toDate: string,
-): Promise<BreakSummaryRow[]> {
+async function getBreakSummaryRows(employeeIds: string[], fromDate: string, toDate: string): Promise<BreakSummaryRow[]> {
   if (employeeIds.length === 0) return [];
-  const placeholders = employeeIds.map(() => "?").join(", ");
+  const placeholders = employeeIds.map(() => '?').join(', ');
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
         bds.employee_id,
@@ -426,32 +367,25 @@ async function getTodayBreakSummary(employeeId: string, shiftDate: string) {
 
 function parseWorkingDays(value: unknown): number[] {
   if (Array.isArray(value)) {
-    return value
-      .map((item) => Number(item))
-      .filter((item) => Number.isInteger(item) && item >= 0 && item <= 6);
+    return value.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item >= 0 && item <= 6);
   }
-  if (typeof value === "string" && value.trim()) {
+  if (typeof value === 'string' && value.trim()) {
     try {
       const parsed = JSON.parse(value);
       if (Array.isArray(parsed)) {
-        return parsed
-          .map((item) => Number(item))
-          .filter((item) => Number.isInteger(item) && item >= 0 && item <= 6);
+        return parsed.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item >= 0 && item <= 6);
       }
     } catch {
-      return value
-        .split(",")
-        .map((item) => Number(item.trim()))
-        .filter((item) => Number.isInteger(item) && item >= 0 && item <= 6);
+      return value.split(',').map((item) => Number(item.trim())).filter((item) => Number.isInteger(item) && item >= 0 && item <= 6);
     }
   }
   return [1, 2, 3, 4, 5];
 }
 
 function formatMonthEnd(month: string): string {
-  const [year, monthNumber] = month.split("-").map(Number);
+  const [year, monthNumber] = month.split('-').map(Number);
   const lastDay = new Date(year, monthNumber, 0).getDate();
-  return `${month}-${String(lastDay).padStart(2, "0")}`;
+  return `${month}-${String(lastDay).padStart(2, '0')}`;
 }
 
 function minDateText(left: string, right: string): string {
@@ -469,10 +403,9 @@ async function computeNcosecMonthlySummary(employeeId: string, month: string) {
   const monthStart = `${month}-01`;
   const monthEnd = formatMonthEnd(month);
   const currentShiftDate = resolveAttendanceShiftDate();
-  const periodEnd =
-    month === currentShiftDate.slice(0, 7)
-      ? minDateText(monthEnd, currentShiftDate)
-      : monthEnd;
+  const periodEnd = month === currentShiftDate.slice(0, 7)
+    ? minDateText(monthEnd, currentShiftDate)
+    : monthEnd;
 
   if (periodEnd < monthStart) {
     return {
@@ -497,10 +430,9 @@ async function computeNcosecMonthlySummary(employeeId: string, month: string) {
       LIMIT 1`,
     [employeeId],
   );
-  const employee = employeeRows[0] as
-    { id: string; working_days: unknown } | undefined;
+  const employee = employeeRows[0] as { id: string; working_days: unknown } | undefined;
   if (!employee) {
-    throw new Error("Employee not found");
+    throw new Error('Employee not found');
   }
 
   const mappings = await getBulkCosecMappings([employeeId]);
@@ -508,11 +440,7 @@ async function computeNcosecMonthlySummary(employeeId: string, month: string) {
     return attendanceEngineService.getMonthlySummary(employeeId, month);
   }
 
-  const rows = await getMonthlyAttendanceFromNcosec(
-    mappings,
-    monthStart,
-    periodEnd,
-  );
+  const rows = await getMonthlyAttendanceFromNcosec(mappings, monthStart, periodEnd);
   const rowMap = new Map(rows.map((row) => [row.record_date, row]));
   const workingDays = parseWorkingDays(employee.working_days);
 
@@ -530,29 +458,22 @@ async function computeNcosecMonthlySummary(employeeId: string, month: string) {
     wfoDays: 0,
   };
 
-  for (
-    let dateText = monthStart;
-    dateText <= periodEnd;
-    dateText = nextDateText(dateText)
-  ) {
+  for (let dateText = monthStart; dateText <= periodEnd; dateText = nextDateText(dateText)) {
     const row = rowMap.get(dateText);
     if (row) {
-      const status = String(row.attendance_status ?? "").toLowerCase();
-      if (status === "present") summary.presentDays += 1;
-      else if (status === "half_day") summary.halfDays += 1;
-      else if (status === "absent") summary.absentDays += 1;
-      else if (status === "leave_approved") summary.leaveDays += 1;
-      else if (status === "holiday") summary.holidayDays += 1;
-      else if (status === "week_off") summary.weekOffDays += 1;
+      const status = String(row.attendance_status ?? '').toLowerCase();
+      if (status === 'present') summary.presentDays += 1;
+      else if (status === 'half_day') summary.halfDays += 1;
+      else if (status === 'absent') summary.absentDays += 1;
+      else if (status === 'leave_approved') summary.leaveDays += 1;
+      else if (status === 'holiday') summary.holidayDays += 1;
+      else if (status === 'week_off') summary.weekOffDays += 1;
 
       summary.totalLwp += Number(row.lwp_value ?? 0);
       summary.lateMarks += Number(row.late_mark ?? 0);
-      summary.totalHours += Number(
-        row.total_hours ?? Number(row.raw_minutes ?? 0) / 60,
-      );
+      summary.totalHours += Number(row.total_hours ?? (Number(row.raw_minutes ?? 0) / 60));
       if (row.clock_in_time || row.clock_out_time) summary.wfoDays += 1;
-      if (!["holiday", "week_off"].includes(status))
-        summary.totalWorkingDays += 1;
+      if (!['holiday', 'week_off'].includes(status)) summary.totalWorkingDays += 1;
       continue;
     }
 
@@ -575,136 +496,82 @@ async function computeNcosecMonthlySummary(employeeId: string, month: string) {
 // Attendance Rules (Admin/HR CRUD + Simulator)
 
 // GET /rules - list all rule configs
-router.get(
-  "/rules",
-  h(async (req, res) => {
-    const data = await attendanceEngineService.listRules();
-    return res.json({ success: true, data });
-  }),
-);
+router.get('/rules', h(async (req, res) => {
+  const data = await attendanceEngineService.listRules();
+  return res.json({ success: true, data });
+}));
 
 // GET /rules/resolve - simulate which rule applies
-router.get(
-  "/rules/resolve",
-  h(async (req, res) => {
-    const { designationId, processId, branchId } = req.query as Record<
-      string,
-      string
-    >;
-    const date =
-      (req.query.date as string) || new Date().toISOString().split("T")[0]!;
-    const rule = await attendanceEngineService.resolveRule(
-      designationId || null,
-      processId || null,
-      branchId || null,
-      date,
-    );
-    return res.json({ success: true, data: rule });
-  }),
-);
+router.get('/rules/resolve', h(async (req, res) => {
+  const { designationId, processId, branchId } = req.query as Record<string, string>;
+  const date = (req.query.date as string) || new Date().toISOString().split('T')[0]!;
+  const rule = await attendanceEngineService.resolveRule(
+    designationId || null, processId || null, branchId || null, date
+  );
+  return res.json({ success: true, data: rule });
+}));
 
 // GET /cost-centres - cost centres for the Payroll Head's Exception Control bulk-apply tab's
 // Branch -> Cost Centre cascade (attendance-exception-bucket.routes.ts).
-router.get(
-  "/cost-centres",
-  requireRole("admin", "hr", "payroll_head", "payroll_admin"),
-  h(async (req, res) => {
-    const { branchId } = req.query as Record<string, string>;
-    const data = await attendanceEngineService.listCostCentresForRules(
-      branchId || null,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+router.get('/cost-centres', requireRole('admin', 'hr', 'payroll_head', 'payroll_admin'), h(async (req, res) => {
+  const { branchId } = req.query as Record<string, string>;
+  const data = await attendanceEngineService.listCostCentresForRules(branchId || null);
+  return res.json({ success: true, data });
+}));
 
 // POST /rules - create new rule (admin only)
-router.post(
-  "/rules",
-  requireRole("admin"),
-  h(async (req, res) => {
-    const schema = z.object({
-      rule_name: z.string().min(1).max(255),
-      scope_type: z.enum([
-        "designation",
-        "process",
-        "branch",
-        "process_designation",
-        "branch_process",
-        "global",
-      ]),
-      designation_id: z.string().uuid().nullable().optional(),
-      process_id: z.string().uuid().nullable().optional(),
-      branch_id: z.string().uuid().nullable().optional(),
-      attendance_source: z.enum(["dialler", "biometric"]),
-      full_day_minutes: z.number().int().min(1).max(1440),
-      half_day_minutes: z.number().int().min(1).max(1440),
-      grace_minutes: z.number().int().min(0).max(120).default(15),
-      effective_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      effective_to: z
-        .string()
-        .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .nullable()
-        .optional(),
-      notes: z.string().nullable().optional(),
-    });
-    const body = schema.parse(req.body);
-    const data = await attendanceEngineService.createRule({
-      ...body,
-      created_by: (req as any).authUser?.id,
-    });
-    return res.status(201).json({ success: true, data });
-  }),
-);
+router.post('/rules', requireRole('admin'), h(async (req, res) => {
+  const schema = z.object({
+    rule_name:          z.string().min(1).max(255),
+    scope_type:         z.enum(['designation','process','branch','process_designation','branch_process','global']),
+    designation_id:     z.string().uuid().nullable().optional(),
+    process_id:         z.string().uuid().nullable().optional(),
+    branch_id:          z.string().uuid().nullable().optional(),
+    attendance_source:  z.enum(['dialler','biometric']),
+    full_day_minutes:   z.number().int().min(1).max(1440),
+    half_day_minutes:   z.number().int().min(1).max(1440),
+    grace_minutes:      z.number().int().min(0).max(120).default(15),
+    effective_from:     z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    effective_to:       z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    notes:              z.string().nullable().optional(),
+  });
+  const body = schema.parse(req.body);
+  const data = await attendanceEngineService.createRule({
+    ...body, created_by: (req as any).authUser?.id
+  });
+  return res.status(201).json({ success: true, data });
+}));
 
 // PATCH /rules/:id - update rule (admin only)
-router.patch(
-  "/rules/:id",
-  requireRole("admin"),
-  h(async (req, res) => {
-    const schema = z.object({
-      rule_name: z.string().min(1).max(255).optional(),
-      attendance_source: z.enum(["dialler", "biometric"]).optional(),
-      full_day_minutes: z.number().int().min(1).max(1440).optional(),
-      half_day_minutes: z.number().int().min(1).max(1440).optional(),
-      grace_minutes: z.number().int().min(0).max(120).optional(),
-      effective_from: z
-        .string()
-        .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .optional(),
-      effective_to: z
-        .string()
-        .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .nullable()
-        .optional(),
-      notes: z.string().nullable().optional(),
-      active_status: z.number().int().min(0).max(1).optional(),
-    });
-    const body = schema.parse(req.body);
-    const data = await attendanceEngineService.updateRule(req.params.id, body);
-    return res.json({ success: true, data });
-  }),
-);
+router.patch('/rules/:id', requireRole('admin'), h(async (req, res) => {
+  const schema = z.object({
+    rule_name:         z.string().min(1).max(255).optional(),
+    attendance_source: z.enum(['dialler','biometric']).optional(),
+    full_day_minutes:  z.number().int().min(1).max(1440).optional(),
+    half_day_minutes:  z.number().int().min(1).max(1440).optional(),
+    grace_minutes:     z.number().int().min(0).max(120).optional(),
+    effective_from:    z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    effective_to:      z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    notes:             z.string().nullable().optional(),
+    active_status:     z.number().int().min(0).max(1).optional(),
+  });
+  const body = schema.parse(req.body);
+  const data = await attendanceEngineService.updateRule(req.params.id, body);
+  return res.json({ success: true, data });
+}));
 
 // DELETE /rules/:id - deactivate rule (admin only)
-router.delete(
-  "/rules/:id",
-  requireRole("admin"),
-  h(async (req, res) => {
-    await attendanceEngineService.deactivateRule(req.params.id);
-    return res.status(204).send();
-  }),
-);
+router.delete('/rules/:id', requireRole('admin'), h(async (req, res) => {
+  await attendanceEngineService.deactivateRule(req.params.id);
+  return res.status(204).send();
+}));
 
 // GET /attendance-logic - per-process attendance logic (which feed decides the day).
 // Readable by the same roles that can open the rules master.
-router.get(
-  "/attendance-logic",
-  requireRole("admin", "hr", "wfm"),
-  h(async (_req, res) => {
-    const data = await attendanceEngineService.listProcessAttendanceLogic();
-    return res.json({ success: true, data });
-  }),
-);
+router.get('/attendance-logic', requireRole('admin', 'hr', 'wfm'), h(async (_req, res) => {
+  const data = await attendanceEngineService.listProcessAttendanceLogic();
+  return res.json({ success: true, data });
+}));
 
 // GET /attendance-logic/thresholds-in-force - the day thresholds the engine really applies.
 router.get('/attendance-logic/thresholds-in-force', requireRole('admin', 'hr', 'wfm'), h(async (_req, res) => {
@@ -746,52 +613,32 @@ router.delete('/attendance-logic/employee/:employeeId', requireRole('admin'), h(
 //
 // This is the write that actually changes which feed builds a process's attendance, so it
 // is restricted to admin and validated against the enum rather than passed through.
-router.put(
-  "/attendance-logic/:processId",
-  requireRole("admin"),
-  h(async (req, res) => {
-    const { attendance_logic: logic } = req.body as {
-      attendance_logic?: string;
-    };
-    const allowed = ["apr", "cosec", "apr_validated_by_cosec"];
-    if (!logic || !allowed.includes(logic)) {
-      return res.status(400).json({
-        success: false,
-        message: `attendance_logic must be one of: ${allowed.join(", ")}`,
-      });
-    }
-    const actor = req.authUser?.id ?? "system";
-    const result = await attendanceEngineService.setProcessAttendanceLogic(
-      req.params.processId,
-      logic as "apr" | "cosec" | "apr_validated_by_cosec",
-      actor,
-    );
-    return res.json({ success: true, data: result });
-  }),
-);
+router.put('/attendance-logic/:processId', requireRole('admin'), h(async (req, res) => {
+  const { attendance_logic: logic } = req.body as { attendance_logic?: string };
+  const allowed = ['apr', 'cosec', 'apr_validated_by_cosec'];
+  if (!logic || !allowed.includes(logic)) {
+    return res.status(400).json({
+      success: false,
+      message: `attendance_logic must be one of: ${allowed.join(', ')}`,
+    });
+  }
+  const actor = req.authUser?.id ?? 'system';
+  const result = await attendanceEngineService.setProcessAttendanceLogic(
+    req.params.processId, logic as 'apr' | 'cosec' | 'apr_validated_by_cosec', actor);
+  return res.json({ success: true, data: result });
+}));
 
 // Attendance Processing
 
 // POST /process - manual trigger for a date (admin, hr, wfm)
-router.post(
-  "/process",
-  requireRole("admin", "hr", "wfm"),
-  h(async (req, res) => {
-    const { date } = req.body as { date?: string };
-    const processDate =
-      date ||
-      (() => {
-        const d = new Date();
-        d.setDate(d.getDate() - 1);
-        return d.toISOString().split("T")[0]!;
-      })();
-    const data = await attendanceEngineService.processDateBatch(
-      processDate,
-      50,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+router.post('/process', requireRole('admin', 'hr', 'wfm'), h(async (req, res) => {
+  const { date } = req.body as { date?: string };
+  const processDate = date || (() => {
+    const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().split('T')[0]!;
+  })();
+  const data = await attendanceEngineService.processDateBatch(processDate, 50);
+  return res.json({ success: true, data });
+}));
 
 // GET /daily - list records with filters
 router.get('/daily', privilegedListScope, h(async (req: AuthenticatedRequest, res: Response) => {
@@ -803,30 +650,19 @@ router.get('/daily', privilegedListScope, h(async (req: AuthenticatedRequest, re
   const safePage = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
   const safeLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 200) : 50;
 
-    const filters: any = {
-      processId: req.query.processId as string | undefined,
-      branchId: req.query.branchId as string | undefined,
-      fromDate: req.query.fromDate as string | undefined,
-      toDate: req.query.toDate as string | undefined,
-      attendanceStatus: req.query.attendanceStatus as string | undefined,
-      page: safePage,
-      limit: safeLimit,
-    };
-    if (isPrivileged) {
-      const qEmpId = req.query.employeeId as string | undefined;
-      if (qEmpId && !DB_ID_REGEX.test(qEmpId)) {
-        return res
-          .status(400)
-          .json({ success: false, error: "Invalid employeeId" });
-      }
-      filters.employeeId = qEmpId;
-    } else {
-      const emp = await getEmployeeForUser(userId);
-      if (!emp)
-        return res
-          .status(403)
-          .json({ success: false, error: "No employee record" });
-      filters.employeeId = emp.id;
+  const filters: any = {
+    processId:        req.query.processId as string | undefined,
+    branchId:         req.query.branchId as string | undefined,
+    fromDate:         req.query.fromDate as string | undefined,
+    toDate:           req.query.toDate as string | undefined,
+    attendanceStatus: req.query.attendanceStatus as string | undefined,
+    page:             safePage,
+    limit:            safeLimit,
+  };
+  if (isPrivileged) {
+    const qEmpId = req.query.employeeId as string | undefined;
+    if (qEmpId && !DB_ID_REGEX.test(qEmpId)) {
+      return res.status(400).json({ success: false, error: 'Invalid employeeId' });
     }
     if (qEmpId && !(await guardTargetEmployee(req, res, qEmpId))) return;
     filters.employeeId = qEmpId;
@@ -840,150 +676,102 @@ router.get('/daily', privilegedListScope, h(async (req: AuthenticatedRequest, re
 }));
 
 // GET /ncosec-monthly - direct COSEC monthly view with HRMS scope and break enrichment.
-router.get(
-  "/ncosec-monthly",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const page = parsePositiveInt(req.query.page, 1, 100000);
-    const limit = parsePositiveInt(req.query.limit, 500, 500);
-    const fromDate = String(req.query.fromDate ?? "").trim();
-    const toDate = String(req.query.toDate ?? "").trim();
+router.get('/ncosec-monthly', h(async (req: AuthenticatedRequest, res: Response) => {
+  const page = parsePositiveInt(req.query.page, 1, 100000);
+  const limit = parsePositiveInt(req.query.limit, 500, 500);
+  const fromDate = String(req.query.fromDate ?? '').trim();
+  const toDate = String(req.query.toDate ?? '').trim();
 
-    if (
-      !/^\d{4}-\d{2}-\d{2}$/.test(fromDate) ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(toDate)
-    ) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: "fromDate and toDate are required in YYYY-MM-DD format",
-        });
-    }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    return res.status(400).json({ success: false, error: 'fromDate and toDate are required in YYYY-MM-DD format' });
+  }
 
-    const employees = await listScopedEmployees(req);
-    if (employees.length === 0) {
-      return res.json({ success: true, data: [], total: 0, page, limit });
-    }
+  const employees = await listScopedEmployees(req);
+  if (employees.length === 0) {
+    return res.json({ success: true, data: [], total: 0, page, limit });
+  }
 
-    const mappings = await getBulkCosecMappings(
-      employees.map((employee) => employee.id),
+  const mappings = await getBulkCosecMappings(employees.map((employee) => employee.id));
+  // Chunks were fetched strictly one after another, so a wide scope paid the
+  // full upstream latency per 200 employees. Run them with bounded concurrency:
+  // fast for large scopes, while still capping simultaneous load on the COSEC
+  // MSSQL box (unbounded Promise.all over every chunk could swamp it).
+  const chunks = chunkArray(mappings, 200);
+  const records: NcosecMonthlyRecord[] = [];
+  const NCOSEC_CONCURRENCY = 4;
+  for (let i = 0; i < chunks.length; i += NCOSEC_CONCURRENCY) {
+    const batch = chunks.slice(i, i + NCOSEC_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map((chunk) => getMonthlyAttendanceFromNcosec(chunk, fromDate, toDate)),
     );
-    // Chunks were fetched strictly one after another, so a wide scope paid the
-    // full upstream latency per 200 employees. Run them with bounded concurrency:
-    // fast for large scopes, while still capping simultaneous load on the COSEC
-    // MSSQL box (unbounded Promise.all over every chunk could swamp it).
-    const chunks = chunkArray(mappings, 200);
-    const records: NcosecMonthlyRecord[] = [];
-    const NCOSEC_CONCURRENCY = 4;
-    for (let i = 0; i < chunks.length; i += NCOSEC_CONCURRENCY) {
-      const batch = chunks.slice(i, i + NCOSEC_CONCURRENCY);
-      const results = await Promise.all(
-        batch.map((chunk) =>
-          getMonthlyAttendanceFromNcosec(chunk, fromDate, toDate),
-        ),
-      );
-      for (const result of results) records.push(...result);
-    }
+    for (const result of results) records.push(...result);
+  }
 
-    const attendanceStatus = String(req.query.attendanceStatus ?? "")
-      .trim()
-      .toLowerCase();
-    const filteredByStatus = attendanceStatus
-      ? records.filter(
-          (record) =>
-            String(record.attendance_status ?? "").toLowerCase() ===
-            attendanceStatus,
-        )
-      : records;
-    const breakRows = await getBreakSummaryRows(
-      Array.from(new Set(filteredByStatus.map((record) => record.employee_id))),
-      fromDate,
-      toDate,
-    );
-    const enriched = attachBreakSummary(filteredByStatus, breakRows);
-    const offset = (page - 1) * limit;
+  const attendanceStatus = String(req.query.attendanceStatus ?? '').trim().toLowerCase();
+  const filteredByStatus = attendanceStatus
+    ? records.filter((record) => String(record.attendance_status ?? '').toLowerCase() === attendanceStatus)
+    : records;
+  const breakRows = await getBreakSummaryRows(
+    Array.from(new Set(filteredByStatus.map((record) => record.employee_id))),
+    fromDate,
+    toDate,
+  );
+  const enriched = attachBreakSummary(filteredByStatus, breakRows);
+  const offset = (page - 1) * limit;
 
-    return res.json({
-      success: true,
-      data: enriched.slice(offset, offset + limit),
-      total: enriched.length,
-      page,
-      limit,
-    });
-  }),
-);
+  return res.json({
+    success: true,
+    data: enriched.slice(offset, offset + limit),
+    total: enriched.length,
+    page,
+    limit,
+  });
+}));
 
 // GET /apr-monthly — dialler (APR) monthly view read from mas_hrms.apr.
 // Counterpart of /ncosec-monthly for employees whose attendance source is the
 // dialler rather than biometric. Same scope guard, same response shape.
-router.get(
-  "/apr-monthly",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const fromDate = String(req.query.fromDate ?? "").trim();
-    const toDate = String(req.query.toDate ?? "").trim();
+router.get('/apr-monthly', h(async (req: AuthenticatedRequest, res: Response) => {
+  const fromDate = String(req.query.fromDate ?? '').trim();
+  const toDate = String(req.query.toDate ?? '').trim();
 
-    if (
-      !/^\d{4}-\d{2}-\d{2}$/.test(fromDate) ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(toDate)
-    ) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: "fromDate and toDate are required in YYYY-MM-DD format",
-        });
-    }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    return res.status(400).json({ success: false, error: 'fromDate and toDate are required in YYYY-MM-DD format' });
+  }
 
-    // Reuses the existing scope/role enforcement — an unauthorised caller is
-    // narrowed to their own record or rejected there.
-    const employees = await listScopedEmployees(req);
-    if (employees.length === 0) {
-      return res.json({ success: true, data: [], total: 0, source: "apr" });
-    }
-    if (employees.length > 1) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: "apr-monthly requires a single employeeId",
-        });
-    }
+  // Reuses the existing scope/role enforcement — an unauthorised caller is
+  // narrowed to their own record or rejected there.
+  const employees = await listScopedEmployees(req);
+  if (employees.length === 0) {
+    return res.json({ success: true, data: [], total: 0, source: 'apr' });
+  }
+  if (employees.length > 1) {
+    return res.status(400).json({ success: false, error: 'apr-monthly requires a single employeeId' });
+  }
 
-    const emp = employees[0];
-    const records = await getAprMonthly(emp, fromDate, toDate);
+  const emp = employees[0];
+  const records = await getAprMonthly(emp, fromDate, toDate);
 
-    return res.json({
-      success: true,
-      data: records.map((r) => ({
-        ...r,
-        employee_id: emp.id,
-        employee_code: emp.employee_code,
-      })),
-      total: records.length,
-      source: "apr",
-    });
-  }),
-);
+  return res.json({
+    success: true,
+    data: records.map((r) => ({ ...r, employee_id: emp.id, employee_code: emp.employee_code })),
+    total: records.length,
+    source: 'apr',
+  });
+}));
 
 // GET /attendance-source/:employeeId — which source drives this employee's attendance.
 // The UI uses this to pick between the APR and biometric views instead of guessing.
-router.get(
-  "/attendance-source/:employeeId",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const employeeId = safeId(req.params.employeeId, "employeeId");
-    if (!employeeId)
-      return res
-        .status(400)
-        .json({ success: false, error: "Invalid employeeId" });
+router.get('/attendance-source/:employeeId', h(async (req: AuthenticatedRequest, res: Response) => {
+  const employeeId = safeId(req.params.employeeId, 'employeeId');
+  if (!employeeId) return res.status(400).json({ success: false, error: 'Invalid employeeId' });
 
-    // Force the scope query onto this employee so access rules still apply.
-    (req.query as Record<string, unknown>).employeeId = employeeId;
-    const employees = await listScopedEmployees(req);
-    if (employees.length === 0) {
-      return res
-        .status(403)
-        .json({ success: false, error: "Employee not in scope" });
-    }
+  // Force the scope query onto this employee so access rules still apply.
+  (req.query as Record<string, unknown>).employeeId = employeeId;
+  const employees = await listScopedEmployees(req);
+  if (employees.length === 0) {
+    return res.status(403).json({ success: false, error: 'Employee not in scope' });
+  }
 
   const emp = employees[0];
   const isApr = await attendanceEngineService.isAprEligible(
@@ -995,128 +783,90 @@ router.get(
     emp.id,
   );
 
-    return res.json({
-      success: true,
-      data: {
-        employee_id: emp.id,
-        employee_code: emp.employee_code,
-        attendance_source: isApr ? "dialler" : "biometric",
-        source_label: isApr ? "APR / Dialler" : "Direct COSEC",
-        apr_user_ids: isApr ? resolveAprUserIds(emp) : [],
-        // Surfaced so the UI can show how fresh the data actually is.
-        sync_interval_note: isApr
-          ? "APR syncs hourly from ViciDial"
-          : "COSEC syncs every 5 minutes",
-      },
-    });
-  }),
-);
+  return res.json({
+    success: true,
+    data: {
+      employee_id: emp.id,
+      employee_code: emp.employee_code,
+      attendance_source: isApr ? 'dialler' : 'biometric',
+      source_label: isApr ? 'APR / Dialler' : 'Direct COSEC',
+      apr_user_ids: isApr ? resolveAprUserIds(emp) : [],
+      // Surfaced so the UI can show how fresh the data actually is.
+      sync_interval_note: isApr ? 'APR syncs hourly from ViciDial' : 'COSEC syncs every 5 minutes',
+    },
+  });
+}));
 
 // GET /today-live - lightweight live punch + break summary lookup for the current user.
-router.get(
-  "/today-live",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp)
-      return res
-        .status(403)
-        .json({ success: false, error: "No employee record" });
-    const shiftDate = resolveAttendanceShiftDate();
-    const breakSummary = await getTodayBreakSummary(emp.id, shiftDate);
-    const nowParts = istNowParts();
-    const calendarDate = `${nowParts.year}-${nowParts.month}-${nowParts.day}`;
+router.get('/today-live', h(async (req: AuthenticatedRequest, res: Response) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ success: false, error: 'No employee record' });
+  const shiftDate = resolveAttendanceShiftDate();
+  const breakSummary = await getTodayBreakSummary(emp.id, shiftDate);
+  const nowParts = istNowParts();
+  const calendarDate = `${nowParts.year}-${nowParts.month}-${nowParts.day}`;
 
-    if (shiftDate !== calendarDate) {
-      const mappings = await getBulkCosecMappings([emp.id]);
-      const overnightRecords = await getMonthlyAttendanceFromNcosec(
-        mappings,
-        shiftDate,
-        calendarDate,
-      );
-      const liveOvernight =
-        overnightRecords.find((record) => record.record_date === shiftDate) ??
-        null;
-      if (liveOvernight) {
-        return res.json({
-          success: true,
-          data: {
-            punch_date: liveOvernight.record_date,
-            first_punch_in: liveOvernight.clock_in_time,
-            last_punch_out: liveOvernight.clock_out_time,
-            raw_minutes: Number(liveOvernight.raw_minutes ?? 0),
-            total_punches: liveOvernight.clock_out_time
-              ? 2
-              : liveOvernight.clock_in_time
-                ? 1
-                : 0,
-            source: "biometric_live",
-            break_summary: breakSummary,
-          },
-        });
-      }
+  if (shiftDate !== calendarDate) {
+    const mappings = await getBulkCosecMappings([emp.id]);
+    const overnightRecords = await getMonthlyAttendanceFromNcosec(mappings, shiftDate, calendarDate);
+    const liveOvernight = overnightRecords.find((record) => record.record_date === shiftDate) ?? null;
+    if (liveOvernight) {
+      return res.json({
+        success: true,
+        data: {
+          punch_date: liveOvernight.record_date,
+          first_punch_in: liveOvernight.clock_in_time,
+          last_punch_out: liveOvernight.clock_out_time,
+          raw_minutes: Number(liveOvernight.raw_minutes ?? 0),
+          total_punches: liveOvernight.clock_out_time ? 2 : liveOvernight.clock_in_time ? 1 : 0,
+          source: 'biometric_live',
+          break_summary: breakSummary,
+        },
+      });
     }
+  }
 
-    try {
-      const live = await withTimeout(
-        getRealTimePunchesToday(emp.id),
-        5000,
-        "today-live realtime lookup",
-      );
-      if (live) {
-        return res.json({
-          success: true,
-          data: {
-            ...live,
-            punch_date: shiftDate,
-            source: "biometric_live",
-            break_summary: breakSummary,
-          },
-        });
-      }
-    } catch (error) {
-      console.warn(
-        "[attendance] today-live realtime lookup failed, falling back to local biometric log:",
-        error instanceof Error ? error.message : String(error),
-      );
+  try {
+    const live = await withTimeout(getRealTimePunchesToday(emp.id), 5000, 'today-live realtime lookup');
+    if (live) {
+      return res.json({
+        success: true,
+        data: {
+          ...live,
+          punch_date: shiftDate,
+          source: 'biometric_live',
+          break_summary: breakSummary,
+        },
+      });
     }
+  } catch (error) {
+    console.warn('[attendance] today-live realtime lookup failed, falling back to local biometric log:', error instanceof Error ? error.message : String(error));
+  }
 
-    try {
-      const mappings = await getBulkCosecMappings([emp.id]);
-      const monthlyRecords = await getMonthlyAttendanceFromNcosec(
-        mappings,
-        shiftDate,
-        shiftDate,
-      );
-      const directRecord =
-        monthlyRecords.find((record) => record.record_date === shiftDate) ??
-        null;
-      if (directRecord) {
-        return res.json({
-          success: true,
-          data: {
-            punch_date: directRecord.record_date,
-            first_punch_in: directRecord.clock_in_time,
-            last_punch_out: directRecord.clock_out_time,
-            raw_minutes: Number(directRecord.raw_minutes ?? 0),
-            total_punches: directRecord.clock_out_time
-              ? 2
-              : directRecord.clock_in_time
-                ? 1
-                : 0,
-            source: "biometric_live",
-            break_summary: breakSummary,
-          },
-        });
-      }
-    } catch (error) {
-      console.warn(
-        "[attendance] today-live monthly fallback failed, falling back to local biometric log:",
-        error instanceof Error ? error.message : String(error),
-      );
+  try {
+    const mappings = await getBulkCosecMappings([emp.id]);
+    const monthlyRecords = await getMonthlyAttendanceFromNcosec(mappings, shiftDate, shiftDate);
+    const directRecord = monthlyRecords.find((record) => record.record_date === shiftDate) ?? null;
+    if (directRecord) {
+      return res.json({
+        success: true,
+        data: {
+          punch_date: directRecord.record_date,
+          first_punch_in: directRecord.clock_in_time,
+          last_punch_out: directRecord.clock_out_time,
+          raw_minutes: Number(directRecord.raw_minutes ?? 0),
+          total_punches: directRecord.clock_out_time ? 2 : directRecord.clock_in_time ? 1 : 0,
+          source: 'biometric_live',
+          break_summary: breakSummary,
+        },
+      });
     }
+  } catch (error) {
+    console.warn('[attendance] today-live monthly fallback failed, falling back to local biometric log:', error instanceof Error ? error.message : String(error));
+  }
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(punch_date, '%Y-%m-%d') AS punch_date,
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(punch_date, '%Y-%m-%d') AS punch_date,
             first_punch_in,
             last_punch_out,
             COALESCE(total_punches, CASE WHEN first_punch_in IS NULL THEN 0 WHEN last_punch_out IS NULL THEN 1 ELSE 2 END) AS total_punches,
@@ -1125,55 +875,51 @@ router.get(
       WHERE employee_id = ? AND punch_date = ?
       ORDER BY migrated_at DESC
       LIMIT 1`,
-      [emp.id, shiftDate],
-    );
-    const row = rows[0] as any;
-    if (row) {
-      return res.json({
-        success: true,
-        data: {
-          punch_date: row.punch_date,
-          first_punch_in: toIST(row.first_punch_in),
-          last_punch_out: toIST(row.last_punch_out),
-          raw_minutes: Number(row.raw_minutes ?? 0),
-          total_punches: Number(row.total_punches ?? 0),
-          source: "biometric_live",
-          break_summary: breakSummary,
-        },
-      });
-    }
+    [emp.id, shiftDate],
+  );
+  const row = rows[0] as any;
+  if (row) {
+    return res.json({
+      success: true,
+      data: {
+        punch_date: row.punch_date,
+        first_punch_in: toIST(row.first_punch_in),
+        last_punch_out: toIST(row.last_punch_out),
+        raw_minutes: Number(row.raw_minutes ?? 0),
+        total_punches: Number(row.total_punches ?? 0),
+        source: 'biometric_live',
+        break_summary: breakSummary,
+      },
+    });
+  }
 
-    if (breakSummary) {
-      return res.json({
-        success: true,
-        data: {
-          punch_date: shiftDate,
-          first_punch_in: null,
-          last_punch_out: null,
-          raw_minutes: 0,
-          total_punches: 0,
-          source: "biometric_live",
-          break_summary: breakSummary,
-        },
-      });
-    }
+  if (breakSummary) {
+    return res.json({
+      success: true,
+      data: {
+        punch_date: shiftDate,
+        first_punch_in: null,
+        last_punch_out: null,
+        raw_minutes: 0,
+        total_punches: 0,
+        source: 'biometric_live',
+        break_summary: breakSummary,
+      },
+    });
+  }
 
-    return res.json({ success: true, data: null });
-  }),
-);
+  return res.json({ success: true, data: null });
+}));
 
 // GET /daily/:employeeId/:date - single record
-router.get(
-  "/daily/:employeeId/:date",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const targetId = req.params.employeeId;
-    const isPrivileged = await hasRole(userId, "admin", "hr", "wfm", "manager");
-    if (!isPrivileged) {
-      const emp = await getEmployeeForUser(userId);
-      if (!emp || emp.id !== targetId) {
-        return res.status(403).json({ success: false, error: "Forbidden" });
-      }
+router.get('/daily/:employeeId/:date', h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const targetId = req.params.employeeId;
+  const isPrivileged = await hasRole(userId, 'admin', 'hr', 'wfm', 'manager');
+  if (!isPrivileged) {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp || emp.id !== targetId) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
     }
   } else if (!(await guardTargetEmployee(req, res, targetId))) return;
   const record = await attendanceEngineService.getRecord(targetId, req.params.date);
@@ -1204,70 +950,30 @@ router.patch('/daily/:employeeId/:date', requireRole('admin', 'hr', 'wfm'), h(as
       success: false,
       error: `lwpValue must be ${VALID_LWP[body.attendanceStatus]} for status '${body.attendanceStatus}'`
     });
-    const body = schema.parse(req.body);
+  }
 
-    // Cross-validate status + lwpValue consistency
-    const VALID_LWP: Record<string, number> = {
-      present: 0,
-      leave_approved: 0,
-      holiday: 0,
-      week_off: 0,
-      half_day: 0.5,
-      absent: 1.0,
-      unreconciled: 0,
-    };
-    if (
-      VALID_LWP[body.attendanceStatus] !== undefined &&
-      body.lwpValue !== VALID_LWP[body.attendanceStatus]
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: `lwpValue must be ${VALID_LWP[body.attendanceStatus]} for status '${body.attendanceStatus}'`,
-      });
-    }
-
-    const input: CorrectionInput = {
-      attendanceStatus: body.attendanceStatus,
-      lwpValue: body.lwpValue,
-      overrideReason: body.overrideReason,
-      isLocked: body.isLocked,
-      regularizationId: body.regularizationId,
-    };
-    const data = await attendanceEngineService.correctDailyRecord(
-      req.params.employeeId,
-      req.params.date,
-      input,
-      (req as any).authUser!.id,
-    );
-    return res.json({
-      success: true,
-      data,
-      message: "Attendance record corrected and locked",
-    });
-  }),
-);
+  const input: CorrectionInput = {
+    attendanceStatus: body.attendanceStatus,
+    lwpValue: body.lwpValue,
+    overrideReason: body.overrideReason,
+    isLocked: body.isLocked,
+    regularizationId: body.regularizationId,
+  };
+  const data = await attendanceEngineService.correctDailyRecord(
+    req.params.employeeId, req.params.date, input, (req as any).authUser!.id
+  );
+  return res.json({ success: true, data, message: 'Attendance record corrected and locked' });
+}));
 
 // GET /summary/:employeeId/:month - monthly summary
-router.get(
-  "/summary/:employeeId/:month",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const targetId = req.params.employeeId;
-    const isPrivileged = await hasRole(
-      userId,
-      "super_admin",
-      "admin",
-      "hr",
-      "wfm",
-      "manager",
-      "payroll_head",
-      "payroll_admin",
-    );
-    if (!isPrivileged) {
-      const emp = await getEmployeeForUser(userId);
-      if (!emp || emp.id !== targetId) {
-        return res.status(403).json({ success: false, error: "Forbidden" });
-      }
+router.get('/summary/:employeeId/:month', h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const targetId = req.params.employeeId;
+  const isPrivileged = await hasRole(userId, 'super_admin', 'admin', 'hr', 'wfm', 'manager', 'payroll_head', 'payroll_admin');
+  if (!isPrivileged) {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp || emp.id !== targetId) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
     }
   } else if (!(await guardTargetEmployee(req, res, targetId))) return;
   const data = await computeNcosecMonthlySummary(targetId, req.params.month);
@@ -1275,20 +981,12 @@ router.get(
 }));
 
 // POST /clock-in
-router.post(
-  "/clock-in",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    // Security: always derive employee_id from auth token - never trust body
-    const emp = await getEmployeeForUser(userId);
-    if (!emp)
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "No employee record for authenticated user",
-        });
-    const employee_id = emp.id;
+router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  // Security: always derive employee_id from auth token - never trust body
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, error: 'No employee record for authenticated user' });
+  const employee_id = emp.id;
 
   const { work_mode, latitude, longitude, location_name } = req.body;
   const nowDate = new Date();
@@ -1319,155 +1017,110 @@ router.post(
     `INSERT INTO attendance_daily_record
        (id, employee_id, record_date, clock_in_time, work_mode, clock_in_lat, clock_in_lng, clock_in_location, attendance_status)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'present')`,
-      [
-        id,
-        employee_id,
-        today,
-        now,
-        work_mode ?? "office",
-        latitude ?? null,
-        longitude ?? null,
-        location_name ?? null,
-      ],
-    );
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT adr.*,
+    [id, employee_id, today, now, work_mode ?? 'office', latitude ?? null, longitude ?? null, location_name ?? null]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT adr.*,
        adr.record_date AS date, adr.clock_in_time AS clock_in, adr.clock_out_time AS clock_out,
        ROUND(adr.raw_minutes / 60, 2) AS total_hours, adr.attendance_status AS status,
        adr.clock_in_location AS clock_in_location_name, adr.clock_out_location AS clock_out_location_name
-     FROM attendance_daily_record adr WHERE adr.id = ? LIMIT 1`,
-      [id],
-    );
-    const row = (rows as RowDataPacket[])[0] as any;
-    if (row) {
-      row.clock_in_time = toIST(row.clock_in_time);
-      row.clock_out_time = toIST(row.clock_out_time);
-      row.clock_in = toIST(row.clock_in);
-      row.clock_out = toIST(row.clock_out);
-    }
-    res.status(201).json({ success: true, data: row });
-  }),
-);
+     FROM attendance_daily_record adr WHERE adr.id = ? LIMIT 1`, [id]
+  );
+  const row = (rows as RowDataPacket[])[0] as any;
+  if (row) {
+    row.clock_in_time  = toIST(row.clock_in_time);
+    row.clock_out_time = toIST(row.clock_out_time);
+    row.clock_in       = toIST(row.clock_in);
+    row.clock_out      = toIST(row.clock_out);
+  }
+  res.status(201).json({ success: true, data: row });
+}));
 
 // POST /clock-out
-router.post(
-  "/clock-out",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const { record_id, latitude, longitude, location_name } = req.body;
-    if (!record_id)
-      return res
-        .status(400)
-        .json({ success: false, error: "record_id required" });
+router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const { record_id, latitude, longitude, location_name } = req.body;
+  if (!record_id) return res.status(400).json({ success: false, error: 'record_id required' });
 
-    const emp = await getEmployeeForUser(userId);
-    if (!emp)
-      return res
-        .status(403)
-        .json({ success: false, error: "No employee record" });
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, error: 'No employee record' });
 
-    // Ownership check: verify this record belongs to the caller
-    const [check] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM attendance_daily_record WHERE id = ? AND employee_id = ? LIMIT 1",
-      [record_id, emp.id],
-    );
-    if ((check as RowDataPacket[]).length === 0) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "Forbidden: record does not belong to you",
-        });
-    }
+  // Ownership check: verify this record belongs to the caller
+  const [check] = await db.execute<RowDataPacket[]>(
+    'SELECT id FROM attendance_daily_record WHERE id = ? AND employee_id = ? LIMIT 1',
+    [record_id, emp.id]
+  );
+  if ((check as RowDataPacket[]).length === 0) {
+    return res.status(403).json({ success: false, error: 'Forbidden: record does not belong to you' });
+  }
 
-    const nowDate = new Date();
-    const now = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Kolkata",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23", // NOT hour12:false — that selects h24 and renders midnight as '24'
-    }).formatToParts(nowDate);
-    const g = (t: string) => now.find((p) => p.type === t)!.value;
-    const nowStr = `${g("year")}-${g("month")}-${g("day")} ${g("hour")}:${g("minute")}:${g("second")}`;
-    await db.execute(
-      `UPDATE attendance_daily_record
+  const nowDate = new Date();
+  const now = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23', // NOT hour12:false — that selects h24 and renders midnight as '24'
+  }).formatToParts(nowDate);
+  const g = (t: string) => now.find(p => p.type === t)!.value;
+  const nowStr = `${g('year')}-${g('month')}-${g('day')} ${g('hour')}:${g('minute')}:${g('second')}`;
+  await db.execute(
+    `UPDATE attendance_daily_record
      SET clock_out_time = ?, clock_out_lat = ?, clock_out_lng = ?, clock_out_location = ?
      WHERE id = ?`,
-      [
-        nowStr,
-        latitude ?? null,
-        longitude ?? null,
-        location_name ?? null,
-        record_id,
-      ],
-    );
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT adr.*,
+    [nowStr, latitude ?? null, longitude ?? null, location_name ?? null, record_id]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT adr.*,
        adr.record_date AS date, adr.clock_in_time AS clock_in, adr.clock_out_time AS clock_out,
        ROUND(adr.raw_minutes / 60, 2) AS total_hours, adr.attendance_status AS status,
        adr.clock_in_location AS clock_in_location_name, adr.clock_out_location AS clock_out_location_name
-     FROM attendance_daily_record adr WHERE adr.id = ? LIMIT 1`,
-      [record_id],
-    );
-    const out = (rows as RowDataPacket[])[0] as any;
-    if (out) {
-      out.clock_in_time = toIST(out.clock_in_time);
-      out.clock_out_time = toIST(out.clock_out_time);
-      out.clock_in = toIST(out.clock_in);
-      out.clock_out = toIST(out.clock_out);
-    }
-    res.json({ success: true, data: out });
-  }),
-);
+     FROM attendance_daily_record adr WHERE adr.id = ? LIMIT 1`, [record_id]
+  );
+  const out = (rows as RowDataPacket[])[0] as any;
+  if (out) {
+    out.clock_in_time  = toIST(out.clock_in_time);
+    out.clock_out_time = toIST(out.clock_out_time);
+    out.clock_in       = toIST(out.clock_in);
+    out.clock_out      = toIST(out.clock_out);
+  }
+  res.json({ success: true, data: out });
+}));
 
 // FIX: POST /engine/trigger-batch - Manual trigger for attendance engine (Admin/WFM only)
 // Allows admin to manually run the attendance engine for a specific date
-router.post(
-  "/engine/trigger-batch",
-  requireRole("admin", "wfm", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const date = req.body.date || new Date().toISOString().slice(0, 10);
+router.post('/engine/trigger-batch', requireRole('admin', 'wfm', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const date = req.body.date || new Date().toISOString().slice(0, 10);
 
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid date format. Use YYYY-MM-DD.",
-      });
-    }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid date format. Use YYYY-MM-DD.'
+    });
+  }
 
-    console.log(
-      `[AttendanceEngine] Manual trigger by user ${req.authUser!.id} for date: ${date}`,
-    );
+  console.log(`[AttendanceEngine] Manual trigger by user ${req.authUser!.id} for date: ${date}`);
 
-    try {
-      const result = await attendanceEngineService.processDateBatch(date);
-      return res.json({
-        success: true,
-        data: result,
-        message: `Processed ${result.processed} employees, skipped ${result.skipped}, failed ${result.failed}`,
-      });
-    } catch (error) {
-      console.error("[AttendanceEngine] Manual trigger failed:", error);
-      return res.status(500).json({
-        success: false,
-        error: "Engine processing failed",
-        details: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }),
-);
+  try {
+    const result = await attendanceEngineService.processDateBatch(date);
+    return res.json({
+      success: true,
+      data: result,
+      message: `Processed ${result.processed} employees, skipped ${result.skipped}, failed ${result.failed}`
+    });
+  } catch (error) {
+    console.error('[AttendanceEngine] Manual trigger failed:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Engine processing failed',
+      details: error instanceof Error ? error.message : String(error)
+    });
+  }
+}));
 
 // FIX: POST /:employeeId/:date/unlock - Unlock attendance record (Admin/WFM only)
 // Allows admin to unlock a locked attendance record for re-processing
-router.post(
-  "/:employeeId/:date/unlock",
-  requireRole("admin", "wfm", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { employeeId, date } = req.params;
+router.post('/:employeeId/:date/unlock', requireRole('admin', 'wfm', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId, date } = req.params;
 
   if (!employeeId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return res.status(400).json({
@@ -1477,68 +1130,66 @@ router.post(
   }
   if (!(await guardTargetEmployee(req, res, employeeId))) return;
 
-    // Check if record exists
-    const [checkRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, is_locked, attendance_status, override_reason
+  // Check if record exists
+  const [checkRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, is_locked, attendance_status, override_reason
      FROM attendance_daily_record
      WHERE employee_id = ? AND record_date = ? LIMIT 1`,
-      [employeeId, date],
-    );
+    [employeeId, date]
+  );
 
-    if ((checkRows as RowDataPacket[]).length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: "Attendance record not found",
-      });
-    }
+  if ((checkRows as RowDataPacket[]).length === 0) {
+    return res.status(404).json({
+      success: false,
+      error: 'Attendance record not found'
+    });
+  }
 
-    const record = checkRows[0] as any;
-    const wasLocked = Number(record.is_locked) === 1;
+  const record = checkRows[0] as any;
+  const wasLocked = Number(record.is_locked) === 1;
 
-    // A reason is mandatory, matching the reason-still-required->400 half of the Part A.3
-    // manager-override contract (2026-08-13 business-decision sign-off). Unlocking a day
-    // payroll has consumed is exactly the action that most needs a recorded justification,
-    // and this endpoint previously took none at all.
-    const reason =
-      typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
-    if (reason.length < 10) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "A reason of at least 10 characters is required to unlock an attendance record",
-      });
-    }
+  // A reason is mandatory, matching the reason-still-required->400 half of the Part A.3
+  // manager-override contract (2026-08-13 business-decision sign-off). Unlocking a day
+  // payroll has consumed is exactly the action that most needs a recorded justification,
+  // and this endpoint previously took none at all.
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+  if (reason.length < 10) {
+    return res.status(400).json({
+      success: false,
+      error: 'A reason of at least 10 characters is required to unlock an attendance record',
+    });
+  }
 
-    // Refuse when the day belongs to a payroll run that is already closed.
-    //
-    // attendance_daily_record.is_locked is the signal the whole Part A.3 lock-guard family
-    // keys on (roster-lock-guard.ts: isRosterDateLocked / checkAssignmentDateNotLocked /
-    // checkEmployeeDateNotLocked), which refuses roster writes above the lock and tells the
-    // caller to use "the payroll correction/reopen workflow instead". This endpoint is what
-    // clears that flag - so with no closure check it was the one call that neutralises every
-    // one of those guards at once, after which the ordinary write paths accept edits to a
-    // month already finalised, paid and filed.
-    //
-    // run_month is VARCHAR 'YYYY-MM', not DATE, so it is compared string-to-string via
-    // DATE_FORMAT - comparing it against a DATE matches zero rows and merely raises a warning.
-    //
-    // The JOIN to salary_prep_line is what makes this per-EMPLOYEE rather than per-MONTH.
-    //
-    // The first version of this guard matched any closed run sharing the target month. That
-    // over-blocked, because a run does not contain every employee - joiners, leavers and
-    // anyone outside the run's selection simply have no line in it. Measured live 2026-08-15:
-    // for 2026-04 the month-only guard blocked all 1,326 active employees while only 1,085
-    // actually had a line in that closed run, so 241 people could not have a genuine
-    // attendance error corrected despite no closed run ever having paid them for that day.
-    // 2026-03 was 186. (salary_prep_run also supports branch_filter/process_filter scoping,
-    // which would widen this further, though both are NULL on all 66 runs today.)
-    //
-    // Over-blocking a correction path is not a safe default: it drives legitimate fixes out
-    // of this audited, reason-required endpoint and into direct SQL, which is exactly what the
-    // guard exists to prevent. salary_prep_line is the per-employee row proving the run really
-    // did consume this person for that period.
-    const [closedRuns] = await db.execute<RowDataPacket[]>(
-      `SELECT r.id, r.run_month, r.status
+  // Refuse when the day belongs to a payroll run that is already closed.
+  //
+  // attendance_daily_record.is_locked is the signal the whole Part A.3 lock-guard family
+  // keys on (roster-lock-guard.ts: isRosterDateLocked / checkAssignmentDateNotLocked /
+  // checkEmployeeDateNotLocked), which refuses roster writes above the lock and tells the
+  // caller to use "the payroll correction/reopen workflow instead". This endpoint is what
+  // clears that flag - so with no closure check it was the one call that neutralises every
+  // one of those guards at once, after which the ordinary write paths accept edits to a
+  // month already finalised, paid and filed.
+  //
+  // run_month is VARCHAR 'YYYY-MM', not DATE, so it is compared string-to-string via
+  // DATE_FORMAT - comparing it against a DATE matches zero rows and merely raises a warning.
+  //
+  // The JOIN to salary_prep_line is what makes this per-EMPLOYEE rather than per-MONTH.
+  //
+  // The first version of this guard matched any closed run sharing the target month. That
+  // over-blocked, because a run does not contain every employee - joiners, leavers and
+  // anyone outside the run's selection simply have no line in it. Measured live 2026-08-15:
+  // for 2026-04 the month-only guard blocked all 1,326 active employees while only 1,085
+  // actually had a line in that closed run, so 241 people could not have a genuine
+  // attendance error corrected despite no closed run ever having paid them for that day.
+  // 2026-03 was 186. (salary_prep_run also supports branch_filter/process_filter scoping,
+  // which would widen this further, though both are NULL on all 66 runs today.)
+  //
+  // Over-blocking a correction path is not a safe default: it drives legitimate fixes out
+  // of this audited, reason-required endpoint and into direct SQL, which is exactly what the
+  // guard exists to prevent. salary_prep_line is the per-employee row proving the run really
+  // did consume this person for that period.
+  const [closedRuns] = await db.execute<RowDataPacket[]>(
+    `SELECT r.id, r.run_month, r.status
        FROM salary_prep_run r
        JOIN salary_prep_line l
          ON l.run_id = r.id
@@ -1546,71 +1197,60 @@ router.post(
       WHERE r.run_month = DATE_FORMAT(?, '%Y-%m')
         AND LOWER(COALESCE(r.status,'')) IN (${CLOSED_RUN_STATUSES_SQL})
       LIMIT 1`,
-      [employeeId, date],
-    );
-    const closedRun = (closedRuns as RowDataPacket[])[0] as any;
-    if (closedRun) {
-      return res.status(409).json({
-        success: false,
-        error:
-          `Attendance for ${date} belongs to payroll run ${closedRun.run_month}, which is ` +
-          `already ${closedRun.status}. A closed run cannot be reopened by unlocking a day it ` +
-          `has already paid — use the payroll correction/reopen workflow instead.`,
-      });
-    }
+    [employeeId, date]
+  );
+  const closedRun = (closedRuns as RowDataPacket[])[0] as any;
+  if (closedRun) {
+    return res.status(409).json({
+      success: false,
+      error:
+        `Attendance for ${date} belongs to payroll run ${closedRun.run_month}, which is ` +
+        `already ${closedRun.status}. A closed run cannot be reopened by unlocking a day it ` +
+        `has already paid — use the payroll correction/reopen workflow instead.`,
+    });
+  }
 
-    // Unlock the record
-    await db.execute(
-      `UPDATE attendance_daily_record
+  // Unlock the record
+  await db.execute(
+    `UPDATE attendance_daily_record
      SET is_locked = 0,
          updated_at = NOW()
      WHERE employee_id = ? AND record_date = ?`,
-      [employeeId, date],
-    );
+    [employeeId, date]
+  );
 
-    // Durable audit. This previously wrote only a console.log, which is not an audit trail:
-    // it is not queryable, not retained, and invisible to the screens that read
-    // sensitive_action_log. Awaited, matching payroll.service.ts's own pattern — for a
-    // control action the record is part of the action, not a side effect of it.
-    const { logSensitiveAction } = await import("../../shared/auditLog.js");
-    await logSensitiveAction({
-      actor_user_id: req.authUser!.id,
-      action_type: "ATTENDANCE_RECORD_UNLOCKED",
-      module_key: "wfm",
-      entity_type: "attendance_daily_record",
-      entity_id: String(record.id),
-      employee_id: employeeId,
-      reason,
-      old_value_json: {
-        is_locked: wasLocked ? 1 : 0,
-        attendance_status: record.attendance_status,
-      },
-      new_value_json: { is_locked: 0 },
-      change_summary: {
-        employee_id: employeeId,
-        record_date: date,
-        was_locked: wasLocked,
-      },
-    });
+  // Durable audit. This previously wrote only a console.log, which is not an audit trail:
+  // it is not queryable, not retained, and invisible to the screens that read
+  // sensitive_action_log. Awaited, matching payroll.service.ts's own pattern — for a
+  // control action the record is part of the action, not a side effect of it.
+  const { logSensitiveAction } = await import("../../shared/auditLog.js");
+  await logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "ATTENDANCE_RECORD_UNLOCKED",
+    module_key: "wfm",
+    entity_type: "attendance_daily_record",
+    entity_id: String(record.id),
+    employee_id: employeeId,
+    reason,
+    old_value_json: { is_locked: wasLocked ? 1 : 0, attendance_status: record.attendance_status },
+    new_value_json: { is_locked: 0 },
+    change_summary: { employee_id: employeeId, record_date: date, was_locked: wasLocked },
+  });
 
-    console.log(
-      `[AttendanceEngine] Record unlocked by user ${req.authUser!.id}: ${employeeId}/${date} (was_locked=${wasLocked})`,
-    );
+  console.log(`[AttendanceEngine] Record unlocked by user ${req.authUser!.id}: ${employeeId}/${date} (was_locked=${wasLocked})`);
 
-    return res.json({
-      success: true,
-      message: wasLocked
-        ? "Record unlocked successfully"
-        : "Record was already unlocked",
-      data: {
-        employeeId,
-        date,
-        wasLocked,
-        previousStatus: record.attendance_status,
-        canReprocess: true,
-      },
-    });
-  }),
-);
+  return res.json({
+    success: true,
+    message: wasLocked ? 'Record unlocked successfully' : 'Record was already unlocked',
+    data: {
+      employeeId,
+      date,
+      wasLocked,
+      previousStatus: record.attendance_status,
+      canReprocess: true
+    }
+  });
+}));
 
 export { router as attendanceEngineRouter };
+

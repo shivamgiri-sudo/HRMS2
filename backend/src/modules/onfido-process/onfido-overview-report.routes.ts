@@ -23,10 +23,7 @@ import {
   getOverviewReport,
 } from "./onfido-overview-report.service.js";
 import { getUtilizationReport } from "./onfido-utilization.service.js";
-import {
-  getOnfidoMandateManpower,
-  getOnfidoCapacityBuilder,
-} from "./onfido-mandate-manpower.service.js";
+import { getOnfidoMandateManpower, getOnfidoCapacityBuilder } from "./onfido-mandate-manpower.service.js";
 import {
   validateRange,
   type Granularity,

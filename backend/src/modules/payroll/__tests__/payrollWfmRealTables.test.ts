@@ -38,10 +38,7 @@ function code(source: string): string {
 
 /** table that does not exist -> the real one, with live row counts. */
 const REPLACEMENTS: Array<{
-  file: string;
-  missing: string;
-  real: string;
-  note: string;
+  file: string; missing: string; real: string; note: string;
 }> = [
   {
     file: "src/modules/wfm/wfm.routes.ts",
@@ -106,9 +103,7 @@ describe("no query targets a table that does not exist", () => {
       // \b(?!_) so employee_bank_detail does not match employee_bank_details,
       // and shift_master does not match wfm_shift_master.
       const stale = new RegExp(`(?<![a-z_])${missing}\\b`);
-      expect(source, `${missing} does not exist in mas_hrms`).not.toMatch(
-        stale,
-      );
+      expect(source, `${missing} does not exist in mas_hrms`).not.toMatch(stale);
       expect(source, `expected ${real} to be used instead`).toContain(real);
     });
   }
@@ -140,9 +135,7 @@ describe("the manager scope clause", () => {
 });
 
 describe("the bank advice file", () => {
-  const SOURCE = read(
-    "src/modules/payroll-compliance/payrollCompliance.routes.ts",
-  );
+  const SOURCE = read("src/modules/payroll-compliance/payrollCompliance.routes.ts");
 
   it("casts the account number out of varbinary", () => {
     // account_number is varbinary(500). Selected raw it reaches JSON as
@@ -169,9 +162,7 @@ describe("the bank advice file", () => {
     // The rule is byte-identical, just expressed in TypeScript —
     //   const SCIENTIFIC_RE = /[Ee][+-]/;
     //   else if (SCIENTIFIC_RE.test(acct)) r.account_number_status = "corrupt_scientific_notation";
-    expect(SOURCE).toMatch(
-      /REGEXP '\[Ee\]\[\+-\]'|SCIENTIFIC_RE\s*=\s*\/\[Ee\]\[\+-\]\//,
-    );
+    expect(SOURCE).toMatch(/REGEXP '\[Ee\]\[\+-\]'|SCIENTIFIC_RE\s*=\s*\/\[Ee\]\[\+-\]\//);
   });
 
   it("reports the unpayable rows to the caller", () => {
@@ -199,10 +190,8 @@ describe("roster generation and holidays", () => {
     expect(at, "the holiday query has moved").toBeGreaterThan(-1);
     const after = SOURCE.slice(at, at + 700);
     expect(after).toMatch(/catch\s*\(/);
-    expect(
-      after,
-      "a swallowed failure here rosters people on holidays",
-    ).toMatch(/console\.(error|warn)/);
+    expect(after, "a swallowed failure here rosters people on holidays")
+      .toMatch(/console\.(error|warn)/);
   });
 
   it("only counts active holidays", () => {

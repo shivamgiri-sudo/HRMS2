@@ -29,7 +29,5 @@ export function normalizePiiForHash(value: unknown): string {
 /** SHA-256 of the normalized value, or null for an empty/absent input. */
 export function hashPiiForMatch(value: unknown): string | null {
   const normalized = normalizePiiForHash(value);
-  return normalized
-    ? createHash("sha256").update(normalized).digest("hex")
-    : null;
+  return normalized ? createHash("sha256").update(normalized).digest("hex") : null;
 }

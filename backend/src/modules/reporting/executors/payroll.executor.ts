@@ -14,12 +14,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type {
-  ExecFilters,
-  ExecScope,
-  ExecOptions,
-  ExecResult,
-} from "./types.js";
+import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
 import { resolvePayrollMonth } from "../payroll-month.js";
 import {
   appendScopeConditions,
@@ -44,7 +39,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params,
+    params
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -58,15 +53,8 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
  * two copies decide which payroll runs a report can see.
  */
 export const PAYROLL_RUN_STATUSES = [
-  "processing",
-  "reviewed",
-  "calculated",
-  "approved",
-  "locked",
-  "disbursed",
-  "finalized",
-  "released",
-  "paid",
+  "processing", "reviewed", "calculated", "approved",
+  "locked", "disbursed", "finalized", "released", "paid",
 ] as const;
 
 /**
@@ -287,7 +275,7 @@ export const PAYROLL_REGISTER_BODY = `
 export async function payrollRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
@@ -330,18 +318,11 @@ export async function payrollRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 /**
@@ -361,7 +342,7 @@ export async function payrollRegister(
 export async function payrollVariance(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
@@ -371,30 +352,22 @@ export async function payrollVariance(
   appendFilterConditions(filters, clauses, params);
   clauses.push("spr.run_month = ?");
   params.push(runMonth);
-  clauses.push(
-    `LOWER(spr.status) IN (${PAYROLL_RUN_STATUSES.map(() => "?").join(",")})`,
-  );
+  clauses.push(`LOWER(spr.status) IN (${PAYROLL_RUN_STATUSES.map(() => "?").join(",")})`);
   params.push(...PAYROLL_RUN_STATUSES);
 
   const body = PAYROLL_VARIANCE_BODY.replace(
-    "__STATUS_PLACEHOLDERS__",
-    PAYROLL_RUN_STATUSES.map(() => "?").join(","),
-  );
+    "__STATUS_PLACEHOLDERS__", PAYROLL_RUN_STATUSES.map(() => "?").join(","));
   const base = `${body}
      WHERE ${clauses.join(" AND ")}
      ORDER BY ABS(COALESCE(net_variance_pct,0)) DESC`;
 
   const all = [...PAYROLL_RUN_STATUSES, ...params];
   const total = options.includeTotal ? await count(base, all) : 0;
-  const sql = applyPagination(base, options);
-  const rows = (await query(sql, all)) as Record<string, unknown>[];
-  return {
-    rows,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > rows.length,
-    nextCursor: null,
-  };
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, all) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
+
 
 // ---------------------------------------------------------------------------
 // bank-advice
@@ -402,7 +375,7 @@ export async function payrollVariance(
 export async function bankAdvice(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
@@ -414,17 +387,11 @@ export async function bankAdvice(
   // (account_number / net_pay / payment_mode); only the first was ever produced, so on a
   // payment file the Account Number, Net Pay and Payment Mode columns rendered as em-dashes
   // for every row. Aliasing rather than renaming keeps any consumer of the old names working.
-  const bankAccountExpr = scope.canViewSensitiveFields
-    ? "e.bank_account_number"
-    : "'***MASKED***'";
-  const ifscExpr = scope.canViewSensitiveFields
-    ? "e.ifsc_code"
-    : "'***MASKED***'";
+  const bankAccountExpr = scope.canViewSensitiveFields ? "e.bank_account_number" : "'***MASKED***'";
+  const ifscExpr        = scope.canViewSensitiveFields ? "e.ifsc_code"           : "'***MASKED***'";
   const bankField = `${bankAccountExpr} AS bank_account_number`;
   const ifscField = `${ifscExpr} AS ifsc_code`;
-  const bankName = scope.canViewSensitiveFields
-    ? "e.bank_name"
-    : "'***MASKED***' AS bank_name";
+  const bankName  = scope.canViewSensitiveFields ? "e.bank_name"           : "'***MASKED***' AS bank_name";
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -453,12 +420,9 @@ export async function bankAdvice(
    * account is missing cannot be paid at all, and one whose two sources disagree must not be paid
    * on a guess. Both are excluded here and remain visible in the bank exception report.
    */
-  clauses.push(
-    "(e.bank_account_number IS NOT NULL AND TRIM(e.bank_account_number) <> '')",
-  );
-  clauses.push(
-    "NOT (e.bank_account_number IS NOT NULL AND e.bank_account_number <> '' AND acct_chk.account_number IS NOT NULL AND acct_chk.account_number <> '' AND TRIM(e.bank_account_number) <> TRIM(acct_chk.account_number))",
-  );
+  clauses.push("(e.bank_account_number IS NOT NULL AND TRIM(e.bank_account_number) <> '')");
+  clauses.push("NOT (e.bank_account_number IS NOT NULL AND e.bank_account_number <> '' AND acct_chk.account_number IS NOT NULL AND acct_chk.account_number <> '' AND TRIM(e.bank_account_number) <> TRIM(acct_chk.account_number))");
+
 
   // A bank advice is an instruction to pay. It had no run-status guard at all, so a run still in
   // draft — or one that had been cancelled — would produce a fully formed payable file complete
@@ -551,18 +515,11 @@ export async function bankAdvice(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -571,7 +528,7 @@ export async function bankAdvice(
 export async function payrollReconciliation(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -626,8 +583,7 @@ export async function payrollReconciliation(
   // idx_adr_emp_date. A LEFT() or DATE_FORMAT() wrapper would not be — that is precisely
   // why the GROUP BY below is the expensive half of this query (EXPLAIN: type=ALL,
   // key=null, Using temporary) and why it is worth not feeding it the whole table.
-  attWhere =
-    "WHERE adr.record_date >= ? AND adr.record_date < DATE_ADD(?, INTERVAL 1 MONTH)";
+  attWhere = "WHERE adr.record_date >= ? AND adr.record_date < DATE_ADD(?, INTERVAL 1 MONTH)";
   attParams.push(`${runMonth}-01`, `${runMonth}-01`);
 
   // This query used to return branch/process/month financial totals: employee_count,
@@ -709,13 +665,9 @@ export async function payrollReconciliation(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : out.length,
-    isTruncated: total > out.length,
-  };
+  const rows  = paged.rows as Record<string, unknown>[];
+  const out   = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : out.length, isTruncated: total > out.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -724,7 +676,7 @@ export async function payrollReconciliation(
 export async function arrearPaymentRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   // This read salary_prep_line for arrear_month / arrear_amount / arrear_reason. None of the
   // three exists on that table — it has 58 columns and not one mentions arrears — so the
@@ -787,18 +739,11 @@ export async function arrearPaymentRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -807,7 +752,7 @@ export async function arrearPaymentRegister(
 export async function payrollCostSummary(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
@@ -857,12 +802,8 @@ export async function payrollCostSummary(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  return {
-    rows,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > rows.length,
-  };
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -882,7 +823,7 @@ export async function payrollCostSummary(
 export async function ytdSalarySummary(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const fyRaw = String(filters.financialYear ?? filters.year ?? "").trim();
   const fyMatch = fyRaw.match(/^(\d{4})-(\d{2,4})$/);
@@ -892,11 +833,11 @@ export async function ytdSalarySummary(
   if (fyMatch) {
     const fyStart = Number(fyMatch[1]);
     monthFrom = `${fyStart}-04`;
-    monthTo = `${fyStart + 1}-03`;
+    monthTo   = `${fyStart + 1}-03`;
   } else {
     const cy = Number(fyRaw) || new Date().getFullYear();
     monthFrom = `${cy}-01`;
-    monthTo = `${cy}-12`;
+    monthTo   = `${cy}-12`;
   }
 
   const clauses: string[] = ["e.id IS NOT NULL"];
@@ -941,12 +882,8 @@ export async function ytdSalarySummary(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  return {
-    rows,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > rows.length,
-  };
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -959,7 +896,7 @@ export async function ytdSalarySummary(
 export async function lwpDeductionRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
@@ -1001,12 +938,8 @@ export async function lwpDeductionRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  return {
-    rows,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > rows.length,
-  };
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -1024,7 +957,7 @@ export async function lwpDeductionRegister(
 export async function neftTransferFile(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
@@ -1084,9 +1017,7 @@ export async function neftTransferFile(
     AND (CONVERT(ebd.account_number USING utf8mb4) NOT REGEXP '^[0-9]{6,20}$'
          OR CONVERT(ebd.account_number USING utf8mb4) REGEXP '[Ee][+-]')
   )`);
-  clauses.push(
-    "UPPER(TRIM(COALESCE(ebd.ifsc_code, e.ifsc_code, ''))) REGEXP '^[A-Z]{4}0[A-Z0-9]{6}$'",
-  );
+  clauses.push("UPPER(TRIM(COALESCE(ebd.ifsc_code, e.ifsc_code, ''))) REGEXP '^[A-Z]{4}0[A-Z0-9]{6}$'");
 
   // Config-driven, not hardcoded — see payroll-debit-account-config.service.ts and the same
   // note on bankAdvice above.
@@ -1145,20 +1076,13 @@ export async function neftTransferFile(
      ORDER BY ebd.bank_name, employee_name`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql = applyPagination(base, options);
-  const rawRows = (await query(sql, params)) as Record<string, unknown>[];
+  const sql   = applyPagination(base, options);
+  const rawRows = await query(sql, params) as Record<string, unknown>[];
   const rows = rawRows.map((r: any) => ({
     ...r,
-    account_number: resolveAccountNumber({
-      account_number_enc: r.account_number_enc,
-      account_number: r.account_number_legacy,
-    }),
+    account_number: resolveAccountNumber({ account_number_enc: r.account_number_enc, account_number: r.account_number_legacy }),
   }));
-  return {
-    rows,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > rows.length,
-  };
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
 /**
@@ -1175,7 +1099,7 @@ export async function neftTransferFile(
 export async function payslipStatus(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
@@ -1195,13 +1119,8 @@ export async function payslipStatus(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  return {
-    rows,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > rows.length,
-    nextCursor: null,
-  };
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -1226,7 +1145,7 @@ export async function payslipStatus(
 export async function salarySheetExport(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
@@ -1322,23 +1241,19 @@ export async function salarySheetExport(
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql = applyPagination(base, options);
-  const lineRows = (await query(sql, params)) as Record<string, unknown>[];
+  const lineRows = await query(sql, params) as Record<string, unknown>[];
   if (lineRows.length === 0) {
-    return {
-      rows: [],
-      rowCount: options.includeTotal ? total : 0,
-      isTruncated: false,
-    };
+    return { rows: [], rowCount: options.includeTotal ? total : 0, isTruncated: false };
   }
 
   // Component amounts for exactly the lines being returned.
-  const lineIds = lineRows.map((r) => r.line_id);
-  const compRows = (await query(
+  const lineIds = lineRows.map(r => r.line_id);
+  const compRows = await query(
     `SELECT line_id, component_code, amount
        FROM salary_prep_line_component
       WHERE line_id IN (${lineIds.map(() => "?").join(",")})`,
-    lineIds,
-  )) as Record<string, unknown>[];
+    lineIds
+  ) as Record<string, unknown>[];
 
   const compMap = new Map<string, Record<string, number>>();
   for (const c of compRows) {
@@ -1349,11 +1264,7 @@ export async function salarySheetExport(
 
   // Resolve encrypted account numbers before building output rows
   lineRows.forEach((r: any) => {
-    r.ac_no =
-      resolveAccountNumber({
-        account_number_enc: r.ac_no_enc,
-        account_number: r.ac_no_legacy,
-      }) ?? "";
+    r.ac_no = resolveAccountNumber({ account_number_enc: r.ac_no_enc, account_number: r.ac_no_legacy }) ?? "";
   });
 
   const rows = lineRows.map((row, idx) => {
@@ -1365,22 +1276,11 @@ export async function salarySheetExport(
     const portfolio = comp["PORTFOLIO"] || 0;
     const medAllw = comp["MA"] || 0;
     const lta = comp["LTA"] || 0;
-    const special =
-      Number(row.special_allowance) || comp["SPECIAL"] || comp["PA"] || 0;
+    const special = Number(row.special_allowance) || comp["SPECIAL"] || comp["PA"] || 0;
     const otherAllw = comp["OTHER"] || 0;
     const pli1 = comp["PLI"] || 0;
-    const gross =
-      Number(row.gross) ||
-      basic +
-        hra +
-        bonus +
-        conv +
-        portfolio +
-        medAllw +
-        lta +
-        special +
-        otherAllw +
-        pli1;
+    const gross = Number(row.gross)
+      || (basic + hra + bonus + conv + portfolio + medAllw + lta + special + otherAllw + pli1);
 
     const earnedDays = Number(row.earned_days) || 0;
     const workingDays = Number(row.working_days) || 1;
@@ -1400,17 +1300,11 @@ export async function salarySheetExport(
       employee_for: row.employee_for,
       billable: row.billable,
       branch: row.branch,
-      basic,
-      hra,
-      bonus,
-      conv,
-      portfolio,
+      basic, hra, bonus, conv, portfolio,
       medical_allowance: medAllw,
-      lta,
-      special_allowance: special,
+      lta, special_allowance: special,
       other_allowance: otherAllw,
-      pli1,
-      gross,
+      pli1, gross,
       working_days: row.working_days,
       ctc_offered: row.ctc_offered,
       current_ctc: row.current_ctc,
@@ -1454,9 +1348,7 @@ export async function salarySheetExport(
       epf_company: row.epf_company,
       admin_chrg: row.admin_chrg,
       ctc: row.ctc,
-      shsh: String(row.run_id ?? "")
-        .slice(-8)
-        .toUpperCase(),
+      shsh: String(row.run_id ?? "").slice(-8).toUpperCase(),
       sal_date: row.sal_date,
       uan: row.uan,
       epf_no: row.epf_no,
@@ -1489,8 +1381,6 @@ export async function salarySheetExport(
   return {
     rows,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal
-      ? total > rows.length
-      : rows.length === options.limit,
+    isTruncated: options.includeTotal ? total > rows.length : rows.length === options.limit,
   };
 }

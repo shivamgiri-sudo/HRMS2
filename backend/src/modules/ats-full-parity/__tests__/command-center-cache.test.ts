@@ -18,46 +18,32 @@ describe("commandCenterCacheKey", () => {
   const q = { period: "ALL", branch: "NOIDA" };
 
   it("is identical for the same actor, scope and filters regardless of query-key order", () => {
-    expect(
-      commandCenterCacheKey("u1", false, { period: "ALL", branch: "NOIDA" }),
-    ).toBe(
-      commandCenterCacheKey("u1", false, { branch: "NOIDA", period: "ALL" }),
-    );
+    expect(commandCenterCacheKey("u1", false, { period: "ALL", branch: "NOIDA" }))
+      .toBe(commandCenterCacheKey("u1", false, { branch: "NOIDA", period: "ALL" }));
   });
 
   it("differs per actor, so one user's scoped result is never served to another", () => {
-    expect(commandCenterCacheKey("u1", false, q)).not.toBe(
-      commandCenterCacheKey("u2", false, q),
-    );
+    expect(commandCenterCacheKey("u1", false, q)).not.toBe(commandCenterCacheKey("u2", false, q));
   });
 
   it("differs when scope bypass differs", () => {
-    expect(commandCenterCacheKey("u1", true, q)).not.toBe(
-      commandCenterCacheKey("u1", false, q),
-    );
+    expect(commandCenterCacheKey("u1", true, q)).not.toBe(commandCenterCacheKey("u1", false, q));
   });
 
   it("differs when any filter differs", () => {
-    expect(commandCenterCacheKey("u1", false, q)).not.toBe(
-      commandCenterCacheKey("u1", false, { ...q, branch: "PUNE" }),
-    );
-    expect(commandCenterCacheKey("u1", false, q)).not.toBe(
-      commandCenterCacheKey("u1", false, { period: "ALL" }),
-    );
+    expect(commandCenterCacheKey("u1", false, q)).not.toBe(commandCenterCacheKey("u1", false, { ...q, branch: "PUNE" }));
+    expect(commandCenterCacheKey("u1", false, q)).not.toBe(commandCenterCacheKey("u1", false, { period: "ALL" }));
   });
 
   it("an unauthenticated actor never collides with a real one", () => {
-    expect(commandCenterCacheKey(undefined, false, q)).not.toBe(
-      commandCenterCacheKey("u1", false, q),
-    );
+    expect(commandCenterCacheKey(undefined, false, q)).not.toBe(commandCenterCacheKey("u1", false, q));
   });
 });
 
 describe("cache bounds", () => {
   it("keeps the newest entries when it grows past its cap", () => {
     commandCenterCache.clear();
-    for (let i = 0; i < 260; i++)
-      commandCenterCache.set(`k${i}`, { at: i, value: { i } });
+    for (let i = 0; i < 260; i++) commandCenterCache.set(`k${i}`, { at: i, value: { i } });
     pruneCommandCenterCache();
     expect(commandCenterCache.size).toBe(200);
     expect(commandCenterCache.has("k259")).toBe(true);
@@ -71,30 +57,18 @@ describe("cache bounds", () => {
 });
 
 describe("route wiring", () => {
-  const src = readFileSync(
-    resolve(
-      process.cwd(),
-      "src/modules/ats-full-parity/atsFullParity.routes.ts",
-    ),
-    "utf8",
-  );
+  const src = readFileSync(resolve(process.cwd(), "src/modules/ats-full-parity/atsFullParity.routes.ts"), "utf8");
   const start = src.indexOf('"/command-center"');
   const body = src.slice(start, src.indexOf("}));", start));
 
   it("keys on the actor and scope, shares in-flight work and never caches failures", () => {
-    expect(body).toMatch(
-      /commandCenterCacheKey\(actorId, bypassScope, query\)/,
-    );
+    expect(body).toMatch(/commandCenterCacheKey\(actorId, bypassScope, query\)/);
     expect(body).toMatch(/sharedInFlight\(key/);
     // the cache write happens only after the service call resolves
-    expect(body.indexOf("await svc.commandCenterData")).toBeLessThan(
-      body.indexOf("commandCenterCache.set"),
-    );
+    expect(body.indexOf("await svc.commandCenterData")).toBeLessThan(body.indexOf("commandCenterCache.set"));
   });
 
   it("still forwards the same actorId / bypassScope to the service", () => {
-    expect(body).toMatch(
-      /svc\.commandCenterData\(\{ \.\.\.query, actorId, bypassScope \}\)/,
-    );
+    expect(body).toMatch(/svc\.commandCenterData\(\{ \.\.\.query, actorId, bypassScope \}\)/);
   });
 });

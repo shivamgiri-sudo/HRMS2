@@ -25,16 +25,13 @@ const CHUNK_SIZE = 200;
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size)
-    out.push(items.slice(i, i + size));
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
 }
 
 /** "1"/"true"/"yes"/"active" → 1; "0"/"false"/"no"/"inactive" → 0; blank → default. */
 function parseActiveStatus(raw: unknown, defaultValue: 0 | 1 = 1): 0 | 1 {
-  const v = String(raw ?? "")
-    .trim()
-    .toLowerCase();
+  const v = String(raw ?? "").trim().toLowerCase();
   if (!v) return defaultValue;
   if (["0", "false", "no", "inactive", "n"].includes(v)) return 0;
   return 1;
@@ -42,13 +39,13 @@ function parseActiveStatus(raw: unknown, defaultValue: 0 | 1 = 1): 0 | 1 {
 
 export async function importBranchMasterBatch(
   batchId: string,
-  importedByUserId: string,
+  importedByUserId: string
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
   const [batchRows] = await db.execute<BatchRow[]>(
     `SELECT id, row_no, normalized_data FROM upload_batch_row
       WHERE upload_batch_id = ? AND row_status IN ('valid','pending')
       ORDER BY row_no`,
-    [batchId],
+    [batchId]
   );
 
   if (batchRows.length === 0) {
@@ -78,10 +75,7 @@ export async function importBranchMasterBatch(
     }
 
     parsed.push({
-      rowId: row.id,
-      rowNo: row.row_no,
-      branchCode,
-      branchName,
+      rowId: row.id, rowNo: row.row_no, branchCode, branchName,
       city: data.city ? String(data.city).trim() : null,
       state: data.state ? String(data.state).trim() : null,
       address: data.address ? String(data.address).trim() : null,
@@ -90,9 +84,7 @@ export async function importBranchMasterBatch(
       // that were never read here despite both being real, indexed columns on
       // branch_master (call_centre_code even carries a UNIQUE key) — a user filling
       // them in per the template had the values silently discarded.
-      callCentreCode: data.call_centre_code
-        ? String(data.call_centre_code).trim()
-        : null,
+      callCentreCode: data.call_centre_code ? String(data.call_centre_code).trim() : null,
       displayName: data.display_name ? String(data.display_name).trim() : null,
       activeStatus: parseActiveStatus(data.active_status),
     });
@@ -107,19 +99,10 @@ export async function importBranchMasterBatch(
   // as an error — every other row in the batch still lands, matching the
   // original per-row loop's error isolation.
   for (const rowsInChunk of chunk(parsed, CHUNK_SIZE)) {
-    const placeholders = rowsInChunk
-      .map(() => "(?,?,?,?,?,?,?,?,?)")
-      .join(", ");
+    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?)").join(", ");
     const params = rowsInChunk.flatMap((r) => [
-      r.branchCode,
-      r.branchName,
-      r.city,
-      r.state,
-      r.address,
-      r.pincode,
-      r.callCentreCode,
-      r.displayName,
-      r.activeStatus,
+      r.branchCode, r.branchName, r.city, r.state, r.address, r.pincode,
+      r.callCentreCode, r.displayName, r.activeStatus,
     ]);
 
     try {
@@ -141,7 +124,7 @@ export async function importBranchMasterBatch(
            call_centre_code = COALESCE(VALUES(call_centre_code), call_centre_code),
            display_name = COALESCE(VALUES(display_name), display_name),
            active_status = VALUES(active_status)`,
-        params,
+        params
       );
       for (const r of rowsInChunk) {
         importedRowIds.push(r.rowId);
@@ -164,17 +147,8 @@ export async function importBranchMasterBatch(
                call_centre_code = COALESCE(VALUES(call_centre_code), call_centre_code),
                display_name = COALESCE(VALUES(display_name), display_name),
                active_status = VALUES(active_status)`,
-            [
-              r.branchCode,
-              r.branchName,
-              r.city,
-              r.state,
-              r.address,
-              r.pincode,
-              r.callCentreCode,
-              r.displayName,
-              r.activeStatus,
-            ],
+            [r.branchCode, r.branchName, r.city, r.state, r.address, r.pincode,
+             r.callCentreCode, r.displayName, r.activeStatus]
           );
           importedRowIds.push(r.rowId);
           importedRows++;
@@ -192,20 +166,17 @@ export async function importBranchMasterBatch(
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'imported'
        WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
-      importedRowIds,
+      importedRowIds
     );
   }
   if (errorUpdates.length > 0) {
     const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
-    const caseParams = errorUpdates.flatMap((u) => [
-      u.rowId,
-      JSON.stringify([u.message]),
-    ]);
+    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...caseParams, ...ids],
+      [...caseParams, ...ids]
     );
   }
 
@@ -213,12 +184,12 @@ export async function importBranchMasterBatch(
     errorRows === 0
       ? "imported"
       : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+      ? "validation_failed"
+      : "imported_with_errors";
 
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
-    [finalStatus, importedRows, errorRows, batchId],
+    [finalStatus, importedRows, errorRows, batchId]
   );
 
   return { importedRows, errorRows, errors };

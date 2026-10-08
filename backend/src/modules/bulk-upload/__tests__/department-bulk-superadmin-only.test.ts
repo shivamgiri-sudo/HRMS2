@@ -27,10 +27,7 @@ vi.mock("../bulk-batch-visibility.js", () => ({ requireBatchVisible: () => (_q: 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = { id: actor };
-    next();
-  },
+  requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: actor }; next(); },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole: () => (_req: any, _res: any, next: any) => next(),
@@ -43,12 +40,8 @@ vi.mock("../../../shared/scopeAccess.js", () => ({
     roles.includes("super_admin") || wanted.some((r) => roles.includes(r)),
 }));
 
-const { importDepartmentMasterBatch } = vi.hoisted(() => ({
-  importDepartmentMasterBatch: vi.fn(),
-}));
-vi.mock("../department-master-bulk.service.js", () => ({
-  importDepartmentMasterBatch,
-}));
+const { importDepartmentMasterBatch } = vi.hoisted(() => ({ importDepartmentMasterBatch: vi.fn() }));
+vi.mock("../department-master-bulk.service.js", () => ({ importDepartmentMasterBatch }));
 
 const { bulkUploadRouter } = await import("../bulk-upload.routes.js");
 const { dispatchImport } = await import("../bulk-dispatch.js");
@@ -59,10 +52,7 @@ function app() {
   a.use("/api/bulk-upload", bulkUploadRouter);
   // Surface the thrown statusCode the way the app's error handler does.
   a.use((err: any, _req: any, res: any, _next: any) =>
-    res
-      .status(err?.statusCode ?? 500)
-      .json({ success: false, error: String(err?.message ?? err) }),
-  );
+    res.status(err?.statusCode ?? 500).json({ success: false, error: String(err?.message ?? err) }));
   return a;
 }
 
@@ -75,20 +65,11 @@ beforeEach(() => {
   roles = [];
   actor = "user-1";
   execute.mockReset().mockResolvedValue([{ affectedRows: 1 }, []]);
-  importDepartmentMasterBatch
-    .mockReset()
-    .mockResolvedValue({ importedRows: 3, errorRows: 0, errors: [] });
+  importDepartmentMasterBatch.mockReset().mockResolvedValue({ importedRows: 3, errorRows: 0, errors: [] });
 });
 
 describe("bulk department upload is super_admin-only", () => {
-  for (const role of [
-    "hr",
-    "admin",
-    "wfm",
-    "wfm_analyst",
-    "payroll",
-    "payroll_hr",
-  ]) {
+  for (const role of ["hr", "admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"]) {
     it(`refuses a department upload from ${role}`, async () => {
       roles = [role];
       const res = await importDepartments();

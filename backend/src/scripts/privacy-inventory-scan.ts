@@ -10,58 +10,22 @@ import fs from "fs";
 import path from "path";
 
 const PII_PATTERNS = [
-  {
-    pattern: /aadhaar|aadhar/i,
-    category: "statutory",
-    sensitivity: "highly_sensitive",
-  },
-  {
-    pattern: /pan_number|pan_no/i,
-    category: "statutory",
-    sensitivity: "highly_sensitive",
-  },
-  {
-    pattern: /bank_account|account_no|account_number/i,
-    category: "financial",
-    sensitivity: "highly_sensitive",
-  },
-  {
-    pattern: /uan|pf_number|esic_number/i,
-    category: "statutory",
-    sensitivity: "highly_sensitive",
-  },
-  {
-    pattern: /passport/i,
-    category: "identity",
-    sensitivity: "highly_sensitive",
-  },
-  {
-    pattern: /biometric/i,
-    category: "biometric",
-    sensitivity: "highly_sensitive",
-  },
-  {
-    pattern: /salary|gross_salary|net_salary|ctc|tds/i,
-    category: "payroll",
-    sensitivity: "highly_sensitive",
-  },
+  { pattern: /aadhaar|aadhar/i, category: "statutory", sensitivity: "highly_sensitive" },
+  { pattern: /pan_number|pan_no/i, category: "statutory", sensitivity: "highly_sensitive" },
+  { pattern: /bank_account|account_no|account_number/i, category: "financial", sensitivity: "highly_sensitive" },
+  { pattern: /uan|pf_number|esic_number/i, category: "statutory", sensitivity: "highly_sensitive" },
+  { pattern: /passport/i, category: "identity", sensitivity: "highly_sensitive" },
+  { pattern: /biometric/i, category: "biometric", sensitivity: "highly_sensitive" },
+  { pattern: /salary|gross_salary|net_salary|ctc|tds/i, category: "payroll", sensitivity: "highly_sensitive" },
   { pattern: /personal_email/i, category: "contact", sensitivity: "pii" },
   { pattern: /mobile|phone/i, category: "contact", sensitivity: "pii" },
   { pattern: /date_of_birth|dob/i, category: "identity", sensitivity: "pii" },
   { pattern: /address/i, category: "contact", sensitivity: "pii" },
-  {
-    pattern: /nominee|emergency_contact/i,
-    category: "family_nominee",
-    sensitivity: "pii",
-  },
+  { pattern: /nominee|emergency_contact/i, category: "family_nominee", sensitivity: "pii" },
   { pattern: /medical|health/i, category: "health", sensitivity: "sensitive" },
   { pattern: /ip_address/i, category: "device", sensitivity: "pii" },
   { pattern: /user_agent/i, category: "device", sensitivity: "internal" },
-  {
-    pattern: /otp|token|password|secret/i,
-    category: "authentication",
-    sensitivity: "highly_sensitive",
-  },
+  { pattern: /otp|token|password|secret/i, category: "authentication", sensitivity: "highly_sensitive" },
 ];
 
 interface ColumnFinding {
@@ -92,7 +56,7 @@ async function scan(): Promise<void> {
        AND TABLE_NAME NOT LIKE '%_log'
        AND TABLE_NAME NOT LIKE 'schema_migrations'
      ORDER BY TABLE_NAME, ORDINAL_POSITION`,
-    [dbName],
+    [dbName]
   );
 
   await conn.end();
@@ -116,12 +80,7 @@ async function scan(): Promise<void> {
     }
   }
 
-  const outputArg = process.argv.find(
-    (a) =>
-      a.startsWith("--output=") ||
-      (process.argv.indexOf("--output") !== -1 &&
-        process.argv[process.argv.indexOf("--output") + 1] === a),
-  );
+  const outputArg = process.argv.find((a) => a.startsWith("--output=") || process.argv.indexOf("--output") !== -1 && process.argv[process.argv.indexOf("--output") + 1] === a);
   let outputPath = "privacy-inventory-findings.json";
   const outputIdx = process.argv.indexOf("--output");
   if (outputIdx !== -1 && process.argv[outputIdx + 1]) {
@@ -137,9 +96,7 @@ async function scan(): Promise<void> {
   };
 
   fs.writeFileSync(outputPath, JSON.stringify(report, null, 2));
-  console.log(
-    `[privacy-scan] Found ${findings.length} candidate PII columns across ${report.tables_with_pii} tables`,
-  );
+  console.log(`[privacy-scan] Found ${findings.length} candidate PII columns across ${report.tables_with_pii} tables`);
   console.log(`[privacy-scan] Report written to: ${path.resolve(outputPath)}`);
   console.log("[privacy-scan] This is a READ-ONLY scan. No data was modified.");
 }

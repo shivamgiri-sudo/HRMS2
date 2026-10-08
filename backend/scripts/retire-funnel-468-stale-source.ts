@@ -33,7 +33,4 @@ async function main() {
   console.log("retired:", JSON.stringify(result));
   process.exit(0);
 }
-main().catch((e) => {
-  console.error("FAILED", e);
-  process.exit(1);
-});
+main().catch((e) => { console.error("FAILED", e); process.exit(1); });

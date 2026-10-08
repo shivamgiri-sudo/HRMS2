@@ -31,22 +31,14 @@ import { db } from "../db/mysql.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 
 /** BGV check types that constitute verification of a specific identity document. */
-const CHECK_TYPE_TO_COLUMN: Readonly<
-  Record<string, "pan_verified_on" | "aadhaar_verified_on">
-> = {
+const CHECK_TYPE_TO_COLUMN: Readonly<Record<string, "pan_verified_on" | "aadhaar_verified_on">> = {
   pan: "pan_verified_on",
   aadhaar: "aadhaar_verified_on",
   aadhaar_offline: "aadhaar_verified_on",
 };
 
 export function verificationColumnFor(checkType: string): string | null {
-  return (
-    CHECK_TYPE_TO_COLUMN[
-      String(checkType ?? "")
-        .trim()
-        .toLowerCase()
-    ] ?? null
-  );
+  return CHECK_TYPE_TO_COLUMN[String(checkType ?? "").trim().toLowerCase()] ?? null;
 }
 
 export interface PropagationResult {
@@ -81,9 +73,7 @@ export async function propagateIdentityVerification(
       WHERE candidate_id = ? AND employee_id IS NOT NULL LIMIT 1`,
     [candidateId],
   );
-  const employeeId = String(
-    (rows as Array<{ employee_id?: string }>)[0]?.employee_id ?? "",
-  ).trim();
+  const employeeId = String((rows as Array<{ employee_id?: string }>)[0]?.employee_id ?? "").trim();
   if (!employeeId) return { column, employeeId: null, updated: false };
 
   // `AND ${column} IS NULL` makes this idempotent and preserves the FIRST verification date.
@@ -92,10 +82,7 @@ export async function propagateIdentityVerification(
   // of data that already existed.
   const [res] = await db.execute<ResultSetHeader>(
     `UPDATE employees SET ${column} = ? WHERE id = ? AND ${column} IS NULL`,
-    [
-      verifiedAt instanceof Date ? verifiedAt : new Date(verifiedAt),
-      employeeId,
-    ],
+    [verifiedAt instanceof Date ? verifiedAt : new Date(verifiedAt), employeeId],
   );
 
   return { column, employeeId, updated: res.affectedRows > 0 };

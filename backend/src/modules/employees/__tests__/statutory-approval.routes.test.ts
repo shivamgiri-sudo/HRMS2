@@ -14,15 +14,7 @@ const ACTOR_ID = "11111111-1111-1111-1111-111111111111";
 const EMPLOYEE_ID = "22222222-2222-2222-2222-222222222222";
 const APPROVAL_ID = "33333333-3333-3333-3333-333333333333";
 
-const {
-  getConnection,
-  dbExecute,
-  encryptPanForSync,
-  blindIndexPan,
-  encryptAadhaarForSync,
-  blindIndexAadhaar,
-  logSensitiveAction,
-} = vi.hoisted(() => ({
+const { getConnection, dbExecute, encryptPanForSync, blindIndexPan, encryptAadhaarForSync, blindIndexAadhaar, logSensitiveAction } = vi.hoisted(() => ({
   getConnection: vi.fn(),
   dbExecute: vi.fn(),
   encryptPanForSync: vi.fn((v: string) => `enc(${v})`),
@@ -32,15 +24,8 @@ const {
   logSensitiveAction: vi.fn(),
 }));
 
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: dbExecute, getConnection },
-}));
-vi.mock("../../../shared/syncPiiEncryption.js", () => ({
-  encryptPanForSync,
-  blindIndexPan,
-  encryptAadhaarForSync,
-  blindIndexAadhaar,
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute, getConnection } }));
+vi.mock("../../../shared/syncPiiEncryption.js", () => ({ encryptPanForSync, blindIndexPan, encryptAadhaarForSync, blindIndexAadhaar }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 // Branch scoping (owner ruling 2026-10-01): these tests are about the approve/reject mechanics, so the
 // caller is treated as org-wide here; the scoping itself is covered in shared/__tests__/branchScoping.batch1.
@@ -50,30 +35,16 @@ vi.mock("../../../shared/enterpriseScope.js", () => ({
   buildEmployeeScopeCondition: vi.fn(() => ({ sql: "1=1", params: [] })),
 }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (req as express.Request & { authUser: { id: string } }).authUser = {
-      id: ACTOR_ID,
-    };
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: { id: string } }).authUser = { id: ACTOR_ID };
     next();
   },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole:
-    () =>
-    (
-      _req: express.Request,
-      _res: express.Response,
-      next: express.NextFunction,
-    ) =>
-      next(),
+  requireRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
-const { statutoryApprovalRouter } =
-  await import("../statutory-approval.routes.js");
+const { statutoryApprovalRouter } = await import("../statutory-approval.routes.js");
 
 function app() {
   const a = express();
@@ -92,8 +63,7 @@ function makeConnection(record: Record<string, unknown> | null) {
     execute: vi.fn(async (sql: string, p?: unknown[]) => {
       statements.push(String(sql).replace(/\s+/g, " ").trim());
       params.push(p ?? []);
-      if (/SELECT \* FROM profile_update_approval/.test(sql))
-        return [record ? [record] : [], []];
+      if (/SELECT \* FROM profile_update_approval/.test(sql)) return [record ? [record] : [], []];
       return [{ affectedRows: 1 }, []];
     }),
     beginTransaction: vi.fn(async () => {}),
@@ -124,19 +94,13 @@ describe("GET /api/statutory-change-requests/pending", () => {
   });
 
   it("lists only pending statutory_details requests", async () => {
-    dbExecute.mockResolvedValueOnce([
-      [{ id: APPROVAL_ID, employee_id: EMPLOYEE_ID, status: "pending" }],
-    ]);
+    dbExecute.mockResolvedValueOnce([[{ id: APPROVAL_ID, employee_id: EMPLOYEE_ID, status: "pending" }]]);
 
-    const res = await request(app()).get(
-      "/api/statutory-change-requests/pending",
-    );
+    const res = await request(app()).get("/api/statutory-change-requests/pending");
 
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(1);
-    expect(String(dbExecute.mock.calls[0][0])).toContain(
-      "request_type = 'statutory_details'",
-    );
+    expect(String(dbExecute.mock.calls[0][0])).toContain("request_type = 'statutory_details'");
     expect(String(dbExecute.mock.calls[0][0])).toContain("status = 'pending'");
   });
 });
@@ -160,27 +124,17 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
       .send({ decision: "approved", note: "verified against PAN card scan" });
 
     expect(res.status).toBe(200);
-    expect(encryptPanForSync).toHaveBeenCalledWith(
-      "NEWPP5678B",
-      expect.any(String),
-    );
-    expect(blindIndexPan).toHaveBeenCalledWith(
-      "NEWPP5678B",
-      expect.any(String),
-    );
+    expect(encryptPanForSync).toHaveBeenCalledWith("NEWPP5678B", expect.any(String));
+    expect(blindIndexPan).toHaveBeenCalledWith("NEWPP5678B", expect.any(String));
 
-    const statInsert = conn.statements.findIndex((s) =>
-      s.includes("INSERT INTO employee_statutory_info"),
-    );
+    const statInsert = conn.statements.findIndex((s) => s.includes("INSERT INTO employee_statutory_info"));
     expect(statInsert).toBeGreaterThan(-1);
     expect(conn.params[statInsert]).toContain("NEWPP5678B");
     expect(conn.params[statInsert]).toContain("enc(NEWPP5678B)");
     expect(conn.params[statInsert]).toContain("idx(NEWPP5678B)");
     expect(conn.params[statInsert]).toContain("999988887777");
 
-    const empSync = conn.statements.findIndex((s) =>
-      s.includes("UPDATE employees SET uan_number"),
-    );
+    const empSync = conn.statements.findIndex((s) => s.includes("UPDATE employees SET uan_number"));
     expect(empSync).toBeGreaterThan(-1);
     expect(conn.params[empSync]).toContain("100200300400");
 
@@ -202,26 +156,16 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
       .send({ decision: "approved" });
 
     expect(res.status).toBe(200);
-    expect(encryptAadhaarForSync).toHaveBeenCalledWith(
-      "999988887777",
-      expect.any(String),
-    );
-    expect(blindIndexAadhaar).toHaveBeenCalledWith(
-      "999988887777",
-      expect.any(String),
-    );
+    expect(encryptAadhaarForSync).toHaveBeenCalledWith("999988887777", expect.any(String));
+    expect(blindIndexAadhaar).toHaveBeenCalledWith("999988887777", expect.any(String));
 
-    const panSync = conn.statements.findIndex((s) =>
-      s.includes("UPDATE employees SET pan_number"),
-    );
+    const panSync = conn.statements.findIndex((s) => s.includes("UPDATE employees SET pan_number"));
     expect(panSync).toBeGreaterThan(-1);
     expect(conn.params[panSync]).toContain("NEWPP5678B");
     expect(conn.params[panSync]).toContain("enc(NEWPP5678B)");
     expect(conn.params[panSync]).toContain("idx(NEWPP5678B)");
 
-    const aadhaarSync = conn.statements.findIndex((s) =>
-      s.includes("UPDATE employees SET aadhaar_number"),
-    );
+    const aadhaarSync = conn.statements.findIndex((s) => s.includes("UPDATE employees SET aadhaar_number"));
     expect(aadhaarSync).toBeGreaterThan(-1);
     expect(conn.params[aadhaarSync]).toContain("999988887777");
     expect(conn.params[aadhaarSync]).toContain("aenc(999988887777)");
@@ -254,10 +198,7 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
       ...PENDING_REQUEST,
       old_values: JSON.stringify({
         employees: { pan_number: "OLDPP1234A", aadhaar_number: "111122223333" },
-        employee_statutory_info: {
-          pan_number: "OLDPP1234A",
-          aadhaar_id: "111122223333",
-        },
+        employee_statutory_info: { pan_number: "OLDPP1234A", aadhaar_id: "111122223333" },
       }),
     });
     getConnection.mockResolvedValue(conn);
@@ -271,9 +212,7 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
     expect(serialized).not.toContain("OLDPP1234A");
     expect(serialized).not.toContain("111122223333");
     expect(entry.old_value_json.employees.pan_number).toBe("******234A");
-    expect(entry.old_value_json.employee_statutory_info.aadhaar_id).toBe(
-      "********3333",
-    );
+    expect(entry.old_value_json.employee_statutory_info.aadhaar_id).toBe("********3333");
   });
 
   it("rejects with a reason, does not touch employee_statutory_info", async () => {
@@ -285,17 +224,9 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
       .send({ decision: "rejected", note: "PAN card scan illegible" });
 
     expect(res.status).toBe(200);
-    expect(
-      conn.statements.some((s) =>
-        s.includes("INSERT INTO employee_statutory_info"),
-      ),
-    ).toBe(false);
-    expect(logSensitiveAction.mock.calls[0][0].action_type).toBe(
-      "STATUTORY_DETAILS_REJECTED",
-    );
-    expect(logSensitiveAction.mock.calls[0][0].reason).toBe(
-      "PAN card scan illegible",
-    );
+    expect(conn.statements.some((s) => s.includes("INSERT INTO employee_statutory_info"))).toBe(false);
+    expect(logSensitiveAction.mock.calls[0][0].action_type).toBe("STATUTORY_DETAILS_REJECTED");
+    expect(logSensitiveAction.mock.calls[0][0].reason).toBe("PAN card scan illegible");
   });
 
   it("refuses to re-process an already-decided request (409), rolls back, no audit log", async () => {
@@ -328,9 +259,7 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
     const conn = makeConnection(PENDING_REQUEST);
     getConnection.mockResolvedValue(conn);
 
-    await request(app())
-      .patch(`/api/statutory-change-requests/${APPROVAL_ID}`)
-      .send({ decision: "approved" });
+    await request(app()).patch(`/api/statutory-change-requests/${APPROVAL_ID}`).send({ decision: "approved" });
 
     expect(conn.release).toHaveBeenCalledTimes(1);
   });
@@ -338,10 +267,7 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
   it("rejects an approval carrying a malformed PAN, rolls back, never writes or audits", async () => {
     const conn = makeConnection({
       ...PENDING_REQUEST,
-      new_values: JSON.stringify({
-        ...JSON.parse(PENDING_REQUEST.new_values),
-        pan_number: "NOT-A-PAN",
-      }),
+      new_values: JSON.stringify({ ...JSON.parse(PENDING_REQUEST.new_values), pan_number: "NOT-A-PAN" }),
     });
     getConnection.mockResolvedValue(conn);
 
@@ -350,14 +276,8 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
       .send({ decision: "approved" });
 
     expect(res.status).toBe(400);
-    expect(res.body.details.some((d: any) => d.field === "pan_number")).toBe(
-      true,
-    );
-    expect(
-      conn.statements.some((s) =>
-        s.includes("INSERT INTO employee_statutory_info"),
-      ),
-    ).toBe(false);
+    expect(res.body.details.some((d: any) => d.field === "pan_number")).toBe(true);
+    expect(conn.statements.some((s) => s.includes("INSERT INTO employee_statutory_info"))).toBe(false);
     expect(conn.rollback).toHaveBeenCalledTimes(1);
     expect(conn.commit).not.toHaveBeenCalled();
     expect(logSensitiveAction).not.toHaveBeenCalled();
@@ -366,10 +286,7 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
   it("rejects an approval carrying a malformed Aadhaar", async () => {
     const conn = makeConnection({
       ...PENDING_REQUEST,
-      new_values: JSON.stringify({
-        ...JSON.parse(PENDING_REQUEST.new_values),
-        aadhaar_id: "123",
-      }),
+      new_values: JSON.stringify({ ...JSON.parse(PENDING_REQUEST.new_values), aadhaar_id: "123" }),
     });
     getConnection.mockResolvedValue(conn);
 
@@ -378,8 +295,6 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
       .send({ decision: "approved" });
 
     expect(res.status).toBe(400);
-    expect(res.body.details.some((d: any) => d.field === "aadhaar_id")).toBe(
-      true,
-    );
+    expect(res.body.details.some((d: any) => d.field === "aadhaar_id")).toBe(true);
   });
 });

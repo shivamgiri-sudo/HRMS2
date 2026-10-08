@@ -47,43 +47,38 @@ const CORRECT_WEEKOFFS_HANDLER = slice(
 describe.each([
   ["POST /runs/:id/calculate", () => CALCULATE_HANDLER],
   ["POST /runs/:id/correct-weekoffs", () => CORRECT_WEEKOFFS_HANDLER],
-])(
-  "%s refuses to silently invalidate an approved run's sign-off",
-  (_name, getHandler) => {
-    it("checks status=approved, finance/CEO sign-off, and validation before recalculating", () => {
-      const handler = getHandler();
-      expect(handler).toContain('"status=approved"');
-      expect(handler).toContain("finance_approved_at");
-      expect(handler).toContain("ceo_acknowledged_at");
-      expect(handler).toContain("validation_status");
-    });
+])("%s refuses to silently invalidate an approved run's sign-off", (_name, getHandler) => {
+  it("checks status=approved, finance/CEO sign-off, and validation before recalculating", () => {
+    const handler = getHandler();
+    expect(handler).toContain('"status=approved"');
+    expect(handler).toContain("finance_approved_at");
+    expect(handler).toContain("ceo_acknowledged_at");
+    expect(handler).toContain("validation_status");
+  });
 
-    it("returns 409 with the specific markers found, not a generic error", () => {
-      const handler = getHandler();
-      expect(handler).toContain("res.status(409)");
-      expect(handler).toContain("approvalMarkers");
-    });
+  it("returns 409 with the specific markers found, not a generic error", () => {
+    const handler = getHandler();
+    expect(handler).toContain("res.status(409)");
+    expect(handler).toContain("approvalMarkers");
+  });
 
-    it("is bypassable only by an explicit force=true, not a bare retry", () => {
-      const handler = getHandler();
-      expect(handler).toMatch(
-        /req\.body\?\.force === true \|\| req\.query\?\.force === "true"/,
-      );
-      expect(handler).toContain("if (!forceRecalc)");
-    });
+  it("is bypassable only by an explicit force=true, not a bare retry", () => {
+    const handler = getHandler();
+    expect(handler).toMatch(/req\.body\?\.force === true \|\| req\.query\?\.force === "true"/);
+    expect(handler).toContain("if (!forceRecalc)");
+  });
 
-    it("the guard runs before the recalculation call, not after", () => {
-      const handler = getHandler();
-      const iGuard = handler.indexOf("if (!forceRecalc)");
-      const iCalc = Math.max(
-        handler.indexOf("calculatePayrollRun("),
-        handler.indexOf("calculatePayrollRunScoped("),
-      );
-      expect(iGuard).toBeGreaterThan(-1);
-      expect(iCalc).toBeGreaterThan(iGuard);
-    });
-  },
-);
+  it("the guard runs before the recalculation call, not after", () => {
+    const handler = getHandler();
+    const iGuard = handler.indexOf("if (!forceRecalc)");
+    const iCalc = Math.max(
+      handler.indexOf("calculatePayrollRun("),
+      handler.indexOf("calculatePayrollRunScoped("),
+    );
+    expect(iGuard).toBeGreaterThan(-1);
+    expect(iCalc).toBeGreaterThan(iGuard);
+  });
+});
 
 describe("correct-weekoffs additionally checks incentives_applied_at, matching /calculate's separate B6 gate", () => {
   it("folds the incentives-applied check into the same 409, since both routes hit the same clearing logic", () => {

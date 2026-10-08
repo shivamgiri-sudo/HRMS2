@@ -82,9 +82,7 @@ function pct(part: number, whole: number): number {
   return whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0;
 }
 function normalizeName(v: unknown): string {
-  return String(v ?? "")
-    .trim()
-    .replace(/\s+/g, " ");
+  return String(v ?? "").trim().replace(/\s+/g, " ");
 }
 
 export async function getSatyaRetailDashboard(): Promise<SatyaDashboardData> {
@@ -99,16 +97,11 @@ export async function getSatyaRetailDashboard(): Promise<SatyaDashboardData> {
     const uid = String(r.uid ?? "").trim();
     if (!uid) continue;
     const k = `${r.report_date}|${uid}|${r.unique_flag ?? ""}`;
-    if ((newestAllocId.get(k) ?? -1) < Number(r.id))
-      newestAllocId.set(k, Number(r.id));
+    if ((newestAllocId.get(k) ?? -1) < Number(r.id)) newestAllocId.set(k, Number(r.id));
   }
   const allocRows = (allocRawRows as any[]).filter((r) => {
     const uid = String(r.uid ?? "").trim();
-    return (
-      !uid ||
-      newestAllocId.get(`${r.report_date}|${uid}|${r.unique_flag ?? ""}`) ===
-        Number(r.id)
-    );
+    return !uid || newestAllocId.get(`${r.report_date}|${uid}|${r.unique_flag ?? ""}`) === Number(r.id);
   });
   const [cdrRows] = await db.execute<any[]>(
     `SELECT scenario, sub_scenario_1, agent_name, attempt
@@ -123,27 +116,15 @@ export async function getSatyaRetailDashboard(): Promise<SatyaDashboardData> {
   }
 
   const shopSet = new Set<string>();
-  const allocByWarehouse = new Map<
-    string,
-    {
-      allocation: number;
-      connected: number;
-      shops: Set<string>;
-      orderValue: number;
-    }
-  >();
-  const allocByAgent = new Map<
-    string,
-    { allocation: number; connected: number; orderValue: number }
-  >();
+  const allocByWarehouse = new Map<string, { allocation: number; connected: number; shops: Set<string>; orderValue: number }>();
+  const allocByAgent = new Map<string, { allocation: number; connected: number; orderValue: number }>();
   let allocationConnected = 0;
   let orderValueTotal = 0;
 
   for (const r of allocRows as any[]) {
     const warehouse = normalizeName(r.warehouse) || "Unknown";
     const agentId = normalizeName(r.agent_id) || "Unknown";
-    const connected =
-      normalizeName(r.disposition).toLowerCase() === "connected";
+    const connected = normalizeName(r.disposition).toLowerCase() === "connected";
     const shopPhone = normalizeName(r.shop_phone);
     // order_value is text with thousands separators ("1,292"); Number() of that is NaN -> 0.
     const orderValue = num(String(r.order_value ?? "").replace(/,/g, ""));
@@ -151,23 +132,14 @@ export async function getSatyaRetailDashboard(): Promise<SatyaDashboardData> {
     if (connected) allocationConnected += 1;
     orderValueTotal += orderValue;
 
-    const wCur = allocByWarehouse.get(warehouse) ?? {
-      allocation: 0,
-      connected: 0,
-      shops: new Set<string>(),
-      orderValue: 0,
-    };
+    const wCur = allocByWarehouse.get(warehouse) ?? { allocation: 0, connected: 0, shops: new Set<string>(), orderValue: 0 };
     wCur.allocation += 1;
     if (connected) wCur.connected += 1;
     if (shopPhone) wCur.shops.add(shopPhone);
     wCur.orderValue += orderValue;
     allocByWarehouse.set(warehouse, wCur);
 
-    const aCur = allocByAgent.get(agentId) ?? {
-      allocation: 0,
-      connected: 0,
-      orderValue: 0,
-    };
+    const aCur = allocByAgent.get(agentId) ?? { allocation: 0, connected: 0, orderValue: 0 };
     aCur.allocation += 1;
     if (connected) aCur.connected += 1;
     aCur.orderValue += orderValue;
@@ -175,75 +147,46 @@ export async function getSatyaRetailDashboard(): Promise<SatyaDashboardData> {
   }
 
   const dispositionMap = new Map<string, number>();
-  const cdrByAgent = new Map<
-    string,
-    {
-      calls: number;
-      connected: number;
-      attemptSum: number;
-      attemptCount: number;
-    }
-  >();
+  const cdrByAgent = new Map<string, { calls: number; connected: number; attemptSum: number; attemptCount: number }>();
   let cdrConnectedTotal = 0;
 
   for (const r of cdrRows as any[]) {
     const connected = normalizeName(r.scenario).toLowerCase() === "connected";
     if (connected) cdrConnectedTotal += 1;
-    const disp =
-      normalizeName(r.sub_scenario_1) || normalizeName(r.scenario) || "Unknown";
+    const disp = normalizeName(r.sub_scenario_1) || normalizeName(r.scenario) || "Unknown";
     dispositionMap.set(disp, (dispositionMap.get(disp) ?? 0) + 1);
 
     const agentId = normalizeName(r.agent_name) || "Unknown"; // satya_cdr's "agent_name" column actually holds the agent code
     const attempt = num(r.attempt);
-    const cur = cdrByAgent.get(agentId) ?? {
-      calls: 0,
-      connected: 0,
-      attemptSum: 0,
-      attemptCount: 0,
-    };
+    const cur = cdrByAgent.get(agentId) ?? { calls: 0, connected: 0, attemptSum: 0, attemptCount: 0 };
     cur.calls += 1;
     if (connected) cur.connected += 1;
-    if (attempt > 0) {
-      cur.attemptSum += attempt;
-      cur.attemptCount += 1;
-    }
+    if (attempt > 0) { cur.attemptSum += attempt; cur.attemptCount += 1; }
     cdrByAgent.set(agentId, cur);
   }
 
-  const agentIds = new Set<string>([
-    ...allocByAgent.keys(),
-    ...cdrByAgent.keys(),
-  ]);
-  const agents: SatyaAgentRow[] = [...agentIds]
-    .map((agentId) => {
-      const alloc = allocByAgent.get(agentId);
-      const cdr = cdrByAgent.get(agentId);
-      return {
-        agentId,
-        agentName: agentNameById.get(agentId) ?? agentId,
-        allocation: alloc?.allocation ?? 0,
-        allocConnected: alloc?.connected ?? 0,
-        allocConnectedPct: pct(alloc?.connected ?? 0, alloc?.allocation ?? 0),
-        cdrCalls: cdr?.calls ?? 0,
-        cdrConnected: cdr?.connected ?? 0,
-        cdrConnectedPct: pct(cdr?.connected ?? 0, cdr?.calls ?? 0),
-        orderValue: alloc?.orderValue ?? 0,
-        avgAttempts:
-          cdr && cdr.attemptCount > 0
-            ? Math.round((cdr.attemptSum / cdr.attemptCount) * 100) / 100
-            : 0,
-      };
-    })
-    .sort((a, b) => b.allocation - a.allocation);
+  const agentIds = new Set<string>([...allocByAgent.keys(), ...cdrByAgent.keys()]);
+  const agents: SatyaAgentRow[] = [...agentIds].map((agentId) => {
+    const alloc = allocByAgent.get(agentId);
+    const cdr = cdrByAgent.get(agentId);
+    return {
+      agentId,
+      agentName: agentNameById.get(agentId) ?? agentId,
+      allocation: alloc?.allocation ?? 0,
+      allocConnected: alloc?.connected ?? 0,
+      allocConnectedPct: pct(alloc?.connected ?? 0, alloc?.allocation ?? 0),
+      cdrCalls: cdr?.calls ?? 0,
+      cdrConnected: cdr?.connected ?? 0,
+      cdrConnectedPct: pct(cdr?.connected ?? 0, cdr?.calls ?? 0),
+      orderValue: alloc?.orderValue ?? 0,
+      avgAttempts: cdr && cdr.attemptCount > 0 ? Math.round((cdr.attemptSum / cdr.attemptCount) * 100) / 100 : 0,
+    };
+  }).sort((a, b) => b.allocation - a.allocation);
 
   const byWarehouse: SatyaWarehouseRow[] = [...allocByWarehouse.entries()]
     .map(([warehouse, v]) => ({
-      warehouse,
-      allocation: v.allocation,
-      connected: v.connected,
-      connectedPct: pct(v.connected, v.allocation),
-      uniqueShops: v.shops.size,
-      orderValue: v.orderValue,
+      warehouse, allocation: v.allocation, connected: v.connected,
+      connectedPct: pct(v.connected, v.allocation), uniqueShops: v.shops.size, orderValue: v.orderValue,
     }))
     .sort((a, b) => b.allocation - a.allocation);
 
@@ -253,9 +196,7 @@ export async function getSatyaRetailDashboard(): Promise<SatyaDashboardData> {
 
   const totalAllocation = allocRows.length;
   const totalCdrCalls = cdrRows.length;
-  const allAttempts = (cdrRows as any[])
-    .map((r) => num(r.attempt))
-    .filter((a) => a > 0);
+  const allAttempts = (cdrRows as any[]).map((r) => num(r.attempt)).filter((a) => a > 0);
 
   const headline: SatyaHeadline = {
     totalAllocation,
@@ -267,15 +208,8 @@ export async function getSatyaRetailDashboard(): Promise<SatyaDashboardData> {
     cdrConnected: cdrConnectedTotal,
     cdrConnectedPct: pct(cdrConnectedTotal, totalCdrCalls),
     // 'VDCL' is the pending-queue sentinel, not a person.
-    activeAgents: [...agentIds].filter(
-      (id) => id !== "VDCL" && id !== "Unknown",
-    ).length,
-    avgAttempts:
-      allAttempts.length > 0
-        ? Math.round(
-            (allAttempts.reduce((s, a) => s + a, 0) / allAttempts.length) * 100,
-          ) / 100
-        : 0,
+    activeAgents: [...agentIds].filter((id) => id !== "VDCL" && id !== "Unknown").length,
+    avgAttempts: allAttempts.length > 0 ? Math.round((allAttempts.reduce((s, a) => s + a, 0) / allAttempts.length) * 100) / 100 : 0,
   };
 
   return { headline, byWarehouse, agents, dispositionBreakdown };

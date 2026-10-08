@@ -5,29 +5,14 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
 // Use process.cwd() (backend/ working directory) — works correctly in both dev and production
-export const CANDIDATE_FILES_ROOT = path.resolve(
-  process.cwd(),
-  "private/ats-candidate-files",
-);
+export const CANDIDATE_FILES_ROOT = path.resolve(process.cwd(), "private/ats-candidate-files");
 
 fs.mkdirSync(CANDIDATE_FILES_ROOT, { recursive: true });
 
 export type CandidateFileRecord = {
   id: string;
   candidate_id: string;
-  file_type:
-    | "resume"
-    | "selfie"
-    | "aadhaar"
-    | "pan"
-    | "bank_proof"
-    | "education"
-    | "address_proof"
-    | "bgv"
-    | "court_check"
-    | "offer"
-    | "appointment"
-    | "other";
+  file_type: "resume" | "selfie" | "aadhaar" | "pan" | "bank_proof" | "education" | "address_proof" | "bgv" | "court_check" | "offer" | "appointment" | "other";
   original_filename: string | null;
   stored_filename: string;
   storage_path: string;
@@ -44,23 +29,10 @@ export type CandidateFileRecord = {
 };
 
 export type CandidateFileAccessActor =
-  | {
-      actorType: "employee";
-      actorUserId: string | null;
-      actorRole: string | null;
-    }
-  | {
-      actorType: "candidate";
-      actorUserId: null;
-      actorRole: null;
-      candidateId: string;
-    };
+  | { actorType: "employee"; actorUserId: string | null; actorRole: string | null; }
+  | { actorType: "candidate"; actorUserId: null; actorRole: null; candidateId: string };
 
-export function buildCandidateFilePath(
-  candidateId: string,
-  fileId: string,
-  originalName: string,
-): { storagePath: string; storedFilename: string } {
+export function buildCandidateFilePath(candidateId: string, fileId: string, originalName: string): { storagePath: string; storedFilename: string } {
   const ext = path.extname(originalName).toLowerCase();
   const candidateDir = path.join(CANDIDATE_FILES_ROOT, candidateId);
   fs.mkdirSync(candidateDir, { recursive: true });
@@ -121,8 +93,7 @@ export function resolveCandidateFilePath(file: {
 
   const candidate = path.join(CANDIDATE_FILES_ROOT, candidateId, safeName);
   const expectedDir = path.join(CANDIDATE_FILES_ROOT, candidateId);
-  if (!path.resolve(candidate).startsWith(path.resolve(expectedDir)))
-    return null;
+  if (!path.resolve(candidate).startsWith(path.resolve(expectedDir))) return null;
 
   return safeIsFile(candidate) ? candidate : null;
 }
@@ -147,11 +118,7 @@ export async function persistCandidateFile(input: {
   migratedFromPublicUrl?: string | null;
 }): Promise<CandidateFileRecord> {
   const fileId = randomUUID();
-  const { storagePath, storedFilename } = buildCandidateFilePath(
-    input.candidateId,
-    fileId,
-    input.originalFilename,
-  );
+  const { storagePath, storedFilename } = buildCandidateFilePath(input.candidateId, fileId, input.originalFilename);
   fs.writeFileSync(storagePath, input.buffer);
 
   const checksum = hashBuffer(input.buffer);
@@ -179,22 +146,20 @@ export async function persistCandidateFile(input: {
       uploadedByUserId,
       uploadedByCandidateTokenId,
       migratedFromPublicUrl,
-    ],
+    ]
   );
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM ats_candidate_file WHERE id = ? LIMIT 1`,
-    [fileId],
+    [fileId]
   );
   return (rows as CandidateFileRecord[])[0];
 }
 
-export async function findCandidateFileById(
-  fileId: string,
-): Promise<CandidateFileRecord | null> {
+export async function findCandidateFileById(fileId: string): Promise<CandidateFileRecord | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM ats_candidate_file WHERE id = ? LIMIT 1`,
-    [fileId],
+    [fileId]
   );
   return (rows as CandidateFileRecord[])[0] ?? null;
 }
@@ -224,6 +189,6 @@ export async function auditCandidateFileAccess(input: {
       input.denialReason ?? null,
       input.ipAddress ?? null,
       input.userAgent ?? null,
-    ],
+    ]
   );
 }

@@ -5,10 +5,7 @@ import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { bpoPnlService } from "./bpo-pnl.service.js";
 
-const safeRows = async <T extends RowDataPacket>(
-  sql: string,
-  params: unknown[] = [],
-): Promise<T[]> => {
+const safeRows = async <T extends RowDataPacket>(sql: string, params: unknown[] = []): Promise<T[]> => {
   try {
     return await queryRows<T>(sql, params);
   } catch {
@@ -34,12 +31,7 @@ function filters(period?: string, processId?: string) {
 }
 
 const PEOPLE_SCOPES = new Set(["employee", "designation", "department"]);
-const PEOPLE_BUCKETS = new Set([
-  "agent_salary",
-  "dsc_people",
-  "bmc_people",
-  "excluded",
-]);
+const PEOPLE_BUCKETS = new Set(["agent_salary", "dsc_people", "bmc_people", "excluded"]);
 const EXPENSE_SCOPES = new Set(["expense_head", "expense_sub_head"]);
 const EXPENSE_BUCKETS = new Set([
   "dsc_non_people",
@@ -53,14 +45,10 @@ const EXPENSE_BUCKETS = new Set([
 ]);
 
 function expenseTreatment(bucket: string) {
-  if (bucket === "dsc_non_people")
-    return { pnlTreatment: "direct_cost", capexOpex: "opex" };
-  if (["finance_cost", "tax"].includes(bucket))
-    return { pnlTreatment: "non_operating", capexOpex: "opex" };
-  if (bucket === "capex")
-    return { pnlTreatment: "excluded", capexOpex: "capex" };
-  if (bucket === "excluded")
-    return { pnlTreatment: "excluded", capexOpex: "non_pnl" };
+  if (bucket === "dsc_non_people") return { pnlTreatment: "direct_cost", capexOpex: "opex" };
+  if (["finance_cost", "tax"].includes(bucket)) return { pnlTreatment: "non_operating", capexOpex: "opex" };
+  if (bucket === "capex") return { pnlTreatment: "excluded", capexOpex: "capex" };
+  if (bucket === "excluded") return { pnlTreatment: "excluded", capexOpex: "non_pnl" };
   return { pnlTreatment: "operating_expense", capexOpex: "opex" };
 }
 
@@ -68,40 +56,35 @@ async function applyExpenseMasterBucket(
   scopeType: string,
   scopeKey: string,
   pnlBucket: string,
-  userId: string,
+  userId: string
 ) {
   if (!EXPENSE_BUCKETS.has(pnlBucket)) {
-    throw new Error(
-      `P&L bucket ${pnlBucket} cannot be applied to an expense master`,
-    );
+    throw new Error(`P&L bucket ${pnlBucket} cannot be applied to an expense master`);
   }
   if (
-    !(await tableExists("finance_expense_sub_head_master")) ||
-    !(await tableExists("finance_expense_head_master"))
+    !(await tableExists("finance_expense_sub_head_master"))
+    || !(await tableExists("finance_expense_head_master"))
   ) {
     throw new Error("Finance expense Head/Sub-Head master is not available");
   }
 
-  const matchRows =
-    scopeType === "expense_sub_head"
-      ? await queryRows<RowDataPacket>(
-          `SELECT sh.id
+  const matchRows = scopeType === "expense_sub_head"
+    ? await queryRows<RowDataPacket>(
+        `SELECT sh.id
            FROM finance_expense_sub_head_master sh
           WHERE sh.id = ? OR LOWER(sh.sub_head_code) = LOWER(?) OR LOWER(sh.sub_head_name) = LOWER(?)
           LIMIT 1`,
-          [scopeKey, scopeKey, scopeKey],
-        )
-      : await queryRows<RowDataPacket>(
-          `SELECT h.id
+        [scopeKey, scopeKey, scopeKey]
+      )
+    : await queryRows<RowDataPacket>(
+        `SELECT h.id
            FROM finance_expense_head_master h
           WHERE h.id = ? OR LOWER(h.head_code) = LOWER(?) OR LOWER(h.head_name) = LOWER(?)
           LIMIT 1`,
-          [scopeKey, scopeKey, scopeKey],
-        );
+        [scopeKey, scopeKey, scopeKey]
+      );
   if (!matchRows.length) {
-    throw new Error(
-      `No finance ${scopeType.replace("_", " ")} matched ${scopeKey}`,
-    );
+    throw new Error(`No finance ${scopeType.replace("_", " ")} matched ${scopeKey}`);
   }
 
   const treatment = expenseTreatment(pnlBucket);
@@ -110,15 +93,7 @@ async function applyExpenseMasterBucket(
       `UPDATE finance_expense_sub_head_master
           SET pnl_bucket = ?, pnl_treatment = ?, capex_opex = ?, updated_by = ?
         WHERE id = ? OR LOWER(sub_head_code) = LOWER(?) OR LOWER(sub_head_name) = LOWER(?)`,
-      [
-        pnlBucket,
-        treatment.pnlTreatment,
-        treatment.capexOpex,
-        userId,
-        scopeKey,
-        scopeKey,
-        scopeKey,
-      ],
+      [pnlBucket, treatment.pnlTreatment, treatment.capexOpex, userId, scopeKey, scopeKey, scopeKey]
     );
   } else {
     await db.execute(
@@ -126,15 +101,7 @@ async function applyExpenseMasterBucket(
        JOIN finance_expense_head_master h ON h.id = sh.head_id
           SET sh.pnl_bucket = ?, sh.pnl_treatment = ?, sh.capex_opex = ?, sh.updated_by = ?
         WHERE h.id = ? OR LOWER(h.head_code) = LOWER(?) OR LOWER(h.head_name) = LOWER(?)`,
-      [
-        pnlBucket,
-        treatment.pnlTreatment,
-        treatment.capexOpex,
-        userId,
-        scopeKey,
-        scopeKey,
-        scopeKey,
-      ],
+      [pnlBucket, treatment.pnlTreatment, treatment.capexOpex, userId, scopeKey, scopeKey, scopeKey]
     );
   }
 }
@@ -152,7 +119,7 @@ export const bpoPnlConfigurationService = {
          FROM process_delivery_actual
          ${scoped.where}
         ORDER BY period_code DESC, process_id, metric_key, activity_date DESC, updated_at DESC`,
-      scoped.params,
+      scoped.params
     );
   },
 
@@ -164,7 +131,7 @@ export const bpoPnlConfigurationService = {
          FROM process_revenue_component
          ${scoped.where}
         ORDER BY period_code DESC, process_id, recognition_date DESC, created_at DESC`,
-      scoped.params,
+      scoped.params
     );
   },
 
@@ -176,7 +143,7 @@ export const bpoPnlConfigurationService = {
          FROM process_pnl_cost_component
          ${scoped.where}
         ORDER BY period_code DESC, branch_id, process_id, cost_type, created_at DESC`,
-      scoped.params,
+      scoped.params
     );
   },
 
@@ -187,7 +154,7 @@ export const bpoPnlConfigurationService = {
          FROM pnl_allocation_policy
          ${branchId ? "WHERE branch_id = ?" : ""}
         ORDER BY branch_id, pool_type, process_id, effective_from DESC`,
-      branchId ? [branchId] : [],
+      branchId ? [branchId] : []
     );
   },
 
@@ -208,7 +175,7 @@ export const bpoPnlConfigurationService = {
          FROM pnl_cost_classification_rule
          ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
         ORDER BY priority ASC, rule_name, effective_from DESC`,
-      params,
+      params
     );
   },
 
@@ -232,27 +199,20 @@ export const bpoPnlConfigurationService = {
     return bpoPnlService.saveAllocationPolicy(payload, userId);
   },
 
-  async saveClassificationRule(
-    payload: Record<string, unknown>,
-    userId: string,
-  ) {
+  async saveClassificationRule(payload: Record<string, unknown>, userId: string) {
     const scopeType = String(payload.scopeType ?? "").trim();
     const scopeKey = String(payload.scopeKey ?? "").trim();
     const pnlBucket = String(payload.pnlBucket ?? "").trim();
     if (!scopeType || !scopeKey || !pnlBucket) {
-      throw new Error(
-        "Scope type, exact scope key and P&L bucket are required",
-      );
+      throw new Error("Scope type, exact scope key and P&L bucket are required");
     }
     if (scopeType === "cost_centre") {
       throw new Error(
-        "Cost-centre P&L treatment is derived from process attribution and approved allocation policy. Configure the expense sub-head or BMC allocation policy instead.",
+        "Cost-centre P&L treatment is derived from process attribution and approved allocation policy. Configure the expense sub-head or BMC allocation policy instead."
       );
     }
     if (PEOPLE_SCOPES.has(scopeType) && !PEOPLE_BUCKETS.has(pnlBucket)) {
-      throw new Error(
-        `P&L bucket ${pnlBucket} is not valid for a people classification rule`,
-      );
+      throw new Error(`P&L bucket ${pnlBucket} is not valid for a people classification rule`);
     }
     if (EXPENSE_SCOPES.has(scopeType)) {
       await applyExpenseMasterBucket(scopeType, scopeKey, pnlBucket, userId);
@@ -263,7 +223,7 @@ export const bpoPnlConfigurationService = {
     const id = String(payload.id ?? randomUUID());
     const [beforeRows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM pnl_cost_classification_rule WHERE id = ?",
-      [id],
+      [id]
     );
     const before = beforeRows[0] ?? null;
     await db.execute(
@@ -290,7 +250,7 @@ export const bpoPnlConfigurationService = {
         payload.activeStatus === false ? 0 : 1,
         userId,
         userId,
-      ],
+      ]
     );
     await writeAuditLog({
       actor_user_id: userId,

@@ -1,10 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Molecular Email / Reginald Men Email dashboard daily actuals.
@@ -36,26 +33,20 @@ export const EMAIL_TICKET_DAILY_HEADERS = [
 
 const DASHBOARD_LABELS: Record<string, "MOLECULAR" | "REGINALD_MEN"> = {
   "molecular email": "MOLECULAR",
-  molecular: "MOLECULAR",
+  "molecular": "MOLECULAR",
   "reginald men email": "REGINALD_MEN",
   "reginald men": "REGINALD_MEN",
-  reginald: "REGINALD_MEN",
+  "reginald": "REGINALD_MEN",
 };
 
-export function parseDashboardLabel(
-  raw: unknown,
-): "MOLECULAR" | "REGINALD_MEN" | null {
-  const v = String(raw ?? "")
-    .trim()
-    .toLowerCase();
+export function parseDashboardLabel(raw: unknown): "MOLECULAR" | "REGINALD_MEN" | null {
+  const v = String(raw ?? "").trim().toLowerCase();
   return DASHBOARD_LABELS[v] ?? null;
 }
 
 /** These are NOT NULL with a 0 default (blank cell = zero, same convention as process_delivery_actual). */
 export function parseCount(raw: unknown): number {
-  const v = String(raw ?? "")
-    .trim()
-    .replace(/,/g, "");
+  const v = String(raw ?? "").trim().replace(/,/g, "");
   if (!v) return 0;
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
@@ -63,9 +54,7 @@ export function parseCount(raw: unknown): number {
 
 /** opening_pending is nullable: "not supplied yet" must not silently become zero and skew closure %. */
 export function parseOpeningPending(raw: unknown): number | null {
-  const v = String(raw ?? "")
-    .trim()
-    .replace(/,/g, "");
+  const v = String(raw ?? "").trim().replace(/,/g, "");
   if (!v) return null;
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
@@ -75,18 +64,8 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   const MONTHS: Record<string, number> = {
-    jan: 1,
-    feb: 2,
-    mar: 3,
-    apr: 4,
-    may: 5,
-    jun: 6,
-    jul: 7,
-    aug: 8,
-    sep: 9,
-    oct: 10,
-    nov: 11,
-    dec: 12,
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
   };
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (m) return m[0];
@@ -104,9 +83,7 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 export async function importEmailTicketDailyBatch(
   batchId: string,
@@ -184,14 +161,9 @@ export async function importEmailTicketDailyBatch(
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(),
-        processId,
-        dashboardLabel,
-        reportDate,
-        parseCount(data["Total Tickets"]),
-        parseCount(data["Email Closure"]),
-        parseCount(data["Open/Pending"]),
-        parseCount(data["Reopen"]),
+        randomUUID(), processId, dashboardLabel, reportDate,
+        parseCount(data["Total Tickets"]), parseCount(data["Email Closure"]),
+        parseCount(data["Open/Pending"]), parseCount(data["Reopen"]),
         parseOpeningPending(data["Opening Pending"]),
         // source_reference is part of the unique key, so a re-upload of the same
         // day from a different batch does not silently collide with the first.
@@ -220,26 +192,17 @@ export async function importEmailTicketDailyBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

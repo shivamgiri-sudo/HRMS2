@@ -33,10 +33,7 @@ import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 import { inboxService } from "../inbox/inbox.service.js";
 
 function frontendBaseUrl(): string {
-  return String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(
-    /\/+$/,
-    "",
-  );
+  return String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(/\/+$/, "");
 }
 
 /** Deep link to the authenticated case screen — where a signatory records their decision. */
@@ -89,10 +86,7 @@ interface StageContext extends RowDataPacket {
   acted_by_name: string | null;
 }
 
-async function loadStage(
-  caseId: string,
-  stageKey: string,
-): Promise<StageContext | null> {
+async function loadStage(caseId: string, stageKey: string): Promise<StageContext | null> {
   const [rows] = await db.execute<StageContext[]>(
     `SELECT s.stage_key, s.stage_label, s.role_key, s.fallback_role_key, s.sla_due_at,
             s.remarks, s.acted_by_name
@@ -105,12 +99,8 @@ async function loadStage(
 
 async function stageVerifyHint(stageKey: string): Promise<string> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT verify_hint FROM noc_signatory_template WHERE stage_key = ? LIMIT 1`,
-    [stageKey],
-  );
-  return String(
-    rows[0]?.verify_hint ?? "Please review and record your decision.",
-  );
+    `SELECT verify_hint FROM noc_signatory_template WHERE stage_key = ? LIMIT 1`, [stageKey]);
+  return String(rows[0]?.verify_hint ?? "Please review and record your decision.");
 }
 
 /**
@@ -127,24 +117,15 @@ async function stageVerifyHint(stageKey: string): Promise<string> {
  * gateway records as undeliverable. HR in cc does not prevent that throw; it is there so the
  * common case of "role holder exists but has no company email" still reaches a human.
  */
-function stageSpec(
-  stage: StageContext,
-  branchId: string | null,
-): RecipientSpec {
-  const roleKeys = [stage.role_key, stage.fallback_role_key].filter(
-    (r): r is string => Boolean(r),
-  );
+function stageSpec(stage: StageContext, branchId: string | null): RecipientSpec {
+  const roleKeys = [stage.role_key, stage.fallback_role_key].filter((r): r is string => Boolean(r));
   return {
-    to: [
-      {
-        kind: "role_scope",
-        roleKeys,
-        scope: branchId
-          ? { type: "branch", branchIds: [branchId] }
-          : { type: "all" },
-        limit: 10,
-      },
-    ],
+    to: [{
+      kind: "role_scope",
+      roleKeys,
+      scope: branchId ? { type: "branch", branchIds: [branchId] } : { type: "all" },
+      limit: 10,
+    }],
     cc: branchId ? [{ kind: "branch_hr", branchId }] : [],
   };
 }
@@ -164,29 +145,22 @@ async function inboxForStage(
   title: string,
   priority: "normal" | "high" = "normal",
 ): Promise<void> {
-  const roleKeys = [stage.role_key, stage.fallback_role_key].filter(
-    (r): r is string => Boolean(r),
-  );
+  const roleKeys = [stage.role_key, stage.fallback_role_key].filter((r): r is string => Boolean(r));
   const userIds = new Set<string>();
   for (const rk of roleKeys) {
-    for (const id of await resolveRoleHolderUserIds(rk, nocCase.branch_id))
-      userIds.add(id);
+    for (const id of await resolveRoleHolderUserIds(rk, nocCase.branch_id)) userIds.add(id);
   }
   for (const userId of userIds) {
-    await inboxService
-      .createItem({
-        user_id: userId,
-        type,
-        title,
-        description: `${nocCase.employee_name ?? ""} (${nocCase.employee_code ?? ""}) — ${stage.stage_label} clearance`,
-        entity_type: "noc_case",
-        entity_id: nocCase.id,
-        action_url: `/payroll/noc?case=${nocCase.id}`,
-        priority,
-      })
-      .catch(() => {
-        /* the bell is a mirror; never the reason a notification fails */
-      });
+    await inboxService.createItem({
+      user_id: userId,
+      type,
+      title,
+      description: `${nocCase.employee_name ?? ""} (${nocCase.employee_code ?? ""}) — ${stage.stage_label} clearance`,
+      entity_type: "noc_case",
+      entity_id: nocCase.id,
+      action_url: `/payroll/noc?case=${nocCase.id}`,
+      priority,
+    }).catch(() => { /* the bell is a mirror; never the reason a notification fails */ });
   }
 }
 
@@ -211,20 +185,10 @@ export interface InviteDelivery {
  */
 export async function notifyInviteSent(
   caseId: string,
-  invite: {
-    inviteId: string;
-    url: string;
-    expiresAt: string;
-    email: string | null;
-    mobile: string | null;
-  },
+  invite: { inviteId: string; url: string; expiresAt: string; email: string | null; mobile: string | null },
 ): Promise<InviteDelivery> {
   const result: InviteDelivery = {
-    emailed: false,
-    channels: [],
-    smsAttempted: false,
-    smsError: null,
-    outcome: "not_sent",
+    emailed: false, channels: [], smsAttempted: false, smsError: null, outcome: "not_sent",
   };
   try {
     const nocCase = await loadCase(caseId);
@@ -244,21 +208,17 @@ export async function notifyInviteSent(
         reporting_manager_name: nocCase.reporting_manager_name,
         location: nocCase.location,
         noc_form_url: invite.url,
-        expires_on: invite.expiresAt
-          ? String(invite.expiresAt).slice(0, 10)
-          : "",
+        expires_on: invite.expiresAt ? String(invite.expiresAt).slice(0, 10) : "",
       },
     });
     result.outcome = outcome.outcome;
     result.emailed = outcome.outcome === "sent";
     if (result.emailed) result.channels.push("email");
 
-    await db
-      .execute(
-        `UPDATE noc_invite SET sent_at = COALESCE(sent_at, NOW()), channels_sent = ? WHERE id = ?`,
-        [result.channels.join(",") || null, invite.inviteId],
-      )
-      .catch(() => undefined);
+    await db.execute(
+      `UPDATE noc_invite SET sent_at = COALESCE(sent_at, NOW()), channels_sent = ? WHERE id = ?`,
+      [result.channels.join(",") || null, invite.inviteId],
+    ).catch(() => undefined);
 
     if (invite.mobile) {
       const sms = await sendInviteSms(invite.mobile, invite.url);
@@ -282,19 +242,11 @@ export async function notifyInviteSent(
  * caller, so the day a template exists this starts working with no code change, and until then the
  * UI can say "SMS not available" instead of implying the employee was texted.
  */
-async function sendInviteSms(
-  mobile: string,
-  url: string,
-): Promise<{ sent: boolean; error: string | null }> {
+async function sendInviteSms(mobile: string, url: string): Promise<{ sent: boolean; error: string | null }> {
   try {
     const { sendSMS } = await import("../communication/sms.helper.js");
     const res = await sendSMS(mobile, "onboarding_link", { link: url });
-    return {
-      sent: Boolean(res?.success),
-      error: res?.success
-        ? null
-        : (res?.error ?? "SMS provider rejected the send"),
-    };
+    return { sent: Boolean(res?.success), error: res?.success ? null : (res?.error ?? "SMS provider rejected the send") };
   } catch (err) {
     return { sent: false, error: (err as Error).message };
   }
@@ -334,10 +286,7 @@ export async function notifyEmployeeSubmitted(caseId: string): Promise<void> {
       await notifySignatoryPending(caseId, stage.stage_key);
     }
   } catch (err) {
-    console.error(
-      `[noc-notify] employee_submitted ${caseId}:`,
-      (err as Error).message,
-    );
+    console.error(`[noc-notify] employee_submitted ${caseId}:`, (err as Error).message);
   }
 }
 
@@ -345,15 +294,9 @@ export async function notifyEmployeeSubmitted(caseId: string): Promise<void> {
 // 3. Signatory pending
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function notifySignatoryPending(
-  caseId: string,
-  stageKey: string,
-): Promise<void> {
+export async function notifySignatoryPending(caseId: string, stageKey: string): Promise<void> {
   try {
-    const [nocCase, stage] = await Promise.all([
-      loadCase(caseId),
-      loadStage(caseId, stageKey),
-    ]);
+    const [nocCase, stage] = await Promise.all([loadCase(caseId), loadStage(caseId, stageKey)]);
     if (!nocCase || !stage) return;
 
     await notificationGateway.notify({
@@ -361,11 +304,7 @@ export async function notifySignatoryPending(
       // Stage-scoped so each of the eight is claimed independently — a single per-case key would
       // let the first stage's claim suppress the other seven.
       dedupeKey: `noc_case:${caseId}:pending:${stageKey}`,
-      context: {
-        employeeId: nocCase.employee_id,
-        branchId: nocCase.branch_id,
-        processId: nocCase.process_id,
-      },
+      context: { employeeId: nocCase.employee_id, branchId: nocCase.branch_id, processId: nocCase.process_id },
       entityType: "noc_case",
       entityId: caseId,
       correlationId: `noc_case:${caseId}`,
@@ -378,32 +317,19 @@ export async function notifySignatoryPending(
         location: nocCase.location,
         stage_label: stage.stage_label,
         verify_hint: await stageVerifyHint(stageKey),
-        sla_due_at: stage.sla_due_at
-          ? String(stage.sla_due_at).slice(0, 16).replace("T", " ")
-          : "as soon as possible",
+        sla_due_at: stage.sla_due_at ? String(stage.sla_due_at).slice(0, 16).replace("T", " ") : "as soon as possible",
         noc_case_url: caseUrl(caseId),
       },
     });
 
-    await db
-      .execute(
-        `UPDATE noc_signatory SET notified_at = COALESCE(notified_at, NOW())
-        WHERE noc_case_id = ? AND stage_key = ?`,
-        [caseId, stageKey],
-      )
-      .catch(() => undefined);
+    await db.execute(
+      `UPDATE noc_signatory SET notified_at = COALESCE(notified_at, NOW())
+        WHERE noc_case_id = ? AND stage_key = ?`, [caseId, stageKey]).catch(() => undefined);
 
-    await inboxForStage(
-      stage,
-      nocCase,
-      "noc_signatory_pending",
-      `NOC clearance awaiting your sign-off — ${nocCase.employee_name ?? nocCase.employee_code ?? ""}`,
-    );
+    await inboxForStage(stage, nocCase, "noc_signatory_pending",
+      `NOC clearance awaiting your sign-off — ${nocCase.employee_name ?? nocCase.employee_code ?? ""}`);
   } catch (err) {
-    console.error(
-      `[noc-notify] signatory_pending ${caseId}/${stageKey}:`,
-      (err as Error).message,
-    );
+    console.error(`[noc-notify] signatory_pending ${caseId}/${stageKey}:`, (err as Error).message);
   }
 }
 
@@ -430,18 +356,12 @@ export async function notifySignatoryReminder(
   escalate: boolean,
 ): Promise<boolean> {
   try {
-    const [nocCase, stage] = await Promise.all([
-      loadCase(caseId),
-      loadStage(caseId, stageKey),
-    ]);
+    const [nocCase, stage] = await Promise.all([loadCase(caseId), loadStage(caseId, stageKey)]);
     if (!nocCase || !stage) return false;
 
     const spec = stageSpec(stage, nocCase.branch_id);
     if (escalate && nocCase.branch_id) {
-      spec.cc = [
-        ...(spec.cc ?? []),
-        { kind: "branch_head", branchId: nocCase.branch_id },
-      ];
+      spec.cc = [...(spec.cc ?? []), { kind: "branch_head", branchId: nocCase.branch_id }];
     }
 
     const outcome = await notificationGateway.notify({
@@ -459,27 +379,17 @@ export async function notifySignatoryReminder(
         reporting_manager_name: nocCase.reporting_manager_name,
         location: nocCase.location,
         stage_label: stage.stage_label,
-        sla_due_at: stage.sla_due_at
-          ? String(stage.sla_due_at).slice(0, 16).replace("T", " ")
-          : "",
+        sla_due_at: stage.sla_due_at ? String(stage.sla_due_at).slice(0, 16).replace("T", " ") : "",
         noc_case_url: caseUrl(caseId),
       },
     });
 
-    await inboxForStage(
-      stage,
-      nocCase,
-      "noc_signatory_reminder",
-      `OVERDUE: NOC clearance sign-off — ${nocCase.employee_name ?? nocCase.employee_code ?? ""}`,
-      "high",
-    );
+    await inboxForStage(stage, nocCase, "noc_signatory_reminder",
+      `OVERDUE: NOC clearance sign-off — ${nocCase.employee_name ?? nocCase.employee_code ?? ""}`, "high");
 
     return outcome.outcome === "sent" || outcome.outcome === "shadow";
   } catch (err) {
-    console.error(
-      `[noc-notify] signatory_reminder ${caseId}/${stageKey}:`,
-      (err as Error).message,
-    );
+    console.error(`[noc-notify] signatory_reminder ${caseId}/${stageKey}:`, (err as Error).message);
     return false;
   }
 }
@@ -488,15 +398,9 @@ export async function notifySignatoryReminder(
 // 5. Declined
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function notifyDeclined(
-  caseId: string,
-  stageKey: string,
-): Promise<void> {
+export async function notifyDeclined(caseId: string, stageKey: string): Promise<void> {
   try {
-    const [nocCase, stage] = await Promise.all([
-      loadCase(caseId),
-      loadStage(caseId, stageKey),
-    ]);
+    const [nocCase, stage] = await Promise.all([loadCase(caseId), loadStage(caseId, stageKey)]);
     if (!nocCase || !stage) return;
 
     await notificationGateway.notify({
@@ -513,36 +417,26 @@ export async function notifyDeclined(
         reporting_manager_name: nocCase.reporting_manager_name,
         location: nocCase.location,
         stage_label: stage.stage_label,
-        decline_reason:
-          nocCase.decline_reason ?? stage.remarks ?? "No reason recorded",
+        decline_reason: nocCase.decline_reason ?? stage.remarks ?? "No reason recorded",
         noc_case_url: caseUrl(caseId),
       },
     });
 
     // HR owns resolution, so HR gets the bell regardless of whether an email address resolved.
-    for (const userId of await resolveRoleHolderUserIds(
-      "hr",
-      nocCase.branch_id,
-    )) {
-      await inboxService
-        .createItem({
-          user_id: userId,
-          type: "noc_declined",
-          title: `NOC declined at ${stage.stage_label} — ${nocCase.employee_name ?? nocCase.employee_code ?? ""}`,
-          description:
-            nocCase.decline_reason ?? stage.remarks ?? "No reason recorded",
-          entity_type: "noc_case",
-          entity_id: caseId,
-          action_url: `/payroll/noc?case=${caseId}`,
-          priority: "high",
-        })
-        .catch(() => undefined);
+    for (const userId of await resolveRoleHolderUserIds("hr", nocCase.branch_id)) {
+      await inboxService.createItem({
+        user_id: userId,
+        type: "noc_declined",
+        title: `NOC declined at ${stage.stage_label} — ${nocCase.employee_name ?? nocCase.employee_code ?? ""}`,
+        description: nocCase.decline_reason ?? stage.remarks ?? "No reason recorded",
+        entity_type: "noc_case",
+        entity_id: caseId,
+        action_url: `/payroll/noc?case=${caseId}`,
+        priority: "high",
+      }).catch(() => undefined);
     }
   } catch (err) {
-    console.error(
-      `[noc-notify] declined ${caseId}/${stageKey}:`,
-      (err as Error).message,
-    );
+    console.error(`[noc-notify] declined ${caseId}/${stageKey}:`, (err as Error).message);
   }
 }
 
@@ -576,9 +470,7 @@ export async function notifyCompleted(caseId: string): Promise<void> {
         reporting_manager_name: nocCase.reporting_manager_name,
         location: nocCase.location,
         last_working_day: nocCase.last_working_day ?? "not recorded",
-        fnf_option: route
-          ? (FNF_LABEL[route] ?? route)
-          : "to be decided by Finance",
+        fnf_option: route ? (FNF_LABEL[route] ?? route) : "to be decided by Finance",
         noc_case_url: caseUrl(caseId),
       },
     });
@@ -586,34 +478,27 @@ export async function notifyCompleted(caseId: string): Promise<void> {
     // Distribution for records and audit. The completed clearance is what Payroll and MIS work
     // from, and neither is a recipient of the employee-facing email above.
     for (const role of ["hr", "payroll_head", "payroll_hr"]) {
-      for (const userId of await resolveRoleHolderUserIds(
-        role,
-        nocCase.branch_id,
-      )) {
-        await inboxService
-          .createItem({
-            user_id: userId,
-            type: "noc_completed",
-            title: `NOC complete — ${nocCase.employee_name ?? nocCase.employee_code ?? ""}`,
-            description: `Salary and F&F release is unblocked. Settlement route: ${route ? (FNF_LABEL[route] ?? route) : "not set"}.`,
-            entity_type: "noc_case",
-            entity_id: caseId,
-            action_url: `/payroll/noc?case=${caseId}`,
-            priority: "normal",
-          })
-          .catch(() => undefined);
+      for (const userId of await resolveRoleHolderUserIds(role, nocCase.branch_id)) {
+        await inboxService.createItem({
+          user_id: userId,
+          type: "noc_completed",
+          title: `NOC complete — ${nocCase.employee_name ?? nocCase.employee_code ?? ""}`,
+          description: `Salary and F&F release is unblocked. Settlement route: ${route ? (FNF_LABEL[route] ?? route) : "not set"}.`,
+          entity_type: "noc_case",
+          entity_id: caseId,
+          action_url: `/payroll/noc?case=${caseId}`,
+          priority: "normal",
+        }).catch(() => undefined);
       }
     }
 
     // Close out the per-signatory inbox tasks for this case — they are done, and leaving them
     // open is how a work inbox becomes noise people stop reading.
-    await inboxService
-      .resolveItems({
-        entity_type: "noc_case",
-        entity_id: caseId,
-        types: ["noc_signatory_pending", "noc_signatory_reminder"],
-      })
-      .catch(() => undefined);
+    await inboxService.resolveItems({
+      entity_type: "noc_case",
+      entity_id: caseId,
+      types: ["noc_signatory_pending", "noc_signatory_reminder"],
+    }).catch(() => undefined);
   } catch (err) {
     console.error(`[noc-notify] completed ${caseId}:`, (err as Error).message);
   }

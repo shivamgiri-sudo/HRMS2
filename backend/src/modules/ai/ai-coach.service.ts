@@ -12,10 +12,10 @@
  * no verdict at all.
  */
 
-export type CoachTone = "celebrate" | "steady" | "watch" | "act";
+export type CoachTone = 'celebrate' | 'steady' | 'watch' | 'act';
 
 export interface CoachPoint {
-  lens: "performance" | "discipline" | "wellbeing" | "growth";
+  lens: 'performance' | 'discipline' | 'wellbeing' | 'growth';
   tone: CoachTone;
   headline: string;
   detail: string;
@@ -77,15 +77,14 @@ export function attendanceRate(window: AttendanceWindow): number {
 export function punctualityTrend(
   recent: AttendanceWindow,
   previous: AttendanceWindow,
-): { direction: "improving" | "slipping" | "steady"; deltaPct: number } | null {
+): { direction: 'improving' | 'slipping' | 'steady'; deltaPct: number } | null {
   const MIN_DAYS = 5;
-  if (recent.workingDays < MIN_DAYS || previous.workingDays < MIN_DAYS)
-    return null;
+  if (recent.workingDays < MIN_DAYS || previous.workingDays < MIN_DAYS) return null;
 
   const delta = lateRate(recent) - lateRate(previous);
   const deltaPct = Math.round(delta * 1000) / 10;
-  if (Math.abs(deltaPct) < 2) return { direction: "steady", deltaPct };
-  return { direction: delta < 0 ? "improving" : "slipping", deltaPct };
+  if (Math.abs(deltaPct) < 2) return { direction: 'steady', deltaPct };
+  return { direction: delta < 0 ? 'improving' : 'slipping', deltaPct };
 }
 
 /**
@@ -94,33 +93,28 @@ export function punctualityTrend(
  * is always better regardless of the metric's direction.
  */
 export function scoreKpi(kpi: KpiSnapshot): {
-  status: "on_track" | "below_target" | "insufficient_data";
+  status: 'on_track' | 'below_target' | 'insufficient_data';
   attainment: number | null;
 } {
   const floor = kpi.minimumSampleSize ?? 1;
-  if (
-    kpi.sampleCount < floor ||
-    kpi.targetValue === null ||
-    kpi.averageActual === null
-  ) {
-    return { status: "insufficient_data", attainment: null };
+  if (kpi.sampleCount < floor || kpi.targetValue === null || kpi.averageActual === null) {
+    return { status: 'insufficient_data', attainment: null };
   }
   if (
     kpi.expectedSampleCount !== null &&
     kpi.expectedSampleCount > 0 &&
     kpi.sampleCount / kpi.expectedSampleCount < MIN_KPI_COVERAGE
   ) {
-    return { status: "insufficient_data", attainment: null };
+    return { status: 'insufficient_data', attainment: null };
   }
-  if (kpi.targetValue === 0)
-    return { status: "insufficient_data", attainment: null };
+  if (kpi.targetValue === 0) return { status: 'insufficient_data', attainment: null };
 
-  const lowerIsBetter = (kpi.direction ?? "").toLowerCase().startsWith("lower");
+  const lowerIsBetter = (kpi.direction ?? '').toLowerCase().startsWith('lower');
   const attainment = lowerIsBetter
     ? kpi.targetValue / Math.max(kpi.averageActual, Number.EPSILON)
     : kpi.averageActual / kpi.targetValue;
 
-  return { status: attainment >= 1 ? "on_track" : "below_target", attainment };
+  return { status: attainment >= 1 ? 'on_track' : 'below_target', attainment };
 }
 
 /**
@@ -143,23 +137,19 @@ export function leaveBurn(rows: LeaveSnapshot[]): {
 /** Whole months between joining and now, floored at zero. */
 export function tenureMonths(joinedAt: Date, now: Date): number {
   const months =
-    (now.getFullYear() - joinedAt.getFullYear()) * 12 +
-    (now.getMonth() - joinedAt.getMonth());
+    (now.getFullYear() - joinedAt.getFullYear()) * 12 + (now.getMonth() - joinedAt.getMonth());
   const beforeAnniversaryDay = now.getDate() < joinedAt.getDate();
   return Math.max(0, beforeAnniversaryDay ? months - 1 : months);
 }
 
 /** The next round tenure milestone worth mentioning, or null if none is near. */
-export function nextTenureMilestone(
-  months: number,
-): { label: string; monthsAway: number } | null {
+export function nextTenureMilestone(months: number): { label: string; monthsAway: number } | null {
   const milestones = [6, 12, 24, 36, 60, 120];
   for (const milestone of milestones) {
     if (months < milestone) {
       const monthsAway = milestone - months;
       if (monthsAway > 3) return null;
-      const label =
-        milestone % 12 === 0 ? `${milestone / 12} year` : `${milestone} month`;
+      const label = milestone % 12 === 0 ? `${milestone / 12} year` : `${milestone} month`;
       return { label, monthsAway };
     }
   }
@@ -172,46 +162,40 @@ function pct(value: number): string {
 
 export function buildPerformancePoints(kpis: KpiSnapshot[]): CoachPoint[] {
   if (!kpis.length) {
-    return [
-      {
-        lens: "performance",
-        tone: "watch",
-        headline: "No KPI feed is reaching your record yet",
-        detail:
-          "Nothing has been published against your employee id, so there is no performance trend to read. Your process manager owns the KPI mapping if you expect scores here.",
-      },
-    ];
+    return [{
+      lens: 'performance',
+      tone: 'watch',
+      headline: 'No KPI feed is reaching your record yet',
+      detail: 'Nothing has been published against your employee id, so there is no performance trend to read. Your process manager owns the KPI mapping if you expect scores here.',
+    }];
   }
 
   return kpis.map((kpi) => {
     const { status, attainment } = scoreKpi(kpi);
-    const unit = kpi.unit === "percent" ? "%" : kpi.unit ? ` ${kpi.unit}` : "";
+    const unit = kpi.unit === 'percent' ? '%' : kpi.unit ? ` ${kpi.unit}` : '';
 
-    if (status === "insufficient_data") {
-      const coverage =
-        kpi.expectedSampleCount && kpi.expectedSampleCount > 0
-          ? ` — covering ${Math.round((kpi.sampleCount / kpi.expectedSampleCount) * 100)}% of your working days`
-          : "";
+    if (status === 'insufficient_data') {
+      const coverage = kpi.expectedSampleCount && kpi.expectedSampleCount > 0
+        ? ` — covering ${Math.round((kpi.sampleCount / kpi.expectedSampleCount) * 100)}% of your working days`
+        : '';
       return {
-        lens: "performance" as const,
-        tone: "watch" as const,
+        lens: 'performance' as const,
+        tone: 'watch' as const,
         headline: `${kpi.metricName}: not enough data to score`,
-        detail:
-          `Only ${kpi.sampleCount} reading${kpi.sampleCount === 1 ? "" : "s"} have been published${coverage}. ` +
-          "Scoring you on a feed this patchy would be misleading, so no verdict is given. Your process manager owns the KPI publication.",
+        detail: `Only ${kpi.sampleCount} reading${kpi.sampleCount === 1 ? '' : 's'} have been published${coverage}. ` +
+          'Scoring you on a feed this patchy would be misleading, so no verdict is given. Your process manager owns the KPI publication.',
       };
     }
 
     const attained = attainment as number;
     return {
-      lens: "performance" as const,
-      tone: attained >= 1 ? "celebrate" : attained >= 0.9 ? "steady" : "act",
+      lens: 'performance' as const,
+      tone: attained >= 1 ? 'celebrate' : attained >= 0.9 ? 'steady' : 'act',
       headline: `${kpi.metricName}: ${pct(attained)} of target`,
-      detail:
-        `You are averaging ${kpi.averageActual}${unit} against a target of ${kpi.targetValue}${unit}, across ${kpi.sampleCount} readings.` +
+      detail: `You are averaging ${kpi.averageActual}${unit} against a target of ${kpi.targetValue}${unit}, across ${kpi.sampleCount} readings.` +
         (attained >= 1
-          ? " That is at or above target — keep the pattern that got you here."
-          : " Closing this gap is the single clearest lever you have right now."),
+          ? ' That is at or above target — keep the pattern that got you here.'
+          : ' Closing this gap is the single clearest lever you have right now.'),
     };
   });
 }
@@ -224,50 +208,43 @@ export function buildDisciplinePoints(
   const rate = lateRate(recent);
 
   if (recent.workingDays === 0) {
-    return [
-      {
-        lens: "discipline",
-        tone: "watch",
-        headline: "No attendance records in the recent window",
-        detail:
-          "There is nothing logged for the last 30 days, so punctuality cannot be assessed.",
-      },
-    ];
+    return [{
+      lens: 'discipline',
+      tone: 'watch',
+      headline: 'No attendance records in the recent window',
+      detail: 'There is nothing logged for the last 30 days, so punctuality cannot be assessed.',
+    }];
   }
 
   points.push({
-    lens: "discipline",
-    tone: rate === 0 ? "celebrate" : rate <= 0.1 ? "steady" : "act",
-    headline:
-      rate === 0
-        ? "No late marks in the last 30 days"
-        : `${recent.lateMarks} late mark${recent.lateMarks === 1 ? "" : "s"} in ${recent.workingDays} working days`,
-    detail:
-      rate === 0
-        ? "Clean punctuality record for the window. This is the kind of consistency that shows up in appraisals."
-        : `That is ${pct(rate)} of your working days. Attendance percentage feeds your KPI, so punctuality and performance move together here.`,
+    lens: 'discipline',
+    tone: rate === 0 ? 'celebrate' : rate <= 0.1 ? 'steady' : 'act',
+    headline: rate === 0
+      ? 'No late marks in the last 30 days'
+      : `${recent.lateMarks} late mark${recent.lateMarks === 1 ? '' : 's'} in ${recent.workingDays} working days`,
+    detail: rate === 0
+      ? 'Clean punctuality record for the window. This is the kind of consistency that shows up in appraisals.'
+      : `That is ${pct(rate)} of your working days. Attendance percentage feeds your KPI, so punctuality and performance move together here.`,
   });
 
   if (recent.lwpDays > 0) {
     points.push({
-      lens: "discipline",
-      tone: "act",
-      headline: `${recent.lwpDays} day${recent.lwpDays === 1 ? "" : "s"} marked loss of pay`,
-      detail:
-        "LWP days reduce payable days directly. If any of these were approved leave recorded wrongly, raise a regularisation before the payroll cut-off.",
+      lens: 'discipline',
+      tone: 'act',
+      headline: `${recent.lwpDays} day${recent.lwpDays === 1 ? '' : 's'} marked loss of pay`,
+      detail: 'LWP days reduce payable days directly. If any of these were approved leave recorded wrongly, raise a regularisation before the payroll cut-off.',
     });
   }
 
   const trend = punctualityTrend(recent, previous);
-  if (trend && trend.direction !== "steady") {
+  if (trend && trend.direction !== 'steady') {
     points.push({
-      lens: "discipline",
-      tone: trend.direction === "improving" ? "celebrate" : "watch",
-      headline:
-        trend.direction === "improving"
-          ? `Punctuality improving — late rate down ${Math.abs(trend.deltaPct)} points`
-          : `Punctuality slipping — late rate up ${Math.abs(trend.deltaPct)} points`,
-      detail: "Measured against the previous 30-day window.",
+      lens: 'discipline',
+      tone: trend.direction === 'improving' ? 'celebrate' : 'watch',
+      headline: trend.direction === 'improving'
+        ? `Punctuality improving — late rate down ${Math.abs(trend.deltaPct)} points`
+        : `Punctuality slipping — late rate up ${Math.abs(trend.deltaPct)} points`,
+      detail: 'Measured against the previous 30-day window.',
     });
   }
 
@@ -277,36 +254,33 @@ export function buildDisciplinePoints(
 export function buildWellbeingPoints(leave: LeaveSnapshot[]): CoachPoint[] {
   const burn = leaveBurn(leave);
   if (burn.allocated === 0) {
-    return [
-      {
-        lens: "wellbeing",
-        tone: "watch",
-        headline: "No leave allocation found for this year",
-        detail:
-          "Without an allocation there is nothing to plan against. HR owns the leave ledger if this looks wrong.",
-      },
-    ];
+    return [{
+      lens: 'wellbeing',
+      tone: 'watch',
+      headline: 'No leave allocation found for this year',
+      detail: 'Without an allocation there is nothing to plan against. HR owns the leave ledger if this looks wrong.',
+    }];
   }
 
   const points: CoachPoint[] = [];
   if (burn.untouched) {
     points.push({
-      lens: "wellbeing",
-      tone: "watch",
-      headline: "You have not taken a single day off this year",
+      lens: 'wellbeing',
+      tone: 'watch',
+      headline: 'You have not taken a single day off this year',
       detail: `All ${burn.allocated} allocated days are still unused. Rest is not a reward for finishing the work — plan a break before the year-end rush.`,
     });
   } else if (burn.burnRate >= 0.85) {
     points.push({
-      lens: "wellbeing",
-      tone: "act",
+      lens: 'wellbeing',
+      tone: 'act',
       headline: `${pct(burn.burnRate)} of your leave is already used`,
       detail: `${Math.round((burn.allocated - burn.used) * 10) / 10} days remain for the rest of the year. Worth planning the remainder deliberately.`,
     });
   } else {
     points.push({
-      lens: "wellbeing",
-      tone: "steady",
+      lens: 'wellbeing',
+      tone: 'steady',
       headline: `Leave balance is healthy — ${Math.round((burn.allocated - burn.used) * 10) / 10} days available`,
       detail: `You have used ${burn.used} of ${burn.allocated} allocated days.`,
     });
@@ -317,11 +291,10 @@ export function buildWellbeingPoints(leave: LeaveSnapshot[]): CoachPoint[] {
     .sort((a, b) => a.available - b.available)[0];
   if (lowest && lowest.available <= 0) {
     points.push({
-      lens: "wellbeing",
-      tone: "watch",
+      lens: 'wellbeing',
+      tone: 'watch',
       headline: `${lowest.leaveName} is exhausted`,
-      detail:
-        "Further absence under this type will fall to another bucket or to loss of pay.",
+      detail: 'Further absence under this type will fall to another bucket or to loss of pay.',
     });
   }
 
@@ -331,28 +304,24 @@ export function buildWellbeingPoints(leave: LeaveSnapshot[]): CoachPoint[] {
 export function buildGrowthPoints(months: number): CoachPoint[] {
   const years = Math.floor(months / 12);
   const remainder = months % 12;
-  const served =
-    years > 0
-      ? `${years} year${years === 1 ? "" : "s"}${remainder ? ` ${remainder} month${remainder === 1 ? "" : "s"}` : ""}`
-      : `${months} month${months === 1 ? "" : "s"}`;
+  const served = years > 0
+    ? `${years} year${years === 1 ? '' : 's'}${remainder ? ` ${remainder} month${remainder === 1 ? '' : 's'}` : ''}`
+    : `${months} month${months === 1 ? '' : 's'}`;
 
-  const points: CoachPoint[] = [
-    {
-      lens: "growth",
-      tone: "steady",
-      headline: `${served} with MAS Callnet`,
-      detail: "Tenure is the backdrop every other number is read against.",
-    },
-  ];
+  const points: CoachPoint[] = [{
+    lens: 'growth',
+    tone: 'steady',
+    headline: `${served} with MAS Callnet`,
+    detail: 'Tenure is the backdrop every other number is read against.',
+  }];
 
   const milestone = nextTenureMilestone(months);
   if (milestone) {
     points.push({
-      lens: "growth",
-      tone: "celebrate",
-      headline: `${milestone.label} milestone is ${milestone.monthsAway} month${milestone.monthsAway === 1 ? "" : "s"} away`,
-      detail:
-        "A good moment to have the growth conversation with your reporting manager.",
+      lens: 'growth',
+      tone: 'celebrate',
+      headline: `${milestone.label} milestone is ${milestone.monthsAway} month${milestone.monthsAway === 1 ? '' : 's'} away`,
+      detail: 'A good moment to have the growth conversation with your reporting manager.',
     });
   }
 
@@ -379,15 +348,12 @@ export function buildTeamPoints(
   totalInScope = members.length,
 ): CoachPoint[] {
   if (!members.length) {
-    return [
-      {
-        lens: "performance",
-        tone: "watch",
-        headline: "No team members resolved under your scope",
-        detail:
-          "Either your assignment scope is empty or nobody mapped to it has attendance in the window. Your HR admin owns the scope mapping.",
-      },
-    ];
+    return [{
+      lens: 'performance',
+      tone: 'watch',
+      headline: 'No team members resolved under your scope',
+      detail: 'Either your assignment scope is empty or nobody mapped to it has attendance in the window. Your HR admin owns the scope mapping.',
+    }];
   }
 
   const points: CoachPoint[] = [];
@@ -395,9 +361,9 @@ export function buildTeamPoints(
 
   const truncated = totalInScope > members.length;
   points.push({
-    lens: "performance",
-    tone: "steady",
-    headline: `${totalInScope} ${totalInScope === 1 ? "person" : "people"} in your scope`,
+    lens: 'performance',
+    tone: 'steady',
+    headline: `${totalInScope} ${totalInScope === 1 ? 'person' : 'people'} in your scope`,
     detail: truncated
       ? `Reading the first ${members.length} by name; ${withDays.length} of those have attendance logged in the last 30 days. Counts below cover the sample, not the whole scope.`
       : `${withDays.length} of them have attendance logged in the last 30 days.`,
@@ -409,23 +375,18 @@ export function buildTeamPoints(
 
   if (!late.length && withDays.length) {
     points.push({
-      lens: "discipline",
-      tone: "celebrate",
-      headline: "Nobody in your team carries a late mark this window",
-      detail:
-        "Worth saying out loud in your next huddle — this rarely holds for a whole team.",
+      lens: 'discipline',
+      tone: 'celebrate',
+      headline: 'Nobody in your team carries a late mark this window',
+      detail: 'Worth saying out loud in your next huddle — this rarely holds for a whole team.',
     });
   } else if (late.length) {
-    const named = late
-      .slice(0, 3)
-      .map(
-        (member) =>
-          `${member.name} (${member.lateMarks}/${member.workingDays})`,
-      )
-      .join(", ");
+    const named = late.slice(0, 3)
+      .map((member) => `${member.name} (${member.lateMarks}/${member.workingDays})`)
+      .join(', ');
     points.push({
-      lens: "discipline",
-      tone: late.length > withDays.length / 2 ? "act" : "watch",
+      lens: 'discipline',
+      tone: late.length > withDays.length / 2 ? 'act' : 'watch',
       headline: `${late.length} of ${withDays.length} have late marks`,
       detail: `Highest concentration: ${named}. A short conversation now costs less than a regularisation backlog later.`,
     });
@@ -435,44 +396,24 @@ export function buildTeamPoints(
     .filter((member) => member.lwpDays > 0)
     .sort((a, b) => b.lwpDays - a.lwpDays);
   if (lwp.length) {
-    const totalLwp =
-      Math.round(lwp.reduce((sum, member) => sum + member.lwpDays, 0) * 10) /
-      10;
+    const totalLwp = Math.round(lwp.reduce((sum, member) => sum + member.lwpDays, 0) * 10) / 10;
     points.push({
-      lens: "discipline",
-      tone: "act",
-      headline: `${totalLwp} loss-of-pay day${totalLwp === 1 ? "" : "s"} across ${lwp.length} member${lwp.length === 1 ? "" : "s"}`,
-      detail: `Worst first: ${lwp
-        .slice(0, 3)
-        .map(
-          (member) =>
-            `${member.name} (${Math.round(member.lwpDays * 10) / 10}d)`,
-        )
-        .join(
-          ", ",
-        )}. Any recorded in error need regularisation before the payroll cut-off.`,
+      lens: 'discipline',
+      tone: 'act',
+      headline: `${totalLwp} loss-of-pay day${totalLwp === 1 ? '' : 's'} across ${lwp.length} member${lwp.length === 1 ? '' : 's'}`,
+      detail: `Worst first: ${lwp.slice(0, 3).map((member) => `${member.name} (${Math.round(member.lwpDays * 10) / 10}d)`).join(', ')}. Any recorded in error need regularisation before the payroll cut-off.`,
     });
   }
 
   const thin = withDays
     .filter((member) => member.presentDays / member.workingDays < 0.8)
-    .sort(
-      (a, b) => a.presentDays / a.workingDays - b.presentDays / b.workingDays,
-    );
+    .sort((a, b) => a.presentDays / a.workingDays - b.presentDays / b.workingDays);
   if (thin.length) {
     points.push({
-      lens: "wellbeing",
-      tone: "watch",
-      headline: `${thin.length} member${thin.length === 1 ? "" : "s"} below 80% attendance`,
-      detail: `Lowest first: ${thin
-        .slice(0, 3)
-        .map(
-          (member) =>
-            `${member.name} (${Math.round((member.presentDays / member.workingDays) * 100)}%)`,
-        )
-        .join(
-          ", ",
-        )}. Low attendance is usually a symptom — worth asking before it becomes an exit.`,
+      lens: 'wellbeing',
+      tone: 'watch',
+      headline: `${thin.length} member${thin.length === 1 ? '' : 's'} below 80% attendance`,
+      detail: `Lowest first: ${thin.slice(0, 3).map((member) => `${member.name} (${Math.round((member.presentDays / member.workingDays) * 100)}%)`).join(', ')}. Low attendance is usually a symptom — worth asking before it becomes an exit.`,
     });
   }
 
@@ -480,10 +421,10 @@ export function buildTeamPoints(
 }
 
 const TONE_PREFIX: Record<CoachTone, string> = {
-  celebrate: "🟢",
-  steady: "🔵",
-  watch: "🟡",
-  act: "🔴",
+  celebrate: '🟢',
+  steady: '🔵',
+  watch: '🟡',
+  act: '🔴',
 };
 
 export interface CoachAddressee {
@@ -495,10 +436,7 @@ export interface CoachAddressee {
 
 /** First name only — "SHIVAM SHIV GIRI" reads as shouting in a greeting. */
 export function firstName(fullName: string | null | undefined): string | null {
-  const parts = String(fullName ?? "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const parts = String(fullName ?? '').trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return null;
   const first = parts[0];
   return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
@@ -508,21 +446,17 @@ export function firstName(fullName: string | null | undefined): string | null {
  * Open the report by addressing the person and placing them, so it reads as
  * written for them rather than rendered from a template.
  */
-export function coachGreeting(
-  who: CoachAddressee,
-  actionCount: number,
-): string {
+export function coachGreeting(who: CoachAddressee, actionCount: number): string {
   const name = firstName(who.fullName);
-  const place = [who.processName, who.branchName].filter(Boolean).join(" at ");
-  const hello = name ? `${name}, here` : "Here";
-  const located = place ? ` for ${place}` : "";
+  const place = [who.processName, who.branchName].filter(Boolean).join(' at ');
+  const hello = name ? `${name}, here` : 'Here';
+  const located = place ? ` for ${place}` : '';
 
-  const framing =
-    actionCount === 0
-      ? "nothing here needs chasing this week"
-      : actionCount === 1
-        ? "one thing is worth your attention this week"
-        : `${actionCount} things are worth your attention this week`;
+  const framing = actionCount === 0
+    ? 'nothing here needs chasing this week'
+    : actionCount === 1
+      ? 'one thing is worth your attention this week'
+      : `${actionCount} things are worth your attention this week`;
 
   return who.isTeamView
     ? `${hello} is your read${located} — your own record first, then your team. ${framing.charAt(0).toUpperCase()}${framing.slice(1)}.`
@@ -531,17 +465,12 @@ export function coachGreeting(
 
 /** Render the coaching points as the message body Mira returns. */
 export function renderCoachReport(points: CoachPoint[]): string {
-  const order: CoachPoint["lens"][] = [
-    "performance",
-    "discipline",
-    "wellbeing",
-    "growth",
-  ];
-  const titles: Record<CoachPoint["lens"], string> = {
-    performance: "Performance",
-    discipline: "Attendance and discipline",
-    wellbeing: "Wellbeing",
-    growth: "Growth",
+  const order: CoachPoint['lens'][] = ['performance', 'discipline', 'wellbeing', 'growth'];
+  const titles: Record<CoachPoint['lens'], string> = {
+    performance: 'Performance',
+    discipline: 'Attendance and discipline',
+    wellbeing: 'Wellbeing',
+    growth: 'Growth',
   };
 
   const sections = order
@@ -549,14 +478,11 @@ export function renderCoachReport(points: CoachPoint[]): string {
       const forLens = points.filter((point) => point.lens === lens);
       if (!forLens.length) return null;
       const lines = forLens
-        .map(
-          (point) =>
-            `${TONE_PREFIX[point.tone]} **${point.headline}**\n   ${point.detail}`,
-        )
-        .join("\n");
+        .map((point) => `${TONE_PREFIX[point.tone]} **${point.headline}**\n   ${point.detail}`)
+        .join('\n');
       return `**${titles[lens]}**\n${lines}`;
     })
     .filter(Boolean);
 
-  return sections.join("\n\n");
+  return sections.join('\n\n');
 }

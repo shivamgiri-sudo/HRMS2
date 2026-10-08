@@ -1,8 +1,5 @@
 import { Router } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { resolveDashboardScopeForRequest, DashboardScopeConfigurationError } from "../../shared/dashboardScope.js";
@@ -11,12 +8,7 @@ import { legacyReportsService, type LegacyFilter } from "./legacy-reports.servic
 export const legacyReportsRouter = Router();
 
 /** Salary voucher sensitivity: full payroll in one response. Narrow roles only. */
-const ROLES = [
-  "super_admin",
-  "hr_admin",
-  "payroll_hr",
-  "finance_head",
-] as const;
+const ROLES = ["super_admin", "hr_admin", "payroll_hr", "finance_head"] as const;
 
 const h =
   (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -25,17 +17,13 @@ const h =
 
 function parseFilter(query: Record<string, unknown>): LegacyFilter {
   return {
-    branch: query.branch ? String(query.branch) : undefined,
-    process: query.process ? String(query.process) : undefined,
-    month: query.month ? String(query.month) : undefined,
-    from_date: query.from_date ? String(query.from_date) : undefined,
-    to_date: query.to_date ? String(query.to_date) : undefined,
-    employee_code: query.employee_code
-      ? String(query.employee_code)
-      : undefined,
-    employee_name: query.employee_name
-      ? String(query.employee_name)
-      : undefined,
+    branch:         query.branch         ? String(query.branch)         : undefined,
+    process:        query.process        ? String(query.process)        : undefined,
+    month:          query.month          ? String(query.month)          : undefined,
+    from_date:      query.from_date      ? String(query.from_date)      : undefined,
+    to_date:        query.to_date        ? String(query.to_date)        : undefined,
+    employee_code:  query.employee_code  ? String(query.employee_code)  : undefined,
+    employee_name:  query.employee_name  ? String(query.employee_name)  : undefined,
   };
 }
 

@@ -20,9 +20,7 @@ interface DailyRow extends RowDataPacket {
   unique_agents: number;
   talk_seconds: number | null;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 export function buildDailySql(): string {
   return `SELECT DATE(date_time) AS report_date,
@@ -53,9 +51,7 @@ export async function syncBlaBliBluCdrDaily(
   lookbackDays = 30,
 ): Promise<{ rowsUpserted: number; error?: string }> {
   const dialerPool = await getNamedPool("dialer");
-  const sinceDate = new Date(Date.now() - lookbackDays * 86400000)
-    .toISOString()
-    .slice(0, 10);
+  const sinceDate = new Date(Date.now() - lookbackDays * 86400000).toISOString().slice(0, 10);
 
   const [procRows] = await db.execute<Ref[]>(
     `SELECT id FROM process_master WHERE process_name = 'Bla Bli Blu' AND active_status = 1 LIMIT 1`,
@@ -66,9 +62,7 @@ export async function syncBlaBliBluCdrDaily(
   }
 
   try {
-    const [rows] = await dialerPool.query<DailyRow[]>(buildDailySql(), [
-      sinceDate,
-    ]);
+    const [rows] = await dialerPool.query<DailyRow[]>(buildDailySql(), [sinceDate]);
 
     let rowsUpserted = 0;
     for (const row of rows) {
@@ -86,14 +80,8 @@ export async function syncBlaBliBluCdrDaily(
             talk_seconds = VALUES(talk_seconds),
             synced_at = NOW()`,
         [
-          randomUUID(),
-          processId,
-          reportDate,
-          row.total_calls,
-          row.unique_customers,
-          row.connected_calls,
-          row.unique_agents,
-          row.talk_seconds,
+          randomUUID(), processId, reportDate, row.total_calls, row.unique_customers,
+          row.connected_calls, row.unique_agents, row.talk_seconds,
           importedByUserId,
         ] as never[],
       );
@@ -101,9 +89,6 @@ export async function syncBlaBliBluCdrDaily(
     }
     return { rowsUpserted };
   } catch (err: unknown) {
-    return {
-      rowsUpserted: 0,
-      error: err instanceof Error ? err.message : String(err),
-    };
+    return { rowsUpserted: 0, error: err instanceof Error ? err.message : String(err) };
   }
 }

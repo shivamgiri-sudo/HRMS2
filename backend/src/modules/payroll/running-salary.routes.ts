@@ -9,10 +9,7 @@
  */
 
 import { Router } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { hasAnyRole, buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { computeRunningSalary } from "./running-salary.service.js";
 import { toISTDate } from "../../shared/timezone.js";
@@ -31,15 +28,8 @@ export const runningSalaryRouter = Router();
  * HO user keeps org-wide reach.
  */
 const RUNNING_SALARY_SCOPE_ROLES = [
-  "payroll_head",
-  "payroll_branch",
-  "payroll",
-  "payroll_admin",
-  "hr",
-  "hr_admin",
-  "wfm",
-  "branch_head",
-  "management",
+  "payroll_head", "payroll_branch", "payroll", "payroll_admin",
+  "hr", "hr_admin", "wfm", "branch_head", "management",
 ];
 
 /**
@@ -65,10 +55,7 @@ const EMPLOYEE_SCOPE_ALIASES = {
  * window on the 1st. That silently returned last month's running salary.
  */
 function currentIstRunMonth(): string {
-  return (toISTDate(new Date()) ?? new Date().toISOString().slice(0, 10)).slice(
-    0,
-    7,
-  );
+  return (toISTDate(new Date()) ?? new Date().toISOString().slice(0, 10)).slice(0, 7);
 }
 
 /**
@@ -82,12 +69,9 @@ function currentIstRunMonth(): string {
  *   • the current month has no active salary_prep_run row.
  * Outside that window, or once a run is created, the current month is returned.
  */
-async function resolveDefaultRunMonth(
-  db: typeof import("../../db/mysql.js").db,
-): Promise<string> {
+async function resolveDefaultRunMonth(db: typeof import("../../db/mysql.js").db): Promise<string> {
   const currentMonth = currentIstRunMonth();
-  const todayIst =
-    toISTDate(new Date()) ?? new Date().toISOString().slice(0, 10);
+  const todayIst = (toISTDate(new Date()) ?? new Date().toISOString().slice(0, 10));
   const dayOfMonth = parseInt(todayIst.slice(8, 10), 10);
 
   // Only look back during the early rollover window (days 1–3)
@@ -106,6 +90,7 @@ async function resolveDefaultRunMonth(
   const prevY = m === 1 ? y - 1 : y;
   return `${prevY}-${String(prevM).padStart(2, "0")}`;
 }
+
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
 
@@ -201,66 +186,60 @@ async function getFinalizedLineForMonth(
   );
   const row = (rows as any[])[0];
   if (!row) return null;
-  const grossSalary = Number(row.gross_salary ?? 0);
-  const netSalary = Number(row.net_salary ?? 0);
-  const payableDays = Number(row.final_payable_days ?? 0);
-  const weekoffDays = Number(row.eligible_weekoff_days ?? 0);
-  const holidayDays = Number(row.eligible_holiday_days ?? 0);
-  const lwpDays = Number(row.lwp_days ?? 0);
-  const runStatus = String(row.run_status ?? "");
-  const CLOSED_STATUSES = new Set([
-    "disbursed",
-    "finalized",
-    "locked",
-    "approved",
-    "completed",
-  ]);
+  const grossSalary   = Number(row.gross_salary   ?? 0);
+  const netSalary     = Number(row.net_salary     ?? 0);
+  const payableDays   = Number(row.final_payable_days ?? 0);
+  const weekoffDays   = Number(row.eligible_weekoff_days ?? 0);
+  const holidayDays   = Number(row.eligible_holiday_days ?? 0);
+  const lwpDays       = Number(row.lwp_days       ?? 0);
+  const runStatus     = String(row.run_status ?? "");
+  const CLOSED_STATUSES = new Set(["disbursed", "finalized", "locked", "approved", "completed"]);
   return {
-    run_status: runStatus,
-    run_month: String(row.run_month),
-    gross_salary: grossSalary,
-    total_deductions: Number(row.total_deductions ?? 0),
-    net_salary: netSalary,
-    basic: Number(row.basic ?? 0),
-    hra: Number(row.hra ?? 0),
-    special_allowance: Number(row.special_allowance ?? 0),
-    pf_employee: Number(row.pf_employee ?? 0),
-    esic_employee: Number(row.esic_employee ?? 0),
-    professional_tax: Number(row.professional_tax ?? 0),
-    tds: Number(row.tds ?? 0),
-    final_payable_days: payableDays,
-    paid_working_days: Number(row.paid_working_days ?? 0),
+    run_status:           runStatus,
+    run_month:            String(row.run_month),
+    gross_salary:         grossSalary,
+    total_deductions:     Number(row.total_deductions ?? 0),
+    net_salary:           netSalary,
+    basic:                Number(row.basic ?? 0),
+    hra:                  Number(row.hra ?? 0),
+    special_allowance:    Number(row.special_allowance ?? 0),
+    pf_employee:          Number(row.pf_employee ?? 0),
+    esic_employee:        Number(row.esic_employee ?? 0),
+    professional_tax:     Number(row.professional_tax ?? 0),
+    tds:                  Number(row.tds ?? 0),
+    final_payable_days:   payableDays,
+    paid_working_days:    Number(row.paid_working_days ?? 0),
     eligible_weekoff_days: weekoffDays,
     eligible_holiday_days: holidayDays,
     active_calendar_days: Number(row.active_calendar_days ?? 0),
-    lwp_days: lwpDays,
-    present_days: Number(row.present_days ?? 0),
-    is_finalized: CLOSED_STATUSES.has(runStatus.toLowerCase()),
-    is_draft: !CLOSED_STATUSES.has(runStatus.toLowerCase()),
+    lwp_days:             lwpDays,
+    present_days:         Number(row.present_days ?? 0),
+    is_finalized:         CLOSED_STATUSES.has(runStatus.toLowerCase()),
+    is_draft:             !CLOSED_STATUSES.has(runStatus.toLowerCase()),
     // Aliases matching the live-estimate field names so every frontend consumer
     // (SalaryTab, RunningPayrollBreakdown, PayslipViewer) works identically
     // whether the month is finalized or still in progress.
-    earned_salary_till_date: grossSalary,
-    earned_net_till_date: netSalary,
-    earned_payable_days: payableDays,
+    earned_salary_till_date:    grossSalary,
+    earned_net_till_date:       netSalary,
+    earned_payable_days:        payableDays,
     eligible_weekoff_till_date: weekoffDays,
     eligible_holiday_till_date: holidayDays,
-    lwp_till_date: lwpDays,
-    projected_salary: grossSalary,
-    projected_net: netSalary,
-    projected_payable_days: payableDays,
-    gross_monthly: grossSalary,
-    esic_applicable: Number(row.esic_employee ?? 0) > 0,
+    lwp_till_date:              lwpDays,
+    projected_salary:           grossSalary,
+    projected_net:              netSalary,
+    projected_payable_days:     payableDays,
+    gross_monthly:              grossSalary,
+    esic_applicable:            Number(row.esic_employee ?? 0) > 0,
     // A finalized month is never gated on APR provenance. The money is already
     // decided and, once locked, paid — telling the viewer it is "not APR-verified"
     // would question a settled figure it can no longer change. The live estimate
     // path is where the distinction is actionable.
-    apr_eligible: false,
-    apr_verified_payable_days: null,
+    apr_eligible:                 false,
+    apr_verified_payable_days:    null,
     apr_verified_salary_till_date: null,
-    fallback_payable_days: null,
-    fallback_salary_till_date: null,
-    apr_no_data_days: null,
+    fallback_payable_days:        null,
+    fallback_salary_till_date:    null,
+    apr_no_data_days:             null,
   };
 }
 
@@ -282,20 +261,14 @@ runningSalaryRouter.get(
 
     const [empRows] = await (db as any).execute(
       "SELECT id FROM employees WHERE auth_user_id = ? AND employment_status = 'active' LIMIT 1",
-      [userId],
+      [userId]
     );
     if (!(empRows as any[]).length) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message: "No active employee record found for this user",
-        });
+      return res.status(404).json({ success: false, message: "No active employee record found for this user" });
     }
     const employeeId = (empRows[0] as any).id;
 
-    const rawMonth =
-      (req.query.month as string) || (req.query.runMonth as string) || "";
+    const rawMonth = (req.query.month as string) || (req.query.runMonth as string) || "";
     let runMonthYYYYMM: string;
     let runMonth: string;
     if (rawMonth && /^\d{4}-\d{2}$/.test(rawMonth)) {
@@ -308,10 +281,7 @@ runningSalaryRouter.get(
     }
 
     // Return stored finalized line when it exists — single source of truth once locked
-    const finalized = await getFinalizedLineForMonth(
-      employeeId,
-      runMonthYYYYMM,
-    );
+    const finalized = await getFinalizedLineForMonth(employeeId, runMonthYYYYMM);
     if (finalized) {
       return res.json({ success: true, data: finalized, run_month: runMonth });
     }
@@ -323,7 +293,7 @@ runningSalaryRouter.get(
     } catch (err: any) {
       return res.status(500).json({ success: false, message: err.message });
     }
-  },
+  }
 );
 
 /**
@@ -347,17 +317,8 @@ runningSalaryRouter.get(
     if (
       !(await hasAnyRole(
         userId,
-        "super_admin",
-        "admin",
-        "payroll_head",
-        "payroll_branch",
-        "payroll",
-        "payroll_admin",
-        "hr",
-        "hr_admin",
-        "wfm",
-        "branch_head",
-        "management",
+        "super_admin", "admin", "payroll_head", "payroll_branch", "payroll",
+        "payroll_admin", "hr", "hr_admin", "wfm", "branch_head", "management"
       ))
     ) {
       return res.status(403).json({ success: false, message: "Access denied" });
@@ -405,10 +366,7 @@ runningSalaryRouter.get(
     }
 
     // Return stored finalized line when it exists — single source of truth once locked
-    const finalized = await getFinalizedLineForMonth(
-      employeeId,
-      runMonthYYYYMM,
-    );
+    const finalized = await getFinalizedLineForMonth(employeeId, runMonthYYYYMM);
     if (finalized) {
       return res.json({ success: true, data: finalized, run_month: runMonth });
     }
@@ -421,7 +379,7 @@ runningSalaryRouter.get(
     } catch (err: any) {
       return res.status(500).json({ success: false, message: err.message });
     }
-  },
+  }
 );
 
 /**
@@ -446,25 +404,14 @@ runningSalaryRouter.get(
     if (
       !(await hasAnyRole(
         userId,
-        "super_admin",
-        "admin",
-        "payroll_head",
-        "payroll_branch",
-        "payroll",
-        "branch_head",
-        "management",
+        "super_admin", "admin", "payroll_head", "payroll_branch", "payroll",
+        "branch_head", "management",
         // The team attendance grid shows each employee's salary days beside their
         // month, and that figure has to be the one payroll will actually pay — so it
         // comes from here, where computeRunningSalary is the single source, rather
         // than from a second formula written for the grid. Row scope is unchanged and
         // still applies below; this widens who may ask, not whose data comes back.
-        "manager",
-        "assistant_manager",
-        "tl",
-        "team_leader",
-        "process_manager",
-        "hr",
-        "wfm",
+        "manager", "assistant_manager", "tl", "team_leader", "process_manager", "hr", "wfm",
       ))
     ) {
       return res.status(403).json({ success: false, message: "Access denied" });
@@ -484,10 +431,7 @@ runningSalaryRouter.get(
       runMonth = `${runMonthYYYYMM}-01`;
     }
 
-    const { branch_id, process_id, search } = req.query as Record<
-      string,
-      string
-    >;
+    const { branch_id, process_id, search } = req.query as Record<string, string>;
     const limitRaw = parseInt((req.query.limit as string) || "50", 10);
     const limit = Math.min(Math.max(1, limitRaw), 100);
     const pageRaw = parseInt((req.query.page as string) || "1", 10);
@@ -499,21 +443,15 @@ runningSalaryRouter.get(
       "esa.active_status = 1",
     ];
     const params: unknown[] = [];
-    if (branch_id) {
-      conds.push("e.branch_id = ?");
-      params.push(branch_id);
-    }
-    if (process_id) {
-      conds.push("e.process_id = ?");
-      params.push(process_id);
-    }
+    if (branch_id) { conds.push("e.branch_id = ?"); params.push(branch_id); }
+    if (process_id) { conds.push("e.process_id = ?"); params.push(process_id); }
     if (search && search.trim()) {
       // Escape SQL LIKE wildcards, same guard payroll.service.ts's listPayrollRecords uses.
-      const escaped = search.trim().replace(/[%_\\]/g, (ch) => "\\" + ch);
+      const escaped = search.trim().replace(/[%_\\]/g, ch => "\\" + ch);
       const s = `%${escaped}%`;
       conds.push(
         "(e.employee_code LIKE ? ESCAPE '\\\\' OR e.full_name LIKE ? ESCAPE '\\\\'" +
-          " OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ? ESCAPE '\\\\')",
+        " OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ? ESCAPE '\\\\')"
       );
       params.push(s, s, s);
     }
@@ -553,69 +491,45 @@ runningSalaryRouter.get(
        ${fromSql}
        ORDER BY name ASC
        LIMIT ${limit} OFFSET ${offset}`,
-      params,
+      params
     );
     const [countRows] = await (db as any).execute(
       `SELECT COUNT(*) AS total FROM employees e
        JOIN employee_salary_assignment esa ON esa.employee_id = e.id
       WHERE ${whereSql}`,
-      params,
+      params
     );
     const total = Number((countRows as any[])[0]?.total ?? 0);
 
     const results = await Promise.allSettled(
       (empRows as any[]).map(async (emp: any) => {
         try {
-          const finalized = await getFinalizedLineForMonth(
-            emp.id,
-            runMonthYYYYMM,
-          );
+          const finalized = await getFinalizedLineForMonth(emp.id, runMonthYYYYMM);
           if (finalized) {
             return {
-              employee_id: emp.id,
-              employee_code: emp.employee_code,
-              name: emp.name,
-              branch_name: emp.branch_name,
-              process_name: emp.process_name,
-              designation_name: emp.designation_name,
+              employee_id: emp.id, employee_code: emp.employee_code, name: emp.name,
+              branch_name: emp.branch_name, process_name: emp.process_name, designation_name: emp.designation_name,
               ...finalized,
             };
           }
           const summary = await computeRunningSalary(emp.id, runMonth);
           return {
-            employee_id: emp.id,
-            employee_code: emp.employee_code,
-            name: emp.name,
-            branch_name: emp.branch_name,
-            process_name: emp.process_name,
-            designation_name: emp.designation_name,
+            employee_id: emp.id, employee_code: emp.employee_code, name: emp.name,
+            branch_name: emp.branch_name, process_name: emp.process_name, designation_name: emp.designation_name,
             ...summary,
           };
         } catch {
-          return {
-            employee_id: emp.id,
-            employee_code: emp.employee_code,
-            name: emp.name,
-            error: true,
-          };
+          return { employee_id: emp.id, employee_code: emp.employee_code, name: emp.name, error: true };
         }
-      }),
+      })
     );
 
     const data = results
       .filter((r) => r.status === "fulfilled")
       .map((r) => (r as PromiseFulfilledResult<any>).value);
 
-    return res.json({
-      success: true,
-      data,
-      run_month: runMonth,
-      count: data.length,
-      total,
-      page,
-      limit,
-    });
-  },
+    return res.json({ success: true, data, run_month: runMonth, count: data.length, total, page, limit });
+  }
 );
 
 /**
@@ -640,17 +554,8 @@ runningSalaryRouter.get(
     if (
       !(await hasAnyRole(
         userId,
-        "super_admin",
-        "admin",
-        "payroll_head",
-        "payroll_branch",
-        "payroll",
-        "branch_head",
-        "management",
-        "hr",
-        "hr_admin",
-        "wfm",
-        "process_manager",
+        "super_admin", "admin", "payroll_head", "payroll_branch", "payroll",
+        "branch_head", "management", "hr", "hr_admin", "wfm", "process_manager",
       ))
     ) {
       return res.status(403).json({ success: false, message: "Access denied" });
@@ -668,12 +573,7 @@ runningSalaryRouter.get(
 
     const groupBy = (req.query.group_by as string) || "branch";
     if (!["branch", "process", "cost_centre"].includes(groupBy)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "group_by must be branch, process, or cost_centre",
-        });
+      return res.status(400).json({ success: false, message: "group_by must be branch, process, or cost_centre" });
     }
 
     const { branch_id, process_id } = req.query as Record<string, string>;
@@ -693,14 +593,8 @@ runningSalaryRouter.get(
     ];
     const params: unknown[] = [...scoped.params];
 
-    if (branch_id) {
-      conds.push("e.branch_id = ?");
-      params.push(branch_id);
-    }
-    if (process_id) {
-      conds.push("e.process_id = ?");
-      params.push(process_id);
-    }
+    if (branch_id) { conds.push("e.branch_id = ?"); params.push(branch_id); }
+    if (process_id) { conds.push("e.process_id = ?"); params.push(process_id); }
 
     // Choose group columns based on group_by
     let groupIdExpr: string;
@@ -770,15 +664,15 @@ runningSalaryRouter.get(
     try {
       const [rows] = await (db as any).execute(sql, allParams);
       const data = (rows as any[]).map((r: any) => ({
-        group_id: r.group_id,
-        group_name: r.group_name,
-        group_type: groupLabel,
-        headcount: Number(r.headcount ?? 0),
-        total_gross: Math.round(Number(r.total_gross ?? 0)),
-        total_net: Math.round(Number(r.total_net ?? 0)),
-        avg_gross: Math.round(Number(r.avg_gross ?? 0)),
+        group_id:        r.group_id,
+        group_name:      r.group_name,
+        group_type:      groupLabel,
+        headcount:       Number(r.headcount ?? 0),
+        total_gross:     Math.round(Number(r.total_gross ?? 0)),
+        total_net:       Math.round(Number(r.total_net ?? 0)),
+        avg_gross:       Math.round(Number(r.avg_gross ?? 0)),
         finalized_count: Number(r.finalized_count ?? 0),
-        estimate_count: Number(r.estimate_count ?? 0),
+        estimate_count:  Number(r.estimate_count ?? 0),
       }));
 
       return res.json({
@@ -787,11 +681,11 @@ runningSalaryRouter.get(
         run_month: runMonthYYYYMM,
         group_by: groupLabel,
         total_headcount: data.reduce((s: number, r: any) => s + r.headcount, 0),
-        total_gross: data.reduce((s: number, r: any) => s + r.total_gross, 0),
-        total_net: data.reduce((s: number, r: any) => s + r.total_net, 0),
+        total_gross:     data.reduce((s: number, r: any) => s + r.total_gross, 0),
+        total_net:       data.reduce((s: number, r: any) => s + r.total_net, 0),
       });
     } catch (err: any) {
       return res.status(500).json({ success: false, message: err.message });
     }
-  },
+  }
 );

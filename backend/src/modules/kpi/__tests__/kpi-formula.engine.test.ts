@@ -44,18 +44,12 @@ describe("formula engine — arithmetic", () => {
   });
 
   it("substitutes named fields", () => {
-    expect(
-      evaluateFormula("talk_seconds / calls", { talk_seconds: 600, calls: 4 })
-        .value,
-    ).toBe(150);
+    expect(evaluateFormula("talk_seconds / calls", { talk_seconds: 600, calls: 4 }).value).toBe(150);
   });
 
   it("resolves field names case-insensitively", () => {
     // An author typing TALK_SECONDS against a talk_seconds column made a typo, not a choice.
-    expect(
-      evaluateFormula("TALK_SECONDS / Calls", { talk_seconds: 600, calls: 4 })
-        .value,
-    ).toBe(150);
+    expect(evaluateFormula("TALK_SECONDS / Calls", { talk_seconds: 600, calls: 4 }).value).toBe(150);
   });
 });
 
@@ -72,33 +66,22 @@ describe("formula engine — the real production formulas", () => {
   it("expresses AHT as the dialer sync computes it: (talk + hold + acw) / calls", () => {
     // The two definitions disagreeing in production is precisely why this needs to be
     // configuration rather than code — both are now writable per process.
-    const result = evaluateFormula(
-      "(talk_seconds + hold_seconds + acw_seconds) / calls",
-      {
-        talk_seconds: 1200,
-        hold_seconds: 200,
-        acw_seconds: 300,
-        calls: 5,
-      },
-    );
+    const result = evaluateFormula("(talk_seconds + hold_seconds + acw_seconds) / calls", {
+      talk_seconds: 1200,
+      hold_seconds: 200,
+      acw_seconds: 300,
+      calls: 5,
+    });
     expect(result.value).toBe(340);
   });
 
   it("expresses QUALITY_SCORE as points earned over points possible", () => {
-    expect(
-      evaluateFormula("PCT(points_earned, points_possible)", {
-        points_earned: 85,
-        points_possible: 100,
-      }).value,
-    ).toBe(85);
+    expect(evaluateFormula("PCT(points_earned, points_possible)", { points_earned: 85, points_possible: 100 }).value).toBe(85);
   });
 
   it("expresses FATAL_RATE over scored audits, not total audits", () => {
     // The documented fix: dividing by total_audits counted un-scored audits as passes.
-    const result = evaluateFormula("PCT(fatal_audits, scored_audits)", {
-      fatal_audits: 3,
-      scored_audits: 60,
-    });
+    const result = evaluateFormula("PCT(fatal_audits, scored_audits)", { fatal_audits: 3, scored_audits: 60 });
     expect(result.value).toBe(5);
   });
 
@@ -111,23 +94,17 @@ describe("formula engine — the real production formulas", () => {
   });
 
   it("expresses a net login figure with a break deduction", () => {
-    const result = evaluateFormula(
-      "SECONDS_TO_HOURS(login_seconds - break_seconds)",
-      {
-        login_seconds: 32_400,
-        break_seconds: 3_600,
-      },
-    );
+    const result = evaluateFormula("SECONDS_TO_HOURS(login_seconds - break_seconds)", {
+      login_seconds: 32_400,
+      break_seconds: 3_600,
+    });
     expect(result.value).toBe(8);
   });
 });
 
 describe("formula engine — missing data is never zero", () => {
   it("returns no result when an input is null, and says which one", () => {
-    const result = evaluateFormula("talk_seconds / calls", {
-      talk_seconds: null,
-      calls: 4,
-    });
+    const result = evaluateFormula("talk_seconds / calls", { talk_seconds: null, calls: 4 });
     expect(result.value).toBeNull();
     expect(result.error).toBeUndefined();
     expect(result.nullReason).toContain("talk_seconds");
@@ -136,10 +113,7 @@ describe("formula engine — missing data is never zero", () => {
   it("returns no result for division by zero rather than Infinity", () => {
     // Infinity would be capped at the max-achievement ceiling and read as a perfect score:
     // an agent who took no calls would top the AHT leaderboard.
-    const result = evaluateFormula("talk_seconds / calls", {
-      talk_seconds: 600,
-      calls: 0,
-    });
+    const result = evaluateFormula("talk_seconds / calls", { talk_seconds: 600, calls: 0 });
     expect(result.value).toBeNull();
     expect(result.nullReason).toContain("Division by zero");
   });
@@ -157,12 +131,7 @@ describe("formula engine — missing data is never zero", () => {
   it("accepts the strings mysql2 returns for DECIMAL columns", () => {
     // mysql2 hands back DECIMAL as a string. Rejecting that would make every database-backed
     // formula fail while every hand-tested one passed.
-    expect(
-      evaluateFormula("talk_seconds / calls", {
-        talk_seconds: "600.0000",
-        calls: "4",
-      }).value,
-    ).toBe(150);
+    expect(evaluateFormula("talk_seconds / calls", { talk_seconds: "600.0000", calls: "4" }).value).toBe(150);
   });
 
   it("distinguishes a null value from an unwired field", () => {
@@ -178,17 +147,12 @@ describe("formula engine — missing data is never zero", () => {
   });
 
   it("lets an author opt into zero explicitly with COALESCE", () => {
-    expect(
-      evaluateFormula("COALESCE(bonus, 0) + base", { bonus: null, base: 100 })
-        .value,
-    ).toBe(100);
+    expect(evaluateFormula("COALESCE(bonus, 0) + base", { bonus: null, base: 100 }).value).toBe(100);
   });
 
   it("does not let a null condition silently take the else branch", () => {
     // IF(unknown, a, b) is unknown. Taking `b` would be inventing a measurement.
-    const result = evaluateFormula("IF(quality_score > 80, 100, 0)", {
-      quality_score: null,
-    });
+    const result = evaluateFormula("IF(quality_score > 80, 100, 0)", { quality_score: null });
     expect(result.value).toBeNull();
   });
 
@@ -201,9 +165,7 @@ describe("formula engine — missing data is never zero", () => {
   });
 
   it("averages only the values that are present", () => {
-    expect(
-      evaluateFormula("AVG(a, b, c)", { a: 10, b: null, c: 20 }).value,
-    ).toBe(15);
+    expect(evaluateFormula("AVG(a, b, c)", { a: 10, b: null, c: 20 }).value).toBe(15);
     expect(evaluateFormula("AVG(a, b)", { a: null, b: null }).value).toBeNull();
   });
 });
@@ -252,10 +214,7 @@ describe("formula engine — functions", () => {
   });
 
   it("nests functions", () => {
-    const result = evaluateFormula(
-      "ROUND(CLAMP(PCT(passed, total), 0, 100), 1)",
-      { passed: 7, total: 9 },
-    );
+    const result = evaluateFormula("ROUND(CLAMP(PCT(passed, total), 0, 100), 1)", { passed: 7, total: 9 });
     expect(result.value).toBe(77.8);
   });
 });
@@ -278,8 +237,7 @@ describe("formula engine — comparisons and conditionals", () => {
   });
 
   it("scores a banded KPI through nested IF", () => {
-    const banded =
-      "IF(aht <= 240, 100, IF(aht <= 300, 80, IF(aht <= 360, 60, 0)))";
+    const banded = "IF(aht <= 240, 100, IF(aht <= 300, 80, IF(aht <= 360, 60, 0)))";
     expect(evaluateFormula(banded, { aht: 200 }).value).toBe(100);
     expect(evaluateFormula(banded, { aht: 280 }).value).toBe(80);
     expect(evaluateFormula(banded, { aht: 350 }).value).toBe(60);
@@ -289,28 +247,21 @@ describe("formula engine — comparisons and conditionals", () => {
 
 describe("formula engine — validation", () => {
   it("reports the fields and functions a formula uses", () => {
-    const result = validateFormula(
-      "SAFE_DIV(talk_seconds + hold_seconds, calls)",
-    );
+    const result = validateFormula("SAFE_DIV(talk_seconds + hold_seconds, calls)");
     expect(result.ok).toBe(true);
     expect(result.variables).toEqual(["talk_seconds", "hold_seconds", "calls"]);
     expect(result.functions).toEqual(["SAFE_DIV"]);
   });
 
   it("rejects a field the chosen data source does not provide", () => {
-    const result = validateFormula("talk_seconds / mystery_column", [
-      "talk_seconds",
-      "calls",
-    ]);
+    const result = validateFormula("talk_seconds / mystery_column", ["talk_seconds", "calls"]);
     expect(result.ok).toBe(false);
     expect(result.error).toContain("mystery_column");
     expect(result.error).toContain("talk_seconds, calls");
   });
 
   it("accepts allowed fields regardless of case", () => {
-    expect(
-      validateFormula("TALK_SECONDS / CALLS", ["talk_seconds", "calls"]).ok,
-    ).toBe(true);
+    expect(validateFormula("TALK_SECONDS / CALLS", ["talk_seconds", "calls"]).ok).toBe(true);
   });
 
   it("rejects a formula that reads no field at all", () => {
@@ -426,18 +377,7 @@ describe("formula engine — function catalogue", () => {
 
   it("documents the functions an operational KPI actually needs", () => {
     const names = listFormulaFunctions().map((fn) => fn.name);
-    for (const required of [
-      "SAFE_DIV",
-      "PCT",
-      "IF",
-      "COALESCE",
-      "ROUND",
-      "CLAMP",
-      "MIN",
-      "MAX",
-      "SUM",
-      "AVG",
-    ]) {
+    for (const required of ["SAFE_DIV", "PCT", "IF", "COALESCE", "ROUND", "CLAMP", "MIN", "MAX", "SUM", "AVG"]) {
       expect(names).toContain(required);
     }
   });

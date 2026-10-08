@@ -69,21 +69,16 @@ const SECRET_KEYWORDS = [
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function maskString(value: string) {
-  if (/^\d{12}$/.test(value))
-    return `${value.slice(0, 2)}XXXXXXXX${value.slice(-2)}`;
-  if (/^[A-Z]{5}\d{4}[A-Z]$/i.test(value))
-    return `${value.slice(0, 3)}XXXX${value.slice(-2)}`;
-  if (/^\d{10}$/.test(value))
-    return `${value.slice(0, 2)}XXXXXX${value.slice(-2)}`;
-  if (/^\d{8,18}$/.test(value))
-    return `${value.slice(0, 2)}XXXX${value.slice(-2)}`;
+  if (/^\d{12}$/.test(value)) return `${value.slice(0, 2)}XXXXXXXX${value.slice(-2)}`;
+  if (/^[A-Z]{5}\d{4}[A-Z]$/i.test(value)) return `${value.slice(0, 3)}XXXX${value.slice(-2)}`;
+  if (/^\d{10}$/.test(value)) return `${value.slice(0, 2)}XXXXXX${value.slice(-2)}`;
+  if (/^\d{8,18}$/.test(value)) return `${value.slice(0, 2)}XXXX${value.slice(-2)}`;
   if (value.length > 12) return `${value.slice(0, 4)}...${value.slice(-4)}`;
   return "***";
 }
 
 export function sanitizeProviderPayload(payload: unknown): unknown {
-  if (Array.isArray(payload))
-    return payload.map((item) => sanitizeProviderPayload(item));
+  if (Array.isArray(payload)) return payload.map((item) => sanitizeProviderPayload(item));
   if (!payload || typeof payload !== "object") {
     if (typeof payload === "string") return payload;
     return payload;
@@ -96,16 +91,13 @@ export function sanitizeProviderPayload(payload: unknown): unknown {
         return [key, typeof value === "string" ? maskString(value) : "***"];
       }
       return [key, sanitizeProviderPayload(value)];
-    }),
+    })
   );
 }
 
 // ── Config normalisation & guards ─────────────────────────────────────────────
 
-const stripWs = (value: unknown) =>
-  String(value ?? "")
-    .replace(/\s+/g, "")
-    .trim();
+const stripWs = (value: unknown) => String(value ?? "").replace(/\s+/g, "").trim();
 
 export function normalizeLuckpayConfig(input: {
   baseUrl?: string | null;
@@ -116,9 +108,7 @@ export function normalizeLuckpayConfig(input: {
   enabled?: boolean;
 }): LuckpayResolvedConfig {
   return {
-    baseUrl: String(input.baseUrl ?? "")
-      .trim()
-      .replace(/\/$/, ""),
+    baseUrl: String(input.baseUrl ?? "").trim().replace(/\/$/, ""),
     basicToken: stripWs(input.basicToken),
     clientId: stripWs(input.clientId),
     timeoutMs: input.timeoutMs ?? env.LUCKPAY_TIMEOUT_MS,
@@ -150,18 +140,10 @@ export function luckpayAuthHeader(clientId: string): string {
 /** Throws 503 when credentials are missing. Does NOT consider `enabled` — see assertLuckpayEnabled. */
 export function assertLuckpayCredentials(cfg: LuckpayResolvedConfig): void {
   if (!cfg.baseUrl) {
-    throw Object.assign(
-      new Error("Luckpay API Base URL is not configured in BGV settings."),
-      { statusCode: 503 },
-    );
+    throw Object.assign(new Error("Luckpay API Base URL is not configured in BGV settings."), { statusCode: 503 });
   }
   if (!cfg.basicToken || !cfg.clientId) {
-    throw Object.assign(
-      new Error(
-        "Luckpay Basic Token and Client ID are not configured in BGV settings.",
-      ),
-      { statusCode: 503 },
-    );
+    throw Object.assign(new Error("Luckpay Basic Token and Client ID are not configured in BGV settings."), { statusCode: 503 });
   }
 }
 
@@ -172,9 +154,7 @@ export function assertLuckpayCredentials(cfg: LuckpayResolvedConfig): void {
  */
 export function assertLuckpayEnabled(cfg: LuckpayResolvedConfig): void {
   if (!cfg.enabled) {
-    throw Object.assign(new Error("Luckpay provider is disabled."), {
-      statusCode: 503,
-    });
+    throw Object.assign(new Error("Luckpay provider is disabled."), { statusCode: 503 });
   }
 }
 
@@ -192,9 +172,7 @@ const warnedAuthUrls = new Set<string>();
  */
 export function resolveAuthUrl(cfg: LuckpayResolvedConfig): string {
   const derived = `${cfg.baseUrl}/auth/token`;
-  const configured = String(env.LUCKPAY_AUTH_URL ?? "")
-    .trim()
-    .replace(/\/$/, "");
+  const configured = String(env.LUCKPAY_AUTH_URL ?? "").trim().replace(/\/$/, "");
   if (!configured) return derived;
   if (configured.startsWith(cfg.baseUrl)) return configured;
   if (!warnedAuthUrls.has(configured)) {
@@ -209,22 +187,13 @@ export function resolveAuthUrl(cfg: LuckpayResolvedConfig): string {
 // ── Error shaping & retry ─────────────────────────────────────────────────────
 
 export function toSafeProviderError(error: unknown) {
-  const status = Number(
-    (error as { response?: { status?: number } })?.response?.status ?? 502,
-  );
-  const responseData = (error as { response?: { data?: unknown } })?.response
-    ?.data;
-  const sanitized = sanitizeProviderPayload(responseData) as Record<
-    string,
-    unknown
-  > | null;
-  const providerMessage =
-    sanitized && typeof sanitized === "object"
-      ? String(sanitized.message ?? sanitized.error ?? sanitized.status ?? "")
-      : "";
-  const message =
-    providerMessage ||
-    String((error as Error)?.message ?? "Luckpay provider request failed");
+  const status = Number((error as { response?: { status?: number } })?.response?.status ?? 502);
+  const responseData = (error as { response?: { data?: unknown } })?.response?.data;
+  const sanitized = sanitizeProviderPayload(responseData) as Record<string, unknown> | null;
+  const providerMessage = sanitized && typeof sanitized === "object"
+    ? String(sanitized.message ?? sanitized.error ?? sanitized.status ?? "")
+    : "";
+  const message = providerMessage || String((error as Error)?.message ?? "Luckpay provider request failed");
   const providerCode = (error as { code?: string })?.code;
 
   // Luckpay rejects non-whitelisted egress IPs with AUTH_023. It is by far the
@@ -236,21 +205,14 @@ export function toSafeProviderError(error: unknown) {
     lowered.includes("not authorized") ||
     providerCode === "ECONNREFUSED";
 
-  return Object.assign(
-    new Error(`Luckpay provider request failed: ${message}`),
-    {
-      statusCode: isIpWhitelistError
-        ? 503
-        : status >= 400 && status < 600
-          ? status
-          : 502,
-      providerPayload: sanitized,
-      /** Marks this error as already sanitized so downstream wrappers don't re-derive from response.data. */
-      luckpayConverted: true as const,
-      providerCode,
-      isIpWhitelistError,
-    },
-  );
+  return Object.assign(new Error(`Luckpay provider request failed: ${message}`), {
+    statusCode: isIpWhitelistError ? 503 : (status >= 400 && status < 600 ? status : 502),
+    providerPayload: sanitized,
+    /** Marks this error as already sanitized so downstream wrappers don't re-derive from response.data. */
+    luckpayConverted: true as const,
+    providerCode,
+    isIpWhitelistError,
+  });
 }
 
 // ── Runtime diagnostics (feeds getRuntimeStatus / provider-status endpoint) ────
@@ -278,10 +240,7 @@ export function getLuckpayDiagnostics() {
  * Only the token endpoint is safe to repeat: it carries no transaction id and simply
  * mints another token.
  */
-async function requestWithRetry<T>(
-  fn: () => Promise<T>,
-  opts: { idempotent: boolean },
-): Promise<T> {
+async function requestWithRetry<T>(fn: () => Promise<T>, opts: { idempotent: boolean }): Promise<T> {
   let attempt = 0;
   let delayMs = 400;
   while (true) {
@@ -289,14 +248,8 @@ async function requestWithRetry<T>(
     try {
       return await fn();
     } catch (error: unknown) {
-      const status = Number(
-        (error as { response?: { status?: number } })?.response?.status ?? 0,
-      );
-      if (
-        !opts.idempotent ||
-        attempt >= 3 ||
-        ![429, 500, 502, 503, 504].includes(status)
-      ) {
+      const status = Number((error as { response?: { status?: number } })?.response?.status ?? 0);
+      if (!opts.idempotent || attempt >= 3 || ![429, 500, 502, 503, 504].includes(status)) {
         const safeError = toSafeProviderError(error);
         diagnostics.lastFailureAt = new Date().toISOString();
         diagnostics.lastFailureMessage = safeError.message;
@@ -310,22 +263,16 @@ async function requestWithRetry<T>(
 
 // ── Token cache ───────────────────────────────────────────────────────────────
 
-const tokenCache = new Map<
-  string,
-  { accessToken: string; expiresAt: number }
->();
+const tokenCache = new Map<string, { accessToken: string; expiresAt: number }>();
 
-const cacheKey = (cfg: LuckpayResolvedConfig) =>
-  `${cfg.baseUrl}::${cfg.clientId}`;
+const cacheKey = (cfg: LuckpayResolvedConfig) => `${cfg.baseUrl}::${cfg.clientId}`;
 
 /** Clears every cached token. Wired into resetBgvProviderAdapterCache() so a credential change takes effect immediately. */
 export function resetLuckpayTokenCache(): void {
   tokenCache.clear();
 }
 
-export async function getLuckpayAccessToken(
-  cfg: LuckpayResolvedConfig,
-): Promise<string> {
+export async function getLuckpayAccessToken(cfg: LuckpayResolvedConfig): Promise<string> {
   assertLuckpayCredentials(cfg);
 
   const key = cacheKey(cfg);
@@ -336,39 +283,32 @@ export async function getLuckpayAccessToken(
   }
 
   // NOTE: headers must contain Authorization ONLY — no Content-Type.
-  const response = await requestWithRetry(
-    async () =>
-      axios.post(resolveAuthUrl(cfg), undefined, {
-        timeout: cfg.timeoutMs,
-        headers: { Authorization: `Basic ${cfg.basicToken}` },
-      }),
-    { idempotent: true },
-  );
+  const response = await requestWithRetry(async () => axios.post(
+    resolveAuthUrl(cfg),
+    undefined,
+    {
+      timeout: cfg.timeoutMs,
+      headers: { Authorization: `Basic ${cfg.basicToken}` },
+    },
+  ), { idempotent: true });
 
   const payload = (response as { data?: Record<string, unknown> })?.data ?? {};
-  const inner =
-    (payload as { data?: Record<string, unknown> })?.data ?? payload;
+  const inner = (payload as { data?: Record<string, unknown> })?.data ?? payload;
   const accessToken = stripWs(
-    (inner as Record<string, unknown>)?.accessToken ??
-      (inner as Record<string, unknown>)?.access_token ??
-      (inner as Record<string, unknown>)?.token,
+    (inner as Record<string, unknown>)?.accessToken
+    ?? (inner as Record<string, unknown>)?.access_token
+    ?? (inner as Record<string, unknown>)?.token,
   );
   if (!accessToken) {
-    throw Object.assign(
-      new Error("Luckpay auth token response did not include an access token."),
-      { statusCode: 502 },
-    );
+    throw Object.assign(new Error("Luckpay auth token response did not include an access token."), { statusCode: 502 });
   }
 
   const expiresIn = Number(
-    (inner as Record<string, unknown>)?.expiresIn ??
-      (inner as Record<string, unknown>)?.expires_in ??
-      env.LUCKPAY_TOKEN_CACHE_TTL_SECONDS,
+    (inner as Record<string, unknown>)?.expiresIn
+    ?? (inner as Record<string, unknown>)?.expires_in
+    ?? env.LUCKPAY_TOKEN_CACHE_TTL_SECONDS,
   );
-  tokenCache.set(key, {
-    accessToken,
-    expiresAt: now + Math.max(1, expiresIn) * 1000,
-  });
+  tokenCache.set(key, { accessToken, expiresAt: now + Math.max(1, expiresIn) * 1000 });
   diagnostics.lastSuccessAt = new Date().toISOString();
   diagnostics.lastFailureAt = null;
   diagnostics.lastFailureMessage = null;
@@ -378,15 +318,9 @@ export async function getLuckpayAccessToken(
 // ── Requests ──────────────────────────────────────────────────────────────────
 
 function toLuckpayResponse(raw: unknown): LuckpayResponse {
-  const envelope = (
-    raw && typeof raw === "object" && !Array.isArray(raw) ? raw : { data: raw }
-  ) as Record<string, unknown>;
+  const envelope = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : { data: raw }) as Record<string, unknown>;
   const inner = envelope.data;
-  const data = (
-    inner && typeof inner === "object" && !Array.isArray(inner)
-      ? inner
-      : envelope
-  ) as Record<string, unknown>;
+  const data = (inner && typeof inner === "object" && !Array.isArray(inner) ? inner : envelope) as Record<string, unknown>;
   return {
     envelope,
     data,
@@ -400,18 +334,18 @@ export async function luckpayPostJson(
   payload: Record<string, unknown>,
 ): Promise<LuckpayResponse> {
   const accessToken = await getLuckpayAccessToken(cfg);
-  const response = await requestWithRetry(
-    async () =>
-      axios.post(`${cfg.baseUrl}${path}`, payload, {
-        timeout: cfg.timeoutMs,
-        headers: {
-          Authorization: luckpayAuthHeader(cfg.clientId),
-          "X-Access-Token": `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-      }),
-    { idempotent: false },
-  );
+  const response = await requestWithRetry(async () => axios.post(
+    `${cfg.baseUrl}${path}`,
+    payload,
+    {
+      timeout: cfg.timeoutMs,
+      headers: {
+        Authorization: luckpayAuthHeader(cfg.clientId),
+        "X-Access-Token": `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+    },
+  ), { idempotent: false });
   return toLuckpayResponse((response as { data?: unknown })?.data);
 }
 
@@ -432,43 +366,32 @@ export async function luckpayPostBinaryOrJson(
   cfg: LuckpayResolvedConfig,
   path: string,
   payload: Record<string, unknown>,
-): Promise<{
-  binary: Buffer | null;
-  contentType: string | null;
-  response: LuckpayResponse | null;
-}> {
+): Promise<{ binary: Buffer | null; contentType: string | null; response: LuckpayResponse | null }> {
   const accessToken = await getLuckpayAccessToken(cfg);
-  const raw = (await requestWithRetry(
-    async () =>
-      axios.post(`${cfg.baseUrl}${path}`, payload, {
-        timeout: cfg.timeoutMs,
-        responseType: "arraybuffer",
-        headers: {
-          Authorization: luckpayAuthHeader(cfg.clientId),
-          "X-Access-Token": `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-      }),
-    { idempotent: false },
-  )) as { data?: unknown; headers?: Record<string, string> };
+  const raw = await requestWithRetry(async () => axios.post(
+    `${cfg.baseUrl}${path}`,
+    payload,
+    {
+      timeout: cfg.timeoutMs,
+      responseType: "arraybuffer",
+      headers: {
+        Authorization: luckpayAuthHeader(cfg.clientId),
+        "X-Access-Token": `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    },
+  ), { idempotent: false }) as { data?: unknown; headers?: Record<string, string> };
 
-  const contentType =
-    String(raw?.headers?.["content-type"] ?? "").toLowerCase() || null;
+  const contentType = String(raw?.headers?.["content-type"] ?? "").toLowerCase() || null;
   const body = raw?.data;
 
   // responseType 'arraybuffer' normally yields bytes, but a JSON body can still
   // arrive already parsed (interceptors, mocks, some proxies). Handle the parsed
   // shape directly rather than forcing it through Buffer.from, which would
   // produce garbage.
-  if (
-    body &&
-    typeof body === "object" &&
-    !Buffer.isBuffer(body) &&
-    !(body instanceof ArrayBuffer) &&
-    !ArrayBuffer.isView(body)
-  ) {
+  if (body && typeof body === "object" && !Buffer.isBuffer(body) && !(body instanceof ArrayBuffer) && !ArrayBuffer.isView(body)) {
     return { binary: null, contentType, response: toLuckpayResponse(body) };
   }
 
@@ -482,19 +405,14 @@ export async function luckpayPostBinaryOrJson(
   const looksBinary =
     buffer.subarray(0, 5).toString("latin1") === "%PDF-" ||
     buffer.subarray(0, 2).toString("latin1") === "PK" ||
-    (contentType !== null &&
-      /application\/(pdf|zip|octet-stream)|image\//.test(contentType));
+    (contentType !== null && /application\/(pdf|zip|octet-stream)|image\//.test(contentType));
 
   if (looksBinary && buffer.length > 0) {
     return { binary: buffer, contentType, response: null };
   }
 
   try {
-    return {
-      binary: null,
-      contentType,
-      response: toLuckpayResponse(JSON.parse(buffer.toString("utf8"))),
-    };
+    return { binary: null, contentType, response: toLuckpayResponse(JSON.parse(buffer.toString("utf8"))) };
   } catch {
     // Neither a recognised document nor JSON. Surface it as an empty envelope so
     // the caller reports "nothing retrieved" rather than throwing.
@@ -520,24 +438,22 @@ export async function luckpayPostMultipart(
     filename: parts.file.filename,
     contentType: parts.file.contentType ?? "application/pdf",
   });
-  form.append("request", JSON.stringify(parts.request), {
-    contentType: "application/json",
-  });
+  form.append("request", JSON.stringify(parts.request), { contentType: "application/json" });
 
-  const response = await requestWithRetry(
-    async () =>
-      axios.post(`${cfg.baseUrl}${path}`, form, {
-        timeout: cfg.timeoutMs,
-        headers: {
-          ...form.getHeaders(),
-          Authorization: luckpayAuthHeader(cfg.clientId),
-          "X-Access-Token": `Bearer ${accessToken}`,
-        },
-        maxBodyLength: Infinity,
-        maxContentLength: Infinity,
-      }),
-    { idempotent: false },
-  );
+  const response = await requestWithRetry(async () => axios.post(
+    `${cfg.baseUrl}${path}`,
+    form,
+    {
+      timeout: cfg.timeoutMs,
+      headers: {
+        ...form.getHeaders(),
+        Authorization: luckpayAuthHeader(cfg.clientId),
+        "X-Access-Token": `Bearer ${accessToken}`,
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+    },
+  ), { idempotent: false });
   return toLuckpayResponse((response as { data?: unknown })?.data);
 }
 
@@ -560,22 +476,16 @@ function resolvePath(root: unknown, path: string): unknown {
  * generic keys like `status` at several levels with different meanings, so the
  * caller has to be able to say exactly which one it wants.
  */
-export function pickLuckpayField(
-  r: LuckpayResponse,
-  names: string[],
-): string | null {
+export function pickLuckpayField(r: LuckpayResponse, names: string[]): string | null {
   for (const name of names) {
     for (const scope of [r.data, r.envelope]) {
-      const value = name.includes(".")
-        ? resolvePath(scope, name)
-        : scope?.[name];
+      const value = name.includes(".") ? resolvePath(scope, name) : scope?.[name];
       if (value === null || value === undefined) continue;
       if (typeof value === "string") {
         if (value.trim()) return value;
         continue;
       }
-      if (typeof value === "number" || typeof value === "boolean")
-        return String(value);
+      if (typeof value === "number" || typeof value === "boolean") return String(value);
     }
   }
   return null;

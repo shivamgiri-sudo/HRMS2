@@ -52,9 +52,7 @@ describe("precedence — date_of_exit, then exit LWD, then legacy date_of_leavin
   it("counts ONLY accepted / notice_serving / exited resignations", () => {
     // A submitted, rejected or revoked request is not an end of employment. Someone who
     // withdrew their resignation must keep being paid.
-    expect(EMPLOYMENT_END_DATE_SQL).toMatch(
-      /LOWER\(x\.status\) IN \('accepted','notice_serving','exited'\)/,
-    );
+    expect(EMPLOYMENT_END_DATE_SQL).toMatch(/LOWER\(x\.status\) IN \('accepted','notice_serving','exited'\)/);
     for (const dead of ["submitted", "rejected", "revoked"]) {
       expect(EMPLOYMENT_END_DATE_SQL).not.toMatch(new RegExp(`'${dead}'`));
     }
@@ -92,15 +90,11 @@ describe("selection — the six scenarios the ruling named", () => {
   it("excludes someone who left before the month", () => {
     // An end date earlier than the month start fails the >= bound; there is no other arm
     // that could re-admit them, because the NULL arm requires the end date to be NULL.
-    expect(predicate).toMatch(
-      /IS NULL AND LOWER\(e\.employment_status\) = 'active'/,
-    );
+    expect(predicate).toMatch(/IS NULL AND LOWER\(e\.employment_status\) = 'active'/);
   });
 
   it("excludes someone joining after the month", () => {
-    expect(predicate).toMatch(
-      /COALESCE\(e\.salary_start_date, e\.date_of_joining\) <= LAST_DAY/,
-    );
+    expect(predicate).toMatch(/COALESCE\(e\.salary_start_date, e\.date_of_joining\) <= LAST_DAY/);
   });
 
   it("includes a joiner whose start falls inside the month", () => {
@@ -121,9 +115,7 @@ describe("selection — the six scenarios the ruling named", () => {
   it("does NOT admit an employee with no end date who is no longer active", () => {
     // Load-bearing: 28,425 non-active employees have no resolvable end date, 28,203 of them
     // marked "Resigned". Without this arm every one of them enters every run.
-    expect(predicate).toMatch(
-      /OR \(\s*[\s\S]*IS NULL AND LOWER\(e\.employment_status\) = 'active'\s*\)/,
-    );
+    expect(predicate).toMatch(/OR \(\s*[\s\S]*IS NULL AND LOWER\(e\.employment_status\) = 'active'\s*\)/);
   });
 });
 
@@ -143,9 +135,7 @@ describe("proration — payableThrough caps at the last working day", () => {
   });
 
   it("tolerates a datetime and keeps the date part", () => {
-    expect(payableThrough("2026-07-15T18:30:00.000Z", MONTH_END)).toBe(
-      "2026-07-15",
-    );
+    expect(payableThrough("2026-07-15T18:30:00.000Z", MONTH_END)).toBe("2026-07-15");
   });
 
   it("compares as strings, so it cannot drift by a timezone", () => {

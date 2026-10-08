@@ -16,31 +16,18 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 import { loadApprovedLeaveDates } from "../roster-generation.service.js";
 
-const source = readFileSync(
-  resolve(__dirname, "../roster-generation.service.ts"),
-  "utf-8",
-);
+const source = readFileSync(resolve(__dirname, "../roster-generation.service.ts"), "utf-8");
 
 describe("loadApprovedLeaveDates", () => {
   beforeEach(() => execute.mockReset());
 
   it("expands an approved leave row into every date in range, clamped to the cycle window", async () => {
     execute.mockResolvedValue([
-      [
-        {
-          employee_id: "emp-1",
-          from_date: "2026-08-16",
-          to_date: "2026-08-19",
-        },
-      ],
+      [{ employee_id: "emp-1", from_date: "2026-08-16", to_date: "2026-08-19" }],
       [],
     ]);
 
-    const dates = await loadApprovedLeaveDates(
-      ["emp-1"],
-      "2026-08-17",
-      "2026-08-23",
-    );
+    const dates = await loadApprovedLeaveDates(["emp-1"], "2026-08-17", "2026-08-23");
 
     // Clamped: leave starts before the cycle window, so only 08-17..08-19 fall inside it.
     expect(dates.has("emp-1|2026-08-17")).toBe(true);
@@ -64,13 +51,9 @@ describe("loadApprovedLeaveDates", () => {
     // flags the dynamic version as a false failure independent of the function's
     // actual behavior, which the passing "returns empty...without querying" and
     // "expands...range" cases already exercise the try block of directly.
-    const fnStart = source.indexOf(
-      "export async function loadApprovedLeaveDates",
-    );
+    const fnStart = source.indexOf("export async function loadApprovedLeaveDates");
     const fnBody = source.slice(fnStart, fnStart + 1400);
-    expect(fnBody).toMatch(
-      /try \{[\s\S]*await db\.execute[\s\S]*\} catch \(error\) \{/,
-    );
+    expect(fnBody).toMatch(/try \{[\s\S]*await db\.execute[\s\S]*\} catch \(error\) \{/);
     expect(fnBody).toMatch(/console\.error\(/);
   });
 
@@ -86,26 +69,14 @@ describe("processEmployee checks approved leave before any other scheduling deci
     const fnStart = source.indexOf("async function processEmployee");
     const loopStart = source.indexOf("for (const date of dates)", fnStart);
     const leaveCheckIdx = source.indexOf("approvedLeaveDates.has(", loopStart);
-    const holidayCheckIdx = source.indexOf(
-      "const isHoliday = ctx.holidays.has(date)",
-      loopStart,
-    );
-    expect(
-      leaveCheckIdx,
-      "leave check not found in processEmployee's date loop",
-    ).toBeGreaterThan(loopStart);
-    expect(holidayCheckIdx, "holiday check not found").toBeGreaterThan(
-      loopStart,
-    );
+    const holidayCheckIdx = source.indexOf("const isHoliday = ctx.holidays.has(date)", loopStart);
+    expect(leaveCheckIdx, "leave check not found in processEmployee's date loop").toBeGreaterThan(loopStart);
+    expect(holidayCheckIdx, "holiday check not found").toBeGreaterThan(loopStart);
     expect(leaveCheckIdx).toBeLessThan(holidayCheckIdx);
   });
 
   it("generateForCycle loads leave dates and threads them into processEmployee", () => {
-    expect(source).toMatch(
-      /const approvedLeaveDates = await loadApprovedLeaveDates\(/,
-    );
-    expect(source).toMatch(
-      /approvedLeaveDates,\s*\n\s*(\w+,\s*\n\s*)?shiftTemplates,/,
-    );
+    expect(source).toMatch(/const approvedLeaveDates = await loadApprovedLeaveDates\(/);
+    expect(source).toMatch(/approvedLeaveDates,\s*\n\s*(\w+,\s*\n\s*)?shiftTemplates,/);
   });
 });

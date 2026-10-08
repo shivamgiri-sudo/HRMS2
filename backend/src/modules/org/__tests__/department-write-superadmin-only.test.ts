@@ -51,9 +51,7 @@ vi.mock("../org.service.js", () => ({
   processService: svcStub(),
 }));
 
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]) },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) } }));
 
 const { orgRouter } = await import("../org.routes.js");
 
@@ -64,9 +62,7 @@ function app() {
   return a;
 }
 
-beforeEach(() => {
-  roles = [];
-});
+beforeEach(() => { roles = []; });
 
 describe("department_master writes are super_admin-only", () => {
   it("refuses a create from hr", async () => {

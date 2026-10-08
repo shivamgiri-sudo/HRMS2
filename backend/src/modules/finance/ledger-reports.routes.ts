@@ -1,8 +1,5 @@
 import { Router } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { BANK_ACCOUNT_READ_ROLES } from "./company-bank-account.routes.js";
 import { callerBranchScope } from "./finance-branch-guard.js";
@@ -43,14 +40,10 @@ ledgerReportsRouter.get(
   "/trial-balance",
   requireRole(...BANK_ACCOUNT_READ_ROLES),
   h(async (req, res) => {
-    const asOfDate = req.query.asOfDate
-      ? String(req.query.asOfDate)
-      : undefined;
+    const asOfDate = req.query.asOfDate ? String(req.query.asOfDate) : undefined;
     const filters = {
       branchId: req.query.branchId ? String(req.query.branchId) : undefined,
-      costCentreId: req.query.costCentreId
-        ? String(req.query.costCentreId)
-        : undefined,
+      costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
       processId: req.query.processId ? String(req.query.processId) : undefined,
     };
     // ?branchId only narrows: outside the caller's scope it is a 403 (see callerBranchScope).
@@ -103,9 +96,7 @@ ledgerReportsRouter.get(
     const to = req.query.to ? String(req.query.to) : undefined;
     const filters = {
       branchId: req.query.branchId ? String(req.query.branchId) : undefined,
-      costCentreId: req.query.costCentreId
-        ? String(req.query.costCentreId)
-        : undefined,
+      costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
       processId: req.query.processId ? String(req.query.processId) : undefined,
     };
     const scope = await callerBranchScope(req, filters.branchId);
@@ -168,12 +159,7 @@ ledgerReportsRouter.get(
   h(async (req, res) => {
     const accountType = String(req.params.accountType);
     if (!(ACCOUNT_TYPES as readonly string[]).includes(accountType)) {
-      res
-        .status(400)
-        .json({
-          success: false,
-          message: `Unknown account type "${accountType}"`,
-        });
+      res.status(400).json({ success: false, message: `Unknown account type "${accountType}"` });
       return;
     }
     const from = req.query.from ? String(req.query.from) : undefined;

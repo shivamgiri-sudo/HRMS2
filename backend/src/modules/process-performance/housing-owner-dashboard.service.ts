@@ -1,10 +1,5 @@
 import { db } from "../../db/mysql.js";
-import {
-  applyOverridesToItems,
-  loadManualAgentsForRange,
-  dojForOwner,
-  ownerBucket,
-} from "./process-targets.service.js";
+import { applyOverridesToItems, loadManualAgentsForRange, dojForOwner, ownerBucket } from "./process-targets.service.js";
 
 export interface HousingOwnerHeadline {
   totalRevenue: number;
@@ -107,9 +102,7 @@ function timeToSec(v: unknown): number {
 }
 
 function normalizeName(v: unknown): string {
-  return String(v ?? "")
-    .trim()
-    .replace(/\s+/g, " ");
+  return String(v ?? "").trim().replace(/\s+/g, " ");
 }
 
 function isNamedGroup(name: string): boolean {
@@ -117,18 +110,8 @@ function isNamedGroup(name: string): boolean {
 }
 
 const MONTH_MAP: Record<string, string> = {
-  jan: "01",
-  feb: "02",
-  mar: "03",
-  apr: "04",
-  may: "05",
-  jun: "06",
-  jul: "07",
-  aug: "08",
-  sep: "09",
-  oct: "10",
-  nov: "11",
-  dec: "12",
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
 };
 
 /** owner_sale has no real date column -- only `month` ("Sep'26") and `day`
@@ -138,9 +121,7 @@ const MONTH_MAP: Record<string, string> = {
  * safer than routing through Date/toISOString, which has bitten this app's
  * "local date" logic before via UTC conversion). */
 function saleRowDate(monthField: unknown, dayField: unknown): string | null {
-  const m = String(monthField ?? "")
-    .trim()
-    .match(/^([A-Za-z]{3})'(\d{2})$/);
+  const m = String(monthField ?? "").trim().match(/^([A-Za-z]{3})'(\d{2})$/);
   if (!m) return null;
   const mon = MONTH_MAP[m[1].toLowerCase()];
   if (!mon) return null;
@@ -153,9 +134,7 @@ function saleRowDate(monthField: unknown, dayField: unknown): string | null {
  * "15-Sep-26" rather than a DATE column -- parsed the same way as
  * saleRowDate for a consistent YYYY-MM-DD comparison key. */
 function cdrRowDate(reportDate: unknown): string | null {
-  const m = String(reportDate ?? "")
-    .trim()
-    .match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/);
+  const m = String(reportDate ?? "").trim().match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/);
   if (!m) return null;
   const mon = MONTH_MAP[m[2].toLowerCase()];
   if (!mon) return null;
@@ -179,10 +158,7 @@ export function currentMonthRange(): { from: string; to: string } {
   return { from, to };
 }
 
-function resolveRange(
-  fromInput: string,
-  toInput: string,
-): { from: string; to: string } {
+function resolveRange(fromInput: string, toInput: string): { from: string; to: string } {
   const fallback = currentMonthRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
@@ -240,10 +216,7 @@ interface CdrAgg {
 }
 
 export async function getHousingOwnerDashboard(
-  fromInput: string,
-  toInput: string,
-  tlInput = "",
-  amInput = "",
+  fromInput: string, toInput: string, tlInput = "", amInput = "",
 ): Promise<HousingOwnerDashboardData> {
   const { from, to } = resolveRange(fromInput, toInput);
   const tlFilter = normalizeName(tlInput);
@@ -252,15 +225,15 @@ export async function getHousingOwnerDashboard(
 
   const [agentRows] = await db.execute<any[]>(
     `SELECT sno, crm_id, overall, tl_name, doj, status, ageing, bucket, monthly_target, per_day_target, mtd, am
-     FROM db_masmis.owner_agent_details`,
+     FROM db_masmis.owner_agent_details`
   );
   const [saleRows] = await db.execute<any[]>(
     `SELECT opp_id, agent_id, agent_name, tl_name, am, value, sale_count, package_type, payment_mode, day, week, month
-     FROM db_masmis.owner_sale`,
+     FROM db_masmis.owner_sale`
   );
   const [cdrRows] = await db.execute<any[]>(
     `SELECT agent, tl_name, am, total_calls, connected, not_connected, avg_talk_time, report_date, day
-     FROM db_masmis.Owner_cdr`,
+     FROM db_masmis.Owner_cdr`
   );
 
   const roster = new Map<string, RosterAgent>();
@@ -286,16 +259,7 @@ export async function getHousingOwnerDashboard(
   }
   // Targets changed on the Process Details page (agent / TL / AM level) replace the uploaded ones here, so every
   // figure below -- headline, TL/AM rows, agent rows, TQ/MQ/BQ -- uses the same effective targets.
-  await applyOverridesToItems("housing_owner", [...roster.values()], to, {
-    name: (r) => r.name,
-    tl: (r) => r.tlName,
-    group: (r) => r.am,
-    active: (r) => r.status === "Active",
-    get: (r) => r.target,
-    set: (r, v) => {
-      r.target = v;
-    },
-  });
+  await applyOverridesToItems("housing_owner", [...roster.values()], to, { name: (r) => r.name, tl: (r) => r.tlName, group: (r) => r.am, active: (r) => r.status === "Active", get: (r) => r.target, set: (r, v) => { r.target = v; } });
 
   // An agent's TL / AM comes from the roster when they are on it, otherwise from the
   // row itself -- the same precedence the agent table uses, so a TL / AM filter keeps
@@ -326,10 +290,7 @@ export async function getHousingOwnerDashboard(
   const saleAggByAm = new Map<string, SaleAgg>();
   const saleAggByTl = new Map<string, SaleAgg>();
   const packageTypeMap = new Map<string, { count: number; revenue: number }>();
-  const dailyRevenue = new Map<
-    string,
-    { revenue: number; saleCount: number }
-  >();
+  const dailyRevenue = new Map<string, { revenue: number; saleCount: number }>();
 
   // The same opportunity is sometimes uploaded more than once (the Sep-1 rows exist in 4 upload
   // batches), which multiplies revenue / sale count -- count each identical sale once.
@@ -345,10 +306,7 @@ export async function getHousingOwnerDashboard(
     }
 
     const name = normalizeName(r.agent_name);
-    noteTlAm(
-      normalizeName(r.tl_name) || "Unassigned",
-      normalizeName(r.am) || "Unassigned",
-    );
+    noteTlAm(normalizeName(r.tl_name) || "Unassigned", normalizeName(r.am) || "Unassigned");
     if (!rowMatches(name, r.tl_name, r.am)) continue;
     const value = num(r.value);
     const count = num(r.sale_count) || 1;
@@ -393,22 +351,8 @@ export async function getHousingOwnerDashboard(
   const dailyTalk = new Map<string, { sum: number; rows: number }>();
   const dailyPresent = new Map<string, Set<string>>();
 
-  function addCdr(
-    map: Map<string, CdrAgg>,
-    key: string,
-    calls: number,
-    connected: number,
-    notConnected: number,
-    talkSec: number,
-    hasTalk: boolean,
-  ) {
-    const cur = map.get(key) ?? {
-      totalCalls: 0,
-      connected: 0,
-      notConnected: 0,
-      talkSecSum: 0,
-      talkRows: 0,
-    };
+  function addCdr(map: Map<string, CdrAgg>, key: string, calls: number, connected: number, notConnected: number, talkSec: number, hasTalk: boolean) {
+    const cur = map.get(key) ?? { totalCalls: 0, connected: 0, notConnected: 0, talkSecSum: 0, talkRows: 0 };
     cur.totalCalls += calls;
     cur.connected += connected;
     cur.notConnected += notConnected;
@@ -424,22 +368,12 @@ export async function getHousingOwnerDashboard(
   for (const r of cdrRows as any[]) {
     const rowDate = cdrRowDate(r.report_date);
     if (rowDate === null || rowDate < from || rowDate > to) continue;
-    const cdrKey = [
-      normalizeName(r.agent),
-      rowDate,
-      r.total_calls,
-      r.connected,
-      r.not_connected,
-      r.avg_talk_time,
-    ].join("|");
+    const cdrKey = [normalizeName(r.agent), rowDate, r.total_calls, r.connected, r.not_connected, r.avg_talk_time].join("|");
     if (seenCdr.has(cdrKey)) continue;
     seenCdr.add(cdrKey);
 
     const name = normalizeName(r.agent);
-    noteTlAm(
-      normalizeName(r.tl_name) || "Unassigned",
-      normalizeName(r.am) || "Unassigned",
-    );
+    noteTlAm(normalizeName(r.tl_name) || "Unassigned", normalizeName(r.am) || "Unassigned");
     if (!rowMatches(name, r.tl_name, r.am)) continue;
     const calls = num(r.total_calls);
     const connected = num(r.connected);
@@ -448,34 +382,9 @@ export async function getHousingOwnerDashboard(
     const hasTalk = talkStr !== "" && talkStr !== "0:00:00";
     const talkSec = hasTalk ? timeToSec(talkStr) : 0;
 
-    if (name)
-      addCdr(
-        cdrAggByName,
-        name,
-        calls,
-        connected,
-        notConnected,
-        talkSec,
-        hasTalk,
-      );
-    addCdr(
-      cdrAggByAm,
-      normalizeName(r.am) || "Unassigned",
-      calls,
-      connected,
-      notConnected,
-      talkSec,
-      hasTalk,
-    );
-    addCdr(
-      cdrAggByTl,
-      normalizeName(r.tl_name) || "Unassigned",
-      calls,
-      connected,
-      notConnected,
-      talkSec,
-      hasTalk,
-    );
+    if (name) addCdr(cdrAggByName, name, calls, connected, notConnected, talkSec, hasTalk);
+    addCdr(cdrAggByAm, normalizeName(r.am) || "Unassigned", calls, connected, notConnected, talkSec, hasTalk);
+    addCdr(cdrAggByTl, normalizeName(r.tl_name) || "Unassigned", calls, connected, notConnected, talkSec, hasTalk);
 
     if (name && calls > 0) {
       const dates = agentPresentDates.get(name) ?? new Set<string>();
@@ -498,11 +407,7 @@ export async function getHousingOwnerDashboard(
     dailyCalls.set(rowDate, dCur);
   }
 
-  const allNames = new Set<string>([
-    ...roster.keys(),
-    ...saleAggByName.keys(),
-    ...cdrAggByName.keys(),
-  ]);
+  const allNames = new Set<string>([...roster.keys(), ...saleAggByName.keys(), ...cdrAggByName.keys()]);
 
   const agents: HousingOwnerAgentRow[] = [];
   for (const name of allNames) {
@@ -534,8 +439,7 @@ export async function getHousingOwnerDashboard(
       connectedCalls,
       notConnectedCalls,
       connectedPct: totalCalls > 0 ? (connectedCalls / totalCalls) * 100 : 0,
-      avgTalkTimeSec:
-        cdr && cdr.talkRows > 0 ? cdr.talkSecSum / cdr.talkRows : 0,
+      avgTalkTimeSec: cdr && cdr.talkRows > 0 ? cdr.talkSecSum / cdr.talkRows : 0,
       saleCount,
       revenue,
       achievementPct,
@@ -548,16 +452,8 @@ export async function getHousingOwnerDashboard(
   // Tally each TL's/AM's own agents by achievement stage, from the same
   // per-agent `stage` just computed above -- so the two counts (group table,
   // agent table) can never disagree.
-  interface StageCounts {
-    tq: number;
-    mq: number;
-    bq: number;
-  }
-  function bumpStage(
-    map: Map<string, StageCounts>,
-    key: string,
-    stage: "TQ" | "MQ" | "BQ" | "NA",
-  ): void {
+  interface StageCounts { tq: number; mq: number; bq: number }
+  function bumpStage(map: Map<string, StageCounts>, key: string, stage: "TQ" | "MQ" | "BQ" | "NA"): void {
     if (stage === "NA") return;
     const cur = map.get(key) ?? { tq: 0, mq: 0, bq: 0 };
     if (stage === "TQ") cur.tq += 1;
@@ -573,19 +469,10 @@ export async function getHousingOwnerDashboard(
   }
 
   function toGroupRows(
-    saleMap: Map<string, SaleAgg>,
-    cdrMap: Map<string, CdrAgg>,
-    targetByGroup: Map<string, number>,
-    stageCounts: Map<string, StageCounts>,
-    agentCountByGroup: Map<string, number>,
+    saleMap: Map<string, SaleAgg>, cdrMap: Map<string, CdrAgg>, targetByGroup: Map<string, number>,
+    stageCounts: Map<string, StageCounts>, agentCountByGroup: Map<string, number>,
   ): HousingOwnerGroupRow[] {
-    const names = new Set<string>([
-      ...saleMap.keys(),
-      ...cdrMap.keys(),
-      ...targetByGroup.keys(),
-      ...stageCounts.keys(),
-      ...agentCountByGroup.keys(),
-    ]);
+    const names = new Set<string>([...saleMap.keys(), ...cdrMap.keys(), ...targetByGroup.keys(), ...stageCounts.keys(), ...agentCountByGroup.keys()]);
     const rows: HousingOwnerGroupRow[] = [];
     for (const name of names) {
       const sale = saleMap.get(name);
@@ -626,14 +513,8 @@ export async function getHousingOwnerDashboard(
     targetByAm.set(ro.am, (targetByAm.get(ro.am) ?? 0) + ro.target);
     targetByTl.set(ro.tlName, (targetByTl.get(ro.tlName) ?? 0) + ro.target);
     if (ro.status === "Active") {
-      activeAgentCountByAm.set(
-        ro.am,
-        (activeAgentCountByAm.get(ro.am) ?? 0) + 1,
-      );
-      activeAgentCountByTl.set(
-        ro.tlName,
-        (activeAgentCountByTl.get(ro.tlName) ?? 0) + 1,
-      );
+      activeAgentCountByAm.set(ro.am, (activeAgentCountByAm.get(ro.am) ?? 0) + 1);
+      activeAgentCountByTl.set(ro.tlName, (activeAgentCountByTl.get(ro.tlName) ?? 0) + 1);
     }
   }
 
@@ -645,19 +526,11 @@ export async function getHousingOwnerDashboard(
   const totalCalls = agents.reduce((s, a) => s + a.totalCalls, 0);
   const connectedCalls = agents.reduce((s, a) => s + a.connectedCalls, 0);
   const notConnectedCalls = agents.reduce((s, a) => s + a.notConnectedCalls, 0);
-  const activeAgentsArr = [...roster.values()].filter(
-    (r) => r.status === "Active" && rosterMatches(r),
-  );
+  const activeAgentsArr = [...roster.values()].filter((r) => r.status === "Active" && rosterMatches(r));
   const totalTarget = activeAgentsArr.reduce((s, r) => s + r.target, 0);
-  const totalMtdReported = activeAgentsArr.reduce(
-    (s, r) => s + r.mtdReported,
-    0,
-  );
+  const totalMtdReported = activeAgentsArr.reduce((s, r) => s + r.mtdReported, 0);
   const talkAgents = agents.filter((a) => a.avgTalkTimeSec > 0);
-  const avgTalkTimeSec =
-    talkAgents.length > 0
-      ? talkAgents.reduce((s, a) => s + a.avgTalkTimeSec, 0) / talkAgents.length
-      : 0;
+  const avgTalkTimeSec = talkAgents.length > 0 ? talkAgents.reduce((s, a) => s + a.avgTalkTimeSec, 0) / talkAgents.length : 0;
 
   const headline: HousingOwnerHeadline = {
     totalRevenue,
@@ -672,16 +545,11 @@ export async function getHousingOwnerDashboard(
     totalTarget,
     totalMtdReported,
     achievementPct: totalTarget > 0 ? (totalRevenue / totalTarget) * 100 : 0,
-    revenuePerAgent:
-      activeAgentsArr.length > 0 ? totalRevenue / activeAgentsArr.length : 0,
+    revenuePerAgent: activeAgentsArr.length > 0 ? totalRevenue / activeAgentsArr.length : 0,
   };
 
   const packageTypeBreakdown = [...packageTypeMap.entries()]
-    .map(([packageType, v]) => ({
-      packageType,
-      count: v.count,
-      revenue: v.revenue,
-    }))
+    .map(([packageType, v]) => ({ packageType, count: v.count, revenue: v.revenue }))
     .sort((a, b) => b.revenue - a.revenue);
 
   const dates = new Set<string>([...dailyRevenue.keys(), ...dailyCalls.keys()]);
@@ -704,23 +572,15 @@ export async function getHousingOwnerDashboard(
     });
 
   const rankable = agents.filter((a) => a.target > 0);
-  const topPerformers = [...rankable]
-    .sort((a, b) => b.achievementPct - a.achievementPct)
-    .slice(0, 5);
-  const bottomPerformers = [...rankable]
-    .sort((a, b) => a.achievementPct - b.achievementPct)
-    .slice(0, 5);
+  const topPerformers = [...rankable].sort((a, b) => b.achievementPct - a.achievementPct).slice(0, 5);
+  const bottomPerformers = [...rankable].sort((a, b) => a.achievementPct - b.achievementPct).slice(0, 5);
 
   const sortAlpha = (a: string, b: string) => a.localeCompare(b);
   const tlByAm: Record<string, string[]> = {};
   for (const [am, tls] of tlByAmSets) tlByAm[am] = [...tls].sort(sortAlpha);
 
   return {
-    filterOptions: {
-      tls: [...tlSet].sort(sortAlpha),
-      ams: [...amSet].sort(sortAlpha),
-      tlByAm,
-    },
+    filterOptions: { tls: [...tlSet].sort(sortAlpha), ams: [...amSet].sort(sortAlpha), tlByAm },
     appliedFilters: { tl: tlFilter || null, am: amFilter || null },
     headline,
     byAm,
@@ -781,25 +641,22 @@ export interface HousingOwnerEntityTrendData {
  * independent of whatever range/filters the main dashboard call used.
  */
 export async function getHousingOwnerEntityTrend(
-  fromInput: string,
-  toInput: string,
-  entityType: "am" | "tl" | "agent",
-  entityNameInput: string,
+  fromInput: string, toInput: string, entityType: "am" | "tl" | "agent", entityNameInput: string,
 ): Promise<HousingOwnerEntityTrendData> {
   const { from, to } = resolveRange(fromInput, toInput);
   const entityName = normalizeName(entityNameInput);
 
   const [agentRows] = await db.execute<any[]>(
     `SELECT sno, crm_id, overall, tl_name, doj, status, ageing, bucket, monthly_target, per_day_target, mtd, am
-     FROM db_masmis.owner_agent_details`,
+     FROM db_masmis.owner_agent_details`
   );
   const [saleRows] = await db.execute<any[]>(
     `SELECT opp_id, agent_id, agent_name, tl_name, am, value, sale_count, package_type, payment_mode, day, week, month
-     FROM db_masmis.owner_sale`,
+     FROM db_masmis.owner_sale`
   );
   const [cdrRows] = await db.execute<any[]>(
     `SELECT agent, tl_name, am, total_calls, connected, not_connected, avg_talk_time, report_date, day
-     FROM db_masmis.Owner_cdr`,
+     FROM db_masmis.Owner_cdr`
   );
 
   const roster = new Map<string, RosterAgent>();
@@ -819,28 +676,15 @@ export async function getHousingOwnerEntityTrend(
       mtdReported: num(r.mtd),
     });
   }
-  for (const m of await loadManualAgentsForRange("housing_owner", to)) {
+    for (const m of await loadManualAgentsForRange("housing_owner", to)) {
     const name = normalizeName(m.name);
     if (name && !roster.has(name)) roster.set(name, { empId: m.empId, name, tlName: m.tl, am: m.group, doj: dojForOwner(m.doj), tenureDays: tenureDaysFrom(m.doj), bucket: ownerBucket(m.doj), status: m.status, target: m.monthlyTarget, mtdReported: 0 });
   }
-  await applyOverridesToItems("housing_owner", [...roster.values()], to, {
-    name: (r) => r.name,
-    tl: (r) => r.tlName,
-    group: (r) => r.am,
-    active: (r) => r.status === "Active",
-    get: (r) => r.target,
-    set: (r, v) => {
-      r.target = v;
-    },
-  });
+  await applyOverridesToItems("housing_owner", [...roster.values()], to, { name: (r) => r.name, tl: (r) => r.tlName, group: (r) => r.am, active: (r) => r.status === "Active", get: (r) => r.target, set: (r, v) => { r.target = v; } });
 
   // Same roster-first precedence as getHousingOwnerDashboard's rowMatches: an
   // agent's TL/AM comes from the roster when they're on it, else from the row itself.
-  const matchesEntity = (
-    agentName: string,
-    rowTl: unknown,
-    rowAm: unknown,
-  ): boolean => {
+  const matchesEntity = (agentName: string, rowTl: unknown, rowAm: unknown): boolean => {
     if (entityType === "agent") return agentName === entityName;
     const ro = roster.get(agentName);
     const tl = ro?.tlName ?? (normalizeName(rowTl) || "Unassigned");
@@ -851,15 +695,11 @@ export async function getHousingOwnerEntityTrend(
   let target = 0;
   for (const ro of roster.values()) {
     if (entityType === "agent" && ro.name === entityName) target += ro.target;
-    else if (entityType === "tl" && ro.tlName === entityName)
-      target += ro.target;
+    else if (entityType === "tl" && ro.tlName === entityName) target += ro.target;
     else if (entityType === "am" && ro.am === entityName) target += ro.target;
   }
 
-  const dailyRevenue = new Map<
-    string,
-    { revenue: number; saleCount: number }
-  >();
+  const dailyRevenue = new Map<string, { revenue: number; saleCount: number }>();
   const seenSales = new Set<string>();
   for (const r of saleRows as any[]) {
     const rowDate = saleRowDate(r.month, r.day);
@@ -880,25 +720,13 @@ export async function getHousingOwnerEntityTrend(
     dailyRevenue.set(rowDate, dCur);
   }
 
-  interface DailyCdrAgg {
-    totalCalls: number;
-    connected: number;
-    talkSecSum: number;
-    talkRows: number;
-  }
+  interface DailyCdrAgg { totalCalls: number; connected: number; talkSecSum: number; talkRows: number }
   const dailyCalls = new Map<string, DailyCdrAgg>();
   const seenCdr = new Set<string>();
   for (const r of cdrRows as any[]) {
     const rowDate = cdrRowDate(r.report_date);
     if (rowDate === null || rowDate < from || rowDate > to) continue;
-    const cdrKey = [
-      normalizeName(r.agent),
-      rowDate,
-      r.total_calls,
-      r.connected,
-      r.not_connected,
-      r.avg_talk_time,
-    ].join("|");
+    const cdrKey = [normalizeName(r.agent), rowDate, r.total_calls, r.connected, r.not_connected, r.avg_talk_time].join("|");
     if (seenCdr.has(cdrKey)) continue;
     seenCdr.add(cdrKey);
     const name = normalizeName(r.agent);
@@ -908,24 +736,14 @@ export async function getHousingOwnerEntityTrend(
     const talkStr = String(r.avg_talk_time ?? "").trim();
     const hasTalk = talkStr !== "" && talkStr !== "0:00:00";
     const talkSec = hasTalk ? timeToSec(talkStr) : 0;
-    const cur = dailyCalls.get(rowDate) ?? {
-      totalCalls: 0,
-      connected: 0,
-      talkSecSum: 0,
-      talkRows: 0,
-    };
+    const cur = dailyCalls.get(rowDate) ?? { totalCalls: 0, connected: 0, talkSecSum: 0, talkRows: 0 };
     cur.totalCalls += calls;
     cur.connected += connected;
-    if (hasTalk) {
-      cur.talkSecSum += talkSec;
-      cur.talkRows += 1;
-    }
+    if (hasTalk) { cur.talkSecSum += talkSec; cur.talkRows += 1; }
     dailyCalls.set(rowDate, cur);
   }
 
-  const dates = [
-    ...new Set([...dailyRevenue.keys(), ...dailyCalls.keys()]),
-  ].sort();
+  const dates = [...new Set([...dailyRevenue.keys(), ...dailyCalls.keys()])].sort();
   let cumulativeRevenue = 0;
   const dailyTrend: HousingOwnerEntityTrendRow[] = dates.map((date) => {
     const sale = dailyRevenue.get(date);
@@ -954,11 +772,9 @@ export async function getHousingOwnerEntityTrend(
   const saleCount = dailyTrend.reduce((s, d) => s + d.saleCount, 0);
   const revenue = dailyTrend.reduce((s, d) => s + d.revenue, 0);
   const talkDays = [...dailyCalls.values()].filter((c) => c.talkRows > 0);
-  const avgTalkTimeSec =
-    talkDays.length > 0
-      ? talkDays.reduce((s, c) => s + c.talkSecSum / c.talkRows, 0) /
-        talkDays.length
-      : 0;
+  const avgTalkTimeSec = talkDays.length > 0
+    ? talkDays.reduce((s, c) => s + c.talkSecSum / c.talkRows, 0) / talkDays.length
+    : 0;
 
   return {
     entityType,
@@ -992,40 +808,20 @@ export async function getHousingOwnerEntityTrend(
  * ------------------------------------------------------------------------ */
 
 export interface HousingOwnerCdrFact {
-  date: string;
-  agent: string;
-  tl: string;
-  am: string;
-  vintage: string;
-  calls: number;
-  connected: number;
-  notConnected: number;
-  talkSec: number;
+  date: string; agent: string; tl: string; am: string; vintage: string;
+  calls: number; connected: number; notConnected: number; talkSec: number;
 }
 export interface HousingOwnerSaleFact {
-  date: string;
-  agent: string;
-  tl: string;
-  am: string;
-  vintage: string;
-  revenue: number;
-  saleCount: number;
+  date: string; agent: string; tl: string; am: string; vintage: string;
+  revenue: number; saleCount: number;
 }
 export interface HousingOwnerRosterFact {
-  name: string;
-  empId: string | null;
-  tl: string;
-  am: string;
-  vintage: string;
-  status: string;
-  monthlyTarget: number;
+  name: string; empId: string | null; tl: string; am: string; vintage: string;
+  status: string; monthlyTarget: number;
 }
 export interface HousingOwnerOutboundData {
-  from: string;
-  to: string;
-  windowFrom: string;
-  cdrThrough: string | null;
-  saleThrough: string | null;
+  from: string; to: string; windowFrom: string;
+  cdrThrough: string | null; saleThrough: string | null;
   cdr: HousingOwnerCdrFact[];
   sales: HousingOwnerSaleFact[];
   roster: HousingOwnerRosterFact[];
@@ -1037,17 +833,11 @@ function shiftDate(iso: string, days: number): string {
   return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
 }
 function dayDiff(a: string, b: string): number {
-  const p = (s: string) => {
-    const [y, m, d] = s.split("-").map(Number);
-    return Date.UTC(y, m - 1, d);
-  };
+  const p = (s: string) => { const [y, m, d] = s.split("-").map(Number); return Date.UTC(y, m - 1, d); };
   return Math.round((p(b) - p(a)) / 86400000);
 }
 
-export async function getHousingOwnerOutbound(
-  fromInput: string,
-  toInput: string,
-): Promise<HousingOwnerOutboundData> {
+export async function getHousingOwnerOutbound(fromInput: string, toInput: string): Promise<HousingOwnerOutboundData> {
   const { from, to } = resolveRange(fromInput, toInput);
 
   const spanDays = dayDiff(from, to) + 1;
@@ -1068,10 +858,10 @@ export async function getHousingOwnerOutbound(
   // that shorter window belongs to Housing Premium's CDR tab only, a different table entirely).
 
   const [agentRows] = await db.execute<any[]>(
-    `SELECT crm_id, overall, tl_name, am, status, bucket, monthly_target FROM db_masmis.owner_agent_details`,
+    `SELECT crm_id, overall, tl_name, am, status, bucket, monthly_target FROM db_masmis.owner_agent_details`
   );
   const [saleRows] = await db.execute<any[]>(
-    `SELECT opp_id, agent_name, tl_name, am, value, sale_count, package_type, day, month FROM db_masmis.owner_sale`,
+    `SELECT opp_id, agent_name, tl_name, am, value, sale_count, package_type, day, month FROM db_masmis.owner_sale`
   );
   const [cdrRows] = await db.execute<any[]>(
     `SELECT agent, tl_name, am, total_calls, connected, not_connected, avg_talk_time, report_date FROM db_masmis.Owner_cdr
@@ -1100,28 +890,11 @@ export async function getHousingOwnerOutbound(
     const name = normalizeName(m.name);
     if (name && !roster.has(name)) {
       const vintage = ownerBucket(m.doj) ?? "Unmapped";
-      roster.set(name, {
-        name,
-        empId: m.empId,
-        tl: m.tl,
-        am: m.group,
-        vintage,
-        status: m.status,
-        monthlyTarget: m.monthlyTarget,
-      });
+      roster.set(name, { name, empId: m.empId, tl: m.tl, am: m.group, vintage, status: m.status, monthlyTarget: m.monthlyTarget });
       vintageOf.set(name, vintage);
     }
   }
-  await applyOverridesToItems("housing_owner", [...roster.values()], to, {
-    name: (r) => r.name,
-    tl: (r) => r.tl,
-    group: (r) => r.am,
-    active: (r) => r.status === "Active",
-    get: (r) => r.monthlyTarget,
-    set: (r, v) => {
-      r.monthlyTarget = v;
-    },
-  });
+  await applyOverridesToItems("housing_owner", [...roster.values()], to, { name: (r) => r.name, tl: (r) => r.tl, group: (r) => r.am, active: (r) => r.status === "Active", get: (r) => r.monthlyTarget, set: (r, v) => { r.monthlyTarget = v; } });
   // Roster first, else the row's own TL / AM -- the precedence the existing endpoints use.
   // Uploaded rows carry placeholder values ("0", "-", "--") for a missing AM / TL.
   const label = (v: unknown) => {
@@ -1151,13 +924,7 @@ export async function getHousingOwnerOutbound(
       seenSales.add(key);
     }
     if (saleThrough === null || date > saleThrough) saleThrough = date;
-    sales.push({
-      date,
-      agent,
-      ...resolve(agent, r.tl_name, r.am),
-      revenue: num(r.value),
-      saleCount: num(r.sale_count) || 1,
-    });
+    sales.push({ date, agent, ...resolve(agent, r.tl_name, r.am), revenue: num(r.value), saleCount: num(r.sale_count) || 1 });
   }
 
   const cdr: HousingOwnerCdrFact[] = [];
@@ -1167,37 +934,17 @@ export async function getHousingOwnerOutbound(
     const date = cdrRowDate(r.report_date);
     if (date === null || date < windowFrom || date > to) continue;
     const agent = normalizeName(r.agent);
-    const key = [
-      agent,
-      date,
-      r.total_calls,
-      r.connected,
-      r.not_connected,
-      r.avg_talk_time,
-    ].join("|");
+    const key = [agent, date, r.total_calls, r.connected, r.not_connected, r.avg_talk_time].join("|");
     if (seenCdr.has(key)) continue;
     seenCdr.add(key);
     if (cdrThrough === null || date > cdrThrough) cdrThrough = date;
     const talkStr = String(r.avg_talk_time ?? "").trim();
     cdr.push({
-      date,
-      agent,
-      ...resolve(agent, r.tl_name, r.am),
-      calls: num(r.total_calls),
-      connected: num(r.connected),
-      notConnected: num(r.not_connected),
+      date, agent, ...resolve(agent, r.tl_name, r.am),
+      calls: num(r.total_calls), connected: num(r.connected), notConnected: num(r.not_connected),
       talkSec: talkStr === "" || talkStr === "0:00:00" ? 0 : timeToSec(talkStr),
     });
   }
 
-  return {
-    from,
-    to,
-    windowFrom,
-    cdrThrough,
-    saleThrough,
-    cdr,
-    sales,
-    roster: [...roster.values()],
-  };
+  return { from, to, windowFrom, cdrThrough, saleThrough, cdr, sales, roster: [...roster.values()] };
 }

@@ -5,15 +5,8 @@ import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { convertCandidateToEmployee } from "./ats.convert.service.js";
 import { classifyEsignState } from "./esignState.js";
 import { syncEsignStatus } from "../integrations/luckpay/luckpay-status.service.js";
-import {
-  assertNotBeforeToday,
-  canBackdateDates,
-} from "../../utils/dateUtils.js";
-import {
-  assertSalaryDateNotOwnedByPayrollHead,
-  checkSalaryStartDateForCandidate,
-  syncSalaryStartDateForCandidate,
-} from "../payroll/salary-start-date.service.js";
+import { assertNotBeforeToday, canBackdateDates } from "../../utils/dateUtils.js";
+import { assertSalaryDateNotOwnedByPayrollHead, checkSalaryStartDateForCandidate, syncSalaryStartDateForCandidate } from "../payroll/salary-start-date.service.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -30,21 +23,12 @@ function toDateOnly(value: unknown): string | null {
 function readinessBlockers(row: RowDataPacket | null): string[] {
   const blockers: string[] = [];
   if (!row) return ["Candidate record is missing"];
-  if (String(row.onboarding_status || "").toLowerCase() !== "approved")
-    blockers.push("Candidate onboarding form is not HR-approved");
-  if (Number(row.document_pending_count || 0) > 0)
-    blockers.push("Mandatory/available documents are not fully verified");
-  if (String(row.bgv_status || "").toLowerCase() !== "verified")
-    blockers.push("BGV/eKYC is not verified");
-  if (String(row.payroll_status || "").toLowerCase() !== "validated")
-    blockers.push("Payroll HR details are not validated");
-  if (
-    row.salary_exception_status &&
-    String(row.salary_exception_status) !== "approved"
-  )
-    blockers.push("Salary proposal approval is pending");
-  if (!row.salary_register_id || Number(row.salary_register_locked || 0) !== 1)
-    blockers.push("Salary register is not locked");
+  if (String(row.onboarding_status || "").toLowerCase() !== "approved") blockers.push("Candidate onboarding form is not HR-approved");
+  if (Number(row.document_pending_count || 0) > 0) blockers.push("Mandatory/available documents are not fully verified");
+  if (String(row.bgv_status || "").toLowerCase() !== "verified") blockers.push("BGV/eKYC is not verified");
+  if (String(row.payroll_status || "").toLowerCase() !== "validated") blockers.push("Payroll HR details are not validated");
+  if (row.salary_exception_status && String(row.salary_exception_status) !== "approved") blockers.push("Salary proposal approval is pending");
+  if (!row.salary_register_id || Number(row.salary_register_locked || 0) !== 1) blockers.push("Salary register is not locked");
   // JCLR (branch-head sign-off + Payroll HR logistics entry) is deliberately NOT a
   // readiness blocker, per an explicit product decision (2026-09-04): it tracks
   // physical joining-day logistics — workstation, ID card, transport, training
@@ -57,29 +41,22 @@ function readinessBlockers(row: RowDataPacket | null): string[] {
   // for anyone who took that path. The JCLR Logistics tab remains, for Payroll HR
   // to record the same information once it exists; see canSaveJclr below for why
   // its own save button no longer depends on this gate either.
-  if (String(row.statutory_status || "").toLowerCase() !== "verified")
-    blockers.push("EPF/statutory declaration is not verified");
-  if (String(row.dpdp_required_status || "").toLowerCase() !== "granted")
-    blockers.push("Required DPDP consent is not granted");
+  if (String(row.statutory_status || "").toLowerCase() !== "verified") blockers.push("EPF/statutory declaration is not verified");
+  if (String(row.dpdp_required_status || "").toLowerCase() !== "granted") blockers.push("Required DPDP consent is not granted");
   return blockers;
 }
 
 function nextAction(blockers: string[]): string {
   if (!blockers.length) return "Generate employee code";
-  if (blockers[0].includes("onboarding"))
-    return "HR review candidate onboarding form";
+  if (blockers[0].includes("onboarding")) return "HR review candidate onboarding form";
   if (blockers[0].includes("documents")) return "Review uploaded documents";
   if (blockers[0].includes("BGV")) return "Complete BGV/eKYC verification";
   if (blockers[0].includes("Payroll")) return "Complete Payroll HR details";
-  if (blockers[0].includes("Salary proposal"))
-    return "Complete salary proposal approvals";
+  if (blockers[0].includes("Salary proposal")) return "Complete salary proposal approvals";
   if (blockers[0].includes("Salary register")) return "Lock salary register";
-  if (blockers[0].includes("JCLR approval"))
-    return "BM / Branch Head JCLR approval";
-  if (blockers[0].includes("JCLR entry"))
-    return "Payroll HR complete JCLR entry";
-  if (blockers[0].includes("statutory"))
-    return "Verify EPF/statutory declaration";
+  if (blockers[0].includes("JCLR approval")) return "BM / Branch Head JCLR approval";
+  if (blockers[0].includes("JCLR entry")) return "Payroll HR complete JCLR entry";
+  if (blockers[0].includes("statutory")) return "Verify EPF/statutory declaration";
   return "Resolve DPDP consent";
 }
 
@@ -191,9 +168,7 @@ const candidateSnapshotSql = (whereSql: string, scoped = false) => `SELECT
      LEFT JOIN employees e ON e.id = ob.employee_id
      WHERE ${whereSql}`;
 
-async function candidateSnapshot(
-  candidateId: string,
-): Promise<RowDataPacket | null> {
+async function candidateSnapshot(candidateId: string): Promise<RowDataPacket | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `${candidateSnapshotSql("c.id = ?", true)} LIMIT 1`,
     [candidateId, candidateId, candidateId, candidateId, candidateId],
@@ -214,18 +189,14 @@ async function candidateSnapshot(
  * Returned in the caller's id order, not the database's: the queue's ordering is decided by
  * listJoiningControlRoomQueue's ORDER BY, and `IN` does not preserve it.
  */
-async function candidateSnapshots(
-  candidateIds: string[],
-): Promise<RowDataPacket[]> {
+async function candidateSnapshots(candidateIds: string[]): Promise<RowDataPacket[]> {
   if (!candidateIds.length) return [];
   const [rows] = await db.execute<RowDataPacket[]>(
     candidateSnapshotSql(`c.id IN (${candidateIds.map(() => "?").join(",")})`),
     candidateIds,
   );
   const byId = new Map(rows.map((row) => [String(row.candidate_id), row]));
-  return candidateIds
-    .map((id) => byId.get(id))
-    .filter(Boolean) as RowDataPacket[];
+  return candidateIds.map((id) => byId.get(id)).filter(Boolean) as RowDataPacket[];
 }
 
 /**
@@ -237,8 +208,7 @@ export async function listJoiningControlRoomQueue(search = "", branchKeys: strin
   let searchSql = "";
   let searchParams: unknown[] = [];
   if (search.trim()) {
-    searchSql =
-      "AND (c.full_name LIKE ? OR c.mobile LIKE ? OR c.email LIKE ? OR c.candidate_code LIKE ?)";
+    searchSql = "AND (c.full_name LIKE ? OR c.mobile LIKE ? OR c.email LIKE ? OR c.candidate_code LIKE ?)";
     const like = `%${search.trim()}%`;
     searchParams = [like, like, like, like];
   }
@@ -252,10 +222,7 @@ export async function listJoiningControlRoomQueue(search = "", branchKeys: strin
   }
   // The filter is interpolated into all four arms below, so its bindings repeat once per arm.
   const params: unknown[] = [
-    ...searchParams,
-    ...searchParams,
-    ...searchParams,
-    ...searchParams,
+    ...searchParams, ...searchParams, ...searchParams, ...searchParams,
   ];
 
   // One arm per source of the candidate's sort key, in the precedence the ORDER BY used to express
@@ -326,18 +293,12 @@ export async function listJoiningControlRoomQueue(search = "", branchKeys: strin
     params,
   );
 
-  const snapshots = await candidateSnapshots(
-    rows.map((row) => String(row.candidate_id)),
-  );
+  const snapshots = await candidateSnapshots(rows.map((row) => String(row.candidate_id)));
   return snapshots.map((row) => {
     const blockers = readinessBlockers(row);
     return {
       ...row,
-      readiness_status: blockers.length
-        ? "blocked"
-        : row?.employee_code
-          ? "employee_created"
-          : "ready",
+      readiness_status: blockers.length ? "blocked" : row?.employee_code ? "employee_created" : "ready",
       blockers,
       next_action: nextAction(blockers),
     };
@@ -366,54 +327,18 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
     [provTasks],
   ] = await Promise.all([
     candidateSnapshot(candidateId),
-    db.execute<RowDataPacket[]>(
-      `SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
-      [candidateId],
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
-      [candidateId],
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`,
-      [candidateId],
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? ORDER BY created_at DESC`,
-      [candidateId],
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT * FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`,
-      [candidateId],
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT * FROM salary_exception_proposal WHERE candidate_id = ? LIMIT 1`,
-      [candidateId],
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT * FROM salary_proposal_approval_step WHERE candidate_id = ? ORDER BY FIELD(approval_level, 'bm','operations','payroll','finance')`,
-      [candidateId],
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT * FROM jclr_detail WHERE candidate_id = ? LIMIT 1`,
-      [candidateId],
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT * FROM statutory_declaration WHERE candidate_id = ? LIMIT 1`,
-      [candidateId],
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT * FROM dpdp_consent_register WHERE candidate_id = ? ORDER BY purpose_code`,
-      [candidateId],
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT * FROM dpdp_consent_withdrawal WHERE requester_id = ? AND requester_type = 'candidate' ORDER BY created_at DESC`,
-      [candidateId],
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT ob.*, e.employee_code, e.official_email FROM ats_onboarding_bridge ob LEFT JOIN employees e ON e.id = ob.employee_id WHERE ob.candidate_id = ? LIMIT 1`,
-      [candidateId],
-    ),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM salary_exception_proposal WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM salary_proposal_approval_step WHERE candidate_id = ? ORDER BY FIELD(approval_level, 'bm','operations','payroll','finance')`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM jclr_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM statutory_declaration WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_register WHERE candidate_id = ? ORDER BY purpose_code`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_withdrawal WHERE requester_id = ? AND requester_type = 'candidate' ORDER BY created_at DESC`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT ob.*, e.employee_code, e.official_email FROM ats_onboarding_bridge ob LEFT JOIN employees e ON e.id = ob.employee_id WHERE ob.candidate_id = ? LIMIT 1`, [candidateId]),
     db.execute<RowDataPacket[]>(
       `SELECT o.*,
               d.dept_name AS department_name, des.designation_name, cc.cost_centre_name,
@@ -440,8 +365,7 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
     ),
   ]);
 
-  if (!summary)
-    throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+  if (!summary) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
 
   // Joining-document e-sign checklist.
   //
@@ -457,9 +381,7 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
   // reverse case — a bridged joiner whose checklist rows were written without the candidate
   // link — would otherwise show a confident, wrong "0 of 0 signed", and `bridge` is already
   // loaded above so the second key costs no extra round trip.
-  const bridgeEmployeeId = bridge[0]?.employee_id
-    ? String(bridge[0].employee_id)
-    : null;
+  const bridgeEmployeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
   const [esignRows] = await db.execute<RowDataPacket[]>(
     `SELECT document_code, document_name, owner_type, action_type, status, fill_status,
             signature_mode, mandatory, due_at, completed_at, verification_status,
@@ -491,22 +413,15 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
     updated_at: row.updated_at ?? null,
   }));
 
-  const esignSignable = esignDocuments.filter(
-    (doc) => doc.action_type === "esign",
-  );
+  const esignSignable = esignDocuments.filter((doc) => doc.action_type === "esign");
   const esign = {
     documents: esignDocuments,
     total: esignDocuments.length,
-    completed: esignDocuments.filter((doc) => doc.bucket === "completed")
-      .length,
-    in_progress: esignDocuments.filter((doc) => doc.bucket === "in_progress")
-      .length,
-    not_started: esignDocuments.filter((doc) => doc.bucket === "not_started")
-      .length,
+    completed: esignDocuments.filter((doc) => doc.bucket === "completed").length,
+    in_progress: esignDocuments.filter((doc) => doc.bucket === "in_progress").length,
+    not_started: esignDocuments.filter((doc) => doc.bucket === "not_started").length,
     signable_total: esignSignable.length,
-    signable_completed: esignSignable.filter(
-      (doc) => doc.bucket === "completed",
-    ).length,
+    signable_completed: esignSignable.filter((doc) => doc.bucket === "completed").length,
     // Kit-level state the dispatcher maintains on the bridge row; shown beside the checklist
     // so HR can tell "nothing sent yet" from "sent and unsigned" without reading nine rows.
     kit_status: bridge[0]?.joining_document_status ?? null,
@@ -533,11 +448,7 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
   return {
     summary: {
       ...summary,
-      readiness_status: blockers.length
-        ? "blocked"
-        : summary.employee_code
-          ? "employee_created"
-          : "ready",
+      readiness_status: blockers.length ? "blocked" : summary.employee_code ? "employee_created" : "ready",
       blockers,
       next_action: nextAction(blockers),
     },
@@ -573,23 +484,12 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
   };
 }
 
-export async function savePayrollControlRoomDetails(
-  candidateId: string,
-  input: JsonRecord,
-  actorId: string,
-  actorRoles?: readonly string[],
-) {
+export async function savePayrollControlRoomDetails(candidateId: string, input: JsonRecord, actorId: string, actorRoles?: readonly string[]) {
   // JCR only updates effective dates and remarks — salary is set in onboarding-requests offer form
   const salaryStartDate = String(input.salary_start_date || "");
-  const attendanceEffective = String(
-    input.attendance_effective_from || salaryStartDate,
-  );
-  const statutoryEffective = String(
-    input.statutory_effective_from || salaryStartDate,
-  );
-  const payrollMonth = String(
-    input.payroll_month_effective || monthOf(salaryStartDate),
-  );
+  const attendanceEffective = String(input.attendance_effective_from || salaryStartDate);
+  const statutoryEffective = String(input.statutory_effective_from || salaryStartDate);
+  const payrollMonth = String(input.payroll_month_effective || monthOf(salaryStartDate));
   const reason = String(input.salary_effective_date_reason || "");
   const joiningRemarks = String(input.joining_remarks || "");
 
@@ -599,56 +499,32 @@ export async function savePayrollControlRoomDetails(
     [candidateId],
   );
   const offer = offerRows[0];
-  const joiningDate = offer?.date_of_joining
-    ? toDateOnly(offer.date_of_joining)
-    : null;
-  const originalSalaryDate = offer?.date_of_salary
-    ? toDateOnly(offer.date_of_salary)
-    : joiningDate;
+  const joiningDate = offer?.date_of_joining ? toDateOnly(offer.date_of_joining) : null;
+  const originalSalaryDate = offer?.date_of_salary ? toDateOnly(offer.date_of_salary) : joiningDate;
   // Payroll HR / Payroll Head keep the CURRENT salary start date on the validation row; the offer keeps
   // the original. Re-saving either one is not a change, so it must neither need a reason nor trip the date lock.
   const [currentRows] = await db.execute<RowDataPacket[]>(
     `SELECT salary_start_date FROM ats_payroll_hr_validation WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
     [candidateId],
   );
-  const currentSalaryDate = currentRows[0]?.salary_start_date
-    ? toDateOnly(currentRows[0].salary_start_date)
-    : null;
-  const isExistingSalaryDate = (d: string) =>
-    d === originalSalaryDate || d === currentSalaryDate;
+  const currentSalaryDate = currentRows[0]?.salary_start_date ? toDateOnly(currentRows[0].salary_start_date) : null;
+  const isExistingSalaryDate = (d: string) => d === originalSalaryDate || d === currentSalaryDate;
 
   // Validate salary start date if changed from original
-  if (
-    salaryStartDate &&
-    originalSalaryDate &&
-    !isExistingSalaryDate(salaryStartDate) &&
-    !reason.trim()
-  ) {
-    throw Object.assign(
-      new Error(
-        "salary_effective_date_reason is required when salary start date differs from offer",
-      ),
-      { statusCode: 400 },
-    );
+  if (salaryStartDate && originalSalaryDate && !isExistingSalaryDate(salaryStartDate) && !reason.trim()) {
+    throw Object.assign(new Error("salary_effective_date_reason is required when salary start date differs from offer"), { statusCode: 400 });
   }
 
   // W11/W12: salary_start_date must never precede joining_date
   if (salaryStartDate && joiningDate && salaryStartDate < joiningDate) {
     throw Object.assign(
-      new Error(
-        `Salary start date (${salaryStartDate}) cannot be before date of joining (${joiningDate}).`,
-      ),
-      { statusCode: 400, code: "SALARY_START_BEFORE_JOINING" },
+      new Error(`Salary start date (${salaryStartDate}) cannot be before date of joining (${joiningDate}).`),
+      { statusCode: 400, code: 'SALARY_START_BEFORE_JOINING' },
     );
   }
 
   // Date lock: a salary start date cannot be moved to before today (re-saving the offer's own date is fine).
-  assertNotBeforeToday(
-    salaryStartDate,
-    "Salary start date",
-    isExistingSalaryDate(salaryStartDate) ? salaryStartDate : undefined,
-    canBackdateDates(actorRoles),
-  );
+  assertNotBeforeToday(salaryStartDate, "Salary start date", isExistingSalaryDate(salaryStartDate) ? salaryStartDate : undefined, canBackdateDates(actorRoles));
 
   // Once Payroll Head has approved the salary the date is theirs: refuse BEFORE writing anything,
   // otherwise this would change only the validation row and leave payroll reading another date.
@@ -711,15 +587,12 @@ export async function savePayrollControlRoomDetails(
         ORDER BY o.created_at DESC
         LIMIT 1`,
       [
-        candidateId,
-        branchId,
-        actorId,
+        candidateId, branchId, actorId,
         salaryStartDate || null,
         attendanceEffective || null,
         statutoryEffective || null,
         payrollMonth || null,
-        reason || null,
-        joiningRemarks || null,
+        reason || null, joiningRemarks || null,
         candidateId,
       ],
     );
@@ -728,7 +601,7 @@ export async function savePayrollControlRoomDetails(
       throw Object.assign(
         new Error(
           "Payroll validation could not be created because this candidate has no employment offer. " +
-            "Raise and approve the offer first — the validation record is seeded from it.",
+          "Raise and approve the offer first — the validation record is seeded from it."
         ),
         { statusCode: 400 },
       );
@@ -784,20 +657,13 @@ export async function savePayrollControlRoomDetails(
   // validate — or the readiness screen, which still reports "not locked"
   // accurately — rather than blocking the save that got the candidate this far.
   await lockSalaryRegister(candidateId, actorId).catch((error: unknown) => {
-    console.warn(
-      `[joining-control-room] auto-lock skipped for ${candidateId}:`,
-      (error as Error)?.message ?? error,
-    );
+    console.warn(`[joining-control-room] auto-lock skipped for ${candidateId}:`, (error as Error)?.message ?? error);
   });
 
   return getJoiningControlRoomCandidate(candidateId);
 }
 
-export async function saveJclrDetails(
-  candidateId: string,
-  input: JsonRecord,
-  actorId: string,
-) {
+export async function saveJclrDetails(candidateId: string, input: JsonRecord, actorId: string) {
   const existing = await candidateSnapshot(candidateId);
   const oldStatus = existing?.jclr_status ? String(existing.jclr_status) : null;
   // No longer gated on jclr_approval_status (2026-09-04, matching readinessBlockers
@@ -854,22 +720,12 @@ export async function saveJclrDetails(
   await db.execute(
     `INSERT INTO jclr_audit_log (id, candidate_id, actor_id, action, old_status, new_status, payload_json)
      VALUES (UUID(), ?, ?, 'SAVE_JCLR', ?, ?, ?)`,
-    [
-      candidateId,
-      actorId,
-      oldStatus,
-      input.jclr_status || "pending",
-      JSON.stringify(input),
-    ],
+    [candidateId, actorId, oldStatus, input.jclr_status || "pending", JSON.stringify(input)],
   );
   return getJoiningControlRoomCandidate(candidateId);
 }
 
-export async function saveStatutoryDeclaration(
-  candidateId: string,
-  input: JsonRecord,
-  actorId: string,
-) {
+export async function saveStatutoryDeclaration(candidateId: string, input: JsonRecord, actorId: string) {
   await db.execute(
     `INSERT INTO statutory_declaration
        (id, candidate_id, epf_member, uan, pf_applicable, esi_applicable, professional_tax_state,
@@ -918,11 +774,7 @@ export async function saveStatutoryDeclaration(
   return getJoiningControlRoomCandidate(candidateId);
 }
 
-export async function upsertDpdpConsent(
-  candidateId: string,
-  input: JsonRecord,
-  actorId: string,
-) {
+export async function upsertDpdpConsent(candidateId: string, input: JsonRecord, actorId: string) {
   const purpose = String(input.purpose_code || "candidate_onboarding");
   const status = String(input.consent_status || "granted");
   await db.execute(
@@ -938,46 +790,22 @@ export async function upsertDpdpConsent(
        source = VALUES(source),
        actor_id = VALUES(actor_id),
        updated_at = NOW()`,
-    [
-      candidateId,
-      purpose,
-      status,
-      input.consent_text_version || null,
-      input.lawful_basis || "consent",
-      status,
-      status,
-      input.source || "hr_control_room",
-      actorId,
-    ],
+    [candidateId, purpose, status, input.consent_text_version || null, input.lawful_basis || "consent", status, status, input.source || "hr_control_room", actorId],
   );
   await db.execute(
     `INSERT INTO dpdp_processing_activity_log (id, candidate_id, actor_id, purpose_code, action, data_category, lawful_basis, payload_json)
      VALUES (UUID(), ?, ?, ?, 'CONSENT_UPDATE', ?, ?, ?)`,
-    [
-      candidateId,
-      actorId,
-      purpose,
-      input.data_category || "candidate_onboarding",
-      input.lawful_basis || "consent",
-      JSON.stringify(input),
-    ],
+    [candidateId, actorId, purpose, input.data_category || "candidate_onboarding", input.lawful_basis || "consent", JSON.stringify(input)],
   );
   return getJoiningControlRoomCandidate(candidateId);
 }
 
-export async function requestDpdpWithdrawal(
-  candidateId: string,
-  input: JsonRecord,
-  actorId: string,
-) {
+export async function requestDpdpWithdrawal(candidateId: string, input: JsonRecord, actorId: string) {
   const purpose = String(input.purpose_code || "candidate_onboarding");
   await db.execute(
     `INSERT INTO dpdp_consent_withdrawal (id, requester_id, requester_type, withdrawal_reason, status)
      VALUES (UUID(), ?, 'candidate', ?, 'submitted')`,
-    [
-      candidateId,
-      String(input.reason || "Withdrawal requested from HR control room"),
-    ],
+    [candidateId, String(input.reason || "Withdrawal requested from HR control room")],
   );
   return getJoiningControlRoomCandidate(candidateId);
 }
@@ -985,11 +813,7 @@ export async function requestDpdpWithdrawal(
 export async function validateReadiness(candidateId: string) {
   const summary = await candidateSnapshot(candidateId);
   const blockers = readinessBlockers(summary);
-  const status = blockers.length
-    ? "blocked"
-    : summary?.employee_code
-      ? "employee_created"
-      : "ready";
+  const status = blockers.length ? "blocked" : summary?.employee_code ? "employee_created" : "ready";
   await db.execute(
     `INSERT INTO joining_control_room_snapshot
        (id, candidate_id, readiness_status, blockers_json, next_action, snapshot_json)
@@ -1000,20 +824,9 @@ export async function validateReadiness(candidateId: string) {
        next_action = VALUES(next_action),
        snapshot_json = VALUES(snapshot_json),
        updated_at = NOW()`,
-    [
-      candidateId,
-      status,
-      JSON.stringify(blockers),
-      nextAction(blockers),
-      JSON.stringify(summary || {}),
-    ],
+    [candidateId, status, JSON.stringify(blockers), nextAction(blockers), JSON.stringify(summary || {})],
   );
-  return {
-    candidate_id: candidateId,
-    readiness_status: status,
-    blockers,
-    next_action: nextAction(blockers),
-  };
+  return { candidate_id: candidateId, readiness_status: status, blockers, next_action: nextAction(blockers) };
 }
 
 /**
@@ -1035,16 +848,12 @@ export async function validateReadiness(candidateId: string) {
  * Every non-terminal transaction for the candidate is checked (not just one),
  * since a joining kit can carry more than one open transaction.
  */
-export async function recheckEsignStatus(
-  candidateId: string,
-): Promise<{ checked: number; completed: number }> {
+export async function recheckEsignStatus(candidateId: string): Promise<{ checked: number; completed: number }> {
   const [bridge] = await db.execute<RowDataPacket[]>(
     `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
     [candidateId],
   );
-  const employeeId = bridge[0]?.employee_id
-    ? String(bridge[0].employee_id)
-    : null;
+  const employeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT client_transaction_id
@@ -1056,13 +865,8 @@ export async function recheckEsignStatus(
 
   let completed = 0;
   for (const row of rows as RowDataPacket[]) {
-    const outcome = await syncEsignStatus(
-      String(row.client_transaction_id),
-    ).catch((error: unknown) => {
-      console.warn(
-        `[joining-control-room] manual esign recheck failed for ${row.client_transaction_id}:`,
-        error,
-      );
+    const outcome = await syncEsignStatus(String(row.client_transaction_id)).catch((error: unknown) => {
+      console.warn(`[joining-control-room] manual esign recheck failed for ${row.client_transaction_id}:`, error);
       return null;
     });
     if (outcome?.state === "completed") completed++;
@@ -1084,17 +888,12 @@ export async function recheckEsignStatus(
  * signature, so Payroll HR is not stuck only re-polling a status that will
  * never change on its own.
  */
-export async function resendEsignLink(
-  candidateId: string,
-  actorId: string,
-): Promise<{ resent: boolean; message: string; emailedTo?: string[] }> {
+export async function resendEsignLink(candidateId: string, actorId: string): Promise<{ resent: boolean; message: string; emailedTo?: string[] }> {
   const [bridge] = await db.execute<RowDataPacket[]>(
     `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
     [candidateId],
   );
-  const employeeId = bridge[0]?.employee_id
-    ? String(bridge[0].employee_id)
-    : null;
+  const employeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
 
   const [kits] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM employee_joining_esign_kit
@@ -1104,15 +903,10 @@ export async function resendEsignLink(
   );
   const kitId = (kits as RowDataPacket[])[0]?.id;
   if (!kitId) {
-    return {
-      resent: false,
-      message:
-        "No joining kit is currently awaiting this candidate's signature.",
-    };
+    return { resent: false, message: "No joining kit is currently awaiting this candidate's signature." };
   }
 
-  const { resendKitEsignLink } =
-    await import("../employees/joiningKitDispatch.service.js");
+  const { resendKitEsignLink } = await import("../employees/joiningKitDispatch.service.js");
   return resendKitEsignLink(String(kitId), actorId);
 }
 
@@ -1123,25 +917,16 @@ export async function resendEsignLink(
  * is dead. This is the one path that deliberately re-bills the provider: a
  * genuinely new kit, assembled and dispatched from scratch.
  */
-export async function redispatchDeadEsignKit(
-  candidateId: string,
-  actorId: string,
-) {
+export async function redispatchDeadEsignKit(candidateId: string, actorId: string) {
   const [bridge] = await db.execute<RowDataPacket[]>(
     `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
     [candidateId],
   );
-  const employeeId = bridge[0]?.employee_id
-    ? String(bridge[0].employee_id)
-    : null;
+  const employeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
   if (!employeeId) {
-    throw Object.assign(
-      new Error("No employee record exists yet for this candidate"),
-      { statusCode: 409 },
-    );
+    throw Object.assign(new Error("No employee record exists yet for this candidate"), { statusCode: 409 });
   }
-  const { redispatchDeadKit } =
-    await import("../employees/joiningKitDispatch.service.js");
+  const { redispatchDeadKit } = await import("../employees/joiningKitDispatch.service.js");
   return redispatchDeadKit(employeeId, actorId);
 }
 
@@ -1155,29 +940,13 @@ export async function lockSalaryRegister(candidateId: string, actorId: string) {
     [candidateId],
   );
   const payroll = rows[0];
-  if (!payroll)
-    throw Object.assign(
-      new Error(
-        "Payroll HR validation is required before locking salary register",
-      ),
-      { statusCode: 409 },
-    );
+  if (!payroll) throw Object.assign(new Error("Payroll HR validation is required before locking salary register"), { statusCode: 409 });
   if (payroll.proposal_status && payroll.proposal_status !== "approved") {
-    throw Object.assign(
-      new Error("Salary proposal must be approved before salary register lock"),
-      { statusCode: 409 },
-    );
+    throw Object.assign(new Error("Salary proposal must be approved before salary register lock"), { statusCode: 409 });
   }
-  const salaryEffective = toDateOnly(
-    payroll.salary_start_date || payroll.joining_date,
-  );
-  if (!salaryEffective)
-    throw Object.assign(new Error("Salary effective date is missing"), {
-      statusCode: 409,
-    });
-  const gross = Number(
-    payroll.proposed_gross_salary || payroll.gross_salary || 0,
-  );
+  const salaryEffective = toDateOnly(payroll.salary_start_date || payroll.joining_date);
+  if (!salaryEffective) throw Object.assign(new Error("Salary effective date is missing"), { statusCode: 409 });
+  const gross = Number(payroll.proposed_gross_salary || payroll.gross_salary || 0);
   const salaryRegisterId = randomUUID();
   await db.execute(
     `INSERT INTO salary_register
@@ -1223,14 +992,9 @@ export async function lockSalaryRegister(candidateId: string, actorId: string) {
   // eligibility check — which reads salary_component_assignments, a different
   // table entirely — should not have to wait for someone to separately notice
   // and re-key it.
-  await syncSalaryComponentFromValidation(candidateId, actorId).catch(
-    (error: unknown) => {
-      console.warn(
-        `[joining-control-room] salary component auto-sync skipped for ${candidateId}:`,
-        error,
-      );
-    },
-  );
+  await syncSalaryComponentFromValidation(candidateId, actorId).catch((error: unknown) => {
+    console.warn(`[joining-control-room] salary component auto-sync skipped for ${candidateId}:`, error);
+  });
   return getJoiningControlRoomCandidate(candidateId);
 }
 
@@ -1262,32 +1026,20 @@ export async function lockSalaryRegister(candidateId: string, actorId: string) {
  * not yet a final figure — and never overwrites an existing active row, same
  * non-overwrite rule as every other sync in this file.
  */
-export async function syncSalaryComponentFromValidation(
-  candidateId: string,
-  actorId: string,
-): Promise<{ synced: boolean; reason?: string }> {
+export async function syncSalaryComponentFromValidation(candidateId: string, actorId: string): Promise<{ synced: boolean; reason?: string }> {
   const [bridge] = await db.execute<RowDataPacket[]>(
     `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
     [candidateId],
   );
-  const employeeId = bridge[0]?.employee_id
-    ? String(bridge[0].employee_id)
-    : null;
-  if (!employeeId)
-    return {
-      synced: false,
-      reason: "No employee record exists yet for this candidate",
-    };
+  const employeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
+  if (!employeeId) return { synced: false, reason: "No employee record exists yet for this candidate" };
 
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT 1 FROM salary_component_assignments WHERE employee_id = ? AND status = 'active' LIMIT 1`,
     [employeeId],
   );
   if ((existing as RowDataPacket[]).length > 0) {
-    return {
-      synced: false,
-      reason: "Employee already has an active salary component assignment",
-    };
+    return { synced: false, reason: "Employee already has an active salary component assignment" };
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -1302,15 +1054,10 @@ export async function syncSalaryComponentFromValidation(
     return { synced: false, reason: "Salary register is not locked" };
   }
   if (payroll.basic_salary == null || payroll.gross_salary == null) {
-    return {
-      synced: false,
-      reason: "Payroll HR validation has no salary component breakdown to copy",
-    };
+    return { synced: false, reason: "Payroll HR validation has no salary component breakdown to copy" };
   }
 
-  const effectiveDate = toDateOnly(
-    payroll.salary_start_date || payroll.joining_date,
-  );
+  const effectiveDate = toDateOnly(payroll.salary_start_date || payroll.joining_date);
   const pfApplicable = Number(payroll.pf_amount ?? 0) > 0;
   const esiApplicable = Number(payroll.esic_amount ?? 0) > 0;
 
@@ -1329,43 +1076,22 @@ export async function syncSalaryComponentFromValidation(
              ?, ?, ?, NULL, ?, NOW(),
              ?, 'active')`,
     [
-      employeeId,
-      effectiveDate,
-      payroll.basic_salary,
-      payroll.hra ?? 0,
-      payroll.conveyance ?? 0,
-      payroll.special_allowance ?? 0,
-      payroll.gross_salary,
-      pfApplicable ? 1 : 0,
-      esiApplicable ? 1 : 0,
-      payroll.pf_amount ?? null,
-      payroll.esic_amount ?? null,
-      payroll.gross_salary,
-      actorId,
-      payroll.salary_register_id
-        ? String(payroll.salary_register_id)
-        : "joining_control_room_lock_sync",
+      employeeId, effectiveDate,
+      payroll.basic_salary, payroll.hra ?? 0, payroll.conveyance ?? 0, payroll.special_allowance ?? 0,
+      payroll.gross_salary, pfApplicable ? 1 : 0, esiApplicable ? 1 : 0,
+      payroll.pf_amount ?? null, payroll.esic_amount ?? null, payroll.gross_salary,
+      actorId, payroll.salary_register_id ? String(payroll.salary_register_id) : "joining_control_room_lock_sync",
     ],
   );
   return { synced: true };
 }
 
-export async function approveSalaryProposal(
-  candidateId: string,
-  input: JsonRecord,
-  actorId: string,
-) {
+export async function approveSalaryProposal(candidateId: string, input: JsonRecord, actorId: string) {
   const level = String(input.approval_level || "bm");
   const action = String(input.action || "approved");
-  const [proposalRows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM salary_exception_proposal WHERE candidate_id = ? LIMIT 1`,
-    [candidateId],
-  );
+  const [proposalRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM salary_exception_proposal WHERE candidate_id = ? LIMIT 1`, [candidateId]);
   const proposal = proposalRows[0];
-  if (!proposal)
-    throw Object.assign(new Error("Salary proposal not found"), {
-      statusCode: 404,
-    });
+  if (!proposal) throw Object.assign(new Error("Salary proposal not found"), { statusCode: 404 });
   await db.execute(
     `INSERT INTO salary_proposal_approval_step
        (id, proposal_id, candidate_id, approval_level, approver_id, status, remarks, acted_at)
@@ -1375,27 +1101,10 @@ export async function approveSalaryProposal(
        status = VALUES(status),
        remarks = VALUES(remarks),
        acted_at = NOW()`,
-    [
-      proposal.id,
-      candidateId,
-      level,
-      actorId,
-      action === "rejected" ? "rejected" : "approved",
-      input.remarks || null,
-    ],
+    [proposal.id, candidateId, level, actorId, action === "rejected" ? "rejected" : "approved", input.remarks || null],
   );
-  const nextStage: Record<string, string> = {
-    bm: "operations",
-    operations: "payroll",
-    payroll: "finance",
-    finance: "completed",
-  };
-  const finalStatus =
-    action === "rejected"
-      ? "rejected"
-      : level === "finance"
-        ? "approved"
-        : "pending";
+  const nextStage: Record<string, string> = { bm: "operations", operations: "payroll", payroll: "finance", finance: "completed" };
+  const finalStatus = action === "rejected" ? "rejected" : level === "finance" ? "approved" : "pending";
   await db.execute(
     `UPDATE salary_exception_proposal
         SET status = ?, approval_stage = ?, approved_by = CASE WHEN ? = 'approved' THEN ? ELSE approved_by END,
@@ -1403,16 +1112,7 @@ export async function approveSalaryProposal(
             rejection_reason = CASE WHEN ? = 'rejected' THEN ? ELSE rejection_reason END,
             updated_at = NOW()
       WHERE id = ?`,
-    [
-      finalStatus,
-      action === "rejected" ? level : nextStage[level] || "completed",
-      finalStatus,
-      actorId,
-      finalStatus,
-      action,
-      input.remarks || null,
-      proposal.id,
-    ],
+    [finalStatus, action === "rejected" ? level : nextStage[level] || "completed", finalStatus, actorId, finalStatus, action, input.remarks || null, proposal.id],
   );
   return getJoiningControlRoomCandidate(candidateId);
 }
@@ -1454,10 +1154,7 @@ export async function syncBankDetailFromOnboarding(
     [employeeId],
   );
   if ((existing as RowDataPacket[]).length > 0) {
-    return {
-      synced: false,
-      reason: "Employee already has an active primary bank record",
-    };
+    return { synced: false, reason: "Employee already has an active primary bank record" };
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -1466,24 +1163,12 @@ export async function syncBankDetailFromOnboarding(
     [candidateId],
   );
   const submission = (rows as RowDataPacket[])[0];
-  if (!submission)
-    return {
-      synced: false,
-      reason: "No bank details submitted during onboarding",
-    };
-  if (
-    String(submission.verification_status ?? "").toLowerCase() !== "verified"
-  ) {
-    return {
-      synced: false,
-      reason: `Onboarding bank submission is "${submission.verification_status ?? "pending"}", not verified`,
-    };
+  if (!submission) return { synced: false, reason: "No bank details submitted during onboarding" };
+  if (String(submission.verification_status ?? "").toLowerCase() !== "verified") {
+    return { synced: false, reason: `Onboarding bank submission is "${submission.verification_status ?? "pending"}", not verified` };
   }
   if (!submission.account_no_encrypted || !submission.ifsc_code) {
-    return {
-      synced: false,
-      reason: "Onboarding bank submission has no usable account number or IFSC",
-    };
+    return { synced: false, reason: "Onboarding bank submission has no usable account number or IFSC" };
   }
 
   await db.execute(
@@ -1500,22 +1185,17 @@ export async function syncBankDetailFromOnboarding(
       submission.account_type || "Savings",
     ],
   );
-  await db
-    .execute(
-      `INSERT INTO employee_bank_detail_backfill_log
+  await db.execute(
+    `INSERT INTO employee_bank_detail_backfill_log
        (employee_id, employee_code, account_before, account_after, ifsc_before, ifsc_after, source, corroborated_by_payment, phase, written_at)
      SELECT id, employee_code, NULL, 'synced-from-onboarding', NULL, ?, 'joining_control_room_onboarding_sync', 0, 'onboarding-sync', NOW()
        FROM employees WHERE id = ?`,
-      [String(submission.ifsc_code).toUpperCase(), employeeId],
-    )
-    .catch((error: unknown) => {
-      // The bank record itself is already written; a missing audit row must not
-      // undo that. Logged so the gap in the log is visible, not silent.
-      console.warn(
-        `[joining-control-room] bank-sync audit log failed for ${employeeId}:`,
-        error,
-      );
-    });
+    [String(submission.ifsc_code).toUpperCase(), employeeId],
+  ).catch((error: unknown) => {
+    // The bank record itself is already written; a missing audit row must not
+    // undo that. Logged so the gap in the log is visible, not silent.
+    console.warn(`[joining-control-room] bank-sync audit log failed for ${employeeId}:`, error);
+  });
   return { synced: true };
 }
 
@@ -1555,10 +1235,7 @@ export async function syncDpdpConsentFromOnboarding(
   );
   const profile = (profileRows as RowDataPacket[])[0];
   if (!profile || !Number(profile.dpdp_consent)) {
-    return {
-      synced: false,
-      reason: "No DPDP consent recorded on the onboarding profile",
-    };
+    return { synced: false, reason: "No DPDP consent recorded on the onboarding profile" };
   }
 
   const [existing] = await db.execute<RowDataPacket[]>(
@@ -1566,34 +1243,21 @@ export async function syncDpdpConsentFromOnboarding(
     [candidateId],
   );
   if ((existing as RowDataPacket[]).length > 0) {
-    return {
-      synced: false,
-      reason: "candidate_onboarding consent is already recorded",
-    };
+    return { synced: false, reason: "candidate_onboarding consent is already recorded" };
   }
 
   await upsertDpdpConsent(
     candidateId,
-    {
-      purpose_code: "candidate_onboarding",
-      consent_status: "granted",
-      source: "onboarding_portal_sync",
-    },
+    { purpose_code: "candidate_onboarding", consent_status: "granted", source: "onboarding_portal_sync" },
     actorId,
   );
   return { synced: true };
 }
 
-export async function generateEmployeeCode(
-  candidateId: string,
-  actorId: string,
-) {
+export async function generateEmployeeCode(candidateId: string, actorId: string) {
   const readiness = await validateReadiness(candidateId);
   if (readiness.blockers.length) {
-    throw Object.assign(
-      new Error(`Employee code blocked: ${readiness.blockers.join("; ")}`),
-      { statusCode: 409, blockers: readiness.blockers },
-    );
+    throw Object.assign(new Error(`Employee code blocked: ${readiness.blockers.join("; ")}`), { statusCode: 409, blockers: readiness.blockers });
   }
   const result = await convertCandidateToEmployee(candidateId, actorId);
   // Best-effort, same reasoning as the salary-register auto-lock just above: the
@@ -1604,25 +1268,13 @@ export async function generateEmployeeCode(
   // elsewhere, and the manual "Sync bank details" action covers a candidate whose
   // onboarding was completed or verified after this ran.
   if (result.employee_id) {
-    await syncBankDetailFromOnboarding(
-      result.employee_id,
-      candidateId,
-      actorId,
-    ).catch((error: unknown) => {
-      console.warn(
-        `[joining-control-room] bank auto-sync skipped for ${candidateId}:`,
-        error,
-      );
+    await syncBankDetailFromOnboarding(result.employee_id, candidateId, actorId).catch((error: unknown) => {
+      console.warn(`[joining-control-room] bank auto-sync skipped for ${candidateId}:`, error);
     });
   }
-  await syncDpdpConsentFromOnboarding(candidateId, actorId).catch(
-    (error: unknown) => {
-      console.warn(
-        `[joining-control-room] dpdp auto-sync skipped for ${candidateId}:`,
-        error,
-      );
-    },
-  );
+  await syncDpdpConsentFromOnboarding(candidateId, actorId).catch((error: unknown) => {
+    console.warn(`[joining-control-room] dpdp auto-sync skipped for ${candidateId}:`, error);
+  });
   await validateReadiness(candidateId);
   return result;
 }

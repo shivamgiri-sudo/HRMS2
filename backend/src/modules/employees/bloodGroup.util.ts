@@ -13,16 +13,7 @@
  * honestly blank) rather than a fake reading.
  */
 
-export const BLOOD_GROUPS = [
-  "A+",
-  "A-",
-  "B+",
-  "B-",
-  "AB+",
-  "AB-",
-  "O+",
-  "O-",
-] as const;
+export const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"] as const;
 
 export type BloodGroup = (typeof BLOOD_GROUPS)[number];
 
@@ -41,9 +32,7 @@ export function normalizeBloodGroup(raw: unknown): BloodGroup | null {
   if (!s) return null;
 
   // Spelled-out signs, before the non-alphanumeric strip removes the words' punctuation.
-  s = s
-    .replace(/POSITIVE|POSTIVE|POS(?![A-Z])/g, "+")
-    .replace(/NEGATIVE|NEGTIVE|NEG(?![A-Z])/g, "-");
+  s = s.replace(/POSITIVE|POSTIVE|POS(?![A-Z])/g, "+").replace(/NEGATIVE|NEGTIVE|NEG(?![A-Z])/g, "-");
   // 'B+VE' / 'B+VE.' — the trailing 'VE' is noise once the sign is present.
   s = s.replace(/VE\b|VE$/g, "");
   s = s.replace(/[^A-Z+-]/g, "");

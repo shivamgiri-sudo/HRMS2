@@ -23,10 +23,7 @@ async function branchGate(req: Request, res: Response, branchId: string | null |
 export const jobsRouter = Router();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 // ─── Job Postings ──────────────────────────────────────────────────────────────
 
@@ -34,17 +31,14 @@ const h =
 jobsRouter.get(
   "/postings",
   h(async (req: Request, res: Response) => {
-    const { status, process_id, branch_id } = req.query as Record<
-      string,
-      string | undefined
-    >;
+    const { status, process_id, branch_id } = req.query as Record<string, string | undefined>;
     const postings = await jobsService.listPostings({
       status,
       process_id,
       branch_id,
     });
     return res.json({ success: true, data: postings, total: postings.length });
-  }),
+  })
 );
 
 // POST /postings — admin/hr only
@@ -58,7 +52,7 @@ jobsRouter.post(
     if (!(await branchGate(req, res, (req.body?.branch_id as string | undefined) ?? null, "Job posting"))) return;
     const posting = await jobsService.createPosting(req.body, userId);
     return res.status(201).json({ success: true, data: posting });
-  }),
+  })
 );
 
 // PATCH /postings/:id — admin/hr only
@@ -71,7 +65,7 @@ jobsRouter.patch(
     if (req.body?.branch_id && !(await branchGate(req, res, req.body.branch_id as string, "Job posting"))) return;
     const posting = await jobsService.updatePosting(req.params.id, req.body);
     return res.json({ success: true, data: posting });
-  }),
+  })
 );
 
 // ─── Walk-in Queue ─────────────────────────────────────────────────────────────
@@ -86,21 +80,14 @@ jobsRouter.get(
     const scope = await resolveAtsBranchScope((req as any).authUser?.id ?? ""); // eslint-disable-line @typescript-eslint/no-explicit-any
     const entries = await jobsService.listWalkin({ status, branch_id, date, scopeBranchIds: scope.orgWide ? undefined : scope.branchIds });
     return res.json({ success: true, data: entries, total: entries.length });
-  }),
+  })
 );
 
 // POST /walkin — public registration
 jobsRouter.post(
   "/walkin",
   h(async (req: Request, res: Response) => {
-    const {
-      candidate_name,
-      mobile,
-      email,
-      applied_role,
-      branch_id,
-      process_id,
-    } = req.body as {
+    const { candidate_name, mobile, email, applied_role, branch_id, process_id } = req.body as {
       candidate_name: string;
       mobile: string;
       email?: string;
@@ -110,14 +97,10 @@ jobsRouter.post(
     };
 
     if (!candidate_name?.trim()) {
-      return res
-        .status(400)
-        .json({ success: false, error: "candidate_name is required" });
+      return res.status(400).json({ success: false, error: "candidate_name is required" });
     }
     if (!mobile?.trim()) {
-      return res
-        .status(400)
-        .json({ success: false, error: "mobile is required" });
+      return res.status(400).json({ success: false, error: "mobile is required" });
     }
 
     const entry = await jobsService.registerWalkin({
@@ -129,7 +112,7 @@ jobsRouter.post(
       process_id,
     });
     return res.status(201).json({ success: true, data: entry });
-  }),
+  })
 );
 
 // PATCH /walkin/:id/call — admin/hr/recruiter
@@ -141,7 +124,7 @@ jobsRouter.patch(
     if (!(await branchGate(req, res, await jobsService.getBranchOf("walkin_queue", req.params.id), "Walk-in entry"))) return;
     const entry = await jobsService.callCandidate(req.params.id);
     return res.json({ success: true, data: entry });
-  }),
+  })
 );
 
 // PATCH /walkin/:id/status — admin/hr/recruiter
@@ -157,9 +140,7 @@ jobsRouter.patch(
     };
 
     if (!status) {
-      return res
-        .status(400)
-        .json({ success: false, error: "status is required" });
+      return res.status(400).json({ success: false, error: "status is required" });
     }
 
     if (!(await branchGate(req, res, await jobsService.getBranchOf("walkin_queue", req.params.id), "Walk-in entry"))) return;
@@ -170,5 +151,5 @@ jobsRouter.patch(
       recruiter_id,
     });
     return res.json({ success: true, data: entry });
-  }),
+  })
 );

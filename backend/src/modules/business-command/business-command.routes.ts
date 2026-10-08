@@ -1,10 +1,7 @@
 import { Router } from "express";
 import type { Response, NextFunction } from "express";
 import type { RowDataPacket } from "mysql2";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { businessCommandService } from "./business-command.service.js";
@@ -17,10 +14,8 @@ import { PAYROLL_ROLES } from "../../platform/policy/roles.js";
 export const businessCommandRouter = Router();
 businessCommandRouter.use(requireAuth);
 
-const h =
-  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
 interface LatestDateRow extends RowDataPacket {
   latest_date: string | null;
@@ -68,15 +63,13 @@ businessCommandRouter.get("/revenue-risk/options", h(async (req, res) => {
            FROM client_master
           WHERE COALESCE(active_status, 1) = 1
           ORDER BY client_name
-          LIMIT 500`,
-          )
-        )[0]
-      : [];
+          LIMIT 500`
+      ))[0]
+    : [];
 
-    const processes = (await tableExists("process_master"))
-      ? (
-          await db.execute<RowDataPacket[]>(
-            `SELECT p.id,
+  const processes = await tableExists("process_master")
+    ? (await db.execute<RowDataPacket[]>(
+        `SELECT p.id,
                 p.process_name AS name,
                 p.client_id,
                 cm.client_name
@@ -84,10 +77,9 @@ businessCommandRouter.get("/revenue-risk/options", h(async (req, res) => {
            LEFT JOIN client_master cm ON cm.id = p.client_id
           WHERE COALESCE(p.active_status, 1) = 1
           ORDER BY cm.client_name, p.process_name
-          LIMIT 1000`,
-          )
-        )[0]
-      : [];
+          LIMIT 1000`
+      ))[0]
+    : [];
 
   if (allowedOpt) {
     const ps = (processes as any[]).filter((p) => allowedOpt.has(String(p.id)));
@@ -116,17 +108,14 @@ businessCommandRouter.get("/revenue-risk/snapshot", h(async (req, res) => {
   res.json({ success: true, data: allowed ? await revenueRiskService.snapshot(date, allowed) : await revenueRiskService.snapshot(date) });
 }));
 
-businessCommandRouter.post(
-  "/revenue-risk/generate-daily",
-  h(async (req, res) => {
-    // Default to latest date that has attendance data (COSEC may lag 1-2 days behind today)
-    let date = String(req.body?.date ?? "");
-    if (!date || date === "today") {
+businessCommandRouter.post("/revenue-risk/generate-daily", h(async (req, res) => {
+  // Default to latest date that has attendance data (COSEC may lag 1-2 days behind today)
+  let date = String(req.body?.date ?? "");
+  if (!date || date === "today") {
       const [latestRows] = await db.execute<LatestDateRow[]>(
-        "SELECT DATE_FORMAT(MAX(record_date), '%Y-%m-%d') AS latest_date FROM attendance_daily_record",
+        "SELECT DATE_FORMAT(MAX(record_date), '%Y-%m-%d') AS latest_date FROM attendance_daily_record"
       );
-      date =
-        latestRows[0]?.latest_date ?? new Date().toISOString().slice(0, 10);
+      date = latestRows[0]?.latest_date ?? new Date().toISOString().slice(0, 10);
     }
   const allowed = await allowedProcesses(req);
   // Persisting rewrites the company-wide daily table: org-wide callers only; others get the scoped figures unsaved.
@@ -149,29 +138,11 @@ businessCommandRouter.get("/workforce-mandates", h(async (req, res) => {
 }));
 
 // POST /api/business-command/workforce-mandates — create/update mandate for a process
-businessCommandRouter.post(
-  "/workforce-mandates",
-  h(async (req, res) => {
-    const {
-      process_id,
-      client_id,
-      mandated_hc,
-      effective_from,
-      effective_to,
-      hc_type,
-    } = req.body;
-    if (!process_id)
-      return res
-        .status(400)
-        .json({ success: false, error: "process_id is required" });
-    if (!mandated_hc || Number(mandated_hc) < 1)
-      return res
-        .status(400)
-        .json({ success: false, error: "mandated_hc must be >= 1" });
-    if (!effective_from)
-      return res
-        .status(400)
-        .json({ success: false, error: "effective_from is required" });
+businessCommandRouter.post("/workforce-mandates", h(async (req, res) => {
+  const { process_id, client_id, mandated_hc, effective_from, effective_to, hc_type } = req.body;
+  if (!process_id) return res.status(400).json({ success: false, error: "process_id is required" });
+  if (!mandated_hc || Number(mandated_hc) < 1) return res.status(400).json({ success: false, error: "mandated_hc must be >= 1" });
+  if (!effective_from) return res.status(400).json({ success: false, error: "effective_from is required" });
 
   // A WFM-only caller may set Required HC only for a process in a branch assigned to them.
   // Everyone else who already reached this endpoint keeps their existing (unrestricted) access.
@@ -191,33 +162,19 @@ businessCommandRouter.post(
       "SELECT branch_id FROM process_master WHERE id = ? LIMIT 1",
       [process_id]
     );
-    if (isWfm && !isBroader) {
-      const [procRows] = await db.execute<RowDataPacket[]>(
-        "SELECT branch_id FROM process_master WHERE id = ? LIMIT 1",
-        [process_id],
-      );
-      const branchId = (procRows as RowDataPacket[])[0]?.branch_id ?? null;
-      const allowed = branchId
-        ? await hasScopedAccess(userId, ["wfm", "branch_wfm"], {
-            branchId: String(branchId),
-            processId: String(process_id),
-          })
-        : false;
-      if (!allowed) {
-        return res
-          .status(403)
-          .json({
-            success: false,
-            error:
-              "You can only change the seat count for a process in a branch assigned to you.",
-          });
-      }
+    const branchId = (procRows as RowDataPacket[])[0]?.branch_id ?? null;
+    const allowed = branchId
+      ? await hasScopedAccess(userId, ["wfm", "branch_wfm"], { branchId: String(branchId), processId: String(process_id) })
+      : false;
+    if (!allowed) {
+      return res.status(403).json({ success: false, error: "You can only change the seat count for a process in a branch assigned to you." });
     }
+  }
 
-    const { randomUUID } = await import("crypto");
-    const id = randomUUID();
-    await db.execute(
-      `INSERT INTO workforce_mandate
+  const { randomUUID } = await import("crypto");
+  const id = randomUUID();
+  await db.execute(
+    `INSERT INTO workforce_mandate
        (id, process_id, client_id, mandated_hc, hc_type, effective_from, effective_to, active_status, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     [

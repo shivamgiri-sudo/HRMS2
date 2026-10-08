@@ -14,10 +14,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { execute, query } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  query: vi.fn(),
-}));
+const { execute, query } = vi.hoisted(() => ({ execute: vi.fn(), query: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, query } }));
 vi.mock("../../../shared/scopeAccess.js", () => ({
   hasAnyRole: vi.fn(),
@@ -63,9 +60,7 @@ describe("lockEntities", () => {
     // the same batch must update nothing rather than fail or re-stamp locked_at.
     await lockEntities(entries(2));
 
-    expect(query.mock.calls[0][0]).toMatch(
-      /ON DUPLICATE KEY UPDATE locked_at = locked_at/,
-    );
+    expect(query.mock.calls[0][0]).toMatch(/ON DUPLICATE KEY UPDATE locked_at = locked_at/);
   });
 
   it("keeps each row's parameters in column order", async () => {
@@ -104,20 +99,14 @@ describe("lockEntities", () => {
     await lockEntities(entries(1200));
 
     expect(query).toHaveBeenCalledTimes(3);
-    const sizes = query.mock.calls.map(
-      (c) => (c[1] as unknown[]).length / COLUMNS,
-    );
+    const sizes = query.mock.calls.map((c) => (c[1] as unknown[]).length / COLUMNS);
     expect(sizes).toEqual([500, 500, 200]);
   });
 
   it("respects a caller-supplied reason and defaults it otherwise", async () => {
-    await lockEntities([
-      { ...entries(1)[0], reason: "Reinstated after review" },
-    ]);
+    await lockEntities([{ ...entries(1)[0], reason: "Reinstated after review" }]);
 
-    expect((query.mock.calls[0][1] as unknown[])[COLUMNS - 1]).toBe(
-      "Reinstated after review",
-    );
+    expect((query.mock.calls[0][1] as unknown[])[COLUMNS - 1]).toBe("Reinstated after review");
   });
 
   it("touches the database not at all for an empty batch", async () => {

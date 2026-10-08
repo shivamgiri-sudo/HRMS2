@@ -42,8 +42,7 @@
 import { decryptField } from "./fieldEncryption.js";
 import { decrypt as decryptLegacyCbc } from "../utils/encryption.js";
 
-export type PiiCiphertextFormat =
-  "gcm_envelope" | "legacy_cbc" | "unrecognised";
+export type PiiCiphertextFormat = "gcm_envelope" | "legacy_cbc" | "unrecognised";
 
 /** 16-byte IV rendered as 32 hex chars, then ":", then at least one AES block of hex. */
 const LEGACY_CBC_SHAPE = /^[0-9a-f]{32}:[0-9a-f]+$/i;
@@ -163,8 +162,7 @@ export function resolvePii(
   ciphertext: string | null | undefined,
   plaintext: string | null | undefined,
 ): ResolvedPii {
-  const plain =
-    typeof plaintext === "string" && plaintext.trim() !== "" ? plaintext : null;
+  const plain = typeof plaintext === "string" && plaintext.trim() !== "" ? plaintext : null;
 
   const hasCipher = typeof ciphertext === "string" && ciphertext.trim() !== "";
   if (hasCipher) {
@@ -179,21 +177,13 @@ export function resolvePii(
     };
   }
 
-  return plain
-    ? { value: plain, source: "plaintext" }
-    : { value: null, source: "none" };
+  return plain ? { value: plain, source: "plaintext" } : { value: null, source: "none" };
 }
 
-export function tryDecryptPii(
-  ciphertext: string | null | undefined,
-): PiiDecryptResult {
+export function tryDecryptPii(ciphertext: string | null | undefined): PiiDecryptResult {
   const value = typeof ciphertext === "string" ? ciphertext.trim() : "";
   if (!value) {
-    return {
-      ok: false,
-      reason: "no ciphertext stored",
-      format: "unrecognised",
-    };
+    return { ok: false, reason: "no ciphertext stored", format: "unrecognised" };
   }
   const format = detectPiiCiphertextFormat(value);
   try {

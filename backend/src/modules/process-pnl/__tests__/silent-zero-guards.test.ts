@@ -17,8 +17,7 @@ import { describe, expect, it, vi } from "vitest";
  */
 
 const moduleDir = path.resolve(__dirname, "..");
-const read = (file: string) =>
-  fs.readFileSync(path.join(moduleDir, file), "utf8");
+const read = (file: string) => fs.readFileSync(path.join(moduleDir, file), "utf8");
 
 describe("safeRows tolerates a missing table and nothing else", () => {
   /**
@@ -36,9 +35,7 @@ describe("safeRows tolerates a missing table and nothing else", () => {
       queryRows,
       tableExists: vi.fn(async () => true),
     }));
-    vi.doMock("../../../db/mysql.js", () => ({
-      db: { execute: vi.fn(), query: vi.fn() },
-    }));
+    vi.doMock("../../../db/mysql.js", () => ({ db: { execute: vi.fn(), query: vi.fn() } }));
     const mod = await import("../bpo-pnl.service.js");
     return mod.safeRows;
   }
@@ -46,21 +43,17 @@ describe("safeRows tolerates a missing table and nothing else", () => {
   it("re-throws an error that is not a missing table", async () => {
     // A lock-wait timeout is the case that used to render as cost 0 on a finance screen.
     const safeRows = await withMockedQueryRows(
-      Object.assign(new Error("Lock wait timeout exceeded"), {
-        code: "ER_LOCK_WAIT_TIMEOUT",
-      }),
+      Object.assign(new Error("Lock wait timeout exceeded"), { code: "ER_LOCK_WAIT_TIMEOUT" })
     );
     await expect(
       safeRows("SELECT SUM(amount) FROM vendor_payment_tracking"),
-      "a timed-out cost query must surface, not resolve to no rows",
+      "a timed-out cost query must surface, not resolve to no rows"
     ).rejects.toThrow(/Lock wait timeout exceeded/);
   });
 
   it("returns no rows when the table genuinely does not exist", async () => {
     const safeRows = await withMockedQueryRows(
-      Object.assign(new Error("Table 'x' doesn't exist"), {
-        code: "ER_NO_SUCH_TABLE",
-      }),
+      Object.assign(new Error("Table 'x' doesn't exist"), { code: "ER_NO_SUCH_TABLE" })
     );
     await expect(safeRows("SELECT 1 FROM optional_table")).resolves.toEqual([]);
   });
@@ -69,18 +62,13 @@ describe("safeRows tolerates a missing table and nothing else", () => {
     // Several tables here are optional on an older database — that tolerance is the reason the
     // helper exists, and it must survive.
     const source = read("bpo-pnl.service.ts");
-    expect(source).toContain(
-      'TOLERATED_QUERY_ERRORS = new Set(["ER_NO_SUCH_TABLE"])',
-    );
+    expect(source).toContain('TOLERATED_QUERY_ERRORS = new Set(["ER_NO_SUCH_TABLE"])');
     expect(source).toContain("return [];");
   });
 
   it("logs before it degrades or throws — the old catch was completely silent", () => {
     const source = read("bpo-pnl.service.ts");
-    const helper = source.slice(
-      source.indexOf("async function safeRows"),
-      source.indexOf("function normalizeBillingModel"),
-    );
+    const helper = source.slice(source.indexOf("async function safeRows"), source.indexOf("function normalizeBillingModel"));
     expect(helper).toContain("console.warn");
     expect(helper).toContain("console.error");
     // The bare swallow must not come back.
@@ -109,9 +97,7 @@ describe("a rollup reports what it could not measure", () => {
   it("the consolidation readiness row does not assert 0% for a failed read", () => {
     const routes = read("process-pnl.routes.ts");
     // completionPct: 0 inside success:true made a broken read look like an unplanned branch.
-    expect(routes).toContain(
-      "completionPct: coverage ? coverage.summary.completionPct : null",
-    );
+    expect(routes).toContain("completionPct: coverage ? coverage.summary.completionPct : null");
     expect(routes).toContain("coverageAvailable: Boolean(coverage)");
   });
 });

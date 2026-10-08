@@ -31,16 +31,11 @@ const SOURCE = readFileSync(
  */
 function seedingBlock(): string {
   const insertAt = SOURCE.indexOf("INSERT INTO ats_payroll_hr_validation");
-  expect(
-    insertAt,
-    "the seeding INSERT has moved or been removed",
-  ).toBeGreaterThan(-1);
+  expect(insertAt, "the seeding INSERT has moved or been removed").toBeGreaterThan(-1);
   const start = SOURCE.lastIndexOf("if (!existingRows[0])", insertAt);
   expect(start, "could not find the branch guard").toBeGreaterThan(-1);
   const end = SOURCE.indexOf("} else {", insertAt);
-  expect(end, "could not find the end of the seeding branch").toBeGreaterThan(
-    insertAt,
-  );
+  expect(end, "could not find the end of the seeding branch").toBeGreaterThan(insertAt);
   return SOURCE.slice(start, end);
 }
 
@@ -55,9 +50,7 @@ describe("seeding a payroll validation record", () => {
     expect(
       seedingBlock(),
       "an INSERT ... SELECT that matches nothing writes nothing and raises nothing",
-    ).toMatch(
-      /const\s+\[\s*\w+\s*\]\s*=\s*await\s+db\.execute<ResultSetHeader>/,
-    );
+    ).toMatch(/const\s+\[\s*\w+\s*\]\s*=\s*await\s+db\.execute<ResultSetHeader>/);
   });
 
   it("raises when no row was written", () => {

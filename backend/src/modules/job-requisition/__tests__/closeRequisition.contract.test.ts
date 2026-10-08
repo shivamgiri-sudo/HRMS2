@@ -27,19 +27,12 @@ function extractFn(code: string, signature: string, nextSignature: string) {
   const start = code.indexOf(signature);
   expect(start, `could not find "${signature}"`).toBeGreaterThan(-1);
   const end = code.indexOf(nextSignature, start + signature.length);
-  expect(
-    end,
-    `could not find "${nextSignature}" after "${signature}"`,
-  ).toBeGreaterThan(start);
+  expect(end, `could not find "${nextSignature}" after "${signature}"`).toBeGreaterThan(start);
   return code.slice(start, end);
 }
 
 describe("closeRequisition (service)", () => {
-  const fn = extractFn(
-    serviceCode,
-    "async closeRequisition(",
-    "async requestClose(",
-  );
+  const fn = extractFn(serviceCode, "async closeRequisition(", "async requestClose(");
 
   it("refuses to re-close an already-closed requisition", () => {
     expect(fn).toContain("already closed");
@@ -72,11 +65,7 @@ describe("closeRequisition (service)", () => {
 });
 
 describe("requestClose (service)", () => {
-  const fn = extractFn(
-    serviceCode,
-    "async requestClose(",
-    "async extendDeadline(",
-  );
+  const fn = extractFn(serviceCode, "async requestClose(", "async extendDeadline(");
 
   it("refuses to request-close an already-closed requisition", () => {
     expect(fn).toContain("already closed");
@@ -124,9 +113,7 @@ describe("job-requisition routes: close & request-close", () => {
     expect(idx).toBeGreaterThan(-1);
     const route = routesCode.slice(idx, idx + 1500);
     expect(route).toContain("REQUISITION_READ_ROLES");
-    expect(route).toContain(
-      "requestClose(id, userId, userName, userRole, reason.trim())",
-    );
+    expect(route).toContain("requestClose(id, userId, userName, userRole, reason.trim())");
   });
 
   it("request-close enforces a minimum reason length server-side", () => {

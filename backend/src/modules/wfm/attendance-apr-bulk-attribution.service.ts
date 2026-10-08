@@ -33,9 +33,9 @@
 //   below is 8 characters. A 44-character code could be ER_DATA_TOO_LONG under strict mode on a
 //   live route, which is not a risk worth taking to share one function.
 
-import { randomUUID } from "crypto";
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
+import { randomUUID } from 'crypto';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
 
 /**
  * The stable source_key of the one Dialler_Source that owns everything this legacy route uploads.
@@ -48,7 +48,7 @@ import type { RowDataPacket } from "mysql2";
  * route", and inventing a per-branch source from an employee's branch_id would assert a
  * registration decision nobody made.
  */
-export const APR_BULK_SOURCE_KEY = "APR_BULK_MANUAL";
+export const APR_BULK_SOURCE_KEY = 'APR_BULK_MANUAL';
 
 /**
  * The campaign_code every apr row this route writes carries, replacing the bare 'MANUAL_UPLOAD'
@@ -68,7 +68,7 @@ export const APR_BULK_SOURCE_KEY = "APR_BULK_MANUAL";
  * Kept to 8 characters on purpose - see this file's header for why length matters here and not in
  * apr_manual_upload.
  */
-export const APR_BULK_CAMPAIGN_CODE = "APR_BULK";
+export const APR_BULK_CAMPAIGN_CODE = 'APR_BULK';
 
 interface IdRow extends RowDataPacket {
   id: string;
@@ -86,9 +86,7 @@ export interface AprBulkAttribution {
  * uq_dialler_source_key, migration 1636), and the re-SELECT afterwards returns whichever row
  * actually won a concurrent race rather than the id this call happened to generate.
  */
-async function resolveOrCreateAprBulkSource(
-  createdBy: string | null,
-): Promise<string> {
+async function resolveOrCreateAprBulkSource(createdBy: string | null): Promise<string> {
   const [existing] = await db.execute<IdRow[]>(
     `SELECT id FROM dialler_source WHERE source_key = ? LIMIT 1`,
     [APR_BULK_SOURCE_KEY],
@@ -118,8 +116,8 @@ async function resolveOrCreateAprBulkSource(
     [
       randomUUID(),
       APR_BULK_SOURCE_KEY,
-      "APR Bulk Manual Upload (attendance CSV route)",
-      JSON.stringify(["net_login"]),
+      'APR Bulk Manual Upload (attendance CSV route)',
+      JSON.stringify(['net_login']),
       createdBy,
     ],
   );
@@ -148,9 +146,7 @@ async function resolveOrCreateAprBulkSource(
  * declared; both columns are nullable with ON DELETE SET NULL foreign keys (015_platform_
  * foundation.sql).
  */
-async function resolveOrCreateAprBulkCampaign(
-  diallerSourceId: string,
-): Promise<string> {
+async function resolveOrCreateAprBulkCampaign(diallerSourceId: string): Promise<string> {
   const [existing] = await db.execute<IdRow[]>(
     `SELECT id FROM campaign_master WHERE campaign_code = ? LIMIT 1`,
     [APR_BULK_CAMPAIGN_CODE],
@@ -165,7 +161,7 @@ async function resolveOrCreateAprBulkCampaign(
       [
         randomUUID(),
         APR_BULK_CAMPAIGN_CODE,
-        "APR bulk manual upload (attendance CSV route)",
+        'APR bulk manual upload (attendance CSV route)',
         diallerSourceId,
       ],
     );
@@ -246,20 +242,13 @@ export async function createAprBulkUploadBatch(
         rejected_row_count, mapping_version_used, supersedes_batch_id, status)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, 'pending')`,
     [
-      batchId,
-      batchReference,
-      diallerSourceId,
-      scope.branchId,
-      scope.processId,
-      scope.dateFrom,
-      scope.dateTo,
+      batchId, batchReference, diallerSourceId, scope.branchId, scope.processId,
+      scope.dateFrom, scope.dateTo,
       // file_name is VARCHAR(255) and content_digest is CHAR(64); multer's originalname is
       // caller-controlled, so it is truncated rather than allowed to fail the batch under strict
       // mode - the same defence productivity-upload-commit.service.ts applies.
-      scope.fileName.slice(0, 255),
-      scope.contentDigest,
-      scope.uploadedBy,
-      scope.submittedRowCount,
+      scope.fileName.slice(0, 255), scope.contentDigest,
+      scope.uploadedBy, scope.submittedRowCount,
     ],
   );
 
@@ -281,11 +270,6 @@ export async function finaliseAprBulkUploadBatch(
     `UPDATE productivity_upload_batch
         SET accepted_row_count = ?, rejected_row_count = ?, status = ?
       WHERE id = ?`,
-    [
-      acceptedCount,
-      rejectedCount,
-      acceptedCount > 0 ? "accepted" : "rejected",
-      batchId,
-    ],
+    [acceptedCount, rejectedCount, acceptedCount > 0 ? 'accepted' : 'rejected', batchId],
   );
 }

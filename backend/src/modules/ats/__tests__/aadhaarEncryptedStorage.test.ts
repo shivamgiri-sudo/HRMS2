@@ -45,20 +45,13 @@ function installTokenAwareMock() {
   execute.mockImplementation(async (sql: string) => {
     const s = String(sql);
     if (s.includes("ats_onboarding_bridge")) {
-      return [
-        [
-          {
-            candidate_id: CANDIDATE_ID,
-            onboarding_token_expires_at: new Date(
-              Date.now() + 3600_000,
-            ).toISOString(),
-            id: CANDIDATE_ID,
-            candidate_code: "MAS63413",
-            full_name: "UDAY KUMAR",
-          },
-        ],
-        [],
-      ];
+      return [[{
+        candidate_id: CANDIDATE_ID,
+        onboarding_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        id: CANDIDATE_ID,
+        candidate_code: "MAS63413",
+        full_name: "UDAY KUMAR",
+      }], []];
     }
     if (s.trim().startsWith("INSERT") || s.trim().startsWith("UPDATE")) {
       return [{ affectedRows: 1 }, undefined];
@@ -68,11 +61,7 @@ function installTokenAwareMock() {
 }
 
 function findProfileInsert() {
-  return execute.mock.calls.find(
-    ([sql]) =>
-      String(sql).includes("candidate_onboarding_profile") &&
-      String(sql).includes("INSERT"),
-  );
+  return execute.mock.calls.find(([sql]) => String(sql).includes("candidate_onboarding_profile") && String(sql).includes("INSERT"));
 }
 
 /** Every SHA-256-shaped binding. The profile INSERT always carries one: the token hash. */

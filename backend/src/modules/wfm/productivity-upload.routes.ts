@@ -32,17 +32,12 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
   fileFilter(_req, file, cb) {
-    if (
-      file.mimetype === "text/csv" ||
-      file.originalname.toLowerCase().endsWith(".csv")
-    ) {
+    if (file.mimetype === 'text/csv' || file.originalname.toLowerCase().endsWith('.csv')) {
       cb(null, true);
     } else {
-      cb(
-        new Error(
-          "This upload reads CSV files only. In Excel choose File > Save As > CSV (Comma delimited) (*.csv) and upload that file.",
-        ),
-      );
+      cb(new Error(
+        'This upload reads CSV files only. In Excel choose File > Save As > CSV (Comma delimited) (*.csv) and upload that file.',
+      ));
     }
   },
 });
@@ -53,17 +48,17 @@ const upload = multer({
  * here, with a real status, keeps the actual reason visible to the uploader.
  */
 function acceptCsvUpload(req: any, res: any, next: any) {
-  upload.single("file")(req, res, (err: unknown) => {
+  upload.single('file')(req, res, (err: unknown) => {
     if (!err) return next();
     const code = (err as { code?: string })?.code;
     const message =
-      code === "LIMIT_FILE_SIZE"
+      code === 'LIMIT_FILE_SIZE'
         ? `The file is larger than ${MAX_UPLOAD_MB} MB. Split it into smaller files and upload them one at a time.`
-        : code === "LIMIT_UNEXPECTED_FILE"
+        : code === 'LIMIT_UNEXPECTED_FILE'
           ? 'Attach the CSV as a single file named "file".'
           : err instanceof Error && err.message
             ? err.message
-            : "The uploaded file could not be read.";
+            : 'The uploaded file could not be read.';
     return res.status(400).json({ success: false, message });
   });
 }
@@ -84,11 +79,10 @@ function asyncRoute(
   return (req, res, next) => {
     Promise.resolve(handler(req, res)).catch((err: unknown) => {
       if (res.headersSent) return next(err);
-      console.error("[productivity-upload] unhandled error", err);
+      console.error('[productivity-upload] unhandled error', err);
       return res.status(500).json({
         success: false,
-        message:
-          "The upload could not be processed because of a server error. Nothing was saved for this request unless a partial-save warning was returned. Please retry, and quote the time of this attempt if it keeps failing.",
+        message: 'The upload could not be processed because of a server error. Nothing was saved for this request unless a partial-save warning was returned. Please retry, and quote the time of this attempt if it keeps failing.',
       });
     });
   };
@@ -152,13 +146,9 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  */
 function isValidIsoDate(value: string): boolean {
   if (!ISO_DATE_RE.test(value)) return false;
-  const [y, m, d] = value.split("-").map(Number) as [number, number, number];
+  const [y, m, d] = value.split('-').map(Number) as [number, number, number];
   const dt = new Date(Date.UTC(y, m - 1, d));
-  return (
-    dt.getUTCFullYear() === y &&
-    dt.getUTCMonth() === m - 1 &&
-    dt.getUTCDate() === d
-  );
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }
 
 interface CsvParseOutcome {
@@ -184,7 +174,7 @@ function parseCsvContent(content: string): CsvParseOutcome {
 
   const records: Array<{ line: number; fields: string[] }> = [];
   let fields: string[] = [];
-  let current = "";
+  let current = '';
   let inQuotes = false;
   let line = 1;
   let recordStartLine = 1;
@@ -193,77 +183,49 @@ function parseCsvContent(content: string): CsvParseOutcome {
     fields.push(current);
     records.push({ line: recordStartLine, fields });
     fields = [];
-    current = "";
+    current = '';
   };
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]!;
     if (inQuotes) {
       if (ch === '"') {
-        if (text[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else inQuotes = false;
+        if (text[i + 1] === '"') { current += '"'; i++; }
+        else inQuotes = false;
       } else {
-        if (ch === "\n") line++;
+        if (ch === '\n') line++;
         current += ch;
       }
       continue;
     }
-    if (ch === '"') {
-      inQuotes = true;
-      continue;
-    }
-    if (ch === ",") {
-      fields.push(current);
-      current = "";
-      continue;
-    }
-    if (ch === "\r") {
-      if (text[i + 1] === "\n") i++;
-      endRecord();
-      line++;
-      recordStartLine = line;
-      continue;
-    }
-    if (ch === "\n") {
-      endRecord();
-      line++;
-      recordStartLine = line;
-      continue;
-    }
+    if (ch === '"') { inQuotes = true; continue; }
+    if (ch === ',') { fields.push(current); current = ''; continue; }
+    if (ch === '\r') { if (text[i + 1] === '\n') i++; endRecord(); line++; recordStartLine = line; continue; }
+    if (ch === '\n') { endRecord(); line++; recordStartLine = line; continue; }
     current += ch;
   }
-  if (inQuotes)
-    return { error: "The CSV has an unterminated quoted field.", rows: [] };
-  if (current !== "" || fields.length > 0) endRecord();
+  if (inQuotes) return { error: 'The CSV has an unterminated quoted field.', rows: [] };
+  if (current !== '' || fields.length > 0) endRecord();
 
-  const isBlankRecord = (r: { fields: string[] }) =>
-    r.fields.every((f) => f.trim() === "");
+  const isBlankRecord = (r: { fields: string[] }) => r.fields.every((f) => f.trim() === '');
   const meaningful = records.filter((r) => !isBlankRecord(r));
-  if (meaningful.length === 0) return { error: "The CSV is empty.", rows: [] };
+  if (meaningful.length === 0) return { error: 'The CSV is empty.', rows: [] };
 
   const headers = meaningful[0]!.fields.map((h) => h.trim());
-  if (headers.some((h) => h === "")) {
-    return {
-      error:
-        "The CSV has a blank column header. Name every column, then upload again.",
-      rows: [],
-    };
+  if (headers.some((h) => h === '')) {
+    return { error: 'The CSV has a blank column header. Name every column, then upload again.', rows: [] };
   }
   const duplicates = headers.filter((h, i) => headers.indexOf(h) !== i);
   if (duplicates.length > 0) {
     return {
-      error: `The CSV repeats the column header(s): ${[...new Set(duplicates)].join(", ")}. Column headers must be unique.`,
+      error: `The CSV repeats the column header(s): ${[...new Set(duplicates)].join(', ')}. Column headers must be unique.`,
       rows: [],
     };
   }
 
   const rows = meaningful.slice(1).map((rec) => {
     const data: Record<string, string> = {};
-    headers.forEach((h, idx) => {
-      data[h] = (rec.fields[idx] ?? "").trim();
-    });
+    headers.forEach((h, idx) => { data[h] = (rec.fields[idx] ?? '').trim(); });
     return { rowNumber: rec.line, data };
   });
   return { rows };
@@ -285,57 +247,25 @@ interface UploadRequestFields {
 // updated, `_assertAllTargetFieldsCovered` stops typechecking — rather than the new field being
 // silently rejected as "unknown" at runtime.
 const UPLOAD_TARGET_FIELDS = [
-  "employee_code",
-  "report_date",
-  "login_minutes",
-  "calls_handled",
-  "aht_seconds",
-  "bio_minutes",
-  "lunch_minutes",
-  "qa_minutes",
-  "training_minutes",
+  'employee_code', 'report_date', 'login_minutes', 'calls_handled', 'aht_seconds',
+  'bio_minutes', 'lunch_minutes', 'qa_minutes', 'training_minutes',
 ] as const satisfies readonly UploadTargetField[];
-type _UncoveredTargetField = Exclude<
-  UploadTargetField,
-  (typeof UPLOAD_TARGET_FIELDS)[number]
->;
-const _assertAllTargetFieldsCovered: [_UncoveredTargetField] extends [never]
-  ? true
-  : never = true;
+type _UncoveredTargetField = Exclude<UploadTargetField, (typeof UPLOAD_TARGET_FIELDS)[number]>;
+const _assertAllTargetFieldsCovered: [_UncoveredTargetField] extends [never] ? true : never = true;
 void _assertAllTargetFieldsCovered;
 
 const VALID_TARGET_FIELDS = new Set<string>(UPLOAD_TARGET_FIELDS);
 
 function readRequestFields(body: any): UploadRequestFields | { error: string } {
-  const {
-    diallerSourceId,
-    branchId,
-    processId,
-    dateFrom,
-    dateTo,
-    columnMappings,
-  } = body;
-  if (
-    !diallerSourceId ||
-    !branchId ||
-    !processId ||
-    !dateFrom ||
-    !dateTo ||
-    !columnMappings
-  ) {
-    return {
-      error:
-        "diallerSourceId, branchId, processId, dateFrom, dateTo and columnMappings are all required",
-    };
+  const { diallerSourceId, branchId, processId, dateFrom, dateTo, columnMappings } = body;
+  if (!diallerSourceId || !branchId || !processId || !dateFrom || !dateTo || !columnMappings) {
+    return { error: 'diallerSourceId, branchId, processId, dateFrom, dateTo and columnMappings are all required' };
   }
   let parsedMappings: unknown;
   try {
-    parsedMappings =
-      typeof columnMappings === "string"
-        ? JSON.parse(columnMappings)
-        : columnMappings;
+    parsedMappings = typeof columnMappings === 'string' ? JSON.parse(columnMappings) : columnMappings;
   } catch {
-    return { error: "columnMappings must be valid JSON" };
+    return { error: 'columnMappings must be valid JSON' };
   }
   // JSON.parse('null') is null, JSON.parse('123') is a number, and both are truthy as the raw
   // form string that reached the guard above — so without this check they flow straight into
@@ -343,34 +273,26 @@ function readRequestFields(body: any): UploadRequestFields | { error: string } {
   // throws a TypeError on null. That made a one-line curl a remote crash of the whole process.
   if (
     parsedMappings === null ||
-    typeof parsedMappings !== "object" ||
+    typeof parsedMappings !== 'object' ||
     Array.isArray(parsedMappings)
   ) {
-    return {
-      error:
-        'columnMappings must be a JSON object of {"csv header": "target field"}',
-    };
+    return { error: 'columnMappings must be a JSON object of {"csv header": "target field"}' };
   }
   const mappings: Record<string, string> = {};
-  for (const [header, target] of Object.entries(
-    parsedMappings as Record<string, unknown>,
-  )) {
-    if (typeof target !== "string" || !VALID_TARGET_FIELDS.has(target)) {
+  for (const [header, target] of Object.entries(parsedMappings as Record<string, unknown>)) {
+    if (typeof target !== 'string' || !VALID_TARGET_FIELDS.has(target)) {
       return {
-        error: `columnMappings maps "${header}" to an unknown target field. Valid target fields: ${UPLOAD_TARGET_FIELDS.join(", ")}`,
+        error: `columnMappings maps "${header}" to an unknown target field. Valid target fields: ${UPLOAD_TARGET_FIELDS.join(', ')}`,
       };
     }
     mappings[header] = target;
   }
 
   if (!isValidIsoDate(String(dateFrom)) || !isValidIsoDate(String(dateTo))) {
-    return {
-      error:
-        "dateFrom and dateTo must be real calendar dates in YYYY-MM-DD format",
-    };
+    return { error: 'dateFrom and dateTo must be real calendar dates in YYYY-MM-DD format' };
   }
   if (String(dateFrom) > String(dateTo)) {
-    return { error: "dateFrom must not be after dateTo" };
+    return { error: 'dateFrom must not be after dateTo' };
   }
 
   return {
@@ -434,37 +356,23 @@ type PreparedRequest =
  * is written.
  */
 async function prepareUpload(req: any): Promise<PreparedRequest> {
-  if (!req.file)
-    return { ok: false, status: 400, message: "No CSV file uploaded" };
+  if (!req.file) return { ok: false, status: 400, message: 'No CSV file uploaded' };
 
   const fields = readRequestFields(req.body);
-  if ("error" in fields)
-    return { ok: false, status: 400, message: fields.error };
+  if ('error' in fields) return { ok: false, status: 400, message: fields.error };
 
   const scope = await resolveUserBusinessScope(req.authUser);
   if (!isBranchInUploaderScope(scope, fields.branchId)) {
-    return {
-      ok: false,
-      status: 403,
-      message: "This branch is outside your resolved scope",
-    };
+    return { ok: false, status: 403, message: 'This branch is outside your resolved scope' };
   }
   if (!isProcessInUploaderScope(scope, fields.branchId, fields.processId)) {
-    return {
-      ok: false,
-      status: 403,
-      message: "This process is outside your resolved scope",
-    };
+    return { ok: false, status: 403, message: 'This process is outside your resolved scope' };
   }
 
-  const parsed = parseCsvContent(req.file.buffer.toString("utf-8"));
+  const parsed = parseCsvContent(req.file.buffer.toString('utf-8'));
   if (parsed.error) return { ok: false, status: 400, message: parsed.error };
   if (parsed.rows.length === 0) {
-    return {
-      ok: false,
-      status: 400,
-      message: "The CSV has a header row but no data rows.",
-    };
+    return { ok: false, status: 400, message: 'The CSV has a header row but no data rows.' };
   }
   if (parsed.rows.length > MAX_DATA_ROWS) {
     return {
@@ -474,24 +382,16 @@ async function prepareUpload(req: any): Promise<PreparedRequest> {
     };
   }
 
-  const rawPreview = await buildUploadPreview(
-    parsed.rows,
-    fields.columnMappings,
-    fields.diallerSourceId,
-  );
+  const rawPreview = await buildUploadPreview(parsed.rows, fields.columnMappings, fields.diallerSourceId);
   if (rawPreview.mappingError) {
     return {
       ok: false,
       status: 400,
-      message: `Column mapping is missing required field(s): ${rawPreview.mappingError.missingFields.join(", ")}`,
+      message: `Column mapping is missing required field(s): ${rawPreview.mappingError.missingFields.join(', ')}`,
     };
   }
 
-  return {
-    ok: true,
-    fields,
-    preview: applyDateWindow(rawPreview, fields.dateFrom, fields.dateTo),
-  };
+  return { ok: true, fields, preview: applyDateWindow(rawPreview, fields.dateFrom, fields.dateTo) };
 }
 
 // Kept as one list used by both endpoints so /preview and /commit cannot drift apart, and so the
@@ -500,27 +400,20 @@ async function prepareUpload(req: any): Promise<PreparedRequest> {
 // screen while being fully able to write attendance-feeding rows). NOTE requireRole() expands
 // ROLE_ALIASES, so 'wfm' here also admits 'wfm_analyst'; 1639 grants that role explicitly for
 // exactly that reason.
-const UPLOAD_ROLES: string[] = [
-  "wfm",
-  "branch_head",
-  "hr",
-  "payroll_head",
-  "super_admin",
-  "admin",
-];
+const UPLOAD_ROLES: string[] = ['wfm', 'branch_head', 'hr', 'payroll_head', 'super_admin', 'admin'];
 
 // migration 1636's own vocabulary: dialler_source.ingestion_mode is
 // ENUM('integrated_pull','manual_upload'), and only the manual_upload half can be uploaded to by
 // hand. An integrated_pull source is served by Phase 3's ingestion job, so offering one in this
 // picker would let a human submit a file against a source whose rows arrive by API — two writers
 // for the same (source, employee, date) with no reconciliation between them.
-const MANUAL_UPLOAD_MODE = "manual_upload";
+const MANUAL_UPLOAD_MODE = 'manual_upload';
 
 interface DiallerSourceListRow extends RowDataPacket {
   id: string;
   source_key: string;
   display_name: string;
-  ingestion_mode: "integrated_pull" | "manual_upload";
+  ingestion_mode: 'integrated_pull' | 'manual_upload';
   // dialler_source_column_mapping.column_mappings is a JSON column. mysql2 hands a JSON column
   // back already parsed as an object, but the driver returns a string when the column is served
   // through anything that types it as text, so both shapes are handled. NULL when the LEFT JOIN
@@ -545,25 +438,22 @@ function readColumnMappings(raw: unknown): Record<string, string> | null {
   if (raw === null || raw === undefined) return null;
 
   let parsed: unknown = raw;
-  if (typeof raw === "string") {
+  if (typeof raw === 'string') {
     try {
       parsed = JSON.parse(raw);
     } catch {
       return null;
     }
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
-    return null;
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
 
   const mappings: Record<string, string> = {};
-  for (const [header, target] of Object.entries(
-    parsed as Record<string, unknown>,
-  )) {
+  for (const [header, target] of Object.entries(parsed as Record<string, unknown>)) {
     // A non-string target is not a target field, and readRequestFields() below would reject it
     // anyway once the frontend echoed it back. Treated as a malformed blob rather than silently
     // dropped, so the caller sees "this source has no usable mapping" instead of a mapping that
     // quietly lost a column.
-    if (typeof target !== "string") return null;
+    if (typeof target !== 'string') return null;
     mappings[header] = target;
   }
   return mappings;
@@ -587,7 +477,7 @@ function readColumnMappings(raw: unknown): Record<string, string> | null {
  * backfills unsubmittable while showing one costs nothing.
  */
 router.get(
-  "/sources",
+  '/sources',
   requireRole(...UPLOAD_ROLES),
   asyncRoute(async (_req: any, res: any) => {
     let rows: DiallerSourceListRow[];
@@ -620,11 +510,10 @@ router.get(
       // asyncRoute's text talks about what was or was not saved, which is meaningless on a GET
       // and reads as though an upload had been attempted. Driver text is logged, never returned —
       // the same convention the rest of this file follows.
-      console.error("[productivity-upload] /sources query failed", err);
+      console.error('[productivity-upload] /sources query failed', err);
       return res.status(500).json({
         success: false,
-        message:
-          "The list of dialler sources could not be loaded because of a server error. Please retry.",
+        message: 'The list of dialler sources could not be loaded because of a server error. Please retry.',
       });
     }
 
@@ -640,10 +529,7 @@ router.get(
         // Kept in lockstep with columnMappings: a version number alongside a null mapping would
         // invite the caller to POST /commit with mappingVersionUsed set for a mapping it never
         // received, mislabelling the batch's audit trail.
-        mappingVersion:
-          columnMappings === null || !Number.isFinite(rawVersion)
-            ? null
-            : rawVersion,
+        mappingVersion: columnMappings === null || !Number.isFinite(rawVersion) ? null : rawVersion,
       };
     });
 
@@ -652,38 +538,26 @@ router.get(
 );
 
 router.post(
-  "/preview",
+  '/preview',
   requireRole(...UPLOAD_ROLES),
   acceptCsvUpload,
   asyncRoute(async (req: any, res: any) => {
     const prepared = await prepareUpload(req);
-    if (!prepared.ok)
-      return res
-        .status(prepared.status)
-        .json({ success: false, message: prepared.message });
-    return res.json({
-      success: true,
-      accepted: prepared.preview.accepted,
-      rejected: prepared.preview.rejected,
-    });
+    if (!prepared.ok) return res.status(prepared.status).json({ success: false, message: prepared.message });
+    return res.json({ success: true, accepted: prepared.preview.accepted, rejected: prepared.preview.rejected });
   }),
 );
 
 router.post(
-  "/commit",
+  '/commit',
   requireRole(...UPLOAD_ROLES),
   acceptCsvUpload,
   asyncRoute(async (req: any, res: any) => {
     const prepared = await prepareUpload(req);
-    if (!prepared.ok)
-      return res
-        .status(prepared.status)
-        .json({ success: false, message: prepared.message });
+    if (!prepared.ok) return res.status(prepared.status).json({ success: false, message: prepared.message });
     const { fields, preview } = prepared;
 
-    const contentDigest = createHash("sha256")
-      .update(req.file.buffer)
-      .digest("hex");
+    const contentDigest = createHash('sha256').update(req.file.buffer).digest('hex');
     // productivity_upload_batch.mapping_version_used is SMALLINT UNSIGNED (migration 1638). An
     // out-of-range value (-5, 99999) raises error 1264 on the FINAL batch INSERT — after every
     // apr_manual_upload row has already landed — leaving orphan rows with no batch and no audit
@@ -727,13 +601,7 @@ router.post(
       });
     } catch (err) {
       if (err instanceof DuplicateUploadBatchError) {
-        return res
-          .status(409)
-          .json({
-            success: false,
-            message: err.message,
-            priorBatchId: err.priorBatchId,
-          });
+        return res.status(409).json({ success: false, message: err.message, priorBatchId: err.priorBatchId });
       }
       throw err;
     }
@@ -754,81 +622,42 @@ router.post(
 
 // ─── Admin: save or replace a column mapping for a dialler source ─────────────
 
-const MAPPING_ADMIN_ROLES: string[] = ["super_admin", "admin", "wfm"];
+const MAPPING_ADMIN_ROLES: string[] = ['super_admin', 'admin', 'wfm'];
 const VALID_TARGETS = new Set<string>([
-  "employee_code",
-  "report_date",
-  "login_minutes",
-  "calls_handled",
-  "aht_seconds",
-  "bio_minutes",
-  "lunch_minutes",
-  "qa_minutes",
-  "training_minutes",
+  'employee_code', 'report_date', 'login_minutes',
+  'calls_handled', 'aht_seconds', 'bio_minutes', 'lunch_minutes', 'qa_minutes', 'training_minutes',
 ]);
-const MANDATORY_TARGETS = ["employee_code", "report_date", "login_minutes"];
+const MANDATORY_TARGETS = ['employee_code', 'report_date', 'login_minutes'];
 
 router.post(
-  "/sources/:sourceId/column-mapping",
+  '/sources/:sourceId/column-mapping',
   requireRole(...MAPPING_ADMIN_ROLES),
   asyncRoute(async (req: any, res: any) => {
     const { sourceId } = req.params;
     const { columnMappings } = req.body ?? {};
 
-    if (
-      !columnMappings ||
-      typeof columnMappings !== "object" ||
-      Array.isArray(columnMappings)
-    ) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "columnMappings must be a plain object mapping CSV headers to target fields.",
-        });
+    if (!columnMappings || typeof columnMappings !== 'object' || Array.isArray(columnMappings)) {
+      return res.status(400).json({ success: false, message: 'columnMappings must be a plain object mapping CSV headers to target fields.' });
     }
 
     const entries = Object.entries(columnMappings as Record<string, unknown>);
     if (entries.length === 0) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "columnMappings must have at least one entry.",
-        });
+      return res.status(400).json({ success: false, message: 'columnMappings must have at least one entry.' });
     }
 
     for (const [header, target] of entries) {
-      if (typeof header !== "string" || !header.trim()) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Every CSV column header must be a non-empty string.",
-          });
+      if (typeof header !== 'string' || !header.trim()) {
+        return res.status(400).json({ success: false, message: 'Every CSV column header must be a non-empty string.' });
       }
-      if (typeof target !== "string" || !VALID_TARGETS.has(target)) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: `"${target}" is not a recognised target field. Valid fields: ${[...VALID_TARGETS].join(", ")}.`,
-          });
+      if (typeof target !== 'string' || !VALID_TARGETS.has(target)) {
+        return res.status(400).json({ success: false, message: `"${target}" is not a recognised target field. Valid fields: ${[...VALID_TARGETS].join(', ')}.` });
       }
     }
 
-    const mappedTargets = Object.values(
-      columnMappings as Record<string, string>,
-    );
+    const mappedTargets = Object.values(columnMappings as Record<string, string>);
     for (const required of MANDATORY_TARGETS) {
       if (!mappedTargets.includes(required)) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: `The mapping must include a column mapped to "${required}".`,
-          });
+        return res.status(400).json({ success: false, message: `The mapping must include a column mapped to "${required}".` });
       }
     }
 
@@ -837,9 +666,7 @@ router.post(
       [sourceId],
     );
     if ((sourceRows as RowDataPacket[]).length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Dialler source not found." });
+      return res.status(404).json({ success: false, message: 'Dialler source not found.' });
     }
 
     const [versionRows] = await db.execute<RowDataPacket[]>(
@@ -857,13 +684,7 @@ router.post(
     await db.execute(
       `INSERT INTO dialler_source_column_mapping (id, dialler_source_id, mapping_version, column_mappings, active_status, created_by)
        VALUES (?, ?, ?, ?, 1, ?)`,
-      [
-        newId,
-        sourceId,
-        nextVersion,
-        JSON.stringify(columnMappings),
-        req.user?.id ?? null,
-      ],
+      [newId, sourceId, nextVersion, JSON.stringify(columnMappings), req.user?.id ?? null],
     );
 
     return res.json({ success: true, mappingVersion: nextVersion });

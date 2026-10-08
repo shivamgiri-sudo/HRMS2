@@ -21,46 +21,32 @@ export interface AtsQueueToken {
 const WAIT_ALERT_MINUTES = 20;
 
 export const atsQueueService = {
-  async createToken(
-    candidateId: string,
-    arrivalTime: string,
-  ): Promise<AtsQueueToken> {
+  async createToken(candidateId: string, arrivalTime: string): Promise<AtsQueueToken> {
     // Verify candidate exists and is active
-    const candidate = await atsService
-      .getCandidate(candidateId)
-      .catch((error: unknown) => {
-        const message =
-          error instanceof Error
-            ? error.message
-            : typeof error === "string"
-              ? error
-              : "Candidate not found";
-        throw Object.assign(new Error(message), {
-          statusCode:
-            typeof error === "object" && error !== null && "statusCode" in error
-              ? Number((error as { statusCode?: unknown }).statusCode) || 404
-              : 404,
-        });
+    const candidate = await atsService.getCandidate(candidateId).catch((error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : typeof error === "string" ? error : "Candidate not found";
+      throw Object.assign(new Error(message), {
+        statusCode:
+          typeof error === "object" && error !== null && "statusCode" in error
+            ? Number((error as { statusCode?: unknown }).statusCode) || 404
+            : 404,
       });
+    });
     if (!candidate.active_status) {
-      throw Object.assign(new Error("Candidate not found"), {
-        statusCode: 404 as const,
-      });
+      throw Object.assign(new Error("Candidate not found"), { statusCode: 404 as const });
     }
 
     // Prevent duplicate active token for same candidate
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM ats_queue_token WHERE candidate_id = ? AND status = 'active' LIMIT 1",
-      [candidateId],
+      [candidateId]
     );
     if ((existing as RowDataPacket[]).length > 0) {
-      throw Object.assign(
-        new Error("Candidate already has an active queue token"),
-        {
-          statusCode: 409 as const,
-          code: "DUPLICATE_QUEUE_TOKEN" as const,
-        },
-      );
+      throw Object.assign(new Error("Candidate already has an active queue token"), {
+        statusCode: 409 as const,
+        code: 'DUPLICATE_QUEUE_TOKEN' as const,
+      });
     }
 
     // Resolve branch name from candidate → branch_master so BRANCH_EXPR filter works on the display
@@ -69,10 +55,9 @@ export const atsQueueService = {
          FROM ats_candidate c
          LEFT JOIN branch_master bm ON bm.id = c.applied_for_branch
         WHERE c.id = ? LIMIT 1`,
-      [candidateId],
+      [candidateId]
     );
-    const resolvedBranchName: string | null =
-      (branchRows[0] as any)?.branch_name ?? null;
+    const resolvedBranchName: string | null = (branchRows[0] as any)?.branch_name ?? null;
 
     const id = randomUUID();
     const token = randomUUID();
@@ -80,7 +65,7 @@ export const atsQueueService = {
       `INSERT INTO ats_queue_token
          (id, candidate_id, token, arrival_time, current_stage, status, branch_name)
        VALUES (?, ?, ?, ?, 'Arrived', 'active', ?)`,
-      [id, candidateId, token, arrivalTime, resolvedBranchName],
+      [id, candidateId, token, arrivalTime, resolvedBranchName]
     );
     return this.getTokenById(id);
   },
@@ -88,76 +73,51 @@ export const atsQueueService = {
   async getTokenById(id: string): Promise<AtsQueueToken> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM ats_queue_token WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     const row = (rows as RowDataPacket[])[0];
-    if (!row)
-      throw Object.assign(new Error("Queue token not found"), {
-        statusCode: 404,
-      });
+    if (!row) throw Object.assign(new Error("Queue token not found"), { statusCode: 404 });
     return row as AtsQueueToken;
   },
 
   async getTokenByCandidateId(candidateId: string): Promise<AtsQueueToken> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM ats_queue_token WHERE candidate_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1",
-      [candidateId],
+      [candidateId]
     );
     const row = (rows as RowDataPacket[])[0];
-    if (!row)
-      throw Object.assign(
-        new Error("No active queue token for this candidate"),
-        { statusCode: 404 },
-      );
+    if (!row) throw Object.assign(new Error("No active queue token for this candidate"), { statusCode: 404 });
     return row as AtsQueueToken;
   },
 
   async walkOut(tokenId: string): Promise<AtsQueueToken> {
     const token = await this.getTokenById(tokenId);
-    if (token.status !== "active") {
-      throw Object.assign(new Error("Token is not active"), {
-        statusCode: 400,
-      });
+    if (token.status !== 'active') {
+      throw Object.assign(new Error("Token is not active"), { statusCode: 400 });
     }
     await db.execute(
       "UPDATE ats_queue_token SET status = 'walked_out', walk_out_at = NOW(), updated_at = NOW() WHERE id = ?",
-      [tokenId],
+      [tokenId]
     );
     return this.getTokenById(tokenId);
   },
 
-  async reEntry(
-    candidateId: string,
-    arrivalTime: string,
-  ): Promise<AtsQueueToken> {
+  async reEntry(candidateId: string, arrivalTime: string): Promise<AtsQueueToken> {
     // Re-entry: create a new active token (previous must be walked_out or completed)
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM ats_queue_token WHERE candidate_id = ? AND status = 'active' LIMIT 1",
-      [candidateId],
+      [candidateId]
     );
     if ((existing as RowDataPacket[]).length > 0) {
-      throw Object.assign(
-        new Error("Candidate still has an active token; walk out first"),
-        { statusCode: 409 },
-      );
+      throw Object.assign(new Error("Candidate still has an active token; walk out first"), { statusCode: 409 });
     }
     return this.createToken(candidateId, arrivalTime);
   },
 
-  async listActiveQueue(scopeFilter: {
-    sql: string;
-    params: unknown[];
-  }): Promise<
-    Array<
-      AtsQueueToken & {
-        candidate_name: string;
-        mobile: string;
-        wait_minutes: number;
-        over_threshold: boolean;
-      }
-    >
-  > {
-    const scopeSql = scopeFilter.sql ? `AND (${scopeFilter.sql})` : "";
+  async listActiveQueue(
+    scopeFilter: { sql: string; params: unknown[] }
+  ): Promise<Array<AtsQueueToken & { candidate_name: string; mobile: string; wait_minutes: number; over_threshold: boolean }>> {
+    const scopeSql = scopeFilter.sql ? `AND (${scopeFilter.sql})` : '';
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT qt.*,
               c.full_name AS candidate_name,
@@ -167,7 +127,7 @@ export const atsQueueService = {
          JOIN ats_candidate c ON c.id = qt.candidate_id
         WHERE qt.status = 'active' ${scopeSql}
         ORDER BY qt.arrival_time ASC`,
-      [...(scopeFilter.params || [])],
+      [...(scopeFilter.params || [])]
     );
 
     return (rows as RowDataPacket[]).map((r) => ({
@@ -177,24 +137,18 @@ export const atsQueueService = {
     }));
   },
 
-  async assignRecruiter(
-    tokenId: string,
-    recruiterId: string | null,
-  ): Promise<AtsQueueToken> {
+  async assignRecruiter(tokenId: string, recruiterId: string | null): Promise<AtsQueueToken> {
     await db.execute(
       "UPDATE ats_queue_token SET assigned_recruiter_id = ?, updated_at = NOW() WHERE id = ?",
-      [recruiterId, tokenId],
+      [recruiterId, tokenId]
     );
     return this.getTokenById(tokenId);
   },
 
-  async assignInterviewer(
-    tokenId: string,
-    interviewerId: string | null,
-  ): Promise<AtsQueueToken> {
+  async assignInterviewer(tokenId: string, interviewerId: string | null): Promise<AtsQueueToken> {
     await db.execute(
       "UPDATE ats_queue_token SET assigned_interviewer_id = ?, updated_at = NOW() WHERE id = ?",
-      [interviewerId, tokenId],
+      [interviewerId, tokenId]
     );
     return this.getTokenById(tokenId);
   },
@@ -202,7 +156,7 @@ export const atsQueueService = {
   async updateStage(tokenId: string, stage: string): Promise<AtsQueueToken> {
     await db.execute(
       "UPDATE ats_queue_token SET current_stage = ?, updated_at = NOW() WHERE id = ?",
-      [stage, tokenId],
+      [stage, tokenId]
     );
     return this.getTokenById(tokenId);
   },

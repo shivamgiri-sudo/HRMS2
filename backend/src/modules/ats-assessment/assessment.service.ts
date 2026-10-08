@@ -1,10 +1,4 @@
-import {
-  createHash,
-  createHmac,
-  randomInt,
-  randomUUID,
-  timingSafeEqual,
-} from "crypto";
+import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from "crypto";
 import type { RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import {
@@ -27,11 +21,7 @@ import { questionBankService } from "./question-bank.service.js";
 import { buildCandidateScopeSql, type AtsBranchScope } from "../ats-extensions/ats-ext-scope.js";
 import { emailService } from "../communication/email.service.js";
 import { assessmentInvitationEmail } from "../ats/email.templates.js";
-import {
-  deviceBlockMessage,
-  isBlockedDeviceUserAgent,
-  isDeviceGateEnabled,
-} from "./device-guard.js";
+import { deviceBlockMessage, isBlockedDeviceUserAgent, isDeviceGateEnabled } from "./device-guard.js";
 
 type ActorType = "candidate" | "system" | "recruiter" | "hr" | "admin";
 type Meta = {
@@ -226,19 +216,12 @@ function appError(message: string, statusCode: number, code: string) {
 }
 
 export function isAssessmentEnabled() {
-  return (
-    String(process.env.ATS_ASSESSMENT_ENABLED ?? "false").toLowerCase() ===
-    "true"
-  );
+  return String(process.env.ATS_ASSESSMENT_ENABLED ?? "false").toLowerCase() === "true";
 }
 
 function guardEnabled() {
   if (!isAssessmentEnabled()) {
-    throw appError(
-      "Candidate assessment is currently disabled",
-      503,
-      "ASSESSMENT_DISABLED",
-    );
+    throw appError("Candidate assessment is currently disabled", 503, "ASSESSMENT_DISABLED");
   }
 }
 
@@ -252,11 +235,7 @@ function assessmentSecret() {
       "ASSESSMENT_SECRET_MISSING",
     );
   }
-  return (
-    process.env.JWT_SECRET ||
-    process.env.AUTH_JWT_SECRET ||
-    "hrms2-assessment-local-secret-change-me"
-  );
+  return process.env.JWT_SECRET || process.env.AUTH_JWT_SECRET || "hrms2-assessment-local-secret-change-me";
 }
 
 function parseJson<T>(value: unknown, fallback: T): T {
@@ -307,47 +286,33 @@ function safeEqual(left: string, right: string) {
 }
 
 function makePublicToken(attemptId: string, candidateId: string) {
-  const payload = Buffer.from(
-    JSON.stringify({ version: 1, attemptId, candidateId }),
-  ).toString("base64url");
-  const signature = createHmac("sha256", assessmentSecret())
-    .update(payload)
-    .digest("base64url");
+  const payload = Buffer.from(JSON.stringify({ version: 1, attemptId, candidateId })).toString("base64url");
+  const signature = createHmac("sha256", assessmentSecret()).update(payload).digest("base64url");
   return `${payload}.${signature}`;
 }
 
 function readPublicToken(token: string) {
   const [payload, suppliedSignature] = String(token ?? "").split(".");
-  if (!payload || !suppliedSignature)
-    throw appError("Invalid assessment link", 401, "INVALID_ASSESSMENT_TOKEN");
-  const expectedSignature = createHmac("sha256", assessmentSecret())
-    .update(payload)
-    .digest("base64url");
+  if (!payload || !suppliedSignature) throw appError("Invalid assessment link", 401, "INVALID_ASSESSMENT_TOKEN");
+  const expectedSignature = createHmac("sha256", assessmentSecret()).update(payload).digest("base64url");
   if (!safeEqual(suppliedSignature, expectedSignature)) {
     throw appError("Invalid assessment link", 401, "INVALID_ASSESSMENT_TOKEN");
   }
 
   try {
-    const decoded = JSON.parse(
-      Buffer.from(payload, "base64url").toString("utf8"),
-    ) as {
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
       version?: number;
       attemptId?: string;
       candidateId?: string;
     };
-    if (decoded.version !== 1 || !decoded.attemptId || !decoded.candidateId)
-      throw new Error("invalid");
+    if (decoded.version !== 1 || !decoded.attemptId || !decoded.candidateId) throw new Error("invalid");
     return { attemptId: decoded.attemptId, candidateId: decoded.candidateId };
   } catch {
     throw appError("Invalid assessment link", 401, "INVALID_ASSESSMENT_TOKEN");
   }
 }
 
-async function rows<T>(
-  executor: Executor,
-  sql: string,
-  values: unknown[] = [],
-) {
+async function rows<T>(executor: Executor, sql: string, values: unknown[] = []) {
   const [result] = await executor.execute(sql, values);
   return result as T[];
 }
@@ -376,69 +341,31 @@ async function safeAudit(
       ],
     );
   } catch (error) {
-    console.error("Assessment audit write failed", {
-      assessmentId,
-      eventType,
-      error,
-    });
+    console.error("Assessment audit write failed", { assessmentId, eventType, error });
   }
 }
 
-export function normalizeAssessmentProcess(
-  value: unknown,
-): AssessmentProcess | null {
+export function normalizeAssessmentProcess(value: unknown): AssessmentProcess | null {
   const normalized = canonical(value);
   if (!normalized) return null;
-  if (
-    /\b(outbound|sales|telecall|tele caller|lead generation|collection)\b/.test(
-      normalized,
-    )
-  )
-    return "outbound";
-  if (
-    /\b(document|kyc|verification|document assessment|document review)\b/.test(
-      normalized,
-    )
-  )
-    return "document";
+  if (/\b(outbound|sales|telecall|tele caller|lead generation|collection)\b/.test(normalized)) return "outbound";
+  if (/\b(document|kyc|verification|document assessment|document review)\b/.test(normalized)) return "document";
   if (/\b(email|mail|chat|written support)\b/.test(normalized)) return "email";
-  if (
-    /\b(back office|backoffice|data entry|non voice|nonvoice|data processing)\b/.test(
-      normalized,
-    )
-  )
-    return "backoffice";
-  if (
-    /\b(inbound|customer care|customer service|voice support|call centre|call center)\b/.test(
-      normalized,
-    )
-  )
-    return "inbound";
+  if (/\b(back office|backoffice|data entry|non voice|nonvoice|data processing)\b/.test(normalized)) return "backoffice";
+  if (/\b(inbound|customer care|customer service|voice support|call centre|call center)\b/.test(normalized)) return "inbound";
   return null;
 }
 
 export function normalizeAssessmentRole(value: unknown): AssessmentRole {
   const normalized = canonical(value);
-  if (
-    /\b(quality|quality analyst|quality auditor|qa|auditor)\b/.test(normalized)
-  )
-    return "quality_auditor";
-  if (
-    /\b(team leader|team lead|tl|supervisor|assistant manager)\b/.test(
-      normalized,
-    )
-  )
-    return "team_leader";
+  if (/\b(quality|quality analyst|quality auditor|qa|auditor)\b/.test(normalized)) return "quality_auditor";
+  if (/\b(team leader|team lead|tl|supervisor|assistant manager)\b/.test(normalized)) return "team_leader";
   return "executive";
 }
 
 export function classifyExperience(value: unknown): "fresher" | "experienced" {
   const normalized = canonical(value);
-  if (
-    !normalized ||
-    /\b(fresher|no experience|0 year|0 1 year)\b/.test(normalized)
-  )
-    return "fresher";
+  if (!normalized || /\b(fresher|no experience|0 year|0 1 year)\b/.test(normalized)) return "fresher";
   return "experienced";
 }
 
@@ -449,15 +376,9 @@ function templateDefinition(row: TemplateRow) {
   );
 }
 
-function attemptDefinition(
-  attempt: AttemptRow,
-  template: TemplateRow,
-): AssessmentTemplateDefinition {
+function attemptDefinition(attempt: AttemptRow, template: TemplateRow): AssessmentTemplateDefinition {
   if (attempt.config_snapshot) {
-    const snapshot = parseJson<AssessmentTemplateDefinition | null>(
-      attempt.config_snapshot,
-      null,
-    );
+    const snapshot = parseJson<AssessmentTemplateDefinition | null>(attempt.config_snapshot, null);
     if (snapshot) return snapshot;
   }
   return templateDefinition(template);
@@ -593,14 +514,9 @@ export async function syncDefaultTemplates() {
   return { templates: DEFAULT_ASSESSMENT_TEMPLATES.length };
 }
 
-async function findCandidateByPublicCredentials(
-  queueToken: string,
-  mobile: string,
-) {
+async function findCandidateByPublicCredentials(queueToken: string, mobile: string) {
   const normalizedToken = String(queueToken ?? "").trim();
-  const normalizedMobile = String(mobile ?? "")
-    .replace(/\D/g, "")
-    .slice(-10);
+  const normalizedMobile = String(mobile ?? "").replace(/\D/g, "").slice(-10);
   if (!normalizedToken || !/^[6-9]\d{9}$/.test(normalizedMobile)) {
     throw appError(
       "Enter a valid queue token and registered mobile number",
@@ -647,11 +563,7 @@ async function findCandidateByPublicCredentials(
     );
   }
   if (!candidates[0].token_number) {
-    throw appError(
-      "No active queue token is available for this candidate",
-      409,
-      "QUEUE_TOKEN_REQUIRED",
-    );
+    throw appError("No active queue token is available for this candidate", 409, "QUEUE_TOKEN_REQUIRED");
   }
   return candidates[0];
 }
@@ -682,14 +594,9 @@ async function findCandidateById(candidateId: string) {
      LIMIT 1`,
     [candidateId],
   );
-  if (!candidates[0])
-    throw appError("Candidate not found", 404, "CANDIDATE_NOT_FOUND");
+  if (!candidates[0]) throw appError("Candidate not found", 404, "CANDIDATE_NOT_FOUND");
   if (!candidates[0].token_number) {
-    throw appError(
-      "Candidate does not have an active queue token",
-      409,
-      "QUEUE_TOKEN_REQUIRED",
-    );
+    throw appError("Candidate does not have an active queue token", 409, "QUEUE_TOKEN_REQUIRED");
   }
   return candidates[0];
 }
@@ -713,8 +620,7 @@ async function resolveRecruiterContact(
     );
     if (roster[0]) {
       return {
-        name:
-          (roster[0].name as string | null) ?? candidate.recruiter_name ?? null,
+        name: (roster[0].name as string | null) ?? candidate.recruiter_name ?? null,
         mobile: (roster[0].mobile as string | null) ?? null,
       };
     }
@@ -736,12 +642,7 @@ function ruleMatches(rule: string | null, actual: string | null | undefined) {
     .split(",")
     .map((entry) => canonical(entry))
     .filter(Boolean)
-    .some(
-      (entry) =>
-        entry === actualValue ||
-        actualValue.includes(entry) ||
-        entry.includes(actualValue),
-    );
+    .some((entry) => entry === actualValue || actualValue.includes(entry) || entry.includes(actualValue));
 }
 
 async function resolveTemplate(candidate: CandidateRow) {
@@ -760,26 +661,24 @@ async function resolveTemplate(candidate: CandidateRow) {
 
   const experience = classifyExperience(candidate.experience);
   const matching = mappings
-    .filter(
-      (mapping) =>
-        ruleMatches(mapping.branch_name, candidate.branch_name) &&
-        ruleMatches(mapping.process_match, candidate.process_name) &&
-        ruleMatches(mapping.role_match, candidate.role_name) &&
-        ruleMatches(mapping.experience_match, experience),
+    .filter((mapping) =>
+      ruleMatches(mapping.branch_name, candidate.branch_name)
+      && ruleMatches(mapping.process_match, candidate.process_name)
+      && ruleMatches(mapping.role_match, candidate.role_name)
+      && ruleMatches(mapping.experience_match, experience),
     )
     .map((mapping) => ({
       mapping,
       specificity:
-        (mapping.branch_name ? 8 : 0) +
-        (mapping.process_match ? 6 : 0) +
-        (mapping.role_match ? 4 : 0) +
-        (mapping.experience_match ? 2 : 0) +
-        (mapping.vacancy_id ? 10 : 0),
+        (mapping.branch_name ? 8 : 0)
+        + (mapping.process_match ? 6 : 0)
+        + (mapping.role_match ? 4 : 0)
+        + (mapping.experience_match ? 2 : 0)
+        + (mapping.vacancy_id ? 10 : 0),
     }))
-    .sort(
-      (left, right) =>
-        Number(left.mapping.priority) - Number(right.mapping.priority) ||
-        right.specificity - left.specificity,
+    .sort((left, right) =>
+      Number(left.mapping.priority) - Number(right.mapping.priority)
+      || right.specificity - left.specificity,
     );
 
   if (matching[0]) {
@@ -789,11 +688,7 @@ async function resolveTemplate(candidate: CandidateRow) {
       [matching[0].mapping.template_id],
     );
     if (template[0]) {
-      return {
-        template: template[0],
-        source: "mapping" as const,
-        mappingId: matching[0].mapping.id,
-      };
+      return { template: template[0], source: "mapping" as const, mappingId: matching[0].mapping.id };
     }
   }
 
@@ -822,24 +717,12 @@ async function resolveTemplate(candidate: CandidateRow) {
     [process, role, experience, experience],
   );
   if (!templates[0]) {
-    throw appError(
-      "Assessment template is not configured",
-      404,
-      "ASSESSMENT_TEMPLATE_NOT_FOUND",
-    );
+    throw appError("Assessment template is not configured", 404, "ASSESSMENT_TEMPLATE_NOT_FOUND");
   }
-  return {
-    template: templates[0],
-    source: "automatic" as const,
-    mappingId: null,
-  };
+  return { template: templates[0], source: "automatic" as const, mappingId: null };
 }
 
-async function attemptById(
-  attemptId: string,
-  executor: Executor = db,
-  lock = false,
-) {
+async function attemptById(attemptId: string, executor: Executor = db, lock = false) {
   const attempts = await rows<AttemptRow>(
     executor,
     `SELECT *,
@@ -850,31 +733,19 @@ async function attemptById(
      FROM ats_candidate_assessment WHERE id = ? LIMIT 1${lock ? " FOR UPDATE" : ""}`,
     [attemptId],
   );
-  if (!attempts[0])
-    throw appError("Assessment session not found", 404, "ASSESSMENT_NOT_FOUND");
+  if (!attempts[0]) throw appError("Assessment session not found", 404, "ASSESSMENT_NOT_FOUND");
   return attempts[0];
 }
 
-async function attemptByToken(
-  token: string,
-  executor: Executor = db,
-  lock = false,
-) {
+async function attemptByToken(token: string, executor: Executor = db, lock = false) {
   const identity = readPublicToken(token);
   const attempt = await attemptById(identity.attemptId, executor, lock);
   if (attempt.candidate_id !== identity.candidateId) {
     throw appError("Invalid assessment link", 401, "INVALID_ASSESSMENT_TOKEN");
   }
   const suppliedHash = sha256(token);
-  if (
-    !attempt.public_token_hash ||
-    !safeEqual(attempt.public_token_hash, suppliedHash)
-  ) {
-    throw appError(
-      "Assessment link has been revoked or is no longer valid",
-      401,
-      "ASSESSMENT_TOKEN_REVOKED",
-    );
+  if (!attempt.public_token_hash || !safeEqual(attempt.public_token_hash, suppliedHash)) {
+    throw appError("Assessment link has been revoked or is no longer valid", 401, "ASSESSMENT_TOKEN_REVOKED");
   }
   return attempt;
 }
@@ -885,12 +756,7 @@ async function loadTemplate(templateId: string, executor: Executor = db) {
     `SELECT * FROM ats_assessment_template WHERE id = ? LIMIT 1`,
     [templateId],
   );
-  if (!templates[0])
-    throw appError(
-      "Assessment template is missing",
-      500,
-      "ASSESSMENT_TEMPLATE_MISSING",
-    );
+  if (!templates[0]) throw appError("Assessment template is missing", 500, "ASSESSMENT_TEMPLATE_MISSING");
   return templates[0];
 }
 
@@ -905,10 +771,7 @@ async function createOrReuseAssignment(
   try {
     await connection.beginTransaction();
     const executor = connection as unknown as Executor;
-    await connection.execute(
-      `SELECT id FROM ats_candidate WHERE id = ? FOR UPDATE`,
-      [candidate.candidate_id],
-    );
+    await connection.execute(`SELECT id FROM ats_candidate WHERE id = ? FOR UPDATE`, [candidate.candidate_id]);
     const currentCycle = cycleKey(candidate);
     const existing = await rows<AttemptRow>(
       executor,
@@ -957,11 +820,7 @@ async function createOrReuseAssignment(
         attemptId,
         "ASSESSMENT_ASSIGNED",
         { templateCode: template.template_code, source, randomized: fromBank },
-        {
-          ...meta,
-          actorType: meta.actorType ?? (assignedBy ? "recruiter" : "candidate"),
-          actorId: assignedBy,
-        },
+        { ...meta, actorType: meta.actorType ?? (assignedBy ? "recruiter" : "candidate"), actorId: assignedBy },
         executor,
       );
     }
@@ -977,12 +836,7 @@ async function createOrReuseAssignment(
   }
 }
 
-function publicAssignmentResult(
-  candidate: CandidateRow,
-  attempt: AttemptRow,
-  template: TemplateRow,
-  token: string,
-) {
+function publicAssignmentResult(candidate: CandidateRow, attempt: AttemptRow, template: TemplateRow, token: string) {
   return {
     token,
     launchUrl: `/api/ats-ext/assessment#token=${encodeURIComponent(token)}`,
@@ -1010,26 +864,16 @@ export async function lookupOrAssignAssessment(input: {
   meta?: Meta;
 }) {
   await ensureReady();
-  const candidate = await findCandidateByPublicCredentials(
-    input.queueToken,
-    input.mobile,
-  );
+  const candidate = await findCandidateByPublicCredentials(input.queueToken, input.mobile);
 
   // Device gate — checked here, after the candidate is identified (so the
   // rejection message can name their recruiter) but BEFORE any attempt is
   // created or reused below, so a blocked device never consumes the
   // candidate's one allowed attempt. See device-guard.ts for what this does
   // and does not catch.
-  if (
-    isDeviceGateEnabled() &&
-    isBlockedDeviceUserAgent(input.meta?.userAgent)
-  ) {
+  if (isDeviceGateEnabled() && isBlockedDeviceUserAgent(input.meta?.userAgent)) {
     const recruiter = await resolveRecruiterContact(candidate);
-    throw appError(
-      deviceBlockMessage(recruiter.name, recruiter.mobile),
-      403,
-      "DEVICE_NOT_ALLOWED",
-    );
+    throw appError(deviceBlockMessage(recruiter.name, recruiter.mobile), 403, "DEVICE_NOT_ALLOWED");
   }
 
   const currentCycle = cycleKey(candidate);
@@ -1070,35 +914,25 @@ export async function assignAssessmentManually(input: {
   await ensureReady();
   const candidate = await findCandidateById(input.candidateId);
   const template = await loadTemplate(input.templateId);
-  if (!template.active_status)
-    throw appError("Assessment template is inactive", 409, "TEMPLATE_INACTIVE");
+  if (!template.active_status) throw appError("Assessment template is inactive", 409, "TEMPLATE_INACTIVE");
   const { attempt, token } = await createOrReuseAssignment(
     candidate,
     template,
     "manual",
     input.actorId,
-    {
-      ...input.meta,
-      actorType: input.meta?.actorType ?? "recruiter",
-      actorId: input.actorId,
-    },
+    { ...input.meta, actorType: input.meta?.actorType ?? "recruiter", actorId: input.actorId },
   );
   const result = publicAssignmentResult(candidate, attempt, template, token);
 
   // Send assessment invitation email to the candidate (non-blocking)
-  if (
-    input.sendEmail !== false &&
-    candidate.email &&
-    emailService.isConfigured()
-  ) {
+  if ((input.sendEmail !== false) && candidate.email && emailService.isConfigured()) {
     // Resolve recruiter name and mobile from employees table
     const recruiterRows = await rows<RowDataPacket>(
       db,
       `SELECT full_name, mobile FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
       [input.actorId],
     );
-    const recruiterName =
-      (recruiterRows[0]?.full_name as string | null) ?? "Your Recruiter";
+    const recruiterName = (recruiterRows[0]?.full_name as string | null) ?? "Your Recruiter";
     const recruiterMobile = (recruiterRows[0]?.mobile as string | null) ?? "—";
 
     const frontendBase = (process.env.FRONTEND_URL ?? "").replace(/\/+$/, "");
@@ -1108,12 +942,8 @@ export async function assignAssessmentManually(input: {
 
     const expiresAt = attempt.expires_at
       ? new Intl.DateTimeFormat("en-IN", {
-          day: "2-digit",
-          month: "short",
-          year: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
+          day: "2-digit", month: "short", year: "numeric",
+          hour: "numeric", minute: "2-digit", hour12: true,
         }).format(new Date(attempt.expires_at))
       : "12 hours from now";
 
@@ -1132,25 +962,17 @@ export async function assignAssessmentManually(input: {
         text: `Dear ${candidate.full_name ?? "Candidate"}, your assessment link: ${assessmentLink} (valid until ${expiresAt}). Contact your recruiter ${recruiterName} at ${recruiterMobile} for help.`,
       })
       .catch((err: unknown) => {
-        console.error(
-          "[assessment] Failed to send invitation email:",
-          err instanceof Error ? err.message : err,
-        );
+        console.error("[assessment] Failed to send invitation email:", err instanceof Error ? err.message : err);
       });
   }
 
   return result;
 }
 
-export function getRemainingSeconds(
-  attempt: Pick<AttemptRow, "status" | "expires_at"> & {
-    db_remaining_seconds?: number | null;
-  },
-) {
+export function getRemainingSeconds(attempt: Pick<AttemptRow, "status" | "expires_at"> & { db_remaining_seconds?: number | null }) {
   if (attempt.status !== "in_progress") return null;
   // Prefer MySQL-computed TIMESTAMPDIFF to avoid Node.js timezone string-parse bugs.
-  if (attempt.db_remaining_seconds != null)
-    return Math.max(0, Number(attempt.db_remaining_seconds));
+  if (attempt.db_remaining_seconds != null) return Math.max(0, Number(attempt.db_remaining_seconds));
   if (!attempt.expires_at) return null;
   const deadline = dateMs(attempt.expires_at);
   if (deadline === null) return null;
@@ -1170,26 +992,19 @@ function hasAnswer(value: unknown) {
 }
 
 function candidateQuestion(question: AssessmentQuestionDefinition) {
-  const {
-    correctAnswer: _correctAnswer,
-    keywords: _keywords,
-    explanation: _explanation,
-    ...safe
-  } = question;
+  const { correctAnswer: _correctAnswer, keywords: _keywords, explanation: _explanation, ...safe } = question;
   return safe;
 }
 
 function serializeTyping(row: TypingRow, includeReference = false) {
   const duration = Number(row.duration_limit_seconds);
   // Use MySQL-computed elapsed (TIMESTAMPDIFF) to avoid Node.js timezone parse bugs.
-  const elapsedSinceStart =
-    !row.submitted_at && row.elapsed_since_start_seconds != null
-      ? Math.max(0, Number(row.elapsed_since_start_seconds))
-      : null;
-  const remainingSeconds =
-    elapsedSinceStart !== null
-      ? Math.max(0, duration - elapsedSinceStart)
-      : null;
+  const elapsedSinceStart = !row.submitted_at && row.elapsed_since_start_seconds != null
+    ? Math.max(0, Number(row.elapsed_since_start_seconds))
+    : null;
+  const remainingSeconds = elapsedSinceStart !== null
+    ? Math.max(0, duration - elapsedSinceStart)
+    : null;
   return {
     id: row.id,
     attemptNo: Number(row.attempt_no),
@@ -1202,8 +1017,7 @@ function serializeTyping(row: TypingRow, includeReference = false) {
     netWpm: row.net_wpm,
     accuracy: row.accuracy_percentage,
     score: row.score_percentage,
-    passedBenchmark:
-      row.passed_benchmark === null ? null : Boolean(row.passed_benchmark),
+    passedBenchmark: row.passed_benchmark === null ? null : Boolean(row.passed_benchmark),
     backspaceCount: Number(row.backspace_count ?? 0),
     pasteAttempts: Number(row.paste_attempts ?? 0),
     result: row.submitted_at ? parseJson(row.result_json, null) : null,
@@ -1214,23 +1028,14 @@ function serializeTyping(row: TypingRow, includeReference = false) {
 
 async function expireUnstartedAttempt(attempt: AttemptRow) {
   const expiry = dateMs(attempt.expires_at);
-  if (
-    attempt.status === "assigned" &&
-    expiry !== null &&
-    expiry <= Date.now()
-  ) {
+  if (attempt.status === "assigned" && expiry !== null && expiry <= Date.now()) {
     await db.execute(
       `UPDATE ats_candidate_assessment
        SET status = 'expired', failure_reason = 'Assessment was not started within the assignment window'
        WHERE id = ? AND status = 'assigned'`,
       [attempt.id],
     );
-    await safeAudit(
-      attempt.id,
-      "ASSESSMENT_EXPIRED_BEFORE_START",
-      {},
-      { actorType: "system" },
-    );
+    await safeAudit(attempt.id, "ASSESSMENT_EXPIRED_BEFORE_START", {}, { actorType: "system" });
     return true;
   }
   return false;
@@ -1253,11 +1058,7 @@ async function loadSessionData(attempt: AttemptRow) {
   // Auto-expire zombie typing attempts: unsubmitted rows where elapsed > duration.
   // These cause the candidate page to auto-submit on load (remaining=0 from first tick).
   for (const typing of typingAttempts) {
-    if (
-      !typing.submitted_at &&
-      Number(typing.elapsed_since_start_seconds ?? 0) >=
-        Number(typing.duration_limit_seconds)
-    ) {
+    if (!typing.submitted_at && Number(typing.elapsed_since_start_seconds ?? 0) >= Number(typing.duration_limit_seconds)) {
       await db.execute(
         `UPDATE ats_typing_test_attempt
             SET submitted_at = NOW(),
@@ -1281,8 +1082,7 @@ async function loadSessionData(attempt: AttemptRow) {
     [attempt.candidate_id],
   );
   const safeTemplate = publicTemplate(definition);
-  const questionsVisible =
-    attempt.status !== "assigned" && attempt.status !== "expired";
+  const questionsVisible = attempt.status !== "assigned" && attempt.status !== "expired";
 
   return {
     candidate: candidates[0]
@@ -1308,10 +1108,7 @@ async function loadSessionData(attempt: AttemptRow) {
       remainingSeconds: getRemainingSeconds(attempt),
       percentage: attempt.percentage,
       result: attempt.result,
-      sectionScores: parseJson<Record<string, SectionScore>>(
-        attempt.section_scores,
-        {},
-      ),
+      sectionScores: parseJson<Record<string, SectionScore>>(attempt.section_scores, {}),
       recommendation: parseJson(attempt.recommendation_json, null),
       integrityFlags: parseJson<unknown[]>(attempt.integrity_flags, []),
       manualReviewRequired: Boolean(attempt.manual_review_required),
@@ -1333,24 +1130,18 @@ async function loadSessionData(attempt: AttemptRow) {
           ? response.marks_awarded
           : undefined,
     })),
-    typingAttempts: typingAttempts.map((typing) =>
-      serializeTyping(typing, !typing.submitted_at),
-    ),
+    typingAttempts: typingAttempts.map((typing) => serializeTyping(typing, !typing.submitted_at)),
   };
 }
 
 export async function getAssessmentSession(token: string) {
   await ensureReady();
   let attempt = await attemptByToken(token);
-  if (await expireUnstartedAttempt(attempt))
-    attempt = await attemptByToken(token);
+  if (await expireUnstartedAttempt(attempt)) attempt = await attemptByToken(token);
 
   const remaining = getRemainingSeconds(attempt);
   if (attempt.status === "in_progress" && remaining === 0) {
-    await submitAssessment(token, {
-      autoSubmit: true,
-      reason: "assessment_timer_expired",
-    });
+    await submitAssessment(token, { autoSubmit: true, reason: "assessment_timer_expired" });
     attempt = await attemptByToken(token);
   }
   return loadSessionData(attempt);
@@ -1374,14 +1165,8 @@ export async function startAssessment(token: string, meta: Meta = {}) {
       if (isDeviceGateEnabled() && isBlockedDeviceUserAgent(meta.userAgent)) {
         throw appError(deviceBlockMessage(), 403, "DEVICE_NOT_ALLOWED");
       }
-      const identityCheckEnabled =
-        String(
-          process.env.ATS_IDENTITY_CHECK_ENABLED ?? "false",
-        ).toLowerCase() === "true";
-      if (
-        identityCheckEnabled &&
-        !(attempt as unknown as { identity_verified: number }).identity_verified
-      ) {
+      const identityCheckEnabled = String(process.env.ATS_IDENTITY_CHECK_ENABLED ?? "false").toLowerCase() === "true";
+      if (identityCheckEnabled && !(attempt as unknown as { identity_verified: number }).identity_verified) {
         throw appError(
           "Identity must be verified before starting the assessment. Request an OTP first.",
           403,
@@ -1406,8 +1191,7 @@ export async function startAssessment(token: string, meta: Meta = {}) {
         await connection.commit();
         return loadSessionData(await attemptByToken(token));
       }
-      const durationSeconds =
-        Number(template.duration_minutes) * 60 + ASSESSMENT_GRACE_SECONDS;
+      const durationSeconds = Number(template.duration_minutes) * 60 + ASSESSMENT_GRACE_SECONDS;
       // Binds this attempt to the device class that actually started it, so
       // saveResponse can later notice (and flag, not block) a switch from
       // desktop to mobile mid-session — e.g. handed off to someone else.
@@ -1416,9 +1200,7 @@ export async function startAssessment(token: string, meta: Meta = {}) {
         ...parseJson<Record<string, unknown>>(attempt.client_meta, {}),
         deviceBinding: {
           boundAt: nowIso(),
-          uaClass: isBlockedDeviceUserAgent(meta.userAgent)
-            ? "mobile"
-            : "desktop",
+          uaClass: isBlockedDeviceUserAgent(meta.userAgent) ? "mobile" : "desktop",
           uaSnippet: meta.userAgent ? meta.userAgent.slice(0, 180) : null,
         },
       };
@@ -1429,13 +1211,7 @@ export async function startAssessment(token: string, meta: Meta = {}) {
          WHERE id = ? AND status = 'assigned'`,
         [durationSeconds, JSON.stringify(boundClientMeta), attempt.id],
       );
-      await safeAudit(
-        attempt.id,
-        "ASSESSMENT_STARTED",
-        { durationSeconds },
-        { ...meta, actorType: "candidate" },
-        executor,
-      );
+      await safeAudit(attempt.id, "ASSESSMENT_STARTED", { durationSeconds }, { ...meta, actorType: "candidate" }, executor);
     } else if (attempt.status !== "in_progress") {
       throw appError(
         "The single assessment attempt has already been used",
@@ -1453,10 +1229,7 @@ export async function startAssessment(token: string, meta: Meta = {}) {
   return getAssessmentSession(token);
 }
 
-function validateAnswer(
-  question: AssessmentQuestionDefinition,
-  answer: unknown,
-) {
+function validateAnswer(question: AssessmentQuestionDefinition, answer: unknown) {
   if (question.type === "single") {
     if (typeof answer !== "string" || !answer.trim()) {
       throw appError("Select one answer", 400, "INVALID_ANSWER");
@@ -1472,11 +1245,7 @@ function validateAnswer(
       throw appError("Select at least one valid answer", 400, "INVALID_ANSWER");
     }
     const clean = [...new Set(answer.map((value) => String(value)))];
-    if (
-      clean.some(
-        (value) => value.length > 500 || !question.options?.includes(value),
-      )
-    ) {
+    if (clean.some((value) => value.length > 500 || !question.options?.includes(value))) {
       throw appError("Invalid answer option", 400, "INVALID_ANSWER");
     }
     return clean;
@@ -1500,18 +1269,10 @@ export async function saveResponse(
 ) {
   await ensureReady();
   const attempt = await attemptByToken(token);
-  if (attempt.status !== "in_progress")
-    throw appError("Assessment is not open", 409, "ASSESSMENT_NOT_OPEN");
+  if (attempt.status !== "in_progress") throw appError("Assessment is not open", 409, "ASSESSMENT_NOT_OPEN");
   if (getRemainingSeconds(attempt) === 0) {
-    await submitAssessment(token, {
-      autoSubmit: true,
-      reason: "assessment_timer_expired",
-    });
-    throw appError(
-      "Assessment time has ended and the attempt was submitted",
-      409,
-      "ASSESSMENT_TIME_ENDED",
-    );
+    await submitAssessment(token, { autoSubmit: true, reason: "assessment_timer_expired" });
+    throw appError("Assessment time has ended and the attempt was submitted", 409, "ASSESSMENT_TIME_ENDED");
   }
 
   // Mid-session device-mismatch flag — soft, never blocks saving the answer.
@@ -1522,64 +1283,36 @@ export async function saveResponse(
   // what could just be a Wi-Fi hop or browser update.
   if (isDeviceGateEnabled()) {
     const clientMeta = parseJson<Record<string, any>>(attempt.client_meta, {});
-    const binding = clientMeta.deviceBinding as
-      { uaClass?: string; mismatchFlagged?: boolean } | undefined;
-    if (
-      binding?.uaClass === "desktop" &&
-      !binding.mismatchFlagged &&
-      isBlockedDeviceUserAgent(meta.userAgent)
-    ) {
+    const binding = clientMeta.deviceBinding as { uaClass?: string; mismatchFlagged?: boolean } | undefined;
+    if (binding?.uaClass === "desktop" && !binding.mismatchFlagged && isBlockedDeviceUserAgent(meta.userAgent)) {
       await recordIntegrityEvent(
         token,
         "device_class_mismatch",
         {
           boundClass: "desktop",
           currentClass: "mobile",
-          currentUaSnippet: meta.userAgent
-            ? meta.userAgent.slice(0, 180)
-            : null,
+          currentUaSnippet: meta.userAgent ? meta.userAgent.slice(0, 180) : null,
         },
         meta,
-      ).catch(() => {
-        /* flagging must never block saving the actual answer */
-      });
-      await db
-        .execute(
-          `UPDATE ats_candidate_assessment SET client_meta = CAST(? AS JSON) WHERE id = ?`,
-          [
-            JSON.stringify({
-              ...clientMeta,
-              deviceBinding: { ...binding, mismatchFlagged: true },
-            }),
-            attempt.id,
-          ],
-        )
-        .catch(() => {
-          /* best-effort guard against repeat flags; not fatal if it misses once */
-        });
+      ).catch(() => { /* flagging must never block saving the actual answer */ });
+      await db.execute(
+        `UPDATE ats_candidate_assessment SET client_meta = CAST(? AS JSON) WHERE id = ?`,
+        [JSON.stringify({ ...clientMeta, deviceBinding: { ...binding, mismatchFlagged: true } }), attempt.id],
+      ).catch(() => { /* best-effort guard against repeat flags; not fatal if it misses once */ });
     }
   }
 
   const template = await loadTemplate(attempt.template_id);
   const definition = attemptDefinition(attempt, template);
   const question = definition.questions.find((item) => item.id === questionId);
-  if (!question)
-    throw appError("Question not found", 404, "QUESTION_NOT_FOUND");
+  if (!question) throw appError("Question not found", 404, "QUESTION_NOT_FOUND");
   const validated = validateAnswer(question, answer);
   const answerText = typeof validated === "string" ? validated : null;
   const answerJson = answerText === null ? JSON.stringify(validated) : null;
-  const evaluationMode = question.manualReview
-    ? "manual"
-    : question.type === "text"
-      ? "keyword"
-      : "auto";
-  const timeTaken =
-    timeTakenSeconds === undefined
-      ? null
-      : Math.max(
-          0,
-          Math.min(86_400, Math.floor(Number(timeTakenSeconds) || 0)),
-        );
+  const evaluationMode = question.manualReview ? "manual" : question.type === "text" ? "keyword" : "auto";
+  const timeTaken = timeTakenSeconds === undefined
+    ? null
+    : Math.max(0, Math.min(86_400, Math.floor(Number(timeTakenSeconds) || 0)));
 
   if (answerJson !== null) {
     await db.execute(
@@ -1640,19 +1373,18 @@ export async function recordIntegrityEvent(
 ) {
   await ensureReady();
   const attempt = await attemptByToken(token);
-  const flags = parseJson<Array<Record<string, unknown>>>(
-    attempt.integrity_flags,
-    [],
-  );
+  const flags = parseJson<Array<Record<string, unknown>>>(attempt.integrity_flags, []);
   flags.push({ eventType: eventType.slice(0, 100), at: nowIso(), details });
   await db.execute(
     `UPDATE ats_candidate_assessment SET integrity_flags = CAST(? AS JSON) WHERE id = ?`,
     [JSON.stringify(flags.slice(-100)), attempt.id],
   );
-  await safeAudit(attempt.id, eventType, details, {
-    ...meta,
-    actorType: "candidate",
-  });
+  await safeAudit(
+    attempt.id,
+    eventType,
+    details,
+    { ...meta, actorType: "candidate" },
+  );
   return { recorded: true, count: flags.length };
 }
 
@@ -1663,19 +1395,13 @@ export async function startTypingAttempt(token: string, meta: Meta = {}) {
     await connection.beginTransaction();
     const executor = connection as unknown as Executor;
     const attempt = await attemptByToken(token, executor, true);
-    if (attempt.status !== "in_progress")
-      throw appError("Assessment is not open", 409, "ASSESSMENT_NOT_OPEN");
-    if (getRemainingSeconds(attempt) === 0)
-      throw appError("Assessment time has ended", 409, "ASSESSMENT_TIME_ENDED");
+    if (attempt.status !== "in_progress") throw appError("Assessment is not open", 409, "ASSESSMENT_NOT_OPEN");
+    if (getRemainingSeconds(attempt) === 0) throw appError("Assessment time has ended", 409, "ASSESSMENT_TIME_ENDED");
 
     const template = await loadTemplate(attempt.template_id, executor);
     const definition = attemptDefinition(attempt, template);
     if (!definition.typing.required) {
-      throw appError(
-        "Typing test is not required for this assessment",
-        400,
-        "TYPING_NOT_REQUIRED",
-      );
+      throw appError("Typing test is not required for this assessment", 400, "TYPING_NOT_REQUIRED");
     }
 
     const active = await rows<TypingRow>(
@@ -1698,11 +1424,7 @@ export async function startTypingAttempt(token: string, meta: Meta = {}) {
       );
       const used = Number(count[0]?.total ?? 0);
       if (used >= 2) {
-        throw appError(
-          "Maximum two typing attempts are allowed",
-          409,
-          "TYPING_ATTEMPTS_USED",
-        );
+        throw appError("Maximum two typing attempts are allowed", 409, "TYPING_ATTEMPTS_USED");
       }
       const typingId = randomUUID();
       const attemptNo = used + 1;
@@ -1710,26 +1432,18 @@ export async function startTypingAttempt(token: string, meta: Meta = {}) {
         `INSERT INTO ats_typing_test_attempt (
           id, assessment_id, attempt_no, reference_text, duration_limit_seconds
         ) VALUES (?, ?, ?, ?, ?)`,
-        [
-          typingId,
-          attempt.id,
-          attemptNo,
-          definition.typing.passage,
-          definition.typing.durationSeconds,
-        ],
+        [typingId, attempt.id, attemptNo, definition.typing.passage, definition.typing.durationSeconds],
       );
       await connection.execute(
         `UPDATE ats_candidate_assessment SET typing_attempts_used = ? WHERE id = ?`,
         [attemptNo, attempt.id],
       );
-      typing = (
-        await rows<TypingRow>(
-          executor,
-          `SELECT *, TIMESTAMPDIFF(SECOND, started_at, NOW()) AS elapsed_since_start_seconds
+      typing = (await rows<TypingRow>(
+        executor,
+        `SELECT *, TIMESTAMPDIFF(SECOND, started_at, NOW()) AS elapsed_since_start_seconds
          FROM ats_typing_test_attempt WHERE id = ? LIMIT 1`,
-          [typingId],
-        )
-      )[0];
+        [typingId],
+      ))[0];
     }
 
     await safeAudit(
@@ -1741,10 +1455,7 @@ export async function startTypingAttempt(token: string, meta: Meta = {}) {
     );
     await connection.commit();
     const duration = Number(typing.duration_limit_seconds);
-    const elapsedSinceStart = Math.max(
-      0,
-      Number(typing.elapsed_since_start_seconds ?? 0),
-    );
+    const elapsedSinceStart = Math.max(0, Number(typing.elapsed_since_start_seconds ?? 0));
     return {
       id: typing.id,
       attemptNo: Number(typing.attempt_no),
@@ -1778,8 +1489,7 @@ export async function submitTypingAttempt(
     await connection.beginTransaction();
     const executor = connection as unknown as Executor;
     const attempt = await attemptByToken(token, executor, true);
-    if (attempt.status !== "in_progress")
-      throw appError("Assessment is not open", 409, "ASSESSMENT_NOT_OPEN");
+    if (attempt.status !== "in_progress") throw appError("Assessment is not open", 409, "ASSESSMENT_NOT_OPEN");
     const template = await loadTemplate(attempt.template_id, executor);
     const definition = attemptDefinition(attempt, template);
     const typingRows = await rows<TypingRow>(
@@ -1792,40 +1502,18 @@ export async function submitTypingAttempt(
       [typingAttemptId, attempt.id],
     );
     const typing = typingRows[0];
-    if (!typing)
-      throw appError(
-        "Typing attempt not found",
-        404,
-        "TYPING_ATTEMPT_NOT_FOUND",
-      );
+    if (!typing) throw appError("Typing attempt not found", 404, "TYPING_ATTEMPT_NOT_FOUND");
 
     if (typing.submitted_at) {
-      const existingResult = parseJson<Record<string, unknown>>(
-        typing.result_json,
-        {},
-      );
+      const existingResult = parseJson<Record<string, unknown>>(typing.result_json, {});
       await connection.commit();
-      return {
-        ...existingResult,
-        attemptNo: typing.attempt_no,
-        attemptsRemaining: 2 - typing.attempt_no,
-        alreadySubmitted: true,
-      };
+      return { ...existingResult, attemptNo: typing.attempt_no, attemptsRemaining: 2 - typing.attempt_no, alreadySubmitted: true };
     }
 
-    const actualElapsed = Math.max(
-      1,
-      Math.max(0, Number(typing.elapsed_since_start_seconds ?? 1)),
-    );
-    const remainingSeconds = Math.max(
-      0,
-      Number(typing.duration_limit_seconds) - actualElapsed,
-    );
+    const actualElapsed = Math.max(1, Math.max(0, Number(typing.elapsed_since_start_seconds ?? 1)));
+    const remainingSeconds = Math.max(0, Number(typing.duration_limit_seconds) - actualElapsed);
     // Reject tiny-sample early manual submissions; a genuinely completed passage is always allowed.
-    if (
-      remainingSeconds > 0 &&
-      !canSubmitEarly(typing.reference_text, String(input.typedText ?? ""))
-    ) {
+    if (remainingSeconds > 0 && !canSubmitEarly(typing.reference_text, String(input.typedText ?? ""))) {
       throw appError(
         "Too little typed to submit early. Continue typing or wait for the timer to expire.",
         400,
@@ -1833,10 +1521,7 @@ export async function submitTypingAttempt(
       );
     }
     // Cap at duration only — grace window is for network latency, not for WPM denominator.
-    const elapsed = Math.min(
-      actualElapsed,
-      Number(typing.duration_limit_seconds),
-    );
+    const elapsed = Math.min(actualElapsed, Number(typing.duration_limit_seconds));
     const scored = calculateTypingScore({
       referenceText: typing.reference_text,
       typedText: String(input.typedText ?? ""),
@@ -1844,14 +1529,8 @@ export async function submitTypingAttempt(
       minNetWpm: definition.typing.minNetWpm,
       minAccuracy: definition.typing.minAccuracy,
     });
-    const pasteAttempts = Math.max(
-      0,
-      Math.min(10_000, Math.floor(Number(input.pasteAttempts ?? 0))),
-    );
-    const backspaceCount = Math.max(
-      0,
-      Math.min(1_000_000, Math.floor(Number(input.backspaceCount ?? 0))),
-    );
+    const pasteAttempts = Math.max(0, Math.min(10_000, Math.floor(Number(input.pasteAttempts ?? 0))));
+    const backspaceCount = Math.max(0, Math.min(1_000_000, Math.floor(Number(input.backspaceCount ?? 0))));
 
     await connection.execute(
       `UPDATE ats_typing_test_attempt
@@ -1884,30 +1563,11 @@ export async function submitTypingAttempt(
         typing.id,
       ],
     );
-    if (
-      pasteAttempts > 0 ||
-      actualElapsed >
-        Number(typing.duration_limit_seconds) + TYPING_GRACE_SECONDS
-    ) {
-      const flags = parseJson<Array<Record<string, unknown>>>(
-        attempt.integrity_flags,
-        [],
-      );
-      if (pasteAttempts > 0)
-        flags.push({
-          eventType: "paste_attempt",
-          at: nowIso(),
-          details: { pasteAttempts },
-        });
-      if (
-        actualElapsed >
-        Number(typing.duration_limit_seconds) + TYPING_GRACE_SECONDS
-      ) {
-        flags.push({
-          eventType: "late_typing_submission",
-          at: nowIso(),
-          details: { actualElapsed },
-        });
+    if (pasteAttempts > 0 || actualElapsed > Number(typing.duration_limit_seconds) + TYPING_GRACE_SECONDS) {
+      const flags = parseJson<Array<Record<string, unknown>>>(attempt.integrity_flags, []);
+      if (pasteAttempts > 0) flags.push({ eventType: "paste_attempt", at: nowIso(), details: { pasteAttempts } });
+      if (actualElapsed > Number(typing.duration_limit_seconds) + TYPING_GRACE_SECONDS) {
+        flags.push({ eventType: "late_typing_submission", at: nowIso(), details: { actualElapsed } });
       }
       await connection.execute(
         `UPDATE ats_candidate_assessment SET integrity_flags = CAST(? AS JSON) WHERE id = ?`,
@@ -1940,17 +1600,11 @@ export async function submitTypingAttempt(
   }
 }
 
-function scoreQuestion(
-  question: AssessmentQuestionDefinition,
-  response?: ResponseRow,
-) {
+function scoreQuestion(question: AssessmentQuestionDefinition, response?: ResponseRow) {
   const value = answerValue(response);
   if (question.type === "single") {
     return {
-      awarded:
-        canonical(value) === canonical(question.correctAnswer)
-          ? question.marks
-          : 0,
+      awarded: canonical(value) === canonical(question.correctAnswer) ? question.marks : 0,
       manual: false,
       notes: "Automatic exact-option scoring",
     };
@@ -1961,10 +1615,7 @@ function scoreQuestion(
       ? question.correctAnswer.map(canonical).sort()
       : [];
     return {
-      awarded:
-        JSON.stringify(actual) === JSON.stringify(expected)
-          ? question.marks
-          : 0,
+      awarded: JSON.stringify(actual) === JSON.stringify(expected) ? question.marks : 0,
       manual: false,
       notes: "Automatic multi-option scoring",
     };
@@ -1972,9 +1623,7 @@ function scoreQuestion(
 
   const text = canonical(value);
   const keywords = question.keywords ?? [];
-  const hits = keywords.filter((keyword) =>
-    text.includes(canonical(keyword)),
-  ).length;
+  const hits = keywords.filter((keyword) => text.includes(canonical(keyword))).length;
   const coverage = keywords.length ? hits / keywords.length : 0;
   return {
     awarded: round(question.marks * coverage),
@@ -1999,9 +1648,7 @@ function finishSectionScores(sections: Record<string, SectionScore>) {
   for (const section of Object.values(sections)) {
     section.awarded = round(section.awarded);
     section.maximum = round(section.maximum);
-    section.percentage = section.maximum
-      ? round((section.awarded / section.maximum) * 100)
-      : 0;
+    section.percentage = section.maximum ? round((section.awarded / section.maximum) * 100) : 0;
   }
   return sections;
 }
@@ -2027,11 +1674,7 @@ async function ensureResponseSnapshots(
         question.type,
         JSON.stringify(question),
         question.marks,
-        question.manualReview
-          ? "manual"
-          : question.type === "text"
-            ? "keyword"
-            : "auto",
+        question.manualReview ? "manual" : question.type === "text" ? "keyword" : "auto",
       ],
     );
   }
@@ -2049,12 +1692,8 @@ async function finalizeAssessment(
     `SELECT * FROM ats_assessment_response WHERE assessment_id = ? FOR UPDATE`,
     [attempt.id],
   );
-  const responseMap = new Map(
-    responses.map((response) => [response.question_id, response]),
-  );
-  const missing = definition.questions.filter(
-    (question) => !hasAnswer(answerValue(responseMap.get(question.id))),
-  );
+  const responseMap = new Map(responses.map((response) => [response.question_id, response]));
+  const missing = definition.questions.filter((question) => !hasAnswer(answerValue(responseMap.get(question.id))));
   const hasQuestions = definition.questions.length > 0;
   const mcqDone = hasQuestions && missing.length === 0;
 
@@ -2069,17 +1708,11 @@ async function finalizeAssessment(
   );
   if (activeTyping[0]) {
     // Auto-submit with empty text if candidate never typed anything
-    const elapsed = Math.max(
-      1,
-      Math.max(0, Number(activeTyping[0].elapsed_since_start_seconds ?? 1)),
-    );
+    const elapsed = Math.max(1, Math.max(0, Number(activeTyping[0].elapsed_since_start_seconds ?? 1)));
     const scored = calculateTypingScore({
       referenceText: activeTyping[0].reference_text,
       typedText: activeTyping[0].typed_text ?? "",
-      elapsedSeconds: Math.min(
-        elapsed,
-        Number(activeTyping[0].duration_limit_seconds),
-      ),
+      elapsedSeconds: Math.min(elapsed, Number(activeTyping[0].duration_limit_seconds)),
       minNetWpm: definition.typing.minNetWpm,
       minAccuracy: definition.typing.minAccuracy,
     });
@@ -2150,25 +1783,13 @@ async function finalizeAssessment(
       awarded += score.awarded;
       maximum += question.marks;
       manualReviewRequired ||= score.manual;
-      addSectionScore(
-        sections,
-        question.sectionKey,
-        question.sectionTitle,
-        score.awarded,
-        question.marks,
-      );
+      addSectionScore(sections, question.sectionKey, question.sectionTitle, score.awarded, question.marks);
     }
     await executor.execute(
       `UPDATE ats_assessment_response
        SET marks_awarded = ?, evaluation_notes = ?, evaluation_mode = ?
        WHERE assessment_id = ? AND question_id = ?`,
-      [
-        score.awarded,
-        score.notes,
-        score.manual ? "manual" : question.type === "text" ? "keyword" : "auto",
-        attempt.id,
-        question.id,
-      ],
+      [score.awarded, score.notes, score.manual ? "manual" : question.type === "text" ? "keyword" : "auto", attempt.id, question.id],
     );
   }
 
@@ -2181,13 +1802,7 @@ async function finalizeAssessment(
     const typingScore = Number(bestTyping.score_percentage ?? 0);
     const typingMarks = round((typingScore / 100) * TYPING_WEIGHT_MARKS);
     typingPassed = Boolean(bestTyping.passed_benchmark);
-    addSectionScore(
-      sections,
-      "typing",
-      "Typing Test",
-      typingMarks,
-      TYPING_WEIGHT_MARKS,
-    );
+    addSectionScore(sections, "typing", "Typing Test", typingMarks, TYPING_WEIGHT_MARKS);
     // Note: typingMarks intentionally excluded from awarded/maximum (MCQ score)
   }
 
@@ -2197,11 +1812,8 @@ async function finalizeAssessment(
   // unattempted section never drags the result down, but at least one must be done.
   const mcqOk = !mcqDone || percentage >= definition.passingPercentage;
   const typingOk = typingPassed === null || typingPassed === true;
-  const preliminaryPassed =
-    (mcqDone || typingPassed !== null) && mcqOk && typingOk;
-  const status: AttemptStatus = manualReviewRequired
-    ? "manual_review"
-    : "completed";
+  const preliminaryPassed = (mcqDone || typingPassed !== null) && mcqOk && typingOk;
+  const status: AttemptStatus = manualReviewRequired ? "manual_review" : "completed";
   const result: "pass" | "fail" | "pending_review" = manualReviewRequired
     ? "pending_review"
     : preliminaryPassed
@@ -2289,11 +1901,7 @@ export async function submitAssessment(
       };
     }
     if (attempt.status !== "in_progress") {
-      throw appError(
-        "The single assessment attempt is not open",
-        409,
-        "ASSESSMENT_NOT_OPEN",
-      );
+      throw appError("The single assessment attempt is not open", 409, "ASSESSMENT_NOT_OPEN");
     }
 
     await connection.execute(
@@ -2325,11 +1933,7 @@ export async function submitAssessment(
 export async function getAssessmentResult(token: string) {
   const session = await getAssessmentSession(token);
   if (!["completed", "manual_review"].includes(session.assessment.status)) {
-    throw appError(
-      "Assessment result is not available yet",
-      409,
-      "RESULT_NOT_AVAILABLE",
-    );
+    throw appError("Assessment result is not available yet", 409, "RESULT_NOT_AVAILABLE");
   }
   return session;
 }
@@ -2426,9 +2030,7 @@ export async function listAssessmentAttempts(filters: {
   }
   if (filters.search?.trim()) {
     const query = `%${filters.search.trim()}%`;
-    conditions.push(
-      "(c.full_name LIKE ? OR c.mobile LIKE ? OR c.candidate_code LIKE ? OR a.q_token_snapshot LIKE ?)",
-    );
+    conditions.push("(c.full_name LIKE ? OR c.mobile LIKE ? OR c.candidate_code LIKE ? OR a.q_token_snapshot LIKE ?)");
     parameters.push(query, query, query, query);
   }
   const limit = Math.max(1, Math.min(200, Number(filters.limit ?? 50)));
@@ -2474,8 +2076,7 @@ export async function getAssessmentAttemptDetail(attemptId: string) {
     [attemptId],
   );
   const attempt = attempts[0];
-  if (!attempt)
-    throw appError("Assessment attempt not found", 404, "ASSESSMENT_NOT_FOUND");
+  if (!attempt) throw appError("Assessment attempt not found", 404, "ASSESSMENT_NOT_FOUND");
   // Template, responses, typing attempts and audit trail are independent reads keyed on the
   // attempt — issued together.
   const [template, responses, typing, audit] = await Promise.all([
@@ -2539,29 +2140,17 @@ export async function reviewAssessment(input: {
     const executor = connection as unknown as Executor;
     const attempt = await attemptById(input.attemptId, executor, true);
     if (attempt.status !== "manual_review") {
-      throw appError(
-        "This assessment is not awaiting manual review",
-        409,
-        "REVIEW_NOT_REQUIRED",
-      );
+      throw appError("This assessment is not awaiting manual review", 409, "REVIEW_NOT_REQUIRED");
     }
     const template = await loadTemplate(attempt.template_id, executor);
     const definition = attemptDefinition(attempt, template);
-    const manualQuestions = definition.questions.filter(
-      (question) => question.manualReview,
-    );
-    const supplied = new Map(
-      input.scores.map((score) => [score.questionId, score]),
-    );
+    const manualQuestions = definition.questions.filter((question) => question.manualReview);
+    const supplied = new Map(input.scores.map((score) => [score.questionId, score]));
 
     for (const question of manualQuestions) {
       const score = supplied.get(question.id);
       if (!score || !Number.isFinite(Number(score.marks))) {
-        throw appError(
-          `A score is required for ${question.id}`,
-          400,
-          "REVIEW_SCORE_REQUIRED",
-        );
+        throw appError(`A score is required for ${question.id}`, 400, "REVIEW_SCORE_REQUIRED");
       }
       const marks = Number(score.marks);
       if (marks < 0 || marks > question.marks) {
@@ -2576,13 +2165,7 @@ export async function reviewAssessment(input: {
          SET marks_awarded = ?, evaluation_mode = 'manual', reviewed_by = ?,
              reviewed_at = NOW(), review_remarks = ?, evaluation_notes = 'Manually reviewed'
          WHERE assessment_id = ? AND question_id = ?`,
-        [
-          marks,
-          input.reviewerId,
-          String(score.remarks ?? "").slice(0, 2000) || null,
-          attempt.id,
-          question.id,
-        ],
+        [marks, input.reviewerId, String(score.remarks ?? "").slice(0, 2000) || null, attempt.id, question.id],
       );
     }
 
@@ -2595,29 +2178,20 @@ export async function reviewAssessment(input: {
     let awarded = 0;
     let maximum = 0;
     for (const response of responses) {
-      const snapshot = parseJson<AssessmentQuestionDefinition>(
-        response.question_snapshot,
-        {
-          id: response.question_id,
-          sectionKey: response.section_key,
-          sectionTitle: response.section_key,
-          type: response.question_type,
-          prompt: response.question_id,
-          marks: Number(response.max_marks),
-          difficulty: "intermediate",
-        },
-      );
+      const snapshot = parseJson<AssessmentQuestionDefinition>(response.question_snapshot, {
+        id: response.question_id,
+        sectionKey: response.section_key,
+        sectionTitle: response.section_key,
+        type: response.question_type,
+        prompt: response.question_id,
+        marks: Number(response.max_marks),
+        difficulty: "intermediate",
+      });
       const marks = Number(response.marks_awarded ?? 0);
       const max = Number(response.max_marks ?? snapshot.marks ?? 0);
       awarded += marks;
       maximum += max;
-      addSectionScore(
-        sections,
-        response.section_key,
-        snapshot.sectionTitle ?? response.section_key,
-        marks,
-        max,
-      );
+      addSectionScore(sections, response.section_key, snapshot.sectionTitle ?? response.section_key, marks, max);
     }
 
     const bestTyping = await rows<TypingRow>(
@@ -2631,39 +2205,20 @@ export async function reviewAssessment(input: {
     );
     let typingPassed: boolean | null = null;
     if (definition.typing.required) {
-      const typingMarks = round(
-        (Number(bestTyping[0]?.score_percentage ?? 0) / 100) *
-          TYPING_WEIGHT_MARKS,
-      );
+      const typingMarks = round((Number(bestTyping[0]?.score_percentage ?? 0) / 100) * TYPING_WEIGHT_MARKS);
       awarded += typingMarks;
       maximum += TYPING_WEIGHT_MARKS;
       typingPassed = Boolean(bestTyping[0]?.passed_benchmark);
-      addSectionScore(
-        sections,
-        "typing",
-        "Typing Test",
-        typingMarks,
-        TYPING_WEIGHT_MARKS,
-      );
+      addSectionScore(sections, "typing", "Typing Test", typingMarks, TYPING_WEIGHT_MARKS);
     }
     finishSectionScores(sections);
 
     const percentage = maximum ? round((awarded / maximum) * 100) : 0;
     const computedResult: "pass" | "fail" =
-      percentage >= definition.passingPercentage && typingPassed !== false
-        ? "pass"
-        : "fail";
+      percentage >= definition.passingPercentage && typingPassed !== false ? "pass" : "fail";
     const finalResult = input.decisionOverride ?? computedResult;
-    if (
-      input.decisionOverride &&
-      input.decisionOverride !== computedResult &&
-      !input.reviewRemarks.trim()
-    ) {
-      throw appError(
-        "Review remarks are required when overriding the computed result",
-        400,
-        "OVERRIDE_REASON_REQUIRED",
-      );
+    if (input.decisionOverride && input.decisionOverride !== computedResult && !input.reviewRemarks.trim()) {
+      throw appError("Review remarks are required when overriding the computed result", 400, "OVERRIDE_REASON_REQUIRED");
     }
     const recommendation = {
       decision: finalResult === "pass" ? "Recommended" : "Not recommended",
@@ -2698,11 +2253,7 @@ export async function reviewAssessment(input: {
       attempt.id,
       "ASSESSMENT_MANUAL_REVIEW_COMPLETED",
       { computedResult, finalResult, percentage },
-      {
-        ...input.meta,
-        actorType: input.meta?.actorType ?? "hr",
-        actorId: input.reviewerId,
-      },
+      { ...input.meta, actorType: input.meta?.actorType ?? "hr", actorId: input.reviewerId },
       executor,
     );
     await connection.commit();
@@ -2739,8 +2290,8 @@ export async function getAssessmentDashboard(scope?: AtsBranchScope) {
   // The two aggregates are independent reads — issued together.
   const [metrics, byProcess] = await Promise.all([
     rows<RowDataPacket>(
-      db,
-      `SELECT
+    db,
+    `SELECT
        COUNT(*) AS total_assigned,
        SUM(status = 'assigned') AS waiting_to_start,
        SUM(status = 'in_progress') AS in_progress,
@@ -2755,8 +2306,8 @@ export async function getAssessmentDashboard(scope?: AtsBranchScope) {
     candScope.params,
   ),
     rows<RowDataPacket>(
-      db,
-      `SELECT t.process_key, t.role_key, COUNT(*) AS total,
+    db,
+    `SELECT t.process_key, t.role_key, COUNT(*) AS total,
             SUM(a.status = 'completed') AS completed,
             SUM(a.result = 'pass') AS passed,
             ROUND(AVG(CASE WHEN a.status = 'completed' THEN a.percentage END), 2) AS average_score
@@ -2784,12 +2335,7 @@ export async function listTemplates() {
   return templates;
 }
 
-export async function setTemplateActive(
-  templateId: string,
-  active: boolean,
-  actorId: string,
-  meta: Meta = {},
-) {
+export async function setTemplateActive(templateId: string, active: boolean, actorId: string, meta: Meta = {}) {
   await ensureReady();
   const template = await loadTemplate(templateId);
   await db.execute(
@@ -2811,31 +2357,15 @@ export async function createCustomTemplate(
 ) {
   await ensureReady();
   if (!definition.code?.trim() || !definition.name?.trim()) {
-    throw appError(
-      "Template code and name are required",
-      400,
-      "INVALID_TEMPLATE",
-    );
+    throw appError("Template code and name are required", 400, "INVALID_TEMPLATE");
   }
   if (!Array.isArray(definition.questions) || definition.questions.length < 1) {
-    throw appError(
-      "Template must contain at least one question",
-      400,
-      "INVALID_TEMPLATE",
-    );
+    throw appError("Template must contain at least one question", 400, "INVALID_TEMPLATE");
   }
   if (definition.typing.maxAttempts !== 2) {
-    throw appError(
-      "Typing attempts must remain fixed at two",
-      400,
-      "INVALID_TEMPLATE",
-    );
+    throw appError("Typing attempts must remain fixed at two", 400, "INVALID_TEMPLATE");
   }
-  const code = definition.code
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9_-]/g, "-")
-    .slice(0, 100);
+  const code = definition.code.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "-").slice(0, 100);
   const existing = await rows<TemplateRow>(
     db,
     `SELECT * FROM ats_assessment_template WHERE template_code = ? ORDER BY template_version DESC LIMIT 1`,
@@ -2903,10 +2433,7 @@ export async function saveMapping(
   await ensureReady();
   await loadTemplate(input.templateId);
   const id = input.id || randomUUID();
-  const priority = Math.max(
-    -10_000,
-    Math.min(10_000, Math.floor(Number(input.priority ?? 100))),
-  );
+  const priority = Math.max(-10_000, Math.min(10_000, Math.floor(Number(input.priority ?? 100))));
   await db.execute(
     `INSERT INTO ats_assessment_mapping (
       id, mapping_name, branch_name, process_match, role_match, experience_match,
@@ -2939,10 +2466,7 @@ export async function saveMapping(
 
 export async function setMappingActive(mappingId: string, active: boolean) {
   await ensureReady();
-  await db.execute(
-    `UPDATE ats_assessment_mapping SET active_status = ? WHERE id = ?`,
-    [active ? 1 : 0, mappingId],
-  );
+  await db.execute(`UPDATE ats_assessment_mapping SET active_status = ? WHERE id = ?`, [active ? 1 : 0, mappingId]);
   return { id: mappingId, active };
 }
 
@@ -2953,8 +2477,7 @@ export async function cancelUnstartedAssessment(
   meta: Meta = {},
 ) {
   await ensureReady();
-  if (!reason.trim())
-    throw appError("Cancellation reason is required", 400, "REASON_REQUIRED");
+  if (!reason.trim()) throw appError("Cancellation reason is required", 400, "REASON_REQUIRED");
   const result = await db.execute(
     `UPDATE ats_candidate_assessment
      SET status = 'cancelled', failure_reason = ?
@@ -2962,12 +2485,7 @@ export async function cancelUnstartedAssessment(
     [reason.trim().slice(0, 1000), attemptId],
   );
   const affected = Number((result as any)?.[0]?.affectedRows ?? 0);
-  if (!affected)
-    throw appError(
-      "Only an unstarted assessment can be cancelled",
-      409,
-      "ASSESSMENT_CANNOT_BE_CANCELLED",
-    );
+  if (!affected) throw appError("Only an unstarted assessment can be cancelled", 409, "ASSESSMENT_CANNOT_BE_CANCELLED");
   await safeAudit(
     attemptId,
     "ASSESSMENT_CANCELLED",
@@ -3003,11 +2521,7 @@ export async function issueIdentityOtp(token: string, meta: Meta = {}) {
   const attempt = await attemptByToken(token);
 
   if (attempt.status !== "assigned") {
-    throw appError(
-      "Assessment is not in a state that requires identity verification",
-      409,
-      "IDENTITY_OTP_NOT_APPLICABLE",
-    );
+    throw appError("Assessment is not in a state that requires identity verification", 409, "IDENTITY_OTP_NOT_APPLICABLE");
   }
   if ((attempt as unknown as { identity_verified: number }).identity_verified) {
     return { alreadyVerified: true, mobileMasked: null, emailMasked: null };
@@ -3036,9 +2550,7 @@ export async function issueIdentityOtp(token: string, meta: Meta = {}) {
 
   const smsEnabled = process.env.ATS_OTP_SMS_ENABLED === "true";
   // Email delivery uses the project's existing SMTP config — enabled by default if SMTP is configured
-  const emailEnabled =
-    process.env.ATS_OTP_EMAIL_ENABLED !== "false" &&
-    emailService.isConfigured();
+  const emailEnabled = process.env.ATS_OTP_EMAIL_ENABLED !== "false" && emailService.isConfigured();
 
   let channel: "sms" | "email" | "sms_email" | "display";
   if (smsEnabled && emailEnabled) channel = "sms_email";
@@ -3063,12 +2575,7 @@ export async function issueIdentityOtp(token: string, meta: Meta = {}) {
     ],
   );
 
-  await safeAudit(
-    attempt.id,
-    "IDENTITY_OTP_ISSUED",
-    { channel, mobileMasked, emailMasked },
-    meta,
-  );
+  await safeAudit(attempt.id, "IDENTITY_OTP_ISSUED", { channel, mobileMasked, emailMasked }, meta);
 
   // --- Delivery ---
   if (smsEnabled && mobile) {
@@ -3077,11 +2584,10 @@ export async function issueIdentityOtp(token: string, meta: Meta = {}) {
   }
   if (emailEnabled && email) {
     if (emailService.isConfigured()) {
-      await emailService
-        .send({
-          to: email,
-          subject: "Your MAS Callnet Assessment OTP",
-          html: `
+      await emailService.send({
+        to: email,
+        subject: "Your MAS Callnet Assessment OTP",
+        html: `
           <div style="font-family:Inter,Arial,sans-serif;max-width:520px;margin:auto;padding:32px 24px;background:#f4f7fa;border-radius:12px">
             <div style="background:#102f50;border-radius:8px 8px 0 0;padding:20px 24px">
               <h2 style="color:#fff;margin:0;font-size:18px">MAS Callnet — Candidate Assessment</h2>
@@ -3096,19 +2602,12 @@ export async function issueIdentityOtp(token: string, meta: Meta = {}) {
               <p style="margin:0;color:#66788a;font-size:13px">Do not share this OTP with anyone. MAS Callnet staff will never ask for your OTP.</p>
             </div>
           </div>`,
-          text: `Your MAS Callnet assessment OTP is: ${otp}\nValid for ${Math.floor(OTP_TTL_SECONDS / 60)} minutes. Do not share this with anyone.`,
-        })
-        .catch((err: unknown) => {
-          console.error("[OTP-EMAIL] delivery failed", {
-            assessmentId: attempt.id,
-            emailMasked,
-            err,
-          });
-        });
+        text: `Your MAS Callnet assessment OTP is: ${otp}\nValid for ${Math.floor(OTP_TTL_SECONDS / 60)} minutes. Do not share this with anyone.`,
+      }).catch((err: unknown) => {
+        console.error("[OTP-EMAIL] delivery failed", { assessmentId: attempt.id, emailMasked, err });
+      });
     } else {
-      console.warn(
-        "[OTP-EMAIL] email not configured — OTP not sent to candidate",
-      );
+      console.warn("[OTP-EMAIL] email not configured — OTP not sent to candidate");
     }
   }
 
@@ -3123,11 +2622,7 @@ export async function issueIdentityOtp(token: string, meta: Meta = {}) {
   };
 }
 
-export async function verifyIdentityOtp(
-  token: string,
-  otp: string,
-  meta: Meta = {},
-) {
+export async function verifyIdentityOtp(token: string, otp: string, meta: Meta = {}) {
   await ensureReady();
   const attempt = await attemptByToken(token);
 
@@ -3139,13 +2634,7 @@ export async function verifyIdentityOtp(
   const expectedHash = sha256(attempt.id + ":" + cleanOtp);
 
   const otpRows = await rows<
-    RowDataPacket & {
-      id: string;
-      otp_hash: string;
-      verified: number;
-      attempt_count: number;
-      expires_at: Date | string;
-    }
+    RowDataPacket & { id: string; otp_hash: string; verified: number; attempt_count: number; expires_at: Date | string }
   >(
     db,
     `SELECT id, otp_hash, verified, attempt_count, expires_at
@@ -3157,28 +2646,16 @@ export async function verifyIdentityOtp(
 
   const record = otpRows[0];
   if (!record) {
-    throw appError(
-      "No active OTP found. Request a new one.",
-      404,
-      "IDENTITY_OTP_NOT_FOUND",
-    );
+    throw appError("No active OTP found. Request a new one.", 404, "IDENTITY_OTP_NOT_FOUND");
   }
 
   const expiry = dateMs(record.expires_at);
   if (expiry !== null && expiry <= Date.now()) {
-    throw appError(
-      "OTP has expired. Request a new one.",
-      410,
-      "IDENTITY_OTP_EXPIRED",
-    );
+    throw appError("OTP has expired. Request a new one.", 410, "IDENTITY_OTP_EXPIRED");
   }
 
   if (record.attempt_count >= OTP_MAX_ATTEMPTS) {
-    throw appError(
-      "Maximum OTP attempts exceeded. Request a new one.",
-      429,
-      "IDENTITY_OTP_MAX_ATTEMPTS",
-    );
+    throw appError("Maximum OTP attempts exceeded. Request a new one.", 429, "IDENTITY_OTP_MAX_ATTEMPTS");
   }
 
   await db.execute(
@@ -3188,11 +2665,7 @@ export async function verifyIdentityOtp(
 
   if (!safeEqual(record.otp_hash, expectedHash)) {
     const remaining = OTP_MAX_ATTEMPTS - record.attempt_count - 1;
-    throw appError(
-      `Incorrect OTP. ${remaining} attempt(s) remaining.`,
-      400,
-      "IDENTITY_OTP_INCORRECT",
-    );
+    throw appError(`Incorrect OTP. ${remaining} attempt(s) remaining.`, 400, "IDENTITY_OTP_INCORRECT");
   }
 
   await db.execute(
@@ -3204,12 +2677,7 @@ export async function verifyIdentityOtp(
     [attempt.id],
   );
 
-  await safeAudit(
-    attempt.id,
-    "IDENTITY_VERIFIED",
-    { method: "otp" },
-    { ...meta, actorType: "candidate" },
-  );
+  await safeAudit(attempt.id, "IDENTITY_VERIFIED", { method: "otp" }, { ...meta, actorType: "candidate" });
 
   return { verified: true, alreadyVerified: false };
 }

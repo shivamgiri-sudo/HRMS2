@@ -16,49 +16,25 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const query = vi.fn();
 const execute = vi.fn();
-vi.mock("../../../db/mysql.js", () => ({
-  db: {
-    query: (...a: unknown[]) => query(...a),
-    execute: (...a: unknown[]) => execute(...a),
-  },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { query: (...a: unknown[]) => query(...a), execute: (...a: unknown[]) => execute(...a) } }));
 
 const {
-  findStalledBatches,
-  markBatchStalled,
-  reapStalledBatches,
-  stallSummary,
-  TRANSIENT_BATCH_STATUSES,
-  STALL_MINUTES,
-  HEARTBEAT_STALL_MINUTES,
+  findStalledBatches, markBatchStalled, reapStalledBatches, stallSummary,
+  TRANSIENT_BATCH_STATUSES, STALL_MINUTES, HEARTBEAT_STALL_MINUTES,
 } = await import("../stale-batch-reaper.service.js");
 
 const STALLED = {
-  id: "b1",
-  uploadBatchNo: "BATCH-1788604867017",
-  uploadTypeCode: "ATTENDANCE_REGULARIZATION_BULK",
-  status: "importing",
-  totalRows: 3765,
-  importedRows: 2475,
-  remainingRows: 1246,
-  idleMinutes: 150,
+  id: "b1", uploadBatchNo: "BATCH-1788604867017", uploadTypeCode: "ATTENDANCE_REGULARIZATION_BULK",
+  status: "importing", totalRows: 3765, importedRows: 2475, remainingRows: 1246, idleMinutes: 150,
 };
 
-beforeEach(() => {
-  query.mockReset();
-  execute.mockReset();
-});
+beforeEach(() => { query.mockReset(); execute.mockReset(); });
 
 describe("what counts as stalled", () => {
   it("watches every state that is only ever held while a process is working", () => {
     // A batch resting in 'imported' or 'pending_approval' is finished or waiting on a human —
     // neither is a stall. Only the working states can be orphaned by a restart.
-    expect([...TRANSIENT_BATCH_STATUSES]).toEqual([
-      "importing",
-      "approving",
-      "validating",
-      "rejecting",
-    ]);
+    expect([...TRANSIENT_BATCH_STATUSES]).toEqual(["importing", "approving", "validating", "rejecting"]);
   });
 
   it("measures silence, not total runtime, so a long import that is still working is never reaped", async () => {
@@ -73,9 +49,7 @@ describe("what counts as stalled", () => {
     expect(sql).toContain("b.updated_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)");
     expect(sql).not.toContain("b.created_at <");
     expect(query.mock.calls[0][1]).toEqual([
-      ...TRANSIENT_BATCH_STATUSES,
-      HEARTBEAT_STALL_MINUTES,
-      30,
+      ...TRANSIENT_BATCH_STATUSES, HEARTBEAT_STALL_MINUTES, 30,
     ]);
   });
 
@@ -139,30 +113,12 @@ describe("the message a person actually reads", () => {
 
 describe("the sweep", () => {
   it("marks every stalled batch and reports both counts", async () => {
-    query.mockResolvedValueOnce([
-      [
-        {
-          id: "b1",
-          upload_batch_no: "B1",
-          upload_type_code: "T",
-          batch_status: "importing",
-          total_rows: 10,
-          imported_rows: 4,
-          remaining_rows: 6,
-          idle_minutes: 99,
-        },
-        {
-          id: "b2",
-          upload_batch_no: "B2",
-          upload_type_code: "T",
-          batch_status: "approving",
-          total_rows: 5,
-          imported_rows: 5,
-          remaining_rows: 0,
-          idle_minutes: 40,
-        },
-      ],
-    ]);
+    query.mockResolvedValueOnce([[
+      { id: "b1", upload_batch_no: "B1", upload_type_code: "T", batch_status: "importing",
+        total_rows: 10, imported_rows: 4, remaining_rows: 6, idle_minutes: 99 },
+      { id: "b2", upload_batch_no: "B2", upload_type_code: "T", batch_status: "approving",
+        total_rows: 5, imported_rows: 5, remaining_rows: 0, idle_minutes: 40 },
+    ]]);
     execute.mockResolvedValue([{ affectedRows: 1 }]);
 
     const r = await reapStalledBatches();
@@ -171,20 +127,10 @@ describe("the sweep", () => {
   });
 
   it("counts a batch that revived as scanned but not marked", async () => {
-    query.mockResolvedValueOnce([
-      [
-        {
-          id: "b1",
-          upload_batch_no: "B1",
-          upload_type_code: "T",
-          batch_status: "importing",
-          total_rows: 10,
-          imported_rows: 4,
-          remaining_rows: 6,
-          idle_minutes: 99,
-        },
-      ],
-    ]);
+    query.mockResolvedValueOnce([[
+      { id: "b1", upload_batch_no: "B1", upload_type_code: "T", batch_status: "importing",
+        total_rows: 10, imported_rows: 4, remaining_rows: 6, idle_minutes: 99 },
+    ]]);
     execute.mockResolvedValueOnce([{ affectedRows: 0 }]);
 
     const r = await reapStalledBatches();
@@ -211,9 +157,7 @@ describe("a heartbeat decides faster, and more certainly", () => {
     await findStalledBatches();
     const sql = String(query.mock.calls[0][0]);
     expect(sql).toContain("b.job_heartbeat_at IS NOT NULL");
-    expect(sql).toContain(
-      "b.job_heartbeat_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)",
-    );
+    expect(sql).toContain("b.job_heartbeat_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)");
     expect(HEARTBEAT_STALL_MINUTES).toBeLessThan(STALL_MINUTES);
   });
 
@@ -241,22 +185,11 @@ describe("a heartbeat decides faster, and more certainly", () => {
   it("reports which process held it and how the verdict was reached", async () => {
     // A post-mortem needs to know where it died, and whether "stalled" was the fast certain
     // answer or the slow inferred one.
-    query.mockResolvedValueOnce([
-      [
-        {
-          id: "b1",
-          upload_batch_no: "B1",
-          upload_type_code: "T",
-          batch_status: "importing",
-          total_rows: 10,
-          imported_rows: 4,
-          remaining_rows: 6,
-          idle_minutes: 99,
-          job_owner: "workers:1234",
-          had_heartbeat: 1,
-        },
-      ],
-    ]);
+    query.mockResolvedValueOnce([[
+      { id: "b1", upload_batch_no: "B1", upload_type_code: "T", batch_status: "importing",
+        total_rows: 10, imported_rows: 4, remaining_rows: 6, idle_minutes: 99,
+        job_owner: "workers:1234", had_heartbeat: 1 },
+    ]]);
     const [b] = await findStalledBatches();
     expect(b.jobOwner).toBe("workers:1234");
     expect(b.hadHeartbeat).toBe(true);

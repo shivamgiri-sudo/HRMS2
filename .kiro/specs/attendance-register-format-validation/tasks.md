@@ -46,17 +46,13 @@ This plan implements the design in `design.md` for the Attendance Register Forma
     { "from": 6, "to": 10 },
     { "from": 7, "to": 10 },
     { "from": 8, "to": 10 },
-    { "from": 9, "to": 10 },
-    { "from": 3, "to": 11 },
-    { "from": 6, "to": 11 }
+    { "from": 9, "to": 10 }, { "from": 3, "to": 11 }, { "from": 6, "to": 11 }
   ]
 }
 ```
 
 Tasks 1 and 3 (the two helper modules) have no dependencies on each other and can be done in either order or in parallel. Task 6 must land before Task 7, since Task 7''s `withDayColumnLabels` call is a no-op without the day-column keys Task 6 adds to the backend catalog. Task 9 is independent of the header-format work and can run at any point once the staging DB is reachable.
-
 ## Tasks
-
 - [x] 1. Create frontend day-label helper module
   - Create `src/lib/attendance-register-columns.ts` with the fixed `SHORT_MONTHS` literal array (`Jan`..`Dec`), and exported functions `buildDayColumnLabel(month: number, day: number): string` (returns `"Mon-DD"`, 1-indexed month, zero-padded 2-digit day), `daysInMonth(year: number, month: number): number` (mirrors `new Date(year, month, 0).getDate()`), and the generic `withDayColumnLabels<T extends { key: string; label: string }>(columns: T[], monthStr: string | undefined): T[]`.
   - `withDayColumnLabels` must: return `columns` unchanged when `monthStr` is `undefined` or fails `/^\d{4}-\d{2}$/`; for every column whose `key` matches `/^day_(\d+)$/`, drop it if its day number exceeds `daysInMonth(year, month)`, otherwise return a copy with `label` overridden to the `buildDayColumnLabel` result; pass every non-matching column through with its original label unchanged.
@@ -131,7 +127,6 @@ Tasks 1 and 3 (the two helper modules) have no dependencies on each other and ca
   - Confirm `filters.month` is available in scope at this point in the worker (check how `filters` is constructed earlier in the same function/file).
   - Do not change any other logic in this worker (chunking, row limits, retry logic, file storage, audit events).
   - _Requirements: 3.5_
-
 ## Notes
 
 - Tasks 1-8 and 10 are pure code changes with no live-database dependency; they can be verified with the existing test runners (Vitest on both frontend and backend) without staging DB access.

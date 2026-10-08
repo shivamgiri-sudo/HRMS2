@@ -20,25 +20,19 @@ let intervalTimer: NodeJS.Timeout | null = null;
 let tickRunning = false;
 
 function isMissingReportTableError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    String((error as { code?: unknown }).code ?? "") === "ER_NO_SUCH_TABLE"
-  );
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && String((error as { code?: unknown }).code ?? '') === 'ER_NO_SUCH_TABLE';
 }
 
 async function reportEmailTablesAvailable(): Promise<boolean> {
   try {
-    await db.execute<RowDataPacket[]>(
-      `SELECT id FROM report_email_delivery LIMIT 1`,
-    );
+    await db.execute<RowDataPacket[]>(`SELECT id FROM report_email_delivery LIMIT 1`);
     return true;
   } catch (error) {
     if (isMissingReportTableError(error)) {
-      console.warn(
-        `[${WORKER_NAME}] report_email_delivery table missing - worker disabled until reporting schema is migrated`,
-      );
+      console.warn(`[${WORKER_NAME}] report_email_delivery table missing - worker disabled until reporting schema is migrated`);
       return false;
     }
     throw error;
@@ -46,8 +40,8 @@ async function reportEmailTablesAvailable(): Promise<boolean> {
 }
 
 function maskEmail(email: string): string {
-  const [local, domain] = email.split("@");
-  if (!local || !domain) return "***@***";
+  const [local, domain] = email.split('@');
+  if (!local || !domain) return '***@***';
   return `${local[0]}***@${domain}`;
 }
 
@@ -62,11 +56,8 @@ function buildEmailHtml(params: {
   retentionDays: number;
 }): string {
   const filterLines = Object.entries(params.filters)
-    .map(
-      ([k, v]) =>
-        `<tr><td style="padding:4px 12px;color:#666;">${k.toUpperCase()}</td><td style="padding:4px 12px;">${String(v ?? "—")}</td></tr>`,
-    )
-    .join("");
+    .map(([k, v]) => `<tr><td style="padding:4px 12px;color:#666;">${k.toUpperCase()}</td><td style="padding:4px 12px;">${String(v ?? '—')}</td></tr>`)
+    .join('');
 
   return `<!DOCTYPE html>
 <html>
@@ -102,7 +93,7 @@ function buildEmailHtml(params: {
         <td style="padding:8px 12px;font-weight:bold;">Total Rows</td>
         <td style="padding:8px 12px;">${params.rowCount.toLocaleString()}</td>
       </tr>
-      ${filterLines ? `<tr><td colspan="2" style="padding:8px 12px;font-weight:bold;background:#f0f4f9;">Filters Applied</td></tr>${filterLines}` : ""}
+      ${filterLines ? `<tr><td colspan="2" style="padding:8px 12px;font-weight:bold;background:#f0f4f9;">Filters Applied</td></tr>${filterLines}` : ''}
     </table>
 
     <div style="background:#fff8e1;border-left:4px solid #f59e0b;padding:12px 16px;margin:16px 0;border-radius:0 4px 4px 0;">
@@ -138,7 +129,7 @@ async function processOneDelivery(): Promise<boolean> {
        WHERE status = 'QUEUED'
          AND (next_retry_at IS NULL OR next_retry_at <= NOW())
        ORDER BY queued_at ASC
-       LIMIT 1 FOR UPDATE SKIP LOCKED`,
+       LIMIT 1 FOR UPDATE SKIP LOCKED`
     );
     if (!rows.length) {
       await conn.rollback();
@@ -150,7 +141,7 @@ async function processOneDelivery(): Promise<boolean> {
 
     await conn.execute(
       `UPDATE report_email_delivery SET status = 'SENDING', sending_started_at = NOW() WHERE id = ?`,
-      [deliveryId],
+      [deliveryId]
     );
     await conn.commit();
   } catch (err) {
@@ -182,7 +173,7 @@ async function processOneDelivery(): Promise<boolean> {
      FROM report_request rr
      LEFT JOIN report_generated_file rgf ON rgf.report_request_id = rr.id
      WHERE rr.id = ?`,
-    [requestId],
+    [requestId]
   );
 
   if (!reqRows.length) {
@@ -190,7 +181,7 @@ async function processOneDelivery(): Promise<boolean> {
       `UPDATE report_email_delivery SET status = 'FAILED', failed_at = NOW(),
        failure_code = 'REQUEST_NOT_FOUND', failure_message = 'Report request record missing'
        WHERE id = ?`,
-      [deliveryId],
+      [deliveryId]
     );
     return true;
   }
@@ -216,12 +207,12 @@ async function processOneDelivery(): Promise<boolean> {
   };
 
   // Pre-flight checks
-  if (req.cancelled_at || req.req_status === "CANCELLED") {
+  if (req.cancelled_at || req.req_status === 'CANCELLED') {
     await db.execute(
       `UPDATE report_email_delivery SET status = 'CANCELLED', failed_at = NOW(),
        failure_code = 'REQUEST_CANCELLED', failure_message = 'Request was cancelled'
        WHERE id = ?`,
-      [deliveryId],
+      [deliveryId]
     );
     return true;
   }
@@ -254,7 +245,7 @@ async function processOneDelivery(): Promise<boolean> {
   }
 
   const filters: Record<string, unknown> =
-    typeof req.requested_filters_json === "string"
+    typeof req.requested_filters_json === 'string'
       ? (JSON.parse(req.requested_filters_json) as Record<string, unknown>)
       : (req.requested_filters_json ?? {});
 
@@ -262,13 +253,11 @@ async function processOneDelivery(): Promise<boolean> {
   const emailSubject = `HRMS Report Ready: ${req.report_name_snapshot} — ${req.request_reference}`;
 
   const html = buildEmailHtml({
-    employeeName: req.requested_by_employee_name ?? "Employee",
+    employeeName: req.requested_by_employee_name ?? 'Employee',
     reportName: req.report_name_snapshot,
     requestReference: req.request_reference,
-    requestedAt: req.requested_at ? String(req.requested_at) : "—",
-    generatedAt: req.generated_at
-      ? String(req.generated_at)
-      : new Date().toISOString(),
+    requestedAt: req.requested_at ? String(req.requested_at) : '—',
+    generatedAt: req.generated_at ? String(req.generated_at) : new Date().toISOString(),
     filters,
     rowCount: req.generated_row_count ?? 0,
     retentionDays,
@@ -278,7 +267,7 @@ async function processOneDelivery(): Promise<boolean> {
   await recordReportAuditEvent({
     reportRequestId: requestId!,
     eventType: REPORT_AUDIT_EVENTS.EMAIL_SEND_STARTED,
-    actorType: "worker",
+    actorType: 'worker',
     recipientEmail: req.official_email,
     deliveryId: deliveryId!,
     message: `Sending to ${maskEmail(req.official_email)}`,
@@ -286,9 +275,7 @@ async function processOneDelivery(): Promise<boolean> {
 
   try {
     if (!emailService.isConfigured()) {
-      throw new Error(
-        "SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM.",
-      );
+      throw new Error('SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM.');
     }
 
     const result = await emailService.send({
@@ -307,52 +294,44 @@ async function processOneDelivery(): Promise<boolean> {
       `UPDATE report_email_delivery
        SET status = 'SENT', sent_at = NOW(), provider_message_id = ?, email_subject = ?
        WHERE id = ?`,
-      [result.messageId ?? null, emailSubject, deliveryId],
+      [result.messageId ?? null, emailSubject, deliveryId]
     );
 
     // Mark request emailed
     await db.execute(
       `UPDATE report_request SET status = 'EMAILED', email_sent_at = NOW(), completed_at = NOW()
        WHERE id = ?`,
-      [requestId],
+      [requestId]
     );
 
     await recordReportAuditEvent({
       reportRequestId: requestId!,
       eventType: REPORT_AUDIT_EVENTS.EMAIL_SENT,
-      actorType: "worker",
+      actorType: 'worker',
       recipientEmail: req.official_email,
       deliveryId: deliveryId!,
-      message: `Email sent to ${maskEmail(req.official_email)}. MessageId: ${result.messageId ?? "unknown"}`,
+      message: `Email sent to ${maskEmail(req.official_email)}. MessageId: ${result.messageId ?? 'unknown'}`,
       metadataJson: { messageId: result.messageId },
     });
 
     await recordReportAuditEvent({
       reportRequestId: requestId!,
       eventType: REPORT_AUDIT_EVENTS.REQUEST_COMPLETED,
-      actorType: "worker",
+      actorType: 'worker',
       recipientEmail: req.official_email,
       message: `Request ${req.request_reference} completed successfully`,
     });
 
-    console.log(
-      `[${WORKER_NAME}] Delivered ${req.request_reference} to ${maskEmail(req.official_email)}`,
-    );
+    console.log(`[${WORKER_NAME}] Delivered ${req.request_reference} to ${maskEmail(req.official_email)}`);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(
-      `[${WORKER_NAME}] Delivery failed for ${deliveryId}:`,
-      message,
-    );
+    console.error(`[${WORKER_NAME}] Delivery failed for ${deliveryId}:`, message);
 
     const [attemptRows] = await db.execute<RowDataPacket[]>(
       `SELECT delivery_attempt_number FROM report_email_delivery WHERE id = ?`,
-      [deliveryId],
+      [deliveryId]
     );
-    const attemptNumber = Number(
-      (attemptRows[0] as { delivery_attempt_number: number } | undefined)
-        ?.delivery_attempt_number ?? 1,
-    );
+    const attemptNumber = Number((attemptRows[0] as { delivery_attempt_number: number } | undefined)?.delivery_attempt_number ?? 1);
     const maxAttempts = RETRY_DELAYS_MINUTES.length;
 
     if (attemptNumber < maxAttempts) {
@@ -363,11 +342,11 @@ async function processOneDelivery(): Promise<boolean> {
          SET status = 'QUEUED', failed_at = NOW(), failure_code = 'SMTP_ERROR',
              failure_message = ?, next_retry_at = ?
          WHERE id = ?`,
-        [message.slice(0, 500), nextRetryAt, deliveryId],
+        [message.slice(0, 500), nextRetryAt, deliveryId]
       );
 
       // Insert next attempt row
-      const nextDeliveryId = (await import("crypto")).randomUUID();
+      const nextDeliveryId = (await import('crypto')).randomUUID();
       await db.execute(
         `INSERT INTO report_email_delivery
            (id, report_request_id, delivery_attempt_number, recipient_email,
@@ -377,43 +356,43 @@ async function processOneDelivery(): Promise<boolean> {
                 recipient_employee_id, recipient_employee_code, email_subject,
                 attachment_filename, 'QUEUED', NOW(), ?
          FROM report_email_delivery WHERE id = ?`,
-        [nextDeliveryId, attemptNumber + 1, nextRetryAt, deliveryId],
+        [nextDeliveryId, attemptNumber + 1, nextRetryAt, deliveryId]
       );
 
       // Mark current attempt as failed
       await db.execute(
         `UPDATE report_email_delivery SET status = 'FAILED' WHERE id = ?`,
-        [deliveryId],
+        [deliveryId]
       );
 
       await recordReportAuditEvent({
         reportRequestId: requestId!,
         eventType: REPORT_AUDIT_EVENTS.RETRY_SCHEDULED,
-        actorType: "worker",
+        actorType: 'worker',
         deliveryId: deliveryId!,
         message: `Delivery attempt ${attemptNumber} failed. Retry scheduled in ${nextDelayMinutes} minutes.`,
-        errorCode: "SMTP_ERROR",
+        errorCode: 'SMTP_ERROR',
         errorDetail: message.slice(0, 1000),
       });
     } else {
       await db.execute(
         `UPDATE report_email_delivery SET status = 'FAILED', failed_at = NOW(),
          failure_code = 'MAX_RETRIES_EXCEEDED', failure_message = ? WHERE id = ?`,
-        [message.slice(0, 500), deliveryId],
+        [message.slice(0, 500), deliveryId]
       );
       await db.execute(
         `UPDATE report_request SET status = 'DELIVERY_FAILED', failed_at = NOW(),
          failure_stage = 'email_delivery', failure_code = 'MAX_RETRIES_EXCEEDED',
          failure_message = ? WHERE id = ?`,
-        [message.slice(0, 500), requestId],
+        [message.slice(0, 500), requestId]
       );
       await recordReportAuditEvent({
         reportRequestId: requestId!,
         eventType: REPORT_AUDIT_EVENTS.EMAIL_FAILED,
-        actorType: "worker",
+        actorType: 'worker',
         deliveryId: deliveryId!,
         message: `All ${maxAttempts} delivery attempts exhausted.`,
-        errorCode: "MAX_RETRIES_EXCEEDED",
+        errorCode: 'MAX_RETRIES_EXCEEDED',
         errorDetail: message.slice(0, 1000),
       });
     }
@@ -426,22 +405,22 @@ async function markDeliveryFailed(
   deliveryId: string,
   requestId: string,
   code: string,
-  msg: string,
+  msg: string
 ): Promise<void> {
   await db.execute(
     `UPDATE report_email_delivery SET status = 'FAILED', failed_at = NOW(),
      failure_code = ?, failure_message = ? WHERE id = ?`,
-    [code, msg, deliveryId],
+    [code, msg, deliveryId]
   );
   await db.execute(
     `UPDATE report_request SET status = 'DELIVERY_FAILED', failed_at = NOW(),
      failure_stage = 'email_delivery', failure_code = ?, failure_message = ? WHERE id = ?`,
-    [code, msg, requestId],
+    [code, msg, requestId]
   );
   await recordReportAuditEvent({
     reportRequestId: requestId,
     eventType: REPORT_AUDIT_EVENTS.EMAIL_FAILED,
-    actorType: "worker",
+    actorType: 'worker',
     deliveryId,
     message: msg,
     errorCode: code,

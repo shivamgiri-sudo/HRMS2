@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  getBusinessDateIST,
-  getCurrentDateIST,
-  getGeneratedAtIST,
-} from "../istDate.js";
+import { getBusinessDateIST, getCurrentDateIST, getGeneratedAtIST } from "../istDate.js";
 
 describe("istDate", () => {
   it("normal time: business date is yesterday in IST", () => {

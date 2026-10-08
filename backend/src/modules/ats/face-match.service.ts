@@ -11,7 +11,8 @@ let modelsLoaded = false;
 let runtimeReady = false;
 let runtimeReadyPromise: Promise<void> | null = null;
 const MODELS_PATH = path.resolve(
-  process.env.FACE_MODELS_PATH ?? path.join(process.cwd(), "face-models"),
+  process.env.FACE_MODELS_PATH ??
+  path.join(process.cwd(), "face-models")
 );
 
 async function ensureRuntime() {
@@ -58,10 +59,7 @@ async function getDescriptor(imagePath: string): Promise<Float32Array | null> {
   try {
     await ensureModels();
     const image = await loadImage(imagePath);
-    const detection = await faceapi
-      .detectSingleFace(image as any)
-      .withFaceLandmarks()
-      .withFaceDescriptor();
+    const detection = await faceapi.detectSingleFace(image as any).withFaceLandmarks().withFaceDescriptor();
     return detection?.descriptor ?? null;
   } catch (e: any) {
     console.error("[FaceMatch] Descriptor extraction failed:", e.message);
@@ -74,7 +72,7 @@ export async function compareFaces(
   photoPath: string,
   idDocumentPath: string,
   photoDocId?: string,
-  idDocId?: string,
+  idDocId?: string
 ): Promise<{ score: number; matched: boolean; status: string }> {
   const id = randomUUID();
 
@@ -101,16 +99,7 @@ export async function compareFaces(
            match_status = new_match.match_status,
            details = new_match.details,
            created_at = NOW()`,
-        [
-          id,
-          candidateId,
-          photoDocId ?? null,
-          idDocId ?? null,
-          status,
-          JSON.stringify({
-            reason: "Could not detect face in one or both images",
-          }),
-        ],
+        [id, candidateId, photoDocId ?? null, idDocId ?? null, status, JSON.stringify({ reason: "Could not detect face in one or both images" })]
       );
       return { score: 0, matched: false, status };
     }
@@ -128,15 +117,7 @@ export async function compareFaces(
          match_status = new_match.match_status,
          details = new_match.details,
          created_at = NOW()`,
-      [
-        id,
-        candidateId,
-        photoDocId ?? null,
-        idDocId ?? null,
-        score,
-        matchStatus,
-        JSON.stringify({ euclidean_distance: distance }),
-      ],
+      [id, candidateId, photoDocId ?? null, idDocId ?? null, score, matchStatus, JSON.stringify({ euclidean_distance: distance })]
     );
 
     if (!matched) {
@@ -156,16 +137,7 @@ export async function compareFaces(
            details = new_alert.details,
            status = CASE WHEN candidate_fraud_alert.status = 'open' THEN 'open' ELSE candidate_fraud_alert.status END,
            updated_at = NOW()`,
-        [
-          alertId,
-          candidateId,
-          JSON.stringify({
-            score,
-            distance,
-            photo_doc_id: photoDocId,
-            id_doc_id: idDocId,
-          }),
-        ],
+        [alertId, candidateId, JSON.stringify({ score, distance, photo_doc_id: photoDocId, id_doc_id: idDocId })]
       );
     }
 
@@ -179,13 +151,7 @@ export async function compareFaces(
          match_status = new_match.match_status,
          details = new_match.details,
          created_at = NOW()`,
-      [
-        id,
-        candidateId,
-        photoDocId ?? null,
-        idDocId ?? null,
-        JSON.stringify({ error: error.message }),
-      ],
+      [id, candidateId, photoDocId ?? null, idDocId ?? null, JSON.stringify({ error: error.message })]
     );
     return { score: 0, matched: false, status: "failed" };
   }
@@ -209,9 +175,7 @@ export interface FaceBbox {
   imageHeight: number;
 }
 
-export async function detectFaceBbox(
-  imagePath: string,
-): Promise<FaceBbox | null> {
+export async function detectFaceBbox(imagePath: string): Promise<FaceBbox | null> {
   try {
     await ensureModels();
     const image = await loadImage(imagePath);

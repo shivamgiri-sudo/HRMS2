@@ -7,16 +7,7 @@ import { computeEmployeeDetail } from "./ops-command.records.js";
 import { computeRiskScores } from "./ops-command.risk.js";
 import { computeRows, type MetricValues } from "./ops-command.service.js";
 
-const PEER_KEYS = [
-  "attendance_pct",
-  "absent_pct",
-  "late_pct",
-  "shrinkage_pct",
-  "missing_punch_pct",
-  "roster_adherence_pct",
-  "qa_score_pct",
-  "avg_login_hours",
-] as const;
+const PEER_KEYS = ["attendance_pct", "absent_pct", "late_pct", "shrinkage_pct", "missing_punch_pct", "roster_adherence_pct", "qa_score_pct", "avg_login_hours"] as const;
 
 export interface PeerBlock {
   label: string;
@@ -42,13 +33,7 @@ export async function computeEmployee360(ctx: OpsCtx, employeeId: string) {
     computeRows(ctx, "employee", view).then((r) => r.rows.get(employeeId)),
     computeRows(ctx, "all", view).then((r) => r.rows.get("all")),
     me?.mgr
-      ? loadView({ ...ctx, f: { ...ctx.f, managerId: me.mgr } }).then((v) =>
-          computeRows(
-            { ...ctx, f: { ...ctx.f, managerId: me.mgr! } },
-            "all",
-            v,
-          ).then((r) => r.rows.get("all")),
-        )
+      ? loadView({ ...ctx, f: { ...ctx.f, managerId: me.mgr } }).then((v) => computeRows({ ...ctx, f: { ...ctx.f, managerId: me.mgr! } }, "all", v).then((r) => r.rows.get("all")))
       : Promise.resolve(undefined),
   ]);
 
@@ -56,9 +41,7 @@ export async function computeEmployee360(ctx: OpsCtx, employeeId: string) {
   const code = String(detail.profile.employee_code ?? "");
   if (code) {
     try {
-      const timeout = new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error("timeout")), 6000),
-      );
+      const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 6000));
       const [rows] = await Promise.race([
         db.execute<RowDataPacket[]>(
           `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d %H:%i') AS at, quality_percentage AS q FROM db_audit.call_quality_assessment
@@ -67,14 +50,9 @@ export async function computeEmployee360(ctx: OpsCtx, employeeId: string) {
         ),
         timeout,
       ]);
-      recentCalls = rows.map((r) => ({
-        at: String(r.at),
-        score: r.q === null ? null : Number(r.q),
-      }));
+      recentCalls = rows.map((r) => ({ at: String(r.at), score: r.q === null ? null : Number(r.q) }));
     } catch (err) {
-      logger.warn(
-        `[ops-command] agent360 recent audits unavailable: ${(err as Error).message}`,
-      );
+      logger.warn(`[ops-command] agent360 recent audits unavailable: ${(err as Error).message}`);
     }
   }
 
@@ -83,23 +61,9 @@ export async function computeEmployee360(ctx: OpsCtx, employeeId: string) {
     risk,
     recentCalls,
     peers: {
-      agent: {
-        label: "This agent",
-        size: null,
-        values: pick(own),
-      } as PeerBlock,
-      team: me?.mgr
-        ? ({
-            label: `Team (${String(detail.profile.manager_name ?? "manager")})`,
-            size: team?.hc_closing ?? null,
-            values: pick(team),
-          } as PeerBlock)
-        : null,
-      scope: {
-        label: "All in scope",
-        size: org?.hc_closing ?? null,
-        values: pick(org),
-      } as PeerBlock,
+      agent: { label: "This agent", size: null, values: pick(own) } as PeerBlock,
+      team: me?.mgr ? ({ label: `Team (${String(detail.profile.manager_name ?? "manager")})`, size: team?.hc_closing ?? null, values: pick(team) } as PeerBlock) : null,
+      scope: { label: "All in scope", size: org?.hc_closing ?? null, values: pick(org) } as PeerBlock,
     },
   };
 }

@@ -10,53 +10,33 @@ import request from "supertest";
  * refused before the service is ever reached.
  */
 
-const {
-  previewLeave,
-  previewRegularization,
-  discardLeave,
-  discardRegularization,
-  listDiscards,
-} = vi.hoisted(() => ({
-  previewLeave: vi.fn(),
-  previewRegularization: vi.fn(),
-  discardLeave: vi.fn(),
-  discardRegularization: vi.fn(),
-  listDiscards: vi.fn(),
-}));
+const { previewLeave, previewRegularization, discardLeave, discardRegularization, listDiscards } =
+  vi.hoisted(() => ({
+    previewLeave: vi.fn(),
+    previewRegularization: vi.fn(),
+    discardLeave: vi.fn(),
+    discardRegularization: vi.fn(),
+    listDiscards: vi.fn(),
+  }));
 
 // Roles for the fake authenticated user, swapped per test.
-const { currentRoles } = vi.hoisted(() => ({
-  currentRoles: { value: ["super_admin"] },
-}));
+const { currentRoles } = vi.hoisted(() => ({ currentRoles: { value: ["super_admin"] } }));
 
 vi.mock("../src/middleware/authMiddleware.js", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = {
-      id: "u1",
-      email: "t@example.com",
-      role: currentRoles.value[0],
-      roles: currentRoles.value,
-      isReadOnly: false,
-    };
+    req.authUser = { id: "u1", email: "t@example.com", role: currentRoles.value[0], roles: currentRoles.value, isReadOnly: false };
     next();
   },
   requireWriteAccess: (_req: any, _res: any, next: any) => next(),
 }));
 
 vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole:
-    (...allowed: string[]) =>
-    (req: any, res: any, next: any) => {
-      const roles: string[] = req.authUser?.roles ?? [];
-      if (roles.includes("super_admin")) return next();
-      if (allowed.some((r) => roles.includes(r))) return next();
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: `Access denied. Required: ${allowed.join(" or ")}`,
-        });
-    },
+  requireRole: (...allowed: string[]) => (req: any, res: any, next: any) => {
+    const roles: string[] = req.authUser?.roles ?? [];
+    if (roles.includes("super_admin")) return next();
+    if (allowed.some((r) => roles.includes(r))) return next();
+    return res.status(403).json({ success: false, message: `Access denied. Required: ${allowed.join(" or ")}` });
+  },
 }));
 
 // getScope() (wfm/branch-scope) resolves the caller's business scope from the database; derive it from
@@ -75,13 +55,7 @@ vi.mock("../src/shared/enterpriseScope.js", async (importOriginal) => {
 });
 
 vi.mock("../src/modules/discard/discard.service.js", () => ({
-  discardService: {
-    previewLeave,
-    previewRegularization,
-    discardLeave,
-    discardRegularization,
-    listDiscards,
-  },
+  discardService: { previewLeave, previewRegularization, discardLeave, discardRegularization, listDiscards },
 }));
 
 import { discardRouter } from "../src/modules/discard/discard.routes.js";
@@ -92,13 +66,7 @@ function makeApp() {
   app.use("/api/discard", discardRouter);
   // Mirror the real errorHandler's contract for thrown statusCode errors.
   app.use((err: any, _req: any, res: any, _next: any) => {
-    res
-      .status(err?.statusCode ?? 500)
-      .json({
-        success: false,
-        message: err?.message,
-        errorCode: err?.code ?? null,
-      });
+    res.status(err?.statusCode ?? 500).json({ success: false, message: err?.message, errorCode: err?.code ?? null });
   });
   return app;
 }
@@ -110,17 +78,13 @@ beforeEach(() => {
 
 describe("POST /api/discard/leave/:id — validation", () => {
   it("rejects a missing reason", async () => {
-    const res = await request(makeApp())
-      .post("/api/discard/leave/lr-1")
-      .send({});
+    const res = await request(makeApp()).post("/api/discard/leave/lr-1").send({});
     expect(res.status).toBe(400);
     expect(discardLeave).not.toHaveBeenCalled();
   });
 
   it("rejects a reason shorter than 10 characters", async () => {
-    const res = await request(makeApp())
-      .post("/api/discard/leave/lr-1")
-      .send({ reason: "oops" });
+    const res = await request(makeApp()).post("/api/discard/leave/lr-1").send({ reason: "oops" });
     expect(res.status).toBe(400);
     expect(res.body.errors?.reason?.[0]).toMatch(/at least 10 characters/i);
     expect(discardLeave).not.toHaveBeenCalled();
@@ -128,19 +92,9 @@ describe("POST /api/discard/leave/:id — validation", () => {
 
   it("accepts a proper reason and passes it through untouched", async () => {
     discardLeave.mockResolvedValue({
-      discardId: "d1",
-      entityType: "leave",
-      entityId: "lr-1",
-      employeeId: "emp-1",
-      restoreMode: "snapshot",
-      daysRestored: 3,
-      balanceBefore: 7,
-      balanceAfter: 10,
-      datesRestored: 3,
-      datesDeleted: 0,
-      datesSkipped: 0,
-      attendance: [],
-      warnings: [],
+      discardId: "d1", entityType: "leave", entityId: "lr-1", employeeId: "emp-1",
+      restoreMode: "snapshot", daysRestored: 3, balanceBefore: 7, balanceAfter: 10,
+      datesRestored: 3, datesDeleted: 0, datesSkipped: 0, attendance: [], warnings: [],
       payrollRecalcStatus: "2026-07:recalculated",
     });
     const res = await request(makeApp())
@@ -153,16 +107,15 @@ describe("POST /api/discard/leave/:id — validation", () => {
     expect(discardLeave).toHaveBeenCalledWith(
       "lr-1",
       expect.objectContaining({ userId: "u1" }),
-      "approved against the wrong employee",
+      "approved against the wrong employee"
     );
   });
 
   it("surfaces a service blocker with its status code", async () => {
     discardLeave.mockRejectedValue(
       Object.assign(new Error("Payroll is closed for 2026-04 (FINALIZED)."), {
-        statusCode: 409,
-        code: "PAYROLL_MONTH_CLOSED",
-      }),
+        statusCode: 409, code: "PAYROLL_MONTH_CLOSED",
+      })
     );
     const res = await request(makeApp())
       .post("/api/discard/leave/lr-1")
@@ -192,19 +145,9 @@ describe("/api/discard — role gate", () => {
     it(`${label} → ${expected} on discard`, async () => {
       currentRoles.value = roles;
       discardLeave.mockResolvedValue({
-        discardId: "d1",
-        entityType: "leave",
-        entityId: "lr-1",
-        employeeId: "emp-1",
-        restoreMode: "snapshot",
-        daysRestored: 1,
-        balanceBefore: 1,
-        balanceAfter: 2,
-        datesRestored: 1,
-        datesDeleted: 0,
-        datesSkipped: 0,
-        attendance: [],
-        warnings: [],
+        discardId: "d1", entityType: "leave", entityId: "lr-1", employeeId: "emp-1",
+        restoreMode: "snapshot", daysRestored: 1, balanceBefore: 1, balanceAfter: 2,
+        datesRestored: 1, datesDeleted: 0, datesSkipped: 0, attendance: [], warnings: [],
         payrollRecalcStatus: null,
       });
       const res = await request(makeApp())
@@ -226,29 +169,11 @@ describe("/api/discard — role gate", () => {
 describe("dispute endpoints reuse the regularization path", () => {
   it("POST /dispute/:id calls discardRegularization", async () => {
     discardRegularization.mockResolvedValue({
-      discardId: "d2",
-      entityType: "dispute",
-      entityId: "reg-1",
-      employeeId: "emp-1",
-      restoreMode: "delete",
-      daysRestored: null,
-      balanceBefore: null,
-      balanceAfter: null,
-      datesRestored: 0,
-      datesDeleted: 1,
-      datesSkipped: 0,
-      attendance: [
-        {
-          date: "2026-07-15",
-          currentStatus: "present",
-          currentLwp: 0,
-          mode: "delete",
-          restoredStatus: null,
-          restoredLwp: null,
-        },
-      ],
-      warnings: [],
-      payrollRecalcStatus: null,
+      discardId: "d2", entityType: "dispute", entityId: "reg-1", employeeId: "emp-1",
+      restoreMode: "delete", daysRestored: null, balanceBefore: null, balanceAfter: null,
+      datesRestored: 0, datesDeleted: 1, datesSkipped: 0,
+      attendance: [{ date: "2026-07-15", currentStatus: "present", currentLwp: 0, mode: "delete", restoredStatus: null, restoredLwp: null }],
+      warnings: [], payrollRecalcStatus: null,
     });
     const res = await request(makeApp())
       .post("/api/discard/dispute/reg-1")
@@ -260,19 +185,10 @@ describe("dispute endpoints reuse the regularization path", () => {
   });
 
   it("GET /preview/dispute/:id calls previewRegularization", async () => {
-    previewRegularization.mockResolvedValue({
-      entityType: "dispute",
-      blockers: [],
-      attendance: [],
-    });
-    const res = await request(makeApp()).get(
-      "/api/discard/preview/dispute/reg-1",
-    );
+    previewRegularization.mockResolvedValue({ entityType: "dispute", blockers: [], attendance: [] });
+    const res = await request(makeApp()).get("/api/discard/preview/dispute/reg-1");
     expect(res.status).toBe(200);
-    expect(previewRegularization).toHaveBeenCalledWith(
-      "reg-1",
-      expect.objectContaining({ userId: "u1" }),
-    );
+    expect(previewRegularization).toHaveBeenCalledWith("reg-1", expect.objectContaining({ userId: "u1" }));
   });
 });
 
@@ -304,9 +220,7 @@ describe("GET /api/discard/history", () => {
   });
 
   it("rejects a malformed date filter", async () => {
-    const res = await request(makeApp()).get(
-      "/api/discard/history?fromDate=15-07-2026",
-    );
+    const res = await request(makeApp()).get("/api/discard/history?fromDate=15-07-2026");
     expect(res.status).toBe(400);
   });
 });

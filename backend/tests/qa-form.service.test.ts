@@ -12,16 +12,12 @@ vi.mock("../src/db/mysql.js", () => ({
     execute: (...a: unknown[]) => execute(...a),
     getConnection: async () => ({
       execute: (...a: unknown[]) => connExecute(...a),
-      beginTransaction,
-      commit,
-      rollback,
-      release,
+      beginTransaction, commit, rollback, release,
     }),
   },
 }));
 
-const { createForm, activateForm } =
-  await import("../src/modules/quality-dashboard/qa-form.service.js");
+const { createForm, activateForm } = await import("../src/modules/quality-dashboard/qa-form.service.js");
 
 /**
  * Without a writer for qa_audit_form the whole QA module is inert:
@@ -37,12 +33,8 @@ const { createForm, activateForm } =
 const OK = [{ affectedRows: 1 }, []] as unknown;
 
 beforeEach(() => {
-  execute.mockReset();
-  connExecute.mockReset();
-  beginTransaction.mockReset();
-  commit.mockReset();
-  rollback.mockReset();
-  release.mockReset();
+  execute.mockReset(); connExecute.mockReset();
+  beginTransaction.mockReset(); commit.mockReset(); rollback.mockReset(); release.mockReset();
   connExecute.mockResolvedValue(OK);
   beginTransaction.mockResolvedValue(undefined);
   commit.mockResolvedValue(undefined);
@@ -56,38 +48,23 @@ describe("creating a form", () => {
   it("creates it as a draft, never immediately active", async () => {
     // A form nobody approved must not start scoring people.
     execute.mockResolvedValueOnce([[{ next: 1 }], []]);
-    await createForm({
-      processId: "p1",
-      formName: "Inbound QA",
-      effectiveFrom: "2026-08-01",
-      parameters: [param],
-    });
+    await createForm({ processId: "p1", formName: "Inbound QA", effectiveFrom: "2026-08-01", parameters: [param] });
 
-    const header = connExecute.mock.calls.find(([s]) =>
-      /INSERT INTO qa_audit_form\b/.test(String(s)),
-    );
+    const header = connExecute.mock.calls.find(([s]) => /INSERT INTO qa_audit_form\b/.test(String(s)));
     expect(String(header?.[0])).toMatch(/'draft'/);
   });
 
   it("versions rather than overwriting", async () => {
     execute.mockResolvedValueOnce([[{ next: 4 }], []]);
     const result = await createForm({
-      processId: "p1",
-      formName: "Inbound QA",
-      effectiveFrom: "2026-08-01",
-      parameters: [param],
+      processId: "p1", formName: "Inbound QA", effectiveFrom: "2026-08-01", parameters: [param],
     });
     expect(result.versionNo).toBe(4);
   });
 
   it("refuses a form with no parameters", async () => {
     await expect(
-      createForm({
-        processId: "p1",
-        formName: "Empty",
-        effectiveFrom: "2026-08-01",
-        parameters: [],
-      }),
+      createForm({ processId: "p1", formName: "Empty", effectiveFrom: "2026-08-01", parameters: [] }),
     ).rejects.toThrow(/at least one parameter/);
     expect(connExecute).not.toHaveBeenCalled();
   });
@@ -97,9 +74,7 @@ describe("creating a form", () => {
     // silently does nothing while looking like it works.
     await expect(
       createForm({
-        processId: "p1",
-        formName: "F",
-        effectiveFrom: "2026-08-01",
+        processId: "p1", formName: "F", effectiveFrom: "2026-08-01",
         parameters: [{ parameterText: "Nothing", maxScore: 0 }],
       }),
     ).rejects.toThrow(/maximum score above zero/);
@@ -108,9 +83,7 @@ describe("creating a form", () => {
   it("refuses a parameter with no text", async () => {
     await expect(
       createForm({
-        processId: "p1",
-        formName: "F",
-        effectiveFrom: "2026-08-01",
+        processId: "p1", formName: "F", effectiveFrom: "2026-08-01",
         parameters: [{ parameterText: "   ", maxScore: 5 }],
       }),
     ).rejects.toThrow(/needs text/);
@@ -125,12 +98,7 @@ describe("creating a form", () => {
       .mockImplementationOnce(() => Promise.reject(new Error("deadlock")));
 
     await expect(
-      createForm({
-        processId: "p1",
-        formName: "F",
-        effectiveFrom: "2026-08-01",
-        parameters: [param],
-      }),
+      createForm({ processId: "p1", formName: "F", effectiveFrom: "2026-08-01", parameters: [param] }),
     ).rejects.toThrow("deadlock");
     expect(rollback).toHaveBeenCalled();
     expect(commit).not.toHaveBeenCalled();
@@ -138,10 +106,7 @@ describe("creating a form", () => {
 });
 
 describe("activating a form", () => {
-  const draft = [
-    [{ id: "f2", process_id: "p1", version_no: 2, status: "draft" }],
-    [],
-  ];
+  const draft = [[{ id: "f2", process_id: "p1", version_no: 2, status: "draft" }], []];
   const hasParams = [[{ n: 3 }], []];
 
   it("retires the form it replaces, so only one is active per process", async () => {
@@ -161,43 +126,30 @@ describe("activating a form", () => {
   });
 
   it("activates cleanly when the process has no current form", async () => {
-    execute
-      .mockResolvedValueOnce(draft)
-      .mockResolvedValueOnce(hasParams)
-      .mockResolvedValueOnce([[], []]);
+    execute.mockResolvedValueOnce(draft).mockResolvedValueOnce(hasParams).mockResolvedValueOnce([[], []]);
     const result = await activateForm("f2");
     expect(result.retiredFormId).toBeNull();
   });
 
   it("refuses a form with no parameters", async () => {
-    execute
-      .mockResolvedValueOnce(draft)
-      .mockResolvedValueOnce([[{ n: 0 }], []]);
+    execute.mockResolvedValueOnce(draft).mockResolvedValueOnce([[{ n: 0 }], []]);
     await expect(activateForm("f2")).rejects.toThrow(/no active parameters/);
   });
 
   it("refuses to reactivate a retired form", async () => {
     // That would resurrect criteria somebody deliberately withdrew.
-    execute.mockResolvedValueOnce([
-      [{ id: "f0", process_id: "p1", version_no: 1, status: "retired" }],
-      [],
-    ]);
+    execute.mockResolvedValueOnce([[{ id: "f0", process_id: "p1", version_no: 1, status: "retired" }], []]);
     await expect(activateForm("f0")).rejects.toThrow(/cannot be reactivated/);
   });
 
   it("refuses an already-active form rather than silently doing nothing", async () => {
-    execute.mockResolvedValueOnce([
-      [{ id: "f1", process_id: "p1", version_no: 1, status: "active" }],
-      [],
-    ]);
+    execute.mockResolvedValueOnce([[{ id: "f1", process_id: "p1", version_no: 1, status: "active" }], []]);
     await expect(activateForm("f1")).rejects.toMatchObject({ statusCode: 409 });
   });
 
   it("reports a missing form as 404", async () => {
     execute.mockResolvedValueOnce([[], []]);
-    await expect(activateForm("nope")).rejects.toMatchObject({
-      statusCode: 404,
-    });
+    await expect(activateForm("nope")).rejects.toMatchObject({ statusCode: 404 });
   });
 
   it("rolls back rather than retiring the old without activating the new", async () => {
@@ -208,9 +160,7 @@ describe("activating a form", () => {
       .mockResolvedValueOnce([[{ id: "f1" }], []]);
     connExecute
       .mockResolvedValueOnce(OK)
-      .mockImplementationOnce(() =>
-        Promise.reject(new Error("lock wait timeout")),
-      );
+      .mockImplementationOnce(() => Promise.reject(new Error("lock wait timeout")));
 
     await expect(activateForm("f2")).rejects.toThrow("lock wait timeout");
     expect(rollback).toHaveBeenCalled();

@@ -53,7 +53,7 @@ export const benefitsService = {
   async listPlans(activeOnly = true): Promise<BenefitPlan[]> {
     const where = activeOnly ? "WHERE is_active = 1" : "";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM benefit_plan ${where} ORDER BY plan_name ASC`,
+      `SELECT * FROM benefit_plan ${where} ORDER BY plan_name ASC`
     );
     return rows as BenefitPlan[];
   },
@@ -72,11 +72,11 @@ export const benefitsService = {
         input.plan_type,
         input.description ?? null,
         input.eligibility_rule ?? null,
-      ],
+      ]
     );
     const insertId = (result as { insertId?: number }).insertId;
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM benefit_plan WHERE id = LAST_INSERT_ID() LIMIT 1",
+      "SELECT * FROM benefit_plan WHERE id = LAST_INSERT_ID() LIMIT 1"
     );
     // fallback: query by inserted id hint or just return last
     void insertId;
@@ -92,7 +92,7 @@ export const benefitsService = {
        LEFT JOIN benefit_plan bp ON bp.id = be.plan_id
        WHERE be.employee_id = ?
        ORDER BY be.enrolled_date DESC`,
-      [employeeId],
+      [employeeId]
     );
     return rows as BenefitEnrollment[];
   },
@@ -107,7 +107,7 @@ export const benefitsService = {
     // Check plan exists
     const [planRows] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM benefit_plan WHERE id = ? LIMIT 1",
-      [input.plan_id],
+      [input.plan_id]
     );
     if (!(planRows as RowDataPacket[]).length) {
       throw new Error("Benefit plan not found");
@@ -128,7 +128,7 @@ export const benefitsService = {
         input.enrolled_date,
         input.effective_from,
         input.effective_to ?? null,
-      ],
+      ]
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -136,33 +136,32 @@ export const benefitsService = {
        FROM benefit_enrollment be
        LEFT JOIN benefit_plan bp ON bp.id = be.plan_id
        WHERE be.employee_id = ? AND be.plan_id = ? LIMIT 1`,
-      [input.employee_id, input.plan_id],
+      [input.employee_id, input.plan_id]
     );
     return (rows as BenefitEnrollment[])[0];
   },
 
   async updateEnrollmentStatus(
     id: string,
-    status: "active" | "inactive" | "pending",
+    status: "active" | "inactive" | "pending"
   ): Promise<BenefitEnrollment> {
     const [check] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM benefit_enrollment WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
-    if (!(check as RowDataPacket[]).length)
-      throw new Error("Enrollment not found");
+    if (!(check as RowDataPacket[]).length) throw new Error("Enrollment not found");
 
-    await db.execute("UPDATE benefit_enrollment SET status = ? WHERE id = ?", [
-      status,
-      id,
-    ]);
+    await db.execute(
+      "UPDATE benefit_enrollment SET status = ? WHERE id = ?",
+      [status, id]
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT be.*, bp.plan_name, bp.plan_type
        FROM benefit_enrollment be
        LEFT JOIN benefit_plan bp ON bp.id = be.plan_id
        WHERE be.id = ? LIMIT 1`,
-      [id],
+      [id]
     );
     return (rows as BenefitEnrollment[])[0];
   },
@@ -201,7 +200,7 @@ export const benefitsService = {
        LEFT JOIN employees e ON e.id = rc.employee_id
        ${where}
        ORDER BY rc.claim_date DESC`,
-      params,
+      params
     );
     return rows as ReimbursementClaim[];
   },
@@ -227,7 +226,7 @@ export const benefitsService = {
         input.claim_date,
         input.description ?? null,
         input.receipt_ref ?? null,
-      ],
+      ]
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -236,7 +235,7 @@ export const benefitsService = {
               e.employee_code
        FROM reimbursement_claim rc
        LEFT JOIN employees e ON e.id = rc.employee_id
-       WHERE rc.id = LAST_INSERT_ID() LIMIT 1`,
+       WHERE rc.id = LAST_INSERT_ID() LIMIT 1`
     );
     return (rows as ReimbursementClaim[])[0];
   },
@@ -245,11 +244,11 @@ export const benefitsService = {
     id: string,
     action: "approved" | "rejected",
     reviewedBy: string,
-    remarks?: string | null,
+    remarks?: string | null
   ): Promise<ReimbursementClaim> {
     const [check] = await db.execute<RowDataPacket[]>(
       "SELECT id, status FROM reimbursement_claim WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     const existing = (check as { id: string; status: string }[])[0];
     if (!existing) throw new Error("Claim not found");
@@ -261,7 +260,7 @@ export const benefitsService = {
       `UPDATE reimbursement_claim
        SET status = ?, reviewed_by = ?, reviewed_at = NOW(), remarks = ?, updated_at = NOW()
        WHERE id = ?`,
-      [action, reviewedBy, remarks ?? null, id],
+      [action, reviewedBy, remarks ?? null, id]
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -271,7 +270,7 @@ export const benefitsService = {
        FROM reimbursement_claim rc
        LEFT JOIN employees e ON e.id = rc.employee_id
        WHERE rc.id = ? LIMIT 1`,
-      [id],
+      [id]
     );
     return (rows as ReimbursementClaim[])[0];
   },
@@ -290,13 +289,11 @@ export const benefitsService = {
        ${scope && scope.sql !== "1=1" ? `JOIN employees e ON e.id = rc.employee_id WHERE (${scope.sql})` : ""}`,
       scope && scope.sql !== "1=1" ? scope.params : []
     );
-    const row = (
-      rows as {
-        total_submitted: number;
-        total_approved: number;
-        total_amount_approved: number;
-      }[]
-    )[0];
+    const row = (rows as {
+      total_submitted: number;
+      total_approved: number;
+      total_amount_approved: number;
+    }[])[0];
     return {
       total_submitted: Number(row.total_submitted ?? 0),
       total_approved: Number(row.total_approved ?? 0),
@@ -306,23 +303,17 @@ export const benefitsService = {
 
   // ─── Mark Claim as Paid ────────────────────────────────────────────────────
 
-  async payClaim(
-    id: string,
-    paymentReference: string,
-  ): Promise<ReimbursementClaim> {
+  async payClaim(id: string, paymentReference: string): Promise<ReimbursementClaim> {
     const [check] = await db.execute<RowDataPacket[]>(
       "SELECT id, status FROM reimbursement_claim WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     const existing = (check as { id: string; status: string }[])[0];
-    if (!existing)
-      throw Object.assign(new Error("Claim not found"), { statusCode: 404 });
+    if (!existing) throw Object.assign(new Error("Claim not found"), { statusCode: 404 });
     if (existing.status !== "approved") {
       throw Object.assign(
-        new Error(
-          `Cannot mark as paid: claim status is '${existing.status}', expected 'approved'`,
-        ),
-        { statusCode: 400 },
+        new Error(`Cannot mark as paid: claim status is '${existing.status}', expected 'approved'`),
+        { statusCode: 400 }
       );
     }
 
@@ -330,7 +321,7 @@ export const benefitsService = {
       `UPDATE reimbursement_claim
        SET status = 'paid', payment_reference = ?, paid_at = NOW(), updated_at = NOW()
        WHERE id = ?`,
-      [paymentReference, id],
+      [paymentReference, id]
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -340,7 +331,7 @@ export const benefitsService = {
        FROM reimbursement_claim rc
        LEFT JOIN employees e ON e.id = rc.employee_id
        WHERE rc.id = ? LIMIT 1`,
-      [id],
+      [id]
     );
     return (rows as ReimbursementClaim[])[0];
   },
@@ -350,22 +341,20 @@ export const benefitsService = {
   async updatePlan(id: string, isActive: boolean): Promise<BenefitPlan> {
     const [check] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM benefit_plan WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     if (!(check as RowDataPacket[]).length) {
-      throw Object.assign(new Error("Benefit plan not found"), {
-        statusCode: 404,
-      });
+      throw Object.assign(new Error("Benefit plan not found"), { statusCode: 404 });
     }
 
     await db.execute(
       "UPDATE benefit_plan SET is_active = ?, updated_at = NOW() WHERE id = ?",
-      [isActive ? 1 : 0, id],
+      [isActive ? 1 : 0, id]
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM benefit_plan WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     return (rows as BenefitPlan[])[0];
   },

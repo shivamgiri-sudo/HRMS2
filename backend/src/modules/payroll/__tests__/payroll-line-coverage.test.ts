@@ -13,26 +13,21 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
  */
 
 const execute = vi.fn();
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: (...a: unknown[]) => execute(...a) },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
 
-const { getRunLineCoverage } =
-  await import("../payroll-line-coverage.service.js");
+const { getRunLineCoverage } = await import("../payroll-line-coverage.service.js");
 const { employmentWindowPredicate } = await import("../employment-end-date.js");
 
 const RUN = "run-1";
 const rows = (r: unknown[]) => [r, []];
 
 /** Queries fire in a fixed order: run header, line count, then the three gap queries. */
-function mockQueries(
-  opts: {
-    noLine?: unknown[];
-    noSalary?: unknown[];
-    zeroPaid?: unknown[];
-    lines?: number;
-  } = {},
-) {
+function mockQueries(opts: {
+  noLine?: unknown[];
+  noSalary?: unknown[];
+  zeroPaid?: unknown[];
+  lines?: number;
+} = {}) {
   execute.mockReset();
   execute
     .mockResolvedValueOnce(rows([{ id: RUN, run_month: "2026-08" }]))
@@ -49,9 +44,7 @@ describe("the eligibility question is the engine's, not a private copy", () => {
     mockQueries();
     await getRunLineCoverage(RUN);
     const noLineSql = String(execute.mock.calls[2][0]);
-    expect(noLineSql).toContain(
-      employmentWindowPredicate().trim().slice(0, 60),
-    );
+    expect(noLineSql).toContain(employmentWindowPredicate().trim().slice(0, 60));
   });
 
   it("resolves the salary assignment point-in-time, not by active_status", async () => {
@@ -66,16 +59,7 @@ describe("the eligibility question is the engine's, not a private copy", () => {
 
 describe("gap 1 — eligible, no line (the 2026-08 mid-month leavers)", () => {
   it("reports a leaver who worked and holds no line, and refuses to call the run clean", async () => {
-    mockQueries({
-      noLine: [
-        {
-          id: "e1",
-          employee_code: "MAS60144",
-          end_date: "2026-08-17",
-          days: 19,
-        },
-      ],
-    });
+    mockQueries({ noLine: [{ id: "e1", employee_code: "MAS60144", end_date: "2026-08-17", days: 19 }] });
     const out = await getRunLineCoverage(RUN);
     expect(out.gaps).toHaveLength(1);
     expect(out.gaps[0].kind).toBe("no_line");
@@ -88,11 +72,7 @@ describe("gap 1 — eligible, no line (the 2026-08 mid-month leavers)", () => {
 
 describe("gap 2 — worked with no resolvable salary (the 9 August joiners)", () => {
   it("names the fix as HR assigning a structure, not a recalculation", async () => {
-    mockQueries({
-      noSalary: [
-        { id: "e2", employee_code: "MAS63408", end_date: null, days: 6 },
-      ],
-    });
+    mockQueries({ noSalary: [{ id: "e2", employee_code: "MAS63408", end_date: null, days: 6 }] });
     const out = await getRunLineCoverage(RUN);
     expect(out.gaps[0].kind).toBe("no_salary_structure");
     expect(out.gaps[0].detail).toContain("HR assigns one");
@@ -102,24 +82,14 @@ describe("gap 2 — worked with no resolvable salary (the 9 August joiners)", ()
   it("treats a zero-CTC assignment as no salary — it resolves, then pays nothing", async () => {
     mockQueries();
     await getRunLineCoverage(RUN);
-    expect(String(execute.mock.calls[3][0])).toContain(
-      "COALESCE(s.ctc_annual, 0) > 0",
-    );
+    expect(String(execute.mock.calls[3][0])).toContain("COALESCE(s.ctc_annual, 0) > 0");
   });
 });
 
 describe("gap 3 — line pays zero against recorded attendance (the locked 2026-07 run)", () => {
   it("catches the case where every count reconciles and only the amount is wrong", async () => {
     mockQueries({
-      zeroPaid: [
-        {
-          id: "e3",
-          employee_code: "MAS61476",
-          end_date: null,
-          days: 17.5,
-          attendance_data_source: "NO_DATA",
-        },
-      ],
+      zeroPaid: [{ id: "e3", employee_code: "MAS61476", end_date: null, days: 17.5, attendance_data_source: "NO_DATA" }],
     });
     const out = await getRunLineCoverage(RUN);
     expect(out.gaps[0].kind).toBe("zero_paid_with_attendance");
@@ -133,16 +103,7 @@ describe("what counts as clean", () => {
   it("a gap with no attendance behind it does not block a correct payroll", async () => {
     // A leaver with no line and no days worked is a records question. Blocking sign-off on it
     // would train people to acknowledge the warning by reflex, which is worse than not having it.
-    mockQueries({
-      noLine: [
-        {
-          id: "e4",
-          employee_code: "MAS63272",
-          end_date: "2026-08-06",
-          days: 0,
-        },
-      ],
-    });
+    mockQueries({ noLine: [{ id: "e4", employee_code: "MAS63272", end_date: "2026-08-06", days: 0 }] });
     const out = await getRunLineCoverage(RUN);
     expect(out.gaps).toHaveLength(1);
     expect(out.gapsWithAttendance).toBe(0);
@@ -151,19 +112,9 @@ describe("what counts as clean", () => {
 
   it("sums unpaid days across all three gap kinds", async () => {
     mockQueries({
-      noLine: [
-        { id: "a", employee_code: "A", end_date: "2026-08-18", days: 12 },
-      ],
+      noLine: [{ id: "a", employee_code: "A", end_date: "2026-08-18", days: 12 }],
       noSalary: [{ id: "b", employee_code: "B", end_date: null, days: 6 }],
-      zeroPaid: [
-        {
-          id: "c",
-          employee_code: "C",
-          end_date: null,
-          days: 2.5,
-          attendance_data_source: "ADR",
-        },
-      ],
+      zeroPaid: [{ id: "c", employee_code: "C", end_date: null, days: 2.5, attendance_data_source: "ADR" }],
     });
     const out = await getRunLineCoverage(RUN);
     expect(out.gapsWithAttendance).toBe(3);
@@ -176,22 +127,8 @@ describe("what counts as clean", () => {
     // "eligible, no line" AND as "no salary". Counted twice, both the headcount and the unpaid
     // days inflate — and "recalculate the run" would do nothing for them.
     mockQueries({
-      noLine: [
-        {
-          id: "dup",
-          employee_code: "MAS63411",
-          end_date: "2026-09-07",
-          days: 1,
-        },
-      ],
-      noSalary: [
-        {
-          id: "dup",
-          employee_code: "MAS63411",
-          end_date: "2026-09-07",
-          days: 1,
-        },
-      ],
+      noLine: [{ id: "dup", employee_code: "MAS63411", end_date: "2026-09-07", days: 1 }],
+      noSalary: [{ id: "dup", employee_code: "MAS63411", end_date: "2026-09-07", days: 1 }],
     });
     const out = await getRunLineCoverage(RUN);
     expect(out.gaps).toHaveLength(1);
@@ -203,15 +140,7 @@ describe("what counts as clean", () => {
   it("orders gaps by unpaid days, so the costliest is read first", async () => {
     mockQueries({
       noLine: [{ id: "a", employee_code: "A", end_date: null, days: 2 }],
-      zeroPaid: [
-        {
-          id: "b",
-          employee_code: "B",
-          end_date: null,
-          days: 17.5,
-          attendance_data_source: "NO_DATA",
-        },
-      ],
+      zeroPaid: [{ id: "b", employee_code: "B", end_date: null, days: 17.5, attendance_data_source: "NO_DATA" }],
     });
     const out = await getRunLineCoverage(RUN);
     expect(out.gaps.map((g) => g.employeeCode)).toEqual(["B", "A"]);
@@ -237,17 +166,7 @@ describe("attendance evidence", () => {
   });
 
   it("counts a half day as half an unpaid day", async () => {
-    mockQueries({
-      zeroPaid: [
-        {
-          id: "h",
-          employee_code: "H",
-          end_date: null,
-          days: 0.5,
-          attendance_data_source: "ADR",
-        },
-      ],
-    });
+    mockQueries({ zeroPaid: [{ id: "h", employee_code: "H", end_date: null, days: 0.5, attendance_data_source: "ADR" }] });
     const out = await getRunLineCoverage(RUN);
     expect(out.unpaidAttendanceDays).toBe(0.5);
     expect(out.clean).toBe(false);
@@ -258,8 +177,6 @@ describe("unknown run", () => {
   it("404s rather than reporting an empty, clean coverage", async () => {
     execute.mockReset();
     execute.mockResolvedValueOnce(rows([]));
-    await expect(getRunLineCoverage("nope")).rejects.toMatchObject({
-      statusCode: 404,
-    });
+    await expect(getRunLineCoverage("nope")).rejects.toMatchObject({ statusCode: 404 });
   });
 });

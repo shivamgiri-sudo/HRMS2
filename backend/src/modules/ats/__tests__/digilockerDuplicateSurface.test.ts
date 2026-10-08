@@ -31,10 +31,7 @@ function code(source: string): string {
 }
 
 const ROUTES = code(
-  readFileSync(
-    resolve(process.cwd(), "src/modules/onboarding/digilocker.routes.ts"),
-    "utf8",
-  ),
+  readFileSync(resolve(process.cwd(), "src/modules/onboarding/digilocker.routes.ts"), "utf8"),
 );
 const APP = readFileSync(resolve(process.cwd(), "src/app.ts"), "utf8");
 const SETTINGS_PAGE = resolve(process.cwd(), "../src/pages/Settings.tsx");
@@ -62,16 +59,13 @@ describe("the retired DigiLocker surface", () => {
 
   it("refuses to mint a session that nothing would ever read", () => {
     const at = ROUTES.indexOf('router.post("/initiate"');
-    expect(at, "the initiate route has moved or been removed").toBeGreaterThan(
-      -1,
-    );
+    expect(at, "the initiate route has moved or been removed").toBeGreaterThan(-1);
     const handler = ROUTES.slice(at, ROUTES.indexOf("}));", at));
     expect(handler).toMatch(/410/);
     // The endpoint is named via a constant, so the redirect target is stated
     // once and every response that turns a caller away uses the same string.
-    expect(handler, "the caller must be told where to go instead").toContain(
-      "LIVE_START_ENDPOINT",
-    );
+    expect(handler, "the caller must be told where to go instead")
+      .toContain("LIVE_START_ENDPOINT");
   });
 
   it("names the live endpoint it redirects callers to", () => {
@@ -96,10 +90,8 @@ describe("Settings does not advertise the dead callback", () => {
       .filter((line) => /^\s*(callback:|path:)/.test(line));
     expect(configLines.length).toBeGreaterThan(0);
     for (const line of configLines) {
-      expect(
-        line,
-        "a config value still points at the retired DigiLocker route",
-      ).not.toMatch(/\/api\/onboarding\/digilocker/);
+      expect(line, "a config value still points at the retired DigiLocker route")
+        .not.toMatch(/\/api\/onboarding\/digilocker/);
     }
   });
 });

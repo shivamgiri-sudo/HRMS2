@@ -22,9 +22,7 @@
 
 import { buildSMS } from "./smartping-dlt-registry.js";
 
-export type SmsVarBuilder = (
-  data: Record<string, unknown> | undefined,
-) => Record<string, string | number> | null;
+export type SmsVarBuilder = (data: Record<string, unknown> | undefined) => Record<string, string | number> | null;
 
 interface EventSmsMapping {
   templateKey: string;
@@ -39,82 +37,75 @@ interface EventSmsMapping {
  * first variable ("Dear {#var#}, ..."), so this is read the same way for every mapped event
  * below rather than guessing at a top-level `data.name` that may not exist.
  */
-function readEmployeeName(
-  data: Record<string, unknown> | undefined,
-): string | undefined {
+function readEmployeeName(data: Record<string, unknown> | undefined): string | undefined {
   const employee = data?.employee as Record<string, unknown> | undefined;
   const name = employee?.name;
   return typeof name === "string" && name.trim() ? name.trim() : undefined;
 }
 
-function readString(
-  data: Record<string, unknown> | undefined,
-  ...keys: string[]
-): string | undefined {
+function readString(data: Record<string, unknown> | undefined, ...keys: string[]): string | undefined {
   if (!data) return undefined;
   for (const key of keys) {
     const v = data[key];
-    if (v !== undefined && v !== null && String(v).trim())
-      return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim()) return String(v).trim();
   }
   return undefined;
 }
 
-export const EVENT_SMS_TEMPLATE_MAP: Readonly<Record<string, EventSmsMapping>> =
-  {
-    // notification-event.service.ts's leave_submitted template: "Your {{leave_type}} request
-    // from {{from_date}} to {{to_date}} has been submitted for approval." — from_date/to_date
-    // confirmed as the caller-supplied field names by that template string itself.
-    leave_submitted: {
-      templateKey: "leave_request_submitted",
-      buildVars: (data) => {
-        const name = readEmployeeName(data);
-        const fromDate = readString(data, "from_date");
-        const toDate = readString(data, "to_date");
-        if (!name || !fromDate || !toDate) return null;
-        return { name, from_date: fromDate, to_date: toDate };
-      },
+export const EVENT_SMS_TEMPLATE_MAP: Readonly<Record<string, EventSmsMapping>> = {
+  // notification-event.service.ts's leave_submitted template: "Your {{leave_type}} request
+  // from {{from_date}} to {{to_date}} has been submitted for approval." — from_date/to_date
+  // confirmed as the caller-supplied field names by that template string itself.
+  leave_submitted: {
+    templateKey: "leave_request_submitted",
+    buildVars: (data) => {
+      const name = readEmployeeName(data);
+      const fromDate = readString(data, "from_date");
+      const toDate = readString(data, "to_date");
+      if (!name || !fromDate || !toDate) return null;
+      return { name, from_date: fromDate, to_date: toDate };
     },
+  },
 
-    // "Your roster for {{period}} is now available." — registry's roster_published wants
-    // [name, week]; catalogue's field is named period, not week, mapped straight across.
-    roster_published: {
-      templateKey: "roster_published",
-      buildVars: (data) => {
-        const name = readEmployeeName(data);
-        const week = readString(data, "period", "week");
-        if (!name || !week) return null;
-        return { name, week };
-      },
+  // "Your roster for {{period}} is now available." — registry's roster_published wants
+  // [name, week]; catalogue's field is named period, not week, mapped straight across.
+  roster_published: {
+    templateKey: "roster_published",
+    buildVars: (data) => {
+      const name = readEmployeeName(data);
+      const week = readString(data, "period", "week");
+      if (!name || !week) return null;
+      return { name, week };
     },
+  },
 
-    // "The course '{{course_name}}' has been assigned to you. Please complete it by
-    // {{deadline}}." — registry's training_assigned wants [name, module_name, deadline];
-    // course_name -> module_name is the only name difference, deadline matches directly.
-    training_assigned: {
-      templateKey: "training_assigned",
-      buildVars: (data) => {
-        const name = readEmployeeName(data);
-        const moduleName = readString(data, "course_name", "module_name");
-        const deadline = readString(data, "deadline");
-        if (!name || !moduleName || !deadline) return null;
-        return { name, module_name: moduleName, deadline };
-      },
+  // "The course '{{course_name}}' has been assigned to you. Please complete it by
+  // {{deadline}}." — registry's training_assigned wants [name, module_name, deadline];
+  // course_name -> module_name is the only name difference, deadline matches directly.
+  training_assigned: {
+    templateKey: "training_assigned",
+    buildVars: (data) => {
+      const name = readEmployeeName(data);
+      const moduleName = readString(data, "course_name", "module_name");
+      const deadline = readString(data, "deadline");
+      if (!name || !moduleName || !deadline) return null;
+      return { name, module_name: moduleName, deadline };
     },
+  },
 
-    // "Your support ticket {{ticket_code}} has been raised for {{category}}." — registry's
-    // ticket_created wants [name, ticket_id, status]; ticket_code -> ticket_id, and this event
-    // only ever fires on creation so status is fixed as "Created" rather than guessed.
-    support_ticket_created: {
-      templateKey: "ticket_created",
-      buildVars: (data) => {
-        const name = readEmployeeName(data);
-        const ticketId = readString(data, "ticket_code", "ticket_id");
-        if (!name || !ticketId) return null;
-        return { name, ticket_id: ticketId, status: "Created" };
-      },
+  // "Your support ticket {{ticket_code}} has been raised for {{category}}." — registry's
+  // ticket_created wants [name, ticket_id, status]; ticket_code -> ticket_id, and this event
+  // only ever fires on creation so status is fixed as "Created" rather than guessed.
+  support_ticket_created: {
+    templateKey: "ticket_created",
+    buildVars: (data) => {
+      const name = readEmployeeName(data);
+      const ticketId = readString(data, "ticket_code", "ticket_id");
+      if (!name || !ticketId) return null;
+      return { name, ticket_id: ticketId, status: "Created" };
     },
-  };
+  },
+};
 
 /**
  * Resolves an event_code to {dltContentId, body}, or null when there's no mapping for this

@@ -28,11 +28,11 @@ export const lifecycleService = {
     employeeId: string,
     confirmedBy: string,
     remarks: string | undefined,
-    req?: Request,
+    req?: Request
   ) {
     await db.execute(
       `UPDATE employees SET employment_status = 'Confirmed', updated_at = NOW() WHERE id = ?`,
-      [employeeId],
+      [employeeId]
     );
 
     await db.execute(
@@ -45,7 +45,7 @@ export const lifecycleService = {
         remarks ?? "Employment confirmed",
         confirmedBy,
         JSON.stringify({ confirmed_by: confirmedBy }),
-      ],
+      ]
     );
 
     await logSensitiveAction({
@@ -64,25 +64,22 @@ export const lifecycleService = {
   async listEvents(employeeId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM employee_lifecycle_event WHERE employee_id = ? ORDER BY effective_date DESC, created_at DESC`,
-      [employeeId],
+      [employeeId]
     );
     return rows as RowDataPacket[];
   },
 
-  async createEvent(
-    data: {
-      employee_id: string;
-      event_type: string;
-      effective_date: string;
-      old_value_json?: Record<string, unknown>;
-      new_value_json?: Record<string, unknown>;
-      remarks?: string;
-      approval_request_id?: string;
-      initiated_by: string;
-      approved_by?: string;
-    },
-    req?: Request,
-  ) {
+  async createEvent(data: {
+    employee_id: string;
+    event_type: string;
+    effective_date: string;
+    old_value_json?: Record<string, unknown>;
+    new_value_json?: Record<string, unknown>;
+    remarks?: string;
+    approval_request_id?: string;
+    initiated_by: string;
+    approved_by?: string;
+  }, req?: Request) {
     const id = randomUUID();
     await db.execute(
       `INSERT INTO employee_lifecycle_event
@@ -90,17 +87,12 @@ export const lifecycleService = {
           remarks, approval_request_id, initiated_by, approved_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        id,
-        data.employee_id,
-        data.event_type,
-        data.effective_date,
+        id, data.employee_id, data.event_type, data.effective_date,
         data.old_value_json ? JSON.stringify(data.old_value_json) : null,
         data.new_value_json ? JSON.stringify(data.new_value_json) : null,
-        data.remarks ?? null,
-        data.approval_request_id ?? null,
-        data.initiated_by,
-        data.approved_by ?? null,
-      ],
+        data.remarks ?? null, data.approval_request_id ?? null,
+        data.initiated_by, data.approved_by ?? null,
+      ]
     );
 
     // Also append to journey_log for unified timeline
@@ -108,17 +100,11 @@ export const lifecycleService = {
       `INSERT INTO employee_journey_log (id, employee_id, event_type, event_date, description, module, triggered_by, metadata)
        VALUES (?, ?, ?, ?, ?, 'LIFECYCLE', ?, ?)`,
       [
-        randomUUID(),
-        data.employee_id,
-        data.event_type,
-        data.effective_date,
+        randomUUID(), data.employee_id, data.event_type, data.effective_date,
         data.remarks ?? data.event_type,
         data.initiated_by,
-        JSON.stringify({
-          lifecycle_event_id: id,
-          new_value: data.new_value_json,
-        }),
-      ],
+        JSON.stringify({ lifecycle_event_id: id, new_value: data.new_value_json }),
+      ]
     );
 
     await logSensitiveAction({
@@ -127,64 +113,45 @@ export const lifecycleService = {
       module_key: "LIFECYCLE",
       entity_type: "employee",
       entity_id: data.employee_id,
-      change_summary: {
-        event_type: data.event_type,
-        effective_date: data.effective_date,
-      },
+      change_summary: { event_type: data.event_type, effective_date: data.effective_date },
       req,
     });
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM employee_lifecycle_event WHERE id = ? LIMIT 1",
-      [id],
+      "SELECT * FROM employee_lifecycle_event WHERE id = ? LIMIT 1", [id]
     );
     return (rows as RowDataPacket[])[0];
   },
 
   // ── Document verification ─────────────────────────────────────────────────
 
-  async verifyDocument(
-    documentId: string,
-    verifiedBy: string,
-    remarks?: string,
-    req?: Request,
-  ) {
+  async verifyDocument(documentId: string, verifiedBy: string, remarks?: string, req?: Request) {
     await db.execute(
       `UPDATE employee_documents SET verified = 1, verified_by = ?, verification_date = NOW(),
        verification_remarks = ? WHERE id = ?`,
-      [verifiedBy, remarks ?? null, documentId],
+      [verifiedBy, remarks ?? null, documentId]
     );
     await logSensitiveAction({
-      actor_user_id: verifiedBy,
-      action_type: "DOCUMENT_VERIFIED",
-      module_key: "LIFECYCLE",
-      entity_type: "employee_document",
-      entity_id: documentId,
+      actor_user_id: verifiedBy, action_type: "DOCUMENT_VERIFIED", module_key: "LIFECYCLE",
+      entity_type: "employee_document", entity_id: documentId,
       change_summary: { verified: true, remarks },
       req,
     });
   },
 
-  async logDocumentAccess(
-    documentId: string,
-    accessedBy: string,
-    accessType: string,
-    ipAddress?: string,
-  ) {
+  async logDocumentAccess(documentId: string, accessedBy: string, accessType: string, ipAddress?: string) {
     try {
       await db.execute(
         "INSERT INTO employee_document_access_log (id, document_id, accessed_by, access_type, ip_address) VALUES (?, ?, ?, ?, ?)",
-        [randomUUID(), documentId, accessedBy, accessType, ipAddress ?? null],
+        [randomUUID(), documentId, accessedBy, accessType, ipAddress ?? null]
       );
-    } catch {
-      /* non-fatal */
-    }
+    } catch { /* non-fatal */ }
   },
 
   async listDocuments(employeeId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT *, doc_name AS document_name FROM employee_documents WHERE employee_id = ? ORDER BY created_at DESC",
-      [employeeId],
+      [employeeId]
     );
     return rows as RowDataPacket[];
   },

@@ -66,13 +66,13 @@ describe("atsService.createCandidate — valid registration", () => {
 
   it("inserts and returns new candidate when all mandatory fields provided", async () => {
     mockExecute
-      .mockResolvedValueOnce([[]]) // mobile dup check — no match
-      .mockResolvedValueOnce([[]]) // email dup check — no match
+      .mockResolvedValueOnce([[]])           // mobile dup check — no match
+      .mockResolvedValueOnce([[]])           // email dup check — no match
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // INSERT
       // No stage-log write any more: createCandidate goes straight from the
       // INSERT to getCandidate(id). Budgeting a value for it fed that malformed
       // entry to the re-fetch, which then reported "Candidate not found".
-      .mockResolvedValueOnce([[fakeCandidate]]); // re-fetch
+      .mockResolvedValueOnce([[fakeCandidate]]);    // re-fetch
     const result = await atsService.createCandidate(validInput, "user-1");
     expect(result.full_name).toBe("Priya Singh");
     expect(result.applied_for_branch).toBe("Mumbai");
@@ -95,48 +95,32 @@ describe("atsService.createCandidate — duplicate mobile", () => {
   beforeEach(resetForCreate);
 
   it("throws 409 DUPLICATE_MOBILE for active candidate", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [{ id: "c1", current_stage: "Applied", active_status: 1 }],
-    ]);
-    const err = await atsService
-      .createCandidate(validInput, "user-1")
-      .catch((e) => e);
+    mockExecute.mockResolvedValueOnce([[{ id: "c1", current_stage: "Applied", active_status: 1 }]]);
+    const err = await atsService.createCandidate(validInput, "user-1").catch((e) => e);
     expect(err.message).toMatch(/mobile.*already registered/i);
     expect((err as any).statusCode).toBe(409);
     expect((err as any).code).toBe("DUPLICATE_MOBILE");
   });
 
   it("throws 409 DUPLICATE_REJECTED with reprocess message for rejected candidate", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [{ id: "c1", current_stage: "Rejected", active_status: 1 }],
-    ]);
-    const err = await atsService
-      .createCandidate(validInput, "user-1")
-      .catch((e) => e);
+    mockExecute.mockResolvedValueOnce([[{ id: "c1", current_stage: "Rejected", active_status: 1 }]]);
+    const err = await atsService.createCandidate(validInput, "user-1").catch((e) => e);
     expect(err.message).toMatch(/rejected/i);
     expect((err as any).statusCode).toBe(409);
     expect((err as any).code).toBe("DUPLICATE_REJECTED");
   });
 
   it("throws 409 DUPLICATE_SELECTED for selected candidate", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [{ id: "c1", current_stage: "Selected", active_status: 1 }],
-    ]);
-    const err = await atsService
-      .createCandidate(validInput, "user-1")
-      .catch((e) => e);
+    mockExecute.mockResolvedValueOnce([[{ id: "c1", current_stage: "Selected", active_status: 1 }]]);
+    const err = await atsService.createCandidate(validInput, "user-1").catch((e) => e);
     expect(err.message).toMatch(/selected/i);
     expect((err as any).statusCode).toBe(409);
     expect((err as any).code).toBe("DUPLICATE_SELECTED");
   });
 
   it("throws 409 DUPLICATE_SELECTED for converted candidate", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [{ id: "c1", current_stage: "converted", active_status: 1 }],
-    ]);
-    const err = await atsService
-      .createCandidate(validInput, "user-1")
-      .catch((e) => e);
+    mockExecute.mockResolvedValueOnce([[{ id: "c1", current_stage: "converted", active_status: 1 }]]);
+    const err = await atsService.createCandidate(validInput, "user-1").catch((e) => e);
     expect((err as any).code).toBe("DUPLICATE_SELECTED");
   });
 });
@@ -158,9 +142,9 @@ describe("atsService.createCandidate — placeholder emails are not deduplicated
   for (const placeholder of ["0", "AN", "", "   ", "not-an-email"]) {
     it(`registers normally when the email is ${JSON.stringify(placeholder)}`, async () => {
       mockExecute
-        .mockResolvedValueOnce([[]]) // mobile dup — no match
+        .mockResolvedValueOnce([[]])                  // mobile dup — no match
         .mockResolvedValueOnce([{ affectedRows: 1 }]) // INSERT (email branch skipped)
-        .mockResolvedValueOnce([[fakeCandidate]]); // re-fetch
+        .mockResolvedValueOnce([[fakeCandidate]]);    // re-fetch
 
       const result = await atsService.createCandidate(
         { ...validInput, email: placeholder },
@@ -178,10 +162,7 @@ describe("atsService.createCandidate — placeholder emails are not deduplicated
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[{ id: "c9", current_stage: "Screening" }]]);
     const err = await atsService
-      .createCandidate(
-        { ...validInput, email: "someone@example.com" },
-        "user-1",
-      )
+      .createCandidate({ ...validInput, email: "someone@example.com" }, "user-1")
       .catch((e) => e);
     expect((err as any).code).toBe("DUPLICATE_EMAIL");
   });
@@ -192,11 +173,9 @@ describe("atsService.createCandidate — duplicate email", () => {
 
   it("throws 409 DUPLICATE_EMAIL when email already registered", async () => {
     mockExecute
-      .mockResolvedValueOnce([[]]) // no mobile dup
+      .mockResolvedValueOnce([[]])  // no mobile dup
       .mockResolvedValueOnce([[{ id: "c2", current_stage: "Screening" }]]); // email dup
-    const err = await atsService
-      .createCandidate(validInput, "user-1")
-      .catch((e) => e);
+    const err = await atsService.createCandidate(validInput, "user-1").catch((e) => e);
     expect(err.message).toMatch(/email.*already registered/i);
     expect((err as any).statusCode).toBe(409);
     expect((err as any).code).toBe("DUPLICATE_EMAIL");
@@ -206,9 +185,7 @@ describe("atsService.createCandidate — duplicate email", () => {
     mockExecute
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[{ id: "c2", current_stage: "Rejected" }]]);
-    const err = await atsService
-      .createCandidate(validInput, "user-1")
-      .catch((e) => e);
+    const err = await atsService.createCandidate(validInput, "user-1").catch((e) => e);
     expect(err.message).toMatch(/rejected/i);
     expect((err as any).code).toBe("DUPLICATE_EMAIL_REJECTED");
   });
@@ -251,39 +228,25 @@ describe("atsService.createCandidate — scope column SQL", () => {
  */
 describe("public registration cannot overwrite an existing candidate's identity", () => {
   const routeSource = readFileSync(
-    new URL(
-      "../src/modules/ats/registration.enhanced.routes.ts",
-      import.meta.url,
-    ),
+    new URL("../src/modules/ats/registration.enhanced.routes.ts", import.meta.url),
     "utf8",
   );
   // The UPDATE that runs when a candidate with this mobile already exists.
   const updateBlock = routeSource.slice(
     routeSource.indexOf("UPDATE ats_candidate"),
-    routeSource.indexOf(
-      "WHERE id = ?",
-      routeSource.indexOf("UPDATE ats_candidate"),
-    ),
+    routeSource.indexOf("WHERE id = ?", routeSource.indexOf("UPDATE ats_candidate")),
   );
 
   it("keeps an existing full_name instead of taking the submitted one", () => {
-    expect(updateBlock).toMatch(
-      /full_name\s*=\s*COALESCE\(\s*NULLIF\(\s*TRIM\(full_name\)/,
-    );
-    expect(
-      updateBlock,
-      "full_name is assigned outright — identity is overwritable",
-    ).not.toMatch(/full_name\s*=\s*\?/);
+    expect(updateBlock).toMatch(/full_name\s*=\s*COALESCE\(\s*NULLIF\(\s*TRIM\(full_name\)/);
+    expect(updateBlock, "full_name is assigned outright — identity is overwritable")
+      .not.toMatch(/full_name\s*=\s*\?/);
   });
 
   it("keeps an existing email, so an offer cannot be redirected", () => {
-    expect(updateBlock).toMatch(
-      /email\s*=\s*COALESCE\(\s*NULLIF\(\s*TRIM\(email\)/,
-    );
-    expect(
-      updateBlock,
-      "email is assigned outright — the offer letter can be redirected",
-    ).not.toMatch(/[^_]email\s*=\s*\?/);
+    expect(updateBlock).toMatch(/email\s*=\s*COALESCE\(\s*NULLIF\(\s*TRIM\(email\)/);
+    expect(updateBlock, "email is assigned outright — the offer letter can be redirected")
+      .not.toMatch(/[^_]email\s*=\s*\?/);
   });
 
   it("keeps an existing date of birth and gender", () => {
@@ -295,27 +258,19 @@ describe("public registration cannot overwrite an existing candidate's identity"
     // The limiter is on POST routes inside the router (not the app.ts mount) so
     // that GET branch/recruiter lookups don't consume the submission budget.
     const routerSource = readFileSync(
-      new URL(
-        "../src/modules/ats/registration.enhanced.routes.ts",
-        import.meta.url,
-      ),
-      "utf8",
+      new URL("../src/modules/ats/registration.enhanced.routes.ts", import.meta.url),
+      "utf8"
     );
     // Both POST endpoints must carry the limiter
     expect(routerSource, "submit-enhanced POST is not rate limited").toMatch(
-      /post\(["']\/submit-enhanced["'],\s*publicRegistrationLimiter/,
+      /post\(["']\/submit-enhanced["'],\s*publicRegistrationLimiter/
     );
     expect(routerSource, "parse-resume POST is not rate limited").toMatch(
-      /post\(\s*["']\/parse-resume["'],\s*publicRegistrationLimiter/,
+      /post\(\s*["']\/parse-resume["'],\s*publicRegistrationLimiter/
     );
     // GET lookups must NOT carry the limiter
-    const branchLine =
-      routerSource
-        .split("\n")
-        .find((l) => l.includes('get("/branch-aliases"')) ?? "";
-    expect(
-      branchLine,
-      "branch-aliases GET should not carry the submission rate limiter",
-    ).not.toMatch(/publicRegistrationLimiter/);
+    const branchLine = routerSource.split("\n").find((l) => l.includes('get("/branch-aliases"')) ?? "";
+    expect(branchLine, "branch-aliases GET should not carry the submission rate limiter")
+      .not.toMatch(/publicRegistrationLimiter/);
   });
 });

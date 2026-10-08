@@ -63,9 +63,8 @@ describe("role model reconciliation", () => {
   });
 
   it("normalisation never maps an assignable role onto a non-existent one", () => {
-    const broken = WORKFORCE_ROLE_CATALOG.map(
-      (role) => [role, normalizeDashboardRole(role)] as const,
-    )
+    const broken = WORKFORCE_ROLE_CATALOG
+      .map((role) => [role, normalizeDashboardRole(role)] as const)
       .filter(([, normalized]) => !isAssignableRole(normalized))
       .map(([role, normalized]) => `${role} -> ${normalized}`);
 
@@ -81,47 +80,30 @@ describe("role model reconciliation", () => {
     // code, so both holders were locked out entirely.
     expect(canAccessDashboard("IT_MANAGER_DASHBOARD", ["it_head"])).toBe(true);
     expect(canAccessDashboard("QUALITY_DASHBOARD", ["tq_head"])).toBe(true);
-    expect(canAccessDashboard("PAYROLL_HR_DASHBOARD", ["finance_head"])).toBe(
-      true,
-    );
-    expect(canAccessDashboard("PAYROLL_HR_DASHBOARD", ["accounts_head"])).toBe(
-      true,
-    );
+    expect(canAccessDashboard("PAYROLL_HR_DASHBOARD", ["finance_head"])).toBe(true);
+    expect(canAccessDashboard("PAYROLL_HR_DASHBOARD", ["accounts_head"])).toBe(true);
   });
 
   it("branch_head reaches the dashboards its scope supports", () => {
     // branch_head holds 7 users and previously resolved to an empty intersection
     // between the code registry and the database page grants.
-    expect(canAccessDashboard("MANAGEMENT_DASHBOARD", ["branch_head"])).toBe(
-      true,
-    );
-    expect(canAccessDashboard("OPERATIONS_DASHBOARD", ["branch_head"])).toBe(
-      true,
-    );
-    expect(canAccessDashboard("EMPLOYEE_SELF_DASHBOARD", ["branch_head"])).toBe(
-      true,
-    );
+    expect(canAccessDashboard("MANAGEMENT_DASHBOARD", ["branch_head"])).toBe(true);
+    expect(canAccessDashboard("OPERATIONS_DASHBOARD", ["branch_head"])).toBe(true);
+    expect(canAccessDashboard("EMPLOYEE_SELF_DASHBOARD", ["branch_head"])).toBe(true);
   });
 
   it("keeps super_admin able to open every dashboard", () => {
     for (const code of ALL_CODES) {
-      expect(
-        canAccessDashboard(code, ["super_admin"]),
-        `super_admin blocked from ${code}`,
-      ).toBe(true);
+      expect(canAccessDashboard(code, ["super_admin"]), `super_admin blocked from ${code}`).toBe(true);
     }
   });
 
   it("does not grant a dashboard to every role indiscriminately", () => {
     // Guards against "fix the orphans by allowing everyone". A plain employee must not
     // reach payroll, quality or the super admin dashboard.
-    expect(canAccessDashboard("PAYROLL_HR_DASHBOARD", ["employee"])).toBe(
-      false,
-    );
+    expect(canAccessDashboard("PAYROLL_HR_DASHBOARD", ["employee"])).toBe(false);
     expect(canAccessDashboard("QUALITY_DASHBOARD", ["employee"])).toBe(false);
-    expect(canAccessDashboard("SUPER_ADMIN_DASHBOARD", ["employee"])).toBe(
-      false,
-    );
+    expect(canAccessDashboard("SUPER_ADMIN_DASHBOARD", ["employee"])).toBe(false);
     expect(canAccessDashboard("SUPER_ADMIN_DASHBOARD", ["admin"])).toBe(false);
     expect(canAccessDashboard("PAYROLL_HR_DASHBOARD", ["trainer"])).toBe(false);
   });

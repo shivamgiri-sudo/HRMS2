@@ -5,21 +5,10 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import {
-  RULE_IDS,
-  RULE_META,
-  evaluateRules,
-  monthBounds,
-  monthOf,
-  previousMonth,
-  summarizeMonth,
-  type RuleId,
+  RULE_IDS, RULE_META, evaluateRules, monthBounds, monthOf, previousMonth, summarizeMonth, type RuleId,
 } from "./wfm-compliance.calc.js";
 import {
-  computeCompliance,
-  loadRosterDays,
-  loadTemplates,
-  monthsEndingAt,
-  type ScopeFilter,
+  computeCompliance, loadRosterDays, loadTemplates, monthsEndingAt, type ScopeFilter,
 } from "./wfm-compliance-console.service.js";
 
 const none = <T>(v: T[]) => v;
@@ -46,22 +35,13 @@ export async function getEmployeeDetail(employeeId: string, month: string) {
 
   const months = monthsEndingAt(month, 6);
   const [days, templates] = await Promise.all([
-    loadRosterDays(
-      monthBounds(months[0]).start,
-      monthBounds(month).end,
-      {},
-      employeeId,
-    ),
+    loadRosterDays(monthBounds(months[0]).start, monthBounds(month).end, {}, employeeId),
     loadTemplates(),
   ]);
   const incidents = evaluateRules(days, templates);
   const monthly = months.map((m) => {
     const s = summarizeMonth(incidents, days, m);
-    return {
-      month: m,
-      violations: s.totalViolations,
-      compliant: s.rostered > 0 && s.totalViolations === 0,
-    };
+    return { month: m, violations: s.totalViolations, compliant: s.rostered > 0 && s.totalViolations === 0 };
   });
 
   const { start, end } = monthBounds(month);
@@ -87,184 +67,77 @@ export async function getEmployeeDetail(employeeId: string, month: string) {
     ),
   ]);
 
-  const inMonth = incidents
-    .filter((i) => monthOf(i.date) === month)
-    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  const inMonth = incidents.filter((i) => monthOf(i.date) === month).sort((a, b) => (a.date < b.date ? 1 : -1));
   return {
     period: month,
     employee: {
-      id: String(e.id),
-      code: e.employee_code,
-      name: String(e.full_name ?? "").trim(),
-      branchName: e.branch_name ?? null,
-      processName: e.process_name ?? null,
-      designation: e.designation_name ?? null,
-      employmentType: e.employment_type ?? null,
-      employmentStatus: e.employment_status ?? null,
-      active: Number(e.active_status) === 1,
-      dateOfJoining: e.doj ?? null,
-      dateOfExit: e.doe ?? null,
-      managerName: e.manager_name ?? null,
-      managerCode: e.manager_code ?? null,
+      id: String(e.id), code: e.employee_code, name: String(e.full_name ?? "").trim(), branchName: e.branch_name ?? null,
+      processName: e.process_name ?? null, designation: e.designation_name ?? null, employmentType: e.employment_type ?? null,
+      employmentStatus: e.employment_status ?? null, active: Number(e.active_status) === 1, dateOfJoining: e.doj ?? null,
+      dateOfExit: e.doe ?? null, managerName: e.manager_name ?? null, managerCode: e.manager_code ?? null,
     },
-    incidents: inMonth.map((i) => ({
-      id: i.id,
-      ruleId: i.ruleId,
-      ruleName: RULE_META[i.ruleId].name,
-      severity: i.severity,
-      date: i.date,
-      detail: i.detail,
-      dates: i.dates,
-    })),
+    incidents: inMonth.map((i) => ({ id: i.id, ruleId: i.ruleId, ruleName: RULE_META[i.ruleId].name, severity: i.severity, date: i.date, detail: i.detail, dates: i.dates })),
     monthly,
     rosterDays: rosterRows[0].map((r) => ({
-      date: r.d,
-      weekOff: Number(r.wo) === 1,
-      shiftName: r.shift_name ?? null,
-      shiftTime: r.st && r.et ? `${r.st}-${r.et}` : null,
-      attendanceStatus: r.att ?? null,
-      late: Number(r.late) === 1,
+      date: r.d, weekOff: Number(r.wo) === 1, shiftName: r.shift_name ?? null,
+      shiftTime: r.st && r.et ? `${r.st}-${r.et}` : null, attendanceStatus: r.att ?? null, late: Number(r.late) === 1,
     })),
-    timeline: none(
-      auditRows[0].map((r) => ({
-        id: String(r.id),
-        at: r.override_at ?? r.created_at,
-        actor: r.actor_name ?? "System (roster engine)",
-        decision: String(r.decision_type ?? "").replace(/_/g, " "),
-        rosterDate: r.d,
-        remarks: r.override_reason ?? r.rule_applied ?? null,
-      })),
-    ),
+    timeline: none(auditRows[0].map((r) => ({
+      id: String(r.id), at: r.override_at ?? r.created_at, actor: r.actor_name ?? "System (roster engine)",
+      decision: String(r.decision_type ?? "").replace(/_/g, " "), rosterDate: r.d, remarks: r.override_reason ?? r.rule_applied ?? null,
+    }))),
   };
 }
 
-export async function getRuleDetail(
-  ruleId: RuleId,
-  scope: ScopeFilter,
-  month: string,
-) {
+export async function getRuleDetail(ruleId: RuleId, scope: ScopeFilter, month: string) {
   const c = await computeCompliance(scope, month);
   const meta = RULE_META[ruleId];
   const all = c.incidents.filter((i) => i.ruleId === ruleId);
-  const cur = all
-    .filter((i) => monthOf(i.date) === month)
-    .sort((a, b) => (a.date < b.date ? 1 : -1));
-  const byBranch = new Map<
-    string,
-    { branchName: string; incidents: number; employees: Set<string> }
-  >();
+  const cur = all.filter((i) => monthOf(i.date) === month).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const byBranch = new Map<string, { branchName: string; incidents: number; employees: Set<string> }>();
   const byEmp = new Map<string, number>();
   for (const i of cur) {
     const e = c.meta.get(i.employeeId);
     const key = e?.branchId ?? "none";
-    const b = byBranch.get(key) ?? {
-      branchName: e?.branchName ?? "Unassigned",
-      incidents: 0,
-      employees: new Set<string>(),
-    };
-    b.incidents += 1;
-    b.employees.add(i.employeeId);
-    byBranch.set(key, b);
+    const b = byBranch.get(key) ?? { branchName: e?.branchName ?? "Unassigned", incidents: 0, employees: new Set<string>() };
+    b.incidents += 1; b.employees.add(i.employeeId); byBranch.set(key, b);
     byEmp.set(i.employeeId, (byEmp.get(i.employeeId) ?? 0) + 1);
   }
   return {
-    period: month,
-    ruleId,
-    ...{
-      ruleName: meta.name,
-      description: meta.description,
-      threshold: meta.threshold,
-      severity: meta.severity,
-    },
-    totalIncidents: cur.length,
-    employeesAffected: byEmp.size,
-    monthly: c.months.map((m) => ({
-      month: m,
-      violations: all.filter((i) => monthOf(i.date) === m).length,
-    })),
-    byBranch: [...byBranch.entries()]
-      .map(([branchId, v]) => ({
-        branchId,
-        branchName: v.branchName,
-        incidents: v.incidents,
-        employees: v.employees.size,
-      }))
-      .sort((a, b) => b.incidents - a.incidents),
+    period: month, ruleId, ...{ ruleName: meta.name, description: meta.description, threshold: meta.threshold, severity: meta.severity },
+    totalIncidents: cur.length, employeesAffected: byEmp.size,
+    monthly: c.months.map((m) => ({ month: m, violations: all.filter((i) => monthOf(i.date) === m).length })),
+    byBranch: [...byBranch.entries()].map(([branchId, v]) => ({ branchId, branchName: v.branchName, incidents: v.incidents, employees: v.employees.size })).sort((a, b) => b.incidents - a.incidents),
     incidents: cur.slice(0, 200).map((i) => {
       const e = c.meta.get(i.employeeId);
-      return {
-        id: i.id,
-        date: i.date,
-        employeeId: i.employeeId,
-        employeeCode: e?.code ?? "",
-        employeeName: e?.name ?? "Unknown",
-        branchName: e?.branchName ?? null,
-        severity: i.severity,
-        detail: i.detail,
-      };
+      return { id: i.id, date: i.date, employeeId: i.employeeId, employeeCode: e?.code ?? "", employeeName: e?.name ?? "Unknown", branchName: e?.branchName ?? null, severity: i.severity, detail: i.detail };
     }),
     truncated: cur.length > 200,
   };
 }
 
-export async function getBranchDetail(
-  branchId: string,
-  scope: ScopeFilter,
-  month: string,
-) {
+export async function getBranchDetail(branchId: string, scope: ScopeFilter, month: string) {
   const c = await computeCompliance({ ...scope, branchId: undefined }, month);
-  const row = (m: string) =>
-    c.branchMonthly[m]?.find((b) => b.branchId === branchId);
+  const row = (m: string) => c.branchMonthly[m]?.find((b) => b.branchId === branchId);
   const cur = row(month);
   if (!cur) return null;
-  const empIds = new Set(
-    [...c.meta.values()]
-      .filter((e) => e.branchId === branchId)
-      .map((e) => e.id),
-  );
-  const inMonth = c.incidents.filter(
-    (i) => monthOf(i.date) === month && empIds.has(i.employeeId),
-  );
+  const empIds = new Set([...c.meta.values()].filter((e) => e.branchId === branchId).map((e) => e.id));
+  const inMonth = c.incidents.filter((i) => monthOf(i.date) === month && empIds.has(i.employeeId));
   const rules = RULE_IDS.map((r) => {
     const list = inMonth.filter((i) => i.ruleId === r);
-    return {
-      ruleId: r,
-      ruleName: RULE_META[r].name,
-      violationCount: list.length,
-      employeesAffected: new Set(list.map((i) => i.employeeId)).size,
-    };
+    return { ruleId: r, ruleName: RULE_META[r].name, violationCount: list.length, employeesAffected: new Set(list.map((i) => i.employeeId)).size };
   });
   const perEmp = new Map<string, number>();
-  for (const i of inMonth)
-    perEmp.set(i.employeeId, (perEmp.get(i.employeeId) ?? 0) + 1);
+  for (const i of inMonth) perEmp.set(i.employeeId, (perEmp.get(i.employeeId) ?? 0) + 1);
   const prev = row(previousMonth(month));
   return {
-    period: month,
-    branchId,
-    branchName: cur.branchName,
-    compliancePct: cur.compliancePct,
-    rostered: cur.rostered,
-    employeesWithViolations: cur.breaching,
-    totalViolations: cur.violations,
-    previousCompliancePct: prev?.compliancePct ?? null,
+    period: month, branchId, branchName: cur.branchName, compliancePct: cur.compliancePct, rostered: cur.rostered,
+    employeesWithViolations: cur.breaching, totalViolations: cur.violations, previousCompliancePct: prev?.compliancePct ?? null,
     rules,
-    monthly: c.months.map((m) => ({
-      month: m,
-      compliancePct: row(m)?.compliancePct ?? null,
-      violations: row(m)?.violations ?? 0,
-    })),
-    topEmployees: [...perEmp.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 25)
-      .map(([id, n]) => {
-        const e = c.meta.get(id);
-        return {
-          employeeId: id,
-          employeeCode: e?.code ?? "",
-          employeeName: e?.name ?? "Unknown",
-          processName: e?.processName ?? null,
-          violations: n,
-        };
-      }),
+    monthly: c.months.map((m) => ({ month: m, compliancePct: row(m)?.compliancePct ?? null, violations: row(m)?.violations ?? 0 })),
+    topEmployees: [...perEmp.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25).map(([id, n]) => {
+      const e = c.meta.get(id);
+      return { employeeId: id, employeeCode: e?.code ?? "", employeeName: e?.name ?? "Unknown", processName: e?.processName ?? null, violations: n };
+    }),
   };
 }

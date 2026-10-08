@@ -23,10 +23,7 @@ import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
  * Non-fatal by design — a notification failure must never roll back or block the GRN
  * transition that triggered it.
  */
-const STAGE_LABEL: Record<
-  "branch_head" | "accounts_head" | "finance_head",
-  string
-> = {
+const STAGE_LABEL: Record<"branch_head" | "accounts_head" | "finance_head", string> = {
   branch_head: "Branch Head",
   accounts_head: "Accounts Head",
   finance_head: "Finance Head",
@@ -45,8 +42,7 @@ export async function notifyGrnStage(
   try {
     const { inboxService } = await import("../inbox/inbox.service.js");
     const userIds = await resolveRoleHolderUserIds(role, branchId);
-    const amountLabel =
-      amount != null ? `₹${Number(amount).toLocaleString("en-IN")}` : "";
+    const amountLabel = amount != null ? `₹${Number(amount).toLocaleString("en-IN")}` : "";
     for (const userId of userIds) {
       await inboxService.createItem({
         user_id: userId,

@@ -25,10 +25,7 @@ import { describe, expect, it } from "vitest";
  * Source-text assertions, the convention this repo uses for the large inline handlers in this
  * router. The FSM itself is covered behaviourally below via the exported module.
  */
-const SRC = readFileSync(
-  resolve(__dirname, "../wfm.regularization.secure.routes.ts"),
-  "utf8",
-);
+const SRC = readFileSync(resolve(__dirname, "../wfm.regularization.secure.routes.ts"), "utf8");
 
 /** Just the freeze resolver — bounded, so the rest of an 800-line router cannot satisfy an
  *  assertion about what this one function reads. */
@@ -36,9 +33,7 @@ function frozenFn(): string {
   const start = SRC.indexOf("async function isPayrollFrozenForDate");
   const end = SRC.indexOf("async function regularizationReviewRole", start);
   expect(start, "isPayrollFrozenForDate not found").toBeGreaterThan(-1);
-  expect(end, "regularizationReviewRole not found after it").toBeGreaterThan(
-    start,
-  );
+  expect(end, "regularizationReviewRole not found after it").toBeGreaterThan(start);
   return SRC.slice(start, end);
 }
 
@@ -67,25 +62,18 @@ describe("the freeze signal comes from payroll, not from the attendance lock fla
 describe("the review consults the freeze before choosing the next status", () => {
   it("resolves the freeze for the session date and passes it to the FSM", () => {
     expect(SRC).toMatch(/const payrollFrozen = await isPayrollFrozenForDate\(/);
-    expect(SRC).toMatch(
-      /nextRegularizationStatus\(reviewRole, String\(pre\.reg_status \?\? ""\), requestedReviewStatus, payrollFrozen\)/,
-    );
+    expect(SRC).toMatch(/nextRegularizationStatus\(reviewRole, String\(pre\.reg_status \?\? ""\), requestedReviewStatus, payrollFrozen\)/);
   });
 
   it("parks at payroll_pending instead of approving, when frozen", () => {
     const fsm = SRC.slice(SRC.indexOf("function nextRegularizationStatus("));
-    expect(fsm).toMatch(
-      /if \(requestedStatus === "approved" && payrollFrozen\) return PAYROLL_PENDING_STATUS/,
-    );
+    expect(fsm).toMatch(/if \(requestedStatus === "approved" && payrollFrozen\) return PAYROLL_PENDING_STATUS/);
   });
 
   it("does not let super_admin bypass the Payroll stage", () => {
     // The whole point is that no single role can move payroll's number alone.
     const fsm = SRC.slice(SRC.indexOf("function nextRegularizationStatus("));
-    const superAdminBranch = fsm.slice(
-      fsm.indexOf('if (role === "super_admin")'),
-      fsm.indexOf('if (role === "manager")'),
-    );
+    const superAdminBranch = fsm.slice(fsm.indexOf('if (role === "super_admin")'), fsm.indexOf('if (role === "manager")'));
     expect(superAdminBranch).toMatch(/payrollFrozen/);
     expect(superAdminBranch).toMatch(/PAYROLL_PENDING_STATUS/);
   });
@@ -100,32 +88,24 @@ describe("the review consults the freeze before choosing the next status", () =>
   it("only Payroll can act on a parked request, and only from payroll_pending", () => {
     const fsm = SRC.slice(SRC.indexOf("function nextRegularizationStatus("));
     const payrollBranch = fsm.slice(fsm.indexOf('if (role === "payroll")'));
-    expect(payrollBranch).toMatch(
-      /if \(currentStatus !== PAYROLL_PENDING_STATUS\) return null/,
-    );
+    expect(payrollBranch).toMatch(/if \(currentStatus !== PAYROLL_PENDING_STATUS\) return null/);
   });
 });
 
 describe("the Payroll reviewer is resolved by role, and only at its own stage", () => {
   it("requires an actual payroll role", () => {
-    expect(SRC).toMatch(
-      /const PAYROLL_APPROVAL_ROLES = \["payroll", "payroll_head", "payroll_admin"\]/,
-    );
+    expect(SRC).toMatch(/const PAYROLL_APPROVAL_ROLES = \["payroll", "payroll_head", "payroll_admin"\]/);
     expect(SRC).toMatch(/hasAnyRole\(userId, \.\.\.PAYROLL_APPROVAL_ROLES\)/);
   });
 
   it("does not let a payroll-holder short-circuit the WFM stage", () => {
     // Resolved from the row's status, so someone holding both wfm and payroll still reviews
     // as WFM while the request is at manager_approved.
-    expect(SRC).toMatch(
-      /if \(String\(target\.status \?\? ""\) === PAYROLL_PENDING_STATUS\)/,
-    );
+    expect(SRC).toMatch(/if \(String\(target\.status \?\? ""\) === PAYROLL_PENDING_STATUS\)/);
   });
 
   it("still refuses self-review before any of this", () => {
-    expect(SRC).toMatch(
-      /if \(callerEmp\?\.id === target\.employee_id\) return null/,
-    );
+    expect(SRC).toMatch(/if \(callerEmp\?\.id === target\.employee_id\) return null/);
   });
 });
 
@@ -137,14 +117,10 @@ describe("the parked state is auditable and does not tell the employee anything 
   it("sends no decision mail while parked", () => {
     // "Approved" mail here would be the same false success this stage exists to prevent.
     const notify = SRC.slice(SRC.indexOf("setImmediate(() => {"));
-    expect(notify).toMatch(
-      /payroll_pending deliberately sends no employee-facing mail/,
-    );
+    expect(notify).toMatch(/payroll_pending deliberately sends no employee-facing mail/);
   });
 
   it("payroll_pending is not terminal, so Payroll can still act on it", () => {
-    expect(SRC).toMatch(
-      /const TERMINAL_REGULARIZATION_STATUSES = \["approved", "rejected", "discarded"\]/,
-    );
+    expect(SRC).toMatch(/const TERMINAL_REGULARIZATION_STATUSES = \["approved", "rejected", "discarded"\]/);
   });
 });

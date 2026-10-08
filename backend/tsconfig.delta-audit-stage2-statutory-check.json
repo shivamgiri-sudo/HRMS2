@@ -5,5 +5,7 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["src/modules/reporting/executors/statutory.executor.ts"]
+  "include": [
+    "src/modules/reporting/executors/statutory.executor.ts"
+  ]
 }

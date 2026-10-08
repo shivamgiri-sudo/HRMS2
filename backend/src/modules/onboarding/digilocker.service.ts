@@ -21,14 +21,11 @@ export class DigiLockerService {
    */
   static async initiateSession(
     candidateId: string,
-    requestedDocuments: string[],
+    requestedDocuments: string[]
   ): Promise<DigiLockerSession> {
     try {
       const adapter = await getConfiguredBgvProviderAdapter();
-      const dlSession = await adapter.startDigilocker(
-        candidateId,
-        requestedDocuments,
-      );
+      const dlSession = await adapter.startDigilocker(candidateId, requestedDocuments);
 
       const sessionId = `DL-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -43,7 +40,7 @@ export class DigiLockerService {
           dlSession.state,
           JSON.stringify(requestedDocuments),
           dlSession.expiresAt,
-        ],
+        ]
       );
 
       return {
@@ -66,13 +63,13 @@ export class DigiLockerService {
    */
   static async recordDocumentsReceived(
     state: string,
-    documentsData: Record<string, any>,
+    documentsData: Record<string, any>
   ): Promise<void> {
     // Find session by state (DigiLocker uses state for CSRF protection)
     const [sessions] = await db.execute<RowDataPacket[]>(
       `SELECT session_id, candidate_id FROM candidate_digilocker_sessions
        WHERE state = ? AND status IN ('initiated', 'pending') LIMIT 1`,
-      [state],
+      [state]
     );
 
     if (!sessions || sessions.length === 0) {
@@ -88,7 +85,7 @@ export class DigiLockerService {
       `UPDATE candidate_digilocker_sessions
        SET documents_received = ?, status = 'documents_received', completed_at = NOW()
        WHERE session_id = ?`,
-      [JSON.stringify(documentsData), sessionId],
+      [JSON.stringify(documentsData), sessionId]
     );
 
     // Auto-store documents in onboarding sections if mappings exist
@@ -101,23 +98,14 @@ export class DigiLockerService {
    */
   private static async autoMapDocuments(
     candidateId: string,
-    documentsData: Record<string, any>,
+    documentsData: Record<string, any>
   ): Promise<void> {
     // Example mappings (adjust based on actual DigiLocker doc types)
     const mappings: Record<string, { table: string; field: string }> = {
-      aadhaar: {
-        table: "candidate_onboarding_profile",
-        field: "aadhaar_number_masked",
-      },
+      aadhaar: { table: "candidate_onboarding_profile", field: "aadhaar_number_masked" },
       dl: { table: "candidate_onboarding_profile", field: "dl_number" },
-      passport: {
-        table: "candidate_onboarding_profile",
-        field: "passport_number",
-      },
-      pan: {
-        table: "candidate_onboarding_profile",
-        field: "pan_number_masked",
-      },
+      passport: { table: "candidate_onboarding_profile", field: "passport_number" },
+      pan: { table: "candidate_onboarding_profile", field: "pan_number_masked" },
     };
 
     for (const [docType, value] of Object.entries(documentsData)) {
@@ -129,7 +117,7 @@ export class DigiLockerService {
 
       await db.execute(
         `UPDATE ${mapping.table} SET ${mapping.field} = ? WHERE candidate_id = ?`,
-        [docNumber, candidateId],
+        [docNumber, candidateId]
       );
     }
   }
@@ -138,14 +126,14 @@ export class DigiLockerService {
    * Get DigiLocker session status
    */
   static async getSessionStatus(
-    sessionId: string,
+    sessionId: string
   ): Promise<DigiLockerSession | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT session_id, candidate_id, auth_url, state, requested_documents,
               documents_received, expires_at, status, completed_at
        FROM candidate_digilocker_sessions
        WHERE session_id = ? LIMIT 1`,
-      [sessionId],
+      [sessionId]
     );
 
     if (!rows || rows.length === 0) return null;
@@ -157,9 +145,7 @@ export class DigiLockerService {
       authUrl: row.auth_url as string,
       state: row.state as string,
       requestedDocuments: JSON.parse(row.requested_documents as string),
-      documentsReceived: row.documents_received
-        ? JSON.parse(row.documents_received as string)
-        : undefined,
+      documentsReceived: row.documents_received ? JSON.parse(row.documents_received as string) : undefined,
       expiresAt: row.expires_at as Date,
       status: row.status as any,
       completedAt: row.completed_at as Date | undefined,
@@ -170,7 +156,7 @@ export class DigiLockerService {
    * Check if candidate has active DigiLocker session
    */
   static async getActiveSession(
-    candidateId: string,
+    candidateId: string
   ): Promise<DigiLockerSession | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT session_id, candidate_id, auth_url, state, requested_documents,
@@ -179,7 +165,7 @@ export class DigiLockerService {
        WHERE candidate_id = ? AND expires_at > NOW()
        ORDER BY initiated_at DESC
        LIMIT 1`,
-      [candidateId],
+      [candidateId]
     );
 
     if (!rows || rows.length === 0) return null;
@@ -191,9 +177,7 @@ export class DigiLockerService {
       authUrl: row.auth_url as string,
       state: row.state as string,
       requestedDocuments: JSON.parse(row.requested_documents as string),
-      documentsReceived: row.documents_received
-        ? JSON.parse(row.documents_received as string)
-        : undefined,
+      documentsReceived: row.documents_received ? JSON.parse(row.documents_received as string) : undefined,
       expiresAt: row.expires_at as Date,
       status: row.status as any,
       completedAt: row.completed_at as Date | undefined,

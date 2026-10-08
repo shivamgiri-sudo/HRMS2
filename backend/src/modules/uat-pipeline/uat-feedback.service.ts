@@ -23,10 +23,7 @@ import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { prepareFeedbackBody } from "./uat-pii.service.js";
 import { computeDueAt, defaultPriorityFor } from "./uat-sla.service.js";
 import { persistScan, runStaticScan } from "./uat-static-scan.service.js";
-import {
-  requestApproval,
-  requestCapabilityApprovals,
-} from "./uat-approval.service.js";
+import { requestApproval, requestCapabilityApprovals } from "./uat-approval.service.js";
 import {
   loadNotifyContext,
   notifyApprovalRequested,
@@ -42,13 +39,7 @@ import type {
 } from "./uat-pipeline.types.js";
 
 /** Roles that may see feedback beyond their own submissions. */
-export const UAT_TRIAGE_ROLES = [
-  "admin",
-  "super_admin",
-  "hr",
-  "it",
-  "it_admin",
-];
+export const UAT_TRIAGE_ROLES = ["admin", "super_admin", "hr", "it", "it_admin"];
 
 export interface FeedbackRow extends RowDataPacket {
   id: string;
@@ -96,12 +87,12 @@ type UatConnection = Awaited<ReturnType<typeof db.getConnection>>;
 
 async function insertWithCode(
   conn: UatConnection,
-  build: (code: string) => { sql: string; params: unknown[] },
+  build: (code: string) => { sql: string; params: unknown[] }
 ): Promise<{ id: string; code: string }> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const [maxRows] = await conn.execute<RowDataPacket[]>(
       `SELECT COALESCE(MAX(CAST(SUBSTRING(feedback_code, 5) AS UNSIGNED)), 0) AS n
-         FROM uat_feedback WHERE feedback_code LIKE 'UAT-%'`,
+         FROM uat_feedback WHERE feedback_code LIKE 'UAT-%'`
     );
     const next = Number((maxRows[0] as { n: number }).n) + 1 + attempt;
     const code = `UAT-${String(next).padStart(6, "0")}`;
@@ -110,7 +101,7 @@ async function insertWithCode(
       await conn.execute(sql, params);
       const [idRows] = await conn.execute<RowDataPacket[]>(
         `SELECT id FROM uat_feedback WHERE feedback_code = ?`,
-        [code],
+        [code]
       );
       return { id: String((idRows[0] as { id: string }).id), code };
     } catch (err) {
@@ -132,19 +123,16 @@ export interface CreateResult {
 
 export async function createFeedback(
   input: CreateFeedbackInput,
-  actor: { userId: string; employeeId: string },
+  actor: { userId: string; employeeId: string }
 ): Promise<CreateResult> {
   const body = prepareFeedbackBody(input.body);
   const title = (input.title ?? "").slice(0, 300).trim();
   if (!title) {
-    const e = new Error("A title is required") as Error & {
-      statusCode?: number;
-    };
+    const e = new Error("A title is required") as Error & { statusCode?: number };
     e.statusCode = 400;
     throw e;
   }
-  const priority: Priority =
-    input.priority ?? defaultPriorityFor(input.severity);
+  const priority: Priority = input.priority ?? defaultPriorityFor(input.severity);
   const dueAt = await computeDueAt(input.severity, priority);
 
   const conn = await db.getConnection();
@@ -157,7 +145,7 @@ export async function createFeedback(
     // The employee record remains the source of truth; this is a copy for query shape only.
     const [empRows] = await conn.execute<EmployeeScopeRow[]>(
       `SELECT branch_id, process_id FROM employees WHERE id = ?`,
-      [actor.employeeId],
+      [actor.employeeId]
     );
     const branchId = empRows[0]?.branch_id ?? null;
     const processId = empRows[0]?.process_id ?? null;
@@ -222,7 +210,7 @@ export async function createFeedback(
           truncated: body.sanitize.truncated,
         },
       },
-      conn,
+      conn
     );
 
     await conn.commit();
@@ -266,21 +254,11 @@ export async function createFeedback(
     await transition(id, "scan_blocked", {
       actorKind: "system",
       reason: scan.blockedReason,
-      detail: {
-        riskTier: scan.riskTier,
-        capabilityClass: scan.capabilityClass,
-      },
+      detail: { riskTier: scan.riskTier, capabilityClass: scan.capabilityClass },
     });
     const nctx = await loadNotifyContext(id);
-    if (nctx)
-      await notifyFeedbackBlocked({ ...nctx, reason: scan.blockedReason });
-    return {
-      id,
-      feedbackCode,
-      status: "scan_blocked",
-      scan,
-      blockedReason: scan.blockedReason,
-    };
+    if (nctx) await notifyFeedbackBlocked({ ...nctx, reason: scan.blockedReason });
+    return { id, feedbackCode, status: "scan_blocked", scan, blockedReason: scan.blockedReason };
   }
 
   await transition(id, "scan_done", {
@@ -330,7 +308,7 @@ export interface ListFilters {
 export async function listFeedback(
   userId: string,
   employeeId: string,
-  filters: ListFilters = {},
+  filters: ListFilters = {}
 ): Promise<{ rows: FeedbackRow[]; total: number }> {
   const scoped = await buildScopeWhereClause(userId, UAT_TRIAGE_ROLES, {
     branchId: "f.branch_id",
@@ -371,13 +349,13 @@ export async function listFeedback(
 
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS n FROM uat_feedback f ${whereSql}`,
-    params,
+    params
   );
   const [rows] = await db.execute<FeedbackRow[]>(
     `SELECT f.* FROM uat_feedback f ${whereSql}
       ORDER BY FIELD(f.priority,'p0','p1','p2','p3'), f.created_at DESC
       LIMIT ${limit} OFFSET ${offset}`,
-    params,
+    params
   );
   return { rows, total: Number((countRows[0] as { n: number }).n) };
 }
@@ -386,7 +364,7 @@ export async function listFeedback(
 export async function getFeedback(
   id: string,
   userId: string,
-  employeeId: string,
+  employeeId: string
 ): Promise<FeedbackRow | null> {
   const scoped = await buildScopeWhereClause(userId, UAT_TRIAGE_ROLES, {
     branchId: "f.branch_id",
@@ -395,29 +373,25 @@ export async function getFeedback(
   const [rows] = await db.execute<FeedbackRow[]>(
     `SELECT f.* FROM uat_feedback f
       WHERE f.id = ? AND (f.submitted_by_employee_id = ? OR (${scoped.sql}))`,
-    [id, employeeId, ...scoped.params],
+    [id, employeeId, ...scoped.params]
   );
   return rows[0] ?? null;
 }
 
-export async function getTimeline(
-  feedbackId: string,
-): Promise<RowDataPacket[]> {
+export async function getTimeline(feedbackId: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, event_type, from_status, to_status, actor_user_id, actor_kind,
             detail_json, message, created_at
        FROM uat_feedback_event WHERE feedback_id = ? ORDER BY id`,
-    [feedbackId],
+    [feedbackId]
   );
   return rows;
 }
 
-export async function getLatestScan(
-  feedbackId: string,
-): Promise<RowDataPacket | null> {
+export async function getLatestScan(feedbackId: string): Promise<RowDataPacket | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM uat_static_scan WHERE feedback_id = ? ORDER BY scanned_at DESC LIMIT 1`,
-    [feedbackId],
+    [feedbackId]
   );
   return rows[0] ?? null;
 }
@@ -428,14 +402,14 @@ export async function addComment(
   feedbackId: string,
   body: string,
   actor: { userId: string },
-  visibility: "internal" | "reporter_visible" = "internal",
+  visibility: "internal" | "reporter_visible" = "internal"
 ): Promise<void> {
   // Comments are prose from a human and get the same treatment as the feedback body.
   const prepared = prepareFeedbackBody(body);
   await db.execute(
     `INSERT INTO uat_feedback_comment (feedback_id, author_user_id, visibility, body)
      VALUES (?,?,?,?)`,
-    [feedbackId, actor.userId, visibility, prepared.raw],
+    [feedbackId, actor.userId, visibility, prepared.raw]
   );
   await recordEvent(feedbackId, "comment", {
     actorUserId: actor.userId,
@@ -446,14 +420,14 @@ export async function addComment(
 
 export async function listComments(
   feedbackId: string,
-  includeInternal: boolean,
+  includeInternal: boolean
 ): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, parent_comment_id, author_user_id, actor_kind, visibility, body, created_at
        FROM uat_feedback_comment
       WHERE feedback_id = ? ${includeInternal ? "" : "AND visibility = 'reporter_visible'"}
       ORDER BY created_at`,
-    [feedbackId],
+    [feedbackId]
   );
   return rows;
 }
@@ -463,7 +437,7 @@ export async function listComments(
 export async function assignFeedback(
   feedbackId: string,
   assigneeEmployeeId: string | null,
-  actorUserId: string,
+  actorUserId: string
 ): Promise<void> {
   await db.execute(`UPDATE uat_feedback SET assigned_to = ? WHERE id = ?`, [
     assigneeEmployeeId,
@@ -488,12 +462,10 @@ export async function assignFeedback(
 export async function markDuplicate(
   feedbackId: string,
   canonicalId: string,
-  actorUserId: string,
+  actorUserId: string
 ): Promise<void> {
   if (feedbackId === canonicalId) {
-    const e = new Error("An item cannot be a duplicate of itself") as Error & {
-      statusCode?: number;
-    };
+    const e = new Error("An item cannot be a duplicate of itself") as Error & { statusCode?: number };
     e.statusCode = 400;
     throw e;
   }
@@ -502,21 +474,17 @@ export async function markDuplicate(
     await conn.beginTransaction();
     await conn.execute(
       `UPDATE uat_feedback SET duplicate_of_id = ?, canonical_issue_id = ? WHERE id = ?`,
-      [canonicalId, canonicalId, feedbackId],
+      [canonicalId, canonicalId, feedbackId]
     );
     await conn.execute(
       `UPDATE uat_feedback SET affected_user_count = affected_user_count + 1 WHERE id = ?`,
-      [canonicalId],
+      [canonicalId]
     );
     await recordEvent(
       feedbackId,
       "duplicate",
-      {
-        actorUserId,
-        actorKind: "user",
-        message: `marked duplicate of ${canonicalId}`,
-      },
-      conn,
+      { actorUserId, actorKind: "user", message: `marked duplicate of ${canonicalId}` },
+      conn
     );
     await conn.commit();
   } catch (err) {

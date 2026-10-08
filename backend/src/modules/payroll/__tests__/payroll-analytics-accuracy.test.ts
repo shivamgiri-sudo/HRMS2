@@ -16,14 +16,8 @@ const source = readFileSync(resolve(__dirname, "../payroll.routes.ts"), "utf8");
  * these tests already enforced — the definition simply no longer lives in a route
  * file, which is what let a sibling report drift in the first place.
  */
-const runStatusSource = readFileSync(
-  resolve(__dirname, "../run-status.ts"),
-  "utf8",
-);
-const varianceSource = readFileSync(
-  resolve(__dirname, "../payroll-variance.routes.ts"),
-  "utf8",
-);
+const runStatusSource = readFileSync(resolve(__dirname, "../run-status.ts"), "utf8");
+const varianceSource = readFileSync(resolve(__dirname, "../payroll-variance.routes.ts"), "utf8");
 
 function block(marker: string, length = 1800): string {
   const index = source.indexOf(marker);
@@ -37,25 +31,13 @@ describe("payroll analytics run selection", () => {
     // One definition, reused by every caller — including the per-employee
     // payslip history, which must resolve a month to the same run.
     // Exactly one definition, and it is not in a route file.
-    expect(
-      runStatusSource.match(/WHEN 'DISBURSED'\s+THEN 2/g) ?? [],
-    ).toHaveLength(1);
-    expect(
-      source.match(/WHEN 'DISBURSED'\s+THEN 2/g) ?? [],
-      "payroll.routes.ts must import the ranking, not restate it",
-    ).toHaveLength(0);
-    expect(
-      varianceSource.match(/WHEN 'DISBURSED'\s+THEN 2/g) ?? [],
-      "the variance report must import the ranking, not restate it",
-    ).toHaveLength(0);
+    expect(runStatusSource.match(/WHEN 'DISBURSED'\s+THEN 2/g) ?? []).toHaveLength(1);
+    expect(source.match(/WHEN 'DISBURSED'\s+THEN 2/g) ?? [], "payroll.routes.ts must import the ranking, not restate it").toHaveLength(0);
+    expect(varianceSource.match(/WHEN 'DISBURSED'\s+THEN 2/g) ?? [], "the variance report must import the ranking, not restate it").toHaveLength(0);
 
     expect(runStatusSource).toMatch(/export function runRankSql/);
-    expect(source).toMatch(
-      /import \{[^}]*runRankSql[^}]*\} from "\.\/run-status\.js"/,
-    );
-    expect(varianceSource).toMatch(
-      /import \{ runRankSql \} from "\.\/run-status\.js"/,
-    );
+    expect(source).toMatch(/import \{[^}]*runRankSql[^}]*\} from "\.\/run-status\.js"/);
+    expect(varianceSource).toMatch(/import \{ runRankSql \} from "\.\/run-status\.js"/);
 
     expect(source).toMatch(/const RUN_RANK_SQL = runRankSql\(\)/);
     expect(source).toMatch(/runRankSql\("spr"\)/);
@@ -67,9 +49,7 @@ describe("payroll analytics run selection", () => {
     // 2026-03 the canonical pick was a 226-line partial worth ₹19.7L instead of
     // the real 1,140-line payroll worth ₹1.77Cr.
     const rankIdx = runStatusSource.indexOf("export function runRankSql");
-    expect(rankIdx, "runRankSql not found in run-status.ts").toBeGreaterThan(
-      -1,
-    );
+    expect(rankIdx, "runRankSql not found in run-status.ts").toBeGreaterThan(-1);
     const rank = runStatusSource.slice(rankIdx, rankIdx + 900);
     expect(rank).toMatch(/CASE UPPER\(\$\{col\}\)/);
     expect(rank).toMatch(/WHEN 'FINALIZED'\s+THEN 1/);
@@ -78,9 +58,7 @@ describe("payroll analytics run selection", () => {
     expect(arms.length).toBeGreaterThanOrEqual(7);
     for (const arm of arms) {
       const value = arm.replace(/WHEN '|'/g, "");
-      expect(value, `${value} must be upper-case to match UPPER(status)`).toBe(
-        value.toUpperCase(),
-      );
+      expect(value, `${value} must be upper-case to match UPPER(status)`).toBe(value.toUpperCase());
     }
   });
 
@@ -98,9 +76,7 @@ describe("payroll analytics run selection", () => {
     // with a re-run reported a higher total in the trend chart than in the KPI
     // cards directly above it.
     // The ranking lives in the shared CTE; the endpoint composes it and takes rn = 1.
-    expect(block("const CANONICAL_RUNS_CTE")).toMatch(
-      /ROW_NUMBER\(\) OVER \(PARTITION BY run_month/,
-    );
+    expect(block("const CANONICAL_RUNS_CTE")).toMatch(/ROW_NUMBER\(\) OVER \(PARTITION BY run_month/);
     const trends = block("/analytics/trends");
     expect(trends).toMatch(/WITH \$\{CANONICAL_RUNS_CTE\}/);
     expect(trends).toMatch(/WHERE rn = 1/);
@@ -120,15 +96,11 @@ describe("payroll analytics run selection", () => {
   });
 
   it("excludes cancelled runs when building the canonical set", () => {
-    expect(block("const CANONICAL_RUNS_CTE")).toMatch(
-      /WHERE UPPER\(status\) NOT IN \('CANCELLED'\)/,
-    );
+    expect(block("const CANONICAL_RUNS_CTE")).toMatch(/WHERE UPPER\(status\) NOT IN \('CANCELLED'\)/);
   });
 
   it("returns run provenance so a draft is distinguishable from a disbursed run", () => {
-    expect(source).toMatch(
-      /isProvisional:\s*\["draft", "processing"\]\.includes/,
-    );
+    expect(source).toMatch(/isProvisional:\s*\["draft", "processing"\]\.includes/);
     expect(source).toMatch(/otherRunsInMonth/);
   });
 });
@@ -138,9 +110,7 @@ describe("payroll analytics figures", () => {
     // AVG(net_salary) and total ÷ distinct-employees are the same only while
     // there is exactly one line per employee. Deriving it explicitly means the
     // KPI card and the ledger cannot disagree about what "average" means.
-    expect(source).toMatch(
-      /SUM\(spl\.net_salary\) \/ NULLIF\(COUNT\(DISTINCT spl\.employee_id\),0\)/,
-    );
+    expect(source).toMatch(/SUM\(spl\.net_salary\) \/ NULLIF\(COUNT\(DISTINCT spl\.employee_id\),0\)/);
     // AVG() over lines is only equal to per-employee average while there is
     // exactly one line per employee — an assumption the card should not carry.
     expect(source).not.toMatch(/ROUND\(AVG\(spl\.net_salary\),2\)/);
@@ -150,9 +120,7 @@ describe("payroll analytics figures", () => {
     // hra + special_allowance omitted incentive_total and overtime_pay, so
     // basic + allowances did not reconcile to gross.
     expect(source).toMatch(/GREATEST\(spl\.gross_salary - spl\.basic, 0\)/);
-    expect(source).not.toMatch(
-      /COALESCE\(spl\.hra,0\)\+COALESCE\(spl\.special_allowance,0\)/,
-    );
+    expect(source).not.toMatch(/COALESCE\(spl\.hra,0\)\+COALESCE\(spl\.special_allowance,0\)/);
   });
 
   it("keeps cancelled lines out of every aggregate", () => {

@@ -14,9 +14,9 @@
  * records a claim without calling the provider — which is exactly the evidence you review
  * before switching it live.
  */
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { notificationGateway } from "../communication/notification.gateway.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { notificationGateway } from '../communication/notification.gateway.js';
 
 interface RosterRecipientRow extends RowDataPacket {
   employee_id: string;
@@ -44,9 +44,7 @@ interface RosterRecipientRow extends RowDataPacket {
  * FK). `wfm_shift` is a different, similarly-named table — joining it would match nothing
  * and silently report zero night shifts for everyone.
  */
-async function loadRosterSummaries(
-  cycleId: string,
-): Promise<RosterRecipientRow[]> {
+async function loadRosterSummaries(cycleId: string): Promise<RosterRecipientRow[]> {
   const [rows] = await db.execute<RosterRecipientRow[]>(
     `SELECT rda.employee_id,
             e.employee_code,
@@ -100,26 +98,19 @@ export interface RosterNotifyResult {
  * report the remainder rather than dropping it silently. Raise that cap deliberately for
  * roster_published before going live at full branch scale.
  */
-export async function notifyRosterPublished(
-  cycle: RosterCycleContext,
-): Promise<RosterNotifyResult> {
-  const result: RosterNotifyResult = {
-    employees: 0,
-    shadow: 0,
-    sent: 0,
-    skipped: 0,
-  };
+export async function notifyRosterPublished(cycle: RosterCycleContext): Promise<RosterNotifyResult> {
+  const result: RosterNotifyResult = { employees: 0, shadow: 0, sent: 0, skipped: 0 };
   const summaries = await loadRosterSummaries(cycle.id);
   result.employees = summaries.length;
 
   const weekLabel = cycle.week_start_date
-    ? `${String(cycle.week_start_date).slice(0, 10)} to ${String(cycle.week_end_date ?? "").slice(0, 10)}`.trim()
+    ? `${String(cycle.week_start_date).slice(0, 10)} to ${String(cycle.week_end_date ?? '').slice(0, 10)}`.trim()
     : cycle.id;
 
   for (const s of summaries) {
     try {
       const outcome = await notificationGateway.notify({
-        eventCode: "roster_published",
+        eventCode: 'roster_published',
         // One notification per employee per cycle, no matter how often publish is retried
         // or how many times a worker re-reads the cycle.
         dedupeKey: `weekly_roster_cycle:${cycle.id}:employee:${s.employee_id}`,
@@ -128,7 +119,7 @@ export async function notifyRosterPublished(
           branchId: cycle.branch_id ?? null,
           processId: cycle.process_id ?? null,
         },
-        entityType: "weekly_roster_cycle",
+        entityType: 'weekly_roster_cycle',
         entityId: cycle.id,
         correlationId: `roster:${cycle.id}`,
         data: {
@@ -144,22 +135,18 @@ export async function notifyRosterPublished(
           week_offs: Number(s.week_offs ?? 0),
           // Omitted entirely rather than reported as 0 when any assignment's shift
           // template could not be resolved — a wrong zero is worse than no figure.
-          nights:
-            Number(s.unresolved_shifts ?? 0) > 0 ? null : Number(s.nights ?? 0),
+          nights: Number(s.unresolved_shifts ?? 0) > 0 ? null : Number(s.nights ?? 0),
           holidays: Number(s.holidays ?? 0),
           ack_deadline: cycle.ack_deadline ?? null,
         },
       });
-      if (outcome.outcome === "sent") result.sent++;
-      else if (outcome.outcome === "shadow") result.shadow++;
+      if (outcome.outcome === 'sent') result.sent++;
+      else if (outcome.outcome === 'shadow') result.shadow++;
       else result.skipped++;
     } catch (err) {
       // One employee's failure must not stop the rest of the roster being notified.
       result.skipped++;
-      console.error(
-        `[roster-notify] cycle ${cycle.id} employee ${s.employee_id}:`,
-        (err as Error).message,
-      );
+      console.error(`[roster-notify] cycle ${cycle.id} employee ${s.employee_id}:`, (err as Error).message);
     }
   }
 
@@ -189,14 +176,9 @@ async function loadEmployeeIdentity(employeeId: string): Promise<{
       LIMIT 1`,
     [employeeId],
   );
-  return (
-    (rows[0] as (typeof rows)[0] & {
-      employee_code: string | null;
-      full_name: string | null;
-      process_name: string | null;
-      reporting_manager_name: string | null;
-    }) ?? null
-  );
+  return (rows[0] as typeof rows[0] & {
+    employee_code: string | null; full_name: string | null; process_name: string | null; reporting_manager_name: string | null;
+  }) ?? null;
 }
 
 export async function notifyShiftChanged(args: {
@@ -211,7 +193,7 @@ export async function notifyShiftChanged(args: {
   try {
     const identity = await loadEmployeeIdentity(args.employeeId);
     await notificationGateway.notify({
-      eventCode: "shift_changed",
+      eventCode: 'shift_changed',
       // Keyed on the change row, so each distinct change notifies exactly once.
       dedupeKey: `roster_change_log:${args.changeId}`,
       context: {
@@ -219,7 +201,7 @@ export async function notifyShiftChanged(args: {
         branchId: args.cycle.branch_id ?? null,
         processId: args.cycle.process_id ?? null,
       },
-      entityType: "roster_change_log",
+      entityType: 'roster_change_log',
       entityId: args.changeId,
       correlationId: `roster:${args.cycle.id}`,
       data: {
@@ -235,16 +217,11 @@ export async function notifyShiftChanged(args: {
         // worth reading, and the one a manager should be held to.
         notice_hours: Math.max(
           0,
-          Math.round(
-            (new Date(args.rosterDate).getTime() - Date.now()) / 3_600_000,
-          ),
+          Math.round((new Date(args.rosterDate).getTime() - Date.now()) / 3_600_000),
         ),
       },
     });
   } catch (err) {
-    console.error(
-      `[roster-notify] shift change ${args.changeId}:`,
-      (err as Error).message,
-    );
+    console.error(`[roster-notify] shift change ${args.changeId}:`, (err as Error).message);
   }
 }

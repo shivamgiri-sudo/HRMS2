@@ -1,31 +1,12 @@
-export type TaskCategory =
-  "onboarding" | "exit" | "transfer" | "promotion" | "lifecycle" | "adhoc";
+export type TaskCategory = 'onboarding' | 'exit' | 'transfer' | 'promotion' | 'lifecycle' | 'adhoc';
 
-export type TaskDepartment =
-  | "it"
-  | "admin"
-  | "hr"
-  | "payroll"
-  | "wfm"
-  | "asset"
-  | "biometric"
-  | "security"
-  | "facility"
-  | "training"
-  | "qa";
+export type TaskDepartment = 'it' | 'admin' | 'hr' | 'payroll' | 'wfm' | 'asset' | 'biometric' | 'security' | 'facility' | 'training' | 'qa';
 
-export type TaskStatus =
-  | "pending"
-  | "in_progress"
-  | "waiting_approval"
-  | "completed"
-  | "cancelled"
-  | "overdue";
+export type TaskStatus = 'pending' | 'in_progress' | 'waiting_approval' | 'completed' | 'cancelled' | 'overdue';
 
-export type TaskPriority = "low" | "medium" | "high" | "urgent";
+export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 
-export type TemplateType =
-  "onboarding" | "exit" | "transfer" | "promotion" | "confirmation";
+export type TemplateType = 'onboarding' | 'exit' | 'transfer' | 'promotion' | 'confirmation';
 
 export interface TaskMaster {
   id: string;

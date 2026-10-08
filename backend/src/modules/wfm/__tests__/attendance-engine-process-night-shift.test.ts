@@ -124,10 +124,7 @@ describe("attendance engine night-shift process flow", () => {
       ],
     });
 
-    const result = await attendanceEngineService.processEmployee(
-      "emp-1",
-      "2026-07-25",
-    );
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.source).toBe("dialler");
     expect(result.sourceSystem).toBe("apr.ReportDate");
@@ -137,9 +134,7 @@ describe("attendance engine night-shift process flow", () => {
     expect(result.status).toBe("present");
     expect(result.lwpValue).toBe(0);
 
-    const aprSqlCall = dbExecute.mock.calls.find(([sql]: [string]) =>
-      sql.includes("FROM apr WHERE UserID = ?"),
-    );
+    const aprSqlCall = dbExecute.mock.calls.find(([sql]: [string]) => sql.includes("FROM apr WHERE UserID = ?"));
     expect(aprSqlCall).toBeTruthy();
     expect(aprSqlCall?.[0]).toContain("ReportDate IN (?)");
     expect(aprSqlCall?.[1]).toEqual(["MAS1001", "2026-07-25"]);
@@ -162,10 +157,7 @@ describe("attendance engine night-shift process flow", () => {
   it("falls back to the dialler sessions of the same date when APR rows are absent", async () => {
     mockEngineDb({ apr: [], diallerTotal: 510 });
 
-    const result = await attendanceEngineService.processEmployee(
-      "emp-1",
-      "2026-07-25",
-    );
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.source).toBe("dialler");
     expect(result.sourceSystem).toBe("dialer_session_log.session_date");
@@ -174,9 +166,7 @@ describe("attendance engine night-shift process flow", () => {
     expect(result.status).toBe("present");
     expect(result.lwpValue).toBe(0);
 
-    const diallerSqlCall = dbExecute.mock.calls.find(([sql]: [string]) =>
-      sql.includes("FROM dialer_session_log dsl"),
-    );
+    const diallerSqlCall = dbExecute.mock.calls.find(([sql]: [string]) => sql.includes("FROM dialer_session_log dsl"));
     expect(diallerSqlCall).toBeTruthy();
     expect(diallerSqlCall?.[0]).toContain("dsl.session_date IN (?)");
     expect(diallerSqlCall?.[1]).toEqual(["emp-1", "2026-07-25"]);
@@ -195,10 +185,7 @@ describe("attendance engine night-shift process flow", () => {
       ],
     });
 
-    const result = await attendanceEngineService.processEmployee(
-      "emp-1",
-      "2026-07-25",
-    );
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.status).toBe("half_day");
     expect(result.source).toBe("dialler");
@@ -223,10 +210,7 @@ describe("attendance engine night-shift process flow", () => {
       ],
     });
 
-    const result = await attendanceEngineService.processEmployee(
-      "emp-1",
-      "2026-07-25",
-    );
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.status).toBe("leave_approved");
     expect(result.source).toBe("dialler");
@@ -246,10 +230,7 @@ describe("attendance engine night-shift process flow", () => {
       ],
     });
 
-    const result = await attendanceEngineService.processEmployee(
-      "emp-1",
-      "2026-07-25",
-    );
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.status).toBe("holiday");
     expect(result.source).toBe("dialler");
@@ -266,10 +247,7 @@ describe("attendance engine night-shift process flow", () => {
       ],
     });
 
-    const result = await attendanceEngineService.processEmployee(
-      "emp-1",
-      "2026-07-25",
-    );
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.source).toBe("dialler");
     expect(result.sourceSystem).toBe("apr.ReportDate");
@@ -283,10 +261,7 @@ describe("attendance engine night-shift process flow", () => {
       apr: [{ ReportDate: "2026-07-26", Net_Login: "08:30:00" }],
     });
 
-    const result = await attendanceEngineService.processEmployee(
-      "emp-1",
-      "2026-07-25",
-    );
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.sourceRecordDate).toBe("2026-07-25");
     expect(result.rawMinutes).toBe(0);
@@ -303,10 +278,7 @@ describe("attendance engine night-shift process flow", () => {
       apr: [{ ReportDate: "2026-07-25", Net_Login: "05:00:00" }],
     });
 
-    const result = await attendanceEngineService.processEmployee(
-      "emp-1",
-      "2026-07-25",
-    );
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.source).toBe("dialler");
     expect(result.sourceSystem).toBe("apr.ReportDate");
@@ -332,10 +304,7 @@ describe("attendance engine night-shift process flow", () => {
       apr: [{ ReportDate: "2026-07-25", Net_Login: "08:10:00" }],
     });
 
-    const result = await attendanceEngineService.processEmployee(
-      "emp-1",
-      "2026-07-25",
-    );
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.source).toBe("dialler");
     expect(result.sourceSystem).not.toBe("cosec_policy_absence");
@@ -371,10 +340,7 @@ describe("attendance engine night-shift process flow", () => {
       biometricDaily: [{ minutes: 557, source_system: "integration:cosec_sqlserver", source_reference: "ibd-1" }],
     });
 
-    const result = await attendanceEngineService.processEmployee(
-      "emp-1",
-      "2026-07-25",
-    );
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.source).toBe("biometric");
     expect(result.sourceSystem).toBe("integration:cosec_sqlserver");

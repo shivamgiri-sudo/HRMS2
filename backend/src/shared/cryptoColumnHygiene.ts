@@ -32,8 +32,7 @@
  * and are frequently the only thing a UI should show. Stripping them would push callers
  * back to the raw column, which is the opposite of the intent.
  */
-export const CRYPTO_PLUMBING_PATTERN =
-  /(_encrypted|_enc|_blind_index|_key_version|_hash)$/;
+export const CRYPTO_PLUMBING_PATTERN = /(_encrypted|_enc|_blind_index|_key_version|_hash)$/;
 
 /** True when this column name is storage plumbing rather than data a client should see. */
 export function isCryptoPlumbingColumn(column: string): boolean {
@@ -47,9 +46,7 @@ export function isCryptoPlumbingColumn(column: string): boolean {
  * (`stripCryptoPlumbing(rows[0] ?? null)`) without the caller adding a guard — the common
  * shape at these call sites, and a guard that is easy to forget is a guard that will be.
  */
-export function stripCryptoPlumbing<T extends Record<string, unknown>>(
-  record: T,
-): Record<string, unknown>;
+export function stripCryptoPlumbing<T extends Record<string, unknown>>(record: T): Record<string, unknown>;
 export function stripCryptoPlumbing(record: null | undefined): null;
 export function stripCryptoPlumbing(
   record: Record<string, unknown> | null | undefined,

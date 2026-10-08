@@ -65,8 +65,7 @@ const ESIC_RE = /^[0-9]{10}$/;
 const DONORS = ["masjclrentry", "his_masjsclrentry"] as const;
 
 type Field = "uan" | "esic";
-type Verdict =
-  "FILL" | "ALREADY_SET" | "CONFLICT" | "MALFORMED_IN_HRMS" | "NOT_IN_DB_BILL";
+type Verdict = "FILL" | "ALREADY_SET" | "CONFLICT" | "MALFORMED_IN_HRMS" | "NOT_IN_DB_BILL";
 
 interface Candidate {
   employeeId: string;
@@ -80,8 +79,7 @@ interface Candidate {
   reason: string;
 }
 
-const mask = (v: string) =>
-  v.length <= 4 ? "*".repeat(v.length) : "*".repeat(v.length - 4) + v.slice(-4);
+const mask = (v: string) => (v.length <= 4 ? "*".repeat(v.length) : "*".repeat(v.length - 4) + v.slice(-4));
 
 async function main(): Promise<void> {
   // ── 1. HRMS-active population ──────────────────────────────────────────────
@@ -92,10 +90,7 @@ async function main(): Promise<void> {
        FROM employees
       WHERE active_status = 1 AND employee_code IS NOT NULL AND TRIM(employee_code) <> ''`,
   );
-  const actives = new Map<
-    string,
-    { id: string; name: string; uan: string; esic: string }
-  >();
+  const actives = new Map<string, { id: string; name: string; uan: string; esic: string }>();
   for (const r of empRows as Array<Record<string, unknown>>) {
     actives.set(String(r.employee_code).trim().toUpperCase(), {
       id: String(r.id),
@@ -105,12 +100,11 @@ async function main(): Promise<void> {
     });
   }
 
-  const needs = (field: Field, cur: string) =>
-    !(field === "uan" ? UAN_RE : ESIC_RE).test(cur);
+  const needs = (field: Field, cur: string) => !(field === "uan" ? UAN_RE : ESIC_RE).test(cur);
 
   // ── 2. Collect every donor value, keyed by (code, field) ───────────────────
   const offered = new Map<string, Map<string, Set<string>>>(); // code -> field -> values
-  const donorOf = new Map<string, string>(); // code|field -> donor table
+  const donorOf = new Map<string, string>();                   // code|field -> donor table
   const bill = await getBillPool();
 
   for (const table of DONORS) {
@@ -127,14 +121,13 @@ async function main(): Promise<void> {
       for (const field of ["uan", "esic"] as Field[]) {
         const raw = String(r[field] ?? "").trim();
         const re = field === "uan" ? UAN_RE : ESIC_RE;
-        if (!re.test(raw)) continue; // junk in the donor is simply not a candidate
-        if (!needs(field, emp[field])) continue; // HRMS already holds a good value
+        if (!re.test(raw)) continue;              // junk in the donor is simply not a candidate
+        if (!needs(field, emp[field])) continue;  // HRMS already holds a good value
         if (!offered.has(code)) offered.set(code, new Map());
         const byField = offered.get(code)!;
         if (!byField.has(field)) byField.set(field, new Set());
         byField.get(field)!.add(raw);
-        if (!donorOf.has(`${code}|${field}`))
-          donorOf.set(`${code}|${field}`, table);
+        if (!donorOf.has(`${code}|${field}`)) donorOf.set(`${code}|${field}`, table);
       }
     }
   }
@@ -147,39 +140,23 @@ async function main(): Promise<void> {
       const base = { employeeId: emp.id, code, name: emp.name, field, current };
 
       if (!needs(field, current)) {
-        candidates.push({
-          ...base,
-          incoming: "",
-          donor: "",
-          verdict: "ALREADY_SET",
-          reason: "HRMS already holds a well-formed value",
-        });
+        candidates.push({ ...base, incoming: "", donor: "", verdict: "ALREADY_SET", reason: "HRMS already holds a well-formed value" });
         continue;
       }
       const values = offered.get(code)?.get(field);
       if (!values || values.size === 0) {
         candidates.push({
-          ...base,
-          incoming: "",
-          donor: "",
+          ...base, incoming: "", donor: "",
           // A non-empty current value that failed the format test is a distinct problem from a
           // blank one: something IS recorded and it is wrong, which HR must reconcile rather than
           // simply collect.
           verdict: current ? "MALFORMED_IN_HRMS" : "NOT_IN_DB_BILL",
-          reason: current
-            ? `recorded as "${current}" (${current.length} chars) — not a valid ${field.toUpperCase()}`
-            : "no valid value in any donor",
+          reason: current ? `recorded as "${current}" (${current.length} chars) — not a valid ${field.toUpperCase()}` : "no valid value in any donor",
         });
         continue;
       }
       if (values.size > 1) {
-        candidates.push({
-          ...base,
-          incoming: "",
-          donor: "",
-          verdict: "CONFLICT",
-          reason: `donors disagree: ${[...values].join(" vs ")}`,
-        });
+        candidates.push({ ...base, incoming: "", donor: "", verdict: "CONFLICT", reason: `donors disagree: ${[...values].join(" vs ")}` });
         continue;
       }
       candidates.push({
@@ -193,11 +170,8 @@ async function main(): Promise<void> {
   }
 
   // ── 4. Report ──────────────────────────────────────────────────────────────
-  const pick = (f: Field, v: Verdict) =>
-    candidates.filter((c) => c.field === f && c.verdict === v);
-  console.log(
-    `\nStatutory identifier recovery — ${actives.size} active employees\n`,
-  );
+  const pick = (f: Field, v: Verdict) => candidates.filter((c) => c.field === f && c.verdict === v);
+  console.log(`\nStatutory identifier recovery — ${actives.size} active employees\n`);
 
   for (const field of ["uan", "esic"] as Field[]) {
     const label = field.toUpperCase();
@@ -208,38 +182,22 @@ async function main(): Promise<void> {
     const absent = pick(field, "NOT_IN_DB_BILL");
     console.log(`  ── ${label} ──`);
     console.log(`     already set        : ${set}`);
-    console.log(
-      `     recoverable        : ${fill.length}   -> coverage ${set} becomes ${set + fill.length}`,
-    );
+    console.log(`     recoverable        : ${fill.length}   -> coverage ${set} becomes ${set + fill.length}`);
     console.log(`     donors disagree    : ${conflict.length}`);
-    console.log(
-      `     malformed in HRMS  : ${malformed.length}   (HR must reconcile — never auto-repaired)`,
-    );
-    console.log(
-      `     no donor value     : ${absent.length}   (applicability unknown — NOT necessarily a gap)`,
-    );
-    for (const c of malformed)
-      console.log(`        ${c.code.padEnd(10)} ${c.reason}`);
-    for (const c of conflict)
-      console.log(`        ${c.code.padEnd(10)} ${c.reason}`);
-    for (const c of fill.slice(0, 10))
-      console.log(
-        `        ${c.code.padEnd(10)} ${mask(c.incoming)} from ${c.donor}`,
-      );
-    if (fill.length > 10)
-      console.log(`        ... and ${fill.length - 10} more`);
+    console.log(`     malformed in HRMS  : ${malformed.length}   (HR must reconcile — never auto-repaired)`);
+    console.log(`     no donor value     : ${absent.length}   (applicability unknown — NOT necessarily a gap)`);
+    for (const c of malformed) console.log(`        ${c.code.padEnd(10)} ${c.reason}`);
+    for (const c of conflict) console.log(`        ${c.code.padEnd(10)} ${c.reason}`);
+    for (const c of fill.slice(0, 10)) console.log(`        ${c.code.padEnd(10)} ${mask(c.incoming)} from ${c.donor}`);
+    if (fill.length > 10) console.log(`        ... and ${fill.length - 10} more`);
     console.log("");
   }
 
   const writable = candidates.filter((c) => c.verdict === "FILL");
-  console.log(
-    `  ── Would write ${writable.length} identifier(s) across ${new Set(writable.map((c) => c.code)).size} employee(s) ──`,
-  );
+  console.log(`  ── Would write ${writable.length} identifier(s) across ${new Set(writable.map((c) => c.code)).size} employee(s) ──`);
 
   if (!APPLY) {
-    console.log(
-      `\nDRY RUN — nothing was written. Re-run with --apply on the server to write.`,
-    );
+    console.log(`\nDRY RUN — nothing was written. Re-run with --apply on the server to write.`);
     return;
   }
 
@@ -257,39 +215,22 @@ async function main(): Promise<void> {
             SET ${column} = ?
           WHERE id = ?
             AND (${column} IS NULL OR ${column} NOT REGEXP ?)`,
-        [
-          c.incoming,
-          c.employeeId,
-          c.field === "uan" ? "^[0-9]{12}$" : "^[0-9]{10}$",
-        ],
+        [c.incoming, c.employeeId, c.field === "uan" ? "^[0-9]{12}$" : "^[0-9]{10}$"],
       );
       if (res.affectedRows === 1) written++;
-      else
-        console.log(
-          `  SKIPPED ${c.code} ${c.field} — a valid value appeared since the read`,
-        );
+      else console.log(`  SKIPPED ${c.code} ${c.field} — a valid value appeared since the read`);
     } catch (err: unknown) {
       failed++;
-      console.error(
-        `  FAILED ${c.code} ${c.field}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      console.error(`  FAILED ${c.code} ${c.field}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   console.log(`\nAPPLIED — ${written} written, ${failed} failed.`);
-  console.log(
-    `This filled identifiers only. It asserted nothing about whether PF or ESIC applies to anyone.`,
-  );
+  console.log(`This filled identifiers only. It asserted nothing about whether PF or ESIC applies to anyone.`);
 }
 
 main()
-  .catch((err) => {
-    console.error("FATAL", err);
-    process.exitCode = 1;
-  })
+  .catch((err) => { console.error("FATAL", err); process.exitCode = 1; })
   // Both pools, or the process hangs after printing a complete report and dies to a timeout —
   // which on a WRITE script is genuinely dangerous, because the operator cannot tell "finished"
   // from "still writing".
-  .finally(async () => {
-    await db.end().catch(() => {});
-    await closeBillPool().catch(() => {});
-  });
+  .finally(async () => { await db.end().catch(() => {}); await closeBillPool().catch(() => {}); });

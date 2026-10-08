@@ -1,19 +1,11 @@
-import { decryptSecretPayload } from "../external-db/external-db.service.js";
-import { encryptSecretPayload } from "../external-db/external-db.service.js";
-import * as repo from "./social-feed.repository.js";
-import { fetchFacebookPosts } from "./social-feed.adapters/facebook.adapter.js";
-import { fetchInstagramPosts } from "./social-feed.adapters/instagram.adapter.js";
-import { fetchYouTubePosts } from "./social-feed.adapters/youtube.adapter.js";
-import type {
-  SocialPlatform,
-  SaveConfigInput,
-  SocialProfileLink,
-  SaveProfileLinkInput,
-} from "./social-feed.types.js";
-import {
-  SOCIAL_LINK_PLATFORMS,
-  SOCIAL_LINK_DEFAULTS,
-} from "./social-feed.types.js";
+import { decryptSecretPayload } from '../external-db/external-db.service.js';
+import { encryptSecretPayload } from '../external-db/external-db.service.js';
+import * as repo from './social-feed.repository.js';
+import { fetchFacebookPosts } from './social-feed.adapters/facebook.adapter.js';
+import { fetchInstagramPosts } from './social-feed.adapters/instagram.adapter.js';
+import { fetchYouTubePosts } from './social-feed.adapters/youtube.adapter.js';
+import type { SocialPlatform, SaveConfigInput, SocialProfileLink, SaveProfileLinkInput } from './social-feed.types.js';
+import { SOCIAL_LINK_PLATFORMS, SOCIAL_LINK_DEFAULTS } from './social-feed.types.js';
 
 async function syncPlatform(platform: SocialPlatform): Promise<number> {
   const config = await repo.getConfig(platform);
@@ -21,25 +13,19 @@ async function syncPlatform(platform: SocialPlatform): Promise<number> {
 
   let posts;
   switch (platform) {
-    case "facebook": {
+    case 'facebook': {
       if (!config.access_token) return 0;
-      const token = String(
-        decryptSecretPayload(config.access_token)["token"] ??
-          config.access_token,
-      );
+      const token = String(decryptSecretPayload(config.access_token)['token'] ?? config.access_token);
       posts = await fetchFacebookPosts(config.page_id, token);
       break;
     }
-    case "instagram": {
+    case 'instagram': {
       if (!config.access_token) return 0;
-      const token = String(
-        decryptSecretPayload(config.access_token)["token"] ??
-          config.access_token,
-      );
+      const token = String(decryptSecretPayload(config.access_token)['token'] ?? config.access_token);
       posts = await fetchInstagramPosts(config.page_id, token);
       break;
     }
-    case "youtube": {
+    case 'youtube': {
       posts = await fetchYouTubePosts(config.page_id);
       break;
     }
@@ -54,10 +40,8 @@ async function syncPlatform(platform: SocialPlatform): Promise<number> {
   return posts.length;
 }
 
-export async function syncAllPlatforms(): Promise<
-  Record<SocialPlatform, number>
-> {
-  const platforms: SocialPlatform[] = ["facebook", "instagram", "youtube"];
+export async function syncAllPlatforms(): Promise<Record<SocialPlatform, number>> {
+  const platforms: SocialPlatform[] = ['facebook', 'instagram', 'youtube'];
   const results: Record<string, number> = {};
 
   await Promise.allSettled(
@@ -75,7 +59,7 @@ export async function syncAllPlatforms(): Promise<
 }
 
 export async function getPosts(
-  platform: SocialPlatform | "all",
+  platform: SocialPlatform | 'all',
   page: number,
   limit: number,
 ) {
@@ -86,13 +70,11 @@ export async function getAdminConfigs() {
   const configs = await repo.getAllConfigs();
   return configs.map((c) => ({
     ...c,
-    access_token: c.access_token ? "***" : null,
+    access_token: c.access_token ? '***' : null,
   }));
 }
 
-export async function saveAdminConfig(
-  input: SaveConfigInput & { plainToken?: string },
-) {
+export async function saveAdminConfig(input: SaveConfigInput & { plainToken?: string }) {
   const { plainToken, ...rest } = input;
   const toSave: SaveConfigInput = { ...rest };
   if (plainToken) {
@@ -102,7 +84,7 @@ export async function saveAdminConfig(
 }
 
 export async function getPostCounts() {
-  const platforms: SocialPlatform[] = ["facebook", "instagram", "youtube"];
+  const platforms: SocialPlatform[] = ['facebook', 'instagram', 'youtube'];
   const counts: Record<string, number> = {};
   await Promise.all(
     platforms.map(async (p) => {

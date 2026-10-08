@@ -28,9 +28,7 @@ const VERIFICATION = read("src/modules/ats/bgv-verification.service.ts");
 
 describe("a completed DigiLocker marks Aadhaar and PAN verified", () => {
   it("the writer is exported so the sync path can reach it", () => {
-    expect(VERIFICATION).toMatch(
-      /export async function autoCreateDigilockerVerifiedChecks/,
-    );
+    expect(VERIFICATION).toMatch(/export async function autoCreateDigilockerVerifiedChecks/);
   });
 
   it("the live completion path calls it", () => {
@@ -48,10 +46,7 @@ describe("a completed DigiLocker marks Aadhaar and PAN verified", () => {
     // explanatory comment above it names the function too, and a window around
     // that would be measuring the wrong thing.
     const at = SYNC.indexOf("await autoCreateDigilockerVerifiedChecks(");
-    expect(
-      at,
-      "the call itself was not found, only a mention of it",
-    ).toBeGreaterThan(-1);
+    expect(at, "the call itself was not found, only a mention of it").toBeGreaterThan(-1);
     const around = SYNC.slice(Math.max(0, at - 200), at + 400);
     expect(around).toMatch(/catch/);
   });
@@ -75,10 +70,7 @@ describe("paid checks refuse to re-verify what DigiLocker already did", () => {
 
   for (const [fn, event] of [
     ["verifyPanForCandidate", "PAN_VERIFICATION_SKIPPED_DIGILOCKER"],
-    [
-      "verifyAadhaarOfflineForCandidate",
-      "AADHAAR_VERIFICATION_SKIPPED_DIGILOCKER",
-    ],
+    ["verifyAadhaarOfflineForCandidate", "AADHAAR_VERIFICATION_SKIPPED_DIGILOCKER"],
   ] as const) {
     it(`${fn} short-circuits on a DigiLocker-verified check`, () => {
       const body = bodyOf(fn);
@@ -96,10 +88,7 @@ describe("paid checks refuse to re-verify what DigiLocker already did", () => {
       const providerAt = body.search(/withProviderFailureLogged|adapter\./);
       expect(guardAt).toBeGreaterThan(-1);
       expect(providerAt).toBeGreaterThan(-1);
-      expect(
-        guardAt,
-        "the check happens after the money is spent",
-      ).toBeLessThan(providerAt);
+      expect(guardAt, "the check happens after the money is spent").toBeLessThan(providerAt);
     });
   }
 });

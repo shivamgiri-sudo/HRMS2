@@ -55,9 +55,7 @@ describe("circuit breaker reopen jitter", () => {
   it("never probes earlier than the nominal delay, so jitter can only add headroom", () => {
     for (const jitter of [0, 1, 5_000, 12_000]) {
       const state = openedState(NOW, jitter);
-      expect(state.nextProbeTime).toBeGreaterThanOrEqual(
-        NOW + CONFIG.recoveryTimeMs,
-      );
+      expect(state.nextProbeTime).toBeGreaterThanOrEqual(NOW + CONFIG.recoveryTimeMs);
     }
   });
 
@@ -66,8 +64,6 @@ describe("circuit breaker reopen jitter", () => {
     // stays bounded, so a probe cannot drift arbitrarily far out.
     const maxJitter = Math.floor(CONFIG.recoveryTimeMs * 0.4);
     const state = openedState(NOW, maxJitter);
-    expect(state.nextProbeTime - NOW).toBeLessThanOrEqual(
-      CONFIG.recoveryTimeMs * 1.4,
-    );
+    expect(state.nextProbeTime - NOW).toBeLessThanOrEqual(CONFIG.recoveryTimeMs * 1.4);
   });
 });

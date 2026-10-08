@@ -17,7 +17,7 @@ Run this one query to get ALL funnel data at once:
 
 ```sql
 -- QUERY: Complete Sales Funnel Dashboard
-SELECT 'FUNNEL' as metric, ProcessName as dimension,
+SELECT 'FUNNEL' as metric, ProcessName as dimension, 
   COUNT(*) as total_calls,
   COUNT(CASE WHEN OfferMade IN ('Yes','1') THEN 1 END) as offers,
   COUNT(CASE WHEN SaleDone IN ('Yes','1') THEN 1 END) as sales,
@@ -31,14 +31,12 @@ ORDER BY total_calls DESC;
 ## Expected Output Format
 
 ### Requested Format:
-
 ```
 PROCESS | TOTAL_CALLS | OFFERS | SALES | CONVERSION_RATE
 ---------|-------------|--------|-------|----------------
 ```
 
 ### Actual Output:
-
 ```
 metric | dimension  | total_calls | offers | sales | conversion_rate_pct
 --------|-----------|-------------|--------|-------|--------------------
@@ -50,7 +48,6 @@ FUNNEL | Process C  |       612   |   220  |   82  |      13.40
 ## All 5 Core Reports
 
 ### 1. Overall Funnel by Process
-
 ```sql
 SELECT
   ProcessName as process,
@@ -65,7 +62,6 @@ ORDER BY total_calls DESC;
 ```
 
 ### 2. 90-Day Conversion Trend
-
 ```sql
 SELECT
   DATE(CallDate) as date,
@@ -79,7 +75,6 @@ ORDER BY date DESC;
 ```
 
 ### 3. Offer Acceptance Rate by Process
-
 ```sql
 SELECT
   ProcessName as process,
@@ -95,7 +90,6 @@ ORDER BY offers_made DESC;
 ```
 
 ### 4. Time from First Call to Sale
-
 ```sql
 SELECT
   ProcessName as process,
@@ -112,7 +106,6 @@ ORDER BY days_to_sale ASC, sales DESC;
 ```
 
 ### 5. Summary Statistics
-
 ```sql
 SELECT
   COUNT(*) as total_calls,
@@ -130,32 +123,29 @@ WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY);
 
 ## Files Provided
 
-| File                          | Purpose                                    |
-| ----------------------------- | ------------------------------------------ |
-| `sales-funnel-queries.sql`    | All 9 SQL queries (comprehensive)          |
-| `sales-funnel-report.py`      | Python script to generate formatted report |
-| `sales-funnel-report.ts`      | TypeScript/Node.js version                 |
-| `SALES_FUNNEL_README.md`      | Complete documentation                     |
-| `SALES_FUNNEL_QUICK_START.md` | This file                                  |
+| File | Purpose |
+|------|---------|
+| `sales-funnel-queries.sql` | All 9 SQL queries (comprehensive) |
+| `sales-funnel-report.py` | Python script to generate formatted report |
+| `sales-funnel-report.ts` | TypeScript/Node.js version |
+| `SALES_FUNNEL_README.md` | Complete documentation |
+| `SALES_FUNNEL_QUICK_START.md` | This file |
 
 ## Quick Execution Methods
 
 ### Method 1: SQL File (30 seconds)
-
 ```bash
 # Copy entire file to your MySQL client
 cat backend/scripts/sales-funnel-queries.sql | mysql -u root -p db_external
 ```
 
 ### Method 2: Python Script (60 seconds)
-
 ```bash
 pip install mysql-connector-python python-dotenv
 python backend/scripts/sales-funnel-report.py
 ```
 
 ### Method 3: DBeaver/MySQL Workbench (2 minutes)
-
 1. Open `backend/scripts/sales-funnel-queries.sql`
 2. Copy query 1 (lines 8-18)
 3. Paste in new SQL tab
@@ -163,17 +153,16 @@ python backend/scripts/sales-funnel-report.py
 
 ## Key Metrics Explained
 
-| Metric              | What It Means                        | Good Value |
-| ------------------- | ------------------------------------ | ---------- |
-| **Conversion Rate** | % of calls that became sales         | 10-20%     |
-| **Offer Rate**      | % of calls where offer was made      | 30-50%     |
-| **Acceptance Rate** | % of offers that were accepted       | 40-60%     |
-| **Days to Sale**    | Average days from first call to sale | 1-5 days   |
+| Metric | What It Means | Good Value |
+|--------|--------------|-----------|
+| **Conversion Rate** | % of calls that became sales | 10-20% |
+| **Offer Rate** | % of calls where offer was made | 30-50% |
+| **Acceptance Rate** | % of offers that were accepted | 40-60% |
+| **Days to Sale** | Average days from first call to sale | 1-5 days |
 
 ## Where Are the Data Files?
 
 All generated reports will be in:
-
 ```
 /home/shuvam/Desktop/MyHRMS1/backend/scripts/
 ```
@@ -182,29 +171,25 @@ All generated reports will be in:
 
 **Q: "Can't connect to MySQL"**
 A: Check DB credentials in `.env` or pass them manually:
-
 ```bash
 mysql -h 192.168.x.x -u username -p database_name
 ```
 
 **Q: "Table doesn't exist"**
 A: Verify table exists:
-
 ```sql
 SHOW TABLES IN db_external LIKE 'CallDetails%';
 ```
 
 **Q: "No results"**
 A: Check if data exists in last 90 days:
-
 ```sql
-SELECT COUNT(*) FROM db_external.CallDetails
+SELECT COUNT(*) FROM db_external.CallDetails 
 WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY);
 ```
 
 **Q: Python ModuleNotFoundError**
 A: Install dependencies:
-
 ```bash
 pip install mysql-connector-python python-dotenv
 ```
@@ -233,7 +218,6 @@ After running Query 1, you should see something like:
 ## Need More Details?
 
 See `SALES_FUNNEL_README.md` for:
-
 - Complete query explanations
 - Data quality notes
 - Performance optimization

@@ -37,17 +37,11 @@ function mentions(haystack: string, word: string): boolean {
   return new RegExp(`(^|[^a-z])${word}([^a-z]|$)`, "i").test(haystack);
 }
 
-export function digilockerVerifiedCheckTypes(
-  evidence: DigilockerEvidence,
-): DigilockerVerifiedCheckType[] {
+export function digilockerVerifiedCheckTypes(evidence: DigilockerEvidence): DigilockerVerifiedCheckType[] {
   const parts: string[] = [];
   if (typeof evidence.fileName === "string") parts.push(evidence.fileName);
   if (Array.isArray(evidence.documentTypes)) {
-    parts.push(
-      ...evidence.documentTypes.filter(
-        (t): t is string => typeof t === "string",
-      ),
-    );
+    parts.push(...evidence.documentTypes.filter((t): t is string => typeof t === "string"));
   }
   const haystack = parts.join(" ").replace(/[^A-Za-z]+/g, " ");
 
@@ -55,8 +49,7 @@ export function digilockerVerifiedCheckTypes(
   // evidenced whether or not a file naming it came back.
   const types: DigilockerVerifiedCheckType[] = ["aadhaar"];
 
-  if (mentions(haystack, "pan") || mentions(haystack, "pancard"))
-    types.push("pan");
+  if (mentions(haystack, "pan") || mentions(haystack, "pancard")) types.push("pan");
 
   return types;
 }

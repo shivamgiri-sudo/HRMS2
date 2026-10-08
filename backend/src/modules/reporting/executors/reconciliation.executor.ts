@@ -31,12 +31,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type {
-  ExecFilters,
-  ExecScope,
-  ExecOptions,
-  ExecResult,
-} from "./types.js";
+import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -53,22 +48,14 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params,
+    params
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
 
-function finish(
-  rows: Record<string, unknown>[],
-  total: number,
-  includeTotal: boolean,
-): ExecResult {
+function finish(rows: Record<string, unknown>[], total: number, includeTotal: boolean): ExecResult {
   const out = rows.map(({ _cursor: _drop, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: includeTotal ? total : out.length,
-    isTruncated: total > out.length,
-  };
+  return { rows: out, rowCount: includeTotal ? total : out.length, isTruncated: total > out.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +68,7 @@ function finish(
 export async function payrollPopulationReconciliation(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const month = monthParam(filters.month);
   const { start, endExclusive } = monthRange(month);
@@ -147,10 +134,7 @@ export async function payrollPopulationReconciliation(
 
   const allParams = [...joinParams, ...params];
   const total = options.includeTotal ? await count(base, allParams) : 0;
-  const rows = (await query(
-    applyPagination(base, options),
-    allParams,
-  )) as Record<string, unknown>[];
+  const rows = await query(applyPagination(base, options), allParams) as Record<string, unknown>[];
   return finish(rows, total, options.includeTotal);
 }
 
@@ -160,7 +144,7 @@ export async function payrollPopulationReconciliation(
 export async function leaveLedgerVsRequestsReconciliation(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const year = Number(filters.year) || new Date().getFullYear();
 
@@ -219,10 +203,7 @@ export async function leaveLedgerVsRequestsReconciliation(
   // One leading param for the projected balance_year, then the two subquery params, then WHERE.
   const allParams = [year, ...joinParams, ...params];
   const total = options.includeTotal ? await count(base, allParams) : 0;
-  const rows = (await query(
-    applyPagination(base, options),
-    allParams,
-  )) as Record<string, unknown>[];
+  const rows = await query(applyPagination(base, options), allParams) as Record<string, unknown>[];
   return finish(rows, total, options.includeTotal);
 }
 
@@ -234,17 +215,12 @@ export async function leaveLedgerVsRequestsReconciliation(
 export async function costCentreVsBillingReconciliation(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["1 = 1"];
   const params: unknown[] = [];
-  if (
-    scope.branchScope.mode === "restricted" &&
-    scope.branchScope.ids.length > 0
-  ) {
-    clauses.push(
-      `cc.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`,
-    );
+  if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
+    clauses.push(`cc.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
     params.push(...scope.branchScope.ids);
   }
 
@@ -285,10 +261,7 @@ export async function costCentreVsBillingReconciliation(
      ORDER BY reconciliation_status = 'MATCH', COALESCE(emp.active_headcount,0) DESC, cc.cost_centre_code`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const rows = (await query(applyPagination(base, options), params)) as Record<
-    string,
-    unknown
-  >[];
+  const rows = await query(applyPagination(base, options), params) as Record<string, unknown>[];
   return finish(rows, total, options.includeTotal);
 }
 
@@ -298,7 +271,7 @@ export async function costCentreVsBillingReconciliation(
 export async function attendanceEnrollmentGap(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const month = monthParam(filters.month);
   const { start, endExclusive } = monthRange(month);
@@ -376,9 +349,6 @@ export async function attendanceEnrollmentGap(
 
   const allParams = [...joinParams, ...params];
   const total = options.includeTotal ? await count(base, allParams) : 0;
-  const rows = (await query(
-    applyPagination(base, options),
-    allParams,
-  )) as Record<string, unknown>[];
+  const rows = await query(applyPagination(base, options), allParams) as Record<string, unknown>[];
   return finish(rows, total, options.includeTotal);
 }

@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  parseDate,
-  CLOVIA_TEAM_ALIGNMENT_HEADERS,
-} from "../clovia-team-alignment-bulk.service.js";
+import { parseDate, CLOVIA_TEAM_ALIGNMENT_HEADERS } from "../clovia-team-alignment-bulk.service.js";
 
 describe("parseDate", () => {
   it("reads the real DOJ Excel serial from the sample (45435 = 2024-05-23)", () => {

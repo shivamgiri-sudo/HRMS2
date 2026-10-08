@@ -38,23 +38,15 @@ const { stateRef, sideEffects } = vi.hoisted(() => ({
     consumed: [] as Array<{ lineId: string; amount: number }>,
     released: [] as Array<{ lineId: string; amount: number }>,
     auditActions: [] as string[],
-    approvalEvents: [] as Array<{
-      action: string;
-      fromStatus: string;
-      toStatus: string;
-      actorRole: string;
-    }>,
-    notifiedStages: [] as Array<
-      "branch_head" | "accounts_head" | "finance_head"
-    >,
+    approvalEvents: [] as Array<{ action: string; fromStatus: string; toStatus: string; actorRole: string }>,
+    notifiedStages: [] as Array<"branch_head" | "accounts_head" | "finance_head">,
     resolvedNotifications: 0,
   },
 }));
 
 vi.mock("../../../db/mysql.js", () => ({
   db: {
-    execute: (...args: unknown[]) =>
-      stateRef.current.route(...(args as [string, unknown[]?])),
+    execute: (...args: unknown[]) => stateRef.current.route(...(args as [string, unknown[]?])),
     getConnection: async () => stateRef.current.connection,
   },
 }));
@@ -105,22 +97,14 @@ vi.mock("../vendor-payment.service.js", () => ({
 
 vi.mock("../imprest-ledger.service.js", () => ({
   imprestLedgerService: {
-    assertSufficientBalance: vi.fn(
-      async (managerId: string, amount: number) => {
-        sideEffects.imprestBalanceChecks.push({ managerId, amount });
-        if (stateRef.current?.floatShort) {
-          throw Object.assign(new Error("Imprest float is short"), {
-            statusCode: 409,
-            code: "IMPREST_FLOAT_SHORT",
-          });
-        }
-      },
-    ),
+    assertSufficientBalance: vi.fn(async (managerId: string, amount: number) => {
+      sideEffects.imprestBalanceChecks.push({ managerId, amount });
+      if (stateRef.current?.floatShort) {
+        throw Object.assign(new Error("Imprest float is short"), { statusCode: 409, code: "IMPREST_FLOAT_SHORT" });
+      }
+    }),
     post: vi.fn(async (entry: any) => {
-      sideEffects.imprestDebits.push({
-        grnId: String(entry.referenceId),
-        amount: Number(entry.amount),
-      });
+      sideEffects.imprestDebits.push({ grnId: String(entry.referenceId), amount: Number(entry.amount) });
       return "ledger-1";
     }),
   },
@@ -141,18 +125,12 @@ vi.mock("../grn-number-monthly.service.js", () => ({
 }));
 
 vi.mock("../grn-notify.js", () => ({
-  notifyGrnStage: vi.fn(
-    async (
-      _grnId: string,
-      _grnNumber: string | null,
-      _branchId: string | null,
-      _vendorName: string | null,
-      _amount: number | null,
-      role: "branch_head" | "accounts_head" | "finance_head",
-    ) => {
-      sideEffects.notifiedStages.push(role);
-    },
-  ),
+  notifyGrnStage: vi.fn(async (
+    _grnId: string, _grnNumber: string | null, _branchId: string | null,
+    _vendorName: string | null, _amount: number | null, role: "branch_head" | "accounts_head" | "finance_head",
+  ) => {
+    sideEffects.notifiedStages.push(role);
+  }),
   resolveGrnNotifications: vi.fn(async () => {
     sideEffects.resolvedNotifications += 1;
   }),
@@ -160,12 +138,7 @@ vi.mock("../grn-notify.js", () => ({
 
 // ── the fake database ────────────────────────────────────────────────────────
 
-type Validation = {
-  code: string;
-  status: string;
-  blocking: 0 | 1;
-  message?: string;
-};
+type Validation = { code: string; status: string; blocking: 0 | 1; message?: string };
 
 function makeState(opts: {
   grn: Record<string, unknown>;
@@ -174,30 +147,17 @@ function makeState(opts: {
    *  is what SUBMIT and REVIEW do about a blocking validation, not how one comes to exist —
    *  grn-invoice-components / grn-lob-attribution own that. */
   validations?: Validation[];
-  overrides?: Array<{
-    validation_code: string;
-    override_reason: string;
-    approved_by: string;
-  }>;
+  overrides?: Array<{ validation_code: string; override_reason: string; approved_by: string }>;
   imprestManagers?: Array<{ id: string }>;
   floatShort?: boolean;
 }) {
   const grn = { ...opts.grn };
   const allocations = opts.allocations ?? [
     {
-      id: "alloc-1",
-      grn_request_id: grn.id,
-      budget_id: "hdr-1",
-      budget_line_id: "line-A",
-      cost_centre_id: "cc-A",
-      funding_cost_centre_id: "cc-A",
-      amount_with_tax: 1000,
-      amount_without_tax: 1000,
-      quantity: 1,
-      lifecycle_status: "draft",
-      is_unbudgeted: 0,
-      process_id: null,
-      cost_centre_name: "CC A",
+      id: "alloc-1", grn_request_id: grn.id, budget_id: "hdr-1", budget_line_id: "line-A",
+      cost_centre_id: "cc-A", funding_cost_centre_id: "cc-A", amount_with_tax: 1000,
+      amount_without_tax: 1000, quantity: 1, lifecycle_status: "draft", is_unbudgeted: 0,
+      process_id: null, cost_centre_name: "CC A",
     },
   ];
   let validations: Validation[] = [...(opts.validations ?? [])];
@@ -209,17 +169,10 @@ function makeState(opts: {
     // A SELECT returns a SNAPSHOT. Handing back the live object let a later UPDATE mutate the row
     // the service had already read, so `fromStatus` on the approval event read as the status the
     // GRN was moving TO. The real DB cannot do that, and neither should the fake.
-    if (
-      s.includes("FROM grn_request WHERE id = ? FOR UPDATE") ||
-      s.startsWith("SELECT * FROM grn_request WHERE id = ?")
-    ) {
+    if (s.includes("FROM grn_request WHERE id = ? FOR UPDATE") || s.startsWith("SELECT * FROM grn_request WHERE id = ?")) {
       return [[{ ...grn }], []];
     }
-    if (
-      s.includes(
-        "SELECT grn_type, grn_number, branch_id, accounting_period, financial_year",
-      )
-    ) {
+    if (s.includes("SELECT grn_type, grn_number, branch_id, accounting_period, financial_year")) {
       return [[{ ...grn }], []];
     }
     if (s.includes("SELECT id, status FROM grn_request")) {
@@ -229,24 +182,14 @@ function makeState(opts: {
       return [allocations, []];
     }
     if (s.includes("FROM grn_validation_result")) {
-      return [
-        validations.map((v) => ({
-          ...v,
-          is_blocking: v.blocking,
-          validation_code: v.code,
-          validation_status: v.status,
-        })),
-        [],
-      ];
+      return [validations.map((v) => ({ ...v, is_blocking: v.blocking, validation_code: v.code, validation_status: v.status })), []];
     }
     if (s.includes("FROM grn_validation_override")) {
       return [opts.overrides ?? [], []];
     }
     if (s.startsWith("UPDATE grn_validation_result")) {
       const code = String(params[params.length - 1]);
-      validations = validations.map((v) =>
-        v.code === code ? { ...v, status: "overridden", blocking: 0 } : v,
-      );
+      validations = validations.map((v) => (v.code === code ? { ...v, status: "overridden", blocking: 0 } : v));
       return [{ affectedRows: 1 }, []];
     }
     if (s.startsWith("DELETE FROM grn_validation_result")) {
@@ -263,38 +206,25 @@ function makeState(opts: {
     if (s.startsWith("UPDATE grn_request")) {
       // Every status UPDATE in the service carries its expected current status in the WHERE, which
       // is the concurrency guard. Honour it, so a test can prove the 409 path.
-      const expected =
-        /status = '([a-z_]+)'\s*$/.exec(s.replace(/`/g, ""))?.[1] ??
-        (s.includes(
-          "status IN ('rejected','returned_to_raiser','returned_to_branch_head')",
-        )
+      const expected = /status = '([a-z_]+)'\s*$/.exec(s.replace(/`/g, ""))?.[1]
+        ?? (s.includes("status IN ('rejected','returned_to_raiser','returned_to_branch_head')")
           ? String(grn.status)
           : null);
-      const expectedFromParam = s.includes("AND status = ?")
-        ? String(params[params.length - 1])
-        : null;
+      const expectedFromParam = s.includes("AND status = ?") ? String(params[params.length - 1]) : null;
       const guard = expectedFromParam ?? expected;
       if (guard && guard !== String(grn.status) && !s.includes("status IN (")) {
         return [{ affectedRows: 0 }, []];
       }
-      const next =
-        /SET status = '([a-z_]+)'/.exec(s)?.[1] ?? (params[0] as string);
+      const next = /SET status = '([a-z_]+)'/.exec(s)?.[1] ?? (params[0] as string);
       if (typeof next === "string" && /^[a-z_]+$/.test(next)) {
         grn.status = next;
         statusHistory.push(next);
       }
       return [{ affectedRows: 1 }, []];
     }
-    if (s.startsWith("UPDATE grn_cost_allocation"))
-      return [{ affectedRows: allocations.length }, []];
-    if (s.startsWith("INSERT INTO sensitive_action_log"))
-      return [{ insertId: 1 }, []];
-    if (
-      s.startsWith("INSERT") ||
-      s.startsWith("DELETE") ||
-      s.startsWith("UPDATE")
-    )
-      return [{ affectedRows: 1 }, []];
+    if (s.startsWith("UPDATE grn_cost_allocation")) return [{ affectedRows: allocations.length }, []];
+    if (s.startsWith("INSERT INTO sensitive_action_log")) return [{ insertId: 1 }, []];
+    if (s.startsWith("INSERT") || s.startsWith("DELETE") || s.startsWith("UPDATE")) return [{ affectedRows: 1 }, []];
     if (s.startsWith("SELECT")) return [[], []];
     throw new Error(`Unhandled SQL in fake DB router: ${s.slice(0, 160)}`);
   }
@@ -307,13 +237,7 @@ function makeState(opts: {
     release: vi.fn().mockResolvedValue(undefined),
   };
 
-  return {
-    route,
-    connection,
-    grn,
-    statusHistory,
-    floatShort: opts.floatShort ?? false,
-  };
+  return { route, connection, grn, statusHistory, floatShort: opts.floatShort ?? false };
 }
 
 function baseGrn(overrides: Record<string, unknown> = {}) {
@@ -343,61 +267,35 @@ function baseGrn(overrides: Record<string, unknown> = {}) {
  *  money that was never taken — see the test that pins it below. */
 function reservedAllocation() {
   return {
-    id: "alloc-1",
-    grn_request_id: "grn-1",
-    budget_id: "hdr-1",
-    budget_line_id: "line-A",
-    cost_centre_id: "cc-A",
-    funding_cost_centre_id: "cc-A",
-    amount_with_tax: 1000,
-    amount_without_tax: 1000,
-    quantity: 1,
-    lifecycle_status: "reserved",
-    is_unbudgeted: 0,
-    process_id: null,
-    cost_centre_name: "CC A",
+    id: "alloc-1", grn_request_id: "grn-1", budget_id: "hdr-1", budget_line_id: "line-A",
+    cost_centre_id: "cc-A", funding_cost_centre_id: "cc-A", amount_with_tax: 1000,
+    amount_without_tax: 1000, quantity: 1, lifecycle_status: "reserved", is_unbudgeted: 0,
+    process_id: null, cost_centre_name: "CC A",
   };
 }
 
-const PASSING: Validation[] = [
-  { code: "DOCUMENT_REQUIRED", status: "passed", blocking: 0 },
-];
+const PASSING: Validation[] = [{ code: "DOCUMENT_REQUIRED", status: "passed", blocking: 0 }];
 const BLOCKED: Validation[] = [
-  {
-    code: "DOCUMENT_REQUIRED",
-    status: "failed",
-    blocking: 1,
-    message: "At least one invoice or supporting proof is mandatory",
-  },
+  { code: "DOCUMENT_REQUIRED", status: "failed", blocking: 1, message: "At least one invoice or supporting proof is mandatory" },
 ];
 
 beforeEach(() => {
   vi.clearAllMocks();
   periodLocked.mockResolvedValue(false);
-  for (const key of Object.keys(sideEffects) as Array<
-    keyof typeof sideEffects
-  >) {
-    if (Array.isArray(sideEffects[key]))
-      (sideEffects[key] as unknown[]).length = 0;
+  for (const key of Object.keys(sideEffects) as Array<keyof typeof sideEffects>) {
+    if (Array.isArray(sideEffects[key])) (sideEffects[key] as unknown[]).length = 0;
   }
   sideEffects.resolvedNotifications = 0;
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("GRN type gate — a type with no accounting lifecycle fails closed", () => {
-  for (const [type, action] of [
-    ["provision", "Submission"],
-    ["salary", "Submission"],
-  ] as const) {
+  for (const [type, action] of [["provision", "Submission"], ["salary", "Submission"]] as const) {
     it(`${type} cannot be submitted`, async () => {
-      stateRef.current = makeState({
-        grn: baseGrn({ grn_type: type }),
-        validations: PASSING,
-      });
-      const { grnValidationControlService } =
-        await import("../grn-validation-control.service.js");
+      stateRef.current = makeState({ grn: baseGrn({ grn_type: type }), validations: PASSING });
+      const { grnValidationControlService } = await import("../grn-validation-control.service.js");
       await expect(
-        grnValidationControlService.submit("grn-1", "u1", "branch_admin"),
+        grnValidationControlService.submit("grn-1", "u1", "branch_admin")
       ).rejects.toMatchObject({ code: expect.stringMatching(/NOT_SUPPORTED/) });
       expect(action).toBe("Submission");
     });
@@ -405,32 +303,20 @@ describe("GRN type gate — a type with no accounting lifecycle fails closed", (
 
   it("salary cannot be approved either — it used to fall through and become 'approved' with nothing posted", async () => {
     stateRef.current = makeState({
-      grn: baseGrn({
-        grn_type: "salary",
-        status: "branch_head_approved",
-        branch_head_reviewed_by: "u-bh",
-      }),
+      grn: baseGrn({ grn_type: "salary", status: "branch_head_approved", branch_head_reviewed_by: "u-bh" }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head"),
+      grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head")
     ).rejects.toMatchObject({ code: "SALARY_GRN_NOT_SUPPORTED" });
     expect(sideEffects.payablesCreatedFor).toHaveLength(0);
     expect(sideEffects.consumed).toHaveLength(0);
   });
 
   it("vendor and imprest are unaffected", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ grn_type: "vendor" }),
-      validations: PASSING,
-    });
-    const { grnValidationControlService } =
-      await import("../grn-validation-control.service.js");
-    const result = await grnValidationControlService.submit(
-      "grn-1",
-      "u1",
-      "branch_admin",
-    );
+    stateRef.current = makeState({ grn: baseGrn({ grn_type: "vendor" }), validations: PASSING });
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
+    const result = await grnValidationControlService.submit("grn-1", "u1", "branch_admin");
     expect(result.newStatus).toBe("submitted");
   });
 });
@@ -439,10 +325,9 @@ describe("GRN type gate — a type with no accounting lifecycle fails closed", (
 describe("Submit gate", () => {
   it("refuses while a blocking validation is failing, and names it", async () => {
     stateRef.current = makeState({ grn: baseGrn(), validations: BLOCKED });
-    const { grnValidationControlService } =
-      await import("../grn-validation-control.service.js");
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
     await expect(
-      grnValidationControlService.submit("grn-1", "u1", "branch_admin"),
+      grnValidationControlService.submit("grn-1", "u1", "branch_admin")
     ).rejects.toThrow(/supporting proof is mandatory/);
     expect(stateRef.current.grn.status).toBe("draft");
   });
@@ -452,41 +337,24 @@ describe("Submit gate", () => {
     // used to allocate one (2026-08-27 fix); it no longer does, on the same request/response
     // shape as before so callers keying off result.grnNumber still get a sensible (null) value.
     stateRef.current = makeState({ grn: baseGrn(), validations: PASSING });
-    const { grnValidationControlService } =
-      await import("../grn-validation-control.service.js");
-    const result = await grnValidationControlService.submit(
-      "grn-1",
-      "u1",
-      "branch_admin",
-    );
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
+    const result = await grnValidationControlService.submit("grn-1", "u1", "branch_admin");
     expect(result.grnNumber).toBeNull();
     expect(result.newStatus).toBe("submitted");
   });
 
   it("still reports an existing number — a re-submit after return must never renumber, and never hides one that already exists", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ grn_number: "GRN/BR1/2026-27/0001" }),
-      validations: PASSING,
-    });
-    const { grnValidationControlService } =
-      await import("../grn-validation-control.service.js");
-    const result = await grnValidationControlService.submit(
-      "grn-1",
-      "u1",
-      "branch_admin",
-    );
+    stateRef.current = makeState({ grn: baseGrn({ grn_number: "GRN/BR1/2026-27/0001" }), validations: PASSING });
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
+    const result = await grnValidationControlService.submit("grn-1", "u1", "branch_admin");
     expect(result.grnNumber).toBe("GRN/BR1/2026-27/0001");
   });
 
   it("refuses when the GRN left draft between the check and the write", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted" }),
-      validations: PASSING,
-    });
-    const { grnValidationControlService } =
-      await import("../grn-validation-control.service.js");
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted" }), validations: PASSING });
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
     await expect(
-      grnValidationControlService.submit("grn-1", "u1", "branch_admin"),
+      grnValidationControlService.submit("grn-1", "u1", "branch_admin")
     ).rejects.toThrow(/status changed before submission/i);
   });
 });
@@ -494,84 +362,46 @@ describe("Submit gate", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("Maker-checker — enforced on identity, not on role name", () => {
   it("the Branch Head cannot approve a GRN they submitted themselves", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-same" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-same" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review(
-        "grn-1",
-        "approved",
-        "fine",
-        "u-same",
-        "branch_head",
-      ),
+      grnSmartService.review("grn-1", "approved", "fine", "u-same", "branch_head")
     ).rejects.toThrow(/Maker-checker/i);
     expect(sideEffects.reserved).toHaveLength(0);
   });
 
   it("the Finance Head cannot approve a GRN they submitted", async () => {
     stateRef.current = makeState({
-      grn: baseGrn({
-        status: "branch_head_approved",
-        submitted_by: "u-same",
-        branch_head_reviewed_by: "u-bh",
-      }),
+      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-same", branch_head_reviewed_by: "u-bh" }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review(
-        "grn-1",
-        "approved",
-        "fine",
-        "u-same",
-        "finance_head",
-      ),
+      grnSmartService.review("grn-1", "approved", "fine", "u-same", "finance_head")
     ).rejects.toThrow(/Maker-checker/i);
   });
 
   it("the Finance Head cannot approve a GRN they Branch-Head reviewed", async () => {
     stateRef.current = makeState({
-      grn: baseGrn({
-        status: "branch_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-same",
-      }),
+      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-same" }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review(
-        "grn-1",
-        "approved",
-        "fine",
-        "u-same",
-        "finance_head",
-      ),
+      grnSmartService.review("grn-1", "approved", "fine", "u-same", "finance_head")
     ).rejects.toThrow(/Maker-checker/i);
   });
 
   it("REJECTION by the same person is allowed — it creates no financial commitment", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-same" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-same" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "rejected",
-      "wrong vendor",
-      "u-same",
-      "branch_head",
-    );
+    const result = await grnSmartService.review("grn-1", "rejected", "wrong vendor", "u-same", "branch_head");
     expect(result.newStatus).toBe("rejected");
   });
 
   it("a rejection with no remarks is refused at every stage", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review("grn-1", "rejected", "   ", "u-bh", "branch_head"),
+      grnSmartService.review("grn-1", "rejected", "   ", "u-bh", "branch_head")
     ).rejects.toThrow(/remarks are mandatory/i);
   });
 });
@@ -579,31 +409,18 @@ describe("Maker-checker — enforced on identity, not on role name", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("Review stage guards", () => {
   it("a Branch Head can only review a submitted GRN", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({
-        status: "branch_head_approved",
-        submitted_by: "u-raiser",
-      }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head"),
+      grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head")
     ).rejects.toThrow(/only review submitted GRNs/i);
   });
 
   it("an Accounts Head can only review a Branch-Head-approved GRN", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review(
-        "grn-1",
-        "approved",
-        "ok",
-        "u-ah",
-        "accounts_head",
-      ),
+      grnSmartService.review("grn-1", "approved", "ok", "u-ah", "accounts_head")
     ).rejects.toThrow(/only review Branch Head-approved/i);
   });
 
@@ -611,36 +428,27 @@ describe("Review stage guards", () => {
     // 3-stage chain (owner ruling, 2026-09-12): a GRN that only cleared Branch Head is not yet
     // Finance Head's to review — it is Accounts Head's.
     stateRef.current = makeState({
-      grn: baseGrn({
-        status: "branch_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-      }),
+      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head"),
+      grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head")
     ).rejects.toThrow(/only review Accounts-Head-approved/i);
   });
 
   it("no other role may review at all", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review("grn-1", "approved", "ok", "u-x", "hr_admin"),
+      grnSmartService.review("grn-1", "approved", "ok", "u-x", "hr_admin")
     ).rejects.toThrow(/not permitted to review/i);
   });
 
   it("a GRN with no saved allocations cannot be reviewed", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }),
-      allocations: [],
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }), allocations: [] });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head"),
+      grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head")
     ).rejects.toThrow(/no saved cost allocations/i);
   });
 });
@@ -648,17 +456,9 @@ describe("Review stage guards", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("What each approval stage actually does to the money", () => {
   it("Branch Head approval RESERVES and does not consume", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-bh",
-      "branch_head",
-    );
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head");
     expect(result.newStatus).toBe("branch_head_approved");
     expect(sideEffects.reserved).toEqual([{ lineId: "line-A", amount: 1000 }]);
     expect(sideEffects.consumed).toHaveLength(0);
@@ -667,20 +467,10 @@ describe("What each approval stage actually does to the money", () => {
 
   it("Accounts Head approval moves the stage on WITHOUT touching budget — Branch Head's reservation stands", async () => {
     stateRef.current = makeState({
-      grn: baseGrn({
-        status: "branch_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-      }),
+      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-ah",
-      "accounts_head",
-    );
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-ah", "accounts_head");
     expect(result.newStatus).toBe("accounts_head_approved");
     expect(sideEffects.reserved).toHaveLength(0);
     expect(sideEffects.consumed).toHaveLength(0);
@@ -689,21 +479,11 @@ describe("What each approval stage actually does to the money", () => {
 
   it("an Accounts Head REJECTION releases the reservation Branch Head made — nothing was consumed yet", async () => {
     stateRef.current = makeState({
-      grn: baseGrn({
-        status: "branch_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-      }),
+      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
       allocations: [reservedAllocation()],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "rejected",
-      "not approved",
-      "u-ah",
-      "accounts_head",
-    );
+    const result = await grnSmartService.review("grn-1", "rejected", "not approved", "u-ah", "accounts_head");
     expect(result.newStatus).toBe("rejected");
     expect(sideEffects.released).toEqual([{ lineId: "line-A", amount: 1000 }]);
     expect(sideEffects.consumed).toHaveLength(0);
@@ -712,20 +492,12 @@ describe("What each approval stage actually does to the money", () => {
   it("Finance Head approval of a VENDOR GRN consumes and creates the payable", async () => {
     stateRef.current = makeState({
       grn: baseGrn({
-        status: "accounts_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-        accounts_head_reviewed_by: "u-ah",
+        status: "accounts_head_approved", submitted_by: "u-raiser",
+        branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-fh",
-      "finance_head",
-    );
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
     expect(result.newStatus).toBe("pending_accounts_payment");
     expect(sideEffects.consumed).toEqual([{ lineId: "line-A", amount: 1000 }]);
     expect(sideEffects.payablesCreatedFor).toEqual(["grn-1"]);
@@ -735,31 +507,18 @@ describe("What each approval stage actually does to the money", () => {
   it("Finance Head approval of an IMPREST GRN debits the float and raises no payable", async () => {
     stateRef.current = makeState({
       grn: baseGrn({
-        grn_type: "imprest",
-        status: "accounts_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-        accounts_head_reviewed_by: "u-ah",
+        grn_type: "imprest", status: "accounts_head_approved",
+        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
       imprestManagers: [{ id: "mgr-1" }],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-fh",
-      "finance_head",
-    );
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
     expect(result.newStatus).toBe("approved");
     expect(sideEffects.payablesCreatedFor).toHaveLength(0);
-    expect(sideEffects.imprestDebits).toEqual([
-      { grnId: "grn-1", amount: 1000 },
-    ]);
+    expect(sideEffects.imprestDebits).toEqual([{ grnId: "grn-1", amount: 1000 }]);
     // The float must be checked BEFORE it is debited, inside the same transaction.
-    expect(sideEffects.imprestBalanceChecks).toEqual([
-      { managerId: "mgr-1", amount: 1000 },
-    ]);
+    expect(sideEffects.imprestBalanceChecks).toEqual([{ managerId: "mgr-1", amount: 1000 }]);
   });
 
   it("an imprest branch with NO appointed manager still approves, and the skip is audited", async () => {
@@ -767,22 +526,13 @@ describe("What each approval stage actually does to the money", () => {
     // imprest approval the moment it deployed. The skip has to be visible, not silent.
     stateRef.current = makeState({
       grn: baseGrn({
-        grn_type: "imprest",
-        status: "accounts_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-        accounts_head_reviewed_by: "u-ah",
+        grn_type: "imprest", status: "accounts_head_approved",
+        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
       imprestManagers: [],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-fh",
-      "finance_head",
-    );
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
     expect(result.newStatus).toBe("approved");
     expect(sideEffects.imprestDebits).toHaveLength(0);
     expect(sideEffects.auditActions).toContain("GRN_IMPREST_LEDGER_SKIPPED");
@@ -794,74 +544,40 @@ describe("What each approval stage actually does to the money", () => {
     // the normal case, not the exception.
     stateRef.current = makeState({
       grn: baseGrn({
-        grn_type: "imprest",
-        status: "accounts_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-        accounts_head_reviewed_by: "u-ah",
+        grn_type: "imprest", status: "accounts_head_approved",
+        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
       imprestManagers: [{ id: "mgr-1" }],
       floatShort: true,
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-fh",
-      "finance_head",
-    );
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
     expect(result.newStatus).toBe("approved");
-    expect(sideEffects.imprestDebits).toEqual([
-      { grnId: "grn-1", amount: 1000 },
-    ]);
-    expect(sideEffects.auditActions).toContain(
-      "GRN_IMPREST_LEDGER_NEGATIVE_BALANCE",
-    );
+    expect(sideEffects.imprestDebits).toEqual([{ grnId: "grn-1", amount: 1000 }]);
+    expect(sideEffects.auditActions).toContain("GRN_IMPREST_LEDGER_NEGATIVE_BALANCE");
   });
 
   it("a Finance Head REJECTION releases the reservation", async () => {
     stateRef.current = makeState({
       grn: baseGrn({
-        status: "accounts_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-        accounts_head_reviewed_by: "u-ah",
+        status: "accounts_head_approved", submitted_by: "u-raiser",
+        branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
       allocations: [reservedAllocation()],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "rejected",
-      "not approved",
-      "u-fh",
-      "finance_head",
-    );
+    const result = await grnSmartService.review("grn-1", "rejected", "not approved", "u-fh", "finance_head");
     expect(result.newStatus).toBe("rejected");
     expect(sideEffects.released).toEqual([{ lineId: "line-A", amount: 1000 }]);
     expect(sideEffects.consumed).toHaveLength(0);
   });
 
   it("records an approval event naming the stage that was cleared", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-bh",
-      "branch_head",
-    );
+    await grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head");
     expect(sideEffects.approvalEvents).toEqual([
-      {
-        action: "approve",
-        fromStatus: "submitted",
-        toStatus: "branch_head_approved",
-        actorRole: "branch_head",
-      },
+      { action: "approve", fromStatus: "submitted", toStatus: "branch_head_approved", actorRole: "branch_head" },
     ]);
   });
 });
@@ -869,17 +585,9 @@ describe("What each approval stage actually does to the money", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("GRN numbering happens at Finance Head approval, not before — Owner ruling", () => {
   it("Branch Head approval does NOT allocate a number — the GRN is still pending final approval", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-bh",
-      "branch_head",
-    );
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head");
     expect(result.newStatus).toBe("branch_head_approved");
     expect(result.grnNumber).toBeNull();
   });
@@ -887,20 +595,12 @@ describe("GRN numbering happens at Finance Head approval, not before — Owner r
   it("Finance Head approval DOES allocate one, on a VENDOR GRN", async () => {
     stateRef.current = makeState({
       grn: baseGrn({
-        status: "accounts_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-        accounts_head_reviewed_by: "u-ah",
+        status: "accounts_head_approved", submitted_by: "u-raiser",
+        branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-fh",
-      "finance_head",
-    );
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
     expect(result.newStatus).toBe("pending_accounts_payment");
     expect(result.grnNumber).toBe("GRN/BR1/2026-27/0007");
   });
@@ -908,22 +608,13 @@ describe("GRN numbering happens at Finance Head approval, not before — Owner r
   it("Finance Head approval DOES allocate one, on an IMPREST GRN too — both types share one final stage", async () => {
     stateRef.current = makeState({
       grn: baseGrn({
-        grn_type: "imprest",
-        status: "accounts_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-        accounts_head_reviewed_by: "u-ah",
+        grn_type: "imprest", status: "accounts_head_approved",
+        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
       imprestManagers: [{ id: "mgr-1" }],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-fh",
-      "finance_head",
-    );
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
     expect(result.newStatus).toBe("approved");
     expect(result.grnNumber).toBe("GRN/BR1/2026-27/0007");
   });
@@ -931,37 +622,21 @@ describe("GRN numbering happens at Finance Head approval, not before — Owner r
   it("a Finance Head REJECTION never allocates one — the deliberate, approved consequence", async () => {
     stateRef.current = makeState({
       grn: baseGrn({
-        status: "accounts_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-        accounts_head_reviewed_by: "u-ah",
+        status: "accounts_head_approved", submitted_by: "u-raiser",
+        branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
       allocations: [reservedAllocation()],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "rejected",
-      "not approved",
-      "u-fh",
-      "finance_head",
-    );
+    const result = await grnSmartService.review("grn-1", "rejected", "not approved", "u-fh", "finance_head");
     expect(result.newStatus).toBe("rejected");
     expect(result.grnNumber).toBeNull();
   });
 
   it("a Branch Head REJECTION never allocates one either — it never reaches Finance Head at all", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "rejected",
-      "not approved",
-      "u-bh",
-      "branch_head",
-    );
+    const result = await grnSmartService.review("grn-1", "rejected", "not approved", "u-bh", "branch_head");
     expect(result.newStatus).toBe("rejected");
     expect(result.grnNumber).toBeNull();
   });
@@ -969,21 +644,13 @@ describe("GRN numbering happens at Finance Head approval, not before — Owner r
   it("an existing number (a legacy migrated row, or a retried approval) is kept, never reissued", async () => {
     stateRef.current = makeState({
       grn: baseGrn({
-        status: "accounts_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-        accounts_head_reviewed_by: "u-ah",
+        status: "accounts_head_approved", submitted_by: "u-raiser",
+        branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
         grn_number: "GRN/BR1/2026-27/0001",
       }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-fh",
-      "finance_head",
-    );
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
     expect(result.grnNumber).toBe("GRN/BR1/2026-27/0001");
   });
 });
@@ -991,31 +658,21 @@ describe("GRN numbering happens at Finance Head approval, not before — Owner r
 // ─────────────────────────────────────────────────────────────────────────────
 describe("Period lock is re-checked inside the approval transaction", () => {
   it("a lock landing between the API check and the write still stops the approval", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     periodLocked.mockResolvedValue(true);
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head"),
+      grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head")
     ).rejects.toThrow(/locked for P&L close/i);
     expect(sideEffects.reserved).toHaveLength(0);
   });
 
   it("a locked period does not stop a REJECTION — nothing is being committed", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     periodLocked.mockResolvedValue(true);
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review(
-        "grn-1",
-        "rejected",
-        "wrong",
-        "u-bh",
-        "branch_head",
-      ),
+      grnSmartService.review("grn-1", "rejected", "wrong", "u-bh", "branch_head")
     ).rejects.toThrow(/locked for P&L close/i);
   });
 });
@@ -1025,84 +682,43 @@ describe("Validation overrides", () => {
   const draftGrn = () => baseGrn({ status: "draft" });
 
   it("LOB_ATTRIBUTION can never be overridden — it is the one structural control", async () => {
-    stateRef.current = makeState({
-      grn: draftGrn(),
-      validations: [{ code: "LOB_ATTRIBUTION", status: "failed", blocking: 1 }],
-    });
-    const { grnValidationControlService } =
-      await import("../grn-validation-control.service.js");
+    stateRef.current = makeState({ grn: draftGrn(), validations: [{ code: "LOB_ATTRIBUTION", status: "failed", blocking: 1 }] });
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
     await expect(
-      grnValidationControlService.overrideValidation(
-        "grn-1",
-        "LOB_ATTRIBUTION",
-        "Finance accepts this exception",
-        "u-fh",
-        "finance_head",
-      ),
+      grnValidationControlService.overrideValidation("grn-1", "LOB_ATTRIBUTION", "Finance accepts this exception", "u-fh", "finance_head")
     ).rejects.toThrow(/structural attribution control/i);
   });
 
   it("a reason under 10 characters is refused", async () => {
     stateRef.current = makeState({ grn: draftGrn(), validations: BLOCKED });
-    const { grnValidationControlService } =
-      await import("../grn-validation-control.service.js");
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
     await expect(
-      grnValidationControlService.overrideValidation(
-        "grn-1",
-        "DOCUMENT_REQUIRED",
-        "ok",
-        "u-fh",
-        "finance_head",
-      ),
+      grnValidationControlService.overrideValidation("grn-1", "DOCUMENT_REQUIRED", "ok", "u-fh", "finance_head")
     ).rejects.toThrow(/at least 10 characters/i);
   });
 
   it("a validation that never ran cannot be overridden", async () => {
     stateRef.current = makeState({ grn: draftGrn(), validations: [] });
-    const { grnValidationControlService } =
-      await import("../grn-validation-control.service.js");
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
     await expect(
-      grnValidationControlService.overrideValidation(
-        "grn-1",
-        "DOCUMENT_REQUIRED",
-        "Finance accepts this exception",
-        "u-fh",
-        "finance_head",
-      ),
+      grnValidationControlService.overrideValidation("grn-1", "DOCUMENT_REQUIRED", "Finance accepts this exception", "u-fh", "finance_head")
     ).rejects.toThrow(/Run GRN validation before/i);
   });
 
   it("a PASSING validation cannot be overridden — there is nothing to waive", async () => {
     stateRef.current = makeState({ grn: draftGrn(), validations: PASSING });
-    const { grnValidationControlService } =
-      await import("../grn-validation-control.service.js");
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
     await expect(
-      grnValidationControlService.overrideValidation(
-        "grn-1",
-        "DOCUMENT_REQUIRED",
-        "Finance accepts this exception",
-        "u-fh",
-        "finance_head",
-      ),
+      grnValidationControlService.overrideValidation("grn-1", "DOCUMENT_REQUIRED", "Finance accepts this exception", "u-fh", "finance_head")
     ).rejects.toThrow(/do not require an override/i);
   });
 
   for (const closed of ["paid", "approved", "cancelled", "rejected"]) {
     it(`an override cannot be changed once the GRN is ${closed}`, async () => {
-      stateRef.current = makeState({
-        grn: baseGrn({ status: closed }),
-        validations: BLOCKED,
-      });
-      const { grnValidationControlService } =
-        await import("../grn-validation-control.service.js");
+      stateRef.current = makeState({ grn: baseGrn({ status: closed }), validations: BLOCKED });
+      const { grnValidationControlService } = await import("../grn-validation-control.service.js");
       await expect(
-        grnValidationControlService.overrideValidation(
-          "grn-1",
-          "DOCUMENT_REQUIRED",
-          "Finance accepts this exception",
-          "u-fh",
-          "finance_head",
-        ),
+        grnValidationControlService.overrideValidation("grn-1", "DOCUMENT_REQUIRED", "Finance accepts this exception", "u-fh", "finance_head")
       ).rejects.toThrow(/after final closure/i);
     });
   }
@@ -1111,21 +727,10 @@ describe("Validation overrides", () => {
     stateRef.current = makeState({
       grn: baseGrn(),
       validations: BLOCKED,
-      overrides: [
-        {
-          validation_code: "DOCUMENT_REQUIRED",
-          override_reason: "Proof held offline by Finance",
-          approved_by: "u-fh",
-        },
-      ],
+      overrides: [{ validation_code: "DOCUMENT_REQUIRED", override_reason: "Proof held offline by Finance", approved_by: "u-fh" }],
     });
-    const { grnValidationControlService } =
-      await import("../grn-validation-control.service.js");
-    const result = await grnValidationControlService.submit(
-      "grn-1",
-      "u1",
-      "branch_admin",
-    );
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
+    const result = await grnValidationControlService.submit("grn-1", "u1", "branch_admin");
     expect(result.newStatus).toBe("submitted");
   });
 
@@ -1134,46 +739,23 @@ describe("Validation overrides", () => {
     // created — so a row inserted by any other means still cannot waive it.
     stateRef.current = makeState({
       grn: baseGrn(),
-      validations: [
-        {
-          code: "LOB_ATTRIBUTION",
-          status: "failed",
-          blocking: 1,
-          message: "requires an exact LOB mapping",
-        },
-      ],
-      overrides: [
-        {
-          validation_code: "LOB_ATTRIBUTION",
-          override_reason: "Trying to waive it",
-          approved_by: "u-fh",
-        },
-      ],
+      validations: [{ code: "LOB_ATTRIBUTION", status: "failed", blocking: 1, message: "requires an exact LOB mapping" }],
+      overrides: [{ validation_code: "LOB_ATTRIBUTION", override_reason: "Trying to waive it", approved_by: "u-fh" }],
     });
-    const { grnValidationControlService } =
-      await import("../grn-validation-control.service.js");
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
     await expect(
-      grnValidationControlService.submit("grn-1", "u1", "branch_admin"),
+      grnValidationControlService.submit("grn-1", "u1", "branch_admin")
     ).rejects.toThrow(/LOB/i);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("Cancel and reopen", () => {
-  for (const status of [
-    "pending_accounts_payment",
-    "payment_scheduled",
-    "partially_paid",
-    "paid",
-    "approved",
-    "cancelled",
-  ]) {
+  for (const status of ["pending_accounts_payment", "payment_scheduled", "partially_paid", "paid", "approved", "cancelled"]) {
     it(`cannot cancel from ${status} — it is already accounted for`, async () => {
       stateRef.current = makeState({ grn: baseGrn({ status }) });
       const { grnSmartService } = await import("../grn-smart.service.js");
-      await expect(
-        grnSmartService.cancel("grn-1", "u1", "branch_admin"),
-      ).rejects.toThrow(/Cannot cancel/i);
+      await expect(grnSmartService.cancel("grn-1", "u1", "branch_admin")).rejects.toThrow(/Cannot cancel/i);
     });
   }
 
@@ -1200,9 +782,7 @@ describe("Cancel and reopen", () => {
   it("a cancel does not release a row that was never reserved, even from an approved status", async () => {
     // The status says a reservation should exist; the row says it does not. Releasing on the
     // strength of the status alone would hand back budget that was never taken.
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "branch_head_approved" }),
-    }); // allocation is 'draft'
+    stateRef.current = makeState({ grn: baseGrn({ status: "branch_head_approved" }) }); // allocation is 'draft'
     const { grnSmartService } = await import("../grn-smart.service.js");
     await grnSmartService.cancel("grn-1", "u1", "branch_admin");
     expect(sideEffects.released).toHaveLength(0);
@@ -1215,71 +795,44 @@ describe("Cancel and reopen", () => {
     expect(sideEffects.released).toHaveLength(0);
   });
 
-  for (const status of [
-    "draft",
-    "submitted",
-    "branch_head_approved",
-    "accounts_head_approved",
-    "paid",
-    "cancelled",
-  ]) {
+  for (const status of ["draft", "submitted", "branch_head_approved", "accounts_head_approved", "paid", "cancelled"]) {
     it(`cannot reopen from ${status}`, async () => {
-      stateRef.current = makeState({
-        grn: baseGrn({ status, created_by: "u1" }),
-      });
+      stateRef.current = makeState({ grn: baseGrn({ status, created_by: "u1" }) });
       const { grnSmartService } = await import("../grn-smart.service.js");
-      await expect(
-        grnSmartService.reopen("grn-1", "u1", "branch_admin"),
-      ).rejects.toThrow(/cannot be reopened/i);
+      await expect(grnSmartService.reopen("grn-1", "u1", "branch_admin")).rejects.toThrow(/cannot be reopened/i);
     });
   }
 
   it("the creator can reopen a rejected GRN, and it lands back in draft", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "rejected", created_by: "u1" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "rejected", created_by: "u1" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
     const result = await grnSmartService.reopen("grn-1", "u1", "branch_admin");
     expect(result.newStatus).toBe("draft");
   });
 
   it("a stranger cannot reopen someone else's rejected GRN", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "rejected", created_by: "u1" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "rejected", created_by: "u1" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.reopen("grn-1", "u-other", "branch_admin"),
+      grnSmartService.reopen("grn-1", "u-other", "branch_admin")
     ).rejects.toThrow(/Only the GRN creator/i);
   });
 
   it("Finance Head can reopen anyone's rejected GRN", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "rejected", created_by: "u1" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "rejected", created_by: "u1" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const result = await grnSmartService.reopen(
-      "grn-1",
-      "u-fh",
-      "finance_head",
-    );
+    const result = await grnSmartService.reopen("grn-1", "u-fh", "finance_head");
     expect(result.newStatus).toBe("draft");
   });
 
   it("a Branch Head can reopen one returned TO them, but not one returned to the raiser", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "returned_to_branch_head", created_by: "u1" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "returned_to_branch_head", created_by: "u1" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    await expect(
-      grnSmartService.reopen("grn-1", "u-bh", "branch_head"),
-    ).resolves.toMatchObject({ newStatus: "draft" });
+    await expect(grnSmartService.reopen("grn-1", "u-bh", "branch_head")).resolves.toMatchObject({ newStatus: "draft" });
 
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "returned_to_raiser", created_by: "u1" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "returned_to_raiser", created_by: "u1" }) });
     await expect(
-      grnSmartService.reopen("grn-1", "u-bh", "branch_head"),
+      grnSmartService.reopen("grn-1", "u-bh", "branch_head")
     ).rejects.toThrow(/Only the GRN creator/i);
   });
 });
@@ -1299,60 +852,33 @@ describe("Cancel and reopen", () => {
 describe("Bell notification fires on the path allocation-aware GRNs actually take", () => {
   it("submit() notifies the branch_head stage", async () => {
     stateRef.current = makeState({ grn: baseGrn(), validations: PASSING });
-    const { grnValidationControlService } =
-      await import("../grn-validation-control.service.js");
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
     await grnValidationControlService.submit("grn-1", "u1", "branch_admin");
     expect(sideEffects.notifiedStages).toEqual(["branch_head"]);
   });
 
   it("a Branch Head approval closes its own alert and opens the accounts_head stage", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-bh",
-      "branch_head",
-    );
+    await grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head");
     expect(sideEffects.resolvedNotifications).toBe(1);
     expect(sideEffects.notifiedStages).toEqual(["accounts_head"]);
   });
 
   it("an Accounts Head approval closes its own alert and opens the finance_head stage", async () => {
     stateRef.current = makeState({
-      grn: baseGrn({
-        status: "branch_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-      }),
+      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-ah",
-      "accounts_head",
-    );
+    await grnSmartService.review("grn-1", "approved", "ok", "u-ah", "accounts_head");
     expect(sideEffects.resolvedNotifications).toBe(1);
     expect(sideEffects.notifiedStages).toEqual(["finance_head"]);
   });
 
   it("a Branch Head rejection closes its own alert and opens nothing further — the chain ends", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    await grnSmartService.review(
-      "grn-1",
-      "rejected",
-      "wrong vendor",
-      "u-bh",
-      "branch_head",
-    );
+    await grnSmartService.review("grn-1", "rejected", "wrong vendor", "u-bh", "branch_head");
     expect(sideEffects.resolvedNotifications).toBe(1);
     expect(sideEffects.notifiedStages).toEqual([]);
   });
@@ -1360,34 +886,21 @@ describe("Bell notification fires on the path allocation-aware GRNs actually tak
   it("a Finance Head's own decision (approve or reject) closes its alert and raises nothing new — Finance Head is the final stage", async () => {
     stateRef.current = makeState({
       grn: baseGrn({
-        status: "accounts_head_approved",
-        submitted_by: "u-raiser",
-        branch_head_reviewed_by: "u-bh",
-        accounts_head_reviewed_by: "u-ah",
+        status: "accounts_head_approved", submitted_by: "u-raiser",
+        branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    await grnSmartService.review(
-      "grn-1",
-      "approved",
-      "ok",
-      "u-fh",
-      "finance_head",
-    );
+    await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
     expect(sideEffects.resolvedNotifications).toBe(1);
     expect(sideEffects.notifiedStages).toEqual([]);
   });
 
   it("a refused review (wrong stage, maker-checker, etc.) notifies nobody — no transition occurred", async () => {
-    stateRef.current = makeState({
-      grn: baseGrn({
-        status: "branch_head_approved",
-        submitted_by: "u-raiser",
-      }),
-    });
+    stateRef.current = makeState({ grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head"),
+      grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head")
     ).rejects.toThrow();
     expect(sideEffects.resolvedNotifications).toBe(0);
     expect(sideEffects.notifiedStages).toEqual([]);

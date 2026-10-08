@@ -4,15 +4,8 @@ import { withLobNames } from "../../shared/lobNames.js";
 import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import {
-  getEmployeeForUser,
-  hasProcessScope,
-  hasRole,
-} from "../../shared/accessGuard.js";
-import {
-  rosterGovernanceService,
-  type RosterCycle,
-} from "./roster.governance.service.js";
+import { getEmployeeForUser, hasProcessScope, hasRole } from "../../shared/accessGuard.js";
+import { rosterGovernanceService, type RosterCycle } from "./roster.governance.service.js";
 import { rosterGenerationService } from "./roster-generation.service.js";
 import { rtaSyncService } from "./rta-sync.service.js";
 import { weekoffAllocationService } from "./weekoff-allocation.service.js";
@@ -43,8 +36,7 @@ async function canTouchWeekOffPolicy(req: AuthenticatedRequest, row: WeekOffPoli
 }
 
 const router = Router();
-const h = (fn: Function) => (req: any, res: any, next: any) =>
-  fn(req, res).catch(next);
+const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 const SCOPED_MONITORS = ["manager", "wfm", "assistant_manager", "tl"];
 
@@ -57,47 +49,26 @@ async function canOwnRoster(req: AuthenticatedRequest, processId: string, branch
   return canOwnRosterForUser(req.authUser!.id, processId, branchId);
 }
 
-async function canMonitorRoster(
-  req: AuthenticatedRequest,
-  processId: string,
-  branchId?: string | null,
-): Promise<boolean> {
+async function canMonitorRoster(req: AuthenticatedRequest, processId: string, branchId?: string | null): Promise<boolean> {
   const userId = req.authUser!.id;
   if (await isOrgWideUser(userId)) return true;
   const roleOk = (await hasProcessScope(userId, processId, branchId, ...SCOPED_MONITORS)) || (await hasRole(userId, "hr"));
   return roleOk && (await userCanAccessProcess(userId, processId, branchId));
 }
 
-async function requireCycleOwner(
-  req: AuthenticatedRequest,
-  res: Response,
-): Promise<RosterCycle | null> {
+async function requireCycleOwner(req: AuthenticatedRequest, res: Response): Promise<RosterCycle | null> {
   const cycle = await rosterGovernanceService.getCycle(req.params.id);
   if (!(await canOwnRoster(req, cycle.process_id, cycle.branch_id))) {
-    res
-      .status(403)
-      .json({
-        success: false,
-        message:
-          "Forbidden: roster ownership is limited to mapped Process Manager/WFM scope",
-      });
+    res.status(403).json({ success: false, message: "Forbidden: roster ownership is limited to mapped Process Manager/WFM scope" });
     return null;
   }
   return cycle;
 }
 
-async function requireCycleMonitor(
-  req: AuthenticatedRequest,
-  res: Response,
-): Promise<RosterCycle | null> {
+async function requireCycleMonitor(req: AuthenticatedRequest, res: Response): Promise<RosterCycle | null> {
   const cycle = await rosterGovernanceService.getCycle(req.params.id);
   if (!(await canMonitorRoster(req, cycle.process_id, cycle.branch_id))) {
-    res
-      .status(403)
-      .json({
-        success: false,
-        message: "Forbidden: roster visibility is limited to mapped scope",
-      });
+    res.status(403).json({ success: false, message: "Forbidden: roster visibility is limited to mapped scope" });
     return null;
   }
   return cycle;
@@ -179,14 +150,10 @@ router.post("/week-off-policy-default", h(async (req: AuthenticatedRequest, res:
     if (!scopedWfm) {
       return res.status(403).json({ success: false, message: "Forbidden: week-off policy defaults require Admin, or mapped WFM scope for a process-level policy" });
     }
-    const data = await weekOffPolicyConfigService.create(
-      req.body,
-      req.authUser!.id,
-      req,
-    );
-    return res.status(201).json({ success: true, data });
-  }),
-);
+  }
+  const data = await weekOffPolicyConfigService.create(req.body, req.authUser!.id, req);
+  return res.status(201).json({ success: true, data });
+}));
 
 router.patch("/week-off-policy-default/:id", h(async (req: AuthenticatedRequest, res: Response) => {
   if (!(await hasRole(req.authUser!.id, "admin", "wfm"))) {
@@ -225,30 +192,23 @@ router.delete("/week-off-policy-default/:id", h(async (req: AuthenticatedRequest
 // clearly marked, rather than deleted or silently "fixed" — edit rosterSelfSecureRouter's
 // "/my-cycles" instead if this behavior needs to change; editing this one does nothing.
 // GET /my-cycles — employee-scoped: returns cycles for the employee's own process only
-router.get(
-  "/my-cycles",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp)
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
+router.get("/my-cycles", h(async (req: AuthenticatedRequest, res: Response) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT process_id FROM employees WHERE id = ? LIMIT 1",
-      [emp.id],
-    );
-    const processId = (rows as RowDataPacket[])[0]?.process_id as
-      string | undefined;
-    if (!processId) return res.json({ data: [] });
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT process_id FROM employees WHERE id = ? LIMIT 1',
+    [emp.id]
+  );
+  const processId = (rows as RowDataPacket[])[0]?.process_id as string | undefined;
+  if (!processId) return res.json({ data: [] });
 
-    const statusFilter = req.query.status as string | undefined;
-    const queryParams: Record<string, unknown> = { process_id: processId };
-    if (statusFilter) queryParams.status = statusFilter;
-    const data = await rosterGovernanceService.listCycles(queryParams as any);
-    return res.json({ data });
-  }),
-);
+  const statusFilter = req.query.status as string | undefined;
+  const queryParams: Record<string, unknown> = { process_id: processId };
+  if (statusFilter) queryParams.status = statusFilter;
+  const data = await rosterGovernanceService.listCycles(queryParams as any);
+  return res.json({ data });
+}));
 
 router.get("/cycles", h(async (req: AuthenticatedRequest, res: Response) => {
   const processId = req.query.process_id as string | undefined;
@@ -265,52 +225,27 @@ router.get("/cycles", h(async (req: AuthenticatedRequest, res: Response) => {
 }));
 
 // Process Manager and WFM both own weekly roster planning in their mapped scope.
-router.post(
-  "/cycles",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { process_id, branch_id, week_start_date, week_end_date } = req.body;
-    if (!process_id || !week_start_date || !week_end_date) {
-      return res
-        .status(400)
-        .json({
-          error: "process_id, week_start_date, week_end_date are required",
-        });
-    }
-    if (!(await canOwnRoster(req, process_id, branch_id ?? null))) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message:
-            "Forbidden: only mapped Process Manager/WFM may create roster cycles",
-        });
-    }
-    const data = await rosterGovernanceService.createCycle(
-      req.body,
-      req.authUser!.id,
-      req,
-    );
-    return res.status(201).json({ data });
-  }),
-);
+router.post("/cycles", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { process_id, branch_id, week_start_date, week_end_date } = req.body;
+  if (!process_id || !week_start_date || !week_end_date) {
+    return res.status(400).json({ error: "process_id, week_start_date, week_end_date are required" });
+  }
+  if (!(await canOwnRoster(req, process_id, branch_id ?? null))) {
+    return res.status(403).json({ success: false, message: "Forbidden: only mapped Process Manager/WFM may create roster cycles" });
+  }
+  const data = await rosterGovernanceService.createCycle(req.body, req.authUser!.id, req);
+  return res.status(201).json({ data });
+}));
 
 // Draft-to-publish and closing status ownership remains with mapped Process
 // Manager/WFM (or Admin override), not TL/Assistant Manager.
-router.post(
-  "/cycles/:id/status",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { status } = req.body;
-    if (!status) return res.status(400).json({ error: "status is required" });
-    if (!(await requireCycleOwner(req, res))) return;
-    const data = await rosterGovernanceService.advanceCycleStatus(
-      req.params.id,
-      status,
-      req.authUser!.id,
-      req,
-    );
-    return res.json({ data });
-  }),
-);
+router.post("/cycles/:id/status", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { status } = req.body;
+  if (!status) return res.status(400).json({ error: "status is required" });
+  if (!(await requireCycleOwner(req, res))) return;
+  const data = await rosterGovernanceService.advanceCycleStatus(req.params.id, status, req.authUser!.id, req);
+  return res.json({ data });
+}));
 
 // ── Daily Assignments ─────────────────────────────────────────────────────────
 router.get("/cycles/:id/assignments", h(async (req: AuthenticatedRequest, res: Response) => {
@@ -328,44 +263,23 @@ router.get("/cycles/:id/assignments", h(async (req: AuthenticatedRequest, res: R
   return res.json({ data });
 }));
 
-router.post(
-  "/cycles/:id/assignments/bulk",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { assignments } = req.body;
-    if (!Array.isArray(assignments) || assignments.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "assignments array is required and must not be empty" });
-    }
-    if (!(await requireCycleOwner(req, res))) return;
-    const data = await rosterGovernanceService.bulkUpsertAssignments(
-      req.params.id,
-      assignments,
-      req.authUser!.id,
-      req,
-    );
-    return res.json({ data });
-  }),
-);
+router.post("/cycles/:id/assignments/bulk", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { assignments } = req.body;
+  if (!Array.isArray(assignments) || assignments.length === 0) {
+    return res.status(400).json({ error: "assignments array is required and must not be empty" });
+  }
+  if (!(await requireCycleOwner(req, res))) return;
+  const data = await rosterGovernanceService.bulkUpsertAssignments(req.params.id, assignments, req.authUser!.id, req);
+  return res.json({ data });
+}));
 
 // ── Employee Self-Acknowledgement ─────────────────────────────────────────────
-router.post(
-  "/cycles/:id/acknowledge",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp)
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
-    const data = await rosterGovernanceService.acknowledgeRoster(
-      req.params.id,
-      emp.id,
-      req.authUser!.id,
-      req,
-    );
-    return res.json({ data });
-  }),
-);
+router.post("/cycles/:id/acknowledge", h(async (req: AuthenticatedRequest, res: Response) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+  const data = await rosterGovernanceService.acknowledgeRoster(req.params.id, emp.id, req.authUser!.id, req);
+  return res.json({ data });
+}));
 
 // DEAD CODE — unreachable in production, same class of collision as "/my-cycles" above:
 // rosterSelfSecureRouter defines the identical "/my-roster/:cycleId" and is mounted first
@@ -374,198 +288,102 @@ router.post(
 // so this specific one is lower-risk dead code — but it's still never invoked. Edit
 // rosterSelfSecureRouter's "/my-roster/:cycleId" instead if this behavior needs to change.
 // Get employee's own roster assignments for a cycle
-router.get(
-  "/my-roster/:cycleId",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp)
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
-    const data = await rosterGovernanceService.getAssignments(
-      req.params.cycleId,
-      emp.id,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/my-roster/:cycleId", h(async (req: AuthenticatedRequest, res: Response) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+  const data = await rosterGovernanceService.getAssignments(req.params.cycleId, emp.id);
+  return res.json({ success: true, data });
+}));
 
 // ── Amendments ────────────────────────────────────────────────────────────────
 // List all amendments (change-log entries) for a published/active cycle
-router.get(
-  "/cycles/:cycleId/amendments",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const cycle = await rosterGovernanceService.getCycle(req.params.cycleId);
-    if (!(await canMonitorRoster(req, cycle.process_id, cycle.branch_id))) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Forbidden: mapped roster scope is required",
-        });
-    }
-    const amendments = await rosterGovernanceService.listChangeLogs(
-      req.params.cycleId,
-    );
-    return res.json({ amendments });
-  }),
-);
+router.get("/cycles/:cycleId/amendments", h(async (req: AuthenticatedRequest, res: Response) => {
+  const cycle = await rosterGovernanceService.getCycle(req.params.cycleId);
+  if (!(await canMonitorRoster(req, cycle.process_id, cycle.branch_id))) {
+    return res.status(403).json({ success: false, message: "Forbidden: mapped roster scope is required" });
+  }
+  const amendments = await rosterGovernanceService.listChangeLogs(req.params.cycleId);
+  return res.json({ amendments });
+}));
 
 // Create a post-publish amendment — requires roster ownership scope
-router.post(
-  "/cycles/:cycleId/amendments",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { employeeId, date, newShiftId, newAssignmentType, reason } =
-      req.body;
-    if (!employeeId || !date || !newAssignmentType || !reason) {
-      return res
-        .status(400)
-        .json({
-          error: "employeeId, date, newAssignmentType, reason are required",
-        });
-    }
-    const cycle = await rosterGovernanceService.getCycle(req.params.cycleId);
-    if (!(await canOwnRoster(req, cycle.process_id, cycle.branch_id))) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message:
-            "Forbidden: only mapped Process Manager/WFM may create amendments",
-        });
-    }
-    const invalid = validateAmendmentInput(req.body, cycle);
-    if (invalid) return res.status(400).json({ error: invalid });
-    const [scopeRows] = await db.execute<RowDataPacket[]>(
-      "SELECT 1 FROM roster_daily_assignment WHERE cycle_id = ? AND employee_id = ? AND roster_date = ? LIMIT 1",
-      [req.params.cycleId, employeeId, date],
-    );
-    if (!(scopeRows as RowDataPacket[])[0]) {
-      return res
-        .status(400)
-        .json({
-          error: "Employee has no assignment in this cycle on that date",
-        });
-    }
-    const amendment = await rosterGovernanceService.createAmendment(
-      req.params.cycleId,
-      {
-        employeeId,
-        date,
-        newShiftId,
-        newAssignmentType,
-        reason: String(reason).trim(),
-      },
-      req.authUser!.id,
-      req,
-    );
-    // Mirror into the roster audit trail (best-effort; the amendment above is already committed).
-    await recordAmendmentInDecisionAudit({
-      cycleId: req.params.cycleId,
-      employeeId,
-      date,
-      newAssignmentType,
-      newShiftId,
-      reason: String(reason),
-      actorUserId: req.authUser!.id,
-      cycle,
-      oldShiftId:
-        (amendment as { old_shift_id?: string | null })?.old_shift_id ?? null,
-    });
-    return res.status(201).json({ amendment });
-  }),
-);
+router.post("/cycles/:cycleId/amendments", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId, date, newShiftId, newAssignmentType, reason } = req.body;
+  if (!employeeId || !date || !newAssignmentType || !reason) {
+    return res.status(400).json({ error: "employeeId, date, newAssignmentType, reason are required" });
+  }
+  const cycle = await rosterGovernanceService.getCycle(req.params.cycleId);
+  if (!(await canOwnRoster(req, cycle.process_id, cycle.branch_id))) {
+    return res.status(403).json({ success: false, message: "Forbidden: only mapped Process Manager/WFM may create amendments" });
+  }
+  const invalid = validateAmendmentInput(req.body, cycle);
+  if (invalid) return res.status(400).json({ error: invalid });
+  const [scopeRows] = await db.execute<RowDataPacket[]>(
+    "SELECT 1 FROM roster_daily_assignment WHERE cycle_id = ? AND employee_id = ? AND roster_date = ? LIMIT 1",
+    [req.params.cycleId, employeeId, date]
+  );
+  if (!(scopeRows as RowDataPacket[])[0]) {
+    return res.status(400).json({ error: "Employee has no assignment in this cycle on that date" });
+  }
+  const amendment = await rosterGovernanceService.createAmendment(
+    req.params.cycleId,
+    { employeeId, date, newShiftId, newAssignmentType, reason: String(reason).trim() },
+    req.authUser!.id,
+    req
+  );
+  // Mirror into the roster audit trail (best-effort; the amendment above is already committed).
+  await recordAmendmentInDecisionAudit({
+    cycleId: req.params.cycleId, employeeId, date, newAssignmentType, newShiftId,
+    reason: String(reason), actorUserId: req.authUser!.id, cycle,
+    oldShiftId: (amendment as { old_shift_id?: string | null })?.old_shift_id ?? null,
+  });
+  return res.status(201).json({ amendment });
+}));
 
 // ── Change Log ────────────────────────────────────────────────────────────────
-router.get(
-  "/cycles/:id/changes",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!(await requireCycleMonitor(req, res))) return;
-    const data = await rosterGovernanceService.listChangeLogs(
-      req.params.id,
-      req.query.employee_id as string | undefined,
-    );
-    return res.json({ data });
-  }),
-);
+router.get("/cycles/:id/changes", h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await requireCycleMonitor(req, res))) return;
+  const data = await rosterGovernanceService.listChangeLogs(req.params.id, req.query.employee_id as string | undefined);
+  return res.json({ data });
+}));
 
 // Only mapped roster owners can record approved roster-truth changes after publish.
 // TL/Assistant Manager use coverage actions below to raise/close scoped exceptions.
-router.post(
-  "/cycles/:id/changes",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { employee_id, change_type, reason, change_date } = req.body;
-    if (!employee_id || !change_type || !reason || !change_date) {
-      return res
-        .status(400)
-        .json({
-          error: "employee_id, change_type, reason, change_date are required",
-        });
-    }
-    if (!(await requireCycleOwner(req, res))) return;
-    const data = await rosterGovernanceService.logRosterChange(
-      req.params.id,
-      req.body,
-      req.authUser!.id,
-      req,
-    );
-    return res.status(201).json({ data });
-  }),
-);
+router.post("/cycles/:id/changes", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employee_id, change_type, reason, change_date } = req.body;
+  if (!employee_id || !change_type || !reason || !change_date) {
+    return res.status(400).json({ error: "employee_id, change_type, reason, change_date are required" });
+  }
+  if (!(await requireCycleOwner(req, res))) return;
+  const data = await rosterGovernanceService.logRosterChange(req.params.id, req.body, req.authUser!.id, req);
+  return res.status(201).json({ data });
+}));
 
 // ── Coverage Actions ──────────────────────────────────────────────────────────
 // Mapped TL/AM may monitor, raise and close accountability/actions without
 // rewriting the published roster truth.
-router.post(
-  "/coverage-actions",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { cycle_id, action_date } = req.body;
-    if (!cycle_id || !action_date) {
-      return res
-        .status(400)
-        .json({ error: "cycle_id and action_date are required" });
-    }
-    const cycle = await rosterGovernanceService.getCycle(cycle_id);
-    if (!(await canMonitorRoster(req, cycle.process_id, cycle.branch_id))) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Forbidden: mapped roster scope is required",
-        });
-    }
-    const data = await rosterGovernanceService.createCoverageAction(
-      { ...req.body, process_id: cycle.process_id },
-      req.authUser!.id,
-      req,
-    );
-    return res.status(201).json({ data });
-  }),
-);
+router.post("/coverage-actions", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { cycle_id, action_date } = req.body;
+  if (!cycle_id || !action_date) {
+    return res.status(400).json({ error: "cycle_id and action_date are required" });
+  }
+  const cycle = await rosterGovernanceService.getCycle(cycle_id);
+  if (!(await canMonitorRoster(req, cycle.process_id, cycle.branch_id))) {
+    return res.status(403).json({ success: false, message: "Forbidden: mapped roster scope is required" });
+  }
+  const data = await rosterGovernanceService.createCoverageAction({ ...req.body, process_id: cycle.process_id }, req.authUser!.id, req);
+  return res.status(201).json({ data });
+}));
 
-router.post(
-  "/coverage-actions/:id/resolve",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const action = await rosterGovernanceService.getCoverageAction(
-      req.params.id,
-    );
-    const cycle = await rosterGovernanceService.getCycle(action.cycle_id);
-    if (!(await canMonitorRoster(req, cycle.process_id, cycle.branch_id))) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Forbidden: mapped roster scope is required",
-        });
-    }
-    const data = await rosterGovernanceService.resolveCoverageAction(
-      req.params.id,
-      req.authUser!.id,
-      req,
-    );
-    return res.json({ data });
-  }),
-);
+router.post("/coverage-actions/:id/resolve", h(async (req: AuthenticatedRequest, res: Response) => {
+  const action = await rosterGovernanceService.getCoverageAction(req.params.id);
+  const cycle = await rosterGovernanceService.getCycle(action.cycle_id);
+  if (!(await canMonitorRoster(req, cycle.process_id, cycle.branch_id))) {
+    return res.status(403).json({ success: false, message: "Forbidden: mapped roster scope is required" });
+  }
+  const data = await rosterGovernanceService.resolveCoverageAction(req.params.id, req.authUser!.id, req);
+  return res.json({ data });
+}));
 
 // ── Portal Aggregate ──────────────────────────────────────────────────────────
 // Internal publishing read: actual external client delivery continues through
@@ -586,30 +404,18 @@ router.get("/portal-aggregate", h(async (req: AuthenticatedRequest, res: Respons
 // ── Roster Auto-Generation ─────────────────────────────────────────────────────
 
 // POST /cycles/:id/generate — trigger auto-roster engine for a cycle
-router.post(
-  "/cycles/:id/generate",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!(await requireCycleOwner(req, res))) return;
-    const data = await rosterGenerationService.generateForCycle(
-      req.params.id,
-      req.authUser!.id,
-      req,
-    );
-    return res.status(201).json({ data });
-  }),
-);
+router.post("/cycles/:id/generate", h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await requireCycleOwner(req, res))) return;
+  const data = await rosterGenerationService.generateForCycle(req.params.id, req.authUser!.id, req);
+  return res.status(201).json({ data });
+}));
 
 // GET /cycles/:id/generation-runs — list generation run history
-router.get(
-  "/cycles/:id/generation-runs",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!(await requireCycleMonitor(req, res))) return;
-    const data = await rosterGenerationService.listGenerationRuns(
-      req.params.id,
-    );
-    return res.json({ data });
-  }),
-);
+router.get("/cycles/:id/generation-runs", h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await requireCycleMonitor(req, res))) return;
+  const data = await rosterGenerationService.listGenerationRuns(req.params.id);
+  return res.json({ data });
+}));
 
 // GET /runs/:runId/decision-audit — paginated per-employee decision trace
 router.get("/runs/:runId/decision-audit", h(async (req: AuthenticatedRequest, res: Response) => {
@@ -636,113 +442,77 @@ router.get("/runs/:runId/decision-audit", h(async (req: AuthenticatedRequest, re
 // ── Employee Acknowledgement & Dispute ─────────────────────────────────────────
 
 // GET /cycles/:id/assignments/:employeeId/ack — get ack state for employee's week
-router.get(
-  "/cycles/:id/assignments/:employeeId/ack",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const emp = await getEmployeeForUser(userId);
-    const isOwn = emp?.id === req.params.employeeId;
-    if (!isOwn) {
-      const cycle = await rosterGovernanceService.getCycle(req.params.id);
-      if (!(await canMonitorRoster(req, cycle.process_id, cycle.branch_id))) {
-        return res.status(403).json({ success: false, message: "Forbidden" });
-      }
+router.get("/cycles/:id/assignments/:employeeId/ack", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const emp = await getEmployeeForUser(userId);
+  const isOwn = emp?.id === req.params.employeeId;
+  if (!isOwn) {
+    const cycle = await rosterGovernanceService.getCycle(req.params.id);
+    if (!(await canMonitorRoster(req, cycle.process_id, cycle.branch_id))) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
     }
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT acknowledgement_status, acknowledged_at, dispute_reason, dispute_resolved_at, dispute_resolution
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT acknowledgement_status, acknowledged_at, dispute_reason, dispute_resolved_at, dispute_resolution
        FROM roster_daily_assignment
       WHERE cycle_id = ? AND employee_id = ?
       ORDER BY roster_date ASC`,
-      [req.params.id, req.params.employeeId],
-    );
-    return res.json({ data: rows });
-  }),
-);
+    [req.params.id, req.params.employeeId]
+  );
+  return res.json({ data: rows });
+}));
 
 // POST /assignments/:id/acknowledge — employee acknowledges a specific assignment
-router.post(
-  "/assignments/:id/acknowledge",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp)
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
+router.post("/assignments/:id/acknowledge", h(async (req: AuthenticatedRequest, res: Response) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM roster_daily_assignment WHERE id = ? LIMIT 1",
-      [req.params.id],
-    );
-    const assignment = rows[0];
-    if (!assignment)
-      return res.status(404).json({ error: "Assignment not found" });
-    if (assignment.employee_id !== emp.id) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "You can only acknowledge your own assignments",
-        });
-    }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT * FROM roster_daily_assignment WHERE id = ? LIMIT 1",
+    [req.params.id]
+  );
+  const assignment = rows[0];
+  if (!assignment) return res.status(404).json({ error: "Assignment not found" });
+  if (assignment.employee_id !== emp.id) {
+    return res.status(403).json({ success: false, message: "You can only acknowledge your own assignments" });
+  }
 
-    const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-    await db.execute(
-      "UPDATE roster_daily_assignment SET acknowledgement_status = 'acknowledged', acknowledged_at = ? WHERE id = ?",
-      [now, req.params.id],
-    );
-    return res.json({ success: true, message: "Acknowledged" });
-  }),
-);
+  const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+  await db.execute(
+    "UPDATE roster_daily_assignment SET acknowledgement_status = 'acknowledged', acknowledged_at = ? WHERE id = ?",
+    [now, req.params.id]
+  );
+  return res.json({ success: true, message: "Acknowledged" });
+}));
 
 // POST /assignments/:id/dispute — employee raises a dispute
-router.post(
-  "/assignments/:id/dispute",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { dispute_reason } = req.body;
-    if (!dispute_reason?.trim()) {
-      return res.status(400).json({ error: "dispute_reason is required" });
-    }
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp)
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
+router.post("/assignments/:id/dispute", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { dispute_reason } = req.body;
+  if (!dispute_reason?.trim()) {
+    return res.status(400).json({ error: "dispute_reason is required" });
+  }
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT rda.*, wrc.status AS cycle_status
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT rda.*, wrc.status AS cycle_status
        FROM roster_daily_assignment rda
        JOIN weekly_roster_cycle wrc ON wrc.id = rda.cycle_id
       WHERE rda.id = ? LIMIT 1`,
-      [req.params.id],
-    );
-    const assignment = rows[0];
-    if (!assignment)
-      return res.status(404).json({ error: "Assignment not found" });
-    if (assignment.employee_id !== emp.id) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "You can only dispute your own assignments",
-        });
-    }
+    [req.params.id]
+  );
+  const assignment = rows[0];
+  if (!assignment) return res.status(404).json({ error: "Assignment not found" });
+  if (assignment.employee_id !== emp.id) {
+    return res.status(403).json({ success: false, message: "You can only dispute your own assignments" });
+  }
 
-    // Block disputes on locked/closed cycles — a dispute raised here would have no resolution path
-    // since the manager resolve route also refuses attendance_locked/payroll_input_ready/closed.
-    if (DISPUTE_LOCKED_STATUSES.has(assignment.cycle_status)) {
-      return res.status(409).json({
-        success: false,
-        message: `Cannot raise a dispute on a ${assignment.cycle_status} cycle — the roster is locked.`,
-      });
-    }
-
-    await db.execute(
-      "UPDATE roster_daily_assignment SET acknowledgement_status = 'disputed', dispute_reason = ? WHERE id = ?",
-      [dispute_reason.trim(), req.params.id],
-    );
-    return res.json({
-      success: true,
-      message: "Dispute raised. Your manager has been notified.",
+  // Block disputes on locked/closed cycles — a dispute raised here would have no resolution path
+  // since the manager resolve route also refuses attendance_locked/payroll_input_ready/closed.
+  if (DISPUTE_LOCKED_STATUSES.has(assignment.cycle_status)) {
+    return res.status(409).json({
+      success: false,
+      message: `Cannot raise a dispute on a ${assignment.cycle_status} cycle — the roster is locked.`,
     });
   }
 
@@ -768,26 +538,26 @@ router.get("/manager-review-queue", h(async (req: AuthenticatedRequest, res: Res
   let processFilter = "";
   const params: unknown[] = [];
 
-    if (!isAdmin) {
-      // Load processes where this user has manager/wfm scope
-      /*
-       * There is no user_process_scope table - this raised ER_NO_SUCH_TABLE, so the manager review
-       * queue returned 500 for every non-admin. The scope table is user_assignment_scope, which
-       * roleResolver already treats as the scope authority, and its column is role_key, not role.
-       *
-       * process_manager is added to the list deliberately. Of the four roles named here, not one
-       * holds a row with a process_id: manager 7 rows, wfm 7, branch_head 4, assistant_manager 0,
-       * all with process_id NULL. process_manager holds 16 of its 22 with a process, and the
-       * charter gives Process Manager publication authority for their mapped process, so it is the
-       * role this queue was for. Renaming the table alone would have turned a 500 into a 403 for
-       * everybody, which is harder to notice and no more usable.
-       *
-       * active_status is now checked, so a revoked assignment stops granting scope. Rows still
-       * scope down to the user's own processes below, so nobody sees a process they are not mapped
-       * to.
-       */
-      const [scopeRows] = await db.execute<RowDataPacket[]>(
-        `SELECT DISTINCT process_id FROM user_assignment_scope
+  if (!isAdmin) {
+    // Load processes where this user has manager/wfm scope
+    /*
+     * There is no user_process_scope table - this raised ER_NO_SUCH_TABLE, so the manager review
+     * queue returned 500 for every non-admin. The scope table is user_assignment_scope, which
+     * roleResolver already treats as the scope authority, and its column is role_key, not role.
+     *
+     * process_manager is added to the list deliberately. Of the four roles named here, not one
+     * holds a row with a process_id: manager 7 rows, wfm 7, branch_head 4, assistant_manager 0,
+     * all with process_id NULL. process_manager holds 16 of its 22 with a process, and the
+     * charter gives Process Manager publication authority for their mapped process, so it is the
+     * role this queue was for. Renaming the table alone would have turned a 500 into a 403 for
+     * everybody, which is harder to notice and no more usable.
+     *
+     * active_status is now checked, so a revoked assignment stops granting scope. Rows still
+     * scope down to the user's own processes below, so nobody sees a process they are not mapped
+     * to.
+     */
+    const [scopeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT process_id FROM user_assignment_scope
         WHERE user_id = ?
           AND role_key IN ('process_manager','manager','wfm','assistant_manager','branch_head')
           AND active_status = 1
@@ -828,11 +598,10 @@ router.get("/manager-review-queue", h(async (req: AuthenticatedRequest, res: Res
         AND rda.dispute_resolved_at IS NULL
         ${processFilter}${lobSql.sql}
       ORDER BY rda.roster_date ASC`,
-      params,
-    );
-    return res.json({ data: await withLobNames(rows, "lob_id") });
-  }),
-);
+    params
+  );
+  return res.json({ data: await withLobNames(rows, "lob_id") });
+}));
 
 // POST /assignments/:id/resolve-dispute — manager resolves dispute. The resolution itself lives in
 // dispute-resolution.service.ts (shared with the Roster Requests hub); a refusal carries the exact
@@ -892,63 +661,39 @@ router.post("/weekoff/run-allocation", h(async (req: AuthenticatedRequest, res: 
     }
   }
 
-    let resolvedCycleId = cycleId;
-    if (!resolvedCycleId && weekStartDate) {
-      const [cycleRows] = await db.execute<import("mysql2").RowDataPacket[]>(
-        `SELECT id FROM weekly_roster_cycle
+  let resolvedCycleId = cycleId;
+  if (!resolvedCycleId && weekStartDate) {
+    const [cycleRows] = await db.execute<import("mysql2").RowDataPacket[]>(
+      `SELECT id FROM weekly_roster_cycle
         WHERE process_id = ? AND week_start_date = ?
         ORDER BY created_at DESC LIMIT 1`,
-        [processId, weekStartDate],
-      );
-      if (cycleRows.length === 0) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-            error: `No roster cycle found for process ${processId} on week starting ${weekStartDate}. Create a cycle first.`,
-          });
-      }
-      resolvedCycleId = cycleRows[0].id;
-    }
-
-    const data = await weekoffAllocationService.runFcfsAllocation(
-      processId,
-      resolvedCycleId,
-      userId,
-      req,
+      [processId, weekStartDate]
     );
-    return res.json({ data });
-  }),
-);
+    if (cycleRows.length === 0) {
+      return res.status(404).json({ success: false, error: `No roster cycle found for process ${processId} on week starting ${weekStartDate}. Create a cycle first.` });
+    }
+    resolvedCycleId = cycleRows[0].id;
+  }
+
+  const data = await weekoffAllocationService.runFcfsAllocation(processId, resolvedCycleId, userId, req);
+  return res.json({ data });
+}));
 
 // ── RTA Sync ───────────────────────────────────────────────────────────────────
 
 // GET /cycles/:id/rta-sync-log
-router.get(
-  "/cycles/:id/rta-sync-log",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!(await requireCycleMonitor(req, res))) return;
-    const data = await rtaSyncService.getSyncLogs(req.params.id);
-    return res.json({ data });
-  }),
-);
+router.get("/cycles/:id/rta-sync-log", h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await requireCycleMonitor(req, res))) return;
+  const data = await rtaSyncService.getSyncLogs(req.params.id);
+  return res.json({ data });
+}));
 
 // POST /cycles/:id/push-to-rta — manual resync of published roster → RTA reconciliation
-router.post(
-  "/cycles/:id/push-to-rta",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!(await requireCycleOwner(req, res))) return;
-    const syncType =
-      (req.body.sync_type as "initial_publish" | "rerun" | "manual_resync") ||
-      "manual_resync";
-    const data = await rtaSyncService.syncCycleToRta(
-      req.params.id,
-      syncType,
-      req.authUser!.id,
-      req,
-    );
-    return res.json({ data });
-  }),
-);
+router.post("/cycles/:id/push-to-rta", h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await requireCycleOwner(req, res))) return;
+  const syncType = (req.body.sync_type as "initial_publish" | "rerun" | "manual_resync") || "manual_resync";
+  const data = await rtaSyncService.syncCycleToRta(req.params.id, syncType, req.authUser!.id, req);
+  return res.json({ data });
+}));
 
 export { router as rosterGovRouter };

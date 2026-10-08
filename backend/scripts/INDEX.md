@@ -1,13 +1,11 @@
 # Sales Funnel Analysis - Complete Package
 
 ## Overview
-
 Complete sales funnel analysis toolkit for querying `db_external.CallDetails` and generating comprehensive sales performance reports.
 
 ## Deliverables
 
 ### 1. SQL Queries (`sales-funnel-queries.sql`)
-
 - **9 complete SQL queries** for sales funnel analysis
 - 90-day analysis window by default
 - Can be customized for different date ranges
@@ -23,13 +21,11 @@ Complete sales funnel analysis toolkit for querying `db_external.CallDetails` an
   9. Funnel Leakage Analysis
 
 **Usage:**
-
 ```bash
 mysql -u root -ppassword db_external < sales-funnel-queries.sql
 ```
 
 ### 2. Python Report Script (`sales-funnel-report.py`)
-
 - Automated report generation
 - Formatted table output
 - Auto-loads environment credentials from `.env`
@@ -37,25 +33,21 @@ mysql -u root -ppassword db_external < sales-funnel-queries.sql
 - Executes all 5 core queries
 
 **Requirements:**
-
 ```bash
 pip install mysql-connector-python python-dotenv
 ```
 
 **Usage:**
-
 ```bash
 python backend/scripts/sales-funnel-report.py
 ```
 
 ### 3. TypeScript/Node.js Script (`sales-funnel-report.ts`)
-
 - Same functionality as Python script
 - Uses `mysql2/promise` for async operations
 - Formatted console output
 
 **Usage:**
-
 ```bash
 cd backend
 npx tsx scripts/sales-funnel-report.ts
@@ -64,7 +56,6 @@ npx tsx scripts/sales-funnel-report.ts
 ### 4. Documentation
 
 #### `SALES_FUNNEL_QUICK_START.md`
-
 - Quick reference guide
 - Copy-paste ready queries
 - Troubleshooting tips
@@ -72,7 +63,6 @@ npx tsx scripts/sales-funnel-report.ts
 - 5-minute setup
 
 #### `SALES_FUNNEL_README.md`
-
 - Complete documentation
 - Data structure explanation
 - Output format specifications
@@ -81,7 +71,6 @@ npx tsx scripts/sales-funnel-report.ts
 - Export procedures
 
 #### `INDEX.md` (this file)
-
 - Package overview
 - File descriptions
 - Quick navigation
@@ -89,13 +78,11 @@ npx tsx scripts/sales-funnel-report.ts
 ## Query Output Format
 
 All queries follow the requested format:
-
 ```
 PROCESS | TOTAL_CALLS | OFFERS | SALES | CONVERSION_RATE
 ```
 
 Example:
-
 ```
 Process A | 1250 | 450 | 180 | 14.40%
 Process B | 890 | 320 | 128 | 14.38%
@@ -103,16 +90,15 @@ Process B | 890 | 320 | 128 | 14.38%
 
 ## Data Specifications
 
-| Specification      | Value                                                 |
-| ------------------ | ----------------------------------------------------- |
-| **Database**       | db_external                                           |
-| **Table**          | CallDetails                                           |
-| **Default Period** | Last 90 days                                          |
-| **Key Fields**     | ProcessName, AgentName, CallDate, OfferMade, SaleDone |
-| **Date Range SQL** | `CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`    |
+| Specification | Value |
+|---|---|
+| **Database** | db_external |
+| **Table** | CallDetails |
+| **Default Period** | Last 90 days |
+| **Key Fields** | ProcessName, AgentName, CallDate, OfferMade, SaleDone |
+| **Date Range SQL** | `CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)` |
 
 ## Files Location
-
 ```
 /home/shuvam/Desktop/MyHRMS1/backend/scripts/
 ├── sales-funnel-queries.sql          (SQL queries)
@@ -126,7 +112,6 @@ Process B | 890 | 320 | 128 | 14.38%
 ## Quick Start
 
 ### 1. Simplest: Copy a Query
-
 ```sql
 -- Paste this into MySQL Workbench and run:
 SELECT
@@ -142,30 +127,28 @@ ORDER BY total_calls DESC;
 ```
 
 ### 2. Medium: Run SQL File
-
 ```bash
 mysql -u root -p db_external < backend/scripts/sales-funnel-queries.sql
 ```
 
 ### 3. Advanced: Automated Report
-
 ```bash
 python backend/scripts/sales-funnel-report.py
 ```
 
 ## Query Reference
 
-| #   | Query Name         | Purpose                    | Output Columns                                            |
-| --- | ------------------ | -------------------------- | --------------------------------------------------------- |
-| 1   | Overall Funnel     | Funnel by process          | Process, Total Calls, Offers, Sales, Conversion %         |
-| 2   | Conversion Trend   | Daily trend analysis       | Date, Daily Calls, Sales, Conversion %                    |
-| 3   | Offer Acceptance   | Offer-to-sale conversion   | Process, Calls, Offers, Accepted, Offer %, Acceptance %   |
-| 4   | Call to Sale Time  | Sales cycle duration       | Process, Agent, First Call, Sale Date, Days, Calls, Sales |
-| 5   | Summary Stats      | Overall metrics            | Total Calls, Processes, Agents, Offers, Sales, Rates      |
-| 6   | Top Agents         | Best performers            | Agent, Calls, Sales, Conversion %                         |
-| 7   | Process Comparison | All processes side-by-side | Process, Agents, Calls, Offers, Sales, Rates              |
-| 8   | Weekly Trend       | Week-over-week metrics     | Week, Start, End, Calls, Offers, Sales, Conversion %      |
-| 9   | Funnel Leakage     | Where leads drop off       | Process, Calls, Offers, No Offer, Rejected, Leakage %     |
+| # | Query Name | Purpose | Output Columns |
+|---|---|---|---|
+| 1 | Overall Funnel | Funnel by process | Process, Total Calls, Offers, Sales, Conversion % |
+| 2 | Conversion Trend | Daily trend analysis | Date, Daily Calls, Sales, Conversion % |
+| 3 | Offer Acceptance | Offer-to-sale conversion | Process, Calls, Offers, Accepted, Offer %, Acceptance % |
+| 4 | Call to Sale Time | Sales cycle duration | Process, Agent, First Call, Sale Date, Days, Calls, Sales |
+| 5 | Summary Stats | Overall metrics | Total Calls, Processes, Agents, Offers, Sales, Rates |
+| 6 | Top Agents | Best performers | Agent, Calls, Sales, Conversion % |
+| 7 | Process Comparison | All processes side-by-side | Process, Agents, Calls, Offers, Sales, Rates |
+| 8 | Weekly Trend | Week-over-week metrics | Week, Start, End, Calls, Offers, Sales, Conversion % |
+| 9 | Funnel Leakage | Where leads drop off | Process, Calls, Offers, No Offer, Rejected, Leakage % |
 
 ## KPI Glossary
 
@@ -188,9 +171,7 @@ python backend/scripts/sales-funnel-report.py
 ## Configuration
 
 ### Environment Variables
-
 Required in `.env` or `.env.local`:
-
 ```
 DB_HOST=localhost
 DB_PORT=3306
@@ -199,9 +180,7 @@ DB_PASSWORD=
 ```
 
 ### Customize Date Range
-
 In any query, modify this line:
-
 ```sql
 -- Change from:
 WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
@@ -213,14 +192,12 @@ WHERE CallDate BETWEEN '2025-01-01' AND '2025-03-31'      -- Date range
 ```
 
 ### Filter by Process
-
 ```sql
 WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
   AND ProcessName = 'Your Process Name'
 ```
 
 ### Filter by Agent
-
 ```sql
 WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
   AND AgentName = 'Agent123'
@@ -228,13 +205,13 @@ WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
 
 ## Troubleshooting
 
-| Issue                     | Solution                                                     |
-| ------------------------- | ------------------------------------------------------------ |
-| Connection refused        | Verify DB_HOST, DB_PORT, check MySQL running                 |
-| Access denied             | Check DB_USER and DB_PASSWORD credentials                    |
-| Table not found           | Verify db_external database exists and has CallDetails table |
-| No results                | Check if data exists in CallDetails for last 90 days         |
-| Permission denied on file | Make scripts executable: `chmod +x *.py *.ts`                |
+| Issue | Solution |
+|---|---|
+| Connection refused | Verify DB_HOST, DB_PORT, check MySQL running |
+| Access denied | Check DB_USER and DB_PASSWORD credentials |
+| Table not found | Verify db_external database exists and has CallDetails table |
+| No results | Check if data exists in CallDetails for last 90 days |
+| Permission denied on file | Make scripts executable: `chmod +x *.py *.ts` |
 
 ## Performance Notes
 

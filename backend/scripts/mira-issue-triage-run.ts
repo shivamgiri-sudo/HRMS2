@@ -11,19 +11,12 @@
  * Usage: npx tsx scripts/mira-issue-triage-run.ts
  */
 import { db } from "../src/db/mysql.js";
-import {
-  findUntriagedMiraFeedback,
-  triageWorkItem,
-} from "../src/modules/ai/mira-issue-triage.service.js";
+import { findUntriagedMiraFeedback, triageWorkItem } from "../src/modules/ai/mira-issue-triage.service.js";
 
 (async () => {
   const items = await findUntriagedMiraFeedback();
   console.log(`untriaged MIRA_FEEDBACK items: ${items.length}`);
-  if (!items.length) {
-    console.log("nothing to do");
-    await db.end();
-    return;
-  }
+  if (!items.length) { console.log("nothing to do"); await db.end(); return; }
 
   const counts: Record<string, number> = {};
   for (const item of items) {
@@ -36,10 +29,6 @@ import {
   await db.end();
 })().catch(async (e) => {
   console.error("ERR", e?.message ?? e);
-  try {
-    await db.end();
-  } catch {
-    /* ignore */
-  }
+  try { await db.end(); } catch { /* ignore */ }
   process.exit(1);
 });

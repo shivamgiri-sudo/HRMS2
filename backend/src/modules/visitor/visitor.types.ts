@@ -10,8 +10,7 @@ export const VISIT_STATUSES = [
 
 export type VisitStatus = (typeof VISIT_STATUSES)[number];
 
-export type VisitSource =
-  "visitor_self" | "guard_desk" | "employee_invitation" | "event_import";
+export type VisitSource = "visitor_self" | "guard_desk" | "employee_invitation" | "event_import";
 
 export interface VisitorIdentityInput {
   full_name: string;
@@ -31,21 +30,9 @@ export interface CreateVisitInput {
   scheduled_end: string;
   source_channel: VisitSource;
   created_by_user_id?: string;
-  companions?: Array<{
-    full_name: string;
-    mobile?: string;
-    relationship_label?: string;
-  }>;
-  vehicle?: {
-    vehicle_number: string;
-    vehicle_type?: string;
-    parking_slot?: string;
-  };
-  belongings?: Array<{
-    item_type: string;
-    description?: string;
-    serial_number?: string;
-  }>;
+  companions?: Array<{ full_name: string; mobile?: string; relationship_label?: string }>;
+  vehicle?: { vehicle_number: string; vehicle_type?: string; parking_slot?: string };
+  belongings?: Array<{ item_type: string; description?: string; serial_number?: string }>;
 }
 
 export interface ActorScope {
@@ -67,9 +54,7 @@ export interface VisitListFilters {
   offset: number;
 }
 
-export const VISIT_TRANSITIONS: Readonly<
-  Record<VisitStatus, readonly VisitStatus[]>
-> = {
+export const VISIT_TRANSITIONS: Readonly<Record<VisitStatus, readonly VisitStatus[]>> = {
   pending_approval: ["approved", "rejected", "cancelled", "expired"],
   approved: ["checked_in", "cancelled", "expired"],
   rejected: [],
@@ -79,9 +64,6 @@ export const VISIT_TRANSITIONS: Readonly<
   expired: [],
 };
 
-export function canTransitionVisit(
-  from: VisitStatus,
-  to: VisitStatus,
-): boolean {
+export function canTransitionVisit(from: VisitStatus, to: VisitStatus): boolean {
   return VISIT_TRANSITIONS[from]?.includes(to) ?? false;
 }

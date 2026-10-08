@@ -1,10 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  isIndexOnlyMigrationSql,
-  isTransientMigrationError,
-} from "../runPendingMigrations.js";
+import { isIndexOnlyMigrationSql, isTransientMigrationError } from "../runPendingMigrations.js";
 
 /**
  * 2026-09-30 outage: migration 1918 (19 ADD INDEX statements, several on `employees`) timed out on a
@@ -24,11 +21,7 @@ describe("isIndexOnlyMigrationSql", () => {
   });
 
   it("accepts the plain and PREPARE-guarded ADD INDEX shapes", () => {
-    expect(
-      isIndexOnlyMigrationSql(
-        "ALTER TABLE t ADD INDEX i (a, b), ALGORITHM=INPLACE, LOCK=NONE;",
-      ),
-    ).toBe(true);
+    expect(isIndexOnlyMigrationSql("ALTER TABLE t ADD INDEX i (a, b), ALGORITHM=INPLACE, LOCK=NONE;")).toBe(true);
     expect(isIndexOnlyMigrationSql("CREATE INDEX i ON t (a);")).toBe(true);
     expect(
       isIndexOnlyMigrationSql(`
@@ -36,18 +29,12 @@ describe("isIndexOnlyMigrationSql", () => {
         SET @s = IF(@c = 0, 'ALTER TABLE t ADD INDEX i (a, b)', 'SELECT 1');
         PREPARE p FROM @s; EXECUTE p; DEALLOCATE PREPARE p;`),
     ).toBe(true);
-    expect(
-      isIndexOnlyMigrationSql(
-        "ALTER TABLE t ADD INDEX a1 (x), ADD UNIQUE KEY a2 (y);",
-      ),
-    ).toBe(true);
+    expect(isIndexOnlyMigrationSql("ALTER TABLE t ADD INDEX a1 (x), ADD UNIQUE KEY a2 (y);")).toBe(true);
   });
 
   it("ignores comments that mention forbidden words", () => {
     expect(
-      isIndexOnlyMigrationSql(
-        "-- drop the old one later, update nothing\n/* delete no rows */\nALTER TABLE t ADD INDEX i (a);",
-      ),
+      isIndexOnlyMigrationSql("-- drop the old one later, update nothing\n/* delete no rows */\nALTER TABLE t ADD INDEX i (a);"),
     ).toBe(true);
   });
 
@@ -68,53 +55,31 @@ describe("isIndexOnlyMigrationSql", () => {
       "SELECT 1;", // no index at all
       "",
     ];
-    for (const sql of bad)
-      expect(isIndexOnlyMigrationSql(sql), sql).toBe(false);
+    for (const sql of bad) expect(isIndexOnlyMigrationSql(sql), sql).toBe(false);
   });
 
   it("does not treat a column named like a keyword as a data change", () => {
-    expect(
-      isIndexOnlyMigrationSql(
-        "ALTER TABLE t ADD INDEX i (updated_at, deleted_flag);",
-      ),
-    ).toBe(true);
+    expect(isIndexOnlyMigrationSql("ALTER TABLE t ADD INDEX i (updated_at, deleted_flag);")).toBe(true);
   });
 });
 
 describe("runner wiring", () => {
-  const src = fs.readFileSync(
-    path.resolve(__dirname, "../runPendingMigrations.ts"),
-    "utf8",
-  );
+  const src = fs.readFileSync(path.resolve(__dirname, "../runPendingMigrations.ts"), "utf8");
 
   it("defers only transient errors on index-only files, and keeps every other failure fatal", () => {
-    expect(src).toMatch(
-      /isTransientMigrationError\(error\)[\s\S]{0,200}isIndexOnlyMigrationSql\(/,
-    );
-    expect(src).toMatch(
-      /if \(deferIndexOnly\)[\s\S]{0,300}migrationHealth\.skipped\.push\(file\)/,
-    );
-    expect(src).toMatch(
-      /else \{\s*migrationHealth\.failed\.push\(\{ filename: file, error: message \}\)/,
-    );
+    expect(src).toMatch(/isTransientMigrationError\(error\)[\s\S]{0,200}isIndexOnlyMigrationSql\(/);
+    expect(src).toMatch(/if \(deferIndexOnly\)[\s\S]{0,300}migrationHealth\.skipped\.push\(file\)/);
+    expect(src).toMatch(/else \{\s*migrationHealth\.failed\.push\(\{ filename: file, error: message \}\)/);
   });
 
   it("still records the deferred attempt with success = false so the next boot retries it", () => {
-    expect(src).toMatch(
-      /DEFERRED \(lock contention on an index-only migration; retried on next boot\)/,
-    );
-    expect(src).toMatch(
-      /\{ success: false \}[\s\S]{0,400}errorMessage: message/,
-    );
+    expect(src).toMatch(/DEFERRED \(lock contention on an index-only migration; retried on next boot\)/);
+    expect(src).toMatch(/\{ success: false \}[\s\S]{0,400}errorMessage: message/);
   });
 
   it("a lock timeout is a transient error (the deferral precondition)", () => {
-    expect(isTransientMigrationError({ code: "ER_LOCK_WAIT_TIMEOUT" })).toBe(
-      true,
-    );
+    expect(isTransientMigrationError({ code: "ER_LOCK_WAIT_TIMEOUT" })).toBe(true);
     expect(isTransientMigrationError({ errno: 1205 })).toBe(true);
-    expect(
-      isTransientMigrationError({ code: "ER_PARSE_ERROR", errno: 1064 }),
-    ).toBe(false);
+    expect(isTransientMigrationError({ code: "ER_PARSE_ERROR", errno: 1064 })).toBe(false);
   });
 });

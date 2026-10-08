@@ -22,11 +22,8 @@ import {
  */
 
 const FIXTURE = "NDA_CONFIDENTIALITY-v1.docx";
-const WINDOWS_PATH =
-  String.raw`C:\Users\ADMIN\Desktop\HRMS2-latest\backend\private-storage\document-templates\${FIXTURE}`.replace(
-    "${FIXTURE}",
-    FIXTURE,
-  );
+const WINDOWS_PATH = String.raw`C:\Users\ADMIN\Desktop\HRMS2-latest\backend\private-storage\document-templates\${FIXTURE}`
+  .replace("${FIXTURE}", FIXTURE);
 
 let createdDir = false;
 let createdFile = false;
@@ -47,21 +44,14 @@ afterAll(() => {
   const target = path.join(TEMPLATE_STORAGE_ROOT, FIXTURE);
   if (createdFile && fs.existsSync(target)) fs.unlinkSync(target);
   if (createdDir && fs.existsSync(TEMPLATE_STORAGE_ROOT)) {
-    try {
-      fs.rmdirSync(TEMPLATE_STORAGE_ROOT);
-    } catch {
-      /* other templates present */
-    }
+    try { fs.rmdirSync(TEMPLATE_STORAGE_ROOT); } catch { /* other templates present */ }
   }
 });
 
 describe("joining-document template path resolution", () => {
   it("resolves a Windows absolute path to the local file by name", () => {
     const resolved = resolveTemplateFile(WINDOWS_PATH);
-    expect(
-      resolved,
-      "a foreign absolute path must still find the file",
-    ).not.toBeNull();
+    expect(resolved, "a foreign absolute path must still find the file").not.toBeNull();
     expect(path.basename(String(resolved))).toBe(FIXTURE);
     expect(fs.existsSync(String(resolved))).toBe(true);
   });
@@ -77,18 +67,14 @@ describe("joining-document template path resolution", () => {
   });
 
   it("returns null for a template that genuinely is not present", () => {
-    expect(
-      resolveTemplateFile(String.raw`C:\somewhere\NOT_A_REAL_TEMPLATE-v9.docx`),
-    ).toBeNull();
+    expect(resolveTemplateFile(String.raw`C:\somewhere\NOT_A_REAL_TEMPLATE-v9.docx`)).toBeNull();
     expect(templateFileExists("")).toBe(false);
     expect(templateFileExists(null)).toBe(false);
   });
 
   it("persists only the file name so the row stays portable across machines", () => {
     expect(toStorableTemplatePath(WINDOWS_PATH)).toBe(FIXTURE);
-    expect(
-      toStorableTemplatePath(path.join(TEMPLATE_STORAGE_ROOT, FIXTURE)),
-    ).toBe(FIXTURE);
+    expect(toStorableTemplatePath(path.join(TEMPLATE_STORAGE_ROOT, FIXTURE))).toBe(FIXTURE);
   });
 
   it("does not treat a directory as a usable template", () => {

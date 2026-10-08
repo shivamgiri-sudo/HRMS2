@@ -28,10 +28,7 @@ export interface FakeDb {
 }
 
 export const rows = (data: any[]) => [data, []];
-export const header = (extra: Record<string, unknown> = {}) => [
-  { affectedRows: 1, insertId: 1, ...extra },
-  [],
-];
+export const header = (extra: Record<string, unknown> = {}) => [{ affectedRows: 1, insertId: 1, ...extra }, []];
 
 export function createFakeDb(): FakeDb {
   const routes: Route[] = [];

@@ -1,7 +1,7 @@
-import { db } from "../../db/mysql.js";
-import { DomainSyncBase } from "./domain-sync-base.js";
+import { db } from '../../db/mysql.js';
+import { DomainSyncBase } from './domain-sync-base.js';
 
-const SYNC_MAP_ID = "a1000000-0000-0000-0000-000000000003";
+const SYNC_MAP_ID = 'a1000000-0000-0000-0000-000000000003';
 
 interface LegacySalary {
   id: number;
@@ -20,13 +20,10 @@ interface LegacySalary {
 
 export class SalarySnapshotSyncHandler extends DomainSyncBase {
   constructor() {
-    super("salary_snapshot", SYNC_MAP_ID);
+    super('salary_snapshot', SYNC_MAP_ID);
   }
 
-  protected async fetchBatch(
-    lastWatermark: string,
-    batchSize: number,
-  ): Promise<LegacySalary[]> {
+  protected async fetchBatch(lastWatermark: string, batchSize: number): Promise<LegacySalary[]> {
     const pool = await this.getLegacy();
     // masjclrentry has salary columns inline; only pull rows where salary changed
     //
@@ -47,40 +44,31 @@ export class SalarySnapshotSyncHandler extends DomainSyncBase {
          AND (Gross > 0 OR CTC > 0)
        ORDER BY COALESCE(lastUpdated, EntryDate) ASC
        LIMIT ?`,
-      [lastWatermark, lastWatermark, batchSize],
+      [lastWatermark, lastWatermark, batchSize]
     );
     return rows as LegacySalary[];
   }
 
   protected extractWatermark(rows: LegacySalary[]): string | null {
-    const last = [...rows].reverse().find((r) => r.lastUpdated || r.EntryDate);
+    const last = [...rows].reverse().find(r => r.lastUpdated || r.EntryDate);
     if (!last) return null;
     const d = new Date((last.lastUpdated ?? last.EntryDate)!);
     d.setSeconds(d.getSeconds() + 1);
-    return d.toISOString().slice(0, 19).replace("T", " ");
+    return d.toISOString().slice(0, 19).replace('T', ' ');
   }
 
   protected async processBatch(rows: LegacySalary[]): Promise<{
-    inserted: number;
-    updated: number;
-    skipped: number;
-    failed: number;
+    inserted: number; updated: number; skipped: number; failed: number;
   }> {
     const empMap = await this.loadEmployeeMap();
-    let inserted = 0,
-      updated = 0,
-      skipped = 0,
-      failed = 0;
+    let inserted = 0, updated = 0, skipped = 0, failed = 0;
 
     for (const row of rows) {
       const empId = this.resolveEmployeeId(empMap, row.EmpCode);
-      if (!empId) {
-        skipped++;
-        continue;
-      }
+      if (!empId) { skipped++; continue; }
 
       const gross = Number(row.Gross ?? 0);
-      const ctc = Number(row.CTC ?? 0) || gross * 12;
+      const ctc   = Number(row.CTC   ?? 0) || gross * 12;
 
       try {
         const [res] = await db.execute<any>(
@@ -119,16 +107,14 @@ export class SalarySnapshotSyncHandler extends DomainSyncBase {
              other_allowance = IF(VALUES(other_allowance) > 0, VALUES(other_allowance), other_allowance),
              snapshot_date   = VALUES(snapshot_date)`,
           [
-            empId,
-            ctc,
-            gross,
+            empId, ctc, gross,
             Number(row.NetInHand ?? 0),
-            Number(row.Basic ?? 0),
-            Number(row.HRA ?? 0),
-            Number(row.DA ?? 0),
-            Number(row.TA ?? 0),
-            Number(row.Other ?? 0),
-          ],
+            Number(row.Basic     ?? 0),
+            Number(row.HRA       ?? 0),
+            Number(row.DA        ?? 0),
+            Number(row.TA        ?? 0),
+            Number(row.Other     ?? 0),
+          ]
         );
         if (res.affectedRows === 1) inserted++;
         else updated++;

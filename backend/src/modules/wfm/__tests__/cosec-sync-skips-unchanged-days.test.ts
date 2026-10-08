@@ -24,9 +24,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 const query = vi.fn();
-vi.mock("../../../db/mysql.js", () => ({
-  db: { query: (...a: unknown[]) => query(...a) },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { query: (...a: unknown[]) => query(...a) } }));
 vi.mock("../../../lib/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -34,18 +32,17 @@ vi.mock("../../../lib/logger.js", () => ({
 const { filterUnchangedGroups } = await import("../cosec-sync.service.js");
 
 /** A settled day: two punches, an in and an out — the ordinary shape of a finished shift. */
-const group = (over: Record<string, unknown> = {}) =>
-  ({
-    cosecUserId: "77262",
-    punchDate: "2026-09-03",
-    firstPunch: "2026-09-03 09:31:02",
-    lastPunch: "2026-09-03 18:29:25",
-    totalPunches: 2,
-    workingMinutes: 538,
-    sourceSystem: "NCOSEC",
-    sourceTable: "AttendanceLogs",
-    ...over,
-  }) as any;
+const group = (over: Record<string, unknown> = {}) => ({
+  cosecUserId: "77262",
+  punchDate: "2026-09-03",
+  firstPunch: "2026-09-03 09:31:02",
+  lastPunch: "2026-09-03 18:29:25",
+  totalPunches: 2,
+  workingMinutes: 538,
+  sourceSystem: "NCOSEC",
+  sourceTable: "AttendanceLogs",
+  ...over,
+}) as any;
 
 /** What the log holds for that day once it has been written the first time. */
 const storedRow = (over: Record<string, unknown> = {}) => ({
@@ -77,9 +74,7 @@ describe("a day already stored identically is not written again", () => {
   it("reads the stored rows in one batched query, not one per day", async () => {
     query.mockClear();
     query.mockResolvedValue([[], []]);
-    const days = Array.from({ length: 300 }, (_, i) =>
-      group({ cosecUserId: String(i) }),
-    );
+    const days = Array.from({ length: 300 }, (_, i) => group({ cosecUserId: String(i) }));
     await filterUnchangedGroups(days, TO);
     // The whole point is to replace many writes with one read; a per-day lookup would reintroduce
     // exactly the round-trip volume this change removes.
@@ -95,20 +90,13 @@ describe("anything that would write a different row is still processed", () => {
 
   it("processes a day whose punch count moved", async () => {
     query.mockResolvedValue([[storedRow({ total_punches: 2 })], []]);
-    const later = group({
-      totalPunches: 4,
-      lastPunch: "2026-09-03 20:10:00",
-      workingMinutes: 638,
-    });
+    const later = group({ totalPunches: 4, lastPunch: "2026-09-03 20:10:00", workingMinutes: 638 });
     expect(await filterUnchangedGroups([later], TO)).toHaveLength(1);
   });
 
   it("processes a day whose last punch moved but whose count did not", async () => {
     // An employee re-punching out corrects the punch-out without adding a punch pair.
-    query.mockResolvedValue([
-      [storedRow({ last_punch_out: "2026-09-03 18:00:00" })],
-      [],
-    ]);
+    query.mockResolvedValue([[storedRow({ last_punch_out: "2026-09-03 18:00:00" })], []]);
     expect(await filterUnchangedGroups([group()], TO)).toHaveLength(1);
   });
 
@@ -123,10 +111,7 @@ describe("anything that would write a different row is still processed", () => {
      * day last week carries last week's timestamp, so a watermark on the source datetime would
      * never see it. Comparing against what we stored does.
      */
-    query.mockResolvedValue([
-      [storedRow({ punch_date: "2026-08-20", raw_minutes: 300 })],
-      [],
-    ]);
+    query.mockResolvedValue([[storedRow({ punch_date: "2026-08-20", raw_minutes: 300 })], []]);
     const old = group({
       punchDate: "2026-08-20",
       firstPunch: "2026-08-20 09:31:02",
@@ -144,22 +129,13 @@ describe("comparison is against the values that would actually be written", () =
      * against that row must not read as a difference, or every single-punch day in the window is
      * rewritten forever.
      */
-    query.mockResolvedValue([
-      [
-        storedRow({
-          total_punches: 1,
-          raw_minutes: 0,
-          last_punch_out: null,
-          first_punch_in: "2026-09-03 09:31:02",
-        }),
-      ],
-      [],
-    ]);
-    const lone = group({
-      totalPunches: 1,
-      lastPunch: "2026-09-03 09:31:02",
-      workingMinutes: 0,
-    });
+    query.mockResolvedValue([[storedRow({
+      total_punches: 1,
+      raw_minutes: 0,
+      last_punch_out: null,
+      first_punch_in: "2026-09-03 09:31:02",
+    })], []]);
+    const lone = group({ totalPunches: 1, lastPunch: "2026-09-03 09:31:02", workingMinutes: 0 });
     expect(await filterUnchangedGroups([lone], TO)).toEqual([]);
   });
 });
@@ -175,25 +151,23 @@ describe("night shifts that cross midnight", () => {
    */
 
   /** A finished night shift: in at 22:05 on day N, out at 06:30 on day N+1, merged into one group. */
-  const merged = (over: Record<string, unknown> = {}) =>
-    group({
-      punchDate: "2026-09-03",
-      firstPunch: "2026-09-03 22:05:00",
-      lastPunch: "2026-09-04 06:30:00",
-      totalPunches: 2,
-      workingMinutes: 505,
-      ...over,
-    });
+  const merged = (over: Record<string, unknown> = {}) => group({
+    punchDate: "2026-09-03",
+    firstPunch: "2026-09-03 22:05:00",
+    lastPunch: "2026-09-04 06:30:00",
+    totalPunches: 2,
+    workingMinutes: 505,
+    ...over,
+  });
 
-  const mergedStored = (over: Record<string, unknown> = {}) =>
-    storedRow({
-      punch_date: "2026-09-03",
-      first_punch_in: "2026-09-03 22:05:00",
-      last_punch_out: "2026-09-04 06:30:00",
-      total_punches: 2,
-      raw_minutes: 505,
-      ...over,
-    });
+  const mergedStored = (over: Record<string, unknown> = {}) => storedRow({
+    punch_date: "2026-09-03",
+    first_punch_in: "2026-09-03 22:05:00",
+    last_punch_out: "2026-09-04 06:30:00",
+    total_punches: 2,
+    raw_minutes: 505,
+    ...over,
+  });
 
   it("skips a completed night shift whose merged row is already stored", async () => {
     // The punch-out is on the following calendar date; the comparison must not read that as a
@@ -209,39 +183,23 @@ describe("night shifts that cross midnight", () => {
      * merges it in, and the group becomes two punches ending the next morning. That must be written,
      * or the night worker's shift is recorded as a lone punch and never completed.
      */
-    query.mockResolvedValue([
-      [
-        mergedStored({
-          total_punches: 1,
-          raw_minutes: 0,
-          last_punch_out: null,
-        }),
-      ],
-      [],
-    ]);
-    expect(await filterUnchangedGroups([merged()], "2026-09-05")).toHaveLength(
-      1,
-    );
+    query.mockResolvedValue([[mergedStored({
+      total_punches: 1,
+      raw_minutes: 0,
+      last_punch_out: null,
+    })], []]);
+    expect(await filterUnchangedGroups([merged()], "2026-09-05")).toHaveLength(1);
   });
 
   it("skips an open night shift only while it is genuinely unchanged", async () => {
     // Mid-shift, no exit punch yet. Rewriting the identical single-punch row every ten minutes
     // achieves nothing; the run where the exit lands is covered by the test above.
-    query.mockResolvedValue([
-      [
-        mergedStored({
-          total_punches: 1,
-          raw_minutes: 0,
-          last_punch_out: null,
-        }),
-      ],
-      [],
-    ]);
-    const open = merged({
-      lastPunch: "2026-09-03 22:05:00",
-      totalPunches: 1,
-      workingMinutes: 0,
-    });
+    query.mockResolvedValue([[mergedStored({
+      total_punches: 1,
+      raw_minutes: 0,
+      last_punch_out: null,
+    })], []]);
+    const open = merged({ lastPunch: "2026-09-03 22:05:00", totalPunches: 1, workingMinutes: 0 });
     expect(await filterUnchangedGroups([open], "2026-09-05")).toEqual([]);
   });
 
@@ -251,18 +209,9 @@ describe("night shifts that cross midnight", () => {
      * group goes to the exception path rather than biometric_attendance_log, so the stale row left
      * from the punch-in must not be read as "already handled".
      */
-    query.mockResolvedValue([
-      [mergedStored({ total_punches: 1, last_punch_out: null })],
-      [],
-    ]);
-    const flagged = merged({
-      totalPunches: 1,
-      lastPunch: "2026-09-03 22:05:00",
-      missingPunch: true,
-    });
-    expect(await filterUnchangedGroups([flagged], "2026-09-05")).toHaveLength(
-      1,
-    );
+    query.mockResolvedValue([[mergedStored({ total_punches: 1, last_punch_out: null })], []]);
+    const flagged = merged({ totalPunches: 1, lastPunch: "2026-09-03 22:05:00", missingPunch: true });
+    expect(await filterUnchangedGroups([flagged], "2026-09-05")).toHaveLength(1);
   });
 });
 
@@ -274,16 +223,12 @@ describe("categories that must never be skipped", () => {
      * exception would never be raised.
      */
     query.mockResolvedValue([[storedRow()], []]);
-    expect(
-      await filterUnchangedGroups([group({ missingPunch: true })], TO),
-    ).toHaveLength(1);
+    expect(await filterUnchangedGroups([group({ missingPunch: true })], TO)).toHaveLength(1);
   });
 
   it("processes everything when the lookup itself fails", async () => {
     // Falling back to the old behaviour costs load. Falling back to skipping costs attendance.
-    query.mockImplementation(() =>
-      Promise.reject(new Error("Queue limit reached")),
-    );
+    query.mockImplementation(() => Promise.reject(new Error("Queue limit reached")));
     const pulled = [group(), group({ cosecUserId: "63389C" })];
     expect(await filterUnchangedGroups(pulled, TO)).toHaveLength(2);
   });

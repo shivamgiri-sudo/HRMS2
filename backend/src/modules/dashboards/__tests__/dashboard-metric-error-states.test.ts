@@ -41,8 +41,7 @@ describe("dashboard metric error states", () => {
       {
         ...base,
         errorCode: "QUERY_FAILED",
-        errorMessage:
-          "ER_BAD_FIELD_ERROR: Unknown column 'foo' in 'field list'",
+        errorMessage: "ER_BAD_FIELD_ERROR: Unknown column 'foo' in 'field list'",
       },
       scope,
       asOf,
@@ -56,13 +55,7 @@ describe("dashboard metric error states", () => {
   it("distinguishes an empty source from a broken one, and keeps it available", () => {
     const metric = adaptLegacyMetric(
       "TAT",
-      {
-        ...base,
-        value: 0,
-        status: "ok",
-        detail: { open: 0 },
-        sourceRowCount: 0,
-      },
+      { ...base, value: 0, status: "ok", detail: { open: 0 }, sourceRowCount: 0 },
       scope,
       asOf,
     );
@@ -77,13 +70,7 @@ describe("dashboard metric error states", () => {
   it("leaves a genuine zero measurement unflagged", () => {
     const metric = adaptLegacyMetric(
       "TAT",
-      {
-        ...base,
-        value: 0,
-        status: "ok",
-        detail: { open: 0 },
-        sourceRowCount: 42,
-      },
+      { ...base, value: 0, status: "ok", detail: { open: 0 }, sourceRowCount: 42 },
       scope,
       asOf,
     );

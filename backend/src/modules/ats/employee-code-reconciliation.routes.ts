@@ -5,16 +5,11 @@ import { resolveAtsBranchScope } from './ats-branch-scope.js';
 import { reconcileEmployeeCodeDrift } from './employee-code-reconciliation.service.js';
 
 const router = Router();
-type AsyncHandler = (
-  req: AuthenticatedRequest,
-  res: Response,
-) => Promise<unknown>;
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 
-const h =
-  (fn: AsyncHandler) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    void fn(req, res).catch(next);
-  };
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 
 // POST /api/ats/employee-code/reconcile
 // Finds and repairs stale ats_candidate.employee_code drift (rename/merge artifacts) and flags
@@ -23,7 +18,7 @@ const h =
 // repeatedly — both checks are idempotent (a repaired row no longer matches Check 1's WHERE, and
 // upsertOpenWorkItem refreshes rather than duplicates an already-open item).
 router.post(
-  "/reconcile",
+  '/reconcile',
   requireAuth,
   requireWriteAccess,
   requireRole('admin', 'hr', 'payroll_hr'),

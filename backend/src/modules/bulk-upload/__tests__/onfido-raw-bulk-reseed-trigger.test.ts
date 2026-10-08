@@ -25,9 +25,7 @@ beforeEach(() => {
 
 describe("shouldTriggerNameMappingReseed", () => {
   it("is true for onfido_doc_external_audit_raw", () => {
-    expect(
-      shouldTriggerNameMappingReseed("onfido_doc_external_audit_raw"),
-    ).toBe(true);
+    expect(shouldTriggerNameMappingReseed("onfido_doc_external_audit_raw")).toBe(true);
   });
 
   it("is true for onfido_agent_daily_raw", () => {
@@ -37,23 +35,14 @@ describe("shouldTriggerNameMappingReseed", () => {
   it("is false for every other Onfido raw table", () => {
     expect(shouldTriggerNameMappingReseed("onfido_poa_raw")).toBe(false);
     expect(shouldTriggerNameMappingReseed("onfido_doc_raw")).toBe(false);
-    expect(shouldTriggerNameMappingReseed("onfido_doc_quality_raw")).toBe(
-      false,
-    );
-    expect(
-      shouldTriggerNameMappingReseed("onfido_doc_escalation_cre_raw"),
-    ).toBe(false);
+    expect(shouldTriggerNameMappingReseed("onfido_doc_quality_raw")).toBe(false);
+    expect(shouldTriggerNameMappingReseed("onfido_doc_escalation_cre_raw")).toBe(false);
   });
 });
 
 describe("triggerNameMappingReseedIfRelevant", () => {
   it("runs the seed when the uploaded table is one of the two name-bearing sources", async () => {
-    runNameMappingSeed.mockResolvedValueOnce({
-      matched: 3,
-      ambiguous: 0,
-      unmatched: 1,
-      errors: [],
-    });
+    runNameMappingSeed.mockResolvedValueOnce({ matched: 3, ambiguous: 0, unmatched: 1, errors: [] });
 
     await triggerNameMappingReseedIfRelevant("onfido_doc_external_audit_raw");
 

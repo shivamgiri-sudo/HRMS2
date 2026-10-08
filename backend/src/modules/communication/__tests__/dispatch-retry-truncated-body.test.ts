@@ -20,21 +20,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const { mockExecute } = vi.hoisted(() => ({ mockExecute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: mockExecute } }));
-vi.mock("../providers/provider.factory.js", () => ({
-  providerFactory: { getProviderAsync: vi.fn() },
-}));
-vi.mock("../provider-config.service.js", () => ({
-  providerConfigService: { loadActiveConfig: vi.fn(async () => ({})) },
-}));
-vi.mock("../template.service.js", () => ({
-  templateService: { renderTemplate: vi.fn() },
-}));
-vi.mock("../notification-preferences.service.js", () => ({
-  notificationPreferencesService: { getDeliveryPreference: vi.fn() },
-}));
-vi.mock("../../inbox/inbox.service.js", () => ({
-  inboxService: { create: vi.fn() },
-}));
+vi.mock("../providers/provider.factory.js", () => ({ providerFactory: { getProviderAsync: vi.fn() } }));
+vi.mock("../provider-config.service.js", () => ({ providerConfigService: { loadActiveConfig: vi.fn(async () => ({})) } }));
+vi.mock("../template.service.js", () => ({ templateService: { renderTemplate: vi.fn() } }));
+vi.mock("../notification-preferences.service.js", () => ({ notificationPreferencesService: { getDeliveryPreference: vi.fn() } }));
+vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { create: vi.fn() } }));
 
 const { dispatchService } = await import("../dispatch.service.js");
 
@@ -44,16 +34,7 @@ function stubRow(bodyLen: number, channel = "email") {
   mockExecute.mockImplementation(async (sql: unknown) => {
     const s = String(sql ?? "");
     if (/SELECT channel, recipient_contact, body_preview/i.test(s)) {
-      return [
-        [
-          {
-            channel,
-            recipient_contact: "someone@teammas.in",
-            body_preview: "x".repeat(bodyLen),
-          },
-        ],
-        [],
-      ];
+      return [[{ channel, recipient_contact: "someone@teammas.in", body_preview: "x".repeat(bodyLen) }], []];
     }
     return [[], []];
   });
@@ -75,25 +56,19 @@ describe("retry refuses to deliver a message it only kept a preview of", () => {
     // would leave a dispatch permanently queued and never sent.
     stubRow(500);
     await dispatchService.retry("d-1").catch(() => undefined);
-    const wrote = mockExecute.mock.calls.some(([s]) =>
-      /UPDATE dispatch_log SET status = 'queued'/i.test(String(s)),
-    );
+    const wrote = mockExecute.mock.calls.some(([s]) => /UPDATE dispatch_log SET status = 'queued'/i.test(String(s)));
     expect(wrote).toBe(false);
   });
 
   it("tells the caller what to do instead of just failing", async () => {
     stubRow(500);
-    await expect(dispatchService.retry("d-1")).rejects.toThrow(
-      /Re-trigger the original event/i,
-    );
+    await expect(dispatchService.retry("d-1")).rejects.toThrow(/Re-trigger the original event/i);
   });
 
   it("still retries a short body, so SMS and WhatsApp keep the feature", async () => {
     stubRow(120, "sms");
     await expect(dispatchService.retry("d-1")).resolves.toBeUndefined();
-    const queued = mockExecute.mock.calls.some(([s]) =>
-      /UPDATE dispatch_log SET status = 'queued'/i.test(String(s)),
-    );
+    const queued = mockExecute.mock.calls.some(([s]) => /UPDATE dispatch_log SET status = 'queued'/i.test(String(s)));
     expect(queued).toBe(true);
   });
 });

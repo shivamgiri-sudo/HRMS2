@@ -15,10 +15,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildSMS } from "../../communication/smartping-dlt-registry.js";
 
-const source = readFileSync(
-  resolve(process.cwd(), "src/modules/ats/ats.onboarding.service.ts"),
-  "utf8",
-);
+const source = readFileSync(resolve(process.cwd(), "src/modules/ats/ats.onboarding.service.ts"), "utf8");
 
 describe("onboarding-link SMS uses a registered DLT template", () => {
   it("builds the SMS with buildSMS rather than hand-writing it", () => {
@@ -32,22 +29,17 @@ describe("onboarding-link SMS uses a registered DLT template", () => {
 
   it("passes the template's dltContentId to smsProvider.send, never a human label", () => {
     // The exact regression: a descriptive string ('Onboarding Link') where the numeric id belongs.
-    const labelInIdSlot =
-      /smsProvider\.send\([^)]*,\s*['"][A-Za-z][^'"]*['"]\s*,/.test(source);
+    const labelInIdSlot = /smsProvider\.send\([^)]*,\s*['"][A-Za-z][^'"]*['"]\s*,/.test(source);
     expect(
       labelInIdSlot,
       "smsProvider.send() is receiving a quoted human label in its dltContentId argument — " +
         "this is the 'Onboarding Link' bug. Pass the dltContentId returned by buildSMS.",
     ).toBe(false);
-    expect(
-      /smsProvider\.send\(\s*cand\.mobile\s*,\s*dltContentId\s*,/.test(source),
-    ).toBe(true);
+    expect(/smsProvider\.send\(\s*cand\.mobile\s*,\s*dltContentId\s*,/.test(source)).toBe(true);
   });
 
   it("renders a body identical to the registered template, with a valid id", () => {
-    const { body, dltContentId } = buildSMS("onboarding_link", {
-      name: "Test Candidate",
-    });
+    const { body, dltContentId } = buildSMS("onboarding_link", { name: "Test Candidate" });
     // SmartPing accepts only a 12-25 digit id; anything else is rejected before sending.
     expect(dltContentId).toMatch(/^\d{12,25}$/);
     expect(body).toContain("Test Candidate");
@@ -59,22 +51,14 @@ describe("onboarding-link SMS uses a registered DLT template", () => {
     // 'Onboarding Reminder', whatsappBody)), found while writing this test. Unlike
     // onboarding_link, its content is per-step dynamic and matches no registered template, so
     // the fix is to stop attempting it, not to route it through buildSMS with a wrong template.
-    expect(
-      /smsProvider\.send\([^)]*['"]Onboarding Reminder['"]/.test(source),
-    ).toBe(false);
-    expect(
-      /no registered DLT template for onboarding reminders/i.test(source),
-    ).toBe(true);
+    expect(/smsProvider\.send\([^)]*['"]Onboarding Reminder['"]/.test(source)).toBe(false);
+    expect(/no registered DLT template for onboarding reminders/i.test(source)).toBe(true);
   });
 
   it("does not attempt the equivalent fix on the WhatsApp send in the same block", () => {
     // Deliberate scope boundary, not an oversight: WhatsApp isn't DLT-regulated the way SMS is,
     // and this fix is specifically about the SMS DLT bug. Documents the boundary so a future
     // reader doesn't assume waProvider.send's free-text body was missed by accident.
-    expect(
-      /waProvider\.send\(\s*cand\.mobile\s*,\s*['"]Onboarding Link['"]/.test(
-        source,
-      ),
-    ).toBe(true);
+    expect(/waProvider\.send\(\s*cand\.mobile\s*,\s*['"]Onboarding Link['"]/.test(source)).toBe(true);
   });
 });

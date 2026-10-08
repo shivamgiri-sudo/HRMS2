@@ -12,9 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute, query: execute, getConnection: vi.fn() },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute, getConnection: vi.fn() } }));
 
 const PERIOD = "2026-03";
 const BRANCH_ID = "branch-1";
@@ -27,55 +25,25 @@ beforeEach(() => {
 
 function summaryRow() {
   return {
-    processId: PROC,
-    processName: "Proc",
-    branchId: BRANCH_ID,
-    branchName: "B",
-    activeHc: 1,
-    dscPeople: 0,
-    dscNonPeople: 0,
-    dsc: 0,
-    bmcPeople: 0,
-    bmcNonPeople: 0,
-    bmc: 0,
-    agentSalary: 0,
-    recognizedRevenue: 1000,
-    grnVendorActual: 0,
-    depreciation: 0,
-    amortization: 0,
-    financeCost: 0,
-    tax: 0,
-    pbt: 0,
-    ebit: 0,
-    ebitda: 0,
-    totalOperatingCost: 0,
-    contribution: 0,
-    billableHc: 0,
-    ebitdaBudget: null,
-    revenueAtRisk: 0,
-    deliveryAttainmentPct: null,
-    operatingProfit: 0,
-    totalPeopleCost: 0,
+    processId: PROC, processName: "Proc", branchId: BRANCH_ID, branchName: "B", activeHc: 1,
+    dscPeople: 0, dscNonPeople: 0, dsc: 0, bmcPeople: 0, bmcNonPeople: 0, bmc: 0,
+    agentSalary: 0, recognizedRevenue: 1000, grnVendorActual: 0, depreciation: 0,
+    amortization: 0, financeCost: 0, tax: 0, pbt: 0, ebit: 0, ebitda: 0,
+    totalOperatingCost: 0, contribution: 0, billableHc: 0, ebitdaBudget: null,
+    revenueAtRisk: 0, deliveryAttainmentPct: null, operatingProfit: 0, totalPeopleCost: 0,
   };
 }
 
 async function loadOverlay() {
   vi.doMock("../bpo-pnl.service.js", async (importOriginal) => {
-    const actual =
-      await importOriginal<typeof import("../bpo-pnl.service.js")>();
+    const actual = await importOriginal<typeof import("../bpo-pnl.service.js")>();
     return {
       ...actual,
       bpoPnlService: {
         ...actual.bpoPnlService,
         getSummary: vi.fn(async (filters: unknown) => ({
-          period: PERIOD,
-          filters,
-          kpis: {},
-          costMix: {},
-          revenueMix: {},
-          alerts: [],
-          rows: [summaryRow()],
-          generatedAt: new Date().toISOString(),
+          period: PERIOD, filters, kpis: {}, costMix: {}, revenueMix: {},
+          alerts: [], rows: [summaryRow()], generatedAt: new Date().toISOString(),
         })),
       },
     };
@@ -83,49 +51,17 @@ async function loadOverlay() {
   execute.mockImplementation(async (sql: string, params?: unknown[]) => {
     const q = String(sql);
     const p = (params ?? []) as unknown[];
-    if (q.includes("information_schema.tables"))
-      return [p[0] === "grn_cost_allocation" ? [{ 1: 1 }] : [], []];
-    if (q.includes("information_schema.columns") && q.includes("ex_gst_amount"))
-      return [[{ 1: 1 }], []];
+    if (q.includes("information_schema.tables")) return [p[0] === "grn_cost_allocation" ? [{ 1: 1 }] : [], []];
+    if (q.includes("information_schema.columns") && q.includes("ex_gst_amount")) return [[{ 1: 1 }], []];
     if (q.includes("vw_process_pnl_grn_allocation")) {
-      return [
-        [
-          {
-            process_id: PROC,
-            branch_id: BRANCH_ID,
-            period_code: PERIOD,
-            pnl_bucket: "bmc_non_people",
-            amount: 100,
-            allocation_count: 1,
-            freshness: null,
-          },
-        ],
-        [],
-      ];
+      return [[{ process_id: PROC, branch_id: BRANCH_ID, period_code: PERIOD, pnl_bucket: "bmc_non_people", amount: 100, allocation_count: 1, freshness: null }], []];
     }
-    if (
-      q.includes("FROM grn_cost_allocation a") &&
-      q.includes("lifecycle_status = 'reserved'")
-    ) {
-      return [
-        [
-          {
-            process_id: PROC,
-            branch_id: BRANCH_ID,
-            period_code: PERIOD,
-            pnl_bucket: "bmc_non_people",
-            amount: 40,
-            allocation_count: 1,
-            freshness: null,
-          },
-        ],
-        [],
-      ];
+    if (q.includes("FROM grn_cost_allocation a") && q.includes("lifecycle_status = 'reserved'")) {
+      return [[{ process_id: PROC, branch_id: BRANCH_ID, period_code: PERIOD, pnl_bucket: "bmc_non_people", amount: 40, allocation_count: 1, freshness: null }], []];
     }
     return [[], []];
   });
-  return (await import("../bpo-pnl-allocation-overlay.service.js"))
-    .bpoPnlAllocationOverlayService;
+  return (await import("../bpo-pnl-allocation-overlay.service.js")).bpoPnlAllocationOverlayService;
 }
 
 describe("bpo allocation overlay — GRN Committed (reserved) folded in for every month", () => {
@@ -145,16 +81,10 @@ describe("bpo allocation overlay — GRN Committed (reserved) folded in for ever
   it("reads 'reserved' only — draft allocations are never committed cost", async () => {
     const overlay = await loadOverlay();
     await overlay.getSummary({ period: PERIOD });
-    const reservedSql = execute.mock.calls
-      .map((c) => String(c[0]))
-      .find(
-        (q) =>
-          q.includes("FROM grn_cost_allocation a") && q.includes("'reserved'"),
-      )!;
+    const reservedSql = execute.mock.calls.map((c) => String(c[0]))
+      .find((q) => q.includes("FROM grn_cost_allocation a") && q.includes("'reserved'"))!;
     expect(reservedSql).toContain("a.lifecycle_status = 'reserved'");
     expect(reservedSql).not.toContain("'draft'");
-    expect(reservedSql, "ex-GST, same guard as the shared reader").toContain(
-      "amount_without_tax",
-    );
+    expect(reservedSql, "ex-GST, same guard as the shared reader").toContain("amount_without_tax");
   });
 });

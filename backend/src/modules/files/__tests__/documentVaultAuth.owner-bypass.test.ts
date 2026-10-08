@@ -22,13 +22,8 @@ const { findByStoredFilename, logDocumentAccess, isHoldActive, canViewEmployee, 
 vi.mock("../../../shared/enterpriseScope.js", () => ({ canViewEmployee }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 
-vi.mock("../../document-vault/documentVault.service.js", () => ({
-  findByStoredFilename,
-  logDocumentAccess,
-}));
-vi.mock("../../privacy-engine/privacyHold.service.js", () => ({
-  isHoldActive,
-}));
+vi.mock("../../document-vault/documentVault.service.js", () => ({ findByStoredFilename, logDocumentAccess }));
+vi.mock("../../privacy-engine/privacyHold.service.js", () => ({ isHoldActive }));
 
 const { authorizeDocumentAccess } = await import("../documentVaultAuth.js");
 

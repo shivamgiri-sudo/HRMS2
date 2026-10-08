@@ -56,16 +56,7 @@ type ControlParams = {
   scopeParams?: unknown[];
 };
 
-const PAYROLL_ROLES = [
-  "super_admin",
-  "admin",
-  "payroll_head",
-  "payroll_branch",
-  "payroll",
-  "hr",
-  "wfm",
-  "branch_head",
-];
+const PAYROLL_ROLES = ["super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm", "branch_head"];
 const REVIEW_PRIORITY: Record<string, number> = {
   open: 0,
   notified: 1,
@@ -112,13 +103,7 @@ function classifyAprStatus(minutes: number) {
 }
 
 function statusRank(status: string | null | undefined) {
-  if (
-    status === "present" ||
-    status === "leave_approved" ||
-    status === "holiday" ||
-    status === "week_off"
-  )
-    return 1;
+  if (status === "present" || status === "leave_approved" || status === "holiday" || status === "week_off") return 1;
   if (status === "half_day") return 0.5;
   return 0;
 }
@@ -165,9 +150,7 @@ async function attachReviewState(gaps: AttendanceControlGap[]) {
       WHERE conflict_key IN (${keys.map(() => "?").join(",")})`,
     keys,
   );
-  const byKey = new Map(
-    (rows as RowDataPacket[]).map((row) => [String(row.conflict_key), row]),
-  );
+  const byKey = new Map((rows as RowDataPacket[]).map((row) => [String(row.conflict_key), row]));
   return gaps.map((gap) => {
     const review = byKey.get(gap.id);
     return {
@@ -215,11 +198,7 @@ async function attachResolutionState(gaps: AttendanceControlGap[]) {
     const sourceSystem = String(adr.source_system ?? "");
     const createdBy = String(adr.created_by ?? "");
 
-    if (
-      gap.issueType === "dialler_missing_adr" &&
-      sourceSystem === "apr.ReportDate" &&
-      createdBy === "payroll_attendance_control"
-    ) {
+    if (gap.issueType === "dialler_missing_adr" && sourceSystem === "apr.ReportDate" && createdBy === "payroll_attendance_control") {
       resolvedThrough = "APR repair";
       resolvedDetail = "ADR created from APR evidence";
     } else if (adr.regularization_id) {
@@ -241,9 +220,9 @@ async function attachResolutionState(gaps: AttendanceControlGap[]) {
       resolvedThrough = "Manual override";
       resolvedDetail = `Resolved through ${sourceSystem}`;
     } else if (
-      sourceSystem.toLowerCase().includes("cosec") ||
-      sourceSystem.toLowerCase().includes("biometric") ||
-      String(adr.attendance_source ?? "").toLowerCase() === "biometric"
+      sourceSystem.toLowerCase().includes("cosec")
+      || sourceSystem.toLowerCase().includes("biometric")
+      || String(adr.attendance_source ?? "").toLowerCase() === "biometric"
     ) {
       resolvedThrough = "COSEC biometric";
       resolvedDetail = `Payroll ADR now using biometric as ${attendanceStatus || "updated"}`;
@@ -257,12 +236,7 @@ async function attachResolutionState(gaps: AttendanceControlGap[]) {
   });
 }
 
-async function upsertReview(
-  gap: AttendanceControlGap,
-  status: string,
-  actorUserId: string | null,
-  note?: string | null,
-) {
+async function upsertReview(gap: AttendanceControlGap, status: string, actorUserId: string | null, note?: string | null) {
   await ensureReviewTable();
   await db.execute(
     `INSERT INTO payroll_attendance_conflict_review
@@ -316,27 +290,14 @@ function normalizeDate(value: unknown) {
 // summary.issueTypes collapsed the dropdown to the single selected value, which
 // left no way back to another type without clearing the filter first.
 function matchesIssueType(gap: AttendanceControlGap, params: ControlParams) {
-  return (
-    !params.issueType ||
-    params.issueType === "all" ||
-    gap.issueType === params.issueType
-  );
+  return !params.issueType || params.issueType === "all" || gap.issueType === params.issueType;
 }
 
 function matchesSearch(gap: AttendanceControlGap, params: ControlParams) {
   const q = params.search?.trim().toLowerCase();
   if (!q) return true;
-  return [
-    gap.employeeCode,
-    gap.employeeName,
-    gap.branchName,
-    gap.processName,
-    gap.issueType,
-  ].some((part) =>
-    String(part ?? "")
-      .toLowerCase()
-      .includes(q),
-  );
+  return [gap.employeeCode, gap.employeeName, gap.branchName, gap.processName, gap.issueType]
+    .some((part) => String(part ?? "").toLowerCase().includes(q));
 }
 
 function matchesFilters(gap: AttendanceControlGap, params: ControlParams) {
@@ -460,11 +421,7 @@ async function sourceCounts(from: string, to: string) {
   };
 }
 
-async function aprGaps(
-  from: string,
-  to: string,
-  params: ControlParams,
-): Promise<AttendanceControlGap[]> {
+async function aprGaps(from: string, to: string, params: ControlParams): Promise<AttendanceControlGap[]> {
   const scope = employeeScope("e", params, "a.ReportDate");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id,
@@ -516,19 +473,13 @@ async function aprGaps(
       aprStatus: classifyAprStatus(sourceMinutes),
       biometricMinutes: null,
       biometricStatus: null,
-      payrollImpact:
-        "Dialler evidence exists, but payroll ADR has no day record",
-      actionNeeded:
-        "Create ADR through attendance policy or approved regularization; do not rewrite APR source",
+      payrollImpact: "Dialler evidence exists, but payroll ADR has no day record",
+      actionNeeded: "Create ADR through attendance policy or approved regularization; do not rewrite APR source",
     };
   });
 }
 
-async function crossEvidencePenaltyConflicts(
-  from: string,
-  to: string,
-  params: ControlParams,
-): Promise<AttendanceControlGap[]> {
+async function crossEvidencePenaltyConflicts(from: string, to: string, params: ControlParams): Promise<AttendanceControlGap[]> {
   const scope = employeeScope("e", params, "adr.record_date");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT adr.employee_id,
@@ -592,16 +543,11 @@ async function crossEvidencePenaltyConflicts(
     const aprStatus = classifyAprStatus(aprMinutes);
     const biometricStatus = classifyBiometricStatus(biometricMinutes);
     const aprRank = aprMinutes > 0 ? statusRank(aprStatus) : -1;
-    const biometricRank =
-      biometricMinutes > 0 ? statusRank(biometricStatus) : -1;
+    const biometricRank = biometricMinutes > 0 ? statusRank(biometricStatus) : -1;
     const sourceSystem = String(row.source_system ?? "").toLowerCase();
     const attendanceSource = String(row.attendance_source ?? "").toLowerCase();
-    const payrollUsesDialler =
-      attendanceSource === "dialler" || sourceSystem.includes("apr");
-    const payrollUsesBiometric =
-      attendanceSource === "biometric" ||
-      sourceSystem.includes("cosec") ||
-      sourceSystem.includes("biometric");
+    const payrollUsesDialler = attendanceSource === "dialler" || sourceSystem.includes("apr");
+    const payrollUsesBiometric = attendanceSource === "biometric" || sourceSystem.includes("cosec") || sourceSystem.includes("biometric");
 
     if (payrollUsesDialler && biometricRank > payrollRank) {
       gaps.push({
@@ -624,8 +570,7 @@ async function crossEvidencePenaltyConflicts(
         biometricMinutes,
         biometricStatus,
         payrollImpact: `Payroll uses APR/dialler result as ${adrStatus}; COSEC biometric evidence supports ${biometricStatus}`,
-        actionNeeded:
-          "Send to reporting manager for review/regularization decision; keep APR and COSEC source data unchanged",
+        actionNeeded: "Send to reporting manager for review/regularization decision; keep APR and COSEC source data unchanged",
         reportingManagerId: row.reporting_manager_id ?? null,
         reportingManagerName: row.reporting_manager_name ?? null,
         reportingManagerUserId: row.reporting_manager_user_id ?? null,
@@ -653,8 +598,7 @@ async function crossEvidencePenaltyConflicts(
         biometricMinutes,
         biometricStatus,
         payrollImpact: `Payroll uses COSEC/biometric result as ${adrStatus}; APR dialler evidence supports ${aprStatus}`,
-        actionNeeded:
-          "Send to reporting manager for review/regularization decision; keep APR and COSEC source data unchanged",
+        actionNeeded: "Send to reporting manager for review/regularization decision; keep APR and COSEC source data unchanged",
         reportingManagerId: row.reporting_manager_id ?? null,
         reportingManagerName: row.reporting_manager_name ?? null,
         reportingManagerUserId: row.reporting_manager_user_id ?? null,
@@ -664,11 +608,7 @@ async function crossEvidencePenaltyConflicts(
   return gaps;
 }
 
-async function ncosecGaps(
-  from: string,
-  to: string,
-  params: ControlParams,
-): Promise<AttendanceControlGap[]> {
+async function ncosecGaps(from: string, to: string, params: ControlParams): Promise<AttendanceControlGap[]> {
   const scope = employeeScope("e", params, "ibd.activity_date");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id,
@@ -718,36 +658,24 @@ async function ncosecGaps(
       employeeName: row.employee_name ?? null,
       branchName: row.branch_name ?? null,
       processName: row.process_name ?? null,
-      issueType: missingAdr
-        ? "ncosec_missing_adr"
-        : "ncosec_minutes_not_in_adr",
+      issueType: missingAdr ? "ncosec_missing_adr" : "ncosec_minutes_not_in_adr",
       severity: "blocker" as const,
       source: "ncosec" as const,
       sourceMinutes: Number(row.biometric_minutes ?? 0),
       adrMinutes: Number(row.adr_minutes ?? 0),
       adrStatus: row.attendance_status ?? null,
-      payrollSourceLabel: missingAdr
-        ? "ADR missing"
-        : "Payroll using COSEC biometric",
+      payrollSourceLabel: missingAdr ? "ADR missing" : "Payroll using COSEC biometric",
       aprMinutes: null,
       aprStatus: null,
       biometricMinutes: Number(row.biometric_minutes ?? 0),
-      biometricStatus: classifyBiometricStatus(
-        Number(row.biometric_minutes ?? 0),
-      ),
-      payrollImpact: missingAdr
-        ? "Biometric evidence exists, but payroll ADR has no day record"
-        : "Biometric evidence is not reflected in payroll ADR",
-      actionNeeded:
-        "Review biometric evidence through attendance policy or regularization; do not rewrite COSEC source data",
+      biometricStatus: classifyBiometricStatus(Number(row.biometric_minutes ?? 0)),
+      payrollImpact: missingAdr ? "Biometric evidence exists, but payroll ADR has no day record" : "Biometric evidence is not reflected in payroll ADR",
+      actionNeeded: "Review biometric evidence through attendance policy or regularization; do not rewrite COSEC source data",
     };
   });
 }
 
-async function salaryPrepGaps(
-  runId: string,
-  params: ControlParams,
-): Promise<AttendanceControlGap[]> {
+async function salaryPrepGaps(runId: string, params: ControlParams): Promise<AttendanceControlGap[]> {
   const scope = employeeScope("e", params);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT spl.employee_id,
@@ -801,11 +729,7 @@ async function salaryPrepGaps(
   }));
 }
 
-async function regularizationGaps(
-  from: string,
-  to: string,
-  params: ControlParams,
-): Promise<AttendanceControlGap[]> {
+async function regularizationGaps(from: string, to: string, params: ControlParams): Promise<AttendanceControlGap[]> {
   const scope = employeeScope("e", params, "ar.session_date");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ar.id AS regularization_id,
@@ -859,15 +783,11 @@ async function regularizationGaps(
     biometricMinutes: null,
     biometricStatus: null,
     payrollImpact: "Approved correction is not safely locked into payroll ADR",
-    actionNeeded:
-      "Relink or recreate ADR from approved regularization before payroll freeze",
+    actionNeeded: "Relink or recreate ADR from approved regularization before payroll freeze",
   }));
 }
 
-async function repairMissingAdrFromApr(
-  conflictKeys: string[],
-  actorUserId: string | null,
-) {
+async function repairMissingAdrFromApr(conflictKeys: string[], actorUserId: string | null) {
   let repaired = 0;
   let skipped = 0;
   for (const key of conflictKeys) {
@@ -907,11 +827,11 @@ async function repairMissingAdrFromApr(
       continue;
     }
 
-    const protectedAdr =
-      Boolean(row.adr_id) &&
-      (Number(row.is_locked ?? 0) === 1 ||
-        Boolean(row.override_by) ||
-        Boolean(row.regularization_id));
+    const protectedAdr = Boolean(row.adr_id) && (
+      Number(row.is_locked ?? 0) === 1 ||
+      Boolean(row.override_by) ||
+      Boolean(row.regularization_id)
+    );
     if (protectedAdr) {
       skipped += 1;
       continue;
@@ -924,12 +844,7 @@ async function repairMissingAdrFromApr(
 
     const aprMinutes = Math.max(0, Math.round(Number(row.apr_minutes ?? 0)));
     const classification = classifyAprStatus(aprMinutes);
-    const lwpValue =
-      classification === "present"
-        ? 0
-        : classification === "half_day"
-          ? 0.5
-          : 1;
+    const lwpValue = classification === "present" ? 0 : classification === "half_day" ? 0.5 : 1;
 
     await db.execute(
       `INSERT INTO attendance_daily_record
@@ -985,22 +900,14 @@ async function repairMissingAdrFromApr(
       payrollImpact: "APR evidence repaired into payroll ADR",
       actionNeeded: "Review repaired payroll day if any exception exists",
     };
-    await upsertReview(
-      gap,
-      "reviewed",
-      actorUserId,
-      "ADR repaired from APR evidence",
-    );
+    await upsertReview(gap, "reviewed", actorUserId, "ADR repaired from APR evidence");
     repaired += 1;
   }
 
   return { requested: conflictKeys.length, repaired, skipped };
 }
 
-async function repairMissingAdrFromNcosec(
-  conflictKeys: string[],
-  actorUserId: string | null,
-) {
+async function repairMissingAdrFromNcosec(conflictKeys: string[], actorUserId: string | null) {
   let repaired = 0;
   let skipped = 0;
   for (const key of conflictKeys) {
@@ -1038,11 +945,11 @@ async function repairMissingAdrFromNcosec(
       continue;
     }
 
-    const protectedAdr =
-      Boolean(row.adr_id) &&
-      (Number(row.is_locked ?? 0) === 1 ||
-        Boolean(row.override_by) ||
-        Boolean(row.regularization_id));
+    const protectedAdr = Boolean(row.adr_id) && (
+      Number(row.is_locked ?? 0) === 1 ||
+      Boolean(row.override_by) ||
+      Boolean(row.regularization_id)
+    );
     if (protectedAdr) {
       skipped += 1;
       continue;
@@ -1053,21 +960,13 @@ async function repairMissingAdrFromNcosec(
       continue;
     }
 
-    const biometricMinutes = Math.max(
-      0,
-      Math.round(Number(row.biometric_minutes ?? 0)),
-    );
+    const biometricMinutes = Math.max(0, Math.round(Number(row.biometric_minutes ?? 0)));
     if (biometricMinutes <= 0) {
       skipped += 1;
       continue;
     }
     const classification = classifyBiometricStatus(biometricMinutes);
-    const lwpValue =
-      classification === "present"
-        ? 0
-        : classification === "half_day"
-          ? 0.5
-          : 1;
+    const lwpValue = classification === "present" ? 0 : classification === "half_day" ? 0.5 : 1;
 
     await db.execute(
       `INSERT INTO attendance_daily_record
@@ -1123,12 +1022,7 @@ async function repairMissingAdrFromNcosec(
       payrollImpact: "COSEC biometric evidence repaired into payroll ADR",
       actionNeeded: "Review repaired payroll day if any exception exists",
     };
-    await upsertReview(
-      gap,
-      "reviewed",
-      actorUserId,
-      "ADR repaired from COSEC biometric evidence",
-    );
+    await upsertReview(gap, "reviewed", actorUserId, "ADR repaired from COSEC biometric evidence");
     repaired += 1;
   }
 
@@ -1186,16 +1080,8 @@ export const payrollAttendanceControlService = {
     const to = isMonthKey ? monthRange(issueDate).to : issueDate;
 
     const [
-      [employeeRows],
-      [adrRows],
-      [ibdRows],
-      [punchRows],
-      [aprRows],
-      [regRows],
-      [leaveRows],
-      [rosterRows],
-      [reviewRows],
-      [auditRows],
+      [employeeRows], [adrRows], [ibdRows], [punchRows],
+      [aprRows], [regRows], [leaveRows], [rosterRows], [reviewRows], [auditRows],
     ] = await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT e.id, e.employee_code, e.biometric_code,
@@ -1327,15 +1213,14 @@ export const payrollAttendanceControlService = {
           (err: any) => ({ error: err?.message ?? String(err) }),
         )
       : Promise.resolve(null);
-    const [counts, apr, ncosec, crossConflicts, regularization, salary] =
-      await Promise.all([
-        sourceCounts(from, to),
-        aprGaps(from, to, params),
-        ncosecGaps(from, to, params),
-        crossEvidencePenaltyConflicts(from, to, params),
-        regularizationGaps(from, to, params),
-        run?.id ? salaryPrepGaps(String(run.id), params) : Promise.resolve([]),
-      ]);
+    const [counts, apr, ncosec, crossConflicts, regularization, salary] = await Promise.all([
+      sourceCounts(from, to),
+      aprGaps(from, to, params),
+      ncosecGaps(from, to, params),
+      crossEvidencePenaltyConflicts(from, to, params),
+      regularizationGaps(from, to, params),
+      run?.id ? salaryPrepGaps(String(run.id), params) : Promise.resolve([]),
+    ]);
 
     // Each source query fetched SOURCE_ROW_CAP + 1 rows; more than the cap means
     // it hit the ceiling and the counts below understate reality. Report which
@@ -1352,22 +1237,14 @@ export const payrollAttendanceControlService = {
       .filter(([, rows]) => capReached(rows))
       .map(([name]) => name);
 
-    const allSources = [
-      ...crossConflicts,
-      ...apr,
-      ...ncosec,
-      ...regularization,
-      ...salary,
-    ];
+    const allSources = [...crossConflicts, ...apr, ...ncosec, ...regularization, ...salary];
 
     // Everything except the issue-type filter. The dropdown is built from this so
     // it keeps listing every type that is present under the current branch,
     // process, search and review filters — picking one type no longer hides the rest.
     const searchScoped = allSources.filter((gap) => matchesSearch(gap, params));
 
-    const allGapsBeforeReview = searchScoped.filter((gap) =>
-      matchesIssueType(gap, params),
-    );
+    const allGapsBeforeReview = searchScoped.filter((gap) => matchesIssueType(gap, params));
     const reviewedGaps = await attachReviewState(allGapsBeforeReview);
     const visibleFilter = (gap: AttendanceControlGap) => {
       const status = String(gap.reviewStatus ?? "open");
@@ -1376,17 +1253,12 @@ export const payrollAttendanceControlService = {
       }
       return !["reviewed", "no_issue"].includes(status);
     };
-    const visibleGaps = reviewedGaps
-      .filter(visibleFilter)
-      .sort(sortControlGaps);
+    const visibleGaps = reviewedGaps.filter(visibleFilter).sort(sortControlGaps);
 
-    const summaryByType = visibleGaps.reduce<Record<string, number>>(
-      (acc, gap) => {
-        acc[gap.issueType] = (acc[gap.issueType] ?? 0) + 1;
-        return acc;
-      },
-      {},
-    );
+    const summaryByType = visibleGaps.reduce<Record<string, number>>((acc, gap) => {
+      acc[gap.issueType] = (acc[gap.issueType] ?? 0) + 1;
+      return acc;
+    }, {});
 
     // Review state is only attached to the issue-type-filtered set, so the option
     // list is derived from the search-scoped set instead. It is the union of the
@@ -1395,24 +1267,16 @@ export const payrollAttendanceControlService = {
     const availableIssueTypes = Array.from(
       new Set([
         ...searchScoped.map((gap) => gap.issueType),
-        ...(params.issueType && params.issueType !== "all"
-          ? [params.issueType]
-          : []),
+        ...(params.issueType && params.issueType !== "all" ? [params.issueType] : []),
       ]),
     ).sort();
-    const blockers = visibleGaps.filter(
-      (gap) => gap.severity === "blocker",
-    ).length;
-    const warnings = visibleGaps.filter(
-      (gap) => gap.severity === "warning",
-    ).length;
+    const blockers = visibleGaps.filter((gap) => gap.severity === "blocker").length;
+    const warnings = visibleGaps.filter((gap) => gap.severity === "warning").length;
 
     const readiness: unknown = await readinessPromise;
 
     const start = (page - 1) * limit;
-    const pageGaps = await attachResolutionState(
-      visibleGaps.slice(start, start + limit),
-    );
+    const pageGaps = await attachResolutionState(visibleGaps.slice(start, start + limit));
     return {
       runMonth,
       from,
@@ -1446,22 +1310,14 @@ export const payrollAttendanceControlService = {
     };
   },
 
-  async notifyReportingManagers(
-    params: ControlParams & {
-      conflictKeys?: string[];
-      actorUserId?: string | null;
-    },
-  ) {
+  async notifyReportingManagers(params: ControlParams & { conflictKeys?: string[]; actorUserId?: string | null }) {
     const runMonth = params.runMonth ?? new Date().toISOString().slice(0, 7);
     const defaultRange = monthRange(runMonth);
     const from = params.from ?? defaultRange.from;
     const to = params.to ?? defaultRange.to;
     const conflicts = (await crossEvidencePenaltyConflicts(from, to, params))
       .filter((gap) => matchesFilters(gap, params))
-      .filter(
-        (gap) =>
-          !params.conflictKeys?.length || params.conflictKeys.includes(gap.id),
-      );
+      .filter((gap) => !params.conflictKeys?.length || params.conflictKeys.includes(gap.id));
 
     let notified = 0;
     let skippedNoManager = 0;
@@ -1470,25 +1326,17 @@ export const payrollAttendanceControlService = {
         skippedNoManager += 1;
         continue;
       }
-      await inboxService.createItem(
-        {
-          user_id: gap.reportingManagerUserId,
-          type: "payroll_attendance_conflict",
-          title: `Attendance payroll conflict: ${gap.employeeCode ?? gap.employeeName ?? "Employee"}`,
-          description: `${gap.issueDate}: ${gap.payrollImpact}. ${gap.actionNeeded}`,
-          entity_type: "attendance_daily_record",
-          entity_id: compactEntityId(gap.id),
-          action_url: `/payroll/attendance-control-tower?runMonth=${encodeURIComponent(runMonth)}&search=${encodeURIComponent(gap.employeeCode ?? "")}`,
-          priority: "high",
-        },
-        24 * 60,
-      );
-      await upsertReview(
-        gap,
-        "notified",
-        params.actorUserId ?? null,
-        "Notification sent to reporting manager",
-      );
+      await inboxService.createItem({
+        user_id: gap.reportingManagerUserId,
+        type: "payroll_attendance_conflict",
+        title: `Attendance payroll conflict: ${gap.employeeCode ?? gap.employeeName ?? "Employee"}`,
+        description: `${gap.issueDate}: ${gap.payrollImpact}. ${gap.actionNeeded}`,
+        entity_type: "attendance_daily_record",
+        entity_id: compactEntityId(gap.id),
+        action_url: `/payroll/attendance-control-tower?runMonth=${encodeURIComponent(runMonth)}&search=${encodeURIComponent(gap.employeeCode ?? "")}`,
+        priority: "high",
+      }, 24 * 60);
+      await upsertReview(gap, "notified", params.actorUserId ?? null, "Notification sent to reporting manager");
       notified += 1;
     }
 
@@ -1515,11 +1363,7 @@ export const payrollAttendanceControlService = {
     // All other key types (apr:, ncosec:, regularization:, salary:) are valid
     // targets for review-status changes too — build a fallback gap object from
     // the key itself so they are not silently dropped.
-    const conflicts = await crossEvidencePenaltyConflicts(
-      range.from,
-      range.to,
-      {},
-    );
+    const conflicts = await crossEvidencePenaltyConflicts(range.from, range.to, {});
     const byKey = new Map(conflicts.map((gap) => [gap.id, gap]));
     let updated = 0;
     for (const key of params.conflictKeys) {
@@ -1536,42 +1380,21 @@ export const payrollAttendanceControlService = {
             [parts[1]],
           );
           const row = (rows as any[])[0];
-          if (row) {
-            employeeId = String(row.employee_id);
-            issueDate = String(row.session_date);
-          }
+          if (row) { employeeId = String(row.employee_id); issueDate = String(row.session_date); }
         } else if (parts[0] === "conflict") {
-          employeeId = parts[2] ?? null;
-          issueDate = parts[3] ?? null;
+          employeeId = parts[2] ?? null; issueDate = parts[3] ?? null;
         } else {
-          employeeId = parts[1] ?? null;
-          issueDate = parts[2] ?? null;
+          employeeId = parts[1] ?? null; issueDate = parts[2] ?? null;
         }
         if (!employeeId || !issueDate) continue;
         gap = {
-          id: key,
-          issueDate,
-          employeeId,
-          employeeCode: null,
-          employeeName: null,
-          branchName: null,
-          processName: null,
-          issueType: parts[0] ?? "unknown",
-          severity: "blocker",
-          source: "adr",
-          sourceMinutes: null,
-          adrMinutes: null,
-          adrStatus: null,
-          payrollImpact: "",
-          actionNeeded: "",
+          id: key, issueDate, employeeId, employeeCode: null, employeeName: null,
+          branchName: null, processName: null, issueType: parts[0] ?? "unknown",
+          severity: "blocker", source: "adr", sourceMinutes: null,
+          adrMinutes: null, adrStatus: null, payrollImpact: "", actionNeeded: "",
         } as AttendanceControlGap;
       }
-      await upsertReview(
-        gap,
-        params.status,
-        params.actorUserId,
-        params.note ?? null,
-      );
+      await upsertReview(gap, params.status, params.actorUserId, params.note ?? null);
       updated += 1;
     }
 
@@ -1596,27 +1419,16 @@ export const payrollAttendanceControlService = {
       });
     }
 
-    return {
-      runMonth,
-      updated,
-      requested: params.conflictKeys.length,
-      status: params.status,
-    };
+    return { runMonth, updated, requested: params.conflictKeys.length, status: params.status };
   },
 
-  async lockUnlockedRegularizations(params: {
-    conflictKeys: string[];
-    actorUserId: string | null;
-  }) {
+  async lockUnlockedRegularizations(params: { conflictKeys: string[]; actorUserId: string | null }) {
     let locked = 0;
     let skipped = 0;
 
     for (const key of params.conflictKeys) {
       const parts = String(key).split(":");
-      if (parts[0] !== "regularization" || !parts[1]) {
-        skipped++;
-        continue;
-      }
+      if (parts[0] !== "regularization" || !parts[1]) { skipped++; continue; }
       const regId = parts[1];
 
       const [rows] = await db.execute<RowDataPacket[]>(
@@ -1635,42 +1447,19 @@ export const payrollAttendanceControlService = {
         [regId],
       );
       const row = (rows as any[])[0];
-      if (!row) {
-        skipped++;
-        continue;
-      }
+      if (!row) { skipped++; continue; }
 
       // Already correctly locked to this regularization — nothing to do
-      if (
-        row.adr_id &&
-        Number(row.is_locked) === 1 &&
-        row.existing_reg_id === regId
-      ) {
-        skipped++;
-        continue;
-      }
+      if (row.adr_id && Number(row.is_locked) === 1 && row.existing_reg_id === regId) { skipped++; continue; }
 
       // Locked to a different regularization — don't overwrite
-      if (
-        row.adr_id &&
-        Number(row.is_locked) === 1 &&
-        row.existing_reg_id &&
-        row.existing_reg_id !== regId
-      ) {
-        skipped++;
-        continue;
-      }
+      if (row.adr_id && Number(row.is_locked) === 1 && row.existing_reg_id && row.existing_reg_id !== regId) { skipped++; continue; }
 
       // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
       if (!(await isEmployedOn(String(row.employee_id), String(row.session_date)))) { skipped++; continue; }
 
       const requestedStatus = String(row.requested_status ?? "present");
-      const lwpValue =
-        requestedStatus === "present"
-          ? 0
-          : requestedStatus === "half_day"
-            ? 0.5
-            : 1;
+      const lwpValue = requestedStatus === "present" ? 0 : requestedStatus === "half_day" ? 0.5 : 1;
 
       await db.execute(
         `INSERT INTO attendance_daily_record
@@ -1687,17 +1476,8 @@ export const payrollAttendanceControlService = {
            is_locked         = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), 1, is_locked),
            processed_at      = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), NOW(), processed_at),
            created_by        = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), 'payroll_attendance_control', created_by)`,
-        [
-          row.employee_id,
-          row.session_date,
-          row.branch_id ?? null,
-          row.process_id ?? null,
-          row.session_date,
-          regId,
-          requestedStatus,
-          lwpValue,
-          regId,
-        ],
+        [row.employee_id, row.session_date, row.branch_id ?? null, row.process_id ?? null,
+         row.session_date, regId, requestedStatus, lwpValue, regId],
       );
       locked++;
     }
@@ -1710,9 +1490,7 @@ export const payrollAttendanceControlService = {
         entity_type: "attendance_daily_record",
         entity_id: `lock:${locked}`,
         change_summary: {
-          requested: params.conflictKeys.length,
-          locked,
-          skipped,
+          requested: params.conflictKeys.length, locked, skipped,
           conflict_keys: params.conflictKeys,
         },
       });
@@ -1723,9 +1501,7 @@ export const payrollAttendanceControlService = {
 
   async getMissingAdrKeys(from: string, to: string, employeeCode?: string) {
     const empFilter = employeeCode ? " AND e.employee_code = ?" : "";
-    const values: unknown[] = employeeCode
-      ? [from, to, employeeCode]
-      : [from, to];
+    const values: unknown[] = employeeCode ? [from, to, employeeCode] : [from, to];
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id AS employee_id,
               DATE_FORMAT(ibd.activity_date, '%Y-%m-%d') AS activity_date
@@ -1744,16 +1520,12 @@ export const payrollAttendanceControlService = {
         LIMIT 500`,
       values,
     );
-    return (rows as any[]).map(
-      (row) => `ncosec:${row.employee_id}:${row.activity_date}`,
-    );
+    return (rows as any[]).map((row) => `ncosec:${row.employee_id}:${row.activity_date}`);
   },
 
   async snapshotCosecState(from: string, to: string, employeeCode?: string) {
     const empFilter = employeeCode ? " AND ibd.employee_code = ?" : "";
-    const values: unknown[] = employeeCode
-      ? [from, to, employeeCode]
-      : [from, to];
+    const values: unknown[] = employeeCode ? [from, to, employeeCode] : [from, to];
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ibd.employee_code,
               DATE_FORMAT(ibd.activity_date, '%Y-%m-%d') AS activity_date,
@@ -1768,22 +1540,11 @@ export const payrollAttendanceControlService = {
     return rows as any[];
   },
 
-  async repairMissingAdr(params: {
-    conflictKeys: string[];
-    actorUserId: string | null;
-  }) {
-    const aprKeys = params.conflictKeys.filter((key) =>
-      String(key).startsWith("apr:"),
-    );
-    const ncosecKeys = params.conflictKeys.filter((key) =>
-      String(key).startsWith("ncosec:"),
-    );
-    const aprResult = aprKeys.length
-      ? await repairMissingAdrFromApr(aprKeys, params.actorUserId)
-      : { requested: 0, repaired: 0, skipped: 0 };
-    const ncosecResult = ncosecKeys.length
-      ? await repairMissingAdrFromNcosec(ncosecKeys, params.actorUserId)
-      : { requested: 0, repaired: 0, skipped: 0 };
+  async repairMissingAdr(params: { conflictKeys: string[]; actorUserId: string | null }) {
+    const aprKeys = params.conflictKeys.filter((key) => String(key).startsWith("apr:"));
+    const ncosecKeys = params.conflictKeys.filter((key) => String(key).startsWith("ncosec:"));
+    const aprResult = aprKeys.length ? await repairMissingAdrFromApr(aprKeys, params.actorUserId) : { requested: 0, repaired: 0, skipped: 0 };
+    const ncosecResult = ncosecKeys.length ? await repairMissingAdrFromNcosec(ncosecKeys, params.actorUserId) : { requested: 0, repaired: 0, skipped: 0 };
 
     const repaired = aprResult.repaired + ncosecResult.repaired;
 

@@ -2,22 +2,15 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket, Pool } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
-import {
-  getPoolForKey,
-  testPoolForKey,
-} from "../external-db/external-db.service.js";
+import { getPoolForKey, testPoolForKey } from "../external-db/external-db.service.js";
 import mysql from "mysql2/promise";
 
 function normalizeLookup(value: unknown): string {
-  return String(value ?? "")
-    .trim()
-    .toLowerCase();
+  return String(value ?? "").trim().toLowerCase();
 }
 
 function uniqueNonEmpty(values: Array<string | null | undefined>): string[] {
-  return Array.from(
-    new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean)),
-  );
+  return Array.from(new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean)));
 }
 
 function buildInClause(values: string[]): { clause: string; params: string[] } {
@@ -59,69 +52,36 @@ function getEnvPool(): Pool {
 // Falls back to .env pool when no IH credentials are stored.
 export async function getLmsPool(): Promise<Pool> {
   try {
-    const pool = (await getPoolForKey("lms_sync")) as Pool;
+    const pool = await getPoolForKey("lms_sync") as Pool;
     return pool;
   } catch {
     return getEnvPool();
   }
 }
 
-export async function lmsQuery<T extends RowDataPacket[] = RowDataPacket[]>(
-  sql: string,
-  params: unknown[] = [],
-): Promise<T> {
+export async function lmsQuery<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params: unknown[] = []): Promise<T> {
   const pool = await getLmsPool();
   const [rows] = await pool.execute<T>(sql, params as any);
   return rows;
 }
 
 function hasLmsAdminRole(hrmsRoles: string[]) {
-  return hrmsRoles.some((role) =>
-    ["admin", "hr", "ceo", "super_admin", "lms_admin"].includes(
-      String(role).toLowerCase(),
-    ),
-  );
+  return hrmsRoles.some((role) => ["admin", "hr", "ceo", "super_admin", "lms_admin"].includes(String(role).toLowerCase()));
 }
 
 function hasLmsCoordinatorRole(hrmsRoles: string[], lmsRole?: string | null) {
   const normalized = hrmsRoles.map((role) => String(role).toLowerCase());
-  return (
-    normalized.some((role) =>
-      [
-        "trainer",
-        "quality",
-        "quality_auditor",
-        "qa",
-        "qtl",
-        "training",
-        "training_manager",
-        "lms_coordinator",
-        "coordinator",
-      ].includes(role),
-    ) ||
-    ["coordinator", "trainer", "quality"].includes(
-      String(lmsRole ?? "").toLowerCase(),
-    )
-  );
+  return normalized.some((role) => ["trainer", "quality", "quality_auditor", "qa", "qtl", "training", "training_manager", "lms_coordinator", "coordinator"].includes(role)) || ["coordinator", "trainer", "quality"].includes(String(lmsRole ?? "").toLowerCase());
 }
 
 export const lmsService = {
-  async testConnection(): Promise<{
-    ok: boolean;
-    source: "integration_hub" | "env";
-    latency_ms?: number;
-    error?: string;
-  }> {
+  async testConnection(): Promise<{ ok: boolean; source: "integration_hub" | "env"; latency_ms?: number; error?: string }> {
     const start = Date.now();
     // Try Integration Hub credentials first
     try {
       const result = await testPoolForKey("lms_sync");
       if (result.ok) {
-        return {
-          ok: true,
-          source: "integration_hub",
-          latency_ms: Date.now() - start,
-        };
+        return { ok: true, source: "integration_hub", latency_ms: Date.now() - start };
       }
     } catch {
       // Fall through to env pool
@@ -132,21 +92,14 @@ export const lmsService = {
       await pool.execute("SELECT 1");
       return { ok: true, source: "env", latency_ms: Date.now() - start };
     } catch (e: any) {
-      return {
-        ok: false,
-        source: "env",
-        error: e?.message ?? "Connection failed",
-        latency_ms: Date.now() - start,
-      };
+      return { ok: false, source: "env", error: e?.message ?? "Connection failed", latency_ms: Date.now() - start };
     }
   },
 
   async getAccessForEmployee(employee: any, hrmsRoles: string[]) {
     const employeeCode = String(employee?.employee_code ?? "").trim();
     const userId = String(employee?.user_id ?? "").trim();
-    const email = String(
-      employee?.email ?? employee?.official_email ?? "",
-    ).trim();
+    const email = String(employee?.email ?? employee?.official_email ?? "").trim();
     const [roleAccess] = await lmsQuery<RowDataPacket[]>(
       `SELECT * FROM role_access_matrix
         WHERE active = 1
@@ -160,29 +113,15 @@ export const lmsService = {
         LIMIT 1`,
       [employeeCode, employeeCode, email],
     );
-    const canAdmin =
-      hasLmsAdminRole(hrmsRoles) ||
-      ["admin", "management"].includes(
-        String(roleAccess?.role ?? "").toLowerCase(),
-      ) ||
-      ["admin", "management"].includes(
-        String(roleAccess?.portal_access ?? "").toLowerCase(),
-      );
-    const canCoordinator =
-      canAdmin ||
-      hasLmsCoordinatorRole(hrmsRoles, roleAccess?.role) ||
-      ["coordinator", "trainer"].includes(
-        String(roleAccess?.portal_access ?? "").toLowerCase(),
-      );
+    const canAdmin = hasLmsAdminRole(hrmsRoles) || ["admin", "management"].includes(String(roleAccess?.role ?? "").toLowerCase()) || ["admin", "management"].includes(String(roleAccess?.portal_access ?? "").toLowerCase());
+    const canCoordinator = canAdmin || hasLmsCoordinatorRole(hrmsRoles, roleAccess?.role) || ["coordinator", "trainer"].includes(String(roleAccess?.portal_access ?? "").toLowerCase());
     const canEmployee = Boolean(trainee) || Boolean(employeeCode);
     return {
       employeeCode,
       user: {
         employeeId: employee?.id,
         employeeCode,
-        name:
-          employee?.full_name ??
-          [employee?.first_name, employee?.last_name].filter(Boolean).join(" "),
+        name: employee?.full_name ?? [employee?.first_name, employee?.last_name].filter(Boolean).join(" "),
         email,
         branch: employee?.branch_name ?? employee?.branch_id,
         process: employee?.process_name ?? employee?.process_id,
@@ -204,8 +143,7 @@ export const lmsService = {
         LIMIT 1`,
       [employeeCode, employeeCode, email ?? ""],
     );
-    if (!trainee)
-      return { trainee: null, modules: [], contents: [], progress: [] };
+    if (!trainee) return { trainee: null, modules: [], contents: [], progress: [] };
     const modules = await lmsQuery<RowDataPacket[]>(
       `SELECT m.*, c.classroom_name
          FROM module_master m
@@ -248,57 +186,21 @@ export const lmsService = {
       if (role.lob) { conds.push("lob = ?"); params.push(role.lob); }
     }
     const where = conds.join(" AND ");
-    const batches = await lmsQuery<RowDataPacket[]>(
-      `SELECT * FROM batch_master WHERE ${where} ORDER BY start_date DESC, created_at DESC LIMIT 100`,
-      params,
-    );
-    const trainees = await lmsQuery<RowDataPacket[]>(
-      `SELECT * FROM trainee_master WHERE ${where} ORDER BY last_updated_at DESC LIMIT 200`,
-      params,
-    );
-    const attendance = await lmsQuery<RowDataPacket[]>(
-      `SELECT * FROM attendance_inference WHERE ${where} ORDER BY attendance_date DESC LIMIT 200`,
-      params,
-    ).catch(() => [] as RowDataPacket[]);
-    return {
-      scope: { branch: role.branch, process: role.process, lob: role.lob },
-      batches,
-      trainees,
-      attendance,
-    };
+    const batches = await lmsQuery<RowDataPacket[]>(`SELECT * FROM batch_master WHERE ${where} ORDER BY start_date DESC, created_at DESC LIMIT 100`, params);
+    const trainees = await lmsQuery<RowDataPacket[]>(`SELECT * FROM trainee_master WHERE ${where} ORDER BY last_updated_at DESC LIMIT 200`, params);
+    const attendance = await lmsQuery<RowDataPacket[]>(`SELECT * FROM attendance_inference WHERE ${where} ORDER BY attendance_date DESC LIMIT 200`, params).catch(() => [] as RowDataPacket[]);
+    return { scope: { branch: role.branch, process: role.process, lob: role.lob }, batches, trainees, attendance };
   },
 
   async getNativeAdminDashboard() {
-    const [batchStats] = await lmsQuery<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total_batches, SUM(batch_status = 'Active') AS active_batches FROM batch_master`,
-    );
-    const [traineeStats] = await lmsQuery<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total_trainees, SUM(status = 'Active') AS active_trainees, SUM(certification_status = 'Certified') AS certified FROM trainee_master`,
-    );
-    const [contentStats] = await lmsQuery<RowDataPacket[]>(
-      `SELECT COUNT(*) AS classrooms FROM classroom_master WHERE active = 1`,
-    );
-    const [moduleStats] = await lmsQuery<RowDataPacket[]>(
-      `SELECT COUNT(*) AS modules FROM module_master WHERE active = 1`,
-    );
-    const [fileStats] = await lmsQuery<RowDataPacket[]>(
-      `SELECT COUNT(*) AS contents FROM content_master WHERE active = 1`,
-    );
-    const roleAccess = await lmsQuery<RowDataPacket[]>(
-      `SELECT login_id, name, role, portal_access, employee_code, branch, process, active FROM role_access_matrix ORDER BY updated_at DESC LIMIT 200`,
-    );
-    const batches = await lmsQuery<RowDataPacket[]>(
-      `SELECT * FROM batch_master ORDER BY created_at DESC LIMIT 50`,
-    );
-    return {
-      batchStats,
-      traineeStats,
-      contentStats,
-      moduleStats,
-      fileStats,
-      roleAccess,
-      batches,
-    };
+    const [batchStats] = await lmsQuery<RowDataPacket[]>(`SELECT COUNT(*) AS total_batches, SUM(batch_status = 'Active') AS active_batches FROM batch_master`);
+    const [traineeStats] = await lmsQuery<RowDataPacket[]>(`SELECT COUNT(*) AS total_trainees, SUM(status = 'Active') AS active_trainees, SUM(certification_status = 'Certified') AS certified FROM trainee_master`);
+    const [contentStats] = await lmsQuery<RowDataPacket[]>(`SELECT COUNT(*) AS classrooms FROM classroom_master WHERE active = 1`);
+    const [moduleStats] = await lmsQuery<RowDataPacket[]>(`SELECT COUNT(*) AS modules FROM module_master WHERE active = 1`);
+    const [fileStats] = await lmsQuery<RowDataPacket[]>(`SELECT COUNT(*) AS contents FROM content_master WHERE active = 1`);
+    const roleAccess = await lmsQuery<RowDataPacket[]>(`SELECT login_id, name, role, portal_access, employee_code, branch, process, active FROM role_access_matrix ORDER BY updated_at DESC LIMIT 200`);
+    const batches = await lmsQuery<RowDataPacket[]>(`SELECT * FROM batch_master ORDER BY created_at DESC LIMIT 50`);
+    return { batchStats, traineeStats, contentStats, moduleStats, fileStats, roleAccess, batches };
   },
 
   /**
@@ -339,12 +241,9 @@ export const lmsService = {
       LIMIT 100
     `, batchParams);
 
-    const batchNos = (batchRows as any[])
-      .map((row) => String(row.batch_no ?? "").trim())
-      .filter(Boolean);
+    const batchNos = (batchRows as any[]).map((row) => String(row.batch_no ?? "").trim()).filter(Boolean);
     const traineeCountsRows = batchNos.length
-      ? await lmsQuery<RowDataPacket[]>(
-          `
+      ? await lmsQuery<RowDataPacket[]>(`
           SELECT
             t.batch_no,
             COUNT(*) AS trainee_count,
@@ -356,9 +255,7 @@ export const lmsService = {
           FROM trainee_master t
           WHERE t.batch_no IN (${buildInClause(batchNos).clause})
           GROUP BY t.batch_no
-        `,
-          buildInClause(batchNos).params,
-        )
+        `, buildInClause(batchNos).params)
       : [];
 
     const traineeCounts = new Map<string, any>();
@@ -413,18 +310,13 @@ export const lmsService = {
       ...(candidateRows as any[]).map((row) => row.hrms_employee_code),
       ...(candidateRows as any[]).map((row) => row.candidate_employee_code),
     ]);
-    const learnerIds = uniqueNonEmpty(
-      (candidateRows as any[]).map((row) => row.lms_learner_id),
-    );
+    const learnerIds = uniqueNonEmpty((candidateRows as any[]).map((row) => row.lms_learner_id));
     const lmsWhereParts: string[] = [];
     const lmsParams: string[] = [];
 
     if (employeeCodes.length) {
       const inClause = buildInClause(employeeCodes);
-      lmsWhereParts.push(
-        `employee_id IN (${inClause.clause})`,
-        `permanent_emp_id IN (${inClause.clause})`,
-      );
+      lmsWhereParts.push(`employee_id IN (${inClause.clause})`, `permanent_emp_id IN (${inClause.clause})`);
       lmsParams.push(...inClause.params, ...inClause.params);
     }
     if (learnerIds.length) {
@@ -434,8 +326,7 @@ export const lmsService = {
     }
 
     const traineeRows = lmsWhereParts.length
-      ? await lmsQuery<RowDataPacket[]>(
-          `
+      ? await lmsQuery<RowDataPacket[]>(`
           SELECT
             employee_id,
             permanent_emp_id,
@@ -457,9 +348,7 @@ export const lmsService = {
           FROM trainee_master
           WHERE ${lmsWhereParts.join(" OR ")}
           ORDER BY last_updated_at DESC
-        `,
-          lmsParams,
-        )
+        `, lmsParams)
       : [];
 
     const traineeLookup = new Map<string, any>();
@@ -480,8 +369,7 @@ export const lmsService = {
       const ojtReadyCount = asNumber(stats.ojt_ready_count);
       const handoverToOpsCount = asNumber(stats.handover_to_ops_count);
       const certifiedCount = asNumber(stats.certified_count);
-      const fillPct =
-        expected > 0 ? Math.min(100, (total / expected) * 100) : 0;
+      const fillPct = expected > 0 ? Math.min(100, (total / expected) * 100) : 0;
       const remainingSlots = Math.max(expected - total, 0);
       const overbooked = Math.max(total - expected, 0);
 
@@ -508,53 +396,28 @@ export const lmsService = {
         fill_pct: Number(fillPct.toFixed(1)),
         remaining_slots: remainingSlots,
         overbooked,
-        fill_state:
-          overbooked > 0
-            ? "overbooked"
-            : fillPct >= 100
-              ? "filled"
-              : fillPct >= 80
-                ? "nearly_full"
-                : "filling",
+        fill_state: overbooked > 0 ? "overbooked" : fillPct >= 100 ? "filled" : fillPct >= 80 ? "nearly_full" : "filling",
         created_at: row.created_at,
         last_updated_at: row.last_updated_at,
       };
     });
 
-    const activeBatches = batches.filter(
-      (batch) =>
-        normalizeLookup(batch.batch_status) === "active" ||
-        normalizeLookup(batch.batch_status) === "planned",
-    );
+    const activeBatches = batches.filter((batch) => normalizeLookup(batch.batch_status) === "active" || normalizeLookup(batch.batch_status) === "planned");
     const selectedCandidates = (candidateRows as any[]).filter((candidate) =>
-      [
-        "selected",
-        "bgv_pending",
-        "bgv_verified",
-        "payroll_validated",
-        "offer_pending",
-        "offer_accepted",
-      ].includes(normalizeLookup(candidate.current_stage)),
+      ["selected", "bgv_pending", "bgv_verified", "payroll_validated", "offer_pending", "offer_accepted"].includes(normalizeLookup(candidate.current_stage)),
     );
 
     const plannerCandidates = (candidateRows as any[]).map((candidate) => {
-      const trainee =
-        traineeLookup.get(normalizeLookup(candidate.hrms_employee_code)) ??
-        traineeLookup.get(normalizeLookup(candidate.candidate_employee_code)) ??
-        traineeLookup.get(normalizeLookup(candidate.lms_learner_id)) ??
-        null;
+      const trainee = traineeLookup.get(normalizeLookup(candidate.hrms_employee_code))
+        ?? traineeLookup.get(normalizeLookup(candidate.candidate_employee_code))
+        ?? traineeLookup.get(normalizeLookup(candidate.lms_learner_id))
+        ?? null;
 
       const confirmedOnboarded = Boolean(
         trainee ||
-        ["joined", "converted", "onboarded"].includes(
-          normalizeLookup(candidate.current_stage),
-        ) ||
-        ["onboarded", "profile_submitted"].includes(
-          normalizeLookup(candidate.profile_status),
-        ) ||
-        ["joined", "approved"].includes(
-          normalizeLookup(candidate.onboarding_bridge_status),
-        ),
+        ["joined", "converted", "onboarded"].includes(normalizeLookup(candidate.current_stage)) ||
+        ["onboarded", "profile_submitted"].includes(normalizeLookup(candidate.profile_status)) ||
+        ["joined", "approved"].includes(normalizeLookup(candidate.onboarding_bridge_status)),
       );
 
       const lmsProvisioned = Boolean(
@@ -565,34 +428,16 @@ export const lmsService = {
       );
 
       const batchAssigned = Boolean(trainee?.batch_no);
-      const readyForTraining =
-        confirmedOnboarded && lmsProvisioned && batchAssigned;
+      const readyForTraining = confirmedOnboarded && lmsProvisioned && batchAssigned;
 
       const suggestedBatch = batchAssigned
         ? trainee.batch_no
-        : (activeBatches.find((batch) => {
-            const branchMatch =
-              candidate.branch_name &&
-              batch.branch &&
-              normalizeLookup(candidate.branch_name) ===
-                normalizeLookup(batch.branch);
-            const processMatch =
-              candidate.process_name &&
-              batch.process &&
-              normalizeLookup(candidate.process_name) ===
-                normalizeLookup(batch.process);
-            const lobMatch =
-              candidate.applied_for_role &&
-              batch.lob &&
-              normalizeLookup(candidate.applied_for_role) ===
-                normalizeLookup(batch.lob);
-            return (
-              batch.remaining_slots > 0 &&
-              (branchMatch || processMatch || lobMatch)
-            );
-          })?.batch_no ??
-          activeBatches.find((batch) => batch.remaining_slots > 0)?.batch_no ??
-          null);
+        : activeBatches.find((batch) => {
+            const branchMatch = candidate.branch_name && batch.branch && normalizeLookup(candidate.branch_name) === normalizeLookup(batch.branch);
+            const processMatch = candidate.process_name && batch.process && normalizeLookup(candidate.process_name) === normalizeLookup(batch.process);
+            const lobMatch = candidate.applied_for_role && batch.lob && normalizeLookup(candidate.applied_for_role) === normalizeLookup(batch.lob);
+            return batch.remaining_slots > 0 && (branchMatch || processMatch || lobMatch);
+          })?.batch_no ?? activeBatches.find((batch) => batch.remaining_slots > 0)?.batch_no ?? null;
 
       const readinessState = readyForTraining
         ? "ready_for_training"
@@ -618,10 +463,7 @@ export const lmsService = {
         lms_learner_id: candidate.lms_learner_id ?? trainee?.lms_id ?? null,
         batch_no: trainee?.batch_no ?? null,
         batch_status: trainee?.status ?? null,
-        onboarding_status:
-          trainee?.onboarding_status ??
-          candidate.onboarding_bridge_status ??
-          null,
+        onboarding_status: trainee?.onboarding_status ?? candidate.onboarding_bridge_status ?? null,
         course_completion_pct: trainee?.course_completion_pct ?? null,
         attendance_pct: trainee?.attendance_pct ?? null,
         certification_status: trainee?.certification_status ?? null,
@@ -648,38 +490,16 @@ export const lmsService = {
       total_batches: batches.length,
       active_batches: activeBatches.length,
       selected_candidates: selectedCandidates.length,
-      confirmed_onboarded: plannerCandidates.filter(
-        (candidate) => candidate.confirmed_onboarded,
-      ).length,
-      lms_provisioned: plannerCandidates.filter(
-        (candidate) => candidate.lms_provisioned,
-      ).length,
-      ready_for_training: plannerCandidates.filter(
-        (candidate) => candidate.ready_for_training,
-      ).length,
-      batch_assigned: plannerCandidates.filter(
-        (candidate) => candidate.batch_assigned,
-      ).length,
-      open_slots: activeBatches.reduce(
-        (sum, batch) => sum + asNumber(batch.remaining_slots),
-        0,
-      ),
-      overbooked: batches.reduce(
-        (sum, batch) => sum + asNumber(batch.overbooked),
-        0,
-      ),
+      confirmed_onboarded: plannerCandidates.filter((candidate) => candidate.confirmed_onboarded).length,
+      lms_provisioned: plannerCandidates.filter((candidate) => candidate.lms_provisioned).length,
+      ready_for_training: plannerCandidates.filter((candidate) => candidate.ready_for_training).length,
+      batch_assigned: plannerCandidates.filter((candidate) => candidate.batch_assigned).length,
+      open_slots: activeBatches.reduce((sum, batch) => sum + asNumber(batch.remaining_slots), 0),
+      overbooked: batches.reduce((sum, batch) => sum + asNumber(batch.overbooked), 0),
       average_fill_pct: batches.length
-        ? Number(
-            (
-              batches.reduce(
-                (sum, batch) => sum + asNumber(batch.fill_pct),
-                0,
-              ) / batches.length
-            ).toFixed(1),
-          )
+        ? Number((batches.reduce((sum, batch) => sum + asNumber(batch.fill_pct), 0) / batches.length).toFixed(1))
         : 0,
-      filling_batches: batches.filter((batch) => batch.remaining_slots > 0)
-        .length,
+      filling_batches: batches.filter((batch) => batch.remaining_slots > 0).length,
     };
 
     return {
@@ -695,7 +515,7 @@ export const lmsService = {
          FROM lms_learning_progress_snapshot
         WHERE employee_id = ?
         ORDER BY synced_at DESC`,
-      [employeeId],
+      [employeeId]
     );
     return rows as RowDataPacket[];
   },
@@ -703,7 +523,7 @@ export const lmsService = {
   async getCertifications(employeeId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM lms_certification_snapshot WHERE employee_id = ? ORDER BY issued_date DESC",
-      [employeeId],
+      [employeeId]
     );
     return rows as RowDataPacket[];
   },
@@ -720,27 +540,22 @@ export const lmsService = {
     return rows as RowDataPacket[];
   },
 
-  async upsertMapping(
-    employeeId: string,
-    lmsLearnerId: string,
-    email?: string,
-  ) {
+  async upsertMapping(employeeId: string, lmsLearnerId: string, email?: string) {
     await db.execute(
       `INSERT INTO lms_employee_mapping (id, employee_id, lms_learner_id, email)
        VALUES (?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE lms_learner_id = VALUES(lms_learner_id), email = VALUES(email), is_active = 1, mapped_at = NOW()`,
-      [randomUUID(), employeeId, lmsLearnerId, email ?? null],
+      [randomUUID(), employeeId, lmsLearnerId, email ?? null]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM lms_employee_mapping WHERE employee_id = ? LIMIT 1",
-      [employeeId],
+      "SELECT * FROM lms_employee_mapping WHERE employee_id = ? LIMIT 1", [employeeId]
     );
     return (rows as RowDataPacket[])[0];
   },
 
   async getSyncLog() {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM lms_sync_audit_log ORDER BY created_at DESC LIMIT 100",
+      "SELECT * FROM lms_sync_audit_log ORDER BY created_at DESC LIMIT 100"
     );
     return rows as RowDataPacket[];
   },
@@ -768,7 +583,7 @@ export const lmsService = {
        WHERE e.active_status = 1
        GROUP BY e.id, e.employee_code, e.first_name, e.last_name
        HAVING modules_assigned > 0
-       ORDER BY employee_name`,
+       ORDER BY employee_name`
     );
     return rows as RowDataPacket[];
   },

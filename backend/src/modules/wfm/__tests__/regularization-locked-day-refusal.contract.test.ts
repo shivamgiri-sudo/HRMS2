@@ -28,10 +28,7 @@ import { describe, expect, it } from "vitest";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const wfm = fs.readFileSync(path.resolve(DIR, "..", "wfm.service.ts"), "utf8");
-const engine = fs.readFileSync(
-  path.resolve(DIR, "..", "attendance-engine.service.ts"),
-  "utf8",
-);
+const engine = fs.readFileSync(path.resolve(DIR, "..", "attendance-engine.service.ts"), "utf8");
 
 /** The reviewRegularization body. */
 function reviewBody(): string {
@@ -46,9 +43,7 @@ describe("the write it depends on really is a silent no-op", () => {
      * This is the premise of the whole test file. If this ever stops being true — if the upsert
      * starts erroring or reporting on a locked day — the refusal below could be relaxed.
      */
-    expect(engine).toContain(
-      "attendance_status  = IF(is_locked = 0, VALUES(attendance_status),  attendance_status)",
-    );
+    expect(engine).toContain("attendance_status  = IF(is_locked = 0, VALUES(attendance_status),  attendance_status)");
   });
 });
 
@@ -92,9 +87,7 @@ describe("a locked day is refused, whoever locked it", () => {
      * correction proceeds into the no-op. Nothing may reintroduce that.
      */
     const body = reviewBody();
-    expect(body).not.toMatch(
-      /is_locked[^\n]*===\s*1\s*&&\s*\(\s*\n?\s*\(existing\.regularization_id &&/,
-    );
+    expect(body).not.toMatch(/is_locked[^\n]*===\s*1\s*&&\s*\(\s*\n?\s*\(existing\.regularization_id &&/);
   });
 
   it("still lets a correction re-review the day it already owns", () => {

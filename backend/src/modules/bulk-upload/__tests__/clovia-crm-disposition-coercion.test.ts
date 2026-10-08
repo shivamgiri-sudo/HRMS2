@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseFtrFlag,
-  parseDate,
-  CLOVIA_CRM_DISPOSITION_HEADERS,
+  parseFtrFlag, parseDate, CLOVIA_CRM_DISPOSITION_HEADERS,
 } from "../clovia-crm-disposition-bulk.service.js";
 
 describe("parseFtrFlag", () => {
@@ -46,8 +44,6 @@ describe("headers", () => {
     expect(CLOVIA_CRM_DISPOSITION_HEADERS).toContain("EMP Name");
     // Agent Name in the live sheet is a Purple Panda login email, not a MAS
     // agent identity -- deliberately never accepted here.
-    expect(CLOVIA_CRM_DISPOSITION_HEADERS as readonly string[]).not.toContain(
-      "Agent Name",
-    );
+    expect(CLOVIA_CRM_DISPOSITION_HEADERS as readonly string[]).not.toContain("Agent Name");
   });
 });

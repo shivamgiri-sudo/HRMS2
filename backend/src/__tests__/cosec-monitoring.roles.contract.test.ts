@@ -28,8 +28,7 @@ vi.mock("../db/mysql.js", () => ({
 
 let actor: { id: string; role: string; roles: string[] };
 vi.mock("../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<typeof import("../middleware/authMiddleware.js")>();
+  const original = await importOriginal<typeof import("../middleware/authMiddleware.js")>();
   return {
     ...original,
     requireAuth: (req: any, _res: any, next: any) => {
@@ -74,17 +73,7 @@ function stubDb() {
   execute.mockReset();
   execute.mockImplementation(async (sql: string) => {
     if (/FROM integration_sync_run[\s\S]*LIMIT 1\b/.test(sql)) {
-      return [
-        [
-          {
-            id: "run-1",
-            status: "success",
-            started_at: "2026-08-27 06:00:00",
-            completed_at: "2026-08-27 06:05:00",
-          },
-        ],
-        [],
-      ];
+      return [[{ id: "run-1", status: "success", started_at: "2026-08-27 06:00:00", completed_at: "2026-08-27 06:05:00" }], []];
     }
     if (/FROM integration_sync_run[\s\S]*LIMIT 50\b/.test(sql)) {
       return [[{ id: "run-1", status: "success" }], []];
@@ -108,74 +97,52 @@ beforeEach(() => {
 
 describe("2a — cosecMonitoringRouter role split", () => {
   it("process_manager (page-gate role, not in the old API list) gets 200 on /sync-runs", async () => {
-    const res = await request(appFor("process_manager")).get(
-      "/api/integrations/cosec/sync-runs",
-    );
+    const res = await request(appFor("process_manager")).get("/api/integrations/cosec/sync-runs");
     expect(res.status).toBe(200);
   });
 
   it("branch_head (page-gate role) gets 200 on /sync-status and /sync-errors", async () => {
     const app = appFor("branch_head");
-    expect(
-      (await request(app).get("/api/integrations/cosec/sync-status")).status,
-    ).toBe(200);
-    expect(
-      (await request(app).get("/api/integrations/cosec/sync-errors")).status,
-    ).toBe(200);
+    expect((await request(app).get("/api/integrations/cosec/sync-status")).status).toBe(200);
+    expect((await request(app).get("/api/integrations/cosec/sync-errors")).status).toBe(200);
   });
 
   it("process_manager gets 403 on /latest-punches — the run-level union does not grant the per-employee route", async () => {
-    const res = await request(appFor("process_manager")).get(
-      "/api/integrations/cosec/latest-punches",
-    );
+    const res = await request(appFor("process_manager")).get("/api/integrations/cosec/latest-punches");
     expect(res.status).toBe(403);
   });
 
   it("branch_wfm gets 403 on /latest-punches for the same reason", async () => {
-    const res = await request(appFor("branch_wfm")).get(
-      "/api/integrations/cosec/latest-punches",
-    );
+    const res = await request(appFor("branch_wfm")).get("/api/integrations/cosec/latest-punches");
     expect(res.status).toBe(403);
   });
 
   it("wfm (in both the old list and the narrow punch list) still gets 200 on /latest-punches", async () => {
-    const res = await request(appFor("wfm")).get(
-      "/api/integrations/cosec/latest-punches",
-    );
+    const res = await request(appFor("wfm")).get("/api/integrations/cosec/latest-punches");
     expect(res.status).toBe(200);
   });
 
   it("an out-of-set role (employee) is refused at the router level", async () => {
-    const res = await request(appFor("employee")).get(
-      "/api/integrations/cosec/sync-runs",
-    );
+    const res = await request(appFor("employee")).get("/api/integrations/cosec/sync-runs");
     expect(res.status).toBe(403);
   });
 });
 
 describe("2b — each endpoint issues only the query(ies) its own response uses", () => {
   it("GET /sync-status returns 200 and issues only the latest-run query — no sync_runs, sync_errors, or punch query", async () => {
-    const res = await request(appFor("admin")).get(
-      "/api/integrations/cosec/sync-status",
-    );
+    const res = await request(appFor("admin")).get("/api/integrations/cosec/sync-status");
     expect(res.status).toBe(200);
 
     const calls = execute.mock.calls.map(([sql]) => String(sql));
     expect(calls.some((sql) => /LIMIT 1\b/.test(sql))).toBe(true);
     expect(calls.some((sql) => /LIMIT 50\b/.test(sql))).toBe(false);
-    expect(calls.some((sql) => /biometric_attendance_log/.test(sql))).toBe(
-      false,
-    );
-    expect(calls.some((sql) => /information_schema\.tables/.test(sql))).toBe(
-      false,
-    );
+    expect(calls.some((sql) => /biometric_attendance_log/.test(sql))).toBe(false);
+    expect(calls.some((sql) => /information_schema\.tables/.test(sql))).toBe(false);
     expect(calls.length).toBe(1);
   });
 
   it("GET /sync-runs issues only the 50-row run query, not the latest-run, errors, or punch query", async () => {
-    const res = await request(appFor("admin")).get(
-      "/api/integrations/cosec/sync-runs",
-    );
+    const res = await request(appFor("admin")).get("/api/integrations/cosec/sync-runs");
     expect(res.status).toBe(200);
 
     const calls = execute.mock.calls.map(([sql]) => String(sql));
@@ -185,9 +152,7 @@ describe("2b — each endpoint issues only the query(ies) its own response uses"
   });
 
   it("GET /sync-errors issues only the failed/records_failed query", async () => {
-    const res = await request(appFor("admin")).get(
-      "/api/integrations/cosec/sync-errors",
-    );
+    const res = await request(appFor("admin")).get("/api/integrations/cosec/sync-errors");
     expect(res.status).toBe(200);
 
     const calls = execute.mock.calls.map(([sql]) => String(sql));
@@ -215,9 +180,7 @@ describe("2b — each endpoint issues only the query(ies) its own response uses"
 
 describe("2c — ATTENDANCE_BILLING_CONFIG list gains wfm", () => {
   it("wfm gets 200 on GET /api/attendance/billing-config (was 403 before the fix)", async () => {
-    const res = await request(appFor("wfm")).get(
-      "/api/attendance/billing-config",
-    );
+    const res = await request(appFor("wfm")).get("/api/attendance/billing-config");
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
   });
@@ -225,31 +188,19 @@ describe("2c — ATTENDANCE_BILLING_CONFIG list gains wfm", () => {
   it("write endpoints are unchanged — wfm still gets 403 on POST /", async () => {
     const res = await request(appFor("wfm"))
       .post("/api/attendance/billing-config")
-      .send({
-        scope_type: "global",
-        extra_day_salary_allowed: 1,
-        effective_from: "2026-08-01",
-        change_reason: "x",
-      });
+      .send({ scope_type: "global", extra_day_salary_allowed: 1, effective_from: "2026-08-01", change_reason: "x" });
     expect(res.status).toBe(403);
   });
 
   it("write endpoints are unchanged — finance_head still gets past POST / role gate", async () => {
     const res = await request(appFor("finance_head"))
       .post("/api/attendance/billing-config")
-      .send({
-        scope_type: "global",
-        extra_day_salary_allowed: 1,
-        effective_from: "2026-08-01",
-        change_reason: "x",
-      });
+      .send({ scope_type: "global", extra_day_salary_allowed: 1, effective_from: "2026-08-01", change_reason: "x" });
     expect(res.status).not.toBe(403);
   });
 
   it("delete stays super_admin-only — finance_head gets 403 on DELETE /:id", async () => {
-    const res = await request(appFor("finance_head")).delete(
-      "/api/attendance/billing-config/cfg-1",
-    );
+    const res = await request(appFor("finance_head")).delete("/api/attendance/billing-config/cfg-1");
     expect(res.status).toBe(403);
   });
 });

@@ -51,7 +51,7 @@ router.post(
         error: "Failed to record inbound event",
       });
     }
-  },
+  }
 );
 
 /**
@@ -98,7 +98,7 @@ router.post(
         error: "Failed to record outbound event",
       });
     }
-  },
+  }
 );
 
 /**
@@ -145,7 +145,7 @@ router.post(
         error: "Failed to record chat event",
       });
     }
-  },
+  }
 );
 
 /**
@@ -192,7 +192,7 @@ router.post(
         error: "Failed to record email event",
       });
     }
-  },
+  }
 );
 
 /**
@@ -205,12 +205,15 @@ router.get(
   async (req: Request, res: Response) => {
     try {
       const processType = req.params.processType as
-        "inbound" | "outbound" | "chat" | "email";
+        | "inbound"
+        | "outbound"
+        | "chat"
+        | "email";
       const daysBack = parseInt(req.query.days as string) || 30;
 
       const metrics = await ConversionFunnelService.getFunnelMetrics(
         processType,
-        daysBack,
+        daysBack
       );
 
       res.json({
@@ -226,7 +229,7 @@ router.get(
         error: "Failed to fetch funnel metrics",
       });
     }
-  },
+  }
 );
 
 /**
@@ -267,7 +270,7 @@ router.get(
         LEFT JOIN chat_funnel_detail cfd ON cfd.conversion_funnel_event_id = cfe.id
         LEFT JOIN email_funnel_detail efd ON efd.conversion_funnel_event_id = cfe.id
         WHERE cfe.stage_entered_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-        `,
+        `
       );
 
       // By process type
@@ -282,7 +285,7 @@ router.get(
         FROM conversion_funnel_event cfe
         WHERE cfe.stage_entered_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
         GROUP BY cfe.process_type
-        `,
+        `
       );
 
       connection.release();
@@ -302,7 +305,7 @@ router.get(
         error: "Failed to fetch funnel summary",
       });
     }
-  },
+  }
 );
 
 /**
@@ -350,7 +353,7 @@ router.get(
         FROM drop_off
         WHERE drop_off_pct IS NOT NULL
         ORDER BY process_type, drop_off_pct DESC
-        `,
+        `
       );
 
       connection.release();
@@ -366,7 +369,7 @@ router.get(
         error: "Failed to fetch bottleneck analysis",
       });
     }
-  },
+  }
 );
 
 export default router;

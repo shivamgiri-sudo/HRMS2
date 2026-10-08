@@ -22,12 +22,7 @@
 
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../db/mysql.js";
-import {
-  beat,
-  clearBeat,
-  HEARTBEAT_MS,
-  JOB_OWNER,
-} from "../modules/bulk-upload/batch-job.js";
+import { beat, clearBeat, HEARTBEAT_MS, JOB_OWNER } from "../modules/bulk-upload/batch-job.js";
 import { dispatchImport } from "../modules/bulk-upload/bulk-dispatch.js";
 
 const POLL_MS = 500;
@@ -72,20 +67,16 @@ async function processJob(job: QueueRow): Promise<void> {
 
   // Stamp the heartbeat and start the ticker so the reaper knows this batch is live.
   await beat(batch_id);
-  const ticker = setInterval(() => {
-    void beat(batch_id);
-  }, HEARTBEAT_MS);
+  const ticker = setInterval(() => { void beat(batch_id); }, HEARTBEAT_MS);
   (ticker as unknown as { unref?: () => void }).unref?.();
 
   // Also stamp job_owner so logs can see which process handled this batch.
   try {
-    await db.execute(`UPDATE upload_batch SET job_owner = ? WHERE id = ?`, [
-      JOB_OWNER,
-      batch_id,
-    ]);
-  } catch {
-    /* non-critical */
-  }
+    await db.execute(
+      `UPDATE upload_batch SET job_owner = ? WHERE id = ?`,
+      [JOB_OWNER, batch_id],
+    );
+  } catch { /* non-critical */ }
 
   try {
     await dispatchImport(rpc_name, batch_id, user_id);
@@ -108,20 +99,13 @@ async function processJob(job: QueueRow): Promise<void> {
       }
     } catch { /* the stale-job check still covers it */ }
   } catch (err) {
-    await db
-      .execute(
-        `UPDATE upload_batch
+    await db.execute(
+      `UPDATE upload_batch
          SET batch_status = 'failed', approval_status = NULL,
              error_summary = ?, updated_at = NOW()
        WHERE id = ?`,
-        [
-          String((err as Error)?.message ?? "Import failed").slice(0, 1000),
-          batch_id,
-        ],
-      )
-      .catch(() => {
-        /* ignore secondary failure */
-      });
+      [String((err as Error)?.message ?? "Import failed").slice(0, 1000), batch_id],
+    ).catch(() => { /* ignore secondary failure */ });
   } finally {
     clearInterval(ticker);
     await clearBeat(batch_id);
@@ -146,13 +130,9 @@ async function poll(): Promise<void> {
 
 export function startBulkImportWorker(): void {
   if (timer) return;
-  timer = setInterval(() => {
-    void poll();
-  }, POLL_MS);
+  timer = setInterval(() => { void poll(); }, POLL_MS);
   (timer as unknown as { unref?: () => void }).unref?.();
-  console.log(
-    `[bulk-import-worker] started (poll every ${POLL_MS}ms, owner=${JOB_OWNER})`,
-  );
+  console.log(`[bulk-import-worker] started (poll every ${POLL_MS}ms, owner=${JOB_OWNER})`);
 }
 
 export function stopBulkImportWorker(): void {

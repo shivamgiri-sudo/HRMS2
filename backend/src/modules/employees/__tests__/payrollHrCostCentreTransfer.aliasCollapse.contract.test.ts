@@ -42,19 +42,9 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 const REALISTIC_PAYROLL_HR_ROLES = ["employee", "hr", "payroll"];
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (
-      req as express.Request & {
-        authUser: { id: string; role: string; roles: string[] };
-      }
-    ).authUser = {
-      id: USER_ID,
-      role: "payroll",
-      roles: REALISTIC_PAYROLL_HR_ROLES,
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: { id: string; role: string; roles: string[] } }).authUser = {
+      id: USER_ID, role: "payroll", roles: REALISTIC_PAYROLL_HR_ROLES,
     };
     next();
   },
@@ -62,12 +52,8 @@ vi.mock("../../../middleware/authMiddleware.js", () => ({
 
 const { updateEmployee } = vi.hoisted(() => ({ updateEmployee: vi.fn() }));
 vi.mock("../employee.controller.js", async (importOriginal) => {
-  const actual = await importOriginal<{
-    employeeController: Record<string, unknown>;
-  }>();
-  return {
-    employeeController: { ...actual.employeeController, updateEmployee },
-  };
+  const actual = await importOriginal<{ employeeController: Record<string, unknown> }>();
+  return { employeeController: { ...actual.employeeController, updateEmployee } };
 });
 
 const { employeeRouter } = await import("../employee.routes.js");
@@ -82,11 +68,9 @@ function app() {
 beforeEach(() => {
   dbExecute.mockReset();
   updateEmployee.mockReset();
-  updateEmployee.mockImplementation(
-    async (_req: express.Request, res: express.Response) => {
-      res.json({ success: true });
-    },
-  );
+  updateEmployee.mockImplementation(async (_req: express.Request, res: express.Response) => {
+    res.json({ success: true });
+  });
 
   dbExecute.mockImplementation(async (sql: unknown, params: unknown[]) => {
     const text = String(sql);
@@ -95,10 +79,7 @@ beforeEach(() => {
     // gate query this. Checked BEFORE the role-key pattern below, which would otherwise also
     // match "SELECT branch_id ... FROM employees" if it were broadened carelessly.
     if (/FROM employees WHERE id = \?/i.test(text)) {
-      return [
-        [{ branch_id: OWN_BRANCH, process_id: null, department_id: null }],
-        [],
-      ];
+      return [[{ branch_id: OWN_BRANCH, process_id: null, department_id: null }], []];
     }
 
     // The actor's own employee row: the own-branch clamp in scopeAccess.ts reads employees.branch_id.
@@ -118,21 +99,9 @@ beforeEach(() => {
 
     // The actor's branch scope grant, keyed exactly as production stores it.
     if (/FROM user_assignment_scope/i.test(text)) {
-      return [
-        [
-          {
-            id: "scope-1",
-            role_key: "payroll_hr",
-            scope_type: "branch",
-            branch_id: OWN_BRANCH,
-            process_id: null,
-            lob_id: null,
-            department_id: null,
-            manager_employee_id: null,
-          },
-        ],
-        [],
-      ];
+      return [[{ id: "scope-1", role_key: "payroll_hr", scope_type: "branch",
+                 branch_id: OWN_BRANCH, process_id: null, lob_id: null,
+                 department_id: null, manager_employee_id: null }], []];
     }
 
     if (/FROM cost_centre_master WHERE id = \?/i.test(text)) {

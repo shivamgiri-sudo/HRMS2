@@ -20,18 +20,9 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
-  loadStagedRows,
-  resolveEmployees,
-  resolveSingleBranch,
-  linkRowToEntity,
-  markRowFailed,
-  markPendingApproval,
-  lockEntities,
-  BulkUploadError,
-  normalizeMonth,
-  type ImportOutcome,
-  type ApplyOutcome,
-  type BatchRecord,
+  loadStagedRows, resolveEmployees, resolveSingleBranch, linkRowToEntity,
+  markRowFailed, markPendingApproval, lockEntities, BulkUploadError, normalizeMonth,
+  type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
 import { withBulkLockRetry } from "./lock-retry.js";
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
@@ -44,9 +35,7 @@ interface IncentiveMasterRow extends RowDataPacket {
   incentive_name: string;
 }
 
-async function loadIncentiveMasters(): Promise<
-  Map<string, IncentiveMasterRow>
-> {
+async function loadIncentiveMasters(): Promise<Map<string, IncentiveMasterRow>> {
   const [rows] = await db.execute<IncentiveMasterRow[]>(
     "SELECT id, incentive_code, incentive_name FROM incentive_master WHERE active_status = 1",
   );
@@ -65,13 +54,9 @@ export async function importIncentiveBatch(
   userId: string,
 ): Promise<ImportOutcome> {
   const rows = await loadStagedRows(batchId);
-  if (rows.length === 0)
-    throw new BulkUploadError("This batch has no rows left to import.", 400);
+  if (rows.length === 0) throw new BulkUploadError("This batch has no rows left to import.", 400);
 
-  const employees = await resolveEmployees(
-    rows.map((r) => r.data.employee_code ?? ""),
-    { includeInactive: true },
-  );
+  const employees = await resolveEmployees(rows.map((r) => r.data.employee_code ?? ""), { includeInactive: true });
   const masters = await loadIncentiveMasters();
   const errors: string[] = [];
   let staged = 0;
@@ -103,12 +88,8 @@ export async function importIncentiveBatch(
           total_employees, total_amount, status, current_approval_step, remarks)
        VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'pending_approval', 1, ?)`,
       [
-        id,
-        master.id,
-        `${uploadBatchNo}-${master.incentive_code}`,
-        payMonth,
-        userId,
-        branchId,
+        id, master.id, `${uploadBatchNo}-${master.incentive_code}`, payMonth,
+        userId, branchId,
         `Created by bulk upload ${uploadBatchNo}; awaiting Branch Head approval`,
       ],
     );
@@ -118,8 +99,7 @@ export async function importIncentiveBatch(
 
   const uploadBatchNo = await (async () => {
     const [r] = await db.execute<RowDataPacket[]>(
-      "SELECT upload_batch_no FROM upload_batch WHERE id = ? LIMIT 1",
-      [batchId],
+      "SELECT upload_batch_no FROM upload_batch WHERE id = ? LIMIT 1", [batchId],
     );
     return String((r as RowDataPacket[])[0]?.upload_batch_no ?? batchId);
   })();
@@ -150,13 +130,10 @@ export async function importIncentiveBatch(
 
     let validationError: string | null = null;
     if (!d.employee_code) validationError = "employee_code is required";
-    else if (!emp)
-      validationError = `employee_code "${d.employee_code}" is not in the employee master`;
+    else if (!emp) validationError = `employee_code "${d.employee_code}" is not in the employee master`;
     else if (!codeOrName) validationError = "incentive_code is required";
     else if (!master) {
-      const uniqueCodes = [
-        ...new Set([...masters.values()].map((m) => m.incentive_code)),
-      ].sort();
+      const uniqueCodes = [...new Set([...masters.values()].map((m) => m.incentive_code))].sort();
       validationError =
         `incentive_code "${d.incentive_code}" is not an active incentive code or name — ` +
         `valid codes are ${uniqueCodes.join(", ")}`;
@@ -209,9 +186,7 @@ export async function importIncentiveBatch(
       [...empSlice, ...distinctMonths],
     );
     for (const r of existingRows as RowDataPacket[]) {
-      existingKeys.add(
-        `${r.employee_id}::${r.incentive_id}::${r.salary_month}`,
-      );
+      existingKeys.add(`${r.employee_id}::${r.incentive_id}::${r.salary_month}`);
     }
   }
 
@@ -236,20 +211,8 @@ export async function importIncentiveBatch(
       failed++;
       continue;
     }
-    const incentiveBatchId = await incentiveBatchFor(
-      master,
-      payMonth,
-      uploadBatchNo,
-    );
-    ready.push({
-      row,
-      emp,
-      master,
-      amount,
-      payMonth,
-      incentiveBatchId,
-      lineId: randomUUID(),
-    });
+    const incentiveBatchId = await incentiveBatchFor(master, payMonth, uploadBatchNo);
+    ready.push({ row, emp, master, amount, payMonth, incentiveBatchId, lineId: randomUUID() });
   }
 
   // Pass B — the actual writes, chunked at 500 rows per statement rather than one
@@ -259,8 +222,7 @@ export async function importIncentiveBatch(
   // A's dedup, so no two chunks ever touch the same incentive_upload_line row.
   const INSERT_CHUNK = 500;
   const chunks: ReadyRow[][] = [];
-  for (let i = 0; i < ready.length; i += INSERT_CHUNK)
-    chunks.push(ready.slice(i, i + INSERT_CHUNK));
+  for (let i = 0; i < ready.length; i += INSERT_CHUNK) chunks.push(ready.slice(i, i + INSERT_CHUNK));
 
   const insertLineSql = (placeholders: string) => `
     INSERT INTO incentive_upload_line
@@ -268,23 +230,15 @@ export async function importIncentiveBatch(
         validation_status, branch_id)
      VALUES ${placeholders}`;
   const lineParams = (r: ReadyRow) => [
-    r.lineId,
-    r.incentiveBatchId,
-    r.emp.id,
-    r.emp.employee_code,
-    r.master.incentive_code,
-    r.amount,
-    r.row.data.remarks || null,
-    r.emp.branch_id,
+    r.lineId, r.incentiveBatchId, r.emp.id, r.emp.employee_code, r.master.incentive_code,
+    r.amount, r.row.data.remarks || null, r.emp.branch_id,
   ];
 
   await mapWithConcurrency(chunks, BULK_ROW_CONCURRENCY, async (chunkRows) => {
     try {
       // One INSERT for the whole chunk...
       await db.execute(
-        insertLineSql(
-          chunkRows.map(() => "(?, ?, ?, ?, ?, ?, ?, 'ok', ?)").join(", "),
-        ),
+        insertLineSql(chunkRows.map(() => "(?, ?, ?, ?, ?, ?, ?, 'ok', ?)").join(", ")),
         chunkRows.flatMap(lineParams),
       );
       // ...then one UPDATE to link every row in it back to its line, instead of
@@ -308,10 +262,7 @@ export async function importIncentiveBatch(
       for (const r of chunkRows) {
         const d = r.row.data;
         try {
-          await db.execute(
-            insertLineSql("(?, ?, ?, ?, ?, ?, ?, 'ok', ?)"),
-            lineParams(r),
-          );
+          await db.execute(insertLineSql("(?, ?, ?, ?, ?, ?, ?, 'ok', ?)"), lineParams(r));
           await linkRowToEntity(r.row.rowId, ENTITY_TYPE, r.lineId);
           staged++;
         } catch (err) {
@@ -349,12 +300,7 @@ export async function importIncentiveBatch(
       module_key: "incentives",
       entity_type: "incentive_upload_batch",
       entity_id: incentiveBatchId,
-      new_value_json: {
-        upload_batch_id: batchId,
-        staged,
-        failed,
-        branch_id: branchId,
-      },
+      new_value_json: { upload_batch_id: batchId, staged, failed, branch_id: branchId },
     });
   }
 
@@ -434,9 +380,7 @@ export async function applyIncentiveBatch(
               decided_at, actioned_at)
            VALUES (?, ?, 1, 'branch_head', ?, 'approved', ?, NOW(), NOW())`,
           [
-            randomUUID(),
-            incentiveBatchId,
-            approverUserId,
+            randomUUID(), incentiveBatchId, approverUserId,
             remarks ?? `Branch Head bulk approval (${batch.upload_batch_no})`,
           ],
         );
@@ -449,15 +393,10 @@ export async function applyIncentiveBatch(
         entity_type: "incentive_upload_batch",
         entity_id: incentiveBatchId,
         reason: remarks ?? undefined,
-        new_value_json: {
-          via_bulk_upload: true,
-          upload_batch_no: batch.upload_batch_no,
-        },
+        new_value_json: { via_bulk_upload: true, upload_batch_no: batch.upload_batch_no },
       });
     } catch (err) {
-      errors.push(
-        `Incentive batch ${incentiveBatchId}: ${(err as Error)?.message ?? String(err)}`,
-      );
+      errors.push(`Incentive batch ${incentiveBatchId}: ${(err as Error)?.message ?? String(err)}`);
       failed++;
     }
   }
@@ -505,10 +444,7 @@ export async function reapplyIncentiveBatch(
     [batch.id, ENTITY_TYPE],
   );
   const rows = rawRows as Array<{
-    ubr_id: string;
-    row_no: number;
-    created_entity_id: string;
-    incentive_batch_id: string;
+    ubr_id: string; row_no: number; created_entity_id: string; incentive_batch_id: string;
   }>;
 
   const byIncentiveBatch = new Map<string, typeof rows>();
@@ -541,9 +477,7 @@ export async function reapplyIncentiveBatch(
               decided_at, actioned_at)
            VALUES (?, ?, 1, 'branch_head', ?, 'approved', ?, NOW(), NOW())`,
           [
-            randomUUID(),
-            incentiveBatchId,
-            approverUserId,
+            randomUUID(), incentiveBatchId, approverUserId,
             remarks ?? `Branch Head bulk re-apply (${batch.upload_batch_no})`,
           ],
         );
@@ -564,10 +498,7 @@ export async function reapplyIncentiveBatch(
         entity_type: "incentive_upload_batch",
         entity_id: incentiveBatchId,
         reason: remarks ?? undefined,
-        new_value_json: {
-          via_bulk_upload: true,
-          upload_batch_no: batch.upload_batch_no,
-        },
+        new_value_json: { via_bulk_upload: true, upload_batch_no: batch.upload_batch_no },
       });
     } catch (err) {
       const msg = `Incentive batch ${incentiveBatchId}: ${(err as Error)?.message ?? String(err)}`;
@@ -611,10 +542,7 @@ export async function rejectIncentiveBatch(
         `UPDATE incentive_upload_batch
             SET status = 'rejected', remarks = ?, updated_at = NOW()
           WHERE id = ? AND status = 'pending_approval'`,
-        [
-          `Branch Head rejected bulk upload ${batch.upload_batch_no}: ${remarks}`,
-          incentiveBatchId,
-        ],
+        [`Branch Head rejected bulk upload ${batch.upload_batch_no}: ${remarks}`, incentiveBatchId],
       );
       await db.execute(
         `INSERT INTO incentive_approval_step
@@ -635,9 +563,7 @@ export async function rejectIncentiveBatch(
       });
       applied++;
     } catch (err) {
-      errors.push(
-        `Incentive batch ${incentiveBatchId}: ${(err as Error)?.message ?? String(err)}`,
-      );
+      errors.push(`Incentive batch ${incentiveBatchId}: ${(err as Error)?.message ?? String(err)}`);
       failed++;
     }
   }

@@ -1,9 +1,9 @@
-import { db } from "../../db/mysql.js";
-import { DomainSyncBase } from "./domain-sync-base.js";
-import { provisionLmsIdentityForEmployee } from "../../modules/lms/lms-provisioning.service.js";
-import { encryptPanForSync } from "../../shared/syncPiiEncryption.js";
+import { db } from '../../db/mysql.js';
+import { DomainSyncBase } from './domain-sync-base.js';
+import { provisionLmsIdentityForEmployee } from '../../modules/lms/lms-provisioning.service.js';
+import { encryptPanForSync } from '../../shared/syncPiiEncryption.js';
 
-const SYNC_MAP_ID = "a1000000-0000-0000-0000-000000000001";
+const SYNC_MAP_ID = 'a1000000-0000-0000-0000-000000000001';
 
 interface LegacyEmployee {
   id: number;
@@ -46,13 +46,10 @@ interface LegacyEmployee {
 
 export class EmployeeMasterSyncHandler extends DomainSyncBase {
   constructor() {
-    super("employee", SYNC_MAP_ID);
+    super('employee', SYNC_MAP_ID);
   }
 
-  protected async fetchBatch(
-    lastWatermark: string,
-    batchSize: number,
-  ): Promise<LegacyEmployee[]> {
+  protected async fetchBatch(lastWatermark: string, batchSize: number): Promise<LegacyEmployee[]> {
     const pool = await this.getLegacy();
     const [rows] = await pool.execute<any[]>(
       `SELECT id, EmpCode, BioCode, EmpName, Title, Gendar, DOB, DOJ, DOL,
@@ -65,46 +62,33 @@ export class EmployeeMasterSyncHandler extends DomainSyncBase {
        WHERE (lastUpdated >= ? OR (lastUpdated IS NULL AND (EntryDate >= ? OR CreateDate >= ?)))
        ORDER BY COALESCE(lastUpdated, EntryDate, CreateDate) ASC
        LIMIT ?`,
-      [lastWatermark, lastWatermark, lastWatermark, batchSize],
+      [lastWatermark, lastWatermark, lastWatermark, batchSize]
     );
     return rows as LegacyEmployee[];
   }
 
   protected extractWatermark(rows: LegacyEmployee[]): string | null {
-    const last = [...rows]
-      .reverse()
-      .find((r) => r.lastUpdated || r.EntryDate || r.CreateDate);
+    const last = [...rows].reverse().find(r => r.lastUpdated || r.EntryDate || r.CreateDate);
     if (!last) return null;
-    const d = new Date(
-      (last.lastUpdated ?? last.EntryDate ?? last.CreateDate)!,
-    );
+    const d = new Date((last.lastUpdated ?? last.EntryDate ?? last.CreateDate)!);
     d.setSeconds(d.getSeconds() + 1);
-    return d.toISOString().slice(0, 19).replace("T", " ");
+    return d.toISOString().slice(0, 19).replace('T', ' ');
   }
 
   protected async processBatch(rows: LegacyEmployee[]): Promise<{
-    inserted: number;
-    updated: number;
-    skipped: number;
-    failed: number;
+    inserted: number; updated: number; skipped: number; failed: number;
   }> {
-    let inserted = 0,
-      updated = 0,
-      skipped = 0,
-      failed = 0;
+    let inserted = 0, updated = 0, skipped = 0, failed = 0;
 
     for (const row of rows) {
-      if (!row.EmpCode?.trim()) {
-        skipped++;
-        continue;
-      }
+      if (!row.EmpCode?.trim()) { skipped++; continue; }
 
-      const nameParts = (row.EmpName ?? "").trim().split(/\s+/);
-      const firstName = nameParts[0] || "Unknown";
-      const lastName = nameParts.slice(1).join(" ") || null;
+      const nameParts = (row.EmpName ?? '').trim().split(/\s+/);
+      const firstName = nameParts[0] || 'Unknown';
+      const lastName  = nameParts.slice(1).join(' ') || null;
 
       const aadhaarLast4 = row.AdharId
-        ? row.AdharId.replace(/\s/g, "").slice(-4)
+        ? row.AdharId.replace(/\s/g, '').slice(-4)
         : null;
 
       try {
@@ -174,64 +158,31 @@ export class EmployeeMasterSyncHandler extends DomainSyncBase {
              legacy_emp_id       = VALUES(legacy_emp_id),
              updated_at          = NOW()`,
           [
-            row.EmpCode.trim(),
-            row.BioCode,
-            firstName,
-            lastName,
-            row.Title,
-            row.Gendar,
-            row.DOB,
-            row.DOJ,
-            row.DOL,
-            row.Mobile,
-            row.EmailId,
-            row.OfficeEmailId,
-            row.PanNo,
-            aadhaarLast4,
-            row.PassportNo,
-            row.EPFNo,
-            row.ESICNo,
-            row.UAN,
+            row.EmpCode.trim(), row.BioCode, firstName, lastName, row.Title, row.Gendar,
+            row.DOB, row.DOJ, row.DOL,
+            row.Mobile, row.EmailId, row.OfficeEmailId,
+            row.PanNo, aadhaarLast4, row.PassportNo, row.EPFNo, row.ESICNo, row.UAN,
             // pan_enc_key_version is NOT NULL DEFAULT 1, so it takes 1 even when there is
             // no ciphertext to accompany it.
-            encryptPanForSync(row.PanNo, "Employee Master Sync"),
-            1,
-            row.Dept,
-            row.Desgination,
-            row.BranchName,
-            row.ClientName,
-            row.Process,
-            row.CostCenter,
-            row.MaritalStatus,
-            row.BloodGruop,
-            row.Qualification,
-            row.Adrress1,
-            row.Adrress2,
-            row.City,
-            row.State,
-            row.PinCode,
-            row.Status === "1",
+            encryptPanForSync(row.PanNo, 'Employee Master Sync'), 1,
+            row.Dept, row.Desgination, row.BranchName, row.ClientName, row.Process, row.CostCenter,
+            row.MaritalStatus, row.BloodGruop, row.Qualification,
+            row.Adrress1, row.Adrress2, row.City, row.State, row.PinCode,
+            row.Status === '1',
             row.lastUpdated,
             row.id,
-          ],
+          ]
         );
         if (res.affectedRows === 1) inserted++;
         else updated++;
 
         try {
-          const lmsResult = await provisionLmsIdentityForEmployee({
-            employeeCode: row.EmpCode.trim(),
-          });
+          const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode: row.EmpCode.trim() });
           if (lmsResult.message) {
-            console.warn(
-              `[Employee Master Sync] LMS provisioning for ${row.EmpCode.trim()}: ${lmsResult.message}`,
-            );
+            console.warn(`[Employee Master Sync] LMS provisioning for ${row.EmpCode.trim()}: ${lmsResult.message}`);
           }
         } catch (err) {
-          console.error(
-            `[Employee Master Sync] LMS provisioning failed for ${row.EmpCode.trim()}:`,
-            err instanceof Error ? err.message : String(err),
-          );
+          console.error(`[Employee Master Sync] LMS provisioning failed for ${row.EmpCode.trim()}:`, err instanceof Error ? err.message : String(err));
         }
       } catch {
         failed++;

@@ -24,14 +24,13 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
  * unchanged — the point of the harness is still which statements run and in what
  * order, not which handle issued them.
  */
-const { dbExecute, connCommit, connRollback, connRelease, connBegin } =
-  vi.hoisted(() => ({
-    dbExecute: vi.fn(),
-    connCommit: vi.fn(async () => undefined),
-    connRollback: vi.fn(async () => undefined),
-    connRelease: vi.fn(() => undefined),
-    connBegin: vi.fn(async () => undefined),
-  }));
+const { dbExecute, connCommit, connRollback, connRelease, connBegin } = vi.hoisted(() => ({
+  dbExecute: vi.fn(),
+  connCommit: vi.fn(async () => undefined),
+  connRollback: vi.fn(async () => undefined),
+  connRelease: vi.fn(() => undefined),
+  connBegin: vi.fn(async () => undefined),
+}));
 vi.mock("../../../db/mysql.js", () => ({
   db: {
     execute: dbExecute,
@@ -47,26 +46,12 @@ vi.mock("../../../db/mysql.js", () => ({
   },
 }));
 
-const { revokeSessionsForEmployee, deprovisionEmployeeAccess } = vi.hoisted(
-  () => ({
-    revokeSessionsForEmployee: vi.fn(async () => ({
-      refreshTokensRevoked: 0,
-      deviceSessionsRevoked: 0,
-    })),
-    deprovisionEmployeeAccess: vi.fn(async () => ({
-      lmsMappingsRevoked: 0,
-      leaveRequestsCancelled: 0,
-      openAssetAssignments: 0,
-      failures: [],
-    })),
-  }),
-);
-vi.mock("../../../shared/sessionRevocation.js", () => ({
-  revokeSessionsForEmployee,
+const { revokeSessionsForEmployee, deprovisionEmployeeAccess } = vi.hoisted(() => ({
+  revokeSessionsForEmployee: vi.fn(async () => ({ refreshTokensRevoked: 0, deviceSessionsRevoked: 0 })),
+  deprovisionEmployeeAccess: vi.fn(async () => ({ lmsMappingsRevoked: 0, leaveRequestsCancelled: 0, openAssetAssignments: 0, failures: [] })),
 }));
-vi.mock("../../../shared/employeeDeprovisioning.js", () => ({
-  deprovisionEmployeeAccess,
-}));
+vi.mock("../../../shared/sessionRevocation.js", () => ({ revokeSessionsForEmployee }));
+vi.mock("../../../shared/employeeDeprovisioning.js", () => ({ deprovisionEmployeeAccess }));
 
 vi.mock("../exit-intelligence.service.js", () => ({
   createDefaultClearanceTasks: vi.fn(async () => undefined),
@@ -76,9 +61,7 @@ vi.mock("../exit.notifications.js", () => ({
   notifyResignationSubmitted: vi.fn(async () => undefined),
   notifyResignationDecision: vi.fn(async () => undefined),
 }));
-vi.mock("nodemailer", () => ({
-  default: { createTransport: () => ({ sendMail: vi.fn() }) },
-}));
+vi.mock("nodemailer", () => ({ default: { createTransport: () => ({ sendMail: vi.fn() }) } }));
 
 const EXIT_ROW = {
   id: "exit-1",
@@ -91,7 +74,7 @@ const EXIT_ROW = {
 
 function mockDb(
   employeesUpdateFails: boolean,
-  opts: { lockedStatus?: string; statusUpdateAffectedRows?: number } = {},
+  opts: { lockedStatus?: string; statusUpdateAffectedRows?: number } = {}
 ) {
   dbExecute.mockReset();
   dbExecute.mockImplementation(async (sql: string) => {
@@ -103,8 +86,7 @@ function mockDb(
     if (/UPDATE exit_request SET status/.test(sql)) {
       return [{ affectedRows: opts.statusUpdateAffectedRows ?? 1 }, []];
     }
-    if (/INSERT INTO exit_approval_log/.test(sql))
-      return [{ affectedRows: 1 }, []];
+    if (/INSERT INTO exit_approval_log/.test(sql)) return [{ affectedRows: 1 }, []];
     if (/UPDATE employees SET active_status = 0/.test(sql)) {
       if (employeesUpdateFails) throw new Error("Connection lost");
       return [{ affectedRows: 1 }, []];
@@ -128,7 +110,7 @@ describe("updateExitStatus('exited') — the active_status write is no longer sw
     const { exitService } = await import("../exit.service.js");
 
     await expect(
-      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1"),
+      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1")
     ).rejects.toThrow();
   });
 
@@ -137,7 +119,7 @@ describe("updateExitStatus('exited') — the active_status write is no longer sw
     const { exitService } = await import("../exit.service.js");
 
     await expect(
-      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1"),
+      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1")
     ).rejects.toThrow();
 
     expect(revokeSessionsForEmployee).not.toHaveBeenCalled();
@@ -149,13 +131,10 @@ describe("updateExitStatus('exited') — the active_status write is no longer sw
     const { exitService } = await import("../exit.service.js");
 
     await expect(
-      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1"),
+      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1")
     ).resolves.toBeDefined();
 
-    expect(revokeSessionsForEmployee).toHaveBeenCalledWith(
-      "emp-1",
-      "employee_exit",
-    );
+    expect(revokeSessionsForEmployee).toHaveBeenCalledWith("emp-1", "employee_exit");
   });
 });
 
@@ -174,7 +153,7 @@ describe("the core exit state change is atomic", () => {
     const { exitService } = await import("../exit.service.js");
 
     await expect(
-      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1"),
+      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1")
     ).rejects.toThrow();
 
     expect(connBegin).toHaveBeenCalled();
@@ -186,7 +165,7 @@ describe("the core exit state change is atomic", () => {
     mockDb(true);
     const { exitService } = await import("../exit.service.js");
     await expect(
-      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1"),
+      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1")
     ).rejects.toThrow();
     expect(connRelease).toHaveBeenCalled();
   });
@@ -194,12 +173,7 @@ describe("the core exit state change is atomic", () => {
   it("commits once on the happy path and does not roll back", async () => {
     mockDb(false);
     const { exitService } = await import("../exit.service.js");
-    await exitService.updateExitStatus(
-      "exit-1",
-      "exited",
-      "confirming",
-      "actor-1",
-    );
+    await exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1");
     expect(connCommit).toHaveBeenCalledTimes(1);
     expect(connRollback).not.toHaveBeenCalled();
   });
@@ -211,13 +185,7 @@ describe("the core exit state change is atomic", () => {
     const { exitService } = await import("../exit.service.js");
 
     await expect(
-      exitService.updateExitStatus(
-        "exit-1",
-        "exited",
-        "confirming",
-        "actor-1",
-        "admin_review",
-      ),
+      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1", "admin_review")
     ).rejects.toMatchObject({ statusCode: 409, code: "EXIT_STATE_CHANGED" });
 
     expect(connRollback).toHaveBeenCalled();
@@ -228,7 +196,7 @@ describe("the core exit state change is atomic", () => {
     const { exitService } = await import("../exit.service.js");
 
     await expect(
-      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1"),
+      exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1")
     ).rejects.toMatchObject({ statusCode: 409 });
 
     expect(connCommit).not.toHaveBeenCalled();
@@ -239,21 +207,13 @@ describe("the core exit state change is atomic", () => {
     const { exitService } = await import("../exit.service.js");
 
     await exitService
-      .updateExitStatus(
-        "exit-1",
-        "exited",
-        "confirming",
-        "actor-1",
-        "admin_review",
-      )
+      .updateExitStatus("exit-1", "exited", "confirming", "actor-1", "admin_review")
       .then(
-        () => {
-          throw new Error("should have rejected");
-        },
+        () => { throw new Error("should have rejected"); },
         (err: any) => {
           expect(err.statusCode).toBe(409);
           expect(String(err.message)).toMatch(/revoked/);
-        },
+        }
       );
   });
 });

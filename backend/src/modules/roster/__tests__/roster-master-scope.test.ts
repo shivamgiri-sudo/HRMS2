@@ -35,27 +35,17 @@ const {
   getTemplateById,
   listWeekOffPreferences,
 } = vi.hoisted(() => ({
-  approveWeekOffPreference: vi
-    .fn()
-    .mockResolvedValue({ id: "pref-1", approved: 1 }),
+  approveWeekOffPreference: vi.fn().mockResolvedValue({ id: "pref-1", approved: 1 }),
   createTemplate: vi.fn().mockResolvedValue({ id: "tmpl-1" }),
-  generateRoster: vi
-    .fn()
-    .mockResolvedValue({ created: 1, skipped: 0, errors: [] }),
+  generateRoster: vi.fn().mockResolvedValue({ created: 1, skipped: 0, errors: [] }),
   listTemplates: vi.fn().mockResolvedValue([{ id: "tmpl-1" }]),
-  getTemplateById: vi
-    .fn()
-    .mockResolvedValue({ id: "tmpl-1", process_id: "process-A" }),
+  getTemplateById: vi.fn().mockResolvedValue({ id: "tmpl-1", process_id: "process-A" }),
   listWeekOffPreferences: vi.fn().mockResolvedValue([{ id: "pref-1" }]),
 }));
 vi.mock("../roster-master.service.js", () => ({
   rosterMasterService: {
-    approveWeekOffPreference,
-    createTemplate,
-    generateRoster,
-    listTemplates,
-    getTemplateById,
-    listWeekOffPreferences,
+    approveWeekOffPreference, createTemplate, generateRoster,
+    listTemplates, getTemplateById, listWeekOffPreferences,
   },
 }));
 
@@ -109,26 +99,19 @@ describe("roster-master.controller scope enforcement", () => {
     createTemplate.mockClear();
     generateRoster.mockClear();
     listTemplates.mockClear().mockResolvedValue([{ id: "tmpl-1" }]);
-    getTemplateById
-      .mockClear()
-      .mockResolvedValue({ id: "tmpl-1", process_id: "process-A" });
+    getTemplateById.mockClear().mockResolvedValue({ id: "tmpl-1", process_id: "process-A" });
     listWeekOffPreferences.mockClear().mockResolvedValue([{ id: "pref-1" }]);
   });
 
   it("refuses to approve week-off for an employee outside the caller's process scope", async () => {
     hasRole.mockResolvedValue(false); // not admin/hr
     hasProcessScope.mockResolvedValue(false); // not scoped to this employee's process
-    execute.mockResolvedValue([
-      [{ process_id: "process-B", branch_id: null }],
-      [],
-    ]);
+    execute.mockResolvedValue([[{ process_id: "process-B", branch_id: null }], []]);
 
     const req = mockReq({ params: { employee_id: "emp-in-process-b" } });
     const res = mockRes();
 
-    await expect(
-      rosterMasterController.approveWeekOffPreference(req, res),
-    ).rejects.toMatchObject({
+    await expect(rosterMasterController.approveWeekOffPreference(req, res)).rejects.toMatchObject({
       statusCode: 403,
     });
     expect(approveWeekOffPreference).not.toHaveBeenCalled();
@@ -137,28 +120,19 @@ describe("roster-master.controller scope enforcement", () => {
   it("allows approval when the caller holds an explicit grant for the employee's process", async () => {
     hasRole.mockResolvedValue(false);
     hasProcessScope.mockResolvedValue(true);
-    execute.mockResolvedValue([
-      [{ process_id: "process-A", branch_id: null }],
-      [],
-    ]);
+    execute.mockResolvedValue([[{ process_id: "process-A", branch_id: null }], []]);
 
     const req = mockReq({ params: { employee_id: "emp-in-process-a" } });
     const res = mockRes();
 
     await rosterMasterController.approveWeekOffPreference(req, res);
-    expect(approveWeekOffPreference).toHaveBeenCalledWith(
-      "emp-in-process-a",
-      "caller-1",
-    );
+    expect(approveWeekOffPreference).toHaveBeenCalledWith("emp-in-process-a", "caller-1");
   });
 
   it("allows approval unconditionally for admin/hr regardless of scope", async () => {
     hasRole.mockResolvedValue(true); // admin/hr bypass
     hasProcessScope.mockResolvedValue(false);
-    execute.mockResolvedValue([
-      [{ process_id: "process-anywhere", branch_id: null }],
-      [],
-    ]);
+    execute.mockResolvedValue([[{ process_id: "process-anywhere", branch_id: null }], []]);
 
     const req = mockReq({ params: { employee_id: "emp-anywhere" } });
     const res = mockRes();
@@ -171,20 +145,10 @@ describe("roster-master.controller scope enforcement", () => {
     hasRole.mockResolvedValue(false);
     hasProcessScope.mockResolvedValue(false);
 
-    const req = mockReq({
-      body: {
-        process_id: "process-not-mine",
-        template_id: "t1",
-        start_date: "2026-08-17",
-        end_date: "2026-08-23",
-        employee_ids: ["e1"],
-      },
-    });
+    const req = mockReq({ body: { process_id: "process-not-mine", template_id: "t1", start_date: "2026-08-17", end_date: "2026-08-23", employee_ids: ["e1"] } });
     const res = mockRes();
 
-    await expect(
-      rosterMasterController.generateRoster(req, res),
-    ).rejects.toMatchObject({ statusCode: 403 });
+    await expect(rosterMasterController.generateRoster(req, res)).rejects.toMatchObject({ statusCode: 403 });
     expect(generateRoster).not.toHaveBeenCalled();
   });
 
@@ -192,20 +156,10 @@ describe("roster-master.controller scope enforcement", () => {
     hasRole.mockResolvedValue(false);
     hasProcessScope.mockResolvedValue(false);
 
-    const req = mockReq({
-      body: {
-        process_id: "process-not-mine",
-        template_name: "x",
-        pattern_type: "fixed",
-        cycle_days: 7,
-        pattern_json: {},
-      },
-    });
+    const req = mockReq({ body: { process_id: "process-not-mine", template_name: "x", pattern_type: "fixed", cycle_days: 7, pattern_json: {} } });
     const res = mockRes();
 
-    await expect(
-      rosterMasterController.createTemplate(req, res),
-    ).rejects.toMatchObject({ statusCode: 403 });
+    await expect(rosterMasterController.createTemplate(req, res)).rejects.toMatchObject({ statusCode: 403 });
     expect(createTemplate).not.toHaveBeenCalled();
   });
 
@@ -226,26 +180,18 @@ describe("roster-master.controller scope enforcement", () => {
 
     it("listTemplates passes the caller's own scoped process ids when none was requested", async () => {
       hasRole.mockResolvedValue(false);
-      execute.mockResolvedValue([
-        [{ scope_type: "process", process_id: "process-A" }],
-        [],
-      ]);
+      execute.mockResolvedValue([[{ scope_type: "process", process_id: "process-A" }], []]);
 
       const req = mockReq();
       const res = mockRes();
       await rosterMasterController.listTemplates(req, res);
 
-      expect(listTemplates).toHaveBeenCalledWith(
-        expect.objectContaining({ process_id: ["process-A"] }),
-      );
+      expect(listTemplates).toHaveBeenCalledWith(expect.objectContaining({ process_id: ["process-A"] }));
     });
 
     it("listTemplates 403s when a scoped caller requests a process outside their own scope", async () => {
       hasRole.mockResolvedValue(false);
-      execute.mockResolvedValue([
-        [{ scope_type: "process", process_id: "process-A" }],
-        [],
-      ]);
+      execute.mockResolvedValue([[{ scope_type: "process", process_id: "process-A" }], []]);
 
       const req = mockReq({ query: { process_id: "process-B" } });
       const res = mockRes();
@@ -260,24 +206,17 @@ describe("roster-master.controller scope enforcement", () => {
       const req = mockReq();
       const res = mockRes();
       await rosterMasterController.listTemplates(req, res);
-      expect(listTemplates).toHaveBeenCalledWith(
-        expect.objectContaining({ process_id: undefined }),
-      );
+      expect(listTemplates).toHaveBeenCalledWith(expect.objectContaining({ process_id: undefined }));
     });
 
     it("getTemplate 403s when the fetched template's own process is outside the caller's scope", async () => {
       hasRole.mockResolvedValue(false); // assertProcessScope: not admin/hr
       hasProcessScope.mockResolvedValue(false); // assertProcessScope: no grant for process-A
-      getTemplateById.mockResolvedValue({
-        id: "tmpl-1",
-        process_id: "process-A",
-      });
+      getTemplateById.mockResolvedValue({ id: "tmpl-1", process_id: "process-A" });
 
       const req = mockReq({ params: { id: "tmpl-1" } });
       const res = mockRes();
-      await expect(
-        rosterMasterController.getTemplate(req, res),
-      ).rejects.toMatchObject({ statusCode: 403 });
+      await expect(rosterMasterController.getTemplate(req, res)).rejects.toMatchObject({ statusCode: 403 });
     });
 
     it("listWeekOffPreferences returns [] for a scoped caller with no assignment", async () => {
@@ -294,18 +233,13 @@ describe("roster-master.controller scope enforcement", () => {
 
     it("listWeekOffPreferences with an 'all'-scope grant stays unrestricted", async () => {
       hasRole.mockResolvedValue(false);
-      execute.mockResolvedValue([
-        [{ scope_type: "all", process_id: null }],
-        [],
-      ]);
+      execute.mockResolvedValue([[{ scope_type: "all", process_id: null }], []]);
 
       const req = mockReq();
       const res = mockRes();
       await rosterMasterController.listWeekOffPreferences(req, res);
 
-      expect(listWeekOffPreferences).toHaveBeenCalledWith(
-        expect.objectContaining({ process_id: undefined }),
-      );
+      expect(listWeekOffPreferences).toHaveBeenCalledWith(expect.objectContaining({ process_id: undefined }));
     });
   });
 });

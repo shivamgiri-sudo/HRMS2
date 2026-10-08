@@ -3,10 +3,7 @@ import { sqlLimitOffset } from "../../db/pagination.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { validateEpfCompliance } from "../employees/epfComplianceValidation.service.js";
-import type {
-  EpfProfileInput,
-  EpfNomineeInput,
-} from "../employees/epfComplianceValidation.service.js";
+import type { EpfProfileInput, EpfNomineeInput } from "../employees/epfComplianceValidation.service.js";
 import { resolveUanFilingReadinessForPeriod } from "./pf-applicability.service.js";
 
 interface BatchFilter {
@@ -95,10 +92,7 @@ export const pfCreationService = {
     );
 
     if (candidates.length === 0) {
-      return {
-        batch: null,
-        message: "No eligible employees found for PF batch creation.",
-      };
+      return { batch: null, message: "No eligible employees found for PF batch creation." };
     }
 
     const batchId = randomUUID();
@@ -139,10 +133,7 @@ export const pfCreationService = {
       "SELECT * FROM pf_creation_batch WHERE id = ?",
       [batchId],
     );
-    return {
-      batch: batchRows[0],
-      message: `Batch created with ${candidates.length} employees.`,
-    };
+    return { batch: batchRows[0], message: `Batch created with ${candidates.length} employees.` };
   },
 
   async validateBatch(batchId: string, actorUserId: string) {
@@ -176,15 +167,7 @@ export const pfCreationService = {
                   error_count = 1,
                   updated_at = NOW()
             WHERE id = ?`,
-          [
-            JSON.stringify([
-              {
-                code: "NO_EPF_PROFILE",
-                message: "EPF compliance profile not found",
-              },
-            ]),
-            item.item_id,
-          ],
+          [JSON.stringify([{ code: "NO_EPF_PROFILE", message: "EPF compliance profile not found" }]), item.item_id],
         );
         errorCount++;
         continue;
@@ -231,11 +214,7 @@ export const pfCreationService = {
         is_primary: Boolean(n.is_primary),
       }));
 
-      const summary = await validateEpfCompliance(
-        item.employee_id,
-        profileInput,
-        nominees,
-      );
+      const summary = await validateEpfCompliance(item.employee_id, profileInput, nominees);
       const errors = summary.issues.filter((i) => i.severity === "error");
       const warnings = summary.issues.filter((i) => i.severity === "warning");
 
@@ -263,8 +242,7 @@ export const pfCreationService = {
         });
       }
 
-      const newStatus =
-        errors.length > 0 ? "validation_failed" : "ready_for_epfo";
+      const newStatus = errors.length > 0 ? "validation_failed" : "ready_for_epfo";
       if (errors.length === 0) validCount++;
       else errorCount++;
 
@@ -304,27 +282,16 @@ export const pfCreationService = {
       newValue: { valid_items: validCount, error_items: errorCount },
     });
 
-    return {
-      valid_items: validCount,
-      error_items: errorCount,
-      total: items.length,
-    };
+    return { valid_items: validCount, error_items: errorCount, total: items.length };
   },
 
-  async exportBatch(
-    batchId: string,
-    templateId: string | null,
-    actorUserId: string,
-  ) {
+  async exportBatch(batchId: string, templateId: string | null, actorUserId: string) {
     let tplId = templateId;
     if (!tplId) {
       const [tplRows] = await db.execute<RowDataPacket[]>(
         "SELECT id FROM pf_export_template WHERE active_status = 1 ORDER BY created_at ASC LIMIT 1",
       );
-      if (tplRows.length === 0)
-        throw Object.assign(new Error("No export template configured"), {
-          statusCode: 400,
-        });
+      if (tplRows.length === 0) throw Object.assign(new Error("No export template configured"), { statusCode: 400 });
       tplId = tplRows[0].id;
     }
 
@@ -333,15 +300,9 @@ export const pfCreationService = {
       [tplId],
     );
     const template = tplRows[0];
-    if (!template)
-      throw Object.assign(new Error("Export template not found"), {
-        statusCode: 404,
-      });
+    if (!template) throw Object.assign(new Error("Export template not found"), { statusCode: 404 });
 
-    const columns =
-      typeof template.columns === "string"
-        ? JSON.parse(template.columns)
-        : template.columns;
+    const columns = typeof template.columns === "string" ? JSON.parse(template.columns) : template.columns;
 
     const [itemRows] = await db.execute<RowDataPacket[]>(
       `SELECT bi.*, p.*, e.employee_code, e.date_of_joining, e.mobile,
@@ -358,10 +319,7 @@ export const pfCreationService = {
     );
 
     if (itemRows.length === 0) {
-      throw Object.assign(
-        new Error("No items ready for export in this batch"),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("No items ready for export in this batch"), { statusCode: 400 });
     }
 
     const exportRows = itemRows.map((row: any) => {
@@ -421,13 +379,7 @@ export const pfCreationService = {
 
   async importAcknowledgement(
     batchId: string,
-    records: Array<{
-      employee_code: string;
-      uan_assigned?: string;
-      member_id?: string;
-      status: string;
-      error_message?: string;
-    }>,
+    records: Array<{ employee_code: string; uan_assigned?: string; member_id?: string; status: string; error_message?: string }>,
     actorUserId: string,
   ) {
     let successCount = 0;
@@ -454,8 +406,7 @@ export const pfCreationService = {
       }
       const itemId = itemRows[0].id;
 
-      const isSuccess =
-        record.status === "success" || record.status === "created";
+      const isSuccess = record.status === "success" || record.status === "created";
       const newStatus = isSuccess ? "pf_created" : "rejected_by_epfo";
 
       await db.execute(
@@ -524,20 +475,11 @@ export const pfCreationService = {
         actionType: isSuccess ? "EPFO_UAN_CREATED" : "EPFO_REJECTED",
         actorUserId,
         actorType: "payroll",
-        newValue: {
-          uan: record.uan_assigned,
-          member_id: record.member_id,
-          epfo_status: record.status,
-        },
+        newValue: { uan: record.uan_assigned, member_id: record.member_id, epfo_status: record.status },
       });
     }
 
-    const finalStatus =
-      failCount === 0
-        ? "completed"
-        : successCount === 0
-          ? "failed"
-          : "partial_success";
+    const finalStatus = failCount === 0 ? "completed" : successCount === 0 ? "failed" : "partial_success";
     await db.execute(
       `UPDATE pf_creation_batch
           SET status = ?,
@@ -547,11 +489,7 @@ export const pfCreationService = {
       [finalStatus, batchId],
     );
 
-    return {
-      success_count: successCount,
-      fail_count: failCount,
-      batch_status: finalStatus,
-    };
+    return { success_count: successCount, fail_count: failCount, batch_status: finalStatus };
   },
 
   async getQueue(filters: QueueFilter) {
@@ -578,14 +516,11 @@ export const pfCreationService = {
       }
     }
     if (filters.search) {
-      whereClauses.push(
-        "(e.employee_code LIKE ? OR CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) LIKE ?)",
-      );
+      whereClauses.push("(e.employee_code LIKE ? OR CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) LIKE ?)");
       params.push(`%${filters.search}%`, `%${filters.search}%`);
     }
 
-    const where =
-      whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+    const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
     const limit = filters.limit ?? 100;
     const offset = filters.offset ?? 0;
 
@@ -651,8 +586,7 @@ export const pfCreationService = {
       params.push(filters.establishmentId);
     }
 
-    const where =
-      whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+    const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT b.*, br.branch_name, est.establishment_name,
@@ -846,17 +780,13 @@ export const pfCreationService = {
   ) {
     const existing = await this.getEstablishmentById(id);
     if (!existing) {
-      throw Object.assign(new Error("Establishment not found"), {
-        statusCode: 404,
-      });
+      throw Object.assign(new Error("Establishment not found"), { statusCode: 404 });
     }
 
     if (data.establishment_code !== undefined) {
       const code = String(data.establishment_code).trim();
       if (!code) {
-        throw Object.assign(new Error("establishment_code cannot be blank"), {
-          statusCode: 400,
-        });
+        throw Object.assign(new Error("establishment_code cannot be blank"), { statusCode: 400 });
       }
       const [dupe] = await db.execute<RowDataPacket[]>(
         "SELECT id FROM pf_establishment_master WHERE establishment_code = ? AND id <> ? LIMIT 1",
@@ -869,13 +799,8 @@ export const pfCreationService = {
         );
       }
     }
-    if (
-      data.establishment_name !== undefined &&
-      !String(data.establishment_name).trim()
-    ) {
-      throw Object.assign(new Error("establishment_name cannot be blank"), {
-        statusCode: 400,
-      });
+    if (data.establishment_name !== undefined && !String(data.establishment_name).trim()) {
+      throw Object.assign(new Error("establishment_name cannot be blank"), { statusCode: 400 });
     }
 
     const columns = [
@@ -916,16 +841,10 @@ export const pfCreationService = {
     return this.getEstablishmentById(id);
   },
 
-  async setEstablishmentActiveStatus(
-    id: string,
-    activeStatus: 0 | 1,
-    actorUserId: string,
-  ) {
+  async setEstablishmentActiveStatus(id: string, activeStatus: 0 | 1, actorUserId: string) {
     const existing = await this.getEstablishmentById(id);
     if (!existing) {
-      throw Object.assign(new Error("Establishment not found"), {
-        statusCode: 404,
-      });
+      throw Object.assign(new Error("Establishment not found"), { statusCode: 404 });
     }
     await db.execute(
       "UPDATE pf_establishment_master SET active_status = ?, updated_at = NOW() WHERE id = ?",
@@ -933,10 +852,7 @@ export const pfCreationService = {
     );
     await logPfAudit({
       employeeId: null,
-      actionType:
-        activeStatus === 1
-          ? "ESTABLISHMENT_ACTIVATED"
-          : "ESTABLISHMENT_DEACTIVATED",
+      actionType: activeStatus === 1 ? "ESTABLISHMENT_ACTIVATED" : "ESTABLISHMENT_DEACTIVATED",
       actorUserId,
       actorType: "admin",
       oldValue: { active_status: existing.active_status },
@@ -954,21 +870,18 @@ export const pfCreationService = {
 
   async generateEcrFile(
     month: string,
-    establishmentId: string,
+    establishmentId: string
   ): Promise<{ content: string; filename: string; employeeCount: number }> {
     const [estRows] = await db.query<any[]>(
       `SELECT establishment_code, establishment_name FROM pf_establishment_master WHERE id = ? AND active_status = 1`,
-      [establishmentId],
+      [establishmentId]
     );
     // status -> statusCode: the property errorHandler.ts actually reads (verified against its
     // other 3 callers in this same file, lines 291/300/319, which already use statusCode). This
     // throw's message was being replaced with a generic "unexpected server error" in production —
     // found while fixing the ECR readiness gate below; fixed here too since it sits in the same
     // function and is the same one-property-name defect, not a separate change.
-    if (!estRows.length)
-      throw Object.assign(new Error("Establishment not found"), {
-        statusCode: 404,
-      });
+    if (!estRows.length) throw Object.assign(new Error("Establishment not found"), { statusCode: 404 });
     const est = estRows[0];
 
     const [runRows] = await db.query<any[]>(
@@ -980,12 +893,12 @@ export const pfCreationService = {
          AND spr.status NOT IN ('draft','cancelled')
        ORDER BY spr.created_at DESC
        LIMIT 1`,
-      [establishmentId, month],
+      [establishmentId, month]
     );
     if (!runRows.length) {
       throw Object.assign(
         new Error(`No finalised salary run found for ${month}`),
-        { statusCode: 404 },
+        { statusCode: 404 }
       );
     }
     const runId = runRows[0].run_id;
@@ -1019,13 +932,13 @@ export const pfCreationService = {
          AND spl.pf_employee > 0
          AND e.employment_type = 'ONROLL'
        ORDER BY e.employee_code`,
-      [runId],
+      [runId]
     );
 
     if (!contributorRows.length) {
       throw Object.assign(
         new Error("No employees with PF deducted were found for this run"),
-        { statusCode: 404 },
+        { statusCode: 404 }
       );
     }
 
@@ -1033,32 +946,18 @@ export const pfCreationService = {
     // 12-digit UAN before this file can be generated. A partially-clean file — some rows
     // present, some quietly missing — would read as a completed export to whoever uploads it.
     const uanReadiness = await resolveUanFilingReadinessForPeriod(month);
-    const blocked: Array<{
-      employee_code: string;
-      member_name: string;
-      reason: string;
-    }> = [];
+    const blocked: Array<{ employee_code: string; member_name: string; reason: string }> = [];
     const rows: any[] = [];
     for (const r of contributorRows) {
-      const readiness = uanReadiness.get(
-        String(r.employee_code).trim().toUpperCase(),
-      );
+      const readiness = uanReadiness.get(String(r.employee_code).trim().toUpperCase());
       const uan = readiness?.uan ?? null;
       const uanValid = readiness?.uanValid ?? null;
       if (!uan) {
-        blocked.push({
-          employee_code: r.employee_code,
-          member_name: r.member_name,
-          reason: "MISSING_UAN",
-        });
+        blocked.push({ employee_code: r.employee_code, member_name: r.member_name, reason: "MISSING_UAN" });
         continue;
       }
       if (!uanValid) {
-        blocked.push({
-          employee_code: r.employee_code,
-          member_name: r.member_name,
-          reason: "INVALID_UAN",
-        });
+        blocked.push({ employee_code: r.employee_code, member_name: r.member_name, reason: "INVALID_UAN" });
         continue;
       }
       rows.push({ ...r, uan });
@@ -1068,48 +967,40 @@ export const pfCreationService = {
       throw Object.assign(
         new Error(
           `ECR_NOT_READY: ${blocked.length} employee(s) had PF deducted this run but have no valid ` +
-            `12-digit UAN, so the file cannot be generated without silently dropping a contributor. ` +
-            `Resolve via HR/Payroll UAN remediation, then regenerate.`,
+          `12-digit UAN, so the file cannot be generated without silently dropping a contributor. ` +
+          `Resolve via HR/Payroll UAN remediation, then regenerate.`
         ),
-        { statusCode: 409, code: "ECR_NOT_READY", blockedEmployees: blocked },
+        { statusCode: 409, code: "ECR_NOT_READY", blockedEmployees: blocked }
       );
     }
 
     const lines: string[] = [];
     lines.push("#~#");
     lines.push(
-      "UAN#MEMBER_NAME#GROSS_WAGES#EPF_WAGES#EPS_WAGES#EDLI_WAGES#EPF_CONTRI_REMITTED#EPS_CONTRI_REMITTED#EPF_EPS_DIFF_REMITTED#NCP_DAYS#REFUND_OF_ADVANCES",
+      "UAN#MEMBER_NAME#GROSS_WAGES#EPF_WAGES#EPS_WAGES#EDLI_WAGES#EPF_CONTRI_REMITTED#EPS_CONTRI_REMITTED#EPF_EPS_DIFF_REMITTED#NCP_DAYS#REFUND_OF_ADVANCES"
     );
 
-    let totalGross = 0,
-      totalEpfWages = 0,
-      totalEpsWages = 0,
-      totalEpfContri = 0,
-      totalEpsContri = 0,
-      totalNcp = 0;
+    let totalGross = 0, totalEpfWages = 0, totalEpsWages = 0, totalEpfContri = 0, totalEpsContri = 0, totalNcp = 0;
 
     for (const r of rows) {
-      const epfWages = Number(r.epf_wages);
-      const epsWages = Math.min(epfWages, 15000);
+      const epfWages  = Number(r.epf_wages);
+      const epsWages  = Math.min(epfWages, 15000);
       const epfContri = Number(r.epf_contri);
       const epsContri = Math.round(Math.min(Number(r.eps_contri), 1250));
-      const diff = epfContri - epsContri;
-      const gross = Number(r.gross_wages);
-      const ncp = Number(r.ncp_days);
+      const diff      = epfContri - epsContri;
+      const gross     = Number(r.gross_wages);
+      const ncp       = Number(r.ncp_days);
 
-      totalGross += gross;
+      totalGross    += gross;
       totalEpfWages += epfWages;
       totalEpsWages += epsWages;
-      totalEpfContri += epfContri;
-      totalEpsContri += epsContri;
-      totalNcp += ncp;
+      totalEpfContri+= epfContri;
+      totalEpsContri+= epsContri;
+      totalNcp      += ncp;
 
-      const name = String(r.member_name)
-        .replace(/#/g, "")
-        .toUpperCase()
-        .substring(0, 80);
+      const name = String(r.member_name).replace(/#/g, "").toUpperCase().substring(0, 80);
       lines.push(
-        `${r.uan}#${name}#${gross}#${epfWages}#${epsWages}#${epsWages}#${epfContri}#${epsContri}#${diff}#${ncp}#0`,
+        `${r.uan}#${name}#${gross}#${epfWages}#${epsWages}#${epsWages}#${epfContri}#${epsContri}#${diff}#${ncp}#0`
       );
     }
 
@@ -1118,10 +1009,10 @@ export const pfCreationService = {
     const mmyyyy = `${mo}${yr}`;
     const totalDiff = totalEpfContri - totalEpsContri;
     lines.push(
-      `${rows.length}#${mmyyyy}#${rows.length}#${totalGross}#${totalEpfWages}#${totalEpsWages}#${totalEpsWages}#${totalEpfContri}#${totalEpsContri}#${totalDiff}#${totalNcp}#0`,
+      `${rows.length}#${mmyyyy}#${rows.length}#${totalGross}#${totalEpfWages}#${totalEpsWages}#${totalEpsWages}#${totalEpfContri}#${totalEpsContri}#${totalDiff}#${totalNcp}#0`
     );
 
-    const content = lines.join("\n");
+    const content  = lines.join("\n");
     const filename = `ECR_${est.establishment_code}_${month.replace("-", "")}.txt`;
 
     return { content, filename, employeeCount: rows.length };

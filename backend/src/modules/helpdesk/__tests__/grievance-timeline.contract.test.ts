@@ -57,21 +57,12 @@ describe("it is no more readable than the grievance itself", () => {
     // hasRole -> hasRoleForRequest: the demo-bypass-aware wrapper in shared/accessGuard.ts.
     // The assertion is unchanged in substance - both routes must run the identical admin/hr
     // check - only the name of the call they both make has moved.
-    expect(timelineRoute).toContain(
-      'hasRoleForRequest(req.authUser, "admin", "hr")',
-    );
-    expect(detailRoute).toContain(
-      'hasRoleForRequest(req.authUser, "admin", "hr")',
-    );
+    expect(timelineRoute).toContain('hasRoleForRequest(req.authUser, "admin", "hr")');
+    expect(detailRoute).toContain('hasRoleForRequest(req.authUser, "admin", "hr")');
   });
 
   it("falls back to the same ownership check for everyone else", () => {
-    for (const guard of [
-      "getEmployeeForUser",
-      "listGrievances",
-      "Forbidden",
-      "No employee record",
-    ]) {
+    for (const guard of ["getEmployeeForUser", "listGrievances", "Forbidden", "No employee record"]) {
       expect(timelineRoute).toContain(guard);
       expect(detailRoute).toContain(guard);
     }
@@ -85,9 +76,7 @@ describe("it is no more readable than the grievance itself", () => {
 describe("every entry has a genuine timestamp", () => {
   it("draws audited actions from sensitive_action_log, scoped to this grievance", () => {
     expect(timelineFn).toContain("FROM sensitive_action_log");
-    expect(timelineFn).toContain(
-      "s.entity_type = 'grievance' AND s.entity_id = ?",
-    );
+    expect(timelineFn).toContain("s.entity_type = 'grievance' AND s.entity_id = ?");
     expect(timelineFn).toContain("s.acted_at");
   });
 

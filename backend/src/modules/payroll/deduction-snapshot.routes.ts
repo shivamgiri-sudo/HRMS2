@@ -12,38 +12,21 @@
 import { Router } from "express";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
 import { employeeCodeScopeSql } from "./payroll-branch-scope.js";
 
 export const deductionSnapshotRouter = Router();
 
-type RouteHandler = (
-  req: AuthenticatedRequest,
-  res: Response,
-) => Promise<unknown>;
+type RouteHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 const h =
   (fn: RouteHandler) =>
-  (
-    req: AuthenticatedRequest,
-    res: Response,
-    next: (err?: unknown) => void,
-  ): void => {
+  (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void): void => {
     void fn(req, res).catch(next);
   };
 
-const READ_ROLES = [
-  "super_admin",
-  "hr_admin",
-  "payroll",
-  "payroll_head",
-  "finance",
-  "branch_head",
-] as const;
+const READ_ROLES = ["super_admin", "hr_admin", "payroll", "payroll_head", "finance", "branch_head"] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // upload_deduction_snapshot
@@ -66,13 +49,10 @@ deductionSnapshotRouter.get(
          FROM upload_deduction_snapshot
         WHERE salary_month IS NOT NULL
         ORDER BY salary_month DESC
-        LIMIT 36`,
+        LIMIT 36`
     );
-    return res.json({
-      success: true,
-      data: rows.map((r) => r.salary_month as string),
-    });
-  }),
+    return res.json({ success: true, data: rows.map((r) => r.salary_month as string) });
+  })
 );
 
 /**
@@ -88,11 +68,8 @@ deductionSnapshotRouter.get(
       return res.status(403).json({ success: false, message: "Access denied" });
     }
 
-    const { salary_month, branch_name, employee_code } = req.query as Record<
-      string,
-      string
-    >;
-    const page = Math.max(1, Number(req.query.page) || 1);
+    const { salary_month, branch_name, employee_code } = req.query as Record<string, string>;
+    const page  = Math.max(1, Number(req.query.page)  || 1);
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
     const offset = (page - 1) * limit;
 
@@ -108,10 +85,10 @@ deductionSnapshotRouter.get(
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
-    const [[{ total }]] = (await db.execute<RowDataPacket[]>(
+    const [[{ total }]] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM upload_deduction_snapshot ${where}`,
-      params,
-    )) as [RowDataPacket[], unknown];
+      params
+    ) as [RowDataPacket[], unknown];
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, branch_name, cost_center, employee_code, employee_name,
@@ -122,17 +99,11 @@ deductionSnapshotRouter.get(
          ${where}
          ORDER BY salary_month DESC, branch_name, employee_code
          LIMIT ${limit} OFFSET ${offset}`,
-      params,
+      params
     );
 
-    return res.json({
-      success: true,
-      data: rows,
-      total: Number(total),
-      page,
-      limit,
-    });
-  }),
+    return res.json({ success: true, data: rows, total: Number(total), page, limit });
+  })
 );
 
 /**
@@ -151,12 +122,7 @@ deductionSnapshotRouter.get(
 
     const { salary_month } = req.query as Record<string, string>;
     if (!salary_month) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "salary_month is required (YYYY-MM)",
-        });
+      return res.status(400).json({ success: false, message: "salary_month is required (YYYY-MM)" });
     }
 
     const sumScope = await employeeCodeScopeSql(req, "employee_code");
@@ -197,13 +163,8 @@ deductionSnapshotRouter.get(
       [salary_month, ...sumScope.params]
     );
 
-    return res.json({
-      success: true,
-      data: rows,
-      totals: totalsRow,
-      salary_month,
-    });
-  }),
+    return res.json({ success: true, data: rows, totals: totalsRow, salary_month });
+  })
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -229,10 +190,10 @@ deductionSnapshotRouter.get(
         ORDER BY sal_year DESC, FIELD(sal_month,
           'Jan','Feb','Mar','Apr','May','Jun',
           'Jul','Aug','Sep','Oct','Nov','Dec') DESC
-        LIMIT 48`,
+        LIMIT 48`
     );
     return res.json({ success: true, data: rows });
-  }),
+  })
 );
 
 /**
@@ -248,11 +209,8 @@ deductionSnapshotRouter.get(
       return res.status(403).json({ success: false, message: "Access denied" });
     }
 
-    const { sal_year, sal_month, employee_code } = req.query as Record<
-      string,
-      string
-    >;
-    const page = Math.max(1, Number(req.query.page) || 1);
+    const { sal_year, sal_month, employee_code } = req.query as Record<string, string>;
+    const page  = Math.max(1, Number(req.query.page)  || 1);
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
     const offset = (page - 1) * limit;
 
@@ -267,10 +225,10 @@ deductionSnapshotRouter.get(
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
-    const [[{ total }]] = (await db.execute<RowDataPacket[]>(
+    const [[{ total }]] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM qual_incentive_snapshot ${where}`,
-      params,
-    )) as [RowDataPacket[], unknown];
+      params
+    ) as [RowDataPacket[], unknown];
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT q.id, q.employee_code, q.sal_year, q.sal_month, q.amount,
@@ -286,17 +244,11 @@ deductionSnapshotRouter.get(
            'Jul','Aug','Sep','Oct','Nov','Dec') DESC,
            q.employee_code
          LIMIT ${limit} OFFSET ${offset}`,
-      params,
+      params
     );
 
-    return res.json({
-      success: true,
-      data: rows,
-      total: Number(total),
-      page,
-      limit,
-    });
-  }),
+    return res.json({ success: true, data: rows, total: Number(total), page, limit });
+  })
 );
 
 /**
@@ -314,12 +266,7 @@ deductionSnapshotRouter.get(
 
     const { sal_year, sal_month } = req.query as Record<string, string>;
     if (!sal_year || !sal_month) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "sal_year and sal_month are required",
-        });
+      return res.status(400).json({ success: false, message: "sal_year and sal_month are required" });
     }
 
     const qSumScope = await employeeCodeScopeSql(req, "q.employee_code");
@@ -344,12 +291,6 @@ deductionSnapshotRouter.get(
       [sal_year, sal_month, ...qSumScope.params]
     );
 
-    return res.json({
-      success: true,
-      data: rows,
-      totals: totalsRow,
-      sal_year,
-      sal_month,
-    });
-  }),
+    return res.json({ success: true, data: rows, totals: totalsRow, sal_year, sal_month });
+  })
 );

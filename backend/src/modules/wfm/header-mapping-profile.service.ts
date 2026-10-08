@@ -1,5 +1,5 @@
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 
 export interface HeaderMappingProfile {
   id: number;
@@ -9,8 +9,8 @@ export interface HeaderMappingProfile {
   columnMappings: Record<string, string>;
   shiftAliasOverrides: Record<string, string> | null;
   statusAliasOverrides: Record<string, string> | null;
-  blankHandling: "UNASSIGNED" | "NO_CHANGE";
-  hdMapsTo: "HALF_DAY" | "NEEDS_MAPPING";
+  blankHandling: 'UNASSIGNED' | 'NO_CHANGE';
+  hdMapsTo: 'HALF_DAY' | 'NEEDS_MAPPING';
   isDefault: boolean;
   isActive: boolean;
   createdBy: string | null;
@@ -27,22 +27,21 @@ function parseProfileRow(row: any): HeaderMappingProfile {
     processId: row.process_id || null,
     profileName: row.profile_name,
     sourceIdentifier: row.source_identifier || null,
-    columnMappings:
-      typeof row.column_mappings === "string"
-        ? JSON.parse(row.column_mappings)
-        : row.column_mappings,
+    columnMappings: typeof row.column_mappings === 'string'
+      ? JSON.parse(row.column_mappings)
+      : row.column_mappings,
     shiftAliasOverrides: row.shift_alias_overrides
-      ? typeof row.shift_alias_overrides === "string"
-        ? JSON.parse(row.shift_alias_overrides)
-        : row.shift_alias_overrides
+      ? (typeof row.shift_alias_overrides === 'string'
+          ? JSON.parse(row.shift_alias_overrides)
+          : row.shift_alias_overrides)
       : null,
     statusAliasOverrides: row.status_alias_overrides
-      ? typeof row.status_alias_overrides === "string"
-        ? JSON.parse(row.status_alias_overrides)
-        : row.status_alias_overrides
+      ? (typeof row.status_alias_overrides === 'string'
+          ? JSON.parse(row.status_alias_overrides)
+          : row.status_alias_overrides)
       : null,
-    blankHandling: row.blank_handling || "UNASSIGNED",
-    hdMapsTo: row.hd_maps_to || "NEEDS_MAPPING",
+    blankHandling: row.blank_handling || 'UNASSIGNED',
+    hdMapsTo: row.hd_maps_to || 'NEEDS_MAPPING',
     isDefault: row.is_default === 1 || row.is_default === true,
     isActive: row.is_active === 1 || row.is_active === true,
     createdBy: row.created_by || null,
@@ -53,18 +52,16 @@ function parseProfileRow(row: any): HeaderMappingProfile {
 /**
  * List all active header mapping profiles, optionally filtered by processId.
  */
-export async function listProfiles(
-  processId?: string,
-): Promise<HeaderMappingProfile[]> {
-  const conds: string[] = ["is_active = 1"];
+export async function listProfiles(processId?: string): Promise<HeaderMappingProfile[]> {
+  const conds: string[] = ['is_active = 1'];
   const params: unknown[] = [];
 
   if (processId) {
-    conds.push("process_id = ?");
+    conds.push('process_id = ?');
     params.push(processId);
   }
 
-  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM wfm_header_mapping_profile ${where} ORDER BY created_at DESC`,
@@ -84,8 +81,8 @@ export async function createProfile(data: {
   columnMappings: Record<string, string>;
   shiftAliasOverrides?: Record<string, string>;
   statusAliasOverrides?: Record<string, string>;
-  blankHandling?: "UNASSIGNED" | "NO_CHANGE";
-  hdMapsTo?: "HALF_DAY" | "NEEDS_MAPPING";
+  blankHandling?: 'UNASSIGNED' | 'NO_CHANGE';
+  hdMapsTo?: 'HALF_DAY' | 'NEEDS_MAPPING';
   isDefault?: boolean;
   createdBy: string;
 }): Promise<HeaderMappingProfile> {
@@ -113,14 +110,10 @@ export async function createProfile(data: {
       data.processId || null,
       data.profileName,
       JSON.stringify(data.columnMappings),
-      data.shiftAliasOverrides
-        ? JSON.stringify(data.shiftAliasOverrides)
-        : null,
-      data.statusAliasOverrides
-        ? JSON.stringify(data.statusAliasOverrides)
-        : null,
-      data.blankHandling || "UNASSIGNED",
-      data.hdMapsTo || "NEEDS_MAPPING",
+      data.shiftAliasOverrides ? JSON.stringify(data.shiftAliasOverrides) : null,
+      data.statusAliasOverrides ? JSON.stringify(data.statusAliasOverrides) : null,
+      data.blankHandling || 'UNASSIGNED',
+      data.hdMapsTo || 'NEEDS_MAPPING',
       data.isDefault ? 1 : 0,
       data.createdBy,
     ],
@@ -135,7 +128,7 @@ export async function createProfile(data: {
   );
 
   if (!rows.length) {
-    throw new Error("Failed to retrieve created profile");
+    throw new Error('Failed to retrieve created profile');
   }
 
   return parseProfileRow(rows[0]);
@@ -146,51 +139,41 @@ export async function createProfile(data: {
  */
 export async function updateProfile(
   id: number,
-  updates: Partial<
-    Omit<HeaderMappingProfile, "id" | "createdAt" | "createdBy">
-  >,
+  updates: Partial<Omit<HeaderMappingProfile, 'id' | 'createdAt' | 'createdBy'>>,
 ): Promise<HeaderMappingProfile> {
   const setClauses: string[] = [];
   const params: unknown[] = [];
 
   if (updates.profileName !== undefined) {
-    setClauses.push("profile_name = ?");
+    setClauses.push('profile_name = ?');
     params.push(updates.profileName);
   }
   if (updates.sourceIdentifier !== undefined) {
-    setClauses.push("source_identifier = ?");
+    setClauses.push('source_identifier = ?');
     params.push(updates.sourceIdentifier || null);
   }
   if (updates.columnMappings !== undefined) {
-    setClauses.push("column_mappings = ?");
+    setClauses.push('column_mappings = ?');
     params.push(JSON.stringify(updates.columnMappings));
   }
   if (updates.shiftAliasOverrides !== undefined) {
-    setClauses.push("shift_alias_overrides = ?");
-    params.push(
-      updates.shiftAliasOverrides
-        ? JSON.stringify(updates.shiftAliasOverrides)
-        : null,
-    );
+    setClauses.push('shift_alias_overrides = ?');
+    params.push(updates.shiftAliasOverrides ? JSON.stringify(updates.shiftAliasOverrides) : null);
   }
   if (updates.statusAliasOverrides !== undefined) {
-    setClauses.push("status_alias_overrides = ?");
-    params.push(
-      updates.statusAliasOverrides
-        ? JSON.stringify(updates.statusAliasOverrides)
-        : null,
-    );
+    setClauses.push('status_alias_overrides = ?');
+    params.push(updates.statusAliasOverrides ? JSON.stringify(updates.statusAliasOverrides) : null);
   }
   if (updates.blankHandling !== undefined) {
-    setClauses.push("blank_handling = ?");
+    setClauses.push('blank_handling = ?');
     params.push(updates.blankHandling);
   }
   if (updates.hdMapsTo !== undefined) {
-    setClauses.push("hd_maps_to = ?");
+    setClauses.push('hd_maps_to = ?');
     params.push(updates.hdMapsTo);
   }
   if (updates.isDefault !== undefined) {
-    setClauses.push("is_default = ?");
+    setClauses.push('is_default = ?');
     params.push(updates.isDefault ? 1 : 0);
   }
 
@@ -208,7 +191,7 @@ export async function updateProfile(
 
   params.push(id);
   await db.execute(
-    `UPDATE wfm_header_mapping_profile SET ${setClauses.join(", ")} WHERE id = ?`,
+    `UPDATE wfm_header_mapping_profile SET ${setClauses.join(', ')} WHERE id = ?`,
     params,
   );
 
@@ -229,8 +212,5 @@ export async function updateProfile(
  * Soft-delete a header mapping profile (set is_active = 0).
  */
 export async function deleteProfile(id: number): Promise<void> {
-  await db.execute(
-    `UPDATE wfm_header_mapping_profile SET is_active = 0 WHERE id = ?`,
-    [id],
-  );
+  await db.execute(`UPDATE wfm_header_mapping_profile SET is_active = 0 WHERE id = ?`, [id]);
 }

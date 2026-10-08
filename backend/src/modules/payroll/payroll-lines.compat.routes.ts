@@ -21,26 +21,13 @@ payrollLinesCompatRouter.get(
   // were rejected here with 403, making the page show "No lines found" for every run they
   // selected — the payslip center was "totally broken" for these roles.
   requireRole(
-    "admin",
-    "hr",
-    "finance",
-    "payroll",
-    "payroll_head",
-    "super_admin",
-    "finance_head",
-    "payroll_admin",
-    "payroll_branch",
-    "payroll_hr",
-    "hr_head",
-    "accounts_head",
+    "admin", "hr", "finance", "payroll", "payroll_head", "super_admin", "finance_head",
+    "payroll_admin", "payroll_branch", "payroll_hr", "hr_head", "accounts_head",
   ),
   async (req, res, next) => {
     try {
-      const page = Math.max(1, parseInt(req.query.page as string) || 1);
-      const limit = Math.min(
-        500,
-        Math.max(1, parseInt(req.query.limit as string) || 200),
-      );
+      const page  = Math.max(1, parseInt(req.query.page  as string) || 1);
+      const limit = Math.min(500, Math.max(1, parseInt(req.query.limit as string) || 200));
       const search = ((req.query.search as string) || "").trim();
       const offset = (page - 1) * limit;
 
@@ -82,10 +69,7 @@ payrollLinesCompatRouter.get(
           LIMIT ? OFFSET ?`,
         [req.params.id, ...searchParams, limit, offset],
       );
-      return res.json({
-        success: true,
-        data: { lines: rows, total, page, limit },
-      });
+      return res.json({ success: true, data: { lines: rows, total, page, limit } });
     } catch (error) {
       next(error);
     }

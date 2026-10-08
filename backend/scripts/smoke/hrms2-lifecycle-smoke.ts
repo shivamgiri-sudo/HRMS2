@@ -13,10 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PREFIX = "TEST DEMO";
 const MARKER = "TEST_DEMO_HRMS2_SMOKE";
 const PRODUCTION_SMOKE_OVERRIDE = "YES_I_ACCEPT_DATA_WRITES";
-const runKey = new Date()
-  .toISOString()
-  .replace(/[-:.TZ]/g, "")
-  .slice(0, 14);
+const runKey = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 const suffix = runKey.slice(-6);
 const today = new Date().toISOString().slice(0, 10);
 
@@ -65,13 +62,7 @@ function isPublicIp(host?: string): boolean {
   if (host.startsWith("10.")) return false;
   if (host.startsWith("192.168.")) return false;
   const parts = host.split(".").map(Number);
-  if (
-    parts.length === 4 &&
-    parts[0] === 172 &&
-    parts[1] >= 16 &&
-    parts[1] <= 31
-  )
-    return false;
+  if (parts.length === 4 && parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return false;
   if (parts.length === 4 && parts[0] === 169 && parts[1] === 254) return false;
   return true;
 }
@@ -80,14 +71,12 @@ function assertSafeSmokeTarget() {
   const nodeEnv = String(process.env.NODE_ENV ?? "development").toLowerCase();
   const dbHost = String(process.env.DB_HOST ?? "");
   const dbName = String(process.env.DB_NAME ?? "");
-  const override =
-    process.env.ALLOW_PRODUCTION_SMOKE === PRODUCTION_SMOKE_OVERRIDE;
+  const override = process.env.ALLOW_PRODUCTION_SMOKE === PRODUCTION_SMOKE_OVERRIDE;
   const blockers: string[] = [];
 
   if (nodeEnv === "production") blockers.push("NODE_ENV=production");
   if (isPublicIp(dbHost) && !override) blockers.push("DB_HOST is a public IP");
-  if (dbName.toLowerCase() === "mas_hrms" && !override)
-    blockers.push("DB_NAME is mas_hrms");
+  if (dbName.toLowerCase() === "mas_hrms" && !override) blockers.push("DB_NAME is mas_hrms");
 
   console.error("============================================================");
   console.error(" HRMS2 LIVE LIFECYCLE SMOKE - WRITES TEST DEMO DATA");
@@ -96,17 +85,13 @@ function assertSafeSmokeTarget() {
   console.error(` DB_HOST=${dbHost}`);
   console.error(` DB_NAME=${dbName}`);
   console.error(` DB_USER=${process.env.DB_USER ?? ""}`);
-  console.error(
-    " This runner creates TEST DEMO records. Use staging/local only.",
-  );
+  console.error(" This runner creates TEST DEMO records. Use staging/local only.");
   console.error("============================================================");
 
   if (blockers.length) {
     console.error("[ABORTED] Unsafe smoke target:");
     for (const blocker of blockers) console.error(` - ${blocker}`);
-    console.error(
-      `Set ALLOW_PRODUCTION_SMOKE=${PRODUCTION_SMOKE_OVERRIDE} only after explicit written approval.`,
-    );
+    console.error(`Set ALLOW_PRODUCTION_SMOKE=${PRODUCTION_SMOKE_OVERRIDE} only after explicit written approval.`);
     process.exit(1);
   }
 }
@@ -119,13 +104,7 @@ async function hasTable(conn: mysql.Connection, table: string) {
   return Number(rows[0]?.c ?? 0) > 0;
 }
 
-async function insert(
-  conn: mysql.Connection,
-  sql: string,
-  params: unknown[],
-  key: string,
-  id = randomUUID(),
-) {
+async function insert(conn: mysql.Connection, sql: string, params: unknown[], key: string, id = randomUUID()) {
   await conn.execute(sql, [id, ...params]);
   evidence.rowIds[key] = id;
   return id;
@@ -181,37 +160,13 @@ async function main() {
     recruiterRoster: randomUUID(),
   };
 
-  const roleUsers = [
-    "admin",
-    "hr",
-    "recruiter",
-    "payroll_hr",
-    "branch_head",
-    "wfm",
-    "it",
-    "branch_admin",
-    "employee",
-  ];
-  const userIds = Object.fromEntries(
-    roleUsers.map((role) => [role, randomUUID()]),
-  );
-  const employeeIds = Object.fromEntries(
-    roleUsers.map((role) => [
-      role,
-      role === "employee" ? ids.employee : randomUUID(),
-    ]),
-  );
+  const roleUsers = ["admin", "hr", "recruiter", "payroll_hr", "branch_head", "wfm", "it", "branch_admin", "employee"];
+  const userIds = Object.fromEntries(roleUsers.map((role) => [role, randomUUID()]));
+  const employeeIds = Object.fromEntries(roleUsers.map((role) => [role, role === "employee" ? ids.employee : randomUUID()]));
 
   try {
-    for (const file of [
-      "265_ats_lifecycle_alignment.sql",
-      "266_hrms2_security_lifecycle_stabilization.sql",
-      "267_lifecycle_completion_surfaces.sql",
-    ]) {
-      const [rows] = await conn.query<RowDataPacket[]>(
-        "SELECT filename FROM schema_migrations WHERE filename = ? LIMIT 1",
-        [file],
-      );
+    for (const file of ["265_ats_lifecycle_alignment.sql", "266_hrms2_security_lifecycle_stabilization.sql", "267_lifecycle_completion_surfaces.sql"]) {
+      const [rows] = await conn.query<RowDataPacket[]>("SELECT filename FROM schema_migrations WHERE filename = ? LIMIT 1", [file]);
       evidence.migrations[file] = rows.length ? "applied" : "missing";
     }
 
@@ -225,77 +180,43 @@ async function main() {
 
     await conn.execute(
       "INSERT INTO process_master (id, process_code, process_name, workload_type, business_lob, branch_id, active_status) VALUES (?, ?, ?, 'backoffice', 'TEST DEMO LOB', ?, 1)",
-      [
-        ids.process,
-        `TD-PR-${suffix}`,
-        `${PREFIX} Process HRMS2 Smoke ${suffix}`,
-        ids.branch,
-      ],
+      [ids.process, `TD-PR-${suffix}`, `${PREFIX} Process HRMS2 Smoke ${suffix}`, ids.branch],
     );
     evidence.rowIds.process = ids.process;
 
     await conn.execute(
       "INSERT INTO department_master (id, dept_code, dept_name, branch_id, description, active_status) VALUES (?, ?, ?, ?, ?, 1)",
-      [
-        ids.dept,
-        `TD-DEPT-${suffix}`,
-        `${PREFIX} Department HRMS2 Smoke ${suffix}`,
-        ids.branch,
-        `${PREFIX} - safe to delete`,
-      ],
+      [ids.dept, `TD-DEPT-${suffix}`, `${PREFIX} Department HRMS2 Smoke ${suffix}`, ids.branch, `${PREFIX} - safe to delete`],
     );
     evidence.rowIds.department = ids.dept;
 
     await conn.execute(
       "INSERT INTO designation_master (id, designation_code, designation_name, grade, active_status) VALUES (?, ?, ?, 'TD', 1)",
-      [
-        ids.designation,
-        `TD-DES-${suffix}`,
-        `${PREFIX} Designation HRMS2 Smoke ${suffix}`,
-      ],
+      [ids.designation, `TD-DES-${suffix}`, `${PREFIX} Designation HRMS2 Smoke ${suffix}`],
     );
     evidence.rowIds.designation = ids.designation;
 
     await conn.execute(
       "INSERT INTO cost_centre_master (id, cost_centre_code, cost_centre_name, branch_id, department_id, active_status) VALUES (?, ?, ?, ?, ?, 1)",
-      [
-        ids.costCentre,
-        `TD-CC-${suffix}`,
-        `${PREFIX} Cost Centre HRMS2 Smoke ${suffix}`,
-        ids.branch,
-        ids.dept,
-      ],
+      [ids.costCentre, `TD-CC-${suffix}`, `${PREFIX} Cost Centre HRMS2 Smoke ${suffix}`, ids.branch, ids.dept],
     );
     evidence.rowIds.costCentre = ids.costCentre;
 
     await conn.execute(
       "INSERT INTO salary_slab_master (id, slab_code, range_from, range_to, label, seq_order, active_status) VALUES (?, ?, 10000, 25000, ?, 999, 1)",
-      [
-        ids.salarySlab,
-        `TD-SLAB-${suffix}`,
-        `${PREFIX} Salary Slab HRMS2 Smoke ${suffix}`,
-      ],
+      [ids.salarySlab, `TD-SLAB-${suffix}`, `${PREFIX} Salary Slab HRMS2 Smoke ${suffix}`],
     );
     evidence.rowIds.salarySlab = ids.salarySlab;
 
     await conn.execute(
       "INSERT INTO salary_structure_master (id, structure_code, structure_name, description, basic_pct, hra_pct, active_status) VALUES (?, ?, ?, ?, 40, 20, 1)",
-      [
-        ids.salaryStructure,
-        `TD-STR-${suffix}`,
-        `${PREFIX} Salary Structure HRMS2 Smoke ${suffix}`,
-        `${PREFIX} - safe to delete`,
-      ],
+      [ids.salaryStructure, `TD-STR-${suffix}`, `${PREFIX} Salary Structure HRMS2 Smoke ${suffix}`, `${PREFIX} - safe to delete`],
     );
     evidence.rowIds.salaryStructure = ids.salaryStructure;
 
     await conn.execute(
       "INSERT INTO leave_type_master (id, leave_code, leave_name, max_days_per_year, carry_forward, requires_approval, paid_leave, active_status) VALUES (?, ?, ?, 1, 0, 1, 1, 1)",
-      [
-        ids.leaveType,
-        `TDL${suffix.slice(-3)}`,
-        `${PREFIX} Leave HRMS2 Smoke ${suffix}`,
-      ],
+      [ids.leaveType, `TDL${suffix.slice(-3)}`, `${PREFIX} Leave HRMS2 Smoke ${suffix}`],
     );
     evidence.rowIds.leaveType = ids.leaveType;
 
@@ -305,21 +226,11 @@ async function main() {
       const email = `test.demo.${role}.${suffix}@example.com`;
       await conn.execute(
         "INSERT INTO workforce_role_catalog (id, role_key, role_name, description, active_status) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE active_status=1",
-        [
-          randomUUID(),
-          role,
-          `${PREFIX} ${role} HRMS2 Smoke`,
-          `${PREFIX} role catalog seed for ${MARKER}`,
-        ],
+        [randomUUID(), role, `${PREFIX} ${role} HRMS2 Smoke`, `${PREFIX} role catalog seed for ${MARKER}`],
       );
       await conn.execute(
         "INSERT INTO auth_user (id, email, password_hash, must_change_password) VALUES (?, ?, ?, ?)",
-        [
-          authId,
-          email,
-          role === "employee" ? tempHash : hash,
-          role === "employee" ? 1 : 0,
-        ],
+        [authId, email, role === "employee" ? tempHash : hash, role === "employee" ? 1 : 0],
       );
       await conn.execute(
         `INSERT INTO employees
@@ -345,10 +256,7 @@ async function main() {
           role === "admin" ? null : employeeIds.admin,
         ],
       );
-      await conn.execute(
-        "INSERT INTO user_roles (id, user_id, role_key, active_status) VALUES (?, ?, ?, 1)",
-        [randomUUID(), authId, role],
-      );
+      await conn.execute("INSERT INTO user_roles (id, user_id, role_key, active_status) VALUES (?, ?, ?, 1)", [randomUUID(), authId, role]);
     }
     evidence.rowIds.users = userIds as unknown as string[];
     evidence.rowIds.roleEmployees = employeeIds as unknown as string[];
@@ -357,16 +265,7 @@ async function main() {
       `INSERT INTO ats_recruiter_roster
        (id, active_flag, name, email, mobile, branch, role_coverage, available_today, daily_capacity, notes, recruiter_code, branch_head_email, active_status)
        VALUES (?, 'Y', ?, ?, ?, ?, 'TEST DEMO', 'Y', 5, ?, ?, ?, 1)`,
-      [
-        ids.recruiterRoster,
-        `${PREFIX} Recruiter HRMS2 Smoke ${suffix}`,
-        `test.demo.recruiter.${suffix}@example.com`,
-        `99998${suffix.slice(-5)}`,
-        `${PREFIX} Branch HRMS2 Smoke ${suffix}`,
-        `${PREFIX} - safe to delete`,
-        `TDREC${suffix}`,
-        `test.demo.branch_head.${suffix}@example.com`,
-      ],
+      [ids.recruiterRoster, `${PREFIX} Recruiter HRMS2 Smoke ${suffix}`, `test.demo.recruiter.${suffix}@example.com`, `99998${suffix.slice(-5)}`, `${PREFIX} Branch HRMS2 Smoke ${suffix}`, `${PREFIX} - safe to delete`, `TDREC${suffix}`, `test.demo.branch_head.${suffix}@example.com`],
     );
     evidence.rowIds.recruiterRoster = ids.recruiterRoster;
 
@@ -393,84 +292,38 @@ async function main() {
 
     await conn.execute(
       "INSERT INTO ats_queue_token (id, candidate_id, token, token_number, branch_name, arrival_time, current_stage, status, queue_status, recruiter_id, assigned_recruiter_id) VALUES (?, ?, ?, ?, ?, NOW(), 'Arrived', 'active', 'waiting', ?, ?)",
-      [
-        ids.queueToken,
-        ids.candidate,
-        `TEST-DEMO-${suffix}`,
-        `TDQ${suffix}`,
-        `${PREFIX} Branch HRMS2 Smoke ${suffix}`,
-        userIds.recruiter,
-        userIds.recruiter,
-      ],
+      [ids.queueToken, ids.candidate, `TEST-DEMO-${suffix}`, `TDQ${suffix}`, `${PREFIX} Branch HRMS2 Smoke ${suffix}`, userIds.recruiter, userIds.recruiter],
     );
     evidence.rowIds.queueToken = ids.queueToken;
 
     await conn.execute(
       "INSERT INTO ats_interview_assignment (id, candidate_id, interviewer_id, interview_round, assigned_by, interview_date, interview_time, status, remarks, branch_id, process_id) VALUES (?, ?, ?, 1, ?, ?, '10:00:00', 'Assigned', ?, ?, ?)",
-      [
-        ids.assignment,
-        ids.candidate,
-        employeeIds.recruiter,
-        employeeIds.admin,
-        today,
-        `${PREFIX} assigned recruiter`,
-        ids.branch,
-        ids.process,
-      ],
+      [ids.assignment, ids.candidate, employeeIds.recruiter, employeeIds.admin, today, `${PREFIX} assigned recruiter`, ids.branch, ids.process],
     );
     evidence.rowIds.recruiterAssignment = ids.assignment;
 
     await conn.execute(
       "INSERT INTO ats_interview_result (id, candidate_id, recruiter_id, interview_status, communication_rating, stability_rating, remarks, joining_interest, expected_joining_date, recruiter_recommendation) VALUES (?, ?, ?, 'selected', 5, 5, ?, 1, ?, ?)",
-      [
-        ids.interviewResult,
-        ids.candidate,
-        userIds.recruiter,
-        `${PREFIX} selected by assigned recruiter`,
-        today,
-        `${PREFIX} proceed to onboarding`,
-      ],
+      [ids.interviewResult, ids.candidate, userIds.recruiter, `${PREFIX} selected by assigned recruiter`, today, `${PREFIX} proceed to onboarding`],
     );
     evidence.rowIds.interviewResult = ids.interviewResult;
 
-    await conn.execute(
-      "UPDATE ats_candidate SET current_stage='Selected', profile_status='onboarding_sent' WHERE id=?",
-      [ids.candidate],
-    );
+    await conn.execute("UPDATE ats_candidate SET current_stage='Selected', profile_status='onboarding_sent' WHERE id=?", [ids.candidate]);
     await conn.execute(
       "INSERT INTO ats_email_log (id, candidate_id, email_type, sent_to, status, error_message) VALUES (?, ?, 'selected', ?, 'skipped', ?)",
-      [
-        ids.emailLog,
-        ids.candidate,
-        `test.demo.candidate.${suffix}@example.com`,
-        `${PREFIX} SMTP bypassed for smoke`,
-      ],
+      [ids.emailLog, ids.candidate, `test.demo.candidate.${suffix}@example.com`, `${PREFIX} SMTP bypassed for smoke`],
     );
     evidence.rowIds.selectionEmailLog = ids.emailLog;
 
     await conn.execute(
       "INSERT INTO ats_onboarding_request (id, candidate_id, branch_id, requested_by, assigned_to, status) VALUES (?, ?, ?, ?, ?, 'profile_submitted')",
-      [
-        ids.onboardingRequest,
-        ids.candidate,
-        ids.branch,
-        userIds.hr,
-        userIds.hr,
-      ],
+      [ids.onboardingRequest, ids.candidate, ids.branch, userIds.hr, userIds.hr],
     );
     evidence.rowIds.onboardingRequest = ids.onboardingRequest;
 
     await conn.execute(
       "INSERT INTO ats_onboarding_bridge (id, candidate_id, bridge_date, joining_date, status, notes, created_by, onboarding_token, onboarding_token_expires_at) VALUES (?, ?, ?, ?, 'profile_submitted', ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))",
-      [
-        ids.onboardingBridge,
-        ids.candidate,
-        today,
-        today,
-        `${PREFIX} ${MARKER}`,
-        userIds.hr,
-        `test-demo-token-${suffix}`,
-      ],
+      [ids.onboardingBridge, ids.candidate, today, today, `${PREFIX} ${MARKER}`, userIds.hr, `test-demo-token-${suffix}`],
     );
     evidence.rowIds.onboardingBridge = ids.onboardingBridge;
 
@@ -513,80 +366,36 @@ async function main() {
 
     await conn.execute(
       "INSERT INTO candidate_bgv_check (id, candidate_id, check_type, provider_key, status, match_score, matched_name, result_summary, result_json, reviewed_by, reviewed_at, review_remarks) VALUES (?, ?, 'aadhaar', 'mock', 'manual_review', 72, ?, ?, JSON_OBJECT('marker', ?), ?, NOW(), ?)",
-      [
-        ids.bgvCheckName,
-        ids.candidate,
-        `${PREFIX} Candidate HRMS2 Smoke ${suffix}`,
-        `${PREFIX} name match manual review`,
-        MARKER,
-        userIds.hr,
-        `${PREFIX} HR manual feedback`,
-      ],
+      [ids.bgvCheckName, ids.candidate, `${PREFIX} Candidate HRMS2 Smoke ${suffix}`, `${PREFIX} name match manual review`, MARKER, userIds.hr, `${PREFIX} HR manual feedback`],
     );
     await conn.execute(
       "INSERT INTO candidate_bgv_check (id, candidate_id, check_type, provider_key, status, match_score, matched_name, result_summary, result_json, verified_at) VALUES (?, ?, 'pan', 'mock', 'verified', 100, ?, ?, JSON_OBJECT('marker', ?), NOW())",
-      [
-        ids.bgvCheckPan,
-        ids.candidate,
-        `${PREFIX} Candidate HRMS2 Smoke ${suffix}`,
-        `${PREFIX} PAN verified`,
-        MARKER,
-      ],
+      [ids.bgvCheckPan, ids.candidate, `${PREFIX} Candidate HRMS2 Smoke ${suffix}`, `${PREFIX} PAN verified`, MARKER],
     );
     evidence.rowIds.bgvChecks = [ids.bgvCheckName, ids.bgvCheckPan];
 
     const [bgvDetailNameResult] = await conn.execute<mysql.ResultSetHeader>(
       "INSERT INTO ats_bgv_verification_details (bgv_id, candidate_id, verification_type, status, verification_method, initiated_by, reviewed_by, remarks, result_data, completed_at) VALUES (?, ?, 'name_match', 'manual_review', 'mock', ?, ?, ?, JSON_OBJECT('marker', ?), NOW())",
-      [
-        bgvVerificationId,
-        ids.candidate,
-        userIds.hr,
-        userIds.hr,
-        `${PREFIX} BGV API failure routed to manual_review`,
-        MARKER,
-      ],
+      [bgvVerificationId, ids.candidate, userIds.hr, userIds.hr, `${PREFIX} BGV API failure routed to manual_review`, MARKER],
     );
     const [bgvDetailManualResult] = await conn.execute<mysql.ResultSetHeader>(
       "INSERT INTO ats_bgv_verification_details (bgv_id, candidate_id, verification_type, status, verification_method, initiated_by, reviewed_by, remarks, result_data, completed_at) VALUES (?, ?, 'pan', 'verified', 'mock', ?, ?, ?, JSON_OBJECT('marker', ?), NOW())",
-      [
-        bgvVerificationId,
-        ids.candidate,
-        userIds.hr,
-        userIds.hr,
-        `${PREFIX} HR manual BGV feedback updated`,
-        MARKER,
-      ],
+      [bgvVerificationId, ids.candidate, userIds.hr, userIds.hr, `${PREFIX} HR manual BGV feedback updated`, MARKER],
     );
-    evidence.rowIds.bgvDetails = [
-      String(bgvDetailNameResult.insertId),
-      String(bgvDetailManualResult.insertId),
-    ];
+    evidence.rowIds.bgvDetails = [String(bgvDetailNameResult.insertId), String(bgvDetailManualResult.insertId)];
 
     await conn.execute(
       `INSERT INTO ats_payroll_hr_validation
        (id, candidate_id, employment_type, gross_salary, joining_date, salary_start_date, basic_salary, hra, conveyance,
         special_allowance, pf_amount, esic_amount, validated_by, validation_status, validated_at, remarks)
        VALUES (?, ?, 'onroll', 22000, ?, ?, 8800, 4400, 1600, 7200, 1800, 0, ?, 'approved', NOW(), ?)`,
-      [
-        ids.payrollValidation,
-        ids.candidate,
-        today,
-        today,
-        userIds.payroll_hr,
-        `${PREFIX} salary slab selected`,
-      ],
+      [ids.payrollValidation, ids.candidate, today, today, userIds.payroll_hr, `${PREFIX} salary slab selected`],
     );
     evidence.rowIds.payrollValidation = ids.payrollValidation;
 
     await conn.execute(
       "INSERT INTO salary_exception_proposal (id, candidate_id, salary_slab_id, proposed_gross_salary, proposal_reason, proposed_by, status) VALUES (?, ?, ?, 22000, ?, ?, 'pending')",
-      [
-        ids.salaryProposal,
-        ids.candidate,
-        ids.salarySlab,
-        `${PREFIX} salary exception proposal`,
-        userIds.payroll_hr,
-      ],
+      [ids.salaryProposal, ids.candidate, ids.salarySlab, `${PREFIX} salary exception proposal`, userIds.payroll_hr],
     );
     evidence.rowIds.salaryProposal = ids.salaryProposal;
 
@@ -596,68 +405,31 @@ async function main() {
         cost_centre, reporting_manager_id, salary_band, offered_ctc, basic, hra, conveyance, special_allowance, gross,
         net_in_hand, status, created_by, submitted_at)
        VALUES (?, ?, ?, 'OnRoll', ?, ?, ?, ?, ?, ?, 'TD', 22000, 8800, 4400, 1600, 7200, 22000, 20200, 'submitted', ?, NOW())`,
-      [
-        ids.offer,
-        ids.onboardingRequest,
-        ids.candidate,
-        today,
-        today,
-        ids.dept,
-        ids.designation,
-        ids.costCentre,
-        employeeIds.admin,
-        userIds.payroll_hr,
-      ],
+      [ids.offer, ids.onboardingRequest, ids.candidate, today, today, ids.dept, ids.designation, ids.costCentre, employeeIds.admin, userIds.payroll_hr],
     );
     evidence.rowIds.offer = ids.offer;
 
     const generatedEmployeeCode = `TDEMP${suffix}`;
     await conn.execute(
       "INSERT INTO ats_branch_head_approval (id, payroll_validation_id, branch_head_id, approval_status, employee_code_generated, remarks) VALUES (?, ?, ?, 'approved', ?, ?)",
-      [
-        ids.branchApproval,
-        ids.payrollValidation,
-        userIds.branch_head,
-        generatedEmployeeCode,
-        `${PREFIX} branch head approved`,
-      ],
+      [ids.branchApproval, ids.payrollValidation, userIds.branch_head, generatedEmployeeCode, `${PREFIX} branch head approved`],
     );
     evidence.rowIds.branchHeadApproval = ids.branchApproval;
 
-    await conn.execute(
-      "UPDATE salary_exception_proposal SET status='approved', approved_by=?, approved_at=NOW() WHERE id=?",
-      [userIds.branch_head, ids.salaryProposal],
-    );
+    await conn.execute("UPDATE salary_exception_proposal SET status='approved', approved_by=?, approved_at=NOW() WHERE id=?", [userIds.branch_head, ids.salaryProposal]);
 
     evidence.rowIds.employee = ids.employee;
     evidence.rowIds.employeeCode = generatedEmployeeCode;
     evidence.rowIds.authUser = ids.employeeAuth;
     await conn.execute(
       "UPDATE employees SET employee_code=?, email=?, official_email=?, personal_email=?, mobile=?, user_id=?, reporting_manager_id=? WHERE id=?",
-      [
-        generatedEmployeeCode,
-        `test.demo.employee.${suffix}@example.com`,
-        `test.demo.employee.${suffix}@example.com`,
-        `test.demo.employee.${suffix}@example.com`,
-        `99996${suffix.slice(-5)}`,
-        ids.employeeAuth,
-        employeeIds.admin,
-        ids.employee,
-      ],
+      [generatedEmployeeCode, `test.demo.employee.${suffix}@example.com`, `test.demo.employee.${suffix}@example.com`, `test.demo.employee.${suffix}@example.com`, `99996${suffix.slice(-5)}`, ids.employeeAuth, employeeIds.admin, ids.employee],
     );
     await conn.execute(
       "UPDATE auth_user SET id=?, email=?, password_hash=?, must_change_password=1 WHERE id=?",
-      [
-        ids.employeeAuth,
-        `test.demo.employee.${suffix}@example.com`,
-        tempHash,
-        userIds.employee,
-      ],
+      [ids.employeeAuth, `test.demo.employee.${suffix}@example.com`, tempHash, userIds.employee],
     );
-    await conn.execute(
-      "UPDATE user_roles SET user_id=? WHERE user_id=? AND role_key='employee'",
-      [ids.employeeAuth, userIds.employee],
-    );
+    await conn.execute("UPDATE user_roles SET user_id=? WHERE user_id=? AND role_key='employee'", [ids.employeeAuth, userIds.employee]);
 
     await conn.execute(
       `INSERT INTO employee_salary_snapshot
@@ -707,199 +479,60 @@ async function main() {
     );
     evidence.rowIds.appointmentLetterRequest = ids.appointment;
 
-    for (const pageCode of [
-      "ATS_BGV",
-      "ATS_PAYROLL_HR",
-      "ATS_BRANCH_HEAD_APPROVAL",
-    ]) {
+    for (const pageCode of ["ATS_BGV", "ATS_PAYROLL_HR", "ATS_BRANCH_HEAD_APPROVAL"]) {
       await conn.execute(
         "INSERT INTO user_page_access (id, user_id, page_code, can_view, can_create, can_edit, can_export, assigned_by, notes) VALUES (?, ?, ?, 1, 1, 1, 1, ?, ?) ON DUPLICATE KEY UPDATE active_status=1",
-        [
-          randomUUID(),
-          userIds.admin,
-          pageCode,
-          userIds.admin,
-          `${PREFIX} ${MARKER}`,
-        ],
+        [randomUUID(), userIds.admin, pageCode, userIds.admin, `${PREFIX} ${MARKER}`],
       );
     }
 
     await conn.commit();
 
-    const adminLogin = await authService.login(
-      `test.demo.admin.${suffix}@example.com`,
-      smokePassword,
-    );
-    evidence.smokeJwtGenerationMethod =
-      "created TEST DEMO admin user, then used authService.login with real password verification";
+    const adminLogin = await authService.login(`test.demo.admin.${suffix}@example.com`, smokePassword);
+    evidence.smokeJwtGenerationMethod = "created TEST DEMO admin user, then used authService.login with real password verification";
     evidence.rowIds.smokeJwtUser = adminLogin.user.id;
-    if (adminLogin.accessToken)
-      pass("SMOKE_JWT generated by real login service");
-    if (adminLogin.user.twoFactorRequired)
-      pass("Admin second login policy requires 2FA");
+    if (adminLogin.accessToken) pass("SMOKE_JWT generated by real login service");
+    if (adminLogin.user.twoFactorRequired) pass("Admin second login policy requires 2FA");
 
-    const firstEmployeeLogin = await authService.login(
-      `test.demo.employee.${suffix}@example.com`,
-      employeeTempPassword,
-    );
-    if (firstEmployeeLogin.user.mustChangePassword)
-      pass("28. First login forces password change");
-    else
-      fail(
-        "28. First login forces password change",
-        "must_change_password was not returned",
-      );
+    const firstEmployeeLogin = await authService.login(`test.demo.employee.${suffix}@example.com`, employeeTempPassword);
+    if (firstEmployeeLogin.user.mustChangePassword) pass("28. First login forces password change");
+    else fail("28. First login forces password change", "must_change_password was not returned");
 
-    if (employeeTempPassword.includes(`99996${suffix.slice(-5)}`))
-      fail(
-        "20. Temporary password is random, not mobile-based",
-        "temporary password included mobile",
-      );
+    if (employeeTempPassword.includes(`99996${suffix.slice(-5)}`)) fail("20. Temporary password is random, not mobile-based", "temporary password included mobile");
     else pass("20. Temporary password is random, not mobile-based");
 
-    await conn.execute(
-      "UPDATE auth_user SET must_change_password=0, password_changed_at=NOW() WHERE id=?",
-      [ids.employeeAuth],
-    );
-    const secondEmployeeLogin = await authService.login(
-      `test.demo.employee.${suffix}@example.com`,
-      employeeTempPassword,
-    );
-    if (secondEmployeeLogin.user.twoFactorRequired)
-      pass("29. Second login requires 2FA");
+    await conn.execute("UPDATE auth_user SET must_change_password=0, password_changed_at=NOW() WHERE id=?", [ids.employeeAuth]);
+    const secondEmployeeLogin = await authService.login(`test.demo.employee.${suffix}@example.com`, employeeTempPassword);
+    if (secondEmployeeLogin.user.twoFactorRequired) pass("29. Second login requires 2FA");
     else fail("29. Second login requires 2FA", "twoFactorRequired was false");
 
     const assertions: Array<[string, string, unknown[]]> = [
-      [
-        "1. TEST DEMO candidate registration creates ats_candidate",
-        "SELECT id FROM ats_candidate WHERE id=? AND full_name LIKE 'TEST DEMO%'",
-        [ids.candidate],
-      ],
-      [
-        "2. TEST DEMO candidate appears in waiting queue",
-        "SELECT id FROM ats_queue_token WHERE candidate_id=? AND queue_status='waiting'",
-        [ids.candidate],
-      ],
-      [
-        "3. TEST DEMO assigned recruiter sees candidate",
-        "SELECT id FROM ats_interview_assignment WHERE candidate_id=? AND interviewer_id=?",
-        [ids.candidate, employeeIds.recruiter],
-      ],
-      [
-        "5. Assigned recruiter selects candidate",
-        "SELECT id FROM ats_interview_result WHERE candidate_id=? AND recruiter_id=? AND interview_status='selected'",
-        [ids.candidate, userIds.recruiter],
-      ],
-      [
-        "6. Selection email + onboarding link auto-created",
-        "SELECT e.id FROM ats_email_log e JOIN ats_onboarding_bridge b ON b.candidate_id=e.candidate_id WHERE e.candidate_id=? AND e.email_type='selected' AND b.onboarding_token LIKE 'test-demo-token-%'",
-        [ids.candidate],
-      ],
-      [
-        "7. ats_onboarding_request row exists",
-        "SELECT id FROM ats_onboarding_request WHERE id=?",
-        [ids.onboardingRequest],
-      ],
-      [
-        "8. ats_onboarding_bridge row exists",
-        "SELECT id FROM ats_onboarding_bridge WHERE id=?",
-        [ids.onboardingBridge],
-      ],
-      [
-        "9. Candidate opens /onboard-full token",
-        "SELECT id FROM ats_onboarding_bridge WHERE onboarding_token=?",
-        [`test-demo-token-${suffix}`],
-      ],
-      [
-        "10. Candidate submits onboarding profile",
-        "SELECT id FROM candidate_onboarding_profile WHERE id=? AND profile_status='submitted'",
-        [ids.onboardingProfile],
-      ],
-      [
-        "11. BGV verification row exists",
-        "SELECT id FROM candidate_bgv_check WHERE candidate_id=? LIMIT 1",
-        [ids.candidate],
-      ],
-      [
-        "12. BGV details rows exist including name_match",
-        "SELECT id FROM ats_bgv_verification_details WHERE candidate_id=? AND verification_type='name_match'",
-        [ids.candidate],
-      ],
-      [
-        "13. BGV API failure moves to manual_review",
-        "SELECT id FROM ats_bgv_verification_details WHERE candidate_id=? AND status='manual_review'",
-        [ids.candidate],
-      ],
-      [
-        "14. HR can update manual BGV feedback",
-        "SELECT id FROM candidate_bgv_check WHERE id=? AND reviewed_by=?",
-        [ids.bgvCheckName, userIds.hr],
-      ],
-      [
-        "15. Payroll HR selects salary slab",
-        "SELECT id FROM ats_payroll_hr_validation WHERE id=? AND validation_status='approved'",
-        [ids.payrollValidation],
-      ],
-      [
-        "16. Salary exception creates proposal",
-        "SELECT id FROM salary_exception_proposal WHERE id=?",
-        [ids.salaryProposal],
-      ],
-      [
-        "17. Branch Head approval approves offer",
-        "SELECT id FROM ats_branch_head_approval WHERE id=? AND approval_status='approved'",
-        [ids.branchApproval],
-      ],
-      [
-        "18. Employee code generated",
-        "SELECT id FROM employees WHERE id=? AND employee_code=?",
-        [ids.employee, generatedEmployeeCode],
-      ],
-      [
-        "19. auth_user created with must_change_password = 1",
-        "SELECT id FROM auth_user WHERE id=? AND must_change_password IN (0,1)",
-        [ids.employeeAuth],
-      ],
-      [
-        "21. Employee master record created",
-        "SELECT id FROM employees WHERE id=?",
-        [ids.employee],
-      ],
-      [
-        "22. Salary snapshot created",
-        "SELECT id FROM employee_salary_snapshot WHERE id=?",
-        [ids.salarySnapshot],
-      ],
-      [
-        "23. Salary assignment created",
-        "SELECT id FROM employee_salary_assignment WHERE id=?",
-        [ids.salaryAssignment],
-      ],
-      [
-        "24. Leave ledger initialized",
-        "SELECT id FROM leave_balance_ledger WHERE id=?",
-        [ids.leaveLedger],
-      ],
-      [
-        "25. Nominee migrated",
-        "SELECT id FROM employee_nominee WHERE id=?",
-        [ids.nominee],
-      ],
-      [
-        "26. Employee role assigned",
-        "SELECT id FROM user_roles WHERE user_id=? AND role_key='employee'",
-        [ids.employeeAuth],
-      ],
-      [
-        "27. WFM/IT/Admin/Appointment tasks created",
-        "SELECT employee_id FROM it_provisioning_request WHERE employee_id=? GROUP BY employee_id HAVING COUNT(*)=4",
-        [ids.employee],
-      ],
-      [
-        "30. Exit flow still opens",
-        "SELECT COUNT(*) AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_exit_record'",
-        [],
-      ],
+      ["1. TEST DEMO candidate registration creates ats_candidate", "SELECT id FROM ats_candidate WHERE id=? AND full_name LIKE 'TEST DEMO%'", [ids.candidate]],
+      ["2. TEST DEMO candidate appears in waiting queue", "SELECT id FROM ats_queue_token WHERE candidate_id=? AND queue_status='waiting'", [ids.candidate]],
+      ["3. TEST DEMO assigned recruiter sees candidate", "SELECT id FROM ats_interview_assignment WHERE candidate_id=? AND interviewer_id=?", [ids.candidate, employeeIds.recruiter]],
+      ["5. Assigned recruiter selects candidate", "SELECT id FROM ats_interview_result WHERE candidate_id=? AND recruiter_id=? AND interview_status='selected'", [ids.candidate, userIds.recruiter]],
+      ["6. Selection email + onboarding link auto-created", "SELECT e.id FROM ats_email_log e JOIN ats_onboarding_bridge b ON b.candidate_id=e.candidate_id WHERE e.candidate_id=? AND e.email_type='selected' AND b.onboarding_token LIKE 'test-demo-token-%'", [ids.candidate]],
+      ["7. ats_onboarding_request row exists", "SELECT id FROM ats_onboarding_request WHERE id=?", [ids.onboardingRequest]],
+      ["8. ats_onboarding_bridge row exists", "SELECT id FROM ats_onboarding_bridge WHERE id=?", [ids.onboardingBridge]],
+      ["9. Candidate opens /onboard-full token", "SELECT id FROM ats_onboarding_bridge WHERE onboarding_token=?", [`test-demo-token-${suffix}`]],
+      ["10. Candidate submits onboarding profile", "SELECT id FROM candidate_onboarding_profile WHERE id=? AND profile_status='submitted'", [ids.onboardingProfile]],
+      ["11. BGV verification row exists", "SELECT id FROM candidate_bgv_check WHERE candidate_id=? LIMIT 1", [ids.candidate]],
+      ["12. BGV details rows exist including name_match", "SELECT id FROM ats_bgv_verification_details WHERE candidate_id=? AND verification_type='name_match'", [ids.candidate]],
+      ["13. BGV API failure moves to manual_review", "SELECT id FROM ats_bgv_verification_details WHERE candidate_id=? AND status='manual_review'", [ids.candidate]],
+      ["14. HR can update manual BGV feedback", "SELECT id FROM candidate_bgv_check WHERE id=? AND reviewed_by=?", [ids.bgvCheckName, userIds.hr]],
+      ["15. Payroll HR selects salary slab", "SELECT id FROM ats_payroll_hr_validation WHERE id=? AND validation_status='approved'", [ids.payrollValidation]],
+      ["16. Salary exception creates proposal", "SELECT id FROM salary_exception_proposal WHERE id=?", [ids.salaryProposal]],
+      ["17. Branch Head approval approves offer", "SELECT id FROM ats_branch_head_approval WHERE id=? AND approval_status='approved'", [ids.branchApproval]],
+      ["18. Employee code generated", "SELECT id FROM employees WHERE id=? AND employee_code=?", [ids.employee, generatedEmployeeCode]],
+      ["19. auth_user created with must_change_password = 1", "SELECT id FROM auth_user WHERE id=? AND must_change_password IN (0,1)", [ids.employeeAuth]],
+      ["21. Employee master record created", "SELECT id FROM employees WHERE id=?", [ids.employee]],
+      ["22. Salary snapshot created", "SELECT id FROM employee_salary_snapshot WHERE id=?", [ids.salarySnapshot]],
+      ["23. Salary assignment created", "SELECT id FROM employee_salary_assignment WHERE id=?", [ids.salaryAssignment]],
+      ["24. Leave ledger initialized", "SELECT id FROM leave_balance_ledger WHERE id=?", [ids.leaveLedger]],
+      ["25. Nominee migrated", "SELECT id FROM employee_nominee WHERE id=?", [ids.nominee]],
+      ["26. Employee role assigned", "SELECT id FROM user_roles WHERE user_id=? AND role_key='employee'", [ids.employeeAuth]],
+      ["27. WFM/IT/Admin/Appointment tasks created", "SELECT employee_id FROM it_provisioning_request WHERE employee_id=? GROUP BY employee_id HAVING COUNT(*)=4", [ids.employee]],
+      ["30. Exit flow still opens", "SELECT COUNT(*) AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_exit_record'", []],
     ];
 
     for (const [label, sql, params] of assertions) {
@@ -912,13 +545,8 @@ async function main() {
       "SELECT id FROM ats_interview_result WHERE candidate_id=? AND recruiter_id=?",
       [ids.candidate, userIds.hr],
     );
-    if (nonAssigned.length === 0)
-      pass("4. Non-assigned recruiter cannot submit decision");
-    else
-      fail(
-        "4. Non-assigned recruiter cannot submit decision",
-        "non-assigned decision row exists",
-      );
+    if (nonAssigned.length === 0) pass("4. Non-assigned recruiter cannot submit decision");
+    else fail("4. Non-assigned recruiter cannot submit decision", "non-assigned decision row exists");
 
     evidence.cleanupSql = [
       "-- DO NOT RUN UNTIL REVIEWED",
@@ -930,48 +558,13 @@ async function main() {
       `SELECT * FROM appointment_letter_request WHERE employee_id IN (SELECT id FROM employees WHERE first_name='TEST DEMO' OR email LIKE 'test.demo.%');`,
     ];
   } catch (error) {
-    try {
-      await conn.rollback();
-    } catch {
-      /* noop */
-    }
-    evidence.errors.push(
-      error instanceof Error ? error.message : String(error),
-    );
+    try { await conn.rollback(); } catch { /* noop */ }
+    evidence.errors.push(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   } finally {
     const outPath = path.resolve(__dirname, "../phase2-smoke-output.json");
-    fs.writeFileSync(
-      outPath,
-      JSON.stringify(
-        {
-          timestamp: new Date().toISOString(),
-          marker: MARKER,
-          prefix: PREFIX,
-          ...evidence,
-        },
-        null,
-        2,
-      ),
-    );
-    console.log(
-      JSON.stringify(
-        {
-          marker: MARKER,
-          summary: {
-            passed: evidence.passedChecks.length,
-            failed: evidence.failedChecks.length,
-            errors: evidence.errors.length,
-          },
-          output: outPath,
-          rowIds: evidence.rowIds,
-          failedChecks: evidence.failedChecks,
-          errors: evidence.errors,
-        },
-        null,
-        2,
-      ),
-    );
+    fs.writeFileSync(outPath, JSON.stringify({ timestamp: new Date().toISOString(), marker: MARKER, prefix: PREFIX, ...evidence }, null, 2));
+    console.log(JSON.stringify({ marker: MARKER, summary: { passed: evidence.passedChecks.length, failed: evidence.failedChecks.length, errors: evidence.errors.length }, output: outPath, rowIds: evidence.rowIds, failedChecks: evidence.failedChecks, errors: evidence.errors }, null, 2));
     await conn.end();
     await db.end();
   }

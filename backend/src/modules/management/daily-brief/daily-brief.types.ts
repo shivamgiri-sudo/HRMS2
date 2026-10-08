@@ -62,14 +62,7 @@ export interface BriefSignal {
   /** True for a signal reporting a positive/improvement metric (used by rankSignals). */
   isPositive?: boolean;
   /** Explicit rank-bucket classification for rankSignals (spec §45); inferred when absent. */
-  kind?:
-    | "action"
-    | "business_risk"
-    | "anomaly"
-    | "hygiene"
-    | "positive"
-    | "metric"
-    | "info";
+  kind?: "action" | "business_risk" | "anomaly" | "hygiene" | "positive" | "metric" | "info";
 }
 
 /** One row in "Your Priorities Today" — sourced from work-inbox, never invented. */

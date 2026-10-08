@@ -58,7 +58,7 @@ export async function getHeadSubHeadCoverage(
    * read cannot see this transaction's own uncommitted reservations and would hand the second row
    * headroom the first row has already taken.
    */
-  executor: SqlExecutor = db,
+  executor: SqlExecutor = db
 ): Promise<{
   headerActive: boolean;
   /** The active budget header's id, so a caller can run the sub-head closure check without a
@@ -74,16 +74,11 @@ export async function getHeadSubHeadCoverage(
         AND period_code = ?
         AND status = 'active'
       LIMIT 1`,
-    [branchId, periodCode],
+    [branchId, periodCode]
   )) as [RowDataPacket[], unknown];
   const header = headerRows[0];
   if (!header) {
-    return {
-      headerActive: false,
-      budgetId: null,
-      lines: [],
-      aggregateAvailable: 0,
-    };
+    return { headerActive: false, budgetId: null, lines: [], aggregateAvailable: 0 };
   }
 
   /*
@@ -117,24 +112,16 @@ export async function getHeadSubHeadCoverage(
       WHERE h.id = ?
         AND UPPER(TRIM(COALESCE(lm.head_name, l.head))) = UPPER(TRIM(?))
         AND UPPER(TRIM(COALESCE(l.sub_head,''))) = UPPER(TRIM(COALESCE(?,'')))`,
-    [header.id, head, subHead],
+    [header.id, head, subHead]
   )) as [RowDataPacket[], unknown];
 
   // A line that is somehow already over-consumed must not drag the aggregate below what other
   // lines genuinely have available, so each line's own contribution is clamped to >= 0 first.
   const aggregateAvailable = roundMoney(
-    lines.reduce(
-      (sum, line) => sum + Math.max(0, Number(line.available_gross_amount)),
-      0,
-    ),
+    lines.reduce((sum, line) => sum + Math.max(0, Number(line.available_gross_amount)), 0)
   );
 
-  return {
-    headerActive: true,
-    budgetId: String(header.id),
-    lines,
-    aggregateAvailable,
-  };
+  return { headerActive: true, budgetId: String(header.id), lines, aggregateAvailable };
 }
 
 /**
@@ -148,19 +135,15 @@ export async function getHeadSubHeadCoverage(
 export function absorbableGrossFor(
   coverage: { lines: RowDataPacket[] },
   grossAmount: number,
-  netAmount?: number,
+  netAmount?: number
 ): number {
   return roundMoney(
     coverage.lines.reduce((sum, line) => {
       const available = Math.max(0, Number(line.available_gross_amount));
       if (available <= 0) return sum;
-      const costRatio = budgetCostRatio(
-        line.tax_treatment,
-        grossAmount,
-        netAmount,
-      );
+      const costRatio = budgetCostRatio(line.tax_treatment, grossAmount, netAmount);
       return sum + (costRatio > 0 ? available / costRatio : available);
-    }, 0),
+    }, 0)
   );
 }
 
@@ -179,21 +162,21 @@ export function assertCoverageExists(
   periodCode: string,
   head: string,
   subHead: string | null,
-  rowLabel?: string,
+  rowLabel?: string
 ): void {
   const prefix = rowLabel ? `${rowLabel}: ` : "";
   if (!coverage.headerActive) {
     throw refuse(
       409,
       "NO_BRANCH_BUDGET",
-      `${prefix}No approved budget exists for this branch for ${periodCode}. A GRN cannot be raised until one is approved.`,
+      `${prefix}No approved budget exists for this branch for ${periodCode}. A GRN cannot be raised until one is approved.`
     );
   }
   if (!coverage.lines.length) {
     throw refuse(
       409,
       "NO_BUDGET_FOR_HEAD",
-      `${prefix}${head}/${subHead || ""} has no budget anywhere in this branch. Raise a budget addition request before submitting this GRN.`,
+      `${prefix}${head}/${subHead || ""} has no budget anywhere in this branch. Raise a budget addition request before submitting this GRN.`
     );
   }
 }
@@ -237,7 +220,7 @@ export function allocateAcrossLines(
    *
    * Optional, and 1:1 when omitted, so any caller that cannot supply it keeps the old behaviour.
    */
-  netAmount?: number,
+  netAmount?: number
 ): Array<{ lineId: string; amount: number }> {
   const isPreferred = (line: RowDataPacket) =>
     preferredLineId != null && String(line.id) === String(preferredLineId);
@@ -249,9 +232,7 @@ export function allocateAcrossLines(
       const aPooled = a.cost_centre_id == null;
       const bPooled = b.cost_centre_id == null;
       if (aPooled !== bPooled) return aPooled ? 1 : -1; // direct lines before pooled lines
-      return (
-        Number(b.available_gross_amount) - Number(a.available_gross_amount)
-      );
+      return Number(b.available_gross_amount) - Number(a.available_gross_amount);
     });
 
   const ordered = [...preferred, ...rest];
@@ -284,9 +265,9 @@ export function allocateAcrossLines(
       refuse(
         409,
         "HEADROOM_EXCEEDED",
-        `Requested amount exceeds available budget for this head/sub-head across the branch by ₹${shortfall.toFixed(2)}`,
+        `Requested amount exceeds available budget for this head/sub-head across the branch by ₹${shortfall.toFixed(2)}`
       ),
-      { shortfall },
+      { shortfall }
     );
   }
 

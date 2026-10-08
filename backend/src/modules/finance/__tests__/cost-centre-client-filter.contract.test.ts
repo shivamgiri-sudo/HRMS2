@@ -59,8 +59,7 @@ describe("cost centre list can actually be filtered by client", () => {
 
   it("the frontend hook sends client_name as a query parameter", () => {
     const hook = fs.readFileSync(
-      path.resolve(backendRoot, "../src/hooks/useCostCentreManagement.ts"),
-      "utf8",
+      path.resolve(backendRoot, "../src/hooks/useCostCentreManagement.ts"), "utf8"
     );
     expect(hook).toContain('params.set("client_name", filters.client_name)');
     expect(hook).toMatch(/client_name\?: string;/);

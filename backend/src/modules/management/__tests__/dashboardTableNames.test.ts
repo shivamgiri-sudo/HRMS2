@@ -30,10 +30,7 @@ describe("management dashboard queries", () => {
       // \b so employee_document does not match employee_documents.
       const pattern = new RegExp(`FROM\\s+${table}\\b(?!s)`, "g");
       const hits = SOURCE.match(pattern) ?? [];
-      expect(
-        hits.length,
-        `${table} does not exist; the tile silently reports 0`,
-      ).toBe(0);
+      expect(hits.length, `${table} does not exist; the tile silently reports 0`).toBe(0);
     });
   }
 
@@ -46,10 +43,7 @@ describe("management dashboard queries", () => {
     // actually consulted.
     expect(SOURCE).toMatch(/FROM employee_documents\b/);
     const at = SOURCE.indexOf("FROM employee_documents");
-    const statement = SOURCE.slice(
-      SOURCE.lastIndexOf("`", at),
-      SOURCE.indexOf("`", at),
-    );
+    const statement = SOURCE.slice(SOURCE.lastIndexOf("`", at), SOURCE.indexOf("`", at));
     expect(statement).toContain("expiry_date");
   });
 
@@ -57,10 +51,7 @@ describe("management dashboard queries", () => {
     // A hard 0 on a compliance tile reads as an all-clear. Since no document
     // currently carries an expiry date, 0 could only ever mean "not tracked".
     const at = SOURCE.indexOf("FROM employee_documents");
-    const statement = SOURCE.slice(
-      SOURCE.lastIndexOf("`", at),
-      SOURCE.indexOf("`", at),
-    );
+    const statement = SOURCE.slice(SOURCE.lastIndexOf("`", at), SOURCE.indexOf("`", at));
     expect(statement).toMatch(/THEN NULL/);
   });
 

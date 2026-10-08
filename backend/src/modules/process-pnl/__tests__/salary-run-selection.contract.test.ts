@@ -28,8 +28,7 @@ import { describe, expect, it } from "vitest";
  */
 
 const moduleDir = path.resolve(__dirname, "..");
-const read = (file: string) =>
-  fs.readFileSync(path.join(moduleDir, file), "utf8");
+const read = (file: string) => fs.readFileSync(path.join(moduleDir, file), "utf8");
 
 const READERS = [
   "process-pnl.service.ts",
@@ -56,7 +55,7 @@ describe("salary_prep_run is read for the whole month, by every service", () => 
       for (const lookup of runLookups(read(file))) {
         expect(
           lookup,
-          `FIELD() scores 0 for FINALIZED, which is nearly every run in this table:\n${lookup.slice(0, 200)}`,
+          `FIELD() scores 0 for FINALIZED, which is nearly every run in this table:\n${lookup.slice(0, 200)}`
         ).not.toMatch(/FIELD\(\s*status/);
       }
     });
@@ -65,7 +64,7 @@ describe("salary_prep_run is read for the whole month, by every service", () => 
       for (const lookup of runLookups(read(file))) {
         expect(
           lookup,
-          `a LIMIT 1 here drops whichever cohort loses the sort:\n${lookup.slice(0, 200)}`,
+          `a LIMIT 1 here drops whichever cohort loses the sort:\n${lookup.slice(0, 200)}`
         ).not.toMatch(/LIMIT\s+1\b/i);
       }
     });
@@ -73,14 +72,8 @@ describe("salary_prep_run is read for the whole month, by every service", () => 
 
   it("the readers that aggregate bind every run id, not one", () => {
     // The three that were fixed all now bind an IN (...) list built from the month's runs.
-    for (const file of [
-      "process-pnl.service.ts",
-      "bpo-pnl.service.ts",
-      "process-lob.service.ts",
-    ]) {
-      expect(read(file), `${file} should bind a run id list`).toMatch(
-        /spl\.run_id IN \(/,
-      );
+    for (const file of ["process-pnl.service.ts", "bpo-pnl.service.ts", "process-lob.service.ts"]) {
+      expect(read(file), `${file} should bind a run id list`).toMatch(/spl\.run_id IN \(/);
     }
   });
 
@@ -106,30 +99,19 @@ describe("approved budget per process", () => {
     // same branch+period, so including 'closed' counts the ceiling twice.
     const statusFilter = source().match(/fbh\.status IN \([^)]*\)/)?.[0] ?? "";
     expect(statusFilter).not.toBe("");
-    expect(
-      statusFilter,
-      "a superseded budget must not be summed with the one that replaced it",
-    ).not.toContain("'closed'");
+    expect(statusFilter, "a superseded budget must not be summed with the one that replaced it")
+      .not.toContain("'closed'");
     expect(statusFilter).toContain("'active'");
   });
 
   it("accumulates a process budgeted in more than one branch", () => {
     const src = source();
     // The query groups by (branch_id, process_id); assigning would keep only the last branch.
-    expect(src).toContain(
-      "current.approvedBudget += toNumber(row.approved_budget)",
-    );
-    expect(src).toContain(
-      "current.reservedBudget += toNumber(row.reserved_budget)",
-    );
-    expect(src).toContain(
-      "current.consumedBudget += toNumber(row.consumed_budget)",
-    );
-    expect(
-      src,
-      "assigning here discards every branch but the last",
-    ).not.toMatch(
-      /result\.set\(String\(row\.process_id\), \{\s*approvedBudget: toNumber/,
+    expect(src).toContain("current.approvedBudget += toNumber(row.approved_budget)");
+    expect(src).toContain("current.reservedBudget += toNumber(row.reserved_budget)");
+    expect(src).toContain("current.consumedBudget += toNumber(row.consumed_budget)");
+    expect(src, "assigning here discards every branch but the last").not.toMatch(
+      /result\.set\(String\(row\.process_id\), \{\s*approvedBudget: toNumber/
     );
   });
 });
@@ -144,14 +126,8 @@ describe("approved budget per process", () => {
 describe("seat revenue resolves one row per effective-dated key", () => {
   it("ranks every effective-dated join, not just the seat-rate ones", () => {
     const source = read("pnl-actuals.service.ts");
-    for (const ranked of [
-      "SEAT_RATE_RANKED",
-      "ROLE_BILLABILITY_RANKED",
-      "SEAT_RATE_OVERRIDE_RANKED",
-    ]) {
-      expect(source, `${ranked} must exist and use ROW_NUMBER`).toContain(
-        ranked,
-      );
+    for (const ranked of ["SEAT_RATE_RANKED", "ROLE_BILLABILITY_RANKED", "SEAT_RATE_OVERRIDE_RANKED"]) {
+      expect(source, `${ranked} must exist and use ROW_NUMBER`).toContain(ranked);
     }
     // The two that were plain joins must no longer be joined directly to their base tables.
     //
@@ -163,9 +139,7 @@ describe("seat revenue resolves one row per effective-dated key", () => {
     const joinedDirectly = (table: string, alias: string) =>
       new RegExp(`LEFT ${"JOIN"} ${table} ${alias}\\b`);
     expect(source).not.toMatch(joinedDirectly("process_role_billability", "m"));
-    expect(source).not.toMatch(
-      joinedDirectly("employee_seat_rate_override", "ovr"),
-    );
+    expect(source).not.toMatch(joinedDirectly("employee_seat_rate_override", "ovr"));
     // Both ranked joins must be pinned to the top-ranked row. Safe to name the aliases now that
     // no "JOIN <table> <alias>" literal above teaches the schema guard what m and ovr refer to.
     expect(source).toContain("m.rn = 1");
@@ -184,44 +158,28 @@ describe("seat revenue resolves one row per effective-dated key", () => {
  * rather than silently moving money.
  */
 describe("overlay legacy classification mirrors the base row", () => {
-  const base = () =>
-    fs.readFileSync(path.join(moduleDir, "process-pnl.service.ts"), "utf8");
-  const overlay = () =>
-    fs.readFileSync(
-      path.join(moduleDir, "bpo-pnl-allocation-overlay.service.ts"),
-      "utf8",
-    );
+  const base = () => fs.readFileSync(path.join(moduleDir, "process-pnl.service.ts"), "utf8");
+  const overlay = () => fs.readFileSync(path.join(moduleDir, "bpo-pnl-allocation-overlay.service.ts"), "utf8");
 
   it("the base row's direct cost requires BOTH a resolved process and cost_class='direct'", () => {
     const source = base();
     // If the IN-list requirement is ever dropped, a NULL-process direct row would start
     // reaching the base row — and then the overlay WOULD need to subtract it.
-    expect(source).toContain(
-      "AND ${directCostClassExpr(\"g\", resolvedProcessExpr)} = 'direct'",
-    );
-    expect(source).toMatch(
-      /WHERE \$\{resolvedProcessExpr\} IN \(\$\{placeholders\(processIds\)\}\)/,
-    );
+    expect(source).toContain("AND ${directCostClassExpr(\"g\", resolvedProcessExpr)} = 'direct'");
+    expect(source).toMatch(/WHERE \$\{resolvedProcessExpr\} IN \(\$\{placeholders\(processIds\)\}\)/);
   });
 
   it("the base row's indirect pools select on cost_class='indirect' alone", () => {
     const source = base();
-    const indirectPredicates =
-      source.match(/directCostClassExpr\([^)]*\)\}? = 'indirect'/g) ?? [];
+    const indirectPredicates = source.match(/directCostClassExpr\([^)]*\)\}? = 'indirect'/g) ?? [];
     expect(indirectPredicates.length).toBeGreaterThanOrEqual(2);
   });
 
   it("the overlay keeps its two mirroring branches and no catch-all", () => {
     const source = overlay();
-    expect(source).toContain(
-      'legacy.process_id && String(legacy.cost_class) === "direct"',
-    );
-    expect(source).toContain(
-      'legacy.branch_id && String(legacy.cost_class) === "indirect"',
-    );
+    expect(source).toContain('legacy.process_id && String(legacy.cost_class) === "direct"');
+    expect(source).toContain('legacy.branch_id && String(legacy.cost_class) === "indirect"');
     // A trailing `else` here would subtract a cost the base row never added.
-    expect(source).not.toMatch(
-      /=== "indirect"\) \{[\s\S]{0,400}?\n {4}\} else \{/,
-    );
+    expect(source).not.toMatch(/=== "indirect"\) \{[\s\S]{0,400}?\n {4}\} else \{/);
   });
 });

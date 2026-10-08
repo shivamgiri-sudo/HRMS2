@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const execute = vi.fn();
-vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: (...a: unknown[]) => execute(...a) },
-}));
+vi.mock("../src/db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
 
-const { getProcessMetricDefinitions, getComparableDefinitions } =
-  await import("../src/modules/kpi/process-metric-definition.service.js");
+const { getProcessMetricDefinitions, getComparableDefinitions } = await import(
+  "../src/modules/kpi/process-metric-definition.service.js"
+);
 
 /**
  * All 97 processes carrying KPI config hold the identical three metrics with
@@ -21,32 +20,14 @@ const { getProcessMetricDefinitions, getComparableDefinitions } =
  */
 
 const canonical = {
-  id: "def-1",
-  process_id: "proc-1",
-  local_code: null,
-  display_name: "CX Score",
-  unit: null,
-  direction: null,
-  display_order: 10,
-  weightage: 40,
-  is_fatal: 0,
-  metric_code: "QUALITY_SCORE",
-  canonical_unit: "percent",
-  canonical_direction: "higher_is_better",
+  id: "def-1", process_id: "proc-1", local_code: null, display_name: "CX Score",
+  unit: null, direction: null, display_order: 10, weightage: 40, is_fatal: 0,
+  metric_code: "QUALITY_SCORE", canonical_unit: "percent", canonical_direction: "higher_is_better",
 };
 const processLocal = {
-  id: "def-2",
-  process_id: "proc-1",
-  local_code: "GREETING_ADHERENCE",
-  display_name: "Greeting Adherence",
-  unit: "percent",
-  direction: "higher_is_better",
-  display_order: 20,
-  weightage: 60,
-  is_fatal: 1,
-  metric_code: null,
-  canonical_unit: null,
-  canonical_direction: null,
+  id: "def-2", process_id: "proc-1", local_code: "GREETING_ADHERENCE", display_name: "Greeting Adherence",
+  unit: "percent", direction: "higher_is_better", display_order: 20, weightage: 60, is_fatal: 1,
+  metric_code: null, canonical_unit: null, canonical_direction: null,
 };
 
 beforeEach(() => execute.mockReset());

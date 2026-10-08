@@ -28,8 +28,7 @@ vi.mock("../db/mysql.js", () => ({
 
 let actor: { id: string; role: string; roles: string[] };
 vi.mock("../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<typeof import("../middleware/authMiddleware.js")>();
+  const original = await importOriginal<typeof import("../middleware/authMiddleware.js")>();
   return {
     ...original,
     requireAuth: (req: any, _res: any, next: any) => {
@@ -50,22 +49,9 @@ function appFor(role: string) {
   return app;
 }
 
-const EMP = {
-  employee_id: "emp-1",
-  employee_code: "E001",
-  dept_name: "operations",
-  designation_name: "executive",
-  branch_id: "b-1",
-  process_id: "p-1",
-};
+const EMP = { employee_id: "emp-1", employee_code: "E001", dept_name: "operations", designation_name: "executive", branch_id: "b-1", process_id: "p-1" };
 
-function baseStub(
-  opts: {
-    insertShouldThrow?: boolean;
-    insertError?: Error;
-    emp?: typeof EMP;
-  } = {},
-) {
+function baseStub(opts: { insertShouldThrow?: boolean; insertError?: Error; emp?: typeof EMP } = {}) {
   execute.mockReset();
   execute.mockImplementation(async (sql: string, _params: unknown[] = []) => {
     if (/FROM employees e/.test(sql)) {
@@ -75,10 +61,7 @@ function baseStub(
       // rejected early now actually reaches them.
       return [[opts.emp ?? EMP], []];
     }
-    if (
-      /FROM attendance_daily_record adr/.test(sql) &&
-      /LEFT JOIN attendance_regularization/.test(sql)
-    ) {
+    if (/FROM attendance_daily_record adr/.test(sql) && /LEFT JOIN attendance_regularization/.test(sql)) {
       return [[], []]; // nothing locked
     }
     if (/FROM apr\s+WHERE \(UserID, ReportDate\)/.test(sql)) {
@@ -98,21 +81,12 @@ function baseStub(
     if (/FROM campaign_master WHERE campaign_code/.test(sql)) {
       return [[{ id: "camp-apr-bulk" }], []];
     }
-    if (
-      /INSERT INTO productivity_upload_batch/.test(sql) ||
-      /UPDATE productivity_upload_batch/.test(sql)
-    ) {
+    if (/INSERT INTO productivity_upload_batch/.test(sql) || /UPDATE productivity_upload_batch/.test(sql)) {
       return [{ affectedRows: 1 }, []];
     }
     if (/INSERT INTO attendance_daily_record/.test(sql)) {
       if (opts.insertShouldThrow) {
-        throw (
-          opts.insertError ??
-          Object.assign(
-            new Error("Lock wait timeout exceeded; try restarting transaction"),
-            { code: "ER_LOCK_WAIT_TIMEOUT" },
-          )
-        );
+        throw opts.insertError ?? Object.assign(new Error("Lock wait timeout exceeded; try restarting transaction"), { code: "ER_LOCK_WAIT_TIMEOUT" });
       }
       return [{ affectedRows: 1 }, []];
     }
@@ -123,11 +97,9 @@ function baseStub(
   });
 }
 
-function csvOf(
-  rows: Array<{ code: string; date: string; mins: number }>,
-): string {
+function csvOf(rows: Array<{ code: string; date: string; mins: number }>): string {
   const header = "employee_code,attendance_date,net_login_minutes";
-  const lines = rows.map((r) => `${r.code},${r.date},${r.mins}`);
+  const lines = rows.map(r => `${r.code},${r.date},${r.mins}`);
   return [header, ...lines].join("\n");
 }
 
@@ -157,20 +129,8 @@ describe("defect 1 — DB error during the insert loop is caught and reported, n
     expect(res.body.failed).toBe(2);
     expect(res.body.errors).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          row: 2,
-          employee_code: "E001",
-          reason: expect.stringMatching(
-            /ER_LOCK_WAIT_TIMEOUT|Lock wait timeout/,
-          ),
-        }),
-        expect.objectContaining({
-          row: 3,
-          employee_code: "E001",
-          reason: expect.stringMatching(
-            /ER_LOCK_WAIT_TIMEOUT|Lock wait timeout/,
-          ),
-        }),
+        expect.objectContaining({ row: 2, employee_code: "E001", reason: expect.stringMatching(/ER_LOCK_WAIT_TIMEOUT|Lock wait timeout/) }),
+        expect.objectContaining({ row: 3, employee_code: "E001", reason: expect.stringMatching(/ER_LOCK_WAIT_TIMEOUT|Lock wait timeout/) }),
       ]),
     );
   });
@@ -185,22 +145,14 @@ describe("defect 1 — DB error during the insert loop is caught and reported, n
 
     expect(res.status).toBe(200);
     expect(res.body.evidence_recorded).toBe(0);
-    const evidenceCalls = execute.mock.calls.filter(([sql]) =>
-      /INSERT INTO apr /.test(sql),
-    );
+    const evidenceCalls = execute.mock.calls.filter(([sql]) => /INSERT INTO apr /.test(sql));
     expect(evidenceCalls.length).toBe(0);
   });
 });
 
 describe("defect 2 — rows are batched into chunked multi-row INSERTs, not one round trip per row", () => {
   it("a 5-row file issues one multi-row INSERT for attendance_daily_record, not five", async () => {
-    const csv = csvOf(
-      Array.from({ length: 5 }, (_, i) => ({
-        code: "E001",
-        date: `0${i + 1}-08-2026`,
-        mins: 500,
-      })),
-    );
+    const csv = csvOf(Array.from({ length: 5 }, (_, i) => ({ code: "E001", date: `0${i + 1}-08-2026`, mins: 500 })));
 
     const res = await request(appFor("wfm"))
       .post("/api/wfm/attendance/apr-bulk-upload")
@@ -209,9 +161,7 @@ describe("defect 2 — rows are batched into chunked multi-row INSERTs, not one 
     expect(res.status).toBe(200);
     expect(res.body.uploaded).toBe(5);
 
-    const insertCalls = execute.mock.calls.filter(([sql]) =>
-      /INSERT INTO attendance_daily_record/.test(sql),
-    );
+    const insertCalls = execute.mock.calls.filter(([sql]) => /INSERT INTO attendance_daily_record/.test(sql));
     expect(insertCalls.length).toBe(1);
     const [sql, params] = insertCalls[0]!;
     // Five VALUES groups in the one statement.
@@ -225,94 +175,59 @@ describe("defect 2 — rows are batched into chunked multi-row INSERTs, not one 
 describe("defect 3 — a small well-formed file still succeeds and classifies identically", () => {
   it("present (>=480 min) classifies as present with lwp_value 0", async () => {
     const csv = csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]);
-    const res = await request(appFor("wfm"))
-      .post("/api/wfm/attendance/apr-bulk-upload")
-      .attach("file", Buffer.from(csv), "apr.csv");
+    const res = await request(appFor("wfm")).post("/api/wfm/attendance/apr-bulk-upload").attach("file", Buffer.from(csv), "apr.csv");
     expect(res.status).toBe(200);
     expect(res.body.uploaded).toBe(1);
     expect(res.body.failed).toBe(0);
-    const insertCall = execute.mock.calls.find(([sql]) =>
-      /INSERT INTO attendance_daily_record/.test(sql),
-    )!;
+    const insertCall = execute.mock.calls.find(([sql]) => /INSERT INTO attendance_daily_record/.test(sql))!;
     expect(insertCall[1]).toEqual(expect.arrayContaining(["present", 0]));
   });
 
   it("absent (< half-day floor) classifies as absent with lwp_value 1", async () => {
     const csv = csvOf([{ code: "E001", date: "01-08-2026", mins: 10 }]);
-    const res = await request(appFor("wfm"))
-      .post("/api/wfm/attendance/apr-bulk-upload")
-      .attach("file", Buffer.from(csv), "apr.csv");
+    const res = await request(appFor("wfm")).post("/api/wfm/attendance/apr-bulk-upload").attach("file", Buffer.from(csv), "apr.csv");
     expect(res.status).toBe(200);
     expect(res.body.uploaded).toBe(1);
-    const insertCall = execute.mock.calls.find(([sql]) =>
-      /INSERT INTO attendance_daily_record/.test(sql),
-    )!;
+    const insertCall = execute.mock.calls.find(([sql]) => /INSERT INTO attendance_daily_record/.test(sql))!;
     expect(insertCall[1]).toEqual(expect.arrayContaining(["absent", 1]));
   });
 
   it("an employee not found or inactive is still skipped with the unchanged reason", async () => {
     const csv = csvOf([{ code: "UNKNOWN", date: "01-08-2026", mins: 500 }]);
-    const res = await request(appFor("wfm"))
-      .post("/api/wfm/attendance/apr-bulk-upload")
-      .attach("file", Buffer.from(csv), "apr.csv");
+    const res = await request(appFor("wfm")).post("/api/wfm/attendance/apr-bulk-upload").attach("file", Buffer.from(csv), "apr.csv");
     expect(res.status).toBe(200);
     expect(res.body.uploaded).toBe(0);
     expect(res.body.errors).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          employee_code: "UNKNOWN",
-          reason: "Employee not found or inactive",
-        }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ employee_code: "UNKNOWN", reason: "Employee not found or inactive" })]),
     );
   });
 
   it("a non-Operations-Executive employee is now STORED as evidence only, with no attendance record written", async () => {
-    baseStub({
-      emp: { ...EMP, dept_name: "finance", designation_name: "manager" },
-    });
+    baseStub({ emp: { ...EMP, dept_name: "finance", designation_name: "manager" } });
     const csv = csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]);
-    const res = await request(appFor("wfm"))
-      .post("/api/wfm/attendance/apr-bulk-upload")
-      .attach("file", Buffer.from(csv), "apr.csv");
+    const res = await request(appFor("wfm")).post("/api/wfm/attendance/apr-bulk-upload").attach("file", Buffer.from(csv), "apr.csv");
     expect(res.status).toBe(200);
     // No longer rejected: the row is accepted and counted in its own bucket.
     expect(res.body.stored_without_attendance).toBe(1);
     expect(res.body.errors).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          reason: "Employee is not an APR/Operations Executive",
-        }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ reason: "Employee is not an APR/Operations Executive" })]),
     );
     // And still counted as zero attendance rows written -- this is the half that must not change.
     expect(res.body.uploaded).toBe(0);
-    expect(
-      execute.mock.calls.filter(([sql]: [string]) =>
-        /INSERT INTO attendance_daily_record/.test(sql),
-      ).length,
-    ).toBe(0);
+    expect(execute.mock.calls.filter(([sql]: [string]) => /INSERT INTO attendance_daily_record/.test(sql)).length).toBe(0);
     // ...but the minutes ARE on record: one evidence row, under the same attributed batch an
     // Operations-Executive row would use.
-    expect(
-      execute.mock.calls.filter(([sql]: [string]) =>
-        /INSERT INTO apr /.test(sql),
-      ).length,
-    ).toBe(1);
+    expect(execute.mock.calls.filter(([sql]: [string]) => /INSERT INTO apr /.test(sql)).length).toBe(1);
   });
 
   it("net_login_minutes above the raised 1080 cap is rejected, and 1080 itself is accepted", async () => {
     const tooHigh = csvOf([{ code: "E001", date: "01-08-2026", mins: 1081 }]);
-    const overRes = await request(appFor("wfm"))
-      .post("/api/wfm/attendance/apr-bulk-upload")
-      .attach("file", Buffer.from(tooHigh), "apr.csv");
+    const overRes = await request(appFor("wfm")).post("/api/wfm/attendance/apr-bulk-upload").attach("file", Buffer.from(tooHigh), "apr.csv");
     expect(overRes.status).toBe(400);
     expect(overRes.body.message).toContain("0–1080");
 
     const atCap = csvOf([{ code: "E001", date: "01-08-2026", mins: 1080 }]);
-    const okRes = await request(appFor("wfm"))
-      .post("/api/wfm/attendance/apr-bulk-upload")
-      .attach("file", Buffer.from(atCap), "apr.csv");
+    const okRes = await request(appFor("wfm")).post("/api/wfm/attendance/apr-bulk-upload").attach("file", Buffer.from(atCap), "apr.csv");
     expect(okRes.status).toBe(200);
     expect(okRes.body.uploaded).toBe(1);
   });
@@ -323,9 +238,7 @@ describe("defect 4 (review finding) — the employee-lookup query, upstream of t
     execute.mockReset();
     execute.mockImplementation(async (sql: string) => {
       if (/FROM employees e/.test(sql)) {
-        throw Object.assign(new Error("Connection lost"), {
-          code: "PROTOCOL_CONNECTION_LOST",
-        });
+        throw Object.assign(new Error("Connection lost"), { code: "PROTOCOL_CONNECTION_LOST" });
       }
       return [[], []];
     });
@@ -355,14 +268,8 @@ describe("defect 5 (review finding) — the lock-check chunk loop is unguarded a
       if (/FROM employees e/.test(sql)) {
         return [[EMP], []];
       }
-      if (
-        /FROM attendance_daily_record adr/.test(sql) &&
-        /LEFT JOIN attendance_regularization/.test(sql)
-      ) {
-        throw Object.assign(
-          new Error("Lock wait timeout exceeded; try restarting transaction"),
-          { code: "ER_LOCK_WAIT_TIMEOUT" },
-        );
+      if (/FROM attendance_daily_record adr/.test(sql) && /LEFT JOIN attendance_regularization/.test(sql)) {
+        throw Object.assign(new Error("Lock wait timeout exceeded; try restarting transaction"), { code: "ER_LOCK_WAIT_TIMEOUT" });
       }
       if (/FROM apr\s+WHERE \(UserID, ReportDate\)/.test(sql)) {
         return [[], []];
@@ -412,9 +319,7 @@ describe("defect 5 (review finding) — the lock-check chunk loop is unguarded a
       expect(e.reason).not.toBe("Attendance record is locked for payroll");
     }
     // Never actually inserted into attendance_daily_record.
-    const insertCalls = execute.mock.calls.filter(([sql]) =>
-      /INSERT INTO attendance_daily_record/.test(sql),
-    );
+    const insertCalls = execute.mock.calls.filter(([sql]) => /INSERT INTO attendance_daily_record/.test(sql));
     expect(insertCalls.length).toBe(0);
   });
 });

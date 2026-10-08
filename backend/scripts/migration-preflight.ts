@@ -97,10 +97,7 @@ function git(args: string[]): string {
 /** Reads a file's content at a given ref directly from git — no checkout required. */
 function readAtRef(ref: string, relPath: string): string | null {
   try {
-    return execFileSync("git", ["show", `${ref}:${relPath}`], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-    });
+    return execFileSync("git", ["show", `${ref}:${relPath}`], { cwd: REPO_ROOT, encoding: "utf8" });
   } catch {
     return null; // file doesn't exist at that ref (e.g. newly added)
   }
@@ -109,9 +106,7 @@ function readAtRef(ref: string, relPath: string): string | null {
 async function main() {
   const [fromSha, toSha] = process.argv.slice(2);
   if (!fromSha || !toSha) {
-    console.error(
-      "Usage: npx tsx scripts/migration-preflight.ts <from-sha> <to-sha>",
-    );
+    console.error("Usage: npx tsx scripts/migration-preflight.ts <from-sha> <to-sha>");
     process.exit(2);
   }
 
@@ -120,13 +115,7 @@ async function main() {
   // 1. Enumerate every backend/sql/*.sql file added or modified in the range — ownership of
   //    who wrote it is irrelevant, per the incident's own finding: the migration that took
   //    production down was authored by a different session than the one that deployed it.
-  const diffOutput = git([
-    "diff",
-    "--name-status",
-    `${fromSha}..${toSha}`,
-    "--",
-    "backend/sql/*.sql",
-  ]);
+  const diffOutput = git(["diff", "--name-status", `${fromSha}..${toSha}`, "--", "backend/sql/*.sql"]);
   const pendingFiles = diffOutput
     .split("\n")
     .filter(Boolean)
@@ -134,14 +123,10 @@ async function main() {
     .map((line) => line.split("\t")[1]);
 
   if (pendingFiles.length === 0) {
-    console.log(
-      "[preflight] no pending backend/sql/*.sql changes in range — nothing to test. PASS.",
-    );
+    console.log("[preflight] no pending backend/sql/*.sql changes in range — nothing to test. PASS.");
     process.exit(0);
   }
-  console.log(
-    `[preflight] ${pendingFiles.length} pending migration file(s): ${pendingFiles.join(", ")}`,
-  );
+  console.log(`[preflight] ${pendingFiles.length} pending migration file(s): ${pendingFiles.join(", ")}`);
 
   const env = loadEnv();
   const adminCfg = loadAdminConfig(env);
@@ -150,37 +135,28 @@ async function main() {
   // Read-only connection to real production — used only for SHOW CREATE TABLE (structure,
   // never data) and to report whether the admin host is actually production or an approximation.
   const prodConn = await mysql.createConnection({
-    host: env.DB_HOST,
-    port: Number(env.DB_PORT || 3306),
-    user: env.DB_USER,
-    password: env.DB_PASSWORD,
-    database: env.DB_NAME,
+    host: env.DB_HOST, port: Number(env.DB_PORT || 3306),
+    user: env.DB_USER, password: env.DB_PASSWORD, database: env.DB_NAME,
   });
   const [[prodVerRow]] = (await prodConn.query("SELECT VERSION() AS v")) as any;
 
   // 2. Admin connection for creating/dropping the isolated preflight database.
   const admin = await mysql.createConnection({
-    host: adminCfg.host,
-    port: adminCfg.port,
-    user: adminCfg.user,
-    password: adminCfg.password,
+    host: adminCfg.host, port: adminCfg.port,
+    user: adminCfg.user, password: adminCfg.password,
     multipleStatements: false,
   });
   const [[verRow]] = (await admin.query("SELECT VERSION() AS v")) as any;
 
   const sameServer = adminCfg.host === env.DB_HOST;
-  console.log(
-    `[preflight] production MySQL:        ${prodVerRow.v} (${env.DB_HOST})`,
-  );
-  console.log(
-    `[preflight] preflight-DB admin host: ${verRow.v} (${adminCfg.host})`,
-  );
+  console.log(`[preflight] production MySQL:        ${prodVerRow.v} (${env.DB_HOST})`);
+  console.log(`[preflight] preflight-DB admin host: ${verRow.v} (${adminCfg.host})`);
   if (!sameServer || verRow.v !== prodVerRow.v) {
     console.warn(
       `[preflight] WARNING: preflight is running against a DIFFERENT server/version than production. ` +
-        `This is an approximation, not a guarantee — see the ONE-TIME SETUP note in this script's header. ` +
-        `Set PREFLIGHT_DB_HOST/PORT/USER/PASSWORD to a credential with CREATE/DROP on production itself ` +
-        `to close this gap.`,
+      `This is an approximation, not a guarantee — see the ONE-TIME SETUP note in this script's header. ` +
+      `Set PREFLIGHT_DB_HOST/PORT/USER/PASSWORD to a credential with CREATE/DROP on production itself ` +
+      `to close this gap.`
     );
   }
 
@@ -193,43 +169,30 @@ async function main() {
     //    leaves mas_hrms; this only reads table definitions.
     const [tables] = (await prodConn.query(
       `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'`,
-      [env.DB_NAME],
+      [env.DB_NAME]
     )) as any;
-    console.log(
-      `[preflight] cloning schema of ${tables.length} table(s) from ${env.DB_NAME}...`,
-    );
+    console.log(`[preflight] cloning schema of ${tables.length} table(s) from ${env.DB_NAME}...`);
 
     const testConn = await mysql.createConnection({
-      host: adminCfg.host,
-      port: adminCfg.port,
-      user: adminCfg.user,
-      password: adminCfg.password,
-      database: PREFLIGHT_DB,
+      host: adminCfg.host, port: adminCfg.port,
+      user: adminCfg.user, password: adminCfg.password, database: PREFLIGHT_DB,
       multipleStatements: false,
     });
 
     // Disable FK checks while recreating tables out of dependency order.
     await testConn.query("SET FOREIGN_KEY_CHECKS = 0");
-    for (const { TABLE_NAME: tableName } of tables as Array<{
-      TABLE_NAME: string;
-    }>) {
-      const [[createRow]] = (await prodConn.query(
-        `SHOW CREATE TABLE \`${tableName}\``,
-      )) as any;
+    for (const { TABLE_NAME: tableName } of tables as Array<{ TABLE_NAME: string }>) {
+      const [[createRow]] = (await prodConn.query(`SHOW CREATE TABLE \`${tableName}\``)) as any;
       const createSql: string = createRow["Create Table"];
       try {
         await testConn.query(createSql);
       } catch (e) {
-        console.error(
-          `[preflight] FAILED cloning table ${tableName}: ${(e as Error).message}`,
-        );
+        console.error(`[preflight] FAILED cloning table ${tableName}: ${(e as Error).message}`);
         throw e;
       }
     }
     await testConn.query("SET FOREIGN_KEY_CHECKS = 1");
-    console.log(
-      `[preflight] schema clone complete — ${PREFLIGHT_DB} now matches production structure as of today`,
-    );
+    console.log(`[preflight] schema clone complete — ${PREFLIGHT_DB} now matches production structure as of today`);
 
     // 4 & 5. Run each pending migration against the clone using the SAME splitter production
     // uses, twice, to prove both first-apply and rerun/idempotency.
@@ -248,43 +211,32 @@ async function main() {
       });
 
       for (const pass of [1, 2] as const) {
-        console.log(
-          `[preflight] ${relPath}: pass ${pass}/2 (${statements.length} statement(s))`,
-        );
+        console.log(`[preflight] ${relPath}: pass ${pass}/2 (${statements.length} statement(s))`);
         for (const [i, stmt] of statements.entries()) {
           try {
             await testConn.query(stmt);
           } catch (e) {
-            const err = e as {
-              code?: string;
-              sqlMessage?: string;
-              message: string;
-            };
+            const err = e as { code?: string; sqlMessage?: string; message: string };
             console.error(
               `[preflight] FAIL ${relPath} pass ${pass} statement ${i + 1}/${statements.length}: ` +
-                `${err.code ?? ""} ${err.sqlMessage ?? err.message}`,
+              `${err.code ?? ""} ${err.sqlMessage ?? err.message}`
             );
             console.error(`[preflight]   statement: ${stmt.slice(0, 300)}`);
             anyFailure = true;
           }
         }
       }
-      if (!anyFailure)
-        console.log(`[preflight] ${relPath}: PASS (both passes clean)`);
+      if (!anyFailure) console.log(`[preflight] ${relPath}: PASS (both passes clean)`);
     }
 
     await testConn.end();
 
     if (anyFailure) {
-      console.error(
-        `\n[preflight] FAILED — do not proceed with deployment. Database ${PREFLIGHT_DB} left in place for inspection.`,
-      );
+      console.error(`\n[preflight] FAILED — do not proceed with deployment. Database ${PREFLIGHT_DB} left in place for inspection.`);
       process.exitCode = 1;
     } else {
       await admin.query(`DROP DATABASE IF EXISTS \`${PREFLIGHT_DB}\``);
-      console.log(
-        `\n[preflight] PASS — all ${pendingFiles.length} pending migration(s) apply cleanly and are rerun-safe. Safe to deploy.`,
-      );
+      console.log(`\n[preflight] PASS — all ${pendingFiles.length} pending migration(s) apply cleanly and are rerun-safe. Safe to deploy.`);
       process.exitCode = 0;
     }
   } finally {

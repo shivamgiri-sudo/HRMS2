@@ -1,25 +1,12 @@
-import {
-  Router,
-  type NextFunction,
-  type RequestHandler,
-  type Response,
-} from "express";
+import { Router, type NextFunction, type RequestHandler, type Response } from "express";
 import { z } from "zod";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import {
-  requireAuth,
-  requireWriteAccess,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { performanceSchedulerService } from "./performance-scheduler.service.js";
 
 const router = Router();
-const managers = [
-  "super_admin",
-  "admin",
-  "process_manager",
-  "qa_manager",
-] as const;
+const managers = ["super_admin", "admin", "process_manager", "qa_manager"] as const;
 const readers = [
   "super_admin",
   "admin",
@@ -29,12 +16,10 @@ const readers = [
   "quality_lead",
 ] as const;
 
-const asyncHandler =
-  (
-    handler: (req: AuthenticatedRequest, res: Response) => Promise<unknown>,
-  ): RequestHandler =>
-  (req, res, next: NextFunction) =>
-    Promise.resolve(handler(req as AuthenticatedRequest, res)).catch(next);
+const asyncHandler = (
+  handler: (req: AuthenticatedRequest, res: Response) => Promise<unknown>,
+): RequestHandler => (req, res, next: NextFunction) =>
+  Promise.resolve(handler(req as AuthenticatedRequest, res)).catch(next);
 
 const scheduleSchema = z.object({
   cronExpression: z.string().trim().max(100).nullable(),

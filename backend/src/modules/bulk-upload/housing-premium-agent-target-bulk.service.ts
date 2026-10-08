@@ -1,10 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Housing Premium's own "Team Details" sheet -- found while auditing every
@@ -20,18 +17,8 @@ import {
  */
 
 export const HOUSING_PREMIUM_AGENT_TARGET_HEADERS = [
-  "Emp_ID",
-  "Report_Period",
-  "Agent_Name",
-  "TL_Name",
-  "Center",
-  "DOJ",
-  "Tenure",
-  "Tenure_Bucket",
-  "Target",
-  "Achievement",
-  "Ach_Pct",
-  "Status",
+  "Emp_ID", "Report_Period", "Agent_Name", "TL_Name", "Center", "DOJ",
+  "Tenure", "Tenure_Bucket", "Target", "Achievement", "Ach_Pct", "Status",
 ] as const;
 
 /** The real sample uses a literal "-" for "not applicable" -- parsed to null, never 0. */
@@ -70,9 +57,7 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(
-      Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000,
-    );
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
     return d.toISOString().slice(0, 10);
   }
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
@@ -91,9 +76,7 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 export async function importHousingPremiumAgentTargetBatch(
   batchId: string,
@@ -144,28 +127,21 @@ export async function importHousingPremiumAgentTargetBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Housing Premium" process found to attach this row to`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const empId = String(data["Emp_ID"] ?? "").trim();
     const reportPeriod = parseReportPeriod(data["Report_Period"]);
     if (!empId || !reportPeriod) {
       const msg = `Row ${row.row_no}: "Emp_ID" and "Report_Period" (YYYY-MM) are both required — together they are the row's identity`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(),
-        processId,
-        reportPeriod,
-        empId,
+        randomUUID(), processId, reportPeriod, empId,
         String(data["Agent_Name"] ?? "").trim() || null,
         String(data["TL_Name"] ?? "").trim() || null,
         String(data["Center"] ?? "").trim() || null,
@@ -187,8 +163,7 @@ export async function importHousingPremiumAgentTargetBatch(
        (id, process_id, report_period, mas_employee_code, agent_name, tl_name, center,
         doj, tenure_days, tenure_bucket, target_amount, achievement_amount, achievement_pct,
         status, data_source, source_reference, created_by)`,
-    placeholderGroup:
-      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
     insertSuffix: `ON DUPLICATE KEY UPDATE
        agent_name = VALUES(agent_name),
        tl_name = VALUES(tl_name),
@@ -208,26 +183,17 @@ export async function importHousingPremiumAgentTargetBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

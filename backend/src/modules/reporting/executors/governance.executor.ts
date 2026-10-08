@@ -14,12 +14,7 @@
  * Replace the stub body with real SQL once the underlying tables are
  * confirmed in the schema baseline.
  */
-import type {
-  ExecFilters,
-  ExecScope,
-  ExecOptions,
-  ExecResult,
-} from "./types.js";
+import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // compliance-audit-summary
@@ -27,7 +22,7 @@ import type {
 export async function complianceAuditSummary(
   _filters: ExecFilters,
   _scope: ExecScope,
-  _options: ExecOptions,
+  _options: ExecOptions
 ): Promise<ExecResult> {
   return { rows: [], rowCount: 0, isTruncated: false };
 }
@@ -38,7 +33,7 @@ export async function complianceAuditSummary(
 export async function helpDeskSummary(
   _filters: ExecFilters,
   _scope: ExecScope,
-  _options: ExecOptions,
+  _options: ExecOptions
 ): Promise<ExecResult> {
   return { rows: [], rowCount: 0, isTruncated: false };
 }
@@ -49,7 +44,7 @@ export async function helpDeskSummary(
 export async function grievanceRegister(
   _filters: ExecFilters,
   _scope: ExecScope,
-  _options: ExecOptions,
+  _options: ExecOptions
 ): Promise<ExecResult> {
   return { rows: [], rowCount: 0, isTruncated: false };
 }
@@ -60,7 +55,7 @@ export async function grievanceRegister(
 export async function auditObservationRegister(
   _filters: ExecFilters,
   _scope: ExecScope,
-  _options: ExecOptions,
+  _options: ExecOptions
 ): Promise<ExecResult> {
   return { rows: [], rowCount: 0, isTruncated: false };
 }

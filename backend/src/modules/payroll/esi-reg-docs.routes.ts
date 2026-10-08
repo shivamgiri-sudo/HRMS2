@@ -158,9 +158,9 @@ esiRegDocsRouter.get(
     }
     const offset = (page - 1) * limit;
     const branchId = req.query.branch_id as string | undefined;
-    const search = req.query.search as string | undefined;
     const activeStatusParam = req.query.active_status as string | undefined;
     const monthParam = req.query.month as string | undefined;
+    const search = req.query.search as string | undefined;
 
     /**
      * LIMIT/OFFSET are interpolated, not bound.
@@ -219,6 +219,14 @@ esiRegDocsRouter.get(
     ];
     const params: unknown[] = [];
 
+    // active_status filter: "1" (default, active only), "0" (inactive), "all" (no filter).
+    if (!activeStatusParam || activeStatusParam === "1") {
+      whereParts.push("e.active_status = 1");
+    } else if (activeStatusParam === "0") {
+      whereParts.push("e.active_status = 0");
+    }
+    // "all" -> omit the active_status condition
+
     // Branch scoping: the caller's own scope always applies; branch_id only narrows it.
     {
       const scope = await employeeScopeFor(req as any, "e");
@@ -235,6 +243,11 @@ esiRegDocsRouter.get(
     const dateTo = String(req.query.date_to ?? "");
     if (dateRe.test(dateFrom)) { whereParts.push("e.date_of_joining >= ?"); params.push(dateFrom); }
     if (dateRe.test(dateTo)) { whereParts.push("e.date_of_joining <= ?"); params.push(dateTo); }
+    // Joining month (YYYY-MM) -> filter by date_of_joining month.
+    if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+      whereParts.push("DATE_FORMAT(e.date_of_joining, '%Y-%m') = ?");
+      params.push(monthParam);
+    }
 
     // Several employee codes pasted (space / comma / semicolon / newline
     // separated) → exact match on all of them. A single term keeps the old
@@ -1082,6 +1095,11 @@ esiRegDocsRouter.get(
       `e.employment_status != 'terminated'`,
     ];
     const params: unknown[] = [];
+    if (!activeStatusParam || activeStatusParam === "1") {
+      whereParts.push("e.active_status = 1");
+    } else if (activeStatusParam === "0") {
+      whereParts.push("e.active_status = 0");
+    }
     {
       const scope = await employeeScopeFor(req as any, "e");
       whereParts.push(`(${scope.sql})`);
@@ -1090,6 +1108,10 @@ esiRegDocsRouter.get(
     if (branchId) {
       whereParts.push("e.branch_id = ?");
       params.push(branchId);
+    }
+    if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+      whereParts.push("DATE_FORMAT(e.date_of_joining, '%Y-%m') = ?");
+      params.push(monthParam);
     }
     for (const [col, op, key] of [["date_of_joining", ">=", "date_from"], ["date_of_joining", "<=", "date_to"]] as const) {
       const v = String(req.query[key] ?? "");

@@ -1,8 +1,5 @@
 import { BPO_MASTER_REPORTS } from "./bpo-master-report-registry.js";
-import {
-  bpoMasterReportV2Service,
-  type BpoMasterReportFilters,
-} from "./bpo-master-report-v2.service.js";
+import { bpoMasterReportV2Service, type BpoMasterReportFilters } from "./bpo-master-report-v2.service.js";
 import type { BranchScope } from "./reporting.scope.js";
 
 export interface MasterReportValidationResult {
@@ -22,12 +19,7 @@ export interface MasterReportValidationResult {
   sourceAccuracyStatus: string;
   uatStatus: "PENDING";
   error: string | null;
-  reconciliationStatus:
-    | "NOT_APPLICABLE"
-    | "PENDING"
-    | "RECONCILED"
-    | "DISCREPANCY"
-    | "NOT_EVIDENCED";
+  reconciliationStatus: "NOT_APPLICABLE" | "PENDING" | "RECONCILED" | "DISCREPANCY" | "NOT_EVIDENCED";
   reconciliationNote: string | null;
   sourceFreshnessMinutes: number | null;
   nullMandatoryFieldCount: number;
@@ -36,32 +28,27 @@ export interface MasterReportValidationResult {
 
 export async function validateAllBpoMasterReports(
   filters: BpoMasterReportFilters,
-  branchScope: BranchScope,
+  branchScope: BranchScope
 ) {
   const results: MasterReportValidationResult[] = [];
   for (const report of BPO_MASTER_REPORTS) {
     try {
-      const result = await bpoMasterReportV2Service.run(
-        report.code,
-        {
-          ...filters,
-          limit: 1,
-          offset: 0,
-          export: false,
-        },
-        branchScope,
-      );
+      const result = await bpoMasterReportV2Service.run(report.code, {
+        ...filters,
+        limit: 1,
+        offset: 0,
+        export: false,
+      }, branchScope);
       const verification = result.verification;
       const sourceState = result.sourceState;
       const hasDuplicate = verification.duplicateGrainCount > 0;
       const noSource = sourceState === "unavailable";
       const noRows = verification.sourceRowCount === 0;
-      const validationStatus: MasterReportValidationResult["validationStatus"] =
-        noSource || hasDuplicate
-          ? "FAIL"
-          : noRows || verification.unavailableFieldCount > 0
-            ? "WARNING"
-            : "PASS";
+      const validationStatus: MasterReportValidationResult["validationStatus"] = noSource || hasDuplicate
+        ? "FAIL"
+        : noRows || verification.unavailableFieldCount > 0
+          ? "WARNING"
+          : "PASS";
       results.push({
         reportCode: report.code,
         reportName: report.name,
@@ -108,10 +95,7 @@ export async function validateAllBpoMasterReports(
         runtimeSchemaVerified: false,
         sourceAccuracyStatus: "RUNTIME QUERY FAILED",
         uatStatus: "PENDING",
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unknown report validation error",
+        error: error instanceof Error ? error.message : "Unknown report validation error",
         reconciliationStatus: "NOT_APPLICABLE",
         reconciliationNote: null,
         sourceFreshnessMinutes: null,
@@ -124,23 +108,14 @@ export async function validateAllBpoMasterReports(
   const summary = {
     totalReports: results.length,
     passed: results.filter((item) => item.validationStatus === "PASS").length,
-    warnings: results.filter((item) => item.validationStatus === "WARNING")
-      .length,
+    warnings: results.filter((item) => item.validationStatus === "WARNING").length,
     failed: results.filter((item) => item.validationStatus === "FAIL").length,
-    sourceAvailable: results.filter((item) => item.sourceState === "available")
-      .length,
-    duplicateGrainReports: results.filter(
-      (item) => item.duplicateGrainCount > 0,
-    ).length,
-    runtimeQueryFailures: results.filter(
-      (item) => item.sourceState === "failed",
-    ).length,
-    allRuntimeChecksPassed: results.every(
-      (item) => item.validationStatus !== "FAIL",
-    ),
+    sourceAvailable: results.filter((item) => item.sourceState === "available").length,
+    duplicateGrainReports: results.filter((item) => item.duplicateGrainCount > 0).length,
+    runtimeQueryFailures: results.filter((item) => item.sourceState === "failed").length,
+    allRuntimeChecksPassed: results.every((item) => item.validationStatus !== "FAIL"),
     valueAccuracyCertified: false,
-    certificationReason:
-      "Value accuracy requires authenticated source totals, report totals and business-owner sign-off for the selected reporting period.",
+    certificationReason: "Value accuracy requires authenticated source totals, report totals and business-owner sign-off for the selected reporting period.",
   };
 
   return {
@@ -148,7 +123,6 @@ export async function validateAllBpoMasterReports(
     filters,
     summary,
     results,
-    mandatoryNextStep:
-      "Run this validation on staging/production-like data, reconcile totals and complete business-owner UAT before marking the report suite certified.",
+    mandatoryNextStep: "Run this validation on staging/production-like data, reconcile totals and complete business-owner UAT before marking the report suite certified.",
   };
 }

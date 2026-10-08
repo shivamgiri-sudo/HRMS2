@@ -20,17 +20,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * re-deriving the branch/process scope-matching SQL those functions build.
  */
 
-const { hasAnyRole, buildScopeWhereClause, hasScopedAccess } = vi.hoisted(
-  () => ({
-    hasAnyRole: vi.fn(async () => false),
-    buildScopeWhereClause: vi.fn(async () => ({ sql: "1=1", params: [] })),
-    hasScopedAccess: vi.fn(async () => true),
-  }),
-);
-vi.mock("../../../shared/scopeAccess.js", () => ({
-  hasAnyRole,
-  buildScopeWhereClause,
-  hasScopedAccess,
+const { hasAnyRole, buildScopeWhereClause, hasScopedAccess } = vi.hoisted(() => ({
+  hasAnyRole: vi.fn(async () => false),
+  buildScopeWhereClause: vi.fn(async () => ({ sql: "1=1", params: [] })),
+  hasScopedAccess: vi.fn(async () => true),
 }));
 vi.mock("../../../shared/scopeAccess.js", () => ({
   hasAnyRole, buildScopeWhereClause, hasScopedAccess,
@@ -46,20 +39,7 @@ const { dbExecute } = vi.hoisted(() => ({
     // employeeTarget()'s lookup — canAccessEmployee needs a real row or it 403s before
     // ever reaching the isPrivileged check this test asserts on.
     if (/FROM employees\s+WHERE id = \?/.test(sql)) {
-      return [
-        [
-          {
-            id: "emp-report-1",
-            branch_id: "b-1",
-            process_id: "p-1",
-            lob_id: null,
-            department_id: null,
-            reporting_manager_id: "emp-tl-1",
-            manager_id: null,
-          },
-        ],
-        [],
-      ];
+      return [[{ id: "emp-report-1", branch_id: "b-1", process_id: "p-1", lob_id: null, department_id: null, reporting_manager_id: "emp-tl-1", manager_id: null }], []];
     }
     return [[], []];
   }),
@@ -79,16 +59,10 @@ vi.mock("../wfm.service.js", () => ({
 
 const actor = { id: "u-tl-1", role: "team_leader", roles: ["team_leader"] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<
-      typeof import("../../../middleware/authMiddleware.js")
-    >();
+  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => {
-      req.authUser = actor;
-      next();
-    },
+    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
   };
 });
 
@@ -103,9 +77,7 @@ function app() {
 
 beforeEach(() => {
   hasAnyRole.mockClear().mockResolvedValue(false);
-  buildScopeWhereClause
-    .mockClear()
-    .mockResolvedValue({ sql: "1=1", params: [] });
+  buildScopeWhereClause.mockClear().mockResolvedValue({ sql: "1=1", params: [] });
   hasScopedAccess.mockClear().mockResolvedValue(true);
 });
 
@@ -130,9 +102,7 @@ describe("submit-on-behalf isPrivileged checks include team_leader", () => {
     // "assistant_manager" — every other call site checks a different, narrower role set
     // (e.g. canAccessEmployee's admin/hr/wfm/ceo bypass), so filtering on that role
     // isolates the exact call this fix touches.
-    const isPrivilegedCall = hasAnyRole.mock.calls.find((c) =>
-      (c as unknown[]).includes("assistant_manager"),
-    );
+    const isPrivilegedCall = hasAnyRole.mock.calls.find((c) => (c as unknown[]).includes("assistant_manager"));
     expect(isPrivilegedCall).toBeDefined();
     expect(isPrivilegedCall).toContain("team_leader");
     expect(isPrivilegedCall).toContain("tl");

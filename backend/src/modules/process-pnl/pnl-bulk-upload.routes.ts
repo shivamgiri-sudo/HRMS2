@@ -9,10 +9,8 @@ import { bpoPnlConfigurationService } from "./bpo-pnl.configuration.service.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
 
 const router = Router();
-const h =
-  (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: any, next: any) => fn(req, res).catch(next);
 
 const PNL_WRITE_ROLES = [
   "super_admin",
@@ -51,10 +49,7 @@ router.post(
   requireWriteAccess,
   requireRole(...PNL_WRITE_ROLES),
   h(async (req, res) => {
-    const { type, rows } = req.body as {
-      type: string;
-      rows: Record<string, unknown>[];
-    };
+    const { type, rows } = req.body as { type: string; rows: Record<string, unknown>[] };
     const userId = req.authUser.id;
 
     if (!type || !VALID_TYPES.has(type)) {
@@ -65,15 +60,11 @@ router.post(
     }
 
     if (!Array.isArray(rows) || rows.length === 0) {
-      return res
-        .status(400)
-        .json({ success: false, error: "rows must be a non-empty array" });
+      return res.status(400).json({ success: false, error: "rows must be a non-empty array" });
     }
 
     if (rows.length > 500) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Maximum 500 rows per upload" });
+      return res.status(400).json({ success: false, error: "Maximum 500 rows per upload" });
     }
 
     const uploadType = type as UploadType;
@@ -126,7 +117,7 @@ router.post(
     // were written; only the all-or-nothing failure is reported as a failure.
     const status = errors.length > 0 && imported === 0 ? 422 : 200;
     res.status(status).json({ success: status === 200, imported, errors });
-  }),
+  })
 );
 
 export { router as pnlBulkUploadRouter };

@@ -39,9 +39,7 @@ describe("DigiLocker session records the documents it actually requested", () =>
   });
 
   it("sends that same list to the provider and stores it on the session row", () => {
-    expect(SOURCE).toMatch(
-      /adapter\.startDigilocker\(candidateId,\s*documentsToRequest\)/,
-    );
+    expect(SOURCE).toMatch(/adapter\.startDigilocker\(candidateId,\s*documentsToRequest\)/);
     expect(SOURCE).toMatch(/JSON\.stringify\(documentsToRequest\)/);
   });
 

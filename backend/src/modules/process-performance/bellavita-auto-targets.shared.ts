@@ -40,37 +40,16 @@ export const ABANDON_CART_LOB = "Abandon Cart";
  * (never a guessed one) -- add the next month's rows here when the business sets them.
  */
 export const CART_CONV_TARGET_PCT: Record<string, number> = {
-  "2026-09-01": 9.48,
-  "2026-09-02": 9.51,
-  "2026-09-03": 9.51,
-  "2026-09-04": 8.65,
-  "2026-09-05": 8.77,
-  "2026-09-06": 8.77,
-  "2026-09-07": 8.77,
-  "2026-09-08": 8.77,
-  "2026-09-09": 9.21,
-  "2026-09-10": 9.21,
-  "2026-09-11": 10.52,
-  "2026-09-12": 10.52,
-  "2026-09-13": 10.52,
-  "2026-09-14": 10.52,
-  "2026-09-15": 10.52,
-  "2026-09-16": 10.08,
-  "2026-09-17": 10.08,
+  "2026-09-01": 9.48, "2026-09-02": 9.51, "2026-09-03": 9.51, "2026-09-04": 8.65,
+  "2026-09-05": 8.77, "2026-09-06": 8.77, "2026-09-07": 8.77, "2026-09-08": 8.77,
+  "2026-09-09": 9.21, "2026-09-10": 9.21,
+  "2026-09-11": 10.52, "2026-09-12": 10.52, "2026-09-13": 10.52, "2026-09-14": 10.52, "2026-09-15": 10.52,
+  "2026-09-16": 10.08, "2026-09-17": 10.08,
   "2026-09-18": 11.11,
-  "2026-09-19": 11.07,
-  "2026-09-20": 11.07,
-  "2026-09-21": 11.07,
-  "2026-09-22": 11.07,
-  "2026-09-23": 11.67,
-  "2026-09-24": 11.67,
-  "2026-09-25": 11.67,
-  "2026-09-26": 11.97,
-  "2026-09-27": 11.97,
-  "2026-09-28": 11.97,
-  "2026-09-29": 11.97,
-  "2026-09-30": 12.44,
-  "2026-10-01": 12.44,
+  "2026-09-19": 11.07, "2026-09-20": 11.07, "2026-09-21": 11.07, "2026-09-22": 11.07,
+  "2026-09-23": 11.67, "2026-09-24": 11.67, "2026-09-25": 11.67,
+  "2026-09-26": 11.97, "2026-09-27": 11.97, "2026-09-28": 11.97, "2026-09-29": 11.97,
+  "2026-09-30": 12.44, "2026-10-01": 12.44,
 };
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
@@ -83,26 +62,14 @@ export function localDateISO(d: Date): string {
 }
 
 export function daysInMonthOf(iso: string): number {
-  return new Date(
-    Number(iso.slice(0, 4)),
-    Number(iso.slice(5, 7)),
-    0,
-  ).getDate();
+  return new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)), 0).getDate();
 }
 
 /** Every YYYY-MM-DD from `from` to `to` inclusive. */
 export function eachDayISO(from: string, to: string): string[] {
   const out: string[] = [];
-  const cur = new Date(
-    Number(from.slice(0, 4)),
-    Number(from.slice(5, 7)) - 1,
-    Number(from.slice(8, 10)),
-  );
-  const end = new Date(
-    Number(to.slice(0, 4)),
-    Number(to.slice(5, 7)) - 1,
-    Number(to.slice(8, 10)),
-  );
+  const cur = new Date(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1, Number(from.slice(8, 10)));
+  const end = new Date(Number(to.slice(0, 4)), Number(to.slice(5, 7)) - 1, Number(to.slice(8, 10)));
   while (cur <= end && out.length < 800) {
     out.push(localDateISO(cur));
     cur.setDate(cur.getDate() + 1);
@@ -126,10 +93,7 @@ const CART_DATE_EXPR = "STR_TO_DATE(call_date, '%e-%b-%y')";
 /** Allocation per date = DISTINCT cart_id in bb_cart by call_date. One cart is allocated once a day; the
  * raw table can hold a re-uploaded row or two (1-Sep has 1,688 rows for 1,680 carts), and the target sheet
  * counts the 1,680. */
-export async function loadCartAllocationByDate(
-  from: string,
-  to: string,
-): Promise<Map<string, number>> {
+export async function loadCartAllocationByDate(from: string, to: string): Promise<Map<string, number>> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(${CART_DATE_EXPR}, '%Y-%m-%d') AS d, COUNT(DISTINCT NULLIF(cart_id, '')) AS n
      FROM db_masmis.bb_cart
@@ -152,68 +116,38 @@ export interface CartTargetRow {
 }
 
 /** Date-wise Abandon Cart target rows for [from, to] (the whole range -- not cut off at today). */
-export async function getCartTargetRows(
-  from: string,
-  to: string,
-): Promise<CartTargetRow[]> {
+export async function getCartTargetRows(from: string, to: string): Promise<CartTargetRow[]> {
   const allocation = await loadCartAllocationByDate(from, to);
   return eachDayISO(from, to).map((date) => {
     const conv = CART_CONV_TARGET_PCT[date] ?? null;
     const alloc = allocation.get(date) ?? 0;
     const saleTarget = conv === null ? 0 : round3(alloc * (conv / 100));
-    return {
-      date,
-      convTgtPct: conv,
-      allocation: alloc,
-      saleTarget,
-      revenueTarget: conv === null ? 0 : round2(saleTarget * REVENUE_PER_SALE),
-    };
+    return { date, convTgtPct: conv, allocation: alloc, saleTarget, revenueTarget: conv === null ? 0 : round2(saleTarget * REVENUE_PER_SALE) };
   });
 }
 
-export interface DailyTarget {
-  date: string;
-  target: number;
-}
+export interface DailyTarget { date: string; target: number }
 
 /**
  * Per-LOB daily revenue targets for [from, to] cut off at today ("MTD till today"):
  * fixed-monthly LOBs get monthly/days-in-month per day, Abandon Cart gets its date-wise
  * Revenue Target, and a LOB with no rule (e.g. "Unknown") gets no entry -- so it has no target.
  */
-export async function getAutoLobDailyTargets(
-  lobs: string[],
-  from: string,
-  to: string,
-): Promise<Record<string, DailyTarget[]>> {
+export async function getAutoLobDailyTargets(lobs: string[], from: string, to: string): Promise<Record<string, DailyTarget[]>> {
   const end = clampToToday(to);
   const out: Record<string, DailyTarget[]> = {};
   if (end < from) return out;
   const days = eachDayISO(from, end);
   const needsCart = lobs.includes(ABANDON_CART_LOB);
-  const cartRows = needsCart
-    ? new Map(
-        (await getCartTargetRows(from, end)).map((r) => [
-          r.date,
-          r.revenueTarget,
-        ]),
-      )
-    : null;
+  const cartRows = needsCart ? new Map((await getCartTargetRows(from, end)).map((r) => [r.date, r.revenueTarget])) : null;
   for (const lob of lobs) {
     if (lob === ABANDON_CART_LOB && cartRows) {
-      out[lob] = days.map((date) => ({
-        date,
-        target: cartRows.get(date) ?? 0,
-      }));
+      out[lob] = days.map((date) => ({ date, target: cartRows.get(date) ?? 0 }));
     } else if (MONTHLY_LOB_TARGETS[lob] !== undefined) {
-      out[lob] = days.map((date) => ({
-        date,
-        target: round2(monthlyDailyTarget(MONTHLY_LOB_TARGETS[lob], date)),
-      }));
+      out[lob] = days.map((date) => ({ date, target: round2(monthlyDailyTarget(MONTHLY_LOB_TARGETS[lob], date)) }));
     }
   }
   return out;
 }
 
-export const sumTargets = (rows: DailyTarget[] | undefined): number =>
-  Math.round((rows ?? []).reduce((n, r) => n + r.target, 0));
+export const sumTargets = (rows: DailyTarget[] | undefined): number => Math.round((rows ?? []).reduce((n, r) => n + r.target, 0));

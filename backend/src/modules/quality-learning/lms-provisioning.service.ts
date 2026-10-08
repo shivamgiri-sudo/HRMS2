@@ -37,43 +37,33 @@ export type LmsProvisioningStatus =
 export async function provisionLmsForAssignment(params: {
   assignmentId: string;
   employeeCode: string;
-}): Promise<{
-  status: LmsProvisioningStatus;
-  learnerId: string | null;
-  note: string | null;
-}> {
+}): Promise<{ status: LmsProvisioningStatus; learnerId: string | null; note: string | null }> {
   let status: LmsProvisioningStatus;
   let learnerId: string | null = null;
   let note: string | null = null;
 
   try {
-    const result = await provisionLmsIdentityForEmployee({
-      employeeCode: params.employeeCode,
-      createdBy: "SYSTEM",
-    });
+    const result = await provisionLmsIdentityForEmployee({ employeeCode: params.employeeCode, createdBy: "SYSTEM" });
     if (result.externalSynced && result.lmsLearnerId) {
       // Identity confirmed. The content itself still needs a coordinator's manual action —
       // see the module header for why there is no further automatable step.
       status = "content_manual_pending";
       learnerId = result.lmsLearnerId;
-      note =
-        "Learner identity confirmed. A training coordinator must add the mapped content to this employee's classroom curriculum in the LMS.";
+      note = "Learner identity confirmed. A training coordinator must add the mapped content to this employee's classroom curriculum in the LMS.";
     } else {
       status = "provisioning_failed";
       note = result.message ?? "LMS identity provisioning did not complete.";
     }
   } catch (err) {
     status = "provisioning_failed";
-    note =
-      (err as Error).message?.slice(0, 500) ??
-      "Unknown error provisioning LMS identity.";
+    note = (err as Error).message?.slice(0, 500) ?? "Unknown error provisioning LMS identity.";
   }
 
   await db.execute(
     `UPDATE training_assignment
         SET lms_learner_id = ?, lms_provisioning_status = ?, lms_provisioning_note = ?, updated_at = NOW()
       WHERE id = ?`,
-    [learnerId, status, note, params.assignmentId],
+    [learnerId, status, note, params.assignmentId]
   );
 
   return { status, learnerId, note };
@@ -87,7 +77,7 @@ export async function provisionLmsForAssignment(params: {
 export async function confirmLmsContentAdded(
   assignmentId: string,
   confirmedBy: string,
-  note?: string,
+  note?: string
 ): Promise<void> {
   const [result] = await db.execute<ResultSetHeader>(
     `UPDATE training_assignment
@@ -97,14 +87,12 @@ export async function confirmLmsContentAdded(
             lms_provisioning_note = COALESCE(?, lms_provisioning_note),
             updated_at = NOW()
       WHERE id = ? AND lms_provisioning_status IN ('identity_provisioned', 'content_manual_pending', 'provisioning_failed')`,
-    [confirmedBy, note ?? null, assignmentId],
+    [confirmedBy, note ?? null, assignmentId]
   );
   if (result.affectedRows === 0) {
     throw Object.assign(
-      new Error(
-        "Assignment not found, or its LMS content is already confirmed",
-      ),
-      { statusCode: 409 },
+      new Error("Assignment not found, or its LMS content is already confirmed"),
+      { statusCode: 409 }
     );
   }
 }
@@ -122,7 +110,7 @@ export async function listPendingLmsContentActions(): Promise<RowDataPacket[]> {
        LEFT JOIN task_tat_instance t ON t.id = ta.tat_instance_id
       WHERE ta.lms_provisioning_status IN ('content_manual_pending', 'provisioning_failed')
         AND (t.status IS NULL OR t.status NOT IN ('completed', 'cancelled'))
-      ORDER BY ta.created_at ASC`,
+      ORDER BY ta.created_at ASC`
   );
   return rows as RowDataPacket[];
 }

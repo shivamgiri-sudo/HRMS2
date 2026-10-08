@@ -18,9 +18,7 @@ import { resolvePfApplicabilityForPeriod } from "../src/modules/payroll/pf-appli
 const runMonth = process.argv[2] || "2026-07";
 
 async function main() {
-  console.log(
-    `Comparing live PF opt-out logic vs canonical resolver for ${runMonth}\n`,
-  );
+  console.log(`Comparing live PF opt-out logic vs canonical resolver for ${runMonth}\n`);
 
   // ── Live engine's logic, batched (mirrors payrollCalculate.service.ts's per-employee query
   //    exactly, just run once for every active employee instead of in a loop) ──
@@ -36,21 +34,14 @@ async function main() {
         AND (effective_from_month IS NULL OR effective_from_month <= ?)`,
     [runMonth],
   );
-  const optedOutIds = new Set(
-    (overrideRows as Array<{ employee_id: string }>).map((r) => r.employee_id),
-  );
-  console.log(
-    `Approved pf_opt_out overrides effective by ${runMonth}: ${optedOutIds.size}\n`,
-  );
+  const optedOutIds = new Set((overrideRows as Array<{ employee_id: string }>).map((r) => r.employee_id));
+  console.log(`Approved pf_opt_out overrides effective by ${runMonth}: ${optedOutIds.size}\n`);
 
   // ── Canonical resolver ──
   const resolved = await resolvePfApplicabilityForPeriod(runMonth);
 
   // ── Compare ──
-  const buckets: Record<
-    string,
-    Array<{ code: string; resolverStatus: string; resolverSource: string }>
-  > = {
+  const buckets: Record<string, Array<{ code: string; resolverStatus: string; resolverSource: string }>> = {
     agree_applicable: [],
     agree_optedout_matches_notapplicable: [],
     current_applicable_resolver_notapplicable: [],
@@ -68,44 +59,14 @@ async function main() {
 
     if (!currentOptedOut) {
       // Live engine treats this employee as PF_APPLICABLE (the default).
-      if (rStatus === "PF_APPLICABLE")
-        buckets.agree_applicable.push({
-          code,
-          resolverStatus: rStatus,
-          resolverSource: rSource,
-        });
-      else if (rStatus === "PF_NOT_APPLICABLE")
-        buckets.current_applicable_resolver_notapplicable.push({
-          code,
-          resolverStatus: rStatus,
-          resolverSource: rSource,
-        });
-      else
-        buckets.current_applicable_resolver_unresolved.push({
-          code,
-          resolverStatus: rStatus,
-          resolverSource: rSource,
-        });
+      if (rStatus === "PF_APPLICABLE") buckets.agree_applicable.push({ code, resolverStatus: rStatus, resolverSource: rSource });
+      else if (rStatus === "PF_NOT_APPLICABLE") buckets.current_applicable_resolver_notapplicable.push({ code, resolverStatus: rStatus, resolverSource: rSource });
+      else buckets.current_applicable_resolver_unresolved.push({ code, resolverStatus: rStatus, resolverSource: rSource });
     } else {
       // Live engine treats this employee as opted out (PF_NOT_APPLICABLE equivalent).
-      if (rStatus === "PF_NOT_APPLICABLE")
-        buckets.agree_optedout_matches_notapplicable.push({
-          code,
-          resolverStatus: rStatus,
-          resolverSource: rSource,
-        });
-      else if (rStatus === "PF_APPLICABLE")
-        buckets.optedout_resolver_applicable.push({
-          code,
-          resolverStatus: rStatus,
-          resolverSource: rSource,
-        });
-      else
-        buckets.optedout_resolver_unresolved.push({
-          code,
-          resolverStatus: rStatus,
-          resolverSource: rSource,
-        });
+      if (rStatus === "PF_NOT_APPLICABLE") buckets.agree_optedout_matches_notapplicable.push({ code, resolverStatus: rStatus, resolverSource: rSource });
+      else if (rStatus === "PF_APPLICABLE") buckets.optedout_resolver_applicable.push({ code, resolverStatus: rStatus, resolverSource: rSource });
+      else buckets.optedout_resolver_unresolved.push({ code, resolverStatus: rStatus, resolverSource: rSource });
     }
   }
 
@@ -120,29 +81,19 @@ async function main() {
     buckets.current_applicable_resolver_unresolved.length +
     buckets.optedout_resolver_applicable.length +
     buckets.optedout_resolver_unresolved.length;
-  console.log(
-    `TOTAL DISAGREEMENT: ${totalDisagree} of ${active.length} active employees\n`,
-  );
+  console.log(`TOTAL DISAGREEMENT: ${totalDisagree} of ${active.length} active employees\n`);
 
   for (const [name, rows] of Object.entries(buckets)) {
     if (name.startsWith("agree")) continue;
     if (!rows.length) continue;
     console.log(`── ${name} (${rows.length}) — first 15 ──`);
     for (const r of rows.slice(0, 15)) {
-      console.log(
-        `  ${r.code}  resolver=${r.resolverStatus} (${r.resolverSource})`,
-      );
+      console.log(`  ${r.code}  resolver=${r.resolverStatus} (${r.resolverSource})`);
     }
     console.log();
   }
 }
 
 main()
-  .catch((err) => {
-    console.error("FATAL", err);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await db.end().catch(() => {});
-    await closeBillPool().catch(() => {});
-  });
+  .catch((err) => { console.error("FATAL", err); process.exitCode = 1; })
+  .finally(async () => { await db.end().catch(() => {}); await closeBillPool().catch(() => {}); });

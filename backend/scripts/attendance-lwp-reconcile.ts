@@ -44,10 +44,7 @@ const arg = (name: string): string | undefined => {
 const APPLY = argv.includes("--apply");
 const FROM = arg("from");
 const TO = arg("to");
-const EMPLOYEES = (arg("employees") ?? "")
-  .split(",")
-  .map((s) => s.trim().toUpperCase())
-  .filter(Boolean);
+const EMPLOYEES = (arg("employees") ?? "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
 const LIMIT = Number(arg("limit") ?? 2000);
 
 /**
@@ -58,9 +55,7 @@ const LIMIT = Number(arg("limit") ?? 2000);
  */
 const OPEN_RUN_STATUSES = new Set(["PROCESSING", "DRAFT"]);
 
-async function monthIsOpen(
-  month: string,
-): Promise<{ open: boolean; status: string }> {
+async function monthIsOpen(month: string): Promise<{ open: boolean; status: string }> {
   // Most authoritative run for the month, mirroring run-status.ts's ranking. UPPER() because
   // production stores 'FINALIZED' alongside lowercase 'approved'/'processing'/'draft', and a
   // case-sensitive check would treat FINALIZED as unrecognised and let the write through.
@@ -75,27 +70,20 @@ async function monthIsOpen(
       LIMIT 1`,
     [month],
   );
-  const status = String(
-    (rows as Array<{ status?: string }>)[0]?.status ?? "",
-  ).toUpperCase();
+  const status = String((rows as Array<{ status?: string }>)[0]?.status ?? "").toUpperCase();
   if (!status) return { open: true, status: "(no run)" };
   return { open: OPEN_RUN_STATUSES.has(status), status };
 }
 
 async function main(): Promise<void> {
   if (!FROM || !TO) {
-    console.error(
-      "--from=YYYY-MM-DD and --to=YYYY-MM-DD are required (a bounded range, deliberately).",
-    );
+    console.error("--from=YYYY-MM-DD and --to=YYYY-MM-DD are required (a bounded range, deliberately).");
     process.exitCode = 1;
     return;
   }
 
-  console.log(
-    `[reconcile] range ${FROM} .. ${TO}  mode=${APPLY ? "APPLY (writes)" : "DRY RUN"}`,
-  );
-  if (EMPLOYEES.length)
-    console.log(`[reconcile] employee whitelist: ${EMPLOYEES.join(", ")}`);
+  console.log(`[reconcile] range ${FROM} .. ${TO}  mode=${APPLY ? "APPLY (writes)" : "DRY RUN"}`);
+  if (EMPLOYEES.length) console.log(`[reconcile] employee whitelist: ${EMPLOYEES.join(", ")}`);
 
   const params: unknown[] = [FROM, TO];
   let empClause = "";
@@ -118,15 +106,10 @@ async function main(): Promise<void> {
   );
 
   const candidates = rows as Array<{
-    employee_id: string;
-    record_date: string;
-    attendance_status: string;
-    lwp_value: string | number;
-    employee_code: string;
-    attendance_source: string | null;
-    clock_in_time: string | null;
-    clock_out_time: string | null;
-    biometric_minutes: number | null;
+    employee_id: string; record_date: string; attendance_status: string;
+    lwp_value: string | number; employee_code: string;
+    attendance_source: string | null; clock_in_time: string | null;
+    clock_out_time: string | null; biometric_minutes: number | null;
   }>;
 
   /**
@@ -144,23 +127,16 @@ async function main(): Promise<void> {
    */
   const sourceIsUnreadable = (r: (typeof candidates)[number]): boolean =>
     String(r.attendance_source ?? "") === "biometric" &&
-    r.clock_in_time != null &&
-    r.clock_out_time != null &&
+    r.clock_in_time != null && r.clock_out_time != null &&
     Number(r.biometric_minutes ?? 0) === 0;
   console.log(`[reconcile] ${candidates.length} unlocked row(s) in range\n`);
 
   // Month gate, resolved once per month rather than per row.
   const monthCache = new Map<string, { open: boolean; status: string }>();
-  const { attendanceEngineService } =
-    await import("../src/modules/wfm/attendance-engine.service.js");
+  const { attendanceEngineService } = await import("../src/modules/wfm/attendance-engine.service.js");
 
-  let changed = 0,
-    applied = 0,
-    skippedClosed = 0,
-    failed = 0,
-    skippedUnreadable = 0;
-  let lwpBeforeTotal = 0,
-    lwpAfterTotal = 0;
+  let changed = 0, applied = 0, skippedClosed = 0, failed = 0, skippedUnreadable = 0;
+  let lwpBeforeTotal = 0, lwpAfterTotal = 0;
 
   for (const row of candidates) {
     const date = String(row.record_date).slice(0, 10);
@@ -172,22 +148,17 @@ async function main(): Promise<void> {
       skippedUnreadable++;
       console.log(
         `  ${row.employee_code.padEnd(12)} ${date}  SKIPPED — punches present but biometric_minutes=0; ` +
-          `the engine cannot read this day and would call it missing_punch`,
+        `the engine cannot read this day and would call it missing_punch`,
       );
       continue;
     }
 
     let engine;
     try {
-      engine = await attendanceEngineService.processEmployee(
-        row.employee_id,
-        date,
-      );
+      engine = await attendanceEngineService.processEmployee(row.employee_id, date);
     } catch (err) {
       failed++;
-      console.error(
-        `  ! ${row.employee_code} ${date}: engine failed — ${err instanceof Error ? err.message : err}`,
-      );
+      console.error(`  ! ${row.employee_code} ${date}: engine failed — ${err instanceof Error ? err.message : err}`);
       continue;
     }
 
@@ -196,60 +167,40 @@ async function main(): Promise<void> {
     const afterStatus = String(engine.status ?? "");
     const afterLwp = Number(engine.lwpValue ?? 0);
 
-    if (beforeStatus === afterStatus && Math.abs(beforeLwp - afterLwp) < 0.001)
-      continue;
+    if (beforeStatus === afterStatus && Math.abs(beforeLwp - afterLwp) < 0.001) continue;
 
     changed++;
     lwpBeforeTotal += beforeLwp;
     lwpAfterTotal += afterLwp;
     console.log(
       `  ${row.employee_code.padEnd(12)} ${date}  ` +
-        `before[status=${beforeStatus} lwp=${beforeLwp.toFixed(2)}]  ` +
-        `after[status=${afterStatus} lwp=${afterLwp.toFixed(2)}]` +
-        (gate.open ? "" : `   SKIPPED — run ${gate.status}`),
+      `before[status=${beforeStatus} lwp=${beforeLwp.toFixed(2)}]  ` +
+      `after[status=${afterStatus} lwp=${afterLwp.toFixed(2)}]` +
+      (gate.open ? "" : `   SKIPPED — run ${gate.status}`),
     );
 
-    if (!gate.open) {
-      skippedClosed++;
-      continue;
-    }
+    if (!gate.open) { skippedClosed++; continue; }
 
     if (APPLY) {
-      await attendanceEngineService.upsertDailyRecord(
-        engine,
-        "attendance-lwp-reconcile",
-      );
+      await attendanceEngineService.upsertDailyRecord(engine, "attendance-lwp-reconcile");
       applied++;
     }
   }
 
   console.log(`\n[reconcile] rows differing from the engine : ${changed}`);
-  console.log(
-    `[reconcile] LWP total before / after       : ${lwpBeforeTotal.toFixed(2)} / ${lwpAfterTotal.toFixed(2)}`,
-  );
+  console.log(`[reconcile] LWP total before / after       : ${lwpBeforeTotal.toFixed(2)} / ${lwpAfterTotal.toFixed(2)}`);
   console.log(`[reconcile] blocked by a closed payroll run: ${skippedClosed}`);
-  console.log(
-    `[reconcile] skipped, source unreadable       : ${skippedUnreadable}`,
-  );
+  console.log(`[reconcile] skipped, source unreadable       : ${skippedUnreadable}`);
   console.log(`[reconcile] engine failures                : ${failed}`);
-  console.log(
-    `[reconcile] rows written                   : ${applied}${APPLY ? "" : "  (dry run — pass --apply to write)"}`,
-  );
-  for (const [m, g] of monthCache)
-    console.log(
-      `[reconcile] run status ${m}: ${g.status}${g.open ? "" : "  (CLOSED — writes refused)"}`,
-    );
+  console.log(`[reconcile] rows written                   : ${applied}${APPLY ? "" : "  (dry run — pass --apply to write)"}`);
+  for (const [m, g] of monthCache) console.log(`[reconcile] run status ${m}: ${g.status}${g.open ? "" : "  (CLOSED — writes refused)"}`);
 }
 
 main()
   .catch((err) => {
     const e = err as { name?: string; code?: string; message?: string };
-    const parts = [e?.name, e?.code, e?.message].filter(
-      (p) => p && String(p).trim(),
-    );
+    const parts = [e?.name, e?.code, e?.message].filter((p) => p && String(p).trim());
     console.error(`[reconcile] FATAL ${parts.join(" | ") || String(err)}`);
     process.exitCode = 1;
   })
-  .finally(() => {
-    void (db as unknown as { end?: () => Promise<void> }).end?.();
-  });
+  .finally(() => { void (db as unknown as { end?: () => Promise<void> }).end?.(); });

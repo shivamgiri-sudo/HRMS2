@@ -542,20 +542,24 @@ router.patch(
         [empId],
       )) as any[];
       if (currentRows[0]?.official_email) {
-        return res.status(403).json({
-          success: false,
-          error: "official_email is already set. Contact HR to change.",
-        });
+        return res
+          .status(403)
+          .json({
+            success: false,
+            error: "official_email is already set. Contact HR to change.",
+          });
       }
       const [conflictRows] = (await db.execute(
         "SELECT id FROM auth_user WHERE email = ? AND id != ? LIMIT 1",
         [candidate, userId],
       )) as any[];
       if (conflictRows.length) {
-        return res.status(409).json({
-          success: false,
-          error: "This email is already in use by another account.",
-        });
+        return res
+          .status(409)
+          .json({
+            success: false,
+            error: "This email is already in use by another account.",
+          });
       }
       officialEmailToSync = candidate;
     }
@@ -921,10 +925,12 @@ router.put(
 
     const { name: rawName, relationship, mobile, address } = req.body;
     if (!rawName || !relationship || !mobile) {
-      return res.status(400).json({
-        success: false,
-        error: "name, relationship, and mobile are required",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: "name, relationship, and mobile are required",
+        });
     }
     const name = toStoredNameRequired(rawName);
 
@@ -983,10 +989,12 @@ router.put(
       address,
     } = req.body;
     if (!rawNomineeName || !relationship) {
-      return res.status(400).json({
-        success: false,
-        error: "nominee_name and relationship are required",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: "nominee_name and relationship are required",
+        });
     }
     const nominee_name = toStoredNameRequired(rawNomineeName);
 
@@ -1112,11 +1120,13 @@ router.put(
     // this route's actual fields instead.
     const formatErrors = validateBankFields({ ifsc_code, account_number });
     if (formatErrors.length) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid format",
-        details: formatErrors,
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: "Invalid format",
+          details: formatErrors,
+        });
     }
 
     // Cross-employee duplicate check, via the blind index added in migration 1136.
@@ -1243,11 +1253,13 @@ router.put(
       epf_number,
     });
     if (formatErrors.length) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid format",
-        details: formatErrors,
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: "Invalid format",
+          details: formatErrors,
+        });
     }
 
     const STAT_FIELDS: string[] = ["employee_id"];
@@ -1390,10 +1402,12 @@ router.put(
     const empId = req.params.employeeId;
     const { name: rawName, relationship, mobile, address } = req.body;
     if (!rawName || !relationship || !mobile) {
-      return res.status(400).json({
-        success: false,
-        error: "name, relationship, and mobile are required",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: "name, relationship, and mobile are required",
+        });
     }
     const name = toStoredNameRequired(rawName);
 
@@ -1440,10 +1454,12 @@ router.put(
       address,
     } = req.body;
     if (!rawNomineeName || !relationship) {
-      return res.status(400).json({
-        success: false,
-        error: "nominee_name and relationship are required",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: "nominee_name and relationship are required",
+        });
     }
     const nominee_name = toStoredNameRequired(rawNomineeName);
 
@@ -1641,11 +1657,13 @@ router.post(
   ...hrProfileGate,
   h(async (req: any, res: any) => {
     if (req.body?.consentConfirmed !== true) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "consentConfirmed must be true — record the employee's consent before starting BGV",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error:
+            "consentConfirmed must be true — record the employee's consent before starting BGV",
+        });
     }
     const result = await bootstrapCandidateForEmployee(
       req.params.employeeId,
@@ -1887,7 +1905,7 @@ router.get(
     // run together (same statements, same params).
     const [[rows], [totalRow]] = await Promise.all([
       db.execute<RowDataPacket[]>(
-        `SELECT
+      `SELECT
        COUNT(*) AS total_with_record,
        SUM(adr.attendance_status = 'present')        AS present,
        SUM(adr.attendance_status = 'half_day')       AS half_day,
@@ -1902,11 +1920,11 @@ router.get(
       AND e.active_status = 1
       AND e.employment_status = 'Active'
      WHERE adr.record_date = ?${scopeSql}`,
-        [today, ...scoped.params],
+      [today, ...scoped.params],
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS total FROM employees e WHERE e.active_status = 1 AND e.employment_status = 'Active'${scopeSql}`,
-        scoped.params,
+      `SELECT COUNT(*) AS total FROM employees e WHERE e.active_status = 1 AND e.employment_status = 'Active'${scopeSql}`,
+      scoped.params,
       ),
     ]);
     const total_active = Number((totalRow[0] as any)?.total ?? 0);
@@ -2288,10 +2306,12 @@ router.get(
       { allowAdminBypass: true },
     );
     if (!ok)
-      return res.status(403).json({
-        success: false,
-        message: "Forbidden: outside your assigned scope",
-      });
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "Forbidden: outside your assigned scope",
+        });
 
     return c.getEmployee(req, res);
   }),
@@ -2476,10 +2496,12 @@ router.post(
     try {
       const b = req.body;
       if (!b.eventType || !b.eventDate) {
-        return res.status(400).json({
-          success: false,
-          message: "eventType and eventDate required",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: "eventType and eventDate required",
+          });
       }
       const data = await appendJourneyEvent({
         employeeId: req.params.id,
@@ -2968,10 +2990,12 @@ router.post(
     const emp = rows[0];
 
     if (emp.user_id)
-      return res.status(409).json({
-        success: false,
-        error: "Employee already has a login account",
-      });
+      return res
+        .status(409)
+        .json({
+          success: false,
+          error: "Employee already has a login account",
+        });
 
     const rawEmail = [emp.official_email, emp.email]
       .map((e: string | null) => (e ?? "").trim().toLowerCase())
@@ -2992,11 +3016,13 @@ router.post(
     let userId: string;
     if (existingAuth.length > 0) {
       if (Number(existingAuth[0].is_blocked ?? 0) === 1) {
-        return res.status(409).json({
-          success: false,
-          error:
-            "An account with this email exists but is blocked. Unblock it first.",
-        });
+        return res
+          .status(409)
+          .json({
+            success: false,
+            error:
+              "An account with this email exists but is blocked. Unblock it first.",
+          });
       }
       userId = String(existingAuth[0].id);
       await db.execute("UPDATE employees SET user_id = ? WHERE id = ?", [

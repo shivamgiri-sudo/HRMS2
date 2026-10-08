@@ -23,7 +23,7 @@ const PII_FIELDS = [
  * Returns a shallow copy — the original record is not mutated.
  */
 export function maskPortalEmployee(
-  record: Record<string, unknown>,
+  record: Record<string, unknown>
 ): Record<string, unknown> {
   const masked = { ...record };
   for (const field of PII_FIELDS) {
@@ -51,7 +51,7 @@ interface AggregateSpec {
 export function aggregateForPortal<T extends Record<string, unknown>>(
   rows: T[],
   groupBy: string,
-  aggregates: AggregateSpec[],
+  aggregates: AggregateSpec[]
 ): Record<string, unknown>[] {
   const groups = new Map<string, T[]>();
 

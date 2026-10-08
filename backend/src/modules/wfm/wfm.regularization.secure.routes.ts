@@ -10,19 +10,13 @@ import { canAccessEmployee as canAccessEmployeeInScope } from "./branch-scope.js
 import { regularizationSchema } from "./wfm.validation.js";
 import { wfmService } from "./wfm.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
-import {
-  notifyRegularizationDecision,
-  notifyRegularizationStage2Pending,
-} from "./attendance.notifications.js";
+import { notifyRegularizationDecision, notifyRegularizationStage2Pending } from "./attendance.notifications.js";
 import { resolveEffectiveApprover } from "../../shared/approvalEscalation.js";
 
 export const wfmRegularizationSecureRouter = Router();
 wfmRegularizationSecureRouter.use(requireAuth);
 
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 // team_leader and tl are two distinct, independently assignable roles in
 // WORKFORCE_ROLE_CATALOG (team_leader is the canonical one used across the rest of the
 // backend — 54 files reference it vs. a handful for tl). This file only recognized tl,
@@ -30,18 +24,7 @@ const h =
 // through buildScopeWhereClause to self-only scope: they saw only their own
 // regularization requests, never their team's, despite AttendanceRegularization.tsx's
 // own APPROVER_ROLES granting them the bulk-approve/per-row approve UI.
-const WFM_VIEW_SCOPE_ROLES = [
-  "wfm",
-  "hr",
-  "payroll_hr",
-  "payroll_branch",
-  "branch_head",
-  "manager",
-  "assistant_manager",
-  "tl",
-  "team_leader",
-  "process_manager",
-];
+const WFM_VIEW_SCOPE_ROLES = ["wfm", "hr", "payroll_hr", "payroll_branch", "branch_head", "manager", "assistant_manager", "tl", "team_leader", "process_manager"];
 const WFM_APPROVAL_SCOPE_ROLES = ["wfm"];
 
 /**
@@ -81,10 +64,7 @@ const ALL_BRANCH_BULK_APPROVAL_ROLES = ["super_admin", "payroll_head"];
  * nobody else.
  */
 const BRANCH_BULK_APPROVAL_ROLES = ["wfm", "payroll_hr", "payroll"];
-const BULK_APPROVAL_ROLES = [
-  ...ALL_BRANCH_BULK_APPROVAL_ROLES,
-  ...BRANCH_BULK_APPROVAL_ROLES,
-];
+const BULK_APPROVAL_ROLES = [...ALL_BRANCH_BULK_APPROVAL_ROLES, ...BRANCH_BULK_APPROVAL_ROLES];
 
 /**
  * Branches this caller may bulk-approve over.
@@ -97,25 +77,18 @@ const BULK_APPROVAL_ROLES = [
  * 2026-08-27), so a filter keyed on it would wave nearly every request through the
  * branch check.
  */
-async function resolveBulkApprovalBranches(
-  userId: string,
-): Promise<"all" | Set<string> | null> {
+async function resolveBulkApprovalBranches(userId: string): Promise<"all" | Set<string> | null> {
   if (await hasAnyRole(userId, ...ALL_BRANCH_BULK_APPROVAL_ROLES)) return "all";
   if (!(await hasAnyRole(userId, ...BRANCH_BULK_APPROVAL_ROLES))) return null;
 
-  const scopes = await getUserAssignmentScopes(
-    userId,
-    BRANCH_BULK_APPROVAL_ROLES,
-  );
+  const scopes = await getUserAssignmentScopes(userId, BRANCH_BULK_APPROVAL_ROLES);
   // A scope_type='all' row on a branch role still means org-wide — that is what the
   // row says, and narrowing it belongs in the data, not here.
   if (scopes.some((s) => s.scope_type === "all")) return "all";
 
   const branches = new Set(
     scopes
-      .filter(
-        (s) => s.scope_type === "branch" || s.scope_type === "branch_process",
-      )
+      .filter((s) => s.scope_type === "branch" || s.scope_type === "branch_process")
       .map((s) => (s.branch_id == null ? "" : String(s.branch_id)))
       .filter(Boolean),
   );
@@ -203,8 +176,7 @@ function reportingManagerScopeSql(): string {
 }
 
 async function listScope(userId: string) {
-  if (await hasAnyRole(userId, "super_admin"))
-    return { sql: "1=1", params: [] as unknown[] };
+  if (await hasAnyRole(userId, "super_admin")) return { sql: "1=1", params: [] as unknown[] };
   const scoped = await buildScopeWhereClause(
     userId,
     WFM_VIEW_SCOPE_ROLES,
@@ -319,9 +291,7 @@ export async function regularizationReviewRole(
   // resolved by the status rather than competing with the manager/WFM checks below — a user
   // holding both payroll and wfm still reviews as WFM at the WFM stage.
   if (String(target.status ?? "") === PAYROLL_PENDING_STATUS) {
-    return (await hasAnyRole(userId, ...PAYROLL_APPROVAL_ROLES))
-      ? "payroll"
-      : null;
+    return (await hasAnyRole(userId, ...PAYROLL_APPROVAL_ROLES)) ? "payroll" : null;
   }
   const { approverId } = await resolveEffectiveApprover(target.employee_id);
   if (callerEmp?.id && approverId !== null && callerEmp.id === approverId) {
@@ -371,19 +341,14 @@ export function nextRegularizationStatus(
   requestedStatus: string,
   payrollFrozen = false,
 ): string | null {
-  if (!["approved", "rejected", "manager_approved"].includes(requestedStatus))
-    return null;
+  if (!["approved", "rejected", "manager_approved"].includes(requestedStatus)) return null;
   if (TERMINAL_REGULARIZATION_STATUSES.includes(currentStatus)) return null;
 
   if (role === "super_admin") {
     if (requestedStatus === "manager_approved") return "approved";
     // super_admin is not a way around the Payroll stage — an approval into a frozen month
     // still parks for Payroll. Rejection is unaffected.
-    if (
-      requestedStatus === "approved" &&
-      payrollFrozen &&
-      currentStatus !== PAYROLL_PENDING_STATUS
-    ) {
+    if (requestedStatus === "approved" && payrollFrozen && currentStatus !== PAYROLL_PENDING_STATUS) {
       return PAYROLL_PENDING_STATUS;
     }
     return requestedStatus;
@@ -402,8 +367,7 @@ export function nextRegularizationStatus(
   // wfm
   if (currentStatus !== "manager_approved") return null;
   if (requestedStatus === "manager_approved") return null;
-  if (requestedStatus === "approved" && payrollFrozen)
-    return PAYROLL_PENDING_STATUS;
+  if (requestedStatus === "approved" && payrollFrozen) return PAYROLL_PENDING_STATUS;
   return requestedStatus;
 }
 
@@ -419,9 +383,7 @@ function formatPreviewTime(value: unknown): string | null {
 }
 
 function normalizePreviewStatus(status: unknown, totalPunches: number): string {
-  const raw = String(status ?? "")
-    .trim()
-    .toLowerCase();
+  const raw = String(status ?? "").trim().toLowerCase();
   const mapped: Record<string, string> = {
     present: "Present",
     absent: "Absent",
@@ -447,10 +409,7 @@ function normalizePreviewStatus(status: unknown, totalPunches: number): string {
     .join(" ");
 }
 
-async function buildRegularizationDecisionSupport(
-  row: RowDataPacket,
-  viewer: ViewerApprovalRoles | null = null,
-) {
+async function buildRegularizationDecisionSupport(row: RowDataPacket, viewer: ViewerApprovalRoles | null = null) {
   const sessionDate = String(row.session_date ?? "").slice(0, 10);
   const employeeId = String(row.employee_id ?? "");
   const flags: string[] = [];
@@ -476,28 +435,17 @@ async function buildRegularizationDecisionSupport(
     riskScore += 30;
   }
 
-  if (
-    String(row.current_attendance_status ?? "") ===
-    String(row.requested_status ?? "")
-  ) {
+  if (String(row.current_attendance_status ?? "") === String(row.requested_status ?? "")) {
     flags.push("Requested status already matches attendance");
     riskScore += 25;
   }
 
-  if (
-    ["present", "half_day"].includes(String(row.requested_status ?? "")) &&
-    Number(row.total_punches ?? 0) === 0
-  ) {
+  if (["present", "half_day"].includes(String(row.requested_status ?? "")) && Number(row.total_punches ?? 0) === 0) {
     flags.push("No biometric punch evidence for payable attendance");
     riskScore += 45;
   }
 
-  if (
-    String(row.roster_status ?? "")
-      .toLowerCase()
-      .includes("week") &&
-    String(row.requested_status ?? "") === "present"
-  ) {
+  if (String(row.roster_status ?? "").toLowerCase().includes("week") && String(row.requested_status ?? "") === "present") {
     flags.push("Requested present on rostered week off");
     riskScore += 20;
   }
@@ -515,8 +463,7 @@ async function buildRegularizationDecisionSupport(
     riskScore += 15;
   }
 
-  const riskLevel =
-    riskScore >= 60 ? "high" : riskScore >= 30 ? "medium" : "low";
+  const riskLevel = riskScore >= 60 ? "high" : riskScore >= 30 ? "medium" : "low";
   // Can the CALLER act on this row at all, at whatever stage it currently sits?
   // Without a viewer this stays false, which is what every non-list caller wants.
   const canApproveNow = viewerCanApproveNow(viewer, String(row.status ?? ""));
@@ -566,15 +513,9 @@ async function buildRegularizationDecisionSupport(
  * produce a per-row "outside your approval scope" in the bulk response; it can
  * never approve anything the single-row path would refuse.
  */
-type ViewerApprovalRoles = {
-  superAdmin: boolean;
-  wfm: boolean;
-  payroll: boolean;
-};
+type ViewerApprovalRoles = { superAdmin: boolean; wfm: boolean; payroll: boolean };
 
-async function resolveViewerApprovalRoles(
-  userId: string,
-): Promise<ViewerApprovalRoles> {
+async function resolveViewerApprovalRoles(userId: string): Promise<ViewerApprovalRoles> {
   const [superAdmin, wfm, payroll] = await Promise.all([
     hasAnyRole(userId, "super_admin"),
     hasAnyRole(userId, "wfm"),
@@ -591,35 +532,22 @@ async function resolveViewerApprovalRoles(
  * purpose: a frozen month changes the destination (payroll_pending rather than
  * approved), not whether the caller may act.
  */
-function viewerCanApproveNow(
-  viewer: ViewerApprovalRoles | null,
-  status: string,
-): boolean {
+function viewerCanApproveNow(viewer: ViewerApprovalRoles | null, status: string): boolean {
   if (!viewer) return false;
   if (TERMINAL_REGULARIZATION_STATUSES.includes(status)) return false;
-  if (viewer.superAdmin)
-    return nextRegularizationStatus("super_admin", status, "approved") !== null;
+  if (viewer.superAdmin) return nextRegularizationStatus("super_admin", status, "approved") !== null;
   if (status === PAYROLL_PENDING_STATUS) {
-    return (
-      viewer.payroll &&
-      nextRegularizationStatus("payroll", status, "approved") !== null
-    );
+    return viewer.payroll && nextRegularizationStatus("payroll", status, "approved") !== null;
   }
-  if (viewer.wfm)
-    return nextRegularizationStatus("wfm", status, "approved") !== null;
+  if (viewer.wfm) return nextRegularizationStatus("wfm", status, "approved") !== null;
   return false;
 }
 
-async function enrichRegularizationRows(
-  rows: RowDataPacket[],
-  viewer: ViewerApprovalRoles | null = null,
-) {
-  return Promise.all(
-    rows.map(async (row) => ({
-      ...row,
-      decision_support: await buildRegularizationDecisionSupport(row, viewer),
-    })),
-  );
+async function enrichRegularizationRows(rows: RowDataPacket[], viewer: ViewerApprovalRoles | null = null) {
+  return Promise.all(rows.map(async (row) => ({
+    ...row,
+    decision_support: await buildRegularizationDecisionSupport(row, viewer),
+  })));
 }
 
 interface ReviewResult {
@@ -632,19 +560,9 @@ async function _performReview(
   regularizationId: string,
   approvalScopeRoles: string[] = WFM_APPROVAL_SCOPE_ROLES,
 ): Promise<ReviewResult> {
-  const reviewRole = await regularizationReviewRole(
-    req.authUser.id,
-    regularizationId,
-    approvalScopeRoles,
-  );
+  const reviewRole = await regularizationReviewRole(req.authUser.id, regularizationId, approvalScopeRoles);
   if (!reviewRole) {
-    return {
-      httpStatus: 403,
-      payload: {
-        success: false,
-        message: "Forbidden: regularization is outside your approval scope",
-      },
-    };
+    return { httpStatus: 403, payload: { success: false, message: "Forbidden: regularization is outside your approval scope" } };
   }
   const requestedReviewStatus = String(req.body.status ?? "");
 
@@ -689,14 +607,10 @@ async function _performReview(
        LEFT JOIN wfm_roster_assignment wra
               ON wra.employee_id = ar.employee_id AND wra.roster_date = ar.session_date
       WHERE ar.id = ? LIMIT 1`,
-    [regularizationId],
+    [regularizationId]
   );
   const pre = (preRows as RowDataPacket[])[0] as any;
-  if (!pre)
-    return {
-      httpStatus: 404,
-      payload: { success: false, message: "Regularization not found" },
-    };
+  if (!pre) return { httpStatus: 404, payload: { success: false, message: "Regularization not found" } };
 
   // Block approval of future-dated regularizations. Employees cannot yet have
   // attendance for a date that hasn't happened — approving one would write a
@@ -705,38 +619,20 @@ async function _performReview(
   if (sessionDateStr > new Date().toISOString().slice(0, 10)) {
     return {
       httpStatus: 400,
-      payload: {
-        success: false,
-        message: `Cannot approve a regularization for a future date (${sessionDateStr}). The attendance date must have already passed.`,
-      },
+      payload: { success: false, message: `Cannot approve a regularization for a future date (${sessionDateStr}). The attendance date must have already passed.` },
     };
   }
   if (sessionDateStr === "1970-01-01" || !sessionDateStr) {
     return {
       httpStatus: 400,
-      payload: {
-        success: false,
-        message:
-          "Regularization has an invalid session date and cannot be approved.",
-      },
+      payload: { success: false, message: "Regularization has an invalid session date and cannot be approved." },
     };
   }
 
   const payrollFrozen = await isPayrollFrozenForDate(sessionDateStr);
-  const status = nextRegularizationStatus(
-    reviewRole,
-    String(pre.reg_status ?? ""),
-    requestedReviewStatus,
-    payrollFrozen,
-  );
+  const status = nextRegularizationStatus(reviewRole, String(pre.reg_status ?? ""), requestedReviewStatus, payrollFrozen);
   if (!status) {
-    return {
-      httpStatus: 400,
-      payload: {
-        success: false,
-        message: "Invalid approval step for current regularization status",
-      },
-    };
+    return { httpStatus: 400, payload: { success: false, message: "Invalid approval step for current regularization status" } };
   }
 
   const decisionSupport = await buildRegularizationDecisionSupport(pre);
@@ -750,8 +646,7 @@ async function _performReview(
       httpStatus: 409,
       payload: {
         success: false,
-        message:
-          "Risky regularization requires manual review before final WFM approval",
+        message: "Risky regularization requires manual review before final WFM approval",
         decision_support: decisionSupport,
       },
     };
@@ -763,31 +658,20 @@ async function _performReview(
   // on every approval (including the bulk path) and let a rejection carry no reason at
   // all, leaving the employee with a refused attendance correction and no explanation.
   if (status === "rejected" && !reviewerNote?.trim()) {
-    return {
-      httpStatus: 400,
-      payload: {
-        success: false,
-        message: "Remarks are required to reject a regularization request",
-      },
-    };
+    return { httpStatus: 400, payload: { success: false, message: "Remarks are required to reject a regularization request" } };
   }
-  const data = await wfmService.reviewRegularization(
-    regularizationId,
-    {
-      status: status as any,
-      reviewerNote,
-    },
-    req.authUser.id,
-  );
+  const data = await wfmService.reviewRegularization(regularizationId, {
+    status: status as any,
+    reviewerNote,
+  }, req.authUser.id);
 
-  const actionType =
-    status === "approved"
-      ? "REGULARIZATION_APPROVED"
-      : status === "manager_approved"
-        ? "REGULARIZATION_MANAGER_APPROVED"
-        : status === PAYROLL_PENDING_STATUS
-          ? "REGULARIZATION_PAYROLL_APPROVAL_PENDING"
-          : "REGULARIZATION_REJECTED";
+  const actionType = status === "approved"
+    ? "REGULARIZATION_APPROVED"
+    : status === "manager_approved"
+      ? "REGULARIZATION_MANAGER_APPROVED"
+      : status === PAYROLL_PENDING_STATUS
+        ? "REGULARIZATION_PAYROLL_APPROVAL_PENDING"
+        : "REGULARIZATION_REJECTED";
 
   // Email notification (fire-and-forget), alongside the audit log below. A final
   // decision tells the employee; manager_approved tells the WFM chain. Shadow.
@@ -818,16 +702,10 @@ async function _performReview(
     },
     new_value_json: {
       reg_status: status,
-      attendance_status:
-        status === "approved"
-          ? (pre.requested_status ?? null)
-          : (pre.current_attendance_status ?? null),
-      lwp_value:
-        status === "approved"
-          ? ({ present: 0, half_day: 0.5, absent: 1.0 }[
-              pre.requested_status as string
-            ] ?? null)
-          : (pre.current_lwp ?? null),
+      attendance_status: status === "approved" ? (pre.requested_status ?? null) : pre.current_attendance_status ?? null,
+      lwp_value: status === "approved"
+        ? ({ present: 0, half_day: 0.5, absent: 1.0 }[pre.requested_status as string] ?? null)
+        : pre.current_lwp ?? null,
       reviewer_note: reviewerNote,
       session_date: pre.session_date ?? null,
       dispute_type: pre.dispute_type ?? null,
@@ -851,148 +729,86 @@ async function _performReview(
       },
       new_value_json: {
         attendance_status: pre.requested_status,
-        lwp_value:
-          { present: 0, half_day: 0.5, absent: 1.0 }[
-            pre.requested_status as string
-          ] ?? 0,
+        lwp_value: { present: 0, half_day: 0.5, absent: 1.0 }[pre.requested_status as string] ?? 0,
         corrected_by: req.authUser.id,
         regularization_id: regularizationId,
       },
       req,
     });
+
   }
 
-  return {
-    httpStatus: 200,
-    payload: {
-      success: true,
-      data: { ...data, decision_support: decisionSupport },
-      message: `Regularization ${status}`,
-    },
-  };
+  return { httpStatus: 200, payload: { success: true, data: { ...data, decision_support: decisionSupport }, message: `Regularization ${status}` } };
 }
 
-function reviewRegularizationRequest(
-  req: any,
-  res: any,
-  regularizationId: string,
-) {
-  return _performReview(req, regularizationId).then((r) =>
-    res.status(r.httpStatus).json(r.payload),
+function reviewRegularizationRequest(req: any, res: any, regularizationId: string) {
+  return _performReview(req, regularizationId).then(r => res.status(r.httpStatus).json(r.payload));
+}
+
+wfmRegularizationSecureRouter.post("/regularizations", h(async (req: any, res: any) => {
+  const input = regularizationSchema.parse(req.body);
+  const callerEmp = await getEmployeeForUser(req.authUser.id);
+  const requestedEmployeeId = String(req.body.employeeId ?? callerEmp?.id ?? "");
+  if (!requestedEmployeeId) return res.status(403).json({ success: false, message: "No employee record" });
+
+  if (!(await canAccessEmployee(req.authUser.id, requestedEmployeeId, true))) {
+    return res.status(403).json({ success: false, error: "Forbidden: employee is outside your WFM scope" });
+  }
+
+  const isPrivileged = await hasAnyRole(req.authUser.id, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "team_leader", "branch_head", "process_manager", "ceo");
+  const requestedByType = isPrivileged && callerEmp?.id !== requestedEmployeeId ? "manager" : "employee";
+  const data = await wfmService.submitRegularization(
+    { ...input, employeeId: requestedEmployeeId, requestedByType } as any,
+    req.authUser.id,
   );
-}
 
-wfmRegularizationSecureRouter.post(
-  "/regularizations",
-  h(async (req: any, res: any) => {
-    const input = regularizationSchema.parse(req.body);
-    const callerEmp = await getEmployeeForUser(req.authUser.id);
-    const requestedEmployeeId = String(
-      req.body.employeeId ?? callerEmp?.id ?? "",
-    );
-    if (!requestedEmployeeId)
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
+  // Audit: regularization submitted
+  void logSensitiveAction({
+    actor_user_id: req.authUser.id,
+    actor_role: requestedByType,
+    action_type: "REGULARIZATION_SUBMITTED",
+    module_key: "attendance",
+    entity_type: "attendance_regularization",
+    entity_id: data.id,
+    employee_id: requestedEmployeeId,
+    reason: input.reason,
+    new_value_json: {
+      session_date: input.sessionDate,
+      requested_status: (input as any).requestedStatus ?? null,
+      reason_code: input.reasonCode ?? null,
+      dispute_type: (input as any).disputeType ?? null,
+      old_status: (input as any).oldStatus ?? null,
+      new_status: (input as any).newStatus ?? null,
+      old_punch_in: (input as any).oldPunchIn ?? null,
+      old_punch_out: (input as any).oldPunchOut ?? null,
+      new_punch_in: (input as any).newPunchIn ?? null,
+      new_punch_out: (input as any).newPunchOut ?? null,
+    },
+    req,
+  });
 
-    if (
-      !(await canAccessEmployee(req.authUser.id, requestedEmployeeId, true))
-    ) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "Forbidden: employee is outside your WFM scope",
-        });
-    }
+  return res.status(201).json({ success: true, data, message: "Regularization submitted" });
+}));
 
-    const isPrivileged = await hasAnyRole(
-      req.authUser.id,
-      "admin",
-      "hr",
-      "wfm",
-      "manager",
-      "assistant_manager",
-      "tl",
-      "team_leader",
-      "branch_head",
-      "process_manager",
-      "ceo",
-    );
-    const requestedByType =
-      isPrivileged && callerEmp?.id !== requestedEmployeeId
-        ? "manager"
-        : "employee";
-    const data = await wfmService.submitRegularization(
-      { ...input, employeeId: requestedEmployeeId, requestedByType } as any,
-      req.authUser.id,
-    );
+wfmRegularizationSecureRouter.get("/regularizations/attendance-preview", h(async (req: any, res: any) => {
+  const date = String(req.query.date ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ success: false, message: "date must be YYYY-MM-DD" });
+  }
 
-    // Audit: regularization submitted
-    void logSensitiveAction({
-      actor_user_id: req.authUser.id,
-      actor_role: requestedByType,
-      action_type: "REGULARIZATION_SUBMITTED",
-      module_key: "attendance",
-      entity_type: "attendance_regularization",
-      entity_id: data.id,
-      employee_id: requestedEmployeeId,
-      reason: input.reason,
-      new_value_json: {
-        session_date: input.sessionDate,
-        requested_status: (input as any).requestedStatus ?? null,
-        reason_code: input.reasonCode ?? null,
-        dispute_type: (input as any).disputeType ?? null,
-        old_status: (input as any).oldStatus ?? null,
-        new_status: (input as any).newStatus ?? null,
-        old_punch_in: (input as any).oldPunchIn ?? null,
-        old_punch_out: (input as any).oldPunchOut ?? null,
-        new_punch_in: (input as any).newPunchIn ?? null,
-        new_punch_out: (input as any).newPunchOut ?? null,
-      },
-      req,
-    });
+  const callerEmp = await getEmployeeForUser(req.authUser.id);
+  const requestedEmployeeId = String(req.query.employeeId ?? callerEmp?.id ?? "").trim();
+  if (!requestedEmployeeId) {
+    return res.status(403).json({ success: false, message: "No employee record" });
+  }
 
-    return res
-      .status(201)
-      .json({ success: true, data, message: "Regularization submitted" });
-  }),
-);
+  if (!(await canAccessEmployee(req.authUser.id, requestedEmployeeId, true))) {
+    return res.status(403).json({ success: false, message: "Forbidden: employee is outside your WFM scope" });
+  }
 
-wfmRegularizationSecureRouter.get(
-  "/regularizations/attendance-preview",
-  h(async (req: any, res: any) => {
-    const date = String(req.query.date ?? "").trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "date must be YYYY-MM-DD" });
-    }
-
-    const callerEmp = await getEmployeeForUser(req.authUser.id);
-    const requestedEmployeeId = String(
-      req.query.employeeId ?? callerEmp?.id ?? "",
-    ).trim();
-    if (!requestedEmployeeId) {
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
-    }
-
-    if (
-      !(await canAccessEmployee(req.authUser.id, requestedEmployeeId, true))
-    ) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Forbidden: employee is outside your WFM scope",
-        });
-    }
-
-    const [[attendanceRows], [punchRows]] = await Promise.all([
-      db.execute<RowDataPacket[]>(
-        `SELECT e.id,
+  const [[attendanceRows], [punchRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT e.id,
               e.employee_code,
               COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name,
               e.working_hours_start,
@@ -1028,12 +844,12 @@ wfmRegularizationSecureRouter.get(
          ) apr_src ON apr_src.UserID = e.employee_code AND apr_src.ReportDate = ?
         WHERE e.id = ?
         LIMIT 1`,
-        [date, date, date, date, requestedEmployeeId],
-      ),
-      // Use biometric_attendance_log (mas_hrms native table) instead of cosec_punch_sync
-      // to avoid cross-DB collation issues and vicidial-sync lock contention.
-      db.execute<RowDataPacket[]>(
-        `SELECT DATE_FORMAT(bal.first_punch_in, '%Y-%m-%d %H:%i:%s') AS punch_time,
+      [date, date, date, date, requestedEmployeeId],
+    ),
+    // Use biometric_attendance_log (mas_hrms native table) instead of cosec_punch_sync
+    // to avoid cross-DB collation issues and vicidial-sync lock contention.
+    db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(bal.first_punch_in, '%Y-%m-%d %H:%i:%s') AS punch_time,
               1 AS io_type, 'In' AS io_label, NULL AS device_id
          FROM biometric_attendance_log bal
         WHERE bal.employee_id = ? AND bal.punch_date = ?
@@ -1045,129 +861,86 @@ wfmRegularizationSecureRouter.get(
         WHERE bal.employee_id = ? AND bal.punch_date = ?
           AND bal.last_punch_out IS NOT NULL
         ORDER BY punch_time ASC`,
-        [requestedEmployeeId, date, requestedEmployeeId, date],
+      [requestedEmployeeId, date, requestedEmployeeId, date],
+    ),
+  ]);
+
+  const row = attendanceRows[0] as RowDataPacket | undefined;
+  if (!row) {
+    return res.status(404).json({ success: false, message: "Employee not found" });
+  }
+
+  const punches = (punchRows as RowDataPacket[]).map((punch) => ({
+    punchTime: String(punch.punch_time ?? ""),
+    ioLabel: String(punch.io_label ?? ""),
+    deviceId: punch.device_id ? String(punch.device_id) : null,
+  }));
+  const totalPunches = Math.max(Number(row.total_punches ?? 0), punches.length);
+  const firstPunchTime = formatPreviewTime(row.clock_in_time ?? punches[0]?.punchTime ?? null);
+  const lastPunchTime = formatPreviewTime(
+    row.clock_out_time ?? (punches.length > 1 ? punches[punches.length - 1]?.punchTime : null),
+  );
+
+  return res.json({
+    success: true,
+    data: {
+      employeeId: String(row.id),
+      employeeCode: row.employee_code ? String(row.employee_code) : null,
+      employeeName: row.employee_name ? String(row.employee_name) : null,
+      attendanceDate: date,
+      currentStatus: normalizePreviewStatus(row.attendance_status, totalPunches),
+      currentLoginTime: firstPunchTime,
+      currentLogoutTime: lastPunchTime,
+      suggestedLoginTime: formatPreviewTime(row.working_hours_start),
+      suggestedLogoutTime: formatPreviewTime(row.working_hours_end),
+      attendanceSource: row.attendance_source ? String(row.attendance_source) : "attendance_daily_record",
+      aprMinutes: Number(row.apr_minutes ?? row.dialler_minutes ?? 0),
+      aprStatus: row.apr_status ? String(row.apr_status) : null,
+      biometricStatus: row.biometric_status ? String(row.biometric_status) : null,
+      mismatchFlag: Number(row.mismatch_flag ?? 0) === 1 || (
+        Number(row.apr_minutes ?? 0) > 0 &&
+        Number(row.biometric_minutes ?? 0) > 0 &&
+        Math.abs(Number(row.apr_minutes ?? 0) - Number(row.biometric_minutes ?? 0)) > 60
       ),
-    ]);
-
-    const row = attendanceRows[0] as RowDataPacket | undefined;
-    if (!row) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Employee not found" });
-    }
-
-    const punches = (punchRows as RowDataPacket[]).map((punch) => ({
-      punchTime: String(punch.punch_time ?? ""),
-      ioLabel: String(punch.io_label ?? ""),
-      deviceId: punch.device_id ? String(punch.device_id) : null,
-    }));
-    const totalPunches = Math.max(
-      Number(row.total_punches ?? 0),
-      punches.length,
-    );
-    const firstPunchTime = formatPreviewTime(
-      row.clock_in_time ?? punches[0]?.punchTime ?? null,
-    );
-    const lastPunchTime = formatPreviewTime(
-      row.clock_out_time ??
-        (punches.length > 1 ? punches[punches.length - 1]?.punchTime : null),
-    );
-
-    return res.json({
-      success: true,
-      data: {
-        employeeId: String(row.id),
-        employeeCode: row.employee_code ? String(row.employee_code) : null,
-        employeeName: row.employee_name ? String(row.employee_name) : null,
-        attendanceDate: date,
-        currentStatus: normalizePreviewStatus(
-          row.attendance_status,
-          totalPunches,
-        ),
-        currentLoginTime: firstPunchTime,
-        currentLogoutTime: lastPunchTime,
-        suggestedLoginTime: formatPreviewTime(row.working_hours_start),
-        suggestedLogoutTime: formatPreviewTime(row.working_hours_end),
-        attendanceSource: row.attendance_source
-          ? String(row.attendance_source)
-          : "attendance_daily_record",
-        aprMinutes: Number(row.apr_minutes ?? row.dialler_minutes ?? 0),
-        aprStatus: row.apr_status ? String(row.apr_status) : null,
-        biometricStatus: row.biometric_status
-          ? String(row.biometric_status)
-          : null,
-        mismatchFlag:
-          Number(row.mismatch_flag ?? 0) === 1 ||
-          (Number(row.apr_minutes ?? 0) > 0 &&
-            Number(row.biometric_minutes ?? 0) > 0 &&
-            Math.abs(
-              Number(row.apr_minutes ?? 0) - Number(row.biometric_minutes ?? 0),
-            ) > 60),
-        biometricMinutes: Number(row.biometric_minutes ?? 0),
-        rawMinutes: Number(row.raw_minutes ?? 0),
-        lwpValue: Number(row.lwp_value ?? 0),
-        totalPunches,
-        punches,
-      },
-    });
-  }),
-);
+      biometricMinutes: Number(row.biometric_minutes ?? 0),
+      rawMinutes: Number(row.raw_minutes ?? 0),
+      lwpValue: Number(row.lwp_value ?? 0),
+      totalPunches,
+      punches,
+    },
+  });
+}));
 
 // ── Date-range attendance scan (for batch mode) ───────────────────────────
-wfmRegularizationSecureRouter.get(
-  "/regularizations/date-range-preview",
-  h(async (req: any, res: any) => {
-    const fromDate = String(req.query.fromDate ?? "").trim();
-    const toDate = String(req.query.toDate ?? "").trim();
-    if (
-      !/^\d{4}-\d{2}-\d{2}$/.test(fromDate) ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(toDate)
-    ) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "fromDate and toDate must be YYYY-MM-DD",
-        });
-    }
-    if (fromDate > toDate) {
-      return res
-        .status(400)
-        .json({ success: false, message: "fromDate must be <= toDate" });
-    }
-    // Guard: max 31 days in a single scan
-    const diffDays = Math.round(
-      (new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000,
-    );
-    if (diffDays > 30) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Range cannot exceed 31 days" });
-    }
-    const today = new Date().toISOString().slice(0, 10);
-    if (toDate > today) {
-      return res
-        .status(400)
-        .json({ success: false, message: "toDate cannot be a future date" });
-    }
+wfmRegularizationSecureRouter.get("/regularizations/date-range-preview", h(async (req: any, res: any) => {
+  const fromDate = String(req.query.fromDate ?? "").trim();
+  const toDate   = String(req.query.toDate ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    return res.status(400).json({ success: false, message: "fromDate and toDate must be YYYY-MM-DD" });
+  }
+  if (fromDate > toDate) {
+    return res.status(400).json({ success: false, message: "fromDate must be <= toDate" });
+  }
+  // Guard: max 31 days in a single scan
+  const diffDays = Math.round((new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000);
+  if (diffDays > 30) {
+    return res.status(400).json({ success: false, message: "Range cannot exceed 31 days" });
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  if (toDate > today) {
+    return res.status(400).json({ success: false, message: "toDate cannot be a future date" });
+  }
 
-    const callerEmp = await getEmployeeForUser(req.authUser.id);
-    const requestedEmployeeId = String(
-      req.query.employeeId ?? callerEmp?.id ?? "",
-    ).trim();
-    if (!requestedEmployeeId)
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
-    if (
-      !(await canAccessEmployee(req.authUser.id, requestedEmployeeId, true))
-    ) {
-      return res.status(403).json({ success: false, message: "Forbidden" });
-    }
+  const callerEmp = await getEmployeeForUser(req.authUser.id);
+  const requestedEmployeeId = String(req.query.employeeId ?? callerEmp?.id ?? "").trim();
+  if (!requestedEmployeeId) return res.status(403).json({ success: false, message: "No employee record" });
+  if (!(await canAccessEmployee(req.authUser.id, requestedEmployeeId, true))) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
 
-    // Fetch all ADR rows for the range in one query
-    const [adrRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(record_date, '%Y-%m-%d') AS record_date,
+  // Fetch all ADR rows for the range in one query
+  const [adrRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(record_date, '%Y-%m-%d') AS record_date,
             attendance_status,
             clock_in_time,
             clock_out_time,
@@ -1176,200 +949,135 @@ wfmRegularizationSecureRouter.get(
       WHERE employee_id = ?
         AND record_date BETWEEN ? AND ?
       ORDER BY record_date ASC`,
-      [requestedEmployeeId, fromDate, toDate],
-    );
+    [requestedEmployeeId, fromDate, toDate]
+  );
 
-    // Fetch existing pending/approved regularizations in this range to avoid duplicates
-    const [existingRegs] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(session_date, '%Y-%m-%d') AS session_date, status
+  // Fetch existing pending/approved regularizations in this range to avoid duplicates
+  const [existingRegs] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(session_date, '%Y-%m-%d') AS session_date, status
        FROM attendance_regularization
       WHERE employee_id = ?
         AND session_date BETWEEN ? AND ?
         AND status NOT IN ('rejected', 'cancelled', 'discarded')`,
-      [requestedEmployeeId, fromDate, toDate],
-    );
-    const alreadyRequested = new Set(
-      (existingRegs as RowDataPacket[]).map((r: any) => r.session_date),
-    );
+    [requestedEmployeeId, fromDate, toDate]
+  );
+  const alreadyRequested = new Set((existingRegs as RowDataPacket[]).map((r: any) => r.session_date));
 
-    // Build a map keyed by date
-    const adrMap = new Map<string, any>();
-    for (const r of adrRows as any[]) {
-      adrMap.set(r.record_date, r);
-    }
+  // Build a map keyed by date
+  const adrMap = new Map<string, any>();
+  for (const r of adrRows as any[]) {
+    adrMap.set(r.record_date, r);
+  }
 
-    // Enumerate every calendar date in the range
-    const days: {
-      date: string;
-      currentStatus: string;
-      loginTime: string | null;
-      logoutTime: string | null;
-      lwpValue: number;
-      hasRecord: boolean;
-      alreadyRequested: boolean;
-      selectable: boolean;
-    }[] = [];
+  // Enumerate every calendar date in the range
+  const days: {
+    date: string;
+    currentStatus: string;
+    loginTime: string | null;
+    logoutTime: string | null;
+    lwpValue: number;
+    hasRecord: boolean;
+    alreadyRequested: boolean;
+    selectable: boolean;
+  }[] = [];
 
-    const cur = new Date(fromDate + "T00:00:00Z");
-    const end = new Date(toDate + "T00:00:00Z");
-    while (cur <= end) {
-      const d = cur.toISOString().slice(0, 10);
-      const adr = adrMap.get(d);
-      const status = adr
-        ? normalizePreviewStatus(
-            adr.attendance_status,
-            adr.clock_in_time ? 1 : 0,
-          )
-        : "No Record";
-      days.push({
-        date: d,
-        currentStatus: status,
-        loginTime: adr?.clock_in_time
-          ? formatPreviewTime(adr.clock_in_time)
-          : null,
-        logoutTime: adr?.clock_out_time
-          ? formatPreviewTime(adr.clock_out_time)
-          : null,
-        lwpValue: Number(adr?.lwp_value ?? 0),
-        hasRecord: !!adr,
-        alreadyRequested: alreadyRequested.has(d),
-        // Selectable = has a record that can be corrected and no pending request exists
-        selectable: !!adr && !alreadyRequested.has(d),
-      });
-      cur.setUTCDate(cur.getUTCDate() + 1);
-    }
-
-    return res.json({
-      success: true,
-      data: { employeeId: requestedEmployeeId, fromDate, toDate, days },
+  const cur = new Date(fromDate + "T00:00:00Z");
+  const end = new Date(toDate + "T00:00:00Z");
+  while (cur <= end) {
+    const d = cur.toISOString().slice(0, 10);
+    const adr = adrMap.get(d);
+    const status = adr ? normalizePreviewStatus(adr.attendance_status, adr.clock_in_time ? 1 : 0) : "No Record";
+    days.push({
+      date: d,
+      currentStatus: status,
+      loginTime: adr?.clock_in_time ? formatPreviewTime(adr.clock_in_time) : null,
+      logoutTime: adr?.clock_out_time ? formatPreviewTime(adr.clock_out_time) : null,
+      lwpValue: Number(adr?.lwp_value ?? 0),
+      hasRecord: !!adr,
+      alreadyRequested: alreadyRequested.has(d),
+      // Selectable = has a record that can be corrected and no pending request exists
+      selectable: !!adr && !alreadyRequested.has(d),
     });
-  }),
-);
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+
+  return res.json({ success: true, data: { employeeId: requestedEmployeeId, fromDate, toDate, days } });
+}));
 
 // ── Batch regularization submit ───────────────────────────────────────────
-wfmRegularizationSecureRouter.post(
-  "/regularizations/batch",
-  h(async (req: any, res: any) => {
-    const sessionDates: string[] = Array.isArray(req.body.sessionDates)
-      ? req.body.sessionDates
-          .map(String)
-          .filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d))
-      : [];
-    if (!sessionDates.length) {
-      return res
-        .status(400)
-        .json({ success: false, message: "sessionDates array is required" });
+wfmRegularizationSecureRouter.post("/regularizations/batch", h(async (req: any, res: any) => {
+  const sessionDates: string[] = Array.isArray(req.body.sessionDates)
+    ? req.body.sessionDates.map(String).filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    : [];
+  if (!sessionDates.length) {
+    return res.status(400).json({ success: false, message: "sessionDates array is required" });
+  }
+  if (sessionDates.length > 31) {
+    return res.status(400).json({ success: false, message: "Cannot batch submit more than 31 dates at once" });
+  }
+
+  const callerEmp = await getEmployeeForUser(req.authUser.id);
+  const requestedEmployeeId = String(req.body.employeeId ?? callerEmp?.id ?? "");
+  if (!requestedEmployeeId) return res.status(403).json({ success: false, message: "No employee record" });
+  if (!(await canAccessEmployee(req.authUser.id, requestedEmployeeId, true))) {
+    return res.status(403).json({ success: false, error: "Forbidden" });
+  }
+
+  const isPrivileged = await hasAnyRole(req.authUser.id, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "team_leader", "branch_head", "process_manager", "ceo");
+  const requestedByType = isPrivileged && callerEmp?.id !== requestedEmployeeId ? "manager" : "employee";
+
+  const commonFields = {
+    requestedStatus: req.body.requestedStatus ?? null,
+    disputeType:     req.body.disputeType ?? null,
+    reason:          String(req.body.reason ?? "Batch attendance correction").trim() || "Batch attendance correction",
+    supportingNote:  req.body.supportingNote ?? null,
+    oldPunchIn:      req.body.oldPunchIn ?? null,
+    oldPunchOut:     req.body.oldPunchOut ?? null,
+    newPunchIn:      req.body.newPunchIn ?? null,
+    newPunchOut:     req.body.newPunchOut ?? null,
+    latitude:        req.body.latitude ?? null,
+    longitude:       req.body.longitude ?? null,
+    requestedByType,
+    employeeId:      requestedEmployeeId,
+  };
+
+  const results: Array<{ date: string; success: boolean; id?: string; message?: string }> = [];
+  for (const sessionDate of sessionDates) {
+    try {
+      const data = await wfmService.submitRegularization(
+        { ...commonFields, sessionDate, reasonCode: req.body.reasonCode ?? undefined } as any,
+        req.authUser.id,
+      );
+      void logSensitiveAction({
+        actor_user_id: req.authUser.id,
+        actor_role: requestedByType,
+        action_type: "REGULARIZATION_SUBMITTED",
+        module_key: "attendance",
+        entity_type: "attendance_regularization",
+        entity_id: data.id,
+        employee_id: requestedEmployeeId,
+        reason: commonFields.reason,
+        new_value_json: { session_date: sessionDate, ...commonFields },
+        req,
+      });
+      results.push({ date: sessionDate, success: true, id: data.id });
+    } catch (err: any) {
+      results.push({ date: sessionDate, success: false, message: err?.message ?? String(err) });
     }
-    if (sessionDates.length > 31) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Cannot batch submit more than 31 dates at once",
-        });
-    }
+  }
 
-    const callerEmp = await getEmployeeForUser(req.authUser.id);
-    const requestedEmployeeId = String(
-      req.body.employeeId ?? callerEmp?.id ?? "",
-    );
-    if (!requestedEmployeeId)
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
-    if (
-      !(await canAccessEmployee(req.authUser.id, requestedEmployeeId, true))
-    ) {
-      return res.status(403).json({ success: false, error: "Forbidden" });
-    }
-
-    const isPrivileged = await hasAnyRole(
-      req.authUser.id,
-      "admin",
-      "hr",
-      "wfm",
-      "manager",
-      "assistant_manager",
-      "tl",
-      "team_leader",
-      "branch_head",
-      "process_manager",
-      "ceo",
-    );
-    const requestedByType =
-      isPrivileged && callerEmp?.id !== requestedEmployeeId
-        ? "manager"
-        : "employee";
-
-    const commonFields = {
-      requestedStatus: req.body.requestedStatus ?? null,
-      disputeType: req.body.disputeType ?? null,
-      reason:
-        String(req.body.reason ?? "Batch attendance correction").trim() ||
-        "Batch attendance correction",
-      supportingNote: req.body.supportingNote ?? null,
-      oldPunchIn: req.body.oldPunchIn ?? null,
-      oldPunchOut: req.body.oldPunchOut ?? null,
-      newPunchIn: req.body.newPunchIn ?? null,
-      newPunchOut: req.body.newPunchOut ?? null,
-      latitude: req.body.latitude ?? null,
-      longitude: req.body.longitude ?? null,
-      requestedByType,
-      employeeId: requestedEmployeeId,
-    };
-
-    const results: Array<{
-      date: string;
-      success: boolean;
-      id?: string;
-      message?: string;
-    }> = [];
-    for (const sessionDate of sessionDates) {
-      try {
-        const data = await wfmService.submitRegularization(
-          {
-            ...commonFields,
-            sessionDate,
-            reasonCode: req.body.reasonCode ?? undefined,
-          } as any,
-          req.authUser.id,
-        );
-        void logSensitiveAction({
-          actor_user_id: req.authUser.id,
-          actor_role: requestedByType,
-          action_type: "REGULARIZATION_SUBMITTED",
-          module_key: "attendance",
-          entity_type: "attendance_regularization",
-          entity_id: data.id,
-          employee_id: requestedEmployeeId,
-          reason: commonFields.reason,
-          new_value_json: { session_date: sessionDate, ...commonFields },
-          req,
-        });
-        results.push({ date: sessionDate, success: true, id: data.id });
-      } catch (err: any) {
-        results.push({
-          date: sessionDate,
-          success: false,
-          message: err?.message ?? String(err),
-        });
-      }
-    }
-
-    const succeeded = results.filter((r) => r.success).length;
-    const failed = results.length - succeeded;
-    return res.status(201).json({
-      success: failed === 0,
-      succeeded,
-      failed,
-      data: results,
-      message:
-        failed > 0
-          ? `${succeeded} submitted, ${failed} skipped — see data for details`
-          : `${succeeded} regularization request(s) submitted`,
-    });
-  }),
-);
+  const succeeded = results.filter((r) => r.success).length;
+  const failed = results.length - succeeded;
+  return res.status(201).json({
+    success: failed === 0,
+    succeeded,
+    failed,
+    data: results,
+    message: failed > 0
+      ? `${succeeded} submitted, ${failed} skipped — see data for details`
+      : `${succeeded} regularization request(s) submitted`,
+  });
+}));
 
 // ── Multi-employee bulk regularization submit ─────────────────────────────
 //
@@ -1393,205 +1101,124 @@ wfmRegularizationSecureRouter.post(
 //   Scope is enforced per employee, not once for the request: canAccessEmployee is called for
 //   every target, so a branch-scoped WFM user cannot widen their reach by naming employees from
 //   another branch in the payload.
-wfmRegularizationSecureRouter.post(
-  "/regularizations/bulk-multi-employee",
-  h(async (req: any, res: any) => {
-    /** Per-employee dates, so each employee can carry their own missing days. */
-    const rawTargets = Array.isArray(req.body.targets) ? req.body.targets : [];
-    if (!rawTargets.length) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "targets array is required: [{ employeeId, sessionDates: [] }]",
-        });
-    }
+wfmRegularizationSecureRouter.post("/regularizations/bulk-multi-employee", h(async (req: any, res: any) => {
+  /** Per-employee dates, so each employee can carry their own missing days. */
+  const rawTargets = Array.isArray(req.body.targets) ? req.body.targets : [];
+  if (!rawTargets.length) {
+    return res.status(400).json({ success: false, message: "targets array is required: [{ employeeId, sessionDates: [] }]" });
+  }
 
-    const targets: Array<{ employeeId: string; sessionDates: string[] }> = [];
-    for (const t of rawTargets) {
-      const employeeId = String(t?.employeeId ?? "").trim();
-      const sessionDates: string[] = Array.isArray(t?.sessionDates)
-        ? t.sessionDates
-            .map(String)
-            .filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d))
-        : [];
-      if (employeeId && sessionDates.length)
-        targets.push({ employeeId, sessionDates });
-    }
-    if (!targets.length) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "No valid targets — each needs employeeId and at least one YYYY-MM-DD sessionDate",
-        });
-    }
+  const targets: Array<{ employeeId: string; sessionDates: string[] }> = [];
+  for (const t of rawTargets) {
+    const employeeId = String(t?.employeeId ?? "").trim();
+    const sessionDates: string[] = Array.isArray(t?.sessionDates)
+      ? t.sessionDates.map(String).filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+      : [];
+    if (employeeId && sessionDates.length) targets.push({ employeeId, sessionDates });
+  }
+  if (!targets.length) {
+    return res.status(400).json({ success: false, message: "No valid targets — each needs employeeId and at least one YYYY-MM-DD sessionDate" });
+  }
 
-    // Bounded because every pair runs the full submit path (risk scoring, duplicate checks). A
-    // whole branch-month exceeds this deliberately: the caller pages rather than the server
-    // holding one very long request open and timing out mid-write with no usable result.
-    const MAX_PAIRS = 500;
-    const totalPairs = targets.reduce((n, t) => n + t.sessionDates.length, 0);
-    if (totalPairs > MAX_PAIRS) {
-      return res.status(400).json({
-        success: false,
-        message: `${totalPairs} employee-date pairs requested; the limit is ${MAX_PAIRS} per call. Split the date range or the employee list and submit again.`,
-      });
-    }
-
-    const reason = String(req.body.reason ?? "").trim();
-    if (reason.length < 10) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "reason is mandatory and must be at least 10 characters — it is the audit record for a bulk correction",
-        });
-    }
-
-    const callerEmp = await getEmployeeForUser(req.authUser.id);
-    const isPrivileged = await hasAnyRole(
-      req.authUser.id,
-      "admin",
-      "hr",
-      "wfm",
-      "manager",
-      "assistant_manager",
-      "tl",
-      "team_leader",
-      "branch_head",
-      "process_manager",
-      "ceo",
-    );
-    if (!isPrivileged) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message:
-            "Bulk correction across employees requires a WFM, HR, branch or management role",
-        });
-    }
-
-    const results: Array<{
-      employeeId: string;
-      date: string;
-      success: boolean;
-      id?: string;
-      message?: string;
-    }> = [];
-    let denied = 0;
-
-    for (const target of targets) {
-      // Per-employee scope check. Denials are reported rather than aborting the run, so one
-      // out-of-scope id in a long list does not discard the corrections that were valid.
-      if (
-        !(await canAccessEmployee(req.authUser.id, target.employeeId, true))
-      ) {
-        denied += target.sessionDates.length;
-        for (const d of target.sessionDates) {
-          results.push({
-            employeeId: target.employeeId,
-            date: d,
-            success: false,
-            message: "Forbidden — employee outside your scope",
-          });
-        }
-        continue;
-      }
-
-      const requestedByType =
-        callerEmp?.id === target.employeeId ? "employee" : "manager";
-      const commonFields = {
-        requestedStatus: req.body.requestedStatus ?? null,
-        disputeType: req.body.disputeType ?? null,
-        reason,
-        supportingNote: req.body.supportingNote ?? null,
-        oldPunchIn: null,
-        oldPunchOut: null,
-        newPunchIn: req.body.newPunchIn ?? null,
-        newPunchOut: req.body.newPunchOut ?? null,
-        latitude: null,
-        longitude: null,
-        requestedByType,
-        employeeId: target.employeeId,
-      };
-
-      for (const sessionDate of target.sessionDates) {
-        try {
-          const data = await wfmService.submitRegularization(
-            {
-              ...commonFields,
-              sessionDate,
-              reasonCode: req.body.reasonCode ?? undefined,
-            } as any,
-            req.authUser.id,
-          );
-          void logSensitiveAction({
-            actor_user_id: req.authUser.id,
-            actor_role: requestedByType,
-            action_type: "REGULARIZATION_SUBMITTED",
-            module_key: "attendance",
-            entity_type: "attendance_regularization",
-            entity_id: data.id,
-            employee_id: target.employeeId,
-            reason,
-            new_value_json: {
-              session_date: sessionDate,
-              bulk_multi_employee: true,
-              ...commonFields,
-            },
-            req,
-          });
-          results.push({
-            employeeId: target.employeeId,
-            date: sessionDate,
-            success: true,
-            id: data.id,
-          });
-        } catch (err: any) {
-          results.push({
-            employeeId: target.employeeId,
-            date: sessionDate,
-            success: false,
-            message: err?.message ?? String(err),
-          });
-        }
-      }
-    }
-
-    const succeeded = results.filter((r) => r.success).length;
-    const failed = results.length - succeeded;
-    return res.status(201).json({
-      success: failed === 0,
-      employees: targets.length,
-      succeeded,
-      failed,
-      denied,
-      data: results,
-      message:
-        failed > 0
-          ? `${succeeded} raised, ${failed} skipped (${denied} out of scope) — see data for details`
-          : `${succeeded} regularization request(s) raised across ${targets.length} employee(s), pending approval`,
+  // Bounded because every pair runs the full submit path (risk scoring, duplicate checks). A
+  // whole branch-month exceeds this deliberately: the caller pages rather than the server
+  // holding one very long request open and timing out mid-write with no usable result.
+  const MAX_PAIRS = 500;
+  const totalPairs = targets.reduce((n, t) => n + t.sessionDates.length, 0);
+  if (totalPairs > MAX_PAIRS) {
+    return res.status(400).json({
+      success: false,
+      message: `${totalPairs} employee-date pairs requested; the limit is ${MAX_PAIRS} per call. Split the date range or the employee list and submit again.`,
     });
-  }),
-);
+  }
 
-wfmRegularizationSecureRouter.get(
-  "/regularizations/mine",
-  h(async (req: any, res: any) => {
-    const emp = await getEmployeeForUser(req.authUser.id);
-    if (!emp)
-      return res
-        .status(403)
-        .json({ success: false, message: "No employee record" });
-    const data = await wfmService.listRegularizations({ employeeId: emp.id });
-    return res.json({ success: true, data });
-  }),
-);
+  const reason = String(req.body.reason ?? "").trim();
+  if (reason.length < 10) {
+    return res.status(400).json({ success: false, message: "reason is mandatory and must be at least 10 characters — it is the audit record for a bulk correction" });
+  }
+
+  const callerEmp = await getEmployeeForUser(req.authUser.id);
+  const isPrivileged = await hasAnyRole(req.authUser.id, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "team_leader", "branch_head", "process_manager", "ceo");
+  if (!isPrivileged) {
+    return res.status(403).json({ success: false, message: "Bulk correction across employees requires a WFM, HR, branch or management role" });
+  }
+
+  const results: Array<{ employeeId: string; date: string; success: boolean; id?: string; message?: string }> = [];
+  let denied = 0;
+
+  for (const target of targets) {
+    // Per-employee scope check. Denials are reported rather than aborting the run, so one
+    // out-of-scope id in a long list does not discard the corrections that were valid.
+    if (!(await canAccessEmployee(req.authUser.id, target.employeeId, true))) {
+      denied += target.sessionDates.length;
+      for (const d of target.sessionDates) {
+        results.push({ employeeId: target.employeeId, date: d, success: false, message: "Forbidden — employee outside your scope" });
+      }
+      continue;
+    }
+
+    const requestedByType = callerEmp?.id === target.employeeId ? "employee" : "manager";
+    const commonFields = {
+      requestedStatus: req.body.requestedStatus ?? null,
+      disputeType:     req.body.disputeType ?? null,
+      reason,
+      supportingNote:  req.body.supportingNote ?? null,
+      oldPunchIn:      null,
+      oldPunchOut:     null,
+      newPunchIn:      req.body.newPunchIn ?? null,
+      newPunchOut:     req.body.newPunchOut ?? null,
+      latitude:        null,
+      longitude:       null,
+      requestedByType,
+      employeeId:      target.employeeId,
+    };
+
+    for (const sessionDate of target.sessionDates) {
+      try {
+        const data = await wfmService.submitRegularization(
+          { ...commonFields, sessionDate, reasonCode: req.body.reasonCode ?? undefined } as any,
+          req.authUser.id,
+        );
+        void logSensitiveAction({
+          actor_user_id: req.authUser.id,
+          actor_role: requestedByType,
+          action_type: "REGULARIZATION_SUBMITTED",
+          module_key: "attendance",
+          entity_type: "attendance_regularization",
+          entity_id: data.id,
+          employee_id: target.employeeId,
+          reason,
+          new_value_json: { session_date: sessionDate, bulk_multi_employee: true, ...commonFields },
+          req,
+        });
+        results.push({ employeeId: target.employeeId, date: sessionDate, success: true, id: data.id });
+      } catch (err: any) {
+        results.push({ employeeId: target.employeeId, date: sessionDate, success: false, message: err?.message ?? String(err) });
+      }
+    }
+  }
+
+  const succeeded = results.filter((r) => r.success).length;
+  const failed = results.length - succeeded;
+  return res.status(201).json({
+    success: failed === 0,
+    employees: targets.length,
+    succeeded,
+    failed,
+    denied,
+    data: results,
+    message: failed > 0
+      ? `${succeeded} raised, ${failed} skipped (${denied} out of scope) — see data for details`
+      : `${succeeded} regularization request(s) raised across ${targets.length} employee(s), pending approval`,
+  });
+}));
+
+wfmRegularizationSecureRouter.get("/regularizations/mine", h(async (req: any, res: any) => {
+  const emp = await getEmployeeForUser(req.authUser.id);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+  const data = await wfmService.listRegularizations({ employeeId: emp.id });
+  return res.json({ success: true, data });
+}));
 
 /**
  * Hard ceiling on one page. The endpoint used to return the WHOLE table: no status
@@ -1613,81 +1240,66 @@ wfmRegularizationSecureRouter.get(
 const REGULARIZATION_PAGE_LIMIT_DEFAULT = 100;
 const REGULARIZATION_PAGE_LIMIT_MAX = 500;
 
-wfmRegularizationSecureRouter.get(
-  "/regularizations",
-  h(async (req: any, res: any) => {
-    const scope = await listScope(req.authUser.id);
-    const conds: string[] = [`(${scope.sql})`];
-    const params: unknown[] = [...scope.params];
-    if (req.query.employeeId) {
-      conds.push("ar.employee_id = ?");
-      params.push(String(req.query.employeeId));
+wfmRegularizationSecureRouter.get("/regularizations", h(async (req: any, res: any) => {
+  const scope = await listScope(req.authUser.id);
+  const conds: string[] = [`(${scope.sql})`];
+  const params: unknown[] = [...scope.params];
+  if (req.query.employeeId) { conds.push("ar.employee_id = ?"); params.push(String(req.query.employeeId)); }
+  if (req.query.status) {
+    // Comma-separated, e.g. "pending,manager_approved,payroll_pending" — the approval
+    // queue needs every open status in one call. A plain `=` matched zero rows for any
+    // multi-status filter, the same defect already fixed in leave.secure.routes.ts.
+    const statuses = String(req.query.status).split(",").map((s: string) => s.trim()).filter(Boolean);
+    if (statuses.length > 0) {
+      conds.push(`ar.status IN (${statuses.map(() => "?").join(",")})`);
+      params.push(...statuses);
     }
-    if (req.query.status) {
-      // Comma-separated, e.g. "pending,manager_approved,payroll_pending" — the approval
-      // queue needs every open status in one call. A plain `=` matched zero rows for any
-      // multi-status filter, the same defect already fixed in leave.secure.routes.ts.
-      const statuses = String(req.query.status)
-        .split(",")
-        .map((s: string) => s.trim())
-        .filter(Boolean);
-      if (statuses.length > 0) {
-        conds.push(`ar.status IN (${statuses.map(() => "?").join(",")})`);
-        params.push(...statuses);
-      }
-    }
-    if (req.query.fromDate) {
-      conds.push("ar.session_date >= ?");
-      params.push(String(req.query.fromDate));
-    }
-    if (req.query.toDate) {
-      conds.push("ar.session_date <= ?");
-      params.push(String(req.query.toDate));
-    }
-    // Employee search. Matched on the employees row rather than on
-    // attendance_regularization, which carries no name and no request number of its
-    // own — the "request no" the UI shows is composed in the browser from the
-    // employee code and the session date. Both columns searched here are on tables
-    // the count query already joins, so paging stays consistent with the list.
-    //
-    // Server-side rather than a browser filter because the list is capped at 500 rows
-    // out of 132,000: filtering only what was already fetched would answer "no
-    // requests found" for an employee whose rows simply were not on the page.
-    const searchTerm = String(req.query.search ?? "").trim();
-    if (searchTerm) {
-      const like = `%${searchTerm}%`;
-      conds.push(`(
+  }
+  if (req.query.fromDate) { conds.push("ar.session_date >= ?"); params.push(String(req.query.fromDate)); }
+  if (req.query.toDate) { conds.push("ar.session_date <= ?"); params.push(String(req.query.toDate)); }
+  // Employee search. Matched on the employees row rather than on
+  // attendance_regularization, which carries no name and no request number of its
+  // own — the "request no" the UI shows is composed in the browser from the
+  // employee code and the session date. Both columns searched here are on tables
+  // the count query already joins, so paging stays consistent with the list.
+  //
+  // Server-side rather than a browser filter because the list is capped at 500 rows
+  // out of 132,000: filtering only what was already fetched would answer "no
+  // requests found" for an employee whose rows simply were not on the page.
+  const searchTerm = String(req.query.search ?? "").trim();
+  if (searchTerm) {
+    const like = `%${searchTerm}%`;
+    conds.push(`(
       COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) LIKE ?
       OR e.employee_code LIKE ?
     )`);
-      params.push(like, like);
-    }
+    params.push(like, like);
+  }
 
-    const limit = Math.min(
-      Math.max(1, Number(req.query.limit) || REGULARIZATION_PAGE_LIMIT_DEFAULT),
-      REGULARIZATION_PAGE_LIMIT_MAX,
-    );
-    const page = Math.max(1, Number(req.query.page) || 1);
-    const offset =
-      Number(req.query.offset) >= 0 && req.query.offset !== undefined
-        ? Math.max(0, Number(req.query.offset))
-        : (page - 1) * limit;
+  const limit = Math.min(
+    Math.max(1, Number(req.query.limit) || REGULARIZATION_PAGE_LIMIT_DEFAULT),
+    REGULARIZATION_PAGE_LIMIT_MAX,
+  );
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const offset = Number(req.query.offset) >= 0 && req.query.offset !== undefined
+    ? Math.max(0, Number(req.query.offset))
+    : (page - 1) * limit;
 
-    const where = `WHERE ${conds.join(" AND ")}`;
+  const where = `WHERE ${conds.join(" AND ")}`;
 
-    // Counted over ar + employees only. `employees` is required because the scope
-    // predicate is written against e.*; none of the other six joins narrow the row set,
-    // so pulling them into the count would pay for them twice.
-    const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total
+  // Counted over ar + employees only. `employees` is required because the scope
+  // predicate is written against e.*; none of the other six joins narrow the row set,
+  // so pulling them into the count would pay for them twice.
+  const [countRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total
        FROM attendance_regularization ar
        LEFT JOIN employees e ON e.id = ar.employee_id
        ${where}`,
-      params,
-    );
-    const total = Number((countRows[0] as any)?.total ?? 0);
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT ar.*,
+    params,
+  );
+  const total = Number((countRows[0] as any)?.total ?? 0);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ar.*,
             COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name,
             e.employee_code,
             b.branch_name,
@@ -1731,159 +1343,99 @@ wfmRegularizationSecureRouter.get(
        ${where}
       ORDER BY ar.created_at DESC
       LIMIT ${limit} OFFSET ${offset}`,
-      params,
-    );
-    const viewer = await resolveViewerApprovalRoles(req.authUser.id);
-    const data = await enrichRegularizationRows(rows, viewer);
-    // `data` keeps its existing shape so every current caller is unaffected; the paging
-    // fields are additive.
-    return res.json({
-      success: true,
-      data,
-      total,
-      page,
-      limit,
-      hasMore: offset + rows.length < total,
+    params,
+  );
+  const viewer = await resolveViewerApprovalRoles(req.authUser.id);
+  const data = await enrichRegularizationRows(rows, viewer);
+  // `data` keeps its existing shape so every current caller is unaffected; the paging
+  // fields are additive.
+  return res.json({ success: true, data, total, page, limit, hasMore: offset + rows.length < total });
+}));
+
+wfmRegularizationSecureRouter.patch("/regularizations/bulk-review", h(async (req: any, res: any) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map(String).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ success: false, message: "ids array is required" });
+
+  // ── Branch RBAC (owner ruling, 2026-08-27) ─────────────────────────────────
+  // Bulk approval is Branch WFM / Branch Payroll HR over their own branch, plus
+  // Payroll Head and Super Admin across all branches. Enforced here rather than
+  // left to per-row scope alone, so one branch can never sweep another's queue.
+  const allowedBranches = await resolveBulkApprovalBranches(req.authUser.id);
+  if (allowedBranches === null) {
+    return res.status(403).json({
+      success: false,
+      message: "Forbidden: bulk approval is limited to Branch WFM, Branch Payroll HR, Payroll Head and Super Admin",
     });
-  }),
-);
+  }
 
-wfmRegularizationSecureRouter.patch(
-  "/regularizations/bulk-review",
-  h(async (req: any, res: any) => {
-    const ids = Array.isArray(req.body.ids)
-      ? req.body.ids.map(String).filter(Boolean)
-      : [];
-    if (!ids.length)
-      return res
-        .status(400)
-        .json({ success: false, message: "ids array is required" });
-
-    // ── Branch RBAC (owner ruling, 2026-08-27) ─────────────────────────────────
-    // Bulk approval is Branch WFM / Branch Payroll HR over their own branch, plus
-    // Payroll Head and Super Admin across all branches. Enforced here rather than
-    // left to per-row scope alone, so one branch can never sweep another's queue.
-    const allowedBranches = await resolveBulkApprovalBranches(req.authUser.id);
-    if (allowedBranches === null) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Forbidden: bulk approval is limited to Branch WFM, Branch Payroll HR, Payroll Head and Super Admin",
-      });
-    }
-
-    // Resolve every target's branch in ONE query rather than per id. employees.branch_id
-    // is the source: attendance_regularization.branch_id is NULL on 131,301 of 131,353
-    // live rows, so keying the branch check on it would pass nearly everything.
-    const branchById = new Map<string, string | null>();
-    if (allowedBranches !== "all") {
-      const [branchRows] = await db.execute<RowDataPacket[]>(
-        `SELECT ar.id, COALESCE(ar.branch_id, e.branch_id) AS branch_id
+  // Resolve every target's branch in ONE query rather than per id. employees.branch_id
+  // is the source: attendance_regularization.branch_id is NULL on 131,301 of 131,353
+  // live rows, so keying the branch check on it would pass nearly everything.
+  const branchById = new Map<string, string | null>();
+  if (allowedBranches !== "all") {
+    const [branchRows] = await db.execute<RowDataPacket[]>(
+      `SELECT ar.id, COALESCE(ar.branch_id, e.branch_id) AS branch_id
          FROM attendance_regularization ar
          LEFT JOIN employees e ON e.id = ar.employee_id
         WHERE ar.id IN (${ids.map(() => "?").join(",")})`,
-        ids,
-      );
-      for (const row of branchRows) {
-        branchById.set(
-          String((row as any).id),
-          (row as any).branch_id == null
-            ? null
-            : String((row as any).branch_id),
-        );
-      }
+      ids,
+    );
+    for (const row of branchRows) {
+      branchById.set(String((row as any).id), (row as any).branch_id == null ? null : String((row as any).branch_id));
     }
+  }
 
-    const results: Array<{
-      id: string;
-      success: boolean;
-      httpStatus: number;
-      message?: string;
-    }> = [];
-    for (const id of ids) {
-      if (allowedBranches !== "all") {
-        const branchId = branchById.get(id);
-        // An unresolvable branch is refused, not waved through — a request whose
-        // employee row is missing or carries no branch cannot be proven in-scope.
-        if (!branchId || !allowedBranches.has(branchId)) {
-          results.push({
-            id,
-            success: false,
-            httpStatus: 403,
-            message: "Forbidden: request belongs to another branch",
-          });
-          continue;
-        }
-      }
-      try {
-        const r = await _performReview(req, id, BRANCH_BULK_APPROVAL_ROLES);
-        results.push({
-          id,
-          success:
-            r.httpStatus >= 200 &&
-            r.httpStatus < 300 &&
-            (r.payload as any)?.success !== false,
-          httpStatus: r.httpStatus,
-          message: (r.payload as any)?.message,
-        });
-      } catch (err: any) {
+  const results: Array<{ id: string; success: boolean; httpStatus: number; message?: string }> = [];
+  for (const id of ids) {
+    if (allowedBranches !== "all") {
+      const branchId = branchById.get(id);
+      // An unresolvable branch is refused, not waved through — a request whose
+      // employee row is missing or carries no branch cannot be proven in-scope.
+      if (!branchId || !allowedBranches.has(branchId)) {
         results.push({
           id,
           success: false,
-          httpStatus: 500,
-          message: err?.message ?? String(err),
+          httpStatus: 403,
+          message: "Forbidden: request belongs to another branch",
         });
+        continue;
       }
     }
+    try {
+      const r = await _performReview(req, id, BRANCH_BULK_APPROVAL_ROLES);
+      results.push({
+        id,
+        success: r.httpStatus >= 200 && r.httpStatus < 300 && (r.payload as any)?.success !== false,
+        httpStatus: r.httpStatus,
+        message: (r.payload as any)?.message,
+      });
+    } catch (err: any) {
+      results.push({ id, success: false, httpStatus: 500, message: err?.message ?? String(err) });
+    }
+  }
 
-    const succeededCount = results.filter((r) => r.success).length;
-    const failedCount = results.length - succeededCount;
-    const httpStatus =
-      failedCount === 0
-        ? 200
-        : succeededCount === 0
-          ? (results[0]?.httpStatus ?? 400)
-          : 207;
-    return res.status(httpStatus).json({
-      success: failedCount === 0,
-      succeeded: succeededCount,
-      failed: failedCount,
-      data: results,
-      message:
-        failedCount > 0
-          ? `${succeededCount} approved, ${failedCount} failed — see data for details`
-          : `${succeededCount} approved successfully`,
-    });
-  }),
-);
+  const succeededCount = results.filter(r => r.success).length;
+  const failedCount    = results.length - succeededCount;
+  const httpStatus     = failedCount === 0 ? 200 : succeededCount === 0 ? results[0]?.httpStatus ?? 400 : 207;
+  return res.status(httpStatus).json({
+    success: failedCount === 0,
+    succeeded: succeededCount,
+    failed: failedCount,
+    data: results,
+    message: failedCount > 0
+      ? `${succeededCount} approved, ${failedCount} failed — see data for details`
+      : `${succeededCount} approved successfully`,
+  });
+}));
 
-wfmRegularizationSecureRouter.patch(
-  "/regularizations/:id/review",
-  h(async (req: any, res: any) => {
-    return reviewRegularizationRequest(req, res, req.params.id);
-  }),
-);
+wfmRegularizationSecureRouter.patch("/regularizations/:id/review", h(async (req: any, res: any) => {
+  return reviewRegularizationRequest(req, res, req.params.id);
+}));
 
 // ── Reason codes ──────────────────────────────────────────────────────────
-wfmRegularizationSecureRouter.get(
-  "/regularizations/reasons",
-  h(async (req: any, res: any) => {
-    const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
-    const isManager = await checkRole(
-      req.authUser.id,
-      "admin",
-      "hr",
-      "wfm",
-      "manager",
-      "assistant_manager",
-      "tl",
-      "team_leader",
-      "branch_head",
-      "process_manager",
-    );
-    const data = await wfmService.listReasons(
-      isManager ? undefined : "employee",
-    );
-    return res.json({ success: true, data });
-  }),
-);
+wfmRegularizationSecureRouter.get("/regularizations/reasons", h(async (req: any, res: any) => {
+  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
+  const isManager = await checkRole(req.authUser.id, 'admin', 'hr', 'wfm', 'manager', 'assistant_manager', 'tl', 'team_leader', 'branch_head', 'process_manager');
+  const data = await wfmService.listReasons(isManager ? undefined : 'employee');
+  return res.json({ success: true, data });
+}));

@@ -48,19 +48,10 @@ export type ScopeRow = { costCentreId: string; branchId: string };
  * centres would fall through to an unfiltered population, which is the whole company: the one
  * mistake here that pays thousands of people from a screen that said it was paying none.
  */
-export async function resolveCostCentreScope(
-  costCentreIds: string[],
-): Promise<ScopeRow[]> {
-  const ids = [
-    ...new Set(
-      (costCentreIds ?? []).map((s) => String(s ?? "").trim()).filter(Boolean),
-    ),
-  ];
+export async function resolveCostCentreScope(costCentreIds: string[]): Promise<ScopeRow[]> {
+  const ids = [...new Set((costCentreIds ?? []).map((s) => String(s ?? "").trim()).filter(Boolean))];
   if (!ids.length) {
-    throw new ScopeError(
-      "CC_REQUIRED",
-      "Select at least one cost centre for a scoped payroll run.",
-    );
+    throw new ScopeError("CC_REQUIRED", "Select at least one cost centre for a scoped payroll run.");
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -82,10 +73,7 @@ export async function resolveCostCentreScope(
     );
   }
 
-  return rows.map((r) => ({
-    costCentreId: String(r.id),
-    branchId: String(r.branch_id),
-  }));
+  return rows.map((r) => ({ costCentreId: String(r.id), branchId: String(r.branch_id) }));
 }
 
 /**
@@ -118,9 +106,7 @@ export async function assertCostCentresFree(
   );
 
   if (rows.length) {
-    const names = rows
-      .map((r) => String(r.cost_centre_code ?? r.cost_centre_id))
-      .join(", ");
+    const names = rows.map((r) => String(r.cost_centre_code ?? r.cost_centre_id)).join(", ");
     throw new ScopeError(
       "CC_ALREADY_IN_RUN",
       `Already covered by another payroll run for ${runMonth}: ${names}`,
@@ -181,19 +167,11 @@ export async function insertRunScope(
   await conn.execute(
     `INSERT INTO salary_prep_run_scope (id, run_id, run_month, branch_id, cost_centre_id)
      VALUES ${rows.map(() => "(?, ?, ?, ?, ?)").join(", ")}`,
-    rows.flatMap((r) => [
-      randomUUID(),
-      runId,
-      runMonth,
-      r.branchId,
-      r.costCentreId,
-    ]),
+    rows.flatMap((r) => [randomUUID(), runId, runMonth, r.branchId, r.costCentreId]),
   );
 }
 
-export async function getRunScopeCostCentreIds(
-  runId: string,
-): Promise<string[]> {
+export async function getRunScopeCostCentreIds(runId: string): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT cost_centre_id FROM salary_prep_run_scope WHERE run_id = ?`,
     [runId],

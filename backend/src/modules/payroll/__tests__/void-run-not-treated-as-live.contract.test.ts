@@ -23,15 +23,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
-  VOID_RUN_STATUSES,
-  VOID_RUN_STATUSES_SQL,
-  CLOSED_RUN_STATUSES,
-} from "../run-status.js";
+import { VOID_RUN_STATUSES, VOID_RUN_STATUSES_SQL, CLOSED_RUN_STATUSES } from "../run-status.js";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const read = (rel: string) =>
-  fs.readFileSync(path.resolve(DIR, "..", rel), "utf8");
+const read = (rel: string) => fs.readFileSync(path.resolve(DIR, "..", rel), "utf8");
 
 /** Every backend site that picks "the run for this month" and must ignore voided ones. */
 const SITES: Array<{ file: string; anchor: string; what: string }> = [
@@ -55,9 +50,7 @@ describe("every backend site that resolves a month's run ignores voided runs", (
       expect(idx, `anchor not found in ${site.file}`).toBeGreaterThan(-1);
       // The SQL sits within a few hundred characters of the anchor in both files.
       const region = src.slice(Math.max(0, idx - 1200), idx + 1200);
-      expect(region, `${site.file} must filter on status`).toContain(
-        "VOID_RUN_STATUSES_SQL",
-      );
+      expect(region, `${site.file} must filter on status`).toContain("VOID_RUN_STATUSES_SQL");
     });
 
     it(`${site.what} compares case- and whitespace-insensitively`, () => {
@@ -89,16 +82,13 @@ describe("the vocabulary the sites share", () => {
   });
 
   it("keeps its SQL form in step", () => {
-    const fromSql = VOID_RUN_STATUSES_SQL.split(",")
-      .map((s) => s.trim().replace(/'/g, ""))
-      .sort();
+    const fromSql = VOID_RUN_STATUSES_SQL.split(",").map((s) => s.trim().replace(/'/g, "")).sort();
     expect(fromSql).toEqual([...VOID_RUN_STATUSES].sort());
   });
 
   it("never overlaps the closed statuses", () => {
     // Closed means finished and must not be recomputed. Void means it never happened. An overlap
     // would either let a real finalized run be replaced, or leave a cancelled one blocking.
-    for (const s of VOID_RUN_STATUSES)
-      expect(CLOSED_RUN_STATUSES.has(s)).toBe(false);
+    for (const s of VOID_RUN_STATUSES) expect(CLOSED_RUN_STATUSES.has(s)).toBe(false);
   });
 });

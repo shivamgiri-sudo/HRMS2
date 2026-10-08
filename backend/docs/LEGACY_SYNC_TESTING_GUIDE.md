@@ -36,7 +36,6 @@ curl -X POST http://localhost:3002/api/legacy/sync/trigger \
 ```
 
 **Expected Response:**
-
 ```json
 {
   "success": true,
@@ -48,7 +47,7 @@ curl -X POST http://localhost:3002/api/legacy/sync/trigger \
 
 ```bash
 mysql -h <mas_hrms DB host — see backend/.env> -u root -p<set SOURCE_DB_PASSWORD in backend/.env> mas_hrms -e "
-SELECT
+SELECT 
   employee_code,
   CONCAT(first_name, ' ', COALESCE(last_name, '')) as name,
   mobile,
@@ -66,7 +65,7 @@ LIMIT 10;
 
 ```bash
 mysql -h <mas_hrms DB host — see backend/.env> -u root -p<set SOURCE_DB_PASSWORD in backend/.env> mas_hrms -e "
-SELECT
+SELECT 
   domain,
   status,
   records_processed,
@@ -85,7 +84,6 @@ LIMIT 5;
 ### Test 1: Initial Sync (First 1000 employees)
 
 **Setup:**
-
 ```bash
 # Check current count
 mysql -h <mas_hrms DB host — see backend/.env> -u root -p<set SOURCE_DB_PASSWORD in backend/.env> mas_hrms -e \
@@ -93,14 +91,12 @@ mysql -h <mas_hrms DB host — see backend/.env> -u root -p<set SOURCE_DB_PASSWO
 ```
 
 **Execute:**
-
 ```bash
 curl -X POST http://localhost:3002/api/legacy/sync/trigger \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 **Verify:**
-
 - Should insert ~1000 new employees
 - All should have `legacy_emp_id` and `legacy_last_updated`
 - Names should be split correctly (first_name + last_name)
@@ -111,7 +107,6 @@ curl -X POST http://localhost:3002/api/legacy/sync/trigger \
 ### Test 2: Incremental Sync (Updated Records)
 
 **Setup:**
-
 ```sql
 -- Update an employee in legacy (on <db_bill host — see backend/.env>)
 UPDATE db_bill.masjclrentry
@@ -120,14 +115,12 @@ WHERE EmpCode = 'MAS00001';
 ```
 
 **Execute:**
-
 ```bash
 curl -X POST http://localhost:3002/api/legacy/sync/trigger \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 **Verify:**
-
 ```sql
 -- Check if HRMS employee updated
 SELECT employee_code, mobile, legacy_last_updated, updated_at
@@ -141,7 +134,6 @@ WHERE employee_code = 'MAS00001';
 ### Test 3: New Employee (Insert)
 
 **Setup:**
-
 ```sql
 -- Add new employee in legacy
 INSERT INTO db_bill.masjclrentry (EmpCode, EmpName, Status, lastUpdated)
@@ -149,14 +141,12 @@ VALUES ('TEST001', 'John Doe', '1', NOW());
 ```
 
 **Execute:**
-
 ```bash
 curl -X POST http://localhost:3002/api/legacy/sync/trigger \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 **Verify:**
-
 ```sql
 SELECT * FROM employees WHERE employee_code = 'TEST001';
 -- Should exist with first_name='John', last_name='Doe'
@@ -167,7 +157,6 @@ SELECT * FROM employees WHERE employee_code = 'TEST001';
 ### Test 4: Continuous Sync (Enable Worker)
 
 **Enable:**
-
 ```bash
 # Edit backend/.env
 LEGACY_SYNC_ENABLED=true
@@ -176,14 +165,12 @@ LEGACY_SYNC_BATCH_SIZE=1000
 ```
 
 **Restart Backend:**
-
 ```bash
 pkill -f "tsx.*server.ts"
 PORT=3002 npx tsx src/server.ts > /tmp/backend.log 2>&1 &
 ```
 
 **Monitor:**
-
 ```bash
 # Watch sync logs
 tail -f /tmp/backend.log | grep LegacySync
@@ -199,9 +186,8 @@ tail -f /tmp/backend.log | grep LegacySync
 ## Verification Queries
 
 ### Count Synced Employees
-
 ```sql
-SELECT
+SELECT 
   COUNT(*) as total,
   SUM(CASE WHEN active_status = 1 THEN 1 ELSE 0 END) as active,
   SUM(CASE WHEN active_status = 0 THEN 1 ELSE 0 END) as inactive
@@ -210,9 +196,8 @@ WHERE legacy_emp_id IS NOT NULL;
 ```
 
 ### Check Field Mapping Quality
-
 ```sql
-SELECT
+SELECT 
   COUNT(*) as total,
   SUM(CASE WHEN first_name IS NULL THEN 1 ELSE 0 END) as missing_name,
   SUM(CASE WHEN mobile IS NULL AND email IS NULL THEN 1 ELSE 0 END) as missing_contact,
@@ -223,15 +208,13 @@ WHERE legacy_emp_id IS NOT NULL;
 ```
 
 **Expected:**
-
 - missing_name = 0
 - missing_contact = 0
 - aadhaar_not_masked = 0 (IMPORTANT: security check)
 
 ### Sync Performance
-
 ```sql
-SELECT
+SELECT 
   status,
   AVG(records_processed) as avg_records,
   AVG(TIMESTAMPDIFF(SECOND, started_at, completed_at)) as avg_duration_sec,
@@ -249,7 +232,6 @@ GROUP BY status;
 
 **Cause:** Checkpoint is ahead of legacy timestamps  
 **Fix:**
-
 ```sql
 -- Reset checkpoint to force re-sync
 UPDATE legacy_sync_checkpoint
@@ -261,7 +243,6 @@ WHERE domain = 'employee';
 
 **Cause:** Legacy database not reachable  
 **Fix:**
-
 - Check VPN connection
 - Verify IP: <db_bill host — see backend/.env>:3306
 - Test: `mysql -h <db_bill host — see backend/.env> -u shivam_user -p db_bill`
@@ -276,7 +257,6 @@ WHERE domain = 'employee';
 
 **CRITICAL SECURITY ISSUE**  
 **Fix:**
-
 ```sql
 -- Mask all Aadhaar numbers
 UPDATE employees
@@ -289,28 +269,24 @@ WHERE LENGTH(aadhaar_last4) > 4;
 ## Production Rollout
 
 ### Phase 1: Initial Full Sync (Week 1)
-
 - [ ] Disable continuous sync: `LEGACY_SYNC_ENABLED=false`
 - [ ] Trigger manual sync in batches
 - [ ] Verify 32,634 employees synced
 - [ ] Audit data quality (name splitting, masking)
 
 ### Phase 2: Enable Continuous Sync (Week 2)
-
 - [ ] Set `LEGACY_SYNC_ENABLED=true`
 - [ ] Set `LEGACY_SYNC_INTERVAL_MS=300000` (5 minutes for production)
 - [ ] Monitor sync logs daily
 - [ ] Alert on sync failures
 
 ### Phase 3: Validation (Week 3)
-
 - [ ] Compare employee counts: legacy vs HRMS
 - [ ] Spot-check 100 random employees
 - [ ] Verify attendance system integration (biometric_code)
 - [ ] Test payroll integration (salary fields)
 
 ### Phase 4: Legacy Sunset (Month 2)
-
 - [ ] After 1 month of successful sync
 - [ ] Confirm HRMS is source of truth
 - [ ] Decommission legacy sync
@@ -321,14 +297,12 @@ WHERE LENGTH(aadhaar_last4) > 4;
 ## API Endpoints
 
 ### Health Check
-
 ```bash
 GET /api/legacy/health
 Authorization: Bearer <admin-token>
 ```
 
 **Response:**
-
 ```json
 {
   "ok": true,
@@ -339,14 +313,12 @@ Authorization: Bearer <admin-token>
 ```
 
 ### Manual Sync Trigger
-
 ```bash
 POST /api/legacy/sync/trigger
 Authorization: Bearer <admin-token>
 ```
 
 **Response:**
-
 ```json
 {
   "success": true,
@@ -355,14 +327,12 @@ Authorization: Bearer <admin-token>
 ```
 
 ### Sync Status
-
 ```bash
 GET /api/legacy/sync/status
 Authorization: Bearer <admin-token>
 ```
 
 **Response:**
-
 ```json
 {
   "domain": "employee",

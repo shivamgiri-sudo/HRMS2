@@ -14,35 +14,29 @@ function applyTicketScope(
   }
 }
 
-function requiresEmployeeJoin(
-  scopeCondition?: HelpdeskTicketScope,
-  ...values: Array<unknown>
-) {
-  return (
-    Boolean(scopeCondition && scopeCondition.sql !== "1=1") ||
-    values.some(Boolean)
-  );
+function requiresEmployeeJoin(scopeCondition?: HelpdeskTicketScope, ...values: Array<unknown>) {
+  return Boolean(scopeCondition && scopeCondition.sql !== "1=1") || values.some(Boolean);
 }
 
 // ── SLA windows (hours) by priority × category ───────────────────────────────
 const SLA_HOURS_DEFAULT: Record<string, number> = {
   urgent: 2,
-  high: 24,
+  high:   24,
   medium: 48,
-  low: 72,
+  low:    72,
 };
 
 const SLA_CATEGORY_OVERRIDE: Record<string, Record<string, number>> = {
-  it: { urgent: 2, high: 8, medium: 24, low: 48 },
-  payroll: { urgent: 4, high: 24, medium: 48, low: 72 },
-  attendance: { urgent: 4, high: 24, medium: 48, low: 72 },
-  hr: { urgent: 4, high: 24, medium: 48, low: 72 },
+  it:         { urgent: 2,  high: 8,  medium: 24, low: 48 },
+  payroll:    { urgent: 4,  high: 24, medium: 48, low: 72 },
+  attendance: { urgent: 4,  high: 24, medium: 48, low: 72 },
+  hr:         { urgent: 4,  high: 24, medium: 48, low: 72 },
 };
 
 export function calculateSlaDueAt(
   priority: string,
   category: string,
-  createdAt: Date,
+  createdAt: Date
 ): Date {
   const prio = priority in SLA_HOURS_DEFAULT ? priority : "medium";
   const categoryHours = SLA_CATEGORY_OVERRIDE[category];
@@ -56,68 +50,33 @@ export function calculateSlaDueAt(
 export const calculateTicketSlaDueAt = calculateSlaDueAt;
 
 // ── Dashboard stats ───────────────────────────────────────────────────────────
-export async function getHelpdeskDashboard(
-  filters: {
-    branch_id?: string;
-    process_id?: string;
-    department_id?: string;
-    category?: string;
-    priority?: string;
-    status?: string;
-    assigned_to?: string;
-    from?: string;
-    to?: string;
-  },
-  scopeCondition?: HelpdeskTicketScope,
-) {
+export async function getHelpdeskDashboard(filters: {
+  branch_id?: string;
+  process_id?: string;
+  department_id?: string;
+  category?: string;
+  priority?: string;
+  status?: string;
+  assigned_to?: string;
+  from?: string;
+  to?: string;
+}, scopeCondition?: HelpdeskTicketScope) {
   const conds: string[] = [];
   const params: unknown[] = [];
 
-  if (filters.from) {
-    conds.push("t.created_at >= ?");
-    params.push(filters.from + " 00:00:00");
-  }
-  if (filters.to) {
-    conds.push("t.created_at <= ?");
-    params.push(filters.to + " 23:59:59");
-  }
-  if (filters.category) {
-    conds.push("t.category = ?");
-    params.push(filters.category);
-  }
-  if (filters.priority) {
-    conds.push("t.priority = ?");
-    params.push(filters.priority);
-  }
-  if (filters.status) {
-    conds.push("t.status = ?");
-    params.push(filters.status);
-  }
-  if (filters.assigned_to) {
-    conds.push("t.assigned_to = ?");
-    params.push(filters.assigned_to);
-  }
-  if (filters.branch_id) {
-    conds.push("e.branch_id = ?");
-    params.push(filters.branch_id);
-  }
-  if (filters.process_id) {
-    conds.push("e.process_id = ?");
-    params.push(filters.process_id);
-  }
-  if (filters.department_id) {
-    conds.push("e.department_id = ?");
-    params.push(filters.department_id);
-  }
+  if (filters.from)       { conds.push("t.created_at >= ?");    params.push(filters.from + " 00:00:00"); }
+  if (filters.to)         { conds.push("t.created_at <= ?");    params.push(filters.to   + " 23:59:59"); }
+  if (filters.category)   { conds.push("t.category = ?");       params.push(filters.category); }
+  if (filters.priority)   { conds.push("t.priority = ?");       params.push(filters.priority); }
+  if (filters.status)     { conds.push("t.status = ?");         params.push(filters.status); }
+  if (filters.assigned_to){ conds.push("t.assigned_to = ?");    params.push(filters.assigned_to); }
+  if (filters.branch_id)  { conds.push("e.branch_id = ?");      params.push(filters.branch_id); }
+  if (filters.process_id) { conds.push("e.process_id = ?");     params.push(filters.process_id); }
+  if (filters.department_id){ conds.push("e.department_id = ?");params.push(filters.department_id); }
   applyTicketScope(conds, params, scopeCondition);
 
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const joinClause = requiresEmployeeJoin(
-    scopeCondition,
-    filters.branch_id,
-    filters.process_id,
-    filters.department_id,
-  )
+  const joinClause = requiresEmployeeJoin(scopeCondition, filters.branch_id, filters.process_id, filters.department_id)
     ? "JOIN employees e ON e.id = t.employee_id"
     : "LEFT JOIN employees e ON e.id = t.employee_id";
 
@@ -137,46 +96,24 @@ export async function getHelpdeskDashboard(
      FROM helpdesk_ticket t
      ${joinClause}
      ${where}`,
-    params,
+    params
   );
 
   return { stats: statsRows[0] ?? {} };
 }
 
-export async function getHelpdeskSlaSummary(
-  filters: {
-    from?: string;
-    to?: string;
-    branch_id?: string;
-    process_id?: string;
-  },
-  scopeCondition?: HelpdeskTicketScope,
-) {
+export async function getHelpdeskSlaSummary(filters: {
+  from?: string; to?: string; branch_id?: string; process_id?: string;
+}, scopeCondition?: HelpdeskTicketScope) {
   const conds: string[] = [];
   const params: unknown[] = [];
-  if (filters.from) {
-    conds.push("t.created_at >= ?");
-    params.push(filters.from + " 00:00:00");
-  }
-  if (filters.to) {
-    conds.push("t.created_at <= ?");
-    params.push(filters.to + " 23:59:59");
-  }
-  if (filters.branch_id) {
-    conds.push("e.branch_id = ?");
-    params.push(filters.branch_id);
-  }
-  if (filters.process_id) {
-    conds.push("e.process_id = ?");
-    params.push(filters.process_id);
-  }
+  if (filters.from) { conds.push("t.created_at >= ?"); params.push(filters.from + " 00:00:00"); }
+  if (filters.to)   { conds.push("t.created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
+  if (filters.branch_id)  { conds.push("e.branch_id = ?");  params.push(filters.branch_id); }
+  if (filters.process_id) { conds.push("e.process_id = ?"); params.push(filters.process_id); }
   applyTicketScope(conds, params, scopeCondition);
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const joinClause = requiresEmployeeJoin(
-    scopeCondition,
-    filters.branch_id,
-    filters.process_id,
-  )
+  const joinClause = requiresEmployeeJoin(scopeCondition, filters.branch_id, filters.process_id)
     ? "JOIN employees e ON e.id = t.employee_id"
     : "";
 
@@ -190,51 +127,28 @@ export async function getHelpdeskSlaSummary(
                       THEN TIMESTAMPDIFF(MINUTE, t.created_at, t.resolved_at) END), 0) AS avg_resolution_minutes
      FROM helpdesk_ticket t ${joinClause} ${where}
      GROUP BY t.priority`,
-    params,
+    params
   );
   return { data: rows };
 }
 
-export async function getCategoryBreakdown(
-  filters: {
-    from?: string;
-    to?: string;
-    branch_id?: string;
-    process_id?: string;
-    department_id?: string;
-  },
-  scopeCondition?: HelpdeskTicketScope,
-) {
+export async function getCategoryBreakdown(filters: {
+  from?: string;
+  to?: string;
+  branch_id?: string;
+  process_id?: string;
+  department_id?: string;
+}, scopeCondition?: HelpdeskTicketScope) {
   const conds: string[] = [];
   const params: unknown[] = [];
-  if (filters.from) {
-    conds.push("t.created_at >= ?");
-    params.push(filters.from + " 00:00:00");
-  }
-  if (filters.to) {
-    conds.push("t.created_at <= ?");
-    params.push(filters.to + " 23:59:59");
-  }
-  if (filters.branch_id) {
-    conds.push("e.branch_id = ?");
-    params.push(filters.branch_id);
-  }
-  if (filters.process_id) {
-    conds.push("e.process_id = ?");
-    params.push(filters.process_id);
-  }
-  if (filters.department_id) {
-    conds.push("e.department_id = ?");
-    params.push(filters.department_id);
-  }
+  if (filters.from) { conds.push("t.created_at >= ?"); params.push(filters.from + " 00:00:00"); }
+  if (filters.to)   { conds.push("t.created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
+  if (filters.branch_id)  { conds.push("e.branch_id = ?");      params.push(filters.branch_id); }
+  if (filters.process_id) { conds.push("e.process_id = ?");     params.push(filters.process_id); }
+  if (filters.department_id){ conds.push("e.department_id = ?");params.push(filters.department_id); }
   applyTicketScope(conds, params, scopeCondition);
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const joinClause = requiresEmployeeJoin(
-    scopeCondition,
-    filters.branch_id,
-    filters.process_id,
-    filters.department_id,
-  )
+  const joinClause = requiresEmployeeJoin(scopeCondition, filters.branch_id, filters.process_id, filters.department_id)
     ? "JOIN employees e ON e.id = t.employee_id"
     : "";
 
@@ -247,7 +161,7 @@ export async function getCategoryBreakdown(
                            THEN TIMESTAMPDIFF(MINUTE, t.created_at, t.resolved_at) END), 0) AS avg_resolution_minutes
        FROM helpdesk_ticket t ${joinClause} ${where}
        GROUP BY t.category ORDER BY total DESC`,
-    params,
+    params
   );
   return { data: rows };
 }
@@ -280,32 +194,19 @@ export async function getOwnerWorkload(scopeCondition?: HelpdeskTicketScope) {
       GROUP BY t.assigned_to, owner_name
       ORDER BY open DESC
       LIMIT 50`,
-    params,
+    params
   );
   return { data: rows };
 }
 
-export async function getAgingBuckets(
-  filters: { branch_id?: string; process_id?: string },
-  scopeCondition?: HelpdeskTicketScope,
-) {
+export async function getAgingBuckets(filters: { branch_id?: string; process_id?: string }, scopeCondition?: HelpdeskTicketScope) {
   const conds: string[] = ["t.status NOT IN ('resolved','closed','cancelled')"];
   const params: unknown[] = [];
-  if (filters.branch_id) {
-    conds.push("e.branch_id = ?");
-    params.push(filters.branch_id);
-  }
-  if (filters.process_id) {
-    conds.push("e.process_id = ?");
-    params.push(filters.process_id);
-  }
+  if (filters.branch_id)  { conds.push("e.branch_id = ?");  params.push(filters.branch_id); }
+  if (filters.process_id) { conds.push("e.process_id = ?"); params.push(filters.process_id); }
   applyTicketScope(conds, params, scopeCondition);
   const where = `WHERE ${conds.join(" AND ")}`;
-  const joinClause = requiresEmployeeJoin(
-    scopeCondition,
-    filters.branch_id,
-    filters.process_id,
-  )
+  const joinClause = requiresEmployeeJoin(scopeCondition, filters.branch_id, filters.process_id)
     ? "JOIN employees e ON e.id = t.employee_id"
     : "LEFT JOIN employees e ON e.id = t.employee_id";
 
@@ -317,85 +218,52 @@ export async function getAgingBuckets(
        SUM(TIMESTAMPDIFF(HOUR, t.created_at, NOW()) BETWEEN 72 AND 168) AS bucket_3_7d,
        SUM(TIMESTAMPDIFF(HOUR, t.created_at, NOW()) > 168)              AS bucket_over_7d
      FROM helpdesk_ticket t ${joinClause} ${where}`,
-    params,
+    params
   );
   return { data: rows[0] ?? {} };
 }
 
-export async function getRootCauses(
-  filters: {
-    from?: string;
-    to?: string;
-    branch_id?: string;
-    process_id?: string;
-    department_id?: string;
-  },
-  scopeCondition?: HelpdeskTicketScope,
-) {
+export async function getRootCauses(filters: {
+  from?: string;
+  to?: string;
+  branch_id?: string;
+  process_id?: string;
+  department_id?: string;
+}, scopeCondition?: HelpdeskTicketScope) {
   const conds: string[] = ["root_cause IS NOT NULL"];
   const params: unknown[] = [];
-  if (filters.from) {
-    conds.push("t.created_at >= ?");
-    params.push(filters.from + " 00:00:00");
-  }
-  if (filters.to) {
-    conds.push("t.created_at <= ?");
-    params.push(filters.to + " 23:59:59");
-  }
-  if (filters.branch_id) {
-    conds.push("e.branch_id = ?");
-    params.push(filters.branch_id);
-  }
-  if (filters.process_id) {
-    conds.push("e.process_id = ?");
-    params.push(filters.process_id);
-  }
-  if (filters.department_id) {
-    conds.push("e.department_id = ?");
-    params.push(filters.department_id);
-  }
+  if (filters.from) { conds.push("t.created_at >= ?"); params.push(filters.from + " 00:00:00"); }
+  if (filters.to)   { conds.push("t.created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
+  if (filters.branch_id)  { conds.push("e.branch_id = ?");      params.push(filters.branch_id); }
+  if (filters.process_id) { conds.push("e.process_id = ?");     params.push(filters.process_id); }
+  if (filters.department_id){ conds.push("e.department_id = ?");params.push(filters.department_id); }
   applyTicketScope(conds, params, scopeCondition);
   const where = `WHERE ${conds.join(" AND ")}`;
-  const joinClause = requiresEmployeeJoin(
-    scopeCondition,
-    filters.branch_id,
-    filters.process_id,
-    filters.department_id,
-  )
+  const joinClause = requiresEmployeeJoin(scopeCondition, filters.branch_id, filters.process_id, filters.department_id)
     ? "JOIN employees e ON e.id = t.employee_id"
     : "";
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT t.root_cause, COUNT(*) AS total FROM helpdesk_ticket t ${joinClause} ${where}
        GROUP BY t.root_cause ORDER BY total DESC LIMIT 20`,
-    params,
+    params
   );
   return { data: rows };
 }
 
-export async function getSupportCommandCenter(
-  filters: {
-    branch_id?: string;
-    process_id?: string;
-    department_id?: string;
-    category?: string;
-    priority?: string;
-    status?: string;
-    assigned_to?: string;
-    from?: string;
-    to?: string;
-  },
-  scopeCondition?: HelpdeskTicketScope,
-) {
+export async function getSupportCommandCenter(filters: {
+  branch_id?: string;
+  process_id?: string;
+  department_id?: string;
+  category?: string;
+  priority?: string;
+  status?: string;
+  assigned_to?: string;
+  from?: string;
+  to?: string;
+}, scopeCondition?: HelpdeskTicketScope) {
   await refreshSlaBreachFlags();
-  const [
-    dashboard,
-    slaSummary,
-    categoryBreakdown,
-    ownerWorkload,
-    aging,
-    rootCauses,
-  ] = await Promise.all([
+  const [dashboard, slaSummary, categoryBreakdown, ownerWorkload, aging, rootCauses] = await Promise.all([
     getHelpdeskDashboard(filters, scopeCondition),
     getHelpdeskSlaSummary(filters, scopeCondition),
     getCategoryBreakdown(filters, scopeCondition),
@@ -438,23 +306,23 @@ export async function getGrievanceDashboard(filters: {
        ROUND(AVG(CASE WHEN closed_at IS NOT NULL
                       THEN TIMESTAMPDIFF(DAY, created_at, closed_at) END), 1) AS avg_resolution_days
      FROM grievance ${where}`,
-    params,
+    params
   );
 
   const [categoryRows] = await db.execute<RowDataPacket[]>(
     `SELECT category, COUNT(*) AS total,
             SUM(status NOT IN ('resolved','closed')) AS open
        FROM grievance ${where}
-       GROUP BY category ORDER BY total DESC`,
-    params,
+       GROUP BY category ORDER BY total DESC`
+    , params
   );
 
   const [severityRows] = await db.execute<RowDataPacket[]>(
     `SELECT severity, COUNT(*) AS total,
             SUM(status NOT IN ('resolved','closed')) AS open
        FROM grievance ${where}
-       GROUP BY severity`,
-    params,
+       GROUP BY severity`
+    , params
   );
 
   const [agingRows] = await db.execute<RowDataPacket[]>(
@@ -496,24 +364,12 @@ export async function getGrievanceCommandCenter(filters: {
 }
 
 // ── IT depth analysis ─────────────────────────────────────────────────────────
-export async function getItDepthAnalysis(
-  filters: { from?: string; to?: string; branch_id?: string },
-  scopeCondition?: HelpdeskTicketScope,
-) {
+export async function getItDepthAnalysis(filters: { from?: string; to?: string; branch_id?: string }, scopeCondition?: HelpdeskTicketScope) {
   const conds: string[] = ["t.category IN ('IT','it')"];
   const params: unknown[] = [];
-  if (filters.from) {
-    conds.push("t.created_at >= ?");
-    params.push(filters.from + " 00:00:00");
-  }
-  if (filters.to) {
-    conds.push("t.created_at <= ?");
-    params.push(filters.to + " 23:59:59");
-  }
-  if (filters.branch_id) {
-    conds.push("e.branch_id = ?");
-    params.push(filters.branch_id);
-  }
+  if (filters.from)      { conds.push("t.created_at >= ?"); params.push(filters.from + " 00:00:00"); }
+  if (filters.to)        { conds.push("t.created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
+  if (filters.branch_id) { conds.push("e.branch_id = ?");   params.push(filters.branch_id); }
   applyTicketScope(conds, params, scopeCondition);
   const where = `WHERE ${conds.join(" AND ")}`;
   const joinClause = requiresEmployeeJoin(scopeCondition, filters.branch_id)
@@ -535,7 +391,7 @@ export async function getItDepthAnalysis(
      ${where}
      GROUP BY COALESCE(t.it_subcategory, 'unclassified')
      ORDER BY total_downtime_minutes DESC`,
-    params,
+    params
   );
 
   // Branch-level impact
@@ -555,7 +411,7 @@ export async function getItDepthAnalysis(
      GROUP BY b.id, b.branch_name
      ORDER BY total_downtime_minutes DESC
      LIMIT 20`,
-    params,
+    params
   );
 
   // Top recurring IT issues (by root_cause or subject keyword)
@@ -570,7 +426,7 @@ export async function getItDepthAnalysis(
      GROUP BY COALESCE(t.root_cause, t.it_subcategory, 'unknown')
      ORDER BY occurrences DESC
      LIMIT 10`,
-    params,
+    params
   );
 
   // Overall IT summary
@@ -586,7 +442,7 @@ export async function getItDepthAnalysis(
        COUNT(DISTINCT e.branch_id) AS branches_affected
      FROM helpdesk_ticket t ${joinClause}
      ${where}`,
-    params,
+    params
   );
 
   return {
@@ -618,7 +474,7 @@ export async function refreshSlaBreachFlags() {
       WHERE sla_due_at IS NOT NULL
         AND sla_due_at < NOW()
         AND status NOT IN ('resolved','closed','cancelled','on_hold')
-        AND sla_breached = 0`,
+        AND sla_breached = 0`
   );
   const tickets = newlyBreached as RowDataPacket[];
   if (!tickets.length) return;
@@ -629,7 +485,7 @@ export async function refreshSlaBreachFlags() {
         SET sla_breached = 1,
             escalation_level = escalation_level + 1
       WHERE id IN (${ids.map(() => "?").join(",")})`,
-    ids,
+    ids
   );
 
   const { logSensitiveAction } = await import("../../shared/auditLog.js");
@@ -646,16 +502,10 @@ export async function refreshSlaBreachFlags() {
         module_key: "HELPDESK",
         entity_type: "helpdesk_ticket",
         entity_id: ticketId,
-        change_summary: {
-          category: t.category,
-          escalation_level: Number(t.escalation_level ?? 0) + 1,
-        },
+        change_summary: { category: t.category, escalation_level: Number(t.escalation_level ?? 0) + 1 },
       });
     } catch (e) {
-      console.error(
-        `[helpdesk-sla] audit log failed for breached ticket ${ticketId}:`,
-        e,
-      );
+      console.error(`[helpdesk-sla] audit log failed for breached ticket ${ticketId}:`, e);
     }
 
     // Notify whoever is currently assigned — this cron doesn't re-route an already-assigned
@@ -675,10 +525,7 @@ export async function refreshSlaBreachFlags() {
           priority: "urgent",
         });
       } catch (e) {
-        console.error(
-          `[helpdesk-sla] breach notification failed for ticket ${ticketId}:`,
-          e,
-        );
+        console.error(`[helpdesk-sla] breach notification failed for ticket ${ticketId}:`, e);
       }
     }
   }

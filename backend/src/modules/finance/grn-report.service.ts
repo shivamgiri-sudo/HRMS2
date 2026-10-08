@@ -1,14 +1,8 @@
 import { grnBranchVisibility } from "./grn-branch-split.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  financeBranchFilter,
-  type FinanceBranchScope,
-} from "./finance-access-scope.js";
-import {
-  ownCompanyGrnSql,
-  refreshHiddenGrnScope,
-} from "../../shared/ownCompanyCostCentre.js";
+import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
+import { ownCompanyGrnSql, refreshHiddenGrnScope } from "../../shared/ownCompanyCostCentre.js";
 import { resolvePendingWith } from "./finance-workflow-role.js";
 
 /**
@@ -72,21 +66,8 @@ export const APPROVAL_STAGE_STATUSES: Record<string, readonly string[]> = {
   awaiting_branch_head: ["submitted"],
   awaiting_accounts_head: ["branch_head_approved"],
   awaiting_finance_head: ["accounts_head_approved"],
-  pending_any_level: [
-    "submitted",
-    "branch_head_approved",
-    "accounts_head_approved",
-    "returned_to_branch_head",
-    "returned_to_raiser",
-  ],
-  fully_approved: [
-    "approved",
-    "finance_head_approved",
-    "pending_accounts_payment",
-    "payment_scheduled",
-    "partially_paid",
-    "paid",
-  ],
+  pending_any_level: ["submitted", "branch_head_approved", "accounts_head_approved", "returned_to_branch_head", "returned_to_raiser"],
+  fully_approved: ["approved", "finance_head_approved", "pending_accounts_payment", "payment_scheduled", "partially_paid", "paid"],
   returned: ["returned_to_branch_head", "returned_to_raiser"],
   rejected: ["rejected"],
   cancelled: ["cancelled"],
@@ -134,7 +115,7 @@ function scopeConditions(filters: GrnReportFilters) {
           SELECT a.grn_request_id FROM grn_cost_allocation a
             JOIN finance_budget_line bl ON bl.id = a.budget_line_id
            WHERE bl.head = ? AND a.lifecycle_status NOT IN ('released', 'reversed')
-        ))`,
+        ))`
     );
     params.push(filters.head, filters.head);
   }
@@ -144,7 +125,7 @@ function scopeConditions(filters: GrnReportFilters) {
           SELECT a.grn_request_id FROM grn_cost_allocation a
             JOIN finance_budget_line bl ON bl.id = a.budget_line_id
            WHERE bl.sub_head = ? AND a.lifecycle_status NOT IN ('released', 'reversed')
-        ))`,
+        ))`
     );
     params.push(filters.subHead, filters.subHead);
   }
@@ -174,11 +155,7 @@ function scopeConditions(filters: GrnReportFilters) {
     const statuses = APPROVAL_STAGE_STATUSES[filters.approvalStage];
     // An unknown key matches nothing rather than being ignored, so a stale link cannot
     // silently return the whole register as if it had been filtered.
-    conditions.push(
-      statuses
-        ? `g.status IN (${statuses.map(() => "?").join(", ")})`
-        : "1 = 0",
-    );
+    conditions.push(statuses ? `g.status IN (${statuses.map(() => "?").join(", ")})` : "1 = 0");
     if (statuses) params.push(...statuses);
   }
   return { conditions, params };
@@ -192,8 +169,7 @@ function scopeConditions(filters: GrnReportFilters) {
  * to the legacy name keeps both eras readable in one column; preferring the legacy name would
  * hide who actually raised a GRN in HRMS2.
  */
-const RAISED_BY =
-  "COALESCE(NULLIF(TRIM(u.full_name), ''), g.legacy_raised_by_name, '')";
+const RAISED_BY = "COALESCE(NULLIF(TRIM(u.full_name), ''), g.legacy_raised_by_name, '')";
 
 export const grnReportService = {
   /**
@@ -206,10 +182,7 @@ export const grnReportService = {
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     // LIMIT is interpolated, not bound: mysql2 3.22.3 rejects LIMIT placeholders in execute(),
     // the same footgun already fixed in listGrns. Clamped to an integer first.
-    const limit = Math.min(
-      Math.max(Number(filters.limit) || 1000, 1),
-      MAX_ROWS,
-    );
+    const limit = Math.min(Math.max(Number(filters.limit) || 1000, 1), MAX_ROWS);
 
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT
@@ -303,47 +276,26 @@ export const grnReportService = {
         ${where}
         ORDER BY g.accounting_period DESC, g.created_at DESC
         LIMIT ${limit}`,
-      params,
+      params
     );
 
     const decorated = (rows as RowDataPacket[]).map((row) => {
-      const pending = resolvePendingWith(
-        String(row.status ?? ""),
-        "grn",
-        row.grn_type ?? null,
-      );
-      const stageStartedAt =
-        row.branch_head_reviewed_at ?? row.submitted_at ?? row.grn_date ?? null;
+      const pending = resolvePendingWith(String(row.status ?? ""), "grn", row.grn_type ?? null);
+      const stageStartedAt = row.branch_head_reviewed_at ?? row.submitted_at ?? row.grn_date ?? null;
       const isLegacyData = Boolean(row.bill_source_id);
       let ageDays: number | null = null;
       if (pending.isPending && stageStartedAt) {
-        const rawAgeDays = Math.max(
-          0,
-          Math.floor(
-            (Date.now() - new Date(String(stageStartedAt)).getTime()) /
-              86_400_000,
-          ),
-        );
+        const rawAgeDays = Math.max(0, Math.floor((Date.now() - new Date(String(stageStartedAt)).getTime()) / 86_400_000));
         ageDays = isLegacyData && rawAgeDays > 90 ? -1 : rawAgeDays;
       }
       return {
         ...row,
-        expense_mode:
-          String(row.grn_type) === "imprest" ? "Imprest" : "Non Imprest",
+        expense_mode: String(row.grn_type) === "imprest" ? "Imprest" : "Non Imprest",
         pending_with: pending.label,
         pending_with_role: pending.role,
         is_pending: pending.isPending,
         ageing_days: ageDays,
-        age_bucket:
-          ageDays === null
-            ? null
-            : ageDays === -1
-              ? "legacy"
-              : ageDays <= 2
-                ? "0-2"
-                : ageDays <= 7
-                  ? "3-7"
-                  : "7+",
+        age_bucket: ageDays === null ? null : ageDays === -1 ? "legacy" : ageDays <= 2 ? "0-2" : ageDays <= 7 ? "3-7" : "7+",
         is_legacy: isLegacyData,
       };
     });
@@ -354,8 +306,7 @@ export const grnReportService = {
 
     // Totals come from the rows actually returned, so the footer can never claim more than the
     // table above it shows — including when the LIMIT truncates.
-    const sum = (key: string) =>
-      visible.reduce((total, row) => total + Number((row as any)[key] ?? 0), 0);
+    const sum = (key: string) => visible.reduce((total, row) => total + Number((row as any)[key] ?? 0), 0);
     return {
       rows: visible,
       totals: {
@@ -383,21 +334,11 @@ export const grnReportService = {
    * joining back to the GRN, because the event table is polymorphic and carries no branch of
    * its own.
    */
-  async auditTrail(
-    filters: GrnReportFilters & {
-      entityType?: string;
-      action?: string;
-      from?: string;
-      to?: string;
-    },
-  ) {
+  async auditTrail(filters: GrnReportFilters & { entityType?: string; action?: string; from?: string; to?: string }) {
     const conditions: string[] = [];
     const params: unknown[] = [];
 
-    const scope = financeBranchFilter(
-      filters.branchScope,
-      "COALESCE(g.branch_id, h.branch_id)",
-    );
+    const scope = financeBranchFilter(filters.branchScope, "COALESCE(g.branch_id, h.branch_id)");
     if (scope.sql !== "1=1") {
       conditions.push(scope.sql);
       params.push(...scope.params);
@@ -440,10 +381,7 @@ export const grnReportService = {
     conditions.push("COALESCE(g.branch_id, h.branch_id) IS NOT NULL");
 
     const where = `WHERE ${conditions.join(" AND ")}`;
-    const limit = Math.min(
-      Math.max(Number(filters.limit) || 1000, 1),
-      MAX_ROWS,
-    );
+    const limit = Math.min(Math.max(Number(filters.limit) || 1000, 1), MAX_ROWS);
 
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT
@@ -476,7 +414,7 @@ export const grnReportService = {
         ${where}
         ORDER BY e.created_at DESC
         LIMIT ${limit}`,
-      params,
+      params
     );
 
     return {
@@ -523,10 +461,7 @@ export const grnReportService = {
       params.push(filters.status);
     }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const limit = Math.min(
-      Math.max(Number(filters.limit) || 1000, 1),
-      MAX_ROWS,
-    );
+    const limit = Math.min(Math.max(Number(filters.limit) || 1000, 1), MAX_ROWS);
 
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT
@@ -558,28 +493,20 @@ export const grnReportService = {
         ${where}
         ORDER BY t.created_at DESC
         LIMIT ${limit}`,
-      params,
+      params
     );
 
     const decorated = (rows as RowDataPacket[]).map((row) => {
       const pending = resolvePendingWith(String(row.status ?? ""), "topup");
-      const stageStartedAt =
-        row.branch_head_reviewed_at ?? row.created_at ?? null;
+      const stageStartedAt = row.branch_head_reviewed_at ?? row.created_at ?? null;
       return {
         ...row,
         pending_with: pending.label,
         pending_with_role: pending.role,
         is_pending: pending.isPending,
-        ageing_days:
-          pending.isPending && stageStartedAt
-            ? Math.max(
-                0,
-                Math.floor(
-                  (Date.now() - new Date(String(stageStartedAt)).getTime()) /
-                    86_400_000,
-                ),
-              )
-            : null,
+        ageing_days: pending.isPending && stageStartedAt
+          ? Math.max(0, Math.floor((Date.now() - new Date(String(stageStartedAt)).getTime()) / 86_400_000))
+          : null,
       };
     });
 
@@ -591,16 +518,10 @@ export const grnReportService = {
       rows: visible,
       totals: {
         count: visible.length,
-        requestedAmount: visible.reduce(
-          (total, row) => total + Number((row as any).requested_amount ?? 0),
-          0,
-        ),
+        requestedAmount: visible.reduce((total, row) => total + Number((row as any).requested_amount ?? 0), 0),
         appliedAmount: visible
           .filter((row) => String((row as any).status) === "applied")
-          .reduce(
-            (total, row) => total + Number((row as any).requested_amount ?? 0),
-            0,
-          ),
+          .reduce((total, row) => total + Number((row as any).requested_amount ?? 0), 0),
         pending: visible.filter((row) => row.is_pending).length,
       },
       truncated: visible.length >= limit,
@@ -629,11 +550,7 @@ export const grnReportService = {
    */
   async filterOptions(filters: GrnReportFilters) {
     await refreshHiddenGrnScope();
-    const { conditions, params } = scopeConditions({
-      ...filters,
-      head: undefined,
-      subHead: undefined,
-    });
+    const { conditions, params } = scopeConditions({ ...filters, head: undefined, subHead: undefined });
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const [headRows, yearRows, periodRows] = await Promise.all([
@@ -643,7 +560,7 @@ export const grnReportService = {
            ${where}${where ? " AND" : " WHERE"} TRIM(COALESCE(g.head, '')) <> ''
           GROUP BY g.head, g.sub_head
           ORDER BY g.head, g.sub_head`,
-        params,
+        params
       ),
       db.query<RowDataPacket[]>(
         `SELECT g.financial_year
@@ -651,7 +568,7 @@ export const grnReportService = {
            ${where}${where ? " AND" : " WHERE"} TRIM(COALESCE(g.financial_year, '')) <> ''
           GROUP BY g.financial_year
           ORDER BY g.financial_year DESC`,
-        params,
+        params
       ),
       db.query<RowDataPacket[]>(
         `SELECT g.accounting_period
@@ -659,7 +576,7 @@ export const grnReportService = {
            ${where}${where ? " AND" : " WHERE"} TRIM(COALESCE(g.accounting_period, '')) <> ''
           GROUP BY g.accounting_period
           ORDER BY g.accounting_period DESC`,
-        params,
+        params
       ),
     ]);
 
@@ -674,17 +591,10 @@ export const grnReportService = {
 
     return {
       heads: Array.from(heads.entries())
-        .map(([head, subHeads]) => ({
-          head,
-          subHeads: Array.from(subHeads).sort(),
-        }))
+        .map(([head, subHeads]) => ({ head, subHeads: Array.from(subHeads).sort() }))
         .sort((a, b) => a.head.localeCompare(b.head)),
-      financialYears: (yearRows[0] as RowDataPacket[]).map((r) =>
-        String(r.financial_year),
-      ),
-      periods: (periodRows[0] as RowDataPacket[]).map((r) =>
-        String(r.accounting_period),
-      ),
+      financialYears: (yearRows[0] as RowDataPacket[]).map((r) => String(r.financial_year)),
+      periods: (periodRows[0] as RowDataPacket[]).map((r) => String(r.accounting_period)),
     };
   },
 };

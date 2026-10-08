@@ -48,11 +48,13 @@ async function executeSalesFunnelReport(): Promise<void> {
       ORDER BY total_calls DESC
     `);
 
-    console.log("PROCESS | TOTAL_CALLS | OFFERS | SALES | CONVERSION_RATE (%)");
+    console.log(
+      "PROCESS | TOTAL_CALLS | OFFERS | SALES | CONVERSION_RATE (%)"
+    );
     console.log("-".repeat(99));
     for (const row of funnelRows as QueryResult[]) {
       console.log(
-        `${String(row.process).padEnd(30)} | ${String(row.total_calls).padEnd(11)} | ${String(row.offers).padEnd(6)} | ${String(row.sales).padEnd(5)} | ${row.conversion_rate_pct}%`,
+        `${String(row.process).padEnd(30)} | ${String(row.total_calls).padEnd(11)} | ${String(row.offers).padEnd(6)} | ${String(row.sales).padEnd(5)} | ${row.conversion_rate_pct}%`
       );
     }
     console.log();
@@ -79,7 +81,7 @@ async function executeSalesFunnelReport(): Promise<void> {
     console.log("-".repeat(99));
     for (const row of trendRows as QueryResult[]) {
       console.log(
-        `${String(row.date).padEnd(10)} | ${String(row.daily_calls).padEnd(11)} | ${String(row.daily_sales).padEnd(11)} | ${row.daily_conversion_rate}%`,
+        `${String(row.date).padEnd(10)} | ${String(row.daily_calls).padEnd(11)} | ${String(row.daily_sales).padEnd(11)} | ${row.daily_conversion_rate}%`
       );
     }
     console.log();
@@ -104,12 +106,12 @@ async function executeSalesFunnelReport(): Promise<void> {
     `);
 
     console.log(
-      "PROCESS | TOTAL_CALLS | OFFERS_MADE | ACCEPTED | OFFER_RATE (%) | ACCEPTANCE_RATE (%)",
+      "PROCESS | TOTAL_CALLS | OFFERS_MADE | ACCEPTED | OFFER_RATE (%) | ACCEPTANCE_RATE (%)"
     );
     console.log("-".repeat(99));
     for (const row of offerRows as QueryResult[]) {
       console.log(
-        `${String(row.process).padEnd(30)} | ${String(row.total_calls).padEnd(11)} | ${String(row.offers_made).padEnd(11)} | ${String(row.offers_accepted).padEnd(8)} | ${String(row.offer_rate).padEnd(14)} | ${row.acceptance_rate}%`,
+        `${String(row.process).padEnd(30)} | ${String(row.total_calls).padEnd(11)} | ${String(row.offers_made).padEnd(11)} | ${String(row.offers_accepted).padEnd(8)} | ${String(row.offer_rate).padEnd(14)} | ${row.acceptance_rate}%`
       );
     }
     console.log();
@@ -138,12 +140,12 @@ async function executeSalesFunnelReport(): Promise<void> {
     `);
 
     console.log(
-      "PROCESS | AGENT | FIRST_CALL | SALE_DATE | DAYS_TO_SALE | TOTAL_CALLS | SALES_COUNT",
+      "PROCESS | AGENT | FIRST_CALL | SALE_DATE | DAYS_TO_SALE | TOTAL_CALLS | SALES_COUNT"
     );
     console.log("-".repeat(99));
     for (const row of durationRows as QueryResult[]) {
       console.log(
-        `${String(row.process).padEnd(20)} | ${String(row.agent).padEnd(15)} | ${String(row.first_call_date).padEnd(10)} | ${String(row.sale_date).padEnd(10)} | ${String(row.days_to_sale).padEnd(12)} | ${String(row.total_calls_before_sale).padEnd(11)} | ${row.sales_count}`,
+        `${String(row.process).padEnd(20)} | ${String(row.agent).padEnd(15)} | ${String(row.first_call_date).padEnd(10)} | ${String(row.sale_date).padEnd(10)} | ${String(row.days_to_sale).padEnd(12)} | ${String(row.total_calls_before_sale).padEnd(11)} | ${row.sales_count}`
       );
     }
     console.log();
@@ -174,13 +176,9 @@ async function executeSalesFunnelReport(): Promise<void> {
     console.log(`Unique Agents:            ${summary.unique_agents}`);
     console.log(`Total Offers Made:        ${summary.total_offers}`);
     console.log(`Total Sales:              ${summary.total_sales}`);
-    console.log(
-      `Overall Conversion Rate:  ${summary.overall_conversion_rate}%`,
-    );
+    console.log(`Overall Conversion Rate:  ${summary.overall_conversion_rate}%`);
     console.log(`Overall Offer Rate:       ${summary.overall_offer_rate}%`);
-    console.log(
-      `Data Period:              ${summary.data_start_date} to ${summary.data_end_date}`,
-    );
+    console.log(`Data Period:              ${summary.data_start_date} to ${summary.data_end_date}`);
     console.log();
 
     console.log("=" + "=".repeat(99));
@@ -191,9 +189,7 @@ async function executeSalesFunnelReport(): Promise<void> {
       console.error("Error executing sales funnel report:");
       console.error(error.message);
       if ("code" in error && error.code === "ER_ACCESS_DENIED_ERROR") {
-        console.error(
-          "Database connection denied. Check credentials and database availability.",
-        );
+        console.error("Database connection denied. Check credentials and database availability.");
       }
     } else {
       console.error("Unknown error:", error);

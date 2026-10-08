@@ -9,10 +9,7 @@ const router = Router();
 router.use(requireAuth);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 // Super Admin Analytics (Dashboard)
 router.get(
@@ -21,7 +18,7 @@ router.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const summary = await getSuperAdminAnalyticsSummary();
     res.json({ success: true, data: summary });
-  }),
+  })
 );
 
 export { router as superAdminRouter };

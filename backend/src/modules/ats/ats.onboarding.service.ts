@@ -16,38 +16,34 @@ import {
   sendOfferReviewEmail,
   sendWelcomeEmail,
   sendRejectedEmail,
-} from "./ats.email.service.js";
-import { createTemporaryPasswordCredential } from "../auth/tempPassword.service.js";
-import {
-  getIstDateString,
-  assertNotBeforeToday,
-  canBackdateDates,
-} from "../../utils/dateUtils.js";
-import { providerFactory } from "../communication/providers/provider.factory.js";
-import { buildSMS } from "../communication/smartping-dlt-registry.js";
-import { hasLiveSelfieDocument } from "./onboarding-full.service.js";
+} from './ats.email.service.js';
+import { createTemporaryPasswordCredential } from '../auth/tempPassword.service.js';
+import { getIstDateString, assertNotBeforeToday, canBackdateDates } from '../../utils/dateUtils.js';
+import { providerFactory } from '../communication/providers/provider.factory.js';
+import { buildSMS } from '../communication/smartping-dlt-registry.js';
+import { hasLiveSelfieDocument } from './onboarding-full.service.js';
 
 // ── PII Helpers ───────────────────────────────────────────────────────────────
 
 const hashPii = hashPiiForMatch;
 
 function maskAadhaar(value: unknown): string | null {
-  if (value == null || value === "") return null;
-  const s = String(value).replace(/\D/g, "");
-  return s.length >= 4 ? `XXXX-XXXX-${s.slice(-4)}` : "XXXX-XXXX-XXXX";
+  if (value == null || value === '') return null;
+  const s = String(value).replace(/\D/g, '');
+  return s.length >= 4 ? `XXXX-XXXX-${s.slice(-4)}` : 'XXXX-XXXX-XXXX';
 }
 
 function maskPan(value: unknown): string | null {
-  if (value == null || value === "") return null;
+  if (value == null || value === '') return null;
   const s = String(value).toUpperCase();
   // PAN format ABCDE1234F — mask middle 5 digits: AB***1234F
-  return s.length === 10 ? `${s.slice(0, 2)}XXXXX${s.slice(7)}` : "XXXXXXXXXX";
+  return s.length === 10 ? `${s.slice(0, 2)}XXXXX${s.slice(7)}` : 'XXXXXXXXXX';
 }
 
 function maskBankAccount(value: unknown): string | null {
-  if (value == null || value === "") return null;
-  const s = String(value).replace(/\s/g, "");
-  return s.length >= 4 ? `XXXXXX${s.slice(-4)}` : "XXXXXXXXXX";
+  if (value == null || value === '') return null;
+  const s = String(value).replace(/\s/g, '');
+  return s.length >= 4 ? `XXXXXX${s.slice(-4)}` : 'XXXXXXXXXX';
 }
 
 async function withDeliveryTimeout<T>(
@@ -71,14 +67,10 @@ async function withDeliveryTimeout<T>(
   }
 }
 
-function normalizeOfferRoleType(value: unknown): "Analyst" | "SupportStaff" {
-  const normalized = String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_-]+/g, "");
-  if (normalized === "supportstaff" || normalized === "support")
-    return "SupportStaff";
-  return "Analyst";
+function normalizeOfferRoleType(value: unknown): 'Analyst' | 'SupportStaff' {
+  const normalized = String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  if (normalized === 'supportstaff' || normalized === 'support') return 'SupportStaff';
+  return 'Analyst';
 }
 
 // ── Token Generation ──────────────────────────────────────────────────────────
@@ -87,14 +79,7 @@ export async function sendOnboardingToken(
   candidateId: string,
   requestedBy: string,
   overrideEmail?: string,
-): Promise<{
-  token: string;
-  expiresAt: Date;
-  emailSent: boolean;
-  emailError?: string;
-  smsSent: boolean;
-  sentTo?: string;
-}> {
+): Promise<{ token: string; expiresAt: Date; emailSent: boolean; emailError?: string; smsSent: boolean; sentTo?: string }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.full_name, c.email, c.mobile, c.applied_for_branch, c.candidate_status,
             b.id AS resolved_branch_id, b.branch_name
@@ -106,22 +91,19 @@ export async function sendOnboardingToken(
      WHERE c.id = ? AND c.active_status = 1`,
     [candidateId],
   );
-  if (!rows.length)
-    throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+  if (!rows.length) throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
   const cand = rows[0];
   // Same guard as sendOnboardingProgressReminder — a candidate marked not
   // joining must not get a (re)sent link either, whether this is the first
   // send or the "Resend Onboarding Link" HR action.
-  if (cand.candidate_status === "not_joining") {
+  if (cand.candidate_status === 'not_joining') {
     throw Object.assign(
-      new Error(
-        "This candidate is marked as not joining — no further onboarding links are sent",
-      ),
+      new Error('This candidate is marked as not joining — no further onboarding links are sent'),
       { statusCode: 409 },
     );
   }
 
-  const rawToken = randomUUID() + "-" + randomUUID();
+  const rawToken = randomUUID() + '-' + randomUUID();
   const expiresAt = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
 
   await db.execute(
@@ -162,7 +144,7 @@ export async function sendOnboardingToken(
   // resend to land somewhere else; that's a deliberate profile edit, not a resend action.
   const stageLogRemarks = overrideEmail
     ? `Secure onboarding link issued (resent to override address, not saved to candidate record)`
-    : "Secure onboarding link issued";
+    : 'Secure onboarding link issued';
   await db.execute(
     `INSERT INTO ats_candidate_stage_log
        (id, candidate_id, from_stage, to_stage, remarks, updated_by)
@@ -170,7 +152,7 @@ export async function sendOnboardingToken(
     [candidateId, stageLogRemarks, requestedBy],
   );
 
-  const baseUrl = env.FRONTEND_URL || "http://localhost:5173";
+  const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
   const onboardingLink = `${baseUrl}/onboard-full?token=${savedToken}`;
 
   const sendTo = overrideEmail || cand.email;
@@ -201,16 +183,11 @@ export async function sendOnboardingToken(
       else emailSent = true;
       if (emailError) console.error('[onboarding] email not delivered for', candidateId, emailError);
     } catch (emailErr) {
-      emailError =
-        emailErr instanceof Error ? emailErr.message : String(emailErr);
-      console.error(
-        "[onboarding] email delivery failed for",
-        candidateId,
-        emailError,
-      );
+      emailError = emailErr instanceof Error ? emailErr.message : String(emailErr);
+      console.error('[onboarding] email delivery failed for', candidateId, emailError);
     }
   } else {
-    emailError = "No email address on file for this candidate";
+    emailError = 'No email address on file for this candidate';
   }
 
   // SMS/WhatsApp fallback for candidates without email (walk-ins)
@@ -230,10 +207,8 @@ export async function sendOnboardingToken(
     // DLT template registered with a URL variable, or a different delivery mechanism; that's a
     // product/compliance decision outside what this fix can resolve.
     try {
-      const smsProvider = providerFactory.getProvider("sms");
-      const { dltContentId, body: smsBody } = buildSMS("onboarding_link", {
-        name: cand.full_name,
-      });
+      const smsProvider = providerFactory.getProvider('sms');
+      const { dltContentId, body: smsBody } = buildSMS('onboarding_link', { name: cand.full_name });
       const smsResult = await withDeliveryTimeout(
         smsProvider.send(cand.mobile, dltContentId, smsBody),
         `SMS delivery for ${candidateId}`,
@@ -242,44 +217,29 @@ export async function sendOnboardingToken(
       // send (e.g. paused via communication_provider_config.send_blocked), and withDeliveryTimeout
       // resolves null on a timeout rather than throwing either — awaiting either without checking
       // reported smsSent=true regardless, silently.
-      if (!smsResult?.success)
-        throw new Error(smsResult?.error ?? "SMS provider reported failure");
+      if (!smsResult?.success) throw new Error(smsResult?.error ?? 'SMS provider reported failure');
       smsSent = true;
     } catch (smsErr) {
       // SMS failure must not block token generation — log and continue
-      console.error(
-        "[onboarding] SMS delivery failed for",
-        candidateId,
-        smsErr instanceof Error ? smsErr.message : String(smsErr),
-      );
+      console.error('[onboarding] SMS delivery failed for', candidateId, smsErr instanceof Error ? smsErr.message : String(smsErr));
     }
     // WhatsApp delivery attempt (best-effort) — left as free text deliberately: WhatsApp isn't
     // DLT-regulated the way SMS is, and fixing its own separate reliability issues is out of
     // scope for this SMS-specific change.
-    const waBody = `Hi ${cand.full_name}, you have been selected! Complete your onboarding at: ${onboardingLink} (valid 15 days)`;
+    const waBody =
+      `Hi ${cand.full_name}, you have been selected! Complete your onboarding at: ${onboardingLink} (valid 15 days)`;
     try {
-      const waProvider = providerFactory.getProvider("whatsapp");
+      const waProvider = providerFactory.getProvider('whatsapp');
       await withDeliveryTimeout(
-        waProvider.send(cand.mobile, "Onboarding Link", waBody),
+        waProvider.send(cand.mobile, 'Onboarding Link', waBody),
         `WhatsApp delivery for ${candidateId}`,
       );
     } catch (waErr) {
-      console.error(
-        "[onboarding] WhatsApp delivery failed for",
-        candidateId,
-        waErr instanceof Error ? waErr.message : String(waErr),
-      );
+      console.error('[onboarding] WhatsApp delivery failed for', candidateId, waErr instanceof Error ? waErr.message : String(waErr));
     }
   }
 
-  return {
-    token: savedToken,
-    expiresAt: savedExpiry,
-    emailSent,
-    emailError,
-    smsSent,
-    sentTo: sendTo || undefined,
-  };
+  return { token: savedToken, expiresAt: savedExpiry, emailSent, emailError, smsSent, sentTo: sendTo || undefined };
 }
 
 /**
@@ -304,13 +264,7 @@ export async function sendBankResubmitRequest(
   candidateId: string,
   requestedBy: string,
   overrideEmail?: string,
-): Promise<{
-  token: string;
-  expiresAt: Date;
-  emailSent: boolean;
-  emailError?: string;
-  sentTo?: string;
-}> {
+): Promise<{ token: string; expiresAt: Date; emailSent: boolean; emailError?: string; sentTo?: string }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.full_name, c.email, c.candidate_status, b.bank_name
        FROM ats_candidate c
@@ -318,19 +272,16 @@ export async function sendBankResubmitRequest(
       WHERE c.id = ? AND c.active_status = 1`,
     [candidateId],
   );
-  if (!rows.length)
-    throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+  if (!rows.length) throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
   const cand = rows[0];
-  if (cand.candidate_status === "not_joining") {
+  if (cand.candidate_status === 'not_joining') {
     throw Object.assign(
-      new Error(
-        "This candidate is marked as not joining — no further links are sent",
-      ),
+      new Error('This candidate is marked as not joining — no further links are sent'),
       { statusCode: 409 },
     );
   }
 
-  const rawToken = randomUUID() + "-" + randomUUID();
+  const rawToken = randomUUID() + '-' + randomUUID();
   const expiresAt = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
   await db.execute(
     `INSERT INTO ats_onboarding_bridge
@@ -354,7 +305,7 @@ export async function sendBankResubmitRequest(
     ? new Date(bridgeRows[0].onboarding_token_expires_at as string)
     : expiresAt;
 
-  const baseUrl = env.FRONTEND_URL || "http://localhost:5173";
+  const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
   const onboardingLink = `${baseUrl}/onboard-full?token=${savedToken}`;
   const sendTo = overrideEmail || cand.email;
 
@@ -374,25 +325,14 @@ export async function sendBankResubmitRequest(
       );
       emailSent = true;
     } catch (emailErr) {
-      emailError =
-        emailErr instanceof Error ? emailErr.message : String(emailErr);
-      console.error(
-        "[onboarding] bank resubmit email delivery failed for",
-        candidateId,
-        emailError,
-      );
+      emailError = emailErr instanceof Error ? emailErr.message : String(emailErr);
+      console.error('[onboarding] bank resubmit email delivery failed for', candidateId, emailError);
     }
   } else {
-    emailError = "No email address on file for this candidate";
+    emailError = 'No email address on file for this candidate';
   }
 
-  return {
-    token: savedToken,
-    expiresAt: savedExpiry,
-    emailSent,
-    emailError,
-    sentTo: sendTo || undefined,
-  };
+  return { token: savedToken, expiresAt: savedExpiry, emailSent, emailError, sentTo: sendTo || undefined };
 }
 
 // ── Token Validation ──────────────────────────────────────────────────────────
@@ -412,26 +352,21 @@ export async function validateToken(token: string) {
      WHERE b.onboarding_token = ?`,
     [token],
   );
-  if (!rows.length)
-    throw Object.assign(new Error("Invalid token"), { statusCode: 400 });
+  if (!rows.length) throw Object.assign(new Error('Invalid token'), { statusCode: 400 });
   const row = rows[0];
   // mysql2 returns DATETIME columns as JS Date objects (UTC epoch); compare directly with Date.now()
-  const expiresMs =
-    row.onboarding_token_expires_at instanceof Date
-      ? row.onboarding_token_expires_at.getTime()
-      : new Date(row.onboarding_token_expires_at as string).getTime();
+  const expiresMs = row.onboarding_token_expires_at instanceof Date
+    ? row.onboarding_token_expires_at.getTime()
+    : new Date(row.onboarding_token_expires_at as string).getTime();
   if (expiresMs < Date.now()) {
-    throw Object.assign(new Error("Token expired"), { statusCode: 410 });
+    throw Object.assign(new Error('Token expired'), { statusCode: 410 });
   }
   return row;
 }
 
 // ── Profile Submission ────────────────────────────────────────────────────────
 
-export async function submitProfile(
-  token: string,
-  profile: Record<string, unknown>,
-) {
+export async function submitProfile(token: string, profile: Record<string, unknown>) {
   const tokenData = await validateToken(token);
   const candidateId: string = tokenData.candidate_id;
 
@@ -446,8 +381,8 @@ export async function submitProfile(
   const hasSelfie = await hasLiveSelfieDocument(candidateId);
   if (!hasSelfie) {
     throw Object.assign(
-      new Error("Please capture a live selfie before submitting."),
-      { statusCode: 400, code: "MISSING_REQUIRED_DOCUMENTS" },
+      new Error('Please capture a live selfie before submitting.'),
+      { statusCode: 400, code: 'MISSING_REQUIRED_DOCUMENTS' },
     );
   }
 
@@ -607,58 +542,50 @@ export async function markCandidateNotJoining(
   actorUserId: string,
   reason: string,
 ): Promise<{ candidateId: string; candidateStatus: string }> {
-  const trimmedReason = String(reason ?? "").trim();
+  const trimmedReason = String(reason ?? '').trim();
   if (!trimmedReason) {
-    throw Object.assign(
-      new Error("A reason is required to mark a candidate as not joining"),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error('A reason is required to mark a candidate as not joining'), { statusCode: 400 });
   }
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id, candidate_status FROM ats_candidate WHERE id = ? AND active_status = 1 LIMIT 1`,
     [candidateId],
   );
   if (!existing[0]) {
-    throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+    throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
   }
-  const previousStatus = (
-    existing[0] as RowDataPacket & { candidate_status?: string | null }
-  ).candidate_status;
+  const previousStatus = (existing[0] as RowDataPacket & { candidate_status?: string | null }).candidate_status;
   await db.execute(
     `UPDATE ats_candidate SET candidate_status = 'not_joining' WHERE id = ?`,
     [candidateId],
   );
-  const { logSensitiveAction } = await import("../../shared/auditLog.js");
+  const { logSensitiveAction } = await import('../../shared/auditLog.js');
   await logSensitiveAction({
     actor_user_id: actorUserId,
-    action_type: "CANDIDATE_MARKED_NOT_JOINING",
-    module_key: "ats_onboarding",
-    entity_type: "ats_candidate",
+    action_type: 'CANDIDATE_MARKED_NOT_JOINING',
+    module_key: 'ats_onboarding',
+    entity_type: 'ats_candidate',
     entity_id: candidateId,
     reason: trimmedReason,
     old_value_json: { candidate_status: previousStatus ?? null },
-    new_value_json: { candidate_status: "not_joining" },
+    new_value_json: { candidate_status: 'not_joining' },
   });
-  return { candidateId, candidateStatus: "not_joining" };
+  return { candidateId, candidateStatus: 'not_joining' };
 }
 
 // ── HR: Reverse a "not joining" mark (candidate changed their mind) ─────────
-export async function clearCandidateNotJoining(
-  candidateId: string,
-  actorUserId: string,
-): Promise<{ candidateId: string }> {
+export async function clearCandidateNotJoining(candidateId: string, actorUserId: string): Promise<{ candidateId: string }> {
   await db.execute(
     `UPDATE ats_candidate
         SET candidate_status = IF(candidate_status = 'not_joining', 'selected', candidate_status)
       WHERE id = ?`,
     [candidateId],
   );
-  const { logSensitiveAction } = await import("../../shared/auditLog.js");
+  const { logSensitiveAction } = await import('../../shared/auditLog.js');
   await logSensitiveAction({
     actor_user_id: actorUserId,
-    action_type: "CANDIDATE_NOT_JOINING_CLEARED",
-    module_key: "ats_onboarding",
-    entity_type: "ats_candidate",
+    action_type: 'CANDIDATE_NOT_JOINING_CLEARED',
+    module_key: 'ats_onboarding',
+    entity_type: 'ats_candidate',
     entity_id: candidateId,
   });
   return { candidateId };
@@ -682,12 +609,9 @@ export async function changeCandidateBranch(
   actorUserId: string,
   reason: string,
 ): Promise<{ candidateId: string; branchId: string; branchName: string }> {
-  const trimmedReason = String(reason ?? "").trim();
+  const trimmedReason = String(reason ?? '').trim();
   if (!trimmedReason) {
-    throw Object.assign(
-      new Error("A reason is required to change a candidate's branch"),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error('A reason is required to change a candidate\'s branch'), { statusCode: 400 });
   }
 
   const [branchRows] = await db.execute<RowDataPacket[]>(
@@ -696,9 +620,7 @@ export async function changeCandidateBranch(
   );
   const newBranch = (branchRows as RowDataPacket[])[0];
   if (!newBranch) {
-    throw Object.assign(new Error("Branch not found or inactive"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error('Branch not found or inactive'), { statusCode: 400 });
   }
 
   const [reqRows] = await db.execute<RowDataPacket[]>(
@@ -710,18 +632,11 @@ export async function changeCandidateBranch(
   );
   const existing = (reqRows as RowDataPacket[])[0];
   if (!existing) {
-    throw Object.assign(
-      new Error("No onboarding request found for this candidate"),
-      { statusCode: 404 },
-    );
+    throw Object.assign(new Error('No onboarding request found for this candidate'), { statusCode: 404 });
   }
 
   if (existing.old_branch_id === newBranchId) {
-    return {
-      candidateId,
-      branchId: newBranchId,
-      branchName: String(newBranch.branch_name),
-    };
+    return { candidateId, branchId: newBranchId, branchName: String(newBranch.branch_name) };
   }
 
   await db.execute(
@@ -729,57 +644,40 @@ export async function changeCandidateBranch(
     [newBranchId, candidateId],
   );
 
-  const { logSensitiveAction } = await import("../../shared/auditLog.js");
+  const { logSensitiveAction } = await import('../../shared/auditLog.js');
   await logSensitiveAction({
     actor_user_id: actorUserId,
-    action_type: "CANDIDATE_BRANCH_CHANGED",
-    module_key: "ats_onboarding",
-    entity_type: "ats_onboarding_request",
+    action_type: 'CANDIDATE_BRANCH_CHANGED',
+    module_key: 'ats_onboarding',
+    entity_type: 'ats_onboarding_request',
     entity_id: String(existing.request_id),
     reason: trimmedReason,
-    old_value_json: {
-      branch_id: existing.old_branch_id ?? null,
-      branch_name: existing.old_branch_name ?? null,
-    },
-    new_value_json: {
-      branch_id: newBranchId,
-      branch_name: newBranch.branch_name,
-    },
+    old_value_json: { branch_id: existing.old_branch_id ?? null, branch_name: existing.old_branch_name ?? null },
+    new_value_json: { branch_id: newBranchId, branch_name: newBranch.branch_name },
   });
 
-  return {
-    candidateId,
-    branchId: newBranchId,
-    branchName: String(newBranch.branch_name),
-  };
+  return { candidateId, branchId: newBranchId, branchName: String(newBranch.branch_name) };
 }
 
 // ── HR: Send Progress Reminder to Candidate ──────────────────────────────────
 
 const STEP_REMINDER_MESSAGES: Record<number, string> = {
-  0: "Please start by completing the Welcome & Consent step — accept the privacy policy and verify your mobile OTP to begin.",
-  1: "You left off at the Personal Details step. Please complete your basic personal information to continue.",
-  2: "You stopped at the Address & KYC step. Please fill in your address and upload your Aadhaar/PAN details.",
-  3: "Please upload your required documents (Aadhaar card, PAN card, etc.) on the Documents step to continue.",
-  4: "You need to complete the BGV & Verification step. Please grant consent for background verification to proceed.",
-  5: "Please complete your Bank Details on the onboarding form to continue.",
-  6: "Please fill in your Education details to continue.",
-  7: "Please provide your Work Experience details to continue.",
-  8: "Please complete your Family & Language details to continue.",
+  0: 'Please start by completing the Welcome & Consent step — accept the privacy policy and verify your mobile OTP to begin.',
+  1: 'You left off at the Personal Details step. Please complete your basic personal information to continue.',
+  2: 'You stopped at the Address & KYC step. Please fill in your address and upload your Aadhaar/PAN details.',
+  3: 'Please upload your required documents (Aadhaar card, PAN card, etc.) on the Documents step to continue.',
+  4: 'You need to complete the BGV & Verification step. Please grant consent for background verification to proceed.',
+  5: 'Please complete your Bank Details on the onboarding form to continue.',
+  6: 'Please fill in your Education details to continue.',
+  7: 'Please provide your Work Experience details to continue.',
+  8: 'Please complete your Family & Language details to continue.',
   9: "You're almost done! Please open your onboarding form, accept the Statutory Declaration, and click the Submit button to finish.",
 };
 
 const STEP_LABELS_SHORT = [
-  "Welcome & Consent",
-  "Personal Details",
-  "Address & KYC",
-  "Documents",
-  "BGV & Verification",
-  "Bank Details",
-  "Education",
-  "Experience",
-  "Family & Language",
-  "Statutory Declaration",
+  'Welcome & Consent', 'Personal Details', 'Address & KYC', 'Documents',
+  'BGV & Verification', 'Bank Details', 'Education', 'Experience',
+  'Family & Language', 'Statutory Declaration',
 ];
 
 export async function sendOnboardingProgressReminder(
@@ -798,25 +696,18 @@ export async function sendOnboardingProgressReminder(
      LIMIT 1`,
     [candidateId],
   );
-  if (!rows.length)
-    throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+  if (!rows.length) throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
   const row = rows[0];
   // Candidate said they're not joining — every follow-up path respects this
   // (see markCandidateNotJoining), so a reminder must not be sent even if
   // someone clicks the button before the UI catches up.
-  if (row.candidate_status === "not_joining") {
+  if (row.candidate_status === 'not_joining') {
     throw Object.assign(
-      new Error(
-        "This candidate is marked as not joining — no further reminders are sent",
-      ),
+      new Error('This candidate is marked as not joining — no further reminders are sent'),
       { statusCode: 409 },
     );
   }
-  if (!row.onboarding_token)
-    throw Object.assign(
-      new Error("No onboarding token found — please resend the link first"),
-      { statusCode: 400 },
-    );
+  if (!row.onboarding_token) throw Object.assign(new Error('No onboarding token found — please resend the link first'), { statusCode: 400 });
 
   const stepIdx: number = row.current_step_idx ?? 0;
   const stepName = STEP_LABELS_SHORT[stepIdx] ?? `Step ${stepIdx + 1}`;
@@ -824,12 +715,12 @@ export async function sendOnboardingProgressReminder(
 
   // Add consent-specific nudge if blocked
   const consentNote = !row.dpdp_consent
-    ? "\n\nImportant: Your Privacy (DPDP) consent has not been recorded. Please complete the Welcome step first."
+    ? '\n\nImportant: Your Privacy (DPDP) consent has not been recorded. Please complete the Welcome step first.'
     : !row.bgv_consent
-      ? "\n\nImportant: Your BGV consent is pending. Please complete the BGV & Verification step."
-      : "";
+    ? '\n\nImportant: Your BGV consent is pending. Please complete the BGV & Verification step.'
+    : '';
 
-  const baseUrl = env.FRONTEND_URL || "http://localhost:5173";
+  const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
   const onboardingLink = `${baseUrl}/onboard-full?token=${row.onboarding_token}`;
   const whatsappBody = `Hi ${row.full_name},\n\nYour onboarding form is incomplete. You last reached: ${stepName} (step ${stepIdx + 1} of 10).\n\n${stepMsg}${consentNote}\n\nContinue here: ${onboardingLink}\n\n— MAS Callnet HR`;
 
@@ -838,45 +729,29 @@ export async function sendOnboardingProgressReminder(
   if (row.email) {
     try {
       await withDeliveryTimeout(
-        sendOnboardingTokenEmail({
-          candidateId,
-          to: row.email,
-          candidateName: row.full_name,
-          onboardingLink,
-        }),
+        sendOnboardingTokenEmail({ candidateId, to: row.email, candidateName: row.full_name, onboardingLink }),
         `reminder email for ${candidateId}`,
       );
-      sent.push("email");
+      sent.push('email');
     } catch (e) {
-      console.error(
-        "[reminder] email failed for",
-        candidateId,
-        e instanceof Error ? e.message : String(e),
-      );
+      console.error('[reminder] email failed for', candidateId, e instanceof Error ? e.message : String(e));
     }
   }
 
   if (row.mobile) {
     try {
-      const waProvider = providerFactory.getProvider("whatsapp");
+      const waProvider = providerFactory.getProvider('whatsapp');
       const waResult = await withDeliveryTimeout(
-        waProvider.send(row.mobile, "Onboarding Reminder", whatsappBody),
+        waProvider.send(row.mobile, 'Onboarding Reminder', whatsappBody),
         `reminder WhatsApp for ${candidateId}`,
       );
       // Same class of gap as the SMS site above: a resolved {success:false} (e.g. paused via
       // send_blocked) or a withDeliveryTimeout timeout (resolves null) is not a thrown error, so
       // it must be checked explicitly or this channel is reported delivered regardless.
-      if (!waResult?.success)
-        throw new Error(
-          waResult?.error ?? "WhatsApp provider reported failure",
-        );
-      sent.push("whatsapp");
+      if (!waResult?.success) throw new Error(waResult?.error ?? 'WhatsApp provider reported failure');
+      sent.push('whatsapp');
     } catch (e) {
-      console.error(
-        "[reminder] WhatsApp failed for",
-        candidateId,
-        e instanceof Error ? e.message : String(e),
-      );
+      console.error('[reminder] WhatsApp failed for', candidateId, e instanceof Error ? e.message : String(e));
     }
     // Not attempted over SMS, deliberately — same 'Onboarding Reminder' human-label-in-DLT-id-slot
     // bug as the two fixed above, but unlike onboarding_link there is no registered DLT template
@@ -886,9 +761,7 @@ export async function sendOnboardingProgressReminder(
     // either be rejected (a template that doesn't match the vars) or, worse, a DLT compliance
     // violation if it somehow got accepted with different content than what's registered — so
     // this stays WhatsApp/email only until a matching template is registered upstream.
-    console.warn(
-      `[reminder] SMS not attempted for ${candidateId} — no registered DLT template for onboarding reminders`,
-    );
+    console.warn(`[reminder] SMS not attempted for ${candidateId} — no registered DLT template for onboarding reminders`);
   }
 
   await db.execute(
@@ -915,10 +788,7 @@ export async function sendOnboardingProgressReminder(
  * duplicated, because Payroll HR revising an offer should move the validated
  * salary with it, not leave a stale one behind for the gate to read.
  */
-async function deriveSalaryValidationFromOffer(
-  candidateId: string,
-  actorUserId: string,
-): Promise<void> {
+async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId: string): Promise<void> {
   const [offerRows] = await db.execute<RowDataPacket[]>(
     `SELECT o.id, o.emp_type, o.gross, o.date_of_joining, o.date_of_salary,
             o.department_id, o.designation_id, o.cost_centre, o.reporting_manager_id,
@@ -946,11 +816,9 @@ async function deriveSalaryValidationFromOffer(
   // silently, leaving no pv row and causing validateSalaryLock to return
   // "Branch Head approval pending". Normalise here once before either branch.
   const empType: string = (() => {
-    const raw = String(o.emp_type ?? "onroll")
-      .toLowerCase()
-      .replace(/[-_\s]/g, "");
-    if (raw.includes("off")) return "offrole";
-    return "onroll";
+    const raw = String(o.emp_type ?? 'onroll').toLowerCase().replace(/[-_\s]/g, '');
+    if (raw.includes('off')) return 'offrole';
+    return 'onroll';
   })();
 
   // payroll_hr_id references employees; the caller gives us an auth user id.
@@ -969,9 +837,9 @@ async function deriveSalaryValidationFromOffer(
   // Clamp date_of_salary to date_of_joining if somehow it arrived earlier — this
   // should never happen after the saveOffer() guard, but a raw DB row or a future
   // caller that bypasses that path must not propagate a bad value downstream.
-  const dojStr = String(o.date_of_joining ?? "").slice(0, 10);
-  const dosRaw = blankToNull(o.date_of_salary);
-  const dosStr = dosRaw ? String(dosRaw).slice(0, 10) : null;
+  const dojStr  = String(o.date_of_joining ?? '').slice(0, 10);
+  const dosRaw  = blankToNull(o.date_of_salary);
+  const dosStr  = dosRaw ? String(dosRaw).slice(0, 10) : null;
   const safeDos = dosStr && dojStr && dosStr < dojStr ? null : dosRaw; // null → COALESCE falls back to joining_date
 
   if (existing[0]) {
@@ -988,23 +856,11 @@ async function deriveSalaryValidationFromOffer(
       // salary_start_date = COALESCE(?, joining_date): "" is not the NULL
       // sentinel, so a blank salary-start date threw ER_TRUNCATED_WRONG_VALUE
       // instead of falling back to the joining date.
-      [
-        empType,
-        o.gross,
-        o.date_of_joining,
-        safeDos,
-        o.department_id ?? null,
-        o.designation_id ?? null,
-        o.cost_centre ?? null,
-        o.reporting_manager_id ?? null,
-        o.branch_id ?? null,
-        o.basic ?? null,
-        o.hra ?? null,
-        o.conveyance ?? null,
-        o.special_allowance ?? null,
-        payrollHrId,
-        String(existing[0].id),
-      ],
+      [empType, o.gross, o.date_of_joining, safeDos,
+       o.department_id ?? null, o.designation_id ?? null, o.cost_centre ?? null,
+       o.reporting_manager_id ?? null, o.branch_id ?? null,
+       o.basic ?? null, o.hra ?? null, o.conveyance ?? null, o.special_allowance ?? null,
+       payrollHrId, String(existing[0].id)],
     );
   } else {
     const ssdForInsert = safeDos ?? o.date_of_joining; // always >= date_of_joining
@@ -1015,34 +871,20 @@ async function deriveSalaryValidationFromOffer(
           gross_salary, basic_salary, hra, conveyance, special_allowance,
           joining_date, salary_start_date, validation_status, validated_at)
        VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'validated', NOW())`,
-      [
-        candidateId,
-        o.branch_id ?? null,
-        payrollHrId,
-        empType,
-        o.department_id ?? null,
-        o.designation_id ?? null,
-        o.cost_centre ?? null,
-        o.reporting_manager_id ?? null,
-        o.gross,
-        o.basic ?? null,
-        o.hra ?? null,
-        o.conveyance ?? null,
-        o.special_allowance ?? null,
-        o.date_of_joining,
-        ssdForInsert,
-      ],
+      [candidateId, o.branch_id ?? null, payrollHrId, empType,
+       o.department_id ?? null, o.designation_id ?? null, o.cost_centre ?? null,
+       o.reporting_manager_id ?? null,
+       o.gross, o.basic ?? null, o.hra ?? null, o.conveyance ?? null, o.special_allowance ?? null,
+       o.date_of_joining, ssdForInsert],
     );
   }
 
   // The branch head queue also filters on this stage.
-  await db
-    .execute(
-      `UPDATE ats_candidate SET current_stage = 'payroll_validated', updated_at = NOW()
+  await db.execute(
+    `UPDATE ats_candidate SET current_stage = 'payroll_validated', updated_at = NOW()
       WHERE id = ? AND COALESCE(current_stage, '') <> 'offer_approved'`,
-      [candidateId],
-    )
-    .catch(() => undefined);
+    [candidateId],
+  ).catch(() => undefined);
 }
 
 /**
@@ -1063,28 +905,16 @@ async function syncCandidateProcessFromCostCentre(
   costCentreId: string | null,
 ): Promise<void> {
   if (!costCentreId) return;
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT process_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
-      [costCentreId],
-    )
-    .catch(
-      () =>
-        [[] as RowDataPacket[], undefined] as unknown as [
-          RowDataPacket[],
-          unknown,
-        ],
-    );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT process_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
+    [costCentreId],
+  ).catch(() => [[] as RowDataPacket[], undefined] as unknown as [RowDataPacket[], unknown]);
   const processId = (rows as RowDataPacket[])[0]?.process_id;
   if (!processId) return; // not linked — leave applied_for_process untouched
-  await db
-    .execute(
-      `UPDATE ats_candidate SET applied_for_process = ?, updated_at = NOW() WHERE id = ?`,
-      [String(processId), candidateId],
-    )
-    .catch((e) =>
-      console.warn("[syncCandidateProcessFromCostCentre] update failed:", e),
-    );
+  await db.execute(
+    `UPDATE ats_candidate SET applied_for_process = ?, updated_at = NOW() WHERE id = ?`,
+    [String(processId), candidateId],
+  ).catch((e) => console.warn('[syncCandidateProcessFromCostCentre] update failed:', e));
 }
 
 /**
@@ -1163,8 +993,7 @@ export async function saveOffer(
      WHERE r.id = ?`,
     [requestId],
   );
-  if (!reqRows.length)
-    throw Object.assign(new Error("Request not found"), { statusCode: 404 });
+  if (!reqRows.length) throw Object.assign(new Error('Request not found'), { statusCode: 404 });
   const req = reqRows[0];
 
   // Fetch branch head email separately to avoid complex role joins
@@ -1186,15 +1015,9 @@ export async function saveOffer(
   // (a direct API call, or a future caller) would otherwise silently corrupt the
   // whole offer. See ctc-parser.ts for the exact bug this closes.
   const annualCtcInput = parseCtcInput(offerData.offered_ctc);
-  if (
-    annualCtcInput === null ||
-    !Number.isFinite(annualCtcInput) ||
-    annualCtcInput <= 0
-  ) {
+  if (annualCtcInput === null || !Number.isFinite(annualCtcInput) || annualCtcInput <= 0) {
     throw Object.assign(
-      new Error(
-        `Offered CTC "${String(offerData.offered_ctc)}" could not be read as a valid amount.`,
-      ),
+      new Error(`Offered CTC "${String(offerData.offered_ctc)}" could not be read as a valid amount.`),
       { statusCode: 400 },
     );
   }
@@ -1204,23 +1027,19 @@ export async function saveOffer(
   // from salary_package_master instead: the canonical master Payroll Head's
   // tools already read. See band-package-ratio.service.ts.
   const band = await resolveBandPct(
-    typeof offerData.salary_band === "string" ? offerData.salary_band : null,
+    typeof offerData.salary_band === 'string' ? offerData.salary_band : null,
     annualCtcInput / 12,
   );
   // Default true (deduct) to match the column's own DB default when a caller
   // omits the field entirely — only an explicit false opts the candidate out.
-  const pfEligible =
-    offerData.pf_eligible !== false && offerData.pf_eligible !== 0;
-  const esiEligible =
-    offerData.esi_eligible !== false && offerData.esi_eligible !== 0;
+  const pfEligible = offerData.pf_eligible !== false && offerData.pf_eligible !== 0;
+  const esiEligible = offerData.esi_eligible !== false && offerData.esi_eligible !== 0;
   let stateCode: string | null = null;
   if (req.branch_id) {
-    const [stateRows] = await db
-      .execute<RowDataPacket[]>(
-        `SELECT state FROM branch_master WHERE id = ? LIMIT 1`,
-        [req.branch_id],
-      )
-      .catch(() => [[] as RowDataPacket[]] as [RowDataPacket[]]);
+    const [stateRows] = await db.execute<RowDataPacket[]>(
+      `SELECT state FROM branch_master WHERE id = ? LIMIT 1`,
+      [req.branch_id],
+    ).catch(() => [[] as RowDataPacket[]] as [RowDataPacket[]]);
     stateCode = (stateRows as RowDataPacket[])[0]?.state ?? null;
   }
   // A package picked from the catalog is saved exactly as the catalog stores it. This
@@ -1251,9 +1070,8 @@ export async function saveOffer(
   // a transient flag the request forgets the moment it is handled -- an
   // approver reading this offer later (Branch Head or Payroll Head) has no
   // other way to know WHY it bypassed the band-range check below.
-  const isProposedException =
-    Boolean(offerData.is_proposed_exception) &&
-    String(offerData.proposed_reason ?? "").trim().length > 0;
+  const isProposedException = Boolean(offerData.is_proposed_exception)
+    && String(offerData.proposed_reason ?? '').trim().length > 0;
   const proposedExceptionReason = isProposedException
     ? String(offerData.proposed_reason).trim().slice(0, 500)
     : null;
@@ -1272,28 +1090,22 @@ export async function saveOffer(
     const monthlyCtc = components.offered_ctc;
     if (!Number.isFinite(monthlyCtc) || monthlyCtc <= 0) {
       throw Object.assign(
-        new Error("Monthly CTC must be greater than zero to submit an offer."),
+        new Error('Monthly CTC must be greater than zero to submit an offer.'),
         { statusCode: 400 },
       );
     }
     if (!isProposedException) {
-      const [slabRows] = await db
-        .execute<RowDataPacket[]>(
-          `SELECT slab_from, slab_to FROM salary_band_master WHERE band_code = ? AND active_status = 1`,
-          [offerData.salary_band ?? null],
-        )
-        .catch(() => [[] as RowDataPacket[]]);
+      const [slabRows] = await db.execute<RowDataPacket[]>(
+        `SELECT slab_from, slab_to FROM salary_band_master WHERE band_code = ? AND active_status = 1`,
+        [offerData.salary_band ?? null],
+      ).catch(() => [[] as RowDataPacket[]]);
       const slab = (slabRows as RowDataPacket[])[0];
-      if (
-        slab &&
-        (monthlyCtc < Number(slab.slab_from) ||
-          monthlyCtc > Number(slab.slab_to))
-      ) {
+      if (slab && (monthlyCtc < Number(slab.slab_from) || monthlyCtc > Number(slab.slab_to))) {
         throw Object.assign(
           new Error(
-            `Monthly CTC ₹${monthlyCtc.toLocaleString("en-IN")} is outside Band ${offerData.salary_band}'s ` +
-              `range (₹${Number(slab.slab_from).toLocaleString("en-IN")}–₹${Number(slab.slab_to).toLocaleString("en-IN")}). ` +
-              `Pick a package from the salary master or correct the CTC.`,
+            `Monthly CTC ₹${monthlyCtc.toLocaleString('en-IN')} is outside Band ${offerData.salary_band}'s ` +
+            `range (₹${Number(slab.slab_from).toLocaleString('en-IN')}–₹${Number(slab.slab_to).toLocaleString('en-IN')}). ` +
+            `Pick a package from the salary master or correct the CTC.`
           ),
           { statusCode: 400 },
         );
@@ -1303,34 +1115,22 @@ export async function saveOffer(
 
   // date_of_salary must not precede date_of_joining — same data-integrity rule as
   // employee.service.ts. Caught here for every save path (draft + submit).
-  const _doj = String(offerData.date_of_joining ?? "").slice(0, 10);
-  const _dos = String(offerData.date_of_salary ?? "").slice(0, 10);
+  const _doj = String(offerData.date_of_joining ?? '').slice(0, 10);
+  const _dos = String(offerData.date_of_salary ?? '').slice(0, 10);
   if (_doj && _dos && _dos < _doj) {
     throw Object.assign(
-      new Error(
-        `Salary start date (${_dos}) cannot be before date of joining (${_doj}).`,
-      ),
-      { statusCode: 400, code: "SALARY_START_BEFORE_JOINING" },
+      new Error(`Salary start date (${_dos}) cannot be before date of joining (${_doj}).`),
+      { statusCode: 400, code: 'SALARY_START_BEFORE_JOINING' }
     );
   }
 
   // Date lock: joining / salary dates cannot be set (or moved) to before today.
   const _prev = (existing as RowDataPacket[])[0];
   const _allowPast = canBackdateDates(actorRoles);
-  assertNotBeforeToday(
-    _doj,
-    "Date of joining",
-    _prev?.date_of_joining,
-    _allowPast,
-  );
-  assertNotBeforeToday(
-    _dos,
-    "Salary start date",
-    _prev?.date_of_salary,
-    _allowPast,
-  );
+  assertNotBeforeToday(_doj, 'Date of joining', _prev?.date_of_joining, _allowPast);
+  assertNotBeforeToday(_dos, 'Salary start date', _prev?.date_of_salary, _allowPast);
 
-  const status = submit ? "submitted" : "draft";
+  const status = submit ? 'submitted' : 'draft';
   const submittedAt = submit ? new Date() : null;
 
   const offerId: string = (existing as RowDataPacket[]).length
@@ -1352,39 +1152,17 @@ export async function saveOffer(
          status = ?, submitted_at = ?, updated_at = NOW()
        WHERE id = ?`,
       [
-        offerData.emp_type ?? "OnRoll",
-        offerData.date_of_joining,
-        offerData.date_of_salary ?? null,
-        offerData.profile ?? null,
-        offerData.department_id ?? null,
-        offerData.designation_id ?? null,
-        offerData.cost_centre ?? null,
-        offerData.reporting_manager_id ?? null,
-        normalizeOfferRoleType(offerData.role_type),
+        offerData.emp_type ?? 'OnRoll', offerData.date_of_joining, offerData.date_of_salary ?? null,
+        offerData.profile ?? null, offerData.department_id ?? null, offerData.designation_id ?? null,
+        offerData.cost_centre ?? null, offerData.reporting_manager_id ?? null, normalizeOfferRoleType(offerData.role_type),
         offerData.salary_band ?? null,
-        components.offered_ctc,
-        components.basic,
-        components.hra,
-        components.conveyance,
-        components.da,
-        components.special_allowance,
-        components.other_allowance,
-        components.bonus,
-        components.gross,
-        components.pf_employee,
-        components.pf_employer,
-        components.esic_employee,
-        components.esic_employer,
-        components.professional_tax,
-        components.gratuity,
-        components.admin_charges,
-        components.net_in_hand,
-        pfEligible ? 1 : 0,
-        esiEligible ? 1 : 0,
-        isProposedException ? 1 : 0,
-        proposedExceptionReason,
-        status,
-        submittedAt,
+        components.offered_ctc, components.basic, components.hra, components.conveyance,
+        components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
+        components.pf_employee, components.pf_employer, components.esic_employee, components.esic_employer,
+        components.professional_tax, components.gratuity, components.admin_charges, components.net_in_hand,
+        pfEligible ? 1 : 0, esiEligible ? 1 : 0,
+        isProposedException ? 1 : 0, proposedExceptionReason,
+        status, submittedAt,
         offerId,
       ],
     );
@@ -1402,43 +1180,18 @@ export async function saveOffer(
           status, created_by, submitted_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        offerId,
-        requestId,
-        req.candidate_id,
-        offerData.emp_type ?? "OnRoll",
-        offerData.date_of_joining,
-        offerData.date_of_salary ?? null,
-        offerData.profile ?? null,
-        offerData.department_id ?? null,
-        offerData.designation_id ?? null,
-        offerData.cost_centre ?? null,
-        offerData.reporting_manager_id ?? null,
-        normalizeOfferRoleType(offerData.role_type),
+        offerId, requestId, req.candidate_id,
+        offerData.emp_type ?? 'OnRoll', offerData.date_of_joining, offerData.date_of_salary ?? null,
+        offerData.profile ?? null, offerData.department_id ?? null, offerData.designation_id ?? null,
+        offerData.cost_centre ?? null, offerData.reporting_manager_id ?? null, normalizeOfferRoleType(offerData.role_type),
         offerData.salary_band ?? null,
-        components.offered_ctc,
-        components.basic,
-        components.hra,
-        components.conveyance,
-        components.da,
-        components.special_allowance,
-        components.other_allowance,
-        components.bonus,
-        components.gross,
-        components.pf_employee,
-        components.pf_employer,
-        components.esic_employee,
-        components.esic_employer,
-        components.professional_tax,
-        components.gratuity,
-        components.admin_charges,
-        components.net_in_hand,
-        pfEligible ? 1 : 0,
-        esiEligible ? 1 : 0,
-        isProposedException ? 1 : 0,
-        proposedExceptionReason,
-        status,
-        createdBy,
-        submittedAt,
+        components.offered_ctc, components.basic, components.hra, components.conveyance,
+        components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
+        components.pf_employee, components.pf_employer, components.esic_employee, components.esic_employer,
+        components.professional_tax, components.gratuity, components.admin_charges, components.net_in_hand,
+        pfEligible ? 1 : 0, esiEligible ? 1 : 0,
+        isProposedException ? 1 : 0, proposedExceptionReason,
+        status, createdBy, submittedAt,
       ],
     );
   }
@@ -1453,12 +1206,8 @@ export async function saveOffer(
     // Not fatal if it fails: the offer is saved and the branch head can still
     // see it. The queue shows a "payroll not validated" flag on the row, so the
     // gap is visible rather than silent.
-    await deriveSalaryValidationFromOffer(
-      String(req.candidate_id),
-      createdBy,
-    ).catch((e) =>
-      console.error("[saveOffer] could not derive payroll validation:", e),
-    );
+    await deriveSalaryValidationFromOffer(String(req.candidate_id), createdBy)
+      .catch((e) => console.error('[saveOffer] could not derive payroll validation:', e));
 
     // When resubmitting after a Branch Head rejection, the ats_branch_head_approval
     // row still holds approval_status='rejected'. recordBranchHeadDecision's UPDATE
@@ -1467,9 +1216,8 @@ export async function saveOffer(
     // would be permanently stuck. Reset the row to 'pending' here so the BH can
     // approve the revised offer. Only touches the row if it exists and is 'rejected'
     // — a fresh offer with no row or a still-pending row is left untouched.
-    await db
-      .execute(
-        `UPDATE ats_branch_head_approval bha
+    await db.execute(
+      `UPDATE ats_branch_head_approval bha
          JOIN ats_payroll_hr_validation pv ON pv.id = bha.payroll_validation_id
         SET bha.approval_status = 'pending',
             bha.branch_head_id  = NULL,
@@ -1477,11 +1225,8 @@ export async function saveOffer(
             bha.approved_at     = NULL,
             bha.updated_at      = NOW()
         WHERE pv.candidate_id = ? AND bha.approval_status = 'rejected'`,
-        [req.candidate_id],
-      )
-      .catch((e) =>
-        console.error("[saveOffer] could not reset branch_head_approval:", e),
-      );
+      [req.candidate_id],
+    ).catch((e) => console.error('[saveOffer] could not reset branch_head_approval:', e));
 
     await db.execute(
       `UPDATE ats_onboarding_request SET status = 'offer_submitted', updated_at = NOW() WHERE id = ?`,
@@ -1534,42 +1279,32 @@ export async function saveOffer(
           JOIN ats_onboarding_request r2 ON r2.id = ?
          WHERE uas.branch_id = r2.branch_id`,
       [req.candidate_id, requestId],
-    )
-      .then(async ([bhRows]) => {
-        await Promise.allSettled(
-          (bhRows as RowDataPacket[]).map((r) =>
-            inboxService.createItem({
-              user_id: String(r.user_id),
-              type: "offer_pending_approval",
-              title: `Offer awaiting approval: ${String(req.full_name)}`,
-              description: `Revised salary offer for ${String(req.full_name)} is ready for your approval. CTC: ₹${components.offered_ctc * 12}/year · Joining: ${offerData.date_of_joining}`,
-              entity_type: "candidate",
-              entity_id: String(req.candidate_id),
-              action_url: "/ats/offer-approvals",
-              priority: "normal",
-            }),
-          ),
-        );
-      })
-      .catch((e) =>
-        console.error("[saveOffer] could not send BH inbox notification:", e),
+    ).then(async ([bhRows]) => {
+      await Promise.allSettled(
+        (bhRows as RowDataPacket[]).map((r) =>
+          inboxService.createItem({
+            user_id: String(r.user_id),
+            type: 'offer_pending_approval',
+            title: `Offer awaiting approval: ${String(req.full_name)}`,
+            description: `Revised salary offer for ${String(req.full_name)} is ready for your approval. CTC: ₹${components.offered_ctc * 12}/year · Joining: ${offerData.date_of_joining}`,
+            entity_type: 'candidate',
+            entity_id: String(req.candidate_id),
+            action_url: '/ats/offer-approvals',
+            priority: 'normal',
+          })
+        )
       );
+    }).catch((e) => console.error('[saveOffer] could not send BH inbox notification:', e));
   }
 
-  await syncCandidateProcessFromCostCentre(
-    String(req.candidate_id),
-    (offerData.cost_centre as string | undefined) ?? null,
-  );
+  await syncCandidateProcessFromCostCentre(String(req.candidate_id), (offerData.cost_centre as string | undefined) ?? null);
 
   return { offerId, components };
 }
 
 // ── Branch Head: List Pending Approvals ───────────────────────────────────────
 
-export async function listPendingApprovals(scopeFilter: {
-  sql: string;
-  params: unknown[];
-}) {
+export async function listPendingApprovals(scopeFilter: { sql: string; params: unknown[] }) {
   // Step 1: main query — no correlated subqueries, just the base columns.
   // process_name / process_is_designation / payroll_* are resolved below from
   // three pre-batch queries, reducing N+1 (5 subqueries × N offers) to 3 fixed
@@ -1604,15 +1339,11 @@ export async function listPendingApprovals(scopeFilter: {
   // without fan-out.
   // Steps 2-4 depend only on the rows above, not on each other, so their queries are issued
   // together (one round trip instead of three).
-  const candidateIds = [
-    ...new Set((rows as any[]).map((r) => String(r.candidate_id))),
-  ];
-  const pvPlaceholders = candidateIds.map(() => "?").join(",");
+  const candidateIds = [...new Set((rows as any[]).map((r) => String(r.candidate_id)))];
+  const pvPlaceholders = candidateIds.map(() => '?').join(',');
   const [[procRows], [desigRows], pvResult] = await Promise.all([
     db.execute<RowDataPacket[]>(`SELECT id, process_name FROM process_master`),
-    db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT designation_name FROM designation_master`,
-    ),
+    db.execute<RowDataPacket[]>(`SELECT DISTINCT designation_name FROM designation_master`),
     candidateIds.length > 0
       ? db.execute<RowDataPacket[]>(
           // Step 4: payroll validations — one query for all candidates in this batch.
@@ -1638,7 +1369,7 @@ export async function listPendingApprovals(scopeFilter: {
         )
       : Promise.resolve([[]] as unknown as [RowDataPacket[]]),
   ]);
-  const procById = new Map<string, string>();
+  const procById  = new Map<string, string>();
   const procByName = new Map<string, string>();
   for (const p of procRows as any[]) {
     procById.set(String(p.id), String(p.process_name));
@@ -1646,21 +1377,12 @@ export async function listPendingApprovals(scopeFilter: {
       procByName.set(String(p.process_name), String(p.process_name));
     }
   }
-  const desigNames = new Set<string>(
-    (desigRows as any[]).map((d) => String(d.designation_name)),
-  );
-  const pvMap = new Map<
-    string,
-    {
-      hasValidated: boolean;
-      joiningDate: string | null;
-      salaryStartDate: string | null;
-    }
-  >();
+  const desigNames = new Set<string>((desigRows as any[]).map((d) => String(d.designation_name)));
+  const pvMap = new Map<string, { hasValidated: boolean; joiningDate: string | null; salaryStartDate: string | null }>();
   for (const r of pvResult[0] as any[]) {
     pvMap.set(String(r.candidate_id), {
-      hasValidated: Number(r.has_validated) === 1,
-      joiningDate: (r.latest_joining_date as string | null) ?? null,
+      hasValidated:    Number(r.has_validated) === 1,
+      joiningDate:     (r.latest_joining_date    as string | null) ?? null,
       salaryStartDate: (r.latest_salary_start_date as string | null) ?? null,
     });
   }
@@ -1672,23 +1394,22 @@ export async function listPendingApprovals(scopeFilter: {
       ? (procById.get(afp) ?? procByName.get(afp) ?? null)
       : null;
     const processIsDesignation = afp ? desigNames.has(afp) : false;
-    const processRaw =
-      afp && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(afp)
-        ? afp.trim() || null
-        : null;
+    const processRaw = afp && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(afp)
+      ? (afp.trim() || null)
+      : null;
 
     const pv = pvMap.get(String(row.candidate_id));
     const payrollValidated =
-      pv?.hasValidated === true ||
+      (pv?.hasValidated === true) ||
       (row.gross != null && row.date_of_joining != null);
 
     return {
       ...row,
-      process_name: processName,
-      process_is_designation: processIsDesignation ? 1 : 0,
-      process_raw: processRaw,
-      payroll_validated: payrollValidated ? 1 : 0,
-      payroll_joining_date: pv?.joiningDate ?? null,
+      process_name:            processName,
+      process_is_designation:  processIsDesignation ? 1 : 0,
+      process_raw:             processRaw,
+      payroll_validated:       payrollValidated ? 1 : 0,
+      payroll_joining_date:    pv?.joiningDate     ?? null,
       payroll_salary_start_date: pv?.salaryStartDate ?? null,
     };
   });
@@ -1696,22 +1417,18 @@ export async function listPendingApprovals(scopeFilter: {
 
 // ── Branch Head: Approve ──────────────────────────────────────────────────────
 
-import { createEmployeeFromCandidate } from "../employees/employee-creation-orchestrator.service.js";
+import { createEmployeeFromCandidate } from '../employees/employee-creation-orchestrator.service.js';
 
 import { blankToNull } from "../../shared/sql-values.js";
-export async function approveOffer(
-  offerId: string,
-  approverId: string,
-  remarks?: string,
-) {
+export async function approveOffer(offerId: string, approverId: string, remarks?: string) {
   // CHANGED: Delegate to Employee Creation Orchestrator (Phase 2)
   const [offerRows] = await db.execute<RowDataPacket[]>(
     `SELECT candidate_id FROM ats_employment_offer WHERE id = ? LIMIT 1`,
-    [offerId],
+    [offerId]
   );
 
   if (offerRows.length === 0) {
-    throw Object.assign(new Error("Offer not found"), { statusCode: 404 });
+    throw Object.assign(new Error('Offer not found'), { statusCode: 404 });
   }
 
   const candidateId = (offerRows[0] as any).candidate_id;
@@ -1736,14 +1453,13 @@ export async function approveOffer(
   // (NativeHROnboardingRequests.tsx:1472) — so without this an existing offer
   // could only be unblocked by rejecting it first, purely to re-open the form.
   // The offer already holds the salary Payroll HR entered; nothing is invented.
-  await deriveSalaryValidationFromOffer(candidateId, approverId).catch((e) =>
-    console.error("[approveOffer] could not derive payroll validation:", e),
-  );
+  await deriveSalaryValidationFromOffer(candidateId, approverId)
+    .catch((e) => console.error('[approveOffer] could not derive payroll validation:', e));
 
   const decision = await recordBranchHeadDecision({
     candidateId,
     branchHeadEmployeeId: approverEmployeeId,
-    decision: "approved",
+    decision: 'approved',
     remarks: remarks ?? null,
   });
 
@@ -1752,19 +1468,9 @@ export async function approveOffer(
   // field — and leaving the row 'approved' would strand the offer as decided
   // with no employee behind it and no way to decide it again.
   const undoOwnDecision = async () => {
-    if (
-      decision.recorded &&
-      !decision.alreadyDecided &&
-      decision.payrollValidationId
-    ) {
-      await revertBranchHeadDecision({
-        payrollValidationId: decision.payrollValidationId,
-      }).catch((e) =>
-        console.error(
-          "[approveOffer] could not revert branch head decision:",
-          e,
-        ),
-      );
+    if (decision.recorded && !decision.alreadyDecided && decision.payrollValidationId) {
+      await revertBranchHeadDecision({ payrollValidationId: decision.payrollValidationId })
+        .catch((e) => console.error('[approveOffer] could not revert branch head decision:', e));
     }
   };
 
@@ -1790,14 +1496,12 @@ export async function approveOffer(
   if (!result.success) {
     await undoOwnDecision();
     throw Object.assign(
-      new Error(
-        `Employee creation failed: ${result.blockers.map((b) => b.reason).join(", ")}`,
-      ),
+      new Error(`Employee creation failed: ${result.blockers.map(b => b.reason).join(', ')}`),
       {
         statusCode: 400,
         blockers: result.blockers,
         warnings: result.warnings,
-      },
+      }
     );
   }
 
@@ -1806,46 +1510,32 @@ export async function approveOffer(
   // was already recorded elsewhere (processBranchHeadApproval writes at :186
   // and then calls this function), so nothing is duplicated.
   if (!decision.alreadyDecided) {
-    await db
-      .execute(
-        `INSERT INTO ats_offer_approval (id, offer_id, approver_id, action, remarks)
+    await db.execute(
+      `INSERT INTO ats_offer_approval (id, offer_id, approver_id, action, remarks)
        VALUES (UUID(), ?, ?, 'approved', ?)`,
-        [offerId, approverId, remarks ?? null],
-      )
-      .catch((e) =>
-        console.error("[approveOffer] offer approval trail insert failed:", e),
-      );
+      [offerId, approverId, remarks ?? null],
+    ).catch((e) => console.error('[approveOffer] offer approval trail insert failed:', e));
 
-    await db
-      .execute(
-        `UPDATE ats_candidate SET current_stage = 'offer_approved', updated_at = NOW() WHERE id = ?`,
-        [candidateId],
-      )
-      .catch(() => undefined);
+    await db.execute(
+      `UPDATE ats_candidate SET current_stage = 'offer_approved', updated_at = NOW() WHERE id = ?`,
+      [candidateId],
+    ).catch(() => undefined);
 
-    await db
-      .execute(
-        `INSERT INTO ats_candidate_stage_log
+    await db.execute(
+      `INSERT INTO ats_candidate_stage_log
          (id, candidate_id, from_stage, to_stage, remarks, updated_by)
        VALUES (UUID(), ?, 'payroll_validated', 'offer_approved', ?, ?)`,
-        [
-          candidateId,
-          remarks || "Branch Head approved final offer",
-          approverEmployeeId,
-        ],
-      )
-      .catch(() => undefined);
+      [candidateId, remarks || 'Branch Head approved final offer', approverEmployeeId],
+    ).catch(() => undefined);
 
     if (result.employeeCode && decision.payrollValidationId) {
       // employee_code_generated is absent under migration 138; guarded so a
       // divergent environment cannot fail an otherwise successful approval.
-      await db
-        .execute(
-          `UPDATE ats_branch_head_approval SET employee_code_generated = ?
+      await db.execute(
+        `UPDATE ats_branch_head_approval SET employee_code_generated = ?
           WHERE payroll_validation_id = ?`,
-          [result.employeeCode, decision.payrollValidationId],
-        )
-        .catch(() => undefined);
+        [result.employeeCode, decision.payrollValidationId],
+      ).catch(() => undefined);
     }
   }
 
@@ -1867,11 +1557,7 @@ export async function approveOffer(
 
 // ── Branch Head: Reject ───────────────────────────────────────────────────────
 
-export async function rejectOffer(
-  offerId: string,
-  approverId: string,
-  remarks: string,
-) {
+export async function rejectOffer(offerId: string, approverId: string, remarks: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT o.onboarding_request_id, r.candidate_id,
             c.full_name, c.email, c.applied_for_branch, c.applied_for_process
@@ -1883,8 +1569,7 @@ export async function rejectOffer(
      LIMIT 1`,
     [offerId, offerId, offerId],
   );
-  if (!rows.length)
-    throw Object.assign(new Error("Offer not found"), { statusCode: 404 });
+  if (!rows.length) throw Object.assign(new Error('Offer not found'), { statusCode: 404 });
   const row = (rows as RowDataPacket[])[0];
 
   // hasScopedAccess compares user_assignment_scope.branch_id (UUID) against
@@ -1893,7 +1578,7 @@ export async function rejectOffer(
   // matches correctly. Admin/super_admin bypass via unrestricted flag.
   const scope = await resolveBranchHeadScope(approverId);
   if (!scope.unrestricted) {
-    const b = String(row.applied_for_branch ?? "");
+    const b = String(row.applied_for_branch ?? '');
     // Resolve applied_for_branch to a branch_master row so we can compare both name and id.
     const [bmRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, branch_name, branch_code FROM branch_master
@@ -1906,7 +1591,7 @@ export async function rejectOffer(
     );
     const idMatch = bm?.id && scope.branchIds.includes(String(bm.id));
     if (!nameMatch && !idMatch) {
-      throw Object.assign(new Error("Access denied"), { statusCode: 403 });
+      throw Object.assign(new Error('Access denied'), { statusCode: 403 });
     }
   }
 
@@ -1921,11 +1606,9 @@ export async function rejectOffer(
   await recordBranchHeadDecision({
     candidateId: String(row.candidate_id),
     branchHeadEmployeeId: await resolveEmployeeIdForAuthUser(approverId),
-    decision: "rejected",
+    decision: 'rejected',
     remarks,
-  }).catch((e) =>
-    console.error("[rejectOffer] could not record branch head decision:", e),
-  );
+  }).catch((e) => console.error('[rejectOffer] could not record branch head decision:', e));
 
   await db.execute(
     `UPDATE ats_onboarding_request SET status = 'rejected', updated_at = NOW() WHERE id = ?`,
@@ -1949,11 +1632,9 @@ export async function rejectOffer(
     sendRejectedEmail({
       candidateId: row.candidate_id,
       to: row.email,
-      candidateName: row.full_name ?? "Candidate",
-      branchName: row.applied_for_branch ?? "",
-    }).catch((err: unknown) =>
-      console.error("[rejectOffer] email failed:", err),
-    );
+      candidateName: row.full_name ?? 'Candidate',
+      branchName: row.applied_for_branch ?? '',
+    }).catch((err: unknown) => console.error('[rejectOffer] email failed:', err));
   }
 
   // Inbox notification to the Payroll HR who validated this salary so they know
@@ -1967,22 +1648,18 @@ export async function rejectOffer(
       ORDER BY COALESCE(pv.validated_at, pv.created_at) DESC
       LIMIT 1`,
     [row.candidate_id],
-  )
-    .then(async ([hrRows]) => {
-      const hrUserId = (hrRows as RowDataPacket[])[0]?.user_id;
-      if (!hrUserId) return;
-      await inboxService.createItem({
-        user_id: String(hrUserId),
-        type: "offer_rejected_by_branch_head",
-        title: `Offer rejected: ${String(row.full_name ?? "Candidate")}`,
-        description: `Branch Head rejected the offer for ${String(row.full_name ?? "this candidate")}${remarks ? ` — "${remarks}"` : ""}. Please revise the salary and resubmit.`,
-        entity_type: "candidate",
-        entity_id: String(row.candidate_id),
-        action_url: "/ats/onboarding-requests",
-        priority: "high",
-      });
-    })
-    .catch((e) =>
-      console.error("[rejectOffer] could not notify payroll HR:", e),
-    );
+  ).then(async ([hrRows]) => {
+    const hrUserId = (hrRows as RowDataPacket[])[0]?.user_id;
+    if (!hrUserId) return;
+    await inboxService.createItem({
+      user_id: String(hrUserId),
+      type: 'offer_rejected_by_branch_head',
+      title: `Offer rejected: ${String(row.full_name ?? 'Candidate')}`,
+      description: `Branch Head rejected the offer for ${String(row.full_name ?? 'this candidate')}${remarks ? ` — "${remarks}"` : ''}. Please revise the salary and resubmit.`,
+      entity_type: 'candidate',
+      entity_id: String(row.candidate_id),
+      action_url: '/ats/onboarding-requests',
+      priority: 'high',
+    });
+  }).catch((e) => console.error('[rejectOffer] could not notify payroll HR:', e));
 }

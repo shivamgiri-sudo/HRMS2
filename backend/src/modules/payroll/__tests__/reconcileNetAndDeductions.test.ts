@@ -17,10 +17,7 @@ import { reconcileNetAndDeductions } from "../payrollCalculate.service.js";
 
 describe("reconcileNetAndDeductions", () => {
   it("passes through unchanged when deductions don't exceed gross", () => {
-    const { totalDeductions, netSalary } = reconcileNetAndDeductions(
-      20000,
-      8000,
-    );
+    const { totalDeductions, netSalary } = reconcileNetAndDeductions(20000, 8000);
     expect(totalDeductions).toBe(8000);
     expect(netSalary).toBe(12000);
     expect(totalDeductions + netSalary).toBe(20000);
@@ -28,10 +25,7 @@ describe("reconcileNetAndDeductions", () => {
 
   it("caps deductions at gross instead of letting net go negative with deductions unclamped", () => {
     // The exact failure scenario: gross 20000, raw deductions 23000.
-    const { totalDeductions, netSalary } = reconcileNetAndDeductions(
-      20000,
-      23000,
-    );
+    const { totalDeductions, netSalary } = reconcileNetAndDeductions(20000, 23000);
     expect(netSalary).toBe(0);
     expect(totalDeductions).toBe(20000); // not 23000
     // The invariant the whole fix exists to guarantee:
@@ -48,26 +42,17 @@ describe("reconcileNetAndDeductions", () => {
       [0, 100],
     ];
     for (const [gross, rawDeductions] of cases) {
-      const { totalDeductions, netSalary } = reconcileNetAndDeductions(
-        gross,
-        rawDeductions,
-      );
-      expect(
-        netSalary,
-        `net should never be negative for gross=${gross}, raw=${rawDeductions}`,
-      ).toBeGreaterThanOrEqual(0);
+      const { totalDeductions, netSalary } = reconcileNetAndDeductions(gross, rawDeductions);
+      expect(netSalary, `net should never be negative for gross=${gross}, raw=${rawDeductions}`).toBeGreaterThanOrEqual(0);
       expect(
         Math.round((totalDeductions + netSalary) * 100) / 100,
-        `gross=${gross}, raw=${rawDeductions} should reconcile`,
+        `gross=${gross}, raw=${rawDeductions} should reconcile`
       ).toBe(gross);
     }
   });
 
   it("rounds to 2 decimal places", () => {
-    const { totalDeductions, netSalary } = reconcileNetAndDeductions(
-      10000.005,
-      3333.333,
-    );
+    const { totalDeductions, netSalary } = reconcileNetAndDeductions(10000.005, 3333.333);
     expect(totalDeductions).toBe(3333.33);
     expect(netSalary).toBe(6666.67);
   });

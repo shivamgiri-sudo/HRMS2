@@ -19,7 +19,7 @@ import { resolve } from "path";
  */
 const svc = readFileSync(
   resolve(__dirname, "../branch-budget.service.ts"),
-  "utf8",
+  "utf8"
 );
 
 function reviewBody() {
@@ -31,9 +31,7 @@ function reviewBody() {
 describe("branch budget review — stage authority", () => {
   it("resolves the stage from the budget status, not from the reviewer's role", () => {
     const body = reviewBody();
-    expect(body).toContain(
-      "REVIEW_STAGES[currentStatus as keyof typeof REVIEW_STAGES]",
-    );
+    expect(body).toContain("REVIEW_STAGES[currentStatus as keyof typeof REVIEW_STAGES]");
     // The old role->status ternary must be gone; it is what pinned each role to one stage.
     expect(body).not.toContain(`role === "branch_head"\n      ? "submitted"`);
     expect(body).not.toMatch(/const expectedStatus\s*=/);
@@ -43,29 +41,20 @@ describe("branch budget review — stage authority", () => {
     for (const stage of ["submitted", "branch_head_approved"]) {
       const block = svc.slice(svc.indexOf(`  ${stage}: {`));
       const roles = block.slice(0, block.indexOf("},"));
-      expect(roles, `${stage} must admit finance_head`).toContain(
-        '"finance_head"',
-      );
-      expect(roles, `${stage} must admit super_admin`).toContain(
-        '"super_admin"',
-      );
+      expect(roles, `${stage} must admit finance_head`).toContain('"finance_head"');
+      expect(roles, `${stage} must admit super_admin`).toContain('"super_admin"');
     }
   });
 
   it("keeps each stage owner able to act on their own stage", () => {
     const submitted = svc.slice(svc.indexOf("  submitted: {"));
-    expect(submitted.slice(0, submitted.indexOf("},"))).toContain(
-      '"branch_head"',
-    );
+    expect(submitted.slice(0, submitted.indexOf("},"))).toContain('"branch_head"');
     const bha = svc.slice(svc.indexOf("  branch_head_approved: {"));
     expect(bha.slice(0, bha.indexOf("},"))).toContain('"finance_head"');
   });
 
   it("has exactly two stages, with the Accounts Head stage removed", () => {
-    const stagesBlock = svc.slice(
-      svc.indexOf("const REVIEW_STAGES ="),
-      svc.indexOf("} as const;", svc.indexOf("const REVIEW_STAGES =")),
-    );
+    const stagesBlock = svc.slice(svc.indexOf("const REVIEW_STAGES ="), svc.indexOf("} as const;", svc.indexOf("const REVIEW_STAGES =")));
     expect(stagesBlock).toContain("submitted:");
     expect(stagesBlock).toContain("branch_head_approved:");
     expect(stagesBlock).not.toContain("finance_head_approved:");
@@ -104,14 +93,9 @@ describe("branch budget review — stage authority", () => {
     expect(body).toContain("callerRoles");
     expect(body).toContain("holdsMakerCheckerExemptRole");
     expect(body).toContain("!holdsMakerCheckerExemptRole");
-    const routes = readFileSync(
-      resolve(__dirname, "../process-pnl.routes.ts"),
-      "utf8",
-    );
+    const routes = readFileSync(resolve(__dirname, "../process-pnl.routes.ts"), "utf8");
     const route = routes.slice(routes.indexOf('"/pnl/budgets/:id/review"'));
-    expect(route.slice(0, route.indexOf("res.json"))).toContain(
-      "[user.role, ...(user.roles ?? [])]",
-    );
+    expect(route.slice(0, route.indexOf("res.json"))).toContain("[user.role, ...(user.roles ?? [])]");
   });
 
   it("still blocks a non-exempt reviewer from approving their own prior work", () => {

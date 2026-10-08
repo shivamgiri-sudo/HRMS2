@@ -1,9 +1,5 @@
 import { randomUUID } from "crypto";
-import type {
-  PoolConnection,
-  ResultSetHeader,
-  RowDataPacket,
-} from "mysql2/promise";
+import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { refuse } from "../process-pnl/finance-error.js";
 import { journalService, type JournalLineInput } from "./journal.service.js";
 import type { Voucher } from "./salary-voucher.service.js";
@@ -34,10 +30,7 @@ import type { Voucher } from "./salary-voucher.service.js";
  * A correction goes through journalService.reverse(), never a second post().
  */
 
-async function resolveExpenseSubHeadAccountId(
-  connection: PoolConnection,
-  subHeadName: string,
-): Promise<string> {
+async function resolveExpenseSubHeadAccountId(connection: PoolConnection, subHeadName: string): Promise<string> {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT sh.id
        FROM finance_expense_sub_head_master sh
@@ -50,30 +43,19 @@ async function resolveExpenseSubHeadAccountId(
   );
   const row = rows[0];
   if (!row) {
-    throw refuse(
-      422,
-      "PAYROLL_LEDGER_HEAD_NOT_FOUND",
-      `No active "${subHeadName}" sub-head under Salary & Workman Compensation — run migration 1803 first.`,
-    );
+    throw refuse(422, "PAYROLL_LEDGER_HEAD_NOT_FOUND", `No active "${subHeadName}" sub-head under Salary & Workman Compensation — run migration 1803 first.`);
   }
   return String(row.id);
 }
 
-async function resolvePayableAccountId(
-  connection: PoolConnection,
-  accountName: string,
-): Promise<string> {
+async function resolvePayableAccountId(connection: PoolConnection, accountName: string): Promise<string> {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT id FROM payable_account_master WHERE account_name = ? AND active_status = 1 LIMIT 1`,
     [accountName],
   );
   const row = rows[0];
   if (!row) {
-    throw refuse(
-      422,
-      "PAYROLL_PAYABLE_ACCOUNT_NOT_FOUND",
-      `The "${accountName}" ledger head is missing or inactive.`,
-    );
+    throw refuse(422, "PAYROLL_PAYABLE_ACCOUNT_NOT_FOUND", `The "${accountName}" ledger head is missing or inactive.`);
   }
   return String(row.id);
 }
@@ -87,11 +69,7 @@ function sumLines(voucher: Voucher, names: string[], side: "D" | "C"): number {
 
 /** Sums every voucher line whose ledger_name STARTS WITH a prefix (the per-employee advance rows,
  *  whose ledger_name carries the branch name and are never a fixed string). */
-function sumLinesByPrefix(
-  voucher: Voucher,
-  prefix: string,
-  side: "D" | "C",
-): number {
+function sumLinesByPrefix(voucher: Voucher, prefix: string, side: "D" | "C"): number {
   return voucher.lines
     .filter((l) => l.debit_credit === side && l.ledger_name.startsWith(prefix))
     .reduce((s, l) => s + Number(l.amount), 0);
@@ -108,26 +86,12 @@ export async function postSalaryVoucherToLedger(
     [runId, voucher.branch_id],
   );
   if (existing[0]) {
-    throw refuse(
-      409,
-      "PAYROLL_VOUCHER_ALREADY_POSTED",
-      `${voucher.voucher_no} was already posted to the ledger — a payroll run is never re-posted, only reversed.`,
-    );
+    throw refuse(409, "PAYROLL_VOUCHER_ALREADY_POSTED", `${voucher.voucher_no} was already posted to the ledger — a payroll run is never re-posted, only reversed.`);
   }
 
-  const [
-    grossSalaryId,
-    employerStatutoryId,
-    salaryPayableId,
-    statutoryDuesId,
-    tdsPayableId,
-    otherId,
-  ] = await Promise.all([
+  const [grossSalaryId, employerStatutoryId, salaryPayableId, statutoryDuesId, tdsPayableId, otherId] = await Promise.all([
     resolveExpenseSubHeadAccountId(connection, "Gross Salary"),
-    resolveExpenseSubHeadAccountId(
-      connection,
-      "Employer Statutory Contribution",
-    ),
+    resolveExpenseSubHeadAccountId(connection, "Employer Statutory Contribution"),
     resolvePayableAccountId(connection, "Salary Payable"),
     resolvePayableAccountId(connection, "Statutory Dues"),
     resolvePayableAccountId(connection, "TDS Payable"),
@@ -137,11 +101,7 @@ export async function postSalaryVoucherToLedger(
   const grossSalary = sumLines(voucher, ["Gross Salary"], "D");
   const employerStatutory = sumLines(
     voucher,
-    [
-      "Employer's Contribution to Esic",
-      "Employer's Contribution to Epf",
-      "EPF Admin Charges",
-    ],
+    ["Employer's Contribution to Esic", "Employer's Contribution to Epf", "EPF Admin Charges"],
     "D",
   );
   const salaryPayable = sumLines(voucher, ["Salary Payable A/C"], "C");
@@ -151,56 +111,16 @@ export async function postSalaryVoucherToLedger(
   // the FY string here and risking it drifting out of sync with that function's own format.
   const tdsPayable = sumLinesByPrefix(voucher, "TDS SALARY", "C");
   const otherCredits =
-    sumLinesByPrefix(voucher, "Advance Against Salary", "C") +
-    sumLines(
-      voucher,
-      ["GROSS SALARY", "STAY HEALTHY STAY HAPPY INSURANCE"],
-      "C",
-    );
+    sumLinesByPrefix(voucher, "Advance Against Salary", "C")
+    + sumLines(voucher, ["GROSS SALARY", "STAY HEALTHY STAY HAPPY INSURANCE"], "C");
 
   const lines: JournalLineInput[] = [];
-  if (grossSalary > 0)
-    lines.push({
-      accountType: "expense_sub_head",
-      accountId: grossSalaryId,
-      debitAmount: grossSalary,
-      narration: "Gross Salary",
-    });
-  if (employerStatutory > 0)
-    lines.push({
-      accountType: "expense_sub_head",
-      accountId: employerStatutoryId,
-      debitAmount: employerStatutory,
-      narration: "Employer Statutory Contribution",
-    });
-  if (salaryPayable > 0)
-    lines.push({
-      accountType: "payable_account",
-      accountId: salaryPayableId,
-      creditAmount: salaryPayable,
-      narration: "Salary Payable",
-    });
-  if (statutoryDues > 0)
-    lines.push({
-      accountType: "payable_account",
-      accountId: statutoryDuesId,
-      creditAmount: statutoryDues,
-      narration: "EPF + ESIC Payable",
-    });
-  if (tdsPayable > 0)
-    lines.push({
-      accountType: "payable_account",
-      accountId: tdsPayableId,
-      creditAmount: tdsPayable,
-      narration: "TDS Payable",
-    });
-  if (otherCredits > 0)
-    lines.push({
-      accountType: "payable_account",
-      accountId: otherId,
-      creditAmount: otherCredits,
-      narration: "Advances + misc recoveries",
-    });
+  if (grossSalary > 0) lines.push({ accountType: "expense_sub_head", accountId: grossSalaryId, debitAmount: grossSalary, narration: "Gross Salary" });
+  if (employerStatutory > 0) lines.push({ accountType: "expense_sub_head", accountId: employerStatutoryId, debitAmount: employerStatutory, narration: "Employer Statutory Contribution" });
+  if (salaryPayable > 0) lines.push({ accountType: "payable_account", accountId: salaryPayableId, creditAmount: salaryPayable, narration: "Salary Payable" });
+  if (statutoryDues > 0) lines.push({ accountType: "payable_account", accountId: statutoryDuesId, creditAmount: statutoryDues, narration: "EPF + ESIC Payable" });
+  if (tdsPayable > 0) lines.push({ accountType: "payable_account", accountId: tdsPayableId, creditAmount: tdsPayable, narration: "TDS Payable" });
+  if (otherCredits > 0) lines.push({ accountType: "payable_account", accountId: otherId, creditAmount: otherCredits, narration: "Advances + misc recoveries" });
 
   const payrollLedgerVoucherId = randomUUID();
   const { journalEntryId } = await journalService.post(connection, {
@@ -218,16 +138,8 @@ export async function postSalaryVoucherToLedger(
        (id, run_id, branch_id, company_code, voucher_no, period, total_debit, total_credit, journal_entry_id, posted_by, posted_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [
-      payrollLedgerVoucherId,
-      runId,
-      voucher.branch_id,
-      voucher.company_code,
-      voucher.voucher_no,
-      periodFromDate(voucher.date),
-      voucher.totals.debit,
-      voucher.totals.credit,
-      journalEntryId,
-      actorUserId,
+      payrollLedgerVoucherId, runId, voucher.branch_id, voucher.company_code, voucher.voucher_no,
+      periodFromDate(voucher.date), voucher.totals.debit, voucher.totals.credit, journalEntryId, actorUserId,
     ],
   );
 

@@ -74,13 +74,10 @@ function toIsoDate(value: unknown): string | null {
 
 /** "M" / "F" / "T", and the spelled-out forms, to what the system stores. */
 function toGender(value: unknown): DigilockerDemographics["gender"] {
-  const v = String(value ?? "")
-    .trim()
-    .toLowerCase();
+  const v = String(value ?? "").trim().toLowerCase();
   if (v === "m" || v === "male") return "Male";
   if (v === "f" || v === "female") return "Female";
-  if (v === "t" || v === "o" || v === "other" || v === "transgender")
-    return "Other";
+  if (v === "t" || v === "o" || v === "other" || v === "transgender") return "Other";
   return null;
 }
 
@@ -141,11 +138,7 @@ export async function applyDigilockerDemographics(
   put("employee_name", demographics.fullName);
   put("full_name_aadhaar", demographics.fullName);
   put("gender", demographics.gender);
-  put(
-    "aadhaar_number_masked",
-    demographics.aadhaarLast4 ? `XXXXXXXX${demographics.aadhaarLast4}` : null,
-    "aadhaar_masked",
-  );
+  put("aadhaar_number_masked", demographics.aadhaarLast4 ? `XXXXXXXX${demographics.aadhaarLast4}` : null, "aadhaar_masked");
 
   const cur = demographics.currentAddress;
   put("present_address", cur?.line ?? null);
@@ -185,31 +178,21 @@ export async function applyDigilockerDemographics(
   return filled;
 }
 
-export function extractDigilockerDemographics(
-  payload: unknown,
-): DigilockerDemographics {
+export function extractDigilockerDemographics(payload: unknown): DigilockerDemographics {
   const empty: DigilockerDemographics = {
-    fullName: null,
-    dateOfBirth: null,
-    gender: null,
-    aadhaarLast4: null,
-    currentAddress: null,
-    permanentAddress: null,
+    fullName: null, dateOfBirth: null, gender: null, aadhaarLast4: null,
+    currentAddress: null, permanentAddress: null,
   };
   if (!payload || typeof payload !== "object") return empty;
 
   const root = payload as Record<string, unknown>;
-  const data = (
-    root.data && typeof root.data === "object" ? root.data : root
-  ) as Record<string, unknown>;
+  const data = (root.data && typeof root.data === "object" ? root.data : root) as Record<string, unknown>;
 
   const list = Array.isArray(data.documentList) ? data.documentList : [];
   // Only Aadhaar carries demographics we trust; a PAN entry names the holder
   // but not their address or date of birth.
   const doc = list.find((d) => {
-    const t = String(
-      (d as Record<string, unknown>)?.document_type ?? "",
-    ).toUpperCase();
+    const t = String((d as Record<string, unknown>)?.document_type ?? "").toUpperCase();
     return t === "AADHAAR";
   }) as Record<string, unknown> | undefined;
 

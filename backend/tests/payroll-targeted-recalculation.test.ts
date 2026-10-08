@@ -45,8 +45,7 @@ function mockRuns(runs: Array<{ id: string; status: string }>) {
 
 function queuedInserts(): number {
   return dbExecute.mock.calls.filter(([sql]) =>
-    /INSERT INTO payroll_recalculation_queue/i.test(String(sql)),
-  ).length;
+    /INSERT INTO payroll_recalculation_queue/i.test(String(sql))).length;
 }
 
 beforeEach(() => {
@@ -59,44 +58,18 @@ beforeEach(() => {
 describe("recalculateOpenPayrollForEmployee — diff capture", () => {
   it("writes SALARY_DRIFT_RECALC audit event when paid_days changes", async () => {
     // Call 0: SELECT salary_prep_run (find open runs)
-    dbExecute.mockResolvedValueOnce([
-      [{ id: "run-1", status: "processing" }],
-      [],
-    ]);
+    dbExecute.mockResolvedValueOnce([[{ id: "run-1", status: "processing" }], []]);
     // Call 1: SELECT salary_prep_line BEFORE snapshot
-    dbExecute.mockResolvedValueOnce([
-      [
-        {
-          paid_working_days: 25,
-          final_payable_days: 29,
-          net_salary: 84891,
-          gross_salary: 90392,
-        },
-      ],
-      [],
-    ]);
+    dbExecute.mockResolvedValueOnce([[{ paid_working_days: 25, final_payable_days: 29, net_salary: 84891, gross_salary: 90392 }], []]);
     // calculatePayrollRunScoped is mocked separately — not a dbExecute call
     // Call 2: SELECT salary_prep_line AFTER snapshot
-    dbExecute.mockResolvedValueOnce([
-      [
-        {
-          paid_working_days: 26,
-          final_payable_days: 30,
-          net_salary: 87819,
-          gross_salary: 93509,
-        },
-      ],
-      [],
-    ]);
+    dbExecute.mockResolvedValueOnce([[{ paid_working_days: 26, final_payable_days: 30, net_salary: 87819, gross_salary: 93509 }], []]);
     // Call 3: INSERT payroll_calculation_audit
     dbExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
     await recalculateOpenPayrollForEmployee({
-      employeeId: "emp-1",
-      payrollMonth: "2026-07",
-      sourceEventType: "cosec_sync",
-      reason: "test",
-      actorUserId: "sys",
+      employeeId: "emp-1", payrollMonth: "2026-07",
+      sourceEventType: "cosec_sync", reason: "test", actorUserId: "sys",
     });
 
     // The 4th execute call (index 3) should be the audit INSERT
@@ -112,47 +85,19 @@ describe("recalculateOpenPayrollForEmployee — diff capture", () => {
 
   it("skips audit write when nothing changed", async () => {
     // Call 0: find runs
-    dbExecute.mockResolvedValueOnce([
-      [{ id: "run-1", status: "processing" }],
-      [],
-    ]);
+    dbExecute.mockResolvedValueOnce([[{ id: "run-1", status: "processing" }], []]);
     // Call 1: before snapshot — same values
-    dbExecute.mockResolvedValueOnce([
-      [
-        {
-          paid_working_days: 26,
-          final_payable_days: 30,
-          net_salary: 87819,
-          gross_salary: 93509,
-        },
-      ],
-      [],
-    ]);
+    dbExecute.mockResolvedValueOnce([[{ paid_working_days: 26, final_payable_days: 30, net_salary: 87819, gross_salary: 93509 }], []]);
     // Call 2: after snapshot — identical
-    dbExecute.mockResolvedValueOnce([
-      [
-        {
-          paid_working_days: 26,
-          final_payable_days: 30,
-          net_salary: 87819,
-          gross_salary: 93509,
-        },
-      ],
-      [],
-    ]);
+    dbExecute.mockResolvedValueOnce([[{ paid_working_days: 26, final_payable_days: 30, net_salary: 87819, gross_salary: 93509 }], []]);
 
     await recalculateOpenPayrollForEmployee({
-      employeeId: "emp-1",
-      payrollMonth: "2026-07",
-      sourceEventType: "cosec_sync",
-      reason: "test",
-      actorUserId: "sys",
+      employeeId: "emp-1", payrollMonth: "2026-07",
+      sourceEventType: "cosec_sync", reason: "test", actorUserId: "sys",
     });
 
     const auditCall = dbExecute.mock.calls.find(
-      (c: any[]) =>
-        typeof c[0] === "string" &&
-        /INSERT INTO payroll_calculation_audit/i.test(c[0]),
+      (c: any[]) => typeof c[0] === "string" && /INSERT INTO payroll_calculation_audit/i.test(c[0])
     );
     expect(auditCall).toBeUndefined();
   });
@@ -168,9 +113,8 @@ describe("recalculateOpenPayrollForEmployee", () => {
     const res = await recalculateOpenPayrollForEmployee(BASE);
 
     expect(calculatePayrollRunScoped).toHaveBeenCalledTimes(2);
-    expect(
-      calculatePayrollRunScoped.mock.calls.map((c) => c[0]).sort(),
-    ).toEqual(["run-new", "run-old"]);
+    expect(calculatePayrollRunScoped.mock.calls.map((c) => c[0]).sort())
+      .toEqual(["run-new", "run-old"]);
     // Scoped to just this employee, not the whole run.
     for (const call of calculatePayrollRunScoped.mock.calls) {
       expect(call[2]).toEqual({ employeeIds: ["emp-1"] });

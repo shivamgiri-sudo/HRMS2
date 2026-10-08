@@ -15,9 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  */
 
 const dbExecute = vi.fn();
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: (...a: unknown[]) => dbExecute(...a) },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => dbExecute(...a) } }));
 
 const notify = vi.fn().mockResolvedValue({ status: "sent" });
 vi.mock("../../communication/notification.gateway.js", () => ({
@@ -26,10 +24,7 @@ vi.mock("../../communication/notification.gateway.js", () => ({
 
 const { runLastWorkingDayScan } = await import("../exit-lwd-scan.service.js");
 
-beforeEach(() => {
-  dbExecute.mockReset();
-  notify.mockClear();
-});
+beforeEach(() => { dbExecute.mockReset(); notify.mockClear(); });
 
 describe("last-working-day scan", () => {
   it("selects only dated, non-terminal exits inside the lookahead window", async () => {
@@ -44,28 +39,14 @@ describe("last-working-day scan", () => {
     expect(sql).toContain("DATE_ADD(CURDATE(), INTERVAL ? DAY)");
     expect(sql).toContain("status NOT IN");
     // An exit already finished, abandoned, or never submitted must not alert.
-    for (const s of ["draft", "exited", "revoked", "rejected"])
-      expect(params).toContain(s);
+    for (const s of ["draft", "exited", "revoked", "rejected"]) expect(params).toContain(s);
   });
 
   it("notifies each exit found, and reports what it did", async () => {
     dbExecute.mockImplementation((sql: string) => {
-      if (sql.includes("DATE_ADD(CURDATE()"))
-        return [[{ id: "x-1" }, { id: "x-2" }]];
-      if (sql.includes("exit_clearance_task"))
-        return [[{ pending: 2, departments: "it, payroll" }]];
-      return [
-        [
-          {
-            employee_id: "e-1",
-            branch_id: "b-1",
-            process_id: "p-1",
-            employee_name: "A",
-            employee_code: "C1",
-            last_working_day_confirmed: "2026-09-01",
-          },
-        ],
-      ];
+      if (sql.includes("DATE_ADD(CURDATE()")) return [[{ id: "x-1" }, { id: "x-2" }]];
+      if (sql.includes("exit_clearance_task")) return [[{ pending: 2, departments: "it, payroll" }]];
+      return [[{ employee_id: "e-1", branch_id: "b-1", process_id: "p-1", employee_name: "A", employee_code: "C1", last_working_day_confirmed: "2026-09-01" }]];
     });
 
     const r = await runLastWorkingDayScan();
@@ -77,20 +58,8 @@ describe("last-working-day scan", () => {
   it("carries the open-clearance count into the notification", async () => {
     dbExecute.mockImplementation((sql: string) => {
       if (sql.includes("DATE_ADD(CURDATE()")) return [[{ id: "x-1" }]];
-      if (sql.includes("exit_clearance_task"))
-        return [[{ pending: 3, departments: "assets, it, payroll" }]];
-      return [
-        [
-          {
-            employee_id: "e-1",
-            branch_id: "b-1",
-            process_id: "p-1",
-            employee_name: "A",
-            employee_code: "C1",
-            last_working_day_confirmed: "2026-09-01",
-          },
-        ],
-      ];
+      if (sql.includes("exit_clearance_task")) return [[{ pending: 3, departments: "assets, it, payroll" }]];
+      return [[{ employee_id: "e-1", branch_id: "b-1", process_id: "p-1", employee_name: "A", employee_code: "C1", last_working_day_confirmed: "2026-09-01" }]];
     });
 
     await runLastWorkingDayScan();
@@ -112,20 +81,8 @@ describe("last-working-day scan", () => {
     dbExecute.mockImplementation((sql: string) => {
       seenSql.push(sql);
       if (sql.includes("DATE_ADD(CURDATE()")) return [[{ id: "x-1" }]];
-      if (sql.includes("exit_clearance_task"))
-        return [[{ pending: 1, departments: "assets" }]];
-      return [
-        [
-          {
-            employee_id: "e-1",
-            branch_id: "b-1",
-            process_id: "p-1",
-            employee_name: "A",
-            employee_code: "C1",
-            last_working_day_confirmed: "2026-09-01",
-          },
-        ],
-      ];
+      if (sql.includes("exit_clearance_task")) return [[{ pending: 1, departments: "assets" }]];
+      return [[{ employee_id: "e-1", branch_id: "b-1", process_id: "p-1", employee_name: "A", employee_code: "C1", last_working_day_confirmed: "2026-09-01" }]];
     });
 
     await runLastWorkingDayScan();
@@ -140,24 +97,11 @@ describe("last-working-day scan", () => {
   it("one unnotifiable exit does not abandon the rest of the batch", async () => {
     let seen = 0;
     dbExecute.mockImplementation((sql: string) => {
-      if (sql.includes("DATE_ADD(CURDATE()"))
-        return [[{ id: "x-1" }, { id: "x-2" }]];
-      if (sql.includes("exit_clearance_task"))
-        return [[{ pending: 0, departments: null }]];
+      if (sql.includes("DATE_ADD(CURDATE()")) return [[{ id: "x-1" }, { id: "x-2" }]];
+      if (sql.includes("exit_clearance_task")) return [[{ pending: 0, departments: null }]];
       seen += 1;
       if (seen === 1) throw new Error("context row unreadable");
-      return [
-        [
-          {
-            employee_id: "e-2",
-            branch_id: "b-1",
-            process_id: "p-1",
-            employee_name: "B",
-            employee_code: "C2",
-            last_working_day_confirmed: "2026-09-01",
-          },
-        ],
-      ];
+      return [[{ employee_id: "e-2", branch_id: "b-1", process_id: "p-1", employee_name: "B", employee_code: "C2", last_working_day_confirmed: "2026-09-01" }]];
     });
 
     const r = await runLastWorkingDayScan();

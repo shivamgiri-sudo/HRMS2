@@ -75,9 +75,7 @@ describe("bulk-import.service.ts findExistingCandidate guards mobile dedup again
 
 describe("recruiter-hiring.service.ts resolveCandidateByActivity guards mobile dedup against placeholder values", () => {
   const source = read("src/modules/ats/recruiter-hiring.service.ts");
-  const fn = source.match(
-    /async function resolveCandidateByActivity\([\s\S]*?\n\}/,
-  );
+  const fn = source.match(/async function resolveCandidateByActivity\([\s\S]*?\n\}/);
 
   it("resolveCandidateByActivity function found", () => {
     expect(fn).toBeTruthy();

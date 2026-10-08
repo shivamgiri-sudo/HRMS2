@@ -46,11 +46,8 @@ async function connect(hosts) {
   for (const host of hosts) {
     try {
       const c = await mysql.createConnection({
-        host,
-        port: 3306,
-        database: "mas_hrms",
-        user: env("DB_USER") ?? "shivam_user",
-        password: env("DB_PASSWORD"),
+        host, port: 3306, database: "mas_hrms",
+        user: env("DB_USER") ?? "shivam_user", password: env("DB_PASSWORD"),
         connectTimeout: 12_000,
       });
       console.log(`  mas_hrms: ${host}`);
@@ -62,15 +59,10 @@ async function connect(hosts) {
   throw new Error("no route to mas_hrms");
 }
 
-const shape = (v) =>
-  String(v)
-    .replace(/[A-Za-z]/g, "A")
-    .replace(/[0-9]/g, "9");
+const shape = (v) => String(v).replace(/[A-Za-z]/g, "A").replace(/[0-9]/g, "9");
 
 console.log(APPLY ? "MODE: APPLY (will clear)" : "MODE: dry run (no writes)");
-const db = await connect(
-  [env("DB_HOST"), "192.168.10.6", "122.184.128.90"].filter(Boolean),
-);
+const db = await connect([env("DB_HOST"), "192.168.10.6", "122.184.128.90"].filter(Boolean));
 
 // Impossible, not merely invalid — see the header.
 const IMPOSSIBLE = `
@@ -90,15 +82,8 @@ const [targets] = await db.query(
 console.log(`\nimpossible PAN values found: ${targets.length}`);
 for (const t of targets) {
   const v = String(t.pan_number).trim();
-  const why =
-    v.length <= 2
-      ? "placeholder"
-      : v.includes(" ")
-        ? "contains a space (a name?)"
-        : "no letters (mobile/Aadhaar?)";
-  console.log(
-    `  ${String(t.employee_code).padEnd(11)} ${String(t.full_name).slice(0, 26).padEnd(28)} shape ${shape(v).padEnd(12)} ${why}`,
-  );
+  const why = v.length <= 2 ? "placeholder" : v.includes(" ") ? "contains a space (a name?)" : "no letters (mobile/Aadhaar?)";
+  console.log(`  ${String(t.employee_code).padEnd(11)} ${String(t.full_name).slice(0, 26).padEnd(28)} shape ${shape(v).padEnd(12)} ${why}`);
 }
 
 const [leave] = await db.query(
@@ -108,9 +93,7 @@ const [leave] = await db.query(
       AND NOT (CHAR_LENGTH(TRIM(pan_number)) <= 2 OR TRIM(pan_number) LIKE '% %'
                OR UPPER(TRIM(pan_number)) NOT REGEXP '[A-Z]')`,
 );
-console.log(
-  `\nnear-miss typos left untouched for HR to correct: ${leave[0].n}`,
-);
+console.log(`\nnear-miss typos left untouched for HR to correct: ${leave[0].n}`);
 
 if (!APPLY) {
   console.log(`\nDry run — nothing cleared. Re-run with --apply.`);

@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  parseBellavitaDateOnly,
-  parseBellavitaDateTime,
-  BB_SALE_HEADERS,
-} from "../bb-sale-masmis-bulk.service.js";
+import { parseBellavitaDateOnly, parseBellavitaDateTime, BB_SALE_HEADERS } from "../bb-sale-masmis-bulk.service.js";
 
 describe("parseBellavitaDateOnly", () => {
   it("reads a real Excel serial", () => {

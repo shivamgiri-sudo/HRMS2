@@ -8,22 +8,18 @@ import { describe, expect, it } from "vitest";
 // and must do so before any write to candidate_onboarding_profile.
 const service = readFileSync(
   resolve(process.cwd(), "src/modules/ats/onboarding-full.service.ts"),
-  "utf8",
+  "utf8"
 );
 
 describe("Onboarding — Mobile Number must differ from Emergency Contact Mobile", () => {
   it("saveEmployeeDetails guards against mobileNumber === emergencyContactMobile", () => {
-    const fn = service.slice(
-      service.indexOf("export async function saveEmployeeDetails"),
-    );
+    const fn = service.slice(service.indexOf("export async function saveEmployeeDetails"));
     expect(fn).toContain("mobileNorm === emergencyNorm");
     expect(fn).toContain("MOBILE_EQUALS_EMERGENCY_CONTACT");
   });
 
   it("the guard runs before the profile INSERT, not after", () => {
-    const fn = service.slice(
-      service.indexOf("export async function saveEmployeeDetails"),
-    );
+    const fn = service.slice(service.indexOf("export async function saveEmployeeDetails"));
     const guardIdx = fn.indexOf("MOBILE_EQUALS_EMERGENCY_CONTACT");
     const insertIdx = fn.indexOf("INSERT INTO candidate_onboarding_profile");
     expect(guardIdx).toBeGreaterThan(-1);

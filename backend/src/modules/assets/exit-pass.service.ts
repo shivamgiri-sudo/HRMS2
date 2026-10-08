@@ -1,13 +1,8 @@
-import { randomUUID } from "crypto";
-import { RowDataPacket } from "mysql2/promise";
-import { db } from "../../db/mysql.js";
-import { getUserRoleKeys } from "../../shared/roleResolver.js";
-import {
-  deriveQrToken,
-  qrTokenHash,
-  qrTokenHashEquals,
-  looksLikeQrToken,
-} from "./exit-pass.qr.js";
+import { randomUUID } from 'crypto';
+import { RowDataPacket } from 'mysql2/promise';
+import { db } from '../../db/mysql.js';
+import { getUserRoleKeys } from '../../shared/roleResolver.js';
+import { deriveQrToken, qrTokenHash, qrTokenHashEquals, looksLikeQrToken } from './exit-pass.qr.js';
 
 /**
  * Asset & Material Exit Pass service — Phase 1 (create -> approve) and
@@ -45,13 +40,7 @@ export const UNRESTRICTED_ROLES = ['super_admin', 'admin', 'it_head'];
 // role_page_access grants in 1539, or a role that can open the page would
 // 403 on every action, the exact bug branch-head-approval.routes.ts warns
 // about.
-const SECURITY_ROLES = [
-  "security_head",
-  "visitor_security",
-  "branch_admin",
-  "it",
-  "wfm",
-];
+const SECURITY_ROLES = ['security_head', 'visitor_security', 'branch_admin', 'it', 'wfm'];
 
 export interface RequestingEmployee {
   employeeId: string;
@@ -59,25 +48,16 @@ export interface RequestingEmployee {
   fullName: string;
 }
 
-export async function resolveRequestingEmployee(
-  authUserId: string,
-): Promise<RequestingEmployee> {
+export async function resolveRequestingEmployee(authUserId: string): Promise<RequestingEmployee> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, branch_id, full_name FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
     [authUserId],
   );
   const row = rows[0];
   if (!row) {
-    throw new ExitPassError(
-      404,
-      "No active employee record is linked to this login.",
-    );
+    throw new ExitPassError(404, 'No active employee record is linked to this login.');
   }
-  return {
-    employeeId: String(row.id),
-    branchId: row.branch_id ? String(row.branch_id) : null,
-    fullName: String(row.full_name ?? ""),
-  };
+  return { employeeId: String(row.id), branchId: row.branch_id ? String(row.branch_id) : null, fullName: String(row.full_name ?? '') };
 }
 
 export interface ExitPassItemInput {
@@ -94,16 +74,16 @@ export interface ExitPassItemInput {
 }
 
 export interface CreateExitPassInput {
-  request_department: "IT" | "ADMIN";
-  movement_type: "returnable" | "non_returnable";
-  priority?: "normal" | "urgent" | "emergency";
+  request_department: 'IT' | 'ADMIN';
+  movement_type: 'returnable' | 'non_returnable';
+  priority?: 'normal' | 'urgent' | 'emergency';
   purpose_code: string;
   purpose_details: string;
   destination_type: string;
   destination_name?: string | null;
   destination_address?: string | null;
   destination_branch_id?: string | null;
-  carrier_type?: "employee" | "vendor" | "courier" | "driver" | "other";
+  carrier_type?: 'employee' | 'vendor' | 'courier' | 'driver' | 'other';
   carrier_employee_id?: string | null;
   carrier_name?: string | null;
   carrier_mobile?: string | null;
@@ -117,11 +97,11 @@ export interface CreateExitPassInput {
 
 function assertHasItems(items: ExitPassItemInput[]): void {
   if (!Array.isArray(items) || items.length === 0) {
-    throw new ExitPassError(400, "At least one item is required.");
+    throw new ExitPassError(400, 'At least one item is required.');
   }
   for (const item of items) {
     if (!item.category || !item.item_name) {
-      throw new ExitPassError(400, "Each item needs a category and item name.");
+      throw new ExitPassError(400, 'Each item needs a category and item name.');
     }
   }
 }
@@ -138,36 +118,20 @@ async function writeAudit(
   await connOrDb.execute(
     `INSERT INTO exit_pass_audit_logs (id, exit_pass_id, actor_employee_id, action, old_status, new_status, remarks)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      randomUUID(),
-      passId,
-      actorEmployeeId,
-      action,
-      oldStatus,
-      newStatus,
-      remarks ?? null,
-    ],
+    [randomUUID(), passId, actorEmployeeId, action, oldStatus, newStatus, remarks ?? null],
   );
 }
 
-export async function createExitPass(
-  input: CreateExitPassInput,
-  requester: RequestingEmployee,
-): Promise<{ id: string }> {
+export async function createExitPass(input: CreateExitPassInput, requester: RequestingEmployee): Promise<{ id: string }> {
   assertHasItems(input.items);
-  if (!input.planned_exit_at)
-    throw new ExitPassError(400, "planned_exit_at is required.");
-  if (!input.purpose_details?.trim())
-    throw new ExitPassError(400, "purpose_details is required.");
+  if (!input.planned_exit_at) throw new ExitPassError(400, 'planned_exit_at is required.');
+  if (!input.purpose_details?.trim()) throw new ExitPassError(400, 'purpose_details is required.');
   // Branch is the REQUESTOR's own branch, resolved server-side from their
   // employee record — never trusted from the client. Letting the client pick
   // branch_id would let anyone file a pass, and print a letterhead, for a
   // branch they don't belong to.
   if (!requester.branchId) {
-    throw new ExitPassError(
-      422,
-      "Your employee record has no branch assigned. Contact Super Admin before raising a pass.",
-    );
+    throw new ExitPassError(422, 'Your employee record has no branch assigned. Contact Super Admin before raising a pass.');
   }
   const branchId = requester.branchId;
 
@@ -184,27 +148,12 @@ export async function createExitPass(
         return_responsible_employee_id, status, created_by
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)`,
       [
-        passId,
-        requester.employeeId,
-        input.request_department,
-        branchId,
-        input.movement_type,
-        input.priority ?? "normal",
-        input.purpose_code,
-        input.purpose_details,
-        input.destination_type,
-        input.destination_name ?? null,
-        input.destination_address ?? null,
-        input.destination_branch_id ?? null,
-        input.carrier_type ?? "employee",
-        input.carrier_employee_id ?? null,
-        input.carrier_name ?? null,
-        input.carrier_mobile ?? null,
-        input.carrier_company ?? null,
-        input.vehicle_number ?? null,
-        input.planned_exit_at,
-        input.expected_return_at ?? null,
-        input.return_responsible_employee_id ?? null,
+        passId, requester.employeeId, input.request_department, branchId, input.movement_type,
+        input.priority ?? 'normal', input.purpose_code, input.purpose_details, input.destination_type,
+        input.destination_name ?? null, input.destination_address ?? null, input.destination_branch_id ?? null,
+        input.carrier_type ?? 'employee', input.carrier_employee_id ?? null, input.carrier_name ?? null,
+        input.carrier_mobile ?? null, input.carrier_company ?? null, input.vehicle_number ?? null,
+        input.planned_exit_at, input.expected_return_at ?? null, input.return_responsible_employee_id ?? null,
         requester.employeeId,
       ],
     );
@@ -215,30 +164,14 @@ export async function createExitPass(
           serial_number, make_model, quantity, unit, condition_out, remarks)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          randomUUID(),
-          passId,
-          item.asset_id ?? null,
-          item.is_tagged ? 1 : 0,
-          item.category,
-          item.item_name,
-          item.serial_number ?? null,
-          item.make_model ?? null,
-          item.quantity ?? 1,
-          item.unit ?? "Nos",
-          item.condition_out ?? null,
-          item.remarks ?? null,
+          randomUUID(), passId, item.asset_id ?? null, item.is_tagged ? 1 : 0, item.category, item.item_name,
+          item.serial_number ?? null, item.make_model ?? null, item.quantity ?? 1, item.unit ?? 'Nos',
+          item.condition_out ?? null, item.remarks ?? null,
         ],
       );
     }
 
-    await writeAudit(
-      conn,
-      passId,
-      requester.employeeId,
-      "created",
-      null,
-      "draft",
-    );
+    await writeAudit(conn, passId, requester.employeeId, 'created', null, 'draft');
     await conn.commit();
     return { id: passId };
   } catch (error) {
@@ -252,10 +185,10 @@ export async function createExitPass(
 interface PassRow extends RowDataPacket {
   id: string;
   requestor_employee_id: string;
-  request_department: "IT" | "ADMIN";
+  request_department: 'IT' | 'ADMIN';
   branch_id: string;
   status: string;
-  movement_type: "returnable" | "non_returnable";
+  movement_type: 'returnable' | 'non_returnable';
   branch_head_employee_id: string | null;
   admin_employee_id: string | null;
   pass_number: string | null;
@@ -264,18 +197,13 @@ interface PassRow extends RowDataPacket {
 }
 
 async function getPassRow(passId: string): Promise<PassRow> {
-  const [rows] = await db.execute<PassRow[]>(
-    `SELECT * FROM exit_pass_requests WHERE id = ? LIMIT 1`,
-    [passId],
-  );
-  if (!rows[0]) throw new ExitPassError(404, "Exit pass not found.");
+  const [rows] = await db.execute<PassRow[]>(`SELECT * FROM exit_pass_requests WHERE id = ? LIMIT 1`, [passId]);
+  if (!rows[0]) throw new ExitPassError(404, 'Exit pass not found.');
   return rows[0];
 }
 
 /** Resolves the active Branch Head assigned to a branch, if any. */
-async function resolveBranchHeadEmployeeId(
-  branchId: string,
-): Promise<string | null> {
+async function resolveBranchHeadEmployeeId(branchId: string): Promise<string | null> {
   // Primary: explicit branch_head_assignments table (legacy admin-managed path)
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT bha.branch_head_id
@@ -299,33 +227,21 @@ async function resolveBranchHeadEmployeeId(
   return scopeRows[0]?.employee_id ? String(scopeRows[0].employee_id) : null;
 }
 
-export async function submitExitPass(
-  passId: string,
-  requester: RequestingEmployee,
-): Promise<void> {
+export async function submitExitPass(passId: string, requester: RequestingEmployee): Promise<void> {
   const pass = await getPassRow(passId);
   if (pass.requestor_employee_id !== requester.employeeId) {
-    throw new ExitPassError(403, "Only the requestor can submit this pass.");
+    throw new ExitPassError(403, 'Only the requestor can submit this pass.');
   }
-  if (pass.status !== "draft" && pass.status !== "returned_for_correction") {
-    throw new ExitPassError(
-      409,
-      `Pass cannot be submitted from status '${pass.status}'.`,
-    );
+  if (pass.status !== 'draft' && pass.status !== 'returned_for_correction') {
+    throw new ExitPassError(409, `Pass cannot be submitted from status '${pass.status}'.`);
   }
 
   const branchHeadId = await resolveBranchHeadEmployeeId(pass.branch_id);
   if (!branchHeadId) {
-    throw new ExitPassError(
-      422,
-      "No active Branch Head is assigned for this branch. Contact Super Admin before submitting.",
-    );
+    throw new ExitPassError(422, 'No active Branch Head is assigned for this branch. Contact Super Admin before submitting.');
   }
   if (branchHeadId === requester.employeeId) {
-    throw new ExitPassError(
-      422,
-      "You are the Branch Head for this branch — an alternate approver must be configured before you can submit your own request. Contact Super Admin.",
-    );
+    throw new ExitPassError(422, 'You are the Branch Head for this branch — an alternate approver must be configured before you can submit your own request. Contact Super Admin.');
   }
 
   await db.execute(
@@ -334,27 +250,14 @@ export async function submitExitPass(
      WHERE id = ?`,
     [branchHeadId, passId],
   );
-  await writeAudit(
-    db,
-    passId,
-    requester.employeeId,
-    "submitted",
-    pass.status,
-    "pending_branch_head",
-  );
+  await writeAudit(db, passId, requester.employeeId, 'submitted', pass.status, 'pending_branch_head');
 }
 
-export type DecisionKind = "approved" | "rejected" | "returned";
+export type DecisionKind = 'approved' | 'rejected' | 'returned';
 
-async function assertCanActOnOwnBehalf(
-  pass: PassRow,
-  actorEmployeeId: string,
-): Promise<void> {
+async function assertCanActOnOwnBehalf(pass: PassRow, actorEmployeeId: string): Promise<void> {
   if (pass.requestor_employee_id === actorEmployeeId) {
-    throw new ExitPassError(
-      403,
-      "You cannot approve or reject your own request. An alternate approver is required.",
-    );
+    throw new ExitPassError(403, 'You cannot approve or reject your own request. An alternate approver is required.');
   }
 }
 
@@ -366,36 +269,24 @@ export async function branchHeadDecision(
   remarks: string | null,
 ): Promise<void> {
   const pass = await getPassRow(passId);
-  if (pass.status !== "pending_branch_head") {
-    throw new ExitPassError(
-      409,
-      `Pass is '${pass.status}', not pending Branch Head decision.`,
-    );
+  if (pass.status !== 'pending_branch_head') {
+    throw new ExitPassError(409, `Pass is '${pass.status}', not pending Branch Head decision.`);
   }
   await assertCanActOnOwnBehalf(pass, actor.employeeId);
 
   const isAssignedHead = pass.branch_head_employee_id === actor.employeeId;
   const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
   if (!isAssignedHead && !isOverride) {
-    throw new ExitPassError(
-      403,
-      "Only the assigned Branch Head (or Super Admin/Admin) can decide this pass.",
-    );
+    throw new ExitPassError(403, 'Only the assigned Branch Head (or Super Admin/Admin) can decide this pass.');
   }
-  if (
-    (decision === "rejected" || decision === "returned") &&
-    !remarks?.trim()
-  ) {
-    throw new ExitPassError(
-      400,
-      "Remarks are required for a rejection or return-for-correction.",
-    );
+  if ((decision === 'rejected' || decision === 'returned') && !remarks?.trim()) {
+    throw new ExitPassError(400, 'Remarks are required for a rejection or return-for-correction.');
   }
 
   // ADMIN requests: Branch Head approval is FINAL (skip admin stage)
   // IT requests: Branch Head approval → pending_admin_approval → Admin approval
-  const isAdminRequest = pass.request_department === "ADMIN";
-  const isFinalApproval = decision === "approved" && isAdminRequest;
+  const isAdminRequest = pass.request_department === 'ADMIN';
+  const isFinalApproval = decision === 'approved' && isAdminRequest;
 
   if (isFinalApproval) {
     // ADMIN request approved by Branch Head → directly to 'approved' with pass number
@@ -419,15 +310,7 @@ export async function branchHeadDecision(
          VALUES (?, ?, 'branch_head', ?, ?, ?)`,
         [randomUUID(), passId, actor.employeeId, decision, remarks ?? null],
       );
-      await writeAudit(
-        conn,
-        passId,
-        actor.employeeId,
-        "branch_head_approved_final",
-        pass.status,
-        "approved",
-        remarks,
-      );
+      await writeAudit(conn, passId, actor.employeeId, 'branch_head_approved_final', pass.status, 'approved', remarks);
       await conn.commit();
     } catch (error) {
       await conn.rollback();
@@ -438,11 +321,8 @@ export async function branchHeadDecision(
   } else {
     // IT request or rejection/return — standard two-stage flow
     const nextStatus =
-      decision === "approved"
-        ? "pending_admin_approval"
-        : decision === "rejected"
-          ? "branch_head_rejected"
-          : "returned_for_correction";
+      decision === 'approved' ? 'pending_admin_approval' :
+      decision === 'rejected' ? 'branch_head_rejected' : 'returned_for_correction';
 
     await db.execute(
       `UPDATE exit_pass_requests SET status = ?, branch_head_decided_at = NOW() WHERE id = ?`,
@@ -453,31 +333,16 @@ export async function branchHeadDecision(
        VALUES (?, ?, 'branch_head', ?, ?, ?)`,
       [randomUUID(), passId, actor.employeeId, decision, remarks ?? null],
     );
-    await writeAudit(
-      db,
-      passId,
-      actor.employeeId,
-      `branch_head_${decision}`,
-      pass.status,
-      nextStatus,
-      remarks,
-    );
+    await writeAudit(db, passId, actor.employeeId, `branch_head_${decision}`, pass.status, nextStatus, remarks);
   }
 }
 
-async function nextPassNumber(
-  conn: { execute: typeof db.execute },
-  branchId: string,
-): Promise<string> {
+async function nextPassNumber(conn: { execute: typeof db.execute }, branchId: string): Promise<string> {
   const [branchRows] = await conn.execute<RowDataPacket[]>(
     `SELECT branch_code FROM branch_master WHERE id = ? LIMIT 1`,
     [branchId],
   );
-  const branchCode =
-    String(branchRows[0]?.branch_code ?? "GEN")
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, "")
-      .slice(0, 8) || "GEN";
+  const branchCode = String(branchRows[0]?.branch_code ?? 'GEN').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || 'GEN';
   const year = new Date().getFullYear();
   const prefix = `GP-${branchCode}-${year}-`;
   // FOR UPDATE inside the caller's transaction serialises concurrent admin
@@ -487,43 +352,36 @@ async function nextPassNumber(
     [`${prefix}%`],
   );
   const seq = Number(countRows[0]?.n ?? 0) + 1;
-  return `${prefix}${String(seq).padStart(6, "0")}`;
+  return `${prefix}${String(seq).padStart(6, '0')}`;
 }
 
 export async function adminDecision(
   passId: string,
   actor: RequestingEmployee,
   actorRoles: string[],
-  decision: "approved" | "rejected",
+  decision: 'approved' | 'rejected',
   remarks: string | null,
 ): Promise<{ passNumber: string | null }> {
   const pass = await getPassRow(passId);
-  if (pass.status !== "pending_admin_approval") {
-    throw new ExitPassError(
-      409,
-      `Pass is '${pass.status}', not pending Admin decision.`,
-    );
+  if (pass.status !== 'pending_admin_approval') {
+    throw new ExitPassError(409, `Pass is '${pass.status}', not pending Admin decision.`);
   }
   await assertCanActOnOwnBehalf(pass, actor.employeeId);
 
   const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
-  const isBranchAdmin =
-    actorRoles.includes("branch_admin") && actor.branchId === pass.branch_id;
+  const isBranchAdmin = actorRoles.includes('branch_admin') && actor.branchId === pass.branch_id;
   if (!isOverride && !isBranchAdmin) {
-    throw new ExitPassError(
-      403,
-      "Only Admin, IT Head, Super Admin, or this branch's Branch Admin can decide this pass.",
-    );
+    throw new ExitPassError(403, 'Only Admin, IT Head, Super Admin, or this branch\'s Branch Admin can decide this pass.');
   }
-  if (decision === "rejected" && !remarks?.trim()) {
-    throw new ExitPassError(400, "Remarks are required for a rejection.");
+  if (decision === 'rejected' && !remarks?.trim()) {
+    throw new ExitPassError(400, 'Remarks are required for a rejection.');
   }
 
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
     let passNumber: string | null = null;
-    if (decision === "approved") {
+    if (decision === 'approved') {
       passNumber = await nextPassNumber(conn, pass.branch_id);
       // Gate QR (Phase 4) — same transaction as the pass number, see the
       // matching comment in branchHeadDecision's final-approval branch.
@@ -532,12 +390,7 @@ export async function adminDecision(
          SET status = 'approved', admin_employee_id = ?, admin_decided_at = NOW(), approved_at = NOW(), pass_number = ?,
              qr_token_hash = ?
          WHERE id = ?`,
-        [
-          actor.employeeId,
-          passNumber,
-          qrTokenHash(deriveQrToken(passId)),
-          passId,
-        ],
+        [actor.employeeId, passNumber, qrTokenHash(deriveQrToken(passId)), passId],
       );
     } else {
       await conn.execute(
@@ -550,15 +403,7 @@ export async function adminDecision(
        VALUES (?, ?, 'admin', ?, ?, ?)`,
       [randomUUID(), passId, actor.employeeId, decision, remarks ?? null],
     );
-    await writeAudit(
-      conn,
-      passId,
-      actor.employeeId,
-      `admin_${decision}`,
-      pass.status,
-      decision === "approved" ? "approved" : "admin_rejected",
-      remarks,
-    );
+    await writeAudit(conn, passId, actor.employeeId, `admin_${decision}`, pass.status, decision === 'approved' ? 'approved' : 'admin_rejected', remarks);
     await conn.commit();
     return { passNumber };
   } catch (error) {
@@ -569,37 +414,21 @@ export async function adminDecision(
   }
 }
 
-async function assertCanView(
-  passBranchId: string,
-  requestorEmployeeId: string,
-  passStatus: string,
-  actor: RequestingEmployee,
-  actorRoles: string[],
-): Promise<void> {
+async function assertCanView(passBranchId: string, requestorEmployeeId: string, passStatus: string, actor: RequestingEmployee, actorRoles: string[]): Promise<void> {
   // Drafts are always private to their creator, regardless of role.
-  if (passStatus === "draft" && actor.employeeId !== requestorEmployeeId) {
-    throw new ExitPassError(403, "You do not have access to this exit pass.");
+  if (passStatus === 'draft' && actor.employeeId !== requestorEmployeeId) {
+    throw new ExitPassError(403, 'You do not have access to this exit pass.');
   }
   const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
   if (isOverride) return;
   if (actor.employeeId === requestorEmployeeId) return;
   if (actor.branchId && actor.branchId === passBranchId) return;
-  throw new ExitPassError(403, "You do not have access to this exit pass.");
+  throw new ExitPassError(403, 'You do not have access to this exit pass.');
 }
 
-export async function getExitPass(
-  passId: string,
-  actor: RequestingEmployee,
-  actorRoles: string[],
-) {
+export async function getExitPass(passId: string, actor: RequestingEmployee, actorRoles: string[]) {
   const pass = await getPassRow(passId);
-  await assertCanView(
-    pass.branch_id,
-    pass.requestor_employee_id,
-    pass.status,
-    actor,
-    actorRoles,
-  );
+  await assertCanView(pass.branch_id, pass.requestor_employee_id, pass.status, actor, actorRoles);
 
   // Letterhead fields for the printable pass: falls back to city/state when
   // address is unset — verified live 2026-08-21 that only 4 of 45 branch_master
@@ -701,26 +530,16 @@ async function shapeForVerification(pass: RowDataPacket) {
   // 'outside_premises' (Phase 3): a returnable pass that has exited and is
   // due back. Overdue is derived here, not stored — a pass doesn't need a
   // background job to "become" overdue.
-  const isOverdue =
-    pass.status === "outside_premises" &&
-    !!pass.expected_return_at &&
-    new Date(String(pass.expected_return_at)).getTime() < Date.now();
+  const isOverdue = pass.status === 'outside_premises'
+    && !!pass.expected_return_at
+    && new Date(String(pass.expected_return_at)).getTime() < Date.now();
 
   const verdict =
-    pass.status === "approved"
-      ? "valid"
-      : pass.status === "outside_premises"
-        ? "valid_return"
-        : pass.status === "closed" || pass.status === "exit_verified"
-          ? "already_used"
-          : [
-                "branch_head_rejected",
-                "admin_rejected",
-                "cancelled",
-                "void",
-              ].includes(String(pass.status))
-            ? "invalid"
-            : "not_ready";
+    pass.status === 'approved' ? 'valid' :
+    pass.status === 'outside_premises' ? 'valid_return' :
+    pass.status === 'closed' || pass.status === 'exit_verified' ? 'already_used' :
+    ['branch_head_rejected', 'admin_rejected', 'cancelled', 'void'].includes(String(pass.status)) ? 'invalid' :
+    'not_ready';
 
   return { ...pass, items, verdict, is_overdue: isOverdue };
 }
@@ -762,7 +581,7 @@ export async function findPassForVerificationByQrToken(token: string, caller?: V
   // Shape-check before querying: a camera pointed at a courier label or an
   // asset sticker must not turn into database load.
   if (!looksLikeQrToken(token)) {
-    throw new ExitPassError(400, "That code is not a gate pass QR.");
+    throw new ExitPassError(400, 'That code is not a gate pass QR.');
   }
   const hash = qrTokenHash(token);
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -776,19 +595,13 @@ export async function findPassForVerificationByQrToken(token: string, caller?: V
     // an attacker probing for valid tokens; there is nothing to probe FOR here
     // (a token grants nothing without a security session), so the message
     // stays useful to the guard actually standing at the gate.
-    throw new ExitPassError(
-      404,
-      "This QR does not match any gate pass. Enter the pass number instead.",
-    );
+    throw new ExitPassError(404, 'This QR does not match any gate pass. Enter the pass number instead.');
   }
   // Belt-and-braces: the indexed WHERE already matched, this re-asserts it in
   // constant time so a future rewrite to a scan-and-compare cannot silently
   // become a `===` on a credential.
   if (!qrTokenHashEquals(String(pass.qr_token_hash), hash)) {
-    throw new ExitPassError(
-      404,
-      "This QR does not match any gate pass. Enter the pass number instead.",
-    );
+    throw new ExitPassError(404, 'This QR does not match any gate pass. Enter the pass number instead.');
   }
   delete pass.qr_token_hash;
   assertPassBranchAccess(pass.branch_id, caller);
@@ -799,30 +612,17 @@ export async function verifyExit(
   passNumber: string,
   actor: RequestingEmployee,
   actorRoles: string[],
-  input: {
-    gate: string;
-    method: "qr" | "manual";
-    remarks?: string | null;
-    qr_token?: string | null;
-  },
+  input: { gate: string; method: 'qr' | 'manual'; remarks?: string | null; qr_token?: string | null },
 ): Promise<void> {
-  const isAllowed = actorRoles.some(
-    (r) => UNRESTRICTED_ROLES.includes(r) || SECURITY_ROLES.includes(r),
-  );
+  const isAllowed = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r) || SECURITY_ROLES.includes(r));
   if (!isAllowed) {
-    throw new ExitPassError(
-      403,
-      "Only Security or Admin roles can verify an exit.",
-    );
+    throw new ExitPassError(403, 'Only Security or Admin roles can verify an exit.');
   }
   if (!input.gate?.trim()) {
-    throw new ExitPassError(400, "gate is required.");
+    throw new ExitPassError(400, 'gate is required.');
   }
 
-  const [rows] = await db.execute<PassRow[]>(
-    `SELECT * FROM exit_pass_requests WHERE pass_number = ? LIMIT 1`,
-    [passNumber],
-  );
+  const [rows] = await db.execute<PassRow[]>(`SELECT * FROM exit_pass_requests WHERE pass_number = ? LIMIT 1`, [passNumber]);
   const pass = rows[0];
   if (!pass) throw new ExitPassError(404, 'No pass found with that number.');
   assertPassBranchAccess(pass.branch_id, { actor, roles: actorRoles });
@@ -837,26 +637,19 @@ export async function verifyExit(
   // so an unprovable 'qr' is REFUSED rather than quietly downgraded to
   // 'manual' — silently rewriting what a guard did would corrupt the same
   // audit trail this check exists to protect.
-  if (input.method === "qr") {
+  if (input.method === 'qr') {
     const scanned = input.qr_token?.trim();
     if (!scanned) {
-      throw new ExitPassError(400, "qr_token is required when method is qr.");
+      throw new ExitPassError(400, 'qr_token is required when method is qr.');
     }
-    if (
-      !pass.qr_token_hash ||
-      !qrTokenHashEquals(qrTokenHash(scanned), pass.qr_token_hash)
-    ) {
-      throw new ExitPassError(
-        422,
-        "The scanned QR does not belong to this pass.",
-      );
+    if (!pass.qr_token_hash || !qrTokenHashEquals(qrTokenHash(scanned), pass.qr_token_hash)) {
+      throw new ExitPassError(422, 'The scanned QR does not belong to this pass.');
     }
   }
 
   // Non-returnable material has nothing to bring back — it closes the moment
   // it leaves. Returnable moves to outside_premises for Phase 3's return flow.
-  const nextStatus =
-    pass.movement_type === "non_returnable" ? "closed" : "outside_premises";
+  const nextStatus = pass.movement_type === 'non_returnable' ? 'closed' : 'outside_premises';
 
   await db.execute(
     `UPDATE exit_pass_requests
@@ -864,15 +657,7 @@ export async function verifyExit(
      WHERE id = ?`,
     [nextStatus, actor.employeeId, input.gate, input.method, pass.id],
   );
-  await writeAudit(
-    db,
-    pass.id,
-    actor.employeeId,
-    "exit_verified",
-    pass.status,
-    nextStatus,
-    input.remarks ?? `Gate: ${input.gate}, method: ${input.method}`,
-  );
+  await writeAudit(db, pass.id, actor.employeeId, 'exit_verified', pass.status, nextStatus, input.remarks ?? `Gate: ${input.gate}, method: ${input.method}`);
 }
 
 // ─── Phase 3: return verification ──────────────────────────────────────────
@@ -890,20 +675,12 @@ export async function verifyReturn(
   actorRoles: string[],
   input: { items: ReturnItemInput[]; remarks?: string | null },
 ): Promise<void> {
-  const isAllowed = actorRoles.some(
-    (r) => UNRESTRICTED_ROLES.includes(r) || SECURITY_ROLES.includes(r),
-  );
+  const isAllowed = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r) || SECURITY_ROLES.includes(r));
   if (!isAllowed) {
-    throw new ExitPassError(
-      403,
-      "Only Security, IT, WFM, or Admin roles can verify a return.",
-    );
+    throw new ExitPassError(403, 'Only Security, IT, WFM, or Admin roles can verify a return.');
   }
 
-  const [rows] = await db.execute<PassRow[]>(
-    `SELECT * FROM exit_pass_requests WHERE pass_number = ? LIMIT 1`,
-    [passNumber],
-  );
+  const [rows] = await db.execute<PassRow[]>(`SELECT * FROM exit_pass_requests WHERE pass_number = ? LIMIT 1`, [passNumber]);
   const pass = rows[0];
   if (!pass) throw new ExitPassError(404, 'No pass found with that number.');
   assertPassBranchAccess(pass.branch_id, { actor, roles: actorRoles });
@@ -911,7 +688,7 @@ export async function verifyReturn(
     throw new ExitPassError(409, `Pass is '${pass.status}', not outside premises — cannot verify return.`);
   }
   if (!input.items?.length) {
-    throw new ExitPassError(400, "At least one item condition is required.");
+    throw new ExitPassError(400, 'At least one item condition is required.');
   }
 
   const conn = await db.getConnection();
@@ -920,13 +697,7 @@ export async function verifyReturn(
     for (const item of input.items) {
       await conn.execute(
         `UPDATE exit_pass_items SET condition_in = ?, has_damage = ?, missing = ? WHERE id = ? AND exit_pass_id = ?`,
-        [
-          item.condition_in,
-          item.has_damage ? 1 : 0,
-          item.missing ? 1 : 0,
-          item.id,
-          pass.id,
-        ],
+        [item.condition_in, item.has_damage ? 1 : 0, item.missing ? 1 : 0, item.id, pass.id],
       );
     }
     await conn.execute(
@@ -935,15 +706,7 @@ export async function verifyReturn(
        WHERE id = ?`,
       [actor.employeeId, input.remarks ?? null, pass.id],
     );
-    await writeAudit(
-      conn,
-      pass.id,
-      actor.employeeId,
-      "return_verified",
-      pass.status,
-      "closed",
-      input.remarks,
-    );
+    await writeAudit(conn, pass.id, actor.employeeId, 'return_verified', pass.status, 'closed', input.remarks);
     await conn.commit();
   } catch (error) {
     await conn.rollback();
@@ -960,39 +723,35 @@ export interface ListFilters {
   offset: number;
 }
 
-export async function listExitPasses(
-  actor: RequestingEmployee,
-  actorRoles: string[],
-  filters: ListFilters,
-) {
+export async function listExitPasses(actor: RequestingEmployee, actorRoles: string[], filters: ListFilters) {
   const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
   const clauses: string[] = [];
   const params: unknown[] = [];
 
   // Drafts are always private to their creator — even override roles cannot see another person's draft.
-  clauses.push("(epr.status <> 'draft' OR epr.requestor_employee_id = ?)");
+  clauses.push('(epr.status <> \'draft\' OR epr.requestor_employee_id = ?)');
   params.push(actor.employeeId);
 
   if (!isOverride) {
     if (actor.branchId) {
       // epr.branch_id must be qualified — employees also has branch_id, making the unaliased form ambiguous.
-      clauses.push("(epr.requestor_employee_id = ? OR epr.branch_id = ?)");
+      clauses.push('(epr.requestor_employee_id = ? OR epr.branch_id = ?)');
       params.push(actor.employeeId, actor.branchId);
     } else {
       // No branch assigned — can only see own requests
-      clauses.push("epr.requestor_employee_id = ?");
+      clauses.push('epr.requestor_employee_id = ?');
       params.push(actor.employeeId);
     }
   }
   if (filters.status) {
-    clauses.push("epr.status = ?");
+    clauses.push('epr.status = ?');
     params.push(filters.status);
   }
   if (filters.branchId) {
-    clauses.push("epr.branch_id = ?");
+    clauses.push('epr.branch_id = ?');
     params.push(filters.branchId);
   }
-  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT epr.*, req.full_name AS requestor_name, bm.branch_name,
@@ -1021,10 +780,7 @@ export async function listExitPasses(
 }
 
 /** Pending-Branch-Head queue for the calling employee (their own assignments only, unless override). */
-export async function listPendingBranchHead(
-  actor: RequestingEmployee,
-  actorRoles: string[],
-) {
+export async function listPendingBranchHead(actor: RequestingEmployee, actorRoles: string[]) {
   const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
   let where: string;
   let params: unknown[];
@@ -1061,19 +817,14 @@ export async function listPendingBranchHead(
 }
 
 /** Pending-Admin queue: Super Admin/Admin/IT Head see all branches; branch_admin sees only their own. */
-export async function listPendingAdmin(
-  actor: RequestingEmployee,
-  actorRoles: string[],
-) {
+export async function listPendingAdmin(actor: RequestingEmployee, actorRoles: string[]) {
   const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
-  const isBranchAdmin = actorRoles.includes("branch_admin");
+  const isBranchAdmin = actorRoles.includes('branch_admin');
   if (!isOverride && !isBranchAdmin) return [];
   // branch_admin with no branch assigned cannot approve any passes
   if (!isOverride && !actor.branchId) return [];
 
-  const where = isOverride
-    ? `epr.status = 'pending_admin_approval'`
-    : `epr.status = 'pending_admin_approval' AND epr.branch_id = ?`;
+  const where = isOverride ? `epr.status = 'pending_admin_approval'` : `epr.status = 'pending_admin_approval' AND epr.branch_id = ?`;
   const params = isOverride ? [] : [actor.branchId];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT epr.*, req.full_name AS requestor_name, bm.branch_name
@@ -1102,37 +853,19 @@ export async function getActorRoles(authUserId: string): Promise<string[]> {
  * would 403 for exactly the people raising most requests. Scoped to the same
  * role set already on this router instead of loosening hr-hub's RBAC.
  */
-export async function cancelExitPass(
-  passId: string,
-  requester: RequestingEmployee,
-): Promise<void> {
+export async function cancelExitPass(passId: string, requester: RequestingEmployee): Promise<void> {
   const pass = await getPassRow(passId);
   if (pass.requestor_employee_id !== requester.employeeId) {
-    throw new ExitPassError(403, "Only the requestor can cancel this pass.");
+    throw new ExitPassError(403, 'Only the requestor can cancel this pass.');
   }
-  if (!["draft", "returned_for_correction"].includes(String(pass.status))) {
-    throw new ExitPassError(
-      409,
-      `Pass cannot be cancelled from status '${pass.status}'.`,
-    );
+  if (!['draft', 'returned_for_correction'].includes(String(pass.status))) {
+    throw new ExitPassError(409, `Pass cannot be cancelled from status '${pass.status}'.`);
   }
-  await db.execute(
-    `UPDATE exit_pass_requests SET status = 'cancelled' WHERE id = ?`,
-    [passId],
-  );
-  await writeAudit(
-    db,
-    passId,
-    requester.employeeId,
-    "cancelled",
-    pass.status,
-    "cancelled",
-  );
+  await db.execute(`UPDATE exit_pass_requests SET status = 'cancelled' WHERE id = ?`, [passId]);
+  await writeAudit(db, passId, requester.employeeId, 'cancelled', pass.status, 'cancelled');
 }
 
-export async function searchEmployeesForCarrier(
-  q: string,
-): Promise<RowDataPacket[]> {
+export async function searchEmployeesForCarrier(q: string): Promise<RowDataPacket[]> {
   const term = `%${q.trim()}%`;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_code, full_name, mobile, branch_id
@@ -1177,14 +910,12 @@ export async function upsertBranchHeadAssignment(
   return { id };
 }
 
-export async function deactivateBranchHeadAssignment(
-  assignmentId: string,
-): Promise<void> {
+export async function deactivateBranchHeadAssignment(assignmentId: string): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM branch_head_assignments WHERE id = ? LIMIT 1`,
     [assignmentId],
   );
-  if (!rows[0]) throw new ExitPassError(404, "Assignment not found.");
+  if (!rows[0]) throw new ExitPassError(404, 'Assignment not found.');
   await db.execute(
     `UPDATE branch_head_assignments SET is_active = FALSE WHERE id = ?`,
     [assignmentId],

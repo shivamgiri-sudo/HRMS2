@@ -39,9 +39,7 @@ async function loadAwolWorkItem(workItemId: string): Promise<AwolWorkItem> {
  * there is nothing further for payroll to watch once an exit exists (confirm) or the
  * no-show is explained (reject).
  */
-async function findSiblingPayrollNoticeId(
-  employeeId: string,
-): Promise<string | null> {
+async function findSiblingPayrollNoticeId(employeeId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM work_item
       WHERE entity_type = 'employee' AND entity_id = ? AND item_type = 'AWOL_PAYROLL_NOTICE'
@@ -49,27 +47,19 @@ async function findSiblingPayrollNoticeId(
       LIMIT 1`,
     [employeeId],
   );
-  return (rows as RowDataPacket[])[0]?.id
-    ? String((rows as RowDataPacket[])[0].id)
-    : null;
+  return (rows as RowDataPacket[])[0]?.id ? String((rows as RowDataPacket[])[0].id) : null;
 }
 
 export async function getAwolContext(
   workItemId: string,
-): Promise<{
-  employeeId: string;
-  employeeName: string;
-  lastWorkedDate: string | null;
-}> {
+): Promise<{ employeeId: string; employeeName: string; lastWorkedDate: string | null }> {
   const item = await loadAwolWorkItem(workItemId);
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(full_name, ''), employee_code) AS full_name
        FROM employees WHERE id = ? LIMIT 1`,
     [item.employeeId],
   );
-  const employeeName = String(
-    (empRows as RowDataPacket[])[0]?.full_name ?? item.title,
-  );
+  const employeeName = String((empRows as RowDataPacket[])[0]?.full_name ?? item.title);
   const lastWorkedDate = await getLastWorkedDate(item.employeeId);
   return { employeeId: item.employeeId, employeeName, lastWorkedDate };
 }
@@ -94,18 +84,10 @@ export async function confirmAwolAbsconding(
     userId,
   );
 
-  await completeWorkItem(
-    workItemId,
-    userId,
-    input.remarks ?? "Absconding confirmed",
-  );
+  await completeWorkItem(workItemId, userId, input.remarks ?? "Absconding confirmed");
   const siblingId = await findSiblingPayrollNoticeId(item.employeeId);
   if (siblingId) {
-    await completeWorkItem(
-      siblingId,
-      userId,
-      `Absconding confirmed, exit ${exit.id} raised`,
-    );
+    await completeWorkItem(siblingId, userId, `Absconding confirmed, exit ${exit.id} raised`);
   }
 
   return { exitRequestId: exit.id };
@@ -117,21 +99,14 @@ export async function rejectAwolSuspected(
   remarks: string,
 ): Promise<void> {
   if (!remarks?.trim()) {
-    throw Object.assign(
-      new Error("A reason is required to dismiss this AWOL item"),
-      {
-        statusCode: 400,
-      },
-    );
+    throw Object.assign(new Error("A reason is required to dismiss this AWOL item"), {
+      statusCode: 400,
+    });
   }
   const item = await loadAwolWorkItem(workItemId);
   await completeWorkItem(workItemId, userId, remarks.trim());
   const siblingId = await findSiblingPayrollNoticeId(item.employeeId);
   if (siblingId) {
-    await completeWorkItem(
-      siblingId,
-      userId,
-      `Not absconding: ${remarks.trim()}`,
-    );
+    await completeWorkItem(siblingId, userId, `Not absconding: ${remarks.trim()}`);
   }
 }

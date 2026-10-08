@@ -35,20 +35,14 @@ describe("name reconciliation runs on its own", () => {
   for (const check of IDENTITY_CHECKS) {
     it(`runs after the ${check} verification completes`, () => {
       const at = SOURCE.indexOf(`createOrUpdateCheck(candidateId, "${check}"`);
-      expect(
-        at,
-        `the ${check} verification path moved or was renamed`,
-      ).toBeGreaterThan(-1);
+      expect(at, `the ${check} verification path moved or was renamed`).toBeGreaterThan(-1);
 
       // Search to the end of the enclosing function, not a fixed number of
       // characters. A fixed window reported the bank path as unwired when the
       // call was simply 58 lines further down — the same mistake that made an
       // earlier contract test in this codebase assert against the wrong text.
       const nextFunction = SOURCE.indexOf("\nexport async function", at);
-      const after = SOURCE.slice(
-        at,
-        nextFunction === -1 ? undefined : nextFunction,
-      );
+      const after = SOURCE.slice(at, nextFunction === -1 ? undefined : nextFunction);
       expect(
         after,
         `${check} completes without reconciling names, so a mismatched identity is never noticed`,

@@ -34,12 +34,7 @@ import {
 } from "../modules/quality-learning/quality-gap.service.js";
 import { requestDialerHold } from "../modules/quality-learning/dialer-hold.service.js";
 import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
-import {
-  withWorkerLock,
-  registerTimer,
-  unregisterTimer,
-  recordWorkerRun,
-} from "./worker-utils.js";
+import { withWorkerLock, registerTimer, unregisterTimer, recordWorkerRun } from "./worker-utils.js";
 
 const WORKER_NAME = "quality-gap-detector";
 // FR2.5: gap detection must run within 15 minutes of QA score submission.
@@ -74,10 +69,7 @@ export async function runQualityGapSweep(): Promise<QualityGapSweepStats> {
   const rules = await listActiveTriggerRules();
   if (!rules.length) return stats;
 
-  const dialerUsers = (await listRecentDialerUsers(LOOKBACK_DAYS)).slice(
-    0,
-    MAX_USERS_PER_RUN,
-  );
+  const dialerUsers = (await listRecentDialerUsers(LOOKBACK_DAYS)).slice(0, MAX_USERS_PER_RUN);
   stats.usersScanned = dialerUsers.length;
   stats.rulesEvaluated = rules.length;
 
@@ -102,7 +94,7 @@ export async function runQualityGapSweep(): Promise<QualityGapSweepStats> {
         // tat-escalation.worker.ts's per-instance try/catch.
         console.error(
           `[${WORKER_NAME}] rule ${rule.id} / user ${dialerUser}:`,
-          (err as Error).message,
+          (err as Error).message
         );
       }
     }
@@ -136,7 +128,7 @@ async function sweepDialerHoldCandidates(): Promise<number> {
         AND NOT EXISTS (
               SELECT 1 FROM training_dialer_hold h WHERE h.training_assignment_id = ta.id
             )
-      LIMIT 100`,
+      LIMIT 100`
   );
 
   let requested = 0;
@@ -153,10 +145,7 @@ async function sweepDialerHoldCandidates(): Promise<number> {
       if (holdId) requested++;
     } catch (err) {
       // One bad candidate must not abort the sweep, same principle as the rule/user loop above.
-      console.error(
-        `[${WORKER_NAME}] dialer-hold request for assignment ${row.assignment_id}:`,
-        (err as Error).message,
-      );
+      console.error(`[${WORKER_NAME}] dialer-hold request for assignment ${row.assignment_id}:`, (err as Error).message);
     }
   }
   return requested;
@@ -177,7 +166,7 @@ async function tick(): Promise<void> {
       console.log(
         `[${WORKER_NAME}] ${stats.assignmentsCreated} assignment(s) created, ` +
           `${stats.contentMissingAlerts} content-missing alert(s), ` +
-          `${stats.duplicatesAnnotated} duplicate(s) annotated`,
+          `${stats.duplicatesAnnotated} duplicate(s) annotated`
       );
     }
   });
@@ -197,15 +186,7 @@ export function startQualityGapDetectorWorker(): void {
 }
 
 export function stopQualityGapDetectorWorker(): void {
-  if (startupTimer) {
-    clearTimeout(startupTimer);
-    unregisterTimer(`${WORKER_NAME}-startup`);
-    startupTimer = null;
-  }
-  if (intervalTimer) {
-    clearInterval(intervalTimer);
-    unregisterTimer(`${WORKER_NAME}-interval`);
-    intervalTimer = null;
-  }
+  if (startupTimer) { clearTimeout(startupTimer); unregisterTimer(`${WORKER_NAME}-startup`); startupTimer = null; }
+  if (intervalTimer) { clearInterval(intervalTimer); unregisterTimer(`${WORKER_NAME}-interval`); intervalTimer = null; }
   console.log(`[${WORKER_NAME}] stopped`);
 }

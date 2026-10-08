@@ -5,51 +5,35 @@
  * caller's role, so a Branch HR holding any lead id could read or message another branch's
  * candidate, and a scoped user with no resolvable branch saw every branch in the list.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import express from "express";
-import request from "supertest";
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import express from 'express';
+import request from 'supertest';
 
-vi.mock(
-  "../src/modules/meta-campaign/wassenger.provider.js",
-  async (importOriginal) => {
-    const actual =
-      await importOriginal<
-        typeof import("../src/modules/meta-campaign/wassenger.provider.js")
-      >();
-    return {
-      ...actual,
-      isWassengerConfigured: vi.fn(() => true),
-      sendCustomMessage: vi.fn(async () => ({
-        success: true,
-        messageId: "wa-1",
-      })),
-    };
-  },
-);
+vi.mock('../src/modules/meta-campaign/wassenger.provider.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/modules/meta-campaign/wassenger.provider.js')>();
+  return {
+    ...actual,
+    isWassengerConfigured: vi.fn(() => true),
+    sendCustomMessage: vi.fn(async () => ({ success: true, messageId: 'wa-1' })),
+  };
+});
 
-import { db } from "../src/db/mysql.js";
-import { metaCampaignRouter } from "../src/modules/meta-campaign/meta-campaign.routes.js";
-import { metaCampaignService } from "../src/modules/meta-campaign/meta-campaign.service.js";
-import { sendCustomMessage } from "../src/modules/meta-campaign/wassenger.provider.js";
+import { db } from '../src/db/mysql.js';
+import { metaCampaignRouter } from '../src/modules/meta-campaign/meta-campaign.routes.js';
+import { metaCampaignService } from '../src/modules/meta-campaign/meta-campaign.service.js';
+import { sendCustomMessage } from '../src/modules/meta-campaign/wassenger.provider.js';
 
-const app = express().use(express.json()).use("/api/meta", metaCampaignRouter);
+const app = express().use(express.json()).use('/api/meta', metaCampaignRouter);
 
 /** lead id -> branch, screening result, number of inbound messages */
-const LEADS: Record<
-  string,
-  { branch: string; screening: string; inbound: number }
-> = {
-  "lead-noida": { branch: "Noida", screening: "qualified", inbound: 0 },
-  "lead-delhi": { branch: "Delhi", screening: "qualified", inbound: 0 },
-  "lead-rejected": { branch: "Noida", screening: "disqualified", inbound: 0 },
-  "lead-rejected-wrote": {
-    branch: "Noida",
-    screening: "disqualified",
-    inbound: 2,
-  },
+const LEADS: Record<string, { branch: string; screening: string; inbound: number }> = {
+  'lead-noida': { branch: 'Noida', screening: 'qualified', inbound: 0 },
+  'lead-delhi': { branch: 'Delhi', screening: 'qualified', inbound: 0 },
+  'lead-rejected': { branch: 'Noida', screening: 'disqualified', inbound: 0 },
+  'lead-rejected-wrote': { branch: 'Noida', screening: 'disqualified', inbound: 2 },
 };
 
-let callerBranch: string | null = "Noida";
+let callerBranch: string | null = 'Noida';
 const executed: string[] = [];
 
 function installDb() {
@@ -76,30 +60,23 @@ const auth = (role: string) => ({ Authorization: `Bearer mock-token-${role}` });
 
 beforeEach(() => {
   executed.length = 0;
-  callerBranch = "Noida";
+  callerBranch = 'Noida';
   vi.mocked(sendCustomMessage).mockClear();
   installDb();
-  vi.spyOn(metaCampaignService, "getLeadDetail").mockImplementation(
-    async (id: string) =>
-      ({ id, parsedPhone: "9876543210", parsedName: "Asha" }) as never,
+  vi.spyOn(metaCampaignService, 'getLeadDetail').mockImplementation(
+    async (id: string) => ({ id, parsedPhone: '9876543210', parsedName: 'Asha' }) as never
   );
 });
 
-describe("thread access is branch-scoped", () => {
+describe('thread access is branch-scoped', () => {
   it("refuses another branch's thread and never reads its messages", async () => {
-    const res = await request(app)
-      .get("/api/meta/leads/lead-delhi/messages")
-      .set(auth("recruiter"));
+    const res = await request(app).get('/api/meta/leads/lead-delhi/messages').set(auth('recruiter'));
     expect(res.status).toBe(403);
-    expect(executed.some((s) => s.includes("ORDER BY created_at ASC"))).toBe(
-      false,
-    );
+    expect(executed.some((s) => s.includes('ORDER BY created_at ASC'))).toBe(false);
   });
 
   it("serves a thread from the caller's own branch", async () => {
-    const res = await request(app)
-      .get("/api/meta/leads/lead-noida/messages")
-      .set(auth("recruiter"));
+    const res = await request(app).get('/api/meta/leads/lead-noida/messages').set(auth('recruiter'));
     expect(res.status).toBe(200);
   });
 
@@ -114,100 +91,82 @@ describe("thread access is branch-scoped", () => {
   });
 
   it("refuses mark-read on another branch's thread", async () => {
-    const res = await request(app)
-      .patch("/api/meta/leads/lead-delhi/messages/read")
-      .set(auth("recruiter"));
+    const res = await request(app).patch('/api/meta/leads/lead-delhi/messages/read').set(auth('recruiter'));
     expect(res.status).toBe(403);
-    expect(executed.some((s) => s.includes("SET read_at"))).toBe(false);
+    expect(executed.some((s) => s.includes('SET read_at'))).toBe(false);
   });
 
   it("refuses the lead detail drawer for another branch's lead", async () => {
-    const res = await request(app)
-      .get("/api/meta/leads/lead-delhi")
-      .set(auth("recruiter"));
+    const res = await request(app).get('/api/meta/leads/lead-delhi').set(auth('recruiter'));
     expect(res.status).toBe(403);
   });
 });
 
-describe("fail-closed when the branch cannot be resolved", () => {
+describe('fail-closed when the branch cannot be resolved', () => {
   beforeEach(() => {
     callerBranch = null;
   });
 
-  it("returns an empty inbox instead of every branch", async () => {
-    const res = await request(app)
-      .get("/api/meta/inbox")
-      .set(auth("recruiter"));
+  it('returns an empty inbox instead of every branch', async () => {
+    const res = await request(app).get('/api/meta/inbox').set(auth('recruiter'));
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual([]);
-    expect(
-      executed.some(
-        (s) =>
-          s.includes("FROM meta_lead_raw ml") &&
-          s.includes("meta_lead_messages"),
-      ),
-    ).toBe(false);
+    expect(executed.some((s) => s.includes('FROM meta_lead_raw ml') && s.includes('meta_lead_messages'))).toBe(false);
   });
 
-  it("reports zero unread", async () => {
-    const res = await request(app)
-      .get("/api/meta/inbox/unread-count")
-      .set(auth("recruiter"));
+  it('reports zero unread', async () => {
+    const res = await request(app).get('/api/meta/inbox/unread-count').set(auth('recruiter'));
     expect(res.body.data.count).toBe(0);
   });
 
-  it("refuses every thread", async () => {
-    const res = await request(app)
-      .get("/api/meta/leads/lead-noida/messages")
-      .set(auth("recruiter"));
+  it('refuses every thread', async () => {
+    const res = await request(app).get('/api/meta/leads/lead-noida/messages').set(auth('recruiter'));
     expect(res.status).toBe(403);
   });
 });
 
-describe("reply requires shortlisting first", () => {
+describe('reply requires shortlisting first', () => {
   it("sends to a shortlisted candidate in the caller's branch", async () => {
     const res = await request(app)
-      .post("/api/meta/leads/lead-noida/reply")
-      .set(auth("recruiter"))
-      .send({ message: "Hello" });
+      .post('/api/meta/leads/lead-noida/reply')
+      .set(auth('recruiter'))
+      .send({ message: 'Hello' });
     expect(res.status).toBe(200);
-    expect(sendCustomMessage).toHaveBeenCalledWith("9876543210", "Hello");
-    expect(
-      executed.some((s) => s.includes("INSERT INTO meta_lead_messages")),
-    ).toBe(true);
+    expect(sendCustomMessage).toHaveBeenCalledWith('9876543210', 'Hello');
+    expect(executed.some((s) => s.includes('INSERT INTO meta_lead_messages'))).toBe(true);
   });
 
-  it("refuses a candidate who was not shortlisted and has not written in", async () => {
+  it('refuses a candidate who was not shortlisted and has not written in', async () => {
     const res = await request(app)
-      .post("/api/meta/leads/lead-rejected/reply")
-      .set(auth("recruiter"))
-      .send({ message: "Hello" });
+      .post('/api/meta/leads/lead-rejected/reply')
+      .set(auth('recruiter'))
+      .send({ message: 'Hello' });
     expect(res.status).toBe(409);
     expect(sendCustomMessage).not.toHaveBeenCalled();
   });
 
-  it("lets HR answer a non-shortlisted candidate who wrote first", async () => {
+  it('lets HR answer a non-shortlisted candidate who wrote first', async () => {
     const res = await request(app)
-      .post("/api/meta/leads/lead-rejected-wrote/reply")
-      .set(auth("recruiter"))
-      .send({ message: "Hi" });
+      .post('/api/meta/leads/lead-rejected-wrote/reply')
+      .set(auth('recruiter'))
+      .send({ message: 'Hi' });
     expect(res.status).toBe(200);
   });
 
-  it("refuses to reply into another branch and sends nothing", async () => {
+  it('refuses to reply into another branch and sends nothing', async () => {
     const res = await request(app)
-      .post("/api/meta/leads/lead-delhi/reply")
-      .set(auth("recruiter"))
-      .send({ message: "Hello" });
+      .post('/api/meta/leads/lead-delhi/reply')
+      .set(auth('recruiter'))
+      .send({ message: 'Hello' });
     expect(res.status).toBe(403);
     expect(sendCustomMessage).not.toHaveBeenCalled();
   });
 
-  it("refuses a file for a non-shortlisted candidate", async () => {
+  it('refuses a file for a non-shortlisted candidate', async () => {
     const res = await request(app)
-      .post("/api/meta/leads/lead-rejected/send-file")
-      .set(auth("recruiter"))
-      .attach("file", Buffer.from("%PDF-1.4"), "offer.pdf");
+      .post('/api/meta/leads/lead-rejected/send-file')
+      .set(auth('recruiter'))
+      .attach('file', Buffer.from('%PDF-1.4'), 'offer.pdf');
     expect(res.status).toBe(409);
   });
 });

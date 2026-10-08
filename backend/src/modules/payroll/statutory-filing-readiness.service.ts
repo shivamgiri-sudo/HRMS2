@@ -58,7 +58,10 @@ export type FilingStatus =
 
 /** Where an identifier was found. Ordered as searched. */
 export type IdentifierSource =
-  "employees" | "employee_statutory_info" | "employee_uan" | "none";
+  | "employees"
+  | "employee_statutory_info"
+  | "employee_uan"
+  | "none";
 
 export interface SchemeFilingReadiness {
   status: FilingStatus;
@@ -113,8 +116,7 @@ const classify = (
 export async function resolveStatutoryFilingReadinessForPeriod(
   payrollMonth: string,
 ): Promise<Map<string, StatutoryFilingReadinessResult>> {
-  const applicability =
-    await resolveStatutoryApplicabilityForPeriod(payrollMonth);
+  const applicability = await resolveStatutoryApplicabilityForPeriod(payrollMonth);
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.employee_code,
@@ -131,9 +133,7 @@ export async function resolveStatutoryFilingReadinessForPeriod(
 
   const out = new Map<string, StatutoryFilingReadinessResult>();
   for (const row of rows as Array<Record<string, unknown>>) {
-    const code = String(row.employee_code ?? "")
-      .trim()
-      .toUpperCase();
+    const code = String(row.employee_code ?? "").trim().toUpperCase();
     if (!code) continue;
 
     const app = applicability.get(code);
@@ -179,27 +179,14 @@ export function summariseFilingReadiness(
   results: Iterable<StatutoryFilingReadinessResult>,
   scheme: Scheme,
 ) {
-  let ready = 0,
-    notApplicable = 0,
-    missingId = 0,
-    invalidId = 0,
-    unresolved = 0;
+  let ready = 0, notApplicable = 0, missingId = 0, invalidId = 0, unresolved = 0;
   for (const r of results) {
     switch (r[scheme].status) {
-      case "READY":
-        ready++;
-        break;
-      case "NOT_APPLICABLE":
-        notApplicable++;
-        break;
-      case "MISSING_ID":
-        missingId++;
-        break;
-      case "INVALID_ID":
-        invalidId++;
-        break;
-      default:
-        unresolved++;
+      case "READY": ready++; break;
+      case "NOT_APPLICABLE": notApplicable++; break;
+      case "MISSING_ID": missingId++; break;
+      case "INVALID_ID": invalidId++; break;
+      default: unresolved++;
     }
   }
   return { ready, notApplicable, missingId, invalidId, unresolved };

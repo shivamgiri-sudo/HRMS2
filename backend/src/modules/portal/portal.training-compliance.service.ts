@@ -28,27 +28,17 @@ export const portalTrainingComplianceService = {
   async getTrainingCompliance(
     processId: string,
     period: string,
-    allowedProcessIds?: string[],
+    allowedProcessIds?: string[]
   ): Promise<TrainingComplianceData> {
     // Defence-in-depth: the controller already calls assertProcessAccess; this layer adds a
     // second check, exactly matching portal.attrition.service.ts's own guard (and required
     // by process-scope-boundary.contract.test.ts's "service still rejects" assertion).
-    if (!processId)
-      throw Object.assign(new Error("processId is required"), {
-        statusCode: 400,
-      });
-    if (
-      allowedProcessIds !== undefined &&
-      !allowedProcessIds.includes(processId)
-    ) {
-      throw Object.assign(new Error("Process not in your access list"), {
-        statusCode: 403,
-      });
+    if (!processId) throw Object.assign(new Error("processId is required"), { statusCode: 400 });
+    if (allowedProcessIds !== undefined && !allowedProcessIds.includes(processId)) {
+      throw Object.assign(new Error("Process not in your access list"), { statusCode: 403 });
     }
     if (!/^\d{4}-\d{2}$/.test(period)) {
-      throw Object.assign(new Error(`Invalid period format: ${period}`), {
-        statusCode: 400,
-      });
+      throw Object.assign(new Error(`Invalid period format: ${period}`), { statusCode: 400 });
     }
 
     if (processId === "p-demo-1") {
@@ -85,7 +75,7 @@ export const portalTrainingComplianceService = {
        LEFT JOIN task_tat_instance t ON t.id = ta.tat_instance_id
       WHERE e.process_id = ?
         AND DATE_FORMAT(ta.created_at, '%Y-%m') = ?`,
-      [processId, period],
+      [processId, period]
     );
     const row = (rows as RowDataPacket[])[0];
 
@@ -98,7 +88,7 @@ export const portalTrainingComplianceService = {
           AND DATE_FORMAT(ta.created_at, '%Y-%m') = ?
           AND (t.status IS NULL OR t.status NOT IN ('completed', 'cancelled'))
         GROUP BY ta.severity`,
-      [processId, period],
+      [processId, period]
     );
 
     const totalCount = Number(row?.total_count) || 0;
@@ -107,10 +97,9 @@ export const portalTrainingComplianceService = {
     // perfect month with zero training required must not read the same as a client with
     // no training program configured yet. Same "null means not measured" rule
     // portal.attrition.service.ts already applies to sanctioned_strength/open_positions.
-    const compliance_pct =
-      totalCount > 0
-        ? Math.round((completedCount / totalCount) * 100 * 100) / 100
-        : null;
+    const compliance_pct = totalCount > 0
+      ? Math.round((completedCount / totalCount) * 100 * 100) / 100
+      : null;
 
     return {
       period,
@@ -118,10 +107,7 @@ export const portalTrainingComplianceService = {
       active_assignment_count: Number(row?.active_count) || 0,
       pending_mandatory_count: Number(row?.pending_mandatory_count) || 0,
       breached_count: Number(row?.breached_count) || 0,
-      avg_completion_hours:
-        row?.avg_completion_hours != null
-          ? Math.round(Number(row.avg_completion_hours) * 10) / 10
-          : null,
+      avg_completion_hours: row?.avg_completion_hours != null ? Math.round(Number(row.avg_completion_hours) * 10) / 10 : null,
       by_severity: (severityRows as RowDataPacket[]).map((r) => ({
         severity: r.severity,
         active_count: Number(r.active_count),

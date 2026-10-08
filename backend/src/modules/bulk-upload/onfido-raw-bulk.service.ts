@@ -52,9 +52,7 @@ export function shouldTriggerNameMappingReseed(table: string): boolean {
  * already succeeded and completed; the seed run is a best-effort follow-up,
  * not part of the upload's own contract.
  */
-export async function triggerNameMappingReseedIfRelevant(
-  table: string,
-): Promise<void> {
+export async function triggerNameMappingReseedIfRelevant(table: string): Promise<void> {
   if (!shouldTriggerNameMappingReseed(table)) return;
 
   try {
@@ -67,10 +65,7 @@ export async function triggerNameMappingReseedIfRelevant(
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(
-      `[onfido-raw-bulk] name-mapping re-seed after ${table} upload failed:`,
-      message,
-    );
+    console.error(`[onfido-raw-bulk] name-mapping re-seed after ${table} upload failed:`, message);
   }
 }
 

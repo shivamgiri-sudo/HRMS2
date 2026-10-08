@@ -39,23 +39,21 @@
  *   --hrms-host=${process.env.DB_HOST} --bill-host=${process.env.BILL_DB_HOST}
  */
 
-import mysql from "mysql2/promise";
-import fs from "fs";
+import mysql from 'mysql2/promise';
+import fs from 'fs';
 
 // ── config ────────────────────────────────────────────────────────────────────
 
 const arg = (name, fallback) =>
-  process.argv.find((a) => a.startsWith(`--${name}=`))?.split("=")[1] ??
-  fallback;
+  process.argv.find(a => a.startsWith(`--${name}=`))?.split('=')[1] ?? fallback;
 
 // --company=mas_callnet restricts payment/collection tables to MAS Callnet India Pvt Ltd rows.
 // Tables without an explicit company column (invoices, budget, GRN) are already scoped by
 // branch and do not need a separate filter.
-const COMPANY_FILTER = arg("company", null);
-const MAS_CALLNET_SQL =
-  COMPANY_FILTER === "mas_callnet"
-    ? " WHERE company_name LIKE '%Mas Callnet%'"
-    : "";
+const COMPANY_FILTER = arg('company', null);
+const MAS_CALLNET_SQL = COMPANY_FILTER === 'mas_callnet'
+  ? " WHERE company_name LIKE '%Mas Callnet%'"
+  : '';
 
 // backend/.env is the same configuration the application itself uses, so a scheduled run
 // reaches whichever host the app reaches. Without this the script hardcoded the office-LAN
@@ -65,78 +63,55 @@ const MAS_CALLNET_SQL =
 // produces "Access denied", which is indistinguishable from a real credential failure.
 function fromEnvFile(key) {
   try {
-    const raw = fs.readFileSync(new URL("../.env", import.meta.url), "utf8");
-    const line = raw.split(/\r?\n/).find((l) => l.trim().startsWith(`${key}=`));
-    return line
-      ? line
-          .slice(line.indexOf("=") + 1)
-          .trim()
-          .replace(/^["']|["']$/g, "")
-      : undefined;
-  } catch {
-    return undefined;
-  }
+    const raw = fs.readFileSync(new URL('../.env', import.meta.url), 'utf8');
+    const line = raw.split(/\r?\n/).find(l => l.trim().startsWith(`${key}=`));
+    return line ? line.slice(line.indexOf('=') + 1).trim().replace(/^["']|["']$/g, '') : undefined;
+  } catch { return undefined; }
 }
 
-const DB_USER = process.env.DB_USER ?? fromEnvFile("DB_USER") ?? "shivam_user";
-const DB_PASSWORD =
-  process.env.DB_PASSWORD ??
-  fromEnvFile("DB_PASSWORD") ??
-  process.env.DB_PASSWORD;
+const DB_USER = process.env.DB_USER ?? fromEnvFile('DB_USER') ?? 'shivam_user';
+const DB_PASSWORD = process.env.DB_PASSWORD ?? fromEnvFile('DB_PASSWORD') ?? process.env.DB_PASSWORD;
 
 const HRMS = {
-  host: arg(
-    "hrms-host",
-    process.env.HRMS_DB_HOST ?? fromEnvFile("DB_HOST") ?? "192.168.10.6",
-  ),
-  port: 3306,
-  user: DB_USER,
-  password: DB_PASSWORD,
-  database: "mas_hrms",
-  connectTimeout: 20000,
-  multipleStatements: false,
+  host: arg('hrms-host', process.env.HRMS_DB_HOST ?? fromEnvFile('DB_HOST') ?? '192.168.10.6'),
+  port: 3306, user: DB_USER, password: DB_PASSWORD,
+  database: 'mas_hrms', connectTimeout: 20000, multipleStatements: false,
 };
 
 const BILL = {
-  host: arg(
-    "bill-host",
-    process.env.BILL_DB_HOST ?? fromEnvFile("BILL_DB_HOST") ?? "192.168.10.22",
-  ),
-  port: 3306,
-  user: DB_USER,
-  password: DB_PASSWORD,
-  database: "db_bill",
-  connectTimeout: 20000,
-  dateStrings: true, // prevents mysql2 from throwing on 0000-00-00 dates
+  host: arg('bill-host', process.env.BILL_DB_HOST ?? fromEnvFile('BILL_DB_HOST') ?? '192.168.10.22'),
+  port: 3306, user: DB_USER, password: DB_PASSWORD,
+  database: 'db_bill', connectTimeout: 20000,
+  dateStrings: true,  // prevents mysql2 from throwing on 0000-00-00 dates
 };
 
 // db_bill branch_name → mas_hrms branch_master.id
 const BRANCH_MAP = {
-  "AHMEDABAD HOUSE": "fe9c9d14-6583-11f1-adb1-00155d0ab410", // AHMH
-  "AHMEDABAD OTHERS": "fe9e502c-6583-11f1-adb1-00155d0ab410", // AHMHO
-  "AHMEDABAD-JALDARSHAN": "fea10538-6583-11f1-adb1-00155d0ab410", // AHMH-JD
-  "AHMEDABAD-NEELAKANTH": "fea2c991-6583-11f1-adb1-00155d0ab410", // AHMEDABAD-NEELAKANTH
-  DELHI: "fea43dc9-6583-11f1-adb1-00155d0ab410", // 07 / DELHI
-  "DEL OTHERS": "774b3ded-5e88-11f1-adb1-00155d0ab410", // DEL_OTHERS
-  "HEAD OFFICE": "fea9fdc3-6583-11f1-adb1-00155d0ab410", // CORP
-  GENLEAP: "fea80658-6583-11f1-adb1-00155d0ab410", // 09 / GENLEAP
-  HYDERABAD: "6a90bb9d-5caf-11f1-adb1-00155d0ab410", // HYD
-  JAIPUR: "fead2650-6583-11f1-adb1-00155d0ab410", // JPR
-  "JAIPUR IDC": "feae8bc7-6583-11f1-adb1-00155d0ab410", // JAID
-  KARNAL: "feb03b3a-6583-11f1-adb1-00155d0ab410", // KNL
-  "MAS-SKILL DEVELOPMENT PROJECT": "feb1fdad-6583-11f1-adb1-00155d0ab410",
-  MAYAPURI: "feb3ff2d-6583-11f1-adb1-00155d0ab410", // QUAL
-  MEERUT: "feb79faa-6583-11f1-adb1-00155d0ab410", // MRT
-  MOHALI: "feb94bca-6583-11f1-adb1-00155d0ab410", // CHD
-  NOIDA: "77769026-5e88-11f1-adb1-00155d0ab410", // NOIDA
-  "NOIDA ISPARK-2": "febb909f-6583-11f1-adb1-00155d0ab410",
-  "NOIDA-2": "febd8777-6583-11f1-adb1-00155d0ab410", // NOIDA-2
-  "NOIDA-DIALDESK": "febeee54-6583-11f1-adb1-00155d0ab410", // NOIDA-DD
-  "NOIDA-ISPARK": "fec0d5da-6583-11f1-adb1-00155d0ab410", // NOI_ISPARK
-  PAYPIK: "fec24b2c-6583-11f1-adb1-00155d0ab410",
-  "Vdf Manpower": "fea5b34a-6583-11f1-adb1-00155d0ab410", // DEL / VDF MANPOWER
-  "VDF MANPOWER": "fea5b34a-6583-11f1-adb1-00155d0ab410",
-  Lucknow: null, // not in branch_master yet
+  'AHMEDABAD HOUSE':           'fe9c9d14-6583-11f1-adb1-00155d0ab410',  // AHMH
+  'AHMEDABAD OTHERS':          'fe9e502c-6583-11f1-adb1-00155d0ab410',  // AHMHO
+  'AHMEDABAD-JALDARSHAN':      'fea10538-6583-11f1-adb1-00155d0ab410',  // AHMH-JD
+  'AHMEDABAD-NEELAKANTH':      'fea2c991-6583-11f1-adb1-00155d0ab410',  // AHMEDABAD-NEELAKANTH
+  'DELHI':                     'fea43dc9-6583-11f1-adb1-00155d0ab410',  // 07 / DELHI
+  'DEL OTHERS':                '774b3ded-5e88-11f1-adb1-00155d0ab410',  // DEL_OTHERS
+  'HEAD OFFICE':               'fea9fdc3-6583-11f1-adb1-00155d0ab410',  // CORP
+  'GENLEAP':                   'fea80658-6583-11f1-adb1-00155d0ab410',  // 09 / GENLEAP
+  'HYDERABAD':                 '6a90bb9d-5caf-11f1-adb1-00155d0ab410',  // HYD
+  'JAIPUR':                    'fead2650-6583-11f1-adb1-00155d0ab410',  // JPR
+  'JAIPUR IDC':                'feae8bc7-6583-11f1-adb1-00155d0ab410',  // JAID
+  'KARNAL':                    'feb03b3a-6583-11f1-adb1-00155d0ab410',  // KNL
+  'MAS-SKILL DEVELOPMENT PROJECT': 'feb1fdad-6583-11f1-adb1-00155d0ab410',
+  'MAYAPURI':                  'feb3ff2d-6583-11f1-adb1-00155d0ab410',  // QUAL
+  'MEERUT':                    'feb79faa-6583-11f1-adb1-00155d0ab410',  // MRT
+  'MOHALI':                    'feb94bca-6583-11f1-adb1-00155d0ab410',  // CHD
+  'NOIDA':                     '77769026-5e88-11f1-adb1-00155d0ab410',  // NOIDA
+  'NOIDA ISPARK-2':            'febb909f-6583-11f1-adb1-00155d0ab410',
+  'NOIDA-2':                   'febd8777-6583-11f1-adb1-00155d0ab410',  // NOIDA-2
+  'NOIDA-DIALDESK':            'febeee54-6583-11f1-adb1-00155d0ab410',  // NOIDA-DD
+  'NOIDA-ISPARK':              'fec0d5da-6583-11f1-adb1-00155d0ab410',  // NOI_ISPARK
+  'PAYPIK':                    'fec24b2c-6583-11f1-adb1-00155d0ab410',
+  'Vdf Manpower':              'fea5b34a-6583-11f1-adb1-00155d0ab410',  // DEL / VDF MANPOWER
+  'VDF MANPOWER':              'fea5b34a-6583-11f1-adb1-00155d0ab410',
+  'Lucknow':                   null,  // not in branch_master yet
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -152,10 +127,10 @@ function safeDate(v) {
   if (!v) return null;
   if (v instanceof Date) {
     const s = v.toISOString().slice(0, 10);
-    return s.startsWith("0000-") ? null : s;
+    return s.startsWith('0000-') ? null : s;
   }
   const s = String(v).trim().slice(0, 10);
-  return !s || s.startsWith("0000-") ? null : s;
+  return (!s || s.startsWith('0000-')) ? null : s;
 }
 
 function trim(v) {
@@ -173,7 +148,7 @@ function trim(v) {
  */
 function safeDec(v) {
   if (v === null || v === undefined) return 0;
-  const n = Number(String(v).replace(/,/g, "").trim());
+  const n = Number(String(v).replace(/,/g, '').trim());
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -183,39 +158,26 @@ function safeDec(v) {
  */
 function paymentCompleteness(billAmount, tds, deduction, netAmount) {
   const bill = safeDec(billAmount);
-  if (bill === 0) return "unknown";
+  if (bill === 0) return 'unknown';
   const expected = bill - safeDec(tds) - safeDec(deduction);
   const net = safeDec(netAmount);
   const diff = net - expected;
-  if (Math.abs(diff) <= 1) return "full";
-  return diff < 0 ? "partial" : "over";
+  if (Math.abs(diff) <= 1) return 'full';
+  return diff < 0 ? 'partial' : 'over';
 }
 
 /** Full datetime, not the date-only value safeDate() returns — approval times matter. */
 function safeDateTime(v) {
   if (!v) return null;
-  const s =
-    v instanceof Date
-      ? v.toISOString().slice(0, 19).replace("T", " ")
-      : String(v).trim();
+  const s = v instanceof Date ? v.toISOString().slice(0, 19).replace('T', ' ') : String(v).trim();
   // Reject any date whose year is 0000 (0000-00-00, 0000-00-01, etc.) — MySQL stores these
   // as sentinels for "no date" in older rows and they are not valid datetimes.
-  return !s || s.startsWith("0000-") ? null : s.slice(0, 19);
+  return (!s || s.startsWith('0000-')) ? null : s.slice(0, 19);
 }
 
 const MONTH_NUM = {
-  jan: "01",
-  feb: "02",
-  mar: "03",
-  apr: "04",
-  may: "05",
-  jun: "06",
-  jul: "07",
-  aug: "08",
-  sep: "09",
-  oct: "10",
-  nov: "11",
-  dec: "12",
+  jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+  jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
 };
 
 /**
@@ -231,23 +193,19 @@ const MONTH_NUM = {
  * through, which are calendar months BEFORE the April start.
  */
 function financeYearOf(periodCode) {
-  const [y, m] = String(periodCode).split("-").map(Number);
+  const [y, m] = String(periodCode).split('-').map(Number);
   const startYear = m >= 4 ? y : y - 1;
-  return `${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
+  return `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`;
 }
 
 function currentFinanceYearStart() {
   const now = new Date();
-  const year =
-    now.getUTCMonth() + 1 >= 4
-      ? now.getUTCFullYear()
-      : now.getUTCFullYear() - 1;
+  const year = now.getUTCMonth() + 1 >= 4 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
   return `${year}-04`;
 }
 
-const FROM_PERIOD =
-  process.argv.find((a) => a.startsWith("--from="))?.split("=")[1] ??
-  currentFinanceYearStart();
+const FROM_PERIOD = process.argv.find(a => a.startsWith('--from='))?.split('=')[1]
+  ?? currentFinanceYearStart();
 const FROM_FINANCE_YEAR = financeYearOf(FROM_PERIOD);
 
 /** True when a row belongs on or after the cutoff. Rows with no derivable period are kept
@@ -293,9 +251,7 @@ function createdBeforeFinanceYear(financeYear, sourceCreatedAt) {
  * '2026-27' — getting that wrong would file three months against the wrong year.
  */
 function toPeriodCode(financeYear, monthLabel) {
-  const raw = String(monthLabel ?? "")
-    .trim()
-    .toLowerCase();
+  const raw = String(monthLabel ?? '').trim().toLowerCase();
   if (!raw) return null;
   const mon = MONTH_NUM[raw.slice(0, 3)];
   if (!mon) return null;
@@ -304,7 +260,7 @@ function toPeriodCode(financeYear, monthLabel) {
   const suffix = raw.match(/-(\d{2})$/);
   if (suffix) return `20${suffix[1]}-${mon}`;
 
-  const fy = String(financeYear ?? "").trim();
+  const fy = String(financeYear ?? '').trim();
   const start = fy.match(/^(\d{4})/);
   if (!start) return null;
   const startYear = Number(start[1]);
@@ -338,41 +294,25 @@ function toPeriodCode(financeYear, monthLabel) {
  * Matching on the word rather than the shape is why.
  */
 function billingPattern(service, particulars, rate, qty, amount) {
-  const hay = `${service ?? ""} ${particulars ?? ""}`.toLowerCase();
-  if (/revenue share/.test(hay)) return "revenue_share";
+  const hay = `${service ?? ''} ${particulars ?? ''}`.toLowerCase();
+  if (/revenue share/.test(hay)) return 'revenue_share';
   // A percentage of the client's own value is revenue share however it is worded. These do
   // not say "revenue share" — they say "28% ( On delivered Ordered value of 695249/-" — and
   // because the line is a single unit, rate x 1 == amount held and they were classified as
   // unit_recurring. Seeding a cost-centre rate from one produced Rs 1,94,670 as a "seat
   // rate" for a process whose real rate is Rs 35,000.
-  if (/\d\s*%/.test(hay)) return "revenue_share";
-  if (
-    /set ?up cost|implementation|integration charge|customi[sz]ation|development cost/.test(
-      hay,
-    )
-  )
-    return "one_time";
-  if (
-    /excess usage|top ?up|talktime|recharge|cloud telephony|\bcti\b|per (call|minute|transaction|lead|case)/.test(
-      hay,
-    )
-  )
-    return "usage";
-  if (/retainer|subscription/.test(hay)) return "fixed";
+  if (/\d\s*%/.test(hay)) return 'revenue_share';
+  if (/set ?up cost|implementation|integration charge|customi[sz]ation|development cost/.test(hay))
+    return 'one_time';
+  if (/excess usage|top ?up|talktime|recharge|cloud telephony|\bcti\b|per (call|minute|transaction|lead|case)/.test(hay))
+    return 'usage';
+  if (/retainer|subscription/.test(hay)) return 'fixed';
   // Shape beats vocabulary: a rate against a real unit count is per-unit billing whatever
   // the line happens to be called.
-  if (
-    /seat|fte|manpower|deployment|resource|telecalling|service charges/.test(
-      hay,
-    )
-  )
-    return "unit_recurring";
-  const r = safeDec(rate),
-    q = safeDec(qty),
-    a = safeDec(amount);
-  if (r > 0 && q > 0 && a > 0 && Math.abs(r * q - a) < 1)
-    return "unit_recurring";
-  return "fixed";
+  if (/seat|fte|manpower|deployment|resource|telecalling|service charges/.test(hay)) return 'unit_recurring';
+  const r = safeDec(rate), q = safeDec(qty), a = safeDec(amount);
+  if (r > 0 && q > 0 && a > 0 && Math.abs(r * q - a) < 1) return 'unit_recurring';
+  return 'fixed';
 }
 
 /**
@@ -383,16 +323,11 @@ function billingPattern(service, particulars, rate, qty, amount) {
  * same invoice value, so the rate/qty split is not always the per-person one.
  */
 function isSeatLine(service, particulars, rate, qty, amount) {
-  return billingPattern(service, particulars, rate, qty, amount) ===
-    "unit_recurring"
-    ? 1
-    : 0;
+  return billingPattern(service, particulars, rate, qty, amount) === 'unit_recurring' ? 1 : 0;
 }
 
 function log(msg) {
-  process.stdout.write(
-    "[" + new Date().toISOString().slice(11, 19) + "] " + msg + "\n",
-  );
+  process.stdout.write('[' + new Date().toISOString().slice(11, 19) + '] ' + msg + '\n');
 }
 
 async function insertBatch(hrms, table, rows, keys, updateCols) {
@@ -400,14 +335,12 @@ async function insertBatch(hrms, table, rows, keys, updateCols) {
   let inserted = 0;
   for (let i = 0; i < rows.length; i += BATCH) {
     const chunk = rows.slice(i, i + BATCH);
-    const placeholders = chunk
-      .map(() => "(" + keys.map(() => "?").join(",") + ")")
-      .join(",");
-    const values = chunk.flatMap((r) => keys.map((k) => r[k]));
-    const updateClause = updateCols.map((c) => `${c}=VALUES(${c})`).join(",");
+    const placeholders = chunk.map(() => '(' + keys.map(() => '?').join(',') + ')').join(',');
+    const values = chunk.flatMap(r => keys.map(k => r[k]));
+    const updateClause = updateCols.map(c => `${c}=VALUES(${c})`).join(',');
     await hrms.query(
-      `INSERT INTO ${table} (${keys.join(",")}) VALUES ${placeholders} ON DUPLICATE KEY UPDATE ${updateClause}`,
-      values,
+      `INSERT INTO ${table} (${keys.join(',')}) VALUES ${placeholders} ON DUPLICATE KEY UPDATE ${updateClause}`,
+      values
     );
     inserted += chunk.length;
   }
@@ -426,13 +359,7 @@ async function insertBatch(hrms, table, rows, keys, updateCols) {
  * history the current run did not consider. A run limited to FY2026-27 must not delete 2014 rows
  * simply because it did not look at them.
  */
-async function pruneOrphans(
-  hrms,
-  table,
-  keptSourceIds,
-  scopeSql,
-  scopeParams = [],
-) {
+async function pruneOrphans(hrms, table, keptSourceIds, scopeSql, scopeParams = []) {
   // Hygiene, not critical path. A prune that cannot run must never take the sync down with it:
   // on 2026-08-05 a wrong scope column (period_code on grn_entry_line_snapshot, which has none)
   // killed sync 10 outright AFTER its rows had been written, and the reconciler still passed
@@ -440,31 +367,26 @@ async function pruneOrphans(
   // problem than a sync that stops halfway.
   try {
     const [existing] = await hrms.query(
-      `SELECT bill_source_id FROM ${table} WHERE ${scopeSql}`,
-      scopeParams,
+      `SELECT bill_source_id FROM ${table} WHERE ${scopeSql}`, scopeParams
     );
-    const keep = new Set(keptSourceIds.map((id) => String(id)));
+    const keep = new Set(keptSourceIds.map(id => String(id)));
     const orphans = existing
-      .map((r) => r.bill_source_id)
-      .filter((id) => id != null && !keep.has(String(id)));
+      .map(r => r.bill_source_id)
+      .filter(id => id != null && !keep.has(String(id)));
     if (!orphans.length) return 0;
 
     for (let i = 0; i < orphans.length; i += BATCH) {
       const chunk = orphans.slice(i, i + BATCH);
       await hrms.query(
-        `DELETE FROM ${table} WHERE bill_source_id IN (${chunk.map(() => "?").join(",")})`,
-        chunk,
+        `DELETE FROM ${table} WHERE bill_source_id IN (${chunk.map(() => '?').join(',')})`,
+        chunk
       );
     }
-    log(
-      `  pruned ${orphans.length} orphan row(s) from ${table} (gone at source)`,
-    );
+    log(`  pruned ${orphans.length} orphan row(s) from ${table} (gone at source)`);
     return orphans.length;
   } catch (err) {
     log(`  WARNING: could not prune ${table}: ${err.message}`);
-    log(
-      `           Rows deleted at source may linger here. The sync itself is unaffected.`,
-    );
+    log(`           Rows deleted at source may linger here. The sync itself is unaffected.`);
     return 0;
   }
 }
@@ -479,25 +401,21 @@ async function pruneOrphans(
  * by import-new-cost-centres-from-dbbill.cjs, which sets their initial state.
  */
 async function syncCostCentres(hrms, bill) {
-  log("Sync 1: enriching cost_centre_master from db_bill.cost_master ...");
+  log('Sync 1: enriching cost_centre_master from db_bill.cost_master ...');
 
   const [billRows] = await bill.query(
-    "SELECT id, cost_center, branch, stream, process, process_name, TallyHead, " +
-      "category, type, tower, total_man_date, shrinkage, attrition, shift, working_days, " +
-      "process_manager, emailid, hremail, GSTType, SACCode, VendorGSTNo, VendorGSTState, " +
-      'goLiveDate, close, active FROM cost_master WHERE cost_center IS NOT NULL AND cost_center != ""',
+    'SELECT id, cost_center, branch, stream, process, process_name, TallyHead, ' +
+    'category, type, tower, total_man_date, shrinkage, attrition, shift, working_days, ' +
+    'process_manager, emailid, hremail, GSTType, SACCode, VendorGSTNo, VendorGSTState, ' +
+    'goLiveDate, close, active FROM cost_master WHERE cost_center IS NOT NULL AND cost_center != ""'
   );
 
-  log("  db_bill.cost_master rows: " + billRows.length);
+  log('  db_bill.cost_master rows: ' + billRows.length);
 
-  let updated = 0,
-    skipped = 0;
+  let updated = 0, skipped = 0;
   for (const row of billRows) {
     const cc = trim(row.cost_center);
-    if (!cc) {
-      skipped++;
-      continue;
-    }
+    if (!cc) { skipped++; continue; }
 
     const branchId = BRANCH_MAP[trim(row.branch)] ?? null;
 
@@ -555,61 +473,50 @@ async function syncCostCentres(hrms, bill) {
         trim(row.branch),
         branchId,
         cc,
-      ],
+      ]
     );
     updated++;
   }
-  log("  Updated: " + updated + "  Skipped (no code): " + skipped);
+  log('  Updated: ' + updated + '  Skipped (no code): ' + skipped);
 
   // Report how many cost_centre_master rows still have no bill_source_id
   const [[{ unmatched }]] = await hrms.query(
-    "SELECT COUNT(*) as unmatched FROM cost_centre_master WHERE bill_source_id IS NULL",
+    'SELECT COUNT(*) as unmatched FROM cost_centre_master WHERE bill_source_id IS NULL'
   );
-  log("  cost_centre_master rows with no bill match: " + unmatched);
+  log('  cost_centre_master rows with no bill match: ' + unmatched);
 }
 
 // ── Sync 2: bill_client_snapshot ──────────────────────────────────────────────
 
 async function syncClients(hrms, bill) {
-  log("Sync 2: populating bill_client_snapshot from db_bill.client_master ...");
+  log('Sync 2: populating bill_client_snapshot from db_bill.client_master ...');
 
   const [billRows] = await bill.query(
-    "SELECT id, client_type, client_name, branch_name, client_status FROM client_master",
+    'SELECT id, client_type, client_name, branch_name, client_status FROM client_master'
   );
-  log("  db_bill.client_master rows: " + billRows.length);
+  log('  db_bill.client_master rows: ' + billRows.length);
 
-  const rows = billRows.map((r) => ({
+  const rows = billRows.map(r => ({
     bill_source_id: r.id,
-    client_type: trim(r.client_type),
-    client_name: trim(r.client_name) || "(unknown)",
-    branch_name: trim(r.branch_name),
-    client_status: r.client_status === 1 ? 1 : 0,
-    synced_at: new Date(),
+    client_type:    trim(r.client_type),
+    client_name:    trim(r.client_name) || '(unknown)',
+    branch_name:    trim(r.branch_name),
+    client_status:  r.client_status === 1 ? 1 : 0,
+    synced_at:      new Date(),
   }));
 
-  const n = await insertBatch(
-    hrms,
-    "bill_client_snapshot",
+  const n = await insertBatch(hrms, 'bill_client_snapshot',
     rows,
-    [
-      "bill_source_id",
-      "client_type",
-      "client_name",
-      "branch_name",
-      "client_status",
-      "synced_at",
-    ],
-    ["client_type", "client_name", "branch_name", "client_status", "synced_at"],
+    ['bill_source_id','client_type','client_name','branch_name','client_status','synced_at'],
+    ['client_type','client_name','branch_name','client_status','synced_at']
   );
-  log("  Upserted: " + n);
+  log('  Upserted: ' + n);
 }
 
 // ── Sync 3: billing_provision_snapshot ────────────────────────────────────────
 
 async function syncProvision(hrms, bill) {
-  log(
-    "Sync 3: populating billing_provision_snapshot from db_bill.provision_master ...",
-  );
+  log('Sync 3: populating billing_provision_snapshot from db_bill.provision_master ...');
 
   // join with cost_master to get client + stream for denormalisation
   const [billRows] = await bill.query(
@@ -619,76 +526,41 @@ async function syncProvision(hrms, bill) {
             c.client AS cm_client, c.stream AS cm_stream
      FROM provision_master p
      LEFT JOIN cost_master c ON c.cost_center = p.cost_center
-     ORDER BY p.id`,
+     ORDER BY p.id`
   );
-  log("  db_bill.provision_master rows: " + billRows.length);
+  log('  db_bill.provision_master rows: ' + billRows.length);
 
   const now = new Date();
-  const rows = billRows.map((r) => ({
-    bill_source_id: r.id,
-    cost_centre_code: trim(r.cost_center) || "",
-    finance_year: trim(r.finance_year) || "",
-    month_label: trim(r.month) || "",
-    period_code: toPeriodCode(trim(r.finance_year) || "", trim(r.month) || ""),
-    invoice_type: trim(r.invoiceType1),
-    provision_amt: safeInt(r.provision),
-    billing_amt: safeInt(r.billing_amt),
-    billing_status: r.billing_status === 1 ? 1 : 0,
-    revenue_active: r.revenue_active === 1 ? 1 : 0,
-    agreement: trim(r.agreement),
-    acknowledgment: trim(r.acknowledgment),
-    remarks: trim(r.remarks),
+  const rows = billRows.map(r => ({
+    bill_source_id:   r.id,
+    cost_centre_code: trim(r.cost_center) || '',
+    finance_year:     trim(r.finance_year) || '',
+    month_label:      trim(r.month) || '',
+    period_code:      toPeriodCode(trim(r.finance_year) || '', trim(r.month) || ''),
+    invoice_type:     trim(r.invoiceType1),
+    provision_amt:    safeInt(r.provision),
+    billing_amt:      safeInt(r.billing_amt),
+    billing_status:   r.billing_status === 1 ? 1 : 0,
+    revenue_active:   r.revenue_active === 1 ? 1 : 0,
+    agreement:        trim(r.agreement),
+    acknowledgment:   trim(r.acknowledgment),
+    remarks:          trim(r.remarks),
     bill_client_name: trim(r.cm_client),
-    bill_stream: trim(r.cm_stream),
-    bill_branch: trim(r.branch_name),
-    synced_at: now,
+    bill_stream:      trim(r.cm_stream),
+    bill_branch:      trim(r.branch_name),
+    synced_at:        now,
   }));
 
-  const n = await insertBatch(
-    hrms,
-    "billing_provision_snapshot",
+  const n = await insertBatch(hrms, 'billing_provision_snapshot',
     rows,
-    [
-      "bill_source_id",
-      "cost_centre_code",
-      "finance_year",
-      "month_label",
-      "period_code",
-      "invoice_type",
-      "provision_amt",
-      "billing_amt",
-      "billing_status",
-      "revenue_active",
-      "agreement",
-      "acknowledgment",
-      "remarks",
-      "bill_client_name",
-      "bill_stream",
-      "bill_branch",
-      "synced_at",
-    ],
-    [
-      "cost_centre_code",
-      "finance_year",
-      "month_label",
-      "period_code",
-      "invoice_type",
-      "provision_amt",
-      "billing_amt",
-      "billing_status",
-      "revenue_active",
-      "agreement",
-      "acknowledgment",
-      "remarks",
-      "bill_client_name",
-      "bill_stream",
-      "bill_branch",
-      "synced_at",
-    ],
+    ['bill_source_id','cost_centre_code','finance_year','month_label','period_code','invoice_type',
+     'provision_amt','billing_amt','billing_status','revenue_active',
+     'agreement','acknowledgment','remarks','bill_client_name','bill_stream','bill_branch','synced_at'],
+    ['cost_centre_code','finance_year','month_label','period_code','invoice_type',
+     'provision_amt','billing_amt','billing_status','revenue_active',
+     'agreement','acknowledgment','remarks','bill_client_name','bill_stream','bill_branch','synced_at']
   );
-  log(
-    `  billing_provision_snapshot: ${n} rows (${rows.filter((r) => r.revenue_active).length} revenue-active, ${rows.filter((r) => r.period_code).length} with resolved period_code)`,
-  );
+  log(`  billing_provision_snapshot: ${n} rows (${rows.filter(r => r.revenue_active).length} revenue-active, ${rows.filter(r => r.period_code).length} with resolved period_code)`);
 }
 
 // ── Sync 4: billing_invoice_snapshot ─────────────────────────────────────────
@@ -705,23 +577,17 @@ async function syncProvision(hrms, bill) {
  *     per invoice. They are netted at period + cost centre, which is the grain both carry.
  */
 async function syncCreditNotes(hrms, bill) {
-  log(
-    "Sync 11: populating billing_credit_note_snapshot from db_bill.tbl_credit_note ...",
-  );
+  log('Sync 11: populating billing_credit_note_snapshot from db_bill.tbl_credit_note ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT id, credit_no, proforma_bill_no, category, branch_name, cost_center,
             finance_year, month, creditDate, creditDescription,
             total, tax, igst, sgst, cgst, grnd,
             credit_approve, credit_approved_date, status, createdate
-       FROM tbl_credit_note WHERE finance_year >= ? ORDER BY id`,
-    [FROM_FINANCE_YEAR],
-  );
-  log(
-    `  db_bill.tbl_credit_note rows from ${FROM_FINANCE_YEAR}: ${src.length}`,
-  );
+       FROM tbl_credit_note WHERE finance_year >= ? ORDER BY id`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.tbl_credit_note rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.id,
     credit_no: trim(r.credit_no),
     proforma_bill_no: trim(r.proforma_bill_no),
@@ -747,50 +613,17 @@ async function syncCreditNotes(hrms, bill) {
     source_created_at: safeDateTime(r.createdate),
     synced_at: now,
   }));
-  const cols = [
-    "bill_source_id",
-    "credit_no",
-    "proforma_bill_no",
-    "category",
-    "branch_name",
-    "cost_centre_code",
-    "finance_year",
-    "month_label",
-    "period_code",
-    "credit_date",
-    "description",
-    "total_amt",
-    "tax_amt",
-    "igst",
-    "sgst",
-    "cgst",
-    "grand_total",
-    "is_approved",
-    "approved_at",
-    "status",
-    "source_created_at",
-    "synced_at",
-  ];
-  const n = await insertBatch(
-    hrms,
-    "billing_credit_note_snapshot",
-    rows,
-    cols,
-    cols.slice(1),
-  );
-  await pruneOrphans(
-    hrms,
-    "billing_credit_note_snapshot",
-    rows.map((r) => r.bill_source_id),
-    "finance_year >= ?",
-    [FROM_FINANCE_YEAR],
-  );
-  const approved = rows.filter((r) => r.is_approved === 1);
+  const cols = ['bill_source_id','credit_no','proforma_bill_no','category','branch_name',
+    'cost_centre_code','finance_year','month_label','period_code','credit_date','description',
+    'total_amt','tax_amt','igst','sgst','cgst','grand_total','is_approved','approved_at','status',
+    'source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'billing_credit_note_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'billing_credit_note_snapshot', rows.map(r => r.bill_source_id),
+    'finance_year >= ?', [FROM_FINANCE_YEAR]);
+  const approved = rows.filter(r => r.is_approved === 1);
   const value = approved.reduce((s, r) => s + Number(r.total_amt || 0), 0);
-  log(
-    `  billing_credit_note_snapshot: ${n} rows (${approved.length} approved, ` +
-      `Rs ${(value / 100000).toFixed(2)} lakh to be SUBTRACTED from invoiced revenue)`,
-  );
+  log(`  billing_credit_note_snapshot: ${n} rows (${approved.length} approved, `
+    + `Rs ${(value / 100000).toFixed(2)} lakh to be SUBTRACTED from invoiced revenue)`);
 }
 
 /**
@@ -806,21 +639,15 @@ async function syncCreditNotes(hrms, bill) {
  * inv_particulars, so a credit can be explained the way an invoice line can.
  */
 async function syncCreditNoteLines(hrms, bill) {
-  log(
-    "Sync 12: populating billing_credit_note_line_snapshot from db_bill.credit_particulars ...",
-  );
+  log('Sync 12: populating billing_credit_note_line_snapshot from db_bill.credit_particulars ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT id, initial_id, cost_center_id, cost_center, branch_name, username,
             fin_year, month_for, particulars, sub_category, rate, qty, amount, createdate
-       FROM credit_particulars WHERE fin_year >= ? ORDER BY id`,
-    [FROM_FINANCE_YEAR],
-  );
-  log(
-    `  db_bill.credit_particulars rows from ${FROM_FINANCE_YEAR}: ${src.length}`,
-  );
+       FROM credit_particulars WHERE fin_year >= ? ORDER BY id`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.credit_particulars rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.id,
     credit_note_source_id: r.initial_id ?? null,
     cost_centre_source_id: r.cost_center_id ?? null,
@@ -840,42 +667,14 @@ async function syncCreditNoteLines(hrms, bill) {
     source_created_at: safeDateTime(r.createdate),
     synced_at: now,
   }));
-  const cols = [
-    "bill_source_id",
-    "credit_note_source_id",
-    "cost_centre_source_id",
-    "cost_centre_code",
-    "branch_name",
-    "finance_year",
-    "month_label",
-    "period_code",
-    "particulars",
-    "sub_category",
-    "rate",
-    "qty",
-    "amount",
-    "raised_by",
-    "source_created_at",
-    "synced_at",
-  ];
-  const n = await insertBatch(
-    hrms,
-    "billing_credit_note_line_snapshot",
-    rows,
-    cols,
-    cols.slice(1),
-  );
-  await pruneOrphans(
-    hrms,
-    "billing_credit_note_line_snapshot",
-    rows.map((r) => r.bill_source_id),
-    "finance_year >= ?",
-    [FROM_FINANCE_YEAR],
-  );
+  const cols = ['bill_source_id','credit_note_source_id','cost_centre_source_id','cost_centre_code',
+    'branch_name','finance_year','month_label','period_code','particulars','sub_category',
+    'rate','qty','amount','raised_by','source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'billing_credit_note_line_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'billing_credit_note_line_snapshot', rows.map(r => r.bill_source_id),
+    'finance_year >= ?', [FROM_FINANCE_YEAR]);
   const value = rows.reduce((s, r) => s + Number(r.amount || 0), 0);
-  log(
-    `  billing_credit_note_line_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh`,
-  );
+  log(`  billing_credit_note_line_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh`);
 }
 
 /**
@@ -893,31 +692,24 @@ async function syncCreditNoteLines(hrms, bill) {
  * decision that needs finance to say whether cost is the provision raised, consumed, or both.
  */
 async function syncProvisionDeductions(hrms, bill) {
-  log("Sync 13: populating billing_provision_deduction_snapshot ...");
+  log('Sync 13: populating billing_provision_deduction_snapshot ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT ProvisionMonthId, ProvisionId, Provision_Finance_Year, Provision_Finance_Month,
             Provision_Branch_Name, Provision_Cost_Center, Provision_UsedBy_Month,
             ProvisionBalanceUsed, InvoiceId, deduction_status, created_at
        FROM provision_master_month_deductions
-      WHERE Provision_Finance_Year >= ? ORDER BY ProvisionMonthId`,
-    [FROM_FINANCE_YEAR],
-  );
-  log(
-    `  db_bill.provision_master_month_deductions rows from ${FROM_FINANCE_YEAR}: ${src.length}`,
-  );
+      WHERE Provision_Finance_Year >= ? ORDER BY ProvisionMonthId`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.provision_master_month_deductions rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.ProvisionMonthId,
     provision_source_id: r.ProvisionId ?? null,
     finance_year: trim(r.Provision_Finance_Year),
     finance_month: trim(r.Provision_Finance_Month),
     used_by_month: trim(r.Provision_UsedBy_Month),
     // Provision_Finance_Month speaks the 'Aug-26' dialect, like tbl_credit_note.month.
-    period_code: toPeriodCode(
-      r.Provision_Finance_Year,
-      r.Provision_Finance_Month,
-    ),
+    period_code: toPeriodCode(r.Provision_Finance_Year, r.Provision_Finance_Month),
     branch_name: trim(r.Provision_Branch_Name),
     cost_centre_code: trim(r.Provision_Cost_Center),
     balance_used: safeDec(r.ProvisionBalanceUsed),
@@ -926,46 +718,19 @@ async function syncProvisionDeductions(hrms, bill) {
     source_created_at: safeDateTime(r.created_at),
     synced_at: now,
   }));
-  const cols = [
-    "bill_source_id",
-    "provision_source_id",
-    "finance_year",
-    "finance_month",
-    "used_by_month",
-    "period_code",
-    "branch_name",
-    "cost_centre_code",
-    "balance_used",
-    "invoice_source_id",
-    "deduction_status",
-    "source_created_at",
-    "synced_at",
-  ];
-  const n = await insertBatch(
-    hrms,
-    "billing_provision_deduction_snapshot",
-    rows,
-    cols,
-    cols.slice(1),
-  );
-  await pruneOrphans(
-    hrms,
-    "billing_provision_deduction_snapshot",
-    rows.map((r) => r.bill_source_id),
-    "finance_year >= ?",
-    [FROM_FINANCE_YEAR],
-  );
+  const cols = ['bill_source_id','provision_source_id','finance_year','finance_month',
+    'used_by_month','period_code','branch_name','cost_centre_code','balance_used',
+    'invoice_source_id','deduction_status','source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'billing_provision_deduction_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'billing_provision_deduction_snapshot', rows.map(r => r.bill_source_id),
+    'finance_year >= ?', [FROM_FINANCE_YEAR]);
   const value = rows.reduce((s, r) => s + Number(r.balance_used || 0), 0);
-  log(
-    `  billing_provision_deduction_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh ` +
-      `of provision drawdown (NOT added to P&L cost — see the note above this function)`,
-  );
+  log(`  billing_provision_deduction_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh `
+    + `of provision drawdown (NOT added to P&L cost — see the note above this function)`);
 }
 
 async function syncInvoices(hrms, bill) {
-  log(
-    "Sync 4: populating billing_invoice_snapshot from db_bill.tbl_invoice ...",
-  );
+  log('Sync 4: populating billing_invoice_snapshot from db_bill.tbl_invoice ...');
 
   const [billRows] = await bill.query(
     `SELECT id, invoiceType, category, branch_name, cost_center, finance_year, month,
@@ -975,103 +740,52 @@ async function syncInvoices(hrms, bill) {
             cost_client, cost_stream, cost_process_name,
             bill_finance_year, carry_forward
      FROM tbl_invoice
-     ORDER BY id`,
+     ORDER BY id`
   );
-  log("  db_bill.tbl_invoice rows: " + billRows.length);
+  log('  db_bill.tbl_invoice rows: ' + billRows.length);
 
-  const rows = billRows.map((r) => ({
-    bill_source_id: r.id,
-    invoice_type: trim(r.invoiceType),
-    category: trim(r.category),
-    cost_centre_code: trim(r.cost_center) || "",
-    finance_year: trim(r.finance_year),
-    month_label: trim(r.month),
-    invoice_date: trim(r.invoiceDate),
-    bill_no: trim(r.bill_no),
-    po_no: trim(r.po_no),
-    grn: trim(r.grn),
-    total_amt: safeInt(r.total),
-    tax_amt: safeInt(r.tax),
-    igst: safeInt(r.igst),
-    sgst: safeInt(r.sgst),
-    cgst: safeInt(r.cgst),
-    grand_total: safeInt(r.grnd),
-    gst_type: trim(r.GSTType),
-    status: r.status === 1 ? 1 : 0,
-    payment_status: trim(r.PaymentStatus),
-    receipt_status: r.ReceiptStatus ? 1 : 0,
-    bill_client: trim(r.cost_client),
-    bill_stream: trim(r.cost_stream),
+  const rows = billRows.map(r => ({
+    bill_source_id:   r.id,
+    invoice_type:     trim(r.invoiceType),
+    category:         trim(r.category),
+    cost_centre_code: trim(r.cost_center) || '',
+    finance_year:     trim(r.finance_year),
+    month_label:      trim(r.month),
+    invoice_date:     trim(r.invoiceDate),
+    bill_no:          trim(r.bill_no),
+    po_no:            trim(r.po_no),
+    grn:              trim(r.grn),
+    total_amt:        safeInt(r.total),
+    tax_amt:          safeInt(r.tax),
+    igst:             safeInt(r.igst),
+    sgst:             safeInt(r.sgst),
+    cgst:             safeInt(r.cgst),
+    grand_total:      safeInt(r.grnd),
+    gst_type:         trim(r.GSTType),
+    status:           r.status === 1 ? 1 : 0,
+    payment_status:   trim(r.PaymentStatus),
+    receipt_status:   r.ReceiptStatus ? 1 : 0,
+    bill_client:      trim(r.cost_client),
+    bill_stream:      trim(r.cost_stream),
     bill_process_name: trim(r.cost_process_name),
-    bill_branch: trim(r.branch_name),
+    bill_branch:      trim(r.branch_name),
     bill_finance_year: trim(r.bill_finance_year),
-    carry_forward: r.carry_forward === 1 ? 1 : 0,
-    synced_at: new Date(),
+    carry_forward:    r.carry_forward === 1 ? 1 : 0,
+    synced_at:        new Date(),
   }));
 
-  const n = await insertBatch(
-    hrms,
-    "billing_invoice_snapshot",
+  const n = await insertBatch(hrms, 'billing_invoice_snapshot',
     rows,
-    [
-      "bill_source_id",
-      "invoice_type",
-      "category",
-      "cost_centre_code",
-      "finance_year",
-      "month_label",
-      "invoice_date",
-      "bill_no",
-      "po_no",
-      "grn",
-      "total_amt",
-      "tax_amt",
-      "igst",
-      "sgst",
-      "cgst",
-      "grand_total",
-      "gst_type",
-      "status",
-      "payment_status",
-      "receipt_status",
-      "bill_client",
-      "bill_stream",
-      "bill_process_name",
-      "bill_branch",
-      "bill_finance_year",
-      "carry_forward",
-      "synced_at",
-    ],
-    [
-      "invoice_type",
-      "category",
-      "cost_centre_code",
-      "finance_year",
-      "month_label",
-      "invoice_date",
-      "bill_no",
-      "po_no",
-      "grn",
-      "total_amt",
-      "tax_amt",
-      "igst",
-      "sgst",
-      "cgst",
-      "grand_total",
-      "gst_type",
-      "status",
-      "payment_status",
-      "receipt_status",
-      "bill_client",
-      "bill_stream",
-      "bill_process_name",
-      "bill_branch",
-      "bill_finance_year",
-      "carry_forward",
-      "synced_at",
-    ],
+    ['bill_source_id','invoice_type','category','cost_centre_code','finance_year','month_label',
+     'invoice_date','bill_no','po_no','grn','total_amt','tax_amt','igst','sgst','cgst','grand_total',
+     'gst_type','status','payment_status','receipt_status',
+     'bill_client','bill_stream','bill_process_name','bill_branch','bill_finance_year','carry_forward','synced_at'],
+    ['invoice_type','category','cost_centre_code','finance_year','month_label',
+     'invoice_date','bill_no','po_no','grn','total_amt','tax_amt','igst','sgst','cgst','grand_total',
+     'gst_type','status','payment_status','receipt_status',
+     'bill_client','bill_stream','bill_process_name','bill_branch','bill_finance_year','carry_forward','synced_at']
   );
-  log("  Upserted: " + n);
+  log('  Upserted: ' + n);
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -1087,62 +801,35 @@ async function syncInvoices(hrms, bill) {
  * Any numeric cast merges them and mislabels every cost posted against them.
  */
 async function syncExpenseHeads(hrms, bill) {
-  log(
-    "Sync 5: populating finance_expense_head_snapshot from db_bill.tbl_bgt_expense*master ...",
-  );
+  log('Sync 5: populating finance_expense_head_snapshot from db_bill.tbl_bgt_expense*master ...');
   const now = new Date();
 
   const [heads] = await bill.query(
-    "SELECT HeadingId, HeadingDesc, close_status FROM tbl_bgt_expenseheadingmaster",
-  );
+    'SELECT HeadingId, HeadingDesc, close_status FROM tbl_bgt_expenseheadingmaster');
   const [subs] = await bill.query(
-    "SELECT SubHeadingId, HeadingId, SubHeadingDesc, sub_close_status FROM tbl_bgt_expensesubheadingmaster",
-  );
+    'SELECT SubHeadingId, HeadingId, SubHeadingDesc, sub_close_status FROM tbl_bgt_expensesubheadingmaster');
 
   const rows = [
-    ...heads.map((r) => ({
-      bill_source_id: String(r.HeadingId),
-      head_type: "head",
-      parent_head_id: null,
-      head_name: trim(r.HeadingDesc),
-      active_status: r.close_status === 1 ? 1 : 0,
-      synced_at: now,
+    ...heads.map(r => ({
+      bill_source_id: String(r.HeadingId), head_type: 'head', parent_head_id: null,
+      head_name: trim(r.HeadingDesc), active_status: r.close_status === 1 ? 1 : 0, synced_at: now,
     })),
-    ...subs.map((r) => ({
-      bill_source_id: String(r.SubHeadingId),
-      head_type: "subhead",
-      parent_head_id: String(r.HeadingId),
-      head_name: trim(r.SubHeadingDesc),
-      active_status: r.sub_close_status === 1 ? 1 : 0,
-      synced_at: now,
+    ...subs.map(r => ({
+      bill_source_id: String(r.SubHeadingId), head_type: 'subhead', parent_head_id: String(r.HeadingId),
+      head_name: trim(r.SubHeadingDesc), active_status: r.sub_close_status === 1 ? 1 : 0, synced_at: now,
     })),
   ];
 
-  const n = await insertBatch(
-    hrms,
-    "finance_expense_head_snapshot",
-    rows,
-    [
-      "bill_source_id",
-      "head_type",
-      "parent_head_id",
-      "head_name",
-      "active_status",
-      "synced_at",
-    ],
-    ["parent_head_id", "head_name", "active_status", "synced_at"],
-  );
-  log(
-    `  finance_expense_head_snapshot: ${n} rows (${heads.length} heads, ${subs.length} sub-heads)`,
-  );
+  const n = await insertBatch(hrms, 'finance_expense_head_snapshot', rows,
+    ['bill_source_id', 'head_type', 'parent_head_id', 'head_name', 'active_status', 'synced_at'],
+    ['parent_head_id', 'head_name', 'active_status', 'synced_at']);
+  log(`  finance_expense_head_snapshot: ${n} rows (${heads.length} heads, ${subs.length} sub-heads)`);
 }
 
 // ── Sync 6: budget ────────────────────────────────────────────────────────────
 
 async function syncBudget(hrms, bill) {
-  log(
-    "Sync 6: populating finance_budget_snapshot from db_bill.expense_master ...",
-  );
+  log('Sync 6: populating finance_budget_snapshot from db_bill.expense_master ...');
   const now = new Date();
 
   const [src] = await bill.query(
@@ -1150,12 +837,10 @@ async function syncBudget(hrms, bill) {
             m.HeadId, m.SubHeadId, m.Amount, m.expense_status, m.EntryStatus, m.Active,
             m.ApproveDate1, m.ApproveDate2, m.ApproveDate3, m.ApproveDate4, m.ApproveDate5,
             m.objective, m.Description_Det, m.createdate
-       FROM expense_master m WHERE m.FinanceYear >= ? ORDER BY m.Id`,
-    [FROM_FINANCE_YEAR],
-  );
+       FROM expense_master m WHERE m.FinanceYear >= ? ORDER BY m.Id`, [FROM_FINANCE_YEAR]);
   log(`  db_bill.expense_master rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.Id,
     branch_source_id: r.BranchId ?? null,
     branch_name: trim(r.Branch),
@@ -1171,7 +856,7 @@ async function syncBudget(hrms, bill) {
     // Kept as a real null when the source has none, rather than defaulting to 1. Only 177 of the
     // 544 FY2026-27 rows are Active, so assuming "active" is exactly the error this column exists
     // to make visible.
-    active_status: r.Active == null ? null : Number(r.Active) === 1 ? 1 : 0,
+    active_status: r.Active == null ? null : (Number(r.Active) === 1 ? 1 : 0),
     approve_1_at: safeDateTime(r.ApproveDate1),
     approve_2_at: safeDateTime(r.ApproveDate2),
     approve_3_at: safeDateTime(r.ApproveDate3),
@@ -1183,32 +868,11 @@ async function syncBudget(hrms, bill) {
     synced_at: now,
   }));
 
-  const cols = [
-    "bill_source_id",
-    "branch_source_id",
-    "branch_name",
-    "entry_no",
-    "finance_year",
-    "finance_month",
-    "period_code",
-    "head_id",
-    "sub_head_id",
-    "amount",
-    "reopen_additional_amount",
-    "expense_status",
-    "entry_status",
-    "active_status",
-    "is_rejected",
-    "approve_1_at",
-    "approve_2_at",
-    "approve_3_at",
-    "approve_4_at",
-    "approve_5_at",
-    "objective",
-    "description_det",
-    "source_created_at",
-    "synced_at",
-  ];
+  const cols = ['bill_source_id','branch_source_id','branch_name','entry_no','finance_year',
+    'finance_month','period_code','head_id','sub_head_id','amount','reopen_additional_amount',
+    'expense_status','entry_status','active_status','is_rejected',
+    'approve_1_at','approve_2_at','approve_3_at','approve_4_at','approve_5_at',
+    'objective','description_det','source_created_at','synced_at'];
 
   // A budget row created before its finance year began is NOT mis-filed — it is a budget.
   // Planning next year's spend before next year starts is the entire point of the exercise.
@@ -1227,17 +891,11 @@ async function syncBudget(hrms, bill) {
   // Mirror everything, and let readers filter on entry_status / approve_*_at, which the snapshot
   // already carries. Deciding what counts as an approved budget is the reader's job; the mirror's
   // job is to be a faithful copy.
-  const plannedAhead = rows.filter((r) =>
-    createdBeforeFinanceYear(r.finance_year, r.source_created_at),
-  );
+  const plannedAhead = rows.filter(r => createdBeforeFinanceYear(r.finance_year, r.source_created_at));
   if (plannedAhead.length) {
     const value = plannedAhead.reduce((sum, r) => sum + Number(r.amount), 0);
-    log(
-      `  Note: ${plannedAhead.length} budget row(s) worth Rs ${(value / 100000).toFixed(2)} lakh were raised before`,
-    );
-    log(
-      `        their finance year began — normal advance planning. Mirrored, not excluded.`,
-    );
+    log(`  Note: ${plannedAhead.length} budget row(s) worth Rs ${(value / 100000).toFixed(2)} lakh were raised before`);
+    log(`        their finance year began — normal advance planning. Mirrored, not excluded.`);
   }
 
   // Rejection is a separate table and a separate fact from Active: 7 of the 18 rejected FY2026-27
@@ -1248,65 +906,40 @@ async function syncBudget(hrms, bill) {
   // silently found zero and left every rejected budget flagged clean. Match on ExpenseId only —
   // the table is ~4.3k rows, so reading it whole costs nothing.
   const [rejects] = await bill.query(
-    `SELECT DISTINCT ExpenseId FROM expense_master_reject WHERE RejectDate IS NOT NULL`,
-  );
-  const rejected = new Set(rejects.map((r) => String(r.ExpenseId)));
+    `SELECT DISTINCT ExpenseId FROM expense_master_reject WHERE RejectDate IS NOT NULL`);
+  const rejected = new Set(rejects.map(r => String(r.ExpenseId)));
 
   // A reopen is a sanctioned top-up, not a correction — AdditionalAmount ADDS budget. Approved
   // ones only. Rs 43.54 lakh across 87 FY2026-27 budgets that were otherwise being understated.
   const [reopens] = await bill.query(
     `SELECT ExpenseId, SUM(COALESCE(AdditionalAmount,0)) AS extra
        FROM expense_reopen_master
-      WHERE Approve = 1 AND FinanceYear >= ? GROUP BY ExpenseId`,
-    [FROM_FINANCE_YEAR],
-  );
-  const topUp = new Map(
-    reopens.map((r) => [String(r.ExpenseId), Number(r.extra) || 0]),
-  );
+      WHERE Approve = 1 AND FinanceYear >= ? GROUP BY ExpenseId`, [FROM_FINANCE_YEAR]);
+  const topUp = new Map(reopens.map(r => [String(r.ExpenseId), Number(r.extra) || 0]));
 
   for (const r of rows) {
     r.is_rejected = rejected.has(String(r.bill_source_id)) ? 1 : 0;
     r.reopen_additional_amount = topUp.get(String(r.bill_source_id)) ?? 0;
   }
 
-  const scoped = rows.filter((r) => inScope(r.period_code));
-  const n = await insertBatch(
-    hrms,
-    "finance_budget_snapshot",
-    scoped,
-    cols,
-    cols.slice(1),
-  );
-  const rej = scoped.filter((r) => r.is_rejected === 1).length;
+  const scoped = rows.filter(r => inScope(r.period_code));
+  const n = await insertBatch(hrms, 'finance_budget_snapshot', scoped, cols, cols.slice(1));
+  const rej = scoped.filter(r => r.is_rejected === 1).length;
   const extra = scoped.reduce((s, r) => s + r.reopen_additional_amount, 0);
-  if (rej)
-    log(
-      `        ${rej} carry a rejection (independent of Active — check both).`,
-    );
-  if (extra)
-    log(
-      `        Rs ${(extra / 100000).toFixed(2)} lakh of approved reopen top-ups mirrored.`,
-    );
-  const active = scoped.filter((r) => r.active_status === 1).length;
-  log(
-    `  finance_budget_snapshot: ${n} rows (from ${FROM_PERIOD}; ${rows.length - scoped.length} out of range)`,
-  );
+  if (rej) log(`        ${rej} carry a rejection (independent of Active — check both).`);
+  if (extra) log(`        Rs ${(extra / 100000).toFixed(2)} lakh of approved reopen top-ups mirrored.`);
+  const active = scoped.filter(r => r.active_status === 1).length;
+  log(`  finance_budget_snapshot: ${n} rows (from ${FROM_PERIOD}; ${rows.length - scoped.length} out of range)`);
   // Surfaced every run: readers that do not filter on active_status are counting the inactive
   // ones too, and the gap is large enough to change any budget total materially.
-  log(
-    `        of which Active at source: ${active} — ${n - active} are INACTIVE and must be`,
-  );
-  log(
-    `        filtered by the reader; the mirror keeps them so the choice stays the reader's.`,
-  );
+  log(`        of which Active at source: ${active} — ${n - active} are INACTIVE and must be`);
+  log(`        filtered by the reader; the mirror keeps them so the choice stays the reader's.`);
 }
 
 // ── Sync 7: GRN / expense entries ─────────────────────────────────────────────
 
 async function syncGrnEntries(hrms, bill) {
-  log(
-    "Sync 7: populating grn_entry_snapshot from db_bill.expense_entry_master ...",
-  );
+  log('Sync 7: populating grn_entry_snapshot from db_bill.expense_entry_master ...');
   const now = new Date();
 
   const [src] = await bill.query(
@@ -1317,14 +950,10 @@ async function syncGrnEntries(hrms, bill) {
             e.Description, e.createdate
        FROM expense_entry_master e
        LEFT JOIN branch_master bm ON bm.id = e.BranchId
-      WHERE e.FinanceYear >= ? ORDER BY e.Id`,
-    [FROM_FINANCE_YEAR],
-  );
-  log(
-    `  db_bill.expense_entry_master rows from ${FROM_FINANCE_YEAR}: ${src.length}`,
-  );
+      WHERE e.FinanceYear >= ? ORDER BY e.Id`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.expense_entry_master rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.Id,
     grn_no: trim(r.GrnNo),
     branch_source_id: r.BranchId ?? null,
@@ -1363,75 +992,31 @@ async function syncGrnEntries(hrms, bill) {
     synced_at: now,
   }));
 
-  const cols = [
-    "bill_source_id",
-    "grn_no",
-    "branch_source_id",
-    "branch_name",
-    "vendor",
-    "finance_year",
-    "finance_month",
-    "period_code",
-    "head_id",
-    "sub_head_id",
-    "amount",
-    "cgst",
-    "sgst",
-    "igst",
-    "expense_date",
-    "bill_no",
-    "bill_date",
-    "entry_status",
-    "grn_status",
-    "reject_flag_raw",
-    "is_rejected",
-    "rejected_at",
-    "approved_at",
-    "approved_by_ph_at",
-    "approved_by_fh_at",
-    "description",
-    "source_created_at",
-    "synced_at",
-  ];
-  const scoped = rows.filter((r) => inScope(r.period_code));
-  const n = await insertBatch(
-    hrms,
-    "grn_entry_snapshot",
-    scoped,
-    cols,
-    cols.slice(1),
-  );
-  await pruneOrphans(
-    hrms,
-    "grn_entry_snapshot",
-    scoped.map((r) => r.bill_source_id),
-    "period_code >= ?",
-    [FROM_PERIOD],
-  );
-  log(
-    `  grn_entry_snapshot: ${n} rows from ${FROM_PERIOD} (${scoped.filter((r) => r.is_rejected).length} genuinely rejected)`,
-  );
+  const cols = ['bill_source_id','grn_no','branch_source_id','branch_name','vendor','finance_year',
+    'finance_month','period_code','head_id','sub_head_id','amount','cgst','sgst','igst',
+    'expense_date','bill_no','bill_date','entry_status','grn_status','reject_flag_raw',
+    'is_rejected','rejected_at','approved_at','approved_by_ph_at','approved_by_fh_at',
+    'description','source_created_at','synced_at'];
+  const scoped = rows.filter(r => inScope(r.period_code));
+  const n = await insertBatch(hrms, 'grn_entry_snapshot', scoped, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'grn_entry_snapshot', scoped.map(r => r.bill_source_id),
+    'period_code >= ?', [FROM_PERIOD]);
+  log(`  grn_entry_snapshot: ${n} rows from ${FROM_PERIOD} (${scoped.filter(r => r.is_rejected).length} genuinely rejected)`);
 }
 
 // ── Sync 8: invoice line items — the cost-centre-wise seat rate ────────────────
 
 async function syncInvoiceParticulars(hrms, bill) {
-  log(
-    "Sync 8: populating billing_invoice_particular_snapshot from db_bill.inv_particulars ...",
-  );
+  log('Sync 8: populating billing_invoice_particular_snapshot from db_bill.inv_particulars ...');
   const now = new Date();
 
   const [src] = await bill.query(
     `SELECT p.id, p.cost_center_id, p.cost_center, p.branch_name, p.fin_year, p.month_for,
             p.service, p.sub_category, p.particulars, p.rate, p.qty, p.amount, p.createdate
-       FROM inv_particulars p WHERE p.fin_year >= ? ORDER BY p.id`,
-    [FROM_FINANCE_YEAR],
-  );
-  log(
-    `  db_bill.inv_particulars rows from ${FROM_FINANCE_YEAR}: ${src.length}`,
-  );
+       FROM inv_particulars p WHERE p.fin_year >= ? ORDER BY p.id`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.inv_particulars rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.id,
     cost_centre_source_id: r.cost_center_id ?? null,
     cost_centre_code: trim(r.cost_center),
@@ -1445,57 +1030,23 @@ async function syncInvoiceParticulars(hrms, bill) {
     rate: safeDec(r.rate),
     qty: safeDec(r.qty),
     amount: safeDec(r.amount),
-    billing_pattern: billingPattern(
-      r.service,
-      r.particulars,
-      r.rate,
-      r.qty,
-      r.amount,
-    ),
+    billing_pattern: billingPattern(r.service, r.particulars, r.rate, r.qty, r.amount),
     is_seat_line: isSeatLine(r.service, r.particulars, r.rate, r.qty, r.amount),
     source_created_at: safeDateTime(r.createdate),
     synced_at: now,
   }));
 
-  const cols = [
-    "bill_source_id",
-    "cost_centre_source_id",
-    "cost_centre_code",
-    "branch_name",
-    "finance_year",
-    "month_for",
-    "period_code",
-    "service",
-    "sub_category",
-    "particulars",
-    "rate",
-    "qty",
-    "amount",
-    "billing_pattern",
-    "is_seat_line",
-    "source_created_at",
-    "synced_at",
-  ];
-  const scoped = rows.filter((r) => inScope(r.period_code));
-  const n = await insertBatch(
-    hrms,
-    "billing_invoice_particular_snapshot",
-    scoped,
-    cols,
-    cols.slice(1),
-  );
+  const cols = ['bill_source_id','cost_centre_source_id','cost_centre_code','branch_name',
+    'finance_year','month_for','period_code','service','sub_category','particulars',
+    'rate','qty','amount','billing_pattern','is_seat_line','source_created_at','synced_at'];
+  const scoped = rows.filter(r => inScope(r.period_code));
+  const n = await insertBatch(hrms, 'billing_invoice_particular_snapshot', scoped, cols, cols.slice(1));
   // The table the CEO Overview reads its revenue from — an orphan here overstates revenue.
-  await pruneOrphans(
-    hrms,
-    "billing_invoice_particular_snapshot",
-    scoped.map((r) => r.bill_source_id),
-    "period_code >= ?",
-    [FROM_PERIOD],
-  );
-  log(
-    `  billing_invoice_particular_snapshot: ${n} rows from ${FROM_PERIOD} (${scoped.filter((r) => r.is_seat_line).length} seat-priced lines)`,
-  );
+  await pruneOrphans(hrms, 'billing_invoice_particular_snapshot', scoped.map(r => r.bill_source_id),
+    'period_code >= ?', [FROM_PERIOD]);
+  log(`  billing_invoice_particular_snapshot: ${n} rows from ${FROM_PERIOD} (${scoped.filter(r => r.is_seat_line).length} seat-priced lines)`);
 }
+
 
 // ── Sync 9: budget LINES ──────────────────────────────────────────────────────
 
@@ -1506,9 +1057,7 @@ async function syncInvoiceParticulars(hrms, bill) {
  * 'CostCenter' plus Rs 374.54 lakh as 'Particular' against a Rs 375.14 lakh header total).
  */
 async function syncBudgetLines(hrms, bill) {
-  log(
-    "Sync 9: populating finance_budget_line_snapshot from db_bill.expense_particular ...",
-  );
+  log('Sync 9: populating finance_budget_line_snapshot from db_bill.expense_particular ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT p.Id, p.ExpenseId, p.BranchId, p.FinanceYear, p.FinanceMonth, p.HeadId, p.SubHeadId,
@@ -1516,14 +1065,10 @@ async function syncBudgetLines(hrms, bill) {
        FROM expense_particular p
        JOIN expense_master m ON m.Id = p.ExpenseId
       WHERE m.FinanceYear >= ?
-      ORDER BY p.Id`,
-    [FROM_FINANCE_YEAR],
-  );
-  log(
-    `  db_bill.expense_particular rows from ${FROM_FINANCE_YEAR}: ${src.length}`,
-  );
+      ORDER BY p.Id`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.expense_particular rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.Id,
     budget_source_id: r.ExpenseId ?? null,
     branch_source_id: r.BranchId ?? null,
@@ -1539,50 +1084,25 @@ async function syncBudgetLines(hrms, bill) {
     source_created_at: safeDateTime(r.createdate),
     synced_at: now,
   }));
-  const cols = [
-    "bill_source_id",
-    "budget_source_id",
-    "branch_source_id",
-    "finance_year",
-    "finance_month",
-    "period_code",
-    "head_id",
-    "sub_head_id",
-    "expense_type",
-    "expense_type_name",
-    "amount",
-    "amount_percent",
-    "source_created_at",
-    "synced_at",
-  ];
-  const scoped = rows.filter((r) => inScope(r.period_code));
-  const n = await insertBatch(
-    hrms,
-    "finance_budget_line_snapshot",
-    scoped,
-    cols,
-    cols.slice(1),
-  );
+  const cols = ['bill_source_id','budget_source_id','branch_source_id','finance_year','finance_month',
+    'period_code','head_id','sub_head_id','expense_type','expense_type_name','amount','amount_percent',
+    'source_created_at','synced_at'];
+  const scoped = rows.filter(r => inScope(r.period_code));
+  const n = await insertBatch(hrms, 'finance_budget_line_snapshot', scoped, cols, cols.slice(1));
   // Only within the window this run actually looked at — see pruneOrphans.
   await pruneOrphans(
-    hrms,
-    "finance_budget_line_snapshot",
-    scoped.map((r) => r.bill_source_id),
-    "period_code >= ?",
-    [FROM_PERIOD],
+    hrms, 'finance_budget_line_snapshot',
+    scoped.map(r => r.bill_source_id),
+    'period_code >= ?', [FROM_PERIOD]
   );
-  const cc = scoped.filter((r) => r.expense_type === "CostCenter").length;
-  log(
-    `  finance_budget_line_snapshot: ${n} rows (${cc} cost-centre attributed, ${scoped.length - cc} manual particulars)`,
-  );
+  const cc = scoped.filter(r => r.expense_type === 'CostCenter').length;
+  log(`  finance_budget_line_snapshot: ${n} rows (${cc} cost-centre attributed, ${scoped.length - cc} manual particulars)`);
 }
 
 // ── Sync 10: GRN LINES — the cost-centre attribution ──────────────────────────
 
 async function syncGrnLines(hrms, bill) {
-  log(
-    "Sync 10: populating grn_entry_line_snapshot from db_bill.expense_entry_particular ...",
-  );
+  log('Sync 10: populating grn_entry_line_snapshot from db_bill.expense_entry_particular ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT p.Id, p.ExpenseEntry, p.BranchId, p.CostCenterId, cm.cost_center,
@@ -1592,14 +1112,10 @@ async function syncGrnLines(hrms, bill) {
        JOIN expense_entry_master m ON m.Id = p.ExpenseEntry
        LEFT JOIN cost_master cm ON cm.id = p.CostCenterId
       WHERE m.FinanceYear >= ?
-      ORDER BY p.Id`,
-    [FROM_FINANCE_YEAR],
-  );
-  log(
-    `  db_bill.expense_entry_particular rows from ${FROM_FINANCE_YEAR}: ${src.length}`,
-  );
+      ORDER BY p.Id`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.expense_entry_particular rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.Id,
     grn_source_id: r.ExpenseEntry ? Number(r.ExpenseEntry) : null,
     branch_source_id: r.BranchId ?? null,
@@ -1615,41 +1131,17 @@ async function syncGrnLines(hrms, bill) {
     synced_at: now,
     _period: toPeriodCode(r.FinanceYear, r.FinanceMonth),
   }));
-  const cols = [
-    "bill_source_id",
-    "grn_source_id",
-    "branch_source_id",
-    "cost_centre_source_id",
-    "cost_centre_code",
-    "entry_type",
-    "particular",
-    "amount",
-    "tax_rate",
-    "tax",
-    "total",
-    "source_created_at",
-    "synced_at",
-  ];
-  const scoped = rows.filter((r) => inScope(r._period));
-  const n = await insertBatch(
-    hrms,
-    "grn_entry_line_snapshot",
-    scoped,
-    cols,
-    cols.slice(1),
-  );
+  const cols = ['bill_source_id','grn_source_id','branch_source_id','cost_centre_source_id',
+    'cost_centre_code','entry_type','particular','amount','tax_rate','tax','total',
+    'source_created_at','synced_at'];
+  const scoped = rows.filter(r => inScope(r._period));
+  const n = await insertBatch(hrms, 'grn_entry_line_snapshot', scoped, cols, cols.slice(1));
   // This table carries no period of its own — scope through the parent entry, which does.
-  await pruneOrphans(
-    hrms,
-    "grn_entry_line_snapshot",
-    scoped.map((r) => r.bill_source_id),
-    "grn_source_id IN (SELECT bill_source_id FROM grn_entry_snapshot WHERE period_code >= ?)",
-    [FROM_PERIOD],
-  );
-  const withCc = scoped.filter((r) => r.cost_centre_source_id).length;
-  log(
-    `  grn_entry_line_snapshot: ${n} rows (${withCc} carry a cost centre, ${scoped.length - withCc} do not)`,
-  );
+  await pruneOrphans(hrms, 'grn_entry_line_snapshot', scoped.map(r => r.bill_source_id),
+    'grn_source_id IN (SELECT bill_source_id FROM grn_entry_snapshot WHERE period_code >= ?)',
+    [FROM_PERIOD]);
+  const withCc = scoped.filter(r => r.cost_centre_source_id).length;
+  log(`  grn_entry_line_snapshot: ${n} rows (${withCc} carry a cost centre, ${scoped.length - withCc} do not)`);
 }
 
 /**
@@ -1667,19 +1159,16 @@ async function syncGrnLines(hrms, bill) {
  * collect from this client" naturally reaches back further than the current FY.
  */
 async function syncCollectionRuns(hrms, bill) {
-  log(
-    "Sync 14: populating client_bill_collection_run_snapshot from db_bill.tbl_payment ...",
-  );
+  log('Sync 14: populating client_bill_collection_run_snapshot from db_bill.tbl_payment ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT id, company_name, financial_year, branch_name, pay_type, pay_no, bank_name,
             pays_date, pay_amount, deposit_bank, no_of_bills, pay_type_dates,
             pay_of_these_bills, username, createdate, PaymentFile, Approve_Payment
-       FROM tbl_payment${MAS_CALLNET_SQL} ORDER BY id`,
-  );
+       FROM tbl_payment${MAS_CALLNET_SQL} ORDER BY id`);
   log(`  db_bill.tbl_payment rows: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.id,
     company_name: trim(r.company_name),
     financial_year: trim(r.financial_year),
@@ -1695,52 +1184,17 @@ async function syncCollectionRuns(hrms, bill) {
     paid_bill_refs: trim(r.pay_of_these_bills),
     raised_by: trim(r.username),
     payment_file: trim(r.PaymentFile),
-    is_approved:
-      r.Approve_Payment == null
-        ? null
-        : Number(r.Approve_Payment) === 1
-          ? 1
-          : 0,
+    is_approved: r.Approve_Payment == null ? null : (Number(r.Approve_Payment) === 1 ? 1 : 0),
     source_created_at: safeDateTime(r.createdate),
     synced_at: now,
   }));
-  const cols = [
-    "bill_source_id",
-    "company_name",
-    "financial_year",
-    "branch_name",
-    "pay_type",
-    "pay_no",
-    "bank_name",
-    "pay_date",
-    "pay_amount",
-    "deposit_bank",
-    "no_of_bills",
-    "pay_type_date",
-    "paid_bill_refs",
-    "raised_by",
-    "payment_file",
-    "is_approved",
-    "source_created_at",
-    "synced_at",
-  ];
-  const n = await insertBatch(
-    hrms,
-    "client_bill_collection_run_snapshot",
-    rows,
-    cols,
-    cols.slice(1),
-  );
-  await pruneOrphans(
-    hrms,
-    "client_bill_collection_run_snapshot",
-    rows.map((r) => r.bill_source_id),
-    "1=1",
-  );
+  const cols = ['bill_source_id','company_name','financial_year','branch_name','pay_type','pay_no',
+    'bank_name','pay_date','pay_amount','deposit_bank','no_of_bills','pay_type_date','paid_bill_refs',
+    'raised_by','payment_file','is_approved','source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'client_bill_collection_run_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'client_bill_collection_run_snapshot', rows.map(r => r.bill_source_id), '1=1');
   const value = rows.reduce((s, r) => s + Number(r.pay_amount || 0), 0);
-  log(
-    `  client_bill_collection_run_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh collected across all runs`,
-  );
+  log(`  client_bill_collection_run_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh collected across all runs`);
 }
 
 /**
@@ -1761,20 +1215,17 @@ async function syncCollectionRuns(hrms, bill) {
  * client_bill_collection_run_snapshot.
  */
 async function syncBillCollections(hrms, bill) {
-  log(
-    "Sync 15: populating client_bill_collection_snapshot from db_bill.bill_pay_particulars ...",
-  );
+  log('Sync 15: populating client_bill_collection_snapshot from db_bill.bill_pay_particulars ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT PaymentId, id, company_name, branch_name, financial_year, pay_type, pay_no, bank_name,
             pay_dates, pay_amount, deposit_bank, no_of_bills, bill_no, bill_amount, bill_passed,
             tds_ded, net_amount, deduction, status, remarks, pay_type_dates, collection_id,
             username, delete_status, createdate, PaymentFile, dialdesk
-       FROM bill_pay_particulars${MAS_CALLNET_SQL} ORDER BY id`,
-  );
+       FROM bill_pay_particulars${MAS_CALLNET_SQL} ORDER BY id`);
   log(`  db_bill.bill_pay_particulars rows: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.id,
     payment_ref: trim(r.PaymentId),
     company_name: trim(r.company_name),
@@ -1797,12 +1248,7 @@ async function syncBillCollections(hrms, bill) {
     // A bill paid across several rows (a genuine, common partial-payment pattern here — see
     // migration 1719) will legitimately show net_amount below bill_amount - tds - deduction
     // on any one row; this only labels that fact so a reader doesn't mistake it for corruption.
-    payment_completeness: paymentCompleteness(
-      r.bill_amount,
-      r.tds_ded,
-      r.deduction,
-      r.net_amount,
-    ),
+    payment_completeness: paymentCompleteness(r.bill_amount, r.tds_ded, r.deduction, r.net_amount),
     status: trim(r.status),
     remarks: trim(r.remarks)?.slice(0, 500) ?? null,
     pay_type_date: safeDateTime(r.pay_type_dates),
@@ -1810,63 +1256,22 @@ async function syncBillCollections(hrms, bill) {
     raised_by: trim(r.username),
     is_deleted: Number(r.delete_status) === 1 ? 1 : 0,
     payment_file: trim(r.PaymentFile),
-    is_dialdesk: r.dialdesk == null ? null : Number(r.dialdesk) === 1 ? 1 : 0,
+    is_dialdesk: r.dialdesk == null ? null : (Number(r.dialdesk) === 1 ? 1 : 0),
     source_created_at: safeDateTime(r.createdate),
     synced_at: now,
   }));
-  const cols = [
-    "bill_source_id",
-    "payment_ref",
-    "company_name",
-    "branch_name",
-    "financial_year",
-    "pay_type",
-    "pay_no",
-    "bank_name",
-    "pay_date_raw",
-    "pay_amount",
-    "deposit_bank",
-    "no_of_bills",
-    "bill_no",
-    "bill_amount",
-    "bill_passed",
-    "tds_deducted",
-    "net_amount",
-    "payment_completeness",
-    "deduction",
-    "status",
-    "remarks",
-    "pay_type_date",
-    "collection_id",
-    "raised_by",
-    "is_deleted",
-    "payment_file",
-    "is_dialdesk",
-    "source_created_at",
-    "synced_at",
-  ];
-  const n = await insertBatch(
-    hrms,
-    "client_bill_collection_snapshot",
-    rows,
-    cols,
-    cols.slice(1),
-  );
-  await pruneOrphans(
-    hrms,
-    "client_bill_collection_snapshot",
-    rows.map((r) => r.bill_source_id),
-    "1=1",
-  );
+  const cols = ['bill_source_id','payment_ref','company_name','branch_name','financial_year','pay_type',
+    'pay_no','bank_name','pay_date_raw','pay_amount','deposit_bank','no_of_bills','bill_no','bill_amount',
+    'bill_passed','tds_deducted','net_amount','payment_completeness','deduction','status','remarks',
+    'pay_type_date','collection_id','raised_by','is_deleted','payment_file','is_dialdesk',
+    'source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'client_bill_collection_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'client_bill_collection_snapshot', rows.map(r => r.bill_source_id), '1=1');
   const netCollected = rows.reduce((s, r) => s + Number(r.net_amount || 0), 0);
   const tds = rows.reduce((s, r) => s + Number(r.tds_deducted || 0), 0);
-  const partial = rows.filter(
-    (r) => r.payment_completeness === "partial",
-  ).length;
-  log(
-    `  client_bill_collection_snapshot: ${n} rows, Rs ${(netCollected / 100000).toFixed(2)} lakh net collected, ` +
-      `Rs ${(tds / 100000).toFixed(2)} lakh TDS deducted by clients, ${partial} flagged partial`,
-  );
+  const partial = rows.filter(r => r.payment_completeness === 'partial').length;
+  log(`  client_bill_collection_snapshot: ${n} rows, Rs ${(netCollected / 100000).toFixed(2)} lakh net collected, `
+    + `Rs ${(tds / 100000).toFixed(2)} lakh TDS deducted by clients, ${partial} flagged partial`);
 }
 
 /**
@@ -1875,19 +1280,16 @@ async function syncBillCollections(hrms, bill) {
  * company_name is MAS's own entity, not a vendor.
  */
 async function syncOtherDeductions(hrms, bill) {
-  log(
-    "Sync 16: populating client_bill_collection_deduction_snapshot from db_bill.other_deductions_bill ...",
-  );
+  log('Sync 16: populating client_bill_collection_deduction_snapshot from db_bill.other_deductions_bill ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT id, company_name, branch_name, financial_year, pay_type, pay_no, pay_amount, bank_name,
             deposit_bank, pays_date, no_of_bills, pay_type_dates, status, bill_no, other_deduction,
             other_remarks, collection_id, username, createdate, PaymentFile
-       FROM other_deductions_bill${MAS_CALLNET_SQL} ORDER BY id`,
-  );
+       FROM other_deductions_bill${MAS_CALLNET_SQL} ORDER BY id`);
   log(`  db_bill.other_deductions_bill rows: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.id,
     company_name: trim(r.company_name),
     branch_name: trim(r.branch_name),
@@ -1900,7 +1302,7 @@ async function syncOtherDeductions(hrms, bill) {
     pay_date: safeDateTime(r.pays_date),
     no_of_bills: r.no_of_bills ?? null,
     pay_type_date: safeDateTime(r.pay_type_dates),
-    status: r.status == null ? null : Number(r.status) === 1 ? 1 : 0,
+    status: r.status == null ? null : (Number(r.status) === 1 ? 1 : 0),
     bill_no: trim(r.bill_no),
     other_deduction: safeDec(r.other_deduction),
     other_remarks: trim(r.other_remarks)?.slice(0, 500) ?? null,
@@ -1910,61 +1312,25 @@ async function syncOtherDeductions(hrms, bill) {
     source_created_at: safeDateTime(r.createdate),
     synced_at: now,
   }));
-  const cols = [
-    "bill_source_id",
-    "company_name",
-    "branch_name",
-    "financial_year",
-    "pay_type",
-    "pay_no",
-    "pay_amount",
-    "bank_name",
-    "deposit_bank",
-    "pay_date",
-    "no_of_bills",
-    "pay_type_date",
-    "status",
-    "bill_no",
-    "other_deduction",
-    "other_remarks",
-    "collection_id",
-    "raised_by",
-    "payment_file",
-    "source_created_at",
-    "synced_at",
-  ];
-  const n = await insertBatch(
-    hrms,
-    "client_bill_collection_deduction_snapshot",
-    rows,
-    cols,
-    cols.slice(1),
-  );
-  await pruneOrphans(
-    hrms,
-    "client_bill_collection_deduction_snapshot",
-    rows.map((r) => r.bill_source_id),
-    "1=1",
-  );
+  const cols = ['bill_source_id','company_name','branch_name','financial_year','pay_type','pay_no',
+    'pay_amount','bank_name','deposit_bank','pay_date','no_of_bills','pay_type_date','status','bill_no',
+    'other_deduction','other_remarks','collection_id','raised_by','payment_file','source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'client_bill_collection_deduction_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'client_bill_collection_deduction_snapshot', rows.map(r => r.bill_source_id), '1=1');
   const value = rows.reduce((s, r) => s + Number(r.other_deduction || 0), 0);
-  log(
-    `  client_bill_collection_deduction_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh deducted`,
-  );
+  log(`  client_bill_collection_deduction_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh deducted`);
 }
 
 /** Sync 17 — billing_client_ledger_snapshot, from db_bill.billing_ledger. */
 async function syncBillingLedger(hrms, bill) {
-  log(
-    "Sync 17: populating billing_client_ledger_snapshot from db_bill.billing_ledger ...",
-  );
+  log('Sync 17: populating billing_client_ledger_snapshot from db_bill.billing_ledger ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT led_id, fin_year, fin_month, clientId, subs, talk_time, topup, setup_cost
-       FROM billing_ledger ORDER BY led_id`,
-  );
+       FROM billing_ledger ORDER BY led_id`);
   log(`  db_bill.billing_ledger rows: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.led_id,
     finance_year: trim(r.fin_year),
     finance_month: trim(r.fin_month),
@@ -1975,47 +1341,24 @@ async function syncBillingLedger(hrms, bill) {
     setup_cost_amt: safeDec(r.setup_cost),
     synced_at: now,
   }));
-  const cols = [
-    "bill_source_id",
-    "finance_year",
-    "finance_month",
-    "client_source_id",
-    "subscription_amt",
-    "talktime_amt",
-    "topup_amt",
-    "setup_cost_amt",
-    "synced_at",
-  ];
-  const n = await insertBatch(
-    hrms,
-    "billing_client_ledger_snapshot",
-    rows,
-    cols,
-    cols.slice(1),
-  );
-  await pruneOrphans(
-    hrms,
-    "billing_client_ledger_snapshot",
-    rows.map((r) => r.bill_source_id),
-    "1=1",
-  );
+  const cols = ['bill_source_id','finance_year','finance_month','client_source_id','subscription_amt',
+    'talktime_amt','topup_amt','setup_cost_amt','synced_at'];
+  const n = await insertBatch(hrms, 'billing_client_ledger_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'billing_client_ledger_snapshot', rows.map(r => r.bill_source_id), '1=1');
   log(`  billing_client_ledger_snapshot: ${n} rows`);
 }
 
 /** Sync 18 — billing_opening_balance_snapshot, from db_bill.billing_opening_balance (current only). */
 async function syncOpeningBalance(hrms, bill) {
-  log(
-    "Sync 18: populating billing_opening_balance_snapshot from db_bill.billing_opening_balance ...",
-  );
+  log('Sync 18: populating billing_opening_balance_snapshot from db_bill.billing_opening_balance ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT op_id, clientId, op_bal, cs_bal, op_dd, bill_start_date, fr_val, fv_st_rl,
             bill_end_date, subs_val, adv_val, as_on_date, created_at, updated_at
-       FROM billing_opening_balance ORDER BY op_id`,
-  );
+       FROM billing_opening_balance ORDER BY op_id`);
   log(`  db_bill.billing_opening_balance rows: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.op_id,
     client_source_id: r.clientId ?? null,
     opening_balance: safeDec(r.op_bal),
@@ -2032,146 +1375,82 @@ async function syncOpeningBalance(hrms, bill) {
     source_updated_at: safeDateTime(r.updated_at),
     synced_at: now,
   }));
-  const cols = [
-    "bill_source_id",
-    "client_source_id",
-    "opening_balance",
-    "cs_balance",
-    "opening_dd",
-    "bill_start_date",
-    "bill_end_date",
-    "fr_val",
-    "fv_st_rl",
-    "subscription_val",
-    "advance_val",
-    "as_on_date",
-    "source_created_at",
-    "source_updated_at",
-    "synced_at",
-  ];
-  const n = await insertBatch(
-    hrms,
-    "billing_opening_balance_snapshot",
-    rows,
-    cols,
-    cols.slice(1),
-  );
-  await pruneOrphans(
-    hrms,
-    "billing_opening_balance_snapshot",
-    rows.map((r) => r.bill_source_id),
-    "1=1",
-  );
+  const cols = ['bill_source_id','client_source_id','opening_balance','cs_balance','opening_dd',
+    'bill_start_date','bill_end_date','fr_val','fv_st_rl','subscription_val','advance_val',
+    'as_on_date','source_created_at','source_updated_at','synced_at'];
+  const n = await insertBatch(hrms, 'billing_opening_balance_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'billing_opening_balance_snapshot', rows.map(r => r.bill_source_id), '1=1');
   log(`  billing_opening_balance_snapshot: ${n} rows`);
 }
 
 /** Sync 19 — bill_no_master_snapshot, from db_bill.bill_no_master. */
 async function syncBillNoMaster(hrms, bill) {
-  log(
-    "Sync 19: populating bill_no_master_snapshot from db_bill.bill_no_master ...",
-  );
+  log('Sync 19: populating bill_no_master_snapshot from db_bill.bill_no_master ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT id, company_name, finance_year, bill_no, RTGS, cost_center, proforma_bill_no,
             createdate, active, month_year
-       FROM bill_no_master${MAS_CALLNET_SQL} ORDER BY id`,
-  );
+       FROM bill_no_master${MAS_CALLNET_SQL} ORDER BY id`);
   log(`  db_bill.bill_no_master rows: ${src.length}`);
 
-  const rows = src.map((r) => ({
+  const rows = src.map(r => ({
     bill_source_id: r.id,
     company_name: trim(r.company_name),
     finance_year: trim(r.finance_year),
     bill_no: r.bill_no ?? null,
-    is_rtgs: r.RTGS == null ? null : Number(r.RTGS) === 1 ? 1 : 0,
+    is_rtgs: r.RTGS == null ? null : (Number(r.RTGS) === 1 ? 1 : 0),
     cost_centre_source_id: r.cost_center ?? null,
     proforma_bill_no: trim(r.proforma_bill_no),
     month_year: trim(r.month_year),
-    is_active: r.active == null ? null : Number(r.active) === 1 ? 1 : 0,
+    is_active: r.active == null ? null : (Number(r.active) === 1 ? 1 : 0),
     source_created_at: safeDateTime(r.createdate),
     synced_at: now,
   }));
-  const cols = [
-    "bill_source_id",
-    "company_name",
-    "finance_year",
-    "bill_no",
-    "is_rtgs",
-    "cost_centre_source_id",
-    "proforma_bill_no",
-    "month_year",
-    "is_active",
-    "source_created_at",
-    "synced_at",
-  ];
-  const n = await insertBatch(
-    hrms,
-    "bill_no_master_snapshot",
-    rows,
-    cols,
-    cols.slice(1),
-  );
-  await pruneOrphans(
-    hrms,
-    "bill_no_master_snapshot",
-    rows.map((r) => r.bill_source_id),
-    "1=1",
-  );
+  const cols = ['bill_source_id','company_name','finance_year','bill_no','is_rtgs','cost_centre_source_id',
+    'proforma_bill_no','month_year','is_active','source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'bill_no_master_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'bill_no_master_snapshot', rows.map(r => r.bill_source_id), '1=1');
   log(`  bill_no_master_snapshot: ${n} rows`);
 }
 
 async function main() {
-  const only =
-    process.argv.find((a) => a.startsWith("--only="))?.split("=")[1] ?? "all";
+  const only = process.argv.find(a => a.startsWith('--only='))?.split('=')[1] ?? 'all';
 
-  log("Connecting to mas_hrms and db_bill ...");
+  log('Connecting to mas_hrms and db_bill ...');
   const hrms = await mysql.createConnection(HRMS);
   const bill = await mysql.createConnection(BILL);
-  log("Connected.");
+  log('Connected.');
 
   try {
-    if (only === "all" || only === "cost_centres")
-      await syncCostCentres(hrms, bill);
-    if (only === "all" || only === "clients") await syncClients(hrms, bill);
-    if (only === "all" || only === "provision") await syncProvision(hrms, bill);
-    if (only === "all" || only === "invoices") await syncInvoices(hrms, bill);
+    if (only === 'all' || only === 'cost_centres') await syncCostCentres(hrms, bill);
+    if (only === 'all' || only === 'clients')      await syncClients(hrms, bill);
+    if (only === 'all' || only === 'provision')    await syncProvision(hrms, bill);
+    if (only === 'all' || only === 'invoices')     await syncInvoices(hrms, bill);
     // Heads first: the budget and GRN snapshots reference them.
-    if (only === "all" || only === "expense_heads")
-      await syncExpenseHeads(hrms, bill);
-    if (only === "all" || only === "budget") await syncBudget(hrms, bill);
-    if (only === "all" || only === "grn") await syncGrnEntries(hrms, bill);
-    if (only === "all" || only === "particulars")
-      await syncInvoiceParticulars(hrms, bill);
-    if (only === "all" || only === "budget_lines")
-      await syncBudgetLines(hrms, bill);
-    if (only === "all" || only === "grn_lines") await syncGrnLines(hrms, bill);
-    if (only === "all" || only === "credit_notes")
-      await syncCreditNotes(hrms, bill);
-    if (only === "all" || only === "credit_lines")
-      await syncCreditNoteLines(hrms, bill);
-    if (only === "all" || only === "prov_deduct")
-      await syncProvisionDeductions(hrms, bill);
-    if (only === "all" || only === "collection_runs")
-      await syncCollectionRuns(hrms, bill);
-    if (only === "all" || only === "bill_collections")
-      await syncBillCollections(hrms, bill);
-    if (only === "all" || only === "other_deductions")
-      await syncOtherDeductions(hrms, bill);
-    if (only === "all" || only === "billing_ledger")
-      await syncBillingLedger(hrms, bill);
-    if (only === "all" || only === "opening_balance")
-      await syncOpeningBalance(hrms, bill);
-    if (only === "all" || only === "bill_no_master")
-      await syncBillNoMaster(hrms, bill);
+    if (only === 'all' || only === 'expense_heads') await syncExpenseHeads(hrms, bill);
+    if (only === 'all' || only === 'budget')        await syncBudget(hrms, bill);
+    if (only === 'all' || only === 'grn')           await syncGrnEntries(hrms, bill);
+    if (only === 'all' || only === 'particulars')   await syncInvoiceParticulars(hrms, bill);
+    if (only === 'all' || only === 'budget_lines')  await syncBudgetLines(hrms, bill);
+    if (only === 'all' || only === 'grn_lines')     await syncGrnLines(hrms, bill);
+    if (only === 'all' || only === 'credit_notes')  await syncCreditNotes(hrms, bill);
+    if (only === 'all' || only === 'credit_lines')  await syncCreditNoteLines(hrms, bill);
+    if (only === 'all' || only === 'prov_deduct')   await syncProvisionDeductions(hrms, bill);
+    if (only === 'all' || only === 'collection_runs')   await syncCollectionRuns(hrms, bill);
+    if (only === 'all' || only === 'bill_collections')  await syncBillCollections(hrms, bill);
+    if (only === 'all' || only === 'other_deductions') await syncOtherDeductions(hrms, bill);
+    if (only === 'all' || only === 'billing_ledger')   await syncBillingLedger(hrms, bill);
+    if (only === 'all' || only === 'opening_balance')  await syncOpeningBalance(hrms, bill);
+    if (only === 'all' || only === 'bill_no_master')   await syncBillNoMaster(hrms, bill);
 
-    log("Done.");
+    log('Done.');
   } finally {
     await hrms.end();
     await bill.end();
   }
 }
 
-main().catch((err) => {
-  process.stderr.write("FATAL: " + err.message + "\n");
+main().catch(err => {
+  process.stderr.write('FATAL: ' + err.message + '\n');
   process.exit(1);
 });

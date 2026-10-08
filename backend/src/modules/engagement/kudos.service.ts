@@ -12,9 +12,7 @@ import type {
 
 const MONTHLY_KUDOS_LIMIT = 10;
 
-export async function createKudosTemplate(
-  data: CreateKudosTemplateDTO,
-): Promise<KudosMaster> {
+export async function createKudosTemplate(data: CreateKudosTemplateDTO): Promise<KudosMaster> {
   const id = randomUUID();
   await db.execute(
     `INSERT INTO kudos_master
@@ -29,43 +27,39 @@ export async function createKudosTemplate(
       data.kudos_category ?? null,
       data.points_value ?? 10,
       data.is_active ?? true,
-    ],
+    ]
   );
   const created = await getKudosTemplate(id);
   if (!created) throw new Error("Failed to create kudos template");
   return created;
 }
 
-export async function getKudosTemplate(
-  id: string,
-): Promise<KudosMaster | null> {
+export async function getKudosTemplate(id: string): Promise<KudosMaster | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM kudos_master WHERE kudos_template_id = ? LIMIT 1",
-    [id],
+    [id]
   );
   return (rows as KudosMaster[])[0] ?? null;
 }
 
-export async function listKudosTemplates(
-  activeOnly = true,
-): Promise<KudosMaster[]> {
+export async function listKudosTemplates(activeOnly = true): Promise<KudosMaster[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM kudos_master
      ${activeOnly ? "WHERE is_active = 1" : ""}
-     ORDER BY kudos_category, kudos_title`,
+     ORDER BY kudos_category, kudos_title`
   );
   return rows as KudosMaster[];
 }
 
 export async function getMonthlyKudosLimit(
-  employeeId: string,
+  employeeId: string
 ): Promise<{ given: number; limit: number; remaining: number }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) as given
        FROM kudos_transaction
       WHERE sender_id = ?
         AND sent_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')`,
-    [employeeId],
+    [employeeId]
   );
   const given = Number(rows[0]?.given ?? 0);
   return {
@@ -76,8 +70,7 @@ export async function getMonthlyKudosLimit(
 }
 
 export async function sendKudos(data: SendKudosDTO): Promise<string> {
-  if (data.sender_id === data.receiver_id)
-    throw new Error("Cannot give kudos to yourself");
+  if (data.sender_id === data.receiver_id) throw new Error("Cannot give kudos to yourself");
 
   const limit = await getMonthlyKudosLimit(data.sender_id);
   if (limit.remaining <= 0) throw new Error("Monthly kudos limit reached");
@@ -104,21 +97,15 @@ export async function sendKudos(data: SendKudosDTO): Promise<string> {
       data.custom_message ?? null,
       points,
       data.is_anonymous ?? false,
-    ],
+    ]
   );
-  await addPoints(
-    data.receiver_id,
-    points,
-    "kudos_received",
-    "Kudos received",
-    id,
-  );
+  await addPoints(data.receiver_id, points, "kudos_received", "Kudos received", id);
   return id;
 }
 
 export async function listKudos(
   filters: KudosFilters = {},
-  limit = 50,
+  limit = 50
 ): Promise<KudosWithDetailsResponse[]> {
   const safeLimit = Math.min(Math.max(Math.trunc(Number(limit) || 50), 1), 100);
   const conditions: string[] = [];
@@ -169,7 +156,7 @@ export async function listKudos(
        ${activeFilter}
       ORDER BY kt.sent_at DESC
       LIMIT ${safeLimit}`,
-    params,
+    params
   );
   return rows as KudosWithDetailsResponse[];
 }

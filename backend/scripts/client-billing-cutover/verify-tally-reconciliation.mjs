@@ -23,11 +23,7 @@ function stripQuotes(v) {
 async function connectWithFallback(hosts, cfg, label) {
   for (const host of hosts) {
     try {
-      const conn = await mysql.createConnection({
-        ...cfg,
-        host,
-        connectTimeout: 8000,
-      });
+      const conn = await mysql.createConnection({ ...cfg, host, connectTimeout: 8000 });
       await conn.query("SELECT 1");
       console.log(`[${label}] connected via ${host}`);
       return conn;
@@ -78,16 +74,8 @@ async function main() {
     port: Number(process.env.BILL_DB_PORT || 3306),
   };
 
-  const hrms = await connectWithFallback(
-    ["192.168.10.6", "122.184.128.90"],
-    hrmsCfg,
-    "mas_hrms",
-  );
-  const bill = await connectWithFallback(
-    ["192.168.10.22", "14.97.30.236"],
-    billCfg,
-    "db_bill",
-  );
+  const hrms = await connectWithFallback(["192.168.10.6", "122.184.128.90"], hrmsCfg, "mas_hrms");
+  const bill = await connectWithFallback(["192.168.10.22", "14.97.30.236"], billCfg, "db_bill");
 
   const report = { generated_at: new Date().toISOString() };
 
@@ -96,7 +84,7 @@ async function main() {
     `SELECT legacy_id, bill_no, DATE_FORMAT(invoice_date, '%Y-%m-%d') AS invoice_date,
             total_amount, igst_amount, cgst_amount,
             sgst_amount, grand_total, tally_head, client_tally_name
-       FROM client_invoice WHERE is_migrated = 1 AND legacy_id IS NOT NULL`,
+       FROM client_invoice WHERE is_migrated = 1 AND legacy_id IS NOT NULL`
   );
   console.log(`[mas_hrms] client_invoice migrated rows: ${hrmsInv.length}`);
 
@@ -109,13 +97,11 @@ async function main() {
       `SELECT id, bill_no, DATE_FORMAT(invoiceDate, '%Y-%m-%d') AS invoiceDate, total, igst, cgst, sgst, grnd,
               cost_TallyHead, cost_client_tally_name
          FROM tbl_invoice WHERE id IN (${chunk.map(() => "?").join(",")})`,
-      chunk,
+      chunk
     );
     for (const r of rows) billInvMap.set(r.id, r);
   }
-  console.log(
-    `[db_bill] tbl_invoice rows fetched by legacy_id: ${billInvMap.size}`,
-  );
+  console.log(`[db_bill] tbl_invoice rows fetched by legacy_id: ${billInvMap.size}`);
 
   let invMissingInBill = 0;
   let invBillNoMismatch = 0;
@@ -130,13 +116,9 @@ async function main() {
 
   for (const h of hrmsInv) {
     const b = billInvMap.get(h.legacy_id);
-    if (!b) {
-      invMissingInBill++;
-      continue;
-    }
+    if (!b) { invMissingInBill++; continue; }
 
-    const billNoOk =
-      String(h.bill_no ?? "").trim() === String(b.bill_no ?? "").trim();
+    const billNoOk = String(h.bill_no ?? "").trim() === String(b.bill_no ?? "").trim();
     const dateOk = dateKey(h.invoice_date) === dateKey(b.invoiceDate);
     const moneyOk =
       !moneyMismatch(Number(h.total_amount), parseLegacyDecimal(b.total)) &&
@@ -150,54 +132,25 @@ async function main() {
     // value — that is not a mismatch, it's an untouched/never-populated field.
     const tallyHeadOk =
       (h.tally_head ?? null) === (b.cost_TallyHead ?? null) ||
-      (h.tally_head === null &&
-        (b.cost_TallyHead === null || String(b.cost_TallyHead).trim() === ""));
+      (h.tally_head === null && (b.cost_TallyHead === null || String(b.cost_TallyHead).trim() === ""));
     const clientTallyOk =
       (h.client_tally_name ?? null) === (b.cost_client_tally_name ?? null) ||
-      (h.client_tally_name === null &&
-        (b.cost_client_tally_name === null ||
-          String(b.cost_client_tally_name).trim() === ""));
+      (h.client_tally_name === null && (b.cost_client_tally_name === null || String(b.cost_client_tally_name).trim() === ""));
 
     if (!billNoOk) invBillNoMismatch++;
     if (!dateOk) invDateMismatch++;
     if (!moneyOk) invMoneyMismatch++;
-    if (!tallyHeadOk) {
-      invTallyHeadDiffers++;
-      if (tallyHeadSamples.length < 12)
-        tallyHeadSamples.push({
-          legacy_id: h.legacy_id,
-          hrms: h.tally_head,
-          bill: b.cost_TallyHead,
-        });
-    }
-    if (!clientTallyOk) {
-      invClientTallyNameDiffers++;
-      if (clientTallySamples.length < 12)
-        clientTallySamples.push({
-          legacy_id: h.legacy_id,
-          hrms: h.client_tally_name,
-          bill: b.cost_client_tally_name,
-        });
-    }
+    if (!tallyHeadOk) { invTallyHeadDiffers++; if (tallyHeadSamples.length < 12) tallyHeadSamples.push({ legacy_id: h.legacy_id, hrms: h.tally_head, bill: b.cost_TallyHead }); }
+    if (!clientTallyOk) { invClientTallyNameDiffers++; if (clientTallySamples.length < 12) clientTallySamples.push({ legacy_id: h.legacy_id, hrms: h.client_tally_name, bill: b.cost_client_tally_name }); }
 
     if (billNoOk && dateOk && moneyOk) invExactMatch++;
     else if (invMismatchSamples.length < 15) {
       invMismatchSamples.push({
         legacy_id: h.legacy_id,
         bill_no: { hrms: h.bill_no, bill: b.bill_no, ok: billNoOk },
-        invoice_date: {
-          hrms: dateKey(h.invoice_date),
-          bill: dateKey(b.invoiceDate),
-          ok: dateOk,
-        },
-        total_amount: {
-          hrms: Number(h.total_amount),
-          bill: parseLegacyDecimal(b.total),
-        },
-        grand_total: {
-          hrms: Number(h.grand_total),
-          bill: parseLegacyDecimal(b.grnd),
-        },
+        invoice_date: { hrms: dateKey(h.invoice_date), bill: dateKey(b.invoiceDate), ok: dateOk },
+        total_amount: { hrms: Number(h.total_amount), bill: parseLegacyDecimal(b.total) },
+        grand_total: { hrms: Number(h.grand_total), bill: parseLegacyDecimal(b.grnd) },
       });
     }
   }
@@ -222,7 +175,7 @@ async function main() {
     `SELECT legacy_id, credit_no, DATE_FORMAT(credit_date, '%Y-%m-%d') AS credit_date,
             total_amount, igst_amount, cgst_amount,
             sgst_amount, grand_total
-       FROM client_credit_note WHERE is_migrated = 1 AND legacy_id IS NOT NULL`,
+       FROM client_credit_note WHERE is_migrated = 1 AND legacy_id IS NOT NULL`
   );
   console.log(`[mas_hrms] client_credit_note migrated rows: ${hrmsCn.length}`);
 
@@ -234,30 +187,20 @@ async function main() {
     const [rows] = await bill.query(
       `SELECT id, credit_no, DATE_FORMAT(creditDate, '%Y-%m-%d') AS creditDate, total, igst, cgst, sgst, grnd
          FROM tbl_credit_note WHERE id IN (${chunk.map(() => "?").join(",")})`,
-      chunk,
+      chunk
     );
     for (const r of rows) billCnMap.set(r.id, r);
   }
-  console.log(
-    `[db_bill] tbl_credit_note rows fetched by legacy_id: ${billCnMap.size}`,
-  );
+  console.log(`[db_bill] tbl_credit_note rows fetched by legacy_id: ${billCnMap.size}`);
 
-  let cnMissingInBill = 0,
-    cnNoMismatch = 0,
-    cnDateMismatch = 0,
-    cnMoneyMismatch = 0,
-    cnExactMatch = 0;
+  let cnMissingInBill = 0, cnNoMismatch = 0, cnDateMismatch = 0, cnMoneyMismatch = 0, cnExactMatch = 0;
   const cnMismatchSamples = [];
 
   for (const h of hrmsCn) {
     const b = billCnMap.get(h.legacy_id);
-    if (!b) {
-      cnMissingInBill++;
-      continue;
-    }
+    if (!b) { cnMissingInBill++; continue; }
 
-    const noOk =
-      String(h.credit_no ?? "").trim() === String(b.credit_no ?? "").trim();
+    const noOk = String(h.credit_no ?? "").trim() === String(b.credit_no ?? "").trim();
     const dateOk = dateKey(h.credit_date) === dateKey(b.creditDate);
     const moneyOk =
       !moneyMismatch(Number(h.total_amount), parseLegacyDecimal(b.total)) &&
@@ -272,15 +215,8 @@ async function main() {
       cnMismatchSamples.push({
         legacy_id: h.legacy_id,
         credit_no: { hrms: h.credit_no, bill: b.credit_no, ok: noOk },
-        credit_date: {
-          hrms: dateKey(h.credit_date),
-          bill: dateKey(b.creditDate),
-          ok: dateOk,
-        },
-        total_amount: {
-          hrms: Number(h.total_amount),
-          bill: parseLegacyDecimal(b.total),
-        },
+        credit_date: { hrms: dateKey(h.credit_date), bill: dateKey(b.creditDate), ok: dateOk },
+        total_amount: { hrms: Number(h.total_amount), bill: parseLegacyDecimal(b.total) },
       });
     }
   }
@@ -297,30 +233,22 @@ async function main() {
   };
 
   // ═══ COVERAGE: db_bill rows that have NO mas_hrms counterpart at all ═════════
-  const [[billInvTotal]] = await bill.query(
-    "SELECT COUNT(*) n FROM tbl_invoice",
-  );
-  const [[billCnTotal]] = await bill.query(
-    "SELECT COUNT(*) n FROM tbl_credit_note",
-  );
+  const [[billInvTotal]] = await bill.query("SELECT COUNT(*) n FROM tbl_invoice");
+  const [[billCnTotal]] = await bill.query("SELECT COUNT(*) n FROM tbl_credit_note");
 
   // Every legacy id mas_hrms already has, so the gap rows below are whatever db_bill holds
   // that mas_hrms does not — computed in JS since the two databases are on different hosts.
   const hrmsInvIds = new Set(hrmsInv.map((r) => r.legacy_id));
   const hrmsCnIds = new Set(hrmsCn.map((r) => r.legacy_id));
   const [allBillInvIds] = await bill.query(
-    "SELECT id, DATE_FORMAT(invoiceDate, '%Y-%m-%d') d, grnd FROM tbl_invoice",
+    "SELECT id, DATE_FORMAT(invoiceDate, '%Y-%m-%d') d, grnd FROM tbl_invoice"
   );
   const [allBillCnIds] = await bill.query(
-    "SELECT id, DATE_FORMAT(creditDate, '%Y-%m-%d') d, createdate FROM tbl_credit_note",
+    "SELECT id, DATE_FORMAT(creditDate, '%Y-%m-%d') d, createdate FROM tbl_credit_note"
   );
   const gapInv = allBillInvIds.filter((r) => !hrmsInvIds.has(r.id));
   const gapCn = allBillCnIds.filter((r) => !hrmsCnIds.has(r.id));
-  const dates = (rows) =>
-    rows
-      .map((r) => r.d)
-      .filter(Boolean)
-      .sort();
+  const dates = (rows) => rows.map((r) => r.d).filter(Boolean).sort();
 
   report.coverage = {
     db_bill_tbl_invoice_total: billInvTotal.n,
@@ -329,39 +257,23 @@ async function main() {
     hrms_migrated_credit_note_total: hrmsCn.length,
     invoice_gap: gapInv.length,
     invoice_gap_date_range: dates(gapInv).length
-      ? {
-          earliest: dates(gapInv)[0],
-          latest: dates(gapInv)[dates(gapInv).length - 1],
-        }
+      ? { earliest: dates(gapInv)[0], latest: dates(gapInv)[dates(gapInv).length - 1] }
       : null,
-    invoice_gap_sample_ids: gapInv
-      .slice(0, 20)
-      .map((r) => ({ id: r.id, date: r.d })),
-    invoice_gap_pre_cutover_2026_08_19: gapInv.filter(
-      (r) => r.d && r.d < "2026-08-19",
-    ).length,
-    invoice_gap_post_cutover_2026_08_19: gapInv.filter(
-      (r) => r.d && r.d >= "2026-08-19",
-    ).length,
+    invoice_gap_sample_ids: gapInv.slice(0, 20).map((r) => ({ id: r.id, date: r.d })),
+    invoice_gap_pre_cutover_2026_08_19: gapInv.filter((r) => r.d && r.d < "2026-08-19").length,
+    invoice_gap_post_cutover_2026_08_19: gapInv.filter((r) => r.d && r.d >= "2026-08-19").length,
     invoice_gap_post_cutover_grand_total_sum: Math.round(
       gapInv
         .filter((r) => r.d && r.d >= "2026-08-19")
-        .reduce((sum, r) => sum + (parseLegacyDecimal(r.grnd) || 0), 0),
+        .reduce((sum, r) => sum + (parseLegacyDecimal(r.grnd) || 0), 0)
     ),
     invoice_gap_post_cutover_sample: gapInv
       .filter((r) => r.d && r.d >= "2026-08-19")
       .slice(0, 15)
-      .map((r) => ({
-        id: r.id,
-        date: r.d,
-        grand_total: parseLegacyDecimal(r.grnd),
-      })),
+      .map((r) => ({ id: r.id, date: r.d, grand_total: parseLegacyDecimal(r.grnd) })),
     credit_note_gap: gapCn.length,
     credit_note_gap_date_range: dates(gapCn).length
-      ? {
-          earliest: dates(gapCn)[0],
-          latest: dates(gapCn)[dates(gapCn).length - 1],
-        }
+      ? { earliest: dates(gapCn)[0], latest: dates(gapCn)[dates(gapCn).length - 1] }
       : null,
   };
 
@@ -371,7 +283,4 @@ async function main() {
   await bill.end();
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main().catch((e) => { console.error(e); process.exit(1); });

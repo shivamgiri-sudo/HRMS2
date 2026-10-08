@@ -117,8 +117,7 @@ const HEAVY_RULE_MIN_INTERVAL_MS = 30 * 60 * 1000;
 export const INBOX_RESOLUTION_RULES: readonly ResolutionRule[] = [
   {
     key: "sla_breach_uncalled",
-    resolvedWhen:
-      "the candidate has been called, or has left the waiting state",
+    resolvedWhen: "the candidate has been called, or has left the waiting state",
     where: `
       w.type = 'sla_breach_uncalled' AND w.is_actioned = 0
       AND EXISTS (
@@ -189,8 +188,7 @@ export const INBOX_RESOLUTION_RULES: readonly ResolutionRule[] = [
   },
   {
     key: "attendance_regularization",
-    resolvedWhen:
-      "no regularization this alert could refer to is still in flight",
+    resolvedWhen: "no regularization this alert could refer to is still in flight",
     where: `
       w.type = 'attendance_regularization' AND w.is_actioned = 0
       AND NOT EXISTS (
@@ -210,8 +208,7 @@ export const INBOX_RESOLUTION_RULES: readonly ResolutionRule[] = [
     key: "attendance_missing_punch",
     twoPhase: true,
     minIntervalMs: HEAVY_RULE_MIN_INTERVAL_MS,
-    resolvedWhen:
-      "a regularization has been raised for that employee and date, or the day's attendance record no longer shows missing_punch",
+    resolvedWhen: "a regularization has been raised for that employee and date, or the day's attendance record no longer shows missing_punch",
     where: `
       w.type = 'attendance_missing_punch' AND w.is_actioned = 0
       AND w.action_url LIKE '%date=%'
@@ -236,8 +233,7 @@ export const INBOX_RESOLUTION_RULES: readonly ResolutionRule[] = [
     key: "attendance_validation",
     twoPhase: true,
     minIntervalMs: HEAVY_RULE_MIN_INTERVAL_MS,
-    resolvedWhen:
-      "a regularization has been raised for that employee and date, or the day's attendance record now shows a settled status",
+    resolvedWhen: "a regularization has been raised for that employee and date, or the day's attendance record now shows a settled status",
     where: `
       w.type = 'attendance_validation' AND w.is_actioned = 0
       AND w.action_url LIKE '%date=%'
@@ -266,8 +262,7 @@ export const INBOX_RESOLUTION_RULES: readonly ResolutionRule[] = [
   },
   {
     key: "official_email_compliance",
-    resolvedWhen:
-      "the employee now has a compliant official email, or has left",
+    resolvedWhen: "the employee now has a compliant official email, or has left",
     where: `
       w.type = 'alerts' AND w.entity_type = 'official_email_compliance' AND w.is_actioned = 0
       AND EXISTS (
@@ -330,13 +325,7 @@ export async function findDuplicateOpenItems(): Promise<{
 
   const groups = new Map<string, Array<{ id: string; created_at: string }>>();
   for (const r of rows as RowDataPacket[]) {
-    const key = [
-      r.user_id,
-      r.type,
-      r.entity_type ?? "",
-      r.entity_id ?? "",
-      r.action_url ?? "",
-    ].join(" ");
+    const key = [r.user_id, r.type, r.entity_type ?? "", r.entity_id ?? "", r.action_url ?? ""].join(" ");
     const bucket = groups.get(key);
     const entry = { id: String(r.id), created_at: String(r.created_at ?? "") };
     if (bucket) bucket.push(entry);
@@ -349,9 +338,7 @@ export async function findDuplicateOpenItems(): Promise<{
     if (bucket.length < 2) continue;
     groupsAffected += 1;
     bucket.sort((a, b) =>
-      a.created_at === b.created_at
-        ? a.id.localeCompare(b.id)
-        : a.created_at.localeCompare(b.created_at),
+      a.created_at === b.created_at ? a.id.localeCompare(b.id) : a.created_at.localeCompare(b.created_at),
     );
     for (let i = 1; i < bucket.length; i += 1) toClose.push(bucket[i].id);
   }
@@ -395,9 +382,7 @@ const MAX_BATCHES_PER_RULE = 200;
 const lastRuleRunAt = new Map<string, number>();
 
 /** Test hook: forget when throttled rules last ran. */
-export function resetRuleThrottle(): void {
-  lastRuleRunAt.clear();
-}
+export function resetRuleThrottle(): void { lastRuleRunAt.clear(); }
 
 export async function runInboxReconciliation(
   opts: { dryRun?: boolean; rules?: readonly ResolutionRule[] } = {},

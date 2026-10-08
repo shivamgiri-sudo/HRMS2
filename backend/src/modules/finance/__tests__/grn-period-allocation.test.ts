@@ -36,36 +36,21 @@ describe("computeEqualSplit — exactness", () => {
   });
 
   it("splits 10,000 over 3 months as 3,333.33 + 3,333.33 + 3,333.34", async () => {
-    const rows = svc.computeEqualSplit(10_000, [
-      "2026-04",
-      "2026-05",
-      "2026-06",
-    ]);
-    expect(rows.map((r) => r.recognition_amount)).toEqual([
-      3333.33, 3333.33, 3333.34,
-    ]);
+    const rows = svc.computeEqualSplit(10_000, ["2026-04", "2026-05", "2026-06"]);
+    expect(rows.map((r) => r.recognition_amount)).toEqual([3333.33, 3333.33, 3333.34]);
     expect(sum(rows)).toBe(1_000_000);
   });
 
   it("puts the residue on the LAST row, never the first", async () => {
     // A larger first row and smaller last one reads as an error to whoever checks it.
-    const rows = svc.computeEqualSplit(10_000, [
-      "2026-04",
-      "2026-05",
-      "2026-06",
-    ]);
-    expect(rows[0].recognition_amount).toBeLessThanOrEqual(
-      rows[2].recognition_amount,
-    );
+    const rows = svc.computeEqualSplit(10_000, ["2026-04", "2026-05", "2026-06"]);
+    expect(rows[0].recognition_amount).toBeLessThanOrEqual(rows[2].recognition_amount);
   });
 
   it("reconciles exactly for every divisor from 1 to 24, on an awkward amount", async () => {
     // The general proof. 1,200,001.37 does not divide cleanly by anything useful.
     for (let n = 1; n <= 24; n++) {
-      const periods = Array.from(
-        { length: n },
-        (_, i) => `2026-${String((i % 12) + 1).padStart(2, "0")}`,
-      );
+      const periods = Array.from({ length: n }, (_, i) => `2026-${String((i % 12) + 1).padStart(2, "0")}`);
       const rows = svc.computeEqualSplit(1_200_001.37, periods);
       expect(sum(rows), `failed at n=${n}`).toBe(120_000_137);
     }
@@ -106,9 +91,7 @@ describe("financial year", () => {
 describe("resolveEligiblePeriods — FY crossing", () => {
   it("keeps all twelve months of an April-to-March policy", async () => {
     const r = svc.resolveEligiblePeriods({
-      accountingPeriod: "2026-04",
-      startPeriod: "2026-04",
-      endPeriod: "2027-03",
+      accountingPeriod: "2026-04", startPeriod: "2026-04", endPeriod: "2027-03",
     });
     expect(r.periods).toHaveLength(12);
     expect(r.clamped).toBe(false);
@@ -119,23 +102,11 @@ describe("resolveEligiblePeriods — FY crossing", () => {
     // Previously clamped to the nine months inside FY 2026-27. The window is now
     // kept whole and crossFy tells the caller to warn.
     const r = svc.resolveEligiblePeriods({
-      accountingPeriod: "2026-07",
-      startPeriod: "2026-07",
-      endPeriod: "2027-06",
+      accountingPeriod: "2026-07", startPeriod: "2026-07", endPeriod: "2027-06",
     });
     expect(r.periods).toEqual([
-      "2026-07",
-      "2026-08",
-      "2026-09",
-      "2026-10",
-      "2026-11",
-      "2026-12",
-      "2027-01",
-      "2027-02",
-      "2027-03",
-      "2027-04",
-      "2027-05",
-      "2027-06",
+      "2026-07","2026-08","2026-09","2026-10","2026-11","2026-12",
+      "2027-01","2027-02","2027-03","2027-04","2027-05","2027-06",
     ]);
     expect(r.clamped).toBe(false);
     expect(r.crossFy).toBe(true);
@@ -148,33 +119,20 @@ describe("resolveEligiblePeriods — FY crossing", () => {
     // Still nothing left unallocated - but over twelve months, so the monthly
     // charge is the honest 1/12 rather than the 1/9 the clamp forced.
     const r = svc.resolveEligiblePeriods({
-      accountingPeriod: "2026-07",
-      startPeriod: "2026-07",
-      endPeriod: "2027-06",
+      accountingPeriod: "2026-07", startPeriod: "2026-07", endPeriod: "2027-06",
     });
     const rows = svc.computeEqualSplit(1_200_000, r.periods);
     expect(rows).toHaveLength(12);
-    expect(sum(rows), "the full 12,00,000 must still be recognised").toBe(
-      120_000_000,
-    );
+    expect(sum(rows), "the full 12,00,000 must still be recognised").toBe(120_000_000);
     expect(rows.every((x) => x.recognition_amount === 100_000)).toBe(true);
   });
 
   it("keeps all six months of a Jan-to-Jun policy that runs into the next FY", async () => {
     // Jan-Mar 2027 are FY 2026-27, Apr-Jun 2027 are FY 2027-28.
     const r = svc.resolveEligiblePeriods({
-      accountingPeriod: "2027-01",
-      startPeriod: "2027-01",
-      endPeriod: "2027-06",
+      accountingPeriod: "2027-01", startPeriod: "2027-01", endPeriod: "2027-06",
     });
-    expect(r.periods).toEqual([
-      "2027-01",
-      "2027-02",
-      "2027-03",
-      "2027-04",
-      "2027-05",
-      "2027-06",
-    ]);
+    expect(r.periods).toEqual(["2027-01","2027-02","2027-03","2027-04","2027-05","2027-06"]);
     expect(r.crossFy).toBe(true);
     const rows = svc.computeEqualSplit(600_000, r.periods);
     expect(rows.every((x) => x.recognition_amount === 100_000)).toBe(true);
@@ -185,9 +143,7 @@ describe("resolveEligiblePeriods — FY crossing", () => {
     // legitimate window - prepaid annual cover bought in advance - and the Finance
     // Head is warned rather than blocked.
     const r = svc.resolveEligiblePeriods({
-      accountingPeriod: "2026-08",
-      startPeriod: "2027-04",
-      endPeriod: "2027-06",
+      accountingPeriod: "2026-08", startPeriod: "2027-04", endPeriod: "2027-06",
     });
     expect(r.periods).toEqual(["2027-04", "2027-05", "2027-06"]);
     expect(r.crossFy).toBe(true);
@@ -198,9 +154,7 @@ describe("resolveEligiblePeriods — FY crossing", () => {
     // The empty-split guard has to survive removing the clamp.
     expect(() =>
       svc.resolveEligiblePeriods({
-        accountingPeriod: "2026-08",
-        startPeriod: "2026-09",
-        endPeriod: "2026-07",
+        accountingPeriod: "2026-08", startPeriod: "2026-09", endPeriod: "2026-07",
       }),
     ).toThrow();
   });
@@ -208,9 +162,7 @@ describe("resolveEligiblePeriods — FY crossing", () => {
   it("refuses a backwards window", async () => {
     expect(() =>
       svc.resolveEligiblePeriods({
-        accountingPeriod: "2026-08",
-        startPeriod: "2026-09",
-        endPeriod: "2026-07",
+        accountingPeriod: "2026-08", startPeriod: "2026-09", endPeriod: "2026-07",
       }),
     ).toThrow(/cannot end before it starts/i);
   });
@@ -218,12 +170,7 @@ describe("resolveEligiblePeriods — FY crossing", () => {
 
 describe("monthsBetween", () => {
   it("is inclusive of both ends and crosses the year boundary", async () => {
-    expect(svc.monthsBetween("2026-11", "2027-02")).toEqual([
-      "2026-11",
-      "2026-12",
-      "2027-01",
-      "2027-02",
-    ]);
+    expect(svc.monthsBetween("2026-11", "2027-02")).toEqual(["2026-11","2026-12","2027-01","2027-02"]);
   });
 
   it("returns one month when start equals end", async () => {
@@ -236,25 +183,15 @@ describe("saveSplit", () => {
     const statements: string[] = [];
     return {
       statements,
-      execute: vi.fn(async (sql: string) => {
-        statements.push(String(sql).replace(/\s+/g, " ").trim());
-        return [[], []];
-      }),
+      execute: vi.fn(async (sql: string) => { statements.push(String(sql).replace(/\s+/g, " ").trim()); return [[], []]; }),
     };
   }
 
   it("refuses to write outside a transaction", async () => {
     await expect(
       svc.grnPeriodAllocationService.saveSplit(
-        {
-          costAllocationId: "a1",
-          grnRequestId: "g1",
-          recognitionAmount: 1200,
-          accountingPeriod: "2026-04",
-          startPeriod: "2026-04",
-          endPeriod: "2026-06",
-          actorUserId: "u1",
-        },
+        { costAllocationId: "a1", grnRequestId: "g1", recognitionAmount: 1200, accountingPeriod: "2026-04",
+          startPeriod: "2026-04", endPeriod: "2026-06", actorUserId: "u1" },
         undefined as never,
       ),
     ).rejects.toThrow(/inside the caller's transaction/i);
@@ -263,23 +200,12 @@ describe("saveSplit", () => {
   it("clears the previous split before writing, so a re-save cannot double it", async () => {
     const c = conn();
     await svc.grnPeriodAllocationService.saveSplit(
-      {
-        costAllocationId: "a1",
-        grnRequestId: "g1",
-        recognitionAmount: 1200,
-        accountingPeriod: "2026-04",
-        startPeriod: "2026-04",
-        endPeriod: "2026-06",
-        actorUserId: "u1",
-      },
+      { costAllocationId: "a1", grnRequestId: "g1", recognitionAmount: 1200, accountingPeriod: "2026-04",
+        startPeriod: "2026-04", endPeriod: "2026-06", actorUserId: "u1" },
       c as never,
     );
-    const del = c.statements.findIndex((s) =>
-      /DELETE FROM grn_period_allocation/.test(s),
-    );
-    const ins = c.statements.findIndex((s) =>
-      /INSERT INTO grn_period_allocation/.test(s),
-    );
+    const del = c.statements.findIndex((s) => /DELETE FROM grn_period_allocation/.test(s));
+    const ins = c.statements.findIndex((s) => /INSERT INTO grn_period_allocation/.test(s));
     expect(del).toBeGreaterThanOrEqual(0);
     expect(ins).toBeGreaterThan(del);
   });
@@ -287,55 +213,24 @@ describe("saveSplit", () => {
   it("marks the GRN deferred only when there is more than one month", async () => {
     const many = conn();
     await svc.grnPeriodAllocationService.saveSplit(
-      {
-        costAllocationId: "a1",
-        grnRequestId: "g1",
-        recognitionAmount: 1200,
-        accountingPeriod: "2026-04",
-        startPeriod: "2026-04",
-        endPeriod: "2026-06",
-        actorUserId: "u1",
-      },
-      many as never,
-    );
-    const manyUpdate = many.execute.mock.calls.find(([s]) =>
-      /UPDATE grn_request/.test(String(s)),
-    );
+      { costAllocationId: "a1", grnRequestId: "g1", recognitionAmount: 1200, accountingPeriod: "2026-04",
+        startPeriod: "2026-04", endPeriod: "2026-06", actorUserId: "u1" }, many as never);
+    const manyUpdate = many.execute.mock.calls.find(([s]) => /UPDATE grn_request/.test(String(s)));
     expect(manyUpdate?.[1]).toContain("deferred");
 
     const one = conn();
     await svc.grnPeriodAllocationService.saveSplit(
-      {
-        costAllocationId: "a1",
-        grnRequestId: "g1",
-        recognitionAmount: 1200,
-        accountingPeriod: "2026-04",
-        startPeriod: "2026-04",
-        endPeriod: "2026-04",
-        actorUserId: "u1",
-      },
-      one as never,
-    );
-    const oneUpdate = one.execute.mock.calls.find(([s]) =>
-      /UPDATE grn_request/.test(String(s)),
-    );
+      { costAllocationId: "a1", grnRequestId: "g1", recognitionAmount: 1200, accountingPeriod: "2026-04",
+        startPeriod: "2026-04", endPeriod: "2026-04", actorUserId: "u1" }, one as never);
+    const oneUpdate = one.execute.mock.calls.find(([s]) => /UPDATE grn_request/.test(String(s)));
     expect(oneUpdate?.[1]).toContain("single");
   });
 
   it("reports the FY crossing back to the caller so the UI can warn", async () => {
     const c = conn();
     const out = await svc.grnPeriodAllocationService.saveSplit(
-      {
-        costAllocationId: "a1",
-        grnRequestId: "g1",
-        recognitionAmount: 1_200_000,
-        accountingPeriod: "2026-07",
-        startPeriod: "2026-07",
-        endPeriod: "2027-06",
-        actorUserId: "u1",
-      },
-      c as never,
-    );
+      { costAllocationId: "a1", grnRequestId: "g1", recognitionAmount: 1_200_000, accountingPeriod: "2026-07",
+        startPeriod: "2026-07", endPeriod: "2027-06", actorUserId: "u1" }, c as never);
     expect(out.clamped).toBe(false);
     expect(out.crossFy).toBe(true);
     // nothing is dropped any more, so eligible and requested agree

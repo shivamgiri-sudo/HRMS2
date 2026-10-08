@@ -12,10 +12,7 @@
 
 import { Router, type NextFunction, type Response } from "express";
 import type { RowDataPacket } from "mysql2";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { buildEmployeeScopeCondition, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
@@ -24,14 +21,10 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 export const auditLogRouter = Router();
 auditLogRouter.use(requireAuth);
 
-type RequiredAuthRequest = AuthenticatedRequest & {
-  authUser: NonNullable<AuthenticatedRequest["authUser"]>;
-};
+type RequiredAuthRequest = AuthenticatedRequest & { authUser: NonNullable<AuthenticatedRequest["authUser"]> };
 
-const h =
-  (fn: (req: RequiredAuthRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) =>
-    fn(req as RequiredAuthRequest, res).catch(next);
+const h = (fn: (req: RequiredAuthRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req as RequiredAuthRequest, res).catch(next);
 
 interface AuditLogCountRow extends RowDataPacket {
   total: number;
@@ -62,12 +55,12 @@ function clampLimit(value: unknown, fallback: number, max: number): number {
 // ─── Role helpers ──────────────────────────────────────────────────────────
 
 async function resolveActorRole(userId: string): Promise<string> {
-  if (await hasAnyRole(userId, "super_admin")) return "super_admin";
-  if (await hasAnyRole(userId, "admin")) return "admin";
-  if (await hasAnyRole(userId, "payroll_head")) return "payroll_head";
-  if (await hasAnyRole(userId, "hr")) return "hr";
-  if (await hasAnyRole(userId, "wfm")) return "wfm";
-  if (await hasAnyRole(userId, "manager")) return "manager";
+  if (await hasAnyRole(userId, "super_admin"))   return "super_admin";
+  if (await hasAnyRole(userId, "admin"))         return "admin";
+  if (await hasAnyRole(userId, "payroll_head"))  return "payroll_head";
+  if (await hasAnyRole(userId, "hr"))            return "hr";
+  if (await hasAnyRole(userId, "wfm"))           return "wfm";
+  if (await hasAnyRole(userId, "manager"))       return "manager";
   return "employee";
 }
 
@@ -114,22 +107,14 @@ async function adminBranchCondition(req: RequiredAuthRequest): Promise<{ sql: st
  * - manager: own team's dispute audit if allowed (restricted, not yet implemented)
  * - employee: cannot access
  */
-export async function getAuditLogExtended(
-  req: RequiredAuthRequest,
-  res: Response,
-): Promise<unknown> {
+export async function getAuditLogExtended(req: RequiredAuthRequest, res: Response): Promise<unknown> {
   // Access control: determine what this user can view
   const isAdmin = await hasAnyRole(req.authUser.id, "admin", "super_admin");
   const isPayrollHead = await hasAnyRole(req.authUser.id, "payroll_head");
   const isHRWFM = await hasAnyRole(req.authUser.id, "hr", "wfm");
 
   if (!isAdmin && !isPayrollHead && !isHRWFM) {
-    return res
-      .status(403)
-      .json({
-        success: false,
-        error: "Forbidden: audit log access not permitted",
-      });
+    return res.status(403).json({ success: false, error: "Forbidden: audit log access not permitted" });
   }
 
   // Build dynamic WHERE clause
@@ -138,9 +123,7 @@ export async function getAuditLogExtended(
 
   // Role-based module filter
   if (isPayrollHead && !isAdmin) {
-    conds.push(
-      "(sal.module_key IN ('attendance','payroll') OR sal.module_key LIKE 'manual_override%')",
-    );
+    conds.push("(sal.module_key IN ('attendance','payroll') OR sal.module_key LIKE 'manual_override%')");
   } else if (isHRWFM && !isAdmin) {
     conds.push("sal.module_key IN ('attendance','regularization','dispute','wfm')");
     // Branch scoping (owner ruling 2026-10-01): hr/wfm only see audit rows about employees inside their own
@@ -217,9 +200,9 @@ export async function getAuditLogExtended(
   }
 
   // Pagination — guard against NaN (MySQL rejects non-integer LIMIT/OFFSET params)
-  const pageRaw = parseInt(String(req.query.page ?? "1"), 10);
-  const limit = clampLimit(req.query.limit, 50, 500);
-  const page = isNaN(pageRaw) ? 1 : Math.max(1, pageRaw);
+  const pageRaw  = parseInt(String(req.query.page  ?? "1"),  10);
+  const limit  = clampLimit(req.query.limit, 50, 500);
+  const page   = isNaN(pageRaw)  ? 1 : Math.max(1, pageRaw);
   const offset = (page - 1) * limit;
 
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "WHERE 1=1";
@@ -233,7 +216,7 @@ export async function getAuditLogExtended(
 
   // LIMIT/OFFSET are safe integer interpolations — mysql2 prepared statements
   // reject ? placeholders for LIMIT/OFFSET ("Incorrect arguments to mysqld_stmt_execute").
-  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const safeLimit  = Math.min(Math.max(1, limit),  500);
   const safeOffset = Math.max(0, offset);
   const [rows] = await db.execute<AuditLogRow[]>(
     `SELECT sal.id, sal.actor_user_id, sal.action_type, sal.module_key,
@@ -289,38 +272,23 @@ auditLogRouter.get("/log", h(getAuditLogExtended));
  * Access: admin, super_admin, payroll_head can export (with module restrictions)
  * Every export is itself audited as AUDIT_LOG_EXPORTED.
  */
-auditLogRouter.post(
-  "/export",
-  h(async (req, res) => {
-    // Access control: same as list
-    const isAdmin = await hasAnyRole(req.authUser.id, "admin", "super_admin");
-    const isPayrollHead = await hasAnyRole(req.authUser.id, "payroll_head");
+auditLogRouter.post("/export", h(async (req, res) => {
+  // Access control: same as list
+  const isAdmin = await hasAnyRole(req.authUser.id, "admin", "super_admin");
+  const isPayrollHead = await hasAnyRole(req.authUser.id, "payroll_head");
 
-    if (!isAdmin && !isPayrollHead) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "Forbidden: audit export not permitted",
-        });
-    }
+  if (!isAdmin && !isPayrollHead) {
+    return res.status(403).json({ success: false, error: "Forbidden: audit export not permitted" });
+  }
 
-    const {
-      fromDate,
-      toDate,
-      employeeId,
-      actorUserId,
-      actorRole,
-      module,
-      entityType,
-      entityId,
-      actionType,
-      reason,
-    } = req.body as Record<string, string | undefined>;
+  const {
+    fromDate, toDate, employeeId, actorUserId, actorRole, module,
+    entityType, entityId, actionType, reason,
+  } = req.body as Record<string, string | undefined>;
 
-    // Build WHERE clause (same pattern as GET)
-    const conds: string[] = [];
-    const params: unknown[] = [];
+  // Build WHERE clause (same pattern as GET)
+  const conds: string[] = [];
+  const params: unknown[] = [];
 
   if (isPayrollHead && !isAdmin) {
     conds.push("(sal.module_key IN ('attendance','payroll') OR sal.module_key LIKE 'manual_override%')");
@@ -330,52 +298,22 @@ auditLogRouter.post(
     if (adminScope) { conds.push(adminScope.sql); params.push(...adminScope.params); }
   }
 
-    if (fromDate) {
-      conds.push("sal.acted_at >= ?");
-      params.push(fromDate);
-    }
-    if (toDate) {
-      conds.push("sal.acted_at <= ?");
-      params.push(toDate);
-    }
-    if (employeeId) {
-      conds.push("sal.employee_id = ?");
-      params.push(employeeId);
-    }
-    if (actorUserId) {
-      conds.push("sal.actor_user_id = ?");
-      params.push(actorUserId);
-    }
-    if (actorRole) {
-      conds.push("sal.actor_role = ?");
-      params.push(actorRole);
-    }
-    if (module) {
-      conds.push("sal.module_key = ?");
-      params.push(module);
-    }
-    if (entityType) {
-      conds.push("sal.entity_type = ?");
-      params.push(entityType);
-    }
-    if (entityId) {
-      conds.push("sal.entity_id = ?");
-      params.push(entityId);
-    }
-    if (actionType) {
-      conds.push("sal.action_type = ?");
-      params.push(actionType);
-    }
-    if (reason) {
-      conds.push("sal.reason LIKE ?");
-      params.push(`%${reason}%`);
-    }
+  if (fromDate) { conds.push("sal.acted_at >= ?"); params.push(fromDate); }
+  if (toDate) { conds.push("sal.acted_at <= ?"); params.push(toDate); }
+  if (employeeId) { conds.push("sal.employee_id = ?"); params.push(employeeId); }
+  if (actorUserId) { conds.push("sal.actor_user_id = ?"); params.push(actorUserId); }
+  if (actorRole) { conds.push("sal.actor_role = ?"); params.push(actorRole); }
+  if (module) { conds.push("sal.module_key = ?"); params.push(module); }
+  if (entityType) { conds.push("sal.entity_type = ?"); params.push(entityType); }
+  if (entityId) { conds.push("sal.entity_id = ?"); params.push(entityId); }
+  if (actionType) { conds.push("sal.action_type = ?"); params.push(actionType); }
+  if (reason) { conds.push("sal.reason LIKE ?"); params.push(`%${reason}%`); }
 
-    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "WHERE 1=1";
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "WHERE 1=1";
 
-    // Fetch all matching rows (up to reasonable limit for export)
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT sal.id, sal.actor_user_id, sal.action_type, sal.module_key,
+  // Fetch all matching rows (up to reasonable limit for export)
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT sal.id, sal.actor_user_id, sal.action_type, sal.module_key,
             sal.entity_type, sal.entity_id, sal.employee_id,
             sal.ip_address, sal.user_agent,
             sal.actor_role, sal.reason,
@@ -385,104 +323,72 @@ auditLogRouter.post(
        ${where}
       ORDER BY sal.acted_at DESC
       LIMIT 50000`,
-      params,
-    );
+    params,
+  );
 
-    // Build CSV header
-    const csvHeader = [
-      "acted_at",
-      "actor_user_id",
-      "actor_role",
-      "module_key",
-      "action_type",
-      "entity_type",
-      "entity_id",
-      "employee_id",
-      "reason",
-      "ip_address",
-      "user_agent",
-      "old_value_json",
-      "new_value_json",
-    ].join(",");
+  // Build CSV header
+  const csvHeader = [
+    "acted_at",
+    "actor_user_id",
+    "actor_role",
+    "module_key",
+    "action_type",
+    "entity_type",
+    "entity_id",
+    "employee_id",
+    "reason",
+    "ip_address",
+    "user_agent",
+    "old_value_json",
+    "new_value_json",
+  ].join(",");
 
-    // Build CSV rows (escape quotes, handle nulls)
-    const csvRows = rows
-      .map((row) =>
-        [
-          escapeCSV(row.acted_at ?? ""),
-          escapeCSV(row.actor_user_id ?? ""),
-          escapeCSV(row.actor_role ?? ""),
-          escapeCSV(row.module_key ?? ""),
-          escapeCSV(row.action_type ?? ""),
-          escapeCSV(row.entity_type ?? ""),
-          escapeCSV(row.entity_id ?? ""),
-          escapeCSV(row.employee_id ?? ""),
-          escapeCSV(row.reason ?? ""),
-          escapeCSV(row.ip_address ?? ""),
-          escapeCSV(row.user_agent ?? ""),
-          escapeCSV(
-            row.old_value_json ? JSON.stringify(row.old_value_json) : "",
-          ),
-          escapeCSV(
-            row.new_value_json ? JSON.stringify(row.new_value_json) : "",
-          ),
-        ].join(","),
-      )
-      .join("\n");
+  // Build CSV rows (escape quotes, handle nulls)
+  const csvRows = rows.map((row) => [
+    escapeCSV(row.acted_at ?? ""),
+    escapeCSV(row.actor_user_id ?? ""),
+    escapeCSV(row.actor_role ?? ""),
+    escapeCSV(row.module_key ?? ""),
+    escapeCSV(row.action_type ?? ""),
+    escapeCSV(row.entity_type ?? ""),
+    escapeCSV(row.entity_id ?? ""),
+    escapeCSV(row.employee_id ?? ""),
+    escapeCSV(row.reason ?? ""),
+    escapeCSV(row.ip_address ?? ""),
+    escapeCSV(row.user_agent ?? ""),
+    escapeCSV(row.old_value_json ? JSON.stringify(row.old_value_json) : ""),
+    escapeCSV(row.new_value_json ? JSON.stringify(row.new_value_json) : ""),
+  ].join(",")).join("\n");
 
-    const csv = `${csvHeader}\n${csvRows}`;
+  const csv = `${csvHeader}\n${csvRows}`;
 
-    // Audit the export action itself
-    const exportActorRole = await resolveActorRole(req.authUser.id);
-    void logSensitiveAction({
-      actor_user_id: req.authUser.id,
-      actor_role: exportActorRole,
-      action_type: "AUDIT_LOG_EXPORTED",
-      module_key: "audit",
-      entity_type: "audit_log",
-      entity_id: `export_${new Date().getTime()}`,
-      reason: `Exported audit log: ${rows.length} rows, filters: ${JSON.stringify(
-        {
-          fromDate,
-          toDate,
-          employeeId,
-          actorUserId,
-          actorRole,
-          module,
-          entityType,
-          entityId,
-          actionType,
-          reason,
-        },
-      )}`,
-      new_value_json: {
-        row_count: rows.length,
-        filters: {
-          fromDate,
-          toDate,
-          employeeId,
-          actorUserId,
-          actorRole,
-          module,
-          entityType,
-          entityId,
-          actionType,
-          reason,
-        },
-      },
-      req,
-    });
+  // Audit the export action itself
+  const exportActorRole = await resolveActorRole(req.authUser.id);
+  void logSensitiveAction({
+    actor_user_id: req.authUser.id,
+    actor_role: exportActorRole,
+    action_type: "AUDIT_LOG_EXPORTED",
+    module_key: "audit",
+    entity_type: "audit_log",
+    entity_id: `export_${new Date().getTime()}`,
+    reason: `Exported audit log: ${rows.length} rows, filters: ${JSON.stringify({
+      fromDate, toDate, employeeId, actorUserId, actorRole, module,
+      entityType, entityId, actionType, reason,
+    })}`,
+    new_value_json: {
+      row_count: rows.length,
+      filters: { fromDate, toDate, employeeId, actorUserId, actorRole, module,
+        entityType, entityId, actionType, reason },
+    },
+    req,
+  });
 
-    // Return CSV file
-    const timestamp = new Date().toISOString().split("T")[0];
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="audit-log-export-${timestamp}.csv"`,
-    );
-    return res.send(csv);
-  }),
-);
+  // Return CSV file
+  const timestamp = new Date().toISOString().split("T")[0];
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="audit-log-export-${timestamp}.csv"`);
+  return res.send(csv);
+}));
 
 // ─── Helper: CSV escaping ───────────────────────────────────────────────────
 
@@ -537,22 +443,10 @@ export async function getEmployeeAuditTimeline(
   const conds: string[] = ["sal.employee_id = ?"];
   const params: unknown[] = [employeeId];
 
-  if (filters?.fromDate) {
-    conds.push("sal.acted_at >= ?");
-    params.push(filters.fromDate);
-  }
-  if (filters?.toDate) {
-    conds.push("sal.acted_at <= ?");
-    params.push(filters.toDate);
-  }
-  if (filters?.module) {
-    conds.push("sal.module_key = ?");
-    params.push(filters.module);
-  }
-  if (filters?.actionType) {
-    conds.push("sal.action_type = ?");
-    params.push(filters.actionType);
-  }
+  if (filters?.fromDate) { conds.push("sal.acted_at >= ?"); params.push(filters.fromDate); }
+  if (filters?.toDate) { conds.push("sal.acted_at <= ?"); params.push(filters.toDate); }
+  if (filters?.module) { conds.push("sal.module_key = ?"); params.push(filters.module); }
+  if (filters?.actionType) { conds.push("sal.action_type = ?"); params.push(filters.actionType); }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, actor_user_id, action_type, actor_role, module_key,

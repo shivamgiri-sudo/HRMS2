@@ -13,11 +13,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { describe, expect, it, beforeEach } from "vitest";
-import {
-  readBuildInfo,
-  UNKNOWN_BUILD,
-  __resetBuildInfoCacheForTests,
-} from "../buildInfo.js";
+import { readBuildInfo, UNKNOWN_BUILD, __resetBuildInfoCacheForTests } from "../buildInfo.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BACKEND = path.resolve(__dirname, "..", "..", "..");
@@ -41,23 +37,14 @@ describe("readBuildInfo", () => {
 
 describe("both runtimes report the same stamp", () => {
   it("the worker entrypoint logs its build on startup", () => {
-    const src = fs.readFileSync(
-      path.join(BACKEND, "src", "workers", "all-workers.ts"),
-      "utf8",
-    );
+    const src = fs.readFileSync(path.join(BACKEND, "src", "workers", "all-workers.ts"), "utf8");
     expect(src).toMatch(/readBuildInfo\(\)/);
     expect(src).toMatch(/Build: commit=/);
   });
 
   it("the health route and the worker use the SAME loader, not two copies", () => {
-    const worker = fs.readFileSync(
-      path.join(BACKEND, "src", "workers", "all-workers.ts"),
-      "utf8",
-    );
-    const health = fs.readFileSync(
-      path.join(BACKEND, "src", "routes", "health.routes.ts"),
-      "utf8",
-    );
+    const worker = fs.readFileSync(path.join(BACKEND, "src", "workers", "all-workers.ts"), "utf8");
+    const health = fs.readFileSync(path.join(BACKEND, "src", "routes", "health.routes.ts"), "utf8");
     for (const src of [worker, health]) {
       expect(src).toMatch(/from "\.\.\/shared\/buildInfo\.js"/);
     }
@@ -67,10 +54,7 @@ describe("both runtimes report the same stamp", () => {
   });
 
   it("health.routes still re-exports readBuildInfo for existing importers", () => {
-    const health = fs.readFileSync(
-      path.join(BACKEND, "src", "routes", "health.routes.ts"),
-      "utf8",
-    );
+    const health = fs.readFileSync(path.join(BACKEND, "src", "routes", "health.routes.ts"), "utf8");
     expect(health).toMatch(/export \{[^}]*readBuildInfo/);
   });
 });

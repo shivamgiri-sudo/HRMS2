@@ -6,14 +6,14 @@
 // Apply:              cd backend && npx tsx scripts/deactivate-orphan-accounts.ts --apply
 // Include login accts: add --include-active-users  (requires --apply too)
 
-import { createConnection, type Connection } from "mysql2/promise";
-import { resolve } from "path";
-import dotenv from "dotenv";
+import { createConnection, type Connection } from 'mysql2/promise';
+import { resolve } from 'path';
+import dotenv from 'dotenv';
 
-dotenv.config({ path: resolve(process.cwd(), ".env") });
+dotenv.config({ path: resolve(process.cwd(), '.env') });
 
-const APPLY = process.argv.includes("--apply");
-const INCLUDE_USERS = process.argv.includes("--include-active-users");
+const APPLY = process.argv.includes('--apply');
+const INCLUDE_USERS = process.argv.includes('--include-active-users');
 
 function env(key: string, fallback?: string): string {
   const v = process.env[key]?.trim();
@@ -33,31 +33,13 @@ interface HrmsEmployee {
   branch: string | null;
 }
 
-async function hasAssociatedData(
-  hrms: Connection,
-  employeeId: string,
-): Promise<{ has: boolean; reason: string }> {
+async function hasAssociatedData(hrms: Connection, employeeId: string): Promise<{ has: boolean; reason: string }> {
   const checks: Array<[string, string]> = [
-    [
-      "leave_requests",
-      `SELECT 1 FROM leave_requests WHERE employee_id = ? LIMIT 1`,
-    ],
-    [
-      "attendance_records",
-      `SELECT 1 FROM attendance_records WHERE employee_id = ? LIMIT 1`,
-    ],
-    [
-      "payroll_records",
-      `SELECT 1 FROM payroll_records WHERE employee_id = ? LIMIT 1`,
-    ],
-    [
-      "ats_candidate",
-      `SELECT 1 FROM ats_candidate WHERE converted_employee_id = ? LIMIT 1`,
-    ],
-    [
-      "employee_bank_detail",
-      `SELECT 1 FROM employee_bank_detail WHERE employee_id = ? LIMIT 1`,
-    ],
+    ['leave_requests',       `SELECT 1 FROM leave_requests WHERE employee_id = ? LIMIT 1`],
+    ['attendance_records',   `SELECT 1 FROM attendance_records WHERE employee_id = ? LIMIT 1`],
+    ['payroll_records',      `SELECT 1 FROM payroll_records WHERE employee_id = ? LIMIT 1`],
+    ['ats_candidate',        `SELECT 1 FROM ats_candidate WHERE converted_employee_id = ? LIMIT 1`],
+    ['employee_bank_detail', `SELECT 1 FROM employee_bank_detail WHERE employee_id = ? LIMIT 1`],
   ];
 
   for (const [table, sql] of checks) {
@@ -68,44 +50,40 @@ async function hasAssociatedData(
       // table may not exist in all environments — skip
     }
   }
-  return { has: false, reason: "" };
+  return { has: false, reason: '' };
 }
 
 async function main() {
-  console.log(
-    `=== Deactivate Orphan Accounts (${APPLY ? "APPLY MODE" : "DRY-RUN"}) ===\n`,
-  );
+  console.log(`=== Deactivate Orphan Accounts (${APPLY ? 'APPLY MODE' : 'DRY-RUN'}) ===\n`);
 
   // ── Connect db_bill ─────────────────────────────────────────────────────────
   const bill = await createConnection({
-    host: env("BILL_DB_HOST"),
-    port: Number(env("BILL_DB_PORT", "3306")),
-    user: env("BILL_DB_USER"),
-    password: env("BILL_DB_PASSWORD"),
-    database: env("BILL_DB_NAME"),
+    host:        env('BILL_DB_HOST'),
+    port:        Number(env('BILL_DB_PORT', '3306')),
+    user:        env('BILL_DB_USER'),
+    password:    env('BILL_DB_PASSWORD'),
+    database:    env('BILL_DB_NAME'),
     dateStrings: true,
-    timezone: "local",
+    timezone:    'local',
   });
 
   // ── Connect mas_hrms ────────────────────────────────────────────────────────
   const hrms = await createConnection({
-    host: env("DB_HOST"),
-    port: Number(env("DB_PORT", "3306")),
-    user: env("DB_USER"),
-    password: env("DB_PASSWORD"),
-    database: env("DB_NAME"),
+    host:        env('DB_HOST'),
+    port:        Number(env('DB_PORT', '3306')),
+    user:        env('DB_USER'),
+    password:    env('DB_PASSWORD'),
+    database:    env('DB_NAME'),
     dateStrings: true,
   });
 
-  console.log("  ✓ Connected to both databases\n");
+  console.log('  ✓ Connected to both databases\n');
 
   // ── Fetch all EmpCodes from db_bill ─────────────────────────────────────────
   const [billRows] = await bill.execute<any[]>(
     `SELECT TRIM(EmpCode) AS EmpCode FROM employee_master WHERE EmpCode IS NOT NULL AND TRIM(EmpCode) != ''`,
   );
-  const billCodes = new Set<string>(
-    billRows.map((r: any) => String(r.EmpCode).trim().toUpperCase()),
-  );
+  const billCodes = new Set<string>(billRows.map((r: any) => String(r.EmpCode).trim().toUpperCase()));
   await bill.end();
   console.log(`  db_bill: ${billCodes.size} distinct employee codes loaded`);
 
@@ -120,12 +98,8 @@ async function main() {
   );
   const allHrms: HrmsEmployee[] = hrmsRows as HrmsEmployee[];
 
-  const orphans = allHrms.filter(
-    (e) => !billCodes.has(e.employee_code.trim().toUpperCase()),
-  );
-  console.log(
-    `  mas_hrms: ${allHrms.length} total, ${orphans.length} not in db_bill\n`,
-  );
+  const orphans = allHrms.filter(e => !billCodes.has(e.employee_code.trim().toUpperCase()));
+  console.log(`  mas_hrms: ${allHrms.length} total, ${orphans.length} not in db_bill\n`);
 
   // ── Categorise orphans ──────────────────────────────────────────────────────
   const toDeactivate: HrmsEmployee[] = [];
@@ -151,33 +125,23 @@ async function main() {
   }
 
   // ── Print plan ──────────────────────────────────────────────────────────────
-  console.log("════════════════════════════════════════════════");
+  console.log('════════════════════════════════════════════════');
   console.log(`  Would DEACTIVATE (no data, no login): ${toDeactivate.length}`);
-  console.log("════════════════════════════════════════════════");
-  toDeactivate.forEach((e) => {
-    console.log(
-      `  ${e.employee_code.padEnd(12)} ${(e.first_name + " " + (e.last_name ?? "")).substring(0, 30).padEnd(32)} joined:${e.date_of_joining ?? "N/A"}  branch:${e.branch ?? "-"}`,
-    );
+  console.log('════════════════════════════════════════════════');
+  toDeactivate.forEach(e => {
+    console.log(`  ${e.employee_code.padEnd(12)} ${(e.first_name + ' ' + (e.last_name ?? '')).substring(0, 30).padEnd(32)} joined:${e.date_of_joining ?? 'N/A'}  branch:${e.branch ?? '-'}`);
   });
 
   console.log(`\n  SKIP — already inactive: ${alreadyInactive.length}`);
 
-  console.log(
-    `\n  SKIP — has login (use --include-active-users to override): ${skippedHasLogin.length}`,
-  );
-  skippedHasLogin.forEach((e) => {
-    console.log(
-      `    ${e.employee_code.padEnd(12)} ${(e.first_name + " " + (e.last_name ?? "")).substring(0, 28)}`,
-    );
+  console.log(`\n  SKIP — has login (use --include-active-users to override): ${skippedHasLogin.length}`);
+  skippedHasLogin.forEach(e => {
+    console.log(`    ${e.employee_code.padEnd(12)} ${(e.first_name + ' ' + (e.last_name ?? '')).substring(0, 28)}`);
   });
 
-  console.log(
-    `\n  SKIP — has associated data (manual review required): ${skippedHasData.length}`,
-  );
+  console.log(`\n  SKIP — has associated data (manual review required): ${skippedHasData.length}`);
   skippedHasData.forEach(({ emp: e, reason }) => {
-    console.log(
-      `    ${e.employee_code.padEnd(12)} ${(e.first_name + " " + (e.last_name ?? "")).substring(0, 28).padEnd(30)} [${reason}]`,
-    );
+    console.log(`    ${e.employee_code.padEnd(12)} ${(e.first_name + ' ' + (e.last_name ?? '')).substring(0, 28).padEnd(30)} [${reason}]`);
   });
 
   // ── Apply ───────────────────────────────────────────────────────────────────
@@ -212,9 +176,7 @@ async function main() {
         // audit_log may have different schema — non-fatal
       }
 
-      console.log(
-        `  ✓ Deactivated ${emp.employee_code}  ${emp.first_name} ${emp.last_name ?? ""}`,
-      );
+      console.log(`  ✓ Deactivated ${emp.employee_code}  ${emp.first_name} ${emp.last_name ?? ''}`);
       deactivated++;
     } catch (err) {
       console.error(`  ✗ Error deactivating ${emp.employee_code}:`, err);
@@ -231,7 +193,7 @@ async function main() {
   console.log(`  Skipped (login): ${skippedHasLogin.length}\n`);
 }
 
-main().catch((err) => {
-  console.error("Fatal:", err);
+main().catch(err => {
+  console.error('Fatal:', err);
   process.exit(1);
 });

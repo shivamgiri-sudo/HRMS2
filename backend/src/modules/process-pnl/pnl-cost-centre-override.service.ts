@@ -93,14 +93,8 @@ export async function payrollAttributionSql(opts: {
 }): Promise<PayrollAttributionSql> {
   const cc = opts.ccAlias ?? "pacc";
   const ovAlias = opts.ovAlias ?? "pecco";
-  const ov = await overrideJoinSql(
-    opts.employeeIdExpr,
-    opts.homeCostCentreExpr,
-    ovAlias,
-  );
-  const overridden = ov.join
-    ? `${ovAlias}.target_cost_centre_id IS NOT NULL`
-    : "";
+  const ov = await overrideJoinSql(opts.employeeIdExpr, opts.homeCostCentreExpr, ovAlias);
+  const overridden = ov.join ? `${ovAlias}.target_cost_centre_id IS NOT NULL` : "";
   return {
     join: `${ov.join}
        LEFT JOIN cost_centre_master ${cc} ON ${cc}.id = ${ov.effectiveCostCentreExpr}`,
@@ -330,11 +324,7 @@ export interface BulkSetOverrideInput {
 }
 
 export interface BulkSetOverrideResult {
-  applied: {
-    employeeId: string;
-    employeeCode: string;
-    employeeName: string | null;
-  }[];
+  applied: { employeeId: string; employeeCode: string; employeeName: string | null }[];
   notFound: string[];
 }
 
@@ -349,39 +339,19 @@ export async function bulkSetCostCentreOverride(
   actorId: string,
 ): Promise<BulkSetOverrideResult> {
   if (!(await tableExists("pnl_employee_cost_centre_override"))) {
-    throw refuse(
-      503,
-      "PNL_CC_OVERRIDE_TABLE_MISSING",
-      "pnl_employee_cost_centre_override table not yet migrated (run sql/1785).",
-    );
+    throw refuse(503, "PNL_CC_OVERRIDE_TABLE_MISSING", "pnl_employee_cost_centre_override table not yet migrated (run sql/1785).");
   }
-  const codes = Array.from(
-    new Set(input.employeeCodes.map((c) => c.trim()).filter(Boolean)),
-  );
-  if (!codes.length)
-    throw refuse(
-      400,
-      "PNL_CC_OVERRIDE_NO_CODES",
-      "At least one employee code is required",
-    );
+  const codes = Array.from(new Set(input.employeeCodes.map((c) => c.trim()).filter(Boolean)));
+  if (!codes.length) throw refuse(400, "PNL_CC_OVERRIDE_NO_CODES", "At least one employee code is required");
   if (!input.targetCostCentreId?.trim()) {
-    throw refuse(
-      400,
-      "PNL_CC_OVERRIDE_TARGET_REQUIRED",
-      "A target cost centre is required",
-    );
+    throw refuse(400, "PNL_CC_OVERRIDE_TARGET_REQUIRED", "A target cost centre is required");
   }
 
   const [ccRows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM cost_centre_master WHERE id = ?`,
     [input.targetCostCentreId],
   );
-  if (!ccRows.length)
-    throw refuse(
-      404,
-      "PNL_CC_OVERRIDE_TARGET_NOT_FOUND",
-      "Target cost centre not found",
-    );
+  if (!ccRows.length) throw refuse(404, "PNL_CC_OVERRIDE_TARGET_NOT_FOUND", "Target cost centre not found");
 
   const marksClause = codes.map(() => "?").join(",");
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -390,11 +360,7 @@ export async function bulkSetCostCentreOverride(
     codes,
   );
   const byCode = new Map<string, { id: string; name: string | null }>();
-  for (const r of empRows)
-    byCode.set(String(r.employee_code), {
-      id: String(r.id),
-      name: r.name ? String(r.name) : null,
-    });
+  for (const r of empRows) byCode.set(String(r.employee_code), { id: String(r.id), name: r.name ? String(r.name) : null });
 
   const applied: BulkSetOverrideResult["applied"] = [];
   const notFound: string[] = [];
@@ -413,20 +379,9 @@ export async function bulkSetCostCentreOverride(
          reason = VALUES(reason),
          active_status = 1,
          updated_by = VALUES(updated_by)`,
-      [
-        randomUUID(),
-        emp.id,
-        input.targetCostCentreId,
-        input.reason?.trim() || null,
-        actorId,
-        actorId,
-      ],
+      [randomUUID(), emp.id, input.targetCostCentreId, input.reason?.trim() || null, actorId, actorId],
     );
-    applied.push({
-      employeeId: emp.id,
-      employeeCode: code,
-      employeeName: emp.name,
-    });
+    applied.push({ employeeId: emp.id, employeeCode: code, employeeName: emp.name });
   }
 
   if (applied.length > 0) {
@@ -437,10 +392,7 @@ export async function bulkSetCostCentreOverride(
       entity_type: "pnl_employee_cost_centre_override",
       entity_id: input.targetCostCentreId,
       reason: input.reason ?? undefined,
-      new_value_json: {
-        targetCostCentreId: input.targetCostCentreId,
-        employeeCodes: applied.map((a) => a.employeeCode),
-      },
+      new_value_json: { targetCostCentreId: input.targetCostCentreId, employeeCodes: applied.map((a) => a.employeeCode) },
     });
   }
 
@@ -448,29 +400,16 @@ export async function bulkSetCostCentreOverride(
 }
 
 /** Reverts one employee to their real cost centre everywhere this is read. Row is kept, not deleted. */
-export async function deactivateCostCentreOverride(
-  employeeId: string,
-  actorId: string,
-): Promise<void> {
+export async function deactivateCostCentreOverride(employeeId: string, actorId: string): Promise<void> {
   if (!(await tableExists("pnl_employee_cost_centre_override"))) {
-    throw refuse(
-      503,
-      "PNL_CC_OVERRIDE_TABLE_MISSING",
-      "pnl_employee_cost_centre_override table not yet migrated (run sql/1785).",
-    );
+    throw refuse(503, "PNL_CC_OVERRIDE_TABLE_MISSING", "pnl_employee_cost_centre_override table not yet migrated (run sql/1785).");
   }
   const [result] = await db.execute<RowDataPacket[]>(
     `UPDATE pnl_employee_cost_centre_override SET active_status = 0, updated_by = ? WHERE employee_id = ? AND active_status = 1`,
     [actorId, employeeId],
   );
-  const affected =
-    (result as unknown as { affectedRows?: number }).affectedRows ?? 0;
-  if (affected === 0)
-    throw refuse(
-      404,
-      "PNL_CC_OVERRIDE_NOT_FOUND",
-      "No active override found for this employee",
-    );
+  const affected = (result as unknown as { affectedRows?: number }).affectedRows ?? 0;
+  if (affected === 0) throw refuse(404, "PNL_CC_OVERRIDE_NOT_FOUND", "No active override found for this employee");
 
   await writeAuditLog({
     actor_user_id: actorId,

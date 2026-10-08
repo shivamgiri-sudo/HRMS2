@@ -24,10 +24,10 @@
  *     leave on Tuesday means the employee is off from Monday night. Owner's words: "Tuesday's
  *     leave means next day off Monday."
  */
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
 
-export type LeaveKind = "FULL" | "HALF";
+export type LeaveKind = 'FULL' | 'HALF';
 
 /** employeeId -> 'YYYY-MM-DD' -> FULL | HALF */
 export type LeaveMap = Map<string, Map<string, LeaveKind>>;
@@ -42,7 +42,7 @@ export interface LeaveVerdict {
 }
 
 function ymd(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function nextDay(date: string): string {
@@ -64,7 +64,7 @@ function nextDay(date: string): string {
 export async function loadApprovedLeave(
   employeeIds: string[],
   fromDate: string,
-  toDate: string,
+  toDate: string
 ): Promise<LeaveMap> {
   const map: LeaveMap = new Map();
   const ids = [...new Set(employeeIds.filter(Boolean))];
@@ -77,7 +77,7 @@ export async function loadApprovedLeave(
   const windowTo = new Date(`${toDate}T00:00:00`);
   windowTo.setDate(windowTo.getDate() + 1);
 
-  const placeholders = ids.map(() => "?").join(",");
+  const placeholders = ids.map(() => '?').join(',');
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_id, from_date, to_date, total_days
        FROM leave_request
@@ -85,26 +85,25 @@ export async function loadApprovedLeave(
         AND LOWER(status) IN ('approved','accepted')
         AND to_date   >= ?
         AND from_date <= ?`,
-    [...ids, ymd(windowFrom), ymd(windowTo)],
+    [...ids, ymd(windowFrom), ymd(windowTo)]
   );
 
   for (const r of rows) {
     const empId = String(r.employee_id);
-    const from = new Date(String(r.from_date).slice(0, 10) + "T00:00:00");
-    const to = new Date(String(r.to_date).slice(0, 10) + "T00:00:00");
+    const from = new Date(String(r.from_date).slice(0, 10) + 'T00:00:00');
+    const to = new Date(String(r.to_date).slice(0, 10) + 'T00:00:00');
     const days = Number(r.total_days ?? 1);
     // A half day only makes sense on a single-date request. A 0.5 spread over a range is data we
     // cannot interpret, so it is treated as FULL — protecting the leave is the safe direction.
     const sameDay = from.getTime() === to.getTime();
-    const kind: LeaveKind =
-      sameDay && days > 0 && days <= 0.5 ? "HALF" : "FULL";
+    const kind: LeaveKind = sameDay && days > 0 && days <= 0.5 ? 'HALF' : 'FULL';
 
     if (!map.has(empId)) map.set(empId, new Map());
     const byDate = map.get(empId)!;
     for (const d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
       const key = ymd(d);
       // FULL always wins over HALF if two requests overlap the same day.
-      if (byDate.get(key) !== "FULL") byDate.set(key, kind);
+      if (byDate.get(key) !== 'FULL') byDate.set(key, kind);
     }
   }
   return map;
@@ -121,17 +120,12 @@ export function checkLeaveConflict(
   leave: LeaveMap,
   employeeId: string,
   rosterDate: string,
-  opts: { isNightShift?: boolean; assignmentType?: string | null } = {},
+  opts: { isNightShift?: boolean; assignmentType?: string | null } = {}
 ): LeaveVerdict {
   const clear: LeaveVerdict = { blocked: false, warning: false, reason: null };
 
-  const type = String(opts.assignmentType ?? "").toUpperCase();
-  if (
-    type === "WEEK_OFF" ||
-    type === "LEAVE" ||
-    type === "HOLIDAY" ||
-    type === "UNASSIGNED"
-  ) {
+  const type = String(opts.assignmentType ?? '').toUpperCase();
+  if (type === 'WEEK_OFF' || type === 'LEAVE' || type === 'HOLIDAY' || type === 'UNASSIGNED') {
     return clear;
   }
 
@@ -139,7 +133,7 @@ export function checkLeaveConflict(
   if (!byDate) return clear;
 
   const onDay = byDate.get(rosterDate);
-  if (onDay === "FULL") {
+  if (onDay === 'FULL') {
     return {
       blocked: true,
       warning: false,
@@ -149,7 +143,7 @@ export function checkLeaveConflict(
 
   if (opts.isNightShift) {
     const endsOn = nextDay(rosterDate);
-    if (byDate.get(endsOn) === "FULL") {
+    if (byDate.get(endsOn) === 'FULL') {
       return {
         blocked: true,
         warning: false,
@@ -158,7 +152,7 @@ export function checkLeaveConflict(
     }
   }
 
-  if (onDay === "HALF") {
+  if (onDay === 'HALF') {
     return {
       blocked: false,
       warning: true,

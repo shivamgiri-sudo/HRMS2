@@ -18,11 +18,11 @@ async function getEmployeeCode(userId: string): Promise<string | null> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT employee_code FROM mas_hrms.employees WHERE user_id = ?`,
-      [userId],
+      [userId]
     );
     return rows && rows.length > 0 ? (rows[0] as any).employee_code : null;
   } catch (error) {
-    logger.error("Error fetching employee code:", error);
+    logger.error('Error fetching employee code:', error);
     return null;
   }
 }
@@ -38,11 +38,7 @@ async function getEmployeeCode(userId: string): Promise<string | null> {
  */
 function allowRolesOrManagers(...roles: string[]) {
   const roleGate = requireRole(...roles);
-  return async (
-    req: AuthenticatedRequest,
-    res: Response,
-    next: (err?: unknown) => void,
-  ) => {
+  return async (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void) => {
     const userId = req.authUser?.id;
     if (userId) {
       try {
@@ -59,15 +55,10 @@ function allowRolesOrManagers(...roles: string[]) {
         if (rows.length > 0) return next();
       } catch (error) {
         // Fall through to the role gate rather than failing open.
-        logger.error(
-          "Error checking direct reports for quality access:",
-          error,
-        );
+        logger.error('Error checking direct reports for quality access:', error);
       }
     }
-    return (
-      roleGate as unknown as (rq: unknown, rs: unknown, nx: unknown) => void
-    )(req, res, next);
+    return (roleGate as unknown as (rq: unknown, rs: unknown, nx: unknown) => void)(req, res, next);
   };
 }
 
@@ -78,23 +69,14 @@ function allowRolesOrManagers(...roles: string[]) {
  * Query params: daysBack (default 7), process (optional — no campaign filter by default)
  */
 router.get(
-  "/team-quality",
+  '/team-quality',
   requireAuth,
-  allowRolesOrManagers(
-    "admin",
-    "hr",
-    "ceo",
-    "process_manager",
-    "team_leader",
-    "manager",
-    "branch_head",
-    "assistant_manager",
-  ),
+  allowRolesOrManagers('admin', 'hr', 'ceo', 'process_manager', 'team_leader', 'manager', 'branch_head', 'assistant_manager'),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.authUser?.id;
       if (!userId) {
-        return res.status(403).json({ success: false, error: "Unauthorized" });
+        return res.status(403).json({ success: false, error: 'Unauthorized' });
       }
 
       const employeeCode = await getEmployeeCode(userId);
@@ -103,16 +85,11 @@ router.get(
       // Defaults to no campaign filter, not to 'INBOUND'. The old default silently excluded
       // every row, because live assessments carry Campaign = NULL — see the query in
       // quality-manager.service.ts. A caller may still pass ?process=... to narrow.
-      const process = (req.query.process as string) || "";
+      const process = (req.query.process as string) || '';
 
       // Validate inputs
       if (daysBack < 1 || daysBack > 365) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            error: "daysBack must be between 1 and 365",
-          });
+        return res.status(400).json({ success: false, error: 'daysBack must be between 1 and 365' });
       }
 
       // Only org-wide roles (ORG_WIDE_EXEMPT_ROLES) without an employee record get org-wide quality. Anyone else
@@ -128,11 +105,11 @@ router.get(
           team_summary: result.team_summary,
           agent_breakdown: result.agent_breakdown,
           last_updated: new Date(),
-          filter: { daysBack, process },
-        },
+          filter: { daysBack, process }
+        }
       });
     } catch (error) {
-      logger.error("Error fetching team quality:", error);
+      logger.error('Error fetching team quality:', error);
       // Return graceful empty payload so the frontend renders an empty state
       // rather than entering TanStack Query error mode and blanking the page.
       return res.json({
@@ -143,22 +120,17 @@ router.get(
             avg_quality: 0,
             agent_count: 0,
             calls_handled: 0,
-            top_performer: { agent_code: "", agent_name: "—", quality: 0 },
-            bottom_performer: { agent_code: "", agent_name: "—", quality: 0 },
-            quality_distribution: {
-              excellent: 0,
-              good: 0,
-              average: 0,
-              poor: 0,
-            },
+            top_performer: { agent_code: '', agent_name: '—', quality: 0 },
+            bottom_performer: { agent_code: '', agent_name: '—', quality: 0 },
+            quality_distribution: { excellent: 0, good: 0, average: 0, poor: 0 },
           },
           agent_breakdown: [],
           last_updated: new Date(),
-          filter: { daysBack: 7, process: "INBOUND" },
+          filter: { daysBack: 7, process: 'INBOUND' },
         },
       });
     }
-  },
+  }
 );
 
 export { router as qualityManagerRouter };

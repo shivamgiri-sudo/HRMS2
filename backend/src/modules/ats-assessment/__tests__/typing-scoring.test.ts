@@ -114,11 +114,7 @@ describe("accuracy over attempted portion", () => {
       minAccuracy: 95,
     });
     expect(result.accuracy).toBeLessThan(100);
-    expect(
-      result.incorrectCharacters +
-        result.missingCharacters +
-        result.extraCharacters,
-    ).toBeGreaterThan(0);
+    expect(result.incorrectCharacters + result.missingCharacters + result.extraCharacters).toBeGreaterThan(0);
   });
 
   it("insertion: extra typed character reduces accuracy", () => {
@@ -499,9 +495,7 @@ describe("selectBestTypingAttempt", () => {
 
   it("returns the only attempt when there is one", () => {
     expect(
-      selectBestTypingAttempt([
-        { attempt_no: 1, passed_benchmark: 1, score_percentage: 77 },
-      ])?.attempt_no,
+      selectBestTypingAttempt([{ attempt_no: 1, passed_benchmark: 1, score_percentage: 77 }])?.attempt_no,
     ).toBe(1);
   });
 });
@@ -523,12 +517,8 @@ describe("buildWordDiff", () => {
       "accurate data entry matters every day",
       "accurate extra data entry matters every day",
     );
-    expect(diff.items.filter((item) => item.status === "extra")).toHaveLength(
-      1,
-    );
-    expect(diff.items.filter((item) => item.status === "correct")).toHaveLength(
-      6,
-    );
+    expect(diff.items.filter((item) => item.status === "extra")).toHaveLength(1);
+    expect(diff.items.filter((item) => item.status === "correct")).toHaveLength(6);
   });
 
   it("deletion: missing word flagged as missing, rest aligned", () => {

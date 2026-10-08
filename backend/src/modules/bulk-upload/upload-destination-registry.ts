@@ -45,175 +45,57 @@ export interface UploadDestination {
 }
 
 export const UPLOAD_DESTINATION_REGISTRY: Record<string, UploadDestination> = {
-  AW_BILLING_MASMIS: {
-    table: "db_masmis.aw_billing",
-    batchIdColumn: "upload_batch_id",
-  },
-  AW_INBOUND_MASMIS: {
-    table: "db_masmis.aw_inbound",
-    batchIdColumn: "upload_batch_id",
-  },
-  AW_MANDATE_MASMIS: {
-    table: "db_masmis.aw_mandate",
-    batchIdColumn: "upload_batch_id",
-  },
-  AW_NEW_CDR_MASMIS: {
-    table: "db_masmis.aw_new_cdr",
-    batchIdColumn: "upload_batch_id",
-  },
-  AW_OUT_MASMIS: {
-    table: "db_masmis.aw_out",
-    batchIdColumn: "upload_batch_id",
-  },
-  AW_CHAT_MASMIS: {
-    table: "db_masmis.appreciate_chat",
-    batchIdColumn: "upload_batch_id",
-  },
+  AW_BILLING_MASMIS: { table: "db_masmis.aw_billing", batchIdColumn: "upload_batch_id" },
+  AW_INBOUND_MASMIS: { table: "db_masmis.aw_inbound", batchIdColumn: "upload_batch_id" },
+  AW_MANDATE_MASMIS: { table: "db_masmis.aw_mandate", batchIdColumn: "upload_batch_id" },
+  AW_NEW_CDR_MASMIS: { table: "db_masmis.aw_new_cdr", batchIdColumn: "upload_batch_id" },
+  AW_OUT_MASMIS: { table: "db_masmis.aw_out", batchIdColumn: "upload_batch_id" },
+  AW_CHAT_MASMIS: { table: "db_masmis.appreciate_chat", batchIdColumn: "upload_batch_id" },
 
-  BB_APR_MASMIS: {
-    table: "db_masmis.bb_apr",
-    batchIdColumn: "upload_batch_id",
-  },
-  BB_CART_MASMIS: {
-    table: "db_masmis.bb_cart",
-    batchIdColumn: "upload_batch_id",
-  },
-  BB_CHAT_MASMIS: {
-    table: "db_masmis.new_bb_chat",
-    batchIdColumn: "upload_batch_id",
-    alsoTables: ["db_masmis.bb_chat"],
-  },
-  BB_SALE_MASMIS: {
-    table: "db_masmis.bb_sale",
-    batchIdColumn: "upload_batch_id",
-  },
+  BB_APR_MASMIS: { table: "db_masmis.bb_apr", batchIdColumn: "upload_batch_id" },
+  BB_CART_MASMIS: { table: "db_masmis.bb_cart", batchIdColumn: "upload_batch_id" },
+  BB_CHAT_MASMIS: { table: "db_masmis.new_bb_chat", batchIdColumn: "upload_batch_id", alsoTables: ["db_masmis.bb_chat"] },
+  BB_SALE_MASMIS: { table: "db_masmis.bb_sale", batchIdColumn: "upload_batch_id" },
 
-  BIRLANU_APR_MASMIS: {
-    table: "db_masmis.birlanu_apr",
-    batchIdColumn: "upload_batch_id",
-  },
-  BIRLANU_SALE_MASMIS: {
-    table: "db_masmis.birlanu_sale",
-    batchIdColumn: "upload_batch_id",
-  },
+  BIRLANU_APR_MASMIS: { table: "db_masmis.birlanu_apr", batchIdColumn: "upload_batch_id" },
+  BIRLANU_SALE_MASMIS: { table: "db_masmis.birlanu_sale", batchIdColumn: "upload_batch_id" },
 
-  CL_APR_MASMIS: {
-    table: "db_masmis.cl_apr",
-    batchIdColumn: "upload_batch_id",
-  },
-  CL_CHAT_MASMIS: {
-    table: "db_masmis.cl_chat",
-    batchIdColumn: "upload_batch_id",
-  },
-  CL_DISPO_MASMIS: {
-    table: "db_masmis.cl_dispo",
-    batchIdColumn: "upload_batch_id",
-  },
-  CL_EMAIL_RAW_MASMIS: {
-    table: "db_masmis.cl_email_raw",
-    batchIdColumn: "upload_batch_id",
-  },
-  CL_FEEDBACK_MASMIS: {
-    table: "db_masmis.cl_feedback",
-    batchIdColumn: "upload_batch_id",
-  },
-  CL_IB_CDR_MASMIS: {
-    table: "db_masmis.cl_ib_cdr",
-    batchIdColumn: "upload_batch_id",
-  },
-  CL_OUTBOUND_MASMIS: {
-    table: "db_masmis.cl_outbound",
-    batchIdColumn: "upload_batch_id",
-  },
-  CL_QUALITY_MASMIS: {
-    table: "db_masmis.cl_quality",
-    batchIdColumn: "upload_batch_id",
-  },
-  CL_RECHURN_CALL_MASMIS: {
-    table: "db_masmis.cl_rechurn_call",
-    batchIdColumn: "upload_batch_id",
-  },
+  CL_APR_MASMIS: { table: "db_masmis.cl_apr", batchIdColumn: "upload_batch_id" },
+  CL_CHAT_MASMIS: { table: "db_masmis.cl_chat", batchIdColumn: "upload_batch_id" },
+  CL_DISPO_MASMIS: { table: "db_masmis.cl_dispo", batchIdColumn: "upload_batch_id" },
+  CL_EMAIL_RAW_MASMIS: { table: "db_masmis.cl_email_raw", batchIdColumn: "upload_batch_id" },
+  CL_FEEDBACK_MASMIS: { table: "db_masmis.cl_feedback", batchIdColumn: "upload_batch_id" },
+  CL_IB_CDR_MASMIS: { table: "db_masmis.cl_ib_cdr", batchIdColumn: "upload_batch_id" },
+  CL_OUTBOUND_MASMIS: { table: "db_masmis.cl_outbound", batchIdColumn: "upload_batch_id" },
+  CL_QUALITY_MASMIS: { table: "db_masmis.cl_quality", batchIdColumn: "upload_batch_id" },
+  CL_RECHURN_CALL_MASMIS: { table: "db_masmis.cl_rechurn_call", batchIdColumn: "upload_batch_id" },
 
-  GNC_ALLOCATION_MASMIS: {
-    table: "db_masmis.gnc_allocation",
-    batchIdColumn: "upload_batch_id",
-  },
+  GNC_ALLOCATION_MASMIS: { table: "db_masmis.gnc_allocation", batchIdColumn: "upload_batch_id" },
   GNC_APR: { table: "db_masmis.gnc_apr", batchIdColumn: "upload_batch_id" },
-  GNC_CHAT_MASMIS: {
-    table: "db_masmis.gnc_chat",
-    batchIdColumn: "upload_batch_id",
-  },
+  GNC_CHAT_MASMIS: { table: "db_masmis.gnc_chat", batchIdColumn: "upload_batch_id" },
   // See file header: upsert reassigns upload_batch_id on re-upload.
-  GNC_SALE_MASMIS: {
-    table: "db_masmis.gnc_sale",
-    batchIdColumn: "upload_batch_id",
-  },
+  GNC_SALE_MASMIS: { table: "db_masmis.gnc_sale", batchIdColumn: "upload_batch_id" },
 
-  LP_FEEDBACK_APR_MASMIS: {
-    table: "db_masmis.lp_feedback_apr",
-    batchIdColumn: "upload_batch_id",
-  },
-  LP_FEEDBACK_CDR_MASMIS: {
-    table: "db_masmis.lp_feedback_cdr",
-    batchIdColumn: "upload_batch_id",
-  },
-  LP_ONBOARDING_APR_MASMIS: {
-    table: "db_masmis.lp_onboarding_apr",
-    batchIdColumn: "upload_batch_id",
-  },
-  LP_ONBOARDING_CDR_MASMIS: {
-    table: "db_masmis.lp_onboarding_cdr",
-    batchIdColumn: "upload_batch_id",
-  },
+  LP_FEEDBACK_APR_MASMIS: { table: "db_masmis.lp_feedback_apr", batchIdColumn: "upload_batch_id" },
+  LP_FEEDBACK_CDR_MASMIS: { table: "db_masmis.lp_feedback_cdr", batchIdColumn: "upload_batch_id" },
+  LP_ONBOARDING_APR_MASMIS: { table: "db_masmis.lp_onboarding_apr", batchIdColumn: "upload_batch_id" },
+  LP_ONBOARDING_CDR_MASMIS: { table: "db_masmis.lp_onboarding_cdr", batchIdColumn: "upload_batch_id" },
 
   // NEEMANS_AGENT_DETAILS_MASMIS intentionally omitted -- see file header.
-  NEEMANS_ALLOCATION_MASMIS: {
-    table: "db_masmis.neemans_allocation",
-    batchIdColumn: "upload_batch_id",
-  },
-  NEEMANS_APR_MASMIS: {
-    table: "db_masmis.neemans_apr",
-    batchIdColumn: "upload_batch_id",
-  },
-  NEEMANS_CART_MASMIS: {
-    table: "db_masmis.neemans_cart",
-    batchIdColumn: "upload_batch_id",
-  },
-  NEEMANS_CHAT_MASMIS: {
-    table: "db_masmis.neemans_chat",
-    batchIdColumn: "upload_batch_id",
-  },
-  NEEMANS_SALE_RAW_MASMIS: {
-    table: "db_masmis.neemans_sale_raw",
-    batchIdColumn: "upload_batch_id",
-  },
+  NEEMANS_ALLOCATION_MASMIS: { table: "db_masmis.neemans_allocation", batchIdColumn: "upload_batch_id" },
+  NEEMANS_APR_MASMIS: { table: "db_masmis.neemans_apr", batchIdColumn: "upload_batch_id" },
+  NEEMANS_CART_MASMIS: { table: "db_masmis.neemans_cart", batchIdColumn: "upload_batch_id" },
+  NEEMANS_CHAT_MASMIS: { table: "db_masmis.neemans_chat", batchIdColumn: "upload_batch_id" },
+  NEEMANS_SALE_RAW_MASMIS: { table: "db_masmis.neemans_sale_raw", batchIdColumn: "upload_batch_id" },
   // NEEMANS_MONTH_TARGET_MASMIS intentionally omitted -- see file header.
 
-  OWNER_AGENT_DETAILS_MASMIS: {
-    table: "db_masmis.owner_agent_details",
-    batchIdColumn: "upload_batch_id",
-  },
-  OWNER_CDR_MASMIS: {
-    table: "db_masmis.Owner_cdr",
-    batchIdColumn: "upload_batch_id",
-  },
-  OWNER_SALE_MASMIS: {
-    table: "db_masmis.owner_sale",
-    batchIdColumn: "upload_batch_id",
-  },
+  OWNER_AGENT_DETAILS_MASMIS: { table: "db_masmis.owner_agent_details", batchIdColumn: "upload_batch_id" },
+  OWNER_CDR_MASMIS: { table: "db_masmis.Owner_cdr", batchIdColumn: "upload_batch_id" },
+  OWNER_SALE_MASMIS: { table: "db_masmis.owner_sale", batchIdColumn: "upload_batch_id" },
 
-  PRE_AGENT_DETAILS_MASMIS: {
-    table: "db_masmis.pre_agent_details",
-    batchIdColumn: "upload_batch_id",
-  },
-  PRE_CDR_MASMIS: {
-    table: "db_masmis.Pre_cdr",
-    batchIdColumn: "upload_batch_id",
-  },
-  PRE_SALE_MASMIS: {
-    table: "db_masmis.pre_sale",
-    batchIdColumn: "upload_batch_id",
-  },
+  PRE_AGENT_DETAILS_MASMIS: { table: "db_masmis.pre_agent_details", batchIdColumn: "upload_batch_id" },
+  PRE_CDR_MASMIS: { table: "db_masmis.Pre_cdr", batchIdColumn: "upload_batch_id" },
+  PRE_SALE_MASMIS: { table: "db_masmis.pre_sale", batchIdColumn: "upload_batch_id" },
 
   SATYA_ALLOCATION_MASMIS: { table: "db_masmis.satya_allocation", batchIdColumn: "upload_batch_id" },
   SATYA_CDR_MASMIS: { table: "db_masmis.satya_cdr", batchIdColumn: "upload_batch_id" },

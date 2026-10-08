@@ -25,10 +25,7 @@ const USER_ID = "demo-super-admin-id";
 async function runOne(
   key: string,
   uploadTypeCode: string,
-  importFn: (
-    batchId: string,
-    userId: string,
-  ) => Promise<{ importedRows: number; errorRows: number; errors: string[] }>,
+  importFn: (batchId: string, userId: string) => Promise<{ importedRows: number; errorRows: number; errors: string[] }>,
 ) {
   const rows: Record<string, unknown>[] = JSON.parse(
     fs.readFileSync(path.join(__dirname, `_${key}.json`), "utf8"),
@@ -47,13 +44,7 @@ async function runOne(
     await db.execute(
       `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status)
        VALUES (?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), 'valid')`,
-      [
-        randomUUID(),
-        batchId,
-        i + 1,
-        JSON.stringify(rows[i]),
-        JSON.stringify(rows[i]),
-      ],
+      [randomUUID(), batchId, i + 1, JSON.stringify(rows[i]), JSON.stringify(rows[i])],
     );
   }
   console.log(`[${key}] batch rows staged:`, rows.length);
@@ -69,28 +60,14 @@ async function runOne(
 }
 
 async function main() {
-  const results: Record<string, { importedRows: number; errorRows: number }> =
-    {};
-  results.hp_team_details = await runOne(
-    "hp_team_details",
-    "HOUSING_PREMIUM_AGENT_TARGET",
-    importHousingPremiumAgentTargetBatch,
-  );
-  results.hp_sale_raw = await runOne(
-    "hp_sale_raw",
-    "HOUSING_PREMIUM_SALE_RAW",
-    importHousingPremiumSaleRawBatch,
-  );
+  const results: Record<string, { importedRows: number; errorRows: number }> = {};
+  results.hp_team_details = await runOne("hp_team_details", "HOUSING_PREMIUM_AGENT_TARGET", importHousingPremiumAgentTargetBatch);
+  results.hp_sale_raw = await runOne("hp_sale_raw", "HOUSING_PREMIUM_SALE_RAW", importHousingPremiumSaleRawBatch);
 
   console.log("\n=== SUMMARY ===");
   console.log(JSON.stringify(results, null, 2));
 
-  const anyFailed = Object.values(results).some(
-    (r) => r.errorRows > 0 && r.importedRows === 0,
-  );
+  const anyFailed = Object.values(results).some((r) => r.errorRows > 0 && r.importedRows === 0);
   process.exit(anyFailed ? 1 : 0);
 }
-main().catch((e) => {
-  console.error("[IMPORT] FAILED", e);
-  process.exit(1);
-});
+main().catch((e) => { console.error("[IMPORT] FAILED", e); process.exit(1); });

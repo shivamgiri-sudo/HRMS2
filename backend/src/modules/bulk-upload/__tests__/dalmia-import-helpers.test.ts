@@ -1,12 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  canonicalizeRow,
-  parseFlexibleDateTime,
-  parseFlexibleDate,
-  parseClockTime,
-  parseDurationSeconds,
-  parsePercent,
-  cleanPhone,
+  canonicalizeRow, parseFlexibleDateTime, parseFlexibleDate, parseClockTime, parseDurationSeconds, parsePercent, cleanPhone,
   isScientificNotation,
 } from "../dalmia-import-helpers.js";
 import { splitAttendance } from "../dalmia-apr-bulk.service.js";
@@ -18,9 +12,7 @@ describe("parseFlexibleDateTime / parseFlexibleDate", () => {
     expect(parseFlexibleDateTime("7/1/2026 10:12")).toBe("2026-07-01 10:12:00");
   });
   it("reads the outbound Date '31-08-2026 21:27:02' as day-month-year", () => {
-    expect(parseFlexibleDateTime("31-08-2026 21:27:02")).toBe(
-      "2026-08-31 21:27:02",
-    );
+    expect(parseFlexibleDateTime("31-08-2026 21:27:02")).toBe("2026-08-31 21:27:02");
   });
   it("reads the outbound Calling Date '9/2/2026' as 2 September", () => {
     expect(parseFlexibleDate("9/2/2026")).toBe("2026-09-02");
@@ -33,9 +25,7 @@ describe("parseFlexibleDateTime / parseFlexibleDate", () => {
     expect(parseFlexibleDate("1-Sep-26")).toBe("2026-09-01");
   });
   it("still reads ISO text and Excel serials (with a time fraction)", () => {
-    expect(parseFlexibleDateTime("2026-07-01 10:12:47")).toBe(
-      "2026-07-01 10:12:47",
-    );
+    expect(parseFlexibleDateTime("2026-07-01 10:12:47")).toBe("2026-07-01 10:12:47");
     expect(parseFlexibleDate("2026-07-03")).toBe("2026-07-03");
     expect(parseFlexibleDateTime(46204.5)).toBe("2026-07-01 12:00:00");
     expect(parseFlexibleDate("46204")).toBe("2026-07-01");
@@ -93,15 +83,7 @@ describe("after-hour contact number", () => {
 
 describe("canonicalizeRow", () => {
   it("matches headers case/space/punctuation-insensitively and keeps extra columns", () => {
-    const out = canonicalizeRow(
-      {
-        "call id": "158792",
-        CALLDATE: "7/1/2026 10:12",
-        "e-mail id": "a@b.c",
-        Extra: "x",
-      },
-      ["Call Id", "CallDate", "E-Mail ID"],
-    );
+    const out = canonicalizeRow({ "call id": "158792", "CALLDATE": "7/1/2026 10:12", "e-mail id": "a@b.c", Extra: "x" }, ["Call Id", "CallDate", "E-Mail ID"]);
     expect(out["Call Id"]).toBe("158792");
     expect(out["CallDate"]).toBe("7/1/2026 10:12");
     expect(out["E-Mail ID"]).toBe("a@b.c");

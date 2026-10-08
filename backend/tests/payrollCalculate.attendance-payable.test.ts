@@ -40,10 +40,7 @@ const {
     resolveHolidaysForEmployeeV2: vi.fn(),
     checkAndReverseLeave: vi.fn(),
     isHolidayWorkAutoGenEnabled: vi.fn(async () => false),
-    detectAndCalculateHolidayWork: vi.fn(async () => ({
-      payout: 0,
-      holidaysWorked: [],
-    })),
+    detectAndCalculateHolidayWork: vi.fn(async () => ({ payout: 0, holidaysWorked: [] })),
     calculateNetSalary: vi.fn(),
     breakSpecialAllowance: vi.fn(() => ({ conv: 0, ma: 0, pa: 0 })),
   };
@@ -146,22 +143,16 @@ function setupDbMocks() {
       return [[runRow], []];
     }
     if (sql.includes("SELECT config_key, config_value FROM statutory_config")) {
-      return [
-        [
-          { config_key: "pf_employee_pct", config_value: 12 },
-          { config_key: "esic_employee_pct", config_value: 0.75 },
-          { config_key: "esic_employer_pct", config_value: 3.25 },
-          { config_key: "esic_wage_limit", config_value: 21000 },
-          { config_key: "pf_wage_limit", config_value: 15000 },
-          { config_key: "professional_tax", config_value: 200 },
-        ],
-        [],
-      ];
+      return [[
+        { config_key: "pf_employee_pct", config_value: 12 },
+        { config_key: "esic_employee_pct", config_value: 0.75 },
+        { config_key: "esic_employer_pct", config_value: 3.25 },
+        { config_key: "esic_wage_limit", config_value: 21000 },
+        { config_key: "pf_wage_limit", config_value: 15000 },
+        { config_key: "professional_tax", config_value: 200 },
+      ], []];
     }
-    if (
-      sql.includes("FROM employees e") &&
-      sql.includes("employee_salary_assignment")
-    ) {
+    if (sql.includes("FROM employees e") && sql.includes("employee_salary_assignment")) {
       return [[employeeRow], []];
     }
     if (sql.includes("FROM attendance_feature_config")) {
@@ -173,20 +164,15 @@ function setupDbMocks() {
       return [[{ employee_id: "emp-1", cnt: 3 }], []];
     }
     if (sql.includes("COUNT(CASE WHEN adr.attendance_status = 'present'")) {
-      return [
-        [
-          {
-            employee_id: "emp-1",
-            working_days: 3,
-            present_days: 1,
-            leave_days: 2,
-            lwp_days: 0.5,
-            late_marks: 0,
-            dialer_hours: 5,
-          },
-        ],
-        [],
-      ];
+      return [[{
+        employee_id: "emp-1",
+        working_days: 3,
+        present_days: 1,
+        leave_days: 2,
+        lwp_days: 0.5,
+        late_marks: 0,
+        dialer_hours: 5,
+      }], []];
     }
     if (sql.includes("SUM(") && sql.includes("AS paid_base")) {
       return [[{ employee_id: "emp-1", paid_base: 1.5 }], []];
@@ -206,35 +192,24 @@ function setupDbMocks() {
     if (sql.includes("UPDATE salary_prep_run SET status = 'draft'")) {
       return [{ affectedRows: 1 }, []];
     }
-    if (
-      sql.includes("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1") &&
-      params?.[0] === "run-1"
-    ) {
+    if (sql.includes("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1") && params?.[0] === "run-1") {
       return [[{ ...runRow, status: "processing" }], []];
     }
     return [[], []];
   });
 
   connExecute.mockImplementation(async (sql: string) => {
-    if (
-      sql.includes("FROM employees e") &&
-      sql.includes("designation_master")
-    ) {
+    if (sql.includes("FROM employees e") && sql.includes("designation_master")) {
       return [[{ designation_name: "Executive", dept_name: "Operations" }], []];
     }
     if (sql.includes("FROM salary_component_assignments")) {
-      return [
-        [
-          {
-            basic: 12000,
-            hra: 6000,
-            conveyance: 0,
-            special_allowance: 3000,
-            gross: 30000,
-          },
-        ],
-        [],
-      ];
+      return [[{
+        basic: 12000,
+        hra: 6000,
+        conveyance: 0,
+        special_allowance: 3000,
+        gross: 30000,
+      }], []];
     }
     if (sql.includes("FROM salary_structure_component")) {
       return [[], []];
@@ -242,10 +217,7 @@ function setupDbMocks() {
     if (sql.includes("FROM tax_declaration")) {
       return [[], []];
     }
-    if (
-      sql.includes("FROM salary_advance_log") &&
-      sql.includes("monthly_recovery")
-    ) {
+    if (sql.includes("FROM salary_advance_log") && sql.includes("monthly_recovery")) {
       return [[{ monthly_recovery: 0 }], []];
     }
     if (sql.includes("FROM employee_statutory_override")) {
@@ -305,9 +277,7 @@ describe("calculatePayrollRun ADR payable-day batch logic", () => {
 
     const result = await calculatePayrollRun("run-1", "user-1");
 
-    const prepInsert = connExecute.mock.calls.find(([sql]: [string]) =>
-      sql.includes("INSERT INTO salary_prep_line"),
-    );
+    const prepInsert = connExecute.mock.calls.find(([sql]: [string]) => sql.includes("INSERT INTO salary_prep_line"));
     expect(prepInsert).toBeTruthy();
     const prepParams = prepInsert?.[1] as unknown[];
     expect(prepParams[COL.paid_working_days]).toBe(1.5);
@@ -339,9 +309,7 @@ describe("calculatePayrollRun ADR payable-day batch logic", () => {
     expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(1, "emp-1", 1.5, "2026-07", 1);
     expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(2, "emp-1", 1, "2026-07", 1);
 
-    const prepInsert = connExecute.mock.calls.find(([sql]: [string]) =>
-      sql.includes("INSERT INTO salary_prep_line"),
-    );
+    const prepInsert = connExecute.mock.calls.find(([sql]: [string]) => sql.includes("INSERT INTO salary_prep_line"));
     const prepParams = prepInsert?.[1] as unknown[];
     expect(prepParams[COL.paid_working_days]).toBe(1);
     expect(prepParams[COL.eligible_weekoff_days]).toBe(0);
@@ -355,53 +323,32 @@ describe("calculatePayrollRun ADR payable-day batch logic", () => {
     // month), matching what the running-salary estimate already did —
     // previously it capped at the full daysInMonth instead, so a mid-month
     // joiner could be paid against a longer window than they were active for.
-    const midMonthEmployeeRow = {
-      ...employeeRow,
-      salary_start_date: "2026-07-25",
-    };
+    const midMonthEmployeeRow = { ...employeeRow, salary_start_date: "2026-07-25" };
     // July 25 -> July 31 inclusive = 7 active days, well short of July's 31.
     const expectedActiveDays = 7;
 
     dbExecute.mockImplementation(async (sql: string, params?: unknown[]) => {
-      if (
-        sql.includes("FROM employees e") &&
-        sql.includes("employee_salary_assignment")
-      ) {
+      if (sql.includes("FROM employees e") && sql.includes("employee_salary_assignment")) {
         return [[midMonthEmployeeRow], []];
       }
       if (sql.includes("SELECT * FROM salary_prep_run")) return [[runRow], []];
-      if (
-        sql.includes("SELECT config_key, config_value FROM statutory_config")
-      ) {
-        return [
-          [
-            { config_key: "pf_employee_pct", config_value: 12 },
-            { config_key: "esic_employee_pct", config_value: 0.75 },
-            { config_key: "esic_employer_pct", config_value: 3.25 },
-            { config_key: "esic_wage_limit", config_value: 21000 },
-            { config_key: "pf_wage_limit", config_value: 15000 },
-            { config_key: "professional_tax", config_value: 200 },
-          ],
-          [],
-        ];
+      if (sql.includes("SELECT config_key, config_value FROM statutory_config")) {
+        return [[
+          { config_key: "pf_employee_pct", config_value: 12 },
+          { config_key: "esic_employee_pct", config_value: 0.75 },
+          { config_key: "esic_employer_pct", config_value: 3.25 },
+          { config_key: "esic_wage_limit", config_value: 21000 },
+          { config_key: "pf_wage_limit", config_value: 15000 },
+          { config_key: "professional_tax", config_value: 200 },
+        ], []];
       }
       if (sql.includes("FROM attendance_feature_config")) return [[{ config_value: "0" }], []];
       if (/COUNT\(\*\) AS cnt\s+FROM attendance_daily_record/.test(sql)) return [[{ employee_id: "emp-1", cnt: 3 }], []];
       if (sql.includes("COUNT(CASE WHEN adr.attendance_status = 'present'")) {
-        return [
-          [
-            {
-              employee_id: "emp-1",
-              working_days: 10,
-              present_days: 10,
-              leave_days: 0,
-              lwp_days: 0,
-              late_marks: 0,
-              dialer_hours: 5,
-            },
-          ],
-          [],
-        ];
+        return [[{
+          employee_id: "emp-1", working_days: 10, present_days: 10, leave_days: 0,
+          lwp_days: 0, late_marks: 0, dialer_hours: 5,
+        }], []];
       }
       // Deliberately larger than the 7-day active window, but still <= daysInMonth(31),
       // so only the active-days cap (not the old full-month cap) can catch this.
@@ -410,33 +357,20 @@ describe("calculatePayrollRun ADR payable-day batch logic", () => {
       if (sql.includes("FROM employee_deduction_entries")) return [[], []];
       if (sql.includes("FROM attendance_billing_config")) return [[], []];
       if (sql.includes("FROM salary_run_manual_tds")) return [[], []];
-      if (sql.includes("UPDATE salary_prep_run SET status = 'draft'"))
-        return [{ affectedRows: 1 }, []];
-      if (
-        sql.includes("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1") &&
-        params?.[0] === "run-1"
-      ) {
+      if (sql.includes("UPDATE salary_prep_run SET status = 'draft'")) return [{ affectedRows: 1 }, []];
+      if (sql.includes("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1") && params?.[0] === "run-1") {
         return [[{ ...runRow, status: "processing" }], []];
       }
       return [[], []];
     });
 
     calculateWeekoffEligibility.mockResolvedValue(0);
-    resolveHolidaysForEmployeeV2.mockResolvedValue({
-      eligibleHolidayCount: 0,
-      holidayWorkExtraPayout: 0,
-    });
-    checkAndReverseLeave.mockResolvedValue({
-      newPaidBase: 10,
-      reversed: false,
-      daysReversed: 0,
-    });
+    resolveHolidaysForEmployeeV2.mockResolvedValue({ eligibleHolidayCount: 0, holidayWorkExtraPayout: 0 });
+    checkAndReverseLeave.mockResolvedValue({ newPaidBase: 10, reversed: false, daysReversed: 0 });
 
     await calculatePayrollRun("run-1", "user-1");
 
-    const prepInsert = connExecute.mock.calls.find(([sql]: [string]) =>
-      sql.includes("INSERT INTO salary_prep_line"),
-    );
+    const prepInsert = connExecute.mock.calls.find(([sql]: [string]) => sql.includes("INSERT INTO salary_prep_line"));
     const prepParams = prepInsert?.[1] as unknown[];
     expect(prepParams[COL.paid_working_days]).toBe(10);              // paid base, uncapped
     expect(prepParams[COL.final_payable_days]).toBe(expectedActiveDays); // finalPayableDays: capped at active days, NOT 10 and NOT 31

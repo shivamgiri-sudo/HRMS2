@@ -1,10 +1,10 @@
 // backend/src/modules/external-db/external-db.service.ts
-import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
-import sql from "mssql";
-import mysql from "mysql2/promise";
-import { db } from "../../db/mysql.js";
-import { env } from "../../config/env.js";
-import type { RowDataPacket } from "mysql2";
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import sql from 'mssql';
+import mysql from 'mysql2/promise';
+import { db } from '../../db/mysql.js';
+import { env } from '../../config/env.js';
+import type { RowDataPacket } from 'mysql2';
 
 export interface DbCredentials {
   host: string;
@@ -15,14 +15,14 @@ export interface DbCredentials {
   table?: string;
   date_column?: string;
   employee_code_column?: string;
-  db_type: "mssql" | "mysql";
+  db_type: 'mssql' | 'mysql';
   tables?: string[];
   encrypt?: boolean;
   trust_server_certificate?: boolean;
 }
 
-const ALGO = "aes-256-gcm";
-const KEY_BUF = () => Buffer.from(env.ENCRYPTION_KEY, "hex");
+const ALGO = 'aes-256-gcm';
+const KEY_BUF = () => Buffer.from(env.ENCRYPTION_KEY, 'hex');
 
 export function encryptCredentials(creds: DbCredentials): string {
   return encryptSecretPayload(creds as unknown as Record<string, unknown>);
@@ -32,12 +32,9 @@ export function encryptSecretPayload(payload: Record<string, unknown>): string {
   const iv = randomBytes(16);
   const cipher = createCipheriv(ALGO, KEY_BUF(), iv);
   const plain = JSON.stringify(payload);
-  const encrypted = Buffer.concat([
-    cipher.update(plain, "utf8"),
-    cipher.final(),
-  ]);
+  const encrypted = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return `${iv.toString("hex")}:${tag.toString("hex")}:${encrypted.toString("hex")}`;
+  return `${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
 }
 
 export function decryptCredentials(stored: string): DbCredentials {
@@ -45,21 +42,20 @@ export function decryptCredentials(stored: string): DbCredentials {
 }
 
 export function decryptSecretPayload(stored: string): Record<string, unknown> {
-  const [ivHex, tagHex, encHex] = stored.split(":");
-  const iv = Buffer.from(ivHex, "hex");
-  const tag = Buffer.from(tagHex, "hex");
-  const encrypted = Buffer.from(encHex, "hex");
+  const [ivHex, tagHex, encHex] = stored.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const tag = Buffer.from(tagHex, 'hex');
+  const encrypted = Buffer.from(encHex, 'hex');
   const decipher = createDecipheriv(ALGO, KEY_BUF(), iv);
   decipher.setAuthTag(tag);
   const plain = Buffer.concat([
     decipher.update(encrypted),
     decipher.final(),
-  ]).toString("utf8");
+  ]).toString('utf8');
   return JSON.parse(plain) as Record<string, unknown>;
 }
 
-const LEGACY_SECRET_KEY =
-  /(password|passphrase|private[_-]?key|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization)/i;
+const LEGACY_SECRET_KEY = /(password|passphrase|private[_-]?key|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization)/i;
 
 function splitLegacySecrets(value: unknown): {
   sanitized: unknown;
@@ -69,21 +65,12 @@ function splitLegacySecrets(value: unknown): {
     const entries = value.map(splitLegacySecrets);
     return {
       sanitized: entries.map((entry) => entry.sanitized),
-      secrets: Object.assign(
-        {},
-        ...entries.map((entry, index) =>
-          Object.fromEntries(
-            Object.entries(entry.secrets).map(([key, item]) => [
-              `${index}.${key}`,
-              item,
-            ]),
-          ),
-        ),
-      ),
+      secrets: Object.assign({}, ...entries.map((entry, index) => (
+        Object.fromEntries(Object.entries(entry.secrets).map(([key, item]) => [`${index}.${key}`, item]))
+      ))),
     };
   }
-  if (!value || typeof value !== "object")
-    return { sanitized: value, secrets: {} };
+  if (!value || typeof value !== 'object') return { sanitized: value, secrets: {} };
 
   const sanitized: Record<string, unknown> = {};
   const secrets: Record<string, unknown> = {};
@@ -104,46 +91,34 @@ function splitLegacySecrets(value: unknown): {
 export async function migrateLegacyIntegrationSecrets(): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT integration_key, integration_type, config_json, encrypted_credentials
-       FROM integration_config`,
+       FROM integration_config`
   );
   let migrated = 0;
 
   for (const row of rows) {
-    const rawConfig =
-      typeof row.config_json === "string"
-        ? JSON.parse(row.config_json)
-        : (row.config_json ?? {});
+    const rawConfig = typeof row.config_json === 'string'
+      ? JSON.parse(row.config_json)
+      : (row.config_json ?? {});
     const { sanitized, secrets } = splitLegacySecrets(rawConfig);
     if (Object.keys(secrets).length === 0) continue;
 
-    let encrypted = row.encrypted_credentials
-      ? String(row.encrypted_credentials)
-      : "";
+    let encrypted = row.encrypted_credentials ? String(row.encrypted_credentials) : '';
     if (!encrypted) {
-      if (row.integration_type === "database") {
+      if (row.integration_type === 'database') {
         const config = rawConfig as Record<string, any>;
         const password = String(
-          secrets.password ??
-            secrets.passphrase ??
-            config.password ??
-            config.pass ??
-            "",
+          secrets.password ?? secrets.passphrase ?? config.password ?? config.pass ?? ''
         );
         encrypted = encryptCredentials({
-          host: String(config.host ?? ""),
-          port: Number(
-            config.port ?? (config.db_type === "mssql" ? 1433 : 3306),
-          ),
-          database: String(config.database ?? ""),
-          username: String(config.username ?? config.user ?? ""),
+          host: String(config.host ?? ''),
+          port: Number(config.port ?? (config.db_type === 'mssql' ? 1433 : 3306)),
+          database: String(config.database ?? ''),
+          username: String(config.username ?? config.user ?? ''),
           password,
           date_column: config.date_column,
           employee_code_column: config.employee_code_column,
           tables: config.tables ?? config.source_tables ?? [],
-          db_type:
-            config.db_type === "mssql" || config.db_type === "sqlserver"
-              ? "mssql"
-              : "mysql",
+          db_type: config.db_type === 'mssql' || config.db_type === 'sqlserver' ? 'mssql' : 'mysql',
           encrypt: Boolean(config.encrypt),
           trust_server_certificate: config.trust_server_certificate !== false,
         });
@@ -156,15 +131,13 @@ export async function migrateLegacyIntegrationSecrets(): Promise<number> {
       `UPDATE integration_config
           SET config_json = ?, encrypted_credentials = ?, updated_at = NOW()
         WHERE integration_key = ?`,
-      [JSON.stringify(sanitized), encrypted, row.integration_key],
+      [JSON.stringify(sanitized), encrypted, row.integration_key]
     );
     migrated += 1;
   }
 
   if (migrated > 0) {
-    console.log(
-      `[security] encrypted and removed plaintext secrets from ${migrated} integration connector(s)`,
-    );
+    console.log(`[security] encrypted and removed plaintext secrets from ${migrated} integration connector(s)`);
   }
   return migrated;
 }
@@ -179,9 +152,7 @@ export class ExternalDbCredentialError extends Error {
   readonly code = "EXTERNAL_DB_CREDENTIAL_DECRYPT_FAILED";
 
   constructor(integrationKey: string, cause?: unknown) {
-    super(
-      `Stored credentials for integration ${integrationKey} could not be decrypted. Re-save the connector credentials.`,
-    );
+    super(`Stored credentials for integration ${integrationKey} could not be decrypted. Re-save the connector credentials.`);
     this.name = "ExternalDbCredentialError";
     this.integrationKey = integrationKey;
     if (cause !== undefined) {
@@ -212,20 +183,14 @@ const hostDivergence = new Map<string, { shown: string; dialled: string }>();
 const divergenceWarned = new Set<string>();
 
 /** What the UI shows vs what is dialled, for every connector read so far. */
-export function getHostDivergences(): Array<{
-  key: string;
-  shown: string;
-  dialled: string;
-}> {
+export function getHostDivergences(): Array<{ key: string; shown: string; dialled: string }> {
   return [...hostDivergence.entries()].map(([key, v]) => ({ key, ...v }));
 }
 
-export async function getCredentialsForKey(
-  key: string,
-): Promise<DbCredentials | null> {
+export async function getCredentialsForKey(key: string): Promise<DbCredentials | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT encrypted_credentials, config_json FROM integration_config WHERE integration_key = ?`,
-    [key],
+    [key]
   );
   const row = (rows as any[])[0];
   if (!row) return null;
@@ -240,17 +205,14 @@ export async function getCredentialsForKey(
     // Recorded, never acted on: the credentials stay authoritative. Silently
     // preferring the displayed host would repoint a live connector at whatever
     // someone last typed into a form, which is a worse failure than a timeout.
-    let shownHost = "";
+    let shownHost = '';
     try {
-      const config =
-        typeof row.config_json === "string"
-          ? JSON.parse(row.config_json)
-          : (row.config_json ?? {});
-      shownHost = String(config?.host ?? "");
+      const config = typeof row.config_json === 'string' ? JSON.parse(row.config_json) : (row.config_json ?? {});
+      shownHost = String(config?.host ?? '');
     } catch {
-      shownHost = "";
+      shownHost = '';
     }
-    const dialledHost = String(creds.host ?? "");
+    const dialledHost = String(creds.host ?? '');
     if (shownHost && dialledHost && shownHost !== dialledHost) {
       hostDivergence.set(key, { shown: shownHost, dialled: dialledHost });
       if (!divergenceWarned.has(key)) {
@@ -285,15 +247,11 @@ function wrapWithHostContext(key: string, pool: mysql.Pool): mysql.Pool {
     return divergence
       ? ` (dialled ${divergence.dialled}, which is NOT the ${divergence.shown} this connector ` +
           `displays — check which of the two this host can actually reach)`
-      : "";
+      : '';
   };
   const annotate = (error: unknown): unknown => {
     const candidate = error as { message?: string; __hostAnnotated?: boolean };
-    if (
-      candidate &&
-      typeof candidate.message === "string" &&
-      !candidate.__hostAnnotated
-    ) {
+    if (candidate && typeof candidate.message === 'string' && !candidate.__hostAnnotated) {
       candidate.__hostAnnotated = true;
       candidate.message = `${candidate.message}${describe()}`;
     }
@@ -303,40 +261,27 @@ function wrapWithHostContext(key: string, pool: mysql.Pool): mysql.Pool {
   return new Proxy(pool, {
     get(target, property, receiver) {
       const value = Reflect.get(target, property, receiver);
-      if (
-        (property === "query" ||
-          property === "execute" ||
-          property === "getConnection") &&
-        typeof value === "function"
-      ) {
+      if ((property === 'query' || property === 'execute' || property === 'getConnection') && typeof value === 'function') {
         return (...args: unknown[]) => {
           let result: unknown;
           try {
-            result = (value as (...a: unknown[]) => unknown).apply(
-              target,
-              args,
-            );
+            result = (value as (...a: unknown[]) => unknown).apply(target, args);
           } catch (error) {
             throw annotate(error);
           }
-          return result instanceof Promise
-            ? result.catch((error) => Promise.reject(annotate(error)))
-            : result;
+          return result instanceof Promise ? result.catch((error) => Promise.reject(annotate(error))) : result;
         };
       }
-      return typeof value === "function" ? value.bind(target) : value;
+      return typeof value === 'function' ? value.bind(target) : value;
     },
   }) as mysql.Pool;
 }
 
-export async function getPoolForKey(
-  key: string,
-): Promise<sql.ConnectionPool | mysql.Pool> {
+export async function getPoolForKey(key: string): Promise<sql.ConnectionPool | mysql.Pool> {
   const creds = await getCredentialsForKey(key);
-  if (!creds)
-    throw new Error(`No credentials configured for integration: ${key}`);
+  if (!creds) throw new Error(`No credentials configured for integration: ${key}`);
 
-  if (creds.db_type === "mssql") {
+  if (creds.db_type === 'mssql') {
     const existing = mssqlPools.get(key);
     if (existing) {
       if (existing.connected) return existing;
@@ -392,26 +337,17 @@ export async function invalidatePool(key: string): Promise<void> {
   mysqlPools.delete(key);
 
   // Close the pools with timeout to prevent hanging
-  const closeWithTimeout = async (
-    closePromise: Promise<void>,
-    poolType: string,
-  ): Promise<void> => {
+  const closeWithTimeout = async (closePromise: Promise<void>, poolType: string): Promise<void> => {
     const timeoutMs = 5000;
     try {
       await Promise.race([
         closePromise,
         new Promise<void>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`${poolType} pool close timed out`)),
-            timeoutMs,
-          ),
+          setTimeout(() => reject(new Error(`${poolType} pool close timed out`)), timeoutMs)
         ),
       ]);
     } catch (error) {
-      console.error(
-        `[external-db] Failed to close ${poolType} pool for ${key}:`,
-        error,
-      );
+      console.error(`[external-db] Failed to close ${poolType} pool for ${key}:`, error);
     }
   };
 
@@ -434,20 +370,18 @@ export async function closeExternalDbPools(): Promise<void> {
   mysqlPools.clear();
 }
 
-export async function testPoolForKey(
-  key: string,
-): Promise<{ ok: boolean; error?: string }> {
+export async function testPoolForKey(key: string): Promise<{ ok: boolean; error?: string }> {
   try {
     const creds = await getCredentialsForKey(key);
-    if (!creds) return { ok: false, error: "No credentials configured" };
+    if (!creds) return { ok: false, error: 'No credentials configured' };
 
     await invalidatePool(key); // force fresh connection for test
     const pool = await getPoolForKey(key);
 
-    if (creds.db_type === "mssql") {
-      await (pool as sql.ConnectionPool).request().query("SELECT 1 AS ok");
+    if (creds.db_type === 'mssql') {
+      await (pool as sql.ConnectionPool).request().query('SELECT 1 AS ok');
     } else {
-      await (pool as mysql.Pool).execute("SELECT 1 AS ok");
+      await (pool as mysql.Pool).execute('SELECT 1 AS ok');
     }
     return { ok: true };
   } catch (e: unknown) {

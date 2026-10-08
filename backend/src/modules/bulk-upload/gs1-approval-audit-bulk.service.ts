@@ -1,10 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * GS1 India — Approval/Audit quality review raw log.
@@ -38,23 +35,10 @@ import {
  */
 
 export const GS1_APPROVAL_AUDIT_HEADERS = [
-  "Audit Date",
-  "Auditee Name",
-  "Auditor Name",
-  "Audit Result",
-  "Error Category",
-  "Error Flag",
-  "GCP Code",
-  "Company Name",
-  "SKU Count",
-  "GCP",
-  "Name",
-  "Auditor",
-  "Approve/Reject",
-  "Errors Yes/No",
-  "Date of Completion",
-  "Products count",
-  "GTIN",
+  "Audit Date", "Auditee Name", "Auditor Name", "Audit Result", "Error Category",
+  "Error Flag", "GCP Code", "Company Name", "SKU Count",
+  "GCP", "Name", "Auditor", "Approve/Reject", "Errors Yes/No",
+  "Date of Completion", "Products count", "GTIN",
 ] as const;
 
 const AUDIT_RESULT_MAP: Record<string, "PASS" | "FAIL" | "PENDING"> = {
@@ -77,18 +61,8 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   const MONTHS: Record<string, number> = {
-    jan: 1,
-    feb: 2,
-    mar: 3,
-    apr: 4,
-    may: 5,
-    jun: 6,
-    jul: 7,
-    aug: 8,
-    sep: 9,
-    oct: 10,
-    nov: 11,
-    dec: 12,
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
   };
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (m) return m[0];
@@ -108,27 +82,19 @@ export function parseDate(raw: unknown): string | null {
 }
 
 export function parseCount(raw: unknown): number {
-  const v = String(raw ?? "")
-    .trim()
-    .replace(/,/g, "");
+  const v = String(raw ?? "").trim().replace(/,/g, "");
   if (!v) return 0;
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
 }
 
 export function parseErrorFlag(raw: unknown): number {
-  const v = String(raw ?? "")
-    .trim()
-    .toUpperCase();
+  const v = String(raw ?? "").trim().toUpperCase();
   return v === "YES" || v === "1" || v === "TRUE" || v === "ERROR" ? 1 : 0;
 }
 
-export function normalizeAuditResult(
-  raw: unknown,
-): "PASS" | "FAIL" | "PENDING" {
-  const v = String(raw ?? "")
-    .trim()
-    .toLowerCase();
+export function normalizeAuditResult(raw: unknown): "PASS" | "FAIL" | "PENDING" {
+  const v = String(raw ?? "").trim().toLowerCase();
   return AUDIT_RESULT_MAP[v] ?? "PENDING";
 }
 
@@ -137,9 +103,7 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 export async function importGs1ApprovalAuditBatch(
   batchId: string,
@@ -193,8 +157,7 @@ export async function importGs1ApprovalAuditBatch(
     // "Date of Completion" is the real export's reliable per-row date (confirmed populated
     // on every real row); "Allocation Date"/"Created at" are batch-constant or a distant
     // original-upload timestamp, not this audit event's own date.
-    const auditDate =
-      parseDate(data["Audit Date"]) ?? parseDate(data["Date of Completion"]);
+    const auditDate = parseDate(data["Audit Date"]) ?? parseDate(data["Date of Completion"]);
     if (!auditDate) {
       const msg = `Row ${row.row_no}: an audit date ("Audit Date" or "Date of Completion") is required and could not be parsed`;
       errors.push(msg);
@@ -204,9 +167,7 @@ export async function importGs1ApprovalAuditBatch(
 
     // "Name" is who processed/verified the product; that is the person whose work this
     // audit event is auditing.
-    const auditeeName = String(
-      data["Auditee Name"] ?? data["Name"] ?? "",
-    ).trim();
+    const auditeeName = String(data["Auditee Name"] ?? data["Name"] ?? "").trim();
     if (!auditeeName) {
       const msg = `Row ${row.row_no}: an auditee ("Auditee Name" or "Name") is required`;
       errors.push(msg);
@@ -215,9 +176,7 @@ export async function importGs1ApprovalAuditBatch(
     }
 
     // "Auditor" is who did the final QC pass on that work.
-    const auditorName = String(
-      data["Auditor Name"] ?? data["Auditor"] ?? "",
-    ).trim();
+    const auditorName = String(data["Auditor Name"] ?? data["Auditor"] ?? "").trim();
     if (!auditorName) {
       const msg = `Row ${row.row_no}: an auditor ("Auditor Name" or "Auditor") is required`;
       errors.push(msg);
@@ -226,35 +185,26 @@ export async function importGs1ApprovalAuditBatch(
     }
 
     // "Approve/Reject" is the real export's direct pass/fail call.
-    const auditResult =
-      data["Audit Result"] !== undefined
-        ? normalizeAuditResult(data["Audit Result"])
-        : normalizeAuditResult(data["Approve/Reject"]);
-    const errorFlag =
-      data["Error Flag"] !== undefined
-        ? parseErrorFlag(data["Error Flag"])
-        : parseErrorFlag(data["Errors Yes/No"]);
-    const gcpCode =
-      String(data["GCP Code"] ?? data["GCP"] ?? "").trim() || null;
+    const auditResult = data["Audit Result"] !== undefined
+      ? normalizeAuditResult(data["Audit Result"])
+      : normalizeAuditResult(data["Approve/Reject"]);
+    const errorFlag = data["Error Flag"] !== undefined
+      ? parseErrorFlag(data["Error Flag"])
+      : parseErrorFlag(data["Errors Yes/No"]);
+    const gcpCode = String(data["GCP Code"] ?? data["GCP"] ?? "").trim() || null;
     // "Products count" is the real export's per-row SKU count (1 on every sampled real
     // row -- one row = one product); default to 1 rather than 0 when genuinely absent,
     // since a raw per-product audit row that exists at all audited at least one SKU.
     const skuCountRaw = data["SKU Count"] ?? data["Products count"];
-    const skuCount =
-      skuCountRaw !== undefined ? parseCount(skuCountRaw) || 1 : 0;
+    const skuCount = skuCountRaw !== undefined ? (parseCount(skuCountRaw) || 1) : 0;
     // Part of the unique key (see doc-comment): without this, every product a person audits
     // on the same day collapses into one row via ON DUPLICATE KEY UPDATE.
     const gtin = String(data["GTIN"] ?? "").trim() || null;
 
     toInsert.push({
-      rowId: row.id,
-      rowNo: row.row_no,
+      rowId: row.id, rowNo: row.row_no,
       values: [
-        randomUUID(),
-        processId,
-        auditDate,
-        auditeeName,
-        auditorName,
+        randomUUID(), processId, auditDate, auditeeName, auditorName,
         auditResult,
         String(data["Error Category"] ?? "").trim() || null,
         errorFlag,
@@ -262,7 +212,7 @@ export async function importGs1ApprovalAuditBatch(
         String(data["Company Name"] ?? "").trim() || null,
         gtin,
         skuCount,
-        "bulk_upload",
+        'bulk_upload',
         batchId,
         importedByUserId,
       ],
@@ -290,26 +240,17 @@ export async function importGs1ApprovalAuditBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

@@ -79,17 +79,10 @@ function resolveScopeMode(scope: ExitScope, recipientRole: string): ScopeMode {
   return "none";
 }
 
-function employeeScopeClause(
-  scope: ExitScope,
-  mode: ScopeMode,
-  alias: string,
-): { sql: string; params: unknown[] } {
+function employeeScopeClause(scope: ExitScope, mode: ScopeMode, alias: string): { sql: string; params: unknown[] } {
   if (mode === "team") {
     const placeholders = scope.teamEmployeeIds!.map(() => "?").join(",");
-    return {
-      sql: `AND ${alias}.employee_id IN (${placeholders})`,
-      params: [...scope.teamEmployeeIds!],
-    };
+    return { sql: `AND ${alias}.employee_id IN (${placeholders})`, params: [...scope.teamEmployeeIds!] };
   }
   return { sql: "", params: [] };
 }
@@ -111,12 +104,7 @@ async function buildResignationAndDiscussionCounts(
       submittedD1: null,
       managerPending: null,
       hrPending: null,
-      health: {
-        module: "exit_resignations",
-        state: "NOT_APPLICABLE",
-        detail: "Role/scope not eligible for exit visibility",
-        asOfDate: reportingDate,
-      },
+      health: { module: "exit_resignations", state: "NOT_APPLICABLE", detail: "Role/scope not eligible for exit visibility", asOfDate: reportingDate },
     };
   }
   const scopeClause = employeeScopeClause(scope, mode, "er");
@@ -133,29 +121,10 @@ async function buildResignationAndDiscussionCounts(
     );
     const row = rows[0] ?? {};
     return {
-      submittedD1: {
-        key: "exit_resignations_submitted_d1",
-        label: "Resignations submitted (D-1)",
-        value: numberValue(row.submitted_d1),
-        unit: "count",
-      },
-      managerPending: {
-        key: "exit_manager_discussions_pending",
-        label: "Manager discussions pending",
-        value: numberValue(row.manager_pending),
-        unit: "count",
-      },
-      hrPending: {
-        key: "exit_hr_discussions_pending",
-        label: "HR discussions pending",
-        value: numberValue(row.hr_pending),
-        unit: "count",
-      },
-      health: {
-        module: "exit_resignations",
-        state: "AVAILABLE",
-        asOfDate: reportingDate,
-      },
+      submittedD1: { key: "exit_resignations_submitted_d1", label: "Resignations submitted (D-1)", value: numberValue(row.submitted_d1), unit: "count" },
+      managerPending: { key: "exit_manager_discussions_pending", label: "Manager discussions pending", value: numberValue(row.manager_pending), unit: "count" },
+      hrPending: { key: "exit_hr_discussions_pending", label: "HR discussions pending", value: numberValue(row.hr_pending), unit: "count" },
+      health: { module: "exit_resignations", state: "AVAILABLE", asOfDate: reportingDate },
     };
   } catch (err) {
     return {
@@ -180,12 +149,7 @@ async function buildUpcomingLwd(
   if (mode === "none") {
     return {
       upcoming: null,
-      health: {
-        module: "exit_upcoming_lwd",
-        state: "NOT_APPLICABLE",
-        detail: "Role/scope not eligible for exit visibility",
-        asOfDate: reportingDate,
-      },
+      health: { module: "exit_upcoming_lwd", state: "NOT_APPLICABLE", detail: "Role/scope not eligible for exit visibility", asOfDate: reportingDate },
     };
   }
   const scopeClause = employeeScopeClause(scope, mode, "er");
@@ -199,17 +163,8 @@ async function buildUpcomingLwd(
       scopeClause.params,
     );
     return {
-      upcoming: {
-        key: "exit_upcoming_lwd_7d",
-        label: "Upcoming last working day (next 7 days)",
-        value: numberValue(rows[0]?.upcoming_count),
-        unit: "count",
-      },
-      health: {
-        module: "exit_upcoming_lwd",
-        state: "AVAILABLE",
-        asOfDate: reportingDate,
-      },
+      upcoming: { key: "exit_upcoming_lwd_7d", label: "Upcoming last working day (next 7 days)", value: numberValue(rows[0]?.upcoming_count), unit: "count" },
+      health: { module: "exit_upcoming_lwd", state: "AVAILABLE", asOfDate: reportingDate },
     };
   } catch (err) {
     return {
@@ -228,21 +183,12 @@ async function buildClearanceStatus(
   scope: ExitScope,
   mode: ScopeMode,
   reportingDate: string,
-): Promise<{
-  pending: BriefSignal | null;
-  completionPct: BriefSignal | null;
-  health: SourceHealth;
-}> {
+): Promise<{ pending: BriefSignal | null; completionPct: BriefSignal | null; health: SourceHealth }> {
   if (mode === "none") {
     return {
       pending: null,
       completionPct: null,
-      health: {
-        module: "exit_clearance",
-        state: "NOT_APPLICABLE",
-        detail: "Role/scope not eligible for exit visibility",
-        asOfDate: reportingDate,
-      },
+      health: { module: "exit_clearance", state: "NOT_APPLICABLE", detail: "Role/scope not eligible for exit visibility", asOfDate: reportingDate },
     };
   }
   // exit_clearance_task carries its own employee_id (denormalized off exit_request), so the
@@ -268,23 +214,9 @@ async function buildClearanceStatus(
     const cleared = numberValue(row.cleared_tasks);
     const pct = total > 0 ? Number(((cleared / total) * 100).toFixed(2)) : null;
     return {
-      pending: {
-        key: "exit_clearance_pending",
-        label: "Clearance tasks pending",
-        value: numberValue(row.pending_tasks),
-        unit: "count",
-      },
-      completionPct: {
-        key: "exit_clearance_completion_pct",
-        label: "Clearance completion",
-        value: pct,
-        unit: "percent",
-      },
-      health: {
-        module: "exit_clearance",
-        state: total > 0 ? "AVAILABLE" : "NO_DATA",
-        asOfDate: reportingDate,
-      },
+      pending: { key: "exit_clearance_pending", label: "Clearance tasks pending", value: numberValue(row.pending_tasks), unit: "count" },
+      completionPct: { key: "exit_clearance_completion_pct", label: "Clearance completion", value: pct, unit: "percent" },
+      health: { module: "exit_clearance", state: total > 0 ? "AVAILABLE" : "NO_DATA", asOfDate: reportingDate },
     };
   } catch (err) {
     return {
@@ -308,12 +240,7 @@ async function buildFfHandoffStatus(
   if (mode === "none") {
     return {
       statuses: null,
-      health: {
-        module: "exit_ff_handoff",
-        state: "NOT_APPLICABLE",
-        detail: "Role/scope not eligible for exit visibility",
-        asOfDate: reportingDate,
-      },
+      health: { module: "exit_ff_handoff", state: "NOT_APPLICABLE", detail: "Role/scope not eligible for exit visibility", asOfDate: reportingDate },
     };
   }
   const scopeClause = employeeScopeClause(scope, mode, "er");
@@ -335,11 +262,7 @@ async function buildFfHandoffStatus(
     }));
     return {
       statuses,
-      health: {
-        module: "exit_ff_handoff",
-        state: statuses.length > 0 ? "AVAILABLE" : "NO_DATA",
-        asOfDate: reportingDate,
-      },
+      health: { module: "exit_ff_handoff", state: statuses.length > 0 ? "AVAILABLE" : "NO_DATA", asOfDate: reportingDate },
     };
   } catch (err) {
     return {
@@ -361,13 +284,12 @@ export async function buildExitModule(
 ): Promise<ExitModuleResult> {
   const mode = resolveScopeMode(scope, recipientRole);
 
-  const [resignationResult, lwdResult, clearanceResult, ffResult] =
-    await Promise.all([
-      buildResignationAndDiscussionCounts(scope, mode, reportingDate),
-      buildUpcomingLwd(scope, mode, reportingDate),
-      buildClearanceStatus(scope, mode, reportingDate),
-      buildFfHandoffStatus(scope, mode, reportingDate),
-    ]);
+  const [resignationResult, lwdResult, clearanceResult, ffResult] = await Promise.all([
+    buildResignationAndDiscussionCounts(scope, mode, reportingDate),
+    buildUpcomingLwd(scope, mode, reportingDate),
+    buildClearanceStatus(scope, mode, reportingDate),
+    buildFfHandoffStatus(scope, mode, reportingDate),
+  ]);
 
   return {
     applicable: mode !== "none",
@@ -378,11 +300,6 @@ export async function buildExitModule(
     clearancePendingCount: clearanceResult.pending,
     clearanceCompletionPct: clearanceResult.completionPct,
     ffHandoffStatus: ffResult.statuses,
-    sourceHealth: [
-      resignationResult.health,
-      lwdResult.health,
-      clearanceResult.health,
-      ffResult.health,
-    ],
+    sourceHealth: [resignationResult.health, lwdResult.health, clearanceResult.health, ffResult.health],
   };
 }

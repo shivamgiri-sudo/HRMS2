@@ -51,8 +51,8 @@ export interface AiGenerateRequest {
   conversationSummaries?: Array<{ question: string; summary: string }>;
   temperature?: number;
   maxOutputTokens?: number;
-  responseFormat?: "text" | "json";
-  safetyLevel?: "strict" | "moderate" | "permissive";
+  responseFormat?: 'text' | 'json';
+  safetyLevel?: 'strict' | 'moderate' | 'permissive';
   requestSource: string;
   entityType?: string;
   entityId?: string;
@@ -85,11 +85,7 @@ export interface AiGenerateResponse {
 
 export interface AiPendingAction {
   /** What kind of action this is; the frontend and the confirm/cancel routes both switch on this. */
-  type:
-    | "leave_request"
-    | "leave_cancel"
-    | "attendance_regularization"
-    | "grievance";
+  type: 'leave_request' | 'leave_cancel' | 'attendance_regularization' | 'grievance';
   /** Human-readable summary of exactly what will happen on confirm — shown verbatim in chat. */
   summary: string;
   confirmLabel: string;
@@ -100,7 +96,7 @@ export interface AiInsight {
   key: string;
   label: string;
   count?: number;
-  severity?: "low" | "medium" | "high" | "critical";
+  severity?: 'low' | 'medium' | 'high' | 'critical';
   value?: string | number;
 }
 
@@ -108,14 +104,14 @@ export interface AiAction {
   key: string;
   label: string;
   url: string;
-  priority: "low" | "medium" | "high" | "critical";
+  priority: 'low' | 'medium' | 'high' | 'critical';
 }
 
 export interface SafeAiProviderConfig {
   id?: string;
   providerKey: string;
   providerName: string;
-  activeStatus?: "active" | "inactive";
+  activeStatus?: 'active' | 'inactive';
   isDefault?: boolean;
   modelName?: string;
   baseUrl?: string;
@@ -141,7 +137,7 @@ export interface AiProviderConfigRow {
   id: string;
   provider_key: string;
   provider_name: string;
-  active_status: "active" | "inactive";
+  active_status: 'active' | 'inactive';
   is_default: boolean;
   model_name?: string;
   base_url?: string;
@@ -201,21 +197,21 @@ export interface AiFeedbackRow {
   provider_key?: string;
   model_name?: string;
   request_id?: number;
-  rating: "helpful" | "not_helpful" | "incorrect" | "unsafe";
+  rating: 'helpful' | 'not_helpful' | 'incorrect' | 'unsafe';
   feedback_text?: string;
   created_at: Date;
 }
 
 export type PiiCategory =
-  | "payroll_sensitive"
-  | "statutory_sensitive"
-  | "personal_identity"
-  | "bank_sensitive"
-  | "document_sensitive"
-  | "medical_sensitive"
-  | "client_confidential"
-  | "candidate_sensitive"
-  | "employee_sensitive";
+  | 'payroll_sensitive'
+  | 'statutory_sensitive'
+  | 'personal_identity'
+  | 'bank_sensitive'
+  | 'document_sensitive'
+  | 'medical_sensitive'
+  | 'client_confidential'
+  | 'candidate_sensitive'
+  | 'employee_sensitive';
 
 export interface PiiDetectionResult {
   hasPii: boolean;

@@ -23,10 +23,7 @@ vi.mock("../src/modules/leave/leave.service.js", () => ({
   },
 }));
 vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole:
-    (..._roles: string[]) =>
-    (_req: any, _res: any, next: any) =>
-      next(),
+  requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
 }));
 vi.mock("../src/shared/scopeAccess.js", () => ({
   hasScopedAccess: vi.fn().mockResolvedValue(true),
@@ -34,12 +31,8 @@ vi.mock("../src/shared/scopeAccess.js", () => ({
   isOrgWideUser: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),
   getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
-  getRosterPlanScope: vi
-    .fn()
-    .mockResolvedValue({ branchId: null, processId: null }),
-  getEmployeeForUser: vi
-    .fn()
-    .mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
+  getRosterPlanScope: vi.fn().mockResolvedValue({ branchId: null, processId: null }),
+  getEmployeeForUser: vi.fn().mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
   getUserRoles: vi.fn().mockResolvedValue([{ role_key: "admin" }]),
   hasRole: vi.fn().mockResolvedValue(true),
   buildScopeWhereClause: vi.fn().mockReturnValue({ where: "", params: [] }),
@@ -59,9 +52,7 @@ vi.mock("../src/middleware/scopeMiddleware.js", () => ({
   getTargetFromBodyOrQuery: () => ({}),
 }));
 vi.mock("../src/shared/accessGuard.js", () => ({
-  getEmployeeForUser: vi
-    .fn()
-    .mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
+  getEmployeeForUser: vi.fn().mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
   hasRole: vi.fn().mockResolvedValue(true),
   selfOrAdminHr: () => (_req: any, _res: any, next: any) => next(),
 }));
@@ -73,24 +64,13 @@ import { app } from "../src/app.js";
 
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
-const svc = leaveService as {
-  [K in keyof typeof leaveService]: ReturnType<typeof vi.fn>;
-};
+const svc = leaveService as { [K in keyof typeof leaveService]: ReturnType<typeof vi.fn> };
 const AUTH = { Authorization: "Bearer mock-token-admin" };
 
-const fakeType = { id: "lt-1", leave_code: "CL", leave_name: "Casual Leave" };
+const fakeType    = { id: "lt-1", leave_code: "CL", leave_name: "Casual Leave" };
 const fakeRequest = { id: "lr-1", employee_id: "emp-1", status: "pending" };
-const fakeBalance = {
-  id: "bal-1",
-  employee_id: "emp-1",
-  allocated_days: 12,
-  used_days: 0,
-};
-const fakeHoliday = {
-  id: "hol-1",
-  holiday_name: "Diwali",
-  holiday_date: "2026-10-20",
-};
+const fakeBalance = { id: "bal-1", employee_id: "emp-1", allocated_days: 12, used_days: 0 };
+const fakeHoliday = { id: "hol-1", holiday_name: "Diwali", holiday_date: "2026-10-20" };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -128,16 +108,12 @@ describe("GET /api/leave/types", () => {
 describe("POST /api/leave/types", () => {
   it("creates leave type", async () => {
     svc.createLeaveType.mockResolvedValueOnce(fakeType);
-    const r = await request(app)
-      .post("/api/leave/types")
-      .set(AUTH)
+    const r = await request(app).post("/api/leave/types").set(AUTH)
       .send({ leaveCode: "CL", leaveName: "Casual Leave", maxDaysPerYear: 12 });
     expect(r.status).toBe(201);
   });
   it("returns 400 for empty leaveCode", async () => {
-    const r = await request(app)
-      .post("/api/leave/types")
-      .set(AUTH)
+    const r = await request(app).post("/api/leave/types").set(AUTH)
       .send({ leaveCode: "", leaveName: "Casual", maxDaysPerYear: 12 });
     expect(r.status).toBe(400);
   });
@@ -149,9 +125,7 @@ describe("POST /api/leave/requests", () => {
     const r = await request(app).post("/api/leave/requests").set(AUTH).send({
       employeeId: "550e8400-e29b-41d4-a716-446655440000",
       leaveTypeId: "550e8400-e29b-41d4-a716-446655440001",
-      fromDate: "2026-06-01",
-      toDate: "2026-06-03",
-      totalDays: 3,
+      fromDate: "2026-06-01", toDate: "2026-06-03", totalDays: 3,
     });
     expect(r.status).toBe(201);
   });
@@ -159,9 +133,7 @@ describe("POST /api/leave/requests", () => {
     const r = await request(app).post("/api/leave/requests").set(AUTH).send({
       employeeId: "550e8400-e29b-41d4-a716-446655440000",
       leaveTypeId: "550e8400-e29b-41d4-a716-446655440001",
-      fromDate: "2026-06-05",
-      toDate: "2026-06-01",
-      totalDays: 3,
+      fromDate: "2026-06-05", toDate: "2026-06-01", totalDays: 3,
     });
     expect(r.status).toBe(400);
   });
@@ -256,16 +228,12 @@ describe("GET /api/leave/holidays", () => {
 describe("POST /api/leave/holidays", () => {
   it("creates holiday", async () => {
     svc.createHoliday.mockResolvedValueOnce(fakeHoliday);
-    const r = await request(app)
-      .post("/api/leave/holidays")
-      .set(AUTH)
+    const r = await request(app).post("/api/leave/holidays").set(AUTH)
       .send({ holidayName: "Diwali", holidayDate: "2026-10-20" });
     expect(r.status).toBe(201);
   });
   it("returns 400 for bad date format", async () => {
-    const r = await request(app)
-      .post("/api/leave/holidays")
-      .set(AUTH)
+    const r = await request(app).post("/api/leave/holidays").set(AUTH)
       .send({ holidayName: "X", holidayDate: "20-10-2026" });
     expect(r.status).toBe(400);
   });

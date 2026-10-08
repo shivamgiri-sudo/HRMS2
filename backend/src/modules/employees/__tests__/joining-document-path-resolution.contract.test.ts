@@ -27,10 +27,7 @@ import { describe, expect, it } from "vitest";
  * Source-text assertions, matching how the other large service-internal helpers in
  * this repo are pinned.
  */
-const SRC = readFileSync(
-  resolve(__dirname, "../employeeJoiningDocuments.service.ts"),
-  "utf8",
-);
+const SRC = readFileSync(resolve(__dirname, "../employeeJoiningDocuments.service.ts"), "utf8");
 
 describe("joining document file resolution", () => {
   it("defines a resolver that falls back beyond the stored path", () => {
@@ -58,17 +55,13 @@ describe("joining document file resolution", () => {
     // One definition plus two call sites.
     expect(uses.length).toBeGreaterThanOrEqual(3);
     expect(SRC).toMatch(/resolveJoiningDocumentFile\(existing\.storage_path/);
-    expect(SRC).toMatch(
-      /resolveJoiningDocumentFile\(generatedDraft\.storage_path/,
-    );
+    expect(SRC).toMatch(/resolveJoiningDocumentFile\(generatedDraft\.storage_path/);
   });
 
   it("returns null rather than a guessed path when nothing is readable", () => {
     // A genuinely missing file must still be treated as missing, or the caller would
     // reuse a path that cannot be served.
-    expect(SRC).toMatch(
-      /return isReadableFile\(candidate\) \? candidate : null/,
-    );
+    expect(SRC).toMatch(/return isReadableFile\(candidate\) \? candidate : null/);
   });
 
   it("documents that regeneration — not a 404 — is the failure mode", () => {

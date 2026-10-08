@@ -18,8 +18,7 @@ import { resolveAtsBranchScope, branchInScope, OUT_OF_BRANCH_MESSAGE } from './a
 export interface InterviewResultInput {
   candidate_id: string;
   recruiter_id: string;
-  interview_status:
-    "selected" | "rejected" | "hold" | "callback" | "no_show" | "walkout";
+  interview_status: 'selected' | 'rejected' | 'hold' | 'callback' | 'no_show' | 'walkout';
   communication_rating?: number; // 1-5
   stability_rating?: number; // 1-5
   salary_fit?: boolean;
@@ -57,9 +56,7 @@ interface AssignedCandidate {
 /**
  * Get assigned candidates for a recruiter
  */
-export async function getAssignedCandidates(
-  recruiterId: string,
-): Promise<AssignedCandidate[]> {
+export async function getAssignedCandidates(recruiterId: string): Promise<AssignedCandidate[]> {
   // Resolve recruiter roster id from users.id via employees table
   const [rosterRows] = await db.execute<RowDataPacket[]>(
     `SELECT r.id as roster_id
@@ -67,7 +64,7 @@ export async function getAssignedCandidates(
      INNER JOIN employees e ON e.id = r.employee_id
      WHERE e.user_id = ?
      LIMIT 1`,
-    [recruiterId],
+    [recruiterId]
   );
   const rosterId: string | null = (rosterRows[0]?.roster_id as string) ?? null;
 
@@ -98,7 +95,7 @@ export async function getAssignedCandidates(
       AND c.candidate_status = 'registered'
       AND qt.queue_status IN ('waiting', 'called', 'in_interview')
     ORDER BY qt.created_at ASC`,
-    [rosterId],
+    [rosterId]
   );
 
   return rows as AssignedCandidate[];
@@ -113,10 +110,7 @@ export async function getAssignedCandidates(
  * returned "not assigned to you" for every candidate. Resolve the roster id
  * first, exactly as getAssignedCandidates does.
  */
-export async function getCandidateForInterview(
-  candidateId: string,
-  recruiterId: string,
-) {
+export async function getCandidateForInterview(candidateId: string, recruiterId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       c.*,
@@ -134,11 +128,11 @@ export async function getCandidateForInterview(
          INNER JOIN employees e ON e.id = r.employee_id
          WHERE e.user_id = ? LIMIT 1
       )`,
-    [candidateId, recruiterId],
+    [candidateId, recruiterId]
   );
 
   if (rows.length === 0) {
-    throw new Error("Candidate not found or not assigned to you");
+    throw new Error('Candidate not found or not assigned to you');
   }
 
   return rows[0];
@@ -163,7 +157,7 @@ export async function assertCandidateAssignedToCaller(candidateId: string, userI
     [candidateId]
   );
   if (!candidate) {
-    throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+    throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
   }
 
   const [[roster]] = await db.execute<RowDataPacket[]>(
@@ -171,13 +165,9 @@ export async function assertCandidateAssignedToCaller(candidateId: string, userI
        FROM ats_recruiter_roster r
        INNER JOIN employees e ON e.id = r.employee_id
       WHERE e.user_id = ? LIMIT 1`,
-    [userId],
+    [userId]
   );
-  if (
-    roster?.roster_id &&
-    String(roster.roster_id) === String(candidate.recruiter_id)
-  )
-    return;
+  if (roster?.roster_id && String(roster.roster_id) === String(candidate.recruiter_id)) return;
 
   // HR and admins legitimately act across candidates they were never assigned - inside their own branch (owner ruling
   // 2026-10-01: admin is branch-scoped like hr). Org-wide roles (super_admin, ...) act on any candidate.
@@ -192,9 +182,10 @@ export async function assertCandidateAssignedToCaller(candidateId: string, userI
     throw Object.assign(new Error(OUT_OF_BRANCH_MESSAGE), { statusCode: 403 });
   }
 
-  throw Object.assign(new Error("This candidate is not assigned to you."), {
-    statusCode: 403,
-  });
+  throw Object.assign(
+    new Error('This candidate is not assigned to you.'),
+    { statusCode: 403 }
+  );
 }
 
 export async function submitInterviewResult(input: InterviewResultInput) {
@@ -234,7 +225,7 @@ export async function submitInterviewResult(input: InterviewResultInput) {
         input.joining_interest ? 1 : 0,
         input.expected_joining_date || null,
         input.recruiter_recommendation || null,
-      ],
+      ]
     );
 
     // Record the outcome that was actually given. The route accepts selected,
@@ -247,22 +238,20 @@ export async function submitInterviewResult(input: InterviewResultInput) {
       `UPDATE ats_candidate
        SET candidate_status = ?
        WHERE id = ?`,
-      [input.interview_status, input.candidate_id],
+      [input.interview_status, input.candidate_id]
     );
 
     // Update queue status
     const queueStatus =
-      input.interview_status === "selected"
-        ? "completed"
-        : input.interview_status === "no_show"
-          ? "no_show"
-          : "completed"; // rejected/hold/callback/walkout all become completed
+      input.interview_status === 'selected' ? 'completed' :
+      input.interview_status === 'no_show' ? 'no_show' :
+      'completed'; // rejected/hold/callback/walkout all become completed
     await connection.execute(
       `UPDATE ats_queue_token
        SET queue_status = ?,
            interview_completed_at = NOW()
        WHERE candidate_id = ?`,
-      [queueStatus, input.candidate_id],
+      [queueStatus, input.candidate_id]
     );
 
     // Deciding a candidate's outcome left no trace at all: no stage log, no
@@ -277,13 +266,13 @@ export async function submitInterviewResult(input: InterviewResultInput) {
         input.recruiter_id,
         input.candidate_id,
         JSON.stringify({
-          action: "SUBMIT_INTERVIEW_RESULT",
+          action: 'SUBMIT_INTERVIEW_RESULT',
           interview_status: input.interview_status,
           result_id: resultId,
           rejection_reason: input.rejection_reason ?? null,
           next_step: input.next_step ?? null,
         }),
-      ],
+      ]
     );
 
     await connection.commit();
@@ -293,18 +282,18 @@ export async function submitInterviewResult(input: InterviewResultInput) {
     // and its own threshold, so they are closed together rather than left for
     // whichever worker happens to re-check first.
     await inboxService.resolveItems({
-      entity_type: "ats_candidate",
+      entity_type: 'ats_candidate',
       entity_id: input.candidate_id,
       types: [
-        "sla_breach_uncalled",
-        "walkin_submission_sla",
-        "walkin_feedback_pending",
-        "interview_submission_overdue",
+        'sla_breach_uncalled',
+        'walkin_submission_sla',
+        'walkin_feedback_pending',
+        'interview_submission_overdue',
       ],
     });
 
     // If selected, send congratulations email and create portal login
-    if (input.interview_status === "selected") {
+    if (input.interview_status === 'selected') {
       await handleCandidateSelection(input.candidate_id);
     }
 
@@ -330,7 +319,7 @@ async function handleCandidateSelection(candidateId: string) {
     `SELECT id, full_name, mobile, email, applied_for_branch, branch_display_name,
      COALESCE(role_applied, applied_for_process) AS applied_for_role
      FROM ats_candidate WHERE id = ?`,
-    [candidateId],
+    [candidateId]
   );
 
   if (rows.length === 0) return;
@@ -339,12 +328,8 @@ async function handleCandidateSelection(candidateId: string) {
 
   // Send onboarding link immediately on selection — candidate fills BGV docs within the onboarding form.
   // This is a separate, working, token-based flow — untouched by the change below.
-  sendOnboardingToken(candidateId, "system").catch((err) =>
-    console.error(
-      "[interview] Failed to send onboarding token for",
-      candidateId,
-      err,
-    ),
+  sendOnboardingToken(candidateId, 'system').catch((err) =>
+    console.error('[interview] Failed to send onboarding token for', candidateId, err)
   );
 
   // Portal credentials are no longer issued here. They used to be generated at
@@ -359,28 +344,21 @@ async function handleCandidateSelection(candidateId: string) {
   // employee code exists (employee-creation-orchestrator.service.ts,
   // post-commit) — see that function below.
 
-  await db
-    .execute(
-      `INSERT INTO portal_notification (
+  await db.execute(
+    `INSERT INTO portal_notification (
       id, user_id, user_type, title, message, notification_type,
       reference_id, priority, read_status
     ) VALUES (UUID(), ?, 'candidate', ?, ?, 'selection', ?, 'high', 0)`,
-      [
-        candidateId,
-        "Congratulations! You are Selected",
-        `You have been selected for ${candidate.applied_for_role ?? "the role"} at ${candidate.branch_display_name ?? ""}. Please complete your onboarding.`,
-        candidateId,
-      ],
-    )
-    .catch((err: unknown) => {
-      // notification table may not exist on all deployments
-      console.error(
-        "[interview] Selection notification failed for candidate",
-        candidateId,
-        ":",
-        err instanceof Error ? err.message : String(err),
-      );
-    });
+    [
+      candidateId,
+      'Congratulations! You are Selected',
+      `You have been selected for ${candidate.applied_for_role ?? 'the role'} at ${candidate.branch_display_name ?? ''}. Please complete your onboarding.`,
+      candidateId,
+    ]
+  ).catch((err: unknown) => {
+    // notification table may not exist on all deployments
+    console.error('[interview] Selection notification failed for candidate', candidateId, ':', err instanceof Error ? err.message : String(err));
+  });
 
   // Notify the recruiter who owns this candidate via work inbox
   void (async () => {
@@ -388,28 +366,28 @@ async function handleCandidateSelection(candidateId: string) {
       if (!candidate.preferred_recruiter_id) return;
       const [rosterRows] = await db.execute<RowDataPacket[]>(
         `SELECT employee_id FROM ats_recruiter_roster WHERE id = ? LIMIT 1`,
-        [candidate.preferred_recruiter_id],
+        [candidate.preferred_recruiter_id]
       );
       const empId = rosterRows[0]?.employee_id as string | null;
       if (!empId) return;
       const [userRows] = await db.execute<RowDataPacket[]>(
         `SELECT user_id AS id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
-        [empId],
+        [empId]
       );
       const userId = userRows[0]?.id as string | null;
       if (!userId) return;
       await inboxService.createItem({
         user_id: userId,
-        type: "candidate_selected",
-        title: `Candidate Selected: ${candidate.full_name ?? "Candidate"}`,
-        description: `${candidate.full_name ?? "Candidate"} has been selected for ${candidate.applied_for_role ?? "the role"} at ${candidate.branch_display_name ?? ""}. Onboarding link sent.`,
-        entity_type: "ats_candidate",
+        type: 'candidate_selected',
+        title: `Candidate Selected: ${candidate.full_name ?? 'Candidate'}`,
+        description: `${candidate.full_name ?? 'Candidate'} has been selected for ${candidate.applied_for_role ?? 'the role'} at ${candidate.branch_display_name ?? ''}. Onboarding link sent.`,
+        entity_type: 'ats_candidate',
         entity_id: candidateId,
-        action_url: "/ats/onboarding-requests",
-        priority: "high",
+        action_url: '/ats/onboarding-requests',
+        priority: 'high',
       });
     } catch (e) {
-      console.warn("[interview] recruiter inbox notification failed:", e);
+      console.warn('[interview] recruiter inbox notification failed:', e);
     }
   })();
 }
@@ -418,8 +396,8 @@ async function handleCandidateSelection(candidateId: string) {
  * Generate temporary password (8 characters)
  */
 function generateTempPassword(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // Removed ambiguous chars
-  let password = "";
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed ambiguous chars
+  let password = '';
   for (let i = 0; i < 8; i++) {
     password += chars.charAt(Math.floor(Math.random() * chars.length));
   }
@@ -442,9 +420,7 @@ function generateTempPassword(): string {
  * orchestrator: a failure here must not affect the employee record that is
  * already committed.
  */
-export async function issueCandidatePortalAccess(
-  candidateId: string,
-): Promise<void> {
+export async function issueCandidatePortalAccess(candidateId: string): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, full_name, email, applied_for_branch, branch_display_name,
             COALESCE(role_applied, applied_for_process) AS applied_for_role
@@ -470,29 +446,27 @@ export async function issueCandidatePortalAccess(
   // The existing token is reused rather than replaced, so the link in the
   // earlier onboarding email keeps working too — two live links to the same
   // form are fine; two links to different places are not.
-  const [tokenRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT onboarding_token
+  const [tokenRows] = await db.execute<RowDataPacket[]>(
+    `SELECT onboarding_token
        FROM ats_onboarding_bridge
       WHERE candidate_id = ?
         AND onboarding_token IS NOT NULL
         AND onboarding_token_expires_at > NOW()
       ORDER BY created_at DESC LIMIT 1`,
-      [candidateId],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    [candidateId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
 
   const liveToken = tokenRows[0]?.onboarding_token
     ? String(tokenRows[0].onboarding_token)
     : null;
 
-  const base = env.FRONTEND_URL || "http://localhost:5173";
+  const base = env.FRONTEND_URL || 'http://localhost:5173';
   const onboardingPortalUrl = liveToken
     ? `${base}/onboard-full?token=${liveToken}`
-    : // No live token: the portal login is the only thing left that identifies
-      // them, so fall back to it rather than sending a link that resolves to an
-      // empty form.
-      `${base}/candidate-portal/login`;
+    // No live token: the portal login is the only thing left that identifies
+    // them, so fall back to it rather than sending a link that resolves to an
+    // empty form.
+    : `${base}/candidate-portal/login`;
 
   await sendSelectionCongratulationsEmail({
     candidateId: candidate.id,
@@ -522,7 +496,7 @@ export async function getInterviewHistory(candidateId: string) {
     -- ats_interview_result records interviewed_at; it has no created_at, so both this history
     -- query and getRecruiterPerformance below threw ER_BAD_FIELD_ERROR.
     ORDER BY ir.interviewed_at DESC`,
-    [candidateId],
+    [candidateId]
   );
 
   return rows;
@@ -531,18 +505,14 @@ export async function getInterviewHistory(candidateId: string) {
 /**
  * Get recruiter performance metrics
  */
-export async function getRecruiterPerformance(
-  recruiterId: string,
-  fromDate?: string,
-  toDate?: string,
-) {
+export async function getRecruiterPerformance(recruiterId: string, fromDate?: string, toDate?: string) {
   const params: unknown[] = [recruiterId];
   let dateFilter: string;
   if (fromDate && toDate) {
-    dateFilter = "AND DATE(ir.interviewed_at) BETWEEN ? AND ?";
+    dateFilter = 'AND DATE(ir.interviewed_at) BETWEEN ? AND ?';
     params.push(fromDate, toDate);
   } else {
-    dateFilter = "AND DATE(ir.interviewed_at) = CURDATE()";
+    dateFilter = 'AND DATE(ir.interviewed_at) = CURDATE()';
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -557,33 +527,28 @@ export async function getRecruiterPerformance(
       ROUND(SUM(CASE WHEN interview_status = 'selected' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as selection_rate
     FROM ats_interview_result ir
     WHERE ir.recruiter_id = ? ${dateFilter}`,
-    params,
+    params
   );
 
-  return (
-    rows[0] || {
-      total_interviews: 0,
-      selected_count: 0,
-      rejected_count: 0,
-      hold_count: 0,
-      no_show_count: 0,
-      avg_communication_rating: 0,
-      avg_stability_rating: 0,
-      selection_rate: 0,
-    }
-  );
+  return rows[0] || {
+    total_interviews: 0,
+    selected_count: 0,
+    rejected_count: 0,
+    hold_count: 0,
+    no_show_count: 0,
+    avg_communication_rating: 0,
+    avg_stability_rating: 0,
+    selection_rate: 0,
+  };
 }
 
 /**
  * Update queue status (called/in_interview)
  */
-export async function updateQueueStatus(
-  candidateId: string,
-  status: "called" | "in_interview",
-) {
+export async function updateQueueStatus(candidateId: string, status: 'called' | 'in_interview') {
   const fieldMap = {
-    called: "called_at",
-    in_interview: "interview_started_at",
+    called: 'called_at',
+    in_interview: 'interview_started_at',
   };
 
   const field = fieldMap[status];
@@ -592,7 +557,7 @@ export async function updateQueueStatus(
     `UPDATE ats_queue_token
      SET queue_status = ?, ${field} = NOW()
      WHERE candidate_id = ?`,
-    [status, candidateId],
+    [status, candidateId]
   );
 
   return { success: true, status };

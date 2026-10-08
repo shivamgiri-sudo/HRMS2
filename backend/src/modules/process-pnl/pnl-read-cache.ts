@@ -58,11 +58,7 @@ function normalise(value: unknown): unknown {
   if (Array.isArray(value)) {
     const items = value.map((item) => normalise(item));
     // Sets of ids: order carries no meaning, duplicates none.
-    if (
-      items.every(
-        (item) => typeof item === "string" || typeof item === "number",
-      )
-    ) {
+    if (items.every((item) => typeof item === "string" || typeof item === "number")) {
       return Array.from(new Set(items.map(String))).sort();
     }
     return items;
@@ -80,10 +76,7 @@ function normalise(value: unknown): unknown {
 }
 
 /** Deterministic cache key for a namespace and the full set of inputs that shape its result. */
-export function pnlCacheKey(
-  namespace: string,
-  inputs: Record<string, unknown>,
-): string {
+export function pnlCacheKey(namespace: string, inputs: Record<string, unknown>): string {
   return `${namespace}:${JSON.stringify(normalise(inputs))}`;
 }
 

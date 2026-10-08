@@ -19,11 +19,8 @@ import path from "path";
  */
 
 const SOURCE = readFileSync(
-  path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "../auto-roster-synced.service.ts",
-  ),
-  "utf-8",
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "../auto-roster-synced.service.ts"),
+  "utf-8"
 );
 
 function changePublishedAssignmentBody(): string {
@@ -38,13 +35,9 @@ function changePublishedAssignmentBody(): string {
 
 describe("changePublishedAssignment's attendance/payroll-lock guard", () => {
   it("imports and calls checkEmployeeDateNotLocked", () => {
-    expect(SOURCE).toMatch(
-      /import \{ checkEmployeeDateNotLocked \} from "\.\.\/roster\/roster-lock-guard\.js";/,
-    );
+    expect(SOURCE).toMatch(/import \{ checkEmployeeDateNotLocked \} from "\.\.\/roster\/roster-lock-guard\.js";/);
     const body = changePublishedAssignmentBody();
-    expect(body).toMatch(
-      /checkEmployeeDateNotLocked\(db, String\(old\.employee_id\), String\(old\.roster_date\)\.slice\(0, 10\)\)/,
-    );
+    expect(body).toMatch(/checkEmployeeDateNotLocked\(db, String\(old\.employee_id\), String\(old\.roster_date\)\.slice\(0, 10\)\)/);
   });
 
   it("checks the lock before the UPDATE that rewrites shift_id/shift_start_time/shift_end_time", () => {
@@ -68,9 +61,7 @@ describe("changePublishedAssignment's attendance/payroll-lock guard", () => {
 
   it("checks the lock before the approval_status gate is bypassed and before any downstream rest-policy work", () => {
     const body = changePublishedAssignmentBody();
-    const approvalGateIdx = body.indexOf(
-      'control.approval_status !== "published"',
-    );
+    const approvalGateIdx = body.indexOf('control.approval_status !== "published"');
     const lockCheckIdx = body.indexOf("checkEmployeeDateNotLocked(db,");
     const restCheckIdx = body.indexOf("validateMinimumRest(");
     expect(approvalGateIdx).toBeGreaterThan(-1);

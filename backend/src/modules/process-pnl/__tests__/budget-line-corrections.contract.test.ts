@@ -39,9 +39,7 @@ describe("reviewer paths", () => {
     expect(routes).toContain('"/pnl/budgets/:id/reviewer-revise"');
     // Must stay off the two paths owned exclusively by budgetCoverageRouter.
     expect(routes).not.toMatch(/router\.post\(\s*"\/pnl\/budgets"/);
-    expect(routes).not.toMatch(
-      /router\.post\(\s*"\/pnl\/budgets\/:id\/submit"/,
-    );
+    expect(routes).not.toMatch(/router\.post\(\s*"\/pnl\/budgets\/:id\/submit"/);
   });
 
   it("keeps the budget at the reviewer's own stage when they edit in place", () => {
@@ -63,7 +61,7 @@ describe("reviewer paths", () => {
   it("requires at least one head/sub-head note when sending a budget back", () => {
     const service = read("src/modules/process-pnl/branch-budget.service.ts");
     expect(service).toContain(
-      "At least one head/sub-head correction note is required when sending a budget back for revision",
+      "At least one head/sub-head correction note is required when sending a budget back for revision"
     );
   });
 });

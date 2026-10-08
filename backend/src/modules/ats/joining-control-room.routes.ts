@@ -59,10 +59,11 @@ const roles: RoleKey[] = ["super_admin", "admin", "hr", "payroll_hr"];
 joiningControlRoomRouter.use(requireAuth);
 joiningControlRoomRouter.use(requireRole(...roles));
 
-const h =
-  (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (
+  req: AuthenticatedRequest,
+  res: any,
+  next: any,
+) => fn(req, res).catch(next);
 
 /**
  * Branch RBAC for this screen. Same rule as the appointment-letter pages: a user's role scope rows
@@ -112,152 +113,86 @@ joiningControlRoomRouter.get("/queue", h(async (req, res) => {
   return res.json({ success: true, data });
 }));
 
-joiningControlRoomRouter.get(
-  "/candidates/:candidateId",
-  h(async (req, res) => {
-    const data = await getJoiningControlRoomCandidate(req.params.candidateId);
-    return res.json({ success: true, data });
-  }),
-);
+joiningControlRoomRouter.get("/candidates/:candidateId", h(async (req, res) => {
+  const data = await getJoiningControlRoomCandidate(req.params.candidateId);
+  return res.json({ success: true, data });
+}));
 
-joiningControlRoomRouter.put(
-  "/candidates/:candidateId/payroll",
-  h(async (req, res) => {
-    const data = await savePayrollControlRoomDetails(
-      req.params.candidateId,
-      req.body || {},
-      req.authUser!.id,
-      req.authUser!.roles,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+joiningControlRoomRouter.put("/candidates/:candidateId/payroll", h(async (req, res) => {
+  const data = await savePayrollControlRoomDetails(req.params.candidateId, req.body || {}, req.authUser!.id, req.authUser!.roles);
+  return res.json({ success: true, data });
+}));
 
-joiningControlRoomRouter.put(
-  "/candidates/:candidateId/jclr",
-  h(async (req, res) => {
-    const data = await saveJclrDetails(
-      req.params.candidateId,
-      req.body || {},
-      req.authUser!.id,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+joiningControlRoomRouter.put("/candidates/:candidateId/jclr", h(async (req, res) => {
+  const data = await saveJclrDetails(req.params.candidateId, req.body || {}, req.authUser!.id);
+  return res.json({ success: true, data });
+}));
 
-joiningControlRoomRouter.put(
-  "/candidates/:candidateId/statutory",
-  h(async (req, res) => {
-    const data = await saveStatutoryDeclaration(
-      req.params.candidateId,
-      req.body || {},
-      req.authUser!.id,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+joiningControlRoomRouter.put("/candidates/:candidateId/statutory", h(async (req, res) => {
+  const data = await saveStatutoryDeclaration(req.params.candidateId, req.body || {}, req.authUser!.id);
+  return res.json({ success: true, data });
+}));
 
-joiningControlRoomRouter.post(
-  "/candidates/:candidateId/dpdp-consent",
-  h(async (req, res) => {
-    const data = await upsertDpdpConsent(
-      req.params.candidateId,
-      req.body || {},
-      req.authUser!.id,
-    );
-    return res.status(201).json({ success: true, data });
-  }),
-);
+joiningControlRoomRouter.post("/candidates/:candidateId/dpdp-consent", h(async (req, res) => {
+  const data = await upsertDpdpConsent(req.params.candidateId, req.body || {}, req.authUser!.id);
+  return res.status(201).json({ success: true, data });
+}));
 
-joiningControlRoomRouter.post(
-  "/candidates/:candidateId/dpdp-withdrawal",
-  h(async (req, res) => {
-    const data = await requestDpdpWithdrawal(
-      req.params.candidateId,
-      req.body || {},
-      req.authUser!.id,
-    );
-    return res.status(201).json({ success: true, data });
-  }),
-);
+joiningControlRoomRouter.post("/candidates/:candidateId/dpdp-withdrawal", h(async (req, res) => {
+  const data = await requestDpdpWithdrawal(req.params.candidateId, req.body || {}, req.authUser!.id);
+  return res.status(201).json({ success: true, data });
+}));
 
-joiningControlRoomRouter.post(
-  "/candidates/:candidateId/readiness",
-  h(async (req, res) => {
-    const data = await validateReadiness(req.params.candidateId);
-    return res.json({ success: true, data });
-  }),
-);
+joiningControlRoomRouter.post("/candidates/:candidateId/readiness", h(async (req, res) => {
+  const data = await validateReadiness(req.params.candidateId);
+  return res.json({ success: true, data });
+}));
 
-joiningControlRoomRouter.post(
-  "/candidates/:candidateId/esign/recheck",
-  h(async (req, res) => {
-    const result = await recheckEsignStatus(req.params.candidateId);
-    const data = await getJoiningControlRoomCandidate(req.params.candidateId);
-    return res.json({ success: true, data: { ...data, recheck: result } });
-  }),
-);
+joiningControlRoomRouter.post("/candidates/:candidateId/esign/recheck", h(async (req, res) => {
+  const result = await recheckEsignStatus(req.params.candidateId);
+  const data = await getJoiningControlRoomCandidate(req.params.candidateId);
+  return res.json({ success: true, data: { ...data, recheck: result } });
+}));
 
-joiningControlRoomRouter.post(
-  "/candidates/:candidateId/esign/resend-link",
-  h(async (req, res) => {
-    const candidateId = req.params.candidateId;
-    const result = await resendEsignLink(candidateId, req.authUser!.id);
-    if (!result.resent) {
-      // Non-2xx so the UI's generic action() helper surfaces this exact reason
-      // instead of showing its fixed "Signing link re-sent" success toast for a
-      // resend that did not actually happen — there was no kit awaiting a
-      // signature, or the employee has no email on file, are common and real,
-      // not exceptional.
-      return res.status(409).json({ success: false, message: result.message });
-    }
-    const data = await getJoiningControlRoomCandidate(candidateId);
-    return res.json({ success: true, data: { ...data, resend: result } });
-  }),
-);
+joiningControlRoomRouter.post("/candidates/:candidateId/esign/resend-link", h(async (req, res) => {
+  const candidateId = req.params.candidateId;
+  const result = await resendEsignLink(candidateId, req.authUser!.id);
+  if (!result.resent) {
+    // Non-2xx so the UI's generic action() helper surfaces this exact reason
+    // instead of showing its fixed "Signing link re-sent" success toast for a
+    // resend that did not actually happen — there was no kit awaiting a
+    // signature, or the employee has no email on file, are common and real,
+    // not exceptional.
+    return res.status(409).json({ success: false, message: result.message });
+  }
+  const data = await getJoiningControlRoomCandidate(candidateId);
+  return res.json({ success: true, data: { ...data, resend: result } });
+}));
 
 // Real provider cost: a brand-new Luckpay signing session, for a kit whose
 // existing one has already died. Never called by any worker — human-only,
 // same discipline as dispatchJoiningKit's own no-retry rule.
-joiningControlRoomRouter.post(
-  "/candidates/:candidateId/esign/redispatch-dead-kit",
-  h(async (req, res) => {
-    const candidateId = req.params.candidateId;
-    const result = await redispatchDeadEsignKit(candidateId, req.authUser!.id);
-    const data = await getJoiningControlRoomCandidate(candidateId);
-    return res.json({
-      success: result.status === "sent",
-      data: { ...data, redispatch: result },
-    });
-  }),
-);
+joiningControlRoomRouter.post("/candidates/:candidateId/esign/redispatch-dead-kit", h(async (req, res) => {
+  const candidateId = req.params.candidateId;
+  const result = await redispatchDeadEsignKit(candidateId, req.authUser!.id);
+  const data = await getJoiningControlRoomCandidate(candidateId);
+  return res.json({ success: result.status === "sent", data: { ...data, redispatch: result } });
+}));
 
-joiningControlRoomRouter.post(
-  "/candidates/:candidateId/bank-detail/sync",
-  h(async (req, res) => {
-    const candidateId = req.params.candidateId;
-    const [bridge] = await db.execute<RowDataPacket[]>(
-      `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
-      [candidateId],
-    );
-    const employeeId = (bridge as RowDataPacket[])[0]?.employee_id;
-    if (!employeeId) {
-      return res
-        .status(409)
-        .json({
-          success: false,
-          message: "No employee record exists yet for this candidate",
-        });
-    }
-    const result = await syncBankDetailFromOnboarding(
-      String(employeeId),
-      candidateId,
-      req.authUser!.id,
-    );
-    const data = await getJoiningControlRoomCandidate(candidateId);
-    return res.json({ success: true, data: { ...data, bankSync: result } });
-  }),
-);
+joiningControlRoomRouter.post("/candidates/:candidateId/bank-detail/sync", h(async (req, res) => {
+  const candidateId = req.params.candidateId;
+  const [bridge] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const employeeId = (bridge as RowDataPacket[])[0]?.employee_id;
+  if (!employeeId) {
+    return res.status(409).json({ success: false, message: "No employee record exists yet for this candidate" });
+  }
+  const result = await syncBankDetailFromOnboarding(String(employeeId), candidateId, req.authUser!.id);
+  const data = await getJoiningControlRoomCandidate(candidateId);
+  return res.json({ success: true, data: { ...data, bankSync: result } });
+}));
 
 // Email the employee a link to finish DigiLocker verification. Reuses the existing onboarding
 // link and never mints a new one (that would invalidate the link already in their inbox).
@@ -295,36 +230,17 @@ joiningControlRoomRouter.post("/candidates/:candidateId/dpdp-consent/sync", h(as
   return res.json({ success: true, data: { ...data, dpdpSync: result } });
 }));
 
-joiningControlRoomRouter.post(
-  "/candidates/:candidateId/salary-register/lock",
-  h(async (req, res) => {
-    const data = await lockSalaryRegister(
-      req.params.candidateId,
-      req.authUser!.id,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+joiningControlRoomRouter.post("/candidates/:candidateId/salary-register/lock", h(async (req, res) => {
+  const data = await lockSalaryRegister(req.params.candidateId, req.authUser!.id);
+  return res.json({ success: true, data });
+}));
 
-joiningControlRoomRouter.post(
-  "/candidates/:candidateId/salary-proposal/approve",
-  h(async (req, res) => {
-    const data = await approveSalaryProposal(
-      req.params.candidateId,
-      req.body || {},
-      req.authUser!.id,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+joiningControlRoomRouter.post("/candidates/:candidateId/salary-proposal/approve", h(async (req, res) => {
+  const data = await approveSalaryProposal(req.params.candidateId, req.body || {}, req.authUser!.id);
+  return res.json({ success: true, data });
+}));
 
-joiningControlRoomRouter.post(
-  "/candidates/:candidateId/employee-code",
-  h(async (req, res) => {
-    const data = await generateEmployeeCode(
-      req.params.candidateId,
-      req.authUser!.id,
-    );
-    return res.status(201).json({ success: true, data });
-  }),
-);
+joiningControlRoomRouter.post("/candidates/:candidateId/employee-code", h(async (req, res) => {
+  const data = await generateEmployeeCode(req.params.candidateId, req.authUser!.id);
+  return res.status(201).json({ success: true, data });
+}));

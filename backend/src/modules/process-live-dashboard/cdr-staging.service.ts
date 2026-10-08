@@ -15,18 +15,11 @@
  * client-specific denominators. Multi-day summaries AVG these values.
  */
 
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { n, pct, round, fmtSec, parseRange } from "./dialler-utils.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { n, pct, round, fmtSec, parseRange } from './dialler-utils.js';
 
-export type CdrClientCode =
-  | "GNC"
-  | "BELLAVITA"
-  | "CLOVIA"
-  | "NEEMANS"
-  | "VIEGA"
-  | "EXICOM"
-  | "DU_BANGLADESH";
+export type CdrClientCode = 'GNC' | 'BELLAVITA' | 'CLOVIA' | 'NEEMANS' | 'VIEGA' | 'EXICOM' | 'DU_BANGLADESH';
 
 export interface CdrStagingSummary {
   clientCode: CdrClientCode;
@@ -88,24 +81,24 @@ export async function getCdrStagingSummary(
     [clientCode, from, to],
   );
   const r = rows[0] ?? {};
-  const totalOffered = n(r.totalOffered);
+  const totalOffered  = n(r.totalOffered);
   const totalAnswered = n(r.totalAnswered);
-  const achtSec = round(n(r.achtSec));
+  const achtSec       = round(n(r.achtSec));
   return {
     clientCode,
     from,
     to,
     totalOffered,
     totalAnswered,
-    alPct: round(pct(totalAnswered, totalOffered)),
-    slPct: round(n(r.slPct)),
+    alPct:         round(pct(totalAnswered, totalOffered)),
+    slPct:         round(n(r.slPct)),
     achtSec,
-    aht: fmtSec(achtSec),
-    repeatPct: round(n(r.repeatPct)),
-    fcrPct: round(n(r.fcrPct)),
+    aht:           fmtSec(achtSec),
+    repeatPct:     round(n(r.repeatPct)),
+    fcrPct:        round(n(r.fcrPct)),
     avgLoginCount: round(n(r.avgLoginCount)),
-    dayCount: n(r.dayCount),
-    generatedAt: new Date().toISOString(),
+    dayCount:      n(r.dayCount),
+    generatedAt:   new Date().toISOString(),
   };
 }
 
@@ -130,18 +123,18 @@ export async function getCdrStagingDaily(
      ORDER BY call_date`,
     [clientCode, from, to],
   );
-  return rows.map((r) => {
+  return rows.map(r => {
     const achtSec = round(n(r.achtSec));
     return {
-      date: String(r.date ?? ""),
-      offered: n(r.offered),
-      answered: n(r.answered),
-      alPct: round(n(r.alPct)),
-      slPct: round(n(r.slPct)),
+      date:       String(r.date ?? ''),
+      offered:    n(r.offered),
+      answered:   n(r.answered),
+      alPct:      round(n(r.alPct)),
+      slPct:      round(n(r.slPct)),
       achtSec,
-      aht: fmtSec(achtSec),
-      repeatPct: round(n(r.repeatPct)),
-      fcrPct: round(n(r.fcrPct)),
+      aht:        fmtSec(achtSec),
+      repeatPct:  round(n(r.repeatPct)),
+      fcrPct:     round(n(r.fcrPct)),
       loginCount: n(r.loginCount),
     };
   });
@@ -181,18 +174,18 @@ export async function getCdrStagingMonthly(
      ORDER BY sortDate`,
     [clientCode, from, to],
   );
-  return rows.map((r) => {
+  return rows.map(r => {
     const achtSec = round(n(r.achtSec));
-    const offered = n(r.offered);
+    const offered  = n(r.offered);
     const answered = n(r.answered);
     return {
-      month: String(r.month ?? ""),
+      month:   String(r.month ?? ''),
       offered,
       answered,
-      alPct: round(pct(answered, offered)),
-      slPct: round(n(r.slPct)),
+      alPct:   round(pct(answered, offered)),
+      slPct:   round(n(r.slPct)),
       achtSec,
-      aht: fmtSec(achtSec),
+      aht:     fmtSec(achtSec),
     };
   });
 }

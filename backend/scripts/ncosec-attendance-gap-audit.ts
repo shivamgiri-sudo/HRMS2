@@ -18,14 +18,9 @@ function parseArgs(argv: string[]): Args {
     else if (arg === "--ncosec-host") out.ncosecHost = argv[++i];
   }
   if (!out.from || !out.to) {
-    throw new Error(
-      "Usage: npm run ncosec:audit -- --from YYYY-MM-DD --to YYYY-MM-DD [--apply] [--ncosec-host HOST]",
-    );
+    throw new Error("Usage: npm run ncosec:audit -- --from YYYY-MM-DD --to YYYY-MM-DD [--apply] [--ncosec-host HOST]");
   }
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(out.from) ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(out.to)
-  ) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(out.from) || !/^\d{4}-\d{2}-\d{2}$/.test(out.to)) {
     throw new Error("--from and --to must be YYYY-MM-DD");
   }
   return out as Args;
@@ -37,10 +32,7 @@ function dateKey(value: unknown): string {
 
 function sourceUserCandidates(row: any): string[] {
   return [row.cosec_user_id, row.biometric_code, row.employee_code]
-    .filter(
-      (value) =>
-        value !== null && value !== undefined && String(value).trim() !== "",
-    )
+    .filter((value) => value !== null && value !== undefined && String(value).trim() !== "")
     .map((value) => String(value).trim());
 }
 
@@ -55,10 +47,8 @@ async function main() {
   }
 
   const { db, closePool } = await import("../src/db/mysql.js");
-  const { getNcosecPool, closeNcosecPool } =
-    await import("../src/db/ncosecDb.js");
-  const { cosecSyncService } =
-    await import("../src/modules/wfm/cosec-sync.service.js");
+  const { getNcosecPool, closeNcosecPool } = await import("../src/db/ncosecDb.js");
+  const { cosecSyncService } = await import("../src/modules/wfm/cosec-sync.service.js");
 
   try {
     const pool = await getNcosecPool();
@@ -96,8 +86,7 @@ async function main() {
     const employeeBySourceUser = new Map<string, any>();
     for (const row of employeeRows) {
       for (const candidate of sourceUserCandidates(row)) {
-        if (!employeeBySourceUser.has(candidate))
-          employeeBySourceUser.set(candidate, row);
+        if (!employeeBySourceUser.has(candidate)) employeeBySourceUser.set(candidate, row);
       }
     }
 
@@ -109,8 +98,7 @@ async function main() {
       [args.from, args.to],
     );
     const ibdByEmployeeDate = new Map<string, any>();
-    for (const row of ibdRows)
-      ibdByEmployeeDate.set(`${row.employee_code}__${row.record_date}`, row);
+    for (const row of ibdRows) ibdByEmployeeDate.set(`${row.employee_code}__${row.record_date}`, row);
 
     const [adrRows] = await db.query<any[]>(
       `SELECT employee_id, DATE_FORMAT(record_date, '%Y-%m-%d') AS record_date,
@@ -120,15 +108,10 @@ async function main() {
       [args.from, args.to],
     );
     const adrByEmployeeDate = new Map<string, any>();
-    for (const row of adrRows)
-      adrByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
+    for (const row of adrRows) adrByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
 
-    const usableSource = sourceGroups.filter(
-      (row) => row.total_punches > 1 && row.working_minutes > 2,
-    );
-    const unmapped = usableSource.filter(
-      (row) => !employeeBySourceUser.has(row.cosec_user_id),
-    );
+    const usableSource = sourceGroups.filter((row) => row.total_punches > 1 && row.working_minutes > 2);
+    const unmapped = usableSource.filter((row) => !employeeBySourceUser.has(row.cosec_user_id));
     const missingIbd: any[] = [];
     const zeroMinuteRows: any[] = [];
     const missingPunchWithUsableSource: any[] = [];
@@ -136,45 +119,14 @@ async function main() {
     for (const row of usableSource) {
       const employee = employeeBySourceUser.get(row.cosec_user_id);
       if (!employee) continue;
-      const ibd = ibdByEmployeeDate.get(
-        `${employee.employee_code}__${row.punch_date}`,
-      );
-      const adr = adrByEmployeeDate.get(
-        `${employee.employee_id}__${row.punch_date}`,
-      );
-      if (!ibd)
-        missingIbd.push({
-          employee_code: employee.employee_code,
-          cosec_user_id: row.cosec_user_id,
-          punch_date: row.punch_date,
-          source_minutes: row.working_minutes,
-        });
-      if (
-        (Number(ibd?.biometric_minutes ?? 0) === 0 ||
-          Number(adr?.biometric_minutes ?? 0) === 0) &&
-        row.working_minutes > 2
-      ) {
-        zeroMinuteRows.push({
-          employee_code: employee.employee_code,
-          cosec_user_id: row.cosec_user_id,
-          punch_date: row.punch_date,
-          source_minutes: row.working_minutes,
-          ibd_minutes: ibd?.biometric_minutes ?? null,
-          adr_minutes: adr?.biometric_minutes ?? null,
-          adr_status: adr?.attendance_status ?? null,
-        });
+      const ibd = ibdByEmployeeDate.get(`${employee.employee_code}__${row.punch_date}`);
+      const adr = adrByEmployeeDate.get(`${employee.employee_id}__${row.punch_date}`);
+      if (!ibd) missingIbd.push({ employee_code: employee.employee_code, cosec_user_id: row.cosec_user_id, punch_date: row.punch_date, source_minutes: row.working_minutes });
+      if ((Number(ibd?.biometric_minutes ?? 0) === 0 || Number(adr?.biometric_minutes ?? 0) === 0) && row.working_minutes > 2) {
+        zeroMinuteRows.push({ employee_code: employee.employee_code, cosec_user_id: row.cosec_user_id, punch_date: row.punch_date, source_minutes: row.working_minutes, ibd_minutes: ibd?.biometric_minutes ?? null, adr_minutes: adr?.biometric_minutes ?? null, adr_status: adr?.attendance_status ?? null });
       }
-      if (
-        adr?.attendance_status === "missing_punch" &&
-        row.working_minutes > 2
-      ) {
-        missingPunchWithUsableSource.push({
-          employee_code: employee.employee_code,
-          cosec_user_id: row.cosec_user_id,
-          punch_date: row.punch_date,
-          source_minutes: row.working_minutes,
-          adr_minutes: adr.biometric_minutes,
-        });
+      if (adr?.attendance_status === "missing_punch" && row.working_minutes > 2) {
+        missingPunchWithUsableSource.push({ employee_code: employee.employee_code, cosec_user_id: row.cosec_user_id, punch_date: row.punch_date, source_minutes: row.working_minutes, adr_minutes: adr.biometric_minutes });
       }
     }
 
@@ -213,37 +165,24 @@ async function main() {
       { metric: "unmapped_usable_source_days", count: unmapped.length },
       { metric: "missing_ibd_days", count: missingIbd.length },
       { metric: "zero_minute_ibd_or_adr_days", count: zeroMinuteRows.length },
-      {
-        metric: "missing_punch_with_usable_source_days",
-        count: missingPunchWithUsableSource.length,
-      },
+      { metric: "missing_punch_with_usable_source_days", count: missingPunchWithUsableSource.length },
     ]);
     console.log("ADR missing dates by day:");
     console.table(gapRows);
     console.log("Samples:");
-    console.dir(
-      {
-        unmapped: unmapped.slice(0, 10),
-        missingIbd: missingIbd.slice(0, 10),
-        zeroMinuteRows: zeroMinuteRows.slice(0, 10),
-        missingPunchWithUsableSource: missingPunchWithUsableSource.slice(0, 10),
-      },
-      { depth: null },
-    );
+    console.dir({
+      unmapped: unmapped.slice(0, 10),
+      missingIbd: missingIbd.slice(0, 10),
+      zeroMinuteRows: zeroMinuteRows.slice(0, 10),
+      missingPunchWithUsableSource: missingPunchWithUsableSource.slice(0, 10),
+    }, { depth: null });
 
     if (args.apply) {
-      console.log(
-        `Applying COSEC reprocess for ${args.from} to ${args.to} through cosecSyncService.sync`,
-      );
-      const result = await cosecSyncService.sync({
-        from: args.from,
-        to: args.to,
-      });
+      console.log(`Applying COSEC reprocess for ${args.from} to ${args.to} through cosecSyncService.sync`);
+      const result = await cosecSyncService.sync({ from: args.from, to: args.to });
       console.dir(result, { depth: null });
     } else {
-      console.log(
-        "Dry-run only. Re-run with --apply to reprocess this date range.",
-      );
+      console.log("Dry-run only. Re-run with --apply to reprocess this date range.");
     }
   } finally {
     const [{ closePool }, { closeNcosecPool }] = await Promise.all([

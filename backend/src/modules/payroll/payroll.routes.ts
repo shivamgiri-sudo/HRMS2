@@ -162,7 +162,7 @@ router.get(
   h(async (req, res) => {
     const summary = await getPayrollAnalyticsSummary();
     res.json({ success: true, data: summary });
-  }),
+  })
 );
 
 // ─── Structures ───────────────────────────────────────────────────────────────
@@ -1931,9 +1931,7 @@ router.get(
          component_code`,
           myLineIds,
         )
-      : Promise.resolve([[] as RowDataPacket[]] as unknown as [
-          RowDataPacket[],
-        ]);
+      : Promise.resolve([[] as RowDataPacket[]] as unknown as [RowDataPacket[]]);
     const legacyPromise = db.execute<RowDataPacket[]>(
       `SELECT lps.id AS legacy_id, lps.employee_code, lps.pay_month AS run_month,
             lps.sal_date, lps.gross_salary, lps.gross_earned, lps.total_deductions,
@@ -2101,7 +2099,7 @@ router.get(
     // successfully. Column names are aliased so the response shape is unchanged.
     const [[rows], [[countRow]]] = await Promise.all([
       db.execute<RowDataPacket[]>(
-        `SELECT spl.run_id            AS run_id,
+      `SELECT spl.run_id            AS run_id,
             spr.run_month         AS run_label,
             spr.run_month         AS period_label,
             spr.disbursed_at      AS pay_date,
@@ -2115,15 +2113,15 @@ router.get(
         AND spr.status NOT IN ('draft', 'cancelled')
       ORDER BY spr.run_month DESC
       LIMIT ${limit} OFFSET ${offset}`,
-        [employeeId],
+      [employeeId],
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS total
+      `SELECT COUNT(*) AS total
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
       WHERE spl.employee_id = ?
         AND spr.status NOT IN ('draft', 'cancelled')`,
-        [employeeId],
+      [employeeId],
       ),
     ]);
     return res.json({
@@ -3249,10 +3247,10 @@ router.get(
 
     const [[kpiRows], [dimRows]] = await Promise.all([
       db.execute<RowDataPacket[]>(
-        // avg_net is derived from the same numerator and denominator the dimension
-        // table uses (total ÷ distinct employees) so the KPI card and the table can
-        // never disagree about what "average" means.
-        `SELECT COUNT(DISTINCT spl.employee_id)             AS headcount,
+      // avg_net is derived from the same numerator and denominator the dimension
+      // table uses (total ÷ distinct employees) so the KPI card and the table can
+      // never disagree about what "average" means.
+      `SELECT COUNT(DISTINCT spl.employee_id)             AS headcount,
             ROUND(SUM(spl.net_salary),2)                AS total_net,
             ROUND(SUM(spl.net_salary) / NULLIF(COUNT(DISTINCT spl.employee_id),0),2) AS avg_net,
             ROUND(SUM(spl.gross_salary),2)              AS total_gross,
@@ -3262,10 +3260,10 @@ router.get(
             ROUND(SUM(COALESCE(spl.esic_employer,0)),2) AS total_esic_employer
      FROM salary_prep_line spl
      WHERE spl.run_id = ? AND spl.status != 'cancelled'`,
-        [runId],
+      [runId],
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT ${d.sel},
+      `SELECT ${d.sel},
             COUNT(DISTINCT spl.employee_id)                                                           AS headcount,
             ROUND(SUM(spl.basic),2)                                                                   AS total_basic,
             -- Everything in gross that is not basic. Summing only hra +
@@ -3283,7 +3281,7 @@ router.get(
      WHERE spl.run_id = ? AND spl.status != 'cancelled'
      GROUP BY ${d.grp}
      ORDER BY total_net DESC`,
-        [runId],
+      [runId],
       ),
     ]);
 

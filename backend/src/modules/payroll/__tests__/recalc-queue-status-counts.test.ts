@@ -19,38 +19,20 @@ const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 
 vi.mock("../payroll-branch-scope.js", async () => (await import("./helpers/orgWideScopeMock.js")).orgWideScopeMock);
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../../../shared/accessGuard.js", () => ({
-  hasRole: vi.fn(),
-  getEmployeeForUser: vi.fn(),
-}));
+vi.mock("../../../shared/accessGuard.js", () => ({ hasRole: vi.fn(), getEmployeeForUser: vi.fn() }));
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasScopedAccess: vi.fn() }));
-vi.mock("../payroll-targeted-recalculation.service.js", () => ({
-  recalculateOpenPayrollForEmployee: vi.fn(),
-}));
+vi.mock("../payroll-targeted-recalculation.service.js", () => ({ recalculateOpenPayrollForEmployee: vi.fn() }));
 vi.mock("../payslip.service.js", () => ({ payslipService: {} }));
 vi.mock("../../../shared/piiCiphertext.js", () => ({ resolvePii: vi.fn() }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn() }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (req as express.Request & { authUser: { id: string } }).authUser = {
-      id: "user-1",
-    };
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: { id: string } }).authUser = { id: "user-1" };
     next();
   },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole:
-    () =>
-    (
-      _req: express.Request,
-      _res: express.Response,
-      next: express.NextFunction,
-    ) =>
-      next(),
+  requireRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
 import { payrollMoreRouter } from "../payroll-more.routes.js";
@@ -68,28 +50,18 @@ describe("GET /api/payroll/recalculation-queue statusCounts", () => {
     execute
       .mockResolvedValueOnce([[{ id: "q1", status: "failed" }]]) // paginated rows
       .mockResolvedValueOnce([[{ total: 21963 }]]) // total count
-      .mockResolvedValueOnce([
-        [
-          // GROUP BY status
-          { status: "pending", c: 500 },
-          { status: "failed", c: 1021 },
-          { status: "completed", c: 20000 },
-          { status: "processing", c: 442 },
-        ],
-      ]);
+      .mockResolvedValueOnce([[ // GROUP BY status
+        { status: "pending", c: 500 },
+        { status: "failed", c: 1021 },
+        { status: "completed", c: 20000 },
+        { status: "processing", c: 442 },
+      ]]);
 
-    const res = await request(buildApp()).get(
-      "/api/payroll/recalculation-queue",
-    );
+    const res = await request(buildApp()).get("/api/payroll/recalculation-queue");
 
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(21963);
-    expect(res.body.statusCounts).toEqual({
-      pending: 500,
-      failed: 1021,
-      completed: 20000,
-      processing: 442,
-    });
+    expect(res.body.statusCounts).toEqual({ pending: 500, failed: 1021, completed: 20000, processing: 442 });
   });
 
   it("scopes statusCounts by payrollMonth but never by the status filter itself", async () => {
@@ -98,9 +70,7 @@ describe("GET /api/payroll/recalculation-queue statusCounts", () => {
       .mockResolvedValueOnce([[{ total: 0 }]])
       .mockResolvedValueOnce([[{ status: "failed", c: 3 }]]);
 
-    await request(buildApp()).get(
-      "/api/payroll/recalculation-queue?status=pending&payrollMonth=2026-07",
-    );
+    await request(buildApp()).get("/api/payroll/recalculation-queue?status=pending&payrollMonth=2026-07");
 
     const statusCountsCall = execute.mock.calls[2];
     expect(statusCountsCall[0]).toMatch(/GROUP BY rq\.status/);
@@ -114,9 +84,7 @@ describe("GET /api/payroll/recalculation-queue statusCounts", () => {
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[{ total: 0 }]])
       .mockResolvedValueOnce([[]]);
-    await request(buildApp()).get(
-      "/api/payroll/recalculation-queue?payrollMonth=2026-07",
-    );
+    await request(buildApp()).get("/api/payroll/recalculation-queue?payrollMonth=2026-07");
     const [listSql, listParams] = execute.mock.calls[0];
     expect(listSql).not.toMatch(/rq\.\*/);
     expect(listSql).toMatch(/LEFT\(rq\.reason, 500\) AS reason/);
@@ -130,9 +98,7 @@ describe("GET /api/payroll/recalculation-queue statusCounts", () => {
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[{ total: 0 }]])
       .mockResolvedValueOnce([[]]);
-    await request(buildApp()).get(
-      "/api/payroll/recalculation-queue?payrollMonth=2026-13'; DROP",
-    );
+    await request(buildApp()).get("/api/payroll/recalculation-queue?payrollMonth=2026-13'; DROP");
     const [listSql, listParams] = execute.mock.calls[0];
     expect(listSql).toMatch(/1 = 0/);
     expect(listParams).toEqual([]);

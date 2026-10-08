@@ -18,9 +18,7 @@ import {
 } from "../bank-payment-readiness.service.js";
 
 /** A record that is fully payable. Each test perturbs exactly one thing. */
-function ready(
-  overrides: Partial<BankReadinessInput> = {},
-): BankReadinessInput {
+function ready(overrides: Partial<BankReadinessInput> = {}): BankReadinessInput {
   return {
     employee_id: "emp-1",
     employee_code: "MAS00001",
@@ -51,9 +49,7 @@ describe("the happy path is actually reachable", () => {
 
 describe("MISSING never infers an account", () => {
   it("is MISSING when there is no bank record, even though db_bill knows the account", () => {
-    const r = classifyBankReadiness(
-      ready({ account_number: null, active_primary_count: 0 }),
-    );
+    const r = classifyBankReadiness(ready({ account_number: null, active_primary_count: 0 }));
     expect(r.readiness_class).toBe("MISSING");
     expect(r.payable).toBe(false);
     // The known account is FLAGGED as recoverable, never silently adopted.
@@ -62,15 +58,9 @@ describe("MISSING never infers an account", () => {
   });
 
   it("distinguishes recoverable from unrecoverable in the reason text", () => {
-    const recoverable = classifyBankReadiness(
-      ready({ account_number: null, active_primary_count: 0 }),
-    );
+    const recoverable = classifyBankReadiness(ready({ account_number: null, active_primary_count: 0 }));
     const not = classifyBankReadiness(
-      ready({
-        account_number: null,
-        active_primary_count: 0,
-        credited_account: null,
-      }),
+      ready({ account_number: null, active_primary_count: 0, credited_account: null }),
     );
     expect(recoverable.recoverable_from_db_bill).toBe(true);
     expect(not.recoverable_from_db_bill).toBe(false);
@@ -104,11 +94,7 @@ describe("precedence — the order decides what a human does next", () => {
 
   it("a data fault outranks an in-flight change request, so a pending row cannot hide it", () => {
     const r = classifyBankReadiness(
-      ready({
-        account_number: "2.0021E+14",
-        credited_account: null,
-        has_open_change_request: true,
-      }),
+      ready({ account_number: "2.0021E+14", credited_account: null, has_open_change_request: true }),
     );
     expect(r.readiness_class).toBe("INVALID");
     expect(r.reasons).toContain("account_number_corrupt");
@@ -116,17 +102,10 @@ describe("precedence — the order decides what a human does next", () => {
 
   it("reports every quality fault at once rather than only the first", () => {
     const r = classifyBankReadiness(
-      ready({
-        account_number: "0000",
-        ifsc_code: "NA",
-        credited_account: null,
-      }),
+      ready({ account_number: "0000", ifsc_code: "NA", credited_account: null }),
     );
     expect(r.readiness_class).toBe("INVALID");
-    expect(r.reasons).toEqual([
-      "account_number_corrupt",
-      "ifsc_invalid_format",
-    ]);
+    expect(r.reasons).toEqual(["account_number_corrupt", "ifsc_invalid_format"]);
   });
 
   it("a corrupt account is CONFLICT, not INVALID, when payment history knows the real one", () => {
@@ -136,10 +115,7 @@ describe("precedence — the order decides what a human does next", () => {
     // number is garbage", it names the account the salary actually reached. INVALID is reserved
     // for the case where nothing better is known and HR must go back to the employee.
     const r = classifyBankReadiness(
-      ready({
-        account_number: "2.0021E+14",
-        credited_account: "50100234567890",
-      }),
+      ready({ account_number: "2.0021E+14", credited_account: "50100234567890" }),
     );
     expect(r.readiness_class).toBe("CONFLICT");
     expect(r.reasons).toContain("disagrees_with_credited_account");
@@ -150,10 +126,7 @@ describe("precedence — the order decides what a human does next", () => {
 describe("CONFLICT reasons never leak a full account number", () => {
   it("masks both sides of a credited-account disagreement", () => {
     const r = classifyBankReadiness(
-      ready({
-        account_number: "50100234567890",
-        credited_account: "60200987654321",
-      }),
+      ready({ account_number: "50100234567890", credited_account: "60200987654321" }),
     );
     expect(r.readiness_class).toBe("CONFLICT");
     expect(r.reason_detail).toContain("XXXX7890");
@@ -163,9 +136,7 @@ describe("CONFLICT reasons never leak a full account number", () => {
   });
 
   it("names the other employee on a shared account without printing the number", () => {
-    const r = classifyBankReadiness(
-      ready({ duplicate_of_employee_code: "MAS00042" }),
-    );
+    const r = classifyBankReadiness(ready({ duplicate_of_employee_code: "MAS00042" }));
     expect(r.readiness_class).toBe("CONFLICT");
     expect(r.reason_detail).toContain("MAS00042");
     expect(r.reason_detail).not.toContain("50100234567890");
@@ -189,9 +160,7 @@ describe("BLOCKED separates 'unverifiable' from 'wrong'", () => {
 
 describe("beneficiary name falls back but says so", () => {
   it("uses the bank record's account holder when present, unflagged", () => {
-    const r = classifyBankReadiness(
-      ready({ account_holder_name: "ASHA KUMARI" }),
-    );
+    const r = classifyBankReadiness(ready({ account_holder_name: "ASHA KUMARI" }));
     expect(r.beneficiary_source).toBe("bank_record");
     expect(r.beneficiary_unconfirmed).toBe(false);
   });
@@ -212,17 +181,13 @@ describe("a dead verification source degrades honestly", () => {
     expect(r.readiness_class).toBe("BLOCKED");
     expect(r.payable).toBe(false);
     expect(r.reasons).toEqual(["bank_source_unavailable"]);
-    expect(r.reason_detail).toMatch(
-      /system fault, not a fault on the employee/i,
-    );
+    expect(r.reason_detail).toMatch(/system fault, not a fault on the employee/i);
   });
 
   it("leaves a genuine data fault reported as itself", () => {
     // A missing record is still missing when db_bill is down. Rewriting every class to
     // BLOCKED would erase the one part of the answer that is still knowable.
-    const missing = classifyBankReadiness(
-      ready({ account_number: null, active_primary_count: 0 }),
-    );
+    const missing = classifyBankReadiness(ready({ account_number: null, active_primary_count: 0 }));
     expect(degradeUnverifiable(missing).readiness_class).toBe("MISSING");
 
     const invalid = classifyBankReadiness(ready({ ifsc_code: "NA" }));
@@ -239,9 +204,9 @@ describe("field validators", () => {
 
   it("rejects all-zero and out-of-range account numbers", () => {
     expect(isCorruptAccount("00000000")).toBe(true);
-    expect(isCorruptAccount("12345")).toBe(true); // 5 digits, too short
-    expect(isCorruptAccount("1".repeat(21))).toBe(true); // 21 digits, too long
-    expect(isCorruptAccount("123456")).toBe(false); // 6 is the floor
+    expect(isCorruptAccount("12345")).toBe(true);            // 5 digits, too short
+    expect(isCorruptAccount("1".repeat(21))).toBe(true);     // 21 digits, too long
+    expect(isCorruptAccount("123456")).toBe(false);          // 6 is the floor
   });
 
   it("enforces the RBI IFSC shape, including the literal zero in position 5", () => {
@@ -249,8 +214,8 @@ describe("field validators", () => {
     // Real values found live: an 'O' where the zero belongs, and a plain 'NA'.
     expect(isValidIfsc("BARBONAGINA")).toBe(false);
     expect(isValidIfsc("NA")).toBe(false);
-    expect(isValidIfsc("ICICI0000831")).toBe(false); // 12 chars, one too many
-    expect(isValidIfsc("hdfc0001234")).toBe(true); // case-insensitive
+    expect(isValidIfsc("ICICI0000831")).toBe(false);         // 12 chars, one too many
+    expect(isValidIfsc("hdfc0001234")).toBe(true);           // case-insensitive
     expect(isValidIfsc(null)).toBe(false);
   });
 

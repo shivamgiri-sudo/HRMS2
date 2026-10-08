@@ -9,15 +9,10 @@ import { employeeListScope } from '../dashboards/branch-scope-guards.js';
 import { getIstDateString } from '../../utils/dateUtils.js';
 
 const router = Router();
-type AsyncHandler = (
-  req: AuthenticatedRequest,
-  res: Response,
-) => Promise<unknown>;
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 
-const h =
-  (fn: AsyncHandler) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) =>
-    void fn(req, res).catch(next);
+const h = (fn: AsyncHandler) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => void fn(req, res).catch(next);
 
 type RoleRow = RowDataPacket & { role_key?: string | null };
 type EmployeeRow = RowDataPacket & { employee_code?: string | null };
@@ -25,48 +20,36 @@ type EmployeeRow = RowDataPacket & { employee_code?: string | null };
 router.use(requireAuth);
 
 // GET /api/apr/data?date=YYYY-MM-DD
-router.get(
-  "/data",
-  h(async (req: AuthenticatedRequest, res) => {
-    const date = (req.query.date as string) || getIstDateString();
-    const userId = req.authUser!.id;
+router.get('/data', h(async (req: AuthenticatedRequest, res) => {
+  const date = (req.query.date as string) || getIstDateString();
+  const userId = req.authUser!.id;
 
-    const [roleRows] = await db.execute<RowDataPacket[]>(
-      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
-      [userId],
+  const [roleRows] = await db.execute<RowDataPacket[]>(
+    `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
+    [userId]
+  );
+  const roles = (roleRows as RoleRow[]).map(r => String(r.role_key ?? ''));
+  const isManager = roles.some(r =>
+    ['admin', 'manager', 'process_manager', 'hr', 'team_leader', 'tl'].includes(r)
+  );
+
+  let employeeCode: string | undefined;
+  if (!isManager) {
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_code FROM employees WHERE user_id = ? LIMIT 1`,
+      [userId]
     );
-    const roles = (roleRows as RoleRow[]).map((r) => String(r.role_key ?? ""));
-    const isManager = roles.some((r) =>
-      [
-        "admin",
-        "manager",
-        "process_manager",
-        "hr",
-        "team_leader",
-        "tl",
-      ].includes(r),
-    );
-
-    let employeeCode: string | undefined;
-    if (!isManager) {
-      const [empRows] = await db.execute<RowDataPacket[]>(
-        `SELECT employee_code FROM employees WHERE user_id = ? LIMIT 1`,
-        [userId],
-      );
-      employeeCode = (empRows as EmployeeRow[])[0]?.employee_code ?? undefined;
-      if (!employeeCode) {
-        return res.json({
-          success: true,
-          data: { configured: true, rows: [], reason: "no_employee_code" },
-        });
-      }
+    employeeCode = (empRows as EmployeeRow[])[0]?.employee_code ?? undefined;
+    if (!employeeCode) {
+      return res.json({ success: true, data: { configured: true, rows: [], reason: 'no_employee_code' } });
     }
+  }
 
-    const result = await getAprData({ date, employeeCode, isManager });
+  const result = await getAprData({ date, employeeCode, isManager });
 
-    if (!result.configured) {
-      return res.json({ success: true, data: { configured: false, rows: [] } });
-    }
+  if (!result.configured) {
+    return res.json({ success: true, data: { configured: false, rows: [] } });
+  }
 
   // Branch scoping (owner ruling 2026-10-01): the role gate above says who may open the page, not whose
   // agents they see. Org-wide roles keep every row; hr / manager / TL etc. see only agents whose

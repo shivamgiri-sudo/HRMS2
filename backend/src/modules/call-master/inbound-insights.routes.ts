@@ -9,10 +9,8 @@ import { inboundProjectAllowed, resolveProcessScope, tpzGrantCoversInboundKey } 
 import { isProcessReadable } from "../process-dashboard/pd.config.service.js";
 
 const router = Router();
-const h =
-  (fn: (req: Request, res: Response) => Promise<unknown>) =>
-  (req: Request, res: Response, next: (e?: unknown) => void) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
+  (req: Request, res: Response, next: (e?: unknown) => void) => fn(req, res).catch(next);
 
 // Same audience as the existing /api/inbound module.
 router.use(
@@ -57,15 +55,9 @@ function baseFilters(req: Request) {
 function fail(res: Response, route: string, err: unknown) {
   const message = err instanceof Error ? err.message : String(err);
   // Validation problems are the caller's; anything else is the dialler being unreachable or a bad query.
-  const isInput =
-    /must be YYYY-MM-DD|Invalid date|before startDate|limited to|Unknown campaign|not available for project/.test(
-      message,
-    );
+  const isInput = /must be YYYY-MM-DD|Invalid date|before startDate|limited to|Unknown campaign|not available for project/.test(message);
   if (isInput) return res.status(400).json({ success: false, error: message });
-  logger.error(
-    { route, err },
-    `[InboundInsights] ${route} failed — responding _unavailable`,
-  );
+  logger.error({ route, err }, `[InboundInsights] ${route} failed — responding _unavailable`);
   return res.json({ success: true, _unavailable: true, data: null });
 }
 

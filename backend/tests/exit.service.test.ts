@@ -85,11 +85,7 @@ describe("exitService.listExitRequests", () => {
   it("filters by employeeId", async () => {
     mockExecute.mockResolvedValueOnce([[fakeRequest]]);
     mockExecute.mockResolvedValueOnce([[{ total: 1 }]]);
-    await exitService.listExitRequests({
-      page: 1,
-      limit: 20,
-      employeeId: "emp-1",
-    });
+    await exitService.listExitRequests({ page: 1, limit: 20, employeeId: "emp-1" });
     const [sql, params] = mockExecute.mock.calls[0];
     expect(sql).toMatch(/employee_id = \?/i);
     expect(params).toContain("emp-1");
@@ -110,9 +106,7 @@ describe("exitService.getExitRequest", () => {
 
   it("throws when not found", async () => {
     mockExecute.mockResolvedValueOnce([[]]);
-    await expect(exitService.getExitRequest("missing")).rejects.toThrow(
-      "Exit request not found",
-    );
+    await expect(exitService.getExitRequest("missing")).rejects.toThrow("Exit request not found");
   });
 });
 
@@ -128,20 +122,14 @@ describe("exitService.createExitRequest", () => {
     // "Exit request not found".
     mockExecute.mockImplementation(async (sql: unknown) => {
       const text = String(sql);
-      if (/SELECT id\s+FROM exit_request/i.test(text)) return [[], []]; // no active request
-      if (/INSERT INTO exit_request/i.test(text))
-        return [{ affectedRows: 1 }, []];
-      if (/SELECT er\.\*/i.test(text)) return [[fakeRequest], []]; // getExitRequest
+      if (/SELECT id\s+FROM exit_request/i.test(text)) return [[], []];   // no active request
+      if (/INSERT INTO exit_request/i.test(text)) return [{ affectedRows: 1 }, []];
+      if (/SELECT er\.\*/i.test(text)) return [[fakeRequest], []];       // getExitRequest
       return [[], []];
     });
     const result = await exitService.createExitRequest(
-      {
-        employeeId: "emp-1",
-        exitDate: "2026-06-30",
-        exitType: "voluntary",
-        reason: "Better opportunity",
-      },
-      "user-1",
+      { employeeId: "emp-1", exitDate: "2026-06-30", exitType: "voluntary", reason: "Better opportunity" },
+      "user-1"
     );
     expect(result.employee_id).toBe("emp-1");
     expect(result.status).toBe("draft");
@@ -154,15 +142,13 @@ describe("exitService.createExitRequest", () => {
     mockExecute.mockImplementation(async (sql: unknown) => {
       const text = String(sql);
       if (/SELECT id\s+FROM exit_request/i.test(text)) return [[], []];
-      if (/INSERT INTO exit_request/i.test(text))
-        return [{ affectedRows: 1 }, []];
-      if (/SELECT er\.\*/i.test(text))
-        return [[{ ...fakeRequest, resignation_reason: null }], []];
+      if (/INSERT INTO exit_request/i.test(text)) return [{ affectedRows: 1 }, []];
+      if (/SELECT er\.\*/i.test(text)) return [[{ ...fakeRequest, resignation_reason: null }], []];
       return [[], []];
     });
     const result = await exitService.createExitRequest(
       { employeeId: "emp-2", exitDate: "2026-07-31", exitType: "voluntary" },
-      "user-2",
+      "user-2"
     );
     expect(result.resignation_reason).toBeNull();
     // Located by statement rather than index — the service issues other queries
@@ -170,10 +156,7 @@ describe("exitService.createExitRequest", () => {
     const insertCall = mockExecute.mock.calls.find(([sql]) =>
       /INSERT INTO exit_request/i.test(String(sql)),
     );
-    expect(
-      insertCall,
-      "expected the exit request to be inserted",
-    ).toBeDefined();
+    expect(insertCall, "expected the exit request to be inserted").toBeDefined();
     expect(insertCall![1]).toContain(null); // reason is null
   });
 });
@@ -190,15 +173,8 @@ describe("exitService.updateExitStatus", () => {
     mockExecute.mockResolvedValueOnce([[{ status: "draft" }]]); // lock + re-read
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // UPDATE (expected-state guarded)
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT log
-    mockExecute.mockResolvedValueOnce([
-      [{ ...fakeRequest, status: "submitted" }],
-    ]); // re-fetch
-    const result = await exitService.updateExitStatus(
-      "exit-1",
-      "submitted",
-      "Looks good",
-      "user-1",
-    );
+    mockExecute.mockResolvedValueOnce([[{ ...fakeRequest, status: "submitted" }]]); // re-fetch
+    const result = await exitService.updateExitStatus("exit-1", "submitted", "Looks good", "user-1");
     expect(result.status).toBe("submitted");
     // Verify log insert was called
     expect(mockExecute).toHaveBeenCalledTimes(5);
@@ -207,7 +183,7 @@ describe("exitService.updateExitStatus", () => {
   it("throws when exit request not found", async () => {
     mockExecute.mockResolvedValueOnce([[]]); // getExitRequest returns empty
     await expect(
-      exitService.updateExitStatus("missing", "submitted", "Remarks", "user-1"),
+      exitService.updateExitStatus("missing", "submitted", "Remarks", "user-1")
     ).rejects.toThrow("Exit request not found");
   });
 });
@@ -218,14 +194,12 @@ describe("exitService.getExitStats", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("returns counts by status including total", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [
-        { status: "draft", cnt: 5 },
-        { status: "submitted", cnt: 3 },
-        { status: "accepted", cnt: 2 },
-        { status: "exited", cnt: 10 },
-      ],
-    ]);
+    mockExecute.mockResolvedValueOnce([[
+      { status: "draft",     cnt: 5 },
+      { status: "submitted", cnt: 3 },
+      { status: "accepted",  cnt: 2 },
+      { status: "exited",    cnt: 10 },
+    ]]);
     const stats = await exitService.getExitStats();
     expect(stats.draft).toBe(5);
     expect(stats.submitted).toBe(3);

@@ -3,23 +3,22 @@
  * Internal Job Posting system for cross-functional transfers and promotions
  */
 
-export type IjpPostingStatus =
-  "draft" | "open" | "closed" | "filled" | "cancelled";
+export type IjpPostingStatus = 'draft' | 'open' | 'closed' | 'filled' | 'cancelled';
 
 export type IjpApplicationStatus =
-  | "submitted"
-  | "pending_manager"
-  | "manager_approved"
-  | "manager_rejected"
-  | "under_review"
-  | "shortlisted"
-  | "interview_scheduled"
-  | "selected"
-  | "rejected"
-  | "withdrawn"
-  | "offer_extended"
-  | "offer_accepted"
-  | "offer_declined";
+  | 'submitted'
+  | 'pending_manager'
+  | 'manager_approved'
+  | 'manager_rejected'
+  | 'under_review'
+  | 'shortlisted'
+  | 'interview_scheduled'
+  | 'selected'
+  | 'rejected'
+  | 'withdrawn'
+  | 'offer_extended'
+  | 'offer_accepted'
+  | 'offer_declined';
 
 export interface IjpPosting {
   id: string;

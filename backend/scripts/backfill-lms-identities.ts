@@ -40,9 +40,7 @@ async function main() {
         console.log(`[ok] ${employeeCode} -> ${result.lmsLearnerId}`);
       } else {
         skipped++;
-        console.log(
-          `[skip] ${employeeCode} -> ${result.message ?? "no change"}`,
-        );
+        console.log(`[skip] ${employeeCode} -> ${result.message ?? "no change"}`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -51,17 +49,13 @@ async function main() {
     }
   }
 
-  console.log(
-    JSON.stringify({ limit, created, skipped, errors: errors.length }, null, 2),
-  );
+  console.log(JSON.stringify({ limit, created, skipped, errors: errors.length }, null, 2));
   if (errors.length > 0) {
     process.exitCode = 1;
   }
 }
 
 main().catch((error) => {
-  console.error(
-    error instanceof Error ? error.stack || error.message : String(error),
-  );
+  console.error(error instanceof Error ? error.stack || error.message : String(error));
   process.exit(1);
 });

@@ -1,10 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * LP (Lawyer Panel) WebConsole "Agent Wise Performance" APR, daily.
@@ -32,9 +29,7 @@ export const LP_APR_DAILY_HEADERS = [
 
 /** total_calls is NOT NULL with a 0 default -- a blank cell means zero, not null. */
 export function parseCallCount(raw: unknown): number {
-  const v = String(raw ?? "")
-    .trim()
-    .replace(/,/g, "");
+  const v = String(raw ?? "").trim().replace(/,/g, "");
   if (!v) return 0;
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
@@ -79,24 +74,12 @@ export function parseDate(raw: unknown): string | null {
   // real export), which is why every one of 119 real rows failed to
   // import on the first real run.
   if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(
-      Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000,
-    );
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
     return d.toISOString().slice(0, 10);
   }
   const MONTHS: Record<string, number> = {
-    jan: 1,
-    feb: 2,
-    mar: 3,
-    apr: 4,
-    may: 5,
-    jun: 6,
-    jul: 7,
-    aug: 8,
-    sep: 9,
-    oct: 10,
-    nov: 11,
-    dec: 12,
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
   };
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (m) return m[0];
@@ -114,9 +97,7 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 export async function importLpAprDailyBatch(
   batchId: string,
@@ -200,41 +181,14 @@ export async function importLpAprDailyBatch(
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(),
-        processId,
-        agentName,
-        callDate,
-        parseCallCount(
-          data["[Total_Calls]"] ?? data["[Total Calls]"] ?? data["Total Calls"],
-        ),
-        parseDurationSeconds(
-          data["[Login_Time]"] ?? data["[Login Time]"] ?? data["Login Time"],
-        ),
-        parseDurationSeconds(
-          data["[Net_LoginTime]"] ??
-            data["[Net LoginTime]"] ??
-            data["Net LoginTime"],
-        ),
-        parseDurationSeconds(
-          data["[Total_Break_Duration]"] ??
-            data["[Total Break Duration]"] ??
-            data["Total Break Duration"],
-        ),
-        parseDurationSeconds(
-          data["[Idle_Duration]"] ??
-            data["[Idle Duration]"] ??
-            data["Idle Duration"],
-        ),
-        parseDurationSeconds(
-          data["[Talk_Duration]"] ??
-            data["[Talk Duration]"] ??
-            data["Talk Duration"],
-        ),
-        parseDurationSeconds(
-          data["[Wrapup_Duration]"] ??
-            data["[Wrapup Duration]"] ??
-            data["Wrapup Duration"],
-        ),
+        randomUUID(), processId, agentName, callDate,
+        parseCallCount(data["[Total_Calls]"] ?? data["[Total Calls]"] ?? data["Total Calls"]),
+        parseDurationSeconds(data["[Login_Time]"] ?? data["[Login Time]"] ?? data["Login Time"]),
+        parseDurationSeconds(data["[Net_LoginTime]"] ?? data["[Net LoginTime]"] ?? data["Net LoginTime"]),
+        parseDurationSeconds(data["[Total_Break_Duration]"] ?? data["[Total Break Duration]"] ?? data["Total Break Duration"]),
+        parseDurationSeconds(data["[Idle_Duration]"] ?? data["[Idle Duration]"] ?? data["Idle Duration"]),
+        parseDurationSeconds(data["[Talk_Duration]"] ?? data["[Talk Duration]"] ?? data["Talk Duration"]),
+        parseDurationSeconds(data["[Wrapup_Duration]"] ?? data["[Wrapup Duration]"] ?? data["Wrapup Duration"]),
         // source_reference is part of the unique key, so a re-upload of the
         // same agent+day from a different batch does not silently collide.
         batchId,
@@ -265,9 +219,7 @@ export async function importLpAprDailyBatch(
   const errorRows = errorUpdates.length;
 
   const failedIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
-  const importedIds = toInsert
-    .filter((r) => !failedIds.has(r.rowId))
-    .map((r) => r.rowId);
+  const importedIds = toInsert.filter((r) => !failedIds.has(r.rowId)).map((r) => r.rowId);
   for (let i = 0; i < importedIds.length; i += 1000) {
     const slice = importedIds.slice(i, i + 1000);
     await db.execute(
@@ -277,26 +229,17 @@ export async function importLpAprDailyBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

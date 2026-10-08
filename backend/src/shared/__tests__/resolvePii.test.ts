@@ -44,11 +44,7 @@ describe("resolvePii prefers ciphertext", () => {
   });
 
   it("reports 'none' rather than an empty string when neither exists", () => {
-    for (const [c, p] of [
-      [null, null],
-      [undefined, undefined],
-      ["", "   "],
-    ] as const) {
+    for (const [c, p] of [[null, null], [undefined, undefined], ["", "   "]] as const) {
       const out = resolvePii(c, p);
       expect(out.value).toBeNull();
       expect(out.source).toBe("none");
@@ -75,9 +71,7 @@ describe("an unreadable ciphertext is never silent", () => {
   });
 
   it("warns on a well-formed envelope that will not decrypt", () => {
-    const tampered = JSON.parse(
-      Buffer.from(encryptField(AADHAAR), "base64").toString("utf8"),
-    ) as Record<string, string>;
+    const tampered = JSON.parse(Buffer.from(encryptField(AADHAAR), "base64").toString("utf8")) as Record<string, string>;
     tampered.tag = "0".repeat(32);
     const corrupt = Buffer.from(JSON.stringify(tampered)).toString("base64");
 

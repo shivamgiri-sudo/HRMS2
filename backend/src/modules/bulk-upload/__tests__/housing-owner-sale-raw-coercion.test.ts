@@ -1,10 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseAmount,
-  parseNullableAmount,
-  parseCount,
-  parseDate,
-  HOUSING_OWNER_SALE_RAW_HEADERS,
+  parseAmount, parseNullableAmount, parseCount, parseDate, HOUSING_OWNER_SALE_RAW_HEADERS,
 } from "../housing-owner-sale-raw-bulk.service.js";
 
 describe("parseAmount", () => {

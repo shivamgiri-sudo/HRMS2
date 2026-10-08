@@ -3,10 +3,7 @@ import { createHash, randomBytes, randomInt, randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { sendOtpSms } from "../auth/sms.helper.js";
-import {
-  validateOnboardingToken,
-  getFullOnboardingStatus,
-} from "../ats/onboarding-full.service.js";
+import { validateOnboardingToken, getFullOnboardingStatus } from "../ats/onboarding-full.service.js";
 import { getBgvStatusByToken } from "../ats/bgv-verification.service.js";
 
 const OTP_TTL_MINUTES = 10;
@@ -20,9 +17,7 @@ type RequestMeta = {
 };
 
 function sha256(value: unknown): string {
-  return createHash("sha256")
-    .update(String(value ?? ""))
-    .digest("hex");
+  return createHash("sha256").update(String(value ?? "")).digest("hex");
 }
 
 function normalizeMobile(value: unknown): string {
@@ -43,21 +38,16 @@ function otpCode(): string {
   return String(randomInt(100000, 1000000));
 }
 
-async function onboardingIdForCandidate(
-  candidateId: string,
-): Promise<string | null> {
+async function onboardingIdForCandidate(candidateId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM ats_onboarding_bridge WHERE candidate_id = ? ORDER BY updated_at DESC LIMIT 1`,
-    [candidateId],
+    [candidateId]
   );
   return rows[0]?.id ? String(rows[0].id) : null;
 }
 
 async function resolveTokenCandidate(token: string) {
-  if (!token)
-    throw Object.assign(new Error("Onboarding token is required"), {
-      statusCode: 400,
-    });
+  if (!token) throw Object.assign(new Error("Onboarding token is required"), { statusCode: 400 });
   const tokenData = await validateOnboardingToken(token);
   const candidateId = String(tokenData.candidate_id);
   return {
@@ -68,16 +58,13 @@ async function resolveTokenCandidate(token: string) {
   };
 }
 
-async function ensureProgress(
-  candidateId: string,
-  onboardingId: string | null,
-) {
+async function ensureProgress(candidateId: string, onboardingId: string | null) {
   await db.execute(
     `INSERT INTO candidate_onboarding_progress
        (id, candidate_id, onboarding_id, current_step_key, current_step_idx, completion_percent, pending_action_count)
      VALUES (?, ?, ?, 'welcome', 0, 0, 0)
      ON DUPLICATE KEY UPDATE onboarding_id = COALESCE(VALUES(onboarding_id), onboarding_id), updated_at = NOW()`,
-    [randomUUID(), candidateId, onboardingId],
+    [randomUUID(), candidateId, onboardingId]
   );
 }
 
@@ -90,29 +77,17 @@ async function latestActiveSession(candidateId: string, tokenHash: string) {
         AND revoked_at IS NULL
         AND expires_at > NOW()
       LIMIT 1`,
-    [candidateId, tokenHash],
+    [candidateId, tokenHash]
   );
   return rows[0] ?? null;
 }
 
-export async function startCandidateOnboarding(
-  token: string,
-  input: { mobile?: string },
-) {
+export async function startCandidateOnboarding(token: string, input: { mobile?: string }) {
   const { tokenData, registeredMobile } = await resolveTokenCandidate(token);
   const requestedMobile = normalizeMobile(input.mobile);
   const mobile = requestedMobile || registeredMobile;
-  if (
-    requestedMobile &&
-    registeredMobile &&
-    requestedMobile !== registeredMobile
-  ) {
-    throw Object.assign(
-      new Error(
-        "Mobile number change requires HR approval before onboarding can continue.",
-      ),
-      { statusCode: 409 },
-    );
+  if (requestedMobile && registeredMobile && requestedMobile !== registeredMobile) {
+    throw Object.assign(new Error("Mobile number change requires HR approval before onboarding can continue."), { statusCode: 409 });
   }
 
   return {
@@ -126,32 +101,15 @@ export async function startCandidateOnboarding(
   };
 }
 
-export async function sendCandidateOnboardingOtp(
-  token: string,
-  input: { mobile?: string },
-  meta: RequestMeta,
-) {
-  const { candidateId, onboardingId, registeredMobile } =
-    await resolveTokenCandidate(token);
+export async function sendCandidateOnboardingOtp(token: string, input: { mobile?: string }, meta: RequestMeta) {
+  const { candidateId, onboardingId, registeredMobile } = await resolveTokenCandidate(token);
   const requestedMobile = normalizeMobile(input.mobile);
   const mobile = requestedMobile || registeredMobile;
   if (!/^\d{10}$/.test(mobile)) {
-    throw Object.assign(
-      new Error("A valid 10-digit mobile number is required"),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error("A valid 10-digit mobile number is required"), { statusCode: 400 });
   }
-  if (
-    requestedMobile &&
-    registeredMobile &&
-    requestedMobile !== registeredMobile
-  ) {
-    throw Object.assign(
-      new Error(
-        "Mobile number change requires HR approval before onboarding can continue.",
-      ),
-      { statusCode: 409 },
-    );
+  if (requestedMobile && registeredMobile && requestedMobile !== registeredMobile) {
+    throw Object.assign(new Error("Mobile number change requires HR approval before onboarding can continue."), { statusCode: 409 });
   }
 
   const mobileHash = sha256(mobile);
@@ -161,13 +119,10 @@ export async function sendCandidateOnboardingOtp(
       WHERE mobile_hash = ?
         AND purpose = 'onboarding_login'
         AND created_at > DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
-    [mobileHash, OTP_RESEND_WINDOW_MINUTES],
+    [mobileHash, OTP_RESEND_WINDOW_MINUTES]
   );
   if (Number(recentRows[0]?.cnt ?? 0) >= OTP_RESEND_LIMIT) {
-    throw Object.assign(
-      new Error("Too many OTP requests. Please try again later."),
-      { statusCode: 429 },
-    );
+    throw Object.assign(new Error("Too many OTP requests. Please try again later."), { statusCode: 429 });
   }
 
   const code = otpCode();
@@ -176,12 +131,7 @@ export async function sendCandidateOnboardingOtp(
   // HRMS, they're verifying their mobile for onboarding, and the registry has a dedicated
   // template that says so; OTP_TTL_MINUTES so the SMS text can't drift from the row's real
   // expiry (DATE_ADD(NOW(), INTERVAL OTP_TTL_MINUTES MINUTE) below).
-  const deliverySent = await sendOtpSms(
-    mobile,
-    code,
-    "candidate_mobile_otp",
-    OTP_TTL_MINUTES,
-  );
+  const deliverySent = await sendOtpSms(mobile, code, 'candidate_mobile_otp', OTP_TTL_MINUTES);
   await db.execute(
     `INSERT INTO candidate_otp_logs
        (id, candidate_id, onboarding_id, mobile_hash, mobile_last4, otp_hash, purpose,
@@ -198,7 +148,7 @@ export async function sendCandidateOnboardingOtp(
       OTP_TTL_MINUTES,
       meta.ip ?? null,
       meta.userAgent ?? null,
-    ],
+    ]
   );
 
   return {
@@ -212,16 +162,13 @@ export async function sendCandidateOnboardingOtp(
 export async function verifyCandidateOnboardingOtp(
   token: string,
   input: { mobile?: string; otp?: string; deviceId?: string },
-  meta: RequestMeta,
+  meta: RequestMeta
 ) {
-  const { candidateId, onboardingId, registeredMobile } =
-    await resolveTokenCandidate(token);
+  const { candidateId, onboardingId, registeredMobile } = await resolveTokenCandidate(token);
   const mobile = normalizeMobile(input.mobile) || registeredMobile;
   const otp = String(input.otp ?? "").trim();
   if (!/^\d{6}$/.test(otp)) {
-    throw Object.assign(new Error("Enter the 6-digit OTP"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error("Enter the 6-digit OTP"), { statusCode: 400 });
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -234,34 +181,19 @@ export async function verifyCandidateOnboardingOtp(
         AND expires_at > NOW()
       ORDER BY created_at DESC
       LIMIT 1`,
-    [candidateId, sha256(mobile)],
+    [candidateId, sha256(mobile)]
   );
   const challenge = rows[0];
-  if (!challenge)
-    throw Object.assign(new Error("Invalid or expired OTP"), {
-      statusCode: 401,
-    });
+  if (!challenge) throw Object.assign(new Error("Invalid or expired OTP"), { statusCode: 401 });
   if (Number(challenge.attempts) >= Number(challenge.max_attempts)) {
-    throw Object.assign(
-      new Error("Maximum OTP attempts exceeded. Request a new OTP."),
-      { statusCode: 429 },
-    );
+    throw Object.assign(new Error("Maximum OTP attempts exceeded. Request a new OTP."), { statusCode: 429 });
   }
 
   const valid = await bcrypt.compare(otp, String(challenge.otp_hash));
-  await db.execute(
-    `UPDATE candidate_otp_logs SET attempts = attempts + 1, updated_at = NOW() WHERE id = ?`,
-    [challenge.id],
-  );
-  if (!valid)
-    throw Object.assign(new Error("Invalid or expired OTP"), {
-      statusCode: 401,
-    });
+  await db.execute(`UPDATE candidate_otp_logs SET attempts = attempts + 1, updated_at = NOW() WHERE id = ?`, [challenge.id]);
+  if (!valid) throw Object.assign(new Error("Invalid or expired OTP"), { statusCode: 401 });
 
-  await db.execute(
-    `UPDATE candidate_otp_logs SET verified_at = NOW(), updated_at = NOW() WHERE id = ?`,
-    [challenge.id],
-  );
+  await db.execute(`UPDATE candidate_otp_logs SET verified_at = NOW(), updated_at = NOW() WHERE id = ?`, [challenge.id]);
 
   const rawToken = sessionToken();
   const tokenHash = sha256(rawToken);
@@ -280,14 +212,14 @@ export async function verifyCandidateOnboardingOtp(
       meta.ip ?? null,
       meta.userAgent ?? null,
       SESSION_TTL_HOURS,
-    ],
+    ]
   );
   await ensureProgress(candidateId, onboardingId);
   await db.execute(
     `INSERT INTO candidate_onboarding_readiness (id, candidate_id, onboarding_id, otp_verified, readiness_status)
      VALUES (?, ?, ?, 1, 'candidate_action_pending')
      ON DUPLICATE KEY UPDATE otp_verified = 1, readiness_status = IF(readiness_status = 'not_ready', 'candidate_action_pending', readiness_status), updated_at = NOW()`,
-    [randomUUID(), candidateId, onboardingId],
+    [randomUUID(), candidateId, onboardingId]
   );
 
   return {
@@ -297,17 +229,9 @@ export async function verifyCandidateOnboardingOtp(
   };
 }
 
-export async function validateCandidateSession(
-  rawSessionToken: string | undefined,
-  candidateId?: string,
-) {
-  const token = String(rawSessionToken ?? "")
-    .replace(/^Bearer\s+/i, "")
-    .trim();
-  if (!token)
-    throw Object.assign(new Error("Candidate onboarding session required"), {
-      statusCode: 401,
-    });
+export async function validateCandidateSession(rawSessionToken: string | undefined, candidateId?: string) {
+  const token = String(rawSessionToken ?? "").replace(/^Bearer\s+/i, "").trim();
+  if (!token) throw Object.assign(new Error("Candidate onboarding session required"), { statusCode: 401 });
   const tokenHash = sha256(token);
   const params: unknown[] = [tokenHash];
   let sql = `SELECT * FROM candidate_onboarding_sessions WHERE session_token_hash = ? AND revoked_at IS NULL AND expires_at > NOW()`;
@@ -318,25 +242,16 @@ export async function validateCandidateSession(
   sql += ` LIMIT 1`;
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   const session = rows[0];
-  if (!session)
-    throw Object.assign(
-      new Error(
-        "Candidate onboarding session expired. Please verify OTP again.",
-      ),
-      { statusCode: 401 },
-    );
+  if (!session) throw Object.assign(new Error("Candidate onboarding session expired. Please verify OTP again."), { statusCode: 401 });
   return session;
 }
 
-export async function resumeCandidateOnboarding(
-  token: string,
-  rawSessionToken: string | undefined,
-) {
+export async function resumeCandidateOnboarding(token: string, rawSessionToken: string | undefined) {
   const { candidateId } = await resolveTokenCandidate(token);
   await validateCandidateSession(rawSessionToken, candidateId);
   const [progressRows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM candidate_onboarding_progress WHERE candidate_id = ? LIMIT 1`,
-    [candidateId],
+    [candidateId]
   );
   const [docMaster] = await db.execute<RowDataPacket[]>(
     `SELECT document_type, document_name, display_name, mandatory_flag, conditional_flag,
@@ -345,11 +260,11 @@ export async function resumeCandidateOnboarding(
             requires_manual_fallback, dpdp_purpose_code, sort_order
        FROM onboarding_document_master
       WHERE candidate_visible = 1 AND active_flag = 1
-      ORDER BY sort_order ASC`,
+      ORDER BY sort_order ASC`
   );
   const [readinessRows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM candidate_onboarding_readiness WHERE candidate_id = ? LIMIT 1`,
-    [candidateId],
+    [candidateId]
   );
   return {
     progress: progressRows[0] ?? null,
@@ -360,29 +275,23 @@ export async function resumeCandidateOnboarding(
   };
 }
 
-export async function refreshCandidateOnboardingSession(
-  rawSessionToken: string | undefined,
-) {
+export async function refreshCandidateOnboardingSession(rawSessionToken: string | undefined) {
   const session = await validateCandidateSession(rawSessionToken);
   await db.execute(
     `UPDATE candidate_onboarding_sessions
         SET expires_at = DATE_ADD(NOW(), INTERVAL ? HOUR), updated_at = NOW()
       WHERE id = ?`,
-    [SESSION_TTL_HOURS, session.id],
+    [SESSION_TTL_HOURS, session.id]
   );
   return { expiresInSeconds: SESSION_TTL_HOURS * 60 * 60 };
 }
 
-export async function logoutCandidateOnboarding(
-  rawSessionToken: string | undefined,
-) {
-  const token = String(rawSessionToken ?? "")
-    .replace(/^Bearer\s+/i, "")
-    .trim();
+export async function logoutCandidateOnboarding(rawSessionToken: string | undefined) {
+  const token = String(rawSessionToken ?? "").replace(/^Bearer\s+/i, "").trim();
   if (!token) return { loggedOut: true };
   await db.execute(
     `UPDATE candidate_onboarding_sessions SET revoked_at = NOW(), updated_at = NOW() WHERE session_token_hash = ?`,
-    [sha256(token)],
+    [sha256(token)]
   );
   return { loggedOut: true };
 }

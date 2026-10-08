@@ -1,10 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Clovia's own "Team Allignment" sheet -- found while auditing every sheet
@@ -15,14 +12,7 @@ import {
  */
 
 export const CLOVIA_TEAM_ALIGNMENT_HEADERS = [
-  "EMP",
-  "Email_ID",
-  "Agent_Name",
-  "Team_Leader",
-  "LOB",
-  "PTO",
-  "DOJ",
-  "Status",
+  "EMP", "Email_ID", "Agent_Name", "Team_Leader", "LOB", "PTO", "DOJ", "Status",
 ] as const;
 
 export function parseDate(raw: unknown): string | null {
@@ -33,9 +23,7 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(
-      Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000,
-    );
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
     return d.toISOString().slice(0, 10);
   }
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
@@ -48,9 +36,7 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 export async function importCloviaTeamAlignmentBatch(
   batchId: string,
@@ -101,26 +87,20 @@ export async function importCloviaTeamAlignmentBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Clovia" process found to attach this row to`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const empCode = String(data["EMP"] ?? "").trim();
     if (!empCode) {
       const msg = `Row ${row.row_no}: "EMP" is required — it is the row's identity`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(),
-        processId,
-        empCode,
+        randomUUID(), processId, empCode,
         String(data["Email_ID"] ?? "").trim() || null,
         String(data["Agent_Name"] ?? "").trim() || null,
         String(data["Team_Leader"] ?? "").trim() || null,
@@ -128,7 +108,7 @@ export async function importCloviaTeamAlignmentBatch(
         String(data["PTO"] ?? "").trim() || null,
         parseDate(data["DOJ"]),
         String(data["Status"] ?? "").trim() || null,
-        "bulk_upload",
+        'bulk_upload',
         batchId,
         importedByUserId,
       ],
@@ -156,26 +136,17 @@ export async function importCloviaTeamAlignmentBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

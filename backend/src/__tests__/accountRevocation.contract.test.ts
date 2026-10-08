@@ -26,18 +26,12 @@ const SECRET = process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
 const mockExecute = db.execute as unknown as ReturnType<typeof vi.fn>;
 
 /** Answer db.execute by SQL shape, so the test does not depend on call order. */
-function stubDb(opts: {
-  isBlocked?: number;
-  employeeActive?: number | null;
-  authUserExists?: boolean;
-}) {
+function stubDb(opts: { isBlocked?: number; employeeActive?: number | null; authUserExists?: boolean }) {
   const { isBlocked = 0, employeeActive = 1, authUserExists = true } = opts;
   mockExecute.mockImplementation((sql: string) => {
     if (typeof sql === "string" && sql.includes("employee_active")) {
       return Promise.resolve([
-        authUserExists
-          ? [{ is_blocked: isBlocked, employee_active: employeeActive }]
-          : [],
+        authUserExists ? [{ is_blocked: isBlocked, employee_active: employeeActive }] : [],
         [],
       ]);
     }
@@ -46,16 +40,12 @@ function stubDb(opts: {
 }
 
 function tokenFor(userId: string) {
-  return jwt.sign({ sub: userId, email: `${userId}@teammas.in` }, SECRET, {
-    expiresIn: "24h",
-  });
+  return jwt.sign({ sub: userId, email: `${userId}@teammas.in` }, SECRET, { expiresIn: "24h" });
 }
 
 function appWithRequireAuth() {
   const app = express();
-  app.get("/probe", requireAuth as never, (_req, res) =>
-    res.json({ success: true, reached: true }),
-  );
+  app.get("/probe", requireAuth as never, (_req, res) => res.json({ success: true, reached: true }));
   return app;
 }
 
@@ -83,9 +73,7 @@ describe("Account revocation is enforced on every authenticated request", () => 
 
     it("allows an account with no employees row — admin and service logins are not employees", async () => {
       stubDb({ employeeActive: null });
-      await expect(isAccountRevoked("user-no-employee-row")).resolves.toBe(
-        false,
-      );
+      await expect(isAccountRevoked("user-no-employee-row")).resolves.toBe(false);
     });
 
     it("fails OPEN when the database is unreachable, so an outage cannot sign out the company", async () => {
@@ -133,8 +121,7 @@ describe("Account revocation is enforced on every authenticated request", () => 
  * sites in this repository have been removed by unrelated commits before.
  */
 describe("Deactivation paths revoke live sessions", () => {
-  const read = (p: string) =>
-    fs.readFileSync(path.resolve(__dirname, p), "utf8");
+  const read = (p: string) => fs.readFileSync(path.resolve(__dirname, p), "utf8");
 
   it("employee.service.deactivateEmployee revokes sessions after clearing active_status", () => {
     const code = read("../modules/employees/employee.service.ts");
@@ -148,12 +135,8 @@ describe("Deactivation paths revoke live sessions", () => {
 
   it("exit.service revokes sessions when an exit reaches 'exited'", () => {
     const code = read("../modules/exit/exit.service.ts");
-    const exitedBlock = code.slice(
-      code.indexOf('if (nextStatus === "exited")'),
-    );
-    expect(exitedBlock).toMatch(
-      /^\s*(const\s+\w+\s*=\s*)?await\s+revokeSessionsForEmployee\(/m,
-    );
+    const exitedBlock = code.slice(code.indexOf('if (nextStatus === "exited")'));
+    expect(exitedBlock).toMatch(/^\s*(const\s+\w+\s*=\s*)?await\s+revokeSessionsForEmployee\(/m);
   });
 
   it("requireAuth consults the account status check", () => {

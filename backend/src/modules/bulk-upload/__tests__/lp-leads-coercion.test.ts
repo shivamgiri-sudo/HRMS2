@@ -1,9 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseNullableAmount,
-  parseNullableInt,
-  parseDate,
-  LP_LEADS_HEADERS,
+  parseNullableAmount, parseNullableInt, parseDate, LP_LEADS_HEADERS,
 } from "../lp-leads-bulk.service.js";
 
 describe("parseNullableAmount", () => {

@@ -43,15 +43,9 @@ describe("/me/promotions and /me/transfers exist", () => {
   });
 
   it("they reuse mobilityService rather than re-querying the tables", () => {
-    expect(employeeRoutes).toContain(
-      'import { mobilityService } from "../mobility/mobility.service.js"',
-    );
-    expect(employeeRoutes).toContain(
-      "mobilityService.listPromotions({ employee_id })",
-    );
-    expect(employeeRoutes).toContain(
-      "mobilityService.listTransfers({ employee_id })",
-    );
+    expect(employeeRoutes).toContain('import { mobilityService } from "../mobility/mobility.service.js"');
+    expect(employeeRoutes).toContain("mobilityService.listPromotions({ employee_id })");
+    expect(employeeRoutes).toContain("mobilityService.listTransfers({ employee_id })");
   });
 });
 
@@ -69,11 +63,7 @@ describe("they are scoped to the caller, for every role", () => {
   });
 
   it("always pass an employee_id filter", () => {
-    const calls = [
-      ...meBlock.matchAll(
-        /mobilityService\.list(Promotions|Transfers)\(([^)]*)\)/g,
-      ),
-    ];
+    const calls = [...meBlock.matchAll(/mobilityService\.list(Promotions|Transfers)\(([^)]*)\)/g)];
     expect(calls).toHaveLength(2);
     for (const [, , args] of calls) expect(args).toContain("employee_id");
   });

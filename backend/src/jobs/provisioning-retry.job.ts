@@ -7,25 +7,17 @@
  * Schedule: Every hour
  */
 
-import { RowDataPacket } from "mysql2";
-import { db } from "../db/mysql.js";
-import {
-  dispatchJoinProvisioningTasks,
-  reresolveUnassignedRequests,
-} from "../modules/it-provisioning/it-provisioning.service.js";
-import { nonReactivatableSqlList } from "../modules/exit/exitEmploymentStatus.js";
+import { RowDataPacket } from 'mysql2';
+import { db } from '../db/mysql.js';
+import { dispatchJoinProvisioningTasks, reresolveUnassignedRequests } from '../modules/it-provisioning/it-provisioning.service.js';
+import { nonReactivatableSqlList } from '../modules/exit/exitEmploymentStatus.js';
 
 export interface RetryReport {
   attempted: number;
   succeeded: number;
   failed: Array<{ employeeId: string; employeeCode: string; error: string }>;
   /** Requests recovered from pending_unassigned by the second pass. */
-  reresolved: {
-    scanned: number;
-    assigned: number;
-    stillUnassigned: number;
-    remaining: number;
-  };
+  reresolved: { scanned: number; assigned: number; stillUnassigned: number; remaining: number };
   runAt: string;
 }
 
@@ -76,7 +68,7 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
            AND pr.task_code = 'IT_EMAIL_DOMAIN_ASSET'
        )
      LIMIT 50`,
-    [],
+    []
   );
 
   for (const emp of employees as any[]) {
@@ -87,7 +79,7 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
         employeeCode: emp.employee_code,
         employeeName: emp.first_name,
         branchId: emp.branch_id,
-        actorUserId: "system_retry",
+        actorUserId: 'system_retry',
         triggerEventId: emp.bridge_id ?? null,
         joiningDate: emp.date_of_joining,
       });
@@ -95,15 +87,8 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
       console.log(`[ProvisioningRetry] Dispatched for ${emp.employee_code}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      report.failed.push({
-        employeeId: emp.id,
-        employeeCode: emp.employee_code,
-        error: msg,
-      });
-      console.error(
-        `[ProvisioningRetry] Failed for ${emp.employee_code}:`,
-        msg,
-      );
+      report.failed.push({ employeeId: emp.id, employeeCode: emp.employee_code, error: msg });
+      console.error(`[ProvisioningRetry] Failed for ${emp.employee_code}:`, msg);
     }
   }
 
@@ -126,10 +111,7 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
       );
     }
   } catch (err) {
-    console.error(
-      "[ProvisioningRetry] Re-resolution pass failed:",
-      err instanceof Error ? err.message : String(err),
-    );
+    console.error('[ProvisioningRetry] Re-resolution pass failed:', err instanceof Error ? err.message : String(err));
   }
 
   return report;

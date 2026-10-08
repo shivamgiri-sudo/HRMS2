@@ -37,22 +37,13 @@ export type CustomResendRequest = { recipients: string[]; reason: string };
 /** Lowercased/trimmed address, or a ResendInputError naming the bad value's position. */
 export function normaliseRecipient(raw: unknown, index: number): string {
   const label = `Email address ${index + 1}`;
-  if (typeof raw !== "string")
-    throw new ResendInputError(`${label} must be text.`);
-  if (CONTROL_CHARS.test(raw))
-    throw new ResendInputError(`${label} contains invalid characters.`);
+  if (typeof raw !== "string") throw new ResendInputError(`${label} must be text.`);
+  if (CONTROL_CHARS.test(raw)) throw new ResendInputError(`${label} contains invalid characters.`);
   const email = raw.trim().toLowerCase();
   if (!email) throw new ResendInputError(`${label} is empty.`);
-  if (email.length > MAX_EMAIL_LENGTH)
-    throw new ResendInputError(
-      `${label} is longer than ${MAX_EMAIL_LENGTH} characters.`,
-    );
+  if (email.length > MAX_EMAIL_LENGTH) throw new ResendInputError(`${label} is longer than ${MAX_EMAIL_LENGTH} characters.`);
   const local = email.split("@")[0] ?? "";
-  if (
-    !isPlausibleEmail(email) ||
-    !EMAIL_SHAPE.test(email) ||
-    local.length > MAX_LOCAL_PART
-  ) {
+  if (!isPlausibleEmail(email) || !EMAIL_SHAPE.test(email) || local.length > MAX_LOCAL_PART) {
     throw new ResendInputError(`"${email}" is not a valid email address.`);
   }
   return email;
@@ -66,38 +57,28 @@ export function normaliseRecipient(raw: unknown, index: number): string {
  * the custom path and is validated in full.
  */
 export function parseResendRequest(body: unknown): CustomResendRequest | null {
-  if (body === null || typeof body !== "object" || Array.isArray(body))
-    return null;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return null;
   const b = body as Record<string, unknown>;
   if (b.recipients === undefined || b.recipients === null) return null;
 
-  if (!Array.isArray(b.recipients))
-    throw new ResendInputError("recipients must be a list of email addresses.");
-  if (b.recipients.length < 1)
-    throw new ResendInputError("Provide at least one email address.");
+  if (!Array.isArray(b.recipients)) throw new ResendInputError("recipients must be a list of email addresses.");
+  if (b.recipients.length < 1) throw new ResendInputError("Provide at least one email address.");
   if (b.recipients.length > MAX_CUSTOM_RECIPIENTS) {
-    throw new ResendInputError(
-      `You can send to at most ${MAX_CUSTOM_RECIPIENTS} email addresses at a time.`,
-    );
+    throw new ResendInputError(`You can send to at most ${MAX_CUSTOM_RECIPIENTS} email addresses at a time.`);
   }
   const recipients = b.recipients.map((r, i) => normaliseRecipient(r, i));
   const seen = new Set<string>();
   for (const r of recipients) {
-    if (seen.has(r))
-      throw new ResendInputError(`"${r}" is listed more than once.`);
+    if (seen.has(r)) throw new ResendInputError(`"${r}" is listed more than once.`);
     seen.add(r);
   }
 
   const reason = typeof b.reason === "string" ? b.reason.trim() : "";
   if (reason.length < MIN_REASON_LENGTH) {
-    throw new ResendInputError(
-      `A reason of at least ${MIN_REASON_LENGTH} characters is required when sending to a different email address.`,
-    );
+    throw new ResendInputError(`A reason of at least ${MIN_REASON_LENGTH} characters is required when sending to a different email address.`);
   }
   if (reason.length > MAX_REASON_LENGTH) {
-    throw new ResendInputError(
-      `The reason must be ${MAX_REASON_LENGTH} characters or fewer.`,
-    );
+    throw new ResendInputError(`The reason must be ${MAX_REASON_LENGTH} characters or fewer.`);
   }
   return { recipients, reason };
 }

@@ -1,13 +1,6 @@
 import {
-  getLpCallDashboard,
-  getLpCallDetail,
-  currentMonthRange,
-  type LpDetailKind,
-  type LpCallDashboardData,
-  type LpCallHeadline,
-  type LpCallServiceRow,
-  type LpCallWeekRow,
-  type LpCallAgentRow,
+  getLpCallDashboard, getLpCallDetail, currentMonthRange, type LpDetailKind,
+  type LpCallDashboardData, type LpCallHeadline, type LpCallServiceRow, type LpCallWeekRow, type LpCallAgentRow,
 } from "./lp-call-dashboard.shared.js";
 
 /**
@@ -22,27 +15,13 @@ import {
  * why there's no TL-wise view.
  */
 
-export type {
-  LpCallDashboardData as LpFeedbackDashboardData,
-  LpCallHeadline as LpFeedbackHeadline,
-  LpCallServiceRow as LpFeedbackServiceRow,
-  LpCallWeekRow as LpFeedbackWeekRow,
-  LpCallAgentRow as LpFeedbackAgentRow,
-};
+export type { LpCallDashboardData as LpFeedbackDashboardData, LpCallHeadline as LpFeedbackHeadline, LpCallServiceRow as LpFeedbackServiceRow, LpCallWeekRow as LpFeedbackWeekRow, LpCallAgentRow as LpFeedbackAgentRow };
 export { currentMonthRange };
 
-export async function getLpFeedbackDashboard(
-  fromInput: string,
-  toInput: string,
-): Promise<LpCallDashboardData> {
+export async function getLpFeedbackDashboard(fromInput: string, toInput: string): Promise<LpCallDashboardData> {
   return getLpCallDashboard("lp_feedback", fromInput, toInput);
 }
 
-export async function getLpFeedbackDetail(
-  kind: LpDetailKind,
-  key: string,
-  fromInput: string,
-  toInput: string,
-) {
+export async function getLpFeedbackDetail(kind: LpDetailKind, key: string, fromInput: string, toInput: string) {
   return getLpCallDetail("lp_feedback", kind, key, fromInput, toInput);
 }

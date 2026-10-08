@@ -19,15 +19,10 @@ import { getDigilockerFacePhotoBuffer } from "../ats/digilocker-face-photo.js";
 
 export const employeeBgvRouter = Router();
 
-type AsyncHandler = (
-  req: AuthenticatedRequest,
-  res: Response,
-) => Promise<unknown>;
-const h =
-  (fn: AsyncHandler) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    void fn(req, res).catch(next);
-  };
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 
 // All routes require authentication
 employeeBgvRouter.use(requireAuth);
@@ -61,7 +56,7 @@ employeeBgvRouter.get(
         message: err.message ?? "Failed to fetch BGV status",
       });
     }
-  }),
+  })
 );
 
 /**
@@ -76,28 +71,21 @@ employeeBgvRouter.get(
     const userId = req.authUser!.id;
     const employeeId = await getEmployeeIdForUser(userId);
     if (!employeeId) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message: "No employee record found for your account",
-        });
+      return res.status(404).json({ success: false, message: "No employee record found for your account" });
     }
 
     const candidateId = await resolveCandidateIdForEmployee(employeeId);
-    if (!candidateId)
-      return res.status(404).json({ error: "No DigiLocker photo on file" });
+    if (!candidateId) return res.status(404).json({ error: "No DigiLocker photo on file" });
 
     const buffer = await getDigilockerFacePhotoBuffer(candidateId);
-    if (!buffer)
-      return res.status(404).json({ error: "No DigiLocker photo on file" });
+    if (!buffer) return res.status(404).json({ error: "No DigiLocker photo on file" });
 
     res.setHeader("Content-Type", "image/jpeg");
     res.setHeader("Content-Disposition", "inline");
     res.setHeader("Cache-Control", "private, max-age=300");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.send(buffer);
-  }),
+  })
 );
 
 /**
@@ -110,8 +98,7 @@ employeeBgvRouter.get(
     const { employeeId } = req.params;
     const actorUserId = req.authUser!.id;
     // userRoles comes from requireRole middleware, or fall back to single role
-    const actorRoles =
-      req.userRoles ?? (req.authUser!.role ? [req.authUser!.role] : []);
+    const actorRoles = req.userRoles ?? (req.authUser!.role ? [req.authUser!.role] : []);
 
     if (!employeeId) {
       return res.status(400).json({
@@ -121,16 +108,11 @@ employeeBgvRouter.get(
     }
 
     // Check access permission
-    const canView = await canViewEmployeeBgv(
-      actorUserId,
-      employeeId,
-      actorRoles,
-    );
+    const canView = await canViewEmployeeBgv(actorUserId, employeeId, actorRoles);
     if (!canView) {
       return res.status(403).json({
         success: false,
-        message:
-          "You do not have permission to view this employee's BGV status",
+        message: "You do not have permission to view this employee's BGV status",
       });
     }
 
@@ -145,7 +127,7 @@ employeeBgvRouter.get(
         message: err.message ?? "Failed to fetch BGV status",
       });
     }
-  }),
+  })
 );
 
 /**
@@ -158,40 +140,30 @@ employeeBgvRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { employeeId } = req.params;
     const actorUserId = req.authUser!.id;
-    const actorRoles =
-      req.userRoles ?? (req.authUser!.role ? [req.authUser!.role] : []);
+    const actorRoles = req.userRoles ?? (req.authUser!.role ? [req.authUser!.role] : []);
 
     if (!employeeId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "employeeId is required" });
+      return res.status(400).json({ success: false, message: "employeeId is required" });
     }
 
-    const canView = await canViewEmployeeBgv(
-      actorUserId,
-      employeeId,
-      actorRoles,
-    );
+    const canView = await canViewEmployeeBgv(actorUserId, employeeId, actorRoles);
     if (!canView) {
       return res.status(403).json({
         success: false,
-        message:
-          "You do not have permission to view this employee's BGV status",
+        message: "You do not have permission to view this employee's BGV status",
       });
     }
 
     const candidateId = await resolveCandidateIdForEmployee(employeeId);
-    if (!candidateId)
-      return res.status(404).json({ error: "No DigiLocker photo on file" });
+    if (!candidateId) return res.status(404).json({ error: "No DigiLocker photo on file" });
 
     const buffer = await getDigilockerFacePhotoBuffer(candidateId);
-    if (!buffer)
-      return res.status(404).json({ error: "No DigiLocker photo on file" });
+    if (!buffer) return res.status(404).json({ error: "No DigiLocker photo on file" });
 
     res.setHeader("Content-Type", "image/jpeg");
     res.setHeader("Content-Disposition", "inline");
     res.setHeader("Cache-Control", "private, max-age=300");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.send(buffer);
-  }),
+  })
 );

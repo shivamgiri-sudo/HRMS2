@@ -9,12 +9,7 @@ import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import { employeeListScope } from "../dashboards/branch-scope-guards.js";
 import type { RowDataPacket } from "mysql2";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import {
-  getQualityHeatmap,
-  predictAgentRisk,
-  generateInsights,
-  calculateQualityROI,
-} from "./quality-insights.service.js";
+import { getQualityHeatmap, predictAgentRisk, generateInsights, calculateQualityROI } from "./quality-insights.service.js";
 import { logSourceFailure } from "../../shared/apiResponse.js";
 import {
   getTopObjectionPatterns,
@@ -34,30 +29,19 @@ const router = Router();
 router.use(requireAuth);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 // Quality Analytics (Dashboard)
-router.get(
-  "/analytics",
-  requireRole("super_admin", "admin", "quality", "operations", "ceo", "coo"),
-  h(async (req, res) => {
-    const summary = await getQualityAnalyticsSummary();
-    res.json({ success: true, data: summary });
-  }),
-);
+router.get("/analytics", requireRole("super_admin", "admin", "quality", "operations", "ceo", "coo"), h(async (req, res) => {
+  const summary = await getQualityAnalyticsSummary();
+  res.json({ success: true, data: summary });
+}));
 
 // Derived from the registry. `hr` stays as a literal (HR reads quality outside the
 // Quality dashboard); the rest come from QUALITY_DASHBOARD itself, which admits
 // quality_lead, qa_manager, operations_manager, tq_head and coo — none of which the
 // hand-written list carried, so the T&Q head was locked out of the quality figures.
-const ALLOWED_ROLES = [
-  "admin",
-  "hr",
-  ...dashboardConsumerRoles("QUALITY_DASHBOARD"),
-] as const;
+const ALLOWED_ROLES = ["admin", "hr", ...dashboardConsumerRoles("QUALITY_DASHBOARD")] as const;
 
 /**
  * TNI (Training Needs Identification) specifically -- a trainer is exactly who
@@ -81,8 +65,8 @@ const TNI_ROLES = [...ALLOWED_ROLES, "trainer"] as const;
  */
 async function resolveScope(req: AuthenticatedRequest): Promise<{
   global: boolean;
-  campaignIds: string[] | null; // filter Shivamgiri.apr by campaign_id
-  agentCodes: string[] | null; // filter db_audit by User / Shivamgiri by UserID (branch scope)
+  campaignIds: string[] | null;         // filter Shivamgiri.apr by campaign_id
+  agentCodes: string[] | null;          // filter db_audit by User / Shivamgiri by UserID (branch scope)
   resolvedAuditCodes?: string[] | null; // filter db_audit for process managers (resolved from process_id)
 }> {
   const userId = req.authUser!.id;
@@ -99,39 +83,21 @@ async function resolveScope(req: AuthenticatedRequest): Promise<{
        FROM user_assignment_scope uas
        JOIN process_master pm ON pm.id = uas.process_id
        WHERE uas.user_id = ? AND uas.active_status = 1 AND uas.process_id IS NOT NULL`,
-      [userId],
+      [userId]
     );
-    const processIds = (scopeRows as any[])
-      .map((r) => r.process_id as string)
-      .filter(Boolean);
-    const names = (scopeRows as any[])
-      .map((r) => r.process_name as string)
-      .filter(Boolean);
-    if (!names.length)
-      return {
-        global: false,
-        campaignIds: [],
-        agentCodes: [],
-        resolvedAuditCodes: [],
-      };
+    const processIds = (scopeRows as any[]).map((r) => r.process_id as string).filter(Boolean);
+    const names = (scopeRows as any[]).map((r) => r.process_name as string).filter(Boolean);
+    if (!names.length) return { global: false, campaignIds: [], agentCodes: [], resolvedAuditCodes: [] };
     // Resolve employee codes in these processes for db_audit filtering
     let resolvedAuditCodes: string[] | null = null;
     if (processIds.length) {
       const ph = processIds.map(() => "?").join(",");
       const [empRows] = await db.execute<RowDataPacket[]>(
-        `SELECT employee_code FROM employees WHERE process_id IN (${ph}) AND active_status = 1`,
-        processIds,
+        `SELECT employee_code FROM employees WHERE process_id IN (${ph}) AND active_status = 1`, processIds
       );
-      resolvedAuditCodes = (empRows as any[])
-        .map((r) => r.employee_code as string)
-        .filter(Boolean);
+      resolvedAuditCodes = (empRows as any[]).map((r) => r.employee_code as string).filter(Boolean);
     }
-    return {
-      global: false,
-      campaignIds: names,
-      agentCodes: null,
-      resolvedAuditCodes,
-    };
+    return { global: false, campaignIds: names, agentCodes: null, resolvedAuditCodes };
   }
 
   // Branch head: get all agent emp_codes in their branch
@@ -139,23 +105,15 @@ async function resolveScope(req: AuthenticatedRequest): Promise<{
     const emp = await getEmployeeForUser(userId);
     if (!emp) return { global: false, campaignIds: [], agentCodes: [] };
     const [bRows] = await db.execute<RowDataPacket[]>(
-      `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`,
-      [emp.id],
+      `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`, [emp.id]
     );
     const branchId = (bRows[0] as any)?.branch_id;
     if (!branchId) return { global: false, campaignIds: [], agentCodes: [] };
     const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT employee_code FROM employees WHERE branch_id = ? AND active_status = 1`,
-      [branchId],
+      `SELECT employee_code FROM employees WHERE branch_id = ? AND active_status = 1`, [branchId]
     );
-    const codes = (empRows as any[])
-      .map((r) => r.employee_code as string)
-      .filter(Boolean);
-    return {
-      global: false,
-      campaignIds: null,
-      agentCodes: codes.length ? codes : [],
-    };
+    const codes = (empRows as any[]).map((r) => r.employee_code as string).filter(Boolean);
+    return { global: false, campaignIds: null, agentCodes: codes.length ? codes : [] };
   }
 
   // hr / qa / quality_analyst / trainer: only the employees inside their own branch / assigned scope.
@@ -191,15 +149,10 @@ function getCiPool() {
   return getShivamgiriPool();
 }
 
-function dateDefaults(query: Record<string, unknown>): {
-  from: string;
-  to: string;
-} {
+function dateDefaults(query: Record<string, unknown>): { from: string; to: string } {
   const now = new Date();
   const to = query.to ? String(query.to) : now.toISOString().slice(0, 10);
-  const from = query.from
-    ? String(query.from)
-    : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const from = query.from ? String(query.from) : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
   return { from, to };
 }
 
@@ -229,30 +182,20 @@ router.get("/tni-analysis", requireRole(...TNI_ROLES), h(async (req, res) => {
 }));
 
 // GET /api/quality-dashboard/tni-filter-options — branches, processes, cost centres for filter dropdowns
-router.get(
-  "/tni-filter-options",
-  requireRole(...TNI_ROLES),
-  h(async (_req, res) => {
-    const [branches, processes, costCentres] = await Promise.all([
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT id, branch_name AS name FROM mas_hrms.branch_master WHERE active_status = 1 ORDER BY branch_name`,
-        )
-        .then(([r]) => r),
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT id, process_name AS name FROM mas_hrms.process_master WHERE active_status = 1 ORDER BY process_name`,
-        )
-        .then(([r]) => r),
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT id, cost_centre_name AS name FROM mas_hrms.cost_centre_master WHERE active_status = 1 ORDER BY cost_centre_name`,
-        )
-        .then(([r]) => r),
-    ]);
-    return res.json({ success: true, branches, processes, costCentres });
-  }),
-);
+router.get("/tni-filter-options", requireRole(...TNI_ROLES), h(async (_req, res) => {
+  const [branches, processes, costCentres] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT id, branch_name AS name FROM mas_hrms.branch_master WHERE active_status = 1 ORDER BY branch_name`
+    ).then(([r]) => r),
+    db.execute<RowDataPacket[]>(
+      `SELECT id, process_name AS name FROM mas_hrms.process_master WHERE active_status = 1 ORDER BY process_name`
+    ).then(([r]) => r),
+    db.execute<RowDataPacket[]>(
+      `SELECT id, cost_centre_name AS name FROM mas_hrms.cost_centre_master WHERE active_status = 1 ORDER BY cost_centre_name`
+    ).then(([r]) => r),
+  ]);
+  return res.json({ success: true, branches, processes, costCentres });
+}));
 
 // GET /api/quality-dashboard/tni-agent-params?from=&to=&agent_code=&param=&client_id=
 router.get("/tni-agent-params", requireRole(...TNI_ROLES), h(async (req, res) => {
@@ -285,31 +228,9 @@ router.get("/tni-agent-params", requireRole(...TNI_ROLES), h(async (req, res) =>
     if (message.startsWith("Unknown TNI param")) {
       return res.status(400).json({ success: false, message });
     }
-    const clientId =
-      typeof req.query.client_id === "string" && req.query.client_id.trim()
-        ? req.query.client_id.trim()
-        : null;
-    try {
-      const calls = await getTniAgentCalls(
-        agentCode,
-        param as Parameters<typeof getTniAgentCalls>[1],
-        from,
-        to,
-        clientId,
-      );
-      return res.json({ success: true, calls });
-    } catch (err) {
-      // getTniAgentCalls throws on an unrecognised param — it interpolates the column name into
-      // SQL after checking it against TNI_PARAMS, so an unknown value is a client error, not a
-      // 500, and must not be reported as an outage.
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.startsWith("Unknown TNI param")) {
-        return res.status(400).json({ success: false, message });
-      }
-      throw err;
-    }
-  }),
-);
+    throw err;
+  }
+}));
 
 // GET /api/quality-dashboard/tni-finding?agent_code=&param=
 //
@@ -318,65 +239,39 @@ router.get("/tni-agent-params", requireRole(...TNI_ROLES), h(async (req, res) =>
 // tracked, assignable finding" without a separate page. `param` here is one of
 // the 19 raw column names the page already drills into; only six of them map
 // onto a tni_finding parameter_key, and the rest correctly return no match.
-router.get(
-  "/tni-finding",
-  requireRole(...TNI_ROLES),
-  h(async (req, res) => {
-    const agentCode =
-      typeof req.query.agent_code === "string"
-        ? req.query.agent_code.trim()
-        : "";
-    const param =
-      typeof req.query.param === "string" ? req.query.param.trim() : "";
-    if (!agentCode || !param) {
-      return res
-        .status(400)
-        .json({ success: false, message: "agent_code and param are required" });
-    }
-    const { RAW_COLUMN_TO_PARAMETER_KEY, getFindingForEmployeeParameter } =
-      await import("./tni-derivation.service.js");
-    const parameterKey = RAW_COLUMN_TO_PARAMETER_KEY[param];
-    if (!parameterKey) return res.json({ success: true, finding: null });
-    const finding = await getFindingForEmployeeParameter(
-      agentCode,
-      parameterKey,
-    );
-    return res.json({ success: true, finding });
-  }),
-);
+router.get("/tni-finding", requireRole(...TNI_ROLES), h(async (req, res) => {
+  const agentCode = typeof req.query.agent_code === "string" ? req.query.agent_code.trim() : "";
+  const param = typeof req.query.param === "string" ? req.query.param.trim() : "";
+  if (!agentCode || !param) {
+    return res.status(400).json({ success: false, message: "agent_code and param are required" });
+  }
+  const { RAW_COLUMN_TO_PARAMETER_KEY, getFindingForEmployeeParameter } = await import(
+    "./tni-derivation.service.js"
+  );
+  const parameterKey = RAW_COLUMN_TO_PARAMETER_KEY[param];
+  if (!parameterKey) return res.json({ success: true, finding: null });
+  const finding = await getFindingForEmployeeParameter(agentCode, parameterKey);
+  return res.json({ success: true, finding });
+}));
 
 // GET /api/quality-dashboard/inbound-ops/summary
-router.get(
-  "/inbound-ops/summary",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req, res) => {
-    const { from, to } = dateDefaults(req.query);
-    const projectKeys =
-      typeof req.query.projects === "string"
-        ? req.query.projects
-            .split(",")
-            .map((key) => key.trim())
-            .filter(Boolean)
-        : undefined;
-    const data = await getInboundSummary(from, to, projectKeys);
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/inbound-ops/summary", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  const { from, to } = dateDefaults(req.query);
+  const projectKeys = typeof req.query.projects === "string"
+    ? req.query.projects.split(",").map((key) => key.trim()).filter(Boolean)
+    : undefined;
+  const data = await getInboundSummary(from, to, projectKeys);
+  return res.json({ success: true, data });
+}));
 
 // Build scope conditions for db_audit.call_quality_assessment (filters by User = agent emp_code)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function auditScopeCond(
-  scope: Awaited<ReturnType<typeof resolveScope>>,
-  params: any[],
-): string {
+function auditScopeCond(scope: Awaited<ReturnType<typeof resolveScope>>, params: any[]): string {
   if (scope.global) return "";
   // Use agentCodes if available (branch_head scope or process manager with resolved codes)
   const codes = scope.agentCodes ?? scope.resolvedAuditCodes ?? null;
   if (codes !== null) {
-    if (!codes.length) {
-      params.push("__no_match__");
-      return " AND User = ?";
-    }
+    if (!codes.length) { params.push("__no_match__"); return " AND User = ?"; }
     const ph = codes.map(() => "?").join(",");
     params.push(...codes);
     return ` AND User IN (${ph})`;
@@ -386,25 +281,16 @@ function auditScopeCond(
 
 // Build scope conditions for Shivamgiri.apr (filters by campaign_id or UserID)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function aprScopeCond(
-  scope: Awaited<ReturnType<typeof resolveScope>>,
-  params: any[],
-): string {
+function aprScopeCond(scope: Awaited<ReturnType<typeof resolveScope>>, params: any[]): string {
   if (scope.global) return "";
   if (scope.campaignIds !== null) {
-    if (!scope.campaignIds.length) {
-      params.push("__no_match__");
-      return " AND campaign_id = ?";
-    }
+    if (!scope.campaignIds.length) { params.push("__no_match__"); return " AND campaign_id = ?"; }
     const ph = scope.campaignIds.map(() => "?").join(",");
     params.push(...scope.campaignIds);
     return ` AND campaign_id IN (${ph})`;
   }
   if (scope.agentCodes !== null) {
-    if (!scope.agentCodes.length) {
-      params.push("__no_match__");
-      return " AND UserID = ?";
-    }
+    if (!scope.agentCodes.length) { params.push("__no_match__"); return " AND UserID = ?"; }
     const ph = scope.agentCodes.map(() => "?").join(",");
     params.push(...scope.agentCodes);
     return ` AND UserID IN (${ph})`;
@@ -413,29 +299,25 @@ function aprScopeCond(
 }
 
 // GET /api/quality-dashboard/summary
-router.get(
-  "/summary",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req: AuthenticatedRequest, res) => {
-    try {
-      const { from, to } = dateDefaults(req.query);
-      const clientId = req.query.client_id ? String(req.query.client_id) : null;
-      const pool = getCiPool();
-      const scope = await resolveScope(req);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const params: any[] = [from, to];
-      const clientCond = clientId ? " AND ClientId = ?" : "";
-      if (clientId) params.push(clientId);
-      const scopeCond = auditScopeCond(scope, params);
+router.get("/summary", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const clientId = req.query.client_id ? String(req.query.client_id) : null;
+    const pool = getCiPool();
+    const scope = await resolveScope(req);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const params: any[] = [from, to];
+    const clientCond = clientId ? " AND ClientId = ?" : "";
+    if (clientId) params.push(clientId);
+    const scopeCond = auditScopeCond(scope, params);
 
-      // The freshness stamp is independent of the summary aggregate, so both run concurrently.
-      const freshP = pool.execute<RowDataPacket[]>(
-        `SELECT MAX(CallDate) AS latest FROM db_audit.call_quality_assessment
+    // The freshness stamp is independent of the summary aggregate, so both run concurrently.
+    const freshP = pool.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) AS latest FROM db_audit.call_quality_assessment
         WHERE CallDate BETWEEN ? AND ?`,
-        [from, to],
-      );
-      const rowsP = pool.execute<RowDataPacket[]>(
-        `
+      [from, to],
+    );
+    const rowsP = pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(*) as total_calls,
         COUNT(CASE WHEN quality_percentage IS NOT NULL THEN 1 END) as audited_calls,
@@ -457,91 +339,63 @@ router.get(
         ROUND(100 - (AVG(correct_and_complete_information) * 100), 1) as fail_rate_accuracy
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?${clientCond}${scopeCond}
-    `,
-        params,
-      );
-      const [[rows], [freshRows]] = await Promise.all([rowsP, freshP]);
+    `, params);
+    const [[rows], [freshRows]] = await Promise.all([rowsP, freshP]);
 
-      const row = rows[0] as Record<string, unknown>;
-      const parameterFails = [
-        { param: "call_open", fail_rate: row.fail_rate_call_open },
-        { param: "professionalism", fail_rate: row.fail_rate_professionalism },
-        {
-          param: "active_listening",
-          fail_rate: row.fail_rate_active_listening,
-        },
-        { param: "call_closure", fail_rate: row.fail_rate_call_closure },
-        { param: "accuracy", fail_rate: row.fail_rate_accuracy },
-      ];
+    const row = rows[0] as Record<string, unknown>;
+    const parameterFails = [
+      { param: "call_open",       fail_rate: row.fail_rate_call_open },
+      { param: "professionalism", fail_rate: row.fail_rate_professionalism },
+      { param: "active_listening",fail_rate: row.fail_rate_active_listening },
+      { param: "call_closure",    fail_rate: row.fail_rate_call_closure },
+      { param: "accuracy",        fail_rate: row.fail_rate_accuracy },
+    ];
 
-      // Stamp the newest audited call in range. db_audit is an upstream system, so a
-      // dashboard must be able to say how current its quality numbers are rather than
-      // implying they are live.
+    // Stamp the newest audited call in range. db_audit is an upstream system, so a
+    // dashboard must be able to say how current its quality numbers are rather than
+    // implying they are live.
 
-      return res.json({
-        success: true,
-        summary: row,
-        parameter_fails: parameterFails,
-        source: {
-          table: "db_audit.call_quality_assessment",
-          latest_record: (freshRows[0] as any)?.latest ?? null,
-        },
-        scope_label: scope.global
-          ? "All"
-          : scope.campaignIds
-            ? `Processes: ${scope.campaignIds.join(", ")}`
-            : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
-      });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      logSourceFailure("quality-dashboard.summary", err, {
-        endpoint: "/summary",
-      });
-      // Previously returned a full set of zeros at HTTP 200, which renders as "0% quality,
-      // 0 calls audited" — indistinguishable from a genuinely quiet period. Return nulls
-      // plus an explicit unavailable reason so the UI states the source is down.
-      return res.json({
-        success: true,
-        summary: null,
-        parameter_fails: [],
-        scope_label: "All",
-        unavailableSources: {
-          quality: `Quality audit source unavailable: ${msg}`,
-        },
-      });
-    }
-  }),
-);
+    return res.json({
+      success: true,
+      summary: row,
+      parameter_fails: parameterFails,
+      source: { table: "db_audit.call_quality_assessment", latest_record: (freshRows[0] as any)?.latest ?? null },
+      scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    logSourceFailure("quality-dashboard.summary", err, { endpoint: "/summary" });
+    // Previously returned a full set of zeros at HTTP 200, which renders as "0% quality,
+    // 0 calls audited" — indistinguishable from a genuinely quiet period. Return nulls
+    // plus an explicit unavailable reason so the UI states the source is down.
+    return res.json({
+      success: true,
+      summary: null,
+      parameter_fails: [],
+      scope_label: "All",
+      unavailableSources: { quality: `Quality audit source unavailable: ${msg}` },
+    });
+  }
+}));
 
 // GET /api/quality-dashboard/trend
-router.get(
-  "/trend",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req: AuthenticatedRequest, res) => {
-    try {
-      const { from, to } = dateDefaults(req.query);
-      const clientId = req.query.client_id ? String(req.query.client_id) : null;
-      const granularity = req.query.granularity === "week" ? "week" : "day";
-      const pool = getCiPool();
-      const scope = await resolveScope(req);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const params: any[] = [from, to];
-      const clientCond = clientId ? " AND ClientId = ?" : "";
-      if (clientId) params.push(clientId);
-      const scopeCond = auditScopeCond(scope, params);
+router.get("/trend", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const clientId = req.query.client_id ? String(req.query.client_id) : null;
+    const granularity = req.query.granularity === "week" ? "week" : "day";
+    const pool = getCiPool();
+    const scope = await resolveScope(req);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const params: any[] = [from, to];
+    const clientCond = clientId ? " AND ClientId = ?" : "";
+    if (clientId) params.push(clientId);
+    const scopeCond = auditScopeCond(scope, params);
 
-      const groupExpr =
-        granularity === "week"
-          ? "YEARWEEK(CallDate)"
-          : "DATE_FORMAT(CallDate,'%Y-%m-%d')";
-      const labelExpr =
-        granularity === "week"
-          ? "DATE_FORMAT(MIN(CallDate),'%Y-%m-%d')"
-          : "DATE_FORMAT(CallDate,'%Y-%m-%d')";
+    const groupExpr = granularity === "week" ? "YEARWEEK(CallDate)" : "DATE_FORMAT(CallDate,'%Y-%m-%d')";
+    const labelExpr = granularity === "week" ? "DATE_FORMAT(MIN(CallDate),'%Y-%m-%d')" : "DATE_FORMAT(CallDate,'%Y-%m-%d')";
 
-      const [rows] = await pool.execute<RowDataPacket[]>(
-        `
+    const [rows] = await pool.execute<RowDataPacket[]>(`
       SELECT
         ${labelExpr} as date,
         COUNT(*) as total_calls,
@@ -553,42 +407,34 @@ router.get(
       GROUP BY ${groupExpr}
       ORDER BY date ASC
       LIMIT 180
-    `,
-        params,
-      );
+    `, params);
 
-      return res.json({ success: true, trend: rows });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/trend]", msg);
-      return res.json({ success: true, trend: [], _error: msg });
-    }
-  }),
-);
+    return res.json({ success: true, trend: rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/trend]", msg);
+    return res.json({ success: true, trend: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/agents
-router.get(
-  "/agents",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req: AuthenticatedRequest, res) => {
-    try {
-      const { from, to } = dateDefaults(req.query);
-      const clientId = req.query.client_id ? String(req.query.client_id) : null;
-      const limit = Math.min(Number(req.query.limit ?? 20), 100);
-      const pool = getCiPool();
-      const scope = await resolveScope(req);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const params: any[] = [from, to];
-      const clientCond = clientId ? " AND ClientId = ?" : "";
-      if (clientId) params.push(clientId);
-      const scopeCond = auditScopeCond(scope, params);
-      // limit is interpolated by sqlLimit below, not bound. It was being pushed as String(limit)
-      // specifically because binding the number fails - a workaround one Number() away from
-      // breaking again.
+router.get("/agents", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const clientId = req.query.client_id ? String(req.query.client_id) : null;
+    const limit = Math.min(Number(req.query.limit ?? 20), 100);
+    const pool = getCiPool();
+    const scope = await resolveScope(req);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const params: any[] = [from, to];
+    const clientCond = clientId ? " AND ClientId = ?" : "";
+    if (clientId) params.push(clientId);
+    const scopeCond = auditScopeCond(scope, params);
+    // limit is interpolated by sqlLimit below, not bound. It was being pushed as String(limit)
+    // specifically because binding the number fails - a workaround one Number() away from
+    // breaking again.
 
-      const [rows] = await pool.execute<RowDataPacket[]>(
-        `
+    const [rows] = await pool.execute<RowDataPacket[]>(`
       SELECT
         cqa.User AS agent_code,
         ANY_VALUE(COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), cqa.User)) AS agent_name,
@@ -626,60 +472,46 @@ router.get(
         AND agent_name NOT LIKE 'Codex E2E%'
       ORDER BY avg_score DESC
       ${sqlLimit(limit, { maxLimit: 100 })}
-    `,
-        params,
-      );
+    `, params);
 
-      return res.json({ success: true, agents: rows });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/agents]", msg);
-      return res
-        .status(500)
-        .json({
-          success: false,
-          error: "Quality dashboard data unavailable",
-          _details: msg,
-        });
-    }
-  }),
-);
+    return res.json({ success: true, agents: rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/agents]", msg);
+    return res.status(500).json({ success: false, error: "Quality dashboard data unavailable", _details: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/clients
-router.get(
-  "/clients",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req, res) => {
-    try {
-      const { from, to } = dateDefaults(req.query);
-      const pool = getCiPool();
-      // Row scope was missing here while /summary, /trend and /fraud-signals all apply
-      // it, so a branch_head or process_manager saw correctly-scoped headline figures
-      // beside an org-wide client table. Harmless for a global-scope caller such as the
-      // CEO, which is why the UAT did not surface it.
-      const scope = await resolveScope(req);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const params: any[] = [from, to];
-      const scopeCond = auditScopeCond(scope, params);
+router.get("/clients", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const pool = getCiPool();
+    // Row scope was missing here while /summary, /trend and /fraud-signals all apply
+    // it, so a branch_head or process_manager saw correctly-scoped headline figures
+    // beside an org-wide client table. Harmless for a global-scope caller such as the
+    // CEO, which is why the UAT did not surface it.
+    const scope = await resolveScope(req);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const params: any[] = [from, to];
+    const scopeCond = auditScopeCond(scope, params);
 
-      // client_name is no longer COALESCEd over a join that cannot match.
-      //
-      // db_audit.call_quality_assessment.ClientId holds opaque numeric ids belonging to
-      // the audit system. Verified 31-Jul-2026: 15 distinct ids, ZERO of which match
-      // mas_hrms.client_master on either client_code (business codes like 'MCIPL') or id
-      // (CHAR(36) UUIDs), and db_audit contains no client table at all. There is no name
-      // source reachable from either database.
-      //
-      // The old COALESCE(cm.client_name, cqa.ClientId) hid that: a 0% match rate rendered
-      // as a "client name" of 475, which reads as corrupted data rather than a missing
-      // mapping. client_name is now explicitly NULL so callers can distinguish "unmapped"
-      // from "named", and the UI labels the id as an id.
-      //
-      // Resolving this needs a ClientId -> name mapping for those 15 ids from whoever owns
-      // the audit system; it is not recoverable in code.
-      const [rows] = await pool.execute<RowDataPacket[]>(
-        `
+    // client_name is no longer COALESCEd over a join that cannot match.
+    //
+    // db_audit.call_quality_assessment.ClientId holds opaque numeric ids belonging to
+    // the audit system. Verified 31-Jul-2026: 15 distinct ids, ZERO of which match
+    // mas_hrms.client_master on either client_code (business codes like 'MCIPL') or id
+    // (CHAR(36) UUIDs), and db_audit contains no client table at all. There is no name
+    // source reachable from either database.
+    //
+    // The old COALESCE(cm.client_name, cqa.ClientId) hid that: a 0% match rate rendered
+    // as a "client name" of 475, which reads as corrupted data rather than a missing
+    // mapping. client_name is now explicitly NULL so callers can distinguish "unmapped"
+    // from "named", and the UI labels the id as an id.
+    //
+    // Resolving this needs a ClientId -> name mapping for those 15 ids from whoever owns
+    // the audit system; it is not recoverable in code.
+    const [rows] = await pool.execute<RowDataPacket[]>(`
       SELECT
         cqa.ClientId as client_id,
         NULL as client_name,
@@ -693,32 +525,24 @@ router.get(
       GROUP BY cqa.ClientId
       ORDER BY total_calls DESC
       LIMIT 20
-    `,
-        params,
-      );
+    `, params);
 
-      return res.json({ success: true, clients: rows });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/clients]", msg);
-      return res.json({ success: true, clients: [], _error: msg });
-    }
-  }),
-);
+    return res.json({ success: true, clients: rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/clients]", msg);
+    return res.json({ success: true, clients: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/apr
-router.get(
-  "/apr",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req, res) => {
-    try {
-      const { from, to } = dateDefaults(req.query);
-      const limit = Math.min(Number(req.query.limit ?? 50), 500);
-      const pool = getCiPool();
+router.get("/apr", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const limit = Math.min(Number(req.query.limit ?? 50), 500);
+    const pool = getCiPool();
 
-      const [rows] = await pool.execute<RowDataPacket[]>(
-        `
+    const [rows] = await pool.execute<RowDataPacket[]>(`
       SELECT
         apr.UserID AS agent_code,
         COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), apr.UserID) AS agent_name,
@@ -748,35 +572,27 @@ router.get(
       WHERE apr.ReportDate BETWEEN ? AND ?
       ORDER BY apr.ReportDate DESC
       ${sqlLimit(limit)}
-    `,
-        [from, to],
-      );
+    `, [from, to]);
 
-      return res.json({ success: true, apr: rows });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/apr]", msg);
-      return res.json({ success: true, apr: [], _error: msg });
-    }
-  }),
-);
+    return res.json({ success: true, apr: rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/apr]", msg);
+    return res.json({ success: true, apr: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/apr-summary
-router.get(
-  "/apr-summary",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req: AuthenticatedRequest, res) => {
-    try {
-      const { from, to } = dateDefaults(req.query);
-      const pool = getCiPool();
-      const scope = await resolveScope(req);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const params: any[] = [from, to];
-      const scopeCond = aprScopeCond(scope, params);
+router.get("/apr-summary", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const pool = getCiPool();
+    const scope = await resolveScope(req);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const params: any[] = [from, to];
+    const scopeCond = aprScopeCond(scope, params);
 
-      const [rows] = await pool.execute<RowDataPacket[]>(
-        `
+    const [rows] = await pool.execute<RowDataPacket[]>(`
       SELECT
         apr.campaign_id AS process_code,
         COALESCE(pm.process_name, apr.campaign_id) AS process,
@@ -801,19 +617,15 @@ router.get(
       GROUP BY apr.campaign_id
       ORDER BY avg_calls DESC
       LIMIT 20
-    `,
-        params,
-      );
+    `, params);
 
-      return res.json({ success: true, processes: rows });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/apr-summary]", msg);
-      return res.json({ success: true, processes: [], _error: msg });
-    }
-  }),
-);
+    return res.json({ success: true, processes: rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/apr-summary]", msg);
+    return res.json({ success: true, processes: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/sales-intelligence
 router.get("/sales-intelligence", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
@@ -831,9 +643,8 @@ router.get("/sales-intelligence", requireRole(...ALLOWED_ROLES), h(async (req: A
     const competitorParams: any[] = [from, to];
     const scopeCondCompetitor = callDetailsScope(codes, competitorParams);
 
-      const [[summaryRows], [competitorRows]] = await Promise.all([
-        pool.execute<RowDataPacket[]>(
-          `
+    const [[summaryRows], [competitorRows]] = await Promise.all([
+    pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(*) as total_calls,
         SUM(CASE WHEN SaleDone='1' OR SaleDone=1 OR LOWER(SaleDone)='yes' THEN 1 ELSE 0 END) as sales_done,
@@ -855,77 +666,48 @@ router.get("/sales-intelligence", requireRole(...ALLOWED_ROLES), h(async (req: A
     `, competitorParams),
     ]);
 
-      return res.json({
-        success: true,
-        summary: summaryRows[0],
-        top_competitors: competitorRows,
-      });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/sales-intelligence]", msg);
-      return res.json({
-        success: true,
-        summary: {
-          total_calls: 0,
-          sales_done: 0,
-          competitor_mentions: 0,
-          unique_clients: 0,
-          objection_calls: 0,
-        },
-        top_competitors: [],
-        _error: msg,
-      });
-    }
-  }),
-);
+    return res.json({ success: true, summary: summaryRows[0], top_competitors: competitorRows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/sales-intelligence]", msg);
+    return res.json({ success: true, summary: { total_calls: 0, sales_done: 0, competitor_mentions: 0, unique_clients: 0, objection_calls: 0 }, top_competitors: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/objections
-router.get(
-  "/objections",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req, res) => {
-    try {
-      const limit = Math.min(Number(req.query.limit ?? 20), 200);
-      const pool = getCiPool();
+router.get("/objections", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 20), 200);
+    const pool = getCiPool();
 
-      const [rows] = await pool.execute<RowDataPacket[]>(
-        `
+    const [rows] = await pool.execute<RowDataPacket[]>(`
       SELECT Objection as objection, Rebutal as rebuttal, COUNT(*) as frequency
       FROM db_external.tbl_obj
       WHERE Objection IS NOT NULL AND Objection != ''
       GROUP BY Objection, Rebutal
       ORDER BY frequency DESC
       ${sqlLimit(limit)}
-    `,
-        [],
-      );
+    `, []);
 
-      return res.json({ success: true, objections: rows });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/objections]", msg);
-      return res.json({ success: true, objections: [], _error: msg });
-    }
-  }),
-);
+    return res.json({ success: true, objections: rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections]", msg);
+    return res.json({ success: true, objections: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/fraud-signals
-router.get(
-  "/fraud-signals",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req: AuthenticatedRequest, res) => {
-    try {
-      const { from, to } = dateDefaults(req.query);
-      const pool = getCiPool();
-      const scope = await resolveScope(req);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const params: any[] = [from, to];
-      const scopeCond = auditScopeCond(scope, params);
+router.get("/fraud-signals", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const pool = getCiPool();
+    const scope = await resolveScope(req);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const params: any[] = [from, to];
+    const scopeCond = auditScopeCond(scope, params);
 
-      const [rows] = await pool.execute<RowDataPacket[]>(
-        `
+    const [rows] = await pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(CASE WHEN COALESCE(data_theft_or_misuse,'') NOT IN ('','null','No','no') THEN 1 END) as data_theft,
         COUNT(CASE WHEN COALESCE(financial_fraud,'') NOT IN ('','null','No','no') THEN 1 END) as financial_fraud,
@@ -935,30 +717,15 @@ router.get(
         COUNT(CASE WHEN COALESCE(system_manipulation,'') NOT IN ('','null','No','no') THEN 1 END) as system_manipulation
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?${scopeCond}
-    `,
-        params,
-      );
+    `, params);
 
-      return res.json({ success: true, fraud_signals: rows[0] });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/fraud-signals]", msg);
-      return res.json({
-        success: true,
-        fraud_signals: {
-          data_theft: 0,
-          financial_fraud: 0,
-          collusion: 0,
-          escalation_failure: 0,
-          unprofessional: 0,
-          system_manipulation: 0,
-        },
-        _error: msg,
-      });
-    }
-  }),
-);
+    return res.json({ success: true, fraud_signals: rows[0] });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/fraud-signals]", msg);
+    return res.json({ success: true, fraud_signals: { data_theft: 0, financial_fraud: 0, collusion: 0, escalation_failure: 0, unprofessional: 0, system_manipulation: 0 }, _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/sales-funnel
 router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
@@ -975,9 +742,8 @@ router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req: Authent
     if (funnelScope) whereClauses.push(funnelScope.replace(/^ AND /, ""));
     const where = whereClauses.join(" AND ");
 
-      const [[sales], [rejection], [reasons]] = await Promise.all([
-        pool.execute<RowDataPacket[]>(
-          `
+    const [[sales], [rejection], [reasons]] = await Promise.all([
+    pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(*) as total_calls,
         SUM(CASE WHEN Opening='1' OR Opening=1 THEN 1 ELSE 0 END) as opening_done,
@@ -985,11 +751,8 @@ router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req: Authent
         SUM(CASE WHEN ObjectionHandling='1' OR ObjectionHandling=1 THEN 1 ELSE 0 END) as objection_handled,
         SUM(CASE WHEN SaleDone='1' OR SaleDone=1 OR LOWER(SaleDone)='yes' THEN 1 ELSE 0 END) as sale_done
       FROM db_external.CallDetails WHERE ${where}
-    `,
-          params,
-        ),
-        pool.execute<RowDataPacket[]>(
-          `
+    `, params),
+    pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(*) as total_calls,
         SUM(CASE WHEN NotInterestedBucketReason IS NOT NULL AND NotInterestedBucketReason NOT IN ('','null','None') THEN 1 ELSE 0 END) as not_interested,
@@ -998,54 +761,28 @@ router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req: Authent
         SUM(CASE WHEN OfferingRejected='1' OR OfferingRejected=1 THEN 1 ELSE 0 END) as offering_rejected,
         SUM(CASE WHEN OpeningRejected='1' OR OpeningRejected=1 THEN 1 ELSE 0 END) as opening_rejected
       FROM db_external.CallDetails WHERE ${where}
-    `,
-          params,
-        ),
-        pool.execute<RowDataPacket[]>(
-          `
+    `, params),
+    pool.execute<RowDataPacket[]>(`
       SELECT NotInterestedBucketReason as reason, COUNT(*) as count
       FROM db_external.CallDetails
       WHERE ${where}
         AND NotInterestedBucketReason IS NOT NULL AND NotInterestedBucketReason NOT IN ('','null')
       GROUP BY NotInterestedBucketReason ORDER BY count DESC LIMIT 8
-    `,
-          params,
-        ),
-      ]);
+    `, params),
+    ]);
 
-      return res.json({
-        success: true,
-        sales_funnel: sales[0],
-        rejection_funnel: rejection[0],
-        top_rejection_reasons: reasons,
-      });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/sales-funnel]", msg);
-      return res.json({
-        success: true,
-        sales_funnel: {
-          total_calls: 0,
-          opening_done: 0,
-          offer_made: 0,
-          objection_handled: 0,
-          sale_done: 0,
-        },
-        rejection_funnel: {
-          total_calls: 0,
-          not_interested: 0,
-          objection_raised: 0,
-          rejected_after_offer: 0,
-          offering_rejected: 0,
-          opening_rejected: 0,
-        },
-        top_rejection_reasons: [],
-        _error: msg,
-      });
-    }
-  }),
-);
+    return res.json({
+      success: true,
+      sales_funnel: sales[0],
+      rejection_funnel: rejection[0],
+      top_rejection_reasons: reasons,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/sales-funnel]", msg);
+    return res.json({ success: true, sales_funnel: { total_calls: 0, opening_done: 0, offer_made: 0, objection_handled: 0, sale_done: 0 }, rejection_funnel: { total_calls: 0, not_interested: 0, objection_raised: 0, rejected_after_offer: 0, offering_rejected: 0, opening_rejected: 0 }, top_rejection_reasons: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/heatmap
 router.get("/heatmap", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
@@ -1061,27 +798,22 @@ router.get("/heatmap", requireRole(...ALLOWED_ROLES), h(async (req: Authenticate
 }));
 
 // GET /api/quality-dashboard/agent-risk
-router.get(
-  "/agent-risk",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req: AuthenticatedRequest, res) => {
-    try {
-      const { from, to } = dateDefaults(req.query);
-      const scope = await resolveScope(req);
-      let agents = await predictAgentRisk(from, to);
-      if (!scope.global && scope.agentCodes !== null) {
-        const codesSet = new Set(scope.agentCodes);
-        agents = agents.filter((a: any) => codesSet.has(a.agent_code));
-      }
-      return res.json({ success: true, agents });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/agent-risk]", msg);
-      return res.json({ success: true, agents: [], _error: msg });
+router.get("/agent-risk", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const scope = await resolveScope(req);
+    let agents = await predictAgentRisk(from, to);
+    if (!scope.global && scope.agentCodes !== null) {
+      const codesSet = new Set(scope.agentCodes);
+      agents = agents.filter((a: any) => codesSet.has(a.agent_code));
     }
-  }),
-);
+    return res.json({ success: true, agents });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/agent-risk]", msg);
+    return res.json({ success: true, agents: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/insights
 router.get("/insights", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
@@ -1115,119 +847,128 @@ router.get("/roi", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedReq
 
 // GET /api/quality-dashboard/objections/patterns
 // Top objection types with resolution rates and sales conversion metrics
-router.get(
-  "/objections/patterns",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req, res) => {
-    try {
-      const limit = Math.min(Number(req.query.limit ?? 50), 200);
-      const patterns = await getTopObjectionPatterns(limit);
-      return res.json({ success: true, patterns });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/objections/patterns]", msg);
-      return res.json({ success: true, patterns: [], _error: msg });
-    }
-  }),
-);
+router.get("/objections/patterns", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 50), 200);
+    const patterns = await getTopObjectionPatterns(limit);
+    return res.json({ success: true, patterns });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/patterns]", msg);
+    return res.json({ success: true, patterns: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/objections/handlers
 // Top objection handlers with best resolution and sales conversion rates
-router.get(
-  "/objections/handlers",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req, res) => {
-    try {
-      const limit = Math.min(Number(req.query.limit ?? 50), 200);
-      const handlers = await getTopObjectionHandlers(limit);
-      return res.json({ success: true, handlers });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/objections/handlers]", msg);
-      return res.json({ success: true, handlers: [], _error: msg });
-    }
-  }),
-);
+router.get("/objections/handlers", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 50), 200);
+    const handlers = await getTopObjectionHandlers(limit);
+    return res.json({ success: true, handlers });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/handlers]", msg);
+    return res.json({ success: true, handlers: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/objections/sales-metrics
 // Sales conversion rates after objection handling by objection type
-router.get(
-  "/objections/sales-metrics",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req, res) => {
-    try {
-      const limit = Math.min(Number(req.query.limit ?? 50), 200);
-      const metrics = await getSalesClosedAfterObjection(limit);
-      return res.json({ success: true, metrics });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/objections/sales-metrics]", msg);
-      return res.json({ success: true, metrics: [], _error: msg });
-    }
-  }),
-);
+router.get("/objections/sales-metrics", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 50), 200);
+    const metrics = await getSalesClosedAfterObjection(limit);
+    return res.json({ success: true, metrics });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/sales-metrics]", msg);
+    return res.json({ success: true, metrics: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/objections/by-process
 // Objection types breakdown by process/campaign
-router.get(
-  "/objections/by-process",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req, res) => {
-    try {
-      const limit = Math.min(Number(req.query.limit ?? 100), 500);
-      const data = await getObjectionsByProcess(limit);
-      return res.json({ success: true, data });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/objections/by-process]", msg);
-      return res.json({ success: true, data: [], _error: msg });
-    }
-  }),
-);
+router.get("/objections/by-process", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 100), 500);
+    const data = await getObjectionsByProcess(limit);
+    return res.json({ success: true, data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/by-process]", msg);
+    return res.json({ success: true, data: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/objections/rebuttals
 // Objection & Rebuttal reference matrix from knowledge base
-router.get(
-  "/objections/rebuttals",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req, res) => {
-    try {
-      const limit = Math.min(Number(req.query.limit ?? 100), 500);
-      const rebuttals = await getObjectionRebuttalMatrix(limit);
-      return res.json({ success: true, rebuttals });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/objections/rebuttals]", msg);
-      return res.json({ success: true, rebuttals: [], _error: msg });
-    }
-  }),
-);
+router.get("/objections/rebuttals", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 100), 500);
+    const rebuttals = await getObjectionRebuttalMatrix(limit);
+    return res.json({ success: true, rebuttals });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/rebuttals]", msg);
+    return res.json({ success: true, rebuttals: [], _error: msg });
+  }
+}));
 
 // GET /api/quality-dashboard/objections/health
 // Overall objection health dashboard metrics
-router.get(
-  "/objections/health",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req, res) => {
-    try {
-      // Optional bounds. Passing neither keeps the all-time figures this returned before; passing
-      // both lets the query seek on CallDate's index instead of scanning 503k rows.
-      const dashboard = await getObjectionHealthDashboard({
-        startDate: req.query.from ? String(req.query.from) : undefined,
-        endDate: req.query.to ? String(req.query.to) : undefined,
-      });
-      return res.json({ success: true, dashboard });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/objections/health]", msg);
-      return res.json({
-        success: true,
+router.get("/objections/health", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    // Optional bounds. Passing neither keeps the all-time figures this returned before; passing
+    // both lets the query seek on CallDate's index instead of scanning 503k rows.
+    const dashboard = await getObjectionHealthDashboard({
+      startDate: req.query.from ? String(req.query.from) : undefined,
+      endDate: req.query.to ? String(req.query.to) : undefined,
+    });
+    return res.json({ success: true, dashboard });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/health]", msg);
+    return res.json({
+      success: true,
+      dashboard: {
+        TOTAL_OBJECTIONS_RAISED: 0,
+        UNIQUE_OBJECTION_TYPES: 0,
+        TOTAL_OBJECTIONS_HANDLED: 0,
+        OVERALL_RESOLUTION_RATE_PCT: 0,
+        SALES_CLOSED_AFTER_OBJECTION_HANDLING: 0,
+        SALES_CONVERSION_AFTER_OBJECTION_PCT: 0,
+        UNIQUE_HANDLERS: 0,
+        UNIQUE_CLIENTS: 0,
+        UNIQUE_PROCESSES: 0,
+      },
+      _error: msg,
+    });
+  }
+}));
+
+// GET /api/quality-dashboard/objections/comprehensive-report
+// Complete objection analysis report (all metrics consolidated)
+router.get("/objections/comprehensive-report", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  try {
+    const patternLimit = Math.min(Number(req.query.patternLimit ?? 50), 200);
+    const handlerLimit = Math.min(Number(req.query.handlerLimit ?? 50), 200);
+    const processLimit = Math.min(Number(req.query.processLimit ?? 100), 500);
+    const rebuttalLimit = Math.min(Number(req.query.rebuttalLimit ?? 100), 500);
+
+    const report = await generateComprehensiveObjectionReport(
+      patternLimit,
+      handlerLimit,
+      processLimit,
+      rebuttalLimit
+    );
+    return res.json({ success: true, report });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "External DB unavailable";
+    console.error("[quality-dashboard/objections/comprehensive-report]", msg);
+    return res.json({
+      success: true,
+      report: {
         dashboard: {
           TOTAL_OBJECTIONS_RAISED: 0,
           UNIQUE_OBJECTION_TYPES: 0,
@@ -1239,63 +980,16 @@ router.get(
           UNIQUE_CLIENTS: 0,
           UNIQUE_PROCESSES: 0,
         },
-        _error: msg,
-      });
-    }
-  }),
-);
-
-// GET /api/quality-dashboard/objections/comprehensive-report
-// Complete objection analysis report (all metrics consolidated)
-router.get(
-  "/objections/comprehensive-report",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req, res) => {
-    try {
-      const patternLimit = Math.min(Number(req.query.patternLimit ?? 50), 200);
-      const handlerLimit = Math.min(Number(req.query.handlerLimit ?? 50), 200);
-      const processLimit = Math.min(Number(req.query.processLimit ?? 100), 500);
-      const rebuttalLimit = Math.min(
-        Number(req.query.rebuttalLimit ?? 100),
-        500,
-      );
-
-      const report = await generateComprehensiveObjectionReport(
-        patternLimit,
-        handlerLimit,
-        processLimit,
-        rebuttalLimit,
-      );
-      return res.json({ success: true, report });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "External DB unavailable";
-      console.error("[quality-dashboard/objections/comprehensive-report]", msg);
-      return res.json({
-        success: true,
-        report: {
-          dashboard: {
-            TOTAL_OBJECTIONS_RAISED: 0,
-            UNIQUE_OBJECTION_TYPES: 0,
-            TOTAL_OBJECTIONS_HANDLED: 0,
-            OVERALL_RESOLUTION_RATE_PCT: 0,
-            SALES_CLOSED_AFTER_OBJECTION_HANDLING: 0,
-            SALES_CONVERSION_AFTER_OBJECTION_PCT: 0,
-            UNIQUE_HANDLERS: 0,
-            UNIQUE_CLIENTS: 0,
-            UNIQUE_PROCESSES: 0,
-          },
-          topPatterns: [],
-          topHandlers: [],
-          salesMetrics: [],
-          processList: [],
-          rebuttalMatrix: [],
-        },
-        _error: msg,
-      });
-    }
-  }),
-);
+        topPatterns: [],
+        topHandlers: [],
+        salesMetrics: [],
+        processList: [],
+        rebuttalMatrix: [],
+      },
+      _error: msg,
+    });
+  }
+}));
 
 /**
  * GET /api/quality-dashboard/scores
@@ -1327,21 +1021,18 @@ router.get(
  *   fatal_count follows the classification already established in client-drill.service.ts —
  *   quality_percentage = 0 is a fatal audit — rather than inventing a second definition.
  */
-router.get(
-  "/scores",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req: AuthenticatedRequest, res) => {
-    try {
-      const { from, to } = dateDefaults(req.query);
-      const pool = getCiPool();
-      const scope = await resolveScope(req);
+router.get("/scores", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const pool = getCiPool();
+    const scope = await resolveScope(req);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const params: any[] = [from, to];
-      const scopeCond = auditScopeCond(scope, params);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const params: any[] = [from, to];
+    const scopeCond = auditScopeCond(scope, params);
 
-      const [rows] = await pool.query(
-        `SELECT e.employee_code,
+    const [rows] = await pool.query(
+      `SELECT e.employee_code,
               COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
               COALESCE(NULLIF(b.branch_name, ''), 'Unmapped')  AS branch_name,
               COALESCE(NULLIF(p.process_name, ''), 'Unmapped') AS process_name,
@@ -1360,17 +1051,16 @@ router.get(
         WHERE DATE(cqa.CallDate) BETWEEN ? AND ?${scopeCond}
         GROUP BY e.employee_code, employee_name, branch_name, process_name
         ORDER BY fatal_count DESC, audit_count DESC`,
-        params,
-      );
+      params
+    );
 
-      return res.json({ success: true, data: rows });
-    } catch (err) {
-      // The module's convention: report the source failure and return an empty feed, which the
-      // page then names in its "unavailable" banner rather than charting a fabricated zero.
-      logSourceFailure("quality-dashboard", err, { endpoint: "scores" });
-      return res.json({ success: true, data: [] });
-    }
-  }),
-);
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    // The module's convention: report the source failure and return an empty feed, which the
+    // page then names in its "unavailable" banner rather than charting a fabricated zero.
+    logSourceFailure("quality-dashboard", err, { endpoint: "scores" });
+    return res.json({ success: true, data: [] });
+  }
+}));
 
 export const qualityDashboardRouter = router;

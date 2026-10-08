@@ -16,15 +16,7 @@
  * 6. Ledger row verification
  */
 
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  beforeEach,
-  afterEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import mysql from "mysql2/promise";
 import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
 import * as crypto from "crypto";
@@ -93,7 +85,7 @@ describe.skipIf(SKIP_MYSQL_TESTS)("Migration MySQL Integration", () => {
       try {
         const [result] = await conn.query<RowDataPacket[]>(
           `SELECT GET_LOCK(?, ?) AS acquired`,
-          [LOCK_NAME, LOCK_TIMEOUT],
+          [LOCK_NAME, LOCK_TIMEOUT]
         );
         expect(result[0].acquired).toBe(1);
 
@@ -112,14 +104,14 @@ describe.skipIf(SKIP_MYSQL_TESTS)("Migration MySQL Integration", () => {
         // First connection acquires lock
         const [result1] = await conn1.query<RowDataPacket[]>(
           `SELECT GET_LOCK(?, ?) AS acquired`,
-          [LOCK_NAME, LOCK_TIMEOUT],
+          [LOCK_NAME, LOCK_TIMEOUT]
         );
         expect(result1[0].acquired).toBe(1);
 
         // Second connection tries to acquire - should timeout
         const [result2] = await conn2.query<RowDataPacket[]>(
           `SELECT GET_LOCK(?, ?) AS acquired`,
-          [LOCK_NAME, LOCK_TIMEOUT],
+          [LOCK_NAME, LOCK_TIMEOUT]
         );
         expect(result2[0].acquired).toBe(0); // Should fail to acquire
 
@@ -129,7 +121,7 @@ describe.skipIf(SKIP_MYSQL_TESTS)("Migration MySQL Integration", () => {
         // Now second connection should be able to acquire
         const [result3] = await conn2.query<RowDataPacket[]>(
           `SELECT GET_LOCK(?, ?) AS acquired`,
-          [LOCK_NAME, LOCK_TIMEOUT],
+          [LOCK_NAME, LOCK_TIMEOUT]
         );
         expect(result3[0].acquired).toBe(1);
 
@@ -143,10 +135,10 @@ describe.skipIf(SKIP_MYSQL_TESTS)("Migration MySQL Integration", () => {
     it("should release lock when connection closes", async () => {
       // First connection acquires lock, then closes
       const conn1 = await pool.getConnection();
-      await conn1.query<RowDataPacket[]>(`SELECT GET_LOCK(?, ?) AS acquired`, [
-        LOCK_NAME,
-        LOCK_TIMEOUT,
-      ]);
+      await conn1.query<RowDataPacket[]>(
+        `SELECT GET_LOCK(?, ?) AS acquired`,
+        [LOCK_NAME, LOCK_TIMEOUT]
+      );
       conn1.release(); // Releases lock automatically
 
       // Second connection should be able to acquire immediately
@@ -154,7 +146,7 @@ describe.skipIf(SKIP_MYSQL_TESTS)("Migration MySQL Integration", () => {
       try {
         const [result] = await conn2.query<RowDataPacket[]>(
           `SELECT GET_LOCK(?, ?) AS acquired`,
-          [LOCK_NAME, LOCK_TIMEOUT],
+          [LOCK_NAME, LOCK_TIMEOUT]
         );
         expect(result[0].acquired).toBe(1);
         await conn2.query(`SELECT RELEASE_LOCK(?)`, [LOCK_NAME]);
@@ -169,29 +161,24 @@ describe.skipIf(SKIP_MYSQL_TESTS)("Migration MySQL Integration", () => {
 
     afterEach(async () => {
       // Cleanup test migrations
-      await pool
-        .query(
-          `DELETE FROM schema_migrations WHERE filename LIKE 'test_migration_%'`,
-        )
-        .catch(() => {});
+      await pool.query(
+        `DELETE FROM schema_migrations WHERE filename LIKE 'test_migration_%'`
+      ).catch(() => {});
     });
 
     it("should record successful migration with checksum", async () => {
       const content = "CREATE TABLE test_table (id INT);";
-      const checksum = crypto
-        .createHash("sha256")
-        .update(content)
-        .digest("hex");
+      const checksum = crypto.createHash("sha256").update(content).digest("hex");
 
       await pool.query(
         `INSERT INTO schema_migrations (filename, checksum_sha256, success, environment, executor)
          VALUES (?, ?, 1, 'test', 'vitest')`,
-        [TEST_MIGRATION, checksum],
+        [TEST_MIGRATION, checksum]
       );
 
       const [rows] = await pool.query<RowDataPacket[]>(
         `SELECT * FROM schema_migrations WHERE filename = ?`,
-        [TEST_MIGRATION],
+        [TEST_MIGRATION]
       );
 
       expect(rows.length).toBe(1);
@@ -205,12 +192,12 @@ describe.skipIf(SKIP_MYSQL_TESTS)("Migration MySQL Integration", () => {
       await pool.query(
         `INSERT INTO schema_migrations (filename, success, error_message, environment)
          VALUES (?, 0, ?, 'test')`,
-        [TEST_MIGRATION, errorMessage],
+        [TEST_MIGRATION, errorMessage]
       );
 
       const [rows] = await pool.query<RowDataPacket[]>(
         `SELECT * FROM schema_migrations WHERE filename = ?`,
-        [TEST_MIGRATION],
+        [TEST_MIGRATION]
       );
 
       expect(rows.length).toBe(1);
@@ -222,15 +209,15 @@ describe.skipIf(SKIP_MYSQL_TESTS)("Migration MySQL Integration", () => {
       // First insert
       await pool.query(
         `INSERT INTO schema_migrations (filename, success) VALUES (?, 1)`,
-        [TEST_MIGRATION],
+        [TEST_MIGRATION]
       );
 
       // Second insert should fail
       await expect(
         pool.query(
           `INSERT INTO schema_migrations (filename, success) VALUES (?, 1)`,
-          [TEST_MIGRATION],
-        ),
+          [TEST_MIGRATION]
+        )
       ).rejects.toThrow(/Duplicate entry/);
     });
 
@@ -243,10 +230,7 @@ describe.skipIf(SKIP_MYSQL_TESTS)("Migration MySQL Integration", () => {
 
       // Log any violations for debugging
       if (rows.length > 0) {
-        console.warn(
-          "Integrity violation: success=1 with error_message:",
-          rows.map((r) => r.filename),
-        );
+        console.warn("Integrity violation: success=1 with error_message:", rows.map(r => r.filename));
       }
 
       expect(rows.length).toBe(0);
@@ -301,9 +285,7 @@ describe.skipIf(SKIP_MYSQL_TESTS)("Migration MySQL Integration", () => {
         expect(true).toBe(false);
       } catch (error: any) {
         // Expected - connection should fail
-        expect(error.code).toMatch(
-          /ENOTFOUND|ETIMEDOUT|ECONNREFUSED|ER_ACCESS_DENIED|ENETUNREACH/,
-        );
+        expect(error.code).toMatch(/ENOTFOUND|ETIMEDOUT|ECONNREFUSED|ER_ACCESS_DENIED|ENETUNREACH/);
       } finally {
         await badPool.end().catch(() => {});
       }
@@ -331,16 +313,14 @@ describe.skipIf(SKIP_MYSQL_TESTS)("Migration MySQL Integration", () => {
       const conn = await pool.getConnection();
       try {
         await conn.beginTransaction();
-        await conn.query(
-          `INSERT INTO ${TEST_TABLE} (value) VALUES ('rollback_test')`,
-        );
+        await conn.query(`INSERT INTO ${TEST_TABLE} (value) VALUES ('rollback_test')`);
 
         // Simulate error by rolling back
         await conn.rollback();
 
         // Verify rollback worked
         const [rows] = await pool.query<RowDataPacket[]>(
-          `SELECT * FROM ${TEST_TABLE} WHERE value = 'rollback_test'`,
+          `SELECT * FROM ${TEST_TABLE} WHERE value = 'rollback_test'`
         );
         expect(rows.length).toBe(0);
       } finally {
@@ -353,22 +333,18 @@ describe.skipIf(SKIP_MYSQL_TESTS)("Migration MySQL Integration", () => {
       const testValue = `commit_test_${Date.now()}`;
       try {
         await conn.beginTransaction();
-        await conn.query(`INSERT INTO ${TEST_TABLE} (value) VALUES (?)`, [
-          testValue,
-        ]);
+        await conn.query(`INSERT INTO ${TEST_TABLE} (value) VALUES (?)`, [testValue]);
         await conn.commit();
 
         // Verify commit worked
         const [rows] = await pool.query<RowDataPacket[]>(
           `SELECT * FROM ${TEST_TABLE} WHERE value = ?`,
-          [testValue],
+          [testValue]
         );
         expect(rows.length).toBe(1);
 
         // Cleanup
-        await pool.query(`DELETE FROM ${TEST_TABLE} WHERE value = ?`, [
-          testValue,
-        ]);
+        await pool.query(`DELETE FROM ${TEST_TABLE} WHERE value = ?`, [testValue]);
       } finally {
         conn.release();
       }
@@ -410,13 +386,7 @@ describe("Migration Governance (Static)", () => {
     const module = await import("../runPendingMigrations.js");
     const state = module.getSchemaVerificationState();
 
-    const validStates = [
-      "unverified",
-      "verifying",
-      "verified",
-      "incompatible",
-      "error",
-    ];
+    const validStates = ["unverified", "verifying", "verified", "incompatible", "error"];
     expect(validStates).toContain(state.state);
     expect(typeof state.appliedCount).toBe("number");
     expect(typeof state.pendingCount).toBe("number");
@@ -425,8 +395,6 @@ describe("Migration Governance (Static)", () => {
 
   it("should export migration manifest", async () => {
     const module = await import("../runPendingMigrations.js");
-    expect(Array.isArray(module.MIGRATION_MANIFEST)).toBe(
-      "object" || "undefined" ? true : Array.isArray(module.MIGRATION_MANIFEST),
-    );
+    expect(Array.isArray(module.MIGRATION_MANIFEST)).toBe("object" || "undefined" ? true : Array.isArray(module.MIGRATION_MANIFEST));
   });
 });

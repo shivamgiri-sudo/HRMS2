@@ -1,11 +1,5 @@
 import { db } from "../../db/mysql.js";
-import {
-  buildMis,
-  rowToFact,
-  type Fact,
-  type MisFilters,
-  type RawRow,
-} from "./birlanu-mis.js";
+import { buildMis, rowToFact, type Fact, type MisFilters, type RawRow } from "./birlanu-mis.js";
 
 /**
  * Birlanu MIS feed: loads the lead rows of db_masmis.birlanu_sale (the reference
@@ -31,22 +25,14 @@ async function loadFacts(): Promise<Fact[]> {
 }
 
 const clean = (v: unknown, max = 60): string | undefined => {
-  const s = String(v ?? "")
-    .trim()
-    .slice(0, max);
+  const s = String(v ?? "").trim().slice(0, max);
   return s === "" || s.toLowerCase() === "all" ? undefined : s;
 };
 
 export async function getBirlanuMis(q: Record<string, unknown>) {
   const filters: MisFilters = {
-    month: clean(q.month),
-    week: clean(q.week),
-    channel: clean(q.channel),
-    brand: clean(q.brand),
-    bau1: clean(q.bau1),
-    bau2: clean(q.bau2),
-    status: clean(q.status),
-    closureMonth: clean(q.closureMonth),
+    month: clean(q.month), week: clean(q.week), channel: clean(q.channel), brand: clean(q.brand),
+    bau1: clean(q.bau1), bau2: clean(q.bau2), status: clean(q.status), closureMonth: clean(q.closureMonth),
   };
   return buildMis(await loadFacts(), filters);
 }

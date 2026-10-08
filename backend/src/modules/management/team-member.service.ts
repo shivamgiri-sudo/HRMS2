@@ -91,16 +91,10 @@ async function section<T>(
   try {
     const data = await run();
     const empty = Array.isArray(data) ? data.length === 0 : data == null;
-    return {
-      data,
-      state: { available: !empty, reason: empty ? "no_data" : undefined },
-    };
+    return { data, state: { available: !empty, reason: empty ? "no_data" : undefined } };
   } catch (err) {
     console.error(`[team-member] section '${name}' unavailable:`, err);
-    return {
-      data: fallback,
-      state: { available: false, reason: "unavailable" },
-    };
+    return { data: fallback, state: { available: false, reason: "unavailable" } };
   }
 }
 
@@ -158,8 +152,7 @@ async function fetchAttendance(employeeId: string) {
     cutoff.setDate(cutoff.getDate() - from);
     const iso = cutoff.toISOString().slice(0, 10);
     const window = days.filter((r) => String(r.d) >= iso);
-    const count = (s: string) =>
-      window.filter((r) => String(r.status) === s).length;
+    const count = (s: string) => window.filter((r) => String(r.status) === s).length;
     const present = count("present");
     const half = count("half_day");
     const marked = window.length;
@@ -169,15 +162,11 @@ async function fetchAttendance(employeeId: string) {
       half_day: half,
       absent: count("absent"),
       missing_punch: count("missing_punch"),
-      leave: window.filter((r) => String(r.status ?? "").includes("leave"))
-        .length,
+      leave: window.filter((r) => String(r.status ?? "").includes("leave")).length,
       late_marks: window.filter((r) => Number(r.late_mark) === 1).length,
       lwp_days: window.reduce((sum, r) => sum + Number(r.lwp_value ?? 0), 0),
       // Half days count as half, matching how the attendance module itself reports a rate.
-      attendance_pct:
-        marked > 0
-          ? Math.round(((present + half * 0.5) / marked) * 1000) / 10
-          : null,
+      attendance_pct: marked > 0 ? Math.round(((present + half * 0.5) / marked) * 1000) / 10 : null,
     };
   };
 
@@ -186,8 +175,7 @@ async function fetchAttendance(employeeId: string) {
       date: String(r.d),
       status: String(r.status ?? "unknown"),
       late: Number(r.late_mark) === 1,
-      late_by_minutes:
-        r.late_by_minutes == null ? null : Number(r.late_by_minutes),
+      late_by_minutes: r.late_by_minutes == null ? null : Number(r.late_by_minutes),
       lwp: Number(r.lwp_value ?? 0),
     })),
     last_30: tally(RECENT_DAYS),
@@ -204,15 +192,10 @@ async function fetchRegularisations(employeeId: string) {
       GROUP BY ar.status`,
     [employeeId],
   );
-  const by = Object.fromEntries(
-    rows.map((r) => [String(r.status), Number(r.n)]),
-  );
+  const by = Object.fromEntries(rows.map((r) => [String(r.status), Number(r.n)]));
   return {
     total: rows.reduce((sum, r) => sum + Number(r.n), 0),
-    pending:
-      (by.pending ?? 0) +
-      (by.manager_approved ?? 0) +
-      (by.payroll_pending ?? 0),
+    pending: (by.pending ?? 0) + (by.manager_approved ?? 0) + (by.payroll_pending ?? 0),
     approved: by.approved ?? 0,
     rejected: by.rejected ?? 0,
     by_status: by,
@@ -263,9 +246,7 @@ async function fetchKpi(employeeId: string, peerIds: string[]) {
     // 'higher' / 'lower'. Matching on the bare word made every metric higher-is-better, which
     // inverted the sign on all 24 lower-is-better metrics — AHT, ACW, FATAL_RATE, RTO_RATE —
     // and would have reported rising handle time as an improvement.
-    const higherIsBetter = !String(r.direction ?? "")
-      .toLowerCase()
-      .startsWith("lower");
+    const higherIsBetter = !String(r.direction ?? "").toLowerCase().startsWith("lower");
 
     // Direction of travel over the last week against the 90-day baseline, signed so that
     // positive always means "getting better" regardless of the metric's own direction.
@@ -366,9 +347,8 @@ async function fetchQuality(employeeCode: string) {
 
   // Behaviour flags the audit already scores. Surfaced because a percentage tells a manager
   // that something is wrong but never what to coach.
-  const [flags] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT SUM(q.escalation_failure = 1)               AS escalation_failures,
+  const [flags] = await db.execute<RowDataPacket[]>(
+    `SELECT SUM(q.escalation_failure = 1)               AS escalation_failures,
             SUM(q.dead_air_under_10_seconds = 0)        AS dead_air_breaches,
             SUM(q.express_empathy = 0)                  AS empathy_misses,
             SUM(q.accurate_issue_probing = 0)           AS probing_misses,
@@ -377,9 +357,8 @@ async function fetchQuality(employeeCode: string) {
        FROM db_audit.call_quality_assessment q
       WHERE q.User = ?
         AND q.CallDate >= DATE_SUB(NOW(), INTERVAL ${RECENT_DAYS} DAY)`,
-      [employeeCode],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    [employeeCode],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
 
   return {
     audits: Number(head.audits),
@@ -388,15 +367,9 @@ async function fetchQuality(employeeCode: string) {
     worst: head.worst == null ? null : Number(head.worst),
     poor_calls: Number(head.poor_calls ?? 0),
     last_audit: head.last_audit ? String(head.last_audit) : null,
-    series: recent.map((r) => ({
-      date: String(r.d),
-      score: Number(r.score),
-      calls: Number(r.calls),
-    })),
+    series: recent.map((r) => ({ date: String(r.d), score: Number(r.score), calls: Number(r.calls) })),
     coaching_flags: flags[0]
-      ? Object.fromEntries(
-          Object.entries(flags[0]).map(([k, v]) => [k, Number(v ?? 0)]),
-        )
+      ? Object.fromEntries(Object.entries(flags[0]).map(([k, v]) => [k, Number(v ?? 0)]))
       : {},
   };
 }
@@ -444,14 +417,14 @@ async function fetchOps(employeeCode: string) {
  * emergency contact, 702 no UAN, 330 no PAN, 143 no bank record, 34 no date of birth.
  */
 export const HYGIENE_FIELDS = [
-  { key: "date_of_birth", label: "Date of birth", critical: false },
-  { key: "pan_number", label: "PAN", critical: true },
-  { key: "uan_number", label: "UAN", critical: true },
-  { key: "personal_email", label: "Personal email", critical: false },
-  { key: "mobile", label: "Mobile", critical: true },
-  { key: "bank_detail", label: "Bank record", critical: true },
+  { key: "date_of_birth",     label: "Date of birth",     critical: false },
+  { key: "pan_number",        label: "PAN",               critical: true },
+  { key: "uan_number",        label: "UAN",               critical: true },
+  { key: "personal_email",    label: "Personal email",    critical: false },
+  { key: "mobile",            label: "Mobile",            critical: true },
+  { key: "bank_detail",       label: "Bank record",       critical: true },
   { key: "emergency_contact", label: "Emergency contact", critical: true },
-  { key: "nominee", label: "Nominee", critical: true },
+  { key: "nominee",           label: "Nominee",           critical: true },
 ] as const;
 
 const HYGIENE_SELECT = `
@@ -479,9 +452,7 @@ function toHygiene(row: RowDataPacket) {
     fields,
     missing_count: missing.length,
     missing_critical: missing.filter((f) => f.critical).length,
-    complete_pct: Math.round(
-      ((fields.length - missing.length) / fields.length) * 100,
-    ),
+    complete_pct: Math.round(((fields.length - missing.length) / fields.length) * 100),
   };
 }
 
@@ -495,16 +466,7 @@ async function fetchHygiene(employeeId: string) {
 
 /** The same checklist across a whole team — backs the Hygiene tab. */
 export async function getTeamHygiene(employeeIds: string[]) {
-  if (employeeIds.length === 0)
-    return {
-      members: [],
-      summary: {
-        team_size: 0,
-        fully_complete: 0,
-        avg_complete_pct: 0,
-        by_field: {},
-      },
-    };
+  if (employeeIds.length === 0) return { members: [], summary: { team_size: 0, fully_complete: 0, avg_complete_pct: 0, by_field: {} } };
   const placeholders = employeeIds.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code,
@@ -527,9 +489,7 @@ export async function getTeamHygiene(employeeIds: string[]) {
 
   const byField: Record<string, number> = {};
   for (const f of HYGIENE_FIELDS) {
-    byField[f.key] = members.filter(
-      (m) => !m.fields.find((x) => x.key === f.key)?.present,
-    ).length;
+    byField[f.key] = members.filter((m) => !m.fields.find((x) => x.key === f.key)?.present).length;
   }
 
   return {
@@ -538,9 +498,7 @@ export async function getTeamHygiene(employeeIds: string[]) {
       team_size: members.length,
       fully_complete: members.filter((m) => m.missing_count === 0).length,
       avg_complete_pct: members.length
-        ? Math.round(
-            members.reduce((s, m) => s + m.complete_pct, 0) / members.length,
-          )
+        ? Math.round(members.reduce((s, m) => s + m.complete_pct, 0) / members.length)
         : 0,
       /** Missing counts per field — what to chase first. */
       by_field: byField,
@@ -574,64 +532,28 @@ async function fetchOpenItems(employeeId: string) {
   );
 
   return {
-    pending_leave: leave.map((r) => ({
-      ...r,
-      total_days: Number(r.total_days ?? 0),
-    })),
+    pending_leave: leave.map((r) => ({ ...r, total_days: Number(r.total_days ?? 0) })),
     pending_regularisations: regs,
   };
 }
 
 // ── Assembly ──────────────────────────────────────────────────────────────────
 
-export async function getTeamMemberDeepDive(
-  employeeId: string,
-  peerIds: string[],
-) {
+export async function getTeamMemberDeepDive(employeeId: string, peerIds: string[]) {
   const identity = await fetchIdentity(employeeId);
   if (!identity) throw httpError("Employee not found", 404);
 
-  const employeeCode = identity.employee_code
-    ? String(identity.employee_code)
-    : "";
+  const employeeCode = identity.employee_code ? String(identity.employee_code) : "";
 
-  const [
-    attendance,
-    regularisations,
-    kpi,
-    kpiSeries,
-    quality,
-    ops,
-    hygiene,
-    openItems,
-  ] = await Promise.all([
-    section("attendance", () => fetchAttendance(employeeId), {
-      strip: [],
-      last_30: null,
-      last_90: null,
-    } as never),
-    section(
-      "regularisations",
-      () => fetchRegularisations(employeeId),
-      null as never,
-    ),
+  const [attendance, regularisations, kpi, kpiSeries, quality, ops, hygiene, openItems] = await Promise.all([
+    section("attendance", () => fetchAttendance(employeeId), { strip: [], last_30: null, last_90: null } as never),
+    section("regularisations", () => fetchRegularisations(employeeId), null as never),
     section("kpi", () => fetchKpi(employeeId, peerIds), [] as never),
     section("kpi_series", () => fetchKpiSeries(employeeId), {} as never),
-    section(
-      "quality",
-      () => (employeeCode ? fetchQuality(employeeCode) : Promise.resolve(null)),
-      null as never,
-    ),
-    section(
-      "ops",
-      () => (employeeCode ? fetchOps(employeeCode) : Promise.resolve(null)),
-      null as never,
-    ),
+    section("quality", () => (employeeCode ? fetchQuality(employeeCode) : Promise.resolve(null)), null as never),
+    section("ops", () => (employeeCode ? fetchOps(employeeCode) : Promise.resolve(null)), null as never),
     section("hygiene", () => fetchHygiene(employeeId), null as never),
-    section("open_items", () => fetchOpenItems(employeeId), {
-      pending_leave: [],
-      pending_regularisations: [],
-    } as never),
+    section("open_items", () => fetchOpenItems(employeeId), { pending_leave: [], pending_regularisations: [] } as never),
   ]);
 
   return {

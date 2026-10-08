@@ -1,5 +1,5 @@
-import { db } from "../../db/mysql.js";
-import { RowDataPacket } from "mysql2/promise";
+import { db } from '../../db/mysql.js';
+import { RowDataPacket } from 'mysql2/promise';
 
 /**
  * Minimum-wage validation gate for salary packages and offers.
@@ -48,48 +48,48 @@ import { RowDataPacket } from "mysql2/promise";
  * real free-text branch/employee data even though they are not the current legal name.
  */
 const STATE_NAME_TO_CODE: Record<string, string> = {
-  "ANDHRA PRADESH": "AP",
-  "ARUNACHAL PRADESH": "AR",
-  ASSAM: "AS",
-  BIHAR: "BR",
-  CHHATTISGARH: "CG",
-  GOA: "GA",
-  GUJARAT: "GJ",
-  HARYANA: "HR",
-  "HIMACHAL PRADESH": "HP",
-  JHARKHAND: "JH",
-  KARNATAKA: "KA",
-  KERALA: "KL",
-  "MADHYA PRADESH": "MP",
-  MAHARASHTRA: "MH",
-  MANIPUR: "MN",
-  MEGHALAYA: "ML",
-  MIZORAM: "MZ",
-  NAGALAND: "NL",
-  ODISHA: "OD",
-  ORISSA: "OD",
-  PUNJAB: "PB",
-  RAJASTHAN: "RJ",
-  SIKKIM: "SK",
-  "TAMIL NADU": "TN",
-  TELANGANA: "TS",
-  TRIPURA: "TR",
-  "UTTAR PRADESH": "UP",
-  UTTARAKHAND: "UK",
-  UTTARANCHAL: "UK",
-  "WEST BENGAL": "WB",
+  'ANDHRA PRADESH': 'AP',
+  'ARUNACHAL PRADESH': 'AR',
+  ASSAM: 'AS',
+  BIHAR: 'BR',
+  CHHATTISGARH: 'CG',
+  GOA: 'GA',
+  GUJARAT: 'GJ',
+  HARYANA: 'HR',
+  'HIMACHAL PRADESH': 'HP',
+  JHARKHAND: 'JH',
+  KARNATAKA: 'KA',
+  KERALA: 'KL',
+  'MADHYA PRADESH': 'MP',
+  MAHARASHTRA: 'MH',
+  MANIPUR: 'MN',
+  MEGHALAYA: 'ML',
+  MIZORAM: 'MZ',
+  NAGALAND: 'NL',
+  ODISHA: 'OD',
+  ORISSA: 'OD',
+  PUNJAB: 'PB',
+  RAJASTHAN: 'RJ',
+  SIKKIM: 'SK',
+  'TAMIL NADU': 'TN',
+  TELANGANA: 'TS',
+  TRIPURA: 'TR',
+  'UTTAR PRADESH': 'UP',
+  UTTARAKHAND: 'UK',
+  UTTARANCHAL: 'UK',
+  'WEST BENGAL': 'WB',
   // Union territories
-  "ANDAMAN AND NICOBAR ISLANDS": "AN",
-  CHANDIGARH: "CH",
-  "DADRA AND NAGAR HAVELI AND DAMAN AND DIU": "DN",
-  DELHI: "DL",
-  "NCT OF DELHI": "DL",
-  "NEW DELHI": "DL",
-  "JAMMU AND KASHMIR": "JK",
-  LADAKH: "LA",
-  LAKSHADWEEP: "LD",
-  PUDUCHERRY: "PY",
-  PONDICHERRY: "PY",
+  'ANDAMAN AND NICOBAR ISLANDS': 'AN',
+  CHANDIGARH: 'CH',
+  'DADRA AND NAGAR HAVELI AND DAMAN AND DIU': 'DN',
+  DELHI: 'DL',
+  'NCT OF DELHI': 'DL',
+  'NEW DELHI': 'DL',
+  'JAMMU AND KASHMIR': 'JK',
+  LADAKH: 'LA',
+  LAKSHADWEEP: 'LD',
+  PUDUCHERRY: 'PY',
+  PONDICHERRY: 'PY',
 };
 
 /** Every code the map above (and minimum_wage_master's own convention) can produce. */
@@ -100,9 +100,9 @@ function cleanKey(raw: string): string {
   return raw
     .trim()
     .toUpperCase()
-    .replace(/&/g, " AND ")
-    .replace(/\./g, " ")
-    .replace(/\s+/g, " ")
+    .replace(/&/g, ' AND ')
+    .replace(/\./g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -113,13 +113,11 @@ function cleanKey(raw: string): string {
  * through to the "state_unresolved" gate result, not be silently skipped or matched to
  * the wrong state.
  */
-export function normalizeStateToCode(
-  raw: string | null | undefined,
-): string | null {
+export function normalizeStateToCode(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const cleaned = cleanKey(raw);
   if (!cleaned) return null;
-  const compact = cleaned.replace(/\s+/g, "");
+  const compact = cleaned.replace(/\s+/g, '');
   if (compact.length === 2 && KNOWN_CODES.has(compact)) return compact;
   return STATE_NAME_TO_CODE[cleaned] ?? null;
 }
@@ -137,9 +135,7 @@ function firstRow<T extends RowDataPacket>(rows: unknown): T | undefined {
  * Returns the raw state string (not yet normalised to a code) or null if neither source
  * has one.
  */
-export async function resolveStateForEmployee(
-  employeeId: string,
-): Promise<string | null> {
+export async function resolveStateForEmployee(employeeId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.state, bm.state AS branch_state
        FROM employees e
@@ -148,9 +144,7 @@ export async function resolveStateForEmployee(
       LIMIT 1`,
     [employeeId],
   );
-  const row = firstRow<
-    RowDataPacket & { state: string | null; branch_state: string | null }
-  >(rows);
+  const row = firstRow<RowDataPacket & { state: string | null; branch_state: string | null }>(rows);
   if (!row) return null;
   const direct = row.state && String(row.state).trim();
   if (direct) return direct;
@@ -159,9 +153,7 @@ export async function resolveStateForEmployee(
 }
 
 /** Resolve a branch's state directly by branch_id — the FK path, unambiguous by construction. */
-export async function resolveStateForBranchId(
-  branchId: string | null | undefined,
-): Promise<string | null> {
+export async function resolveStateForBranchId(branchId: string | null | undefined): Promise<string | null> {
   if (!branchId) return null;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT state FROM branch_master WHERE id = ? LIMIT 1`,
@@ -185,9 +177,7 @@ export async function resolveStateForBranchId(
  * exists to avoid; an ambiguous name falls through to the "state could not be resolved"
  * path, which is honest.
  */
-export async function resolveStateForBranchName(
-  branchName: string | null | undefined,
-): Promise<string | null> {
+export async function resolveStateForBranchName(branchName: string | null | undefined): Promise<string | null> {
   if (!branchName || !branchName.trim()) return null;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT state
@@ -203,8 +193,7 @@ export async function resolveStateForBranchName(
 
 // ── The floor check itself ───────────────────────────────────────────────────────
 
-export type MinimumWageGateStatus =
-  "ok" | "below_floor" | "not_configured" | "state_unresolved";
+export type MinimumWageGateStatus = 'ok' | 'below_floor' | 'not_configured' | 'state_unresolved';
 
 export interface MinimumWageGateResult {
   status: MinimumWageGateStatus;
@@ -238,7 +227,7 @@ export async function evaluateMinimumWageFloor(
   const code = normalizeStateToCode(stateRaw ?? null);
   if (!code) {
     return {
-      status: "state_unresolved",
+      status: 'state_unresolved',
       provisional: true,
       state_raw: stateRaw ?? null,
       state_code: null,
@@ -247,7 +236,7 @@ export async function evaluateMinimumWageFloor(
       shortfall: null,
       note: stateRaw
         ? `State "${stateRaw}" could not be resolved to a minimum_wage_master state code.`
-        : "No state could be resolved for this record — minimum-wage floor not checked.",
+        : 'No state could be resolved for this record — minimum-wage floor not checked.',
     };
   }
 
@@ -262,7 +251,7 @@ export async function evaluateMinimumWageFloor(
 
   if (!row || rowCount === 0 || row.floor_monthly === null) {
     return {
-      status: "not_configured",
+      status: 'not_configured',
       provisional: true,
       state_raw: stateRaw ?? null,
       state_code: code,
@@ -277,7 +266,7 @@ export async function evaluateMinimumWageFloor(
   if (amountMonthly < floor) {
     const shortfall = Math.round((floor - amountMonthly) * 100) / 100;
     return {
-      status: "below_floor",
+      status: 'below_floor',
       provisional: true,
       state_raw: stateRaw ?? null,
       state_code: code,
@@ -289,7 +278,7 @@ export async function evaluateMinimumWageFloor(
   }
 
   return {
-    status: "ok",
+    status: 'ok',
     provisional: false,
     state_raw: stateRaw ?? null,
     state_code: code,

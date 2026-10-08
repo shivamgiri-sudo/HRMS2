@@ -30,8 +30,9 @@ vi.mock("../src/shared/approvalEscalation.js", () => ({
 
 const { db } = await import("../src/db/mysql.js");
 const { hasAnyRole } = await import("../src/shared/scopeAccess.js");
-const { wfmRegularizationSecureRouter } =
-  await import("../src/modules/wfm/wfm.regularization.secure.routes.js");
+const { wfmRegularizationSecureRouter } = await import(
+  "../src/modules/wfm/wfm.regularization.secure.routes.js"
+);
 
 const execute = db.execute as unknown as ReturnType<typeof vi.fn>;
 const roleCheck = hasAnyRole as unknown as ReturnType<typeof vi.fn>;
@@ -63,18 +64,11 @@ async function callList(query: Record<string, string> = {}) {
 
   let payload: any = null;
   const res: any = {
-    status() {
-      return res;
-    },
-    json(body: any) {
-      payload = body;
-      return res;
-    },
+    status() { return res; },
+    json(body: any) { payload = body; return res; },
   };
   const req: any = { query, body: {}, authUser: { id: "user-1" }, params: {} };
-  await layer.route.stack[0].handle(req, res, (err: unknown) => {
-    if (err) throw err;
-  });
+  await layer.route.stack[0].handle(req, res, (err: unknown) => { if (err) throw err; });
   return payload;
 }
 
@@ -83,9 +77,7 @@ beforeEach(() => {
   roleCheck.mockReset();
   roleCheck.mockResolvedValue(false);
   // count query, then the list query
-  execute
-    .mockResolvedValueOnce([[{ total: 1 }], []])
-    .mockResolvedValue([[pendingRow()], []]);
+  execute.mockResolvedValueOnce([[{ total: 1 }], []]).mockResolvedValue([[pendingRow()], []]);
 });
 
 describe("employee search", () => {
@@ -130,18 +122,14 @@ describe("canApproveNow / canBulkApprove", () => {
   });
 
   it("stays false for WFM on a pending row — the manager stage comes first", async () => {
-    roleCheck.mockImplementation(async (_u: string, ...roles: string[]) =>
-      roles.includes("wfm"),
-    );
+    roleCheck.mockImplementation(async (_u: string, ...roles: string[]) => roles.includes("wfm"));
 
     const body = await callList();
     expect(body.data[0].decision_support.canApproveNow).toBe(false);
   });
 
   it("turns true for WFM once the manager has approved", async () => {
-    roleCheck.mockImplementation(async (_u: string, ...roles: string[]) =>
-      roles.includes("wfm"),
-    );
+    roleCheck.mockImplementation(async (_u: string, ...roles: string[]) => roles.includes("wfm"));
     execute.mockReset();
     execute
       .mockResolvedValueOnce([[{ total: 1 }], []])

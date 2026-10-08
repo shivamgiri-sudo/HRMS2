@@ -7,7 +7,6 @@ This document shows realistic example outputs from each query and how to interpr
 ## Example 1: Agent-Level Cost Efficiency (Top 15 Ranked by ROI)
 
 ### Sample Output
-
 ```
 EMPLOYEE_CODE | AGENT_NAME          | MONTHLY_SALARY | CALLS_30D | AVG_QUALITY | COST_PER_CALL | COST_PER_QP | RATING   | TENURE_MO
 EMP001        | Alice Kumar         | 26,000         | 180       | 88.5%       | 144.44        | 163.40      | HIGH_ROI | 18
@@ -24,7 +23,6 @@ EMP009        | Iris Sharma         | 26,500         | 95        | 55.8%       |
 ### Interpretation
 
 **High Performers (HIGH_ROI - Alice, Bob):**
-
 - Quality 85%+, cost per quality point <₹180
 - These agents are tier-1 performers—consider them for:
   - Team lead / mentor roles
@@ -33,21 +31,18 @@ EMP009        | Iris Sharma         | 26,500         | 95        | 55.8%       |
 - **Action:** Reward; retain; develop
 
 **Good Performers (GOOD_ROI - Carol, Dave, Eve):**
-
 - Quality 75-85%, cost per quality point ₹176-196
 - Stable baseline; no immediate action
 - Expected distribution: 40% of team
 - **Action:** Monitor; provide routine coaching
 
 **Medium Performers (MEDIUM_ROI - Frank, Grace):**
-
 - Quality 65-75%, cost per quality point ₹225-291
 - Need attention but still productive
 - Tenure varies—onboarding gap if new
 - **Action:** Identify bottleneck; assign mentor; set 30-day improvement target
 
 **Low Performers (LOW_ROI - Harry, Iris):**
-
 - Quality <65%, cost per quality point >₹430
 - Urgent action needed; costly mistakes
 - Iris just hired (0.5 mo)—expected ramp time; but Harry (1 mo) is concerning
@@ -58,7 +53,6 @@ EMP009        | Iris Sharma         | 26,500         | 95        | 55.8%       |
 ## Example 2: Process-Level ROI (Top 10 Ranked by Efficiency)
 
 ### Sample Output
-
 ```
 PROCESS              | CALLS_30D | AGENTS | AVG_QUALITY | TOTAL_PAYROLL | COST_PER_CALL | COST_PER_QP | ROI_CLASS
 Customer Service     | 5,000     | 45     | 82.1%       | 1,125,000     | 225.00        | 274.10      | GOOD_ROI
@@ -73,17 +67,15 @@ Retention Outreach   | 400       | 8      | 64.2%       | 200,000       | 500.00
 ### Interpretation
 
 **PREMIUM_ROI Process (Sales Outbound):**
-
 - Quality 87.3% at ₹250/call
 - **Finding:** Highest quality + moderate cost = most efficient
-- **Strategy:**
+- **Strategy:** 
   - Document best practices
   - Use as training model for other teams
   - Consider expanding headcount
   - **Scaling:** 1 additional agent = ~₹25k additional spend + 150 calls + ₹12.5k value
 
 **GOOD_ROI Processes (Customer Service, Billing):**
-
 - Quality 79-82% at ₹225-250/call
 - **Finding:** Baseline acceptable performance
 - **Strategy:**
@@ -92,7 +84,6 @@ Retention Outreach   | 400       | 8      | 64.2%       | 200,000       | 500.00
   - Expected outcome: +3-5% quality = ₹50-100k annual savings
 
 **ACCEPTABLE ROI Process (Collections):**
-
 - Quality 76.5% at ₹312.50/call
 - **Finding:** Highest cost per call; quality acceptable
 - **Investigation needed:**
@@ -105,7 +96,6 @@ Retention Outreach   | 400       | 8      | 64.2%       | 200,000       | 500.00
   - Target: Reduce cost to ₹275/call (₹37.5k annual savings)
 
 **POOR_ROI Processes (L2 Support, Retention):**
-
 - Quality 64-68% at ₹500-778/call
 - **Finding:** High cost + low quality = unacceptable
 - **Immediate Actions:**
@@ -122,7 +112,6 @@ Retention Outreach   | 400       | 8      | 64.2%       | 200,000       | 500.00
 ## Example 3: Top 20 Savings Opportunities (Ranked by Monthly Savings)
 
 ### Sample Output
-
 ```
 RANK | AGENT_NAME | SALARY | QUALITY | CALLS | INT_PRIORITY | MONTHLY_SAVINGS | ACTION           | 12_MO_SAVINGS
 1    | Harry Brown| 27,000 | 55.8%   | 110   | CRITICAL     | 8,100           | Reskill/Replace  | 97,200
@@ -140,7 +129,6 @@ RANK | AGENT_NAME | SALARY | QUALITY | CALLS | INT_PRIORITY | MONTHLY_SAVINGS | 
 ### Implementation Strategy
 
 **CRITICAL Priority (Rank 1-2: Harry, Iris)**
-
 - Combined savings: ₹16,075/month or ₹193k/year
 - **Action Plan:**
   - Week 1: Assessment call with manager + 1:1 coaching plan
@@ -150,7 +138,6 @@ RANK | AGENT_NAME | SALARY | QUALITY | CALLS | INT_PRIORITY | MONTHLY_SAVINGS | 
 - **Budget:** ₹2k/person × 2 = ₹4k coaching investment vs. ₹193k annual savings
 
 **HIGH Priority (Rank 3-5: Jack, Kelly, Larry)**
-
 - Combined savings: ₹10,800/month or ₹129.6k/year
 - **Action Plan:**
   - Assign each to PREMIUM_ROI mentor (Sales Outbound team)
@@ -160,7 +147,6 @@ RANK | AGENT_NAME | SALARY | QUALITY | CALLS | INT_PRIORITY | MONTHLY_SAVINGS | 
 - **Budget:** ₹500/person coaching vs. ₹129.6k annual savings
 
 **MEDIUM Priority (Rank 6-8: Mary, Nancy, Oscar)**
-
 - Combined savings: ₹6,300/month or ₹75.6k/year
 - **Action Plan:**
   - Structured 60-day performance improvement plan
@@ -188,7 +174,6 @@ Q4_Highest25%  | 31,000-45,000   | 32     | 87.5%       | 60%         | 3%
 ```
 
 **Interpretation:**
-
 - Clean positive correlation: ₹ spent = quality received
 - Q4 is worth the premium: 85% higher quality than Q1, 30% higher salary
 - **Finding:** Salary ladder is correctly calibrated
@@ -205,7 +190,6 @@ Q4_Highest25%  | 32     | 72.1%       | 15%         | 28%  ← PROBLEM
 ```
 
 **Diagnosis:** Q4 agents performing WORSE than Q1
-
 - **Possible causes:**
   - Q4 = senior/burned out; retention problem masking under-performance
   - Misclassified roles (should be team leads, not frontline)
@@ -226,7 +210,6 @@ Q4             | 32     | 76.9%       | 18%  ← Flat
 ```
 
 **Diagnosis:** Very flat salary band (Q1 ₹18k, Q4 ₹22k) but quality only +4%
-
 - **Possible causes:**
   - No merit-based progression
   - Across-the-board increases regardless of performance
@@ -244,7 +227,6 @@ Q4_Highest25%  | 85.2%       | 18.5%           ← HIGH
 ```
 
 **Diagnosis:** Q4 agents are inconsistent (some 95%, some 68%)
-
 - **Possible causes:**
   - Different roles grouped together (senior agents + specialists)
   - Lack of standardized process; heroes vs. strugglers
@@ -351,24 +333,24 @@ CRISIS INDICATORS:
 URGENT ACTION PLAN (Next 30 Days):
 1. Emergency Manager Huddle (Day 1)
    - Root cause analysis: hiring, training, process, incentives?
-
+   
 2. Immediate Interventions (Week 1)
    - Reduce workload: 20-30% load shedding to stabilize
    - Hire external coaching: ₹500k emergency investment
    - Daily quality huddles (15 min)
-
+   
 3. Diagnostic Deep-Dive (Week 2-3)
    - Call audit: 50 calls from bottom 20% agents
    - Manager capability assessment
    - Process/system bottleneck analysis
-
+   
 4. Corrective Actions (Week 4)
    - Action plan with quarterly targets:
      - Q1 (30 days): 64% → 70% (stop bleeding)
      - Q2 (60 days): 70% → 76% (recovery)
      - Q3 (90 days): 76% → 80% (stabilization)
      - Q4: 80%+ (new normal)
-
+   
 5. Success Metrics & Accountability
    - Weekly tracking vs. targets
    - Manager/agent bonuses tied to quality improvement
@@ -387,52 +369,47 @@ INVESTMENT & PAYBACK:
 ## Decision Framework: What to Do With Each Result
 
 ### If cost_per_quality_point is >₹500
-
 **High cost, low quality = money wasted**
 
-| Finding          | Action                                      | Timeline |
-| ---------------- | ------------------------------------------- | -------- |
-| New hire (<6 mo) | Extend onboarding; assign mentor            | 30 days  |
-| Tenure >12 mo    | Performance improvement plan                | 15 days  |
-| Complex role     | Assess role/person fit; reclassify or exit  | 30 days  |
-| Process issue    | Bypass agent; investigate system bottleneck | 5 days   |
+| Finding | Action | Timeline |
+|---------|--------|----------|
+| New hire (<6 mo) | Extend onboarding; assign mentor | 30 days |
+| Tenure >12 mo | Performance improvement plan | 15 days |
+| Complex role | Assess role/person fit; reclassify or exit | 30 days |
+| Process issue | Bypass agent; investigate system bottleneck | 5 days |
 
 ### If cost_per_call is <₹120 but quality 65%
-
 **Cost-effective but quality concerns**
 
-| Finding          | Action                                      | Timeline |
-| ---------------- | ------------------------------------------- | -------- |
-| High call volume | Reduce workload to improve quality          | 7 days   |
-| Low call volume  | Increase utilization; add complexity        | 14 days  |
-| Compliance risk  | Immediate audit; possibly remove from floor | 3 days   |
+| Finding | Action | Timeline |
+|---------|--------|----------|
+| High call volume | Reduce workload to improve quality | 7 days |
+| Low call volume | Increase utilization; add complexity | 14 days |
+| Compliance risk | Immediate audit; possibly remove from floor | 3 days |
 
 ### If Q4 quality <Q1 quality
-
 **Salary ladder inverted = urgent review**
 
-| Finding           | Action                                 | Timeline |
-| ----------------- | -------------------------------------- | -------- |
-| Data error        | Validate data; check call audit sample | 3 days   |
-| Burnout           | Career path review; consider lead role | 30 days  |
-| Misclassification | Separate frontline from leadership     | 15 days  |
+| Finding | Action | Timeline |
+|---------|--------|----------|
+| Data error | Validate data; check call audit sample | 3 days |
+| Burnout | Career path review; consider lead role | 30 days |
+| Misclassification | Separate frontline from leadership | 15 days |
 
 ### If PREMIUM_ROI process <5% of volume
-
 **Underutilized high-efficiency process**
 
-| Finding              | Action                                   | Timeline |
-| -------------------- | ---------------------------------------- | -------- |
-| Capacity available   | Shift calls from POOR_ROI process        | 7 days   |
-| Skills differ        | Create training pathway from other teams | 30 days  |
-| Resource constrained | Add budget to scale                      | 14 days  |
+| Finding | Action | Timeline |
+|---------|--------|----------|
+| Capacity available | Shift calls from POOR_ROI process | 7 days |
+| Skills differ | Create training pathway from other teams | 30 days |
+| Resource constrained | Add budget to scale | 14 days |
 
 ---
 
 ## Excel/Dashboard Visualization Tips
 
 ### Chart 1: Agent Scatter (Cost vs. Quality)
-
 - X-axis: Cost per Call (₹100-500)
 - Y-axis: Quality % (40-95%)
 - Size: Call volume
@@ -444,21 +421,18 @@ INVESTMENT & PAYBACK:
   - Lower-right (Low quality, High cost) = PROBLEM ❌
 
 ### Chart 2: Process ROI Waterfall
-
 - X-axis: Process names
 - Y-axis: Cost per Quality Point (₹150-800)
 - Bars color: Green (PREMIUM), Yellow (GOOD/ACCEPTABLE), Red (POOR)
 - Trend line: Industry benchmark (₹400)
 
 ### Chart 3: Savings Opportunity Pareto
-
 - X-axis: Agent names (top 20)
 - Y-axis: Monthly savings potential (₹0-10k)
 - Bars: Stacked by intervention type (Coaching, Reskill, Replace)
 - Cumulative line: Show 80/20 rule
 
 ### Chart 4: Salary-Quality Regression
-
 - X-axis: Monthly salary (₹15k-50k)
 - Y-axis: Quality % (50-95%)
 - Points: Individual agents

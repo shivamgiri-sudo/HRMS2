@@ -21,10 +21,7 @@ import { describe, expect, it } from "vitest";
  * offer INTO the assignment, so the offer is already the source of truth there.
  */
 const SERVICE = readFileSync(
-  resolve(
-    process.cwd(),
-    "src/modules/payroll-head-review/payroll-head-review.service.ts",
-  ),
+  resolve(process.cwd(), "src/modules/payroll-head-review/payroll-head-review.service.ts"),
   "utf8",
 );
 

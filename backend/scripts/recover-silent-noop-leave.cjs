@@ -86,32 +86,17 @@ async function main() {
     const target = whole ? "leave_approved" : halfDayAttendanceTarget(r.cur);
     const lwp = whole ? 0 : halfDayLwpValue(target);
 
-    if (target === null) {
-      skipped.push({ ...r, why: "already a full paid day — nothing to add" });
-      continue;
-    }
-    if (r.cur === target) {
-      skipped.push({ ...r, why: "already correct" });
-      continue;
-    }
+    if (target === null) { skipped.push({ ...r, why: "already a full paid day — nothing to add" }); continue; }
+    if (r.cur === target) { skipped.push({ ...r, why: "already correct" }); continue; }
     // Only touch a row the leave demonstrably never reached.
-    if (
-      r.approved_at &&
-      r.adr_updated &&
-      new Date(r.adr_updated) > new Date(r.approved_at)
-    ) {
-      skipped.push({
-        ...r,
-        why: `row changed AFTER leave approval (${r.adr_updated}) — not ours to overwrite`,
-      });
+    if (r.approved_at && r.adr_updated && new Date(r.adr_updated) > new Date(r.approved_at)) {
+      skipped.push({ ...r, why: `row changed AFTER leave approval (${r.adr_updated}) — not ours to overwrite` });
       continue;
     }
     plan.push({ ...r, target, lwp });
   }
 
-  console.log(
-    `${APPLY ? "APPLY" : "DRY RUN"} — ${rows.length} approved leave days in ${BATCH_NO}`,
-  );
+  console.log(`${APPLY ? "APPLY" : "DRY RUN"} — ${rows.length} approved leave days in ${BATCH_NO}`);
   console.log(`  to repair: ${plan.length}   leaving alone: ${skipped.length}`);
   const byMove = {};
   for (const p of plan) {
@@ -119,31 +104,16 @@ async function main() {
     byMove[k] = (byMove[k] || 0) + 1;
   }
   console.log("\n  repairs:");
-  for (const [k, n] of Object.entries(byMove))
-    console.log(`    ${String(n).padStart(4)}  ${k}`);
+  for (const [k, n] of Object.entries(byMove)) console.log(`    ${String(n).padStart(4)}  ${k}`);
   const whySkip = {};
-  for (const s of skipped)
-    whySkip[s.why.replace(/\(.*\)/, "(…)")] =
-      (whySkip[s.why.replace(/\(.*\)/, "(…)")] || 0) + 1;
+  for (const s of skipped) whySkip[s.why.replace(/\(.*\)/, "(…)")] = (whySkip[s.why.replace(/\(.*\)/, "(…)")] || 0) + 1;
   console.log("\n  skipped:");
-  for (const [k, n] of Object.entries(whySkip))
-    console.log(`    ${String(n).padStart(4)}  ${k}`);
-  const days = plan.reduce(
-    (a, p) => a + (Number(p.total_days) === 1 ? 1 : 0.5),
-    0,
-  );
+  for (const [k, n] of Object.entries(whySkip)) console.log(`    ${String(n).padStart(4)}  ${k}`);
+  const days = plan.reduce((a, p) => a + (Number(p.total_days) === 1 ? 1 : 0.5), 0);
   console.log(`\n  days of pay restored: ${days.toFixed(1)}`);
 
-  if (!plan.length) {
-    console.log("\nNothing to recover.");
-    await c.end();
-    return;
-  }
-  if (!APPLY) {
-    console.log("\nNo changes written. Re-run with APPLY=1 to write.");
-    await c.end();
-    return;
-  }
+  if (!plan.length) { console.log("\nNothing to recover."); await c.end(); return; }
+  if (!APPLY) { console.log("\nNo changes written. Re-run with APPLY=1 to write."); await c.end(); return; }
 
   await c.beginTransaction();
   let n = 0;
@@ -170,17 +140,9 @@ async function main() {
       `INSERT INTO sensitive_action_log
          (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, acted_at, reason)
        VALUES (UUID(), ?, 'LEAVE_ATTENDANCE_RECOVERED', 'leave', 'upload_batch', ?, ?, NOW(), ?)`,
-      [
-        ACTOR,
-        BATCH_ID,
-        JSON.stringify({
-          batch_no: BATCH_NO,
-          rows_recovered: n,
-          moves: byMove,
-          days_of_pay_restored: days,
-        }),
-        REASON,
-      ],
+      [ACTOR, BATCH_ID,
+       JSON.stringify({ batch_no: BATCH_NO, rows_recovered: n, moves: byMove, days_of_pay_restored: days }),
+       REASON],
     );
     await c.commit();
     console.log(`\nCommitted. rows updated = ${n}`);
@@ -192,7 +154,4 @@ async function main() {
   await c.end();
 }
 
-main().catch((e) => {
-  console.error("ERR", e.message);
-  process.exit(1);
-});
+main().catch((e) => { console.error("ERR", e.message); process.exit(1); });

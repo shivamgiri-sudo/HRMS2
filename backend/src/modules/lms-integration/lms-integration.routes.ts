@@ -10,10 +10,8 @@ import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 export const lmsIntegrationRouter = Router();
 lmsIntegrationRouter.use(requireAuth);
 
-const h =
-  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: any) => fn(req, res).catch(next);
 
 const LMS_PROGRESS_OVERSIGHT_ROLES = [
   "super_admin",
@@ -38,12 +36,8 @@ export function isOwnLmsEmployeeReference(
 ): boolean {
   if (!employee) return false;
   const target = targetEmployeeId.trim().toLowerCase();
-  return (
-    target.length > 0 &&
-    [employee.id, employee.employee_code].some(
-      (value) => value.trim().toLowerCase() === target,
-    )
-  );
+  return target.length > 0 && [employee.id, employee.employee_code]
+    .some((value) => value.trim().toLowerCase() === target);
 }
 
 async function requireLmsProgressAccess(
@@ -56,8 +50,7 @@ async function requireLmsProgressAccess(
     if (await hasRole(userId, ...LMS_PROGRESS_OVERSIGHT_ROLES)) return next();
 
     const employee = await getEmployeeForUser(userId);
-    if (isOwnLmsEmployeeReference(req.params.employeeId, employee))
-      return next();
+    if (isOwnLmsEmployeeReference(req.params.employeeId, employee)) return next();
 
     return res.status(403).json({ success: false, message: "Forbidden" });
   } catch (error) {
@@ -86,54 +79,25 @@ async function requireLmsProgressAccess(
  * reported back in `skipped` instead of failing the batch: a TNI selection of 40 agents should
  * not be lost because two of them have left.
  */
-lmsIntegrationRouter.post(
-  "/assign",
-  requireRole(
-    "super_admin",
-    "admin",
-    "hr",
-    "quality",
-    "wfm",
-    "operations_manager",
-  ),
+lmsIntegrationRouter.post("/assign",
+  requireRole("super_admin", "admin", "hr", "quality", "wfm", "operations_manager"),
   h(async (req, res) => {
-    const body = req.body as {
-      agent_codes?: unknown;
-      reason?: unknown;
-      priority?: unknown;
-    };
+    const body = req.body as { agent_codes?: unknown; reason?: unknown; priority?: unknown };
     const codes = Array.isArray(body.agent_codes)
-      ? [
-          ...new Set(
-            body.agent_codes.map((c) => String(c ?? "").trim()).filter(Boolean),
-          ),
-        ]
+      ? [...new Set(body.agent_codes.map((c) => String(c ?? "").trim()).filter(Boolean))]
       : [];
     if (codes.length === 0) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "agent_codes must be a non-empty array",
-        });
+      return res.status(400).json({ success: false, message: "agent_codes must be a non-empty array" });
     }
     if (codes.length > 500) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "agent_codes is limited to 500 per request",
-        });
+      return res.status(400).json({ success: false, message: "agent_codes is limited to 500 per request" });
     }
 
     const ALLOWED_PRIORITY = new Set(["low", "medium", "high", "critical"]);
-    const priority = ALLOWED_PRIORITY.has(String(body.priority ?? ""))
-      ? String(body.priority)
-      : "high";
-    const reason =
-      typeof body.reason === "string" && body.reason.trim()
-        ? body.reason.trim().slice(0, 2000)
-        : "Training need identified from TNI analysis";
+    const priority = ALLOWED_PRIORITY.has(String(body.priority ?? "")) ? String(body.priority) : "high";
+    const reason = typeof body.reason === "string" && body.reason.trim()
+      ? body.reason.trim().slice(0, 2000)
+      : "Training need identified from TNI analysis";
 
     const { db } = await import("../../db/mysql.js");
     const placeholders = codes.map(() => "?").join(", ");
@@ -142,12 +106,7 @@ lmsIntegrationRouter.post(
         WHERE employee_code IN (${placeholders}) AND employment_status = 'active'`,
       codes,
     );
-    const byCode = new Map(
-      (empRows as RowDataPacket[]).map((r) => [
-        String(r.employee_code),
-        String(r.id),
-      ]),
-    );
+    const byCode = new Map((empRows as RowDataPacket[]).map((r) => [String(r.employee_code), String(r.id)]));
     const skipped = codes.filter((c) => !byCode.has(c));
 
     const actorId = req.authUser?.id ?? null;
@@ -170,18 +129,16 @@ lmsIntegrationRouter.post(
       status: "identified",
       // Said explicitly in the payload, not just in this comment: the caller's UI should not
       // tell a user their agents are enrolled in a course. They are flagged for training.
-      message:
-        created > 0
-          ? `${created} training need(s) recorded in HRMS. LMS enrolment is actioned separately by a coordinator.`
-          : "No active employees matched the supplied agent codes.",
+      message: created > 0
+        ? `${created} training need(s) recorded in HRMS. LMS enrolment is actioned separately by a coordinator.`
+        : "No active employees matched the supplied agent codes.",
     });
   }),
 );
 
 // ─── Dashboard Summary ────────────────────────────────────────────────────────
 // GET /api/lms/dashboard-summary — org-wide LMS snapshot for CEO/Super Admin
-lmsIntegrationRouter.get(
-  "/dashboard-summary",
+lmsIntegrationRouter.get("/dashboard-summary",
   requireRole("super_admin", "admin", "ceo", "hr"),
   h(async (_req, res) => {
     const [summary] = await lmsDb.execute<RowDataPacket[]>(`
@@ -241,187 +198,148 @@ lmsIntegrationRouter.get(
       success: true,
       data: {
         // Key metrics for CEO / Super Admin widgets
-        certified_learners: Number(s.certified_count ?? s.certified_total ?? 0),
-        total_trainees: Number(s.total_trainees ?? 0),
-        ops_ready: Number(b.total_handed_over ?? s.ops_ready_count ?? 0),
-        ojt_ready: Number(s.ojt_ready_count ?? 0),
-        high_risk_trainees: Number(s.high_risk_count ?? 0),
+        certified_learners:     Number(s.certified_count ?? s.certified_total ?? 0),
+        total_trainees:         Number(s.total_trainees ?? 0),
+        ops_ready:              Number(b.total_handed_over ?? s.ops_ready_count ?? 0),
+        ojt_ready:              Number(s.ojt_ready_count ?? 0),
+        high_risk_trainees:     Number(s.high_risk_count ?? 0),
         critical_risk_trainees: Number(s.critical_risk_count ?? 0),
-        avg_course_completion: Number(s.avg_course_completion ?? 0),
-        avg_mcq_pass: Number(s.avg_mcq_pass ?? 0),
-        avg_attendance_pct: Number(s.avg_attendance_pct ?? 0),
+        avg_course_completion:  Number(s.avg_course_completion ?? 0),
+        avg_mcq_pass:           Number(s.avg_mcq_pass ?? 0),
+        avg_attendance_pct:     Number(s.avg_attendance_pct ?? 0),
         // Batch info
-        active_batches: Number(b.active_batches ?? 0),
-        total_batches: Number(b.total_batches ?? 0),
+        active_batches:         Number(b.active_batches ?? 0),
+        total_batches:          Number(b.total_batches ?? 0),
         // Risk
         risks: {
-          open_high: Number((risks[0] ?? {}).open_high ?? 0),
+          open_high:     Number((risks[0] ?? {}).open_high ?? 0),
           open_critical: Number((risks[0] ?? {}).open_critical ?? 0),
-          open_watch: Number((risks[0] ?? {}).open_watch ?? 0),
-          resolved: Number((risks[0] ?? {}).resolved ?? 0),
+          open_watch:    Number((risks[0] ?? {}).open_watch ?? 0),
+          resolved:      Number((risks[0] ?? {}).resolved ?? 0),
         },
         // Historical KPI trend
-        kpi_trend: (kpi as RowDataPacket[]).map((r) => ({
-          period: String(r.period),
-          active_batches: Number(r.active_batches),
-          total_trainees: Number(r.total_trainees),
-          avg_course_pct: Number(r.avg_course_pct),
-          avg_mcq_pct: Number(r.avg_mcq_pct),
+        kpi_trend: (kpi as RowDataPacket[]).map(r => ({
+          period:           String(r.period),
+          active_batches:   Number(r.active_batches),
+          total_trainees:   Number(r.total_trainees),
+          avg_course_pct:   Number(r.avg_course_pct),
+          avg_mcq_pct:      Number(r.avg_mcq_pct),
           avg_attendance_pct: Number(r.avg_attendance_pct),
-          certified_count: Number(r.certified_count),
+          certified_count:  Number(r.certified_count),
           certification_pct: Number(r.certification_pct),
-          critical_risks: Number(r.critical_risks),
+          critical_risks:   Number(r.critical_risks),
         })),
         // Active batch list
-        active_batch_list: (activeBatches as RowDataPacket[]).map((r) => ({
-          batch_no: String(r.batch_no),
-          batch_name: String(r.batch_name),
-          branch: String(r.branch),
-          process: String(r.process),
+        active_batch_list: (activeBatches as RowDataPacket[]).map(r => ({
+          batch_no:      String(r.batch_no),
+          batch_name:    String(r.batch_name),
+          branch:        String(r.branch),
+          process:       String(r.process),
           total_trainees: Number(r.total_trainees),
-          certified: Number(r.certified),
+          certified:     Number(r.certified),
           handover_to_ops: Number(r.handover_to_ops),
         })),
       },
     });
-  }),
+  })
 );
 
 // ─── Per-Employee Progress ────────────────────────────────────────────────────
 // GET /api/lms/learner-progress/:employeeId — employee's own LMS progress
 // Any authenticated user can request their own record; managers/hr/admin can request any.
-lmsIntegrationRouter.get(
-  "/learner-progress/:employeeId",
-  requireRole(
-    "super_admin",
-    "admin",
-    "hr",
-    "manager",
-    "process_manager",
-    "branch_head",
-    "team_leader",
-    "tl",
-    "assistant_manager",
-    "trainer",
-    "training_manager",
-    "payroll",
-    "payroll_head",
-    "ceo",
-    "coo",
-    "employee",
-    "agent",
-    "trainee",
-    "wfm",
-    "qa",
-    "quality_analyst",
-    "operations_manager",
-    "recruiter",
-    "recruitment_hr",
-  ),
+lmsIntegrationRouter.get("/learner-progress/:employeeId",
+  requireRole("super_admin", "admin", "hr", "manager", "process_manager", "branch_head",
+              "team_leader", "tl", "assistant_manager", "trainer", "training_manager",
+              "payroll", "payroll_head", "ceo", "coo", "employee", "agent", "trainee",
+              "wfm", "qa", "quality_analyst", "operations_manager", "recruiter", "recruitment_hr"),
   requireLmsProgressAccess,
   h(async (req, res) => {
-    const { employeeId } = req.params;
+  const { employeeId } = req.params;
 
-    const [trainee] = await lmsDb.execute<RowDataPacket[]>(
-      `
+  const [trainee] = await lmsDb.execute<RowDataPacket[]>(`
     SELECT * FROM trainee_master
     WHERE employee_id = ? OR permanent_emp_id = ?
     LIMIT 1
-  `,
-      [employeeId, employeeId],
-    );
+  `, [employeeId, employeeId]);
 
-    if (!(trainee as RowDataPacket[]).length) {
-      return res.json({ success: true, data: null });
-    }
+  if (!(trainee as RowDataPacket[]).length) {
+    return res.json({ success: true, data: null });
+  }
 
-    const t = (trainee as RowDataPacket[])[0];
+  const t = (trainee as RowDataPacket[])[0];
 
-    const [assessment] = await lmsDb.execute<RowDataPacket[]>(
-      `
+  const [assessment] = await lmsDb.execute<RowDataPacket[]>(`
     SELECT best_percentage, result, total_attempts, last_attempt_at
     FROM assessment_results
     WHERE employee_id = ?
     ORDER BY best_percentage DESC
     LIMIT 1
-  `,
-      [employeeId],
-    );
+  `, [employeeId]);
 
-    const [risks] = await lmsDb.execute<RowDataPacket[]>(
-      `
+  const [risks] = await lmsDb.execute<RowDataPacket[]>(`
     SELECT risk_type, risk_title, severity, status
     FROM training_risk_log
     WHERE employee_id = ? AND status = 'Open'
     ORDER BY FIELD(severity,'CRITICAL','HIGH','WATCH')
     LIMIT 5
-  `,
-      [employeeId],
-    );
+  `, [employeeId]);
 
-    const [content] = await lmsDb.execute<RowDataPacket[]>(
-      `
+  const [content] = await lmsDb.execute<RowDataPacket[]>(`
     SELECT COUNT(*) as total,
            SUM(opened = 1) as opened,
            ROUND(AVG(completion_pct), 1) as avg_pct
     FROM content_progress
     WHERE employee_id = ?
-  `,
-      [employeeId],
-    );
+  `, [employeeId]);
 
-    const a = (assessment as RowDataPacket[])[0];
-    const cp = (content as RowDataPacket[])[0];
+  const a = (assessment as RowDataPacket[])[0];
+  const cp = (content as RowDataPacket[])[0];
 
-    return res.json({
-      success: true,
-      data: {
-        employee_id: String(t.employee_id),
-        lms_id: String(t.lms_id ?? ""),
-        trainee_name: String(t.trainee_name),
-        batch_no: String(t.batch_no ?? ""),
-        classroom_name: String(t.classroom_name ?? ""),
-        branch: String(t.branch ?? ""),
-        process: String(t.process ?? ""),
-        // Completion metrics
-        completion_pct: Number(t.course_completion_pct ?? 0),
-        mcq_best_score: Number(
-          a?.best_percentage ?? t.assessment_pass_pct ?? 0,
-        ),
-        mcq_result: String(a?.result ?? ""),
-        attendance_pct: Number(t.attendance_pct ?? 0),
-        // Certification
-        certification_status: String(t.certification_status ?? "Not Certified"),
-        ojt_ready: Boolean(t.ojt_ready),
-        handover_to_ops: Boolean(t.handover_to_ops),
-        // Risk
-        risk_status: String(t.risk_status ?? ""),
-        risk_reason: String(t.risk_reason ?? ""),
-        open_risks: (risks as RowDataPacket[]).map((r) => ({
-          type: String(r.risk_type),
-          title: String(r.risk_title),
-          severity: String(r.severity),
-        })),
-        // Content progress
-        content_total: Number(cp?.total ?? 0),
-        content_opened: Number(cp?.opened ?? 0),
-        content_avg_pct: Number(cp?.avg_pct ?? 0),
-        // For dashboard model compatibility
-        completionPct: Number(t.course_completion_pct ?? 0),
-        mcqBestScore: Number(a?.best_percentage ?? t.assessment_pass_pct ?? 0),
-        readinessScore: Number(t.attendance_pct ?? 0),
-        certificationStatus: String(t.certification_status ?? "Not Certified"),
-        course_progress: `${Math.round(Number(cp?.opened ?? 0))}/${Number(cp?.total ?? 0)} modules`,
-        course_name: String(t.classroom_name ?? t.batch_no ?? ""),
-      },
-    });
-  }),
-);
+  return res.json({
+    success: true,
+    data: {
+      employee_id:         String(t.employee_id),
+      lms_id:              String(t.lms_id ?? ""),
+      trainee_name:        String(t.trainee_name),
+      batch_no:            String(t.batch_no ?? ""),
+      classroom_name:      String(t.classroom_name ?? ""),
+      branch:              String(t.branch ?? ""),
+      process:             String(t.process ?? ""),
+      // Completion metrics
+      completion_pct:      Number(t.course_completion_pct ?? 0),
+      mcq_best_score:      Number(a?.best_percentage ?? t.assessment_pass_pct ?? 0),
+      mcq_result:          String(a?.result ?? ""),
+      attendance_pct:      Number(t.attendance_pct ?? 0),
+      // Certification
+      certification_status: String(t.certification_status ?? "Not Certified"),
+      ojt_ready:           Boolean(t.ojt_ready),
+      handover_to_ops:     Boolean(t.handover_to_ops),
+      // Risk
+      risk_status:         String(t.risk_status ?? ""),
+      risk_reason:         String(t.risk_reason ?? ""),
+      open_risks:          (risks as RowDataPacket[]).map(r => ({
+        type:     String(r.risk_type),
+        title:    String(r.risk_title),
+        severity: String(r.severity),
+      })),
+      // Content progress
+      content_total:       Number(cp?.total ?? 0),
+      content_opened:      Number(cp?.opened ?? 0),
+      content_avg_pct:     Number(cp?.avg_pct ?? 0),
+      // For dashboard model compatibility
+      completionPct:       Number(t.course_completion_pct ?? 0),
+      mcqBestScore:        Number(a?.best_percentage ?? t.assessment_pass_pct ?? 0),
+      readinessScore:      Number(t.attendance_pct ?? 0),
+      certificationStatus: String(t.certification_status ?? "Not Certified"),
+      course_progress:     `${Math.round(Number(cp?.opened ?? 0))}/${Number(cp?.total ?? 0)} modules`,
+      course_name:         String(t.classroom_name ?? t.batch_no ?? ""),
+    },
+  });
+}));
 
 // ─── Training Risk Summary ────────────────────────────────────────────────────
 // GET /api/lms/risk-summary — org-wide risk breakdown
-lmsIntegrationRouter.get(
-  "/risk-summary",
+lmsIntegrationRouter.get("/risk-summary",
   requireRole("super_admin", "admin", "ceo", "hr", "manager"),
   h(async (_req, res) => {
     const [risks] = await lmsDb.execute<RowDataPacket[]>(`
@@ -445,35 +363,31 @@ lmsIntegrationRouter.get(
     return res.json({
       success: true,
       data: {
-        summary: (summary as RowDataPacket[]).reduce(
-          (acc, r) => {
-            acc[String(r.severity).toLowerCase()] = Number(r.count);
-            return acc;
-          },
-          {} as Record<string, number>,
-        ),
-        risks: (risks as RowDataPacket[]).map((r) => ({
-          employee_id: String(r.employee_id),
-          trainee_name: String(r.trainee_name),
-          batch_no: String(r.batch_no),
-          branch: String(r.branch),
-          process: String(r.process),
-          risk_type: String(r.risk_type),
-          risk_title: String(r.risk_title),
-          severity: String(r.severity),
+        summary: (summary as RowDataPacket[]).reduce((acc, r) => {
+          acc[String(r.severity).toLowerCase()] = Number(r.count);
+          return acc;
+        }, {} as Record<string, number>),
+        risks: (risks as RowDataPacket[]).map(r => ({
+          employee_id:   String(r.employee_id),
+          trainee_name:  String(r.trainee_name),
+          batch_no:      String(r.batch_no),
+          branch:        String(r.branch),
+          process:       String(r.process),
+          risk_type:     String(r.risk_type),
+          risk_title:    String(r.risk_title),
+          severity:      String(r.severity),
           current_value: Number(r.current_value),
           expected_value: Number(r.expected_value),
-          created_at: String(r.created_at),
+          created_at:    String(r.created_at),
         })),
       },
     });
-  }),
+  })
 );
 
 // ─── Batch Progress List ──────────────────────────────────────────────────────
 // GET /api/lms/batches — active batch list with progress
-lmsIntegrationRouter.get(
-  "/batches",
+lmsIntegrationRouter.get("/batches",
   requireRole("super_admin", "admin", "ceo", "hr", "manager", "trainer"),
   h(async (_req, res) => {
     const [batches] = await lmsDb.execute<RowDataPacket[]>(`
@@ -493,23 +407,23 @@ lmsIntegrationRouter.get(
 
     return res.json({
       success: true,
-      data: (batches as RowDataPacket[]).map((r) => ({
-        batch_no: String(r.batch_no),
-        batch_name: String(r.batch_name),
-        branch: String(r.branch),
-        process: String(r.process),
-        batch_status: String(r.batch_status),
-        total_trainees: Number(r.total_trainees),
-        certified: Number(r.certified),
+      data: (batches as RowDataPacket[]).map(r => ({
+        batch_no:        String(r.batch_no),
+        batch_name:      String(r.batch_name),
+        branch:          String(r.branch),
+        process:         String(r.process),
+        batch_status:    String(r.batch_status),
+        total_trainees:  Number(r.total_trainees),
+        certified:       Number(r.certified),
         handover_to_ops: Number(r.handover_to_ops),
-        ojt_ready: Number(r.ojt_ready),
-        avg_course_pct: Number(r.avg_course_pct ?? 0),
-        avg_mcq_pct: Number(r.avg_mcq_pct ?? 0),
-        at_risk_count: Number(r.at_risk_count ?? 0),
-        start_date: r.start_date ? String(r.start_date) : null,
-        end_date: r.end_date ? String(r.end_date) : null,
-        coordinator: r.coordinator_name ? String(r.coordinator_name) : null,
+        ojt_ready:       Number(r.ojt_ready),
+        avg_course_pct:  Number(r.avg_course_pct ?? 0),
+        avg_mcq_pct:     Number(r.avg_mcq_pct ?? 0),
+        at_risk_count:   Number(r.at_risk_count ?? 0),
+        start_date:      r.start_date ? String(r.start_date) : null,
+        end_date:        r.end_date ? String(r.end_date) : null,
+        coordinator:     r.coordinator_name ? String(r.coordinator_name) : null,
       })),
     });
-  }),
+  })
 );

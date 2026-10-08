@@ -9,8 +9,7 @@ import { branchInScopeSql } from './payroll-branch-scope.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 
 const router = Router();
-const h = (fn: Function) => (req: any, res: any, next: any) =>
-  fn(req, res).catch(next);
+const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -64,24 +63,16 @@ router.get('/:id', requireRole('payroll', 'super_admin', 'finance'), h(async (re
 
 // ── PATCH /api/payroll/cheque-validation/:id ─────────────────────────────────
 // Payroll HO validates (or rejects) a cheque name mismatch case.
-router.patch(
-  "/:id",
-  requireRole("payroll", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const actorUserId = req.authUser!.id;
-    const { decision, note } = req.body as {
-      decision: "manual_validated" | "rejected";
-      note?: string;
-    };
+router.patch('/:id', requireRole('payroll', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const actorUserId = req.authUser!.id;
+  const { decision, note } = req.body as {
+    decision: 'manual_validated' | 'rejected';
+    note?: string;
+  };
 
-    if (!["manual_validated", "rejected"].includes(decision)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "decision must be manual_validated or rejected",
-        });
-    }
+  if (!['manual_validated', 'rejected'].includes(decision)) {
+    return res.status(400).json({ success: false, message: 'decision must be manual_validated or rejected' });
+  }
 
   const patchScope = await branchInScopeSql(req, 'ac.applied_for_branch');
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -96,41 +87,32 @@ router.patch(
     return res.status(409).json({ success: false, message: `Case already ${rec.match_status}` });
   }
 
-    await db.execute(
-      `UPDATE cheque_name_validation
+  await db.execute(
+    `UPDATE cheque_name_validation
         SET match_status = ?, validated_by = ?, validated_at = NOW(), validator_note = ?
       WHERE id = ?`,
-      [decision, actorUserId, note ?? null, req.params.id],
+    [decision, actorUserId, note ?? null, req.params.id]
+  );
+
+  // Update bank detail's validation status
+  const bankStatus = decision === 'manual_validated' ? 'validated' : 'rejected';
+  if (rec.bank_detail_id) {
+    await db.execute(
+      `UPDATE candidate_onboarding_bank_detail SET name_validation_status = ? WHERE id = ?`,
+      [bankStatus, rec.bank_detail_id]
     );
+  }
 
-    // Update bank detail's validation status
-    const bankStatus =
-      decision === "manual_validated" ? "validated" : "rejected";
-    if (rec.bank_detail_id) {
-      await db.execute(
-        `UPDATE candidate_onboarding_bank_detail SET name_validation_status = ? WHERE id = ?`,
-        [bankStatus, rec.bank_detail_id],
-      );
-    }
+  await logSensitiveAction({
+    actor_user_id: actorUserId,
+    action_type: `cheque_name_${decision}`,
+    module_key: 'onboarding',
+    entity_type: 'cheque_name_validation',
+    entity_id: req.params.id,
+    change_summary: { decision, candidate_id: rec.candidate_id, bank_detail_id: rec.bank_detail_id },
+  });
 
-    await logSensitiveAction({
-      actor_user_id: actorUserId,
-      action_type: `cheque_name_${decision}`,
-      module_key: "onboarding",
-      entity_type: "cheque_name_validation",
-      entity_id: req.params.id,
-      change_summary: {
-        decision,
-        candidate_id: rec.candidate_id,
-        bank_detail_id: rec.bank_detail_id,
-      },
-    });
-
-    return res.json({
-      success: true,
-      message: `Cheque name case ${decision.replace("_", " ")}`,
-    });
-  }),
-);
+  return res.json({ success: true, message: `Cheque name case ${decision.replace('_', ' ')}` });
+}));
 
 export { router as chequeValidationRouter };

@@ -11,9 +11,9 @@
  * answer is "no fallback criteria", never an error — a lead webhook must not fail over this.
  */
 
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import type { MetaScreeningConfig } from "../job-requisition/job-requisition.types.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import type { MetaScreeningConfig } from '../job-requisition/job-requisition.types.js';
 
 export interface CampaignCriteria {
   formId: string;
@@ -25,21 +25,19 @@ export interface CampaignCriteria {
 export function parseScreeningConfig(raw: unknown): MetaScreeningConfig | null {
   if (!raw) return null;
   try {
-    const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
-    return obj && typeof obj === "object" ? (obj as MetaScreeningConfig) : null;
+    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return obj && typeof obj === 'object' ? (obj as MetaScreeningConfig) : null;
   } catch {
     return null;
   }
 }
 
 /** The fallback criteria for the campaign that owns this Lead Gen form, or null. */
-export async function loadCampaignScreeningConfig(
-  formId: string,
-): Promise<MetaScreeningConfig | null> {
+export async function loadCampaignScreeningConfig(formId: string): Promise<MetaScreeningConfig | null> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT screening_config FROM meta_campaign WHERE meta_form_id = ? LIMIT 1",
-      [formId],
+      'SELECT screening_config FROM meta_campaign WHERE meta_form_id = ? LIMIT 1',
+      [formId]
     );
     return parseScreeningConfig(rows[0]?.screening_config);
   } catch {
@@ -57,12 +55,12 @@ export async function loadAllCampaignCriteria(): Promise<CampaignCriteria[]> {
   });
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT meta_form_id, campaign_name, requisition_id, screening_config FROM meta_campaign WHERE meta_form_id IS NOT NULL",
+      'SELECT meta_form_id, campaign_name, requisition_id, screening_config FROM meta_campaign WHERE meta_form_id IS NOT NULL'
     );
     return rows.map((r) => map(r, r.screening_config));
   } catch {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT meta_form_id, campaign_name, requisition_id FROM meta_campaign WHERE meta_form_id IS NOT NULL",
+      'SELECT meta_form_id, campaign_name, requisition_id FROM meta_campaign WHERE meta_form_id IS NOT NULL'
     );
     return rows.map((r) => map(r, null));
   }

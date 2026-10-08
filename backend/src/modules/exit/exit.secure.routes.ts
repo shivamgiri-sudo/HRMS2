@@ -448,10 +448,12 @@ async function handleExitStatusUpdate(req: any, res: any) {
       { allowAdminBypass: true, requireScopeForNonAdmin: true },
     )) || (await canViewEmployee({ id: userId }, String(prefetch.employee_id)));
     if (!scopeOk)
-      return res.status(403).json({
-        success: false,
-        message: "Forbidden: exit request is outside your action scope",
-      });
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "Forbidden: exit request is outside your action scope",
+        });
   }
 
   const nextStatus = normalizeExitStatus(req.body?.status);

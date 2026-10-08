@@ -28,27 +28,18 @@ import { describe, expect, it } from "vitest";
  * level. That is deliberate: it stops a future refactor quietly reverting to the bare UPDATE.
  */
 describe("roster conflict resolution persists its evidence (RR12)", () => {
-  const service = readFileSync(
-    resolve(__dirname, "../wfm-ext.service.ts"),
-    "utf-8",
-  );
+  const service = readFileSync(resolve(__dirname, "../wfm-ext.service.ts"), "utf-8");
 
   function resolveFn(): string {
     const start = service.indexOf("async resolve(");
-    expect(start, "rosterConflictService.resolve not found").toBeGreaterThan(
-      -1,
-    );
+    expect(start, "rosterConflictService.resolve not found").toBeGreaterThan(-1);
     const end = service.indexOf("export const coverageService", start);
-    expect(end, "end marker (coverageService) not found").toBeGreaterThan(
-      start,
-    );
+    expect(end, "end marker (coverageService) not found").toBeGreaterThan(start);
     return service.slice(start, end);
   }
 
   it("no longer runs the bare unguarded resolved = 1 update", () => {
-    expect(service).not.toContain(
-      "UPDATE wfm_roster_conflict_log SET resolved = 1 WHERE id = ?",
-    );
+    expect(service).not.toContain('UPDATE wfm_roster_conflict_log SET resolved = 1 WHERE id = ?');
   });
 
   it("writes resolution_action, resolution_remarks, resolved_by and resolved_at", () => {
@@ -95,10 +86,7 @@ describe("roster conflict resolution persists its evidence (RR12)", () => {
 });
 
 describe("the resolve route reads and validates the body it used to discard (RR12/RR13)", () => {
-  const routes = readFileSync(
-    resolve(__dirname, "../wfm-ext.routes.ts"),
-    "utf-8",
-  );
+  const routes = readFileSync(resolve(__dirname, "../wfm-ext.routes.ts"), "utf-8");
 
   function resolveRoute(): string {
     const start = routes.indexOf('router.post("/roster/conflicts/:id/resolve"');
@@ -128,18 +116,10 @@ describe("the resolve route reads and validates the body it used to discard (RR1
 describe("the columns the fix writes to actually exist", () => {
   it("ships a migration adding the four evidence columns", () => {
     const sql = readFileSync(
-      resolve(
-        __dirname,
-        "../../../../sql/1759_roster_conflict_resolution_evidence.sql",
-      ),
+      resolve(__dirname, "../../../../sql/1759_roster_conflict_resolution_evidence.sql"),
       "utf-8",
     );
-    for (const column of [
-      "resolution_action",
-      "resolution_remarks",
-      "resolved_by",
-      "resolved_at",
-    ]) {
+    for (const column of ["resolution_action", "resolution_remarks", "resolved_by", "resolved_at"]) {
       expect(sql, `${column} not added`).toContain(`ADD COLUMN ${column}`);
       // Guarded on information_schema so the migration is rerunnable, per the repo convention.
       expect(sql).toContain(`column_name='${column}'`);
@@ -148,12 +128,7 @@ describe("the columns the fix writes to actually exist", () => {
   });
 
   it("registers that migration in the manifest, so it runs on deploy", () => {
-    const manifest = readFileSync(
-      resolve(__dirname, "../../../db/runPendingMigrations.ts"),
-      "utf-8",
-    );
-    expect(manifest).toContain(
-      '"1759_roster_conflict_resolution_evidence.sql"',
-    );
+    const manifest = readFileSync(resolve(__dirname, "../../../db/runPendingMigrations.ts"), "utf-8");
+    expect(manifest).toContain('"1759_roster_conflict_resolution_evidence.sql"');
   });
 });

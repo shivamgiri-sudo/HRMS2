@@ -100,10 +100,6 @@ const ZERO_HEX = "0".repeat(32);
   await db.end();
 })().catch(async (e) => {
   console.error("ERR", e?.message ?? e);
-  try {
-    await db.end();
-  } catch {
-    /* ignore */
-  }
+  try { await db.end(); } catch { /* ignore */ }
   process.exit(1);
 });

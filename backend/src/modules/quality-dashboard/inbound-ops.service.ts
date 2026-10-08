@@ -20,10 +20,7 @@ export async function getProjectsMeta() {
 const _cache = new Map<string, { value: unknown; exp: number }>();
 function cacheGet<T>(key: string): T | null {
   const e = _cache.get(key);
-  if (!e || Date.now() > e.exp) {
-    _cache.delete(key);
-    return null;
-  }
+  if (!e || Date.now() > e.exp) { _cache.delete(key); return null; }
   return e.value as T;
 }
 function cacheSet(key: string, value: unknown, ttlMs = 120_000) {
@@ -117,11 +114,7 @@ interface RawRow {
   unique_phones: number;
 }
 
-function normalizeRow(
-  raw: RawRow,
-  p: ProjectConfig,
-  fcr: number | null = null,
-): ProjectDailyRow {
+function normalizeRow(raw: RawRow, p: ProjectConfig, fcr: number | null = null): ProjectDailyRow {
   const offered = Number(raw.offered) || 0;
   const answered = Number(raw.answered) || 0;
   const sl_num = Number(raw.sl_num) || 0;
@@ -129,41 +122,24 @@ function normalizeRow(
   const login_count = Number(raw.login_count) || 0;
   const acht = Number(raw.acht) || 0;
 
-  const al = offered > 0 ? Math.round((answered * 10000) / offered) / 100 : 0;
-  const sl = offered > 0 ? Math.round((sl_num * 10000) / offered) / 100 : 0;
-  const repeat_pct =
-    offered > 0
-      ? Math.round(((offered - unique_phones) * 10000) / offered) / 100
-      : 0;
+  const al = offered > 0 ? Math.round(answered * 10000 / offered) / 100 : 0;
+  const sl = offered > 0 ? Math.round(sl_num * 10000 / offered) / 100 : 0;
+  const repeat_pct = offered > 0 ? Math.round((offered - unique_phones) * 10000 / offered) / 100 : 0;
   const deficit = p.required - login_count;
 
   return {
-    key: p.key,
-    name: p.name,
-    icon: p.icon,
-    color: p.color,
+    key: p.key, name: p.name, icon: p.icon, color: p.color,
     date: String(raw.date),
-    offered,
-    answered,
-    abandoned: offered - answered,
-    al,
-    sl,
-    acht,
-    repeat_pct,
-    login_count,
-    fcr_pct: fcr,
-    deficit,
-    mandate: p.mandate,
-    required: p.required,
+    offered, answered, abandoned: offered - answered,
+    al, sl, acht, repeat_pct, login_count, fcr_pct: fcr,
+    deficit, mandate: p.mandate, required: p.required,
   };
 }
 
 // ─── getInboundSummary ──────────────────────────────────────────────────────────
 
 export async function getInboundSummary(
-  startDate: string,
-  endDate: string,
-  projectKeys?: string[],
+  startDate: string, endDate: string, projectKeys?: string[]
 ): Promise<ProjectDailyRow[]> {
   const cacheKey = `ib-summary:${projectKeys?.join(",") ?? "all"}:${startDate}:${endDate}`;
   const cached = cacheGet<ProjectDailyRow[]>(cacheKey);
@@ -176,19 +152,14 @@ export async function getInboundSummary(
 
   const results = await Promise.all(
     projectsToQuery.map(async (p) => {
-      const sql =
-        p.pattern === "A" ? buildPatternAQuery(p) : buildPatternBQuery(p);
+      const sql = p.pattern === "A" ? buildPatternAQuery(p) : buildPatternBQuery(p);
       const params: (string | number)[] = [startDate, endDate, ...p.campaigns];
 
       try {
         const rows = await dialerQuery<RawRow>(sql, params);
 
-        let totalOffered = 0,
-          totalAnswered = 0,
-          totalSlNum = 0;
-        let totalUniquePhones = 0,
-          maxLoginCount = 0,
-          weightedAcht = 0;
+        let totalOffered = 0, totalAnswered = 0, totalSlNum = 0;
+        let totalUniquePhones = 0, maxLoginCount = 0, weightedAcht = 0;
 
         for (const r of rows) {
           const offered = Number(r.offered) || 0;
@@ -200,58 +171,31 @@ export async function getInboundSummary(
           weightedAcht += (Number(r.acht) || 0) * offered;
         }
 
-        const acht =
-          totalOffered > 0 ? Math.round(weightedAcht / totalOffered) : 0;
+        const acht = totalOffered > 0 ? Math.round(weightedAcht / totalOffered) : 0;
 
         let fcrPct: number | null = null;
         if (p.hasFCR && p.fcrClientId) {
           try {
-            const fcrRows = await dialerQuery<{
-              date: string;
-              fcr_pct: number;
-            }>(buildFCRQuery(), [startDate, endDate, p.fcrClientId]);
+            const fcrRows = await dialerQuery<{ date: string; fcr_pct: number }>(
+              buildFCRQuery(), [startDate, endDate, p.fcrClientId]
+            );
             if (fcrRows.length > 0) {
-              const total = fcrRows.reduce(
-                (s, r) => s + (Number(r.fcr_pct) || 0),
-                0,
-              );
+              const total = fcrRows.reduce((s, r) => s + (Number(r.fcr_pct) || 0), 0);
               fcrPct = Math.round((total / fcrRows.length) * 100) / 100;
             }
-          } catch {
-            /* FCR optional */
-          }
+          } catch { /* FCR optional */ }
         }
 
-        return normalizeRow(
-          {
-            date: endDate,
-            login_count: maxLoginCount,
-            offered: totalOffered,
-            answered: totalAnswered,
-            sl_num: totalSlNum,
-            acht,
-            unique_phones: totalUniquePhones,
-          },
-          p,
-          fcrPct,
-        );
+        return normalizeRow({
+          date: endDate, login_count: maxLoginCount,
+          offered: totalOffered, answered: totalAnswered,
+          sl_num: totalSlNum, acht, unique_phones: totalUniquePhones,
+        }, p, fcrPct);
       } catch (err: any) {
         console.error(`[inbound-ops] Error querying ${p.key}:`, err.message);
-        return normalizeRow(
-          {
-            date: endDate,
-            login_count: 0,
-            offered: 0,
-            answered: 0,
-            sl_num: 0,
-            acht: 0,
-            unique_phones: 0,
-          },
-          p,
-          null,
-        );
+        return normalizeRow({ date: endDate, login_count: 0, offered: 0, answered: 0, sl_num: 0, acht: 0, unique_phones: 0 }, p, null);
       }
-    }),
+    })
   );
 
   cacheSet(cacheKey, results);
@@ -272,9 +216,7 @@ export interface TrendRow {
 }
 
 export async function getInboundTrend(
-  startDate: string,
-  endDate: string,
-  projectKey: string,
+  startDate: string, endDate: string, projectKey: string
 ): Promise<TrendRow[]> {
   const p = await getInboundProject(projectKey);
   if (!p) return [];
@@ -288,22 +230,18 @@ export async function getInboundTrend(
 
   try {
     const rows = await dialerQuery<RawRow>(sql, params);
-    const result: TrendRow[] = rows.map((r) => {
+    const result: TrendRow[] = rows.map(r => {
       const offered = Number(r.offered) || 0;
       const answered = Number(r.answered) || 0;
       const sl_num = Number(r.sl_num) || 0;
       const unique_phones = Number(r.unique_phones) || 0;
       return {
         date: String(r.date).slice(0, 10),
-        offered,
-        answered,
-        al: offered > 0 ? Math.round((answered * 10000) / offered) / 100 : 0,
-        sl: offered > 0 ? Math.round((sl_num * 10000) / offered) / 100 : 0,
+        offered, answered,
+        al: offered > 0 ? Math.round(answered * 10000 / offered) / 100 : 0,
+        sl: offered > 0 ? Math.round(sl_num * 10000 / offered) / 100 : 0,
         acht: Number(r.acht) || 0,
-        repeat_pct:
-          offered > 0
-            ? Math.round(((offered - unique_phones) * 10000) / offered) / 100
-            : 0,
+        repeat_pct: offered > 0 ? Math.round((offered - unique_phones) * 10000 / offered) / 100 : 0,
         login_count: Number(r.login_count) || 0,
       };
     });
@@ -329,9 +267,7 @@ export interface ConsolidatedTrendRow {
 }
 
 export async function getConsolidatedTrend(
-  startDate: string,
-  endDate: string,
-  projectKeys?: string[],
+  startDate: string, endDate: string, projectKeys?: string[]
 ): Promise<ConsolidatedTrendRow[]> {
   const allProjects = await getInboundProjects();
   const projects = projectKeys?.length
@@ -339,33 +275,17 @@ export async function getConsolidatedTrend(
     : allProjects;
 
   const allTrends = await Promise.all(
-    projects.map((p) => getInboundTrend(startDate, endDate, p.key)),
+    projects.map(p => getInboundTrend(startDate, endDate, p.key))
   );
 
-  const dateMap = new Map<
-    string,
-    {
-      offered: number;
-      answered: number;
-      sl_num: number;
-      acht_weighted: number;
-      login: number;
-    }
-  >();
+  const dateMap = new Map<string, { offered: number; answered: number; sl_num: number; acht_weighted: number; login: number }>();
 
   for (const trend of allTrends) {
     for (const row of trend) {
-      const d = dateMap.get(row.date) ?? {
-        offered: 0,
-        answered: 0,
-        sl_num: 0,
-        acht_weighted: 0,
-        login: 0,
-      };
+      const d = dateMap.get(row.date) ?? { offered: 0, answered: 0, sl_num: 0, acht_weighted: 0, login: 0 };
       d.offered += row.offered;
       d.answered += row.answered;
-      d.sl_num +=
-        row.offered > 0 ? Math.round((row.sl * row.offered) / 100) : 0;
+      d.sl_num += row.offered > 0 ? Math.round(row.sl * row.offered / 100) : 0;
       d.acht_weighted += (row.acht || 0) * row.offered;
       d.login += row.login_count;
       dateMap.set(row.date, d);
@@ -378,9 +298,8 @@ export async function getConsolidatedTrend(
       date,
       offered: d.offered,
       answered: d.answered,
-      al:
-        d.offered > 0 ? Math.round((d.answered * 10000) / d.offered) / 100 : 0,
-      sl: d.offered > 0 ? Math.round((d.sl_num * 10000) / d.offered) / 100 : 0,
+      al: d.offered > 0 ? Math.round(d.answered * 10000 / d.offered) / 100 : 0,
+      sl: d.offered > 0 ? Math.round(d.sl_num * 10000 / d.offered) / 100 : 0,
       acht: d.offered > 0 ? Math.round(d.acht_weighted / d.offered) : 0,
       total_login: d.login,
     }));
@@ -430,22 +349,16 @@ export async function getProjectHourly(projectKey: string, date: string): Promis
 
   const params: (string | number)[] = [date, date, ...p.campaigns];
   try {
-    const rows = await dialerQuery<{
-      hour: number;
-      offered: number;
-      answered: number;
-      sl_num: number;
-    }>(sql, params);
-    return rows.map((r) => {
+    const rows = await dialerQuery<{ hour: number; offered: number; answered: number; sl_num: number }>(sql, params);
+    return rows.map(r => {
       const offered = Number(r.offered) || 0;
       const answered = Number(r.answered) || 0;
       const sl_num = Number(r.sl_num) || 0;
       return {
         hour: Number(r.hour),
-        offered,
-        answered,
-        al: offered > 0 ? Math.round((answered * 10000) / offered) / 100 : 0,
-        sl: offered > 0 ? Math.round((sl_num * 10000) / offered) / 100 : 0,
+        offered, answered,
+        al: offered > 0 ? Math.round(answered * 10000 / offered) / 100 : 0,
+        sl: offered > 0 ? Math.round(sl_num * 10000 / offered) / 100 : 0,
       };
     });
   } catch (err: any) {

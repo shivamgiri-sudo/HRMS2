@@ -17,68 +17,68 @@
  * either of these (shared/accessGuard.ts, auth-launch.routes.ts).
  */
 export const Role = {
-  SUPER_ADMIN: "super_admin",
-  HR_ADMIN: "hr",
-  RECRUITMENT_HR: "recruitment_hr",
-  RECRUITER: "recruiter",
-  FINANCE: "finance",
-  FINANCE_HEAD: "finance_head",
-  ACCOUNTS_HEAD: "accounts_head",
-  PAYROLL: "payroll",
-  PAYROLL_HEAD: "payroll_head",
-  PAYROLL_BRANCH: "payroll_branch",
-  PAYROLL_HR: "payroll_hr",
-  WFM: "wfm",
-  WFM_ANALYST: "wfm_analyst",
-  BRANCH_HEAD: "branch_head",
-  OPERATIONS_MANAGER: "operations_manager",
-  PROCESS_MANAGER: "process_manager",
-  MANAGER: "manager",
-  TEAM_LEADER: "team_leader",
-  TL: "tl",
-  ASSISTANT_MANAGER: "assistant_manager",
-  TRAINER: "trainer",
-  QA: "qa",
-  QUALITY_ANALYST: "quality_analyst",
-  EMPLOYEE: "employee",
-  CEO: "ceo",
-  COO: "coo",
-  IT: "it",
-  BRANCH_ADMIN: "branch_admin",
-  CLIENT: "client",
+  SUPER_ADMIN:         "super_admin",
+  HR_ADMIN:            "hr",
+  RECRUITMENT_HR:      "recruitment_hr",
+  RECRUITER:           "recruiter",
+  FINANCE:             "finance",
+  FINANCE_HEAD:        "finance_head",
+  ACCOUNTS_HEAD:       "accounts_head",
+  PAYROLL:             "payroll",
+  PAYROLL_HEAD:        "payroll_head",
+  PAYROLL_BRANCH:      "payroll_branch",
+  PAYROLL_HR:          "payroll_hr",
+  WFM:                 "wfm",
+  WFM_ANALYST:         "wfm_analyst",
+  BRANCH_HEAD:         "branch_head",
+  OPERATIONS_MANAGER:  "operations_manager",
+  PROCESS_MANAGER:     "process_manager",
+  MANAGER:             "manager",
+  TEAM_LEADER:         "team_leader",
+  TL:                  "tl",
+  ASSISTANT_MANAGER:   "assistant_manager",
+  TRAINER:             "trainer",
+  QA:                  "qa",
+  QUALITY_ANALYST:     "quality_analyst",
+  EMPLOYEE:            "employee",
+  CEO:                 "ceo",
+  COO:                 "coo",
+  IT:                  "it",
+  BRANCH_ADMIN:        "branch_admin",
+  CLIENT:              "client",
   // Extended roles discovered via compile-time audit of existing route files
-  HR_ADMIN_ALT: "hr_admin", // alternate hr key used in some modules
-  QA_MANAGER: "QA_Manager", // legacy capitalised form in top-performers module
-  QUALITY_MANAGER: "Quality_Manager", // another legacy capitalised form
-  BRANCH_HR: "branch_hr",
-  BRANCH_IT: "branch_it",
-  HO_HR: "ho_hr", // Head-office HR role
-  HO_PAYROLL: "ho_payroll",
-  HO_OPERATIONS: "ho_operations",
-  BM: "bm", // Branch Manager (legacy alias)
-  OPERATIONS: "operations",
-  OPERATIONS_HEAD: "operations_head",
-  MANAGEMENT: "management",
-  PAYROLL_ADMIN: "payroll_admin",
-  FINANCE_ADMIN: "finance_admin",
-  IT_ADMIN: "it_admin",
-  COMPLIANCE: "compliance",
-  DPO: "dpo", // Data Protection Officer
-  SECURITY: "security",
-  SECURITY_HEAD: "security_head",
-  VISITOR_SECURITY: "visitor_security",
-  VISITOR_RECEPTION: "visitor_reception",
-  HR_BRANCH: "hr_branch",
-  SALES: "sales",
-  ANALYST: "analyst",
-  WFM_SPOC: "wfm_spoc",
-  SUPER_ADMIN_DISPLAY: "Super Admin", // legacy display name (non-canonical — do not use in new code)
+  HR_ADMIN_ALT:        "hr_admin",         // alternate hr key used in some modules
+  QA_MANAGER:          "QA_Manager",       // legacy capitalised form in top-performers module
+  QUALITY_MANAGER:     "Quality_Manager",  // another legacy capitalised form
+  BRANCH_HR:           "branch_hr",
+  BRANCH_IT:           "branch_it",
+  HO_HR:               "ho_hr",            // Head-office HR role
+  HO_PAYROLL:          "ho_payroll",
+  HO_OPERATIONS:       "ho_operations",
+  BM:                  "bm",               // Branch Manager (legacy alias)
+  OPERATIONS:          "operations",
+  OPERATIONS_HEAD:     "operations_head",
+  MANAGEMENT:          "management",
+  PAYROLL_ADMIN:       "payroll_admin",
+  FINANCE_ADMIN:       "finance_admin",
+  IT_ADMIN:            "it_admin",
+  COMPLIANCE:          "compliance",
+  DPO:                 "dpo",              // Data Protection Officer
+  SECURITY:            "security",
+  SECURITY_HEAD:       "security_head",
+  VISITOR_SECURITY:    "visitor_security",
+  VISITOR_RECEPTION:   "visitor_reception",
+  HR_BRANCH:           "hr_branch",
+  SALES:               "sales",
+  ANALYST:             "analyst",
+  WFM_SPOC:            "wfm_spoc",
+  SUPER_ADMIN_DISPLAY: "Super Admin",      // legacy display name (non-canonical — do not use in new code)
   // Internal / system
-  ADMIN: "admin",
-  DEMO: "demo",
+  ADMIN:               "admin",
+  DEMO:                "demo",
 } as const;
 
-export type RoleKey = (typeof Role)[keyof typeof Role];
+export type RoleKey = typeof Role[keyof typeof Role];
 
 const ROLE_VALUES = new Set<RoleKey>(Object.values(Role));
 
@@ -119,10 +119,7 @@ const LEGACY_ROLE_EQUIVALENTS: Readonly<Record<string, RoleKey[]>> = {
 };
 
 function canonicalizeRoleLabel(role: string): string {
-  return role
-    .trim()
-    .replace(/[\s-]+/g, "_")
-    .toLowerCase();
+  return role.trim().replace(/[\s-]+/g, "_").toLowerCase();
 }
 
 function isRoleKey(role: string): role is RoleKey {
@@ -163,18 +160,18 @@ export function normalizeRoleInputs(roles: readonly string[]): RoleKey[] {
  */
 export const ROLE_ALIASES: Readonly<Partial<Record<RoleKey, RoleKey[]>>> = {
   [Role.PROCESS_MANAGER]: [Role.MANAGER],
-  [Role.MANAGER]: [Role.PROCESS_MANAGER],
-  [Role.TEAM_LEADER]: [Role.TL],
-  [Role.TL]: [Role.TEAM_LEADER],
-  [Role.WFM]: [Role.WFM_ANALYST],
-  [Role.WFM_ANALYST]: [Role.WFM],
+  [Role.MANAGER]:         [Role.PROCESS_MANAGER],
+  [Role.TEAM_LEADER]:     [Role.TL],
+  [Role.TL]:              [Role.TEAM_LEADER],
+  [Role.WFM]:             [Role.WFM_ANALYST],
+  [Role.WFM_ANALYST]:     [Role.WFM],
 };
 
 /** Expand a set of roles to include all known aliases */
 export function expandRoles(roles: RoleKey[]): RoleKey[] {
   const expanded = new Set(roles);
   for (const r of roles) {
-    (ROLE_ALIASES[r] ?? []).forEach((a) => expanded.add(a));
+    (ROLE_ALIASES[r] ?? []).forEach(a => expanded.add(a));
   }
   return Array.from(expanded);
 }

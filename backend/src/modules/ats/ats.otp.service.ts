@@ -1,7 +1,7 @@
-import { providerFactory } from "../communication/providers/provider.factory.js";
-import { providerConfigService } from "../communication/provider-config.service.js";
-import { buildSMS } from "../communication/smartping-dlt-registry.js";
-import { sendOnboardingOtp as sendOnboardingOtpEmail } from "./ats.email.service.js";
+import { providerFactory } from '../communication/providers/provider.factory.js';
+import { providerConfigService } from '../communication/provider-config.service.js';
+import { buildSMS } from '../communication/smartping-dlt-registry.js';
+import { sendOnboardingOtp as sendOnboardingOtpEmail } from './ats.email.service.js';
 
 /**
  * Must match the caller's expiry. onboarding-full.routes.ts inserts the OTP with
@@ -35,27 +35,20 @@ interface SendOtpParams {
  * always attempted, independently, so a candidate who has a working phone
  * always gets it there too, regardless of what happens to the other channel.
  */
-export async function sendOnboardingOtp(
-  params: SendOtpParams,
-): Promise<SendOtpResult> {
+export async function sendOnboardingOtp(params: SendOtpParams): Promise<SendOtpResult> {
   const { mobile, otp, candidateName, email } = params;
 
   let smsSuccess = false;
   let smsError: string | undefined;
 
-  const cleanMobile = mobile.replace(/\D/g, "");
+  const cleanMobile = mobile.replace(/\D/g, '');
   if (!cleanMobile || cleanMobile.length < 10) {
-    smsError = "Invalid mobile number format";
+    smsError = 'Invalid mobile number format';
   } else {
-    const formattedMobile = cleanMobile.startsWith("91")
-      ? `+${cleanMobile}`
-      : `+91${cleanMobile}`;
+    const formattedMobile = cleanMobile.startsWith('91') ? `+${cleanMobile}` : `+91${cleanMobile}`;
     try {
-      const dbConfig = await providerConfigService.loadActiveConfig("sms");
-      const smsProvider = await providerFactory.getProviderAsync(
-        "sms",
-        dbConfig,
-      );
+      const dbConfig = await providerConfigService.loadActiveConfig('sms');
+      const smsProvider = await providerFactory.getProviderAsync('sms', dbConfig);
 
       if (!smsProvider.validateRecipient(formattedMobile)) {
         smsError = `Invalid mobile format for SMS provider: ${formattedMobile}`;
@@ -71,21 +64,15 @@ export async function sendOnboardingOtp(
         // India's TRAI DLT rules the delivered text must MATCH the registered template, so
         // buildSMS interpolates the registered text and returns its id — the only way to keep
         // both correct together.
-        const { body, dltContentId } = buildSMS("candidate_mobile_otp", {
+        const { body, dltContentId } = buildSMS('candidate_mobile_otp', {
           otp,
           validity_minutes: OTP_VALIDITY_MINUTES,
         });
 
-        const result = await smsProvider.send(
-          formattedMobile,
-          dltContentId,
-          body,
-        );
+        const result = await smsProvider.send(formattedMobile, dltContentId, body);
         if (result.success) {
           smsSuccess = true;
-          console.info(
-            `[OTP] SMS sent successfully to ${mobile.slice(-4).padStart(mobile.length, "*")}`,
-          );
+          console.info(`[OTP] SMS sent successfully to ${mobile.slice(-4).padStart(mobile.length, '*')}`);
         } else {
           smsError = result.error;
           console.warn(`[OTP] SMS send failed: ${result.error}`);
@@ -101,20 +88,15 @@ export async function sendOnboardingOtp(
   let emailSuccess = false;
   let emailError: string | undefined;
   if (!email) {
-    emailError = "No email address on file";
+    emailError = 'No email address on file';
   } else {
     try {
-      const emailResult = await sendOnboardingOtpEmail({
-        mobile,
-        otp,
-        candidateName,
-        email,
-      });
+      const emailResult = await sendOnboardingOtpEmail({ mobile, otp, candidateName, email });
       if (emailResult && emailResult.ok) {
         emailSuccess = true;
         console.info(`[OTP] Email sent successfully to ${email}`);
       } else {
-        emailError = emailResult?.error ?? "Email send returned no result";
+        emailError = emailResult?.error ?? 'Email send returned no result';
         console.error(`[OTP] Email send failed: ${emailError}`);
       }
     } catch (err) {
@@ -124,10 +106,7 @@ export async function sendOnboardingOtp(
   }
 
   return {
-    smsSuccess,
-    smsError,
-    emailSuccess,
-    emailError,
+    smsSuccess, smsError, emailSuccess, emailError,
     success: smsSuccess || emailSuccess,
   };
 }

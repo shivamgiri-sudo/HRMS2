@@ -1,8 +1,6 @@
-export type PerformanceSourceType =
-  "mysql" | "mssql" | "excel" | "csv" | "google_sheet";
+export type PerformanceSourceType = "mysql" | "mssql" | "excel" | "csv" | "google_sheet";
 export type PerformanceRunMode = "preview" | "publish";
-export type PerformanceAggregation =
-  "sum" | "average" | "weighted_average" | "ratio" | "latest";
+export type PerformanceAggregation = "sum" | "average" | "weighted_average" | "ratio" | "latest";
 
 export interface DatasetMetricBinding {
   metricCode: string;
@@ -38,8 +36,7 @@ export interface GoogleSheetDatasetConfig {
   maxRows?: number;
 }
 
-export type DatasetConfig =
-  DatabaseDatasetConfig | GoogleSheetDatasetConfig | Record<string, unknown>;
+export type DatasetConfig = DatabaseDatasetConfig | GoogleSheetDatasetConfig | Record<string, unknown>;
 
 export interface PerformanceDataset {
   id: string;

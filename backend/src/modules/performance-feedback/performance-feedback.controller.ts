@@ -24,17 +24,11 @@ import {
 
 const service = new PerformanceFeedbackService();
 
-async function resolveReportScope(
-  req: AuthenticatedRequest,
-  includeOwnForManager = false,
-) {
+async function resolveReportScope(req: AuthenticatedRequest, includeOwnForManager = false) {
   const userId = req.authUser.id;
-  const requestedEmployeeId =
-    typeof req.query.employee_id === "string"
-      ? req.query.employee_id
-      : typeof req.query.employeeId === "string"
-        ? req.query.employeeId
-        : undefined;
+  const requestedEmployeeId = typeof req.query.employee_id === "string"
+    ? req.query.employee_id
+    : typeof req.query.employeeId === "string" ? req.query.employeeId : undefined;
   const canViewAll = await hasRole(userId, "admin", "hr");
   if (canViewAll) {
     // Owner ruling 2026-10-01: hr is limited to its own branch / assigned scope. Org-wide roles
@@ -57,12 +51,7 @@ async function resolveReportScope(
   const employee = await getEmployeeForUser(userId);
   if (!employee) return { authorized: false, filters: {} };
 
-  const isManager = await hasRole(
-    userId,
-    "manager",
-    "process_manager",
-    "assistant_manager",
-  );
+  const isManager = await hasRole(userId, "manager", "process_manager", "assistant_manager");
   if (isManager && !requestedEmployeeId) {
     return {
       authorized: true,
@@ -88,8 +77,7 @@ export const performanceFeedbackController = {
         return res.status(400).json({ error: parsed.error.flatten() });
       }
 
-      const createdBy =
-        (req as any).user?.emp_id || (req as any).userId || "system";
+      const createdBy = (req as any).user?.emp_id || (req as any).userId || "system";
 
       // Map camelCase to snake_case for service layer
       const data = {
@@ -174,12 +162,9 @@ export const performanceFeedbackController = {
       const updates: any = {};
       if (parsed.data.name !== undefined) updates.cycle_name = parsed.data.name;
       if (parsed.data.period !== undefined) updates.period = parsed.data.period;
-      if (parsed.data.startDate !== undefined)
-        updates.start_date = parsed.data.startDate;
-      if (parsed.data.endDate !== undefined)
-        updates.end_date = parsed.data.endDate;
-      if (parsed.data.managerReviewDeadline !== undefined)
-        updates.deadline = parsed.data.managerReviewDeadline;
+      if (parsed.data.startDate !== undefined) updates.start_date = parsed.data.startDate;
+      if (parsed.data.endDate !== undefined) updates.end_date = parsed.data.endDate;
+      if (parsed.data.managerReviewDeadline !== undefined) updates.deadline = parsed.data.managerReviewDeadline;
 
       await service.updateCycle(cycleId, updates);
 
@@ -322,9 +307,7 @@ export const performanceFeedbackController = {
         const isReviewer = emp && (request as any).reviewer_id === emp.id;
         const isSubject = emp && (request as any).employee_id === emp.id;
         if (!isReviewer && !isSubject) {
-          return res
-            .status(403)
-            .json({ error: "This feedback request is outside your access" });
+          return res.status(403).json({ error: "This feedback request is outside your access" });
         }
       }
 
@@ -367,10 +350,7 @@ export const performanceFeedbackController = {
   async getCompetencies(req: Request, res: Response) {
     try {
       const filters = {
-        is_active:
-          req.query.isActive !== undefined
-            ? req.query.isActive === "true"
-            : undefined,
+        is_active: req.query.isActive !== undefined ? req.query.isActive === "true" : undefined,
         category: req.query.category as string | undefined,
       };
 
@@ -423,19 +403,13 @@ export const performanceFeedbackController = {
 
       // Map camelCase to snake_case
       const updates: any = {};
-      if (parsed.data.name !== undefined)
-        updates.competency_name = parsed.data.name;
-      if (parsed.data.description !== undefined)
-        updates.description = parsed.data.description;
-      if (parsed.data.category !== undefined)
-        updates.category = parsed.data.category;
-      if (parsed.data.weight !== undefined)
-        updates.display_order = parsed.data.weight;
+      if (parsed.data.name !== undefined) updates.competency_name = parsed.data.name;
+      if (parsed.data.description !== undefined) updates.description = parsed.data.description;
+      if (parsed.data.category !== undefined) updates.category = parsed.data.category;
+      if (parsed.data.weight !== undefined) updates.display_order = parsed.data.weight;
 
       await service.updateCompetency(competencyId, updates);
-      return res
-        .status(200)
-        .json({ message: "Competency updated successfully" });
+      return res.status(200).json({ message: "Competency updated successfully" });
     } catch (error) {
       console.error("Error updating competency:", error);
       return res.status(500).json({ error: "Failed to update competency" });
@@ -468,16 +442,8 @@ export const performanceFeedbackController = {
       return res.status(200).json({ data: template });
     } catch (error) {
       console.error("Error fetching form template:", error);
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to fetch form template";
-      return res
-        .status(
-          error instanceof Error && error.message.includes("not found")
-            ? 404
-            : 500,
-        )
+      const message = error instanceof Error ? error.message : "Failed to fetch form template";
+      return res.status(error instanceof Error && error.message.includes("not found") ? 404 : 500)
         .json({ error: message });
     }
   },
@@ -494,32 +460,25 @@ export const performanceFeedbackController = {
         return res.status(400).json({ error: parsed.error.flatten() });
       }
 
-      const managerId =
-        (req as any).authUser?.id ||
-        (req as any).user?.emp_id ||
-        (req as any).userId;
+      const managerId = (req as any).authUser?.id || (req as any).user?.emp_id || (req as any).userId;
       if (!managerId) {
-        return res
-          .status(401)
-          .json({ error: "Unauthorized: manager ID not found" });
+        return res.status(401).json({ error: "Unauthorized: manager ID not found" });
       }
 
       // Map validation schema to service DTO
-      const competencies =
-        parsed.data.competencies?.map((c) => ({
-          competency_id: c.competencyId,
-          competency_name: "", // Will be fetched by service
-          rating: c.managerRating || c.selfRating,
-          comment: c.managerComment || c.selfComment,
-        })) || [];
+      const competencies = parsed.data.competencies?.map((c) => ({
+        competency_id: c.competencyId,
+        competency_name: "", // Will be fetched by service
+        rating: c.managerRating || c.selfRating,
+        comment: c.managerComment || c.selfComment,
+      })) || [];
 
-      const kpis =
-        parsed.data.kpis?.map((k) => ({
-          kpi_id: k.kpiId,
-          kpi_name: "", // Will be fetched by service
-          rating: k.managerRating || k.selfRating,
-          comment: k.managerComment || k.selfComment,
-        })) || [];
+      const kpis = parsed.data.kpis?.map((k) => ({
+        kpi_id: k.kpiId,
+        kpi_name: "", // Will be fetched by service
+        rating: k.managerRating || k.selfRating,
+        comment: k.managerComment || k.selfComment,
+      })) || [];
 
       const data = {
         request_id: requestId,
@@ -535,14 +494,9 @@ export const performanceFeedbackController = {
       return res.status(201).json({ data: result });
     } catch (error) {
       console.error("Error submitting feedback:", error);
-      const message =
-        error instanceof Error ? error.message : "Failed to submit feedback";
-      const statusCode =
-        error instanceof Error && error.message.includes("Unauthorized")
-          ? 403
-          : error instanceof Error && error.message.includes("not found")
-            ? 404
-            : 500;
+      const message = error instanceof Error ? error.message : "Failed to submit feedback";
+      const statusCode = error instanceof Error && error.message.includes("Unauthorized") ? 403 :
+        error instanceof Error && error.message.includes("not found") ? 404 : 500;
       return res.status(statusCode).json({ error: message });
     }
   },
@@ -569,14 +523,8 @@ export const performanceFeedbackController = {
       return res.status(201).json({ data: result });
     } catch (error) {
       console.error("Error generating report:", error);
-      const message =
-        error instanceof Error ? error.message : "Failed to generate report";
-      return res
-        .status(
-          error instanceof Error && error.message.includes("not found")
-            ? 404
-            : 500,
-        )
+      const message = error instanceof Error ? error.message : "Failed to generate report";
+      return res.status(error instanceof Error && error.message.includes("not found") ? 404 : 500)
         .json({ error: message });
     }
   },
@@ -593,12 +541,9 @@ export const performanceFeedbackController = {
         return res.status(403).json({ success: false, error: "No employee record for authenticated user" });
       }
 
-      const requestedCycle =
-        typeof req.query.cycle_id === "string"
-          ? req.query.cycle_id
-          : typeof req.query.cycleId === "string"
-            ? req.query.cycleId
-            : undefined;
+      const requestedCycle = typeof req.query.cycle_id === "string"
+        ? req.query.cycle_id
+        : typeof req.query.cycleId === "string" ? req.query.cycleId : undefined;
       const reports = await service.getReports({
         ...scope.filters,
         cycle_id: requestedCycle,
@@ -606,9 +551,7 @@ export const performanceFeedbackController = {
       return res.status(200).json({ success: true, data: reports });
     } catch (error) {
       console.error("Error fetching reports:", error);
-      return res
-        .status(500)
-        .json({ success: false, error: "Failed to fetch reports" });
+      return res.status(500).json({ success: false, error: "Failed to fetch reports" });
     }
   },
 
@@ -625,16 +568,12 @@ export const performanceFeedbackController = {
 
       const report = await service.getReportById(req.params.id, scope.filters);
       if (!report) {
-        return res
-          .status(404)
-          .json({ success: false, error: "Report not found" });
+        return res.status(404).json({ success: false, error: "Report not found" });
       }
       return res.status(200).json({ success: true, data: report });
     } catch (error) {
       console.error("Error fetching report:", error);
-      return res
-        .status(500)
-        .json({ success: false, error: "Failed to fetch report" });
+      return res.status(500).json({ success: false, error: "Failed to fetch report" });
     }
   },
 
@@ -704,9 +643,7 @@ export const performanceFeedbackController = {
       return res.status(200).json({ data: plans });
     } catch (error) {
       console.error("Error fetching development plans:", error);
-      return res
-        .status(500)
-        .json({ error: "Failed to fetch development plans" });
+      return res.status(500).json({ error: "Failed to fetch development plans" });
     }
   },
 
@@ -718,14 +655,11 @@ export const performanceFeedbackController = {
       // This method is not yet implemented in service layer
       return res.status(501).json({
         error: "Not implemented",
-        message:
-          "getDevelopmentPlanById method needs to be added to service layer",
+        message: "getDevelopmentPlanById method needs to be added to service layer"
       });
     } catch (error) {
       console.error("Error fetching development plan:", error);
-      return res
-        .status(500)
-        .json({ error: "Failed to fetch development plan" });
+      return res.status(500).json({ error: "Failed to fetch development plan" });
     }
   },
 
@@ -761,14 +695,10 @@ export const performanceFeedbackController = {
       }
 
       await service.updateDevelopmentPlan(planId, updates);
-      return res
-        .status(200)
-        .json({ message: "Development plan updated successfully" });
+      return res.status(200).json({ message: "Development plan updated successfully" });
     } catch (error) {
       console.error("Error updating development plan:", error);
-      return res
-        .status(500)
-        .json({ error: "Failed to update development plan" });
+      return res.status(500).json({ error: "Failed to update development plan" });
     }
   },
 
@@ -786,15 +716,12 @@ export const performanceFeedbackController = {
 
       // Map camelCase to snake_case
       const updates: any = {};
-      if (parsed.data.description !== undefined)
-        updates.description = parsed.data.description;
-      if (parsed.data.targetDate !== undefined)
-        updates.target_date = parsed.data.targetDate;
+      if (parsed.data.description !== undefined) updates.description = parsed.data.description;
+      if (parsed.data.targetDate !== undefined) updates.target_date = parsed.data.targetDate;
       if (parsed.data.status !== undefined) {
         updates.status = parsed.data.status.toLowerCase().replace(" ", "_");
       }
-      if (parsed.data.completedDate !== undefined)
-        updates.actual_date = parsed.data.completedDate;
+      if (parsed.data.completedDate !== undefined) updates.actual_date = parsed.data.completedDate;
 
       const goalEmployeeId = await service.getGoalEmployeeId(goalId);
       if (!goalEmployeeId) return res.status(404).json({ error: "Goal not found" });
@@ -818,14 +745,11 @@ export const performanceFeedbackController = {
       // This method is not yet implemented in service layer
       return res.status(501).json({
         error: "Not implemented",
-        message:
-          "deleteDevelopmentPlan method needs to be added to service layer",
+        message: "deleteDevelopmentPlan method needs to be added to service layer"
       });
     } catch (error) {
       console.error("Error deleting development plan:", error);
-      return res
-        .status(500)
-        .json({ error: "Failed to delete development plan" });
+      return res.status(500).json({ error: "Failed to delete development plan" });
     }
   },
 };

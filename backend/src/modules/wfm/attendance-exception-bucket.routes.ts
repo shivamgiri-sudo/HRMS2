@@ -19,10 +19,7 @@
 import { Router, type NextFunction, type Response } from "express";
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -32,14 +29,10 @@ import { COSEC_DEFAULT_FULL_DAY_MINUTES } from "./attendance-engine.service.js";
 export const attendanceExceptionBucketRouter = Router();
 attendanceExceptionBucketRouter.use(requireAuth);
 
-type RequiredAuthRequest = AuthenticatedRequest & {
-  authUser: NonNullable<AuthenticatedRequest["authUser"]>;
-};
+type RequiredAuthRequest = AuthenticatedRequest & { authUser: NonNullable<AuthenticatedRequest["authUser"]> };
 
-const h =
-  (fn: (req: RequiredAuthRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) =>
-    fn(req as RequiredAuthRequest, res).catch(next);
+const h = (fn: (req: RequiredAuthRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req as RequiredAuthRequest, res).catch(next);
 
 const ENTITY_TYPE = "employee_attendance_exception_bucket";
 
@@ -56,16 +49,11 @@ const MAX_FULL_DAY_MINUTES = 1440;
 // ─── Access guard ─────────────────────────────────────────────────────────────
 // Same role set and precedence as attendance.manual-override.routes.ts, so the two screens a
 // Payroll Head uses together cannot disagree about who may act.
-async function assertPayrollAccess(
-  userId: string,
-): Promise<{ actorRole: string } | null> {
-  if (await hasAnyRole(userId, "super_admin"))
-    return { actorRole: "super_admin" };
-  if (await hasAnyRole(userId, "admin")) return { actorRole: "admin" };
-  if (await hasAnyRole(userId, "payroll_head"))
-    return { actorRole: "payroll_head" };
-  if (await hasAnyRole(userId, "payroll_admin"))
-    return { actorRole: "payroll_admin" };
+async function assertPayrollAccess(userId: string): Promise<{ actorRole: string } | null> {
+  if (await hasAnyRole(userId, "super_admin"))   return { actorRole: "super_admin" };
+  if (await hasAnyRole(userId, "admin"))         return { actorRole: "admin" };
+  if (await hasAnyRole(userId, "payroll_head"))  return { actorRole: "payroll_head" };
+  if (await hasAnyRole(userId, "payroll_admin")) return { actorRole: "payroll_admin" };
   return null;
 }
 
@@ -113,37 +101,27 @@ const SELECT_ROW = `
 `;
 
 async function getRowById(id: string): Promise<RowDataPacket | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `${SELECT_ROW} WHERE b.id = ? LIMIT 1`,
-    [id],
-  );
+  const [rows] = await db.execute<RowDataPacket[]>(`${SELECT_ROW} WHERE b.id = ? LIMIT 1`, [id]);
   return rows[0] ?? null;
 }
 
 /** Validate an incoming threshold. Returns the value to store, or an error message. */
-function normaliseThreshold(
-  raw: unknown,
-): { value: number | null } | { error: string } {
+function normaliseThreshold(raw: unknown): { value: number | null } | { error: string } {
   // Absent, null, or empty string all mean "no override — use the engine default". They are
   // stored as NULL rather than as 540 so that a later change to the global default carries.
   if (raw === undefined || raw === null || raw === "") return { value: null };
   const n = Number(raw);
   if (!Number.isFinite(n) || !Number.isInteger(n)) {
-    return {
-      error: "full_day_threshold_minutes must be a whole number of minutes",
-    };
+    return { error: "full_day_threshold_minutes must be a whole number of minutes" };
   }
   if (n < MIN_FULL_DAY_MINUTES || n > MAX_FULL_DAY_MINUTES) {
-    return {
-      error: `full_day_threshold_minutes must be between ${MIN_FULL_DAY_MINUTES} and ${MAX_FULL_DAY_MINUTES}`,
-    };
+    return { error: `full_day_threshold_minutes must be between ${MIN_FULL_DAY_MINUTES} and ${MAX_FULL_DAY_MINUTES}` };
   }
   return { value: n };
 }
 
 function reasonError(reason: unknown): string | null {
-  if (typeof reason !== "string" || !reason.trim())
-    return "reason is mandatory";
+  if (typeof reason !== "string" || !reason.trim()) return "reason is mandatory";
   if (reason.trim().length < 10) return "reason must be at least 10 characters";
   return null;
 }
@@ -153,14 +131,10 @@ function reasonError(reason: unknown): string | null {
  * List bucketed employees. Active only by default; ?includeInactive=1 returns removed rows too,
  * so "who was exempt last month, and why" stays answerable after someone is taken out.
  */
-attendanceExceptionBucketRouter.get(
-  "/",
-  h(async (req, res) => {
-    if (!(await assertPayrollAccess(req.authUser.id))) {
-      return res
-        .status(403)
-        .json({ success: false, error: "Forbidden: Payroll access required" });
-    }
+attendanceExceptionBucketRouter.get("/", h(async (req, res) => {
+  if (!(await assertPayrollAccess(req.authUser.id))) {
+    return res.status(403).json({ success: false, error: "Forbidden: Payroll access required" });
+  }
 
   const includeInactive = req.query.includeInactive === "1";
   const conds: string[] = [];
@@ -171,18 +145,17 @@ attendanceExceptionBucketRouter.get(
   if (limit) { conds.push(`(${limit.sql})`); params.push(...limit.params); }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `${SELECT_ROW} ${where} ORDER BY b.active_status DESC, b.created_at DESC LIMIT 500`,
-      params,
-    );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `${SELECT_ROW} ${where} ORDER BY b.active_status DESC, b.created_at DESC LIMIT 500`,
+    params,
+  );
 
-    return res.json({
-      success: true,
-      data: rows,
-      meta: { default_full_day_minutes: COSEC_DEFAULT_FULL_DAY_MINUTES },
-    });
-  }),
-);
+  return res.json({
+    success: true,
+    data: rows,
+    meta: { default_full_day_minutes: COSEC_DEFAULT_FULL_DAY_MINUTES },
+  });
+}));
 
 // ─── GET /match-employees ─────────────────────────────────────────────────────
 /**
@@ -193,23 +166,18 @@ attendanceExceptionBucketRouter.get(
  * Registered ahead of GET /:id: Express matches routes in registration order, and "/:id" would
  * otherwise swallow this path with id="match-employees" and shadow it entirely.
  */
-attendanceExceptionBucketRouter.get(
-  "/match-employees",
-  h(async (req, res) => {
-    if (!(await assertPayrollAccess(req.authUser.id))) {
-      return res
-        .status(403)
-        .json({ success: false, error: "Forbidden: Payroll access required" });
-    }
+attendanceExceptionBucketRouter.get("/match-employees", h(async (req, res) => {
+  if (!(await assertPayrollAccess(req.authUser.id))) {
+    return res.status(403).json({ success: false, error: "Forbidden: Payroll access required" });
+  }
 
-    const filters = bulkGroupFilters(req.query as Record<string, unknown>);
-    if (!filters.branchId && !filters.costCentreId && !filters.designationId) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "Pick at least a Branch, Cost Centre, or Designation before previewing.",
-      });
-    }
+  const filters = bulkGroupFilters(req.query as Record<string, unknown>);
+  if (!filters.branchId && !filters.costCentreId && !filters.designationId) {
+    return res.status(400).json({
+      success: false,
+      error: "Pick at least a Branch, Cost Centre, or Designation before previewing.",
+    });
+  }
 
   const rows = await matchGroupEmployees(filters, await employeeLimit(req.authUser.id));
   if (rows.length > MAX_BULK_MATCH) {
@@ -219,45 +187,39 @@ attendanceExceptionBucketRouter.get(
     });
   }
 
-    return res.json({ success: true, data: rows });
-  }),
-);
+  return res.json({ success: true, data: rows });
+}));
 
 // ─── GET /:id ─────────────────────────────────────────────────────────────────
 /** One row with its full audit timeline, for the drill-down drawer. */
-attendanceExceptionBucketRouter.get(
-  "/:id",
-  h(async (req, res) => {
-    if (!(await assertPayrollAccess(req.authUser.id))) {
-      return res
-        .status(403)
-        .json({ success: false, error: "Forbidden: Payroll access required" });
-    }
+attendanceExceptionBucketRouter.get("/:id", h(async (req, res) => {
+  if (!(await assertPayrollAccess(req.authUser.id))) {
+    return res.status(403).json({ success: false, error: "Forbidden: Payroll access required" });
+  }
 
   const row = await getRowById(req.params.id);
   if (!row) return res.status(404).json({ success: false, error: "Exception bucket entry not found" });
   if (!(await mayAccessEmployee(req.authUser.id, String(row.employee_id)))) return denyScope(res);
 
-    const [auditRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, actor_user_id, action_type, actor_role, reason,
+  const [auditRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, actor_user_id, action_type, actor_role, reason,
             old_value_json, new_value_json, ip_address, acted_at
        FROM sensitive_action_log
       WHERE entity_type = ? AND entity_id = ?
       ORDER BY acted_at ASC
       LIMIT 50`,
-      [ENTITY_TYPE, req.params.id],
-    );
+    [ENTITY_TYPE, req.params.id],
+  );
 
-    return res.json({
-      success: true,
-      data: {
-        ...row,
-        default_full_day_minutes: COSEC_DEFAULT_FULL_DAY_MINUTES,
-        audit_timeline: auditRows,
-      },
-    });
-  }),
-);
+  return res.json({
+    success: true,
+    data: {
+      ...row,
+      default_full_day_minutes: COSEC_DEFAULT_FULL_DAY_MINUTES,
+      audit_timeline: auditRows,
+    },
+  });
+}));
 
 /**
  * Upsert one employee's bucket row and audit it. Shared by the single-employee POST / below and
@@ -274,15 +236,7 @@ async function upsertBucketRow(args: {
   actorRole: string;
   req: AuthenticatedRequest;
 }): Promise<{ id: string; created: boolean }> {
-  const {
-    employeeId,
-    singlePunch,
-    thresholdValue,
-    reason,
-    actorId,
-    actorRole,
-    req,
-  } = args;
+  const { employeeId, singlePunch, thresholdValue, reason, actorId, actorRole, req } = args;
 
   const [existingRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, single_punch_counts_as_present, full_day_threshold_minutes, reason, active_status
@@ -317,28 +271,25 @@ async function upsertBucketRow(args: {
 
   void logSensitiveAction({
     actor_user_id: actorId,
-    actor_role: actorRole,
-    action_type: existing
-      ? "ATTENDANCE_EXCEPTION_BUCKET_UPDATED"
-      : "ATTENDANCE_EXCEPTION_BUCKET_ASSIGNED",
-    module_key: "attendance",
-    entity_type: ENTITY_TYPE,
-    entity_id: id,
-    employee_id: employeeId,
+    actor_role:    actorRole,
+    action_type:   existing ? "ATTENDANCE_EXCEPTION_BUCKET_UPDATED" : "ATTENDANCE_EXCEPTION_BUCKET_ASSIGNED",
+    module_key:    "attendance",
+    entity_type:   ENTITY_TYPE,
+    entity_id:     id,
+    employee_id:   employeeId,
     reason,
     old_value_json: existing
       ? {
-          single_punch_counts_as_present:
-            existing.single_punch_counts_as_present,
-          full_day_threshold_minutes: existing.full_day_threshold_minutes,
-          reason: existing.reason,
-          active_status: existing.active_status,
+          single_punch_counts_as_present: existing.single_punch_counts_as_present,
+          full_day_threshold_minutes:     existing.full_day_threshold_minutes,
+          reason:                         existing.reason,
+          active_status:                  existing.active_status,
         }
       : undefined,
     new_value_json: {
       single_punch_counts_as_present: singlePunch,
-      full_day_threshold_minutes: thresholdValue,
-      active_status: 1,
+      full_day_threshold_minutes:     thresholdValue,
+      active_status:                  1,
     },
     req,
   });
@@ -354,72 +305,33 @@ async function upsertBucketRow(args: {
  * and re-added in September is the same person with a new decision on them, not a second row.
  * Re-adding reactivates and overwrites the settings, and the audit log carries both events.
  */
-attendanceExceptionBucketRouter.post(
-  "/",
-  h(async (req, res) => {
-    const access = await assertPayrollAccess(req.authUser.id);
-    if (!access) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "Forbidden: Payroll Head or Payroll Admin role required",
-        });
-    }
+attendanceExceptionBucketRouter.post("/", h(async (req, res) => {
+  const access = await assertPayrollAccess(req.authUser.id);
+  if (!access) {
+    return res.status(403).json({ success: false, error: "Forbidden: Payroll Head or Payroll Admin role required" });
+  }
 
-    const {
-      employee_id,
-      single_punch_counts_as_present,
-      full_day_threshold_minutes,
-      reason,
-    } = req.body ?? {};
+  const { employee_id, single_punch_counts_as_present, full_day_threshold_minutes, reason } = req.body ?? {};
 
-    if (typeof employee_id !== "string" || !employee_id.trim()) {
-      return res
-        .status(400)
-        .json({ success: false, error: "employee_id is required" });
-    }
-    const rErr = reasonError(reason);
-    if (rErr) return res.status(400).json({ success: false, error: rErr });
+  if (typeof employee_id !== "string" || !employee_id.trim()) {
+    return res.status(400).json({ success: false, error: "employee_id is required" });
+  }
+  const rErr = reasonError(reason);
+  if (rErr) return res.status(400).json({ success: false, error: rErr });
 
-    const threshold = normaliseThreshold(full_day_threshold_minutes);
-    if ("error" in threshold)
-      return res.status(400).json({ success: false, error: threshold.error });
+  const threshold = normaliseThreshold(full_day_threshold_minutes);
+  if ("error" in threshold) return res.status(400).json({ success: false, error: threshold.error });
 
-    const singlePunch =
-      single_punch_counts_as_present === true ||
-      single_punch_counts_as_present === 1
-        ? 1
-        : 0;
+  const singlePunch = single_punch_counts_as_present === true || single_punch_counts_as_present === 1 ? 1 : 0;
 
-    // An entry that relaxes nothing is almost certainly a half-filled form, and it would sit in the
-    // list looking like an active exception while changing no one's attendance.
-    if (singlePunch === 0 && threshold.value === null) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "Set at least one exception: single-punch-counts-as-present, or a full-day threshold.",
-      });
-    }
-
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, employee_code FROM employees WHERE id = ? LIMIT 1`,
-      [employee_id.trim()],
-    );
-    if (!empRows.length)
-      return res
-        .status(404)
-        .json({ success: false, error: "Employee not found" });
-
-    const { id, created } = await upsertBucketRow({
-      employeeId: employee_id.trim(),
-      singlePunch,
-      thresholdValue: threshold.value,
-      reason: String(reason).trim(),
-      actorId: req.authUser.id,
-      actorRole: access.actorRole,
-      req,
+  // An entry that relaxes nothing is almost certainly a half-filled form, and it would sit in the
+  // list looking like an active exception while changing no one's attendance.
+  if (singlePunch === 0 && threshold.value === null) {
+    return res.status(400).json({
+      success: false,
+      error: "Set at least one exception: single-punch-counts-as-present, or a full-day threshold.",
     });
+  }
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_code FROM employees WHERE id = ? LIMIT 1`,
@@ -453,18 +365,9 @@ const MAX_BULK_MATCH = 500;
 
 /** At least one of the three must be set — an all-blank filter would match every employee. */
 function bulkGroupFilters(query: Record<string, unknown>) {
-  const branchId =
-    typeof query.branchId === "string" && query.branchId.trim()
-      ? query.branchId.trim()
-      : null;
-  const costCentreId =
-    typeof query.costCentreId === "string" && query.costCentreId.trim()
-      ? query.costCentreId.trim()
-      : null;
-  const designationId =
-    typeof query.designationId === "string" && query.designationId.trim()
-      ? query.designationId.trim()
-      : null;
+  const branchId       = typeof query.branchId === "string" && query.branchId.trim() ? query.branchId.trim() : null;
+  const costCentreId    = typeof query.costCentreId === "string" && query.costCentreId.trim() ? query.costCentreId.trim() : null;
+  const designationId  = typeof query.designationId === "string" && query.designationId.trim() ? query.designationId.trim() : null;
   return { branchId, costCentreId, designationId };
 }
 
@@ -565,195 +468,85 @@ attendanceExceptionBucketRouter.post("/bulk", h(async (req, res) => {
     } catch (e: any) {
       failed.push({ employee_id: String(row.id), error: e?.message ?? "Unknown error" });
     }
+  }
 
-    const body = req.body ?? {};
-    const filters = bulkGroupFilters(body);
-    if (!filters.branchId && !filters.costCentreId && !filters.designationId) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "Pick at least a Branch, Cost Centre, or Designation before applying.",
-      });
-    }
-
-    const rErr = reasonError(body.reason);
-    if (rErr) return res.status(400).json({ success: false, error: rErr });
-
-    const threshold = normaliseThreshold(body.full_day_threshold_minutes);
-    if ("error" in threshold)
-      return res.status(400).json({ success: false, error: threshold.error });
-
-    const singlePunch =
-      body.single_punch_counts_as_present === true ||
-      body.single_punch_counts_as_present === 1
-        ? 1
-        : 0;
-    if (singlePunch === 0 && threshold.value === null) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "Set at least one exception: single-punch-counts-as-present, or a full-day threshold.",
-      });
-    }
-
-    const rows = await matchGroupEmployees(filters);
-    if (rows.length === 0) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          error: "No active employees match this combination.",
-        });
-    }
-    if (rows.length > MAX_BULK_MATCH) {
-      return res.status(400).json({
-        success: false,
-        error: `This matches more than ${MAX_BULK_MATCH} employees. Narrow the filters before applying.`,
-      });
-    }
-
-    const reason = String(body.reason).trim();
-    let created = 0;
-    let updated = 0;
-    const failed: Array<{ employee_id: string; error: string }> = [];
-
-    for (const row of rows) {
-      try {
-        const result = await upsertBucketRow({
-          employeeId: String(row.id),
-          singlePunch,
-          thresholdValue: threshold.value,
-          reason,
-          actorId: req.authUser.id,
-          actorRole: access.actorRole,
-          req,
-        });
-        if (result.created) created += 1;
-        else updated += 1;
-      } catch (e: any) {
-        failed.push({
-          employee_id: String(row.id),
-          error: e?.message ?? "Unknown error",
-        });
-      }
-    }
-
-    return res.status(201).json({
-      success: true,
-      message:
-        `Applied to ${created + updated} of ${rows.length} matched employees (${created} added, ${updated} updated).` +
-        (failed.length ? ` ${failed.length} failed.` : ""),
-      data: { matched: rows.length, created, updated, failed },
-    });
-  }),
-);
+  return res.status(201).json({
+    success: true,
+    message: `Applied to ${created + updated} of ${rows.length} matched employees (${created} added, ${updated} updated).`
+      + (failed.length ? ` ${failed.length} failed.` : ""),
+    data: { matched: rows.length, created, updated, failed },
+  });
+}));
 
 // ─── PATCH /:id ───────────────────────────────────────────────────────────────
 /** Change an existing entry's settings. Only the fields present in the body are touched. */
-attendanceExceptionBucketRouter.patch(
-  "/:id",
-  h(async (req, res) => {
-    const access = await assertPayrollAccess(req.authUser.id);
-    if (!access) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "Forbidden: Payroll Head or Payroll Admin role required",
-        });
-    }
+attendanceExceptionBucketRouter.patch("/:id", h(async (req, res) => {
+  const access = await assertPayrollAccess(req.authUser.id);
+  if (!access) {
+    return res.status(403).json({ success: false, error: "Forbidden: Payroll Head or Payroll Admin role required" });
+  }
 
   const current = await getRowById(req.params.id);
   if (!current) return res.status(404).json({ success: false, error: "Exception bucket entry not found" });
   if (!(await mayAccessEmployee(req.authUser.id, String(current.employee_id)))) return denyScope(res);
 
-    const {
-      single_punch_counts_as_present,
-      full_day_threshold_minutes,
-      reason,
-    } = req.body ?? {};
-    const rErr = reasonError(reason);
-    if (rErr)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: `${rErr} — state why this exception is changing`,
-        });
+  const { single_punch_counts_as_present, full_day_threshold_minutes, reason } = req.body ?? {};
+  const rErr = reasonError(reason);
+  if (rErr) return res.status(400).json({ success: false, error: `${rErr} — state why this exception is changing` });
 
-    const singlePunch =
-      single_punch_counts_as_present === undefined
-        ? Number(current.single_punch_counts_as_present ?? 0)
-        : single_punch_counts_as_present === true ||
-            single_punch_counts_as_present === 1
-          ? 1
-          : 0;
+  const singlePunch = single_punch_counts_as_present === undefined
+    ? Number(current.single_punch_counts_as_present ?? 0)
+    : (single_punch_counts_as_present === true || single_punch_counts_as_present === 1 ? 1 : 0);
 
-    const threshold =
-      full_day_threshold_minutes === undefined
-        ? {
-            value:
-              current.full_day_threshold_minutes === null
-                ? null
-                : Number(current.full_day_threshold_minutes),
-          }
-        : normaliseThreshold(full_day_threshold_minutes);
-    if ("error" in threshold)
-      return res.status(400).json({ success: false, error: threshold.error });
+  const threshold = full_day_threshold_minutes === undefined
+    ? { value: current.full_day_threshold_minutes === null ? null : Number(current.full_day_threshold_minutes) }
+    : normaliseThreshold(full_day_threshold_minutes);
+  if ("error" in threshold) return res.status(400).json({ success: false, error: threshold.error });
 
-    if (singlePunch === 0 && threshold.value === null) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "An entry must keep at least one exception. Remove the employee from the bucket instead.",
-      });
-    }
+  if (singlePunch === 0 && threshold.value === null) {
+    return res.status(400).json({
+      success: false,
+      error: "An entry must keep at least one exception. Remove the employee from the bucket instead.",
+    });
+  }
 
-    await db.execute(
-      `UPDATE employee_attendance_exception_bucket
+  await db.execute(
+    `UPDATE employee_attendance_exception_bucket
         SET single_punch_counts_as_present = ?,
             full_day_threshold_minutes     = ?,
             reason                         = ?,
             updated_by                     = ?
       WHERE id = ?`,
-      [
-        singlePunch,
-        threshold.value,
-        String(reason).trim(),
-        req.authUser.id,
-        req.params.id,
-      ],
-    );
+    [singlePunch, threshold.value, String(reason).trim(), req.authUser.id, req.params.id],
+  );
 
-    void logSensitiveAction({
-      actor_user_id: req.authUser.id,
-      actor_role: access.actorRole,
-      action_type: "ATTENDANCE_EXCEPTION_BUCKET_UPDATED",
-      module_key: "attendance",
-      entity_type: ENTITY_TYPE,
-      entity_id: req.params.id,
-      employee_id: String(current.employee_id),
-      reason: String(reason).trim(),
-      old_value_json: {
-        single_punch_counts_as_present: current.single_punch_counts_as_present,
-        full_day_threshold_minutes: current.full_day_threshold_minutes,
-        reason: current.reason,
-      },
-      new_value_json: {
-        single_punch_counts_as_present: singlePunch,
-        full_day_threshold_minutes: threshold.value,
-      },
-      req,
-    });
+  void logSensitiveAction({
+    actor_user_id: req.authUser.id,
+    actor_role:    access.actorRole,
+    action_type:   "ATTENDANCE_EXCEPTION_BUCKET_UPDATED",
+    module_key:    "attendance",
+    entity_type:   ENTITY_TYPE,
+    entity_id:     req.params.id,
+    employee_id:   String(current.employee_id),
+    reason:        String(reason).trim(),
+    old_value_json: {
+      single_punch_counts_as_present: current.single_punch_counts_as_present,
+      full_day_threshold_minutes:     current.full_day_threshold_minutes,
+      reason:                         current.reason,
+    },
+    new_value_json: {
+      single_punch_counts_as_present: singlePunch,
+      full_day_threshold_minutes:     threshold.value,
+    },
+    req,
+  });
 
-    return res.json({
-      success: true,
-      data: await getRowById(req.params.id),
-      message:
-        "Exception updated. It applies from the next attendance processing run.",
-    });
-  }),
-);
+  return res.json({
+    success: true,
+    data: await getRowById(req.params.id),
+    message: "Exception updated. It applies from the next attendance processing run.",
+  });
+}));
 
 // ─── DELETE /:id ──────────────────────────────────────────────────────────────
 /**
@@ -761,18 +554,11 @@ attendanceExceptionBucketRouter.patch(
  * period during which the exception applied is still on the record. The engine reads active rows
  * only, so removal takes effect on the next processing run.
  */
-attendanceExceptionBucketRouter.delete(
-  "/:id",
-  h(async (req, res) => {
-    const access = await assertPayrollAccess(req.authUser.id);
-    if (!access) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "Forbidden: Payroll Head or Payroll Admin role required",
-        });
-    }
+attendanceExceptionBucketRouter.delete("/:id", h(async (req, res) => {
+  const access = await assertPayrollAccess(req.authUser.id);
+  if (!access) {
+    return res.status(403).json({ success: false, error: "Forbidden: Payroll Head or Payroll Admin role required" });
+  }
 
   const current = await getRowById(req.params.id);
   if (!current) return res.status(404).json({ success: false, error: "Exception bucket entry not found" });
@@ -781,48 +567,40 @@ attendanceExceptionBucketRouter.delete(
     return res.status(409).json({ success: false, error: "This employee is already removed from the bucket" });
   }
 
-    const reason = (req.body ?? {}).reason;
-    const rErr = reasonError(reason);
-    if (rErr)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: `${rErr} — state why this exception is being removed`,
-        });
+  const reason = (req.body ?? {}).reason;
+  const rErr = reasonError(reason);
+  if (rErr) return res.status(400).json({ success: false, error: `${rErr} — state why this exception is being removed` });
 
-    await db.execute(
-      `UPDATE employee_attendance_exception_bucket
+  await db.execute(
+    `UPDATE employee_attendance_exception_bucket
         SET active_status       = 0,
             deactivated_by      = ?,
             deactivated_at      = NOW(),
             deactivation_reason = ?
       WHERE id = ?`,
-      [req.authUser.id, String(reason).trim(), req.params.id],
-    );
+    [req.authUser.id, String(reason).trim(), req.params.id],
+  );
 
-    void logSensitiveAction({
-      actor_user_id: req.authUser.id,
-      actor_role: access.actorRole,
-      action_type: "ATTENDANCE_EXCEPTION_BUCKET_REMOVED",
-      module_key: "attendance",
-      entity_type: ENTITY_TYPE,
-      entity_id: req.params.id,
-      employee_id: String(current.employee_id),
-      reason: String(reason).trim(),
-      old_value_json: {
-        single_punch_counts_as_present: current.single_punch_counts_as_present,
-        full_day_threshold_minutes: current.full_day_threshold_minutes,
-        active_status: 1,
-      },
-      new_value_json: { active_status: 0 },
-      req,
-    });
+  void logSensitiveAction({
+    actor_user_id: req.authUser.id,
+    actor_role:    access.actorRole,
+    action_type:   "ATTENDANCE_EXCEPTION_BUCKET_REMOVED",
+    module_key:    "attendance",
+    entity_type:   ENTITY_TYPE,
+    entity_id:     req.params.id,
+    employee_id:   String(current.employee_id),
+    reason:        String(reason).trim(),
+    old_value_json: {
+      single_punch_counts_as_present: current.single_punch_counts_as_present,
+      full_day_threshold_minutes:     current.full_day_threshold_minutes,
+      active_status:                  1,
+    },
+    new_value_json: { active_status: 0 },
+    req,
+  });
 
-    return res.json({
-      success: true,
-      message:
-        "Employee removed from the exception bucket. Standard COSEC rules apply from the next processing run.",
-    });
-  }),
-);
+  return res.json({
+    success: true,
+    message: "Employee removed from the exception bucket. Standard COSEC rules apply from the next processing run.",
+  });
+}));

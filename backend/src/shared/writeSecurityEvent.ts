@@ -18,9 +18,7 @@ export interface SecurityEventPayload {
   user_agent?: string | null;
 }
 
-export async function writeSecurityEvent(
-  payload: SecurityEventPayload,
-): Promise<void> {
+export async function writeSecurityEvent(payload: SecurityEventPayload): Promise<void> {
   try {
     await db.execute(
       `INSERT INTO security_audit_event

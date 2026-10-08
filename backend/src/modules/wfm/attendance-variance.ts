@@ -36,47 +36,38 @@
 // deciding Attendance_Source_Rule id and the per-Dialler_Source contribution breakdown are
 // inputs the writer already holds, not inputs to this decision).
 
-import type {
-  CanonicalResult,
-  ProducingRule,
-} from "./canonical-productivity.js";
+import type { CanonicalResult, ProducingRule } from './canonical-productivity.js';
 
 // requirements.md decision A9: the existing enum('dialler','biometric') is adopted unchanged and
 // no third value exists anywhere in the schema. Stated inline exactly as
 // attendance-source-rule.service.ts states it, rather than imported from
 // attendance-engine.service.ts, so this module keeps no edge to a db-importing module.
-export type ResolvedAttendanceSource = "dialler" | "biometric";
+export type ResolvedAttendanceSource = 'dialler' | 'biometric';
 
 // attendance_daily_record.attendance_status (evidence E6), in full, so this module is total over
 // every classification the engine can actually produce.
 export type DayClassification =
-  | "present"
-  | "half_day"
-  | "absent"
-  | "leave_approved"
-  | "holiday"
-  | "week_off"
-  | "unreconciled"
-  | "missing_punch"
-  | "week_off_worked";
+  | 'present'
+  | 'half_day'
+  | 'absent'
+  | 'leave_approved'
+  | 'holiday'
+  | 'week_off'
+  | 'unreconciled'
+  | 'missing_punch'
+  | 'week_off_worked';
 
 /**
  * criteria 5.3, 18.10. Productivity evidence for one employee-date is present with a value, or
  * absent — never a nullable number. See guarantee 2 in the file header.
  */
 export type ProductivityEvidence =
-  | {
-      readonly state: "present";
-      readonly minutes: number;
-      readonly rule: ProducingRule;
-    }
-  | { readonly state: "absent" };
+  | { readonly state: 'present'; readonly minutes: number; readonly rule: ProducingRule }
+  | { readonly state: 'absent' };
 
-export const PRODUCTIVITY_EVIDENCE_ABSENT: ProductivityEvidence = Object.freeze(
-  {
-    state: "absent",
-  },
-);
+export const PRODUCTIVITY_EVIDENCE_ABSENT: ProductivityEvidence = Object.freeze({
+  state: 'absent',
+});
 
 // criteria 5.5 (480) and 6.2 (60). These mirror DEFAULT_THRESHOLD_MINUTES in
 // attendance-threshold-config.service.ts, which is the db-backed resolver for the same two
@@ -87,23 +78,26 @@ export const DEFAULT_VARIANCE_TOLERANCE_MINUTES = 60;
 // criterion 6.7. `week_off_worked` is deliberately absent from this list: it is a worked day, and
 // the requirement names only approved leave, holiday and week off. Extending suppression to it
 // would be inventing policy the requirement does not state.
-const VARIANCE_SUPPRESSING_CLASSIFICATIONS: readonly DayClassification[] =
-  Object.freeze(["leave_approved", "holiday", "week_off"]);
+const VARIANCE_SUPPRESSING_CLASSIFICATIONS: readonly DayClassification[] = Object.freeze([
+  'leave_approved',
+  'holiday',
+  'week_off',
+]);
 
 export type CorroborationState =
   // The resolved Attendance_Source is `dialler`. Requirement 5 governs biometric-resolved days
   // only (criteria 5.1, 5.6, 5.7); on a dialler-resolved day the productivity figure classifies
   // the day (criterion 4.3) and is not a corroborating second opinion. No corroboration verdict
   // is invented for that case.
-  | "not_applicable"
+  | 'not_applicable'
   // criterion 5.7: no registered Dialler_Source holds a record for the date. The expected case,
   // not an exception.
-  | "evidence_absent"
+  | 'evidence_absent'
   // Canonical_Productive_Minutes reach the applied APR_Corroboration_Threshold.
-  | "corroborated"
+  | 'corroborated'
   // Evidence is present — including a genuine zero — and falls short of the threshold. This is
   // an annotation only: by criterion 5.6 it feeds nothing but the raising of a Variance_Record.
-  | "shortfall";
+  | 'shortfall';
 
 /**
  * criteria 5.6, 5.7, 5.9. Note what this interface does NOT carry: no attendance classification,
@@ -129,24 +123,24 @@ export interface CorroborationResult {
 export type VarianceDecision =
   // criterion 6.1: biometric-resolved, evidence present, below the corroboration threshold, and
   // biometric exceeds productive by at least the tolerance.
-  | "raised_biometric_shortfall"
+  | 'raised_biometric_shortfall'
   // criterion 6.4: dialler-resolved, biometric exceeds productive by at least the tolerance, and
   // the day is classified absent or half day.
-  | "raised_dialler_underclassified"
+  | 'raised_dialler_underclassified'
   // criterion 6.7.
-  | "not_raised_suppressed_day"
+  | 'not_raised_suppressed_day'
   // criteria 6.1 and 6.4 both compare two present figures (design.md section 6). With no
   // productivity evidence there is nothing to compare, and criterion 5.7 requires the biometric
   // classification to stand. The "resolved source reported nothing while the other feed did"
   // case is criterion 4.6's `unreconciled` path, which is Requirement 4's, not this module's.
-  | "not_raised_evidence_absent"
-  | "not_raised_biometric_absent"
+  | 'not_raised_evidence_absent'
+  | 'not_raised_biometric_absent'
   // criterion 6.6, the no-false-positive property.
-  | "not_raised_within_tolerance"
+  | 'not_raised_within_tolerance'
   // criterion 6.1's threshold conjunct is unmet: productivity corroborates the day.
-  | "not_raised_corroborated"
+  | 'not_raised_corroborated'
   // criterion 6.4's classification conjunct is unmet: the day is not an absence or half day.
-  | "not_raised_classification_not_shortfall";
+  | 'not_raised_classification_not_shortfall';
 
 export interface VarianceEvaluation {
   readonly decision: VarianceDecision;
@@ -173,7 +167,7 @@ export interface VarianceEvaluation {
 }
 
 export interface ClassificationInput {
-  readonly basis: "biometric_minutes" | "canonical_productive_minutes";
+  readonly basis: 'biometric_minutes' | 'canonical_productive_minutes';
   // null means the resolved source reported nothing for the date, which is criterion 4.6/4.7's
   // requires-review input — never a zero-minute (and therefore absent) day.
   readonly minutes: number | null;
@@ -218,13 +212,10 @@ function usableMinutes(value: number | null | undefined): number | null {
  * criterion 5.1 forbids reading that column for corroboration, and offering the conversion would
  * be offering the forbidden path.
  */
-export function productivityEvidenceFromCanonical(
-  result: CanonicalResult,
-): ProductivityEvidence {
+export function productivityEvidenceFromCanonical(result: CanonicalResult): ProductivityEvidence {
   const minutes = usableMinutes(result.minutes);
-  if (minutes === null || result.rule === null)
-    return PRODUCTIVITY_EVIDENCE_ABSENT;
-  return { state: "present", minutes, rule: result.rule };
+  if (minutes === null || result.rule === null) return PRODUCTIVITY_EVIDENCE_ABSENT;
+  return { state: 'present', minutes, rule: result.rule };
 }
 
 interface NormalizedEvidence {
@@ -240,8 +231,7 @@ interface NormalizedEvidence {
  * becoming a zero-minute day.
  */
 function normalizeEvidence(evidence: ProductivityEvidence): NormalizedEvidence {
-  if (evidence.state === "absent")
-    return { minutes: null, rule: null, warning: null };
+  if (evidence.state === 'absent') return { minutes: null, rule: null, warning: null };
   const minutes = usableMinutes(evidence.minutes);
   if (minutes === null) {
     return {
@@ -304,17 +294,14 @@ export function selectClassificationMinutes(
   biometricMinutes: number | null,
   evidence: ProductivityEvidence,
 ): ClassificationInput {
-  if (resolvedSource === "biometric") {
+  if (resolvedSource === 'biometric') {
     // criterion 5.6: from Biometric_Minutes alone.
-    return {
-      basis: "biometric_minutes",
-      minutes: usableMinutes(biometricMinutes),
-    };
+    return { basis: 'biometric_minutes', minutes: usableMinutes(biometricMinutes) };
   }
   // criterion 4.3: from Canonical_Productive_Minutes. Absent evidence stays absent (null) so the
   // caller reaches criterion 4.7's requires-review state instead of a zero-minute absence.
   return {
-    basis: "canonical_productive_minutes",
+    basis: 'canonical_productive_minutes',
     minutes: normalizeEvidence(evidence).minutes,
   };
 }
@@ -323,11 +310,9 @@ export function selectClassificationMinutes(
  * Requirement 5. Returns the corroboration outcome for one employee-day. Cannot block the day:
  * see the file header, guarantee 1.
  */
-export function evaluateCorroboration(
-  input: CorroborationEvaluationInput,
-): CorroborationResult {
+export function evaluateCorroboration(input: CorroborationEvaluationInput): CorroborationResult {
   const threshold = applyThreshold(
-    "APR_Corroboration_Threshold",
+    'APR_Corroboration_Threshold',
     input.configuredCorroborationThresholdMinutes,
     DEFAULT_APR_CORROBORATION_THRESHOLD_MINUTES,
   );
@@ -347,20 +332,20 @@ export function evaluateCorroboration(
   // criteria 5.1, 5.6, 5.7: Requirement 5 governs biometric-resolved days. A dialler-resolved day
   // is classified from the same productivity figure (criterion 4.3), so there is no second
   // opinion to corroborate and none is invented.
-  if (input.resolvedSource === "dialler") {
-    return { state: "not_applicable", ...base };
+  if (input.resolvedSource === 'dialler') {
+    return { state: 'not_applicable', ...base };
   }
 
   // criterion 5.7: absence is the expected case (26,215 of 29,271 July 2026 biometric-source
   // days had no productivity figure at all, evidence E7), and the biometric classification
   // stands untouched.
   if (evidence.minutes === null) {
-    return { state: "evidence_absent", ...base };
+    return { state: 'evidence_absent', ...base };
   }
 
   // A present zero is a measurement, not an absence: it corroborates nothing and is a shortfall.
   return {
-    state: evidence.minutes >= threshold.minutes ? "corroborated" : "shortfall",
+    state: evidence.minutes >= threshold.minutes ? 'corroborated' : 'shortfall',
     ...base,
   };
 }
@@ -375,12 +360,10 @@ export function evaluateCorroboration(
  * to the tolerance RAISES. Criterion 6.6's "within the Variance_Tolerance of each other" is
  * therefore read as an excess strictly below the tolerance.
  */
-export function evaluateVariance(
-  input: VarianceEvaluationInput,
-): VarianceEvaluation {
+export function evaluateVariance(input: VarianceEvaluationInput): VarianceEvaluation {
   const corroboration = evaluateCorroboration(input);
   const tolerance = applyThreshold(
-    "Variance_Tolerance",
+    'Variance_Tolerance',
     input.configuredVarianceToleranceMinutes,
     DEFAULT_VARIANCE_TOLERANCE_MINUTES,
   );
@@ -391,18 +374,13 @@ export function evaluateVariance(
   const warnings = [...corroboration.configurationWarnings];
   if (tolerance.warning !== null) warnings.push(tolerance.warning);
 
-  const comparable =
-    biometricMinutes !== null && canonicalProductiveMinutes !== null;
+  const comparable = biometricMinutes !== null && canonicalProductiveMinutes !== null;
   const varianceRiskScore = comparable
     ? biometricMinutes - canonicalProductiveMinutes
     : null;
-  const exceedsTolerance =
-    varianceRiskScore !== null && varianceRiskScore >= tolerance.minutes;
+  const exceedsTolerance = varianceRiskScore !== null && varianceRiskScore >= tolerance.minutes;
 
-  const decide = (
-    decision: VarianceDecision,
-    raised: boolean,
-  ): VarianceEvaluation => ({
+  const decide = (decision: VarianceDecision, raised: boolean): VarianceEvaluation => ({
     decision,
     raised,
     needsReview: raised,
@@ -419,41 +397,38 @@ export function evaluateVariance(
   // criterion 6.7: no Variance_Record on approved leave, holiday or week off, whatever the feeds
   // report. Checked first because it is unconditional.
   if (VARIANCE_SUPPRESSING_CLASSIFICATIONS.includes(input.dayClassification)) {
-    return decide("not_raised_suppressed_day", false);
+    return decide('not_raised_suppressed_day', false);
   }
 
   // criteria 6.1 and 6.4 both compare two present figures. Either figure absent means there is
   // no comparison to make here; that day belongs to criterion 4.6's `unreconciled` path.
   if (biometricMinutes === null) {
-    return decide("not_raised_biometric_absent", false);
+    return decide('not_raised_biometric_absent', false);
   }
   if (canonicalProductiveMinutes === null) {
-    return decide("not_raised_evidence_absent", false);
+    return decide('not_raised_evidence_absent', false);
   }
 
   // criterion 6.6, checked before the source-specific conjuncts so the no-false-positive
   // property holds on both sources by one branch.
   if (!exceedsTolerance) {
-    return decide("not_raised_within_tolerance", false);
+    return decide('not_raised_within_tolerance', false);
   }
 
-  if (input.resolvedSource === "biometric") {
+  if (input.resolvedSource === 'biometric') {
     // criterion 6.1's remaining conjunct: productivity must fall below the corroboration
     // threshold. `state` is 'corroborated' or 'shortfall' here, evidence being present.
-    if (corroboration.state === "corroborated") {
-      return decide("not_raised_corroborated", false);
+    if (corroboration.state === 'corroborated') {
+      return decide('not_raised_corroborated', false);
     }
-    return decide("raised_biometric_shortfall", true);
+    return decide('raised_biometric_shortfall', true);
   }
 
   // criterion 6.4's remaining conjunct: the day is classified as an absence or a half day. A
   // dialler-resolved day already classified `present` from the same productivity figure is not a
   // disagreement between feeds worth a reviewer's time.
-  if (
-    input.dayClassification !== "absent" &&
-    input.dayClassification !== "half_day"
-  ) {
-    return decide("not_raised_classification_not_shortfall", false);
+  if (input.dayClassification !== 'absent' && input.dayClassification !== 'half_day') {
+    return decide('not_raised_classification_not_shortfall', false);
   }
-  return decide("raised_dialler_underclassified", true);
+  return decide('raised_dialler_underclassified', true);
 }

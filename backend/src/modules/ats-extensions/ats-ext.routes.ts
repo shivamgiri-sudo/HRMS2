@@ -35,32 +35,14 @@ router.use(assessmentBuilderPublicRouter);
 router.use(assessmentPublicRouter);
 
 // ── PUBLIC: Offer Digital Acceptance ─────────────────────────────────────────
-router.post(
-  "/offers/:id/respond",
-  h(async (req: Request, res: Response) => {
-    const { action, token, candidate_name, remarks } = req.body as {
-      action?: string;
-      token?: string;
-      candidate_name?: string;
-      remarks?: string;
-    };
-    if (!action || (action !== "accepted" && action !== "declined"))
-      return res
-        .status(400)
-        .json({ error: "action must be 'accepted' or 'declined'" });
-    if (!token) return res.status(400).json({ error: "token is required" });
-    if (!candidate_name?.trim())
-      return res.status(400).json({ error: "candidate_name is required" });
-    await offerService.respondToOffer(
-      req.params.id,
-      action,
-      token,
-      candidate_name.trim(),
-      remarks,
-    );
-    return res.json({ ok: true, message: `Offer ${action} successfully` });
-  }),
-);
+router.post("/offers/:id/respond", h(async (req: Request, res: Response) => {
+  const { action, token, candidate_name, remarks } = req.body as { action?: string; token?: string; candidate_name?: string; remarks?: string };
+  if (!action || (action !== "accepted" && action !== "declined")) return res.status(400).json({ error: "action must be 'accepted' or 'declined'" });
+  if (!token) return res.status(400).json({ error: "token is required" });
+  if (!candidate_name?.trim()) return res.status(400).json({ error: "candidate_name is required" });
+  await offerService.respondToOffer(req.params.id, action, token, candidate_name.trim(), remarks);
+  return res.json({ ok: true, message: `Offer ${action} successfully` });
+}));
 
 router.use(requireAuth);
 

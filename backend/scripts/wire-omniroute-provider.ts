@@ -16,53 +16,43 @@
  *
  * Usage: ./node_modules/.bin/tsx scripts/wire-omniroute-provider.ts
  */
-import { db } from "../src/db/mysql.js";
-import { aiProviderConfigService } from "../src/modules/ai/ai-provider-config.service.js";
+import { db } from '../src/db/mysql.js';
+import { aiProviderConfigService } from '../src/modules/ai/ai-provider-config.service.js';
 
 async function main() {
-  const existing = await aiProviderConfigService.getByKey("omniroute", false);
+  const existing = await aiProviderConfigService.getByKey('omniroute', false);
 
   if (existing) {
     await aiProviderConfigService.update(existing.id!, {
-      activeStatus: "active",
+      activeStatus: 'active',
       isDefault: true,
-      modelName: "auto/best-chat",
-      baseUrl: "http://127.0.0.1:20128/v1",
-      updatedBy: "system",
+      modelName: 'auto/best-chat',
+      baseUrl: 'http://127.0.0.1:20128/v1',
+      updatedBy: 'system',
     });
-    console.log("[wire-omniroute] updated existing row, id=", existing.id);
+    console.log('[wire-omniroute] updated existing row, id=', existing.id);
   } else {
     const created = await aiProviderConfigService.create({
-      providerKey: "omniroute",
-      providerName: "OmniRoute Gateway",
-      activeStatus: "active",
+      providerKey: 'omniroute',
+      providerName: 'OmniRoute Gateway',
+      activeStatus: 'active',
       isDefault: true,
-      modelName: "auto/best-chat",
-      baseUrl: "http://127.0.0.1:20128/v1",
-      fallbackProviderKey: "gemini",
-      createdBy: "system",
+      modelName: 'auto/best-chat',
+      baseUrl: 'http://127.0.0.1:20128/v1',
+      fallbackProviderKey: 'gemini',
+      createdBy: 'system',
     });
-    console.log("[wire-omniroute] created new row, id=", created.id);
+    console.log('[wire-omniroute] created new row, id=', created.id);
   }
 
   const nowDefault = await aiProviderConfigService.getDefaultProvider(false);
-  console.log(
-    "[wire-omniroute] current default provider:",
-    nowDefault?.providerKey,
-    nowDefault?.activeStatus,
-    "isDefault=",
-    nowDefault?.isDefault,
-  );
+  console.log('[wire-omniroute] current default provider:', nowDefault?.providerKey, nowDefault?.activeStatus, 'isDefault=', nowDefault?.isDefault);
 
   await db.end();
 }
 
 main().catch(async (error) => {
-  console.error("[wire-omniroute] failed:", error);
-  try {
-    await db.end();
-  } catch {
-    /* ignore */
-  }
+  console.error('[wire-omniroute] failed:', error);
+  try { await db.end(); } catch { /* ignore */ }
   process.exit(1);
 });

@@ -34,6 +34,7 @@ function resetDbMock() {
   mockExecute.mockResolvedValue([[], []]);
 }
 
+
 const fakeCandidate = {
   id: "cand-1",
   candidate_code: "ATS-20260001",
@@ -128,9 +129,7 @@ describe("atsService.getCandidate", () => {
 
   it("throws when not found", async () => {
     mockExecute.mockResolvedValueOnce([[]]);
-    await expect(atsService.getCandidate("missing")).rejects.toThrow(
-      "Candidate not found",
-    );
+    await expect(atsService.getCandidate("missing")).rejects.toThrow("Candidate not found");
   });
 });
 
@@ -157,11 +156,9 @@ describe("atsService.createCandidate", () => {
   });
 
   it("throws when mobile already exists", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [{ id: fakeCandidate.id, current_stage: "Applied", active_status: 1 }],
-    ]);
+    mockExecute.mockResolvedValueOnce([[{ id: fakeCandidate.id, current_stage: "Applied", active_status: 1 }]]);
     await expect(
-      atsService.createCandidate(fullCandidateInput, "user-1"),
+      atsService.createCandidate(fullCandidateInput, "user-1")
     ).rejects.toThrow("mobile");
   });
 
@@ -172,17 +169,12 @@ describe("atsService.createCandidate", () => {
     mockExecute.mockResolvedValueOnce([[]]); // no duplicate email
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT
     mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // re-fetch by id (getCandidate)
-    const result = await atsService.createCandidate(
-      fullCandidateInput,
-      "user-1",
-    );
+    const result = await atsService.createCandidate(fullCandidateInput, "user-1");
     expect(result.full_name).toBe("Rahul Sharma");
     // Located by statement rather than index, so a further query added ahead of
     // it cannot silently point this assertion at the wrong call.
     expect(
-      mockExecute.mock.calls.some(([sql]) =>
-        /INSERT INTO ats_candidate/i.test(String(sql)),
-      ),
+      mockExecute.mock.calls.some(([sql]) => /INSERT INTO ats_candidate/i.test(String(sql))),
     ).toBe(true);
   });
 });
@@ -202,23 +194,14 @@ describe("atsService.moveStage", () => {
     // not "Screening" — so the old name is rejected as an illegal transition
     // rather than being a fixture detail.
     const nextStage = "Round 1- HR Screening";
-    mockExecute.mockResolvedValueOnce([
-      [{ ...fakeCandidate, current_stage: nextStage }],
-    ]); // moveStage: getCandidate (re-fetch)
-    const result = await atsService.moveStage(
-      "cand-1",
-      nextStage,
-      "user-1",
-      "Passed screening",
-    );
+    mockExecute.mockResolvedValueOnce([[{ ...fakeCandidate, current_stage: nextStage }]]); // moveStage: getCandidate (re-fetch)
+    const result = await atsService.moveStage("cand-1", nextStage, "user-1", "Passed screening");
     expect(result.current_stage).toBe(nextStage);
   });
 
   it("throws when candidate not found", async () => {
     mockExecute.mockResolvedValueOnce([[]]); // getCandidate
-    await expect(
-      atsService.moveStage("missing", "Screened", "user-1"),
-    ).rejects.toThrow("Candidate not found");
+    await expect(atsService.moveStage("missing", "Screened", "user-1")).rejects.toThrow("Candidate not found");
   });
 });
 
@@ -246,12 +229,8 @@ describe("atsService.createOnboardingBridge", () => {
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT
     mockExecute.mockResolvedValueOnce([[fakeOnboardingBridge]]); // re-fetch
     const result = await atsService.createOnboardingBridge(
-      {
-        candidateId: "cand-1",
-        bridgeDate: "2026-05-21",
-        joiningDate: "2026-06-01",
-      },
-      "user-1",
+      { candidateId: "cand-1", bridgeDate: "2026-05-21", joiningDate: "2026-06-01" },
+      "user-1"
     );
     expect(result.candidate_id).toBe("cand-1");
     expect(result.status).toBe("pending");
@@ -261,10 +240,7 @@ describe("atsService.createOnboardingBridge", () => {
     mockExecute.mockResolvedValueOnce([[fakeCandidate]]);
     mockExecute.mockResolvedValueOnce([[fakeOnboardingBridge]]); // already exists
     await expect(
-      atsService.createOnboardingBridge(
-        { candidateId: "cand-1", bridgeDate: "2026-05-21" },
-        "user-1",
-      ),
+      atsService.createOnboardingBridge({ candidateId: "cand-1", bridgeDate: "2026-05-21" }, "user-1")
     ).rejects.toThrow("Onboarding bridge already exists");
   });
 });
@@ -273,25 +249,17 @@ describe("atsService.listOnboardingBridges", () => {
   beforeEach(resetDbMock);
 
   it("returns the joined candidate lifecycle view with scope parameters", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [
-        {
-          candidate_id: "cand-1",
-          candidate_code: "ATS-20260001",
-          latest_stage: "Selected",
-          request_status: "profile_submitted",
-        },
-      ],
-    ]);
+    mockExecute.mockResolvedValueOnce([[{
+      candidate_id: "cand-1",
+      candidate_code: "ATS-20260001",
+      latest_stage: "Selected",
+      request_status: "profile_submitted",
+    }]]);
 
-    const result = await atsService.listOnboardingBridges({
-      branchId: "branch-1",
-    });
+    const result = await atsService.listOnboardingBridges({ branchId: "branch-1" });
 
     expect(result).toHaveLength(1);
-    expect(String(mockExecute.mock.calls[0][0])).toContain(
-      "ats_onboarding_bridge",
-    );
+    expect(String(mockExecute.mock.calls[0][0])).toContain("ats_onboarding_bridge");
     expect(mockExecute.mock.calls[0][1]).toEqual(["branch-1"]);
   });
 });
@@ -302,17 +270,9 @@ describe("atsService.listSourcingChannels", () => {
   beforeEach(resetDbMock);
 
   it("returns active sourcing channels", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [
-        {
-          id: "sc-1",
-          channel_code: "WALK_IN",
-          channel_name: "Walk-in",
-          channel_type: "walk_in",
-          active_status: 1,
-        },
-      ],
-    ]);
+    mockExecute.mockResolvedValueOnce([[
+      { id: "sc-1", channel_code: "WALK_IN", channel_name: "Walk-in", channel_type: "walk_in", active_status: 1 },
+    ]]);
     const result = await atsService.listSourcingChannels();
     expect(result).toHaveLength(1);
     expect(result[0].channel_code).toBe("WALK_IN");

@@ -38,14 +38,8 @@ export type VendorApplicability = {
 };
 
 const SHIP_TO_FIELDS = [
-  "ship_to_name",
-  "ship_to_address1",
-  "ship_to_address2",
-  "ship_to_address3",
-  "ship_to_city",
-  "ship_to_state",
-  "ship_to_state_code",
-  "ship_to_pincode",
+  "ship_to_name", "ship_to_address1", "ship_to_address2", "ship_to_address3",
+  "ship_to_city", "ship_to_state", "ship_to_state_code", "ship_to_pincode",
 ] as const;
 
 const trimOrNull = (value: unknown) => {
@@ -88,11 +82,7 @@ export const vendorApplicabilityService = {
     vendorId: string,
     input: {
       companyCodes?: string[];
-      branches?: Array<
-        { branchId: string } & Partial<
-          Record<(typeof SHIP_TO_FIELDS)[number], string | null>
-        >
-      >;
+      branches?: Array<{ branchId: string } & Partial<Record<(typeof SHIP_TO_FIELDS)[number], string | null>>>;
     },
     actorUserId: string,
     existingConnection?: PoolConnection,
@@ -110,11 +100,7 @@ export const vendorApplicabilityService = {
           "DELETE FROM vendor_company_applicability WHERE vendor_id = ?",
           [vendorId],
         );
-        const codes = [
-          ...new Set(
-            input.companyCodes.map((c) => String(c).trim()).filter(Boolean),
-          ),
-        ];
+        const codes = [...new Set(input.companyCodes.map((c) => String(c).trim()).filter(Boolean))];
         for (const code of codes) {
           await connection.execute(
             `INSERT INTO vendor_company_applicability
@@ -141,9 +127,7 @@ export const vendorApplicabilityService = {
                 active_status, created_by, created_at)
              VALUES (?, ?, ?, ${SHIP_TO_FIELDS.map(() => "?").join(", ")}, 1, ?, NOW())`,
             [
-              randomUUID(),
-              vendorId,
-              branchId,
+              randomUUID(), vendorId, branchId,
               // NULL means "use the branch's own address". Copying the branch address in by
               // default would guarantee the two drift apart the first time a branch moves.
               ...SHIP_TO_FIELDS.map((field) => trimOrNull(row[field])),
@@ -170,14 +154,10 @@ export const vendorApplicabilityService = {
    * FILTER a vendor list should use vendorFilterClause() below instead, so the restriction is
    * applied in SQL rather than by fetching every vendor and discarding most of them.
    */
-  async isAvailable(
-    vendorId: string,
-    scope: { companyCode?: string; branchId?: string },
-  ) {
+  async isAvailable(vendorId: string, scope: { companyCode?: string; branchId?: string }) {
     const { companies, branches } = await this.getForVendor(vendorId);
     if (scope.companyCode && companies.length) {
-      if (!companies.some((c) => c.company_code === scope.companyCode))
-        return false;
+      if (!companies.some((c) => c.company_code === scope.companyCode)) return false;
     }
     if (scope.branchId && branches.length) {
       if (!branches.some((b) => b.branch_id === scope.branchId)) return false;
@@ -244,20 +224,14 @@ export const vendorApplicabilityService = {
     if (!row) return null;
     const overridden = Boolean(trimOrNull(row.ship_to_address1));
     return {
-      source: overridden
-        ? ("vendor_branch_override" as const)
-        : ("branch_master" as const),
+      source: overridden ? ("vendor_branch_override" as const) : ("branch_master" as const),
       name: trimOrNull(row.ship_to_name) ?? row.branch_name ?? null,
-      address1: overridden
-        ? row.ship_to_address1
-        : (row.branch_address ?? null),
+      address1: overridden ? row.ship_to_address1 : (row.branch_address ?? null),
       address2: overridden ? row.ship_to_address2 : null,
       address3: overridden ? row.ship_to_address3 : null,
       city: overridden ? row.ship_to_city : (row.branch_city ?? null),
       state: overridden ? row.ship_to_state : null,
-      state_code: overridden
-        ? row.ship_to_state_code
-        : (row.branch_state_code ?? null),
+      state_code: overridden ? row.ship_to_state_code : (row.branch_state_code ?? null),
       pincode: overridden ? row.ship_to_pincode : (row.branch_pincode ?? null),
     };
   },

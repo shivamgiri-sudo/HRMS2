@@ -20,17 +20,11 @@
  * data-lookup intent (e.g. "leave" matching before this ever runs) or vice
  * versa.
  */
-import {
-  expandRoles,
-  normalizeRoleInputs,
-} from "../../platform/policy/index.js";
-import { getAccessMe } from "../access/access.service.js";
-import type { AiAction, AiGenerateResponse } from "./ai-provider.types.js";
-import { HOWTO_CATALOG, type HowToEntry } from "./ai-howto-catalog.js";
-import {
-  KNOWLEDGE_CATALOG,
-  type KnowledgeEntry,
-} from "./mira-hrms-knowledge.js";
+import { expandRoles, normalizeRoleInputs } from '../../platform/policy/index.js';
+import { getAccessMe } from '../access/access.service.js';
+import type { AiAction, AiGenerateResponse } from './ai-provider.types.js';
+import { HOWTO_CATALOG, type HowToEntry } from './ai-howto-catalog.js';
+import { KNOWLEDGE_CATALOG, type KnowledgeEntry } from './mira-hrms-knowledge.js';
 
 export interface HowToAnswerResult {
   handled: boolean;
@@ -57,14 +51,14 @@ const HOWTO_TRIGGERS: RegExp[] = [
   /\bhow\s+i\s+(?:can|do|would|should)\b/i,
   /\bwhere\s+(do|can|is|are)\s+i\b/i,
   /\bwhere\s+i\s+can\b/i,
-  /\bwhere\s+(is|are)\b/i, // "where is the roster page" / "where are the reports"
-  /\bwhere\s+to\b/i, // "where to see/find/go"
+  /\bwhere\s+(is|are)\b/i,               // "where is the roster page" / "where are the reports"
+  /\bwhere\s+to\b/i,                      // "where to see/find/go"
   /\b(the\s+)?path\s+(to|for|from)\b/i,
   /\bwhich\s+(page|screen|tab|menu)\b/i,
-  /\btell\s+me\s+(where|how)\b/i, // "tell me where to see"
-  /\bshow\s+me\b/i, // "show me statutory status"
-  /\bhow\s+many\b/i, // "how many leave days"
-  /\bI\s+(want|need)\s+to\b/i, // "I want to resign / I need to upload"
+  /\btell\s+me\s+(where|how)\b/i,         // "tell me where to see"
+  /\bshow\s+me\b/i,                        // "show me statutory status"
+  /\bhow\s+many\b/i,                       // "how many leave days"
+  /\bI\s+(want|need)\s+to\b/i,            // "I want to resign / I need to upload"
   /\b(don'?t|doesn'?t|do\s+not|does\s+not)\s+know\s+(how|where)\s+to\b/i,
   /\b(don'?t|doesn'?t|do\s+not|does\s+not)\s+know\s+the\s+(path|way)\b/i,
   /\bnot\s+sure\s+how\s+to\b/i,
@@ -79,11 +73,7 @@ function matchesEntry(question: string, entry: HowToEntry): boolean {
   return entry.aliases.some((pattern) => pattern.test(question));
 }
 
-async function isAllowed(
-  entry: HowToEntry,
-  userId: string,
-  roleKeys: string[],
-): Promise<boolean> {
+async function isAllowed(entry: HowToEntry, userId: string, roleKeys: string[]): Promise<boolean> {
   const callerRoles = normalizeRoleInputs(roleKeys);
   // requireRole.ts grants super_admin unconditional access via a separate,
   // explicit check BEFORE its expand/intersect logic (not something
@@ -91,16 +81,14 @@ async function isAllowed(
   // caller would be wrongly denied on any entry whose roles list doesn't
   // happen to spell out "super_admin" (e.g. leave_approve's
   // ['admin','hr','manager']).
-  if (callerRoles.includes("super_admin")) return true;
+  if (callerRoles.includes('super_admin')) return true;
 
-  if (entry.auth.mode === "static_roles") {
+  if (entry.auth.mode === 'static_roles') {
     if (entry.auth.roles.length === 0) return true; // open to any authenticated employee
     // Same normalize-then-expand requireRole.ts itself uses, so this
     // catalog's opinion of "can this role do this" cannot drift from the
     // actual middleware's behavior (backend/src/middleware/requireRole.ts).
-    const allowedExpanded = new Set(
-      expandRoles(normalizeRoleInputs(entry.auth.roles)),
-    );
+    const allowedExpanded = new Set(expandRoles(normalizeRoleInputs(entry.auth.roles)));
     const callerExpanded = expandRoles(callerRoles);
     return callerExpanded.some((role) => allowedExpanded.has(role));
   }
@@ -109,25 +97,19 @@ async function isAllowed(
   // /api/access/pages/my-catalog and ModuleLauncher.tsx already trust.
   const access = await getAccessMe(userId);
   const pageCode = entry.auth.pageCode;
-  return access.pages.some(
-    (page) => page.page_code === pageCode && page.can_view,
-  );
+  return access.pages.some((page) => page.page_code === pageCode && page.can_view);
 }
 
-function response(
-  answer: string,
-  actions: AiAction[],
-  startedAt: number,
-): AiGenerateResponse {
+function response(answer: string, actions: AiAction[], startedAt: number): AiGenerateResponse {
   return {
     answer,
-    provider: "mira-secure-local",
-    model: "hrms-howto-v1",
+    provider: 'mira-secure-local',
+    model: 'hrms-howto-v1',
     latencyMs: Math.max(1, Date.now() - startedAt),
     safetyBlocked: false,
     fallbackUsed: false,
     generatedAt: new Date().toISOString(),
-    sourceContexts: ["howto_catalog"],
+    sourceContexts: ['howto_catalog'],
     dataConfidence: { overall: 1 },
     actions,
   };
@@ -139,14 +121,10 @@ export async function answerHowToQuestion(
   roleKeys: string[],
 ): Promise<HowToAnswerResult> {
   const startedAt = Date.now();
-  if (!looksLikeHowToQuestion(question))
-    return { handled: false, intent: "unknown" };
+  if (!looksLikeHowToQuestion(question)) return { handled: false, intent: 'unknown' };
 
-  const entry = HOWTO_CATALOG.find(
-    (candidate) =>
-      candidate.status === "verified" && matchesEntry(question, candidate),
-  );
-  if (!entry) return { handled: false, intent: "unknown" };
+  const entry = HOWTO_CATALOG.find((candidate) => candidate.status === 'verified' && matchesEntry(question, candidate));
+  if (!entry) return { handled: false, intent: 'unknown' };
 
   const allowed = await isAllowed(entry, userId, roleKeys);
   if (!allowed) {
@@ -157,20 +135,11 @@ export async function answerHowToQuestion(
     };
   }
 
-  const action: AiAction = {
-    key: entry.code,
-    label: `Open ${entry.title}`,
-    url: entry.route,
-    priority: "low",
-  };
+  const action: AiAction = { key: entry.code, label: `Open ${entry.title}`, url: entry.route, priority: 'low' };
   return {
     handled: true,
     intent: `howto:${entry.code}`,
-    response: response(
-      `Here's how to ${entry.title.toLowerCase()}:\n\n${entry.steps.join("\n")}`,
-      [action],
-      startedAt,
-    ),
+    response: response(`Here's how to ${entry.title.toLowerCase()}:\n\n${entry.steps.join('\n')}`, [action], startedAt),
   };
 }
 
@@ -193,11 +162,7 @@ export async function answerHowToQuestion(
  * only a regex scan over a small in-memory array.
  */
 export function findDeepKnowledge(question: string): KnowledgeEntry | null {
-  const text = String(question ?? "");
+  const text = String(question ?? '');
   if (!text.trim()) return null;
-  return (
-    KNOWLEDGE_CATALOG.find((entry) =>
-      entry.aliases.some((pattern) => pattern.test(text)),
-    ) ?? null
-  );
+  return KNOWLEDGE_CATALOG.find((entry) => entry.aliases.some((pattern) => pattern.test(text))) ?? null;
 }

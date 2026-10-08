@@ -40,19 +40,19 @@
  *   node scripts/backfill-fractional-cl-ml-credits.cjs            # dry run
  *   node scripts/backfill-fractional-cl-ml-credits.cjs --apply    # writes
  */
-const mysql = require("mysql2/promise");
-const fs = require("fs");
-const path = require("path");
+const mysql = require('mysql2/promise');
+const fs = require('fs');
+const path = require('path');
 
-const APPLY = process.argv.includes("--apply");
+const APPLY = process.argv.includes('--apply');
 
 function envFile() {
-  const p = path.resolve(__dirname, "..", ".env");
+  const p = path.resolve(__dirname, '..', '.env');
   const out = {};
   if (!fs.existsSync(p)) return out;
-  for (const line of fs.readFileSync(p, "utf8").split(/\r?\n/)) {
+  for (const line of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
     const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
-    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
+    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
   }
   return out;
 }
@@ -63,31 +63,19 @@ async function connectAny(hosts, database, label) {
   for (const host of hosts) {
     try {
       const c = await mysql.createConnection({
-        host,
-        user: pick("DB_USER"),
-        password: pick("DB_PASSWORD"),
-        database,
-        connectTimeout: 20000,
+        host, user: pick('DB_USER'), password: pick('DB_PASSWORD'), database, connectTimeout: 20000,
       });
       console.log(`  ${label}: connected via ${host}`);
       return c;
-    } catch (e) {
-      console.log(`  ${label}: ${host} -> ${e.code}`);
-    }
+    } catch (e) { console.log(`  ${label}: ${host} -> ${e.code}`); }
   }
   throw new Error(`${label} unreachable on every known address`);
 }
 
 (async () => {
-  console.log(
-    APPLY
-      ? "=== APPLY MODE - this will write ==="
-      : "=== DRY RUN - no writes ===",
-  );
+  console.log(APPLY ? '=== APPLY MODE - this will write ===' : '=== DRY RUN - no writes ===');
   const db = await connectAny(
-    [pick("DB_HOST", "192.168.10.6"), "122.184.128.90"],
-    pick("DB_NAME", "mas_hrms"),
-    "mas_hrms",
+    [pick('DB_HOST', '192.168.10.6'), '122.184.128.90'], pick('DB_NAME', 'mas_hrms'), 'mas_hrms'
   );
 
   try {
@@ -110,13 +98,11 @@ async function connectAny(hosts, database, label) {
         WHERE l.credit_type = 'monthly'
           AND lt.leave_code IN ('CL','ML')
           AND l.days_credited < s.credit_days
-        ORDER BY l.credit_year, l.credit_month, lt.leave_code`,
+        ORDER BY l.credit_year, l.credit_month, lt.leave_code`
     );
 
     if (short.length === 0) {
-      console.log(
-        "\nNo short-credited scheduled CL/ML rows found. Nothing to do.",
-      );
+      console.log('\nNo short-credited scheduled CL/ML rows found. Nothing to do.');
       return;
     }
 
@@ -125,23 +111,17 @@ async function connectAny(hosts, database, label) {
     for (const r of short) {
       const delta = Number(r.scheduled) - Number(r.credited);
       totalDelta += delta;
-      const k = `${r.credit_year}-${String(r.credit_month).padStart(2, "0")} ${r.leave_code}`;
+      const k = `${r.credit_year}-${String(r.credit_month).padStart(2, '0')} ${r.leave_code}`;
       byMonth[k] = byMonth[k] || { rows: 0, days: 0 };
       byMonth[k].rows++;
       byMonth[k].days += delta;
     }
 
     console.log(`\nShort-credited scheduled CL/ML rows: ${short.length}`);
-    console.log(
-      `Employees affected:                  ${new Set(short.map((r) => r.employee_id)).size}`,
-    );
-    console.log(
-      `Leave days to be added in total:     ${totalDelta.toFixed(2)}\n`,
-    );
+    console.log(`Employees affected:                  ${new Set(short.map(r => r.employee_id)).size}`);
+    console.log(`Leave days to be added in total:     ${totalDelta.toFixed(2)}\n`);
     for (const [k, v] of Object.entries(byMonth).sort()) {
-      console.log(
-        `  ${k}  ${String(v.rows).padStart(5)} rows  +${v.days.toFixed(2)} days`,
-      );
+      console.log(`  ${k}  ${String(v.rows).padStart(5)} rows  +${v.days.toFixed(2)} days`);
     }
 
     // Ledger totals before, so the write can be checked against them afterwards.
@@ -153,40 +133,28 @@ async function connectAny(hosts, database, label) {
          FROM leave_balance_ledger b
          JOIN leave_type_master lt ON lt.id = b.leave_type_id
         WHERE b.balance_year = 2026 AND lt.leave_code IN ('CL','ML')
-        GROUP BY lt.leave_code`,
+        GROUP BY lt.leave_code`
     );
-    console.log("\nleave_balance_ledger 2026 BEFORE:");
+    console.log('\nleave_balance_ledger 2026 BEFORE:');
     for (const r of before) {
-      console.log(
-        `  ${r.leave_code}  ${r.rows_2026} rows, ${r.fractional} fractional, ${r.total_allocated} days allocated`,
-      );
+      console.log(`  ${r.leave_code}  ${r.rows_2026} rows, ${r.fractional} fractional, ${r.total_allocated} days allocated`);
     }
 
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const outDir = path.resolve(__dirname, "..", "backups");
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const outDir = path.resolve(__dirname, '..', 'backups');
     fs.mkdirSync(outDir, { recursive: true });
-    const outFile = path.join(
-      outDir,
-      `fractional-cl-ml-backfill-${stamp}.json`,
-    );
-    fs.writeFileSync(
-      outFile,
-      JSON.stringify({ before, byMonth, rows: short }, null, 2),
-    );
+    const outFile = path.join(outDir, `fractional-cl-ml-backfill-${stamp}.json`);
+    fs.writeFileSync(outFile, JSON.stringify({ before, byMonth, rows: short }, null, 2));
     console.log(`\nPlan written to ${outFile}`);
 
     if (!APPLY) {
-      console.log(
-        "\nDRY RUN - nothing written. Re-run with --apply to correct these balances.",
-      );
+      console.log('\nDRY RUN - nothing written. Re-run with --apply to correct these balances.');
       return;
     }
 
     let done = 0;
     for (const r of short) {
-      const delta = Number(
-        (Number(r.scheduled) - Number(r.credited)).toFixed(2),
-      );
+      const delta = Number((Number(r.scheduled) - Number(r.credited)).toFixed(2));
       if (!(delta > 0)) continue;
 
       // The ledger moves by the delta rather than being set to a computed total: the ledger
@@ -195,19 +163,17 @@ async function connectAny(hosts, database, label) {
         `UPDATE leave_balance_ledger
             SET allocated_days = allocated_days + ?, updated_at = NOW()
           WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-        [delta, r.employee_id, r.leave_type_id, r.credit_year],
+        [delta, r.employee_id, r.leave_type_id, r.credit_year]
       );
       if (res.affectedRows === 0) {
         // No ledger row means the credit was logged but never landed. Correcting the log
         // alone would make the two disagree in the opposite direction, so leave both.
-        console.log(
-          `  SKIP ${r.employee_code ?? r.employee_id} ${r.leave_code} ${r.credit_year}-${r.credit_month}: no ledger row`,
-        );
+        console.log(`  SKIP ${r.employee_code ?? r.employee_id} ${r.leave_code} ${r.credit_year}-${r.credit_month}: no ledger row`);
         continue;
       }
       await db.execute(
         `UPDATE leave_el_credit_log SET days_credited = ? WHERE id = ?`,
-        [Number(r.scheduled), r.log_id],
+        [Number(r.scheduled), r.log_id]
       );
       done++;
       if (done % 100 === 0) console.log(`  ... ${done}/${short.length}`);
@@ -221,25 +187,16 @@ async function connectAny(hosts, database, label) {
          FROM leave_balance_ledger b
          JOIN leave_type_master lt ON lt.id = b.leave_type_id
         WHERE b.balance_year = 2026 AND lt.leave_code IN ('CL','ML')
-        GROUP BY lt.leave_code`,
+        GROUP BY lt.leave_code`
     );
-    console.log("\nleave_balance_ledger 2026 AFTER:");
+    console.log('\nleave_balance_ledger 2026 AFTER:');
     for (const r of after) {
-      console.log(
-        `  ${r.leave_code}  ${r.rows_2026} rows, ${r.fractional} fractional, ${r.total_allocated} days allocated`,
-      );
+      console.log(`  ${r.leave_code}  ${r.rows_2026} rows, ${r.fractional} fractional, ${r.total_allocated} days allocated`);
     }
     console.log(`\nDone. Credits corrected: ${done}.`);
-    console.log(
-      "Remaining CL fractions should be 0. Remaining ML fractions are the July-2026",
-    );
-    console.log(
-      "pre-schedule 0.42 credits, which this script deliberately does not touch.",
-    );
+    console.log('Remaining CL fractions should be 0. Remaining ML fractions are the July-2026');
+    console.log('pre-schedule 0.42 credits, which this script deliberately does not touch.');
   } finally {
     await db.end();
   }
-})().catch((e) => {
-  console.error("FATAL", e.message);
-  process.exit(1);
-});
+})().catch(e => { console.error('FATAL', e.message); process.exit(1); });

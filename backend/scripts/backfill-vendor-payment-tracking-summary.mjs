@@ -26,12 +26,12 @@
  *   node backend/scripts/backfill-vendor-payment-tracking-summary.mjs
  *   node backend/scripts/backfill-vendor-payment-tracking-summary.mjs --apply
  */
-import { connect } from "./lib/db-connect.mjs";
+import { connect } from './lib/db-connect.mjs';
 
-const APPLY = process.argv.includes("--apply");
+const APPLY = process.argv.includes('--apply');
 
 async function main() {
-  const hrms = await connect("mas_hrms", { log: console.log });
+  const hrms = await connect('mas_hrms', { log: console.log });
 
   try {
     // Latest transaction per vendor_payment_id, excluding the zero-date artifact.
@@ -48,15 +48,13 @@ async function main() {
       WHERE vpt.payment_date IS NULL
     `);
 
-    console.log(
-      `Found ${candidates.length} vendor_payment_tracking rows with a real transaction` +
-        ` but a blank summary column.`,
-    );
+    console.log(`Found ${candidates.length} vendor_payment_tracking rows with a real transaction`
+      + ` but a blank summary column.`);
 
     if (!APPLY) {
-      console.log("\nDRY RUN — sample of 5:");
+      console.log('\nDRY RUN — sample of 5:');
       console.table(candidates.slice(0, 5));
-      console.log("\nRe-run with --apply to write.");
+      console.log('\nRe-run with --apply to write.');
       return;
     }
 
@@ -73,20 +71,11 @@ async function main() {
                   bank_name = COALESCE(bank_name, ?),
                   transaction_id = COALESCE(transaction_id, ?)
             WHERE id = ? AND payment_date IS NULL`,
-          [
-            row.payment_mode,
-            row.payment_date,
-            row.bank_id,
-            row.bank_name,
-            row.transaction_id,
-            row.tracking_id,
-          ],
+          [row.payment_mode, row.payment_date, row.bank_id, row.bank_name, row.transaction_id, row.tracking_id]
         );
         updated += result.affectedRows;
       }
-      process.stdout.write(
-        `\r  ${Math.min(i + BATCH, candidates.length)}/${candidates.length} processed...`,
-      );
+      process.stdout.write(`\r  ${Math.min(i + BATCH, candidates.length)}/${candidates.length} processed...`);
     }
     console.log(`\n\nUpdated: ${updated} rows.`);
   } finally {
@@ -95,6 +84,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("FATAL:", err.message);
+  console.error('FATAL:', err.message);
   process.exit(1);
 });

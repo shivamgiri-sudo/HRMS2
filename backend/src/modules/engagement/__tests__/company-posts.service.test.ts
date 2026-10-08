@@ -138,9 +138,7 @@ describe("company feed database foundation", () => {
     ]);
 
     for (const table of requiredTables) {
-      expect(migrationSql).toMatch(
-        new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`, "i"),
-      );
+      expect(migrationSql).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`, "i"));
     }
     for (const status of requiredStatuses) {
       expect(migrationSql).toContain(`'${status}'`);
@@ -154,63 +152,49 @@ describe("company feed database foundation", () => {
 
 describe("company feed validation", () => {
   it("accepts a text post with image media", () => {
-    expect(
-      CreateCompanyPostSchema.safeParse({
-        content_text: "Townhall at 4 PM",
-        media: [{ file_id: "file-1", media_type: "image", sort_order: 1 }],
-      }).success,
-    ).toBe(true);
+    expect(CreateCompanyPostSchema.safeParse({
+      content_text: "Townhall at 4 PM",
+      media: [{ file_id: "file-1", media_type: "image", sort_order: 1 }],
+    }).success).toBe(true);
   });
 
   it("requires text or at least one image", () => {
-    expect(
-      CreateCompanyPostSchema.safeParse({
-        content_text: "",
-        media: [],
-      }).success,
-    ).toBe(false);
+    expect(CreateCompanyPostSchema.safeParse({
+      content_text: "",
+      media: [],
+    }).success).toBe(false);
   });
 
   it("limits v1 media to four images", () => {
-    expect(
-      CreateCompanyPostSchema.safeParse({
-        media: [1, 2, 3, 4, 5].map((sort_order) => ({
-          file_id: `file-${sort_order}`,
-          media_type: "image",
-          sort_order,
-        })),
-      }).success,
-    ).toBe(false);
+    expect(CreateCompanyPostSchema.safeParse({
+      media: [1, 2, 3, 4, 5].map((sort_order) => ({
+        file_id: `file-${sort_order}`,
+        media_type: "image",
+        sort_order,
+      })),
+    }).success).toBe(false);
   });
 
   it("requires UUID employee and user IDs for creator access", () => {
-    expect(
-      GrantCompanyPostCreatorSchema.safeParse({
-        employee_id: "not-a-uuid",
-        user_id: "not-a-uuid",
-      }).success,
-    ).toBe(false);
-    expect(
-      RevokeCompanyPostCreatorSchema.safeParse({
-        employee_id: "not-a-uuid",
-      }).success,
-    ).toBe(false);
+    expect(GrantCompanyPostCreatorSchema.safeParse({
+      employee_id: "not-a-uuid",
+      user_id: "not-a-uuid",
+    }).success).toBe(false);
+    expect(RevokeCompanyPostCreatorSchema.safeParse({
+      employee_id: "not-a-uuid",
+    }).success).toBe(false);
   });
 
   it("requires a UUID post and actor for moderation", () => {
-    expect(
-      ModerateCompanyPostSchema.safeParse({
-        actor_user_id: "00000000-0000-0000-0000-000000000001",
-        action: "approve",
-      }).success,
-    ).toBe(false);
-    expect(
-      ModerateCompanyPostSchema.safeParse({
-        post_id: "not-a-uuid",
-        actor_user_id: "not-a-uuid",
-        action: "approve",
-      }).success,
-    ).toBe(false);
+    expect(ModerateCompanyPostSchema.safeParse({
+      actor_user_id: "00000000-0000-0000-0000-000000000001",
+      action: "approve",
+    }).success).toBe(false);
+    expect(ModerateCompanyPostSchema.safeParse({
+      post_id: "not-a-uuid",
+      actor_user_id: "not-a-uuid",
+      action: "approve",
+    }).success).toBe(false);
   });
 
   it("does not expose server-managed media fields in create requests", () => {
@@ -224,26 +208,19 @@ describe("company feed validation", () => {
 
     // @ts-expect-error Response-only media identifiers must not be accepted on create.
     const serverManagedMedia: CreateCompanyPostDTO["media"] = [
-      {
-        file_id: "file-1",
-        media_type: "image",
-        sort_order: 1,
-        id: "post-media-1",
-      },
+      { file_id: "file-1", media_type: "image", sort_order: 1, id: "post-media-1" },
     ];
     expect(serverManagedMedia).toBeDefined();
   });
 
   it("rejects server-managed media fields at runtime", () => {
     const result = CreateCompanyPostSchema.safeParse({
-      media: [
-        {
-          file_id: "file-1",
-          media_type: "image",
-          sort_order: 1,
-          id: "post-media-1",
-        },
-      ],
+      media: [{
+        file_id: "file-1",
+        media_type: "image",
+        sort_order: 1,
+        id: "post-media-1",
+      }],
     });
 
     expect(result.success).toBe(false);
@@ -280,34 +257,21 @@ describe("company feed permissions and creator access", () => {
   it("requires active creator access to create a company post", async () => {
     executeMock.mockResolvedValueOnce([[], []]);
 
-    await expect(assertCanCreateCompanyPost("user-1")).rejects.toThrow(
-      "creator access",
-    );
+    await expect(assertCanCreateCompanyPost("user-1")).rejects.toThrow("creator access");
     expect(
-      executeMock.mock.calls.some(([sql]) =>
-        String(sql).includes("company_post_creator_access"),
-      ),
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("company_post_creator_access")),
     ).toBe(true);
   });
 
   it("allows only normalized moderation roles", async () => {
     executeMock.mockResolvedValueOnce([[{ role_key: "hr_head" }], []]);
-    await expect(
-      assertCanModerateCompanyPosts("user-2"),
-    ).resolves.toBeUndefined();
+    await expect(assertCanModerateCompanyPosts("user-2")).resolves.toBeUndefined();
 
-    executeMock.mockResolvedValueOnce([
-      [{ role_key: ` ${Role.HR_ADMIN} ` }],
-      [],
-    ]);
-    await expect(assertCanModerateCompanyPosts("user-3")).rejects.toThrow(
-      "Access denied",
-    );
+    executeMock.mockResolvedValueOnce([[{ role_key: ` ${Role.HR_ADMIN} ` }], []]);
+    await expect(assertCanModerateCompanyPosts("user-3")).rejects.toThrow("Access denied");
 
     executeMock.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
-    await expect(assertCanModerateCompanyPosts("user-4")).rejects.toThrow(
-      "Access denied",
-    );
+    await expect(assertCanModerateCompanyPosts("user-4")).rejects.toThrow("Access denied");
   });
 
   it("allows only super admins to grant creator access and audits the grant", async () => {
@@ -316,34 +280,26 @@ describe("company feed permissions and creator access", () => {
       .mockResolvedValueOnce([[{ user_id: "user-4" }], []])
       .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
-      .mockResolvedValueOnce([
-        [{ id: "access-1", employee_id: "emp-1", user_id: "user-4" }],
-        [],
-      ]);
+      .mockResolvedValueOnce([[{ id: "access-1", employee_id: "emp-1", user_id: "user-4" }], []]);
 
-    await expect(
-      grantCompanyPostCreator({
-        actorUserId: "super-admin-id",
-        employeeId: "emp-1",
-      }),
-    ).resolves.toMatchObject({ id: "access-1" });
-    expect(logSensitiveActionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action_type: "COMPANY_FEED_CREATOR_GRANTED",
-        actor_user_id: "super-admin-id",
-      }),
-    );
+    await expect(grantCompanyPostCreator({
+      actorUserId: "super-admin-id",
+      employeeId: "emp-1",
+    })).resolves.toMatchObject({ id: "access-1" });
+    expect(logSensitiveActionMock).toHaveBeenCalledWith(expect.objectContaining({
+      action_type: "COMPANY_FEED_CREATOR_GRANTED",
+      actor_user_id: "super-admin-id",
+    }));
   });
 
   it("revokes creator access only for super admins and audits the revoke", async () => {
-    executeMock.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
+    executeMock
+      .mockResolvedValueOnce([[{ role_key: "admin" }], []]);
 
-    await expect(
-      revokeCompanyPostCreator({
-        actorUserId: "admin-id",
-        employeeId: "emp-1",
-      }),
-    ).rejects.toThrow("super administrator");
+    await expect(revokeCompanyPostCreator({
+      actorUserId: "admin-id",
+      employeeId: "emp-1",
+    })).rejects.toThrow("super administrator");
   });
 
   it("fails without auditing when no active creator access row is revoked", async () => {
@@ -351,12 +307,10 @@ describe("company feed permissions and creator access", () => {
       .mockResolvedValueOnce([[{ role_key: "super_admin" }], []])
       .mockResolvedValueOnce([{ affectedRows: 0 }, []]);
 
-    await expect(
-      revokeCompanyPostCreator({
-        actorUserId: "super-admin-id",
-        employeeId: "emp-1",
-      }),
-    ).rejects.toThrow("active company post creator access");
+    await expect(revokeCompanyPostCreator({
+      actorUserId: "super-admin-id",
+      employeeId: "emp-1",
+    })).rejects.toThrow("active company post creator access");
     expect(logSensitiveActionMock).not.toHaveBeenCalled();
   });
 
@@ -365,13 +319,9 @@ describe("company feed permissions and creator access", () => {
       .mockResolvedValueOnce([[{ role_key: "super_admin" }], []])
       .mockResolvedValueOnce([[{ id: "access-1" }], []]);
 
-    await expect(
-      listCompanyPostCreators({ actorUserId: "super-admin-id" }),
-    ).resolves.toEqual([{ id: "access-1" }]);
+    await expect(listCompanyPostCreators({ actorUserId: "super-admin-id" })).resolves.toEqual([{ id: "access-1" }]);
     expect(
-      executeMock.mock.calls.some(([sql]) =>
-        String(sql).includes("FROM company_post_creator_access"),
-      ),
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("FROM company_post_creator_access")),
     ).toBe(true);
   });
 });
@@ -406,21 +356,13 @@ describe("company feed lifecycle and moderation", () => {
   it("auto rejects clear violations and audits the rejection path", async () => {
     executeMock
       .mockResolvedValueOnce([[{ 1: 1 }], []])
-      .mockResolvedValueOnce([
-        [{ id: "00000000-0000-0000-0000-000000000301" }],
-        [],
-      ])
-      .mockResolvedValueOnce([
-        [
-          makePostRow({
-            content_text: "This contains porn",
-            status: "auto_rejected",
-            moderation_state: "violation",
-            auto_reject_reason: "Policy-violating content detected",
-          }),
-        ],
-        [],
-      ])
+      .mockResolvedValueOnce([[{ id: "00000000-0000-0000-0000-000000000301" }], []])
+      .mockResolvedValueOnce([[makePostRow({
+        content_text: "This contains porn",
+        status: "auto_rejected",
+        moderation_state: "violation",
+        auto_reject_reason: "Policy-violating content detected",
+      })], []])
       .mockResolvedValueOnce([[], []]);
     connectionExecuteMock
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
@@ -437,29 +379,19 @@ describe("company feed lifecycle and moderation", () => {
     expect(beginTransactionMock).toHaveBeenCalledTimes(1);
     expect(commitMock).toHaveBeenCalledTimes(1);
     expect(releaseMock).toHaveBeenCalledTimes(1);
-    expect(connectionExecuteMock.mock.calls[1][0]).toContain(
-      "INSERT INTO sensitive_action_log",
-    );
+    expect(connectionExecuteMock.mock.calls[1][0]).toContain("INSERT INTO sensitive_action_log");
     expect(logSensitiveActionMock).not.toHaveBeenCalled();
   });
 
   it("flags borderline content for moderation review", async () => {
     executeMock
       .mockResolvedValueOnce([[{ 1: 1 }], []])
-      .mockResolvedValueOnce([
-        [{ id: "00000000-0000-0000-0000-000000000301" }],
-        [],
-      ])
-      .mockResolvedValueOnce([
-        [
-          makePostRow({
-            content_text: "Click here now for an investment scheme",
-            status: "borderline_flagged",
-            moderation_state: "borderline",
-          }),
-        ],
-        [],
-      ])
+      .mockResolvedValueOnce([[{ id: "00000000-0000-0000-0000-000000000301" }], []])
+      .mockResolvedValueOnce([[makePostRow({
+        content_text: "Click here now for an investment scheme",
+        status: "borderline_flagged",
+        moderation_state: "borderline",
+      })], []])
       .mockResolvedValueOnce([[], []]);
     connectionExecuteMock.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
@@ -477,19 +409,11 @@ describe("company feed lifecycle and moderation", () => {
   it("stores clean creator submissions as pending approval", async () => {
     executeMock
       .mockResolvedValueOnce([[{ 1: 1 }], []])
-      .mockResolvedValueOnce([
-        [{ id: "00000000-0000-0000-0000-000000000301" }],
-        [],
-      ])
-      .mockResolvedValueOnce([
-        [
-          makePostRow({
-            status: "pending_approval",
-            moderation_state: "clean",
-          }),
-        ],
-        [],
-      ])
+      .mockResolvedValueOnce([[{ id: "00000000-0000-0000-0000-000000000301" }], []])
+      .mockResolvedValueOnce([[makePostRow({
+        status: "pending_approval",
+        moderation_state: "clean",
+      })], []])
       .mockResolvedValueOnce([[makeMediaRow()], []]);
     connectionExecuteMock
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
@@ -498,55 +422,39 @@ describe("company feed lifecycle and moderation", () => {
     const result = await createCompanyPost({
       actorUserId: "00000000-0000-0000-0000-000000000201",
       content_text: "Quarterly townhall at 4 PM",
-      media: [
-        {
-          file_id: "00000000-0000-0000-0000-000000000501",
-          media_type: "image",
-          sort_order: 1,
-        },
-      ],
+      media: [{ file_id: "00000000-0000-0000-0000-000000000501", media_type: "image", sort_order: 1 }],
     });
 
     expect(result.status).toBe("pending_approval");
     expect(result.media).toHaveLength(1);
-    expect(connectionExecuteMock.mock.calls[0][0]).toContain(
-      "INSERT INTO company_posts",
-    );
-    expect(connectionExecuteMock.mock.calls[1][0]).toContain(
-      "INSERT INTO company_post_media",
-    );
+    expect(connectionExecuteMock.mock.calls[0][0]).toContain("INSERT INTO company_posts");
+    expect(connectionExecuteMock.mock.calls[1][0]).toContain("INSERT INTO company_post_media");
   });
 
-  /**
-   * Answer the list queries by statement rather than by call order.
-   *
-   * listCompanyPosts runs a COUNT before the row SELECT, and some callers run an
-   * access check before both. These tests were written against a version with no
-   * COUNT, so their positional mockResolvedValueOnce chains fed the count query the
-   * rows and left the real query with the default empty set. Keying on the
-   * statement survives the service adding or reordering queries.
-   */
-  function stubPostList(
-    opts: { posts?: unknown[]; media?: unknown[]; access?: unknown[] } = {},
-  ) {
-    const posts = opts.posts ?? [];
-    executeMock.mockImplementation(async (sql: unknown) => {
-      const text = String(sql);
-      if (/COUNT\(\*\)/i.test(text)) return [[{ total: posts.length }], []];
-      if (/FROM company_post_media/i.test(text)) return [opts.media ?? [], []];
-      if (/FROM company_posts cp/i.test(text)) return [posts, []];
-      return [opts.access ?? [], []];
-    });
-  }
+
+/**
+ * Answer the list queries by statement rather than by call order.
+ *
+ * listCompanyPosts runs a COUNT before the row SELECT, and some callers run an
+ * access check before both. These tests were written against a version with no
+ * COUNT, so their positional mockResolvedValueOnce chains fed the count query the
+ * rows and left the real query with the default empty set. Keying on the
+ * statement survives the service adding or reordering queries.
+ */
+function stubPostList(opts: { posts?: unknown[]; media?: unknown[]; access?: unknown[] } = {}) {
+  const posts = opts.posts ?? [];
+  executeMock.mockImplementation(async (sql: unknown) => {
+    const text = String(sql);
+    if (/COUNT\(\*\)/i.test(text)) return [[{ total: posts.length }], []];
+    if (/FROM company_post_media/i.test(text)) return [opts.media ?? [], []];
+    if (/FROM company_posts cp/i.test(text)) return [posts, []];
+    return [opts.access ?? [], []];
+  });
+}
 
   it("lists only approved posts on the public feed", async () => {
     stubPostList({
-      posts: [
-        makePostRow({
-          status: "approved",
-          moderation_state: "manual_override_approved",
-        }),
-      ],
+      posts: [makePostRow({ status: "approved", moderation_state: "manual_override_approved" })],
       media: [makeMediaRow()],
     });
 
@@ -554,9 +462,7 @@ describe("company feed lifecycle and moderation", () => {
 
     expect(result.posts.every((post) => post.status === "approved")).toBe(true);
     expect(
-      executeMock.mock.calls.some(([sql]) =>
-        String(sql).includes("cp.status = 'approved' AND cp.active_status = 1"),
-      ),
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("cp.status = 'approved' AND cp.active_status = 1")),
     ).toBe(true);
   });
 
@@ -577,19 +483,12 @@ describe("company feed lifecycle and moderation", () => {
       actorUserId: "00000000-0000-0000-0000-000000000201",
     });
 
-    expect(result.posts.map((post) => post.status)).toEqual([
-      "pending_approval",
-      "rejected",
-    ]);
+    expect(result.posts.map((post) => post.status)).toEqual(["pending_approval", "rejected"]);
     expect(
-      executeMock.mock.calls.some(([sql]) =>
-        String(sql).includes("cp.author_user_id = ? AND cp.active_status = 1"),
-      ),
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("cp.author_user_id = ? AND cp.active_status = 1")),
     ).toBe(true);
     expect(
-      executeMock.mock.calls.some(([sql]) =>
-        String(sql).includes("cp.status <> 'deleted'"),
-      ),
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("cp.status <> 'deleted'")),
     ).toBe(true);
   });
 
@@ -610,16 +509,9 @@ describe("company feed lifecycle and moderation", () => {
       actorUserId: "00000000-0000-0000-0000-000000000701",
     });
 
-    expect(result.posts.map((post) => post.status)).toEqual([
-      "pending_approval",
-      "borderline_flagged",
-    ]);
+    expect(result.posts.map((post) => post.status)).toEqual(["pending_approval", "borderline_flagged"]);
     expect(
-      executeMock.mock.calls.some(([sql]) =>
-        String(sql).includes(
-          "cp.status IN ('pending_approval', 'borderline_flagged') AND cp.active_status = 1",
-        ),
-      ),
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("cp.status IN ('pending_approval', 'borderline_flagged') AND cp.active_status = 1")),
     ).toBe(true);
   });
 
@@ -640,14 +532,9 @@ describe("company feed lifecycle and moderation", () => {
       actorUserId: "00000000-0000-0000-0000-000000000710",
     });
 
-    expect(result.posts.map((post) => post.status)).toEqual([
-      "approved",
-      "rejected",
-    ]);
+    expect(result.posts.map((post) => post.status)).toEqual(["approved", "rejected"]);
     expect(
-      executeMock.mock.calls.some(([sql]) =>
-        String(sql).includes("cp.status <> 'deleted' AND cp.active_status = 1"),
-      ),
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("cp.status <> 'deleted' AND cp.active_status = 1")),
     ).toBe(true);
   });
 
@@ -655,23 +542,15 @@ describe("company feed lifecycle and moderation", () => {
     executeMock
       .mockResolvedValueOnce([[{ role_key: "hr_head" }], []])
       .mockResolvedValueOnce([[], []])
-      .mockResolvedValueOnce([
-        [
-          makePostRow({
-            status: "approved",
-            moderation_state: "manual_override_approved",
-            approved_by: "00000000-0000-0000-0000-000000000701",
-            approved_at: "2026-07-18 10:00:00",
-          }),
-        ],
-        [],
-      ])
+      .mockResolvedValueOnce([[makePostRow({
+        status: "approved",
+        moderation_state: "manual_override_approved",
+        approved_by: "00000000-0000-0000-0000-000000000701",
+        approved_at: "2026-07-18 10:00:00",
+      })], []])
       .mockResolvedValueOnce([[], []]);
     connectionExecuteMock
-      .mockResolvedValueOnce([
-        [makePostRow({ status: "pending_approval" })],
-        [],
-      ])
+      .mockResolvedValueOnce([[makePostRow({ status: "pending_approval" })], []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
@@ -683,38 +562,23 @@ describe("company feed lifecycle and moderation", () => {
     });
 
     expect(result.status).toBe("approved");
-    expect(connectionExecuteMock.mock.calls[2][0]).toContain(
-      "INSERT INTO sensitive_action_log",
-    );
+    expect(connectionExecuteMock.mock.calls[2][0]).toContain("INSERT INTO sensitive_action_log");
   });
 
   it("rejects a queued post and audits the moderation action", async () => {
     executeMock
       .mockResolvedValueOnce([[{ role_key: "admin" }], []])
       .mockResolvedValueOnce([[], []])
-      .mockResolvedValueOnce([
-        [
-          makePostRow({
-            status: "rejected",
-            moderation_state: "manual_override_rejected",
-            rejection_reason: "Spam-like content",
-            rejected_by: "00000000-0000-0000-0000-000000000702",
-            rejected_at: "2026-07-18 10:30:00",
-          }),
-        ],
-        [],
-      ])
+      .mockResolvedValueOnce([[makePostRow({
+        status: "rejected",
+        moderation_state: "manual_override_rejected",
+        rejection_reason: "Spam-like content",
+        rejected_by: "00000000-0000-0000-0000-000000000702",
+        rejected_at: "2026-07-18 10:30:00",
+      })], []])
       .mockResolvedValueOnce([[], []]);
     connectionExecuteMock
-      .mockResolvedValueOnce([
-        [
-          makePostRow({
-            status: "borderline_flagged",
-            moderation_state: "borderline",
-          }),
-        ],
-        [],
-      ])
+      .mockResolvedValueOnce([[makePostRow({ status: "borderline_flagged", moderation_state: "borderline" })], []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
@@ -727,9 +591,7 @@ describe("company feed lifecycle and moderation", () => {
     });
 
     expect(result.status).toBe("rejected");
-    expect(connectionExecuteMock.mock.calls[2][0]).toContain(
-      "INSERT INTO sensitive_action_log",
-    );
+    expect(connectionExecuteMock.mock.calls[2][0]).toContain("INSERT INTO sensitive_action_log");
   });
 
   it("soft deletes a post and audits the deletion path", async () => {
@@ -741,32 +603,24 @@ describe("company feed lifecycle and moderation", () => {
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
-    await expect(
-      deleteCompanyPost({
-        postId: "00000000-0000-0000-0000-000000000101",
-        actorUserId: "00000000-0000-0000-0000-000000000703",
-        reason: "Policy retention cleanup",
-      }),
-    ).resolves.toBeUndefined();
+    await expect(deleteCompanyPost({
+      postId: "00000000-0000-0000-0000-000000000101",
+      actorUserId: "00000000-0000-0000-0000-000000000703",
+      reason: "Policy retention cleanup",
+    })).resolves.toBeUndefined();
 
-    expect(connectionExecuteMock.mock.calls[1][0]).toContain(
-      "SET status = 'deleted'",
-    );
-    expect(connectionExecuteMock.mock.calls[2][0]).toContain(
-      "INSERT INTO sensitive_action_log",
-    );
+    expect(connectionExecuteMock.mock.calls[1][0]).toContain("SET status = 'deleted'");
+    expect(connectionExecuteMock.mock.calls[2][0]).toContain("INSERT INTO sensitive_action_log");
   });
 
   it("denies moderation to ordinary HR admin users", async () => {
     executeMock.mockResolvedValueOnce([[{ role_key: Role.HR_ADMIN }], []]);
 
-    await expect(
-      approveCompanyPost({
-        post_id: "00000000-0000-0000-0000-000000000101",
-        actor_user_id: "00000000-0000-0000-0000-000000000704",
-        action: "approve",
-      }),
-    ).rejects.toThrow("Access denied");
+    await expect(approveCompanyPost({
+      post_id: "00000000-0000-0000-0000-000000000101",
+      actor_user_id: "00000000-0000-0000-0000-000000000704",
+      action: "approve",
+    })).rejects.toThrow("Access denied");
 
     expect(getConnectionMock).not.toHaveBeenCalled();
   });
@@ -775,23 +629,18 @@ describe("company feed lifecycle and moderation", () => {
     executeMock
       .mockResolvedValueOnce([[{ role_key: "super_admin" }], []])
       .mockResolvedValueOnce([[], []]);
-    connectionExecuteMock.mockResolvedValueOnce([
-      [
-        makePostRow({
-          status: "auto_rejected",
-          moderation_state: "violation",
-        }),
-      ],
-      [],
-    ]);
-
-    await expect(
-      approveCompanyPost({
-        post_id: "00000000-0000-0000-0000-000000000101",
-        actor_user_id: "00000000-0000-0000-0000-000000000705",
-        action: "approve",
+    connectionExecuteMock.mockResolvedValueOnce([[
+      makePostRow({
+        status: "auto_rejected",
+        moderation_state: "violation",
       }),
-    ).rejects.toThrow("Only queued company posts can be approved");
+    ], []]);
+
+    await expect(approveCompanyPost({
+      post_id: "00000000-0000-0000-0000-000000000101",
+      actor_user_id: "00000000-0000-0000-0000-000000000705",
+      action: "approve",
+    })).rejects.toThrow("Only queued company posts can be approved");
 
     expect(rollbackMock).toHaveBeenCalledTimes(1);
     expect(commitMock).not.toHaveBeenCalled();
@@ -801,24 +650,19 @@ describe("company feed lifecycle and moderation", () => {
     executeMock
       .mockResolvedValueOnce([[{ role_key: "admin" }], []])
       .mockResolvedValueOnce([[], []]);
-    connectionExecuteMock.mockResolvedValueOnce([
-      [
-        makePostRow({
-          status: "approved",
-          moderation_state: "manual_override_approved",
-        }),
-      ],
-      [],
-    ]);
-
-    await expect(
-      rejectCompanyPost({
-        post_id: "00000000-0000-0000-0000-000000000101",
-        actor_user_id: "00000000-0000-0000-0000-000000000706",
-        action: "reject",
-        reason: "Late moderation attempt",
+    connectionExecuteMock.mockResolvedValueOnce([[
+      makePostRow({
+        status: "approved",
+        moderation_state: "manual_override_approved",
       }),
-    ).rejects.toThrow("Only queued company posts can be rejected");
+    ], []]);
+
+    await expect(rejectCompanyPost({
+      post_id: "00000000-0000-0000-0000-000000000101",
+      actor_user_id: "00000000-0000-0000-0000-000000000706",
+      action: "reject",
+      reason: "Late moderation attempt",
+    })).rejects.toThrow("Only queued company posts can be rejected");
 
     expect(rollbackMock).toHaveBeenCalledTimes(1);
     expect(commitMock).not.toHaveBeenCalled();
@@ -827,21 +671,16 @@ describe("company feed lifecycle and moderation", () => {
   it("rolls back create when transactional audit insert fails", async () => {
     executeMock
       .mockResolvedValueOnce([[{ 1: 1 }], []])
-      .mockResolvedValueOnce([
-        [{ id: "00000000-0000-0000-0000-000000000301" }],
-        [],
-      ]);
+      .mockResolvedValueOnce([[{ id: "00000000-0000-0000-0000-000000000301" }], []]);
     connectionExecuteMock
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])
       .mockRejectedValueOnce(new Error("audit insert failed"));
 
-    await expect(
-      createCompanyPost({
-        actorUserId: "00000000-0000-0000-0000-000000000201",
-        content_text: "This contains porn",
-        media: [],
-      }),
-    ).rejects.toThrow("audit insert failed");
+    await expect(createCompanyPost({
+      actorUserId: "00000000-0000-0000-0000-000000000201",
+      content_text: "This contains porn",
+      media: [],
+    })).rejects.toThrow("audit insert failed");
 
     expect(rollbackMock).toHaveBeenCalledTimes(1);
     expect(commitMock).not.toHaveBeenCalled();
@@ -852,19 +691,14 @@ describe("company feed lifecycle and moderation", () => {
       .mockResolvedValueOnce([[{ role_key: "super_admin" }], []])
       .mockResolvedValueOnce([[], []]);
     connectionExecuteMock
-      .mockResolvedValueOnce([
-        [makePostRow({ status: "pending_approval" })],
-        [],
-      ])
+      .mockResolvedValueOnce([[makePostRow({ status: "pending_approval" })], []])
       .mockResolvedValueOnce([{ affectedRows: 0 }, []]);
 
-    await expect(
-      approveCompanyPost({
-        post_id: "00000000-0000-0000-0000-000000000101",
-        actor_user_id: "00000000-0000-0000-0000-000000000707",
-        action: "approve",
-      }),
-    ).rejects.toThrow("queued state changed");
+    await expect(approveCompanyPost({
+      post_id: "00000000-0000-0000-0000-000000000101",
+      actor_user_id: "00000000-0000-0000-0000-000000000707",
+      action: "approve",
+    })).rejects.toThrow("queued state changed");
 
     expect(rollbackMock).toHaveBeenCalledTimes(1);
     expect(commitMock).not.toHaveBeenCalled();
@@ -876,25 +710,15 @@ describe("company feed lifecycle and moderation", () => {
       .mockResolvedValueOnce([[{ role_key: "admin" }], []])
       .mockResolvedValueOnce([[], []]);
     connectionExecuteMock
-      .mockResolvedValueOnce([
-        [
-          makePostRow({
-            status: "borderline_flagged",
-            moderation_state: "borderline",
-          }),
-        ],
-        [],
-      ])
+      .mockResolvedValueOnce([[makePostRow({ status: "borderline_flagged", moderation_state: "borderline" })], []])
       .mockResolvedValueOnce([{ affectedRows: 0 }, []]);
 
-    await expect(
-      rejectCompanyPost({
-        post_id: "00000000-0000-0000-0000-000000000101",
-        actor_user_id: "00000000-0000-0000-0000-000000000708",
-        action: "reject",
-        reason: "Concurrent moderation change",
-      }),
-    ).rejects.toThrow("queued state changed");
+    await expect(rejectCompanyPost({
+      post_id: "00000000-0000-0000-0000-000000000101",
+      actor_user_id: "00000000-0000-0000-0000-000000000708",
+      action: "reject",
+      reason: "Concurrent moderation change",
+    })).rejects.toThrow("queued state changed");
 
     expect(rollbackMock).toHaveBeenCalledTimes(1);
     expect(commitMock).not.toHaveBeenCalled();
@@ -909,19 +733,15 @@ describe("company feed lifecycle and moderation", () => {
       .mockResolvedValueOnce([[makePostRow({ status: "approved" })], []])
       .mockResolvedValueOnce([{ affectedRows: 0 }, []]);
 
-    await expect(
-      deleteCompanyPost({
-        postId: "00000000-0000-0000-0000-000000000101",
-        actorUserId: "00000000-0000-0000-0000-000000000709",
-        reason: "Concurrent delete race",
-      }),
-    ).rejects.toThrow("record changed");
+    await expect(deleteCompanyPost({
+      postId: "00000000-0000-0000-0000-000000000101",
+      actorUserId: "00000000-0000-0000-0000-000000000709",
+      reason: "Concurrent delete race",
+    })).rejects.toThrow("record changed");
 
     expect(rollbackMock).toHaveBeenCalledTimes(1);
     expect(commitMock).not.toHaveBeenCalled();
     expect(connectionExecuteMock).toHaveBeenCalledTimes(2);
-    expect(connectionExecuteMock.mock.calls[1][0]).toContain(
-      "WHERE id = ? AND status = ?",
-    );
+    expect(connectionExecuteMock.mock.calls[1][0]).toContain("WHERE id = ? AND status = ?");
   });
 });

@@ -6,10 +6,8 @@ import { salaryIncrementService, INCREMENT_ROLE_GATES, INCREMENT_VIEW_ROLES, typ
 import { employeeScopeFor, guardEmployee } from "../payroll/payroll-branch-scope.js";
 
 const router = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -72,14 +70,9 @@ router.post("/", requireRole(...INCREMENT_VIEW_ROLES), h(async (req: any, res: a
 }));
 
 // POST /api/salary-increment/:id/action — workflow transitions
-router.post(
-  "/:id/action",
-  h(async (req: any, res: any) => {
-    const userId: string = req.authUser!.id;
-    const { action, remarks } = req.body as {
-      action: string;
-      remarks?: string;
-    };
+router.post("/:id/action", h(async (req: any, res: any) => {
+  const userId: string = req.authUser!.id;
+  const { action, remarks } = req.body as { action: string; remarks?: string };
 
   const allowed = INCREMENT_ROLE_GATES[action as IncrementAction];
   if (!allowed) return res.status(400).json({ success: false, error: "Invalid action" });

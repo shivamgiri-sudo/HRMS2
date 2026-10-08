@@ -27,27 +27,14 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.resolve(
-  __dirname,
-  "..",
-  "..",
-  "..",
-  "scripts",
-  "attendance-lwp-reconcile.ts",
-);
+const SCRIPT = path.resolve(__dirname, "..", "..", "..", "scripts", "attendance-lwp-reconcile.ts");
 const source = fs.readFileSync(SCRIPT, "utf8");
-const code = source
-  .replace(/\/\*[\s\S]*?\*\//g, "")
-  .replace(/^\s*\/\/.*$/gm, "");
+const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("reconciler refuses rows the engine cannot read", () => {
   it("selects the punch evidence it needs to make that judgement", () => {
     // It cannot decide whether the engine is blind without reading the punch columns.
-    for (const col of [
-      "clock_in_time",
-      "clock_out_time",
-      "biometric_minutes",
-    ]) {
+    for (const col of ["clock_in_time", "clock_out_time", "biometric_minutes"]) {
       expect(code).toContain(col);
     }
   });
@@ -58,9 +45,7 @@ describe("reconciler refuses rows the engine cannot read", () => {
 
   it("skips those rows instead of writing the engine's verdict", () => {
     // The whole point: a row the engine misreads must never reach upsertDailyRecord.
-    const guardAt = code.search(
-      /sourceIsUnreadable|unsafeToRederive|engineIsBlind/,
-    );
+    const guardAt = code.search(/sourceIsUnreadable|unsafeToRederive|engineIsBlind/);
     const upsertAt = code.indexOf("upsertDailyRecord");
     expect(guardAt).toBeGreaterThan(-1);
     expect(upsertAt).toBeGreaterThan(guardAt);
@@ -69,8 +54,6 @@ describe("reconciler refuses rows the engine cannot read", () => {
 
   it("reports the count so a run cannot quietly do nothing", () => {
     // Silently skipping everything looks identical to finding nothing wrong.
-    expect(code).toMatch(
-      /skippedUnreadable[\s\S]{0,200}console\.log|console\.log[\s\S]{0,200}skippedUnreadable/,
-    );
+    expect(code).toMatch(/skippedUnreadable[\s\S]{0,200}console\.log|console\.log[\s\S]{0,200}skippedUnreadable/);
   });
 });

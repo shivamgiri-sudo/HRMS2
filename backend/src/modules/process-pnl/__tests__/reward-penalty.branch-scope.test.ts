@@ -7,15 +7,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * caller's own branch(es); a global scope ({mode:"all"}) must behave exactly as before.
  */
 
-const { execute, tableExists } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  tableExists: vi.fn(),
-}));
+const { execute, tableExists } = vi.hoisted(() => ({ execute: vi.fn(), tableExists: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/dbHelpers.js", () => ({ tableExists }));
-vi.mock("../../../shared/auditLog.js", () => ({
-  writeAuditLog: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock("../../../shared/auditLog.js", () => ({ writeAuditLog: vi.fn().mockResolvedValue(undefined) }));
 
 beforeEach(() => {
   execute.mockReset();
@@ -37,10 +32,7 @@ describe("listRewardPenalty branch scoping", () => {
 
   it("switches to an INNER JOIN filtered to the caller's branches when scope is branch-bound", async () => {
     const { listRewardPenalty } = await import("../reward-penalty.service.js");
-    await listRewardPenalty("2026-08", undefined, {
-      mode: "branches",
-      branchIds: ["branch-1"],
-    });
+    await listRewardPenalty("2026-08", undefined, { mode: "branches", branchIds: ["branch-1"] });
 
     const [sql, params] = execute.mock.calls[0];
     expect(String(sql)).toContain("INNER JOIN cost_centre_master");
@@ -51,12 +43,8 @@ describe("listRewardPenalty branch scoping", () => {
 
 describe("getRewardPenaltySummary branch scoping", () => {
   it("switches to an INNER JOIN filtered to the caller's branches when scope is branch-bound", async () => {
-    const { getRewardPenaltySummary } =
-      await import("../reward-penalty.service.js");
-    await getRewardPenaltySummary("2026-08", {
-      mode: "branches",
-      branchIds: ["branch-1", "branch-2"],
-    });
+    const { getRewardPenaltySummary } = await import("../reward-penalty.service.js");
+    await getRewardPenaltySummary("2026-08", { mode: "branches", branchIds: ["branch-1", "branch-2"] });
 
     const [sql, params] = execute.mock.calls[0];
     expect(String(sql)).toContain("INNER JOIN cost_centre_master");
@@ -65,8 +53,7 @@ describe("getRewardPenaltySummary branch scoping", () => {
   });
 
   it("keeps the unfiltered LEFT JOIN when scope is company-wide", async () => {
-    const { getRewardPenaltySummary } =
-      await import("../reward-penalty.service.js");
+    const { getRewardPenaltySummary } = await import("../reward-penalty.service.js");
     await getRewardPenaltySummary("2026-08", { mode: "all" });
 
     const [sql, params] = execute.mock.calls[0];

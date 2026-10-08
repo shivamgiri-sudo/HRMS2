@@ -45,9 +45,7 @@ export type BranchHeadScope = {
  * bha.branch_head_id, so an unresolved id shows a blank approver name in
  * history.
  */
-export async function resolveEmployeeIdForAuthUser(
-  authUserId: string,
-): Promise<string> {
+export async function resolveEmployeeIdForAuthUser(authUserId: string): Promise<string> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
     [authUserId],
@@ -55,29 +53,19 @@ export async function resolveEmployeeIdForAuthUser(
   return rows[0]?.id ? String(rows[0].id) : authUserId;
 }
 
-export async function resolveBranchHeadScope(
-  authUserId: string,
-): Promise<BranchHeadScope> {
+export async function resolveBranchHeadScope(authUserId: string): Promise<BranchHeadScope> {
   const roles = await getUserRoleKeys(authUserId).catch(() => [] as string[]);
   const employeeId = await resolveEmployeeIdForAuthUser(authUserId);
 
-  const [assignments] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT DISTINCT branch_name FROM branch_head_assignments
+  const [assignments] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT branch_name FROM branch_head_assignments
       WHERE branch_head_id = ? AND is_active = TRUE`,
-      [employeeId],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    [employeeId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
 
-  const scopes = await getUserAssignmentScopes(authUserId, [
-    "branch_head",
-  ]).catch(() => []);
-  const branchNames = assignments
-    .map((r) => String(r.branch_name))
-    .filter(Boolean);
-  const branchIds = scopes
-    .map((s) => String(s.branch_id ?? ""))
-    .filter(Boolean);
+  const scopes = await getUserAssignmentScopes(authUserId, ["branch_head"]).catch(() => []);
+  const branchNames = assignments.map((r) => String(r.branch_name)).filter(Boolean);
+  const branchIds = scopes.map((s) => String(s.branch_id ?? "")).filter(Boolean);
 
   // Org-wide roles (ORG_WIDE_EXEMPT_ROLES) are never restricted. Everyone else - hr, payroll_hr, manager,
   // branch_head - is limited to the branches they are assigned to; a user with no assignment at all falls
@@ -162,10 +150,7 @@ export async function assertBranchHeadCanSeeCandidate(
   const scope = await resolveBranchHeadScope(authUserId);
   if (scope.unrestricted) return;
 
-  const pred = buildCandidateBranchPredicate(scope, {
-    candidate: "c",
-    branch: "bm",
-  });
+  const pred = buildCandidateBranchPredicate(scope, { candidate: "c", branch: "bm" });
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT 1 FROM ats_candidate c
        LEFT JOIN branch_master bm

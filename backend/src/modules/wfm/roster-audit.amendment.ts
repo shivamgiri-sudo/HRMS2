@@ -7,8 +7,8 @@
  *     change log (the service only ever updated shift_template_id, leaving a week-off amendment as a no-op).
  * Best-effort: failures are logged, never thrown — the amendment itself is already committed.
  */
-import { db } from "../../db/mysql.js";
-import type { AmendmentAssignmentType } from "./roster-audit.helpers.js";
+import { db } from '../../db/mysql.js';
+import type { AmendmentAssignmentType } from './roster-audit.helpers.js';
 
 export interface AmendmentAuditInput {
   cycleId: string;
@@ -19,35 +19,26 @@ export interface AmendmentAuditInput {
   reason: string;
   actorUserId: string;
   actorRole?: string | null;
-  cycle: {
-    process_id: string;
-    branch_id: string | null;
-    week_start_date: string;
-  };
+  cycle: { process_id: string; branch_id: string | null; week_start_date: string };
   oldShiftId?: string | null;
 }
 
-export async function recordAmendmentInDecisionAudit(
-  a: AmendmentAuditInput,
-): Promise<void> {
+export async function recordAmendmentInDecisionAudit(a: AmendmentAuditInput): Promise<void> {
   try {
-    if (a.newAssignmentType === "WEEK_OFF") {
+    if (a.newAssignmentType === 'WEEK_OFF') {
       await db.execute(
         `UPDATE roster_daily_assignment SET is_week_off = 1, shift_template_id = NULL, updated_at = NOW()
           WHERE cycle_id = ? AND employee_id = ? AND roster_date = ?`,
         [a.cycleId, a.employeeId, a.date],
       );
-    } else if (a.newAssignmentType === "SHIFT") {
+    } else if (a.newAssignmentType === 'SHIFT') {
       await db.execute(
         `UPDATE roster_daily_assignment SET is_week_off = 0, updated_at = NOW()
           WHERE cycle_id = ? AND employee_id = ? AND roster_date = ?`,
         [a.cycleId, a.employeeId, a.date],
       );
     }
-    const decision =
-      a.newAssignmentType === "WEEK_OFF"
-        ? "weekoff_assigned"
-        : "manual_override";
+    const decision = a.newAssignmentType === 'WEEK_OFF' ? 'weekoff_assigned' : 'manual_override';
     await db.execute(
       `INSERT INTO roster_decision_audit
          (id, run_id, cycle_id, week_start_date, process_id, branch_id, employee_id, roster_date, decision_type,
@@ -55,29 +46,15 @@ export async function recordAmendmentInDecisionAudit(
           old_value_json, new_value_json)
        VALUES (UUID(), NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'post_publication_amendment', ?, ?, ?, NOW(), ?, ?)`,
       [
-        a.cycleId,
-        String(a.cycle.week_start_date).slice(0, 10),
-        a.cycle.process_id,
-        a.cycle.branch_id ?? null,
-        a.employeeId,
-        a.date,
-        decision,
-        a.newShiftId ?? null,
-        a.newAssignmentType === "WEEK_OFF" ? 1 : 0,
-        a.actorUserId,
-        a.actorRole ?? null,
-        a.reason.trim().slice(0, 500),
+        a.cycleId, String(a.cycle.week_start_date).slice(0, 10), a.cycle.process_id, a.cycle.branch_id ?? null,
+        a.employeeId, a.date, decision,
+        a.newShiftId ?? null, a.newAssignmentType === 'WEEK_OFF' ? 1 : 0,
+        a.actorUserId, a.actorRole ?? null, a.reason.trim().slice(0, 500),
         JSON.stringify({ shiftId: a.oldShiftId ?? null }),
-        JSON.stringify({
-          assignmentType: a.newAssignmentType,
-          shiftId: a.newShiftId ?? null,
-        }),
+        JSON.stringify({ assignmentType: a.newAssignmentType, shiftId: a.newShiftId ?? null }),
       ],
     );
   } catch (err) {
-    console.error(
-      "[roster-audit] failed to mirror amendment into roster_decision_audit",
-      err,
-    );
+    console.error('[roster-audit] failed to mirror amendment into roster_decision_audit', err);
   }
 }

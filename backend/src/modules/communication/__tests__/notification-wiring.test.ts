@@ -15,96 +15,82 @@
  * break them. Static source inspection is used rather than a runtime spy because the goal
  * is to catch DELETION, and a deleted call site cannot be spied on.
  */
-import { describe, it, expect } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { describe, it, expect } from 'vitest';
+import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 
-const MODULES_DIR = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-);
+const MODULES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /** callSite: the service that must invoke it. functions: what must appear there. */
-const WIRING: Array<{
-  area: string;
-  callSite: string;
-  module: string;
-  functions: string[];
-}> = [
+const WIRING: Array<{ area: string; callSite: string; module: string; functions: string[] }> = [
   {
-    area: "leave",
-    callSite: "leave/leave.service.ts",
-    module: "leave/leave.notifications.ts",
-    functions: ["notifyLeaveSubmitted", "notifyLeaveDecision"],
+    area: 'leave',
+    callSite: 'leave/leave.service.ts',
+    module: 'leave/leave.notifications.ts',
+    functions: ['notifyLeaveSubmitted', 'notifyLeaveDecision'],
   },
   {
-    area: "roster",
-    callSite: "roster/roster.governance.service.ts",
-    module: "roster/roster.notifications.ts",
-    functions: ["notifyRosterPublished"],
+    area: 'roster',
+    callSite: 'roster/roster.governance.service.ts',
+    module: 'roster/roster.notifications.ts',
+    functions: ['notifyRosterPublished'],
   },
   {
-    area: "attendance",
-    callSite: "wfm/wfm.regularization.secure.routes.ts",
-    module: "wfm/attendance.notifications.ts",
-    functions: [
-      "notifyRegularizationDecision",
-      "notifyRegularizationStage2Pending",
-    ],
+    area: 'attendance',
+    callSite: 'wfm/wfm.regularization.secure.routes.ts',
+    module: 'wfm/attendance.notifications.ts',
+    functions: ['notifyRegularizationDecision', 'notifyRegularizationStage2Pending'],
   },
   {
-    area: "payroll",
-    callSite: "payroll/payroll.service.ts",
-    module: "payroll/payroll.notifications.ts",
-    functions: ["notifyPayrollRunStatus", "notifyPayslipsReady"],
+    area: 'payroll',
+    callSite: 'payroll/payroll.service.ts',
+    module: 'payroll/payroll.notifications.ts',
+    functions: ['notifyPayrollRunStatus', 'notifyPayslipsReady'],
   },
   {
-    area: "exit",
-    callSite: "exit/exit.service.ts",
-    module: "exit/exit.notifications.ts",
-    functions: ["notifyResignationSubmitted", "notifyResignationDecision"],
+    area: 'exit',
+    callSite: 'exit/exit.service.ts',
+    module: 'exit/exit.notifications.ts',
+    functions: ['notifyResignationSubmitted', 'notifyResignationDecision'],
   },
   {
-    area: "exit-ff",
-    callSite: "exit/ff.service.ts",
-    module: "exit/exit.notifications.ts",
-    functions: ["notifyFullFinalReady"],
+    area: 'exit-ff',
+    callSite: 'exit/ff.service.ts',
+    module: 'exit/exit.notifications.ts',
+    functions: ['notifyFullFinalReady'],
   },
   {
-    area: "salary-increment",
-    callSite: "salary-increment/salaryIncrement.service.ts",
-    module: "salary-increment/salaryIncrement.notifications.ts",
-    functions: ["notifySalaryIncrementLetter"],
+    area: 'salary-increment',
+    callSite: 'salary-increment/salaryIncrement.service.ts',
+    module: 'salary-increment/salaryIncrement.notifications.ts',
+    functions: ['notifySalaryIncrementLetter'],
   },
 ];
 
 const read = (rel: string): string => {
   const p = resolve(MODULES_DIR, rel);
   if (!existsSync(p)) throw new Error(`file missing: ${rel}`);
-  return readFileSync(p, "utf8");
+  return readFileSync(p, 'utf8');
 };
 
 /** Strip comments so a call site that is only MENTIONED in prose does not count as wired. */
 const stripComments = (s: string): string =>
-  s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-describe("notification wiring is not silently deleted", () => {
+describe('notification wiring is not silently deleted', () => {
   for (const { area, callSite, module, functions } of WIRING) {
     describe(area, () => {
       it(`${module} exists and exports its notifiers`, () => {
         const src = read(module);
         for (const fn of functions) {
-          expect(src, `${module} must export ${fn}`).toContain(
-            `export async function ${fn}`,
-          );
+          expect(src, `${module} must export ${fn}`).toContain(`export async function ${fn}`);
         }
       });
 
-      it(`${callSite} imports from ${module.split("/")[1]}`, () => {
+      it(`${callSite} imports from ${module.split('/')[1]}`, () => {
         const src = stripComments(read(callSite));
-        const importedName = module.split("/")[1].replace(/\.ts$/, "");
+        const importedName = module.split('/')[1].replace(/\.ts$/, '');
         expect(
           src,
           `${callSite} no longer imports ${importedName} — the wiring has been removed`,
@@ -114,7 +100,7 @@ describe("notification wiring is not silently deleted", () => {
       it.each(functions)(`${callSite} still calls %s()`, (fn) => {
         const src = stripComments(read(callSite));
         // `fn(` in executable code — not merely present in the import list.
-        const calls = src.match(new RegExp(`\\b${fn}\\s*\\(`, "g")) ?? [];
+        const calls = src.match(new RegExp(`\\b${fn}\\s*\\(`, 'g')) ?? [];
         expect(
           calls.length,
           `${fn}() is no longer invoked in ${callSite}. The notification module still ` +
@@ -133,12 +119,11 @@ describe("notification wiring is not silently deleted", () => {
    * WIRING mechanism above — which checks for an `export async function <fn>` — cannot
    * cover it. Guard the eventCode string directly instead.
    */
-  it("payroll.notifications.ts still fires salary_advance_recovery inside notifyPayslipsReady", () => {
-    const src = stripComments(read("payroll/payroll.notifications.ts"));
-    expect(
-      src,
-      "salary_advance_recovery eventCode missing from payroll.notifications.ts",
-    ).toContain("eventCode: 'salary_advance_recovery'");
+  it('payroll.notifications.ts still fires salary_advance_recovery inside notifyPayslipsReady', () => {
+    const src = stripComments(read('payroll/payroll.notifications.ts'));
+    expect(src, 'salary_advance_recovery eventCode missing from payroll.notifications.ts').toContain(
+      "eventCode: 'salary_advance_recovery'",
+    );
   });
 
   /**
@@ -148,19 +133,14 @@ describe("notification wiring is not silently deleted", () => {
    * approveRunForDisbursement loses its notify call again — hence this function-scoped
    * check.
    */
-  it("approveRunForDisbursement still calls notifyPayslipsReady on its own disbursed path", () => {
-    const src = stripComments(read("payroll/payroll.service.ts"));
-    const fnMatch = src.match(
-      /export async function approveRunForDisbursement[\s\S]*?\n\}/,
-    );
-    expect(
-      fnMatch,
-      "approveRunForDisbursement function body not found",
-    ).toBeTruthy();
+  it('approveRunForDisbursement still calls notifyPayslipsReady on its own disbursed path', () => {
+    const src = stripComments(read('payroll/payroll.service.ts'));
+    const fnMatch = src.match(/export async function approveRunForDisbursement[\s\S]*?\n\}/);
+    expect(fnMatch, 'approveRunForDisbursement function body not found').toBeTruthy();
     expect(
       fnMatch![0],
-      "approveRunForDisbursement no longer calls notifyPayslipsReady — the disbursed-via-" +
-        "finance-approval path will silently stop notifying again",
+      'approveRunForDisbursement no longer calls notifyPayslipsReady — the disbursed-via-' +
+        'finance-approval path will silently stop notifying again',
     ).toMatch(/notifyPayslipsReady\s*\(/);
   });
 
@@ -172,42 +152,33 @@ describe("notification wiring is not silently deleted", () => {
    * however it was configured, while the table and the worker file both existed and made
    * the feature look finished.
    */
-  const SRC = resolve(MODULES_DIR, "..");
+  const SRC = resolve(MODULES_DIR, '..');
   const DUAL_REGISTERED = [
-    { worker: "tat-escalation.worker.js", starter: "startTatEscalationWorker" },
-    {
-      worker: "report-subscription.worker.js",
-      starter: "startReportSubscriptionWorker",
-    },
+    { worker: 'tat-escalation.worker.js', starter: 'startTatEscalationWorker' },
+    { worker: 'report-subscription.worker.js', starter: 'startReportSubscriptionWorker' },
   ];
 
-  describe.each(DUAL_REGISTERED)(
-    "$starter is registered in BOTH schedulers",
-    ({ worker, starter }) => {
-      const files = ["workers/all-workers.ts", "server.ts"];
-      it.each(files)("%s imports and calls it", (rel) => {
-        const src = stripComments(readFileSync(resolve(SRC, rel), "utf8"));
-        expect(src, `${rel} must import ${worker}`).toContain(worker);
-        expect(
-          (src.match(new RegExp(`\\b${starter}\\s*\\(`, "g")) ?? []).length,
-          `${rel} imports ${starter} but never calls it — the worker will never run in ` +
-            `this topology, and nothing else will tell you.`,
-        ).toBeGreaterThan(0);
-      });
-    },
-  );
+  describe.each(DUAL_REGISTERED)('$starter is registered in BOTH schedulers', ({ worker, starter }) => {
+    const files = ['workers/all-workers.ts', 'server.ts'];
+    it.each(files)('%s imports and calls it', (rel) => {
+      const src = stripComments(readFileSync(resolve(SRC, rel), 'utf8'));
+      expect(src, `${rel} must import ${worker}`).toContain(worker);
+      expect(
+        (src.match(new RegExp(`\\b${starter}\\s*\\(`, 'g')) ?? []).length,
+        `${rel} imports ${starter} but never calls it — the worker will never run in ` +
+          `this topology, and nothing else will tell you.`,
+      ).toBeGreaterThan(0);
+    });
+  });
 
-  it("the gateway is the only thing the notification modules dispatch through", () => {
+  it('the gateway is the only thing the notification modules dispatch through', () => {
     for (const { module } of WIRING) {
       const src = stripComments(read(module));
-      expect(src, `${module} must dispatch via notificationGateway`).toContain(
-        "notificationGateway",
-      );
+      expect(src, `${module} must dispatch via notificationGateway`).toContain('notificationGateway');
       // Bypassing the gateway skips the kill switch, deny-list and dedupe claim.
-      expect(
-        src,
-        `${module} must not call a mail transport directly`,
-      ).not.toMatch(/createTransport|sendMail\s*\(/);
+      expect(src, `${module} must not call a mail transport directly`).not.toMatch(
+        /createTransport|sendMail\s*\(/,
+      );
     }
   });
 });

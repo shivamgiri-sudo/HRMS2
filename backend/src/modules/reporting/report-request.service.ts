@@ -1,52 +1,44 @@
-import { createHash, randomUUID } from "crypto";
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { REPORT_CATALOG } from "./report-catalog.js";
+import { createHash, randomUUID } from 'crypto';
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { REPORT_CATALOG } from './report-catalog.js';
 import {
   resolveRegisteredOfficialEmail,
   maskEmail,
   ReportEmailResolutionError,
-} from "./report-email-resolver.js";
-import { resolveBranchScope } from "./reporting.scope.js";
-import { generateRequestReference } from "./report-request-ref.js";
+} from './report-email-resolver.js';
+import { resolveBranchScope } from './reporting.scope.js';
+import { generateRequestReference } from './report-request-ref.js';
 import {
   recordReportAuditEvent,
   REPORT_AUDIT_EVENTS,
-} from "./report-audit.service.js";
-import { ensureReportingSchemaAvailable } from "./report-schema-availability.js";
+} from './report-audit.service.js';
+import { ensureReportingSchemaAvailable } from './report-schema-availability.js';
 
 const MAX_REQUESTS_PER_HOUR = 5;
 const DUPLICATE_WINDOW_MINUTES = 30;
 const DEFAULT_RETENTION_DAYS = 7;
 const SENSITIVE_RETENTION_DAYS = 2;
 
-const SENSITIVE_CATEGORIES = ["payroll", "statutory", "hr_sensitive"];
+const SENSITIVE_CATEGORIES = ['payroll', 'statutory', 'hr_sensitive'];
 
 function getRetentionDays(reportCode: string): number {
-  const def = REPORT_CATALOG.find((r) => r.code === reportCode);
+  const def = REPORT_CATALOG.find(r => r.code === reportCode);
   if (!def) return DEFAULT_RETENTION_DAYS;
-  if (
-    SENSITIVE_CATEGORIES.some((c) => def.category?.toLowerCase().includes(c))
-  ) {
+  if (SENSITIVE_CATEGORIES.some(c => def.category?.toLowerCase().includes(c))) {
     return SENSITIVE_RETENTION_DAYS;
   }
   return DEFAULT_RETENTION_DAYS;
 }
 
-function dedupeKey(
-  userId: string,
-  reportCode: string,
-  filters: Record<string, unknown>,
-): string {
-  const sorted = Object.keys(filters)
-    .sort()
-    .reduce<Record<string, unknown>>((acc, k) => {
-      acc[k] = filters[k];
-      return acc;
-    }, {});
-  return createHash("sha256")
+function dedupeKey(userId: string, reportCode: string, filters: Record<string, unknown>): string {
+  const sorted = Object.keys(filters).sort().reduce<Record<string, unknown>>((acc, k) => {
+    acc[k] = filters[k];
+    return acc;
+  }, {});
+  return createHash('sha256')
     .update(`${userId}:${reportCode}:${JSON.stringify(sorted)}`)
-    .digest("hex");
+    .digest('hex');
 }
 
 export interface CreateReportRequestResult {
@@ -77,21 +69,16 @@ export interface PreviewRequestResult {
 export async function previewReportRequest(
   userId: string,
   reportCode: string,
-  filters: Record<string, unknown>,
+  filters: Record<string, unknown>
 ): Promise<PreviewRequestResult> {
   await ensureReportingSchemaAvailable();
-  const def = REPORT_CATALOG.find((r) => r.code === reportCode);
-  if (!def)
-    throw Object.assign(new Error(`Report '${reportCode}' not found`), {
-      statusCode: 404,
-    });
+  const def = REPORT_CATALOG.find(r => r.code === reportCode);
+  if (!def) throw Object.assign(new Error(`Report '${reportCode}' not found`), { statusCode: 404 });
 
   const emailResolution = await resolveRegisteredOfficialEmail(userId);
   const scope = await resolveBranchScope(userId);
 
-  const isSensitive = SENSITIVE_CATEGORIES.some((c) =>
-    def.category?.toLowerCase().includes(c),
-  );
+  const isSensitive = SENSITIVE_CATEGORIES.some(c => def.category?.toLowerCase().includes(c));
 
   return {
     reportName: def.name,
@@ -102,10 +89,10 @@ export async function previewReportRequest(
     resolvedScope: scope,
     officialEmailMasked: maskEmail(emailResolution.officialEmail),
     retentionDays: getRetentionDays(reportCode),
-    outputFormat: "xlsx",
+    outputFormat: 'xlsx',
     sensitivityWarning: isSensitive
-      ? "This report contains sensitive HR or payroll data. The attachment will be deleted from our servers after 2 days."
-      : "The report attachment will be deleted from our servers after 7 days.",
+      ? 'This report contains sensitive HR or payroll data. The attachment will be deleted from our servers after 2 days.'
+      : 'The report attachment will be deleted from our servers after 7 days.',
   };
 }
 
@@ -113,16 +100,13 @@ export async function createReportRequest(
   userId: string,
   reportCode: string,
   filters: Record<string, unknown>,
-  meta: { ip: string; userAgent: string; correlationId?: string },
+  meta: { ip: string; userAgent: string; correlationId?: string }
 ): Promise<CreateReportRequestResult> {
   await ensureReportingSchemaAvailable();
   // 1. Validate report exists in catalog
-  const def = REPORT_CATALOG.find((r) => r.code === reportCode);
+  const def = REPORT_CATALOG.find(r => r.code === reportCode);
   if (!def) {
-    throw Object.assign(
-      new Error(`Report '${reportCode}' not found in catalog`),
-      { statusCode: 404 },
-    );
+    throw Object.assign(new Error(`Report '${reportCode}' not found in catalog`), { statusCode: 404 });
   }
 
   // 2. Rate limit check
@@ -131,7 +115,7 @@ export async function createReportRequest(
      WHERE requested_by_user_id = ?
        AND requested_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)
        AND status NOT IN ('CANCELLED', 'REJECTED')`,
-    [userId],
+    [userId]
   );
   const requestCount = Number((countRows[0] as { cnt: number }).cnt);
   if (requestCount >= MAX_REQUESTS_PER_HOUR) {
@@ -142,13 +126,11 @@ export async function createReportRequest(
       reportName: def.name,
       ipAddress: meta.ip,
       message: `Rate limit exceeded: ${requestCount} requests in last hour`,
-      errorCode: "RATE_LIMIT_EXCEEDED",
+      errorCode: 'RATE_LIMIT_EXCEEDED',
     });
     throw Object.assign(
-      new Error(
-        `You have reached the maximum of ${MAX_REQUESTS_PER_HOUR} report requests per hour. Please try again later.`,
-      ),
-      { statusCode: 429 },
+      new Error(`You have reached the maximum of ${MAX_REQUESTS_PER_HOUR} report requests per hour. Please try again later.`),
+      { statusCode: 429 }
     );
   }
 
@@ -157,8 +139,7 @@ export async function createReportRequest(
   try {
     emailResolution = await resolveRegisteredOfficialEmail(userId);
   } catch (err) {
-    const code =
-      err instanceof ReportEmailResolutionError ? err.code : "UNKNOWN";
+    const code = err instanceof ReportEmailResolutionError ? err.code : 'UNKNOWN';
     await recordReportAuditEvent({
       eventType: REPORT_AUDIT_EVENTS.EMAIL_RESOLUTION_FAILED,
       actorUserId: userId,
@@ -177,10 +158,9 @@ export async function createReportRequest(
   // 5. Get requester role
   const [roleRows] = await db.execute<RowDataPacket[]>(
     `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1 LIMIT 1`,
-    [userId],
+    [userId]
   );
-  const requesterRole =
-    (roleRows[0] as { role_key?: string } | undefined)?.role_key ?? "employee";
+  const requesterRole = (roleRows[0] as { role_key?: string } | undefined)?.role_key ?? 'employee';
 
   // 6. Duplicate detection
   const inputHash = dedupeKey(userId, reportCode, filters);
@@ -191,14 +171,10 @@ export async function createReportRequest(
        AND requested_at > DATE_SUB(NOW(), INTERVAL ? MINUTE)
        AND status NOT IN ('CANCELLED', 'REJECTED', 'GENERATION_FAILED', 'DELIVERY_FAILED', 'EXPIRED')
      ORDER BY requested_at DESC LIMIT 1`,
-    [userId, reportCode, DUPLICATE_WINDOW_MINUTES],
+    [userId, reportCode, DUPLICATE_WINDOW_MINUTES]
   );
   if (dupRows.length > 0) {
-    const dup = dupRows[0] as {
-      id: string;
-      request_reference: string;
-      status: string;
-    };
+    const dup = dupRows[0] as { id: string; request_reference: string; status: string };
     await recordReportAuditEvent({
       reportRequestId: dup.id,
       eventType: REPORT_AUDIT_EVENTS.DUPLICATE_DETECTED,
@@ -257,14 +233,14 @@ export async function createReportRequest(
       emailResolution.verified ? 1 : 0,
       JSON.stringify(filters),
       JSON.stringify(scope),
-      "xlsx",
-      "portal",
+      'xlsx',
+      'portal',
       meta.ip,
       meta.userAgent ? String(meta.userAgent).slice(0, 512) : null,
       correlationId,
-      "QUEUED",
+      'QUEUED',
       expiresAt,
-    ],
+    ]
   );
 
   // 9. Audit events
@@ -289,7 +265,7 @@ export async function createReportRequest(
   await recordReportAuditEvent({
     reportRequestId: requestId,
     eventType: REPORT_AUDIT_EVENTS.REQUEST_QUEUED,
-    actorType: "system",
+    actorType: 'system',
     reportCode,
     reportName: def.name,
     correlationId,
@@ -299,7 +275,7 @@ export async function createReportRequest(
   return {
     requestReference,
     requestId,
-    status: "QUEUED",
+    status: 'QUEUED',
     recipientEmailMasked: maskEmail(emailResolution.officialEmail),
     isDuplicate: false,
     message: `Your report request has been queued and will be sent to your registered official email.`,
@@ -348,10 +324,7 @@ export async function getMyReportRequests(
   await ensureReportingSchemaAvailable();
   // Ensure page/pageSize are valid integers — NaN from query params causes ER_WRONG_ARGUMENTS
   const safePage = Math.max(1, Math.floor(Number.isFinite(page) ? page : 1));
-  const safePageSize = Math.max(
-    1,
-    Math.min(Math.floor(Number.isFinite(pageSize) ? pageSize : 20), 200),
-  );
+  const safePageSize = Math.max(1, Math.min(Math.floor(Number.isFinite(pageSize) ? pageSize : 20), 200));
   const offset = (safePage - 1) * safePageSize;
 
   const conditions: string[] = ['rr.requested_by_user_id = ?'];
@@ -373,9 +346,10 @@ export async function getMyReportRequests(
     `SELECT COUNT(*) AS total FROM report_request rr WHERE ${where}`,
     params
   );
+  const total = parseInt(String((countRows[0] as { total: unknown }).total ?? 0), 10);
 
   // Use inline literal LIMIT/OFFSET (not parameterised) to avoid ER_WRONG_ARGUMENTS on some MySQL versions
-  const limitInt = parseInt(String(safePageSize), 10);
+  const limitInt  = parseInt(String(safePageSize), 10);
   const offsetInt = parseInt(String(offset), 10);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT rr.id, rr.request_reference, rr.report_code, rr.report_name_snapshot,
@@ -394,15 +368,15 @@ export async function getMyReportRequests(
   const iso = (v: unknown): string | null => (v ? String(v) : null);
   return {
     total,
-    rows: (rows as Array<Record<string, unknown>>).map((r) => ({
+    rows: (rows as Array<Record<string, unknown>>).map(r => ({
       id: String(r.id),
       requestReference: String(r.request_reference),
       reportCode: String(r.report_code),
       reportName: String(r.report_name_snapshot),
       requestedFilters: r.requested_filters_json
-        ? ((typeof r.requested_filters_json === "string"
+        ? (typeof r.requested_filters_json === 'string'
             ? JSON.parse(r.requested_filters_json)
-            : r.requested_filters_json) as Record<string, unknown>)
+            : r.requested_filters_json) as Record<string, unknown>
         : {},
       officialEmailMasked: maskEmail(String(r.official_email)),
       status: String(r.status),
@@ -448,7 +422,7 @@ export async function resubmitReportRequest(
 
 export async function getMyReportRequestDetail(
   userId: string,
-  requestId: string,
+  requestId: string
 ): Promise<Record<string, unknown>> {
   await ensureReportingSchemaAvailable();
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -457,13 +431,11 @@ export async function getMyReportRequestDetail(
      FROM report_request rr
      LEFT JOIN report_generated_file rgf ON rgf.report_request_id = rr.id
      WHERE rr.id = ? AND rr.requested_by_user_id = ?`,
-    [requestId, userId],
+    [requestId, userId]
   );
 
   if (!rows.length) {
-    throw Object.assign(new Error("Report request not found"), {
-      statusCode: 404,
-    });
+    throw Object.assign(new Error('Report request not found'), { statusCode: 404 });
   }
 
   const row = rows[0] as Record<string, unknown>;
@@ -496,40 +468,33 @@ export async function getMyReportRequestDetail(
   };
 }
 
-export async function cancelReportRequest(
-  userId: string,
-  requestId: string,
-): Promise<void> {
+export async function cancelReportRequest(userId: string, requestId: string): Promise<void> {
   await ensureReportingSchemaAvailable();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, status FROM report_request WHERE id = ? AND requested_by_user_id = ?`,
-    [requestId, userId],
+    [requestId, userId]
   );
   if (!rows.length) {
-    throw Object.assign(new Error("Report request not found"), {
-      statusCode: 404,
-    });
+    throw Object.assign(new Error('Report request not found'), { statusCode: 404 });
   }
 
   const row = rows[0] as { id: string; status: string };
-  if (!["REQUESTED", "QUEUED"].includes(row.status)) {
+  if (!['REQUESTED', 'QUEUED'].includes(row.status)) {
     throw Object.assign(
-      new Error(
-        `Cannot cancel a request in status '${row.status}'. Only QUEUED requests can be cancelled.`,
-      ),
-      { statusCode: 409 },
+      new Error(`Cannot cancel a request in status '${row.status}'. Only QUEUED requests can be cancelled.`),
+      { statusCode: 409 }
     );
   }
 
   await db.execute(
     `UPDATE report_request SET status = 'CANCELLED', cancelled_at = NOW() WHERE id = ?`,
-    [requestId],
+    [requestId]
   );
   await recordReportAuditEvent({
     reportRequestId: requestId,
     eventType: REPORT_AUDIT_EVENTS.REQUEST_CANCELLED,
     actorUserId: userId,
-    message: "Request cancelled by user",
+    message: 'Request cancelled by user',
   });
 }
 
@@ -563,58 +528,28 @@ export async function adminListReportRequests(f: AdminRequestFilter): Promise<{
    * survive into the SQL - a non-numeric page or pageSize collapses to the default. Every other
    * filter stays a bound parameter.
    */
-  const pageSize = Math.max(
-    1,
-    Math.min(Math.trunc(Number(f.pageSize)) || 50, 200),
-  );
+  const pageSize = Math.max(1, Math.min(Math.trunc(Number(f.pageSize)) || 50, 200));
   const page = Math.max(1, Math.trunc(Number(f.page)) || 1);
   const offset = (page - 1) * pageSize;
 
   const conditions: string[] = [];
   const params: unknown[] = [];
 
-  if (f.requestReference) {
-    conditions.push("rr.request_reference LIKE ?");
-    params.push(`%${f.requestReference}%`);
-  }
-  if (f.reportCode) {
-    conditions.push("rr.report_code = ?");
-    params.push(f.reportCode);
-  }
-  if (f.employeeCode) {
-    conditions.push("rr.requested_by_employee_code LIKE ?");
-    params.push(`%${f.employeeCode}%`);
-  }
-  if (f.employeeName) {
-    conditions.push("rr.requested_by_employee_name LIKE ?");
-    params.push(`%${f.employeeName}%`);
-  }
-  if (f.officialEmail) {
-    conditions.push("rr.official_email LIKE ?");
-    params.push(`%${f.officialEmail}%`);
-  }
-  if (f.status) {
-    conditions.push("rr.status = ?");
-    params.push(f.status);
-  }
-  if (f.failureStage) {
-    conditions.push("rr.failure_stage = ?");
-    params.push(f.failureStage);
-  }
-  if (f.fromDate) {
-    conditions.push("rr.requested_at >= ?");
-    params.push(f.fromDate);
-  }
-  if (f.toDate) {
-    conditions.push("rr.requested_at <= ?");
-    params.push(f.toDate + " 23:59:59");
-  }
+  if (f.requestReference) { conditions.push('rr.request_reference LIKE ?'); params.push(`%${f.requestReference}%`); }
+  if (f.reportCode)        { conditions.push('rr.report_code = ?');          params.push(f.reportCode); }
+  if (f.employeeCode)      { conditions.push('rr.requested_by_employee_code LIKE ?'); params.push(`%${f.employeeCode}%`); }
+  if (f.employeeName)      { conditions.push('rr.requested_by_employee_name LIKE ?'); params.push(`%${f.employeeName}%`); }
+  if (f.officialEmail)     { conditions.push('rr.official_email LIKE ?');     params.push(`%${f.officialEmail}%`); }
+  if (f.status)            { conditions.push('rr.status = ?');                params.push(f.status); }
+  if (f.failureStage)      { conditions.push('rr.failure_stage = ?');         params.push(f.failureStage); }
+  if (f.fromDate)          { conditions.push('rr.requested_at >= ?');         params.push(f.fromDate); }
+  if (f.toDate)            { conditions.push('rr.requested_at <= ?');         params.push(f.toDate + ' 23:59:59'); }
 
-  const where = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM report_request rr ${where}`,
-    params,
+    params
   );
   const total = Number((countRows[0] as { total: number }).total);
 
@@ -636,7 +571,7 @@ export async function adminListReportRequests(f: AdminRequestFilter): Promise<{
        ${where}
        ORDER BY rr.requested_at DESC
        LIMIT ${pageSize} OFFSET ${offset}`,
-      params,
+      params
     );
     rows = r;
   } catch {
@@ -651,7 +586,7 @@ export async function adminListReportRequests(f: AdminRequestFilter): Promise<{
        ${where}
        ORDER BY rr.requested_at DESC
        LIMIT ${pageSize} OFFSET ${offset}`,
-      params,
+      params
     );
     rows = r;
   }
@@ -659,9 +594,7 @@ export async function adminListReportRequests(f: AdminRequestFilter): Promise<{
   return { total, rows: rows as Record<string, unknown>[] };
 }
 
-export async function adminGetReportRequestDetail(
-  requestId: string,
-): Promise<Record<string, unknown>> {
+export async function adminGetReportRequestDetail(requestId: string): Promise<Record<string, unknown>> {
   await ensureReportingSchemaAvailable();
   const [reqRows] = await db.execute<RowDataPacket[]>(
     `SELECT rr.*, rgf.storage_key, rgf.file_size_bytes, rgf.generated_row_count,
@@ -670,12 +603,10 @@ export async function adminGetReportRequestDetail(
      FROM report_request rr
      LEFT JOIN report_generated_file rgf ON rgf.report_request_id = rr.id
      WHERE rr.id = ?`,
-    [requestId],
+    [requestId]
   );
   if (!reqRows.length) {
-    throw Object.assign(new Error("Report request not found"), {
-      statusCode: 404,
-    });
+    throw Object.assign(new Error('Report request not found'), { statusCode: 404 });
   }
 
   const [deliveryRows] = await db.execute<RowDataPacket[]>(
@@ -686,7 +617,7 @@ export async function adminGetReportRequestDetail(
      FROM report_email_delivery
      WHERE report_request_id = ?
      ORDER BY delivery_attempt_number ASC`,
-    [requestId],
+    [requestId]
   );
 
   const [auditRows] = await db.execute<RowDataPacket[]>(
@@ -695,7 +626,7 @@ export async function adminGetReportRequestDetail(
      FROM report_audit_event
      WHERE report_request_id = ?
      ORDER BY id ASC`,
-    [requestId],
+    [requestId]
   );
 
   const req = reqRows[0] as Record<string, unknown>;
@@ -711,81 +642,61 @@ export async function adminGetReportRequestDetail(
 export async function adminRetryEmailDelivery(
   requestId: string,
   actorUserId: string,
-  reason: string,
+  reason: string
 ): Promise<void> {
   await ensureReportingSchemaAvailable();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, status FROM report_request WHERE id = ?`,
-    [requestId],
+    [requestId]
   );
   if (!rows.length) {
-    throw Object.assign(new Error("Report request not found"), {
-      statusCode: 404,
-    });
+    throw Object.assign(new Error('Report request not found'), { statusCode: 404 });
   }
 
   const req = rows[0] as { id: string; status: string };
-  if (!["DELIVERY_FAILED", "GENERATED"].includes(req.status)) {
+  if (!['DELIVERY_FAILED', 'GENERATED'].includes(req.status)) {
     throw Object.assign(
-      new Error(
-        `Cannot retry request in status '${req.status}'. Only DELIVERY_FAILED or GENERATED requests can be retried.`,
-      ),
-      { statusCode: 409 },
+      new Error(`Cannot retry request in status '${req.status}'. Only DELIVERY_FAILED or GENERATED requests can be retried.`),
+      { statusCode: 409 }
     );
   }
 
   // Check file not expired
   const [fileRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, expires_at, deletion_status FROM report_generated_file WHERE report_request_id = ?`,
-    [requestId],
+    [requestId]
   );
   if (!fileRows.length) {
-    throw Object.assign(new Error("No generated file found for this request"), {
-      statusCode: 409,
-    });
+    throw Object.assign(new Error('No generated file found for this request'), { statusCode: 409 });
   }
-  const file = fileRows[0] as {
-    id: string;
-    expires_at: string;
-    deletion_status: string | null;
-  };
-  if (
-    file.deletion_status === "deleted" ||
-    new Date(file.expires_at) < new Date()
-  ) {
-    throw Object.assign(
-      new Error(
-        "The generated report file has expired and cannot be re-delivered. Please submit a new report request.",
-      ),
-      { statusCode: 409 },
-    );
+  const file = fileRows[0] as { id: string; expires_at: string; deletion_status: string | null };
+  if (file.deletion_status === 'deleted' || new Date(file.expires_at) < new Date()) {
+    throw Object.assign(new Error('The generated report file has expired and cannot be re-delivered. Please submit a new report request.'), { statusCode: 409 });
   }
 
   // Insert a new delivery attempt
   const deliveryId = randomUUID();
   const [prevRows] = await db.execute<RowDataPacket[]>(
     `SELECT MAX(delivery_attempt_number) AS max_attempt FROM report_email_delivery WHERE report_request_id = ?`,
-    [requestId],
+    [requestId]
   );
-  const nextAttempt =
-    Number((prevRows[0] as { max_attempt: number | null }).max_attempt ?? 0) +
-    1;
+  const nextAttempt = Number((prevRows[0] as { max_attempt: number | null }).max_attempt ?? 0) + 1;
 
   await db.execute(
     `INSERT INTO report_email_delivery (id, report_request_id, delivery_attempt_number, status, queued_at)
      SELECT ?, ?, ?, 'QUEUED', NOW() FROM report_request WHERE id = ?`,
-    [deliveryId, requestId, nextAttempt, requestId],
+    [deliveryId, requestId, nextAttempt, requestId]
   );
   await db.execute(
     `UPDATE report_request SET status = 'GENERATED', retry_count = retry_count + 1, last_retry_at = NOW()
      WHERE id = ?`,
-    [requestId],
+    [requestId]
   );
 
   await recordReportAuditEvent({
     reportRequestId: requestId,
     eventType: REPORT_AUDIT_EVENTS.SUPER_ADMIN_RETRIED,
-    actorType: "admin",
+    actorType: 'admin',
     actorUserId,
     deliveryId,
     message: `Admin retry initiated. Reason: ${reason}`,

@@ -33,10 +33,7 @@ describe("external-db create route", () => {
     expect(createRoute).toMatch(/encryptCredentials/);
     expect(createRoute).toMatch(/encrypted_credentials/);
     // The config object built for config_json must not carry the password.
-    const configBlock = createRoute.slice(
-      createRoute.indexOf("const config"),
-      createRoute.indexOf("await db.execute"),
-    );
+    const configBlock = createRoute.slice(createRoute.indexOf("const config"), createRoute.indexOf("await db.execute"));
     expect(configBlock).not.toMatch(/password/);
   });
 

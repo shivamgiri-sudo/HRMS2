@@ -11,24 +11,13 @@ import mysql from "mysql2/promise";
 import "dotenv/config";
 
 const conn = await mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT || 3306,
-  database: process.env.DB_NAME,
+  host: process.env.DB_HOST, user: process.env.DB_USER, password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT || 3306, database: process.env.DB_NAME,
 });
 
 const PROCESSES = [
-  {
-    name: "Bella-Vita Organic",
-    processId: "050b7ba8-67ba-11f1-adb1-00155d0ab410",
-    clientId: "375",
-  },
-  {
-    name: "Neemans Private Limited",
-    processId: "05150ba3-67ba-11f1-adb1-00155d0ab410",
-    clientId: "475",
-  },
+  { name: "Bella-Vita Organic", processId: "050b7ba8-67ba-11f1-adb1-00155d0ab410", clientId: "375" },
+  { name: "Neemans Private Limited", processId: "05150ba3-67ba-11f1-adb1-00155d0ab410", clientId: "475" },
 ];
 
 const results = [];
@@ -50,10 +39,7 @@ for (const p of PROCESSES) {
   const real = days.find((r) => Number(r.n) >= 20);
   const latest = real?.d ?? null;
   if (!latest) {
-    results.push({
-      ...p,
-      skipped: "no day with >=20 calls in the last 10 days of data",
-    });
+    results.push({ ...p, skipped: "no day with >=20 calls in the last 10 days of data" });
     continue;
   }
 

@@ -1,10 +1,10 @@
-import { describe, it, expect } from "vitest";
-import request from "supertest";
+import { describe, it, expect } from 'vitest';
+import request from 'supertest';
 
 // Static import — see operations-live.routes.test.ts for why (tests/setup.ts sets the
 // environment before any module loads, so a dynamic import inside beforeAll bought nothing
 // and risked exceeding the hook timeout).
-import { app } from "../src/app.js";
+import { app } from '../src/app.js';
 
 /**
  * Demo tokens (mock-token-*) satisfy requireRole's route gate directly from the token, but
@@ -26,104 +26,90 @@ import { app } from "../src/app.js";
  * resolution) were verified separately against the live database by hand — seed 2026-08-04
  * — rather than through this mocked harness; see the design spec for those figures.
  */
-const adminToken = "Bearer mock-token-admin";
-const scopedToken = "Bearer mock-token-team_leader";
+const adminToken = 'Bearer mock-token-admin';
+const scopedToken = 'Bearer mock-token-team_leader';
 
-describe("Quality Dashboard v2 Routes", () => {
-  describe("GET /api/quality-dashboard-v2/summary", () => {
-    it("returns 401 with no authorization header", async () => {
-      const res = await request(app).get(
-        "/api/quality-dashboard-v2/summary?level=branch",
-      );
+describe('Quality Dashboard v2 Routes', () => {
+  describe('GET /api/quality-dashboard-v2/summary', () => {
+    it('returns 401 with no authorization header', async () => {
+      const res = await request(app).get('/api/quality-dashboard-v2/summary?level=branch');
       expect(res.status).toBe(401);
-      expect(res.body).toHaveProperty("success", false);
+      expect(res.body).toHaveProperty('success', false);
     });
 
-    it("rejects an invalid level with 400", async () => {
+    it('rejects an invalid level with 400', async () => {
       const res = await request(app)
-        .get("/api/quality-dashboard-v2/summary?level=galaxy")
-        .set("Authorization", adminToken);
+        .get('/api/quality-dashboard-v2/summary?level=galaxy')
+        .set('Authorization', adminToken);
       expect(res.status).toBe(400);
     });
 
-    it("requires id for process/team/analyst levels", async () => {
-      for (const level of ["process", "team", "analyst"]) {
+    it('requires id for process/team/analyst levels', async () => {
+      for (const level of ['process', 'team', 'analyst']) {
         const res = await request(app)
           .get(`/api/quality-dashboard-v2/summary?level=${level}`)
-          .set("Authorization", adminToken);
+          .set('Authorization', adminToken);
         expect(res.status).toBe(400);
       }
     });
 
-    it("fails closed (409) for an unconfigured account rather than leaking org-wide data — even for an admin-claiming token", async () => {
+    it('fails closed (409) for an unconfigured account rather than leaking org-wide data — even for an admin-claiming token', async () => {
       for (const token of [adminToken, scopedToken]) {
         const res = await request(app)
-          .get("/api/quality-dashboard-v2/summary?level=branch")
-          .set("Authorization", token);
+          .get('/api/quality-dashboard-v2/summary?level=branch')
+          .set('Authorization', token);
         expect(res.status).toBe(409);
-        expect(res.body).toMatchObject({
-          success: false,
-          code: "DASHBOARD_SCOPE_NOT_CONFIGURED",
-        });
+        expect(res.body).toMatchObject({ success: false, code: 'DASHBOARD_SCOPE_NOT_CONFIGURED' });
       }
     });
   });
 
-  describe("GET /api/quality-dashboard-v2/analyst/:employeeId/calls", () => {
-    it("returns 401 with no authorization header", async () => {
-      const res = await request(app).get(
-        "/api/quality-dashboard-v2/analyst/some-id/calls",
-      );
+  describe('GET /api/quality-dashboard-v2/analyst/:employeeId/calls', () => {
+    it('returns 401 with no authorization header', async () => {
+      const res = await request(app).get('/api/quality-dashboard-v2/analyst/some-id/calls');
       expect(res.status).toBe(401);
     });
   });
 });
 
-describe("Operations Dashboard v2 Routes", () => {
-  describe("GET /api/operations-dashboard-v2/summary", () => {
-    it("returns 401 with no authorization header", async () => {
-      const res = await request(app).get(
-        "/api/operations-dashboard-v2/summary?level=branch",
-      );
+describe('Operations Dashboard v2 Routes', () => {
+  describe('GET /api/operations-dashboard-v2/summary', () => {
+    it('returns 401 with no authorization header', async () => {
+      const res = await request(app).get('/api/operations-dashboard-v2/summary?level=branch');
       expect(res.status).toBe(401);
-      expect(res.body).toHaveProperty("success", false);
+      expect(res.body).toHaveProperty('success', false);
     });
 
-    it("rejects an invalid level with 400", async () => {
+    it('rejects an invalid level with 400', async () => {
       const res = await request(app)
-        .get("/api/operations-dashboard-v2/summary?level=galaxy")
-        .set("Authorization", adminToken);
+        .get('/api/operations-dashboard-v2/summary?level=galaxy')
+        .set('Authorization', adminToken);
       expect(res.status).toBe(400);
     });
 
-    it("requires id for process/team/analyst levels", async () => {
-      for (const level of ["process", "team", "analyst"]) {
+    it('requires id for process/team/analyst levels', async () => {
+      for (const level of ['process', 'team', 'analyst']) {
         const res = await request(app)
           .get(`/api/operations-dashboard-v2/summary?level=${level}`)
-          .set("Authorization", adminToken);
+          .set('Authorization', adminToken);
         expect(res.status).toBe(400);
       }
     });
 
-    it("fails closed (409) for an unconfigured account rather than leaking org-wide data — even for an admin-claiming token", async () => {
+    it('fails closed (409) for an unconfigured account rather than leaking org-wide data — even for an admin-claiming token', async () => {
       for (const token of [adminToken, scopedToken]) {
         const res = await request(app)
-          .get("/api/operations-dashboard-v2/summary?level=branch")
-          .set("Authorization", token);
+          .get('/api/operations-dashboard-v2/summary?level=branch')
+          .set('Authorization', token);
         expect(res.status).toBe(409);
-        expect(res.body).toMatchObject({
-          success: false,
-          code: "DASHBOARD_SCOPE_NOT_CONFIGURED",
-        });
+        expect(res.body).toMatchObject({ success: false, code: 'DASHBOARD_SCOPE_NOT_CONFIGURED' });
       }
     });
   });
 
-  describe("GET /api/operations-dashboard-v2/analyst/:employeeId/detail", () => {
-    it("returns 401 with no authorization header", async () => {
-      const res = await request(app).get(
-        "/api/operations-dashboard-v2/analyst/some-id/detail",
-      );
+  describe('GET /api/operations-dashboard-v2/analyst/:employeeId/detail', () => {
+    it('returns 401 with no authorization header', async () => {
+      const res = await request(app).get('/api/operations-dashboard-v2/analyst/some-id/detail');
       expect(res.status).toBe(401);
     });
   });

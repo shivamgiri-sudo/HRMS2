@@ -27,49 +27,25 @@ export function normalizeKey(k: string): string {
  * punctuation-insensitively, so "Call ID", "call id" and "Call Id" all reach `data["Call Id"]`.
  * A canonical header with no match is left absent; extra columns are kept untouched.
  */
-export function canonicalizeRow(
-  row: Record<string, unknown>,
-  headers: readonly string[],
-): Record<string, unknown> {
+export function canonicalizeRow(row: Record<string, unknown>, headers: readonly string[]): Record<string, unknown> {
   const byNorm = new Map<string, string>();
   for (const h of headers) byNorm.set(normalizeKey(h), h);
   const out: Record<string, unknown> = { ...row };
   for (const [k, v] of Object.entries(row)) {
     const canonical = byNorm.get(normalizeKey(k));
-    if (
-      canonical &&
-      canonical !== k &&
-      (out[canonical] === undefined || out[canonical] === "")
-    )
-      out[canonical] = v;
+    if (canonical && canonical !== k && (out[canonical] === undefined || out[canonical] === "")) out[canonical] = v;
   }
   return out;
 }
 
 const MONTHS: Record<string, number> = {
-  jan: 1,
-  feb: 2,
-  mar: 3,
-  apr: 4,
-  may: 5,
-  jun: 6,
-  jul: 7,
-  aug: 8,
-  sep: 9,
-  sept: 9,
-  oct: 10,
-  nov: 11,
-  dec: 12,
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
 };
 
 function validYmd(y: number, m: number, d: number): boolean {
   if (y < 2000 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return false;
   const dt = new Date(Date.UTC(y, m - 1, d));
-  return (
-    dt.getUTCFullYear() === y &&
-    dt.getUTCMonth() === m - 1 &&
-    dt.getUTCDate() === d
-  );
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }
 
 /** "10:12", "21:27:02", "9:05 PM" -> seconds since midnight, or null. */
@@ -93,16 +69,12 @@ function fromSerial(raw: number): { ymd: string; secs: number } {
   return { ymd: d.toISOString().slice(0, 10), secs };
 }
 
-const hms = (secs: number): string =>
-  `${pad2(Math.floor(secs / 3600))}:${pad2(Math.floor((secs % 3600) / 60))}:${pad2(secs % 60)}`;
+const hms = (secs: number): string => `${pad2(Math.floor(secs / 3600))}:${pad2(Math.floor((secs % 3600) / 60))}:${pad2(secs % 60)}`;
 
 /** Any of the formats above -> { ymd: "YYYY-MM-DD", secs: seconds since midnight } or null. */
 function parseDateParts(raw: unknown): { ymd: string; secs: number } | null {
   if (raw === null || raw === undefined) return null;
-  if (typeof raw === "number")
-    return Number.isFinite(raw) && raw > 20000 && raw < 80000
-      ? fromSerial(raw)
-      : null;
+  if (typeof raw === "number") return Number.isFinite(raw) && raw > 20000 && raw < 80000 ? fromSerial(raw) : null;
   const v = String(raw).trim();
   if (!v) return null;
 
@@ -115,25 +87,17 @@ function parseDateParts(raw: unknown): { ymd: string; secs: number } | null {
   if (m) {
     const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
     if (!validYmd(y, mo, d)) return null;
-    return {
-      ymd: `${y}-${pad2(mo)}-${pad2(d)}`,
-      secs: m[4] ? (parseTimePart(m[4]) ?? 0) : 0,
-    };
+    return { ymd: `${y}-${pad2(mo)}-${pad2(d)}`, secs: m[4] ? (parseTimePart(m[4]) ?? 0) : 0 };
   }
 
-  m = /^(\d{1,2})[-\s]([A-Za-z]{3,4})[-\s,]*(\d{2}|\d{4})(?:[ T,]+(.+))?$/.exec(
-    v,
-  );
+  m = /^(\d{1,2})[-\s]([A-Za-z]{3,4})[-\s,]*(\d{2}|\d{4})(?:[ T,]+(.+))?$/.exec(v);
   if (m) {
     const mo = MONTHS[m[2].toLowerCase()];
     let y = Number(m[3]);
     if (m[3].length === 2) y += 2000;
     const d = Number(m[1]);
     if (!mo || !validYmd(y, mo, d)) return null;
-    return {
-      ymd: `${y}-${pad2(mo)}-${pad2(d)}`,
-      secs: m[4] ? (parseTimePart(m[4]) ?? 0) : 0,
-    };
+    return { ymd: `${y}-${pad2(mo)}-${pad2(d)}`, secs: m[4] ? (parseTimePart(m[4]) ?? 0) : 0 };
   }
 
   m = /^(\d{1,2})([/-])(\d{1,2})\2(\d{2}|\d{4})(?:[ T,]+(.+))?$/.exec(v);
@@ -146,10 +110,7 @@ function parseDateParts(raw: unknown): { ymd: string; secs: number } | null {
     const monthFirst = m[2] === "/" ? a <= 12 : !(b <= 12);
     const [mo, d] = monthFirst ? [a, b] : [b, a];
     if (!validYmd(y, mo, d)) return null;
-    return {
-      ymd: `${y}-${pad2(mo)}-${pad2(d)}`,
-      secs: m[5] ? (parseTimePart(m[5]) ?? 0) : 0,
-    };
+    return { ymd: `${y}-${pad2(mo)}-${pad2(d)}`, secs: m[5] ? (parseTimePart(m[5]) ?? 0) : 0 };
   }
   return null;
 }
@@ -168,8 +129,7 @@ export function parseFlexibleDate(raw: unknown): string | null {
 /** A clock time ("9:32:52", "19:01:07", Excel day-fraction 0.4) -> "HH:mm:ss" or null. */
 export function parseClockTime(raw: unknown): string | null {
   if (raw === null || raw === undefined) return null;
-  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0 && raw < 1)
-    return hms(Math.round(raw * 86400));
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0 && raw < 1) return hms(Math.round(raw * 86400));
   const v = String(raw).trim();
   if (!v) return null;
   if (/^0?\.\d+$/.test(v)) return hms(Math.round(Number(v) * 86400));
@@ -184,17 +144,11 @@ export function parseClockTime(raw: unknown): string | null {
  */
 export function parseDurationSeconds(raw: unknown): number | null {
   if (raw === null || raw === undefined || raw === "") return null;
-  if (typeof raw === "number")
-    return Number.isFinite(raw) && raw >= 0
-      ? raw < 1
-        ? Math.round(raw * 86400)
-        : Math.round(raw)
-      : null;
+  if (typeof raw === "number") return Number.isFinite(raw) && raw >= 0 ? (raw < 1 ? Math.round(raw * 86400) : Math.round(raw)) : null;
   const v = String(raw).trim();
   if (!v || v === "-") return null;
   const m = /^(\d+):(\d{1,2})(?::(\d{1,2}))?$/.exec(v);
-  if (m)
-    return Number(m[1]) * 3600 + Number(m[2]) * 60 + (m[3] ? Number(m[3]) : 0);
+  if (m) return Number(m[1]) * 3600 + Number(m[2]) * 60 + (m[3] ? Number(m[3]) : 0);
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) return null;
   return v.includes(".") && n < 1 ? Math.round(n * 86400) : Math.round(n);
@@ -213,9 +167,7 @@ export function parsePercent(raw: unknown): number | null {
   const n = Number(s.replace(/%/g, "").replace(/,/g, ""));
   if (!Number.isFinite(n)) return null;
   if (s.includes("%")) return Math.round(n * 100) / 100;
-  return n > 0 && n <= 1
-    ? Math.round(n * 10000) / 100
-    : Math.round(n * 100) / 100;
+  return n > 0 && n <= 1 ? Math.round(n * 10000) / 100 : Math.round(n * 100) / 100;
 }
 
 export function cleanText(raw: unknown): string | null {
@@ -233,10 +185,7 @@ export function isScientificNotation(raw: unknown): boolean {
  * notation, falls back to `fallback` (Dalmia's after-hour sheet carries the same number twice -- "Contact No"
  * is often shown as 9.18235E+11 while "Number" keeps the real digits). Returns null when neither is usable.
  */
-export function cleanPhone(
-  primary: unknown,
-  fallback?: unknown,
-): string | null {
+export function cleanPhone(primary: unknown, fallback?: unknown): string | null {
   const usable = (x: unknown): string | null => {
     const s = String(x ?? "").trim();
     if (!s || isScientificNotation(s)) return null;

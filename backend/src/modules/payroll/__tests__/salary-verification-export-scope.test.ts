@@ -29,28 +29,13 @@ const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../payroll-branch-scope.js", async () => (await import("./helpers/orgWideScopeMock.js")).orgWideScopeMock);
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole:
-    () =>
-    (
-      _req: express.Request,
-      _res: express.Response,
-      next: express.NextFunction,
-    ) =>
-      next(),
+  requireRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
-let authUser: { id: string; roleKeys: string[] } = {
-  id: AUTH_USER_ID,
-  roleKeys: [],
-};
+let authUser: { id: string; roleKeys: string[] } = { id: AUTH_USER_ID, roleKeys: [] };
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (req as express.Request & { authUser: typeof authUser }).authUser =
-      authUser;
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: typeof authUser }).authUser = authUser;
     next();
   },
 }));
@@ -74,16 +59,11 @@ describe("GET /salary-verification/export branch/process scope", () => {
   it("enforces the branch_head caller's own branch even when branchId/processId are omitted", async () => {
     authUser = { id: AUTH_USER_ID, roleKeys: ["branch_head"] };
     execute
-      .mockResolvedValueOnce([
-        [{ branch_id: "branch-A", process_id: "proc-A" }],
-        [],
-      ]) // resolveActorOwnScope
+      .mockResolvedValueOnce([[{ branch_id: "branch-A", process_id: "proc-A" }], []]) // resolveActorOwnScope
       .mockResolvedValueOnce(NO_RUN) // getRunForMonth
       .mockResolvedValueOnce([[], []]); // empRows
 
-    const res = await request(buildApp()).get(
-      "/api/payroll/salary-verification/export?format=csv",
-    );
+    const res = await request(buildApp()).get("/api/payroll/salary-verification/export?format=csv");
 
     expect(res.status).toBe(200);
     const [empSql, empParams] = execute.mock.calls[2];
@@ -95,16 +75,11 @@ describe("GET /salary-verification/export branch/process scope", () => {
   it("enforces the process_manager caller's own process even when branchId/processId are omitted", async () => {
     authUser = { id: AUTH_USER_ID, roleKeys: ["process_manager"] };
     execute
-      .mockResolvedValueOnce([
-        [{ branch_id: "branch-B", process_id: "proc-B" }],
-        [],
-      ]) // resolveActorOwnScope
+      .mockResolvedValueOnce([[{ branch_id: "branch-B", process_id: "proc-B" }], []]) // resolveActorOwnScope
       .mockResolvedValueOnce(NO_RUN)
       .mockResolvedValueOnce([[], []]);
 
-    const res = await request(buildApp()).get(
-      "/api/payroll/salary-verification/export?format=csv",
-    );
+    const res = await request(buildApp()).get("/api/payroll/salary-verification/export?format=csv");
 
     expect(res.status).toBe(200);
     const [empSql, empParams] = execute.mock.calls[2];
@@ -122,15 +97,12 @@ describe("GET /salary-verification/export branch/process scope", () => {
     // it is not itself a widening vector and this test asserts it stays that way.
     authUser = { id: AUTH_USER_ID, roleKeys: ["wfm"] };
     execute
-      .mockResolvedValueOnce([
-        [{ branch_id: "branch-C", process_id: "proc-C" }],
-        [],
-      ])
+      .mockResolvedValueOnce([[{ branch_id: "branch-C", process_id: "proc-C" }], []])
       .mockResolvedValueOnce(NO_RUN)
       .mockResolvedValueOnce([[], []]);
 
     const res = await request(buildApp()).get(
-      "/api/payroll/salary-verification/export?format=csv&branchId=someone-elses-branch&processId=someone-elses-process",
+      "/api/payroll/salary-verification/export?format=csv&branchId=someone-elses-branch&processId=someone-elses-process"
     );
 
     expect(res.status).toBe(200);
@@ -145,9 +117,7 @@ describe("GET /salary-verification/export branch/process scope", () => {
     authUser = { id: AUTH_USER_ID, roleKeys: ["branch_head"] };
     execute.mockResolvedValueOnce([[], []]); // resolveActorOwnScope finds nothing
 
-    const res = await request(buildApp()).get(
-      "/api/payroll/salary-verification/export?format=csv",
-    );
+    const res = await request(buildApp()).get("/api/payroll/salary-verification/export?format=csv");
 
     expect(res.status).toBe(403);
     // Only the scope-resolution query ran — the salary register was never queried.
@@ -160,9 +130,7 @@ describe("GET /salary-verification/export branch/process scope", () => {
       .mockResolvedValueOnce(NO_RUN) // getRunForMonth — no scope-resolution query for an org-wide caller
       .mockResolvedValueOnce([[], []]); // empRows
 
-    const res = await request(buildApp()).get(
-      "/api/payroll/salary-verification/export?format=csv",
-    );
+    const res = await request(buildApp()).get("/api/payroll/salary-verification/export?format=csv");
 
     expect(res.status).toBe(200);
     // Two queries total: no resolveActorOwnScope call was made for an org-wide caller.
@@ -175,10 +143,12 @@ describe("GET /salary-verification/export branch/process scope", () => {
 
   it("still honours an explicit branchId query param for an org-wide super_admin caller (unchanged behaviour)", async () => {
     authUser = { id: AUTH_USER_ID, roleKeys: ["super_admin"] };
-    execute.mockResolvedValueOnce(NO_RUN).mockResolvedValueOnce([[], []]);
+    execute
+      .mockResolvedValueOnce(NO_RUN)
+      .mockResolvedValueOnce([[], []]);
 
     const res = await request(buildApp()).get(
-      "/api/payroll/salary-verification/export?format=csv&branchId=chosen-branch",
+      "/api/payroll/salary-verification/export?format=csv&branchId=chosen-branch"
     );
 
     expect(res.status).toBe(200);

@@ -67,28 +67,17 @@
 //     apportioned to the calendar date by the aggregator; re-apportioning would double-count.
 //
 
-import {
-  deriveCanonical,
-  type Contribution,
-  type ProducingRule,
-} from "./canonical-productivity.js";
-import type {
-  DayClassification,
-  ResolvedAttendanceSource,
-} from "./attendance-variance.js";
-import type {
-  QueueState,
-  ReviewOutcome,
-  VarianceRecordStatus,
-} from "./variance-review.js";
-import type { FloorAbsenceReason } from "./floor-absence-pattern.js";
+import { deriveCanonical, type Contribution, type ProducingRule } from './canonical-productivity.js';
+import type { DayClassification, ResolvedAttendanceSource } from './attendance-variance.js';
+import type { QueueState, ReviewOutcome, VarianceRecordStatus } from './variance-review.js';
+import type { FloorAbsenceReason } from './floor-absence-pattern.js';
 
 // Type-only namespace import: fully erased by the compiler, so this module keeps NO runtime edge
 // to dialler-source-registry.service.ts, which imports `db`. It exists so the metric vocabulary
 // below is checked against Requirement 16's registry vocabulary by the compiler instead of by
 // hope — the same problem attendance-variance.ts and floor-absence-pattern.ts solve by
 // duplicating a constant with a comment, solved here without losing the coupling.
-import type * as diallerSourceRegistry from "./dialler-source-registry.service.js";
+import type * as diallerSourceRegistry from './dialler-source-registry.service.js';
 
 // ---------------------------------------------------------------------------------------------
 // Requirement 16's metric vocabulary, reused rather than reinvented
@@ -99,8 +88,7 @@ import type * as diallerSourceRegistry from "./dialler-source-registry.service.j
  * The single source of truth is `PRODUCTIVITY_METRICS` in dialler-source-registry.service.ts
  * (Requirement 16, already built); this is its element type, imported type-only.
  */
-export type ProductivityMetric =
-  (typeof diallerSourceRegistry.PRODUCTIVITY_METRICS)[number];
+export type ProductivityMetric = (typeof diallerSourceRegistry.PRODUCTIVITY_METRICS)[number];
 
 /**
  * The metrics criterion 19.2 requires the view to present, in display order: login time, logout
@@ -113,20 +101,20 @@ export type ProductivityMetric =
  * spellings criterion 19.2 states are carried on BREAK_CATEGORY_LABELS.
  */
 export const VIEW_METRICS: readonly ProductivityMetric[] = Object.freeze([
-  "login_time",
-  "logout_time",
-  "net_login",
-  "talk_time",
-  "wait_time",
-  "dispo_time",
-  "pause_time",
-  "aht",
-  "calls",
-  "bio",
-  "lunch",
-  "qa",
-  "training",
-  "dismx",
+  'login_time',
+  'logout_time',
+  'net_login',
+  'talk_time',
+  'wait_time',
+  'dispo_time',
+  'pause_time',
+  'aht',
+  'calls',
+  'bio',
+  'lunch',
+  'qa',
+  'training',
+  'dismx',
 ]);
 
 /**
@@ -134,25 +122,24 @@ export const VIEW_METRICS: readonly ProductivityMetric[] = Object.freeze([
  * to their registry metric keys. Exported so the export payload of criterion 19.9 and the screen
  * of a later phase label the same columns identically.
  */
-export const BREAK_CATEGORY_LABELS: Readonly<
-  Record<"bio" | "lunch" | "qa" | "training" | "dismx", string>
-> = Object.freeze({
-  bio: "BIO",
-  lunch: "LUNCH",
-  qa: "QA",
-  training: "TRAINING",
-  dismx: "DISMX",
-});
+export const BREAK_CATEGORY_LABELS: Readonly<Record<'bio' | 'lunch' | 'qa' | 'training' | 'dismx', string>> =
+  Object.freeze({
+    bio: 'BIO',
+    lunch: 'LUNCH',
+    qa: 'QA',
+    training: 'TRAINING',
+    dismx: 'DISMX',
+  });
 
 /** criterion 16.1's two ingestion modes. Same literals as the registry's `ingestion_mode`. */
-export type IngestionMode = "integrated_pull" | "manual_upload";
+export type IngestionMode = 'integrated_pull' | 'manual_upload';
 
 // ---------------------------------------------------------------------------------------------
 // criteria 19.6 and 19.7: the tri-state (guarantee 1)
 // ---------------------------------------------------------------------------------------------
 
 /** The three states of criteria 19.6 and 19.7. Never collapsed, never inferred from a number. */
-export type MetricAvailability = "unavailable" | "not_reported" | "reported";
+export type MetricAvailability = 'unavailable' | 'not_reported' | 'reported';
 
 /**
  * ONE metric of ONE Dialler_Source on ONE date, in exactly one of three states. Note that only
@@ -167,23 +154,19 @@ export type MetricAvailability = "unavailable" | "not_reported" | "reported";
  */
 export type MetricCell =
   // criterion 19.6: absent from the source's declared Metric_Availability.
-  | { readonly availability: "unavailable" }
+  | { readonly availability: 'unavailable' }
   // criterion 19.7: declared, but this source held no value for it on this date.
-  | { readonly availability: "not_reported" }
+  | { readonly availability: 'not_reported' }
   // A real reported figure — including a genuine 0, which is a measurement.
-  | { readonly availability: "reported"; readonly value: number };
+  | { readonly availability: 'reported'; readonly value: number };
 
-export const METRIC_UNAVAILABLE: MetricCell = Object.freeze({
-  availability: "unavailable",
-});
-export const METRIC_NOT_REPORTED: MetricCell = Object.freeze({
-  availability: "not_reported",
-});
+export const METRIC_UNAVAILABLE: MetricCell = Object.freeze({ availability: 'unavailable' });
+export const METRIC_NOT_REPORTED: MetricCell = Object.freeze({ availability: 'not_reported' });
 
 /** The only constructor of a `reported` cell, so an unusable number cannot become a value. */
 function reportedCell(value: number): MetricCell | null {
   if (!Number.isFinite(value)) return null;
-  return Object.freeze({ availability: "reported" as const, value });
+  return Object.freeze({ availability: 'reported' as const, value });
 }
 
 /**
@@ -192,15 +175,15 @@ function reportedCell(value: number): MetricCell | null {
  * to three different cell values. Stated as constants rather than inline literals so the screen
  * of a later phase and the export agree.
  */
-export const EXPORT_MARKER_UNAVAILABLE = "n/a";
-export const EXPORT_MARKER_NOT_REPORTED = "--";
+export const EXPORT_MARKER_UNAVAILABLE = 'n/a';
+export const EXPORT_MARKER_NOT_REPORTED = '--';
 
 /** Renders one cell for export. A reported 0 renders as the number 0, never as a marker. */
 export function renderMetricCellForExport(cell: MetricCell): string | number {
   switch (cell.availability) {
-    case "unavailable":
+    case 'unavailable':
       return EXPORT_MARKER_UNAVAILABLE;
-    case "not_reported":
+    case 'not_reported':
       return EXPORT_MARKER_NOT_REPORTED;
     default:
       return cell.value;
@@ -250,10 +233,7 @@ export interface ContributionEvidence {
    * which is every `apr_manual_upload` row, because that table carries no logout column
    * (criteria 17.4, 18.6).
    */
-  readonly interval: {
-    readonly startMinute: number;
-    readonly endMinute: number;
-  } | null;
+  readonly interval: { readonly startMinute: number; readonly endMinute: number } | null;
   /** Net_Login / login_minutes. The magnitude Requirement 18's secondary rule reads. */
   readonly magnitudeMinutes: number;
   readonly metrics?: MetricValueMap;
@@ -326,12 +306,12 @@ export interface DateEvidence {
  */
 export interface RequesterScope {
   readonly userId: string;
-  readonly branchIds: readonly string[] | "all";
+  readonly branchIds: readonly string[] | 'all';
   /**
    * An explicit employee allow-list, for a scope that is narrower than a branch — a Reporting
    * Manager's direct reports, for instance. 'all' means the branch test alone governs.
    */
-  readonly employeeIds?: readonly string[] | "all";
+  readonly employeeIds?: readonly string[] | 'all';
 }
 
 export interface ConsolidatedViewRequest {
@@ -356,12 +336,12 @@ export interface ConsolidatedViewRequest {
 // ---------------------------------------------------------------------------------------------
 
 /** criterion 19.8. The `manual_upload` arm cannot exist without its Upload_Batch identifier. */
-export type UploadAttributionField = "upload_batch_id" | "uploading_user";
+export type UploadAttributionField = 'upload_batch_id' | 'uploading_user';
 
 export type UploadProvenance =
-  | { readonly kind: "integrated_pull" }
+  | { readonly kind: 'integrated_pull' }
   | {
-      readonly kind: "manual_upload";
+      readonly kind: 'manual_upload';
       readonly uploadBatchId: string;
       readonly uploadedByUserId: string;
     }
@@ -372,7 +352,7 @@ export type UploadProvenance =
    * of rendering a blank cell that reads like an ordinary absence.
    */
   | {
-      readonly kind: "manual_upload_unattributed";
+      readonly kind: 'manual_upload_unattributed';
       readonly uploadBatchId: string | null;
       readonly uploadedByUserId: string | null;
       readonly missingFields: readonly UploadAttributionField[];
@@ -426,17 +406,17 @@ export interface BiometricPresentation {
 /** criterion 19.5, derived from the Variance_Record's queue state, status and recorded outcomes. */
 export type ReviewState =
   /** criteria 6.11, 7.1: raised and retained, never presented for Dual_Review. */
-  | "not_queued"
-  | "awaiting_both_reviewers"
-  | "awaiting_wfm_reviewer"
-  | "awaiting_reporting_manager"
-  | "reviewed"
+  | 'not_queued'
+  | 'awaiting_both_reviewers'
+  | 'awaiting_wfm_reviewer'
+  | 'awaiting_reporting_manager'
+  | 'reviewed'
   /** criterion 7.10: the two reviewers disagree; the Override_Approver holds it. */
-  | "contested"
+  | 'contested'
   /** The legacy `payroll_attendance_conflict_review` closures of criterion 7.11. */
-  | "closed_legacy"
+  | 'closed_legacy'
   /** No Variance_Record exists for the date, so there is no review state to show. */
-  | "not_recorded";
+  | 'not_recorded';
 
 export interface PresentedVariance {
   readonly varianceRecordId: string;
@@ -466,11 +446,11 @@ export interface AttendancePresentation {
 
 /** criterion 19.1: what made a date's row exist at all. Never empty on an emitted row. */
 export type EvidenceKind =
-  | "dialler_contribution"
-  | "biometric"
-  | "attendance_record"
-  | "variance_record"
-  | "floor_absence_pattern";
+  | 'dialler_contribution'
+  | 'biometric'
+  | 'attendance_record'
+  | 'variance_record'
+  | 'floor_absence_pattern';
 
 export interface ConsolidatedDateRow {
   readonly date: string;
@@ -491,10 +471,10 @@ export interface ConsolidatedDateRow {
 
 /** Why a supplied evidence entry produced no row. Reported, never silently dropped. */
 export type DroppedDateReason =
-  | "no_evidence"
-  | "outside_requested_range"
-  | "invalid_date"
-  | "duplicate_date_merged";
+  | 'no_evidence'
+  | 'outside_requested_range'
+  | 'invalid_date'
+  | 'duplicate_date_merged';
 
 export interface DroppedDate {
   readonly date: string;
@@ -515,14 +495,15 @@ export interface ConsolidatedProductivityView {
 
 export type ViewRefusalCode =
   /** criteria 14.4, 19.10. */
-  | "employee_outside_resolved_scope"
+  | 'employee_outside_resolved_scope'
   /** The employee's branch could not be resolved, so in-scope cannot be proven. */
-  | "employee_branch_unresolvable"
+  | 'employee_branch_unresolvable'
   /** criterion 19.11's branch/process mode, requested for a branch outside the caller's scope. */
-  | "branch_outside_resolved_scope";
+  | 'branch_outside_resolved_scope';
 
 export type RequestedViewAction =
-  "consolidated_productivity_view" | "consolidated_productivity_view_branch";
+  | 'consolidated_productivity_view'
+  | 'consolidated_productivity_view_branch';
 
 /**
  * criteria 19.10 and 14.6's refused attempt, RETURNED for the caller to record. Nothing here is
@@ -538,7 +519,7 @@ export interface RefusedAttemptAudit {
   readonly requestedFromDate: string | null;
   readonly requestedToDate: string | null;
   readonly refusalCode: ViewRefusalCode;
-  readonly resolvedScopeBranchIds: readonly string[] | "all";
+  readonly resolvedScopeBranchIds: readonly string[] | 'all';
 }
 
 /**
@@ -553,8 +534,7 @@ export interface ConsolidatedViewRefused {
   readonly audit: RefusedAttemptAudit;
 }
 
-export type ConsolidatedViewResult =
-  ConsolidatedProductivityView | ConsolidatedViewRefused;
+export type ConsolidatedViewResult = ConsolidatedProductivityView | ConsolidatedViewRefused;
 
 // ---------------------------------------------------------------------------------------------
 // Calendar and numeric helpers. No Date object anywhere: a 'YYYY-MM-DD' is validated by shape and
@@ -563,9 +543,7 @@ export type ConsolidatedViewResult =
 // ---------------------------------------------------------------------------------------------
 
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
-const DAYS_IN_MONTH: readonly number[] = Object.freeze([
-  31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
-]);
+const DAYS_IN_MONTH: readonly number[] = Object.freeze([31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]);
 
 function isLeapYear(year: number): boolean {
   return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
@@ -585,7 +563,7 @@ export function isCalendarDate(value: string): boolean {
 
 /** A metric value is usable only when it is a finite number. */
 function isUsableValue(value: number | null | undefined): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function sanitizedMagnitude(value: number): number {
@@ -598,22 +576,16 @@ function toContribution(evidence: ContributionEvidence): Contribution {
     interval:
       evidence.interval === null || evidence.interval === undefined
         ? null
-        : {
-            startMinute: evidence.interval.startMinute,
-            endMinute: evidence.interval.endMinute,
-          },
+        : { startMinute: evidence.interval.startMinute, endMinute: evidence.interval.endMinute },
     magnitudeMinutes: sanitizedMagnitude(evidence.magnitudeMinutes),
   };
 }
 
 /** criterion 19.3's human-readable rule name, alongside the machine name. */
-export const AGGREGATION_RULE_LABELS: Readonly<Record<ProducingRule, string>> =
-  Object.freeze({
-    interval_union:
-      "Union of session intervals (Requirement 18.4, primary rule)",
-    max_contribution:
-      "Maximum single contribution (Requirement 18.6, secondary rule)",
-  });
+export const AGGREGATION_RULE_LABELS: Readonly<Record<ProducingRule, string>> = Object.freeze({
+  interval_union: 'Union of session intervals (Requirement 18.4, primary rule)',
+  max_contribution: 'Maximum single contribution (Requirement 18.6, secondary rule)',
+});
 
 // ---------------------------------------------------------------------------------------------
 // criteria 19.6, 19.7, 19.13: building the tri-state cells
@@ -641,20 +613,14 @@ function readMetricValue(
   if (isUsableValue(explicit)) return explicit;
   if (explicit === null) return null;
 
-  if (metric === "net_login" && Number.isFinite(evidence.magnitudeMinutes)) {
+  if (metric === 'net_login' && Number.isFinite(evidence.magnitudeMinutes)) {
     return evidence.magnitudeMinutes;
   }
   if (evidence.interval !== null && evidence.interval !== undefined) {
-    if (
-      metric === "login_time" &&
-      Number.isFinite(evidence.interval.startMinute)
-    ) {
+    if (metric === 'login_time' && Number.isFinite(evidence.interval.startMinute)) {
       return evidence.interval.startMinute;
     }
-    if (
-      metric === "logout_time" &&
-      Number.isFinite(evidence.interval.endMinute)
-    ) {
+    if (metric === 'logout_time' && Number.isFinite(evidence.interval.endMinute)) {
       return evidence.interval.endMinute;
     }
   }
@@ -670,10 +636,7 @@ function readMetricValue(
 function buildMetricCells(
   declared: ReadonlySet<ProductivityMetric>,
   evidence: ContributionEvidence,
-): {
-  cells: Record<ProductivityMetric, MetricCell>;
-  presented: ProductivityMetric[];
-} {
+): { cells: Record<ProductivityMetric, MetricCell>; presented: ProductivityMetric[] } {
   const cells = {} as Record<ProductivityMetric, MetricCell>;
   const presented: ProductivityMetric[] = [];
 
@@ -706,34 +669,28 @@ function buildUploadProvenance(
   ingestionMode: IngestionMode,
   evidence: ContributionEvidence,
 ): UploadProvenance {
-  if (ingestionMode !== "manual_upload") {
-    return Object.freeze({ kind: "integrated_pull" as const });
+  if (ingestionMode !== 'manual_upload') {
+    return Object.freeze({ kind: 'integrated_pull' as const });
   }
 
   const uploadBatchId =
-    typeof evidence.uploadBatchId === "string" &&
-    evidence.uploadBatchId.length > 0
+    typeof evidence.uploadBatchId === 'string' && evidence.uploadBatchId.length > 0
       ? evidence.uploadBatchId
       : null;
   const uploadedByUserId =
-    typeof evidence.uploadedByUserId === "string" &&
-    evidence.uploadedByUserId.length > 0
+    typeof evidence.uploadedByUserId === 'string' && evidence.uploadedByUserId.length > 0
       ? evidence.uploadedByUserId
       : null;
 
   if (uploadBatchId !== null && uploadedByUserId !== null) {
-    return Object.freeze({
-      kind: "manual_upload" as const,
-      uploadBatchId,
-      uploadedByUserId,
-    });
+    return Object.freeze({ kind: 'manual_upload' as const, uploadBatchId, uploadedByUserId });
   }
 
   const missingFields: UploadAttributionField[] = [];
-  if (uploadBatchId === null) missingFields.push("upload_batch_id");
-  if (uploadedByUserId === null) missingFields.push("uploading_user");
+  if (uploadBatchId === null) missingFields.push('upload_batch_id');
+  if (uploadedByUserId === null) missingFields.push('uploading_user');
   return Object.freeze({
-    kind: "manual_upload_unattributed" as const,
+    kind: 'manual_upload_unattributed' as const,
     uploadBatchId,
     uploadedByUserId,
     missingFields: Object.freeze(missingFields),
@@ -747,8 +704,7 @@ function buildUploadProvenance(
  * alternative — assuming the full vocabulary — would invent an availability the registry never
  * declared and break criterion 19.13.
  */
-const UNREGISTERED_SOURCE_DECLARED_METRICS: ReadonlySet<ProductivityMetric> =
-  new Set();
+const UNREGISTERED_SOURCE_DECLARED_METRICS: ReadonlySet<ProductivityMetric> = new Set();
 
 function buildSourceRow(
   evidence: ContributionEvidence,
@@ -759,8 +715,7 @@ function buildSourceRow(
     descriptor === undefined
       ? UNREGISTERED_SOURCE_DECLARED_METRICS
       : new Set(descriptor.metricAvailability);
-  const ingestionMode: IngestionMode =
-    descriptor?.ingestionMode ?? "integrated_pull";
+  const ingestionMode: IngestionMode = descriptor?.ingestionMode ?? 'integrated_pull';
 
   const { cells, presented } = buildMetricCells(declared, evidence);
   const contribution = toContribution(evidence);
@@ -786,8 +741,8 @@ function buildSourceRow(
 // ---------------------------------------------------------------------------------------------
 
 const LEGACY_CLOSED_STATUSES: readonly VarianceRecordStatus[] = Object.freeze([
-  "no_issue",
-  "regularization_required",
+  'no_issue',
+  'regularization_required',
 ]);
 
 /**
@@ -801,20 +756,20 @@ const LEGACY_CLOSED_STATUSES: readonly VarianceRecordStatus[] = Object.freeze([
  * closure.
  */
 export function deriveReviewState(variance: VarianceEvidence): ReviewState {
-  if (variance.status === "contested") return "contested";
-  if (variance.status === "reviewed") return "reviewed";
-  if (LEGACY_CLOSED_STATUSES.includes(variance.status)) return "closed_legacy";
+  if (variance.status === 'contested') return 'contested';
+  if (variance.status === 'reviewed') return 'reviewed';
+  if (LEGACY_CLOSED_STATUSES.includes(variance.status)) return 'closed_legacy';
 
   const wfm = variance.wfmOutcome ?? null;
   const manager = variance.managerOutcome ?? null;
-  if (wfm !== null && manager !== null) return "reviewed";
+  if (wfm !== null && manager !== null) return 'reviewed';
 
   // criteria 6.11, 7.1: raised and retained, but never presented for Dual_Review, so it is not
   // "awaiting" anyone.
-  if (variance.queueState === "recorded_not_queued") return "not_queued";
+  if (variance.queueState === 'recorded_not_queued') return 'not_queued';
 
-  if (wfm === null && manager === null) return "awaiting_both_reviewers";
-  return wfm === null ? "awaiting_wfm_reviewer" : "awaiting_reporting_manager";
+  if (wfm === null && manager === null) return 'awaiting_both_reviewers';
+  return wfm === null ? 'awaiting_wfm_reviewer' : 'awaiting_reporting_manager';
 }
 
 function presentVariance(variance: VarianceEvidence): PresentedVariance {
@@ -822,9 +777,7 @@ function presentVariance(variance: VarianceEvidence): PresentedVariance {
     varianceRecordId: variance.varianceRecordId,
     queueState: variance.queueState,
     status: variance.status,
-    varianceRiskScore: isUsableValue(variance.varianceRiskScore)
-      ? variance.varianceRiskScore
-      : null,
+    varianceRiskScore: isUsableValue(variance.varianceRiskScore) ? variance.varianceRiskScore : null,
     wfmOutcome: variance.wfmOutcome ?? null,
     managerOutcome: variance.managerOutcome ?? null,
     reviewState: deriveReviewState(variance),
@@ -841,38 +794,27 @@ function presentFloorAbsence(
   // borrowing an unrelated record's state would misreport who has reviewed what.
   const reviewState: ReviewState =
     variance !== null &&
-    (varianceRecordId === null ||
-      varianceRecordId === variance.varianceRecordId)
+    (varianceRecordId === null || varianceRecordId === variance.varianceRecordId)
       ? variance.reviewState
-      : "not_recorded";
-  return Object.freeze({
-    reason: occurrence.reason,
-    varianceRecordId,
-    reviewState,
-  });
+      : 'not_recorded';
+  return Object.freeze({ reason: occurrence.reason, varianceRecordId, reviewState });
 }
 
 // ---------------------------------------------------------------------------------------------
 // criteria 19.1 through 19.5: one date's row
 // ---------------------------------------------------------------------------------------------
 
-function hasBiometricEvidence(
-  biometric: BiometricEvidence | null | undefined,
-): boolean {
+function hasBiometricEvidence(biometric: BiometricEvidence | null | undefined): boolean {
   if (biometric === null || biometric === undefined) return false;
   return (
     isUsableValue(biometric.biometricMinutes) ||
-    (typeof biometric.firstClockInTime === "string" &&
-      biometric.firstClockInTime.length > 0) ||
-    (typeof biometric.lastClockOutTime === "string" &&
-      biometric.lastClockOutTime.length > 0) ||
+    (typeof biometric.firstClockInTime === 'string' && biometric.firstClockInTime.length > 0) ||
+    (typeof biometric.lastClockOutTime === 'string' && biometric.lastClockOutTime.length > 0) ||
     (isUsableValue(biometric.punchCount) && biometric.punchCount > 0)
   );
 }
 
-function hasAttendanceEvidence(
-  attendance: AttendanceEvidence | null | undefined,
-): boolean {
+function hasAttendanceEvidence(attendance: AttendanceEvidence | null | undefined): boolean {
   if (attendance === null || attendance === undefined) return false;
   return (
     (attendance.resolvedAttendanceSource ?? null) !== null ||
@@ -881,13 +823,8 @@ function hasAttendanceEvidence(
   );
 }
 
-function buildBiometricPresentation(
-  biometric: BiometricEvidence | null | undefined,
-): BiometricPresentation {
-  const minutes =
-    biometric === null || biometric === undefined
-      ? null
-      : biometric.biometricMinutes;
+function buildBiometricPresentation(biometric: BiometricEvidence | null | undefined): BiometricPresentation {
+  const minutes = biometric === null || biometric === undefined ? null : biometric.biometricMinutes;
   const cell = isUsableValue(minutes) ? reportedCell(minutes) : null;
   return Object.freeze({
     // criteria 5.3 / 18.10's discipline applied to the biometric figure too: no record means
@@ -895,9 +832,7 @@ function buildBiometricPresentation(
     minutes: cell ?? METRIC_NOT_REPORTED,
     firstClockInTime: biometric?.firstClockInTime ?? null,
     lastClockOutTime: biometric?.lastClockOutTime ?? null,
-    punchCount: isUsableValue(biometric?.punchCount)
-      ? biometric.punchCount
-      : null,
+    punchCount: isUsableValue(biometric?.punchCount) ? biometric.punchCount : null,
   });
 }
 
@@ -936,22 +871,18 @@ export function assembleDateRow(
 ): ConsolidatedDateRow | null {
   const contributions = evidence.contributions ?? [];
   const kinds: EvidenceKind[] = [];
-  if (contributions.length > 0) kinds.push("dialler_contribution");
-  if (hasBiometricEvidence(evidence.biometric)) kinds.push("biometric");
-  if (hasAttendanceEvidence(evidence.attendance))
-    kinds.push("attendance_record");
-  if (evidence.variance !== null && evidence.variance !== undefined)
-    kinds.push("variance_record");
+  if (contributions.length > 0) kinds.push('dialler_contribution');
+  if (hasBiometricEvidence(evidence.biometric)) kinds.push('biometric');
+  if (hasAttendanceEvidence(evidence.attendance)) kinds.push('attendance_record');
+  if (evidence.variance !== null && evidence.variance !== undefined) kinds.push('variance_record');
   if (evidence.floorAbsence !== null && evidence.floorAbsence !== undefined) {
-    kinds.push("floor_absence_pattern");
+    kinds.push('floor_absence_pattern');
   }
 
   // criterion 19.1: no evidence, no row.
   if (kinds.length === 0) return null;
 
-  const sources = sortSourceRows(
-    contributions.map((c) => buildSourceRow(c, registry)),
-  );
+  const sources = sortSourceRows(contributions.map((c) => buildSourceRow(c, registry)));
 
   // criteria 19.3 and 19.12. Derived from exactly the contributions this row DISPLAYS, by
   // Requirement 18's own function, so the displayed figure and the reconciliation cannot diverge.
@@ -968,15 +899,12 @@ export function assembleDateRow(
     sources: Object.freeze(sources),
     canonicalProductiveMinutes: canonical.minutes,
     aggregationRule: canonical.rule,
-    aggregationRuleLabel:
-      canonical.rule === null ? null : AGGREGATION_RULE_LABELS[canonical.rule],
+    aggregationRuleLabel: canonical.rule === null ? null : AGGREGATION_RULE_LABELS[canonical.rule],
     excludedContributionCount: canonical.excludedCount,
     biometric: buildBiometricPresentation(evidence.biometric),
     attendance: Object.freeze({
-      resolvedAttendanceSource:
-        evidence.attendance?.resolvedAttendanceSource ?? null,
-      decidingAttendanceSourceRuleId:
-        evidence.attendance?.decidingAttendanceSourceRuleId ?? null,
+      resolvedAttendanceSource: evidence.attendance?.resolvedAttendanceSource ?? null,
+      decidingAttendanceSourceRuleId: evidence.attendance?.decidingAttendanceSourceRuleId ?? null,
       classification: evidence.attendance?.classification ?? null,
       variance,
       floorAbsence:
@@ -994,8 +922,7 @@ export function indexDiallerSources(
 ): ReadonlyMap<string, DiallerSourceDescriptor> {
   const index = new Map<string, DiallerSourceDescriptor>();
   for (const source of sources) {
-    if (!index.has(source.diallerSourceId))
-      index.set(source.diallerSourceId, source);
+    if (!index.has(source.diallerSourceId)) index.set(source.diallerSourceId, source);
   }
   return index;
 }
@@ -1004,23 +931,17 @@ export function indexDiallerSources(
 // criteria 14.4, 14.6, 19.10: scope, and the refusal that leaks nothing
 // ---------------------------------------------------------------------------------------------
 
-function branchInScope(
-  scope: RequesterScope,
-  branchId: string | null,
-): boolean {
-  if (scope.branchIds === "all") return true;
+function branchInScope(scope: RequesterScope, branchId: string | null): boolean {
+  if (scope.branchIds === 'all') return true;
   // An unresolvable branch is refused, not waved through: a request whose employee row carries no
   // branch cannot be PROVEN in scope, and criterion 19.10 refuses what cannot be proven.
   if (branchId === null) return false;
   return scope.branchIds.includes(branchId);
 }
 
-function employeeAllowListed(
-  scope: RequesterScope,
-  employeeId: string,
-): boolean {
-  const allowed = scope.employeeIds ?? "all";
-  if (allowed === "all") return true;
+function employeeAllowListed(scope: RequesterScope, employeeId: string): boolean {
+  const allowed = scope.employeeIds ?? 'all';
+  if (allowed === 'all') return true;
   return allowed.includes(employeeId);
 }
 
@@ -1034,10 +955,7 @@ export function isEmployeeInScope(
   employeeId: string,
   employeeBranchId: string | null,
 ): boolean {
-  return (
-    branchInScope(scope, employeeBranchId) &&
-    employeeAllowListed(scope, employeeId)
-  );
+  return branchInScope(scope, employeeBranchId) && employeeAllowListed(scope, employeeId);
 }
 
 function refuse(
@@ -1072,16 +990,10 @@ interface MergedEvidence {
  * Floor_Absence_Pattern occurrence) take the first non-null, and the merge is REPORTED on
  * `droppedDates` so a caller can see it happened rather than discover it in a total.
  */
-function mergeEvidence(
-  first: DateEvidence,
-  second: DateEvidence,
-): DateEvidence {
+function mergeEvidence(first: DateEvidence, second: DateEvidence): DateEvidence {
   return {
     date: first.date,
-    contributions: [
-      ...(first.contributions ?? []),
-      ...(second.contributions ?? []),
-    ],
+    contributions: [...(first.contributions ?? []), ...(second.contributions ?? [])],
     biometric: first.biometric ?? second.biometric ?? null,
     attendance: first.attendance ?? second.attendance ?? null,
     variance: first.variance ?? second.variance ?? null,
@@ -1106,49 +1018,37 @@ export function assembleConsolidatedProductivityView(
 ): ConsolidatedViewResult {
   const audit: RefusedAttemptAudit = {
     actingUserId: request.requester.userId,
-    requestedAction: "consolidated_productivity_view",
+    requestedAction: 'consolidated_productivity_view',
     requestedEmployeeId: request.employeeId,
     requestedBranchId: request.employeeBranchId,
     requestedProcessId: null,
     requestedFromDate: request.fromDate,
     requestedToDate: request.toDate,
-    refusalCode: "employee_outside_resolved_scope",
+    refusalCode: 'employee_outside_resolved_scope',
     resolvedScopeBranchIds:
-      request.requester.branchIds === "all"
-        ? "all"
-        : Object.freeze([...request.requester.branchIds]),
+      request.requester.branchIds === 'all' ? 'all' : Object.freeze([...request.requester.branchIds]),
   };
 
   // criterion 19.10, checked before ANY evidence is read, so there is no assembled row in scope
   // for a refusal to accidentally return.
-  if (
-    request.requester.branchIds !== "all" &&
-    request.employeeBranchId === null
-  ) {
+  if (request.requester.branchIds !== 'all' && request.employeeBranchId === null) {
     return refuse(
-      "employee_branch_unresolvable",
-      "Refused: the requested employee's branch could not be resolved, so the request cannot be proven to fall inside the resolved business scope.",
-      ["14.4", "19.10"],
-      { ...audit, refusalCode: "employee_branch_unresolvable" },
+      'employee_branch_unresolvable',
+      'Refused: the requested employee\'s branch could not be resolved, so the request cannot be proven to fall inside the resolved business scope.',
+      ['14.4', '19.10'],
+      { ...audit, refusalCode: 'employee_branch_unresolvable' },
     );
   }
-  if (
-    !isEmployeeInScope(
-      request.requester,
-      request.employeeId,
-      request.employeeBranchId,
-    )
-  ) {
+  if (!isEmployeeInScope(request.requester, request.employeeId, request.employeeBranchId)) {
     return refuse(
-      "employee_outside_resolved_scope",
-      "Refused: the requested employee is outside the acting user's resolved business scope. No employee data is returned and the attempt is recorded.",
-      ["14.4", "14.6", "19.10"],
+      'employee_outside_resolved_scope',
+      'Refused: the requested employee is outside the acting user\'s resolved business scope. No employee data is returned and the attempt is recorded.',
+      ['14.4', '14.6', '19.10'],
       audit,
     );
   }
 
-  const rangeValid =
-    isCalendarDate(request.fromDate) && isCalendarDate(request.toDate);
+  const rangeValid = isCalendarDate(request.fromDate) && isCalendarDate(request.toDate);
   const rangeInverted = rangeValid && request.toDate < request.fromDate;
 
   const droppedDates: DroppedDate[] = [];
@@ -1156,21 +1056,15 @@ export function assembleConsolidatedProductivityView(
 
   for (const entry of request.evidence) {
     if (!isCalendarDate(entry.date)) {
-      droppedDates.push({ date: entry.date, reason: "invalid_date" });
+      droppedDates.push({ date: entry.date, reason: 'invalid_date' });
       continue;
     }
     // criterion 19.1: the presented dates are the requested range's dates and no others. An
     // invalid or inverted requested range contains nothing, so nothing is presented.
     const inRange =
-      rangeValid &&
-      !rangeInverted &&
-      entry.date >= request.fromDate &&
-      entry.date <= request.toDate;
+      rangeValid && !rangeInverted && entry.date >= request.fromDate && entry.date <= request.toDate;
     if (!inRange) {
-      droppedDates.push({
-        date: entry.date,
-        reason: "outside_requested_range",
-      });
+      droppedDates.push({ date: entry.date, reason: 'outside_requested_range' });
       continue;
     }
     const existing = byDate.get(entry.date);
@@ -1191,11 +1085,11 @@ export function assembleConsolidatedProductivityView(
   for (const { date, entry, merged } of [...byDate.values()].sort((a, b) =>
     a.date < b.date ? -1 : a.date > b.date ? 1 : 0,
   )) {
-    if (merged) droppedDates.push({ date, reason: "duplicate_date_merged" });
+    if (merged) droppedDates.push({ date, reason: 'duplicate_date_merged' });
     const row = assembleDateRow(entry, registry);
     if (row === null) {
       // criterion 19.1: a date whose evidence entry carried nothing is omitted entirely.
-      droppedDates.push({ date, reason: "no_evidence" });
+      droppedDates.push({ date, reason: 'no_evidence' });
       continue;
     }
     rows.push(row);
@@ -1279,29 +1173,25 @@ export type BranchViewResult = BranchProductivityView | ConsolidatedViewRefused;
  * because criterion 14.4 requires the list to return only in-scope employees and refusing the
  * whole page would deny a legitimate branch request over one stray row.
  */
-export function assembleBranchProductivityView(
-  request: BranchViewRequest,
-): BranchViewResult {
+export function assembleBranchProductivityView(request: BranchViewRequest): BranchViewResult {
   const audit: RefusedAttemptAudit = {
     actingUserId: request.requester.userId,
-    requestedAction: "consolidated_productivity_view_branch",
+    requestedAction: 'consolidated_productivity_view_branch',
     requestedEmployeeId: null,
     requestedBranchId: request.branchId,
     requestedProcessId: request.processId,
     requestedFromDate: request.date,
     requestedToDate: request.date,
-    refusalCode: "branch_outside_resolved_scope",
+    refusalCode: 'branch_outside_resolved_scope',
     resolvedScopeBranchIds:
-      request.requester.branchIds === "all"
-        ? "all"
-        : Object.freeze([...request.requester.branchIds]),
+      request.requester.branchIds === 'all' ? 'all' : Object.freeze([...request.requester.branchIds]),
   };
 
   if (!branchInScope(request.requester, request.branchId)) {
     return refuse(
-      "branch_outside_resolved_scope",
-      "Refused: the requested branch is outside the acting user's resolved business scope. No employee data is returned and the attempt is recorded.",
-      ["14.4", "14.6", "19.10", "19.11"],
+      'branch_outside_resolved_scope',
+      'Refused: the requested branch is outside the acting user\'s resolved business scope. No employee data is returned and the attempt is recorded.',
+      ['14.4', '14.6', '19.10', '19.11'],
       audit,
     );
   }
@@ -1312,13 +1202,7 @@ export function assembleBranchProductivityView(
   const withoutEvidence: string[] = [];
 
   for (const employee of request.employees) {
-    if (
-      !isEmployeeInScope(
-        request.requester,
-        employee.employeeId,
-        employee.branchId,
-      )
-    ) {
+    if (!isEmployeeInScope(request.requester, employee.employeeId, employee.branchId)) {
       outOfScope.push(employee.employeeId);
       continue;
     }
@@ -1343,8 +1227,7 @@ export function assembleBranchProductivityView(
     );
   }
 
-  const byEmployeeId = (a: string, b: string): number =>
-    a < b ? -1 : a > b ? 1 : 0;
+  const byEmployeeId = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
   rows.sort((a, b) => byEmployeeId(a.employeeId, b.employeeId));
 
   return Object.freeze({
@@ -1354,9 +1237,7 @@ export function assembleBranchProductivityView(
     date: request.date,
     rows: Object.freeze(rows),
     omittedOutOfScopeEmployeeIds: Object.freeze(outOfScope.sort(byEmployeeId)),
-    omittedWithoutEvidenceEmployeeIds: Object.freeze(
-      withoutEvidence.sort(byEmployeeId),
-    ),
+    omittedWithoutEvidenceEmployeeIds: Object.freeze(withoutEvidence.sort(byEmployeeId)),
   });
 }
 
@@ -1396,15 +1277,11 @@ export interface DateReconciliation {
 export function reconcileDateRow(row: ConsolidatedDateRow): DateReconciliation {
   const contributions = row.sources.map((s) => s.contribution);
   const rederived = deriveCanonical(contributions);
-  const sum = contributions.reduce(
-    (total, c) => total + sanitizedMagnitude(c.magnitudeMinutes),
-    0,
-  );
+  const sum = contributions.reduce((total, c) => total + sanitizedMagnitude(c.magnitudeMinutes), 0);
   const displayed = row.canonicalProductiveMinutes;
   return Object.freeze({
     date: row.date,
-    reconciles:
-      displayed === rederived.minutes && row.aggregationRule === rederived.rule,
+    reconciles: displayed === rederived.minutes && row.aggregationRule === rederived.rule,
     displayedMinutes: displayed,
     rederivedMinutes: rederived.minutes,
     displayedRule: row.aggregationRule,
@@ -1413,8 +1290,7 @@ export function reconcileDateRow(row: ConsolidatedDateRow): DateReconciliation {
     // The canonical figure is capped at 1,440 (criterion 18.2), so a day whose contributions sum
     // beyond a day can legitimately exceed the sum only if the sum itself is below the cap; the
     // bound is therefore stated against the cap too.
-    withinNoInflationBound:
-      displayed === null || displayed <= Math.min(sum, 1440),
+    withinNoInflationBound: displayed === null || displayed <= Math.min(sum, 1440),
   });
 }
 
@@ -1439,18 +1315,16 @@ export function reconcileDisplayedView(
 // ---------------------------------------------------------------------------------------------
 
 /** Column labels for the metrics of criterion 19.2. The five break categories use its spellings. */
-export const METRIC_EXPORT_LABELS: Readonly<
-  Record<ProductivityMetric, string>
-> = Object.freeze({
-  login_time: "Login Time",
-  logout_time: "Logout Time",
-  net_login: "Net Login Minutes",
-  talk_time: "Talk Time",
-  wait_time: "Wait Time",
-  dispo_time: "Dispo Time",
-  pause_time: "Pause Time",
-  aht: "AHT",
-  calls: "Calls Handled",
+export const METRIC_EXPORT_LABELS: Readonly<Record<ProductivityMetric, string>> = Object.freeze({
+  login_time: 'Login Time',
+  logout_time: 'Logout Time',
+  net_login: 'Net Login Minutes',
+  talk_time: 'Talk Time',
+  wait_time: 'Wait Time',
+  dispo_time: 'Dispo Time',
+  pause_time: 'Pause Time',
+  aht: 'AHT',
+  calls: 'Calls Handled',
   bio: BREAK_CATEGORY_LABELS.bio,
   lunch: BREAK_CATEGORY_LABELS.lunch,
   qa: BREAK_CATEGORY_LABELS.qa,
@@ -1472,41 +1346,41 @@ export interface ExportPayload {
 }
 
 const DATE_HEADERS: readonly string[] = Object.freeze([
-  "Date",
-  "Dialler Source",
-  "Dialler Source Name",
-  "Ingestion Mode",
-  "Upload Batch",
-  "Uploaded By",
+  'Date',
+  'Dialler Source',
+  'Dialler Source Name',
+  'Ingestion Mode',
+  'Upload Batch',
+  'Uploaded By',
 ]);
 
 const TAIL_HEADERS: readonly string[] = Object.freeze([
-  "Canonical Productive Minutes",
-  "Aggregation Rule",
-  "Biometric Minutes",
-  "First Clock In",
-  "Last Clock Out",
-  "Resolved Attendance Source",
-  "Deciding Attendance Source Rule",
-  "Attendance Classification",
-  "Variance Record",
-  "Variance Review State",
-  "Floor Absence Pattern",
-  "Floor Absence Review State",
+  'Canonical Productive Minutes',
+  'Aggregation Rule',
+  'Biometric Minutes',
+  'First Clock In',
+  'Last Clock Out',
+  'Resolved Attendance Source',
+  'Deciding Attendance Source Rule',
+  'Attendance Classification',
+  'Variance Record',
+  'Variance Review State',
+  'Floor Absence Pattern',
+  'Floor Absence Review State',
 ]);
 
 function uploadCells(upload: UploadProvenance): readonly ExportCell[] {
   switch (upload.kind) {
-    case "integrated_pull":
+    case 'integrated_pull':
       // criterion 19.8 asks for the Upload_Batch only where the mode is manual_upload; an
       // integrated pull has none, and that is not an unavailable metric.
       return [null, null];
-    case "manual_upload":
+    case 'manual_upload':
       return [upload.uploadBatchId, upload.uploadedByUserId];
     default:
       return [
-        upload.uploadBatchId ?? "MISSING",
-        upload.uploadedByUserId ?? "MISSING",
+        upload.uploadBatchId ?? 'MISSING',
+        upload.uploadedByUserId ?? 'MISSING',
       ];
   }
 }
@@ -1526,9 +1400,9 @@ function tailCells(row: ConsolidatedDateRow): readonly ExportCell[] {
     row.attendance.decidingAttendanceSourceRuleId ?? EXPORT_MARKER_NOT_REPORTED,
     row.attendance.classification ?? EXPORT_MARKER_NOT_REPORTED,
     row.attendance.variance?.varianceRecordId ?? EXPORT_MARKER_NOT_REPORTED,
-    row.attendance.variance?.reviewState ?? "not_recorded",
+    row.attendance.variance?.reviewState ?? 'not_recorded',
     row.attendance.floorAbsence?.reason ?? EXPORT_MARKER_NOT_REPORTED,
-    row.attendance.floorAbsence?.reviewState ?? "not_recorded",
+    row.attendance.floorAbsence?.reviewState ?? 'not_recorded',
   ];
 }
 
@@ -1538,10 +1412,7 @@ function tailCells(row: ConsolidatedDateRow): readonly ExportCell[] {
  * common case — with the source columns carrying the not-reported marker, because with no
  * Dialler_Source there is no declared Metric_Availability to call anything unavailable against.
  */
-function sourceLines(
-  row: ConsolidatedDateRow,
-  leading: readonly ExportCell[],
-): ExportCell[][] {
+function sourceLines(row: ConsolidatedDateRow, leading: readonly ExportCell[]): ExportCell[][] {
   const tail = tailCells(row);
   if (row.sources.length === 0) {
     return [
@@ -1565,17 +1436,13 @@ function sourceLines(
     source.diallerSourceName ?? EXPORT_MARKER_NOT_REPORTED,
     source.ingestionMode,
     ...uploadCells(source.upload),
-    ...VIEW_METRICS.map((metric) =>
-      renderMetricCellForExport(source.metrics[metric]),
-    ),
+    ...VIEW_METRICS.map((metric) => renderMetricCellForExport(source.metrics[metric])),
     ...tail,
   ]);
 }
 
 /** criterion 19.9, per-employee mode. */
-export function buildExportPayload(
-  view: ConsolidatedProductivityView,
-): ExportPayload {
+export function buildExportPayload(view: ConsolidatedProductivityView): ExportPayload {
   const headers = [
     ...DATE_HEADERS,
     ...VIEW_METRICS.map((m) => METRIC_EXPORT_LABELS[m]),
@@ -1583,20 +1450,15 @@ export function buildExportPayload(
   ];
   const rows: ExportCell[][] = [];
   for (const row of view.rows) rows.push(...sourceLines(row, []));
-  return Object.freeze({
-    headers: Object.freeze(headers),
-    rows: Object.freeze(rows),
-  });
+  return Object.freeze({ headers: Object.freeze(headers), rows: Object.freeze(rows) });
 }
 
 /** criteria 19.9 with 19.11, branch-and-process mode: the same columns behind an employee column. */
-export function buildBranchExportPayload(
-  view: BranchProductivityView,
-): ExportPayload {
+export function buildBranchExportPayload(view: BranchProductivityView): ExportPayload {
   const headers = [
-    "Employee",
-    "Employee Code",
-    "Employee Name",
+    'Employee',
+    'Employee Code',
+    'Employee Name',
     ...DATE_HEADERS,
     ...VIEW_METRICS.map((m) => METRIC_EXPORT_LABELS[m]),
     ...TAIL_HEADERS,
@@ -1611,8 +1473,5 @@ export function buildBranchExportPayload(
       ]),
     );
   }
-  return Object.freeze({
-    headers: Object.freeze(headers),
-    rows: Object.freeze(rows),
-  });
+  return Object.freeze({ headers: Object.freeze(headers), rows: Object.freeze(rows) });
 }

@@ -25,23 +25,19 @@ const REAL_KEY = "a".repeat(64);
 const DEV_KEY = "0".repeat(64);
 
 describe("encryptPanForSync", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
+  beforeEach(() => { vi.restoreAllMocks(); });
 
   it("produces ciphertext that decrypts back to the original PAN", async () => {
     const { mod, fe } = await loadWith(REAL_KEY);
     const ct = mod.encryptPanForSync("ABCDE1234F");
     expect(ct).toBeTypeOf("string");
-    expect(ct).not.toContain("ABCDE1234F"); // never stored in the clear
+    expect(ct).not.toContain("ABCDE1234F");        // never stored in the clear
     expect(fe.decryptField(ct as string)).toBe("ABCDE1234F");
   });
 
   it("trims before encrypting, so padding does not change the stored value", async () => {
     const { mod, fe } = await loadWith(REAL_KEY);
-    expect(
-      fe.decryptField(mod.encryptPanForSync("  ABCDE1234F  ") as string),
-    ).toBe("ABCDE1234F");
+    expect(fe.decryptField(mod.encryptPanForSync("  ABCDE1234F  ") as string)).toBe("ABCDE1234F");
   });
 
   it("returns null when there is nothing to encrypt", async () => {
@@ -63,7 +59,7 @@ describe("encryptPanForSync", () => {
     expect(mod.encryptPanForSync("ABCDE1234F")).toBeNull();
     expect(mod.encryptPanForSync("ZZZZZ9999Z")).toBeNull();
 
-    expect(warn).toHaveBeenCalledTimes(1); // warn-once, not per row
+    expect(warn).toHaveBeenCalledTimes(1);                       // warn-once, not per row
     expect(warn.mock.calls[0][0]).toContain("dev key");
   });
 
@@ -71,16 +67,12 @@ describe("encryptPanForSync", () => {
     // A deterministic ciphertext would leak equality: anyone reading the column could tell
     // which employees share a PAN without decrypting anything.
     const { mod } = await loadWith(REAL_KEY);
-    expect(mod.encryptPanForSync("ABCDE1234F")).not.toBe(
-      mod.encryptPanForSync("ABCDE1234F"),
-    );
+    expect(mod.encryptPanForSync("ABCDE1234F")).not.toBe(mod.encryptPanForSync("ABCDE1234F"));
   });
 });
 
 describe("encryptAadhaarForSync", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
+  beforeEach(() => { vi.restoreAllMocks(); });
 
   it("produces ciphertext that decrypts back to the original Aadhaar", async () => {
     const { mod, fe } = await loadWith(REAL_KEY);
@@ -92,9 +84,7 @@ describe("encryptAadhaarForSync", () => {
 
   it("trims before encrypting", async () => {
     const { mod, fe } = await loadWith(REAL_KEY);
-    expect(
-      fe.decryptField(mod.encryptAadhaarForSync("  999988887777  ") as string),
-    ).toBe("999988887777");
+    expect(fe.decryptField(mod.encryptAadhaarForSync("  999988887777  ") as string)).toBe("999988887777");
   });
 
   it("returns null when there is nothing to encrypt", async () => {
@@ -118,16 +108,12 @@ describe("encryptAadhaarForSync", () => {
 
   it("randomises the IV, so the same Aadhaar does not produce a repeatable ciphertext", async () => {
     const { mod } = await loadWith(REAL_KEY);
-    expect(mod.encryptAadhaarForSync("999988887777")).not.toBe(
-      mod.encryptAadhaarForSync("999988887777"),
-    );
+    expect(mod.encryptAadhaarForSync("999988887777")).not.toBe(mod.encryptAadhaarForSync("999988887777"));
   });
 });
 
 describe("encryptAccountForSync", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
+  beforeEach(() => { vi.restoreAllMocks(); });
 
   it("produces ciphertext that decrypts back to the original account number", async () => {
     const { mod, fe } = await loadWith(REAL_KEY);
@@ -138,9 +124,7 @@ describe("encryptAccountForSync", () => {
 
   it("trims, so padding does not change the stored value", async () => {
     const { mod, fe } = await loadWith(REAL_KEY);
-    expect(
-      fe.decryptField(mod.encryptAccountForSync("  123456789012  ") as string),
-    ).toBe("123456789012");
+    expect(fe.decryptField(mod.encryptAccountForSync("  123456789012  ") as string)).toBe("123456789012");
   });
 
   it("returns null when there is nothing to encrypt", async () => {
@@ -161,9 +145,7 @@ describe("encryptAccountForSync", () => {
 
   it("randomises the IV, so a shared account number is not detectable from the ciphertext", async () => {
     const { mod } = await loadWith(REAL_KEY);
-    expect(mod.encryptAccountForSync("123456789012")).not.toBe(
-      mod.encryptAccountForSync("123456789012"),
-    );
+    expect(mod.encryptAccountForSync("123456789012")).not.toBe(mod.encryptAccountForSync("123456789012"));
   });
 });
 
@@ -186,10 +168,7 @@ describe("bank detail sync writer", () => {
     // detail entirely. account_number is written regardless and resolveAccountNumber falls
     // back to it, so writing plaintext-only degrades safely; losing the account does not.
     const src = fs.readFileSync(path.join(WORKERS, file), "utf8");
-    const insert = src.slice(
-      src.indexOf("INSERT INTO employee_bank_detail"),
-      src.indexOf("ON DUPLICATE"),
-    );
+    const insert = src.slice(src.indexOf("INSERT INTO employee_bank_detail"), src.indexOf("ON DUPLICATE"));
     expect(insert).toContain("account_number");
     expect(insert).toContain("account_number_enc");
   });
@@ -200,9 +179,7 @@ describe("bank detail sync writer", () => {
     // production ciphertext on every re-sync.
     const src = fs.readFileSync(path.join(WORKERS, file), "utf8");
     const dup = src.slice(src.indexOf("ON DUPLICATE"));
-    expect(dup).toMatch(
-      /account_number_enc\s*=\s*IF\(\s*VALUES\(account_number_enc\)\s+IS NOT NULL/i,
-    );
+    expect(dup).toMatch(/account_number_enc\s*=\s*IF\(\s*VALUES\(account_number_enc\)\s+IS NOT NULL/i);
   });
 });
 
@@ -220,9 +197,7 @@ async function loadWithBlindKey(blindKey: string | undefined) {
 const REAL_BLIND_KEY = "b".repeat(64);
 
 describe("blindIndexPan", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
+  beforeEach(() => { vi.restoreAllMocks(); });
 
   it("matches fieldEncryption.blindIndex for the same value", async () => {
     // The whole point of the index is that a row written by a route and a row written by
@@ -236,20 +211,14 @@ describe("blindIndexPan", () => {
     // else. Upper-casing here would put every route-written row in a different index space
     // from every backfilled row.
     const { mod, fe } = await loadWithBlindKey(REAL_BLIND_KEY);
-    expect(mod.blindIndexPan("  ABCDE1234F  ")).toBe(
-      fe.blindIndex("ABCDE1234F"),
-    );
+    expect(mod.blindIndexPan("  ABCDE1234F  ")).toBe(fe.blindIndex("ABCDE1234F"));
     expect(mod.blindIndexPan("abcde1234f")).toBe(fe.blindIndex("abcde1234f"));
-    expect(mod.blindIndexPan("abcde1234f")).not.toBe(
-      fe.blindIndex("ABCDE1234F"),
-    );
+    expect(mod.blindIndexPan("abcde1234f")).not.toBe(fe.blindIndex("ABCDE1234F"));
   });
 
   it("is deterministic, unlike the ciphertext", async () => {
     const { mod } = await loadWithBlindKey(REAL_BLIND_KEY);
-    expect(mod.blindIndexPan("ABCDE1234F")).toBe(
-      mod.blindIndexPan("ABCDE1234F"),
-    );
+    expect(mod.blindIndexPan("ABCDE1234F")).toBe(mod.blindIndexPan("ABCDE1234F"));
   });
 
   it("returns null when there is nothing to index", async () => {
@@ -275,29 +244,21 @@ describe("blindIndexPan", () => {
 });
 
 describe("blindIndexAadhaar", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
+  beforeEach(() => { vi.restoreAllMocks(); });
 
   it("matches fieldEncryption.blindIndex for the same value", async () => {
     const { mod, fe } = await loadWithBlindKey(REAL_BLIND_KEY);
-    expect(mod.blindIndexAadhaar("999988887777")).toBe(
-      fe.blindIndex("999988887777"),
-    );
+    expect(mod.blindIndexAadhaar("999988887777")).toBe(fe.blindIndex("999988887777"));
   });
 
   it("normalises with trim only", async () => {
     const { mod, fe } = await loadWithBlindKey(REAL_BLIND_KEY);
-    expect(mod.blindIndexAadhaar("  999988887777  ")).toBe(
-      fe.blindIndex("999988887777"),
-    );
+    expect(mod.blindIndexAadhaar("  999988887777  ")).toBe(fe.blindIndex("999988887777"));
   });
 
   it("is deterministic, unlike the ciphertext", async () => {
     const { mod } = await loadWithBlindKey(REAL_BLIND_KEY);
-    expect(mod.blindIndexAadhaar("999988887777")).toBe(
-      mod.blindIndexAadhaar("999988887777"),
-    );
+    expect(mod.blindIndexAadhaar("999988887777")).toBe(mod.blindIndexAadhaar("999988887777"));
   });
 
   it("returns null when there is nothing to index", async () => {
@@ -344,10 +305,7 @@ describe("employee_statutory_info writers keep the PAN dual-write", () => {
     // flag without this would pour every one of them into employee_statutory_info as
     // plaintext with no ciphertext — re-creating the exact gap the other two writers just
     // closed. Re-enabling the flag is gated on this staying true.
-    const src = fs.readFileSync(
-      path.join(WORKERS, "statutory-sync-handler.ts"),
-      "utf8",
-    );
+    const src = fs.readFileSync(path.join(WORKERS, "statutory-sync-handler.ts"), "utf8");
     const start = src.indexOf("INSERT INTO employee_statutory_info");
     expect(start, "statutory INSERT missing").toBeGreaterThan(-1);
     const insert = src.slice(start, src.indexOf("ON DUPLICATE", start));
@@ -367,22 +325,14 @@ describe("employee_statutory_info writers keep the PAN dual-write", () => {
     // on VALUES(pan_number) — the plaintext's condition — and never on their own. Keying
     // them on VALUES(pan_number_encrypted) would leave the plaintext updated and the
     // ciphertext stale the first time the helper returns null.
-    const src = fs.readFileSync(
-      path.join(WORKERS, "statutory-sync-handler.ts"),
-      "utf8",
-    );
+    const src = fs.readFileSync(path.join(WORKERS, "statutory-sync-handler.ts"), "utf8");
     const dup = src.slice(src.indexOf("ON DUPLICATE"));
-    expect(dup).toMatch(
-      /pan_number_encrypted\s*=\s*IF\(\s*VALUES\(pan_number\)/,
-    );
+    expect(dup).toMatch(/pan_number_encrypted\s*=\s*IF\(\s*VALUES\(pan_number\)/);
     expect(dup).toMatch(/pan_blind_index\s*=\s*IF\(\s*VALUES\(pan_number\)/);
   });
 
   it("the employee-creation orchestrator writes ciphertext and blind index for new employees", () => {
-    const src = fs.readFileSync(
-      path.join(EMPLOYEES, "employee-creation-orchestrator.service.ts"),
-      "utf8",
-    );
+    const src = fs.readFileSync(path.join(EMPLOYEES, "employee-creation-orchestrator.service.ts"), "utf8");
     const start = src.indexOf("INSERT INTO employee_statutory_info");
     expect(start).toBeGreaterThan(-1);
     const insert = src.slice(start, start + 600);
@@ -416,25 +366,15 @@ describe("statutory-approval route syncs approved PAN/Aadhaar to employees, not 
   const EMPLOYEES = path.join(here, "..", "..", "modules", "employees");
 
   it("writes employees.pan_number with ciphertext and blind index", () => {
-    const src = fs.readFileSync(
-      path.join(EMPLOYEES, "statutory-approval.routes.ts"),
-      "utf8",
-    );
-    expect(src).toContain(
-      "UPDATE employees SET pan_number = ?, pan_number_encrypted = ?, pan_blind_index = ?",
-    );
+    const src = fs.readFileSync(path.join(EMPLOYEES, "statutory-approval.routes.ts"), "utf8");
+    expect(src).toContain("UPDATE employees SET pan_number = ?, pan_number_encrypted = ?, pan_blind_index = ?");
     expect(src).toContain("encryptPanForSync(pan_number");
     expect(src).toContain("blindIndexPan(pan_number");
   });
 
   it("writes employees.aadhaar_number with ciphertext and blind index", () => {
-    const src = fs.readFileSync(
-      path.join(EMPLOYEES, "statutory-approval.routes.ts"),
-      "utf8",
-    );
-    expect(src).toContain(
-      "UPDATE employees SET aadhaar_number = ?, aadhaar_number_encrypted = ?, aadhaar_blind_index = ?",
-    );
+    const src = fs.readFileSync(path.join(EMPLOYEES, "statutory-approval.routes.ts"), "utf8");
+    expect(src).toContain("UPDATE employees SET aadhaar_number = ?, aadhaar_number_encrypted = ?, aadhaar_blind_index = ?");
     expect(src).toContain("encryptAadhaarForSync(aadhaar_id");
     expect(src).toContain("blindIndexAadhaar(aadhaar_id");
   });
@@ -449,61 +389,39 @@ describe("statutory-approval route syncs approved PAN/Aadhaar to employees, not 
 describe("legacy sync writers keep the PAN dual-write", () => {
   const FILES = ["employee-sync-handler.ts", "employee-master-sync-handler.ts"];
 
-  it.each(FILES)(
-    "%s inserts pan_number_encrypted alongside pan_number",
-    (file) => {
-      const sql = fs.readFileSync(path.join(WORKERS, file), "utf8");
-      const insert = sql.slice(
-        sql.indexOf("INSERT INTO employees"),
-        sql.indexOf("ON DUPLICATE"),
-      );
-      expect(insert).toContain("pan_number");
-      expect(insert).toContain("pan_number_encrypted");
-      expect(insert).toContain("pan_enc_key_version");
-    },
-  );
+  it.each(FILES)("%s inserts pan_number_encrypted alongside pan_number", (file) => {
+    const sql = fs.readFileSync(path.join(WORKERS, file), "utf8");
+    const insert = sql.slice(sql.indexOf("INSERT INTO employees"), sql.indexOf("ON DUPLICATE"));
+    expect(insert).toContain("pan_number");
+    expect(insert).toContain("pan_number_encrypted");
+    expect(insert).toContain("pan_enc_key_version");
+  });
 
-  it.each(FILES)(
-    "%s maintains the ciphertext on duplicate-key update",
-    (file) => {
-      const sql = fs.readFileSync(path.join(WORKERS, file), "utf8");
-      const dup = sql.slice(sql.indexOf("ON DUPLICATE"));
-      expect(dup).toContain("pan_number_encrypted");
-    },
-  );
+  it.each(FILES)("%s maintains the ciphertext on duplicate-key update", (file) => {
+    const sql = fs.readFileSync(path.join(WORKERS, file), "utf8");
+    const dup = sql.slice(sql.indexOf("ON DUPLICATE"));
+    expect(dup).toContain("pan_number_encrypted");
+  });
 
-  it.each(FILES)(
-    "%s routes the value through encryptPanForSync, never encryptField directly",
-    (file) => {
-      const src = fs.readFileSync(path.join(WORKERS, file), "utf8");
-      expect(src).toContain("encryptPanForSync");
-      // Calling encryptField directly would bypass the dev-key refusal.
-      expect(src).not.toMatch(/\bencryptField\s*\(/);
-    },
-  );
+  it.each(FILES)("%s routes the value through encryptPanForSync, never encryptField directly", (file) => {
+    const src = fs.readFileSync(path.join(WORKERS, file), "utf8");
+    expect(src).toContain("encryptPanForSync");
+    // Calling encryptField directly would bypass the dev-key refusal.
+    expect(src).not.toMatch(/\bencryptField\s*\(/);
+  });
 
   it("keeps the two writers' ciphertext rule matched to their own plaintext rule", () => {
     // The two handlers deliberately differ: one fills only when empty, the other overwrites.
     // The ciphertext must follow whichever rule its own file uses for the plaintext, or the
     // two columns drift apart.
-    const fill = fs.readFileSync(
-      path.join(WORKERS, "employee-sync-handler.ts"),
-      "utf8",
-    );
+    const fill = fs.readFileSync(path.join(WORKERS, "employee-sync-handler.ts"), "utf8");
     const fillDup = fill.slice(fill.indexOf("ON DUPLICATE"));
     expect(fillDup).toContain("pan_number = IF(pan_number IS NULL");
-    expect(fillDup).toContain(
-      "pan_number_encrypted = IF(pan_number_encrypted IS NULL",
-    );
+    expect(fillDup).toContain("pan_number_encrypted = IF(pan_number_encrypted IS NULL");
 
-    const over = fs.readFileSync(
-      path.join(WORKERS, "employee-master-sync-handler.ts"),
-      "utf8",
-    );
+    const over = fs.readFileSync(path.join(WORKERS, "employee-master-sync-handler.ts"), "utf8");
     const overDup = over.slice(over.indexOf("ON DUPLICATE"));
     expect(overDup).toMatch(/pan_number\s*=\s*VALUES\(pan_number\)/);
-    expect(overDup).toMatch(
-      /pan_number_encrypted\s*=\s*VALUES\(pan_number_encrypted\)/,
-    );
+    expect(overDup).toMatch(/pan_number_encrypted\s*=\s*VALUES\(pan_number_encrypted\)/);
   });
 });

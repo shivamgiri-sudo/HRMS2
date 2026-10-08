@@ -70,10 +70,7 @@ const COLS = [
   "personal_email",
 ];
 
-const strip = (v) =>
-  String(v ?? "")
-    .trim()
-    .replace(/^["']|["']$/g, "");
+const strip = (v) => String(v ?? "").trim().replace(/^["']|["']$/g, "");
 const conn = await mysql.createConnection({
   host: process.env.DB_HOST_OVERRIDE || strip(process.env.DB_HOST),
   port: Number(strip(process.env.DB_PORT) || 3306),
@@ -83,15 +80,11 @@ const conn = await mysql.createConnection({
   connectTimeout: 20000,
 });
 
-console.log(
-  `mode=${APPLY ? "APPLY (writes)" : "DRY-RUN (no writes)"}  table=${TABLE}`,
-);
+console.log(`mode=${APPLY ? "APPLY (writes)" : "DRY-RUN (no writes)"}  table=${TABLE}`);
 
 const [tbl] = await conn.query(
   `SELECT TABLE_NAME FROM information_schema.TABLES
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
-  [TABLE],
-);
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`, [TABLE]);
 if (tbl.length === 0) {
   console.log(`${TABLE} does not exist — nothing to do.`);
   await conn.end();
@@ -104,21 +97,14 @@ const [[live]] = await conn.query(`
          SUM(pan_number IS NOT NULL AND TRIM(pan_number) <> '')         AS p
     FROM employees`);
 if (Number(live.a) === 0 || Number(live.p) === 0) {
-  console.error(
-    "REFUSING: employees no longer holds the plaintext this backup mirrors.",
-  );
-  console.error(
-    "Clearing the backup would then destroy the only remaining copy.",
-  );
+  console.error("REFUSING: employees no longer holds the plaintext this backup mirrors.");
+  console.error("Clearing the backup would then destroy the only remaining copy.");
   await conn.end();
   process.exit(1);
 }
-console.log(
-  `live employees still holds aadhaar=${live.a} pan=${live.p} — clearing the mirror is lossless\n`,
-);
+console.log(`live employees still holds aadhaar=${live.a} pan=${live.p} — clearing the mirror is lossless\n`);
 
-let cleared = 0,
-  skipped = 0;
+let cleared = 0, skipped = 0;
 
 for (const col of COLS) {
   const [[d]] = await conn.query(`
@@ -132,15 +118,10 @@ for (const col of COLS) {
     SELECT SUM(b.${col} IS NOT NULL AND TRIM(b.${col}) <> '') AS n
       FROM ${TABLE} b LEFT JOIN employees e ON e.id = b.id WHERE e.id IS NULL`);
 
-  console.log(
-    `${col}: safe_to_clear=${d.safe_to_clear || 0}  not_redundant=${d.not_redundant || 0}  on_orphan_rows=${orph.n || 0}`,
-  );
+  console.log(`${col}: safe_to_clear=${d.safe_to_clear || 0}  not_redundant=${d.not_redundant || 0}  on_orphan_rows=${orph.n || 0}`);
   skipped += Number(d.not_redundant || 0) + Number(orph.n || 0);
 
-  if (!APPLY) {
-    cleared += Number(d.safe_to_clear || 0);
-    continue;
-  }
+  if (!APPLY) { cleared += Number(d.safe_to_clear || 0); continue; }
 
   // Clear ONLY where the live row still holds an identical value.
   const [res] = await conn.execute(`
@@ -152,25 +133,20 @@ for (const col of COLS) {
   cleared += res.affectedRows;
 }
 
-console.log(
-  `\n${APPLY ? "CLEARED" : "WOULD CLEAR"} total=${cleared}   left_in_place(not provably redundant)=${skipped}`,
-);
+console.log(`\n${APPLY ? "CLEARED" : "WOULD CLEAR"} total=${cleared}   left_in_place(not provably redundant)=${skipped}`);
 
 if (APPLY) {
   console.log("\n=== verification ===");
   for (const col of COLS) {
     const [[r]] = await conn.query(
-      `SELECT SUM(${col} IS NOT NULL AND TRIM(${col}) <> '') AS remaining FROM ${TABLE}`,
-    );
+      `SELECT SUM(${col} IS NOT NULL AND TRIM(${col}) <> '') AS remaining FROM ${TABLE}`);
     console.log(`${col}: remaining_plaintext=${r.remaining || 0}`);
   }
   const [[chk]] = await conn.query(`
     SELECT SUM(aadhaar_number IS NOT NULL AND TRIM(aadhaar_number) <> '') AS a,
            SUM(pan_number IS NOT NULL AND TRIM(pan_number) <> '')         AS p
       FROM employees`);
-  console.log(
-    `live employees UNCHANGED: aadhaar=${chk.a} pan=${chk.p} (expect 30108 / 23341)`,
-  );
+  console.log(`live employees UNCHANGED: aadhaar=${chk.a} pan=${chk.p} (expect 30108 / 23341)`);
 }
 
 await conn.end();

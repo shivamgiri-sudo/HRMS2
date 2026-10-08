@@ -157,7 +157,7 @@ export async function insertAuditLog(
   withdrawalId: string,
   action: string,
   performedBy: string,
-  opts?: { fromStatus?: string; toStatus?: string; remarks?: string },
+  opts?: { fromStatus?: string; toStatus?: string; remarks?: string }
 ): Promise<void> {
   await db.execute(
     `INSERT INTO dpdp_withdrawal_audit_log
@@ -170,7 +170,7 @@ export async function insertAuditLog(
       opts?.toStatus ?? null,
       performedBy,
       opts?.remarks ?? null,
-    ],
+    ]
   );
 }
 
@@ -255,9 +255,7 @@ export async function submitRequest(
 /**
  * Employee views their own requests.
  */
-export async function getMyRequests(
-  requesterId: string,
-): Promise<RowDataPacket[]> {
+export async function getMyRequests(requesterId: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, reference_number, reference_number AS request_ref, requester_id, requester_type,
             withdrawal_scope_json, withdrawal_reason,
@@ -268,7 +266,7 @@ export async function getMyRequests(
      FROM dpdp_consent_withdrawal
      WHERE requester_id = ?
      ORDER BY created_at DESC`,
-    [requesterId],
+    [requesterId]
   );
   return rows;
 }
@@ -316,7 +314,7 @@ export async function listAll(filters: WithdrawalFilters, scope?: { sql: string;
      WHERE ${where}
      ORDER BY dcw.created_at DESC
      LIMIT 500`,
-    params,
+    params
   );
   return rows;
 }
@@ -338,7 +336,7 @@ export async function getById(
    * A data principal reading their own request is not logged — the DPDP interest is in who
    * ELSE looked at it, so only HR/DPO reads produce an entry.
    */
-  logView = false,
+  logView = false
 ): Promise<RowDataPacket | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT dcw.*,
@@ -352,7 +350,7 @@ export async function getById(
      LEFT JOIN employees requester_emp ON requester_emp.user_id = requester_user.id AND requester_emp.active_status = 1
      WHERE dcw.id = ?
      LIMIT 1`,
-    [id],
+    [id]
   );
   if (!rows.length) return null;
   const record = rows[0];
@@ -433,7 +431,7 @@ export async function startReview(id: string, reviewedBy: string): Promise<void>
 export async function approve(
   id: string,
   approvedBy: string,
-  remarks?: string,
+  remarks?: string
 ): Promise<void> {
   // Read current status for accurate audit log
   const [preRows] = await db.execute<RowDataPacket[]>(
@@ -459,21 +457,16 @@ export async function approve(
     [approvedBy, remarks ?? null, approvedBy, approvedBy, id]
   );
   if (result.affectedRows === 0) {
-    throw Object.assign(
-      new Error(`Cannot approve: request is in status '${fromStatus}'`),
-      { statusCode: 409 },
-    );
+    throw Object.assign(new Error(`Cannot approve: request is in status '${fromStatus}'`), { statusCode: 409 });
   }
 
   // Release any active hold record
-  await db
-    .execute(
-      `UPDATE dpdp_processing_hold
+  await db.execute(
+    `UPDATE dpdp_processing_hold
      SET is_active = 0, released_at = NOW(), released_by = ?, release_reason = 'Withdrawal approved'
      WHERE withdrawal_id = ? AND is_active = 1`,
-      [approvedBy, id],
-    )
-    .catch(() => {});
+    [approvedBy, id]
+  ).catch(() => {});
 
   await insertAuditLog(id, "DPDP_WITHDRAWAL_APPROVED", approvedBy, {
     fromStatus,
@@ -521,7 +514,7 @@ export async function approve(
 export async function reject(
   id: string,
   rejectedBy: string,
-  reason: string,
+  reason: string
 ): Promise<void> {
   const [preRows] = await db.execute<RowDataPacket[]>(
     "SELECT status, requester_id FROM dpdp_consent_withdrawal WHERE id = ? LIMIT 1", [id]
@@ -549,14 +542,12 @@ export async function reject(
     throw Object.assign(new Error(`Cannot reject: request is in status '${fromStatus}'`), { statusCode: 409 });
   }
 
-  await db
-    .execute(
-      `UPDATE dpdp_processing_hold
+  await db.execute(
+    `UPDATE dpdp_processing_hold
      SET is_active = 0, released_at = NOW(), released_by = ?, release_reason = 'Withdrawal rejected'
      WHERE withdrawal_id = ? AND is_active = 1`,
-      [rejectedBy, id],
-    )
-    .catch(() => {});
+    [rejectedBy, id]
+  ).catch(() => {});
 
   await insertAuditLog(id, "DPDP_WITHDRAWAL_REJECTED", rejectedBy, {
     fromStatus,
@@ -581,9 +572,8 @@ export async function releaseHold(id: string, releasedBy: string): Promise<void>
     `UPDATE dpdp_processing_hold
      SET is_active = 0, released_at = NOW(), released_by = ?, release_reason = 'Manual hold release'
      WHERE withdrawal_id = ? AND is_active = 1`,
-      [releasedBy, id],
-    )
-    .catch(() => {});
+    [releasedBy, id]
+  ).catch(() => {});
 
   // A manual release closes a request that never reached a decision; leaving it 'in_review' kept it
   // in every open-queue count and SLA breach figure forever.
@@ -593,7 +583,7 @@ export async function releaseHold(id: string, releasedBy: string): Promise<void>
          status = IF(status = 'in_review', 'hold_released', status),
          closed_at = IF(status = 'in_review', NOW(), closed_at)
      WHERE id = ?`,
-    [id],
+    [id]
   );
 
   await insertAuditLog(id, "DPDP_PROCESSING_HOLD_RELEASED", releasedBy, {
@@ -608,10 +598,7 @@ export async function releaseHold(id: string, releasedBy: string): Promise<void>
 /**
  * Return full audit trail for a withdrawal request.
  */
-export async function getAudit(
-  id: string,
-  viewedBy?: string,
-): Promise<RowDataPacket[]> {
+export async function getAudit(id: string, viewedBy?: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT dwal.*,
             COALESCE(
@@ -624,7 +611,7 @@ export async function getAudit(
      LEFT JOIN employees performed_emp ON performed_emp.user_id = performed_user.id AND performed_emp.active_status = 1
      WHERE dwal.withdrawal_id = ?
      ORDER BY dwal.performed_at DESC`,
-    [id],
+    [id]
   );
   if (viewedBy) {
     // Reading the audit trail of someone's withdrawal is itself an access event a regulator
@@ -638,12 +625,10 @@ export async function getAudit(
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
-export async function getTasksForWithdrawal(
-  withdrawalId: string,
-): Promise<RowDataPacket[]> {
+export async function getTasksForWithdrawal(withdrawalId: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM dpdp_withdrawal_task WHERE withdrawal_id = ? ORDER BY created_at ASC`,
-    [withdrawalId],
+    [withdrawalId]
   );
   return rows;
 }
@@ -673,7 +658,7 @@ export async function completeTask(
    */
   const [taskRows] = await db.execute<RowDataPacket[]>(
     `SELECT withdrawal_id, module_key FROM dpdp_withdrawal_task WHERE id = ? LIMIT 1`,
-    [taskId],
+    [taskId]
   );
   const task = taskRows[0];
   if (task?.withdrawal_id) {
@@ -681,9 +666,7 @@ export async function completeTask(
       String(task.withdrawal_id),
       "DPDP_WITHDRAWAL_MODULE_ACTION_COMPLETED",
       completedBy,
-      {
-        remarks: `Task completed${task.module_key ? ` for module ${String(task.module_key)}` : ""}`,
-      },
+      { remarks: `Task completed${task.module_key ? ` for module ${String(task.module_key)}` : ""}` },
     ).catch(() => undefined);
 
     // When the last task closes, the withdrawal is fully implemented: stamp it and say so.
@@ -709,12 +692,10 @@ export async function completeTask(
 
 // ── Evidence ─────────────────────────────────────────────────────────────────
 
-export async function getEvidenceForWithdrawal(
-  withdrawalId: string,
-): Promise<RowDataPacket[]> {
+export async function getEvidenceForWithdrawal(withdrawalId: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM dpdp_withdrawal_evidence WHERE withdrawal_id = ? ORDER BY recorded_at DESC`,
-    [withdrawalId],
+    [withdrawalId]
   );
   return rows;
 }
@@ -724,13 +705,13 @@ export async function addEvidence(
   evidenceType: string,
   description: string,
   recordedBy: string,
-  fileRef?: string,
+  fileRef?: string
 ): Promise<void> {
   await db.execute(
     `INSERT INTO dpdp_withdrawal_evidence
        (id, withdrawal_id, evidence_type, description, file_ref, recorded_by, recorded_at)
      VALUES (UUID(), ?, ?, ?, ?, ?, NOW())`,
-    [withdrawalId, evidenceType, description, fileRef ?? null, recordedBy],
+    [withdrawalId, evidenceType, description, fileRef ?? null, recordedBy]
   );
 }
 

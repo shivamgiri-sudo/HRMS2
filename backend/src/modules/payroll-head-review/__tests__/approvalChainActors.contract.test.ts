@@ -24,16 +24,14 @@ const SERVICE = fs.readFileSync(
 );
 
 /** The getQueue() list statement only — the detail/journey queries have different rules. */
-const RAW_QUEUE_SQL = SERVICE.split("SELECT r.id AS review_id")[1].split(
-  "LIMIT 500",
-)[0];
+const RAW_QUEUE_SQL = SERVICE.split("SELECT r.id AS review_id")[1].split("LIMIT 500")[0];
 /** Comments explain which columns are wrong to use, so they must not count as usage. */
-const QUEUE_SQL = RAW_QUEUE_SQL.split(/\r?\n/)
+const QUEUE_SQL = RAW_QUEUE_SQL
+  .split(/\r?\n/)
   .filter((l) => !l.trim().startsWith("--"))
   .join("\n");
 /** The top-level join chain: everything after FROM. Scalar subqueries live in the SELECT list. */
-const QUEUE_JOINS =
-  QUEUE_SQL.split("FROM employee_payroll_head_review")[1] ?? "";
+const QUEUE_JOINS = QUEUE_SQL.split("FROM employee_payroll_head_review")[1] ?? "";
 
 describe("approval chain actors", () => {
   it("names the Payroll HR from the offer creator, never from payroll_hr_id", () => {
@@ -47,9 +45,7 @@ describe("approval chain actors", () => {
   it("resolves every user_id-keyed actor through a LIMIT 1 subquery, not a bare join", () => {
     // A user_id join in the top-level chain multiplies queue rows. Inside the SELECT list it is
     // fine, because those subqueries are all bounded — assert that too rather than trusting it.
-    const topLevelUserIdJoins =
-      QUEUE_JOINS.match(/JOIN\s+employees\s+\w+\s+ON\s+\w+\.user_id\s*=/gi) ??
-      [];
+    const topLevelUserIdJoins = QUEUE_JOINS.match(/JOIN\s+employees\s+\w+\s+ON\s+\w+\.user_id\s*=/gi) ?? [];
     expect(topLevelUserIdJoins).toHaveLength(0);
 
     const selectList = QUEUE_SQL.split("FROM employee_payroll_head_review")[0];
@@ -61,17 +57,8 @@ describe("approval chain actors", () => {
   });
 
   it("keeps the three stage columns the row renders", () => {
-    for (const col of [
-      "AS phr_status",
-      "AS phr_at",
-      "AS phr_by",
-      "AS bh_status",
-      "AS bh_at",
-      "AS bh_by",
-      "AS ph_by",
-      "AS stage1_minutes",
-      "AS stage2_minutes",
-    ]) {
+    for (const col of ["AS phr_status", "AS phr_at", "AS phr_by", "AS bh_status", "AS bh_at",
+                       "AS bh_by", "AS ph_by", "AS stage1_minutes", "AS stage2_minutes"]) {
       expect(QUEUE_SQL).toContain(col);
     }
   });
@@ -80,8 +67,6 @@ describe("approval chain actors", () => {
     // ats_branch_head_approval.candidate_id is populated on 3 of 31 live rows; joining on it
     // silently renders every Branch Head node as "Not recorded".
     expect(QUEUE_SQL).toContain("b2.payroll_validation_id = v.id");
-    expect(QUEUE_SQL).not.toMatch(
-      /ats_branch_head_approval\s+\w+\s+ON\s+\w+\.candidate_id/i,
-    );
+    expect(QUEUE_SQL).not.toMatch(/ats_branch_head_approval\s+\w+\s+ON\s+\w+\.candidate_id/i);
   });
 });

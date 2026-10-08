@@ -9,14 +9,10 @@ import type { PoolConnection } from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { sha256 } from "./control-plane.js";
-import type {
-  ChecklistItemResult,
-  DbChecklistRule,
-} from "./uat-checklist.service.js";
+import type { ChecklistItemResult, DbChecklistRule } from "./uat-checklist.service.js";
 import type { CapabilityHit, StaticScanResult } from "./uat-pipeline.types.js";
 
-type UatConnection =
-  PoolConnection | Awaited<ReturnType<typeof db.getConnection>>;
+type UatConnection = PoolConnection | Awaited<ReturnType<typeof db.getConnection>>;
 
 interface RuleRow extends RowDataPacket {
   item_key: string;
@@ -36,10 +32,7 @@ export interface LoadedChecklist {
   /** Hash of the active rule set as it was read, stored on every evaluation row. */
   snapshotSha: string;
   /** Statement text, for rendering the console without a second query. */
-  statements: Map<
-    string,
-    { statement: string; category: string; evidenceSpec: string }
-  >;
+  statements: Map<string, { statement: string; category: string; evidenceSpec: string }>;
 }
 
 /**
@@ -49,22 +42,20 @@ export interface LoadedChecklist {
  * rather than returning zero rules, because zero rules is indistinguishable from "everything
  * passed" at every layer above.
  */
-export async function loadChecklist(
-  conn?: UatConnection,
-): Promise<LoadedChecklist> {
+export async function loadChecklist(conn?: UatConnection): Promise<LoadedChecklist> {
   const runner = conn ?? db;
   const [rows] = await runner.query<RuleRow[]>(
     `SELECT item_key, failure_mode, is_floor, rule_version, evaluator,
             statement, evidence_spec, category
        FROM uat_checklist_item
       WHERE active_status = 1
-      ORDER BY sort_order, item_key`,
+      ORDER BY sort_order, item_key`
   );
 
   if (!rows.length) {
     throw new Error(
       "[uat] uat_checklist_item has no active rows; refusing to evaluate a checklist that " +
-        "would vacuously pass.",
+        "would vacuously pass."
     );
   }
 
@@ -77,7 +68,7 @@ export async function loadChecklist(
   }));
 
   const blockingItemKeys = new Set(
-    rows.filter((r) => r.failure_mode === "block").map((r) => r.item_key),
+    rows.filter((r) => r.failure_mode === "block").map((r) => r.item_key)
   );
   // Floor items always block, whatever the mirror row happens to say. The mirror is for
   // display; letting it downgrade a floor item to a warn would be the loosening path this
@@ -87,12 +78,8 @@ export async function loadChecklist(
   const statements = new Map(
     rows.map((r) => [
       r.item_key,
-      {
-        statement: r.statement,
-        category: r.category,
-        evidenceSpec: r.evidence_spec,
-      },
-    ]),
+      { statement: r.statement, category: r.category, evidenceSpec: r.evidence_spec },
+    ])
   );
 
   // Hashes the rules as they were read — the version, the mode and the floor flag — so a
@@ -100,7 +87,7 @@ export async function loadChecklist(
   const snapshotSha = sha256(
     JSON.stringify(
       rows.map((r) => [r.item_key, r.rule_version, r.failure_mode, r.is_floor]),
-    ),
+    )
   );
 
   return { rules, blockingItemKeys, snapshotSha, statements };
@@ -126,7 +113,7 @@ export interface PersistEvaluationInput {
  */
 export async function persistEvaluations(
   input: PersistEvaluationInput,
-  conn?: UatConnection,
+  conn?: UatConnection
 ): Promise<number> {
   if (!input.results.length) return 0;
   const runner = conn ?? db;
@@ -157,7 +144,7 @@ export async function persistEvaluations(
         input.snapshotSha,
         input.pathsSha,
         input.registrySha,
-      ],
+      ]
     );
     written++;
   }
@@ -177,12 +164,10 @@ export async function persistCapabilityHits(
   feedbackId: string,
   scan: StaticScanResult,
   scanId: string | null,
-  conn?: UatConnection,
+  conn?: UatConnection
 ): Promise<number> {
   const runner = conn ?? db;
-  await runner.query(`DELETE FROM uat_capability_hit WHERE feedback_id = ?`, [
-    feedbackId,
-  ]);
+  await runner.query(`DELETE FROM uat_capability_hit WHERE feedback_id = ?`, [feedbackId]);
 
   const hits: CapabilityHit[] = scan.capabilityHits ?? [];
   for (const h of hits) {
@@ -190,14 +175,7 @@ export async function persistCapabilityHits(
       `INSERT INTO uat_capability_hit
          (feedback_id, scan_id, capability_key, capability_class, match_signal, matched_token)
        VALUES (?,?,?,?,?,?)`,
-      [
-        feedbackId,
-        scanId,
-        h.capabilityKey,
-        h.class,
-        h.signal,
-        String(h.matchedToken).slice(0, 300),
-      ],
+      [feedbackId, scanId, h.capabilityKey, h.class, h.signal, String(h.matchedToken).slice(0, 300)]
     );
   }
   return hits.length;

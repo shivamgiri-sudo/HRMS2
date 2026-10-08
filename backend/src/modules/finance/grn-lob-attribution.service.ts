@@ -16,7 +16,7 @@ function dateOnly(value: unknown): string | null {
 async function effectiveLobs(
   connection: PoolConnection,
   processId: string,
-  effectiveDate: string,
+  effectiveDate: string
 ) {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT id, process_id, lob_code, lob_name, approval_status, active_status,
@@ -29,7 +29,7 @@ async function effectiveLobs(
         AND (effective_to IS NULL OR effective_to >= ?)
       ORDER BY lob_code
       FOR UPDATE`,
-    [processId, effectiveDate, effectiveDate],
+    [processId, effectiveDate, effectiveDate]
   );
   return rows;
 }
@@ -39,16 +39,14 @@ async function resolveLob(
   row: RowDataPacket,
   requestedLobId: string | null,
   effectiveDate: string,
-  rowNumber: number,
+  rowNumber: number
 ) {
   const processId = row.process_id ? String(row.process_id) : null;
   if (!processId) {
     if (requestedLobId) {
       throw Object.assign(
-        new Error(
-          `Allocation ${rowNumber}: a branch/shared budget line cannot be assigned directly to a process LOB`,
-        ),
-        { statusCode: 400 },
+        new Error(`Allocation ${rowNumber}: a branch/shared budget line cannot be assigned directly to a process LOB`),
+        { statusCode: 400 }
       );
     }
     return null;
@@ -57,10 +55,8 @@ async function resolveLob(
   const lobs = await effectiveLobs(connection, processId, effectiveDate);
   if (!lobs.length) {
     throw Object.assign(
-      new Error(
-        `Allocation ${rowNumber}: process has no approved active LOB for ${effectiveDate}`,
-      ),
-      { statusCode: 400 },
+      new Error(`Allocation ${rowNumber}: process has no approved active LOB for ${effectiveDate}`),
+      { statusCode: 400 }
     );
   }
 
@@ -68,10 +64,8 @@ async function resolveLob(
     const selected = lobs.find((lob) => String(lob.id) === requestedLobId);
     if (!selected) {
       throw Object.assign(
-        new Error(
-          `Allocation ${rowNumber}: selected LOB is inactive, outside its effective period, or belongs to another process`,
-        ),
-        { statusCode: 400 },
+        new Error(`Allocation ${rowNumber}: selected LOB is inactive, outside its effective period, or belongs to another process`),
+        { statusCode: 400 }
       );
     }
     return String(selected.id);
@@ -82,17 +76,15 @@ async function resolveLob(
     : null;
   if (budgetPreferred) return String(budgetPreferred.id);
 
-  const businessLobs = lobs.filter(
-    (lob) => String(lob.lob_code).toUpperCase() !== "DEFAULT",
-  );
+  const businessLobs = lobs.filter((lob) => String(lob.lob_code).toUpperCase() !== "DEFAULT");
   if (businessLobs.length === 1) return String(businessLobs[0].id);
   if (businessLobs.length === 0 && lobs.length === 1) return String(lobs[0].id);
 
   throw Object.assign(
     new Error(
-      `Allocation ${rowNumber}: process has ${businessLobs.length || lobs.length} active LOBs. Select the exact LOB before submission.`,
+      `Allocation ${rowNumber}: process has ${businessLobs.length || lobs.length} active LOBs. Select the exact LOB before submission.`
     ),
-    { statusCode: 400 },
+    { statusCode: 400 }
   );
 }
 
@@ -123,7 +115,7 @@ export const grnLobAttributionService = {
        HAVING missing_lob_count > 0
         ORDER BY g.created_at DESC
         LIMIT ${safeLimit}`,
-      branchId ? [branchId] : [],
+      branchId ? [branchId] : []
     );
     return rows;
   },
@@ -132,10 +124,9 @@ export const grnLobAttributionService = {
   async getBranchId(grnId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT branch_id FROM grn_request WHERE id = ? LIMIT 1",
-      [grnId],
+      [grnId]
     );
-    if (!rows[0])
-      throw Object.assign(new Error("GRN not found"), { statusCode: 404 });
+    if (!rows[0]) throw Object.assign(new Error("GRN not found"), { statusCode: 404 });
     return rows[0].branch_id ? String(rows[0].branch_id) : null;
   },
 
@@ -148,18 +139,13 @@ export const grnLobAttributionService = {
          LEFT JOIN branch_master b ON b.id = g.branch_id
         WHERE g.id = ?
         LIMIT 1`,
-      [grnId],
+      [grnId]
     );
     const grn = grnRows[0];
-    if (!grn)
-      throw Object.assign(new Error("GRN not found"), { statusCode: 404 });
-    const effectiveDate =
-      dateOnly(grn.service_period_end) ?? dateOnly(grn.bill_date);
+    if (!grn) throw Object.assign(new Error("GRN not found"), { statusCode: 404 });
+    const effectiveDate = dateOnly(grn.service_period_end) ?? dateOnly(grn.bill_date);
     if (!effectiveDate) {
-      throw Object.assign(
-        new Error("GRN service period or bill date is required"),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("GRN service period or bill date is required"), { statusCode: 400 });
     }
     const [allocations] = await db.execute<RowDataPacket[]>(
       `SELECT a.id, a.sequence_no, a.budget_line_id, a.process_id, a.process_lob_id,
@@ -175,15 +161,13 @@ export const grnLobAttributionService = {
          LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
         WHERE a.grn_request_id = ?
         ORDER BY a.sequence_no`,
-      [grnId],
+      [grnId]
     );
-    const processIds = [
-      ...new Set(
-        allocations
-          .map((row) => (row.process_id ? String(row.process_id) : null))
-          .filter((value): value is string => Boolean(value)),
-      ),
-    ];
+    const processIds = [...new Set(
+      allocations
+        .map((row) => row.process_id ? String(row.process_id) : null)
+        .filter((value): value is string => Boolean(value))
+    )];
     let lobs: RowDataPacket[] = [];
     if (processIds.length) {
       const placeholders = processIds.map(() => "?").join(",");
@@ -196,7 +180,7 @@ export const grnLobAttributionService = {
             AND effective_from <= ?
             AND (effective_to IS NULL OR effective_to >= ?)
           ORDER BY process_id, lob_code`,
-        [...processIds, effectiveDate, effectiveDate],
+        [...processIds, effectiveDate, effectiveDate]
       );
       lobs = rows;
     }
@@ -207,13 +191,10 @@ export const grnLobAttributionService = {
     grnId: string,
     input: GrnLobAllocationInput[],
     actorUserId: string,
-    actorRole: string,
+    actorRole: string
   ) {
     if (!Array.isArray(input) || !input.length) {
-      throw Object.assign(
-        new Error("At least one GRN allocation is required"),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("At least one GRN allocation is required"), { statusCode: 400 });
     }
 
     const connection = await db.getConnection();
@@ -224,18 +205,12 @@ export const grnLobAttributionService = {
            FROM grn_request
           WHERE id = ?
           FOR UPDATE`,
-        [grnId],
+        [grnId]
       );
       const grn = grnRows[0];
-      if (!grn)
-        throw Object.assign(new Error("GRN not found"), { statusCode: 404 });
+      if (!grn) throw Object.assign(new Error("GRN not found"), { statusCode: 404 });
       if (String(grn.status) !== "draft") {
-        throw Object.assign(
-          new Error(
-            "LOB attribution can only be changed while the GRN is a draft",
-          ),
-          { statusCode: 400 },
-        );
+        throw Object.assign(new Error("LOB attribution can only be changed while the GRN is a draft"), { statusCode: 400 });
       }
 
       const [rows] = await connection.execute<RowDataPacket[]>(
@@ -246,26 +221,18 @@ export const grnLobAttributionService = {
           WHERE a.grn_request_id = ?
           ORDER BY a.sequence_no
           FOR UPDATE`,
-        [grnId],
+        [grnId]
       );
       if (rows.length !== input.length) {
         throw Object.assign(
-          new Error(
-            "GRN allocation rows changed before LOB attribution; refresh and retry",
-          ),
-          { statusCode: 409 },
+          new Error("GRN allocation rows changed before LOB attribution; refresh and retry"),
+          { statusCode: 409 }
         );
       }
 
-      const effectiveDate =
-        dateOnly(grn.service_period_end) ?? dateOnly(grn.bill_date);
+      const effectiveDate = dateOnly(grn.service_period_end) ?? dateOnly(grn.bill_date);
       if (!effectiveDate) {
-        throw Object.assign(
-          new Error(
-            "GRN service period or bill date is required before LOB attribution",
-          ),
-          { statusCode: 400 },
-        );
+        throw Object.assign(new Error("GRN service period or bill date is required before LOB attribution"), { statusCode: 400 });
       }
 
       const changes: Array<{
@@ -278,14 +245,10 @@ export const grnLobAttributionService = {
       for (let index = 0; index < rows.length; index += 1) {
         const row = rows[index];
         const supplied = input[index];
-        if (
-          String(row.budget_line_id) !== String(supplied?.budgetLineId ?? "")
-        ) {
+        if (String(row.budget_line_id) !== String(supplied?.budgetLineId ?? "")) {
           throw Object.assign(
-            new Error(
-              `Allocation ${index + 1}: budget-line order changed; refresh and retry`,
-            ),
-            { statusCode: 409 },
+            new Error(`Allocation ${index + 1}: budget-line order changed; refresh and retry`),
+            { statusCode: 409 }
           );
         }
         const processLobId = await resolveLob(
@@ -293,11 +256,11 @@ export const grnLobAttributionService = {
           row,
           supplied.processLobId ? String(supplied.processLobId) : null,
           effectiveDate,
-          index + 1,
+          index + 1
         );
         await connection.execute(
           "UPDATE grn_cost_allocation SET process_lob_id = ?, updated_at = NOW() WHERE id = ?",
-          [processLobId, row.id],
+          [processLobId, row.id]
         );
         changes.push({
           allocationId: String(row.id),
@@ -307,14 +270,9 @@ export const grnLobAttributionService = {
         });
       }
 
-      const unmapped = changes.filter(
-        (change) => change.processId && !change.processLobId,
-      );
+      const unmapped = changes.filter((change) => change.processId && !change.processLobId);
       if (unmapped.length) {
-        throw Object.assign(
-          new Error("Every process-linked GRN allocation must have a LOB"),
-          { statusCode: 400 },
-        );
+        throw Object.assign(new Error("Every process-linked GRN allocation must have a LOB"), { statusCode: 400 });
       }
 
       await connection.commit();

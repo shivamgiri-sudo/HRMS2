@@ -72,23 +72,17 @@ export function mdClientsRefs(source: string): string[] {
 
 describe("Shivamgiri schema references", () => {
   it("flags a lowercase schema-qualified reference", () => {
-    expect(
-      lowercaseSchemaRefs("LEFT JOIN shivamgiri.md_clients c ON 1=1"),
-    ).toEqual(["shivamgiri.md_clients"]);
+    expect(lowercaseSchemaRefs("LEFT JOIN shivamgiri.md_clients c ON 1=1")).toEqual([
+      "shivamgiri.md_clients",
+    ]);
   });
 
   it("does not flag the pool helper or connector key", () => {
-    expect(
-      lowercaseSchemaRefs(
-        "getShivamgiriPool(); getPoolForKey('shivamgiri_quality')",
-      ),
-    ).toEqual([]);
+    expect(lowercaseSchemaRefs("getShivamgiriPool(); getPoolForKey('shivamgiri_quality')")).toEqual([]);
   });
 
   it("does not flag the correctly-cased schema", () => {
-    expect(lowercaseSchemaRefs("FROM Shivamgiri.portal_client_config")).toEqual(
-      [],
-    );
+    expect(lowercaseSchemaRefs("FROM Shivamgiri.portal_client_config")).toEqual([]);
   });
 
   it("no backend source references the lowercase schema in SQL", () => {

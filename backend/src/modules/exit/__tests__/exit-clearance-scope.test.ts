@@ -34,13 +34,8 @@ let authUser: { id: string; role: string; roles: string[] } = {
 };
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (req as express.Request & { authUser: typeof authUser }).authUser =
-      authUser;
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: typeof authUser }).authUser = authUser;
     next();
   },
 }));

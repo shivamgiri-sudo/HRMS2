@@ -39,27 +39,16 @@ async function q(sql: string, params: unknown[] = []): Promise<any> {
 
 async function main() {
   console.log(`--- runs to remove (${MONTH}) ---`);
-  const runs = await q(
-    "SELECT id,status,total_employees FROM salary_prep_run WHERE run_month=?",
-    [MONTH],
-  );
+  const runs = await q("SELECT id,status,total_employees FROM salary_prep_run WHERE run_month=?", [MONTH]);
   console.log(runs.length ? JSON.stringify(runs, null, 1) : "  (none)");
   const ids: string[] = runs.map((r: { id: string }) => r.id);
 
   if (ids.length) {
     const ph = ids.map(() => "?").join(",");
-    const lines = await q(
-      `DELETE FROM salary_prep_line WHERE run_id IN (${ph})`,
-      ids,
-    );
+    const lines = await q(`DELETE FROM salary_prep_line WHERE run_id IN (${ph})`, ids);
     console.log(`  salary_prep_line           deleted ${lines.affectedRows}`);
-    const aud = await q(
-      `SELECT COUNT(*) c FROM payroll_calculation_audit WHERE run_id IN (${ph})`,
-      ids,
-    );
-    console.log(
-      `  payroll_calculation_audit  ${aud[0].c} rows LEFT IN PLACE (audit trail)`,
-    );
+    const aud = await q(`SELECT COUNT(*) c FROM payroll_calculation_audit WHERE run_id IN (${ph})`, ids);
+    console.log(`  payroll_calculation_audit  ${aud[0].c} rows LEFT IN PLACE (audit trail)`);
     const del = await q(`DELETE FROM salary_prep_run WHERE id IN (${ph})`, ids);
     console.log(`  salary_prep_run            deleted ${del.affectedRows}`);
   }
@@ -90,9 +79,7 @@ async function main() {
     );
     console.log(`  removed ${extra.affectedRows} rows created by the test`);
   } else {
-    console.log(
-      "  (non-scratch month: leaving readiness rows in place, flags reset only)",
-    );
+    console.log("  (non-scratch month: leaving readiness rows in place, flags reset only)");
   }
 
   console.log("\n--- verify against baseline ---");
@@ -107,17 +94,11 @@ async function main() {
   );
   const r = chk[0];
   const wantReadiness = IS_SCRATCH ? " (want 7)" : "";
-  console.log(
-    `  runs=${r.runs} (want 0)   readiness=${r.readiness}${wantReadiness}   dirty=${r.dirty} (want 0)`,
-  );
+  console.log(`  runs=${r.runs} (want 0)   readiness=${r.readiness}${wantReadiness}   dirty=${r.dirty} (want 0)`);
 
   const clean =
-    Number(r.runs) === 0 &&
-    Number(r.dirty) === 0 &&
-    (!IS_SCRATCH || Number(r.readiness) === 7);
-  console.log(
-    clean ? "\nCLEAN - baseline restored." : "\nNOT CLEAN - inspect manually.",
-  );
+    Number(r.runs) === 0 && Number(r.dirty) === 0 && (!IS_SCRATCH || Number(r.readiness) === 7);
+  console.log(clean ? "\nCLEAN - baseline restored." : "\nNOT CLEAN - inspect manually.");
   if (!clean) process.exitCode = 1;
 }
 

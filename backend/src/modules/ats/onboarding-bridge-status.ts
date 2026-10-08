@@ -29,25 +29,18 @@
 
 /** ats_onboarding_bridge.digilocker_status */
 export type BridgeDigilockerStatus =
-  "not_started" | "initiated" | "documents_received" | "expired";
+  | "not_started" | "initiated" | "documents_received" | "expired";
 
 /** ats_onboarding_bridge.penny_drop_status */
 export type BridgePennyDropStatus =
-  "not_started" | "initiated" | "verified" | "failed" | "name_mismatch";
+  | "not_started" | "initiated" | "verified" | "failed" | "name_mismatch";
 
 export const BRIDGE_DIGILOCKER_VALUES: BridgeDigilockerStatus[] = [
-  "not_started",
-  "initiated",
-  "documents_received",
-  "expired",
+  "not_started", "initiated", "documents_received", "expired",
 ];
 
 export const BRIDGE_PENNY_DROP_VALUES: BridgePennyDropStatus[] = [
-  "not_started",
-  "initiated",
-  "verified",
-  "failed",
-  "name_mismatch",
+  "not_started", "initiated", "verified", "failed", "name_mismatch",
 ];
 
 /**
@@ -58,27 +51,16 @@ export const BRIDGE_PENNY_DROP_VALUES: BridgePennyDropStatus[] = [
  * "initiated". Higher wins.
  */
 const DIGILOCKER_RANK: Record<BridgeDigilockerStatus, number> = {
-  not_started: 0,
-  initiated: 1,
-  expired: 2,
-  documents_received: 3,
+  not_started: 0, initiated: 1, expired: 2, documents_received: 3,
 };
 
 const PENNY_DROP_RANK: Record<BridgePennyDropStatus, number> = {
-  not_started: 0,
-  initiated: 1,
-  failed: 2,
-  name_mismatch: 3,
-  verified: 4,
+  not_started: 0, initiated: 1, failed: 2, name_mismatch: 3, verified: 4,
 };
 
 /** DigiLocker session state -> the bridge's vocabulary. */
 export function bridgeDigilockerStatus(state: unknown): BridgeDigilockerStatus {
-  switch (
-    String(state ?? "")
-      .trim()
-      .toLowerCase()
-  ) {
+  switch (String(state ?? "").trim().toLowerCase()) {
     case "completed":
     case "documents_received":
       return "documents_received";
@@ -109,15 +91,9 @@ export function bridgePennyDropStatus(
   riskFlags?: ReadonlyArray<unknown> | null,
 ): BridgePennyDropStatus {
   const flags = (riskFlags ?? []).map((f) => String(f ?? "").toUpperCase());
-  const nameDiverged = flags.some(
-    (f) => f.includes("NAME_DIVERGENCE") || f.includes("NAME_MISMATCH"),
-  );
+  const nameDiverged = flags.some((f) => f.includes("NAME_DIVERGENCE") || f.includes("NAME_MISMATCH"));
 
-  switch (
-    String(checkStatus ?? "")
-      .trim()
-      .toLowerCase()
-  ) {
+  switch (String(checkStatus ?? "").trim().toLowerCase()) {
     case "verified":
       return "verified";
     case "mismatch":
@@ -135,9 +111,7 @@ export function bridgePennyDropStatus(
   }
 }
 
-type Executor = {
-  execute: (sql: string, params: unknown[]) => Promise<unknown>;
-};
+type Executor = { execute: (sql: string, params: unknown[]) => Promise<unknown> };
 
 /**
  * Write a bridge status, but only ever forwards.
@@ -164,8 +138,7 @@ async function advance(
   // ER_BAD_FIELD_ERROR, and because this whole call is deliberately swallowed
   // (below), it failed silently: the bridge simply never moved. Caught by
   // migration 1070, which made the same mistake and could not hide it.
-  const setStamp =
-    next === stamp.whenStatusIs ? `, ${stamp.column} = NOW()` : "";
+  const setStamp = next === stamp.whenStatusIs ? `, ${stamp.column} = NOW()` : "";
 
   try {
     await db.execute(
@@ -184,32 +157,21 @@ async function advance(
 }
 
 export async function syncBridgeDigilockerStatus(
-  db: Executor,
-  candidateId: string,
-  state: unknown,
+  db: Executor, candidateId: string, state: unknown,
 ): Promise<void> {
   await advance(
-    db,
-    candidateId,
-    "digilocker_status",
-    bridgeDigilockerStatus(state),
-    DIGILOCKER_RANK,
+    db, candidateId, "digilocker_status", bridgeDigilockerStatus(state), DIGILOCKER_RANK,
     { column: "digilocker_completed_at", whenStatusIs: "documents_received" },
   );
 }
 
 export async function syncBridgePennyDropStatus(
-  db: Executor,
-  candidateId: string,
-  checkStatus: unknown,
+  db: Executor, candidateId: string, checkStatus: unknown,
   riskFlags?: ReadonlyArray<unknown> | null,
 ): Promise<void> {
   await advance(
-    db,
-    candidateId,
-    "penny_drop_status",
-    bridgePennyDropStatus(checkStatus, riskFlags),
-    PENNY_DROP_RANK,
+    db, candidateId, "penny_drop_status",
+    bridgePennyDropStatus(checkStatus, riskFlags), PENNY_DROP_RANK,
     { column: "penny_drop_verified_at", whenStatusIs: "verified" },
   );
 }

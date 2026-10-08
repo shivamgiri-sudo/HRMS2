@@ -1,33 +1,33 @@
-import { describe, it, expect } from "vitest";
-import * as fs from "fs";
-import * as path from "path";
-import { SELF_EDITABLE_PERSONAL_COLUMNS } from "../fieldOwnership.js";
+import { describe, it, expect } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+import { SELF_EDITABLE_PERSONAL_COLUMNS } from '../fieldOwnership.js';
 
 // ── Task 1: employment_status case consistency ──────────────────────────────
-describe("activateEmployee — employment_status case", () => {
-  it("activation SQL must write capital-A Active, matching payroll/attendance filters", () => {
+describe('activateEmployee — employment_status case', () => {
+  it('activation SQL must write capital-A Active, matching payroll/attendance filters', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, "../employee-activation.service.ts"),
-      "utf8",
+      path.resolve(__dirname, '../employee-activation.service.ts'),
+      'utf8'
     );
     expect(src).toContain("employment_status = 'Active'");
   });
 });
 
 // ── Task 2: userId must not be patchable via updateEmployee ──────────────────
-describe("updateEmployeeSchema — userId not patchable", () => {
-  it("updateEmployeeSchema must not contain userId field", () => {
+describe('updateEmployeeSchema — userId not patchable', () => {
+  it('updateEmployeeSchema must not contain userId field', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, "../employee.validation.ts"),
-      "utf8",
+      path.resolve(__dirname, '../employee.validation.ts'),
+      'utf8'
     );
     expect(src).not.toMatch(/userId\s*:\s*z\.string\(\)\.uuid\(\)/);
   });
 
-  it("updateEmployee service must not build a user_id SET clause from input.userId", () => {
+  it('updateEmployee service must not build a user_id SET clause from input.userId', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, "../employee.service.ts"),
-      "utf8",
+      path.resolve(__dirname, '../employee.service.ts'),
+      'utf8'
     );
     expect(src).not.toMatch(/input\.userId[^}]+user_id\s*=\s*\?/);
   });
@@ -117,14 +117,12 @@ describe('PATCH /me — official_email is set-once, then locked', () => {
     expect(section).toContain('EMPLOYEE_SELF_OFFICIAL_EMAIL_SET');
   });
 
-  it("builds its UPDATE from an allowlist, not from arbitrary req.body keys", () => {
+  it('builds its UPDATE from an allowlist, not from arbitrary req.body keys', () => {
     const section = patchMeHandler();
-    expect(section).toContain("ALLOWED_FIELDS");
+    expect(section).toContain('ALLOWED_FIELDS');
     // The SET clause must iterate the allowlist. Iterating req.body directly would
     // let any column through, which is the defect the 403 above only partially covers.
-    expect(section).toMatch(
-      /for\s*\(\s*const\s+field\s+of\s+ALLOWED_FIELDS\s*\)/,
-    );
+    expect(section).toMatch(/for\s*\(\s*const\s+field\s+of\s+ALLOWED_FIELDS\s*\)/);
     expect(section).not.toMatch(/Object\.keys\(\s*req\.body\s*\)/);
   });
 
@@ -132,8 +130,8 @@ describe('PATCH /me — official_email is set-once, then locked', () => {
   // (see that file — the single source of truth this replaced three disagreeing allowlists
   // with), rather than a literal array in this file, so this asserts against the real,
   // live-imported value instead of regex-slicing a moving target string.
-  it("the live field-ownership matrix does not mark official_email as employee-editable", () => {
-    expect(SELF_EDITABLE_PERSONAL_COLUMNS).not.toContain("official_email");
+  it('the live field-ownership matrix does not mark official_email as employee-editable', () => {
+    expect(SELF_EDITABLE_PERSONAL_COLUMNS).not.toContain('official_email');
   });
 });
 
@@ -145,14 +143,12 @@ describe('PUT /me/statutory-details — approval gate', () => {
     expect(section).toContain('submitStatutoryDetailsForApproval');
   });
 
-  it("profile-approval.service must export submitStatutoryDetailsForApproval", () => {
+  it('profile-approval.service must export submitStatutoryDetailsForApproval', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, "../profile-approval.service.ts"),
-      "utf8",
+      path.resolve(__dirname, '../profile-approval.service.ts'),
+      'utf8'
     );
-    expect(src).toContain(
-      "export async function submitStatutoryDetailsForApproval(",
-    );
+    expect(src).toContain('export async function submitStatutoryDetailsForApproval(');
     expect(src).toContain("'statutory_details'");
   });
 });
@@ -169,13 +165,13 @@ describe('PUT /me/bank-details — tombstoned', () => {
 });
 
 // ── Task 6: promotion approval must be transactional ────────────────────────
-describe("mobility.service — updatePromotion is transactional", () => {
-  it("updatePromotion source must use a transaction", () => {
+describe('mobility.service — updatePromotion is transactional', () => {
+  it('updatePromotion source must use a transaction', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, "../../mobility/mobility.service.ts"),
-      "utf8",
+      path.resolve(__dirname, '../../mobility/mobility.service.ts'),
+      'utf8'
     );
-    const promotionSection = src.slice(src.indexOf("async updatePromotion("));
+    const promotionSection = src.slice(src.indexOf('async updatePromotion('));
     expect(promotionSection).toMatch(/beginTransaction|START TRANSACTION/);
     expect(promotionSection).toMatch(/commit|COMMIT/);
     expect(promotionSection).toMatch(/rollback|ROLLBACK/);
@@ -192,63 +188,42 @@ describe("mobility.service — updatePromotion is transactional", () => {
  * over an empty region. They are repointed at the real implementation, unchanged in intent:
  * a master lookup that misses must throw, never write NULL into the FK.
  */
-describe("mobility.service — the transfer master lookup is NULL-safe", () => {
+describe('mobility.service — the transfer master lookup is NULL-safe', () => {
   const applyImpl = () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, "../../mobility/mobility.service.ts"),
-      "utf8",
+      path.resolve(__dirname, '../../mobility/mobility.service.ts'),
+      'utf8'
     );
-    const start = src.indexOf("async function applyTransferOn(");
-    expect(
-      start,
-      "applyTransferOn not found — has the transfer apply logic moved again?",
-    ).toBeGreaterThan(-1);
+    const start = src.indexOf('async function applyTransferOn(');
+    expect(start, 'applyTransferOn not found — has the transfer apply logic moved again?').toBeGreaterThan(-1);
     return src.slice(start);
   };
 
-  it("must not use inline correlated subquery that could silently null the FK", () => {
+  it('must not use inline correlated subquery that could silently null the FK', () => {
     const applyFn = applyImpl();
-    expect(applyFn).not.toMatch(
-      /branch_id\s*=\s*\(SELECT\s+id\s+FROM\s+branch_master/,
-    );
-    expect(applyFn).not.toMatch(
-      /department_id\s*=\s*\(SELECT\s+id\s+FROM\s+department_master/,
-    );
-    expect(applyFn).not.toMatch(
-      /designation_id\s*=\s*\(SELECT\s+id\s+FROM\s+designation_master/,
-    );
-    expect(applyFn).not.toMatch(
-      /process_id\s*=\s*\(SELECT\s+id\s+FROM\s+process_master/,
-    );
+    expect(applyFn).not.toMatch(/branch_id\s*=\s*\(SELECT\s+id\s+FROM\s+branch_master/);
+    expect(applyFn).not.toMatch(/department_id\s*=\s*\(SELECT\s+id\s+FROM\s+department_master/);
+    expect(applyFn).not.toMatch(/designation_id\s*=\s*\(SELECT\s+id\s+FROM\s+designation_master/);
+    expect(applyFn).not.toMatch(/process_id\s*=\s*\(SELECT\s+id\s+FROM\s+process_master/);
   });
 
-  it("must throw when master lookup returns null instead of silently nulling FK", () => {
+  it('must throw when master lookup returns null instead of silently nulling FK', () => {
     // The four messages are now produced by one shared resolver rather than written out
     // four times, so the guarantee is: a miss throws, the message names the master table,
     // and every transfer type still routes through it.
     const applyFn = applyImpl();
-    expect(applyFn).toMatch(
-      /if \(!masterId\) throw mobilityError\(\d+, `Transfer: \$\{label\} '\$\{to_value\}' not found in \$\{table\}`\)/,
-    );
-    for (const table of [
-      "branch_master",
-      "department_master",
-      "designation_master",
-      "process_master",
-    ]) {
-      expect(
-        applyFn,
-        `${table} is no longer resolved before the FK is written`,
-      ).toContain(`"${table}"`);
+    expect(applyFn).toMatch(/if \(!masterId\) throw mobilityError\(\d+, `Transfer: \$\{label\} '\$\{to_value\}' not found in \$\{table\}`\)/);
+    for (const table of ['branch_master', 'department_master', 'designation_master', 'process_master']) {
+      expect(applyFn, `${table} is no longer resolved before the FK is written`).toContain(`"${table}"`);
     }
   });
 
-  it("applyTransferToEmployee still delegates to it, so the worker path is covered too", () => {
+  it('applyTransferToEmployee still delegates to it, so the worker path is covered too', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, "../../mobility/mobility.service.ts"),
-      "utf8",
+      path.resolve(__dirname, '../../mobility/mobility.service.ts'),
+      'utf8'
     );
-    const method = src.slice(src.indexOf("async applyTransferToEmployee("));
+    const method = src.slice(src.indexOf('async applyTransferToEmployee('));
     expect(method).toMatch(/await applyTransferOn\(db,/);
   });
 });
@@ -267,28 +242,19 @@ describe("mobility.service — the transfer master lookup is NULL-safe", () => {
  * and the window runs to the end of the file rather than a magic number.
  */
 const exitedBranch = (): string => {
-  const src = fs.readFileSync(
-    path.resolve(__dirname, "../../exit/exit.service.ts"),
-    "utf8",
-  );
-  const code = src
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
+  const src = fs.readFileSync(path.resolve(__dirname, '../../exit/exit.service.ts'), 'utf8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const i = code.indexOf('nextStatus === "exited"');
-  expect(i, "the exited branch is gone from exit.service.ts").toBeGreaterThan(
-    -1,
-  );
+  expect(i, 'the exited branch is gone from exit.service.ts').toBeGreaterThan(-1);
   return code.slice(i);
 };
 
-describe("exit.service — exited status propagation", () => {
-  it("exit.service must set date_of_exit on employees on exited", () => {
+describe('exit.service — exited status propagation', () => {
+  it('exit.service must set date_of_exit on employees on exited', () => {
     // Asserts the actual write, not that the string appears somewhere nearby: the point is
     // that the employees row is stamped, and `date_of_exit` could otherwise be satisfied by
     // a SELECT or an unrelated table.
-    expect(exitedBranch()).toMatch(
-      /UPDATE\s+employees[\s\S]{0,400}?date_of_exit\s*=/,
-    );
+    expect(exitedBranch()).toMatch(/UPDATE\s+employees[\s\S]{0,400}?date_of_exit\s*=/);
   });
 
   /**
@@ -309,18 +275,18 @@ describe("exit.service — exited status propagation", () => {
    * path rather than flipping status directly. Asserting the call therefore covers strictly
    * more than the two dead statements did.
    */
-  it("exit.service revokes access on exited via deprovisionEmployeeAccess", () => {
+  it('exit.service revokes access on exited via deprovisionEmployeeAccess', () => {
     expect(exitedBranch()).toMatch(/await\s+deprovisionEmployeeAccess\s*\(/);
   });
 
-  it("exit.service revokes live sessions on exited", () => {
+  it('exit.service revokes live sessions on exited', () => {
     expect(exitedBranch()).toMatch(/await\s+revokeSessionsForEmployee\s*\(/);
   });
 
-  it("exit.service must create clearance tasks for all exit paths including exited", () => {
+  it('exit.service must create clearance tasks for all exit paths including exited', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, "../../exit/exit.service.ts"),
-      "utf8",
+      path.resolve(__dirname, '../../exit/exit.service.ts'),
+      'utf8'
     );
     // This used to look for one line gating on ["accepted","notice_serving","exited"]. Since
     // the 2026-09-15 owner ruling tasks are no longer created at accept time: they key off the
@@ -345,49 +311,45 @@ describe("exit.service — exited status propagation", () => {
 });
 
 // ── Task 9: BGV scope — HR without branch_id must not see all ──────────────
-describe("canViewEmployeeBgv — HR without branch_id", () => {
-  it("HR without branch_id must return false, not true", () => {
+describe('canViewEmployeeBgv — HR without branch_id', () => {
+  it('HR without branch_id must return false, not true', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, "../employee-bgv.service.ts"),
-      "utf8",
+      path.resolve(__dirname, '../employee-bgv.service.ts'),
+      'utf8'
     );
-    expect(src).not.toContain("HR without branch restriction can view all");
-    const canViewFn = src.slice(
-      src.indexOf("export async function canViewEmployeeBgv("),
-    );
+    expect(src).not.toContain('HR without branch restriction can view all');
+    const canViewFn = src.slice(src.indexOf('export async function canViewEmployeeBgv('));
     expect(canViewFn).not.toMatch(/return true;\s*\/\/ HR without/);
-    expect(canViewFn).toMatch(
-      /if\s*\(\s*!actorScope\.branch_id\s*\)\s*return false/,
-    );
+    expect(canViewFn).toMatch(/if\s*\(\s*!actorScope\.branch_id\s*\)\s*return false/);
   });
 });
 
 // ── Task 10: createEmployee email duplicate guard ───────────────────────────
-describe("employee.service — createEmployee duplicate guards", () => {
-  it("createEmployee must check for duplicate email in employees table before INSERT", () => {
+describe('employee.service — createEmployee duplicate guards', () => {
+  it('createEmployee must check for duplicate email in employees table before INSERT', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, "../employee.service.ts"),
-      "utf8",
+      path.resolve(__dirname, '../employee.service.ts'),
+      'utf8'
     );
-    const createFn = src.slice(src.indexOf("async createEmployee("));
-    const insertIdx = createFn.indexOf("INSERT INTO employees");
+    const createFn = src.slice(src.indexOf('async createEmployee('));
+    const insertIdx = createFn.indexOf('INSERT INTO employees');
     const preamble = createFn.slice(0, insertIdx);
     expect(preamble).toMatch(/email.*employees|employees.*email/);
   });
 });
 
 // ── Task 11: Absconded/Terminated not settable via updateEmployee ────────────
-describe("updateEmployeeSchema — no bypass of exit module", () => {
-  it("Absconded and Terminated must not be in employmentStatus enum of updateEmployeeSchema", () => {
+describe('updateEmployeeSchema — no bypass of exit module', () => {
+  it('Absconded and Terminated must not be in employmentStatus enum of updateEmployeeSchema', () => {
     const src = fs.readFileSync(
-      path.resolve(__dirname, "../employee.validation.ts"),
-      "utf8",
+      path.resolve(__dirname, '../employee.validation.ts'),
+      'utf8'
     );
-    const enumLine = src
-      .split("\n")
-      .find((l) => l.includes("employmentStatus") && l.includes("z.enum"));
+    const enumLine = src.split('\n').find(
+      (l) => l.includes('employmentStatus') && l.includes('z.enum')
+    );
     expect(enumLine).toBeDefined();
-    expect(enumLine).not.toContain("Absconded");
-    expect(enumLine).not.toContain("Terminated");
+    expect(enumLine).not.toContain('Absconded');
+    expect(enumLine).not.toContain('Terminated');
   });
 });

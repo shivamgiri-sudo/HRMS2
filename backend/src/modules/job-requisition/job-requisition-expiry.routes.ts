@@ -29,9 +29,7 @@ jobRequisitionExpiryRouter.get(
   "/pending",
   handler(async (req, res) => {
     // HR sees only their own branch's decisions; head office / admin see all.
-    const data = await listPendingExpiryDecisions(
-      await resolveHrBranchScope(req.authUser!.id),
-    );
+    const data = await listPendingExpiryDecisions(await resolveHrBranchScope(req.authUser!.id));
     return res.json({ success: true, data });
   }),
 );
@@ -58,11 +56,13 @@ jobRequisitionExpiryRouter.post(
     const id = z.string().uuid().safeParse(req.params.decisionId);
     const body = decisionBody.safeParse(req.body);
     if (!id.success || !body.success) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "A valid action and a reason of at least 3 characters are required",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "A valid action and a reason of at least 3 characters are required",
+        });
     }
     try {
       await decideExpiry(

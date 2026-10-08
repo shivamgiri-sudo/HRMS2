@@ -532,29 +532,17 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
   // allowedRoleKeys but otherwise absent from this file. Migration 1607.
   // TEAM_KPI_SCORECARD added by migration 1628.
   // BGV access added migration 1645 — HO HR oversees cross-branch HR ops.
-  ho_hr: [
-    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
-    "TEAM_KPI_SCORECARD",
-    "ATS_BGV",
-    "ATS_BGV_REPORT",
-  ],
+  ho_hr: ["PERFORMANCE_SCORECARD_COMMAND_CENTER", "TEAM_KPI_SCORECARD", "ATS_BGV", "ATS_BGV_REPORT"],
 
   // Process-level HR role named in dashboardAccessRegistry's PERFORMANCE_SCORECARD
   // allowedRoleKeys but otherwise absent from this file. Migration 1607.
   // BGV access added migration 1645 — process HR manages candidate lifecycle for their process.
-  process_hr: [
-    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
-    "ATS_BGV",
-    "ATS_BGV_REPORT",
-  ],
+  process_hr: ["PERFORMANCE_SCORECARD_COMMAND_CENTER", "ATS_BGV", "ATS_BGV_REPORT"],
 
   // Named in dashboardAccessRegistry's PERFORMANCE_SCORECARD allowedRoleKeys
   // alongside branch_head, but no branch_manager entry exists anywhere else in
   // this file. Migration 1607. TEAM_KPI_SCORECARD added by migration 1628.
-  branch_manager: [
-    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
-    "TEAM_KPI_SCORECARD",
-  ],
+  branch_manager: ["PERFORMANCE_SCORECARD_COMMAND_CENTER", "TEAM_KPI_SCORECARD"],
 
   // 7 active users. Grants existed only in the 2026-06 SQL seed, and most of
   // those page codes have no mounted route. Dashboard registry already allows
@@ -621,9 +609,7 @@ export type RbacRoleKey = keyof typeof ROLE_SPECIFIC_PAGE_CODES | "super_admin";
  * Keep this list very short. It is for pages that are structurally meaningless for
  * a role, not for permission tuning — that belongs in role_page_access.
  */
-export const ROLE_EXCLUDED_PAGE_CODES: Readonly<
-  Record<string, readonly string[]>
-> = {
+export const ROLE_EXCLUDED_PAGE_CODES: Readonly<Record<string, readonly string[]>> = {
   // The CEO is not measured on operational KPIs, so "My KPI" has nothing to show
   // him. The CEO UAT reported the page as hollow — 3 KPIs tracked, 0 with data,
   // Overall Score 0% — and the right fix is to not offer the page rather than to
@@ -664,20 +650,13 @@ export function uniquePageCodes(pageCodes: readonly string[]): string[] {
  * These want reviewing rather than trusting — some are very likely accidents of
  * history. Deleting one here is a real revocation, so do it knowingly.
  */
-export const LIVE_IMPORTED_PAGE_CODES: Readonly<
-  Record<string, readonly string[]>
-> = {
+export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]>> = {
   admin: [
     // Merged /wfm/roster-command-center console — all 8 tabs (backend/sql/1757_roster_
     // command_center_console_page_codes.sql).
-    "WFM_ROSTER_LIVE_MONITORING",
-    "WFM_ROSTER_TEAM_ROSTER",
-    "WFM_ROSTER_ANALYTICS",
-    "WFM_ROSTER_TRENDS",
-    "WFM_ROSTER_COMPLIANCE",
-    "WFM_ROSTER_SHIFT_EFFECTIVENESS",
-    "WFM_ROSTER_INTERVENTIONS",
-    "WFM_ROSTER_AUDIT_TRAIL",
+    "WFM_ROSTER_LIVE_MONITORING", "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_ANALYTICS",
+    "WFM_ROSTER_TRENDS", "WFM_ROSTER_COMPLIANCE", "WFM_ROSTER_SHIFT_EFFECTIVENESS",
+    "WFM_ROSTER_INTERVENTIONS", "WFM_ROSTER_AUDIT_TRAIL",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "FINANCE_BRANCH_BUDGET",
     "FINANCE_GRN",
@@ -725,9 +704,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<
     "PROVISIONING_WFM_ALIGNMENT", // WFM Alignment queue, branch-scoped in it-provisioning.routes.ts
     // Merged /wfm/roster-command-center console — Team Roster, Analytics, Compliance,
     // Shift Effectiveness tabs.
-    "WFM_ROSTER_TEAM_ROSTER",
-    "WFM_ROSTER_ANALYTICS",
-    "WFM_ROSTER_COMPLIANCE",
+    "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_ANALYTICS", "WFM_ROSTER_COMPLIANCE",
     "WFM_ROSTER_SHIFT_EFFECTIVENESS",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "ATS_CANDIDATE_MASTER",
@@ -877,14 +854,9 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<
   hr: [
     // Merged /wfm/roster-command-center console — all 8 tabs (backend/sql/1757_roster_
     // command_center_console_page_codes.sql).
-    "WFM_ROSTER_LIVE_MONITORING",
-    "WFM_ROSTER_TEAM_ROSTER",
-    "WFM_ROSTER_ANALYTICS",
-    "WFM_ROSTER_TRENDS",
-    "WFM_ROSTER_COMPLIANCE",
-    "WFM_ROSTER_SHIFT_EFFECTIVENESS",
-    "WFM_ROSTER_INTERVENTIONS",
-    "WFM_ROSTER_AUDIT_TRAIL",
+    "WFM_ROSTER_LIVE_MONITORING", "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_ANALYTICS",
+    "WFM_ROSTER_TRENDS", "WFM_ROSTER_COMPLIANCE", "WFM_ROSTER_SHIFT_EFFECTIVENESS",
+    "WFM_ROSTER_INTERVENTIONS", "WFM_ROSTER_AUDIT_TRAIL",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "ATS_RECRUITER_PORTAL",
     "ATS_RECRUITER_QUEUE",
@@ -937,7 +909,9 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<
     "ATS_INTERVIEW_SUBMIT",
     "MODULE_LAUNCHER",
   ],
-  operations_head: ["JOBS"],
+  operations_head: [
+    "JOBS",
+  ],
   payroll: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "BULK_UPLOAD",
@@ -1002,7 +976,11 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<
     "PAYROLL_RUNNING_BREAKDOWN",
     "PAYROLL_VALIDATION",
   ],
-  recruiter: ["ATS_INTERVIEW_QUEUE", "ATS_INTERVIEW_SUBMIT", "MODULE_LAUNCHER"],
+  recruiter: [
+    "ATS_INTERVIEW_QUEUE",
+    "ATS_INTERVIEW_SUBMIT",
+    "MODULE_LAUNCHER",
+  ],
   recruitment_hr: [
     "ATS_BULK_IMPORT",
     "JOBS",
@@ -1015,12 +993,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<
     // Merged /wfm/roster-command-center console (backend/sql/1757_roster_command_center_
     // console_page_codes.sql) — all tabs except Interventions (hr/admin/super_admin/
     // manager only).
-    "WFM_ROSTER_LIVE_MONITORING",
-    "WFM_ROSTER_TEAM_ROSTER",
-    "WFM_ROSTER_ANALYTICS",
-    "WFM_ROSTER_TRENDS",
-    "WFM_ROSTER_COMPLIANCE",
-    "WFM_ROSTER_SHIFT_EFFECTIVENESS",
+    "WFM_ROSTER_LIVE_MONITORING", "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_ANALYTICS",
+    "WFM_ROSTER_TRENDS", "WFM_ROSTER_COMPLIANCE", "WFM_ROSTER_SHIFT_EFFECTIVENESS",
     "WFM_ROSTER_AUDIT_TRAIL",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "KPI_DASHBOARD",
@@ -1063,17 +1037,14 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<
   ceo: [
     // Merged /wfm/roster-command-center console (backend/sql/1757_roster_command_center_
     // console_page_codes.sql) — Analytics, Compliance, Shift Effectiveness tabs.
-    "WFM_ROSTER_ANALYTICS",
-    "WFM_ROSTER_COMPLIANCE",
-    "WFM_ROSTER_SHIFT_EFFECTIVENESS",
+    "WFM_ROSTER_ANALYTICS", "WFM_ROSTER_COMPLIANCE", "WFM_ROSTER_SHIFT_EFFECTIVENESS",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "FINANCE_PROCESS_PNL",
     "PAYROLL_SIGN_OFF",
   ],
   coo: [
     // Merged /wfm/roster-command-center console — Analytics, Shift Effectiveness tabs.
-    "WFM_ROSTER_ANALYTICS",
-    "WFM_ROSTER_SHIFT_EFFECTIVENESS",
+    "WFM_ROSTER_ANALYTICS", "WFM_ROSTER_SHIFT_EFFECTIVENESS",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "FINANCE_PROCESS_PNL",
   ],
@@ -1088,9 +1059,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<
   manager: [
     // Merged /wfm/roster-command-center console — Team Roster, Trends & Publish,
     // Compliance, Interventions tabs.
-    "WFM_ROSTER_TEAM_ROSTER",
-    "WFM_ROSTER_TRENDS",
-    "WFM_ROSTER_COMPLIANCE",
+    "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_TRENDS", "WFM_ROSTER_COMPLIANCE",
     "WFM_ROSTER_INTERVENTIONS",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "OPERATIONS_DASHBOARD",
@@ -1102,11 +1071,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<
   operations_manager: [
     // Merged /wfm/roster-command-center console — Team Roster, Analytics, Compliance,
     // Shift Effectiveness, Audit Trail tabs.
-    "WFM_ROSTER_TEAM_ROSTER",
-    "WFM_ROSTER_ANALYTICS",
-    "WFM_ROSTER_COMPLIANCE",
-    "WFM_ROSTER_SHIFT_EFFECTIVENESS",
-    "WFM_ROSTER_AUDIT_TRAIL",
+    "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_ANALYTICS", "WFM_ROSTER_COMPLIANCE",
+    "WFM_ROSTER_SHIFT_EFFECTIVENESS", "WFM_ROSTER_AUDIT_TRAIL",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "WFM_ATTENDANCE_DASHBOARD",
     // Owner-specified access list, 2026-09-16 (Live Monitoring tab, respective-process scoped).
@@ -1123,8 +1089,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<
   ],
   process_manager: [
     // Merged /wfm/roster-command-center console — Team Roster, Trends & Publish tabs.
-    "WFM_ROSTER_TEAM_ROSTER",
-    "WFM_ROSTER_TRENDS",
+    "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_TRENDS",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     // Added 2026-08-22: see the manager entry above — same gap, same fix. Migration 1544.
     "TEAM_ATTENDANCE",
@@ -1163,10 +1128,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<
   ],
 } as const;
 
-export function getRolePageCodes(
-  roleKey: string,
-  allPageCodes: readonly string[] = [],
-): string[] {
+export function getRolePageCodes(roleKey: string, allPageCodes: readonly string[] = []): string[] {
   // super_admin receives exactly the pages the caller says are active — no union with
   // COMMON_USER_PAGE_CODES. That is deliberate: page_catalog decides which pages exist, and
   // granting a code that is not active there would hand out a page the platform does not
@@ -1179,9 +1141,7 @@ export function getRolePageCodes(
 
   return uniquePageCodes([
     ...COMMON_USER_PAGE_CODES,
-    ...(ROLE_SPECIFIC_PAGE_CODES[
-      roleKey as keyof typeof ROLE_SPECIFIC_PAGE_CODES
-    ] ?? []),
+    ...(ROLE_SPECIFIC_PAGE_CODES[roleKey as keyof typeof ROLE_SPECIFIC_PAGE_CODES] ?? []),
     // Access that already exists in production. Without this the applier would
     // revoke 158 grants across 20 roles the first time anyone ran it.
     ...(LIVE_IMPORTED_PAGE_CODES[roleKey] ?? []),

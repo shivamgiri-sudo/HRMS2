@@ -17,35 +17,21 @@ async function rowOf(code: string) {
   const [r]: any = await db.query(
     `SELECT e.id, ROUND(l.net_salary,2) net, l.manual_override_locked locked, l.calculation_version ver
        FROM salary_prep_line l JOIN employees e ON e.id = l.employee_id
-      WHERE l.run_id = ? AND e.employee_code = ?`,
-    [RUN, code],
-  );
+      WHERE l.run_id = ? AND e.employee_code = ?`, [RUN, code]);
   return r[0];
 }
 
 const before = await rowOf(LOCKED_CODE);
-console.log(
-  `BEFORE  ${LOCKED_CODE}: locked=${before?.locked} net=${before?.net} calc_version=${before?.ver}`,
-);
-if (!before) {
-  console.error(`${LOCKED_CODE} not found on this run`);
-  process.exit(1);
-}
+console.log(`BEFORE  ${LOCKED_CODE}: locked=${before?.locked} net=${before?.net} calc_version=${before?.ver}`);
+if (!before) { console.error(`${LOCKED_CODE} not found on this run`); process.exit(1); }
 
 let unlockedCode = "";
 let unlockedBefore: any;
 for (const c of UNLOCKED_CODE_CANDIDATES) {
   const r = await rowOf(c);
-  if (r && Number(r.locked) === 0) {
-    unlockedCode = c;
-    unlockedBefore = r;
-    break;
-  }
+  if (r && Number(r.locked) === 0) { unlockedCode = c; unlockedBefore = r; break; }
 }
-if (unlockedCode)
-  console.log(
-    `BEFORE  ${unlockedCode}: locked=${unlockedBefore.locked} net=${unlockedBefore.net} calc_version=${unlockedBefore.ver}`,
-  );
+if (unlockedCode) console.log(`BEFORE  ${unlockedCode}: locked=${unlockedBefore.locked} net=${unlockedBefore.net} calc_version=${unlockedBefore.ver}`);
 
 console.log("\nRecalculating both through calculatePayrollRunScoped...");
 const ids = [before.id, ...(unlockedCode ? [unlockedBefore.id] : [])];
@@ -57,29 +43,19 @@ const ids = [before.id, ...(unlockedCode ? [unlockedBefore.id] : [])];
 await calculatePayrollRunScoped(RUN, ACTOR, { employeeIds: ids });
 
 const after = await rowOf(LOCKED_CODE);
-console.log(
-  `\nAFTER   ${LOCKED_CODE}: locked=${after?.locked} net=${after?.net} calc_version=${after?.ver}`,
-);
-const lockedSurvived =
-  Math.abs(Number(after.net) - Number(before.net)) < 0.01 &&
-  after.ver === before.ver;
-console.log(
-  lockedSurvived
-    ? `PASS -- locked employee's row was NOT touched by the recalculation.`
-    : `FAIL -- locked employee's net changed from ${before.net} to ${after.net} (calc_version ${before.ver} -> ${after.ver}). The guard did not work.`,
-);
+console.log(`\nAFTER   ${LOCKED_CODE}: locked=${after?.locked} net=${after?.net} calc_version=${after?.ver}`);
+const lockedSurvived = Math.abs(Number(after.net) - Number(before.net)) < 0.01 && after.ver === before.ver;
+console.log(lockedSurvived
+  ? `PASS -- locked employee's row was NOT touched by the recalculation.`
+  : `FAIL -- locked employee's net changed from ${before.net} to ${after.net} (calc_version ${before.ver} -> ${after.ver}). The guard did not work.`);
 
 if (unlockedCode) {
   const uAfter = await rowOf(unlockedCode);
-  console.log(
-    `\nAFTER   ${unlockedCode}: locked=${uAfter?.locked} net=${uAfter?.net} calc_version=${uAfter?.ver}`,
-  );
+  console.log(`\nAFTER   ${unlockedCode}: locked=${uAfter?.locked} net=${uAfter?.net} calc_version=${uAfter?.ver}`);
   const unlockedRecalculated = uAfter.ver !== unlockedBefore.ver;
-  console.log(
-    unlockedRecalculated
-      ? `PASS -- unlocked employee WAS recalculated normally (calc_version changed), so the guard is selective.`
-      : `NOTE -- calc_version unchanged for the unlocked employee; inconclusive on selectivity from this signal alone (net may still have been correctly recomputed to the same value).`,
-  );
+  console.log(unlockedRecalculated
+    ? `PASS -- unlocked employee WAS recalculated normally (calc_version changed), so the guard is selective.`
+    : `NOTE -- calc_version unchanged for the unlocked employee; inconclusive on selectivity from this signal alone (net may still have been correctly recomputed to the same value).`);
 }
 
 process.exit(lockedSurvived ? 0 : 1);

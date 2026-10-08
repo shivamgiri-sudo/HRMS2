@@ -86,35 +86,14 @@ describe("affectedPayrollMonths", () => {
 
 describe("actorAuthority", () => {
   it("splits ownership (reviewer tier) from the backdating exemption, exactly like canBackdateDates", () => {
-    expect(actorAuthority(["payroll_head"])).toEqual({
-      authority: "payroll_head",
-      allowBackdate: true,
-    });
-    expect(actorAuthority(["super_admin"])).toEqual({
-      authority: "payroll_head",
-      allowBackdate: true,
-    });
+    expect(actorAuthority(["payroll_head"])).toEqual({ authority: "payroll_head", allowBackdate: true });
+    expect(actorAuthority(["super_admin"])).toEqual({ authority: "payroll_head", allowBackdate: true });
     // admin is not an approver: it cannot change an approved salary's date, and is not exempt from the date locks.
-    expect(actorAuthority(["hr", "admin"])).toEqual({
-      authority: "standard",
-      allowBackdate: false,
-    });
-    expect(actorAuthority(["hr"])).toEqual({
-      authority: "standard",
-      allowBackdate: false,
-    });
-    expect(actorAuthority(["payroll_hr", "branch_head"])).toEqual({
-      authority: "standard",
-      allowBackdate: false,
-    });
-    expect(actorAuthority([])).toEqual({
-      authority: "standard",
-      allowBackdate: false,
-    });
-    expect(actorAuthority(undefined)).toEqual({
-      authority: "standard",
-      allowBackdate: false,
-    });
+    expect(actorAuthority(["hr", "admin"])).toEqual({ authority: "standard", allowBackdate: false });
+    expect(actorAuthority(["hr"])).toEqual({ authority: "standard", allowBackdate: false });
+    expect(actorAuthority(["payroll_hr", "branch_head"])).toEqual({ authority: "standard", allowBackdate: false });
+    expect(actorAuthority([])).toEqual({ authority: "standard", allowBackdate: false });
+    expect(actorAuthority(undefined)).toEqual({ authority: "standard", allowBackdate: false });
   });
 });
 
@@ -128,11 +107,7 @@ describe("assessSalaryStartDate", () => {
   it("accepts a date on or after both joining and today, for anyone", () => {
     for (const allowBackdate of [false, true]) {
       expect(
-        assessSalaryStartDate({
-          ...base,
-          newDate: "2026-09-25",
-          allowBackdate,
-        }),
+        assessSalaryStartDate({ ...base, newDate: "2026-09-25", allowBackdate }),
       ).toEqual({ preJoining: false, beforeToday: false, unchanged: false });
     }
   });
@@ -311,20 +286,9 @@ function fakeExec(state: FakeState): SqlExecutor {
     if (q.includes("employee_salary_change_log"))
       return [[{ n: state.hasSalaryChange ? 1 : 0 }], []];
 
-    if (
-      q.startsWith(
-        "SELECT e.salary_start_date FROM employee_payroll_head_review r JOIN employees e",
-      )
-    ) {
-      const approved =
-        state.review?.status === "approved" &&
-        state.review.candidate_id === params[0];
-      return [
-        approved
-          ? [{ salary_start_date: state.employee.salary_start_date }]
-          : [],
-        [],
-      ];
+    if (q.startsWith("SELECT e.salary_start_date FROM employee_payroll_head_review r JOIN employees e")) {
+      const approved = state.review?.status === "approved" && state.review.candidate_id === params[0];
+      return [approved ? [{ salary_start_date: state.employee.salary_start_date }] : [], []];
     }
 
     if (q.startsWith("SELECT id, employee_code, date_of_joining"))
@@ -542,31 +506,15 @@ describe("applySalaryStartDate", () => {
   it("lets a reviewer-tier actor without the backdate exemption change an approved salary's date, but not before today/joining", async () => {
     const state = newState();
     state.review!.status = "approved";
-    const admin = {
-      actorUserId: "user-admin",
-      authority: "payroll_head" as const,
-      allowBackdate: false,
-      source: "revision_request_approved" as const,
-    };
+    const admin = { actorUserId: "user-admin", authority: "payroll_head" as const, allowBackdate: false, source: "revision_request_approved" as const };
 
     await expect(
-      applySalaryStartDate(fakeExec(state), {
-        ...admin,
-        employeeId: "emp-1",
-        newDate: "2026-08-25",
-        reason: "some reason",
-        today: "2026-09-25",
-      }),
+      applySalaryStartDate(fakeExec(state), { ...admin, employeeId: "emp-1", newDate: "2026-08-25", reason: "some reason", today: "2026-09-25" }),
     ).rejects.toMatchObject({ code: "SALARY_START_BEFORE_JOINING" });
     expect(state.employee.salary_start_date).toBe("2026-08-31");
 
     await expect(
-      applySalaryStartDate(fakeExec(state), {
-        ...admin,
-        employeeId: "emp-1",
-        newDate: "2026-09-30",
-        today: "2026-09-25",
-      }),
+      applySalaryStartDate(fakeExec(state), { ...admin, employeeId: "emp-1", newDate: "2026-09-30", today: "2026-09-25" }),
     ).resolves.toMatchObject({ changed: true });
     expect(state.employee.salary_start_date).toBe("2026-09-30");
   });
@@ -753,51 +701,29 @@ describe("assignment rows: increments versus stale start-date rows", () => {
       reason: "Payroll Head assigned start",
       today: "2026-09-25",
     });
-    expect(
-      state.assignments.find((a) => a.id === "asg-2")!.effective_from,
-    ).toBe("2026-08-25");
-    expect(
-      (await getSalaryStartDateConsistency(fakeExec(state), "emp-1"))
-        .consistent,
-    ).toBe(true);
+    expect(state.assignments.find((a) => a.id === "asg-2")!.effective_from).toBe("2026-08-25");
+    expect((await getSalaryStartDateConsistency(fakeExec(state), "emp-1")).consistent).toBe(true);
   });
 
   it("never rewrites an increment: a single active row on a later date stays put for an employee with a salary change", async () => {
     const state = newState();
     state.hasSalaryChange = true;
-    state.assignments = [
-      { id: "asg-1", effective_from: "2026-10-01", active_status: 1 },
-    ];
-    await applySalaryStartDate(fakeExec(state), {
-      ...PH,
-      employeeId: "emp-1",
-      newDate: "2026-09-30",
-      today: "2026-09-25",
-    });
+    state.assignments = [{ id: "asg-1", effective_from: "2026-10-01", active_status: 1 }];
+    await applySalaryStartDate(fakeExec(state), { ...PH, employeeId: "emp-1", newDate: "2026-09-30", today: "2026-09-25" });
     expect(state.assignments[0].effective_from).toBe("2026-10-01");
   });
 
   it("does not call an incremented employee inconsistent just because the assignment date moved on", async () => {
     const state = newState();
     state.hasSalaryChange = true;
-    state.assignments = [
-      { id: "asg-1", effective_from: "2026-10-01", active_status: 1 },
-    ];
-    expect(
-      (await getSalaryStartDateConsistency(fakeExec(state), "emp-1"))
-        .consistent,
-    ).toBe(true);
+    state.assignments = [{ id: "asg-1", effective_from: "2026-10-01", active_status: 1 }];
+    expect((await getSalaryStartDateConsistency(fakeExec(state), "emp-1")).consistent).toBe(true);
   });
 
   it("still calls a stale assignment inconsistent when nothing explains its date", async () => {
     const state = newState();
-    state.assignments = [
-      { id: "asg-1", effective_from: "2026-10-01", active_status: 1 },
-    ];
-    expect(
-      (await getSalaryStartDateConsistency(fakeExec(state), "emp-1"))
-        .consistent,
-    ).toBe(false);
+    state.assignments = [{ id: "asg-1", effective_from: "2026-10-01", active_status: 1 }];
+    expect((await getSalaryStartDateConsistency(fakeExec(state), "emp-1")).consistent).toBe(false);
   });
 
   it("leaves a superseded component assignment's history date alone when the caller already inserted the new one", async () => {
@@ -805,19 +731,11 @@ describe("assignment rows: increments versus stale start-date rows", () => {
     // between prepare and commit; commit must see the NEW row, not rewrite the old one.
     const state = newState();
     const exec = fakeExec(state);
-    const prepared = await prepareSalaryStartDate(exec, {
-      ...PH,
-      employeeId: "emp-1",
-      newDate: "2026-09-30",
-      today: "2026-09-25",
-      assignmentAlreadyWritten: true,
-    });
+    const prepared = await prepareSalaryStartDate(exec, { ...PH, employeeId: "emp-1", newDate: "2026-09-30", today: "2026-09-25", assignmentAlreadyWritten: true });
     state.component = { id: "sca-new", effective_date: "2026-09-30" };
     state.assignments[0].effective_from = "2026-09-30";
     const result = await commitSalaryStartDate(exec, prepared);
-    expect(result.copiesWritten).not.toContain(
-      "salary_component_assignments.effective_date",
-    );
+    expect(result.copiesWritten).not.toContain("salary_component_assignments.effective_date");
   });
 });
 
@@ -838,14 +756,7 @@ describe("checkSalaryStartDate (validation only, always rolled back)", () => {
   it("passes a valid change without writing anything, and rolls back", async () => {
     const state = newState();
     const connection = connectionFor(state);
-    await expect(
-      checkSalaryStartDate({
-        ...PH,
-        employeeId: "emp-1",
-        newDate: "2026-09-30",
-        today: "2026-09-25",
-      }),
-    ).resolves.toBeUndefined();
+    await expect(checkSalaryStartDate({ ...PH, employeeId: "emp-1", newDate: "2026-09-30", today: "2026-09-25" })).resolves.toBeUndefined();
     expect(state.employee.salary_start_date).toBe("2026-08-31");
     expect(state.audit).toHaveLength(0);
     expect(connection.commit).not.toHaveBeenCalled();
@@ -855,23 +766,10 @@ describe("checkSalaryStartDate (validation only, always rolled back)", () => {
 
   it("throws the same refusal the real write would, and still rolls back and releases", async () => {
     const state = newState();
-    state.runs = [
-      {
-        id: "run-8",
-        run_month: "2026-08",
-        status: "FINALIZED",
-        branch_id: null,
-        process_id: null,
-      },
-    ];
+    state.runs = [{ id: "run-8", run_month: "2026-08", status: "FINALIZED", branch_id: null, process_id: null }];
     const connection = connectionFor(state);
     await expect(
-      checkSalaryStartDate({
-        ...PH,
-        employeeId: "emp-1",
-        newDate: "2026-09-30",
-        today: "2026-09-25",
-      }),
+      checkSalaryStartDate({ ...PH, employeeId: "emp-1", newDate: "2026-09-30", today: "2026-09-25" }),
     ).rejects.toMatchObject({ code: "PAYROLL_MONTH_CLOSED" });
     expect(connection.rollback).toHaveBeenCalled();
     expect(connection.release).toHaveBeenCalled();
@@ -880,12 +778,7 @@ describe("checkSalaryStartDate (validation only, always rolled back)", () => {
   it("checkSalaryStartDateForCandidate does nothing before the employee record exists", async () => {
     (db.execute as unknown as Mock).mockResolvedValue([[], []]);
     await expect(
-      checkSalaryStartDateForCandidate({
-        candidateId: "cand-x",
-        newDate: "2026-09-30",
-        actorUserId: null,
-        source: "joining_control_room",
-      }),
+      checkSalaryStartDateForCandidate({ candidateId: "cand-x", newDate: "2026-09-30", actorUserId: null, source: "joining_control_room" }),
     ).resolves.toBeUndefined();
   });
 });
@@ -963,55 +856,32 @@ describe("assertSalaryDateNotOwnedByPayrollHead (Joining Control Room / Payroll 
     const state = newState();
     state.review!.status = "approved";
     await expect(
-      assertSalaryDateNotOwnedByPayrollHead(
-        fakeExec(state),
-        "cand-1",
-        "2026-09-30",
-      ),
-    ).rejects.toMatchObject({
-      statusCode: 403,
-      code: "SALARY_DATE_OWNED_BY_PAYROLL_HEAD",
-    });
+      assertSalaryDateNotOwnedByPayrollHead(fakeExec(state), "cand-1", "2026-09-30"),
+    ).rejects.toMatchObject({ statusCode: 403, code: "SALARY_DATE_OWNED_BY_PAYROLL_HEAD" });
   });
 
   it("allows re-saving the date the employee already carries", async () => {
     const state = newState();
     state.review!.status = "approved";
     await expect(
-      assertSalaryDateNotOwnedByPayrollHead(
-        fakeExec(state),
-        "cand-1",
-        "2026-08-31",
-      ),
+      assertSalaryDateNotOwnedByPayrollHead(fakeExec(state), "cand-1", "2026-08-31"),
     ).resolves.toBeUndefined();
   });
 
   it("does nothing while the salary review is still pending, or before an employee exists", async () => {
     const pending = newState();
     await expect(
-      assertSalaryDateNotOwnedByPayrollHead(
-        fakeExec(pending),
-        "cand-1",
-        "2026-09-30",
-      ),
+      assertSalaryDateNotOwnedByPayrollHead(fakeExec(pending), "cand-1", "2026-09-30"),
     ).resolves.toBeUndefined();
     await expect(
-      assertSalaryDateNotOwnedByPayrollHead(
-        fakeExec(newState({ review: null })),
-        "cand-1",
-        "2026-09-30",
-      ),
+      assertSalaryDateNotOwnedByPayrollHead(fakeExec(newState({ review: null })), "cand-1", "2026-09-30"),
     ).resolves.toBeUndefined();
   });
 
   it("ignores an empty date (Joining Control Room saves that leave the date untouched)", async () => {
     const state = newState();
     state.review!.status = "approved";
-    await expect(
-      assertSalaryDateNotOwnedByPayrollHead(fakeExec(state), "cand-1", ""),
-    ).resolves.toBeUndefined();
-    await expect(
-      assertSalaryDateNotOwnedByPayrollHead(fakeExec(state), "cand-1", null),
-    ).resolves.toBeUndefined();
+    await expect(assertSalaryDateNotOwnedByPayrollHead(fakeExec(state), "cand-1", "")).resolves.toBeUndefined();
+    await expect(assertSalaryDateNotOwnedByPayrollHead(fakeExec(state), "cand-1", null)).resolves.toBeUndefined();
   });
 });

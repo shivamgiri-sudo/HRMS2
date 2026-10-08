@@ -81,8 +81,6 @@ describe("key rotation must not orphan stored values", () => {
     const stored = encrypt("123456789012");
 
     setKeys("a-completely-different-key", undefined);
-    expect(() => decrypt(stored)).toThrow(
-      /Unable to decrypt with any configured key/,
-    );
+    expect(() => decrypt(stored)).toThrow(/Unable to decrypt with any configured key/);
   });
 });

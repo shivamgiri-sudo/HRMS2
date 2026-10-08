@@ -21,10 +21,7 @@ import {
   sanitizeProviderPayload,
   type LuckpayResponse,
 } from "./luckpay.transport.js";
-import {
-  getLastResolvedLuckpayConfig,
-  resolveLuckpayConfig,
-} from "./luckpay.config.js";
+import { getLastResolvedLuckpayConfig, resolveLuckpayConfig } from "./luckpay.config.js";
 
 export { sanitizeProviderPayload };
 
@@ -75,24 +72,8 @@ export type LuckpayDocumentResult = {
   sanitized: Record<string, unknown>;
 };
 
-const COMPLETED = [
-  "completed",
-  "complete",
-  "verified",
-  "signed",
-  "approved",
-  "done",
-  "success",
-];
-const FAILED = [
-  "failed",
-  "failure",
-  "rejected",
-  "declined",
-  "cancelled",
-  "canceled",
-  "error",
-];
+const COMPLETED = ["completed", "complete", "verified", "signed", "approved", "done", "success"];
+const FAILED = ["failed", "failure", "rejected", "declined", "cancelled", "canceled", "error"];
 const EXPIRED = ["expired", "timeout", "timedout"];
 
 /**
@@ -128,38 +109,20 @@ function toStatusResult(
   const lowered = (providerStatus ?? "").toLowerCase();
   // Default to "pending" — never treat an unrecognised status as terminal, or a
   // candidate's session could be closed out before they have actually finished.
-  const state: LuckpayStatusResult["state"] = COMPLETED.some(
-    (s) => lowered === s || lowered.includes(s),
-  )
-    ? "completed"
-    : FAILED.some((s) => lowered.includes(s))
-      ? "failed"
-      : EXPIRED.some((s) => lowered.includes(s))
-        ? "expired"
-        : "pending";
+  const state: LuckpayStatusResult["state"] =
+    COMPLETED.some((s) => lowered === s || lowered.includes(s)) ? "completed"
+    : FAILED.some((s) => lowered.includes(s)) ? "failed"
+    : EXPIRED.some((s) => lowered.includes(s)) ? "expired"
+    : "pending";
 
   return {
     state,
     providerStatus,
     // gatewayId is Luckpay's transaction identifier — the value every
     // status/download call expects as `transactionId`.
-    transactionId:
-      pickLuckpayField(response, [
-        "gatewayId",
-        "transactionId",
-        "transaction_id",
-      ]) ?? ref.transactionId,
-    clientTransactionId:
-      pickLuckpayField(response, [
-        "clientTransactionId",
-        "client_transaction_id",
-      ]) ?? ref.clientTransactionId,
-    message: pickLuckpayField(response, [
-      "responseMessage",
-      "message",
-      "statusDescription",
-      "description",
-    ]),
+    transactionId: pickLuckpayField(response, ["gatewayId", "transactionId", "transaction_id"]) ?? ref.transactionId,
+    clientTransactionId: pickLuckpayField(response, ["clientTransactionId", "client_transaction_id"]) ?? ref.clientTransactionId,
+    message: pickLuckpayField(response, ["responseMessage", "message", "statusDescription", "description"]),
     sanitized: response.sanitized,
   };
 }
@@ -188,20 +151,12 @@ function decodeBase64(value: string | null): Buffer | null {
  * response, including DigiLocker KYC downloads, which mislabeled every
  * DigiLocker Aadhaar/PAN file as an e-sign artifact.
  */
-function rawDocumentResult(
-  buffer: Buffer,
-  contentType: string | null,
-  namePrefix: string,
-): LuckpayDocumentResult {
-  const ext = contentType?.includes("pdf")
-    ? "pdf"
-    : contentType?.includes("zip")
-      ? "zip"
-      : contentType?.includes("png")
-        ? "png"
-        : contentType?.includes("jpeg")
-          ? "jpg"
-          : "bin";
+function rawDocumentResult(buffer: Buffer, contentType: string | null, namePrefix: string): LuckpayDocumentResult {
+  const ext = contentType?.includes("pdf") ? "pdf"
+    : contentType?.includes("zip") ? "zip"
+    : contentType?.includes("png") ? "png"
+    : contentType?.includes("jpeg") ? "jpg"
+    : "bin";
   return {
     buffer,
     url: null,
@@ -213,65 +168,30 @@ function rawDocumentResult(
 
 function toDocumentResult(response: LuckpayResponse): LuckpayDocumentResult {
   const raw = pickLuckpayField(response, [
-    "esignDownloadDetails.file",
-    "details.file",
-    "esignDetails.file",
-    "document",
-    "documentBase64",
-    "fileBase64",
-    "base64",
-    "fileContent",
-    "content",
-    "file",
+    "esignDownloadDetails.file", "details.file", "esignDetails.file",
+    "document", "documentBase64", "fileBase64", "base64", "fileContent", "content", "file",
   ]);
   const url = pickLuckpayField(response, [
-    "documentUrl",
-    "document_url",
-    "fileUrl",
-    "file_url",
-    "downloadUrl",
-    "download_url",
-    "url",
+    "documentUrl", "document_url", "fileUrl", "file_url", "downloadUrl", "download_url", "url",
   ]);
 
   let buffer = decodeBase64(raw);
   let fileName = pickLuckpayField(response, [
-    "details.file_name",
-    "esignDownloadDetails.file_name",
-    "esignDetails.file_name",
-    "fileName",
-    "file_name",
-    "documentName",
-    "document_name",
+    "details.file_name", "esignDownloadDetails.file_name", "esignDetails.file_name",
+    "fileName", "file_name", "documentName", "document_name",
   ]);
-  let contentType = pickLuckpayField(response, [
-    "contentType",
-    "content_type",
-    "mimeType",
-    "mime_type",
-  ]);
+  let contentType = pickLuckpayField(response, ["contentType", "content_type", "mimeType", "mime_type"]);
 
   // Unwrap the KYC JSON envelope when present. Detected by content rather than
   // by endpoint so either endpoint may return either shape.
   if (buffer && buffer[0] === 0x7b /* '{' */) {
     try {
-      const wrapper = JSON.parse(buffer.toString("utf8")) as Record<
-        string,
-        unknown
-      >;
-      const inner = decodeBase64(
-        String(wrapper.file_in_base64 ?? wrapper.fileInBase64 ?? ""),
-      );
+      const wrapper = JSON.parse(buffer.toString("utf8")) as Record<string, unknown>;
+      const inner = decodeBase64(String(wrapper.file_in_base64 ?? wrapper.fileInBase64 ?? ""));
       if (inner) {
         buffer = inner;
-        fileName =
-          (wrapper.file_name as string) ??
-          (wrapper.fileName as string) ??
-          fileName;
-        contentType =
-          (wrapper.file_type as string) ??
-          (wrapper.fileType as string) ??
-          contentType;
+        fileName = (wrapper.file_name as string) ?? (wrapper.fileName as string) ?? fileName;
+        contentType = (wrapper.file_type as string) ?? (wrapper.fileType as string) ?? contentType;
       }
     } catch {
       // Not the wrapper shape — keep the bytes we already decoded.
@@ -302,11 +222,7 @@ export const luckpayClient = {
 
   async initiateDigilockerWithUrl(payload: LuckpayDigilockerPayload) {
     const cfg = await digilockerConfig();
-    const response = await luckpayPostJson(
-      cfg,
-      "/verifyDigilockerWithURL",
-      payload,
-    );
+    const response = await luckpayPostJson(cfg, "/verifyDigilockerWithURL", payload);
     return {
       raw: response.envelope,
       sanitized: response.sanitized as SanitizedJson,
@@ -325,14 +241,13 @@ export const luckpayClient = {
       // gatewayId is Luckpay's transaction id and the value checkKycStatus /
       // checkESignStatus expect back as `transactionId`. Without it the
       // completion half has nothing to poll with.
-      providerReferenceId:
-        pickLuckpayField(response, [
-          "gatewayId",
-          "referenceId",
-          "reference_id",
-          "transactionId",
-          "transaction_id",
-        ]) ?? payload.clientTransactionId,
+      providerReferenceId: pickLuckpayField(response, [
+        "gatewayId",
+        "referenceId",
+        "reference_id",
+        "transactionId",
+        "transaction_id",
+      ]) ?? payload.clientTransactionId,
       status: pickLuckpayField(response, ["status"]) ?? "initiated",
     };
   },
@@ -356,14 +271,13 @@ export const luckpayClient = {
         "esignDetails.redirect_url",
         "details.authorizationUrl",
       ]),
-      providerReferenceId:
-        pickLuckpayField(response, [
-          "gatewayId",
-          "referenceId",
-          "reference_id",
-          "transactionId",
-          "transaction_id",
-        ]) ?? payload.request.clientTransactionId,
+      providerReferenceId: pickLuckpayField(response, [
+        "gatewayId",
+        "referenceId",
+        "reference_id",
+        "transactionId",
+        "transaction_id",
+      ]) ?? payload.request.clientTransactionId,
       status: pickLuckpayField(response, ["status"]) ?? "initiated",
     };
   },
@@ -382,13 +296,8 @@ export const luckpayClient = {
   /** Retrieve the DigiLocker/KYC documents once checkKycStatus reports success. */
   async downloadKycDocument(payload: LuckpayTransactionRef) {
     const cfg = await digilockerConfig();
-    const { binary, contentType, response } = await luckpayPostBinaryOrJson(
-      cfg,
-      "/downloadKycDocument",
-      payload,
-    );
-    if (binary)
-      return rawDocumentResult(binary, contentType, "digilocker-kyc-document");
+    const { binary, contentType, response } = await luckpayPostBinaryOrJson(cfg, "/downloadKycDocument", payload);
+    if (binary) return rawDocumentResult(binary, contentType, "digilocker-kyc-document");
     return toDocumentResult(response!);
   },
 
@@ -408,11 +317,7 @@ export const luckpayClient = {
    */
   async downloadESignDocument(payload: LuckpayTransactionRef) {
     const cfg = await digilockerConfig();
-    const { binary, contentType, response } = await luckpayPostBinaryOrJson(
-      cfg,
-      "/downloadESignDocument",
-      payload,
-    );
+    const { binary, contentType, response } = await luckpayPostBinaryOrJson(cfg, "/downloadESignDocument", payload);
     if (binary) return rawDocumentResult(binary, contentType, "esign-document");
     return toDocumentResult(response!);
   },

@@ -15,7 +15,7 @@ type CelebrationEmployee = {
   official_email: string | null;
   email: string | null;
   avatar_url: string | null;
-  branch_display: string | null; // display_name from branch_master
+  branch_display: string | null;   // display_name from branch_master
   branch_id: string | null;
   date_of_joining: string;
   years_completed?: number;
@@ -31,9 +31,7 @@ type CelebrationEmployee = {
 
 function resolvePhotoUrl(avatarUrl: string | null): string | undefined {
   if (!avatarUrl) return undefined;
-  return avatarUrl.startsWith("http")
-    ? avatarUrl
-    : `${PROD_BASE_URL}${avatarUrl}`;
+  return avatarUrl.startsWith("http") ? avatarUrl : `${PROD_BASE_URL}${avatarUrl}`;
 }
 
 async function resolveSystemUserId(): Promise<string | null> {
@@ -61,9 +59,7 @@ async function resolveAdminBccEmails(): Promise<string[]> {
   return (rows as Array<{ email: string }>).map((r) => r.email).filter(Boolean);
 }
 
-async function resolveBranchHrBccEmails(
-  branchId: string | null,
-): Promise<string[]> {
+async function resolveBranchHrBccEmails(branchId: string | null): Promise<string[]> {
   if (!branchId) return [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT au.email
@@ -126,9 +122,7 @@ export async function queryTodayBirthdays(): Promise<CelebrationEmployee[]> {
   return rows as CelebrationEmployee[];
 }
 
-export async function queryTodayAnniversaries(): Promise<
-  CelebrationEmployee[]
-> {
+export async function queryTodayAnniversaries(): Promise<CelebrationEmployee[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `${CELEBRATION_SELECT_WITH_TENURE}
       WHERE e.active_status = 1
@@ -170,9 +164,7 @@ function uniqueEmails(...lists: (string | null | undefined)[][]): string[] {
   return result;
 }
 
-export async function sendBirthdayGreeting(
-  emp: CelebrationEmployee,
-): Promise<void> {
+export async function sendBirthdayGreeting(emp: CelebrationEmployee): Promise<void> {
   if (await hasCelebrationPostToday(emp.id, "birthday")) return;
 
   const photoUrl = resolvePhotoUrl(emp.avatar_url);
@@ -218,16 +210,11 @@ export async function sendBirthdayGreeting(
 
   const sysUserId = await resolveSystemUserId();
   if (!sysUserId) {
-    console.warn(
-      "[celebration] No system user — skipping feed post for birthday:",
-      emp.id,
-    );
+    console.warn("[celebration] No system user — skipping feed post for birthday:", emp.id);
     return;
   }
 
-  const branchTag = branch
-    ? ` The ${branch} family is celebrating with you today! 🥳`
-    : "";
+  const branchTag = branch ? ` The ${branch} family is celebrating with you today! 🥳` : "";
   const masidTag = emp.employee_code ? ` [${emp.employee_code}]` : "";
   const contentText = `🎂 Wishing ${name}${masidTag} a very Happy Birthday! 🎉${branchTag} May your day be filled with joy, laughter, and everything wonderful! 🌸🎈🎁`;
 
@@ -241,9 +228,7 @@ export async function sendBirthdayGreeting(
   );
 }
 
-export async function sendAnniversaryGreeting(
-  emp: CelebrationEmployee,
-): Promise<void> {
+export async function sendAnniversaryGreeting(emp: CelebrationEmployee): Promise<void> {
   if (await hasCelebrationPostToday(emp.id, "anniversary")) return;
 
   const photoUrl = resolvePhotoUrl(emp.avatar_url);
@@ -294,19 +279,13 @@ export async function sendAnniversaryGreeting(
         }),
       });
     } catch (err) {
-      console.error(
-        `[celebration] Anniversary email failed for ${emp.id}:`,
-        err,
-      );
+      console.error(`[celebration] Anniversary email failed for ${emp.id}:`, err);
     }
   }
 
   const sysUserId = await resolveSystemUserId();
   if (!sysUserId) {
-    console.warn(
-      "[celebration] No system user — skipping feed post for anniversary:",
-      emp.id,
-    );
+    console.warn("[celebration] No system user — skipping feed post for anniversary:", emp.id);
     return;
   }
 
@@ -325,11 +304,7 @@ export async function sendAnniversaryGreeting(
   );
 }
 
-export async function runCelebrationSweep(): Promise<{
-  birthdays: number;
-  anniversaries: number;
-  failed: number;
-}> {
+export async function runCelebrationSweep(): Promise<{ birthdays: number; anniversaries: number; failed: number }> {
   let birthdays = 0;
   let anniversaries = 0;
   let failed = 0;
@@ -355,10 +330,7 @@ export async function runCelebrationSweep(): Promise<{
       anniversaries++;
     } catch (err) {
       failed++;
-      console.error(
-        `[celebration] Anniversary sweep failed for ${emp.id}:`,
-        err,
-      );
+      console.error(`[celebration] Anniversary sweep failed for ${emp.id}:`, err);
     }
   }
 

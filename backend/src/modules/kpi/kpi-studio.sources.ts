@@ -31,17 +31,13 @@
  * external-db.service.ts's pools. Nothing here writes to a source.
  */
 
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
-import type { Pool as MysqlPool } from "mysql2/promise";
-import { assertSafeIdentifier } from "../integration-hub/adapters/databaseAdapter.js";
-import { getNamedPool } from "./kpi-studio.pools.js";
-import { getPoolForKey } from "../external-db/external-db.service.js";
-import {
-  fetchSheetCsv,
-  parseSheetDate,
-  parseSheetNumber,
-} from "./kpi-studio.gsheet.js";
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import type { Pool as MysqlPool } from 'mysql2/promise';
+import { assertSafeIdentifier } from '../integration-hub/adapters/databaseAdapter.js';
+import { getNamedPool } from './kpi-studio.pools.js';
+import { getPoolForKey } from '../external-db/external-db.service.js';
+import { fetchSheetCsv, parseSheetDate, parseSheetNumber } from './kpi-studio.gsheet.js';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -59,23 +55,14 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 export interface FieldFilter {
   column: string;
   op:
-    | "eq"
-    | "ne"
-    | "gt"
-    | "gte"
-    | "lt"
-    | "lte"
-    | "in"
-    | "is_null"
-    | "is_not_null"
+    | "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "is_null" | "is_not_null"
     /**
      * Text present, or absent. A free-text column records "nothing to say" as an
      * empty string about as often as NULL, so is_null alone answers half the
      * question — and `ne ''` cannot express the other half, because a filter with
      * an empty value is refused as a likely mistake, which it usually is.
      */
-    | "is_blank"
-    | "is_not_blank";
+    | "is_blank" | "is_not_blank";
   value?: string | number | Array<string | number> | null;
 }
 
@@ -126,19 +113,17 @@ export interface DataSourceConfig {
    *             this system's own operational tables, which are keyed by employee
    *             and carry no process column
    */
-  process_key_kind?: "none" | "constant" | "column" | "employee" | null;
+  process_key_kind?: 'none' | 'constant' | 'column' | 'employee' | null;
   process_key_column?: string | null;
   process_key_value?: string | null;
   process_id?: string | null;
 }
 
 /** JSON columns arrive parsed or as text depending on driver version. Normalise once, here. */
-export function readConfigJson(
-  source: DataSourceConfig,
-): Record<string, unknown> {
+export function readConfigJson(source: DataSourceConfig): Record<string, unknown> {
   const raw = source.config_json;
   if (!raw) return {};
-  if (typeof raw === "string") {
+  if (typeof raw === 'string') {
     try {
       return JSON.parse(raw) as Record<string, unknown>;
     } catch {
@@ -166,7 +151,7 @@ export interface SourceReadResult {
 const dayKey = (employeeId: string, date: string) => `${employeeId}|${date}`;
 
 function toNumberOrNull(raw: unknown): number | null {
-  if (raw === null || raw === undefined || raw === "") return null;
+  if (raw === null || raw === undefined || raw === '') return null;
   if (raw instanceof Date) return raw.getTime();
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : null;
@@ -175,7 +160,7 @@ function toNumberOrNull(raw: unknown): number | null {
 function toDateString(raw: unknown): string | null {
   if (!raw) return null;
   if (raw instanceof Date) {
-    const pad = (n: number) => String(n).padStart(2, "0");
+    const pad = (n: number) => String(n).padStart(2, '0');
     return `${raw.getFullYear()}-${pad(raw.getMonth() + 1)}-${pad(raw.getDate())}`;
   }
   const text = String(raw);
@@ -191,15 +176,8 @@ function toDateString(raw: unknown): string | null {
  * been written by an older version of that function or edited directly in the database.
  */
 const FILTER_OPS: Partial<Record<FieldFilter["op"], string>> = {
-  eq: "=",
-  ne: "<>",
-  gt: ">",
-  gte: ">=",
-  lt: "<",
-  lte: "<=",
-  in: "IN",
-  is_null: "IS NULL",
-  is_not_null: "IS NOT NULL",
+  eq: "=", ne: "<>", gt: ">", gte: ">=", lt: "<", lte: "<=",
+  in: "IN", is_null: "IS NULL", is_not_null: "IS NOT NULL",
 };
 
 function parseFilters(raw: SourceField["filter_json"]): FieldFilter[] {
@@ -214,8 +192,7 @@ function parseFilters(raw: SourceField["filter_json"]): FieldFilter[] {
       throw new Error("Field filter is not readable JSON");
     }
   }
-  if (!Array.isArray(parsed))
-    throw new Error("Field filter must be a list of conditions");
+  if (!Array.isArray(parsed)) throw new Error("Field filter must be a list of conditions");
   return parsed as FieldFilter[];
 }
 
@@ -238,18 +215,14 @@ function parseFilters(raw: SourceField["filter_json"]): FieldFilter[] {
 function compileFieldFilters(
   filters: readonly FieldFilter[],
   alias: string,
-  q = "",
+  q = '',
 ): { sql: string; params: unknown[] } {
   const conds: string[] = [];
   const params: unknown[] = [];
 
   for (const filter of filters) {
-    if (!filter?.column)
-      throw new Error(`A filter on field ${alias} names no column`);
-    const column = assertSafeIdentifier(
-      filter.column,
-      `filter column on ${alias}`,
-    );
+    if (!filter?.column) throw new Error(`A filter on field ${alias} names no column`);
+    const column = assertSafeIdentifier(filter.column, `filter column on ${alias}`);
     // Handled before the operator table is consulted: each of these renders two
     // conditions rather than a single infix operator, so it has no entry there.
     if (filter.op === "is_blank" || filter.op === "is_not_blank") {
@@ -278,17 +251,14 @@ function compileFieldFilters(
 
     if (filter.op === "in") {
       const list = Array.isArray(filter.value) ? filter.value : [];
-      if (!list.length)
-        throw new Error(`The "in" filter on field ${alias} has no values`);
+      if (!list.length) throw new Error(`The "in" filter on field ${alias} has no values`);
       conds.push(`${q}\`${column}\` IN (${list.map(() => "?").join(",")})`);
       params.push(...list);
       continue;
     }
 
     if (filter.value === undefined || filter.value === null) {
-      throw new Error(
-        `The "${filter.op}" filter on field ${alias} has no value`,
-      );
+      throw new Error(`The "${filter.op}" filter on field ${alias} has no value`);
     }
     conds.push(`${q}\`${column}\` ${op} ?`);
     params.push(filter.value);
@@ -299,30 +269,28 @@ function compileFieldFilters(
 
 function buildFieldSelect(
   fields: readonly SourceField[],
-  q = "",
+  q = '',
 ): { sql: string; names: string[]; params: unknown[] } {
   const parts: string[] = [];
   const names: string[] = [];
   const params: unknown[] = [];
 
   for (const field of fields) {
-    const alias = assertSafeIdentifier(field.field_name, "field name");
+    const alias = assertSafeIdentifier(field.field_name, 'field name');
     let expression = field.source_expression?.trim();
 
     const filters = parseFilters(field.filter_json);
 
     if (!expression) {
       if (!field.source_column) continue;
-      const column = assertSafeIdentifier(field.source_column, "source column");
-      const aggregate = String(field.aggregate_fn ?? "SUM").toUpperCase();
-      const allowed = ["SUM", "AVG", "COUNT", "MIN", "MAX", "NONE"];
+      const column = assertSafeIdentifier(field.source_column, 'source column');
+      const aggregate = String(field.aggregate_fn ?? 'SUM').toUpperCase();
+      const allowed = ['SUM', 'AVG', 'COUNT', 'MIN', 'MAX', 'NONE'];
       if (!allowed.includes(aggregate)) {
-        throw new Error(
-          `Unsupported aggregate "${aggregate}" on field ${alias}`,
-        );
+        throw new Error(`Unsupported aggregate "${aggregate}" on field ${alias}`);
       }
 
-      if (filters.length && aggregate !== "NONE") {
+      if (filters.length && aggregate !== 'NONE') {
         // AGG(CASE WHEN <filter> THEN col END) — the same shape the hand-written
         // inbound-ops metrics use, which is how AL%/SL%/Abn% become configurable
         // rather than code. No ELSE branch: when nothing matches the answer is
@@ -332,25 +300,17 @@ function buildFieldSelect(
         expression = `${aggregate}(CASE WHEN ${compiled.sql} THEN ${q}\`${column}\` END)`;
         params.push(...compiled.params);
       } else if (filters.length) {
-        throw new Error(
-          `Field ${alias} has filters but no aggregate to apply them inside`,
-        );
+        throw new Error(`Field ${alias} has filters but no aggregate to apply them inside`);
       } else {
-        expression =
-          aggregate === "NONE"
-            ? `${q}\`${column}\``
-            : `${aggregate}(${q}\`${column}\`)`;
+        expression = aggregate === 'NONE' ? `${q}\`${column}\`` : `${aggregate}(${q}\`${column}\`)`;
       }
     } else {
       if (filters.length) {
-        throw new Error(
-          `Field ${alias} has both a source expression and filters; use one or the other`,
-        );
+        throw new Error(`Field ${alias} has both a source expression and filters; use one or the other`);
       }
       // An expression from the database is trusted only as far as its shape: aggregate over a
       // single backticked or bare identifier. Anything else is rejected rather than executed.
-      const shape =
-        /^(?:(SUM|AVG|COUNT|MIN|MAX)\s*\(\s*`?[A-Za-z_][A-Za-z0-9_]*`?\s*\)|`?[A-Za-z_][A-Za-z0-9_]*`?)$/i;
+      const shape = /^(?:(SUM|AVG|COUNT|MIN|MAX)\s*\(\s*`?[A-Za-z_][A-Za-z0-9_]*`?\s*\)|`?[A-Za-z_][A-Za-z0-9_]*`?)$/i;
       if (!shape.test(expression)) {
         throw new Error(`Field ${alias} has an unsupported source expression`);
       }
@@ -360,8 +320,7 @@ function buildFieldSelect(
       if (q) {
         expression = expression.replace(
           /`?([A-Za-z_][A-Za-z0-9_]*)`?(?![A-Za-z0-9_(])/,
-          (whole, name) =>
-            /^(SUM|AVG|COUNT|MIN|MAX)$/i.test(name) ? whole : `${q}\`${name}\``,
+          (whole, name) => (/^(SUM|AVG|COUNT|MIN|MAX)$/i.test(name) ? whole : `${q}\`${name}\``),
         );
       }
     }
@@ -370,9 +329,8 @@ function buildFieldSelect(
     names.push(alias);
   }
 
-  if (!parts.length)
-    throw new Error("This data source has no usable fields configured yet");
-  return { sql: parts.join(", "), names, params };
+  if (!parts.length) throw new Error('This data source has no usable fields configured yet');
+  return { sql: parts.join(', '), names, params };
 }
 
 /**
@@ -382,12 +340,8 @@ function buildFieldSelect(
  * batched lookup rather than per row: a month of dialer data for 300 agents is ~9,000 rows and a
  * per-row lookup would be 9,000 queries.
  */
-async function buildEmployeeCodeMap(
-  codes: readonly string[],
-): Promise<Map<string, string>> {
-  const unique = [
-    ...new Set(codes.map((code) => String(code).trim()).filter(Boolean)),
-  ];
+async function buildEmployeeCodeMap(codes: readonly string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(codes.map((code) => String(code).trim()).filter(Boolean))];
   if (!unique.length) return new Map();
 
   const map = new Map<string, string>();
@@ -395,7 +349,7 @@ async function buildEmployeeCodeMap(
   for (let index = 0; index < unique.length; index += CHUNK) {
     const chunk = unique.slice(index, index + CHUNK);
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, employee_code FROM employees WHERE employee_code IN (${chunk.map(() => "?").join(",")})`,
+      `SELECT id, employee_code FROM employees WHERE employee_code IN (${chunk.map(() => '?').join(',')})`,
       chunk,
     );
     for (const row of rows as any[]) {
@@ -416,14 +370,13 @@ async function readManualValues(
   dateTo: string,
 ): Promise<SourceReadResult> {
   const fieldNames = fields.map((field) => field.field_name);
-  if (!fieldNames.length || !employeeIds.length)
-    return { values: new Map(), rowsRead: 0 };
+  if (!fieldNames.length || !employeeIds.length) return { values: new Map(), rowsRead: 0 };
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_id, field_name, value_date, field_value
        FROM kpi_studio_manual_value
-      WHERE employee_id IN (${employeeIds.map(() => "?").join(",")})
-        AND field_name IN (${fieldNames.map(() => "?").join(",")})
+      WHERE employee_id IN (${employeeIds.map(() => '?').join(',')})
+        AND field_name IN (${fieldNames.map(() => '?').join(',')})
         AND value_date BETWEEN ? AND ?
         AND superseded_by_batch_id IS NULL`,
     [...employeeIds, ...fieldNames, dateFrom, dateTo],
@@ -435,9 +388,7 @@ async function readManualValues(
     if (!date) continue;
     const key = dayKey(String(row.employee_id), date);
     if (!values.has(key)) values.set(key, new Map());
-    values
-      .get(key)!
-      .set(String(row.field_name), toNumberOrNull(row.field_value));
+    values.get(key)!.set(String(row.field_name), toNumberOrNull(row.field_value));
   }
 
   return { values, rowsRead: (rows as any[]).length };
@@ -459,37 +410,18 @@ export function buildQueryPlan(
   dateFrom: string,
   dateTo: string,
 ): QueryPlan {
-  if (!source.source_object)
-    throw new Error(
-      `Data source ${source.source_code} has no table configured`,
-    );
-  if (!source.employee_key_column)
-    throw new Error(
-      `Data source ${source.source_code} has no employee column configured`,
-    );
-  if (!source.date_column)
-    throw new Error(
-      `Data source ${source.source_code} has no date column configured`,
-    );
+  if (!source.source_object) throw new Error(`Data source ${source.source_code} has no table configured`);
+  if (!source.employee_key_column) throw new Error(`Data source ${source.source_code} has no employee column configured`);
+  if (!source.date_column) throw new Error(`Data source ${source.source_code} has no date column configured`);
 
-  const table = assertSafeIdentifier(source.source_object, "source table");
-  const keyColumn = assertSafeIdentifier(
-    source.employee_key_column,
-    "employee column",
-  );
-  const dateColumn = assertSafeIdentifier(source.date_column, "date column");
-  const {
-    sql: fieldSelect,
-    names,
-    params: fieldParams,
-  } = buildFieldSelect(fields);
+  const table = assertSafeIdentifier(source.source_object, 'source table');
+  const keyColumn = assertSafeIdentifier(source.employee_key_column, 'employee column');
+  const dateColumn = assertSafeIdentifier(source.date_column, 'date column');
+  const { sql: fieldSelect, names, params: fieldParams } = buildFieldSelect(fields);
 
   // Backtick each dotted part separately: a schema-qualified `db.table` must become
   // `` `db`.`table` ``, not `` `db.table` `` which MySQL reads as one table with a dot in its name.
-  const quotedTable = table
-    .split(".")
-    .map((part) => `\`${part}\``)
-    .join(".");
+  const quotedTable = table.split('.').map((part) => `\`${part}\``).join('.');
 
   // The same date handling the process-grain plan uses. With no declared format this is the bare column, exactly
   // as before. With one (text dates, Excel serials) the column is parsed first: comparing the raw text to a
@@ -512,7 +444,7 @@ export function buildQueryPlan(
     sql,
     params: [...fieldParams, dateFrom, dateTo, ...keys],
     fieldNames: names,
-    keyKind: source.employee_key_kind ?? "employee_code",
+    keyKind: source.employee_key_kind ?? 'employee_code',
   };
 }
 
@@ -541,31 +473,28 @@ export function buildQueryPlan(
  * four-digit years fails silently rather than loudly.
  */
 export const DATE_FORMATS = [
-  "%Y-%m-%d",
-  "%d-%m-%Y",
-  "%d/%m/%Y",
-  "%m/%d/%Y",
-  "%Y/%m/%d",
-  "%d-%b-%Y",
-  "%d %b %Y",
-  "%Y-%m-%d %H:%i:%s",
-  "%d-%m-%Y %H:%i:%s",
+  '%Y-%m-%d',
+  '%d-%m-%Y',
+  '%d/%m/%Y',
+  '%m/%d/%Y',
+  '%Y/%m/%d',
+  '%d-%b-%Y',
+  '%d %b %Y',
+  '%Y-%m-%d %H:%i:%s',
+  '%d-%m-%Y %H:%i:%s',
   // Not a STR_TO_DATE pattern: a day count since the Excel epoch, which is what a
   // spreadsheet exported "as values" leaves behind (db_masmis.neemans_sale_raw and
   // neemans_allocation both store 46174-style numbers in a varchar `date`).
   // dateExpression renders it with DATE_ADD instead. Without this the whole table
   // is unusable as a source: STR_TO_DATE returns NULL for every row, so a month
   // filter matches nothing and the KPI reads as a confident zero.
-  "excel_serial",
+  'excel_serial',
 ] as const;
 
 export type DateFormat = (typeof DATE_FORMATS)[number];
 
 export function isSupportedDateFormat(value: unknown): value is DateFormat {
-  return (
-    typeof value === "string" &&
-    (DATE_FORMATS as readonly string[]).includes(value)
-  );
+  return typeof value === 'string' && (DATE_FORMATS as readonly string[]).includes(value);
 }
 
 /**
@@ -579,17 +508,13 @@ export function isSupportedDateFormat(value: unknown): value is DateFormat {
  * The format is re-validated here, not trusted from the row, because this value
  * is interpolated. A stored value outside the list is refused rather than run.
  */
-export function dateExpression(
-  dateColumn: string,
-  dateFormat?: string | null,
-  q = "",
-): string {
+export function dateExpression(dateColumn: string, dateFormat?: string | null, q = ''): string {
   const quoted = `${q}\`${dateColumn}\``;
   if (!dateFormat) return quoted;
   if (!isSupportedDateFormat(dateFormat)) {
     throw new Error(`Unsupported date format "${dateFormat}"`);
   }
-  if (dateFormat === "excel_serial") {
+  if (dateFormat === 'excel_serial') {
     // Excel counts days from 1900-01-01 as serial 1 but also treats 1900 as a leap
     // year, so the epoch that reproduces its arithmetic is 1899-12-30. CAST to
     // SIGNED rather than trusting the column: a stray non-numeric yields 0, which
@@ -621,29 +546,21 @@ export function buildProcessQueryPlan(
    */
   processIdOverride?: string | null,
 ): { sql: string; params: unknown[]; fieldNames: string[] } {
-  if (!source.source_object)
-    throw new Error(
-      `Data source ${source.source_code} has no table configured`,
-    );
-  if (!source.date_column)
-    throw new Error(
-      `Data source ${source.source_code} has no date column configured`,
-    );
+  if (!source.source_object) throw new Error(`Data source ${source.source_code} has no table configured`);
+  if (!source.date_column) throw new Error(`Data source ${source.source_code} has no date column configured`);
 
-  const kind = source.process_key_kind ?? "none";
-  if (kind === "none") {
+  const kind = source.process_key_kind ?? 'none';
+  if (kind === 'none') {
     throw new Error(
       `Data source ${source.source_code} is not mapped to a process. Set it to the client's own database (constant), name the column that identifies the client (column), or look the process up from the employee (employee), before using it for a process metric.`,
     );
   }
   if (!source.process_id) {
-    throw new Error(
-      `Data source ${source.source_code} has a process mapping but no process selected`,
-    );
+    throw new Error(`Data source ${source.source_code} has a process mapping but no process selected`);
   }
 
-  const table = assertSafeIdentifier(source.source_object, "source table");
-  const dateColumn = assertSafeIdentifier(source.date_column, "date column");
+  const table = assertSafeIdentifier(source.source_object, 'source table');
+  const dateColumn = assertSafeIdentifier(source.date_column, 'date column');
 
   // Most of this system's operational tables carry no process column at all:
   // cosec_daily_agg, wfm_roster_assignment, biometric_attendance_log and the WFH
@@ -654,56 +571,37 @@ export function buildProcessQueryPlan(
   // Once a second table is in the query every column has to say which one it came
   // from — `status` exists on plenty of both — so the source's own columns are
   // qualified throughout.
-  const joinsEmployees = kind === "employee";
-  const q = joinsEmployees ? "s." : "";
+  const joinsEmployees = kind === 'employee';
+  const q = joinsEmployees ? 's.' : '';
 
   // Everywhere the date is used must go through the SAME expression. Filtering on
   // a parsed date while grouping by the raw text would bucket rows under strings
   // like "01-01-2025" and silently produce one group per distinct spelling.
-  const dateExpr = dateExpression(
-    dateColumn,
-    (source as { date_format?: string | null }).date_format,
-    q,
-  );
-  const {
-    sql: fieldSelect,
-    names,
-    params: fieldParams,
-  } = buildFieldSelect(fields, q);
-  const quotedTable = table
-    .split(".")
-    .map((part) => `\`${part}\``)
-    .join(".");
+  const dateExpr = dateExpression(dateColumn, (source as { date_format?: string | null }).date_format, q);
+  const { sql: fieldSelect, names, params: fieldParams } = buildFieldSelect(fields, q);
+  const quotedTable = table.split('.').map((part) => `\`${part}\``).join('.');
 
-  const where = [
-    `${dateExpr} >= ?`,
-    `${dateExpr} < DATE_ADD(?, INTERVAL 1 DAY)`,
-  ];
+  const where = [`${dateExpr} >= ?`, `${dateExpr} < DATE_ADD(?, INTERVAL 1 DAY)`];
   // Field params come FIRST: a filtered field compiles to a CASE inside the
   // SELECT list, which MySQL binds before the WHERE clause. Getting this order
   // wrong silently shifts every placeholder and produces a plausible-looking
   // wrong answer rather than an error.
   const params: unknown[] = [...fieldParams, dateFrom, dateTo];
 
-  if (kind === "column") {
+  if (kind === 'column') {
     if (!source.process_key_column) {
-      throw new Error(
-        `Data source ${source.source_code} maps by column but no column is named`,
-      );
+      throw new Error(`Data source ${source.source_code} maps by column but no column is named`);
     }
-    const keyColumn = assertSafeIdentifier(
-      source.process_key_column,
-      "process key column",
-    );
+    const keyColumn = assertSafeIdentifier(source.process_key_column, 'process key column');
     // The identifier is validated; the VALUE is bound, because it comes from
     // configuration a user typed and is data, not SQL.
     where.push(`${q}\`${keyColumn}\` = ?`);
-    params.push(source.process_key_value ?? "");
+    params.push(source.process_key_value ?? '');
   }
 
-  let join = "";
+  let join = '';
   if (joinsEmployees) {
-    if (source.source_type === "integration_connector") {
+    if (source.source_type === 'integration_connector') {
       // employees lives in this application's database. A connector pool points
       // at somebody else's server, where the join would simply not resolve.
       throw new Error(
@@ -716,14 +614,10 @@ export function buildProcessQueryPlan(
         `Data source ${source.source_code} looks the process up from the employee but names no employee column`,
       );
     }
-    const employeeColumn = assertSafeIdentifier(
-      source.employee_key_column,
-      "employee key column",
-    );
+    const employeeColumn = assertSafeIdentifier(source.employee_key_column, 'employee key column');
     // Only these two, and both are literals in this file — the join target is
     // never taken from configuration.
-    const employeeSide =
-      source.employee_key_kind === "employee_id" ? "id" : "employee_code";
+    const employeeSide = source.employee_key_kind === 'employee_id' ? 'id' : 'employee_code';
     join = `JOIN employees e ON e.\`${employeeSide}\` = s.\`${employeeColumn}\``;
     const readingFor = processIdOverride ?? source.process_id;
     if (!readingFor) {
@@ -732,16 +626,16 @@ export function buildProcessQueryPlan(
           `was given to read`,
       );
     }
-    where.push("e.process_id = ?");
+    where.push('e.process_id = ?');
     params.push(readingFor);
   }
 
   const sql = `
     SELECT DATE(${dateExpr}) AS __score_date,
            ${fieldSelect}
-      FROM ${quotedTable}${joinsEmployees ? " s" : ""}
+      FROM ${quotedTable}${joinsEmployees ? ' s' : ''}
       ${join}
-     WHERE ${where.join(" AND ")}
+     WHERE ${where.join(' AND ')}
      GROUP BY DATE(${dateExpr})
   `;
 
@@ -767,54 +661,31 @@ export function buildProcessEmployeeBreakdownPlan(
   dateTo: string,
   processId: string,
 ): { sql: string; params: unknown[]; fieldNames: string[] } {
-  if (!source.source_object)
-    throw new Error(
-      `Data source ${source.source_code} has no table configured`,
-    );
-  if (!source.date_column)
-    throw new Error(
-      `Data source ${source.source_code} has no date column configured`,
-    );
-  if ((source.process_key_kind ?? "none") !== "employee") {
+  if (!source.source_object) throw new Error(`Data source ${source.source_code} has no table configured`);
+  if (!source.date_column) throw new Error(`Data source ${source.source_code} has no date column configured`);
+  if ((source.process_key_kind ?? 'none') !== 'employee') {
     throw new Error(
       `Data source ${source.source_code} is not attributed to individual employees, so it has no ` +
         `analyst-level breakdown to show — only a whole-process total.`,
     );
   }
-  if (source.source_type === "integration_connector") {
+  if (source.source_type === 'integration_connector') {
     throw new Error(
       `Data source ${source.source_code} looks the process up from the employee, which only works ` +
         `for a table in this system's own database.`,
     );
   }
   if (!source.employee_key_column) {
-    throw new Error(
-      `Data source ${source.source_code} names no employee column to break down by`,
-    );
+    throw new Error(`Data source ${source.source_code} names no employee column to break down by`);
   }
 
-  const table = assertSafeIdentifier(source.source_object, "source table");
-  const dateColumn = assertSafeIdentifier(source.date_column, "date column");
-  const employeeColumn = assertSafeIdentifier(
-    source.employee_key_column,
-    "employee key column",
-  );
-  const employeeSide =
-    source.employee_key_kind === "employee_id" ? "id" : "employee_code";
-  const dateExpr = dateExpression(
-    dateColumn,
-    (source as { date_format?: string | null }).date_format,
-    "s.",
-  );
-  const {
-    sql: fieldSelect,
-    names,
-    params: fieldParams,
-  } = buildFieldSelect(fields, "s.");
-  const quotedTable = table
-    .split(".")
-    .map((part) => `\`${part}\``)
-    .join(".");
+  const table = assertSafeIdentifier(source.source_object, 'source table');
+  const dateColumn = assertSafeIdentifier(source.date_column, 'date column');
+  const employeeColumn = assertSafeIdentifier(source.employee_key_column, 'employee key column');
+  const employeeSide = source.employee_key_kind === 'employee_id' ? 'id' : 'employee_code';
+  const dateExpr = dateExpression(dateColumn, (source as { date_format?: string | null }).date_format, 's.');
+  const { sql: fieldSelect, names, params: fieldParams } = buildFieldSelect(fields, 's.');
+  const quotedTable = table.split('.').map((part) => `\`${part}\``).join('.');
 
   const sql = `
     SELECT e.id AS __employee_id, e.employee_code AS __employee_code,
@@ -828,11 +699,7 @@ export function buildProcessEmployeeBreakdownPlan(
      GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.designation_id
   `;
 
-  return {
-    sql,
-    params: [...fieldParams, dateFrom, dateTo, processId],
-    fieldNames: names,
-  };
+  return { sql, params: [...fieldParams, dateFrom, dateTo, processId], fieldNames: names };
 }
 
 /** date (YYYY-MM-DD) -> field name -> value, for one process. */
@@ -864,45 +731,31 @@ export async function readProcessGrainValues(
 
   let plan: ReturnType<typeof buildProcessQueryPlan>;
   try {
-    plan = buildProcessQueryPlan(
-      source,
-      fields,
-      dateFrom,
-      dateTo,
-      processIdOverride,
-    );
+    plan = buildProcessQueryPlan(source, fields, dateFrom, dateTo, processIdOverride);
   } catch (err) {
     return { values, rowsRead: 0, error: (err as Error).message };
   }
 
   let rows: Record<string, unknown>[];
   try {
-    if (source.source_type === "named_pool") {
+    if (source.source_type === 'named_pool') {
       // A database this codebase already connects to, named rather than
       // re-credentialed. The pool module owns the secret; nothing is copied.
       if (!source.integration_key) {
-        return {
-          values,
-          rowsRead: 0,
-          error: `Data source ${source.source_code} names no database`,
-        };
+        return { values, rowsRead: 0, error: `Data source ${source.source_code} names no database` };
       }
       const pool = await getNamedPool(source.integration_key);
       const [result] = await pool.query(plan.sql, plan.params);
       rows = result as Record<string, unknown>[];
-    } else if (source.source_type === "integration_connector") {
+    } else if (source.source_type === 'integration_connector') {
       if (!source.integration_key) {
-        return {
-          values,
-          rowsRead: 0,
-          error: `Data source ${source.source_code} has no connector selected`,
-        };
+        return { values, rowsRead: 0, error: `Data source ${source.source_code} has no connector selected` };
       }
       const pool = await getPoolForKey(source.integration_key);
       // Same duck-type guard the employee path uses: the SQL above is MySQL
       // dialect, and a SQL Server pool would fail deep in the driver instead of
       // here with a message somebody can act on.
-      if (typeof (pool as MysqlPool).execute !== "function") {
+      if (typeof (pool as MysqlPool).execute !== 'function') {
         return {
           values,
           rowsRead: 0,
@@ -969,17 +822,17 @@ async function readLocalQuery(
   dateFrom: string,
   dateTo: string,
 ): Promise<SourceReadResult> {
-  const keyKind = source.employee_key_kind ?? "employee_code";
+  const keyKind = source.employee_key_kind ?? 'employee_code';
 
   // The query is keyed on whatever the source table stores, so codes are resolved BEFORE the
   // query and mapped back after.
   let keys: string[];
   let codeToId: Map<string, string> | null = null;
-  if (keyKind === "employee_id") {
+  if (keyKind === 'employee_id') {
     keys = [...employeeIds];
   } else {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, employee_code FROM employees WHERE id IN (${employeeIds.map(() => "?").join(",")})`,
+      `SELECT id, employee_code FROM employees WHERE id IN (${employeeIds.map(() => '?').join(',')})`,
       [...employeeIds],
     );
     codeToId = new Map();
@@ -995,8 +848,10 @@ async function readLocalQuery(
   const plan = buildQueryPlan(source, fields, keys, dateFrom, dateTo);
   const [rows] = await db.execute<RowDataPacket[]>(plan.sql, plan.params);
 
-  const values = collectQueryRows(rows as any[], plan.fieldNames, (key) =>
-    keyKind === "employee_id" ? key : codeToId?.get(key.toUpperCase()),
+  const values = collectQueryRows(
+    rows as any[],
+    plan.fieldNames,
+    (key) => (keyKind === 'employee_id' ? key : codeToId?.get(key.toUpperCase())),
   );
 
   return { values, rowsRead: (rows as any[]).length };
@@ -1010,17 +865,13 @@ async function readConnectorQuery(
   dateTo: string,
 ): Promise<SourceReadResult> {
   if (!source.integration_key) {
-    return {
-      values: new Map(),
-      rowsRead: 0,
-      error: `Data source ${source.source_code} has no integration key`,
-    };
+    return { values: new Map(), rowsRead: 0, error: `Data source ${source.source_code} has no integration key` };
   }
 
   // An external source almost always keys on an agent code, so resolve this system's ids to codes
   // before querying it.
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_code FROM employees WHERE id IN (${employeeIds.map(() => "?").join(",")})`,
+    `SELECT id, employee_code FROM employees WHERE id IN (${employeeIds.map(() => '?').join(',')})`,
     [...employeeIds],
   );
   const codeToId = new Map<string, string>();
@@ -1036,16 +887,12 @@ async function readConnectorQuery(
   try {
     // A named pool is already a MySQL pool from this codebase, so it skips the
     // dialect guard below — there is no SQL Server behind any of them.
-    if (source.source_type === "named_pool") {
-      const named = await getNamedPool(String(source.integration_key ?? ""));
+    if (source.source_type === 'named_pool') {
+      const named = await getNamedPool(String(source.integration_key ?? ''));
       const [result] = await named.query(plan.sql, plan.params);
-      const namedRows = (Array.isArray(result) ? result : []) as Array<
-        Record<string, unknown>
-      >;
+      const namedRows = (Array.isArray(result) ? result : []) as Array<Record<string, unknown>>;
       return {
-        values: collectQueryRows(namedRows, plan.fieldNames, (key) =>
-          codeToId.get(key.toUpperCase()),
-        ),
+        values: collectQueryRows(namedRows, plan.fieldNames, (key) => codeToId.get(key.toUpperCase())),
         rowsRead: namedRows.length,
       };
     }
@@ -1054,7 +901,7 @@ async function readConnectorQuery(
     // DATE_ADD, which SQL Server rejects; claiming to support MSSQL and then emitting MySQL syntax
     // would fail at query time with a confusing error instead of at configuration time with a
     // clear one.
-    if (typeof (pool as MysqlPool).execute !== "function") {
+    if (typeof (pool as MysqlPool).execute !== 'function') {
       return {
         values: new Map(),
         rowsRead: 0,
@@ -1066,12 +913,8 @@ async function readConnectorQuery(
     // returns. The rows are shaped by collectQueryRows immediately below, which validates each
     // field it reads, so the cast buys nothing that is not re-checked.
     const [rows] = await (pool as MysqlPool).query(plan.sql, plan.params);
-    const rowArray = (Array.isArray(rows) ? rows : []) as Array<
-      Record<string, unknown>
-    >;
-    const values = collectQueryRows(rowArray, plan.fieldNames, (key) =>
-      codeToId.get(key.toUpperCase()),
-    );
+    const rowArray = (Array.isArray(rows) ? rows : []) as Array<Record<string, unknown>>;
+    const values = collectQueryRows(rowArray, plan.fieldNames, (key) => codeToId.get(key.toUpperCase()));
     return { values, rowsRead: rowArray.length };
   } catch (error) {
     // Returned rather than thrown. One unreachable external system must not fail the whole
@@ -1106,57 +949,32 @@ async function readGoogleSheet(
   dateTo: string,
 ): Promise<SourceReadResult> {
   const config = readConfigJson(source);
-  const csvUrl = typeof config.csv_url === "string" ? config.csv_url : "";
+  const csvUrl = typeof config.csv_url === 'string' ? config.csv_url : '';
   if (!csvUrl) {
-    return {
-      values: new Map(),
-      rowsRead: 0,
-      error: `Sheet source ${source.source_code} has no published CSV link`,
-    };
+    return { values: new Map(), rowsRead: 0, error: `Sheet source ${source.source_code} has no published CSV link` };
   }
   if (!source.employee_key_column) {
-    return {
-      values: new Map(),
-      rowsRead: 0,
-      error: `Sheet source ${source.source_code} does not say which column holds the employee code`,
-    };
+    return { values: new Map(), rowsRead: 0, error: `Sheet source ${source.source_code} does not say which column holds the employee code` };
   }
   if (!source.date_column) {
-    return {
-      values: new Map(),
-      rowsRead: 0,
-      error: `Sheet source ${source.source_code} does not say which column holds the date`,
-    };
+    return { values: new Map(), rowsRead: 0, error: `Sheet source ${source.source_code} does not say which column holds the date` };
   }
 
   const sheet = await fetchSheetCsv(csvUrl);
-  if (sheet.error)
-    return { values: new Map(), rowsRead: 0, error: sheet.error };
+  if (sheet.error) return { values: new Map(), rowsRead: 0, error: sheet.error };
 
   // Header names in a sheet are typed by humans, so match them case- and spacing-insensitively.
-  const normalise = (value: string) =>
-    value.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const headerByNormalised = new Map(
-    sheet.headers.map((header) => [normalise(header), header]),
-  );
-  const resolveHeader = (name: string) =>
-    headerByNormalised.get(normalise(name));
+  const normalise = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const headerByNormalised = new Map(sheet.headers.map((header) => [normalise(header), header]));
+  const resolveHeader = (name: string) => headerByNormalised.get(normalise(name));
 
   const employeeHeader = resolveHeader(source.employee_key_column);
   const dateHeader = resolveHeader(source.date_column);
   if (!employeeHeader) {
-    return {
-      values: new Map(),
-      rowsRead: 0,
-      error: `The sheet has no column called "${source.employee_key_column}". It has: ${sheet.headers.join(", ")}`,
-    };
+    return { values: new Map(), rowsRead: 0, error: `The sheet has no column called "${source.employee_key_column}". It has: ${sheet.headers.join(', ')}` };
   }
   if (!dateHeader) {
-    return {
-      values: new Map(),
-      rowsRead: 0,
-      error: `The sheet has no column called "${source.date_column}". It has: ${sheet.headers.join(", ")}`,
-    };
+    return { values: new Map(), rowsRead: 0, error: `The sheet has no column called "${source.date_column}". It has: ${sheet.headers.join(', ')}` };
   }
 
   // A field's sheet column is its source_column when set, otherwise its own name.
@@ -1171,13 +989,13 @@ async function readGoogleSheet(
     return {
       values: new Map(),
       rowsRead: 0,
-      error: `None of this source's fields (${fields.map((f) => f.field_name).join(", ")}) match a column in the sheet. It has: ${sheet.headers.join(", ")}`,
+      error: `None of this source's fields (${fields.map((f) => f.field_name).join(', ')}) match a column in the sheet. It has: ${sheet.headers.join(', ')}`,
     };
   }
 
   // Employee codes are what a sheet holds; map to ids for the caller.
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_code FROM employees WHERE id IN (${employeeIds.map(() => "?").join(",")})`,
+    `SELECT id, employee_code FROM employees WHERE id IN (${employeeIds.map(() => '?').join(',')})`,
     [...employeeIds],
   );
   const idByCode = new Map<string, string>();
@@ -1186,10 +1004,7 @@ async function readGoogleSheet(
   }
 
   const aggregateByField = new Map(
-    fields.map((field) => [
-      field.field_name,
-      String(field.aggregate_fn ?? "SUM").toUpperCase(),
-    ]),
+    fields.map((field) => [field.field_name, String(field.aggregate_fn ?? 'SUM').toUpperCase()]),
   );
 
   // Collected first, aggregated after: a per-day bucket may receive many sheet rows.
@@ -1233,7 +1048,7 @@ async function readGoogleSheet(
         dayValues.set(field.field_name, null);
         continue;
       }
-      const aggregate = aggregateByField.get(field.field_name) ?? "SUM";
+      const aggregate = aggregateByField.get(field.field_name) ?? 'SUM';
       dayValues.set(field.field_name, aggregateSamples(samples, aggregate));
     }
     values.set(key, dayValues);
@@ -1245,28 +1060,23 @@ async function readGoogleSheet(
     // Not an error: the run continues. But a field whose column has vanished from the sheet is the
     // single most likely cause of a KPI silently going empty, so it is reported.
     error: missingFields.length
-      ? `These fields have no matching column in the sheet and were skipped: ${missingFields.join(", ")}`
+      ? `These fields have no matching column in the sheet and were skipped: ${missingFields.join(', ')}`
       : undefined,
   };
 }
 
-function aggregateSamples(
-  samples: readonly number[],
-  aggregate: string,
-): number | null {
+function aggregateSamples(samples: readonly number[], aggregate: string): number | null {
   if (!samples.length) return null;
   switch (aggregate) {
-    case "AVG":
-      return (
-        samples.reduce((total, value) => total + value, 0) / samples.length
-      );
-    case "COUNT":
+    case 'AVG':
+      return samples.reduce((total, value) => total + value, 0) / samples.length;
+    case 'COUNT':
       return samples.length;
-    case "MIN":
+    case 'MIN':
       return Math.min(...samples);
-    case "MAX":
+    case 'MAX':
       return Math.max(...samples);
-    case "NONE":
+    case 'NONE':
       // "As-is" means the value for the day, so the last row wins rather than being summed.
       return samples[samples.length - 1];
     default:
@@ -1285,57 +1095,31 @@ export async function readSourceValues(
   dateTo: string,
 ): Promise<SourceReadResult> {
   if (!ISO_DATE.test(dateFrom) || !ISO_DATE.test(dateTo)) {
-    throw new Error("Dates must be YYYY-MM-DD");
+    throw new Error('Dates must be YYYY-MM-DD');
   }
   if (!employeeIds.length) return { values: new Map(), rowsRead: 0 };
 
   try {
     switch (source.source_type) {
-      case "manual":
-      case "upload":
+      case 'manual':
+      case 'upload':
         return await readManualValues(fields, employeeIds, dateFrom, dateTo);
-      case "local_query":
-        return await readLocalQuery(
-          source,
-          fields,
-          employeeIds,
-          dateFrom,
-          dateTo,
-        );
-      case "integration_connector":
+      case 'local_query':
+        return await readLocalQuery(source, fields, employeeIds, dateFrom, dateTo);
+      case 'integration_connector':
       // readConnectorQuery already branches on source_type === 'named_pool' internally
       // (it resolves via getNamedPool instead of getPoolForKey) -- this switch just never
       // routed a named_pool source there, so it fell to "Unknown source type" before ever
       // reaching that branch. ONFIDO_AGENT_DAILY (employee-grain) hit this live 2026-09-09.
-      case "named_pool":
-        return await readConnectorQuery(
-          source,
-          fields,
-          employeeIds,
-          dateFrom,
-          dateTo,
-        );
-      case "google_sheet_csv":
-        return await readGoogleSheet(
-          source,
-          fields,
-          employeeIds,
-          dateFrom,
-          dateTo,
-        );
+      case 'named_pool':
+        return await readConnectorQuery(source, fields, employeeIds, dateFrom, dateTo);
+      case 'google_sheet_csv':
+        return await readGoogleSheet(source, fields, employeeIds, dateFrom, dateTo);
       default:
-        return {
-          values: new Map(),
-          rowsRead: 0,
-          error: `Unknown source type "${source.source_type}"`,
-        };
+        return { values: new Map(), rowsRead: 0, error: `Unknown source type "${source.source_type}"` };
     }
   } catch (error) {
-    return {
-      values: new Map(),
-      rowsRead: 0,
-      error: error instanceof Error ? error.message : String(error),
-    };
+    return { values: new Map(), rowsRead: 0, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -1376,21 +1160,12 @@ export async function readMergedSourceValues(
   for (const entry of sources) {
     if (!entry.fields.length) continue;
 
-    const read = await readSourceValues(
-      entry.source,
-      entry.fields,
-      employeeIds,
-      dateFrom,
-      dateTo,
-    );
+    const read = await readSourceValues(entry.source, entry.fields, employeeIds, dateFrom, dateTo);
 
     // A sheet read can return values AND a warning (a field whose column vanished), so the failure
     // is recorded without discarding what did come back.
     if (read.error) {
-      failures.push({
-        source_code: entry.source.source_code,
-        error: read.error,
-      });
+      failures.push({ source_code: entry.source.source_code, error: read.error });
     }
     rowsRead += read.rowsRead;
 
@@ -1401,11 +1176,7 @@ export async function readMergedSourceValues(
         const owner = claimedBy.get(fieldName);
         if (owner && owner !== entry.source.source_code) {
           // Reported once per colliding field, not once per employee per day.
-          if (
-            !failures.some((failure) =>
-              failure.error.includes(`"${fieldName}"`),
-            )
-          ) {
+          if (!failures.some((failure) => failure.error.includes(`"${fieldName}"`))) {
             failures.push({
               source_code: entry.source.source_code,
               error: `Field "${fieldName}" is also supplied by ${owner}; ${owner} was used. Rename one of them.`,
@@ -1438,16 +1209,9 @@ export async function readMergedSourceValues(
  */
 async function introspectSheetColumns(
   source: DataSourceConfig,
-): Promise<
-  Array<{
-    column_name: string;
-    data_type: string;
-    is_numeric: boolean;
-    is_date: boolean;
-  }>
-> {
+): Promise<Array<{ column_name: string; data_type: string; is_numeric: boolean; is_date: boolean }>> {
   const config = readConfigJson(source);
-  const csvUrl = typeof config.csv_url === "string" ? config.csv_url : "";
+  const csvUrl = typeof config.csv_url === 'string' ? config.csv_url : '';
   if (!csvUrl) return [];
 
   const sheet = await fetchSheetCsv(csvUrl);
@@ -1457,77 +1221,53 @@ async function introspectSheetColumns(
     const samples = sheet.rows
       .slice(0, 200)
       .map((row) => row[header])
-      .filter((cell) => cell !== undefined && cell !== "");
-    const numeric = samples.filter(
-      (cell) => parseSheetNumber(cell) !== null,
-    ).length;
-    const dates = samples.filter(
-      (cell) => parseSheetDate(cell) !== null,
-    ).length;
+      .filter((cell) => cell !== undefined && cell !== '');
+    const numeric = samples.filter((cell) => parseSheetNumber(cell) !== null).length;
+    const dates = samples.filter((cell) => parseSheetDate(cell) !== null).length;
     const majority = samples.length ? samples.length / 2 : 0;
     // Dates are checked first: an ISO date parses as neither a plain number nor a duration, but a
     // serial-number date would otherwise be offered as a measure.
     const isDate = samples.length > 0 && dates > majority;
     return {
       column_name: header,
-      data_type: isDate ? "date" : numeric > majority ? "number" : "text",
+      data_type: isDate ? 'date' : numeric > majority ? 'number' : 'text',
       is_numeric: samples.length > 0 && numeric > majority && !isDate,
       is_date: isDate,
     };
   });
 }
 
-export async function introspectSourceColumns(
-  source: DataSourceConfig,
-): Promise<
-  Array<{
-    column_name: string;
-    data_type: string;
-    is_numeric: boolean;
-    is_date: boolean;
-  }>
+export async function introspectSourceColumns(source: DataSourceConfig): Promise<
+  Array<{ column_name: string; data_type: string; is_numeric: boolean; is_date: boolean }>
 > {
-  if (source.source_type === "google_sheet_csv")
-    return introspectSheetColumns(source);
+  if (source.source_type === 'google_sheet_csv') return introspectSheetColumns(source);
   if (!source.source_object) return [];
-  const table = assertSafeIdentifier(source.source_object, "source table");
-  const parts = table.split(".");
+  const table = assertSafeIdentifier(source.source_object, 'source table');
+  const parts = table.split('.');
   const tableName = parts[parts.length - 1];
   const schemaName = parts.length > 1 ? parts[0] : null;
 
-  const NUMERIC = [
-    "int",
-    "bigint",
-    "smallint",
-    "tinyint",
-    "mediumint",
-    "decimal",
-    "float",
-    "double",
-    "numeric",
-  ];
-  const DATE = ["date", "datetime", "timestamp"];
+  const NUMERIC = ['int', 'bigint', 'smallint', 'tinyint', 'mediumint', 'decimal', 'float', 'double', 'numeric'];
+  const DATE = ['date', 'datetime', 'timestamp'];
 
   const mapRows = (rows: readonly Record<string, unknown>[]) =>
     rows.map((row) => {
-      const dataType = String(
-        row.DATA_TYPE ?? row.data_type ?? "",
-      ).toLowerCase();
+      const dataType = String(row.DATA_TYPE ?? row.data_type ?? '').toLowerCase();
       return {
-        column_name: String(row.COLUMN_NAME ?? row.column_name ?? ""),
+        column_name: String(row.COLUMN_NAME ?? row.column_name ?? ''),
         data_type: dataType,
         is_numeric: NUMERIC.includes(dataType),
         is_date: DATE.includes(dataType),
       };
     });
 
-  if (source.source_type === "named_pool" && source.integration_key) {
+  if (source.source_type === 'named_pool' && source.integration_key) {
     try {
       const named = await getNamedPool(String(source.integration_key));
       const [rows] = await named.execute<RowDataPacket[]>(
         `SELECT COLUMN_NAME, DATA_TYPE
            FROM INFORMATION_SCHEMA.COLUMNS
-          WHERE TABLE_NAME = ? ${schemaName ? "AND TABLE_SCHEMA = ?" : ""}
+          WHERE TABLE_NAME = ? ${schemaName ? 'AND TABLE_SCHEMA = ?' : ''}
           ORDER BY ORDINAL_POSITION`,
         schemaName ? [tableName, schemaName] : [tableName],
       );
@@ -1538,17 +1278,14 @@ export async function introspectSourceColumns(
     }
   }
 
-  if (
-    source.source_type === "integration_connector" &&
-    source.integration_key
-  ) {
+  if (source.source_type === 'integration_connector' && source.integration_key) {
     try {
       const pool = await getPoolForKey(source.integration_key);
-      if (typeof (pool as MysqlPool).execute !== "function") return [];
+      if (typeof (pool as MysqlPool).execute !== 'function') return [];
       const [rows] = await (pool as MysqlPool).execute<RowDataPacket[]>(
         `SELECT COLUMN_NAME, DATA_TYPE
            FROM INFORMATION_SCHEMA.COLUMNS
-          WHERE TABLE_NAME = ? ${schemaName ? "AND TABLE_SCHEMA = ?" : ""}
+          WHERE TABLE_NAME = ? ${schemaName ? 'AND TABLE_SCHEMA = ?' : ''}
           ORDER BY ORDINAL_POSITION`,
         schemaName ? [tableName, schemaName] : [tableName],
       );
@@ -1563,7 +1300,7 @@ export async function introspectSourceColumns(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COLUMN_NAME, DATA_TYPE
        FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = ${schemaName ? "?" : "DATABASE()"} AND TABLE_NAME = ?
+      WHERE TABLE_SCHEMA = ${schemaName ? '?' : 'DATABASE()'} AND TABLE_NAME = ?
       ORDER BY ORDINAL_POSITION`,
     schemaName ? [schemaName, tableName] : [tableName],
   );
@@ -1586,30 +1323,18 @@ export interface ParsedUpload {
  * .xlsx outright — telling users to re-save as CSV is a workaround for a library that is already
  * installed.
  */
-export async function parseUploadBuffer(
-  buffer: Buffer,
-  fileName: string,
-): Promise<ParsedUpload> {
-  const xlsx = await import("xlsx");
-  const workbook = xlsx.read(buffer, { type: "buffer", cellDates: true });
+export async function parseUploadBuffer(buffer: Buffer, fileName: string): Promise<ParsedUpload> {
+  const xlsx = await import('xlsx');
+  const workbook = xlsx.read(buffer, { type: 'buffer', cellDates: true });
   const sheetName = workbook.SheetNames[0];
   if (!sheetName) throw new Error(`${fileName} has no sheets`);
 
   const sheet = workbook.Sheets[sheetName];
   // defval null, not undefined: a blank cell must survive as an explicit "no value" so the
   // formula engine can tell it apart from a column that was never mapped.
-  const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-    defval: null,
-    raw: false,
-  });
-  const headerRow =
-    xlsx.utils.sheet_to_json<string[]>(sheet, {
-      header: 1,
-      blankrows: false,
-    })[0] ?? [];
-  const headers = (headerRow as unknown[])
-    .map((cell) => String(cell ?? "").trim())
-    .filter(Boolean);
+  const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: null, raw: false });
+  const headerRow = xlsx.utils.sheet_to_json<string[]>(sheet, { header: 1, blankrows: false })[0] ?? [];
+  const headers = (headerRow as unknown[]).map((cell) => String(cell ?? '').trim()).filter(Boolean);
 
   return { headers, rows };
 }
@@ -1626,23 +1351,17 @@ export function suggestColumnMapping(
   headers: readonly string[],
   fields: readonly { field_name: string; display_name?: string | null }[],
 ): Record<string, string | null> {
-  const normalise = (value: string) =>
-    value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const normalise = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
   const byNormalised = new Map<string, string>();
   for (const header of headers) byNormalised.set(normalise(header), header);
 
   const mapping: Record<string, string | null> = {};
   for (const field of fields) {
-    const candidates = [field.field_name, field.display_name ?? ""].filter(
-      Boolean,
-    );
+    const candidates = [field.field_name, field.display_name ?? ''].filter(Boolean);
     let matched: string | null = null;
     for (const candidate of candidates) {
       const hit = byNormalised.get(normalise(candidate));
-      if (hit) {
-        matched = hit;
-        break;
-      }
+      if (hit) { matched = hit; break; }
     }
     mapping[field.field_name] = matched;
   }
@@ -1689,19 +1408,10 @@ export async function commitUploadRows(options: {
 }): Promise<CommitUploadResult> {
   const { rows, columnMapping, employeeColumn, dateColumn } = options;
   const rejections: UploadRowOutcome[] = [];
-  const accepted: Array<{
-    employeeId: string;
-    date: string;
-    field: string;
-    value: number | null;
-  }> = [];
+  const accepted: Array<{ employeeId: string; date: string; field: string; value: number | null }> = [];
 
   const codes = rows
-    .map((row) =>
-      row[employeeColumn] === null || row[employeeColumn] === undefined
-        ? ""
-        : String(row[employeeColumn]).trim(),
-    )
+    .map((row) => (row[employeeColumn] === null || row[employeeColumn] === undefined ? '' : String(row[employeeColumn]).trim()))
     .filter(Boolean);
   const codeMap = await buildEmployeeCodeMap(codes);
 
@@ -1728,19 +1438,14 @@ export async function commitUploadRows(options: {
     const rowNumber = index + 2;
 
     const rawCode = row[employeeColumn];
-    const code =
-      rawCode === null || rawCode === undefined ? "" : String(rawCode).trim();
+    const code = rawCode === null || rawCode === undefined ? '' : String(rawCode).trim();
     if (!code) {
-      rejections.push({ rowNumber, reason: "No employee code" });
+      rejections.push({ rowNumber, reason: 'No employee code' });
       return;
     }
     const employeeId = codeMap.get(code.toUpperCase());
     if (!employeeId) {
-      rejections.push({
-        rowNumber,
-        employeeCode: code,
-        reason: `No employee with code ${code}`,
-      });
+      rejections.push({ rowNumber, employeeCode: code, reason: `No employee with code ${code}` });
       return;
     }
     if (outOfScope.has(employeeId)) {
@@ -1750,21 +1455,13 @@ export async function commitUploadRows(options: {
 
     const date = toDateString(row[dateColumn]);
     if (!date) {
-      rejections.push({
-        rowNumber,
-        employeeCode: code,
-        reason: `Could not read a date from "${String(row[dateColumn] ?? "")}"`,
-      });
+      rejections.push({ rowNumber, employeeCode: code, reason: `Could not read a date from "${String(row[dateColumn] ?? '')}"` });
       return;
     }
     // A future-dated figure is a typo often enough to be worth refusing, and a KPI cannot be
     // measured before it happens.
     if (date > new Date().toISOString().slice(0, 10)) {
-      rejections.push({
-        rowNumber,
-        employeeCode: code,
-        reason: `Date ${date} is in the future`,
-      });
+      rejections.push({ rowNumber, employeeCode: code, reason: `Date ${date} is in the future` });
       return;
     }
 
@@ -1775,38 +1472,23 @@ export async function commitUploadRows(options: {
       // A blank cell is stored as null — a real "not measured" for that field on that day — but a
       // cell containing something non-numeric is a mistake worth reporting rather than quietly
       // discarding.
-      if (
-        value === null &&
-        raw !== null &&
-        raw !== undefined &&
-        String(raw).trim() !== ""
-      ) {
-        rejections.push({
-          rowNumber,
-          employeeCode: code,
-          reason: `"${String(raw)}" in ${header} is not a number`,
-        });
+      if (value === null && raw !== null && raw !== undefined && String(raw).trim() !== '') {
+        rejections.push({ rowNumber, employeeCode: code, reason: `"${String(raw)}" in ${header} is not a number` });
         continue;
       }
       accepted.push({ employeeId, date, field: fieldName, value });
       usable += 1;
     }
     if (!usable) {
-      rejections.push({
-        rowNumber,
-        employeeCode: code,
-        reason: "No usable values in this row",
-      });
+      rejections.push({ rowNumber, employeeCode: code, reason: 'No usable values in this row' });
     }
   });
 
-  const acceptedRowCount = new Set(
-    accepted.map((entry) => `${entry.employeeId}|${entry.date}`),
-  ).size;
+  const acceptedRowCount = new Set(accepted.map((entry) => `${entry.employeeId}|${entry.date}`)).size;
 
   if (options.dryRun) {
     return {
-      batch_id: "preview",
+      batch_id: 'preview',
       total_rows: rows.length,
       accepted_rows: acceptedRowCount,
       rejected_rows: rejections.length,
@@ -1849,20 +1531,10 @@ export async function commitUploadRows(options: {
     const CHUNK = 200;
     for (let index = 0; index < accepted.length; index += CHUNK) {
       const chunk = accepted.slice(index, index + CHUNK);
-      const placeholders = chunk
-        .map(() => "(UUID(), ?, ?, ?, ?, ?, ?, ?)")
-        .join(", ");
+      const placeholders = chunk.map(() => '(UUID(), ?, ?, ?, ?, ?, ?, ?)').join(', ');
       const params: unknown[] = [];
       for (const entry of chunk) {
-        params.push(
-          options.dataSourceId,
-          entry.employeeId,
-          entry.field,
-          entry.date,
-          entry.value,
-          "upload",
-          batchId,
-        );
+        params.push(options.dataSourceId, entry.employeeId, entry.field, entry.date, entry.value, 'upload', batchId);
       }
       await connection.execute(
         `INSERT INTO kpi_studio_manual_value
@@ -1906,10 +1578,8 @@ export async function saveManualValue(input: {
   note?: string | null;
   userId?: string;
 }) {
-  if (!ISO_DATE.test(input.valueDate))
-    throw new Error("Date must be YYYY-MM-DD");
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(input.fieldName))
-    throw new Error("Invalid field name");
+  if (!ISO_DATE.test(input.valueDate)) throw new Error('Date must be YYYY-MM-DD');
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(input.fieldName)) throw new Error('Invalid field name');
 
   await db.execute(
     `INSERT INTO kpi_studio_manual_value

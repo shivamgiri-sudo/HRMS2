@@ -6,9 +6,9 @@
  *   await sendSMS('9876543210', 'hrms_login_otp', { otp: '123456', validity_minutes: '5' });
  */
 
-import { buildSMS, listTemplates } from "./smartping-dlt-registry.js";
-import { SmartPingProvider } from "./providers/sms/smartping.provider.js";
-import { logger } from "../../logger.js";
+import { buildSMS, listTemplates } from './smartping-dlt-registry.js';
+import { SmartPingProvider } from './providers/sms/smartping.provider.js';
+import { logger } from '../../logger.js';
 
 const provider = new SmartPingProvider();
 
@@ -25,9 +25,7 @@ export async function sendSMS(
     const { body, dltContentId } = buildSMS(templateKey, variables);
     const result = await provider.send(mobile, dltContentId, body);
     if (!result.success) {
-      logger.warn(
-        `[SMS] Failed "${templateKey}" to ${mobile.slice(-4).padStart(mobile.length, "*")}: ${result.error}`,
-      );
+      logger.warn(`[SMS] Failed "${templateKey}" to ${mobile.slice(-4).padStart(mobile.length, '*')}: ${result.error}`);
     }
     return result;
   } catch (err) {

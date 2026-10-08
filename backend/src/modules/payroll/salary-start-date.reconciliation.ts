@@ -24,10 +24,7 @@ export async function isSalaryStartDateGateEnforced(): Promise<boolean> {
         WHERE branch_id IS NULL AND process_id IS NULL AND config_key = ? LIMIT 1`,
       [SALARY_DATE_GATE_FLAG_KEY],
     );
-    return (
-      rows.length > 0 &&
-      String(rows[0].config_value).trim().toLowerCase() === "true"
-    );
+    return rows.length > 0 && String(rows[0].config_value).trim().toLowerCase() === "true";
   } catch {
     return false;
   }
@@ -104,11 +101,7 @@ export async function findSalaryStartDateMismatches(
       reasons.push("VALIDATION_DATE_DIFFERS");
     if (r.package_date && dayOf(r.package_date) !== payroll)
       reasons.push("PACKAGE_DATE_DIFFERS");
-    if (
-      payroll &&
-      Number(r.on_start_date) === 0 &&
-      Number(r.has_salary_change) === 0
-    )
+    if (payroll && Number(r.on_start_date) === 0 && Number(r.has_salary_change) === 0)
       reasons.push("NO_ASSIGNMENT_ON_START_DATE");
     if (Number(r.active_assignments) > 1)
       reasons.push("MULTIPLE_ACTIVE_ASSIGNMENTS");
@@ -136,15 +129,6 @@ export async function findSalaryStartDateMismatches(
 }
 
 /** Every Payroll Head-approved employee whose salary start date differs across the stored copies. */
-export async function listSalaryStartDateMismatches(
-  limit = 1000,
-): Promise<SalaryDateMismatchRow[]> {
-  return findSalaryStartDateMismatches(
-    db as unknown as {
-      query: (sql: string, params?: unknown[]) => Promise<unknown>;
-    },
-    "1=1",
-    [],
-    limit,
-  );
+export async function listSalaryStartDateMismatches(limit = 1000): Promise<SalaryDateMismatchRow[]> {
+  return findSalaryStartDateMismatches(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }, "1=1", [], limit);
 }

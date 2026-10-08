@@ -1,5 +1,5 @@
-import { Router } from "express";
-import * as service from "./social-feed.service.js";
+import { Router } from 'express';
+import * as service from './social-feed.service.js';
 
 /**
  * Unauthenticated read of the company's public social profile links.
@@ -16,12 +16,12 @@ import * as service from "./social-feed.service.js";
  */
 export const socialLinksPublicRouter = Router();
 
-socialLinksPublicRouter.get("/", async (_req, res) => {
+socialLinksPublicRouter.get('/', async (_req, res) => {
   try {
     const links = await service.getProfileLinks();
     return res.json({ success: true, links: links.filter((l) => l.enabled) });
   } catch (err) {
-    console.error("[social-links] public read failed:", err);
+    console.error('[social-links] public read failed:', err);
     return res.json({ success: true, links: [] });
   }
 });

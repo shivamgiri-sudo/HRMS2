@@ -88,18 +88,13 @@ describe("P0-1: zero-allocation GRNs cannot bypass Smart validation on submit", 
 
   it("requireAllocationsForSubmit sends 400 and does not call next('router')", () => {
     const routes = read("src/modules/finance/grn-smart.routes.ts");
-    const fnStart = routes.indexOf(
-      "async function requireAllocationsForSubmit",
-    );
+    const fnStart = routes.indexOf("async function requireAllocationsForSubmit");
     // Extract just the function body (next function starts with "async function" or "smartGrnRouter")
     const fnEnd = Math.min(
       routes.indexOf("\nasync function", fnStart + 1),
       routes.indexOf("\nsmartGrnRouter", fnStart + 1),
     );
-    const fnBody = routes.slice(
-      fnStart,
-      fnEnd > fnStart ? fnEnd : fnStart + 600,
-    );
+    const fnBody = routes.slice(fnStart, fnEnd > fnStart ? fnEnd : fnStart + 600);
     expect(fnBody).toContain("res.status(400)");
     expect(fnBody).not.toContain('next("router")');
   });
@@ -238,14 +233,14 @@ describe("P0P1-4: GRN approval maker-checker checks actor ID, not only role", ()
     const reviewFn = svc.slice(svc.indexOf("async review("));
     expect(reviewFn).toContain("Maker-checker violation");
     expect(reviewFn).toContain("grn.submitted_by");
-    expect(reviewFn).toContain('role === "branch_head"');
+    expect(reviewFn).toContain("role === \"branch_head\"");
   });
 
   it("grn-smart.service.ts review has finance_head guard against BH reviewer", () => {
     const svc = read("src/modules/finance/grn-smart.service.ts");
     const reviewFn = svc.slice(svc.indexOf("async review("));
     expect(reviewFn).toContain("grn.branch_head_reviewed_by");
-    expect(reviewFn).toContain('role === "finance_head"');
+    expect(reviewFn).toContain("role === \"finance_head\"");
   });
 
   it("grn.service.ts reviewGrn has the same identity checks", () => {
@@ -412,9 +407,7 @@ describe("P1-8: debit note creation guarded; approve and cancel endpoints exist"
     const routes = read("src/modules/finance/grn.routes.ts");
     expect(routes).toContain("DN_ELIGIBLE_GRN_STATUSES");
     expect(routes).toContain("pending_accounts_payment");
-    expect(routes).toContain(
-      "Debit notes can only be raised against vendor GRNs",
-    );
+    expect(routes).toContain("Debit notes can only be raised against vendor GRNs");
     expect(routes).toContain("Finance Head-approved GRNs");
   });
 
@@ -440,8 +433,7 @@ describe("P1-8: debit note creation guarded; approve and cancel endpoints exist"
     const routes = read("src/modules/finance/grn.routes.ts");
     expect(routes).toContain("recordFinanceApprovalEvent");
     // Should appear at least twice — once for approve, once for cancel
-    const callCount = (routes.match(/recordFinanceApprovalEvent\(/g) ?? [])
-      .length;
+    const callCount = (routes.match(/recordFinanceApprovalEvent\(/g) ?? []).length;
     expect(callCount).toBeGreaterThanOrEqual(2);
   });
 
@@ -498,10 +490,8 @@ describe("HSN/SAC and IRN validation in canonical buildValidations()", () => {
    */
   it("does NOT emit HSN_SAC_REQUIRED — removed deliberately, do not reinstate", () => {
     const svc = codeOnly(read("src/modules/finance/grn-smart.service.ts"));
-    expect(
-      svc,
-      "re-adding this warning gives users something they cannot action",
-    ).not.toContain("HSN_SAC_REQUIRED");
+    expect(svc, "re-adding this warning gives users something they cannot action")
+      .not.toContain("HSN_SAC_REQUIRED");
   });
 
   it("keeps the hsn_sac_code column plumbed, so capture can return without a schema change", () => {
@@ -534,11 +524,11 @@ describe("HSN/SAC and IRN validation in canonical buildValidations()", () => {
 describe("cost centre SAC code is writable", () => {
   it("create and update both persist sac_code alongside hsn_code", () => {
     const svc = read("src/modules/finance/cost-centre-management.service.ts");
-    expect(svc).toMatch(/hsn_code,\s*sac_code,/); // INSERT column list
-    expect(svc).toMatch(/sac_code = \?/); // UPDATE set clause
-    expect(svc).toContain("data.sac_code ?? null"); // INSERT param
+    expect(svc).toMatch(/hsn_code,\s*sac_code,/);          // INSERT column list
+    expect(svc).toMatch(/sac_code = \?/);                   // UPDATE set clause
+    expect(svc).toContain("data.sac_code ?? null");         // INSERT param
     expect(svc).toContain("data.sac_code ?? existing.sac_code"); // UPDATE keeps migrated values
-    expect(svc).toMatch(/sac_code\?: string;/); // input type
+    expect(svc).toMatch(/sac_code\?: string;/);             // input type
   });
 });
 
@@ -582,17 +572,11 @@ describe("GRN smart review maker-checker — runtime paths (DB mocked)", () => {
     lifecycle_status: "pending",
   };
 
-  function setupReviewMocks(
-    grnOverrides: Record<string, unknown> = {},
-    periodLocked = false,
-  ) {
+  function setupReviewMocks(grnOverrides: Record<string, unknown> = {}, periodLocked = false) {
     mockConnection.execute
-      .mockResolvedValueOnce([[grnRow(grnOverrides)], []]) // lockGrn
-      .mockResolvedValueOnce([[allocationRow], []]) // loadAllocations (with=true)
-      .mockResolvedValueOnce([
-        [{ status: periodLocked ? "locked" : "open" }],
-        [],
-      ]); // isPeriodLocked
+      .mockResolvedValueOnce([[grnRow(grnOverrides)], []])          // lockGrn
+      .mockResolvedValueOnce([[allocationRow], []])                  // loadAllocations (with=true)
+      .mockResolvedValueOnce([[{ status: periodLocked ? "locked" : "open" }], []]); // isPeriodLocked
   }
 
   beforeEach(() => {
@@ -609,47 +593,23 @@ describe("GRN smart review maker-checker — runtime paths (DB mocked)", () => {
     setupReviewMocks();
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review(
-        GRN_ID,
-        "approved",
-        undefined,
-        SUBMITTER,
-        "branch_head",
-      ),
+      grnSmartService.review(GRN_ID, "approved", undefined, SUBMITTER, "branch_head"),
     ).rejects.toThrow(/Maker-checker violation/);
   });
 
   it("finance_head cannot approve a GRN they submitted", async () => {
-    setupReviewMocks({
-      status: "branch_head_approved",
-      branch_head_reviewed_by: BH_REVIEWER,
-    });
+    setupReviewMocks({ status: "branch_head_approved", branch_head_reviewed_by: BH_REVIEWER });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review(
-        GRN_ID,
-        "approved",
-        undefined,
-        SUBMITTER,
-        "finance_head",
-      ),
+      grnSmartService.review(GRN_ID, "approved", undefined, SUBMITTER, "finance_head"),
     ).rejects.toThrow(/Maker-checker violation/);
   });
 
   it("finance_head cannot approve a GRN where they were the branch_head reviewer", async () => {
-    setupReviewMocks({
-      status: "branch_head_approved",
-      branch_head_reviewed_by: FINANCE_HEAD,
-    });
+    setupReviewMocks({ status: "branch_head_approved", branch_head_reviewed_by: FINANCE_HEAD });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review(
-        GRN_ID,
-        "approved",
-        undefined,
-        FINANCE_HEAD,
-        "finance_head",
-      ),
+      grnSmartService.review(GRN_ID, "approved", undefined, FINANCE_HEAD, "finance_head"),
     ).rejects.toThrow(/Maker-checker violation/);
   });
 
@@ -657,13 +617,7 @@ describe("GRN smart review maker-checker — runtime paths (DB mocked)", () => {
     setupReviewMocks({}, true /* periodLocked */);
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review(
-        GRN_ID,
-        "approved",
-        undefined,
-        BH_REVIEWER,
-        "branch_head",
-      ),
+      grnSmartService.review(GRN_ID, "approved", undefined, BH_REVIEWER, "branch_head"),
     ).rejects.toThrow(/locked for P&L close/);
   });
 
@@ -671,13 +625,7 @@ describe("GRN smart review maker-checker — runtime paths (DB mocked)", () => {
     setupReviewMocks({ grn_type: "provision" });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review(
-        GRN_ID,
-        "approved",
-        undefined,
-        BH_REVIEWER,
-        "branch_head",
-      ),
+      grnSmartService.review(GRN_ID, "approved", undefined, BH_REVIEWER, "branch_head"),
     ).rejects.toThrow(/PROVISION_GRN_NOT_SUPPORTED/);
   });
 
@@ -691,19 +639,10 @@ describe("GRN smart review maker-checker — runtime paths (DB mocked)", () => {
   // ───────────────────────────────────────────────────────────────────────────
   it("branch_head reject: STATE_CHANGED/409 when affectedRows is 0", async () => {
     setupReviewMocks(); // status: submitted (default) — no reserveAllocations call on reject
-    mockConnection.execute.mockResolvedValueOnce([
-      { affectedRows: 0 },
-      undefined,
-    ]); // guarded UPDATE
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review(
-        GRN_ID,
-        "rejected",
-        "not needed",
-        BH_REVIEWER,
-        "branch_head",
-      ),
+      grnSmartService.review(GRN_ID, "rejected", "not needed", BH_REVIEWER, "branch_head"),
     ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
   });
 
@@ -711,29 +650,14 @@ describe("GRN smart review maker-checker — runtime paths (DB mocked)", () => {
     // 3-stage chain (owner ruling, 2026-09-12): Finance Head's own precondition is now
     // accounts_head_approved, not branch_head_approved — that earlier status is Accounts Head's
     // stage to clear first.
-    setupReviewMocks({
-      status: "accounts_head_approved",
-      branch_head_reviewed_by: BH_REVIEWER,
-    });
+    setupReviewMocks({ status: "accounts_head_approved", branch_head_reviewed_by: BH_REVIEWER });
     // releaseAllocations: allocationRow.lifecycle_status is 'pending' (not 'reserved'), so it
     // skips budgetConsumptionService.release and only issues the grn_cost_allocation UPDATE.
-    mockConnection.execute.mockResolvedValueOnce([
-      { affectedRows: 1 },
-      undefined,
-    ]); // grn_cost_allocation UPDATE
-    mockConnection.execute.mockResolvedValueOnce([
-      { affectedRows: 0 },
-      undefined,
-    ]); // guarded UPDATE
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 1 }, undefined]); // grn_cost_allocation UPDATE
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review(
-        GRN_ID,
-        "rejected",
-        "not needed",
-        FINANCE_HEAD,
-        "finance_head",
-      ),
+      grnSmartService.review(GRN_ID, "rejected", "not needed", FINANCE_HEAD, "finance_head"),
     ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
   });
 });
@@ -769,8 +693,8 @@ describe("Legacy grn.service.ts reviewGrn — STATE_CHANGED runtime paths (DB mo
   // grn_request/finance_period columns, not the allocation-aware smart path).
   function setupLegacyMocks(grnOverrides: Record<string, unknown> = {}) {
     mockConnection.execute
-      .mockResolvedValueOnce([[grnRow(grnOverrides)], []]) // SELECT ... FOR UPDATE
-      .mockResolvedValueOnce([[{ status: "open" }], []]); // isPeriodLocked
+      .mockResolvedValueOnce([[grnRow(grnOverrides)], []])              // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce([[{ status: "open" }], []]);                // isPeriodLocked
   }
 
   beforeEach(() => {
@@ -785,18 +709,10 @@ describe("Legacy grn.service.ts reviewGrn — STATE_CHANGED runtime paths (DB mo
 
   it("branch_head decision: STATE_CHANGED/409 when affectedRows is 0", async () => {
     setupLegacyMocks(); // status: submitted
-    mockConnection.execute.mockResolvedValueOnce([
-      { affectedRows: 0 },
-      undefined,
-    ]); // guarded UPDATE
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
     const { grnService } = await import("../grn.service.js");
     await expect(
-      grnService.reviewGrn(
-        GRN_ID,
-        { decision: "rejected", reviewNote: "not needed" },
-        BH_REVIEWER,
-        "branch_head",
-      ),
+      grnService.reviewGrn(GRN_ID, { decision: "rejected", reviewNote: "not needed" }, BH_REVIEWER, "branch_head"),
     ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
   });
 
@@ -820,46 +736,24 @@ describe("Legacy grn.service.ts reviewGrn — STATE_CHANGED runtime paths (DB mo
     // — expense debit, vendor credit; neither destructures its result, but each still consumes
     // one queued mock response, and skipping them shifts every mock after it by one call,
     // which is what silently broke this test the first time this diff was tested).
-    mockConnection.execute.mockResolvedValueOnce([
-      [{ id: "expense-sub-head-001" }],
-      [],
-    ]); // resolveExpenseSubHeadAccountId
+    mockConnection.execute.mockResolvedValueOnce([[{ id: "expense-sub-head-001" }], []]); // resolveExpenseSubHeadAccountId
     mockConnection.execute.mockResolvedValueOnce([{}, undefined]); // INSERT INTO journal_entry
     mockConnection.execute.mockResolvedValueOnce([{}, undefined]); // INSERT INTO journal_entry_line (expense debit)
     mockConnection.execute.mockResolvedValueOnce([{}, undefined]); // INSERT INTO journal_entry_line (vendor credit)
-    mockConnection.execute.mockResolvedValueOnce([
-      { affectedRows: 0 },
-      undefined,
-    ]); // guarded UPDATE
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
     const { grnService } = await import("../grn.service.js");
     await expect(
-      grnService.reviewGrn(
-        GRN_ID,
-        { decision: "approved", reviewNote: "ok" },
-        FINANCE_HEAD,
-        "finance_head",
-      ),
+      grnService.reviewGrn(GRN_ID, { decision: "approved", reviewNote: "ok" }, FINANCE_HEAD, "finance_head"),
     ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
   });
 
   it("finance_head reject: STATE_CHANGED/409 when affectedRows is 0", async () => {
-    setupLegacyMocks({
-      status: "accounts_head_approved",
-      branch_head_reviewed_by: BH_REVIEWER,
-    });
+    setupLegacyMocks({ status: "accounts_head_approved", branch_head_reviewed_by: BH_REVIEWER });
     // budgetConsumptionService.release is module-mocked — next call is the guarded UPDATE.
-    mockConnection.execute.mockResolvedValueOnce([
-      { affectedRows: 0 },
-      undefined,
-    ]); // guarded UPDATE
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
     const { grnService } = await import("../grn.service.js");
     await expect(
-      grnService.reviewGrn(
-        GRN_ID,
-        { decision: "rejected", reviewNote: "not needed" },
-        FINANCE_HEAD,
-        "finance_head",
-      ),
+      grnService.reviewGrn(GRN_ID, { decision: "rejected", reviewNote: "not needed" }, FINANCE_HEAD, "finance_head"),
     ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
   });
 });
@@ -876,8 +770,9 @@ describe("submitTransfer idempotency — runtime (DB mocked)", () => {
   it("blocks a second pending transfer with same parameters within 60 seconds", async () => {
     // Idempotency check returns an existing row
     mockExecute.mockResolvedValueOnce([[{ id: "existing-transfer" }], []]);
-    const { branchBudgetService } =
-      await import("../../process-pnl/branch-budget.service.js");
+    const { branchBudgetService } = await import(
+      "../../process-pnl/branch-budget.service.js"
+    );
     await expect(
       branchBudgetService.submitTransfer({
         budgetId: "bgt-1",
@@ -900,34 +795,17 @@ describe("submitTransfer idempotency — runtime (DB mocked)", () => {
     // failure that looked like a missing row rather than a stale harness.
     mockExecute
       .mockResolvedValueOnce([[], []])
-      .mockResolvedValueOnce([
-        [{ id: "bgt-1", status: "active", period_code: "2026-07" }],
-        [],
-      ])
+      .mockResolvedValueOnce([[{ id: "bgt-1", status: "active", period_code: "2026-07" }], []])
       .mockResolvedValueOnce([[{ status: "open" }], []])
-      .mockResolvedValueOnce([
-        [
-          {
-            id: "line-a",
-            budget_id: "bgt-1",
-            gross_amount: 10000,
-            reserved_amount: 0,
-            consumed_amount: 0,
-          },
-          {
-            id: "line-b",
-            budget_id: "bgt-1",
-            gross_amount: 5000,
-            reserved_amount: 0,
-            consumed_amount: 0,
-          },
-        ],
-        [],
-      ])
+      .mockResolvedValueOnce([[
+        { id: "line-a", budget_id: "bgt-1", gross_amount: 10000, reserved_amount: 0, consumed_amount: 0 },
+        { id: "line-b", budget_id: "bgt-1", gross_amount: 5000,  reserved_amount: 0, consumed_amount: 0 },
+      ], []])
       .mockResolvedValueOnce([[{ id: "new-transfer", status: "pending" }], []]);
     mockConnection.execute.mockResolvedValue([{ insertId: 1 }, []]);
-    const { branchBudgetService } =
-      await import("../../process-pnl/branch-budget.service.js");
+    const { branchBudgetService } = await import(
+      "../../process-pnl/branch-budget.service.js"
+    );
     const result = await branchBudgetService.submitTransfer({
       budgetId: "bgt-1",
       fromLineId: "line-a",
@@ -939,6 +817,7 @@ describe("submitTransfer idempotency — runtime (DB mocked)", () => {
     expect(result).toBeDefined();
   });
 });
+
 
 /*
  * POOLED_LINE_SHARE — owner decision, 2026-08-29: warn where a share is defined, never block.
@@ -978,9 +857,7 @@ describe("POOLED_LINE_SHARE: visible, and never a block", () => {
     // A share is exhausted by the branch's cumulative draw. Looking at this GRN alone would
     // never fire, because no single invoice is likely to exceed a share on its own.
     expect(block).toContain("already_drawn");
-    expect(block).toContain(
-      "prior.lifecycle_status IN ('reserved','consumed')",
-    );
+    expect(block).toContain("prior.lifecycle_status IN ('reserved','consumed')");
     expect(block).toContain("prior.grn_request_id <> a.grn_request_id");
   });
 

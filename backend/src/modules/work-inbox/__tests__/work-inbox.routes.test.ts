@@ -9,10 +9,7 @@ vi.mock("../../../middleware/authMiddleware.js", () => ({
   },
 }));
 vi.mock("../../../shared/roleResolver.js", () => ({
-  getUserRoleContext: async () => ({
-    roleKeys: ["manager"],
-    primaryRole: "manager",
-  }),
+  getUserRoleContext: async () => ({ roleKeys: ["manager"], primaryRole: "manager" }),
 }));
 
 const mockAssertAccess = vi.fn().mockResolvedValue(undefined);
@@ -83,9 +80,7 @@ describe("AWOL confirm routes", () => {
   });
 
   it("POST /:id/awol/reject requires remarks and returns success", async () => {
-    const res = await request(app)
-      .post("/api/work-inbox/wi-1/awol/reject")
-      .send({ remarks: "on leave" });
+    const res = await request(app).post("/api/work-inbox/wi-1/awol/reject").send({ remarks: "on leave" });
     expect(res.status).toBe(200);
     expect(mockReject).toHaveBeenCalledWith("wi-1", "user-1", "on leave");
   });

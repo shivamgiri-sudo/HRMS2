@@ -8,10 +8,7 @@ import { listComprehensiveJourney } from "./journeyLog.service.js";
 import { getBillPool } from "../../db/billDb.js";
 
 const router = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -26,22 +23,11 @@ type EmployeeAccessTarget = {
   manager_id: string | null;
 };
 
-const PEOPLE_SCOPE_ROLES = [
-  "hr",
-  "manager",
-  "branch_head",
-  "process_manager",
-  "assistant_manager",
-  "tl",
-  "payroll_head",
-  "finance_head",
-];
+const PEOPLE_SCOPE_ROLES = ["hr", "manager", "branch_head", "process_manager", "assistant_manager", "tl", "payroll_head", "finance_head"];
 const STAT_CARD_SCOPE_ROLES = [...PEOPLE_SCOPE_ROLES, "finance", "payroll"];
 const UUID_ROUTE = "/:id([0-9a-fA-F-]{36})";
 
-async function getEmployeeTarget(
-  employeeId: string,
-): Promise<EmployeeAccessTarget | null> {
+async function getEmployeeTarget(employeeId: string): Promise<EmployeeAccessTarget | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, user_id, branch_id, process_id, lob_id, department_id, reporting_manager_id, manager_id
        FROM employees
@@ -72,10 +58,7 @@ type FixedSalaryComponents = {
  * fixed amount is the single source of truth once configured; CTC% is an
  * estimate only, used when no fixed components exist yet.
  */
-async function getFixedSalaryComponents(
-  employeeId: string,
-  structureId: string | null,
-): Promise<FixedSalaryComponents> {
+async function getFixedSalaryComponents(employeeId: string, structureId: string | null): Promise<FixedSalaryComponents> {
   const [scaRows] = await db.execute<RowDataPacket[]>(
     `SELECT basic, hra, special_allowance
        FROM salary_component_assignments
@@ -85,12 +68,7 @@ async function getFixedSalaryComponents(
   );
   const sca = (scaRows as any[])[0];
   if (sca && Number(sca.basic) > 0) {
-    return {
-      hasFixed: true,
-      basic: Number(sca.basic) || 0,
-      hra: Number(sca.hra) || 0,
-      special: Number(sca.special_allowance) || 0,
-    };
+    return { hasFixed: true, basic: Number(sca.basic) || 0, hra: Number(sca.hra) || 0, special: Number(sca.special_allowance) || 0 };
   }
 
   if (!structureId) return { hasFixed: false, basic: 0, hra: 0, special: 0 };
@@ -103,10 +81,8 @@ async function getFixedSalaryComponents(
     [structureId],
   );
   const amounts: Record<string, number> = {};
-  for (const c of compRows as any[])
-    amounts[c.component_code] = Number(c.value) || 0;
-  if (!(amounts.BASIC > 0))
-    return { hasFixed: false, basic: 0, hra: 0, special: 0 };
+  for (const c of compRows as any[]) amounts[c.component_code] = Number(c.value) || 0;
+  if (!(amounts.BASIC > 0)) return { hasFixed: false, basic: 0, hra: 0, special: 0 };
 
   return {
     hasFixed: true,
@@ -125,8 +101,7 @@ async function canAccessEmployee(userId: string, target: EmployeeAccessTarget, s
   const self = await getEmployeeForUser(userId);
   if (self?.id === target.id) return true;
 
-  const targetManagerId =
-    target.reporting_manager_id ?? target.manager_id ?? null;
+  const targetManagerId = target.reporting_manager_id ?? target.manager_id ?? null;
   if (self?.id && targetManagerId === self.id) return true;
 
   return hasScopedAccess(
@@ -144,23 +119,15 @@ async function canAccessEmployee(userId: string, target: EmployeeAccessTarget, s
   );
 }
 
-async function assertEmployeeAccess(
-  userId: string,
-  employeeId: string,
-  scopedRoles = PEOPLE_SCOPE_ROLES,
-): Promise<EmployeeAccessTarget> {
+async function assertEmployeeAccess(userId: string, employeeId: string, scopedRoles = PEOPLE_SCOPE_ROLES): Promise<EmployeeAccessTarget> {
   const target = await getEmployeeTarget(employeeId);
   if (!target) {
-    const err = new Error("Employee not found") as Error & {
-      statusCode?: number;
-    };
+    const err = new Error("Employee not found") as Error & { statusCode?: number };
     err.statusCode = 404;
     throw err;
   }
   if (!(await canAccessEmployee(userId, target, scopedRoles))) {
-    const err = new Error(
-      "Forbidden: employee is outside your assigned scope",
-    ) as Error & { statusCode?: number };
+    const err = new Error("Forbidden: employee is outside your assigned scope") as Error & { statusCode?: number };
     err.statusCode = 403;
     throw err;
   }
@@ -182,23 +149,21 @@ async function employeeScopeWhere(userId: string) {
   );
 }
 
-router.get(
-  "/stats",
-  h(async (req: any, res: any) => {
-    const userId = req.authUser!.id;
-    const scoped = await employeeScopeWhere(userId);
-    /*
-     * PERF: the single-pass COUNT(CASE ...) over employees read every wide row (59k, no usable
-     * index for LOWER(COALESCE(employment_status))) and ran past the 10s cap on prod for
-     * unscoped callers. The three status counts depend only on (active_status, employment_status),
-     * which the covering index idx_employees_directory_status holds, so they are counted per
-     * (active_status, employment_status) group (6 groups) and the CASE logic is applied to
-     * those groups. Same predicates, same scope clause; only the row source changed.
-     * new_joiners_90d needs date_of_joining, so it is a separate concurrent query.
-     */
-    const [[statusRows], [joinerRows]] = await Promise.all([
-      db.execute<RowDataPacket[]>(
-        `SELECT
+router.get("/stats", h(async (req: any, res: any) => {
+  const userId = req.authUser!.id;
+  const scoped = await employeeScopeWhere(userId);
+  /*
+   * PERF: the single-pass COUNT(CASE ...) over employees read every wide row (59k, no usable
+   * index for LOWER(COALESCE(employment_status))) and ran past the 10s cap on prod for
+   * unscoped callers. The three status counts depend only on (active_status, employment_status),
+   * which the covering index idx_employees_directory_status holds, so they are counted per
+   * (active_status, employment_status) group (6 groups) and the CASE logic is applied to
+   * those groups. Same predicates, same scope clause; only the row source changed.
+   * new_joiners_90d needs date_of_joining, so it is a separate concurrent query.
+   */
+  const [[statusRows], [joinerRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT
          COALESCE(CAST(SUM(g.c) AS UNSIGNED), 0) AS total_employees,
          COALESCE(CAST(SUM(CASE WHEN g.active_status = 1 AND LOWER(COALESCE(g.employment_status, 'active')) NOT IN ('inactive','terminated','offboarded','absconded','resigned','left','separated') THEN g.c ELSE 0 END) AS UNSIGNED), 0) AS active_employees,
          COALESCE(CAST(SUM(CASE WHEN LOWER(COALESCE(g.employment_status, '')) IN ('inactive','terminated','offboarded','absconded','resigned','left','separated') THEN g.c ELSE 0 END) AS UNSIGNED), 0) AS inactive_employees
@@ -208,25 +173,18 @@ router.get(
           WHERE (${scoped.sql})
           GROUP BY e.active_status, e.employment_status
        ) g`,
-        scoped.params,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS new_joiners_90d
+      scoped.params,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS new_joiners_90d
          FROM employees e
         WHERE e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
           AND (${scoped.sql})`,
-        scoped.params,
-      ),
-    ]);
-    return res.json({
-      success: true,
-      data: {
-        ...statusRows[0],
-        new_joiners_90d: joinerRows[0]?.new_joiners_90d ?? 0,
-      },
-    });
-  }),
-);
+      scoped.params,
+    ),
+  ]);
+  return res.json({ success: true, data: { ...statusRows[0], new_joiners_90d: joinerRows[0]?.new_joiners_90d ?? 0 } });
+}));
 
 /**
  * Directory filter dropdowns: process / branch names with headcount, for employees that are
@@ -241,8 +199,7 @@ router.get(
  * utf8mb4_unicode_ci, so the bare comparison equals LOWER(COALESCE(...)) IN (...) and is
  * sargable. HAVING > 0 keeps the old behaviour of omitting names with no matching employee.
  */
-const DIRECTORY_LEAVER_STATUSES =
-  "'inactive', 'terminated', 'offboarded', 'absconded', 'resigned', 'left', 'separated'";
+const DIRECTORY_LEAVER_STATUSES = "'inactive', 'terminated', 'offboarded', 'absconded', 'resigned', 'left', 'separated'";
 
 function directoryMasterCountsSql(opts: {
   masterTable: "process_master" | "branch_master";
@@ -251,20 +208,11 @@ function directoryMasterCountsSql(opts: {
   employeeColumn: "process_id" | "branch_id";
   scopeSql: string;
 }): string {
-  const {
-    masterTable,
-    masterAlias: m,
-    nameColumn,
-    employeeColumn: col,
-    scopeSql,
-  } = opts;
+  const { masterTable, masterAlias: m, nameColumn, employeeColumn: col, scopeSql } = opts;
   // Pin the covering index only for the unscoped scan; scoped callers keep the optimiser's choice.
-  const hint =
-    scopeSql === "1=1"
-      ? col === "process_id"
-        ? "USE INDEX (idx_employees_directory_status_process)"
-        : "USE INDEX (idx_emp_branch_active)"
-      : "";
+  const hint = scopeSql === "1=1"
+    ? (col === "process_id" ? "USE INDEX (idx_employees_directory_status_process)" : "USE INDEX (idx_emp_branch_active)")
+    : "";
   return `SELECT MIN(${m}.id) AS id,
             ${m}.${nameColumn},
             CAST(SUM(t_all.c - COALESCE(t_rej.c, 0)) AS UNSIGNED) AS employee_count
@@ -289,56 +237,36 @@ function directoryMasterCountsSql(opts: {
       ORDER BY ${m}.${nameColumn} ASC`;
 }
 
-router.get(
-  "/directory-masters",
-  h(async (req: any, res: any) => {
-    const userId = req.authUser!.id;
-    const scoped = await employeeScopeWhere(userId);
-    const params = [...scoped.params, ...scoped.params];
+router.get("/directory-masters", h(async (req: any, res: any) => {
+  const userId = req.authUser!.id;
+  const scoped = await employeeScopeWhere(userId);
+  const params = [...scoped.params, ...scoped.params];
 
-    const [[processes], [branches]] = await Promise.all([
-      db.execute<RowDataPacket[]>(
-        directoryMasterCountsSql({
-          masterTable: "process_master",
-          masterAlias: "p",
-          nameColumn: "process_name",
-          employeeColumn: "process_id",
-          scopeSql: scoped.sql,
-        }),
-        params,
-      ),
-      db.execute<RowDataPacket[]>(
-        directoryMasterCountsSql({
-          masterTable: "branch_master",
-          masterAlias: "b",
-          nameColumn: "branch_name",
-          employeeColumn: "branch_id",
-          scopeSql: scoped.sql,
-        }),
-        params,
-      ),
-    ]);
+  const [[processes], [branches]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      directoryMasterCountsSql({ masterTable: "process_master", masterAlias: "p", nameColumn: "process_name", employeeColumn: "process_id", scopeSql: scoped.sql }),
+      params,
+    ),
+    db.execute<RowDataPacket[]>(
+      directoryMasterCountsSql({ masterTable: "branch_master", masterAlias: "b", nameColumn: "branch_name", employeeColumn: "branch_id", scopeSql: scoped.sql }),
+      params,
+    ),
+  ]);
 
-    return res.json({ success: true, data: { processes, branches } });
-  }),
-);
+  return res.json({ success: true, data: { processes, branches } });
+}));
 
-router.get(
-  "/options/search",
-  h(async (req: any, res: any) => {
-    const userId = req.authUser!.id;
-    const search = String(req.query.q ?? "").trim();
-    if (search.length < 1) return res.json({ success: true, data: [] });
+router.get("/options/search", h(async (req: any, res: any) => {
+  const userId = req.authUser!.id;
+  const search = String(req.query.q ?? "").trim();
+  if (search.length < 1) return res.json({ success: true, data: [] });
 
-    const limit = Math.min(Math.max(Number(req.query.limit ?? 30), 1), 50);
-    const like = `%${search}%`;
-    const [scoped, self] = await Promise.all([
-      employeeScopeWhere(userId),
-      getEmployeeForUser(userId),
-    ]);
-    const selfClause = self?.id ? " OR e.id = ?" : "";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.id,
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 30), 1), 50);
+  const like = `%${search}%`;
+  const [scoped, self] = await Promise.all([employeeScopeWhere(userId), getEmployeeForUser(userId)]);
+  const selfClause = self?.id ? " OR e.id = ?" : "";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id,
             e.employee_code,
             COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS name,
             e.first_name,
@@ -362,39 +290,22 @@ router.get(
         )
       ORDER BY CASE WHEN e.employee_code = ? THEN 0 ELSE 1 END, name
       LIMIT ${limit}`,
-      [
-        ...scoped.params,
-        ...(self?.id ? [self.id] : []),
-        like,
-        like,
-        like,
-        search,
-      ],
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    [...scoped.params, ...(self?.id ? [self.id] : []), like, like, like, search],
+  );
+  return res.json({ success: true, data: rows });
+}));
 
-router.get(
-  `${UUID_ROUTE}/stat-card`,
-  h(async (req: any, res: any) => {
-    const userId = req.authUser!.id;
-    const targetId = String(req.params.id);
-    await assertEmployeeAccess(userId, targetId, STAT_CARD_SCOPE_ROLES);
+router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
+  const userId = req.authUser!.id;
+  const targetId = String(req.params.id);
+  await assertEmployeeAccess(userId, targetId, STAT_CARD_SCOPE_ROLES);
 
-    const isPrivilegedForComp = await hasAnyRole(
-      userId,
-      "admin",
-      "hr",
-      "ceo",
-      "finance",
-      "payroll",
-    );
-    const selfEmp = await getEmployeeForUser(userId);
-    const canSeeCompensation = isPrivilegedForComp || selfEmp?.id === targetId;
+  const isPrivilegedForComp = await hasAnyRole(userId, "admin", "hr", "ceo", "finance", "payroll");
+  const selfEmp = await getEmployeeForUser(userId);
+  const canSeeCompensation = isPrivilegedForComp || selfEmp?.id === targetId;
 
-    const [[emp]] = await db.execute<RowDataPacket[]>(
-      `SELECT e.id, e.employee_code, e.user_id, e.first_name, e.last_name,
+  const [[emp]] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code, e.user_id, e.first_name, e.last_name,
             COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name,
             COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS email,
             e.mobile, e.alternate_mobile, e.gender, e.marital_status,
@@ -461,28 +372,25 @@ router.get(
         )
       WHERE e.id = ?
       LIMIT 1`,
-      [targetId],
-    );
-    if (!emp)
-      return res
-        .status(404)
-        .json({ success: false, error: "Employee not found" });
+    [targetId],
+  );
+  if (!emp) return res.status(404).json({ success: false, error: "Employee not found" });
 
-    // Run all independent queries in parallel after the main employee row is fetched
-    const [
-      salaryResult,
-      [leaveBalances],
-      [[attendance]],
-      [performanceRows],
-      [[assetRow]],
-      clDocResult,
-      docResult,
-      [tierRows],
-      journeyResult,
-    ] = await Promise.all([
-      canSeeCompensation
-        ? db.execute<RowDataPacket[]>(
-            `SELECT esa.id,
+  // Run all independent queries in parallel after the main employee row is fetched
+  const [
+    salaryResult,
+    [leaveBalances],
+    [[attendance]],
+    [performanceRows],
+    [[assetRow]],
+    clDocResult,
+    docResult,
+    [tierRows],
+    journeyResult,
+  ] = await Promise.all([
+    canSeeCompensation
+      ? db.execute<RowDataPacket[]>(
+          `SELECT esa.id,
                   esa.structure_id,
                   ssm.structure_code,
                   ssm.structure_name,
@@ -503,11 +411,11 @@ router.get(
               AND esa.active_status = 1
             ORDER BY esa.effective_from DESC, esa.created_at DESC
             LIMIT 1`,
-            [targetId],
-          )
-        : Promise.resolve([[] as RowDataPacket[], [] as any]),
-      db.execute<RowDataPacket[]>(
-        `SELECT lt.leave_code,
+          [targetId],
+        )
+      : Promise.resolve([[] as RowDataPacket[], [] as any]),
+    db.execute<RowDataPacket[]>(
+      `SELECT lt.leave_code,
               lt.leave_name,
               COALESCE(lbl.allocated_days, 0) + COALESCE(lbl.adjusted_days, 0) - COALESCE(lbl.used_days, 0) AS available_days,
               COALESCE(lbl.used_days, 0) AS used_days
@@ -516,10 +424,10 @@ router.get(
         WHERE lbl.employee_id = ?
           AND lbl.balance_year = YEAR(CURDATE())
         ORDER BY lt.leave_name`,
-        [targetId],
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT
+      [targetId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT
          COUNT(CASE WHEN attendance_status = 'present' THEN 1 END) AS present_days,
          COUNT(CASE WHEN attendance_status NOT IN ('week_off','holiday') THEN 1 END) AS working_days,
          ROUND(
@@ -530,256 +438,171 @@ router.get(
         WHERE employee_id = ?
           AND record_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
           AND record_date <  DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)`,
-        [targetId],
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT pfr.overall_score, pfc.period
+      [targetId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT pfr.overall_score, pfc.period
          FROM performance_feedback_report pfr
          JOIN performance_feedback_cycle pfc ON pfc.cycle_id = pfr.cycle_id
         WHERE pfr.employee_id = ?
         ORDER BY pfr.report_generated_at DESC
         LIMIT 1`,
-        [targetId],
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS active_assets FROM asset_assignment WHERE employee_id = ? AND returned_date IS NULL`,
-        [targetId],
-      ),
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT
+      [targetId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS active_assets FROM asset_assignment WHERE employee_id = ? AND returned_date IS NULL`,
+      [targetId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT
          SUM(CASE WHEN status IN ('pending_hr_upload','pending_candidate_esign','pending_generation','rejected') AND mandatory = 1 THEN 1 ELSE 0 END) AS checklist_missing,
          SUM(CASE WHEN status IN ('uploaded','submitted','pending_verification','signed') THEN 1 ELSE 0 END) AS checklist_awaiting,
          SUM(CASE WHEN status IN ('verified','signed_verified','completed') THEN 1 ELSE 0 END) AS checklist_verified
          FROM employee_joining_document_checklist WHERE employee_id = ?`,
-          [targetId],
-        )
-        .catch(
-          () =>
-            [
-              [
-                {
-                  checklist_missing: null,
-                  checklist_awaiting: null,
-                  checklist_verified: null,
-                },
-              ],
-            ] as any,
-        ),
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT
+      [targetId],
+    ).catch(() => [[{ checklist_missing: null, checklist_awaiting: null, checklist_verified: null }]] as any),
+    db.execute<RowDataPacket[]>(
+      `SELECT
          SUM(CASE WHEN (file_url IS NULL OR file_url = '') THEN 1 ELSE 0 END) AS missing_docs,
          SUM(CASE WHEN file_url IS NOT NULL AND file_url <> '' AND verified = 0 THEN 1 ELSE 0 END) AS awaiting_verification,
          SUM(CASE WHEN verified = 1 THEN 1 ELSE 0 END) AS verified_docs
          FROM employee_documents WHERE employee_id = ?`,
-          [targetId],
-        )
-        .catch(
-          () =>
-            [
-              [{ missing_docs: 0, awaiting_verification: 0, verified_docs: 0 }],
-            ] as any,
-        ),
-      db.execute<RowDataPacket[]>(
-        `SELECT COALESCE(gtm.tier_name, gt.tier_name, 'Unassigned') AS tier_name,
+      [targetId],
+    ).catch(() => [[{ missing_docs: 0, awaiting_verification: 0, verified_docs: 0 }]] as any),
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(gtm.tier_name, gt.tier_name, 'Unassigned') AS tier_name,
               ets.total_points
          FROM employee_tier_status ets
          LEFT JOIN gamification_tier_master gtm ON gtm.tier_id = ets.current_tier_id
          LEFT JOIN gamification_tier gt ON gt.id = ets.current_tier_id
         WHERE ets.employee_id = ?
         LIMIT 1`,
-        [targetId],
-      ),
-      listComprehensiveJourney(targetId, {
-        includeCompensation: canSeeCompensation,
-      }).catch(() => []),
-    ]);
+      [targetId],
+    ),
+    listComprehensiveJourney(targetId, { includeCompensation: canSeeCompensation }).catch(() => []),
+  ]);
 
-    let salary: RowDataPacket | null = canSeeCompensation
-      ? ((salaryResult[0] as RowDataPacket[])[0] ?? null)
-      : null;
-    if (salary) {
-      // Same fixed-vs-CTC% preference as the /ctc endpoint — see getFixedSalaryComponents.
-      const fixed = await getFixedSalaryComponents(
-        targetId,
-        (salary as any).structure_id ?? null,
-      );
-      if (fixed.hasFixed) {
-        salary = {
-          ...salary,
-          basic: fixed.basic,
-          hra: fixed.hra,
-          other_allowances: fixed.special,
-          compensation_source: "fixed_structure",
-        } as RowDataPacket;
-      } else {
-        salary = {
-          ...salary,
-          compensation_source: "ctc_percentage_estimate",
-        } as RowDataPacket;
-      }
+  let salary: RowDataPacket | null = canSeeCompensation ? ((salaryResult[0] as RowDataPacket[])[0] ?? null) : null;
+  if (salary) {
+    // Same fixed-vs-CTC% preference as the /ctc endpoint — see getFixedSalaryComponents.
+    const fixed = await getFixedSalaryComponents(targetId, (salary as any).structure_id ?? null);
+    if (fixed.hasFixed) {
+      salary = {
+        ...salary,
+        basic: fixed.basic,
+        hra: fixed.hra,
+        other_allowances: fixed.special,
+        compensation_source: "fixed_structure",
+      } as RowDataPacket;
+    } else {
+      salary = { ...salary, compensation_source: "ctc_percentage_estimate" } as RowDataPacket;
     }
-    const clDocRow = (clDocResult as any)[0]?.[0];
-    const docRow = (docResult as any)[0]?.[0];
-    const journey = journeyResult as unknown as RowDataPacket[];
+  }
+  const clDocRow = (clDocResult as any)[0]?.[0];
+  const docRow = (docResult as any)[0]?.[0];
+  const journey = journeyResult as unknown as RowDataPacket[];
 
-    // db_bill attendance fallback when mas_hrms has no records for current month
-    let attendanceData: {
-      present_days: number;
-      working_days: number;
-      attendance_pct: number | null;
-      source?: string;
-    } = (attendance as any) ?? {
-      present_days: 0,
-      working_days: 0,
-      attendance_pct: null,
-    };
-    if (Number(attendanceData.present_days) === 0 && process.env.BILL_DB_HOST) {
-      try {
-        const billPool = await getBillPool();
-        const [[billAtt]] = await billPool.execute<RowDataPacket[]>(
-          `SELECT COUNT(*) AS present_days
+  // db_bill attendance fallback when mas_hrms has no records for current month
+  let attendanceData: { present_days: number; working_days: number; attendance_pct: number | null; source?: string } =
+    (attendance as any) ?? { present_days: 0, working_days: 0, attendance_pct: null };
+  if (Number(attendanceData.present_days) === 0 && process.env.BILL_DB_HOST) {
+    try {
+      const billPool = await getBillPool();
+      const [[billAtt]] = await billPool.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS present_days
            FROM db_bill.Attandence
           WHERE EmpCode = ?
             AND MONTH(AttDate) = MONTH(CURDATE())
             AND YEAR(AttDate) = YEAR(CURDATE())
             AND Status IN ('P','H','WO')`,
-          [emp.employee_code ?? ""],
-        );
-        const legacyDays = Number(billAtt?.present_days ?? 0);
-        if (legacyDays > 0) {
-          attendanceData = {
-            present_days: legacyDays,
-            working_days: 26,
-            attendance_pct: Math.round((legacyDays / 26) * 100 * 10) / 10,
-            source: "legacy",
-          };
-        }
-      } catch (_) {
-        /* db_bill unavailable — skip silently */
+        [emp.employee_code ?? ""],
+      );
+      const legacyDays = Number(billAtt?.present_days ?? 0);
+      if (legacyDays > 0) {
+        attendanceData = { present_days: legacyDays, working_days: 26, attendance_pct: Math.round(legacyDays / 26 * 100 * 10) / 10, source: "legacy" };
       }
-    }
+    } catch (_) { /* db_bill unavailable — skip silently */ }
+  }
 
-    // db_bill leave fallback when mas_hrms has no leave balance records
-    let leaveBalancesData: RowDataPacket[] = leaveBalances;
-    if (leaveBalancesData.length === 0 && process.env.BILL_DB_HOST) {
-      try {
-        const billPool = await getBillPool();
-        const [billLeave] = await billPool.execute<RowDataPacket[]>(
-          `SELECT leave_type AS leave_code, leave_type AS leave_name,
+  // db_bill leave fallback when mas_hrms has no leave balance records
+  let leaveBalancesData: RowDataPacket[] = leaveBalances;
+  if (leaveBalancesData.length === 0 && process.env.BILL_DB_HOST) {
+    try {
+      const billPool = await getBillPool();
+      const [billLeave] = await billPool.execute<RowDataPacket[]>(
+        `SELECT leave_type AS leave_code, leave_type AS leave_name,
                 (allocated - used) AS available_days, used AS used_days
            FROM db_bill.leave_management
           WHERE emp_code = ? AND YEAR(from_date) = YEAR(CURDATE())
           GROUP BY leave_type`,
-          [emp.employee_code ?? ""],
-        );
-        if (billLeave.length > 0) leaveBalancesData = billLeave;
-      } catch (_) {
-        /* db_bill unavailable — skip silently */
-      }
-    }
-
-    const clTotal =
-      Number(clDocRow?.checklist_missing ?? 0) +
-      Number(clDocRow?.checklist_awaiting ?? 0) +
-      Number(clDocRow?.checklist_verified ?? 0);
-    const resolvedMissingDocs =
-      clTotal > 0
-        ? Number(clDocRow?.checklist_missing ?? 0)
-        : Number(docRow?.missing_docs ?? 0);
-    const resolvedAwaitingVerify =
-      clTotal > 0
-        ? Number(clDocRow?.checklist_awaiting ?? 0)
-        : Number(docRow?.awaiting_verification ?? 0);
-    const resolvedVerifiedDocs =
-      clTotal > 0
-        ? Number(clDocRow?.checklist_verified ?? 0)
-        : Number(docRow?.verified_docs ?? 0);
-
-    /**
-     * One-line postal addresses, composed here rather than in each consumer so the Employee
-     * 360 dialog, the full stat-card page and anything else added later all read the same
-     * string. Blank parts are dropped instead of leaving ", , ," in the middle.
-     *
-     * Source order per address: the employees.* columns first (what HR edits and what the
-     * letters / form-fill layer reads), then the migrated employee_address row. Returns null
-     * when neither holds anything, so a consumer can say "Not recorded" and mean it.
-     */
-    const joinParts = (...parts: unknown[]) => {
-      const line = parts
-        .map((part) => String(part ?? "").trim())
-        .filter(Boolean)
-        .join(", ");
-      return line || null;
-    };
-    const currentAddress =
-      joinParts(emp.address1, emp.address2, emp.city, emp.state, emp.pincode) ??
-      joinParts(
-        emp.ea_current_line1,
-        emp.ea_current_line2,
-        emp.ea_current_city,
-        emp.ea_current_state,
-        emp.ea_current_pincode,
+        [emp.employee_code ?? ""],
       );
-    const permanentAddress =
-      joinParts(
-        emp.permanent_address1,
-        emp.permanent_address2,
-        emp.permanent_city,
-        emp.permanent_state,
-        emp.permanent_pincode,
-      ) ??
-      joinParts(
-        emp.ea_permanent_line1,
-        emp.ea_permanent_line2,
-        emp.ea_permanent_city,
-        emp.ea_permanent_state,
-        emp.ea_permanent_pincode,
-      );
+      if (billLeave.length > 0) leaveBalancesData = billLeave;
+    } catch (_) { /* db_bill unavailable — skip silently */ }
+  }
 
-    return res.json({
-      success: true,
-      data: {
-        employee: {
-          ...emp,
-          current_address: currentAddress,
-          permanent_address: permanentAddress,
-          emergency_contact: emp.emergency_name
-            ? {
-                name: emp.emergency_name,
-                relationship: emp.emergency_relationship,
-                mobile: emp.emergency_mobile,
-                address: emp.emergency_address,
-              }
-            : null,
-        },
-        leave_balances: leaveBalancesData,
-        attendance: attendanceData,
-        performance: performanceRows[0] ?? null,
-        active_assets: Number(assetRow?.active_assets ?? 0),
-        missing_docs: resolvedMissingDocs,
-        awaiting_verification: resolvedAwaitingVerify,
-        verified_docs: resolvedVerifiedDocs,
-        pending_docs: resolvedMissingDocs,
-        gamification_tier: tierRows[0] ?? null,
-        journey,
-        salary,
+  const clTotal = Number(clDocRow?.checklist_missing ?? 0) + Number(clDocRow?.checklist_awaiting ?? 0) + Number(clDocRow?.checklist_verified ?? 0);
+  const resolvedMissingDocs    = clTotal > 0 ? Number(clDocRow?.checklist_missing ?? 0)  : Number(docRow?.missing_docs ?? 0);
+  const resolvedAwaitingVerify = clTotal > 0 ? Number(clDocRow?.checklist_awaiting ?? 0) : Number(docRow?.awaiting_verification ?? 0);
+  const resolvedVerifiedDocs   = clTotal > 0 ? Number(clDocRow?.checklist_verified ?? 0) : Number(docRow?.verified_docs ?? 0);
+
+  /**
+   * One-line postal addresses, composed here rather than in each consumer so the Employee
+   * 360 dialog, the full stat-card page and anything else added later all read the same
+   * string. Blank parts are dropped instead of leaving ", , ," in the middle.
+   *
+   * Source order per address: the employees.* columns first (what HR edits and what the
+   * letters / form-fill layer reads), then the migrated employee_address row. Returns null
+   * when neither holds anything, so a consumer can say "Not recorded" and mean it.
+   */
+  const joinParts = (...parts: unknown[]) => {
+    const line = parts.map((part) => String(part ?? "").trim()).filter(Boolean).join(", ");
+    return line || null;
+  };
+  const currentAddress =
+    joinParts(emp.address1, emp.address2, emp.city, emp.state, emp.pincode)
+    ?? joinParts(emp.ea_current_line1, emp.ea_current_line2, emp.ea_current_city, emp.ea_current_state, emp.ea_current_pincode);
+  const permanentAddress =
+    joinParts(emp.permanent_address1, emp.permanent_address2, emp.permanent_city, emp.permanent_state, emp.permanent_pincode)
+    ?? joinParts(emp.ea_permanent_line1, emp.ea_permanent_line2, emp.ea_permanent_city, emp.ea_permanent_state, emp.ea_permanent_pincode);
+
+  return res.json({
+    success: true,
+    data: {
+      employee: {
+        ...emp,
+        current_address: currentAddress,
+        permanent_address: permanentAddress,
+        emergency_contact: emp.emergency_name ? {
+          name: emp.emergency_name,
+          relationship: emp.emergency_relationship,
+          mobile: emp.emergency_mobile,
+          address: emp.emergency_address,
+        } : null,
       },
-    });
-  }),
-);
+      leave_balances: leaveBalancesData,
+      attendance: attendanceData,
+      performance: performanceRows[0] ?? null,
+      active_assets: Number(assetRow?.active_assets ?? 0),
+      missing_docs: resolvedMissingDocs,
+      awaiting_verification: resolvedAwaitingVerify,
+      verified_docs: resolvedVerifiedDocs,
+      pending_docs: resolvedMissingDocs,
+      gamification_tier: tierRows[0] ?? null,
+      journey,
+      salary,
+    },
+  });
+}));
 
 // GET /api/employees/:id/ctc — returns annual CTC + full monthly breakdown for payslip viewer
-router.get(
-  `${UUID_ROUTE}/ctc`,
-  h(async (req: any, res: any) => {
-    const userId = req.authUser!.id;
-    const targetId = String(req.params.id);
-    await assertEmployeeAccess(userId, targetId, PEOPLE_SCOPE_ROLES);
+router.get(`${UUID_ROUTE}/ctc`, h(async (req: any, res: any) => {
+  const userId = req.authUser!.id;
+  const targetId = String(req.params.id);
+  await assertEmployeeAccess(userId, targetId, PEOPLE_SCOPE_ROLES);
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT esa.structure_id, esa.ctc_annual,
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT esa.structure_id, esa.ctc_annual,
             ssm.basic_pct,
             ssm.hra_pct,
             ROUND(esa.ctc_annual / 12, 2)                                     AS monthly_ctc,
@@ -796,37 +619,29 @@ router.get(
         AND esa.active_status = 1
       ORDER BY esa.effective_from DESC, esa.created_at DESC
       LIMIT 1`,
-      [targetId],
-    );
-    if (!rows[0]) return res.json({ success: true, data: { ctc: null } });
-    const r = rows[0] as any;
+    [targetId],
+  );
+  if (!rows[0]) return res.json({ success: true, data: { ctc: null } });
+  const r = rows[0] as any;
 
-    // Prefer the fixed salary-structure amount both payroll engines actually pay
-    // out; the CTC% figures above become a labeled fallback estimate only.
-    const fixed = await getFixedSalaryComponents(
-      targetId,
-      r.structure_id ?? null,
-    );
+  // Prefer the fixed salary-structure amount both payroll engines actually pay
+  // out; the CTC% figures above become a labeled fallback estimate only.
+  const fixed = await getFixedSalaryComponents(targetId, r.structure_id ?? null);
 
-    return res.json({
-      success: true,
-      data: {
-        ctc: Number(r.ctc_annual),
-        monthly_ctc: Number(r.monthly_ctc),
-        monthly_basic: fixed.hasFixed ? fixed.basic : Number(r.monthly_basic),
-        monthly_hra: fixed.hasFixed ? fixed.hra : Number(r.monthly_hra),
-        monthly_special: fixed.hasFixed
-          ? fixed.special
-          : Number(r.monthly_special),
-        basic_pct: Number(r.basic_pct),
-        hra_pct: Number(r.hra_pct),
-        compensation_source: fixed.hasFixed
-          ? "fixed_structure"
-          : "ctc_percentage_estimate",
-      },
-    });
-  }),
-);
+  return res.json({
+    success: true,
+    data: {
+      ctc:                 Number(r.ctc_annual),
+      monthly_ctc:         Number(r.monthly_ctc),
+      monthly_basic:       fixed.hasFixed ? fixed.basic   : Number(r.monthly_basic),
+      monthly_hra:         fixed.hasFixed ? fixed.hra     : Number(r.monthly_hra),
+      monthly_special:     fixed.hasFixed ? fixed.special : Number(r.monthly_special),
+      basic_pct:           Number(r.basic_pct),
+      hra_pct:             Number(r.hra_pct),
+      compensation_source: fixed.hasFixed ? "fixed_structure" : "ctc_percentage_estimate",
+    },
+  });
+}));
 
 /**
  * One employee's salary structure, and every version of it.
@@ -852,37 +667,30 @@ router.get(
  * check is assertEmployeeAccess's, unchanged — a payroll_hr scoped to one branch
  * sees their own branch only.
  */
-const SALARY_SCOPE_ROLES = [
-  "payroll",
-  "payroll_hr",
-  "payroll_head",
-  "finance_head",
-];
+const SALARY_SCOPE_ROLES = ["payroll", "payroll_hr", "payroll_head", "finance_head"];
 
-router.get(
-  `${UUID_ROUTE}/salary-structure`,
-  h(async (req: any, res: any) => {
-    const userId = req.authUser!.id;
-    const targetId = String(req.params.id);
+router.get(`${UUID_ROUTE}/salary-structure`, h(async (req: any, res: any) => {
+  const userId = req.authUser!.id;
+  const targetId = String(req.params.id);
 
-    // A role check BEFORE the scope check, because canAccessEmployee() is deliberately
-    // generous in ways that are right for a profile and wrong for pay: it admits
-    // 'admin' and 'ceo' outright, the employee themselves, and anyone the target
-    // reports to. Passing SALARY_SCOPE_ROLES to it alone would therefore still hand a
-    // team lead their reports' full salary structure. Holding a payroll role is
-    // required first; hasAnyRole() lets super_admin through, as everywhere else.
-    if (!(await hasAnyRole(userId, ...SALARY_SCOPE_ROLES))) {
-      return res.status(403).json({
-        success: false,
-        message: "Forbidden: salary structure is limited to payroll roles",
-      });
-    }
-    // Then the ordinary branch/process scope check, so a branch-scoped payroll_hr
-    // still only reads their own branch.
-    await assertEmployeeAccess(userId, targetId, SALARY_SCOPE_ROLES);
+  // A role check BEFORE the scope check, because canAccessEmployee() is deliberately
+  // generous in ways that are right for a profile and wrong for pay: it admits
+  // 'admin' and 'ceo' outright, the employee themselves, and anyone the target
+  // reports to. Passing SALARY_SCOPE_ROLES to it alone would therefore still hand a
+  // team lead their reports' full salary structure. Holding a payroll role is
+  // required first; hasAnyRole() lets super_admin through, as everywhere else.
+  if (!(await hasAnyRole(userId, ...SALARY_SCOPE_ROLES))) {
+    return res.status(403).json({
+      success: false,
+      message: "Forbidden: salary structure is limited to payroll roles",
+    });
+  }
+  // Then the ordinary branch/process scope check, so a branch-scoped payroll_hr
+  // still only reads their own branch.
+  await assertEmployeeAccess(userId, targetId, SALARY_SCOPE_ROLES);
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT s.id, s.status, s.effective_date, s.assigned_at, s.salary_slab, s.approval_reference,
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT s.id, s.status, s.effective_date, s.assigned_at, s.salary_slab, s.approval_reference,
             s.basic, s.hra, s.conveyance, s.special_allowance, s.medical_allowance, s.lta,
             s.bonus, s.pli, s.portfolio, s.other_allowance,
             s.gross, s.ctc, s.net_estimate,
@@ -895,92 +703,64 @@ router.get(
        FROM salary_component_assignments s
       WHERE s.employee_id = ?
       ORDER BY s.effective_date DESC, s.assigned_at DESC`,
-      [targetId],
-    );
+    [targetId],
+  );
 
-    const num = (v: unknown) =>
-      v === null || v === undefined ? null : Number(v);
-    const versions = (rows as RowDataPacket[]).map((r) => ({
-      id: String(r.id),
-      status: r.status ? String(r.status) : null,
-      effective_date: r.effective_date,
-      assigned_at: r.assigned_at,
-      assigned_by_name: r.assigned_by_name ? String(r.assigned_by_name) : null,
-      salary_slab: r.salary_slab ? String(r.salary_slab) : null,
-      approval_reference: r.approval_reference
-        ? String(r.approval_reference)
-        : null,
-      earnings: {
-        basic: num(r.basic),
-        hra: num(r.hra),
-        conveyance: num(r.conveyance),
-        special_allowance: num(r.special_allowance),
-        medical_allowance: num(r.medical_allowance),
-        lta: num(r.lta),
-        bonus: num(r.bonus),
-        pli: num(r.pli),
-        portfolio: num(r.portfolio),
-        other_allowance: num(r.other_allowance),
-      },
-      deductions: {
-        pf_employee: num(r.pf_employee),
-        esic_employee: num(r.esic_employee),
-        mobile_deduction: num(r.mobile_deduction),
-        insurance_deduction: num(r.insurance_deduction),
-      },
-      employer: {
-        employer_pf: num(r.employer_pf),
-        employer_esi: num(r.employer_esi),
-      },
-      totals: {
-        gross: num(r.gross),
-        ctc: num(r.ctc),
-        net_estimate: num(r.net_estimate),
-      },
-      pf_applicable:
-        r.pf_applicable === null ? null : Number(r.pf_applicable) === 1,
-      esi_applicable:
-        r.esi_applicable === null ? null : Number(r.esi_applicable) === 1,
-    }));
+  const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  const versions = (rows as RowDataPacket[]).map((r) => ({
+    id: String(r.id),
+    status: r.status ? String(r.status) : null,
+    effective_date: r.effective_date,
+    assigned_at: r.assigned_at,
+    assigned_by_name: r.assigned_by_name ? String(r.assigned_by_name) : null,
+    salary_slab: r.salary_slab ? String(r.salary_slab) : null,
+    approval_reference: r.approval_reference ? String(r.approval_reference) : null,
+    earnings: {
+      basic: num(r.basic), hra: num(r.hra), conveyance: num(r.conveyance),
+      special_allowance: num(r.special_allowance), medical_allowance: num(r.medical_allowance),
+      lta: num(r.lta), bonus: num(r.bonus), pli: num(r.pli),
+      portfolio: num(r.portfolio), other_allowance: num(r.other_allowance),
+    },
+    deductions: {
+      pf_employee: num(r.pf_employee), esic_employee: num(r.esic_employee),
+      mobile_deduction: num(r.mobile_deduction), insurance_deduction: num(r.insurance_deduction),
+    },
+    employer: { employer_pf: num(r.employer_pf), employer_esi: num(r.employer_esi) },
+    totals: { gross: num(r.gross), ctc: num(r.ctc), net_estimate: num(r.net_estimate) },
+    pf_applicable: r.pf_applicable === null ? null : Number(r.pf_applicable) === 1,
+    esi_applicable: r.esi_applicable === null ? null : Number(r.esi_applicable) === 1,
+  }));
 
-    // "Current" is the active row, not merely the newest: a superseded or draft row
-    // dated later must not be presented as what this person is paid on.
-    const current =
-      versions.find((v) => String(v.status ?? "").toLowerCase() === "active") ??
-      null;
+  // "Current" is the active row, not merely the newest: a superseded or draft row
+  // dated later must not be presented as what this person is paid on.
+  const current = versions.find((v) => String(v.status ?? "").toLowerCase() === "active") ?? null;
 
-    if (!current && versions.length === 0) {
-      // No component row at all. Say so, and say whether a CTC-only record exists, so
-      // the page can distinguish "not set up yet" from "we cannot show you".
-      const [ctcOnly] = await db.execute<RowDataPacket[]>(
-        `SELECT ctc_annual FROM employee_salary_assignment
+  if (!current && versions.length === 0) {
+    // No component row at all. Say so, and say whether a CTC-only record exists, so
+    // the page can distinguish "not set up yet" from "we cannot show you".
+    const [ctcOnly] = await db.execute<RowDataPacket[]>(
+      `SELECT ctc_annual FROM employee_salary_assignment
         WHERE employee_id = ? AND active_status = 1
         ORDER BY effective_from DESC LIMIT 1`,
-        [targetId],
-      );
-      const ctcRow = (ctcOnly as RowDataPacket[])[0];
-      return res.json({
-        success: true,
-        data: {
-          source: ctcRow ? "ctc_percentage_estimate" : "none",
-          ctc_annual: ctcRow ? Number(ctcRow.ctc_annual) : null,
-          current: null,
-          history: [],
-        },
-      });
-    }
-
+      [targetId],
+    );
+    const ctcRow = (ctcOnly as RowDataPacket[])[0];
     return res.json({
       success: true,
       data: {
-        source: "salary_component_assignments",
-        ctc_annual: null,
-        current,
-        history: versions,
+        source: ctcRow ? "ctc_percentage_estimate" : "none",
+        ctc_annual: ctcRow ? Number(ctcRow.ctc_annual) : null,
+        current: null,
+        history: [],
       },
     });
-  }),
-);
+  }
+
+  return res.json({
+    success: true,
+    data: { source: "salary_component_assignments", ctc_annual: null, current, history: versions },
+  });
+}));
 
 // NOTE: there used to be a `router.get(UUID_ROUTE, ...)` here returning `SELECT e.*`
 // unredacted. Because this router is mounted before employee.routes.ts (app.ts) and

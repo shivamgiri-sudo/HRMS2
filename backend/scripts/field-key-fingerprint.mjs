@@ -35,8 +35,7 @@ const envPath = path.join(here, "..", ".env");
 
 /** env var wins; fall back to backend/.env, whose values are wrapped in double quotes. */
 function readKey(name) {
-  if (process.env[name])
-    return process.env[name].trim().replace(/^["']|["']$/g, "");
+  if (process.env[name]) return process.env[name].trim().replace(/^["']|["']$/g, "");
   if (!fs.existsSync(envPath)) return "";
   for (const line of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
     const m = line.match(new RegExp(`^\\s*${name}\\s*=\\s*(.*)$`));
@@ -53,23 +52,15 @@ function report(name, devValue) {
   }
   const norm = key.toLowerCase();
   const valid = /^[0-9a-f]{64}$/.test(norm);
-  const fp = crypto
-    .createHash("sha256")
-    .update(norm)
-    .digest("hex")
-    .slice(0, 16);
+  const fp = crypto.createHash("sha256").update(norm).digest("hex").slice(0, 16);
   console.log(
     `${name}: present  len=${key.length}  valid_hex=${valid}` +
-      `  is_dev_key=${norm === devValue}  FINGERPRINT=${fp}`,
+    `  is_dev_key=${norm === devValue}  FINGERPRINT=${fp}`
   );
 }
 
-console.log(
-  `host=${process.env.HOSTNAME || process.env.COMPUTERNAME || "(unknown)"}  node_env=${process.env.NODE_ENV || "(unset)"}`,
-);
+console.log(`host=${process.env.HOSTNAME || process.env.COMPUTERNAME || "(unknown)"}  node_env=${process.env.NODE_ENV || "(unset)"}`);
 report("FIELD_ENCRYPTION_KEY", DEV_ENCRYPTION_KEY);
 report("FIELD_BLIND_INDEX_KEY", DEV_BLIND_INDEX_KEY);
-console.log(
-  "\nFingerprints must match the production host before running any backfill.",
-);
+console.log("\nFingerprints must match the production host before running any backfill.");
 console.log("No key value is printed by this script.");

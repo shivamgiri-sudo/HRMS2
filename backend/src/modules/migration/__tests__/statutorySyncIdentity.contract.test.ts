@@ -28,50 +28,29 @@ import { describe, expect, it } from "vitest";
 import { namesCorroborate } from "../syncStatutoryDataFromDbBill.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(
-  path.resolve(__dirname, "../syncStatutoryDataFromDbBill.ts"),
-  "utf8",
-);
-const code = source
-  .replace(/\/\*[\s\S]*?\*\//g, "")
-  .replace(/^\s*\/\/.*$/gm, "");
+const source = fs.readFileSync(path.resolve(__dirname, "../syncStatutoryDataFromDbBill.ts"), "utf8");
+const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("db_bill statutory sync — identity corroboration", () => {
   it("rejects the real code collisions found in production", () => {
     expect(namesCorroborate("SHEELU GARG", "KRISHNA")).toBe(false);
     expect(namesCorroborate("SOFIYA SULTAN", "NAYANDEEP KAUR")).toBe(false);
     expect(namesCorroborate("Harsh Thakur", "KASHISH TYAGI")).toBe(false);
-    expect(
-      namesCorroborate("Codex E2E Candidate CODEX_E2E_1", "SACHIN KUMAR"),
-    ).toBe(false);
+    expect(namesCorroborate("Codex E2E Candidate CODEX_E2E_1", "SACHIN KUMAR")).toBe(false);
     expect(namesCorroborate("dsd dsd", "DEEPANSHU PUNDHEER")).toBe(false);
   });
 
   it("accepts the same person spelled differently", () => {
     // All observed in the 691 matched pairs.
-    expect(
-      namesCorroborate(
-        "NAGORI MOHAMMED SAMIR MOHAMMED",
-        "NAGORI MOHAMMED SAMIR",
-      ),
-    ).toBe(true);
+    expect(namesCorroborate("NAGORI MOHAMMED SAMIR MOHAMMED", "NAGORI MOHAMMED SAMIR")).toBe(true);
     expect(namesCorroborate("CHAVDA RANJANBEN", "chavda ranjanben")).toBe(true);
-    expect(
-      namesCorroborate("MONIKA SANJAY SHARMA  ", " MONIKA SANJAY SHARMA"),
-    ).toBe(true);
-    expect(namesCorroborate("LATTABEN TEJASBHAI AHUJA", "AHUJA LATTABEN")).toBe(
-      true,
-    );
+    expect(namesCorroborate("MONIKA SANJAY SHARMA  ", " MONIKA SANJAY SHARMA")).toBe(true);
+    expect(namesCorroborate("LATTABEN TEJASBHAI AHUJA", "AHUJA LATTABEN")).toBe(true);
   });
 
   it("fails closed when either name is missing", () => {
     // Unverifiable is not the same as verified — a blank name must not authorise a write.
-    for (const [a, b] of [
-      [null, "KRISHNA"],
-      ["SOFIYA SULTAN", null],
-      ["", ""],
-      [undefined, undefined],
-    ] as const) {
+    for (const [a, b] of [[null, "KRISHNA"], ["SOFIYA SULTAN", null], ["", ""], [undefined, undefined]] as const) {
       expect(namesCorroborate(a, b)).toBe(false);
     }
   });
@@ -84,15 +63,11 @@ describe("db_bill statutory sync — identity corroboration", () => {
   });
 
   it("the sync consults the check before writing anything", () => {
-    expect(code).toContain(
-      "namesCorroborate(employee.full_name, legacy.EmpName)",
-    );
+    expect(code).toContain("namesCorroborate(employee.full_name, legacy.EmpName)");
     // Both names must actually be selected, or the check silently compares undefined.
     expect(code).toMatch(/SELECT EmpCode, EmpName,/);
     expect(code).toMatch(/SELECT id, employee_code, full_name,/);
     // The guard must precede the field-by-field writes.
-    expect(code.indexOf("namesCorroborate")).toBeLessThan(
-      code.indexOf("fieldsToUpdate.push('uan_number')"),
-    );
+    expect(code.indexOf("namesCorroborate")).toBeLessThan(code.indexOf("fieldsToUpdate.push('uan_number')"));
   });
 });

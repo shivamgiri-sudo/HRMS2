@@ -21,7 +21,9 @@ describe("attendance engine night-shift helpers", () => {
   });
 
   it("builds a two-day shift window for night shifts", () => {
-    expect(buildShiftWindowInfo("2026-07-25", "21:00:00", "06:00:00")).toEqual({
+    expect(
+      buildShiftWindowInfo("2026-07-25", "21:00:00", "06:00:00")
+    ).toEqual({
       isNightShift: true,
       startDate: "2026-07-25",
       endDate: "2026-07-26",
@@ -31,7 +33,9 @@ describe("attendance engine night-shift helpers", () => {
   });
 
   it("keeps same-day windows for normal shifts", () => {
-    expect(buildShiftWindowInfo("2026-07-25", "09:00:00", "18:00:00")).toEqual({
+    expect(
+      buildShiftWindowInfo("2026-07-25", "09:00:00", "18:00:00")
+    ).toEqual({
       isNightShift: false,
       startDate: "2026-07-25",
       endDate: "2026-07-25",

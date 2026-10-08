@@ -24,13 +24,7 @@ const BASE_LINE = {
 describe("applying a top-up to a budget line", () => {
   it("under exclusive GST, adding to gross_amount under-states it by the tax on the increase", () => {
     // A line of 10 units at Rs 1,000 with 18% GST exclusive.
-    const before = calculateBudgetLine({
-      ...BASE_LINE,
-      quantity: 10,
-      unitRate: 1000,
-      taxTreatment: "exclusive",
-      gstRate: 18,
-    });
+    const before = calculateBudgetLine({ ...BASE_LINE, quantity: 10, unitRate: 1000, taxTreatment: "exclusive", gstRate: 18 });
     expect(before.baseAmount).toBe(10_000);
     expect(before.taxAmount).toBe(1_800);
     expect(before.grossAmount).toBe(11_800);
@@ -40,13 +34,7 @@ describe("applying a top-up to a budget line", () => {
     const requestedAmount = 5_000;
     const requestedQuantity = requestedAmount / 1000;
 
-    const after = calculateBudgetLine({
-      ...BASE_LINE,
-      quantity: 10 + requestedQuantity,
-      unitRate: 1000,
-      taxTreatment: "exclusive",
-      gstRate: 18,
-    });
+    const after = calculateBudgetLine({ ...BASE_LINE, quantity: 10 + requestedQuantity, unitRate: 1000, taxTreatment: "exclusive", gstRate: 18 });
     expect(after.grossAmount).toBe(17_700);
 
     // The old behaviour: gross_amount + requested_amount.
@@ -60,22 +48,8 @@ describe("applying a top-up to a budget line", () => {
 
   it("carries the increase through to pnl_cost_amount, which every P&L read uses", () => {
     // 50% recoverable GST, so the P&L cost is base + half the tax.
-    const before = calculateBudgetLine({
-      ...BASE_LINE,
-      quantity: 10,
-      unitRate: 1000,
-      taxTreatment: "exclusive",
-      gstRate: 18,
-      recoverableTaxPct: 50,
-    });
-    const after = calculateBudgetLine({
-      ...BASE_LINE,
-      quantity: 15,
-      unitRate: 1000,
-      taxTreatment: "exclusive",
-      gstRate: 18,
-      recoverableTaxPct: 50,
-    });
+    const before = calculateBudgetLine({ ...BASE_LINE, quantity: 10, unitRate: 1000, taxTreatment: "exclusive", gstRate: 18, recoverableTaxPct: 50 });
+    const after = calculateBudgetLine({ ...BASE_LINE, quantity: 15, unitRate: 1000, taxTreatment: "exclusive", gstRate: 18, recoverableTaxPct: 50 });
 
     expect(before.pnlCostAmount).toBe(10_900);
     expect(after.pnlCostAmount).toBe(16_350);
@@ -85,13 +59,7 @@ describe("applying a top-up to a budget line", () => {
   });
 
   it("keeps base + tax equal to gross after the increase", () => {
-    const after = calculateBudgetLine({
-      ...BASE_LINE,
-      quantity: 15,
-      unitRate: 1000,
-      taxTreatment: "exclusive",
-      gstRate: 18,
-    });
+    const after = calculateBudgetLine({ ...BASE_LINE, quantity: 15, unitRate: 1000, taxTreatment: "exclusive", gstRate: 18 });
     expect(after.baseAmount + after.taxAmount).toBe(after.grossAmount);
     // And the CGST/SGST split still adds back to the whole tax.
     expect(after.cgstAmount + after.sgstAmount).toBe(after.taxAmount);
@@ -99,20 +67,8 @@ describe("applying a top-up to a budget line", () => {
 
   it("is a plain quantity increase when the line is non_gst — the only shape live today", () => {
     // All 94 production lines are non_gst at 0%, so this is the path a real top-up takes now.
-    const before = calculateBudgetLine({
-      ...BASE_LINE,
-      quantity: 1,
-      unitRate: 150_000,
-      taxTreatment: "non_gst",
-      gstRate: 0,
-    });
-    const after = calculateBudgetLine({
-      ...BASE_LINE,
-      quantity: 2,
-      unitRate: 150_000,
-      taxTreatment: "non_gst",
-      gstRate: 0,
-    });
+    const before = calculateBudgetLine({ ...BASE_LINE, quantity: 1, unitRate: 150_000, taxTreatment: "non_gst", gstRate: 0 });
+    const after = calculateBudgetLine({ ...BASE_LINE, quantity: 2, unitRate: 150_000, taxTreatment: "non_gst", gstRate: 0 });
     expect(before.grossAmount).toBe(150_000);
     expect(after.grossAmount).toBe(300_000);
     expect(after.pnlCostAmount).toBe(300_000);

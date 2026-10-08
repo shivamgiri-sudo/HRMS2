@@ -26,25 +26,16 @@ import mysql from "mysql2/promise";
 const WRITE = process.argv.includes("--write");
 
 const rawConn = await mysql.createConnection({
-  host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+  host: process.env.DB_HOST, port: Number(process.env.DB_PORT || 3306),
+  user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
 });
 const conn = {
   query: async (...args) => {
     for (let a = 1; a <= 6; a++) {
-      try {
-        return await rawConn.query(...args);
-      } catch (err) {
-        if (
-          (err.code === "ER_LOCK_DEADLOCK" ||
-            err.code === "ER_LOCK_WAIT_TIMEOUT") &&
-          a < 6
-        ) {
-          await new Promise((r) => setTimeout(r, 1000 * a));
-          continue;
+      try { return await rawConn.query(...args); }
+      catch (err) {
+        if ((err.code === "ER_LOCK_DEADLOCK" || err.code === "ER_LOCK_WAIT_TIMEOUT") && a < 6) {
+          await new Promise((r) => setTimeout(r, 1000 * a)); continue;
         }
         throw err;
       }
@@ -69,18 +60,8 @@ const [qualRows] = await conn.query(`
      AND best.qualification <> ''
      AND NOT EXISTS (SELECT 1 FROM employee_education ee WHERE ee.employee_id = e.id)
 `);
-console.log(
-  `\n=== employee_education: ${qualRows.length} employee(s) recoverable ===`,
-);
-console.table(
-  qualRows
-    .slice(0, 10)
-    .map((r) => ({
-      code: r.employee_code,
-      qualification: r.qualification,
-      year: r.passed_out_year,
-    })),
-);
+console.log(`\n=== employee_education: ${qualRows.length} employee(s) recoverable ===`);
+console.table(qualRows.slice(0, 10).map(r => ({ code: r.employee_code, qualification: r.qualification, year: r.passed_out_year })));
 if (WRITE) {
   for (const r of qualRows) {
     await conn.query(
@@ -88,16 +69,8 @@ if (WRITE) {
          (id, employee_id, qualification, specialization_course_name, institution_name,
           passed_out_state, passed_out_city, passed_out_year, passed_out_percentage)
        VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        r.employee_id,
-        r.qualification,
-        r.specialization_course_name,
-        r.institution_name,
-        r.passed_out_state,
-        r.passed_out_city,
-        r.passed_out_year,
-        r.passed_out_percentage,
-      ],
+      [r.employee_id, r.qualification, r.specialization_course_name, r.institution_name,
+       r.passed_out_state, r.passed_out_city, r.passed_out_year, r.passed_out_percentage]
     );
   }
   console.log(`Wrote ${qualRows.length} employee_education row(s).`);
@@ -117,30 +90,21 @@ const [expRows] = await conn.query(`
      AND best.experience_year IS NOT NULL
      AND NOT EXISTS (SELECT 1 FROM employee_experience ex WHERE ex.employee_id = e.id)
 `);
-console.log(
-  `\n=== employee_experience: ${expRows.length} employee(s) recoverable ===`,
-);
-console.table(
-  expRows.map((r) => ({
-    code: r.employee_code,
-    experience_year: r.experience_year,
-  })),
-);
+console.log(`\n=== employee_experience: ${expRows.length} employee(s) recoverable ===`);
+console.table(expRows.map(r => ({ code: r.employee_code, experience_year: r.experience_year })));
 if (WRITE) {
   for (const r of expRows) {
     await conn.query(
       `INSERT INTO employee_experience (id, employee_id, is_fresher, experience_years)
        VALUES (UUID(), ?, 0, ?)`,
-      [r.employee_id, Number(r.experience_year) || 0],
+      [r.employee_id, Number(r.experience_year) || 0]
     );
   }
   console.log(`Wrote ${expRows.length} employee_experience row(s).`);
 }
 
 if (!WRITE) {
-  console.log(
-    `\nDRY RUN — would write ${qualRows.length} education + ${expRows.length} experience row(s). Re-run with --write to apply.`,
-  );
+  console.log(`\nDRY RUN — would write ${qualRows.length} education + ${expRows.length} experience row(s). Re-run with --write to apply.`);
 }
 
 await conn.end();

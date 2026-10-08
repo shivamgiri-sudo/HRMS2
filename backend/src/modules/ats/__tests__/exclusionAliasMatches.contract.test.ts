@@ -58,12 +58,7 @@ function enclosingRegion(src: string, index: number): string {
   return src.slice(starts.length ? starts[starts.length - 1] : 0, ends.length ? ends[0] : src.length);
 }
 
-interface Site {
-  file: string;
-  line: number;
-  arg: string;
-  alias: string;
-}
+interface Site { file: string; line: number; arg: string; alias: string }
 
 function callSites(): Site[] {
   const sites: Site[] = [];
@@ -72,9 +67,7 @@ function callSites(): Site[] {
     if (!raw.includes("excludeEmployeeShapedCandidatesSql(")) continue;
     const src = stripComments(raw);
 
-    for (const m of src.matchAll(
-      /excludeEmployeeShapedCandidatesSql\(\s*["'`]([^"'`]+)["'`]\s*\)/g,
-    )) {
+    for (const m of src.matchAll(/excludeEmployeeShapedCandidatesSql\(\s*["'`]([^"'`]+)["'`]\s*\)/g)) {
       const region = enclosingRegion(src, m.index!);
       const decl = [...region.matchAll(/\b(?:FROM|JOIN)\s+ats_candidate\b(?![.\w])(?:\s+(?:AS\s+)?([a-zA-Z_]\w*))?/gi)];
       if (!decl.length) continue; // module-level constant; validated where it is used
@@ -84,10 +77,7 @@ function callSites(): Site[] {
       const aliases = new Set(
         decl.map((d) => {
           const a = d[1];
-          return a &&
-            !/^(WHERE|ON|SET|LEFT|INNER|GROUP|ORDER|LIMIT|AND)$/i.test(a)
-            ? a
-            : "ats_candidate";
+          return a && !/^(WHERE|ON|SET|LEFT|INNER|GROUP|ORDER|LIMIT|AND)$/i.test(a) ? a : "ats_candidate";
         }),
       );
       if (aliases.has(m[1])) continue;
@@ -108,8 +98,7 @@ describe("the legacy-row exclusion is passed the alias its query uses", () => {
     let found = 0;
     for (const file of sourceFiles(BACKEND_SRC)) {
       const src = readFileSync(file, "utf8");
-      found += (src.match(/excludeEmployeeShapedCandidatesSql\(/g) ?? [])
-        .length;
+      found += (src.match(/excludeEmployeeShapedCandidatesSql\(/g) ?? []).length;
     }
     expect(found).toBeGreaterThan(10);
   });
@@ -132,10 +121,7 @@ describe("the legacy-row exclusion is passed the alias its query uses", () => {
   it("every call site names the alias in its own query", () => {
     const bad = callSites();
     expect(
-      bad.map(
-        (s) =>
-          `${s.file}:${s.line} passes "${s.arg}" but its query uses "${s.alias}"`,
-      ),
+      bad.map((s) => `${s.file}:${s.line} passes "${s.arg}" but its query uses "${s.alias}"`),
       "The helper interpolates this argument into a column reference. A mismatch is an " +
         "ER_BAD_FIELD_ERROR at runtime, not a style problem — MySQL rejects the original table " +
         "name once the query aliases it. This exact mistake 500'd the candidate list.",

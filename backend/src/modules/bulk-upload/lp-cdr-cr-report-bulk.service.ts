@@ -1,10 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * LP's "10. CR Reports" (per its own SOP: "Open BPO Panel... Select
@@ -22,37 +19,19 @@ import {
  */
 
 export const LP_CR_REPORT_HEADERS = [
-  "Name",
-  "Mobile",
-  "Email",
-  "Status",
-  "Unsecured_Loan",
-  "AgentName",
-  "CreatedOn",
+  "Name", "Mobile", "Email", "Status", "Unsecured_Loan", "AgentName", "CreatedOn",
 ] as const;
 
 export function parseNullableAmount(raw: unknown): number | null {
-  const v = String(raw ?? "")
-    .trim()
-    .replace(/,/g, "");
+  const v = String(raw ?? "").trim().replace(/,/g, "");
   if (!v) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
 
 const MONTHS: Record<string, number> = {
-  jan: 1,
-  feb: 2,
-  mar: 3,
-  apr: 4,
-  may: 5,
-  jun: 6,
-  jul: 7,
-  aug: 8,
-  sep: 9,
-  oct: 10,
-  nov: 11,
-  dec: 12,
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
 };
 
 export function parseDate(raw: unknown): string | null {
@@ -63,9 +42,7 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(
-      Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000,
-    );
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
     return d.toISOString().slice(0, 10);
   }
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
@@ -84,9 +61,7 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 async function resolveLpProcessId(): Promise<string | null> {
   const [procRows] = await db.execute<Ref[]>(
@@ -95,19 +70,14 @@ async function resolveLpProcessId(): Promise<string | null> {
   return procRows[0]?.id ?? null;
 }
 
-async function writeErrors(
-  errorUpdates: Array<{ rowId: string; message: string }>,
-) {
+async function writeErrors(errorUpdates: Array<{ rowId: string; message: string }>) {
   if (!errorUpdates.length) return;
   const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
   const ids = errorUpdates.map((u) => u.rowId);
   await db.execute(
     `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
       WHERE id IN (${ids.map(() => "?").join(",")})`,
-    [
-      ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-      ...ids,
-    ],
+    [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
   );
 }
 
@@ -153,9 +123,7 @@ async function importCrReportBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no "Lawyer Panel" process found to attach this row to`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const name = String(data["Name"] ?? "").trim();
@@ -163,19 +131,14 @@ async function importCrReportBatch(
     const createdOn = parseDate(data["CreatedOn"]);
     if (!name || !mobile || !createdOn) {
       const msg = `Row ${row.row_no}: "Name", "Mobile" and "CreatedOn" are all required — together they are the row's identity`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(),
-        processId,
-        dashboardLabel,
-        name,
+        randomUUID(), processId, dashboardLabel, name,
         String(data["Email"] ?? "").trim() || null,
         mobile,
         String(data["Status"] ?? "").trim() || null,
@@ -207,9 +170,7 @@ async function importCrReportBatch(
   const errorRows = errorUpdates.length;
 
   const failedIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
-  const importedIds = toInsert
-    .filter((r) => !failedIds.has(r.rowId))
-    .map((r) => r.rowId);
+  const importedIds = toInsert.filter((r) => !failedIds.has(r.rowId)).map((r) => r.rowId);
   for (let i = 0; i < importedIds.length; i += 1000) {
     const slice = importedIds.slice(i, i + 1000);
     await db.execute(
@@ -221,11 +182,7 @@ async function importCrReportBatch(
   await writeErrors(errorUpdates);
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],
@@ -234,15 +191,9 @@ async function importCrReportBatch(
   return { importedRows, errorRows, errors };
 }
 
-export async function importLpCrReportRegionalBatch(
-  batchId: string,
-  importedByUserId: string,
-) {
+export async function importLpCrReportRegionalBatch(batchId: string, importedByUserId: string) {
   return importCrReportBatch(batchId, importedByUserId, "REGIONAL");
 }
-export async function importLpCrReportNonRegionalBatch(
-  batchId: string,
-  importedByUserId: string,
-) {
+export async function importLpCrReportNonRegionalBatch(batchId: string, importedByUserId: string) {
   return importCrReportBatch(batchId, importedByUserId, "NON_REGIONAL");
 }

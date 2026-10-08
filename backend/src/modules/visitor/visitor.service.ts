@@ -2,20 +2,11 @@ import { createHash, randomBytes, randomUUID } from "crypto";
 import type { Request } from "express";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  writeAuditLog,
-  writeSensitiveActionLog,
-} from "../../shared/auditLog.js";
+import { writeAuditLog, writeSensitiveActionLog } from "../../shared/auditLog.js";
 import { getUserRoleKeys } from "../../shared/roleResolver.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import * as repository from "./visitor.repository.js";
-import {
-  canTransitionVisit,
-  type ActorScope,
-  type CreateVisitInput,
-  type VisitListFilters,
-  type VisitStatus,
-} from "./visitor.types.js";
+import { canTransitionVisit, type ActorScope, type CreateVisitInput, type VisitListFilters, type VisitStatus } from "./visitor.types.js";
 import { inboxService } from "../inbox/inbox.service.js";
 
 // Owner ruling 2026-10-01: ho_hr, hr_admin and security_head are NOT org-wide roles - they are limited to
@@ -66,29 +57,13 @@ async function actorScope(userId: string): Promise<ActorScope> {
 
 function mayAccessVisit(scope: ActorScope, visit: any): boolean {
   if (scope.unrestricted) return true;
-  if (scope.employeeId && visit.host_employee_id === scope.employeeId)
-    return true;
-  return Boolean(
-    scope.branchId &&
-    scope.branchId === visit.branch_id &&
-    scope.roles.some((role) => BRANCH_SECURITY_ROLES.has(role)),
-  );
+  if (scope.employeeId && visit.host_employee_id === scope.employeeId) return true;
+  return Boolean(scope.branchId && scope.branchId === visit.branch_id && scope.roles.some((role) => BRANCH_SECURITY_ROLES.has(role)));
 }
 
-async function createVisit(
-  input: CreateVisitInput,
-  req: Request,
-  consent?: {
-    consent_type: string;
-    consent_version: string;
-    accepted: boolean;
-  },
-) {
+async function createVisit(input: CreateVisitInput, req: Request, consent?: { consent_type: string; consent_version: string; accepted: boolean }) {
   const branch = await repository.getActiveBranch(input.branch_id);
-  if (!branch)
-    throw Object.assign(new Error("Active branch not found"), {
-      statusCode: 400,
-    });
+  if (!branch) throw Object.assign(new Error("Active branch not found"), { statusCode: 400 });
 
   const host = await repository.resolveActiveHost({
     employeeId: input.host_employee_id,
@@ -96,10 +71,7 @@ async function createVisit(
     branchId: input.branch_id,
   });
   if ((input.host_employee_id || input.host_employee_code) && !host) {
-    throw Object.assign(
-      new Error("Active host was not found in the selected branch"),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error("Active host was not found in the selected branch"), { statusCode: 400 });
   }
 
   const trackingToken = randomBytes(32).toString("hex");
@@ -112,29 +84,21 @@ async function createVisit(
     trackingTokenHash: tokenHash(trackingToken),
     hostEmployeeId: host?.id ?? null,
     hostDisplayName: host?.full_name ?? null,
-    consent: consent
-      ? {
-          consentType: consent.consent_type,
-          consentVersion: consent.consent_version,
-          accepted: consent.accepted,
-          ipAddress: req.ip,
-          userAgent: String(req.headers["user-agent"] ?? ""),
-        }
-      : undefined,
+    consent: consent ? {
+      consentType: consent.consent_type,
+      consentVersion: consent.consent_version,
+      accepted: consent.accepted,
+      ipAddress: req.ip,
+      userAgent: String(req.headers["user-agent"] ?? ""),
+    } : undefined,
   });
   await writeAuditLog({
-    actor_user_id:
-      input.created_by_user_id ??
-      `public:${tokenHash(trackingToken).slice(0, 16)}`,
+    actor_user_id: input.created_by_user_id ?? `public:${tokenHash(trackingToken).slice(0, 16)}`,
     action_type: "VISITOR_VISIT_CREATED",
     module_key: "VISITOR_MANAGEMENT",
     entity_type: "visitor_visit",
     entity_id: visitId,
-    metadata: {
-      visit_number: number,
-      branch_id: input.branch_id,
-      source_channel: input.source_channel,
-    },
+    metadata: { visit_number: number, branch_id: input.branch_id, source_channel: input.source_channel },
     req,
   });
 
@@ -149,81 +113,40 @@ async function createVisit(
       const visitorName = input.visitor?.full_name ?? "A visitor";
       const company = input.visitor?.company_name;
       const startLabel = input.scheduled_start
-        ? new Date(input.scheduled_start).toLocaleString("en-IN", {
-            timeZone: "Asia/Kolkata",
-            day: "2-digit",
-            month: "short",
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: true,
-          })
+        ? new Date(input.scheduled_start).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true })
         : "soon";
-      inboxService
-        .createItem({
-          user_id: hostUserId,
-          type: "visitor_approval_needed",
-          title: `Visitor approval needed: ${visitorName}`,
-          description: `${visitorName}${company ? ` (${company})` : ""} wants to visit you on ${startLabel}. Please approve or reject from the Visitor Approvals page.`,
-          entity_type: "visitor_visit",
-          entity_id: visitId,
-          action_url: "/visitor-management/approvals",
-          priority: "normal",
-        } as any)
-        .catch(() => {});
+      inboxService.createItem({
+        user_id: hostUserId,
+        type: "visitor_approval_needed",
+        title: `Visitor approval needed: ${visitorName}`,
+        description: `${visitorName}${company ? ` (${company})` : ""} wants to visit you on ${startLabel}. Please approve or reject from the Visitor Approvals page.`,
+        entity_type: "visitor_visit",
+        entity_id: visitId,
+        action_url: "/visitor-management/approvals",
+        priority: "normal",
+      } as any).catch(() => {});
     }
   }
 
-  return {
-    id: visitId,
-    visit_number: number,
-    tracking_token: trackingToken,
-    status: "pending_approval" as const,
-  };
+  return { id: visitId, visit_number: number, tracking_token: trackingToken, status: "pending_approval" as const };
 }
 
 export const visitorService = {
   listPublicBranches: repository.listPublicBranches,
 
-  async registerPublic(
-    input: Omit<CreateVisitInput, "source_channel"> & {
-      consent: {
-        consent_type: string;
-        consent_version: string;
-        accepted: boolean;
-      };
-    },
-    req: Request,
-  ) {
-    return createVisit(
-      { ...input, source_channel: "visitor_self" },
-      req,
-      input.consent,
-    );
+  async registerPublic(input: Omit<CreateVisitInput, "source_channel"> & { consent: { consent_type: string; consent_version: string; accepted: boolean } }, req: Request) {
+    return createVisit({ ...input, source_channel: "visitor_self" }, req, input.consent);
   },
 
   async getPublicStatus(trackingToken: string) {
-    const row = await repository.getVisitByTrackingHash(
-      tokenHash(trackingToken),
-    );
-    if (!row)
-      throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
+    const row = await repository.getVisitByTrackingHash(tokenHash(trackingToken));
+    if (!row) throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
     return publicStatus(row);
   },
 
-  async recordPublicConsent(
-    input: {
-      tracking_token: string;
-      consent_type: string;
-      consent_version: string;
-      accepted: boolean;
-    },
-    req: Request,
-  ) {
-    const row = await repository.getVisitByTrackingHash(
-      tokenHash(input.tracking_token),
-    );
-    if (!row)
-      throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
+  async recordPublicConsent(input: { tracking_token: string; consent_type: string; consent_version: string; accepted: boolean }, req: Request) {
+    const row = await repository.getVisitByTrackingHash(tokenHash(input.tracking_token));
+    if (!row) throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
     await repository.recordConsent({
       visitorId: row.visitor_id,
       visitId: row.id,
@@ -239,13 +162,8 @@ export const visitorService = {
   async requestPublicCheckout(trackingToken: string, req: Request) {
     const hash = tokenHash(trackingToken);
     const row = await repository.getVisitByTrackingHash(hash);
-    if (!row)
-      throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
-    if (row.status !== "checked_in")
-      throw Object.assign(
-        new Error("Checkout can only be requested for a checked-in visitor"),
-        { statusCode: 409 },
-      );
+    if (!row) throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
+    if (row.status !== "checked_in") throw Object.assign(new Error("Checkout can only be requested for a checked-in visitor"), { statusCode: 409 });
     await db.executeRun(
       `UPDATE visitor_visit SET checkout_requested_at = CURRENT_TIMESTAMP
         WHERE id = ? AND status = 'checked_in'`,
@@ -298,85 +216,43 @@ export const visitorService = {
   },
 
   async getVisit(userId: string, visitId: string) {
-    const [scope, visit] = await Promise.all([
-      actorScope(userId),
-      repository.getVisitDetail(visitId),
-    ]);
-    if (!visit)
-      throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
-    if (!mayAccessVisit(scope, visit))
-      throw Object.assign(new Error("Visit access denied"), {
-        statusCode: 403,
-      });
+    const [scope, visit] = await Promise.all([actorScope(userId), repository.getVisitDetail(visitId)]);
+    if (!visit) throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
+    if (!mayAccessVisit(scope, visit)) throw Object.assign(new Error("Visit access denied"), { statusCode: 403 });
     return visit;
   },
 
-  async createInvitation(
-    userId: string,
-    input: Omit<CreateVisitInput, "source_channel" | "created_by_user_id">,
-    req: Request,
-  ) {
+  async createInvitation(userId: string, input: Omit<CreateVisitInput, "source_channel" | "created_by_user_id">, req: Request) {
     const scope = await actorScope(userId);
-    const hostEmployeeId =
-      input.host_employee_id ?? scope.employeeId ?? undefined;
-    if (!hostEmployeeId)
-      throw Object.assign(new Error("An active employee host is required"), {
-        statusCode: 400,
-      });
+    const hostEmployeeId = input.host_employee_id ?? scope.employeeId ?? undefined;
+    if (!hostEmployeeId) throw Object.assign(new Error("An active employee host is required"), { statusCode: 400 });
     if (!scope.unrestricted && scope.branchId !== input.branch_id) {
-      throw Object.assign(
-        new Error("You can only invite visitors to your assigned branch"),
-        { statusCode: 403 },
-      );
+      throw Object.assign(new Error("You can only invite visitors to your assigned branch"), { statusCode: 403 });
     }
     if (!scope.unrestricted && hostEmployeeId !== scope.employeeId) {
-      throw Object.assign(
-        new Error("You can only create an employee invitation for yourself"),
-        { statusCode: 403 },
-      );
+      throw Object.assign(new Error("You can only create an employee invitation for yourself"), { statusCode: 403 });
     }
-    return createVisit(
-      {
-        ...input,
-        host_employee_id: hostEmployeeId,
-        source_channel: "employee_invitation",
-        created_by_user_id: userId,
-      },
-      req,
-    );
+    return createVisit({
+      ...input,
+      host_employee_id: hostEmployeeId,
+      source_channel: "employee_invitation",
+      created_by_user_id: userId,
+    }, req);
   },
 
-  async createDeskVisit(
-    userId: string,
-    input: Omit<CreateVisitInput, "source_channel" | "created_by_user_id"> & {
-      host_employee_id: string;
-    },
-    req: Request,
-  ) {
+  async createDeskVisit(userId: string, input: Omit<CreateVisitInput, "source_channel" | "created_by_user_id"> & { host_employee_id: string }, req: Request) {
     const scope = await actorScope(userId);
     if (!scope.unrestricted && scope.branchId !== input.branch_id) {
-      throw Object.assign(
-        new Error("You can only register visitors at your assigned branch"),
-        { statusCode: 403 },
-      );
+      throw Object.assign(new Error("You can only register visitors at your assigned branch"), { statusCode: 403 });
     }
-    return createVisit(
-      {
-        ...input,
-        source_channel: "guard_desk",
-        created_by_user_id: userId,
-      },
-      req,
-    );
+    return createVisit({
+      ...input,
+      source_channel: "guard_desk",
+      created_by_user_id: userId,
+    }, req);
   },
 
-  async decide(
-    userId: string,
-    visitId: string,
-    decision: "approved" | "rejected",
-    reason: string | undefined,
-    req: AuthenticatedRequest,
-  ) {
+  async decide(userId: string, visitId: string, decision: "approved" | "rejected", reason: string | undefined, req: AuthenticatedRequest) {
     const scope = await actorScope(userId);
     const conn = await db.getConnection();
     let previousStatus: VisitStatus | undefined;
@@ -391,25 +267,16 @@ export const visitorService = {
         [visitId],
       );
       const visit = visits[0];
-      if (!visit)
-        throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
+      if (!visit) throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
 
       const globalOverride = scope.roles.some((role) => ["super_admin", "admin"].includes(role));
       const branchOverride = scope.roles.some((r) => ["branch_head", "security_head", "ho_hr", "hr_admin"].includes(r)) && scope.branchId === visit.branch_id;
       const assignedHost = Boolean(scope.employeeId && visit.host_employee_id === scope.employeeId);
       if (!globalOverride && !branchOverride && !assignedHost) {
-        throw Object.assign(
-          new Error(
-            "Only the assigned host or an authorized approver may decide this visit",
-          ),
-          { statusCode: 403 },
-        );
+        throw Object.assign(new Error("Only the assigned host or an authorized approver may decide this visit"), { statusCode: 403 });
       }
       if (!canTransitionVisit(visit.status as VisitStatus, decision)) {
-        throw Object.assign(
-          new Error(`Visit cannot move from ${visit.status} to ${decision}`),
-          { statusCode: 409 },
-        );
+        throw Object.assign(new Error(`Visit cannot move from ${visit.status} to ${decision}`), { statusCode: 409 });
       }
       previousStatus = visit.status as VisitStatus;
 
@@ -421,10 +288,7 @@ export const visitorService = {
         [decision, decision, decision, reason ?? null, visitId],
       );
       if (result.affectedRows !== 1) {
-        throw Object.assign(
-          new Error("Visit was already decided by another user"),
-          { statusCode: 409 },
-        );
+        throw Object.assign(new Error("Visit was already decided by another user"), { statusCode: 409 });
       }
       await conn.execute<ResultSetHeader>(
         `UPDATE visitor_approval
@@ -443,10 +307,7 @@ export const visitorService = {
     await writeSensitiveActionLog({
       actor_user_id: userId,
       actor_role: scope.roles[0],
-      action_type:
-        decision === "approved"
-          ? "VISITOR_VISIT_APPROVED"
-          : "VISITOR_VISIT_REJECTED",
+      action_type: decision === "approved" ? "VISITOR_VISIT_APPROVED" : "VISITOR_VISIT_REJECTED",
       module_key: "VISITOR_MANAGEMENT",
       entity_type: "visitor_visit",
       entity_id: visitId,
@@ -456,23 +317,15 @@ export const visitorService = {
       req,
     });
     // Close the host's approval-needed inbox alert so the repeat-reminder stops.
-    inboxService
-      .resolveItems({
-        entity_type: "visitor_visit",
-        entity_id: visitId,
-        types: ["visitor_approval_needed"],
-      })
-      .catch(() => {});
+    inboxService.resolveItems({
+      entity_type: "visitor_visit",
+      entity_id: visitId,
+      types: ["visitor_approval_needed"],
+    }).catch(() => {});
     return { id: visitId, status: decision };
   },
 
-  async checkEvent(
-    userId: string,
-    visitId: string,
-    event: "checked_in" | "checked_out",
-    input: { gate_code: string; badge_number?: string; notes?: string },
-    req: AuthenticatedRequest,
-  ) {
+  async checkEvent(userId: string, visitId: string, event: "checked_in" | "checked_out", input: { gate_code: string; badge_number?: string; notes?: string }, req: AuthenticatedRequest) {
     const scope = await actorScope(userId);
     const conn = await db.getConnection();
     let previousStatus: VisitStatus | undefined;
@@ -487,19 +340,12 @@ export const visitorService = {
         [visitId],
       );
       const visit = visits[0];
-      if (!visit)
-        throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
+      if (!visit) throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
       if (!scope.unrestricted && scope.branchId !== visit.branch_id) {
-        throw Object.assign(
-          new Error("You can only process visitors at your assigned branch"),
-          { statusCode: 403 },
-        );
+        throw Object.assign(new Error("You can only process visitors at your assigned branch"), { statusCode: 403 });
       }
       if (!canTransitionVisit(visit.status as VisitStatus, event)) {
-        throw Object.assign(
-          new Error(`Visit cannot move from ${visit.status} to ${event}`),
-          { statusCode: 409 },
-        );
+        throw Object.assign(new Error(`Visit cannot move from ${visit.status} to ${event}`), { statusCode: 409 });
       }
       previousStatus = visit.status as VisitStatus;
 
@@ -514,9 +360,7 @@ export const visitorService = {
           [input.badge_number, visit.branch_id],
         );
         if (badges[0] && badges[0].status !== "available") {
-          throw Object.assign(new Error("Badge is not available"), {
-            statusCode: 409,
-          });
+          throw Object.assign(new Error("Badge is not available"), { statusCode: 409 });
         }
         badgeId = badges[0]?.id ?? randomUUID();
         await conn.execute<ResultSetHeader>(
@@ -528,8 +372,7 @@ export const visitorService = {
         );
       }
 
-      const timeColumn =
-        event === "checked_in" ? "checked_in_at" : "checked_out_at";
+      const timeColumn = event === "checked_in" ? "checked_in_at" : "checked_out_at";
       const expected = event === "checked_in" ? "approved" : "checked_in";
       const [result] = await conn.execute<ResultSetHeader>(
         `UPDATE visitor_visit SET status = ?, ${timeColumn} = CURRENT_TIMESTAMP
@@ -537,10 +380,7 @@ export const visitorService = {
         [event, visitId, expected],
       );
       if (result.affectedRows !== 1) {
-        throw Object.assign(
-          new Error("Visit status changed; refresh before trying again"),
-          { statusCode: 409 },
-        );
+        throw Object.assign(new Error("Visit status changed; refresh before trying again"), { statusCode: 409 });
       }
 
       if (event === "checked_out") {
@@ -558,15 +398,7 @@ export const visitorService = {
         `INSERT INTO visitor_check_event
            (id, visit_id, event_type, gate_code, badge_id, actor_user_id, metadata_json)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          randomUUID(),
-          visitId,
-          event,
-          input.gate_code,
-          badgeId,
-          userId,
-          JSON.stringify({ notes: input.notes ?? null }),
-        ],
+        [randomUUID(), visitId, event, input.gate_code, badgeId, userId, JSON.stringify({ notes: input.notes ?? null })],
       );
       await conn.commit();
     } catch (error) {
@@ -579,8 +411,7 @@ export const visitorService = {
     await writeSensitiveActionLog({
       actor_user_id: userId,
       actor_role: scope.roles[0],
-      action_type:
-        event === "checked_in" ? "VISITOR_CHECKED_IN" : "VISITOR_CHECKED_OUT",
+      action_type: event === "checked_in" ? "VISITOR_CHECKED_IN" : "VISITOR_CHECKED_OUT",
       module_key: "VISITOR_MANAGEMENT",
       entity_type: "visitor_visit",
       entity_id: visitId,
@@ -592,41 +423,15 @@ export const visitorService = {
     return { id: visitId, status: event };
   },
 
-  async extendVisit(
-    userId: string,
-    visitId: string,
-    scheduledEnd: string,
-    reason: string,
-    req: AuthenticatedRequest,
-  ) {
-    const [scope, visit] = await Promise.all([
-      actorScope(userId),
-      repository.getVisitDetail(visitId),
-    ]);
-    if (!visit)
-      throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
-    if (!mayAccessVisit(scope, visit))
-      throw Object.assign(new Error("Visit access denied"), {
-        statusCode: 403,
-      });
-    if (!["approved", "checked_in"].includes(visit.status))
-      throw Object.assign(
-        new Error("Only approved or checked-in visits can be extended"),
-        { statusCode: 409 },
-      );
-    if (
-      new Date(scheduledEnd).getTime() <=
-      new Date(visit.scheduled_end).getTime()
-    ) {
-      throw Object.assign(
-        new Error("New end time must be later than the current end time"),
-        { statusCode: 400 },
-      );
+  async extendVisit(userId: string, visitId: string, scheduledEnd: string, reason: string, req: AuthenticatedRequest) {
+    const [scope, visit] = await Promise.all([actorScope(userId), repository.getVisitDetail(visitId)]);
+    if (!visit) throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
+    if (!mayAccessVisit(scope, visit)) throw Object.assign(new Error("Visit access denied"), { statusCode: 403 });
+    if (!["approved", "checked_in"].includes(visit.status)) throw Object.assign(new Error("Only approved or checked-in visits can be extended"), { statusCode: 409 });
+    if (new Date(scheduledEnd).getTime() <= new Date(visit.scheduled_end).getTime()) {
+      throw Object.assign(new Error("New end time must be later than the current end time"), { statusCode: 400 });
     }
-    await db.executeRun(
-      `UPDATE visitor_visit SET scheduled_end = ? WHERE id = ?`,
-      [new Date(scheduledEnd), visitId],
-    );
+    await db.executeRun(`UPDATE visitor_visit SET scheduled_end = ? WHERE id = ?`, [new Date(scheduledEnd), visitId]);
     await writeSensitiveActionLog({
       actor_user_id: userId,
       actor_role: scope.roles[0],
@@ -682,12 +487,7 @@ export const visitorService = {
     return rows;
   },
 
-  async publicGateCheckEvent(
-    visitId: string,
-    event: "checked_in" | "checked_out",
-    gateCode: string,
-    badgeNumber?: string,
-  ) {
+  async publicGateCheckEvent(visitId: string, event: "checked_in" | "checked_out", gateCode: string, badgeNumber?: string) {
     const conn = await db.getConnection();
     let previousStatus: VisitStatus | undefined;
     try {
@@ -697,13 +497,9 @@ export const visitorService = {
         [visitId],
       );
       const visit = visits[0];
-      if (!visit)
-        throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
+      if (!visit) throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
       if (!canTransitionVisit(visit.status as VisitStatus, event)) {
-        throw Object.assign(
-          new Error(`Visit cannot move from ${visit.status} to ${event}`),
-          { statusCode: 409 },
-        );
+        throw Object.assign(new Error(`Visit cannot move from ${visit.status} to ${event}`), { statusCode: 409 });
       }
       previousStatus = visit.status as VisitStatus;
 
@@ -714,9 +510,7 @@ export const visitorService = {
           [badgeNumber, visit.branch_id],
         );
         if (badges[0] && badges[0].status !== "available") {
-          throw Object.assign(new Error("Badge is not available"), {
-            statusCode: 409,
-          });
+          throw Object.assign(new Error("Badge is not available"), { statusCode: 409 });
         }
         badgeId = badges[0]?.id ?? randomUUID();
         await conn.execute<ResultSetHeader>(
@@ -728,18 +522,14 @@ export const visitorService = {
         );
       }
 
-      const timeColumn =
-        event === "checked_in" ? "checked_in_at" : "checked_out_at";
+      const timeColumn = event === "checked_in" ? "checked_in_at" : "checked_out_at";
       const expected = event === "checked_in" ? "approved" : "checked_in";
       const [result] = await conn.execute<ResultSetHeader>(
         `UPDATE visitor_visit SET status = ?, ${timeColumn} = CURRENT_TIMESTAMP WHERE id = ? AND status = ?`,
         [event, visitId, expected],
       );
       if (result.affectedRows !== 1) {
-        throw Object.assign(
-          new Error("Visit status changed; refresh before trying again"),
-          { statusCode: 409 },
-        );
+        throw Object.assign(new Error("Visit status changed; refresh before trying again"), { statusCode: 409 });
       }
 
       if (event === "checked_out") {
@@ -756,14 +546,7 @@ export const visitorService = {
       await conn.execute<ResultSetHeader>(
         `INSERT INTO visitor_check_event (id, visit_id, event_type, gate_code, badge_id, actor_user_id, metadata_json)
          VALUES (?, ?, ?, ?, ?, NULL, ?)`,
-        [
-          randomUUID(),
-          visitId,
-          event,
-          gateCode,
-          badgeId,
-          JSON.stringify({ source: "guard_gate_public" }),
-        ],
+        [randomUUID(), visitId, event, gateCode, badgeId, JSON.stringify({ source: "guard_gate_public" })],
       );
       await conn.commit();
     } catch (error) {

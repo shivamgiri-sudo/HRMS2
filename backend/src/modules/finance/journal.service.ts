@@ -39,8 +39,7 @@ const toPaise = (value: number) => {
   return Math.abs(paise - rounded) < PAISE_NOISE_EPSILON ? rounded : paise;
 };
 
-export type JournalAccountType =
-  "bank_account" | "vendor" | "expense_sub_head" | "payable_account";
+export type JournalAccountType = "bank_account" | "vendor" | "expense_sub_head" | "payable_account";
 
 export type JournalLineInput = {
   accountType: JournalAccountType;
@@ -51,13 +50,7 @@ export type JournalLineInput = {
   narration?: string | null;
 };
 
-export type JournalSourceType =
-  | "grn"
-  | "payment_voucher"
-  | "bank_reconciliation_adjustment"
-  | "imprest"
-  | "manual"
-  | "payroll";
+export type JournalSourceType = "grn" | "payment_voucher" | "bank_reconciliation_adjustment" | "imprest" | "manual" | "payroll";
 
 export type PostJournalEntryInput = {
   entryDate: string;
@@ -92,16 +85,9 @@ export const journalService = {
    * post() that nets against the first — journal_entry has no UPDATE path, matching every other
    * ledger table in this codebase.
    */
-  async post(
-    connection: PoolConnection,
-    input: PostJournalEntryInput,
-  ): Promise<{ journalEntryId: string }> {
+  async post(connection: PoolConnection, input: PostJournalEntryInput): Promise<{ journalEntryId: string }> {
     if (input.lines.length < 2) {
-      throw refuse(
-        400,
-        "JOURNAL_ENTRY_TOO_SHORT",
-        "A journal entry needs at least two lines — one debit side, one credit side.",
-      );
+      throw refuse(400, "JOURNAL_ENTRY_TOO_SHORT", "A journal entry needs at least two lines — one debit side, one credit side.");
     }
 
     let debitTotalPaise = 0;
@@ -113,18 +99,10 @@ export const journalService = {
       const creditPaise = toPaise(credit);
 
       if (debitPaise > 0 && creditPaise > 0) {
-        throw refuse(
-          400,
-          "JOURNAL_LINE_BOTH_SIDES",
-          `Line ${index + 1} has both a debit and a credit — a line moves exactly one side.`,
-        );
+        throw refuse(400, "JOURNAL_LINE_BOTH_SIDES", `Line ${index + 1} has both a debit and a credit — a line moves exactly one side.`);
       }
       if (debitPaise === 0 && creditPaise === 0) {
-        throw refuse(
-          400,
-          "JOURNAL_LINE_ZERO",
-          `Line ${index + 1} has no amount on either side.`,
-        );
+        throw refuse(400, "JOURNAL_LINE_ZERO", `Line ${index + 1} has no amount on either side.`);
       }
 
       debitTotalPaise += debitPaise;
@@ -192,26 +170,15 @@ export const journalService = {
    * Marks the original reversed_by_entry_id rather than deleting it — the original stays legible
    * in a Trial Balance for the period it was posted in, exactly as a contra entry would in Tally.
    */
-  async reverse(
-    connection: PoolConnection,
-    journalEntryId: string,
-    postedBy: string,
-    reason: string,
-  ): Promise<{ reversalEntryId: string }> {
+  async reverse(connection: PoolConnection, journalEntryId: string, postedBy: string, reason: string): Promise<{ reversalEntryId: string }> {
     const [rows] = await connection.execute(
       `SELECT id, entry_date, narration, source_type, source_id, reversed_by_entry_id, branch_id, cost_centre_id, process_id
          FROM journal_entry WHERE id = ? FOR UPDATE`,
       [journalEntryId],
     );
     const original = (rows as any[])[0];
-    if (!original)
-      throw refuse(404, "JOURNAL_ENTRY_NOT_FOUND", "Journal entry not found.");
-    if (original.reversed_by_entry_id)
-      throw refuse(
-        409,
-        "JOURNAL_ENTRY_ALREADY_REVERSED",
-        "Journal entry has already been reversed.",
-      );
+    if (!original) throw refuse(404, "JOURNAL_ENTRY_NOT_FOUND", "Journal entry not found.");
+    if (original.reversed_by_entry_id) throw refuse(409, "JOURNAL_ENTRY_ALREADY_REVERSED", "Journal entry has already been reversed.");
 
     const [lineRows] = await connection.execute(
       `SELECT account_type, account_id, debit_amount, credit_amount, narration
@@ -238,10 +205,7 @@ export const journalService = {
       })),
     });
 
-    await connection.execute(
-      `UPDATE journal_entry SET reversed_by_entry_id = ? WHERE id = ?`,
-      [reversalEntryId, journalEntryId],
-    );
+    await connection.execute(`UPDATE journal_entry SET reversed_by_entry_id = ? WHERE id = ?`, [reversalEntryId, journalEntryId]);
 
     return { reversalEntryId };
   },

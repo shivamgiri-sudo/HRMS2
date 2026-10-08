@@ -17,12 +17,10 @@ describe("daily-brief-quality.module", () => {
   });
 
   function mockEmployees() {
-    execute.mockImplementation(async () => [
-      [
-        { id: "e1", employee_code: "MAS001", full_name: "Alice" },
-        { id: "e2", employee_code: "MAS002", full_name: "Bob" },
-      ],
-    ]);
+    execute.mockImplementation(async () => [[
+      { id: "e1", employee_code: "MAS001", full_name: "Alice" },
+      { id: "e2", employee_code: "MAS002", full_name: "Bob" },
+    ]]);
   }
 
   it("below the reused MIN_SCORED_CALLS_FOR_SIGNAL floor yields INSUFFICIENT_SAMPLE, not a silent zero average", async () => {
@@ -35,11 +33,7 @@ describe("daily-brief-quality.module", () => {
       return []; // baseline window
     });
 
-    const result = await buildQualityModule(
-      ["e1", "e2"],
-      "2026-08-18",
-      "summary",
-    );
+    const result = await buildQualityModule(["e1", "e2"], "2026-08-18", "summary");
 
     expect(result.scoredCallCount).toBe(2);
     expect(result.avgQualityPct).toBe(80); // still computed and reported...
@@ -60,11 +54,7 @@ describe("daily-brief-quality.module", () => {
       return [];
     });
 
-    const result = await buildQualityModule(
-      ["e1", "e2"],
-      "2026-08-18",
-      "summary",
-    );
+    const result = await buildQualityModule(["e1", "e2"], "2026-08-18", "summary");
     expect(result.scoredCallCount).toBe(4);
     expect(result.avgQualityPct).toBe(90);
     const health = result.sourceHealth.find((h) => h.module === "quality");
@@ -88,24 +78,14 @@ describe("daily-brief-quality.module", () => {
   it("diagnostic detail level includes parameter fail rates; summary does not", async () => {
     mockEmployees();
     querySource.mockImplementation(async (sql: string) => {
-      if (
-        sql.includes("CallDate >= ? AND CallDate < DATE_ADD") &&
-        sql.includes("callopen_fail")
-      ) {
-        return [
-          {
-            callopen_fail: 1,
-            callopen_n: 4,
-            prof_fail: 0,
-            prof_n: 4,
-            listen_fail: 2,
-            listen_n: 4,
-            closure_fail: 0,
-            closure_n: 4,
-            info_fail: 1,
-            info_n: 4,
-          },
-        ];
+      if (sql.includes("CallDate >= ? AND CallDate < DATE_ADD") && sql.includes("callopen_fail")) {
+        return [{
+          callopen_fail: 1, callopen_n: 4,
+          prof_fail: 0, prof_n: 4,
+          listen_fail: 2, listen_n: 4,
+          closure_fail: 0, closure_n: 4,
+          info_fail: 1, info_n: 4,
+        }];
       }
       if (sql.includes("CallDate >= ? AND CallDate < DATE_ADD")) {
         return [{ User: "MAS001", score_sum: "320", scored_calls: 4 }];
@@ -113,17 +93,9 @@ describe("daily-brief-quality.module", () => {
       return [];
     });
 
-    const diagnostic = await buildQualityModule(
-      ["e1"],
-      "2026-08-18",
-      "diagnostic",
-    );
+    const diagnostic = await buildQualityModule(["e1"], "2026-08-18", "diagnostic");
     expect(diagnostic.parameterFailRates).not.toBeNull();
-    expect(
-      diagnostic.parameterFailRates?.find((p) =>
-        p.parameter.includes("Active listening"),
-      )?.failRatePct,
-    ).toBe(50);
+    expect(diagnostic.parameterFailRates?.find((p) => p.parameter.includes("Active listening"))?.failRatePct).toBe(50);
 
     const summary = await buildQualityModule(["e1"], "2026-08-18", "summary");
     expect(summary.parameterFailRates).toBeNull();

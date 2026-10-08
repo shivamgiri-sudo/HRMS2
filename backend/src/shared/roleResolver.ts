@@ -94,17 +94,17 @@ const ROLE_PRIORITY: Readonly<Record<string, number>> = {
   // promoting them would change primaryRole for 12 accounts across 30+ unrelated call
   // sites; `it_admin`/`payroll_admin`/`tl` and the other aliases are normalised away by
   // uniqueRoles before this table is consulted, so an entry for them would be dead.
-  branch_admin: 62, // branch tier, just under branch_it (63) above
+  branch_admin: 62,     // branch tier, just under branch_it (63) above
   branch_qa: 61,
-  branch_wfm: 60, // ties process_manager; the tie breaks to branch_wfm by name,
-  // which is the direction we want — a branch grant beats a process one
-  tq_head: 73, // head-office function head: must outrank qa_manager (53) and
-  // quality_analyst (52), which a T&Q head commonly co-holds —
-  // otherwise the process-tier role wins and narrows them again
+  branch_wfm: 60,       // ties process_manager; the tie breaks to branch_wfm by name,
+                        // which is the direction we want — a branch grant beats a process one
+  tq_head: 73,          // head-office function head: must outrank qa_manager (53) and
+                        // quality_analyst (52), which a T&Q head commonly co-holds —
+                        // otherwise the process-tier role wins and narrows them again
   quality_lead: 50,
   operations_manager: 49,
   ho_it: 42,
-  it_head: 41, // head-office tier: ORG_ALL_ROLES, fails closed to own branch
+  it_head: 41,          // head-office tier: ORG_ALL_ROLES, fails closed to own branch
   it: 40,
 
   employee: 10,
@@ -127,30 +127,20 @@ export async function getUserRoleKeys(userId: string): Promise<string[]> {
   // independent of it, so both run concurrently (one round-trip of latency instead of two on
   // every auth-cache miss); results are still appended in the same order, user_roles first.
   const [userRoleRows, scopeRoleRows] = await Promise.all([
-    db
-      .execute<RowDataPacket[]>(
-        "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
-        [userId],
-      )
-      .then(
-        ([rows]) => rows,
-        (error) => {
-          console.error("[roleResolver] user_roles lookup failed", error);
-          return [] as RowDataPacket[];
-        },
-      ),
+    db.execute<RowDataPacket[]>(
+      "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+      [userId],
+    ).then(([rows]) => rows, (error) => {
+      console.error("[roleResolver] user_roles lookup failed", error);
+      return [] as RowDataPacket[];
+    }),
     // Scoped assignments also carry a role_key. They must participate in role
     // resolution because many WFM/manager accounts are provisioned through scope.
     // Older databases may not have this table yet; user_roles still works.
-    db
-      .execute<RowDataPacket[]>(
-        "SELECT role_key FROM user_assignment_scope WHERE user_id = ? AND active_status = 1",
-        [userId],
-      )
-      .then(
-        ([rows]) => rows,
-        () => [] as RowDataPacket[],
-      ),
+    db.execute<RowDataPacket[]>(
+      "SELECT role_key FROM user_assignment_scope WHERE user_id = ? AND active_status = 1",
+      [userId],
+    ).then(([rows]) => rows, () => [] as RowDataPacket[]),
   ]);
   resolved.push(...userRoleRows.map((row) => row.role_key));
   resolved.push(...scopeRoleRows.map((row) => row.role_key));
@@ -172,7 +162,7 @@ export async function getUserRoleKeys(userId: string): Promise<string[]> {
    * same cache, which fails OPEN: if information_schema cannot be read it assumes the column is
    * present and the query still runs, so the worst case is today's behaviour.
    */
-  if (resolved.length === 0 && (await columnExists("auth_user", "role"))) {
+  if (resolved.length === 0 && await columnExists("auth_user", "role")) {
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
         "SELECT role FROM auth_user WHERE id = ? LIMIT 1",
@@ -200,9 +190,7 @@ export async function getUserRoleKeys(userId: string): Promise<string[]> {
   const roles = uniqueRoles(resolved);
   if (roles.length > 0) return roles;
 
-  console.warn(
-    `[roleResolver] Could not resolve roles for user ${userId}; using employee access`,
-  );
+  console.warn(`[roleResolver] Could not resolve roles for user ${userId}; using employee access`);
   return ["employee"];
 }
 
@@ -211,11 +199,8 @@ export function resolvePrimaryRole(roleKeys: readonly string[]): string {
   if (normalized.length === 0) return "employee";
 
   return [...normalized].sort((left, right) => {
-    const priorityDifference =
-      (ROLE_PRIORITY[right] ?? 0) - (ROLE_PRIORITY[left] ?? 0);
-    return priorityDifference !== 0
-      ? priorityDifference
-      : left.localeCompare(right);
+    const priorityDifference = (ROLE_PRIORITY[right] ?? 0) - (ROLE_PRIORITY[left] ?? 0);
+    return priorityDifference !== 0 ? priorityDifference : left.localeCompare(right);
   })[0];
 }
 

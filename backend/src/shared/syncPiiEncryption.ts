@@ -23,12 +23,7 @@
  * follow whichever rule its own file uses for the plaintext. Keeping the encryption itself
  * identical is what stops that difference becoming two different encryption behaviours.
  */
-import {
-  blindIndex,
-  encryptField,
-  isUsingDevBlindIndexKey,
-  isUsingDevEncryptionKey,
-} from "./fieldEncryption.js";
+import { blindIndex, encryptField, isUsingDevBlindIndexKey, isUsingDevEncryptionKey } from "./fieldEncryption.js";
 
 let devKeyWarned = false;
 let devBlindKeyWarned = false;
@@ -40,10 +35,7 @@ let devBlindKeyWarned = false;
  * database produces rows production can never decrypt, and nothing looks broken at the
  * time — so it returns null and warns once, leaving the plaintext write to stand alone.
  */
-export function encryptPanForSync(
-  value: string | null | undefined,
-  context = "sync",
-): string | null {
+export function encryptPanForSync(value: string | null | undefined, context = "sync"): string | null {
   const plain = value ? String(value).trim() : "";
   if (!plain) return null;
 
@@ -52,7 +44,7 @@ export function encryptPanForSync(
       devKeyWarned = true;
       console.warn(
         `[${context}] FIELD_ENCRYPTION_KEY is the all-zeros dev key — writing plaintext PAN only, no ciphertext. ` +
-          `Ciphertext written under this key would be undecryptable in production.`,
+        `Ciphertext written under this key would be undecryptable in production.`
       );
     }
     return null;
@@ -77,10 +69,7 @@ export function encryptPanForSync(
  * should keep doing so: that path writes account_number_enc with NO plaintext sibling, so
  * refusing there would silently discard the account rather than degrade.
  */
-export function encryptAccountForSync(
-  value: string | null | undefined,
-  context = "sync",
-): string | null {
+export function encryptAccountForSync(value: string | null | undefined, context = "sync"): string | null {
   const plain = value ? String(value).trim() : "";
   if (!plain) return null;
 
@@ -89,7 +78,7 @@ export function encryptAccountForSync(
       devKeyWarned = true;
       console.warn(
         `[${context}] FIELD_ENCRYPTION_KEY is the all-zeros dev key — writing plaintext account only, ` +
-          `no ciphertext. Ciphertext written under this key would be undecryptable in production.`,
+        `no ciphertext. Ciphertext written under this key would be undecryptable in production.`
       );
     }
     return null;
@@ -112,10 +101,7 @@ export function encryptAccountForSync(
  * detectably wrong: every lookup simply returns no rows, so the duplicate-employee guard
  * would read that as "no duplicate exists" and pass everything.
  */
-export function blindIndexPan(
-  value: string | null | undefined,
-  context = "sync",
-): string | null {
+export function blindIndexPan(value: string | null | undefined, context = "sync"): string | null {
   const plain = value ? String(value).trim() : "";
   if (!plain) return null;
 
@@ -124,7 +110,7 @@ export function blindIndexPan(
       devBlindKeyWarned = true;
       console.warn(
         `[${context}] FIELD_BLIND_INDEX_KEY is the dev key — writing no blind index. ` +
-          `An index written under this key matches nothing at lookup time and reports no error.`,
+        `An index written under this key matches nothing at lookup time and reports no error.`
       );
     }
     return null;
@@ -143,10 +129,7 @@ export function blindIndexPan(
  * statutory-approval sync started using this, so there is no prior plaintext
  * coverage to preserve — this is additive, not a rewrite of an existing path.
  */
-export function encryptAadhaarForSync(
-  value: string | null | undefined,
-  context = "sync",
-): string | null {
+export function encryptAadhaarForSync(value: string | null | undefined, context = "sync"): string | null {
   const plain = value ? String(value).trim() : "";
   if (!plain) return null;
 
@@ -155,7 +138,7 @@ export function encryptAadhaarForSync(
       devKeyWarned = true;
       console.warn(
         `[${context}] FIELD_ENCRYPTION_KEY is the all-zeros dev key — writing plaintext Aadhaar only, no ciphertext. ` +
-          `Ciphertext written under this key would be undecryptable in production.`,
+        `Ciphertext written under this key would be undecryptable in production.`
       );
     }
     return null;
@@ -171,10 +154,7 @@ export function encryptAadhaarForSync(
  * upper-casing — Aadhaar is numeric so case does not apply, but kept
  * identical to the PAN helper for consistency) and same dev-key refusal.
  */
-export function blindIndexAadhaar(
-  value: string | null | undefined,
-  context = "sync",
-): string | null {
+export function blindIndexAadhaar(value: string | null | undefined, context = "sync"): string | null {
   const plain = value ? String(value).trim() : "";
   if (!plain) return null;
 
@@ -183,7 +163,7 @@ export function blindIndexAadhaar(
       devBlindKeyWarned = true;
       console.warn(
         `[${context}] FIELD_BLIND_INDEX_KEY is the dev key — writing no blind index. ` +
-          `An index written under this key matches nothing at lookup time and reports no error.`,
+        `An index written under this key matches nothing at lookup time and reports no error.`
       );
     }
     return null;

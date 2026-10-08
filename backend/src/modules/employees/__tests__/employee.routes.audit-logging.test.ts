@@ -25,41 +25,19 @@ const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (req as express.Request & { authUser: { id: string } }).authUser = {
-      id: USER_ID,
-    };
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: { id: string } }).authUser = { id: USER_ID };
     next();
   },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole:
-    () =>
-    (
-      _req: express.Request,
-      _res: express.Response,
-      next: express.NextFunction,
-    ) =>
-      next(),
+  requireRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 vi.mock("../../../middleware/scopeMiddleware.js", () => ({
-  requireScopedRole:
-    () =>
-    (
-      _req: express.Request,
-      _res: express.Response,
-      next: express.NextFunction,
-    ) =>
-      next(),
+  requireScopedRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 vi.mock("../../../shared/accessGuard.js", () => ({
-  getEmployeeForUser: vi
-    .fn()
-    .mockResolvedValue({ id: EMP_ID, employee_code: "MAS0001" }),
+  getEmployeeForUser: vi.fn().mockResolvedValue({ id: EMP_ID, employee_code: "MAS0001" }),
   hasRole: vi.fn().mockResolvedValue(true),
 }));
 
@@ -73,9 +51,7 @@ function app() {
 }
 
 function auditInserts() {
-  return dbExecute.mock.calls.filter(([sql]) =>
-    /INSERT INTO sensitive_action_log/i.test(String(sql)),
-  );
+  return dbExecute.mock.calls.filter(([sql]) => /INSERT INTO sensitive_action_log/i.test(String(sql)));
 }
 
 beforeEach(() => {
@@ -83,8 +59,7 @@ beforeEach(() => {
   // Default: "who is the caller's own employee record" lookup used by every /me route.
   dbExecute.mockImplementation(async (sql: unknown) => {
     const text = String(sql);
-    if (/FROM employees WHERE user_id = \?/i.test(text))
-      return [[{ id: EMP_ID }], []];
+    if (/FROM employees WHERE user_id = \?/i.test(text)) return [[{ id: EMP_ID }], []];
     return [[], []];
   });
 });
@@ -93,16 +68,12 @@ describe("PATCH /api/employees/me", () => {
   it("logs a before/after audit entry when a field actually changes", async () => {
     dbExecute.mockImplementation(async (sql: unknown) => {
       const text = String(sql);
-      if (/FROM employees WHERE user_id = \?/i.test(text))
-        return [[{ id: EMP_ID }], []];
-      if (/^SELECT `mobile` FROM employees/i.test(text))
-        return [[{ mobile: "9999999999" }], []];
+      if (/FROM employees WHERE user_id = \?/i.test(text)) return [[{ id: EMP_ID }], []];
+      if (/^SELECT `mobile` FROM employees/i.test(text)) return [[{ mobile: "9999999999" }], []];
       return [{ affectedRows: 1 }, []];
     });
 
-    const res = await request(app())
-      .patch("/api/employees/me")
-      .send({ mobile: "8888888888" });
+    const res = await request(app()).patch("/api/employees/me").send({ mobile: "8888888888" });
 
     expect(res.status).toBe(200);
     const [inserts] = [auditInserts()];
@@ -178,32 +149,16 @@ describe("PUT /api/employees/me/emergency-contact", () => {
   it("logs before/after when replacing an existing contact", async () => {
     dbExecute.mockImplementation(async (sql: unknown) => {
       const text = String(sql);
-      if (/FROM employees WHERE user_id = \?/i.test(text))
-        return [[{ id: EMP_ID }], []];
+      if (/FROM employees WHERE user_id = \?/i.test(text)) return [[{ id: EMP_ID }], []];
       if (/FROM employee_emergency_contact/i.test(text)) {
-        return [
-          [
-            {
-              name: "Old Name",
-              relationship: "Father",
-              mobile: "1111111111",
-              address: "Old Addr",
-            },
-          ],
-          [],
-        ];
+        return [[{ name: "Old Name", relationship: "Father", mobile: "1111111111", address: "Old Addr" }], []];
       }
       return [{ affectedRows: 1 }, []];
     });
 
-    const res = await request(app())
-      .put("/api/employees/me/emergency-contact")
-      .send({
-        name: "New Name",
-        relationship: "Mother",
-        mobile: "2222222222",
-        address: "New Addr",
-      });
+    const res = await request(app()).put("/api/employees/me/emergency-contact").send({
+      name: "New Name", relationship: "Mother", mobile: "2222222222", address: "New Addr",
+    });
 
     expect(res.status).toBe(200);
     const inserts = auditInserts();
@@ -222,33 +177,15 @@ describe("PUT /api/employees/me/nominee", () => {
   it("logs before/after when updating an existing nominee", async () => {
     dbExecute.mockImplementation(async (sql: unknown) => {
       const text = String(sql);
-      if (/FROM employees WHERE user_id = \?/i.test(text))
-        return [[{ id: EMP_ID }], []];
-      if (
-        /SELECT id, nominee_name, relationship.*FROM employee_nominee/is.test(
-          text,
-        )
-      ) {
-        return [
-          [
-            {
-              id: "nom-1",
-              nominee_name: "Old Nominee",
-              relationship: "Spouse",
-              date_of_birth: null,
-              mobile: null,
-              address: null,
-            },
-          ],
-          [],
-        ];
+      if (/FROM employees WHERE user_id = \?/i.test(text)) return [[{ id: EMP_ID }], []];
+      if (/SELECT id, nominee_name, relationship.*FROM employee_nominee/is.test(text)) {
+        return [[{ id: "nom-1", nominee_name: "Old Nominee", relationship: "Spouse", date_of_birth: null, mobile: null, address: null }], []];
       }
       return [{ affectedRows: 1 }, []];
     });
 
     const res = await request(app()).put("/api/employees/me/nominee").send({
-      nominee_name: "New Nominee",
-      relationship: "Child",
+      nominee_name: "New Nominee", relationship: "Child",
     });
 
     expect(res.status).toBe(200);
@@ -267,28 +204,14 @@ describe("PUT /api/employees/:employeeId/emergency-contact — HR entry", () => 
     dbExecute.mockImplementation(async (sql: unknown) => {
       const text = String(sql);
       if (/FROM employee_emergency_contact/i.test(text)) {
-        return [
-          [
-            {
-              name: "Old Name",
-              relationship: "Father",
-              mobile: "1111111111",
-              address: null,
-            },
-          ],
-          [],
-        ];
+        return [[{ name: "Old Name", relationship: "Father", mobile: "1111111111", address: null }], []];
       }
       return [{ affectedRows: 1 }, []];
     });
 
-    const res = await request(app())
-      .put(`/api/employees/${EMP_ID}/emergency-contact`)
-      .send({
-        name: "HR Entered Name",
-        relationship: "Mother",
-        mobile: "3333333333",
-      });
+    const res = await request(app()).put(`/api/employees/${EMP_ID}/emergency-contact`).send({
+      name: "HR Entered Name", relationship: "Mother", mobile: "3333333333",
+    });
 
     expect(res.status).toBe(200);
     const inserts = auditInserts();
@@ -303,34 +226,15 @@ describe("PUT /api/employees/:employeeId/nominee — HR entry", () => {
   it("logs before/after for an HR-entered nominee change", async () => {
     dbExecute.mockImplementation(async (sql: unknown) => {
       const text = String(sql);
-      if (
-        /SELECT id, nominee_name, relationship.*FROM employee_nominee/is.test(
-          text,
-        )
-      ) {
-        return [
-          [
-            {
-              id: "nom-1",
-              nominee_name: "Old Nominee",
-              relationship: "Spouse",
-              date_of_birth: null,
-              mobile: null,
-              address: null,
-            },
-          ],
-          [],
-        ];
+      if (/SELECT id, nominee_name, relationship.*FROM employee_nominee/is.test(text)) {
+        return [[{ id: "nom-1", nominee_name: "Old Nominee", relationship: "Spouse", date_of_birth: null, mobile: null, address: null }], []];
       }
       return [{ affectedRows: 1 }, []];
     });
 
-    const res = await request(app())
-      .put(`/api/employees/${EMP_ID}/nominee`)
-      .send({
-        nominee_name: "HR Entered Nominee",
-        relationship: "Child",
-      });
+    const res = await request(app()).put(`/api/employees/${EMP_ID}/nominee`).send({
+      nominee_name: "HR Entered Nominee", relationship: "Child",
+    });
 
     expect(res.status).toBe(200);
     const inserts = auditInserts();

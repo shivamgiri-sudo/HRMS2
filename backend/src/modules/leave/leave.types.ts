@@ -75,7 +75,7 @@ export interface LeaveElCreditLog {
   credit_date: string;
   days_credited: number;
   months_served: number;
-  credit_type: "annual" | "monthly" | "manual";
+  credit_type: 'annual' | 'monthly' | 'manual';
   created_at: string;
 }
 

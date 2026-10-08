@@ -22,12 +22,8 @@ const { execute, query } = vi.hoisted(() => ({
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, query } }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn() }));
-vi.mock("../payroll-governance.service.js", () => ({
-  payrollGovernanceService: { readiness: vi.fn() },
-}));
-vi.mock("../../inbox/inbox.service.js", () => ({
-  inboxService: { createItem: vi.fn() },
-}));
+vi.mock("../payroll-governance.service.js", () => ({ payrollGovernanceService: { readiness: vi.fn() } }));
+vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem: vi.fn() } }));
 
 import { payrollAttendanceControlService } from "../payroll-attendance-control.service.js";
 
@@ -75,10 +71,8 @@ function ncosecRow(code: string, date: string) {
 function mockDb(opts: { apr?: unknown[]; ncosec?: unknown[] }) {
   execute.mockReset();
   execute.mockImplementation(async (sql: string) => {
-    if (sql.includes("FROM apr a") && sql.includes("HAVING adr_id IS NULL"))
-      return [opts.apr ?? [], []];
-    if (sql.includes("FROM integration_biometric_daily ibd"))
-      return [opts.ncosec ?? [], []];
+    if (sql.includes("FROM apr a") && sql.includes("HAVING adr_id IS NULL")) return [opts.apr ?? [], []];
+    if (sql.includes("FROM integration_biometric_daily ibd")) return [opts.ncosec ?? [], []];
     if (sql.includes("FROM salary_prep_run")) return [[], []];
     return [[], []];
   });
@@ -90,14 +84,9 @@ describe("issue-type dropdown does not collapse to the selected value", () => {
   beforeEach(() => query.mockClear());
 
   it("lists every issue type present, even while filtered to one of them", async () => {
-    mockDb({
-      apr: [aprRow("MAS1", "2026-08-04")],
-      ncosec: [ncosecRow("MAS2", "2026-08-05")],
-    });
+    mockDb({ apr: [aprRow("MAS1", "2026-08-04")], ncosec: [ncosecRow("MAS2", "2026-08-05")] });
 
-    const unfiltered = await payrollAttendanceControlService.getControlTower({
-      ...BASE,
-    });
+    const unfiltered = await payrollAttendanceControlService.getControlTower({ ...BASE });
     expect(unfiltered.summary.availableIssueTypes).toEqual(
       expect.arrayContaining(["dialler_missing_adr", "ncosec_missing_adr"]),
     );
@@ -113,14 +102,10 @@ describe("issue-type dropdown does not collapse to the selected value", () => {
       expect.arrayContaining(["dialler_missing_adr", "ncosec_missing_adr"]),
     );
     // The rows themselves are still filtered; only the option list is broader.
-    expect(
-      filtered.gaps.every((g) => g.issueType === "dialler_missing_adr"),
-    ).toBe(true);
+    expect(filtered.gaps.every((g) => g.issueType === "dialler_missing_adr")).toBe(true);
     // Guard against a regression to the old source: issueTypes stays filtered,
     // so reading the dropdown from it would still collapse.
-    expect(Object.keys(filtered.summary.issueTypes)).toEqual([
-      "dialler_missing_adr",
-    ]);
+    expect(Object.keys(filtered.summary.issueTypes)).toEqual(["dialler_missing_adr"]);
   });
 
   it("keeps the selected type listed even when nothing currently matches it", async () => {
@@ -139,9 +124,7 @@ describe("issue-type dropdown does not collapse to the selected value", () => {
 describe("per-source row cap is reported rather than silently applied", () => {
   it("says nothing when the cap is not reached", async () => {
     mockDb({ apr: [aprRow("MAS1", "2026-08-04")] });
-    const result = await payrollAttendanceControlService.getControlTower({
-      ...BASE,
-    });
+    const result = await payrollAttendanceControlService.getControlTower({ ...BASE });
     expect(result.summary.truncatedSources).toEqual([]);
   });
 
@@ -153,9 +136,7 @@ describe("per-source row cap is reported rather than silently applied", () => {
     );
     mockDb({ apr: overflowing });
 
-    const result = await payrollAttendanceControlService.getControlTower({
-      ...BASE,
-    });
+    const result = await payrollAttendanceControlService.getControlTower({ ...BASE });
 
     expect(result.summary.sourceRowCap).toBe(cap);
     expect(result.summary.truncatedSources).toContain("apr");
@@ -168,9 +149,7 @@ describe("gap queries are scoped to employees actually in force on the gap date"
     await payrollAttendanceControlService.getControlTower({ ...BASE });
 
     const sqls = execute.mock.calls.map(([sql]) => String(sql));
-    const aprSql = sqls.find(
-      (s) => s.includes("FROM apr a") && s.includes("HAVING adr_id IS NULL"),
-    );
+    const aprSql = sqls.find((s) => s.includes("FROM apr a") && s.includes("HAVING adr_id IS NULL"));
     expect(aprSql).toBeDefined();
 
     // Active employees always qualify...
@@ -188,14 +167,8 @@ describe("gap queries are scoped to employees actually in force on the gap date"
     const sqls = execute.mock.calls.map(([sql]) => String(sql));
 
     const expectations: [string, string][] = [
-      [
-        "FROM integration_biometric_daily ibd",
-        "e.date_of_leaving >= ibd.activity_date",
-      ],
-      [
-        "FROM attendance_regularization ar",
-        "e.date_of_leaving >= ar.session_date",
-      ],
+      ["FROM integration_biometric_daily ibd", "e.date_of_leaving >= ibd.activity_date"],
+      ["FROM attendance_regularization ar", "e.date_of_leaving >= ar.session_date"],
     ];
     for (const [needle, clause] of expectations) {
       const sql = sqls.find((s) => s.includes(needle));
@@ -221,9 +194,7 @@ describe("gap drill-down resolves every key shape to an employee-day", () => {
 
   it("widens a salary key's run month into that month's range", async () => {
     mockDb({});
-    const detail = await payrollAttendanceControlService.getGapDetail(
-      "salary:emp-9:2026-08",
-    );
+    const detail = await payrollAttendanceControlService.getGapDetail("salary:emp-9:2026-08");
     expect(detail?.window).toEqual({ from: "2026-08-01", to: "2026-08-31" });
   });
 
@@ -235,17 +206,13 @@ describe("gap drill-down resolves every key shape to an employee-day", () => {
       }
       return [[], []];
     });
-    const detail = await payrollAttendanceControlService.getGapDetail(
-      "regularization:reg-1",
-    );
+    const detail = await payrollAttendanceControlService.getGapDetail("regularization:reg-1");
     expect(detail?.employeeId).toBe("emp-7");
     expect(detail?.issueDate).toBe("2026-08-11");
   });
 
   it("returns null for an unparseable key instead of querying on undefined", async () => {
     mockDb({});
-    expect(
-      await payrollAttendanceControlService.getGapDetail("nonsense"),
-    ).toBeNull();
+    expect(await payrollAttendanceControlService.getGapDetail("nonsense")).toBeNull();
   });
 });

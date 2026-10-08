@@ -6,25 +6,16 @@
  * (as the routes used to) resolved almost every actor to "System". employees.user_id links the two;
  * legacy rows that stored an employee id are matched too.
  */
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
 
-export interface ActorInfo {
-  name: string;
-  code: string | null;
-}
+export interface ActorInfo { name: string; code: string | null }
 
-export async function resolveActors(
-  ids: Array<string | null | undefined>,
-): Promise<Map<string, ActorInfo>> {
-  const unique = [
-    ...new Set(
-      ids.filter((v): v is string => typeof v === "string" && v.length > 0),
-    ),
-  ];
+export async function resolveActors(ids: Array<string | null | undefined>): Promise<Map<string, ActorInfo>> {
+  const unique = [...new Set(ids.filter((v): v is string => typeof v === 'string' && v.length > 0))];
   const out = new Map<string, ActorInfo>();
   if (unique.length === 0) return out;
-  const ph = unique.map(() => "?").join(",");
+  const ph = unique.map(() => '?').join(',');
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, user_id, full_name, employee_code
        FROM employees
@@ -33,10 +24,7 @@ export async function resolveActors(
     [...unique, ...unique],
   );
   for (const r of rows) {
-    const info: ActorInfo = {
-      name: r.full_name ?? "Unknown user",
-      code: r.employee_code ?? null,
-    };
+    const info: ActorInfo = { name: r.full_name ?? 'Unknown user', code: r.employee_code ?? null };
     // Rows are ordered active-first, so the first hit per key wins.
     if (r.user_id && !out.has(r.user_id)) out.set(r.user_id, info);
     if (r.id && !out.has(r.id)) out.set(r.id, info);
@@ -45,10 +33,7 @@ export async function resolveActors(
 }
 
 /** Display name for an actor id: null id => System, unresolved id => Unknown user. */
-export function actorName(
-  map: Map<string, ActorInfo>,
-  id: string | null | undefined,
-): string {
-  if (!id) return "System";
-  return map.get(id)?.name ?? "Unknown user";
+export function actorName(map: Map<string, ActorInfo>, id: string | null | undefined): string {
+  if (!id) return 'System';
+  return map.get(id)?.name ?? 'Unknown user';
 }

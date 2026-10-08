@@ -1,8 +1,5 @@
 import { Router, type NextFunction, type Response } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./process-performance.service.js";
 import { tpzBranchScopeGuard } from "./tpz-branch-scope.guard.js";
@@ -28,18 +25,8 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
  * predicate is applied in SQL rather than by trusting the id in the URL.
  */
 const VIEWER_ROLES = [
-  "admin",
-  "ceo",
-  "coo",
-  "manager",
-  "process_manager",
-  "operations_manager",
-  "branch_head",
-  "branch_wfm",
-  "wfm",
-  "qa",
-  "quality_analyst",
-  "tq_head",
+  "admin", "ceo", "coo", "manager", "process_manager", "operations_manager",
+  "branch_head", "branch_wfm", "wfm", "qa", "quality_analyst", "tq_head",
 ] as const;
 
 /**
@@ -67,30 +54,17 @@ function readFilters(req: AuthenticatedRequest): svc.PerfFilters {
 }
 
 const SECTION_KEYS: svc.SectionKey[] = [
-  "headcount",
-  "mandate",
-  "buffer",
-  "shrinkage",
-  "attrition",
-  "quality",
-  "operations",
-  "hygiene",
-  "late_comers",
-  "pnl",
+  "headcount", "mandate", "buffer", "shrinkage", "attrition",
+  "quality", "operations", "hygiene", "late_comers", "pnl",
 ];
 
 // Literal routes are declared before any ":id"-style route in this file. Express
 // matches in registration order, so a later wildcard would swallow these -- the
 // same trap that made /my-processes need its own ordering test.
-router.get(
-  "/processes",
-  requireAuth,
-  requireRole(...VIEWER_ROLES),
-  h(async (req, res) => {
-    const data = await svc.getProcessRows(req.authUser!.id, readFilters(req));
-    res.json({ success: true, data });
-  }),
-);
+router.get("/processes", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getProcessRows(req.authUser!.id, readFilters(req));
+  res.json({ success: true, data });
+}));
 
 /**
  * The two pickers at the top of the page.
@@ -99,79 +73,37 @@ router.get(
  * the same scope predicate the table uses -- see getFilterOptions for why the
  * old /api/processes/my-processes source left the pickers empty for admins.
  */
-router.get(
-  "/filters",
-  requireAuth,
-  requireRole(...VIEWER_ROLES),
-  h(async (req, res) => {
-    const data = await svc.getFilterOptions(req.authUser!.id, readFilters(req));
-    res.json({ success: true, data });
-  }),
-);
+router.get("/filters", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getFilterOptions(req.authUser!.id, readFilters(req));
+  res.json({ success: true, data });
+}));
 
-router.get(
-  "/managers",
-  requireAuth,
-  requireRole(...VIEWER_ROLES),
-  h(async (req, res) => {
-    const filters = readFilters(req);
-    if (!filters.processId) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          code: "PROCESS_REQUIRED",
-          message: "processId is required for manager rows.",
-        });
-    }
-    const data = await svc.getManagerRows(req.authUser!.id, filters);
-    res.json({ success: true, data });
-  }),
-);
+router.get("/managers", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const filters = readFilters(req);
+  if (!filters.processId) {
+    return res.status(400).json({ success: false, code: "PROCESS_REQUIRED", message: "processId is required for manager rows." });
+  }
+  const data = await svc.getManagerRows(req.authUser!.id, filters);
+  res.json({ success: true, data });
+}));
 
-router.get(
-  "/agents",
-  requireAuth,
-  requireRole(...VIEWER_ROLES),
-  h(async (req, res) => {
-    const filters = readFilters(req);
-    if (!filters.managerId) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          code: "MANAGER_REQUIRED",
-          message: "managerId is required for agent rows.",
-        });
-    }
-    const data = await svc.getAgentRows(req.authUser!.id, filters);
-    res.json({ success: true, data });
-  }),
-);
+router.get("/agents", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const filters = readFilters(req);
+  if (!filters.managerId) {
+    return res.status(400).json({ success: false, code: "MANAGER_REQUIRED", message: "managerId is required for agent rows." });
+  }
+  const data = await svc.getAgentRows(req.authUser!.id, filters);
+  res.json({ success: true, data });
+}));
 
-router.get(
-  "/detail/:section",
-  requireAuth,
-  requireRole(...VIEWER_ROLES),
-  h(async (req, res) => {
-    const section = req.params.section as svc.SectionKey;
-    if (!SECTION_KEYS.includes(section)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          code: "UNKNOWN_SECTION",
-          message: `Unknown section '${section}'.`,
-        });
-    }
-    const data = await svc.getMetricDetail(
-      req.authUser!.id,
-      section,
-      readFilters(req),
-    );
-    res.json({ success: true, data });
-  }),
-);
+router.get("/detail/:section", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const section = req.params.section as svc.SectionKey;
+  if (!SECTION_KEYS.includes(section)) {
+    return res.status(400).json({ success: false, code: "UNKNOWN_SECTION", message: `Unknown section '${section}'.` });
+  }
+  const data = await svc.getMetricDetail(req.authUser!.id, section, readFilters(req));
+  res.json({ success: true, data });
+}));
 
 export const processPerformanceRouter = router;
 export default router;

@@ -7,14 +7,14 @@
  * Run backend/sql/migrations/100_employee_documents_migration_tracking.sql first.
  */
 
-import { migrateDocumentsFromLegacy } from "../src/modules/migration/migrateDocumentsFromLegacy.js";
+import { migrateDocumentsFromLegacy } from '../src/modules/migration/migrateDocumentsFromLegacy.js';
 
 migrateDocumentsFromLegacy()
   .then((result) => {
-    console.log("\nFinal result:", JSON.stringify(result, null, 2));
+    console.log('\nFinal result:', JSON.stringify(result, null, 2));
     process.exit(0);
   })
   .catch((err) => {
-    console.error("Migration failed:", err);
+    console.error('Migration failed:', err);
     process.exit(1);
   });

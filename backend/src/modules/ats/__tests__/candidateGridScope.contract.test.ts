@@ -36,33 +36,21 @@ describe("includeFormerEmployees parsing", () => {
   });
 
   it.each([["true"], ["1"]])("opts in for %s", (v) => {
-    expect(parse({ includeFormerEmployees: v }).includeFormerEmployees).toBe(
-      true,
-    );
+    expect(parse({ includeFormerEmployees: v }).includeFormerEmployees).toBe(true);
   });
 
   it("treats the string 'false' as false", () => {
     // This is the trap: query params arrive as strings and the string "false" is truthy in
     // JavaScript. Boolean(req.query.x) would have opted every caller IN while the URL said
     // the opposite — the same bug shape as LEGACY_SYNC_ENABLED elsewhere in this repo.
-    expect(
-      parse({ includeFormerEmployees: "false" }).includeFormerEmployees,
-    ).toBe(false);
-    expect(parse({ includeFormerEmployees: "0" }).includeFormerEmployees).toBe(
-      false,
-    );
-    expect(parse({ includeFormerEmployees: "" }).includeFormerEmployees).toBe(
-      false,
-    );
+    expect(parse({ includeFormerEmployees: "false" }).includeFormerEmployees).toBe(false);
+    expect(parse({ includeFormerEmployees: "0" }).includeFormerEmployees).toBe(false);
+    expect(parse({ includeFormerEmployees: "" }).includeFormerEmployees).toBe(false);
   });
 
   it("accepts a real boolean too, for non-HTTP callers", () => {
-    expect(parse({ includeFormerEmployees: true }).includeFormerEmployees).toBe(
-      true,
-    );
-    expect(
-      parse({ includeFormerEmployees: false }).includeFormerEmployees,
-    ).toBe(false);
+    expect(parse({ includeFormerEmployees: true }).includeFormerEmployees).toBe(true);
+    expect(parse({ includeFormerEmployees: false }).includeFormerEmployees).toBe(false);
   });
 
   it("does not disturb the other filters", () => {

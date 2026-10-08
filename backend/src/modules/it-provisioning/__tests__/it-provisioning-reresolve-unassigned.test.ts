@@ -23,36 +23,21 @@ const { logSensitiveAction } = vi.hoisted(() => ({
 }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 
-const { getConfiguredRecipients } = vi.hoisted(() => ({
-  getConfiguredRecipients: vi.fn(),
-}));
-vi.mock("../notification-recipients.service.js", () => ({
-  getConfiguredRecipients,
-}));
+const { getConfiguredRecipients } = vi.hoisted(() => ({ getConfiguredRecipients: vi.fn() }));
+vi.mock("../notification-recipients.service.js", () => ({ getConfiguredRecipients }));
 
 const { createItem, send } = vi.hoisted(() => ({
   createItem: vi.fn().mockResolvedValue(undefined),
   send: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("../../inbox/inbox.service.js", () => ({
-  inboxService: { createItem },
-}));
-vi.mock("../../communication/email.service.js", () => ({
-  emailService: { send },
-}));
-vi.mock("../../../config/env.js", () => ({
-  env: { FRONTEND_URL: "https://hrms.example" },
-}));
+vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem } }));
+vi.mock("../../communication/email.service.js", () => ({ emailService: { send } }));
+vi.mock("../../../config/env.js", () => ({ env: { FRONTEND_URL: "https://hrms.example" } }));
 
 const { notify } = vi.hoisted(() => ({ notify: vi.fn() }));
-vi.mock("../../communication/notification.gateway.js", () => ({
-  notificationGateway: { notify },
-}));
+vi.mock("../../communication/notification.gateway.js", () => ({ notificationGateway: { notify } }));
 
-import {
-  reresolveUnassignedRequests,
-  notifyOverdueProvisioning,
-} from "../it-provisioning.service.js";
+import { reresolveUnassignedRequests, notifyOverdueProvisioning } from "../it-provisioning.service.js";
 
 function unassignedRow(over: Record<string, unknown> = {}) {
   return {
@@ -79,26 +64,19 @@ beforeEach(() => {
 
 describe("reresolveUnassignedRequests", () => {
   it("assigns a request whose role now has a holder, and audits the recovery", async () => {
-    execute.mockResolvedValueOnce([[unassignedRow()], []]); // 1: SELECT pending_unassigned
+    execute.mockResolvedValueOnce([[unassignedRow()], []]);          // 1: SELECT pending_unassigned
     getConfiguredRecipients.mockResolvedValueOnce({
       to: [{ userId: "user-it-1", email: "it.spoc@teammas.in" }],
       cc: [],
     });
-    execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // 2: UPDATE -> pending
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);        // 2: UPDATE -> pending
 
     const out = await reresolveUnassignedRequests();
 
-    expect(out).toMatchObject({
-      scanned: 1,
-      assigned: 1,
-      stillUnassigned: 0,
-      remaining: 0,
-    });
+    expect(out).toMatchObject({ scanned: 1, assigned: 1, stillUnassigned: 0, remaining: 0 });
 
     const [sql, params] = execute.mock.calls[1];
-    expect(sql).toContain(
-      "SET assigned_user_id = ?, status = 'pending', assignment_exception = 0",
-    );
+    expect(sql).toContain("SET assigned_user_id = ?, status = 'pending', assignment_exception = 0");
     // Guarded on the old status so a concurrent waive/reassign wins instead of
     // being silently overwritten.
     expect(sql).toContain("AND status = 'pending_unassigned'");
@@ -108,9 +86,7 @@ describe("reresolveUnassignedRequests", () => {
       expect.objectContaining({
         action_type: "it_provisioning_reassigned",
         entity_id: "req-1",
-        change_summary: expect.objectContaining({
-          previous_status: "pending_unassigned",
-        }),
+        change_summary: expect.objectContaining({ previous_status: "pending_unassigned" }),
       }),
     );
   });
@@ -121,30 +97,21 @@ describe("reresolveUnassignedRequests", () => {
     // people to TELL, but nobody to OWN it. Assigning the branch head here would
     // silently make them the actioner of every orphaned IT task.
     getConfiguredRecipients.mockResolvedValueOnce(null);
-    execute.mockResolvedValueOnce([[], []]); // getUsersForBranchRole -> none
-    execute.mockResolvedValueOnce([
-      [{ user_id: "user-bh", email: "bh@teammas.in" }],
-      [],
-    ]); // branchHeadUsers
-    execute.mockResolvedValue([[], []]); // any trailing lookups
+    execute.mockResolvedValueOnce([[], []]);                          // getUsersForBranchRole -> none
+    execute.mockResolvedValueOnce([[{ user_id: "user-bh", email: "bh@teammas.in" }], []]); // branchHeadUsers
+    execute.mockResolvedValue([[], []]);                              // any trailing lookups
 
     const out = await reresolveUnassignedRequests();
 
     expect(out.assigned).toBe(0);
     expect(out.stillUnassigned).toBe(1);
     expect(logSensitiveAction).not.toHaveBeenCalled();
-    expect(
-      execute.mock.calls.some(([s]) =>
-        String(s).includes("UPDATE it_provisioning_request"),
-      ),
-    ).toBe(false);
+    expect(execute.mock.calls.some(([s]) => String(s).includes("UPDATE it_provisioning_request"))).toBe(false);
   });
 
   it("caps the batch and reports the deferred remainder instead of dropping it", async () => {
-    const many = Array.from({ length: 4 }, (_, i) =>
-      unassignedRow({ id: `req-${i + 1}` }),
-    );
-    execute.mockResolvedValueOnce([many, []]); // 1: SELECT returns limit+1 = 4
+    const many = Array.from({ length: 4 }, (_, i) => unassignedRow({ id: `req-${i + 1}` }));
+    execute.mockResolvedValueOnce([many, []]);                        // 1: SELECT returns limit+1 = 4
     getConfiguredRecipients.mockResolvedValue({
       to: [{ userId: "user-it-1", email: "it.spoc@teammas.in" }],
       cc: [],
@@ -229,21 +196,13 @@ describe("notifyOverdueProvisioning", () => {
 
     const out = await notifyOverdueProvisioning();
 
-    expect(out).toMatchObject({
-      scanned: 1,
-      notified: 1,
-      skipped: 0,
-      remaining: 0,
-    });
+    expect(out).toMatchObject({ scanned: 1, notified: 1, skipped: 0, remaining: 0 });
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({
         eventCode: "provisioning_overdue",
         dedupeKey: "it_provisioning_request:req-9:overdue:37", // 4-hour bucket: floor(148 / 4)
         entityType: "it_provisioning_request",
-        data: expect.objectContaining({
-          hours_overdue: 148,
-          unassigned: false,
-        }),
+        data: expect.objectContaining({ hours_overdue: 148, unassigned: false }),
       }),
     );
   });
@@ -257,9 +216,7 @@ describe("notifyOverdueProvisioning", () => {
     const [sql, params] = execute.mock.calls[1];
     expect(sql).toContain("AND r.sla_due_at >= ?");
     expect((params as any[])[0]).toBeInstanceOf(Date);
-    expect(((params as any[])[0] as Date).toISOString()).toContain(
-      "2026-07-31",
-    );
+    expect(((params as any[])[0] as Date).toISOString()).toContain("2026-07-31");
   });
 
   it("falls back to a 7-day floor, never all history, when the registry has none", async () => {
@@ -277,10 +234,7 @@ describe("notifyOverdueProvisioning", () => {
   it("counts a gateway refusal as skipped rather than notified", async () => {
     execute.mockResolvedValueOnce([[{ floor: "2026-07-31 10:19:16" }], []]);
     execute.mockResolvedValueOnce([[overdueRow()], []]);
-    notify.mockResolvedValueOnce({
-      outcome: "disabled",
-      reason: "event is disabled",
-    });
+    notify.mockResolvedValueOnce({ outcome: "disabled", reason: "event is disabled" });
 
     const out = await notifyOverdueProvisioning();
 

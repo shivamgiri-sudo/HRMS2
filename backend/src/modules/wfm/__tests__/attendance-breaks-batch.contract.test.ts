@@ -18,14 +18,11 @@ import { join, resolve } from "node:path";
  *      failure this route was added to remove.
  */
 const ROOT = resolve(__dirname, "../../../..");
-const routes = readFileSync(
-  join(ROOT, "src/modules/wfm/wfm.routes.ts"),
-  "utf8",
-);
+const routes = readFileSync(join(ROOT, "src/modules/wfm/wfm.routes.ts"), "utf8");
 
 const handler = routes.slice(
   routes.indexOf('wfmRouter.get("/attendance/breaks"'),
-  routes.indexOf('wfmRouter.patch("/breaks/:breakId/end"'),
+  routes.indexOf('wfmRouter.patch("/breaks/:breakId/end"')
 );
 
 describe("GET /wfm/attendance/breaks", () => {
@@ -63,15 +60,11 @@ describe("GET /wfm/attendance/breaks", () => {
   it("answers an empty or absent recordIds with an empty list, not an error", () => {
     // The caller guards with enabled: recordIds.length > 0, but a page with no attendance
     // rows must not produce a 400 if that guard ever changes.
-    expect(handler).toContain(
-      "if (recordIds.length === 0) return res.json({ success: true, data: [] })",
-    );
+    expect(handler).toContain("if (recordIds.length === 0) return res.json({ success: true, data: [] })");
   });
 
   it("answers a login with no employee record with an empty list", () => {
-    expect(handler).toContain(
-      "if (!callerEmp) return res.json({ success: true, data: [] })",
-    );
+    expect(handler).toContain("if (!callerEmp) return res.json({ success: true, data: [] })");
   });
 
   it("sits behind the router's authentication", () => {
@@ -82,10 +75,7 @@ describe("GET /wfm/attendance/breaks", () => {
     // wfmRouter.use("/attendance", attendanceAprBulkRouter) runs first. Express falls through
     // to this route only because that sub-router registers no /breaks path; if it ever does,
     // it will shadow this one.
-    const apr = readFileSync(
-      join(ROOT, "src/modules/wfm/attendance-apr-bulk.routes.ts"),
-      "utf8",
-    );
+    const apr = readFileSync(join(ROOT, "src/modules/wfm/attendance-apr-bulk.routes.ts"), "utf8");
     expect(apr).not.toMatch(/["'`]\/breaks/);
   });
 });

@@ -17,15 +17,15 @@ function ticketCode(): string {
 // hr owns hr/leave/payroll, admin owns everything else. Kept in one place so routing and
 // visibility can never silently disagree about which roles own which category.
 export const CATEGORY_OWNER_ROLES: Record<string, string[]> = {
-  it: ["it", "branch_it", "it_admin"],
-  hr: ["hr"],
-  leave: ["hr"],
-  payroll: ["hr"],
+  it:         ["it", "branch_it", "it_admin"],
+  hr:         ["hr"],
+  leave:      ["hr"],
+  payroll:    ["hr"],
   attendance: ["admin"],
-  admin: ["admin"],
-  asset: ["admin"],
-  general: ["admin"],
-  other: ["admin"],
+  admin:      ["admin"],
+  asset:      ["admin"],
+  general:    ["admin"],
+  other:      ["admin"],
 };
 
 /**
@@ -39,13 +39,8 @@ export const CATEGORY_OWNER_ROLES: Record<string, string[]> = {
  * any owning role for the category — the IT manager (or any HELPDESK_ADMIN_ROLES member) can
  * still assign manually via the existing /assign endpoint, unchanged.
  */
-export async function resolveAutoAssignee(
-  category: string,
-  branchId: string | null,
-): Promise<string | null> {
-  const roles =
-    CATEGORY_OWNER_ROLES[category.trim().toLowerCase()] ??
-    CATEGORY_OWNER_ROLES.other;
+export async function resolveAutoAssignee(category: string, branchId: string | null): Promise<string | null> {
+  const roles = CATEGORY_OWNER_ROLES[category.trim().toLowerCase()] ?? CATEGORY_OWNER_ROLES.other;
   for (const role of roles) {
     const ids = await resolveRoleHolderUserIds(role, branchId);
     if (ids.length) return ids[0];
@@ -57,10 +52,7 @@ function grievanceCode(): string {
   return `GRV-${Date.now().toString(36).toUpperCase()}`;
 }
 
-function packedGrievanceDescription(data: {
-  subject?: string;
-  description: string;
-}) {
+function packedGrievanceDescription(data: { subject?: string; description: string }) {
   const subject = String(data.subject ?? "").trim();
   const description = String(data.description ?? "").trim();
   return subject ? `${subject}\n\n${description}` : description;
@@ -132,50 +124,23 @@ export const helpdeskService = {
     // caller happened to pass them as query params, not derived from identity.
     // Same anti-pattern the same-HEAD IJP fix closed. Undefined (or "1=1") means
     // unrestricted — admin/hr/super_admin's existing behavior is unchanged.
-    scopeCondition?: { sql: string; params: unknown[] },
+    scopeCondition?: { sql: string; params: unknown[] }
   ) {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.employee_id) {
-      conds.push("t.employee_id = ?");
-      params.push(filters.employee_id);
-    }
-    if (filters.status) {
-      conds.push("t.status = ?");
-      params.push(filters.status);
-    }
+    if (filters.employee_id) { conds.push("t.employee_id = ?");  params.push(filters.employee_id); }
+    if (filters.status)      { conds.push("t.status = ?");        params.push(filters.status); }
     if (filters.statuses?.length) {
       conds.push(`t.status IN (${filters.statuses.map(() => "?").join(",")})`);
       params.push(...filters.statuses);
     }
-    if (filters.category) {
-      conds.push("t.category = ?");
-      params.push(filters.category);
-    }
-    if (filters.assigned_to) {
-      conds.push("t.assigned_to = ?");
-      params.push(filters.assigned_to);
-    }
-    if (filters.priority) {
-      conds.push("t.priority = ?");
-      params.push(filters.priority);
-    }
-    if (filters.branch_id) {
-      conds.push("e.branch_id = ?");
-      params.push(filters.branch_id);
-    }
-    if (filters.process_id) {
-      conds.push("e.process_id = ?");
-      params.push(filters.process_id);
-    }
-    if (filters.from) {
-      conds.push("t.created_at >= ?");
-      params.push(filters.from + " 00:00:00");
-    }
-    if (filters.to) {
-      conds.push("t.created_at <= ?");
-      params.push(filters.to + " 23:59:59");
-    }
+    if (filters.category)    { conds.push("t.category = ?");      params.push(filters.category); }
+    if (filters.assigned_to) { conds.push("t.assigned_to = ?");   params.push(filters.assigned_to); }
+    if (filters.priority)    { conds.push("t.priority = ?");      params.push(filters.priority); }
+    if (filters.branch_id)   { conds.push("e.branch_id = ?");     params.push(filters.branch_id); }
+    if (filters.process_id)  { conds.push("e.process_id = ?");    params.push(filters.process_id); }
+    if (filters.from)        { conds.push("t.created_at >= ?");   params.push(filters.from + " 00:00:00"); }
+    if (filters.to)          { conds.push("t.created_at <= ?");   params.push(filters.to   + " 23:59:59"); }
     if (scopeCondition && scopeCondition.sql !== "1=1") {
       conds.push(`(${scopeCondition.sql})`);
       params.push(...scopeCondition.params);
@@ -184,17 +149,15 @@ export const helpdeskService = {
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `${TICKET_SELECT} ${where} ORDER BY t.created_at DESC LIMIT 200`,
-      params,
+      params
     );
     return rows as RowDataPacket[];
   },
 
   async getTicket(
     id: string,
-    scopeCondition?: { sql: string; params: unknown[] },
-  ): Promise<
-    (RowDataPacket & { employee_id: string; comments: RowDataPacket[] }) | null
-  > {
+    scopeCondition?: { sql: string; params: unknown[] }
+  ): Promise<(RowDataPacket & { employee_id: string; comments: RowDataPacket[] }) | null> {
     const conds = ["t.id = ?"];
     const params: unknown[] = [id];
     if (scopeCondition && scopeCondition.sql !== "1=1") {
@@ -202,8 +165,7 @@ export const helpdeskService = {
       params.push(...scopeCondition.params);
     }
     const [rows] = await db.execute<RowDataPacket[]>(
-      `${TICKET_SELECT} WHERE ${conds.join(" AND ")} LIMIT 1`,
-      params,
+      `${TICKET_SELECT} WHERE ${conds.join(" AND ")} LIMIT 1`, params
     );
     const ticket = (rows as RowDataPacket[])[0] ?? null;
     if (!ticket) return null;
@@ -219,14 +181,9 @@ export const helpdeskService = {
          LEFT JOIN auth_user u ON u.id = c.author_user_id
          LEFT JOIN employees emp_c ON emp_c.user_id = u.id
         WHERE c.ticket_id = ?
-        ORDER BY c.created_at ASC`,
-      [id],
+        ORDER BY c.created_at ASC`, [id]
     );
-    return {
-      ...ticket,
-      employee_id: ticket.employee_id as string,
-      comments: comments as RowDataPacket[],
-    };
+    return { ...ticket, employee_id: ticket.employee_id as string, comments: comments as RowDataPacket[] };
   },
 
   async createTicket(data: {
@@ -258,19 +215,14 @@ export const helpdeskService = {
     let autoRouteFailure: string | null = null;
     try {
       const [raiserRows] = await db.execute<RowDataPacket[]>(
-        `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`,
-        [data.employee_id],
+        `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`, [data.employee_id]
       );
       const branchId = (raiserRows[0]?.branch_id as string | undefined) ?? null;
       assignedTo = await resolveAutoAssignee(data.category, branchId);
-      if (!assignedTo)
-        autoRouteFailure = `no active holder of any owning role for category '${data.category}'`;
+      if (!assignedTo) autoRouteFailure = `no active holder of any owning role for category '${data.category}'`;
     } catch (e) {
       autoRouteFailure = e instanceof Error ? e.message : String(e);
-      console.error(
-        "[helpdesk] auto-routing lookup failed, ticket will be unassigned:",
-        e,
-      );
+      console.error("[helpdesk] auto-routing lookup failed, ticket will be unassigned:", e);
     }
 
     await db.execute(
@@ -279,20 +231,14 @@ export const helpdeskService = {
           priority, sla_due_at, downtime_minutes, affected_seats, assigned_to, raised_by_user_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        id,
-        ticketCode(),
-        data.employee_id,
-        data.category,
+        id, ticketCode(), data.employee_id, data.category,
         data.it_subcategory ?? null,
-        data.subject,
-        data.description,
-        priority,
-        slaDueAt,
+        data.subject, data.description, priority, slaDueAt,
         data.downtime_minutes ?? 0,
         data.affected_seats ?? 1,
         assignedTo,
         data.raised_by_user_id ?? null,
-      ],
+      ]
     );
     const ticket = await this.getTicket(id);
 
@@ -315,61 +261,49 @@ export const helpdeskService = {
     try {
       const [empRow] = await db.execute<RowDataPacket[]>(
         `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
-         FROM employees WHERE id = ? LIMIT 1`,
-        [data.employee_id],
+         FROM employees WHERE id = ? LIMIT 1`, [data.employee_id]
       );
-      const emp = empRow[0] as any;
+      const emp = (empRow[0] as any);
       const phone = emp?.mobile ?? emp?.personal_phone ?? null;
       if (phone) {
-        sendSMS(phone, "ticket_created", {
+        sendSMS(phone, 'ticket_created', {
           name: emp.name,
           ticket_id: (ticket as any).ticket_code ?? id,
-          status: "Open",
+          status: 'Open',
         }).catch(() => {});
       }
-    } catch {
-      /* non-fatal */
-    }
+    } catch { /* non-fatal */ }
 
     return ticket;
   },
 
-  async updateTicket(
-    id: string,
-    data: {
-      status?: string;
-      assigned_to?: string;
-      resolution_note?: string;
-      priority?: string;
-      root_cause?: string;
-      it_subcategory?: string;
-      closure_rating?: number;
-      escalation_level?: number;
-      impact_type?: string;
-      employee_blocked?: boolean;
-      productivity_impact?: boolean;
-      payroll_impact?: boolean;
-      downtime_minutes?: number;
-      affected_seats?: number;
-      hold_reason?: string;
-      /** auth_user.id of whoever resolved it — the checker half (migration 1558). */
-      resolved_by_user_id?: string;
-    },
-  ) {
+  async updateTicket(id: string, data: {
+    status?: string;
+    assigned_to?: string;
+    resolution_note?: string;
+    priority?: string;
+    root_cause?: string;
+    it_subcategory?: string;
+    closure_rating?: number;
+    escalation_level?: number;
+    impact_type?: string;
+    employee_blocked?: boolean;
+    productivity_impact?: boolean;
+    payroll_impact?: boolean;
+    downtime_minutes?: number;
+    affected_seats?: number;
+    hold_reason?: string;
+    /** auth_user.id of whoever resolved it — the checker half (migration 1558). */
+    resolved_by_user_id?: string;
+  }) {
     // Recalculate SLA if priority changes
     let slaDueAt: Date | null = null;
     if (data.priority) {
       const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT category, created_at FROM helpdesk_ticket WHERE id = ? LIMIT 1`,
-        [id],
+        `SELECT category, created_at FROM helpdesk_ticket WHERE id = ? LIMIT 1`, [id]
       );
       const t = rows[0];
-      if (t)
-        slaDueAt = calculateSlaDueAt(
-          data.priority,
-          String(t.category),
-          new Date(t.created_at as string),
-        );
+      if (t) slaDueAt = calculateSlaDueAt(data.priority, String(t.category), new Date(t.created_at as string));
     }
 
     // 'closed' removed as a live ticket status (2026-08-24): confirmed live, no route ever
@@ -415,11 +349,7 @@ export const helpdeskService = {
         data.escalation_level ?? null,
         data.impact_type ?? null,
         data.employee_blocked != null ? (data.employee_blocked ? 1 : 0) : null,
-        data.productivity_impact != null
-          ? data.productivity_impact
-            ? 1
-            : 0
-          : null,
+        data.productivity_impact != null ? (data.productivity_impact ? 1 : 0) : null,
         data.payroll_impact != null ? (data.payroll_impact ? 1 : 0) : null,
         data.downtime_minutes ?? null,
         data.affected_seats ?? null,
@@ -430,7 +360,7 @@ export const helpdeskService = {
         ...(slaDueAt ? [slaDueAt] : []),
         isClosingStatus ? (data.status ?? "") : "",
         id,
-      ],
+      ]
     );
     const updated = await this.getTicket(id);
 
@@ -440,20 +370,17 @@ export const helpdeskService = {
         const empId = (updated as any).employee_id;
         const [empRow] = await db.execute<RowDataPacket[]>(
           `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
-           FROM employees WHERE id = ? LIMIT 1`,
-          [empId],
+           FROM employees WHERE id = ? LIMIT 1`, [empId]
         );
-        const emp = empRow[0] as any;
+        const emp = (empRow[0] as any);
         const phone = emp?.mobile ?? emp?.personal_phone ?? null;
         if (phone) {
-          sendSMS(phone, "ticket_resolved", {
+          sendSMS(phone, 'ticket_resolved', {
             name: emp.name,
             ticket_id: (updated as any).ticket_code ?? id,
           }).catch(() => {});
         }
-      } catch {
-        /* non-fatal */
-      }
+      } catch { /* non-fatal */ }
     }
 
     return updated;
@@ -467,7 +394,7 @@ export const helpdeskService = {
               resolved_at = NULL,
               updated_at = NOW()
         WHERE id = ?`,
-      [id],
+      [id]
     );
     await writeSensitiveAuditLog({
       actorUserId,
@@ -485,21 +412,16 @@ export const helpdeskService = {
     await db.execute(
       `UPDATE helpdesk_ticket SET closure_rating = ?, updated_at = NOW()
         WHERE id = ? AND employee_id = ?`,
-      [rating, id, employeeId],
+      [rating, id, employeeId]
     );
     return this.getTicket(id);
   },
 
-  async addComment(
-    ticketId: string,
-    authorUserId: string,
-    text: string,
-    isInternal = false,
-  ) {
+  async addComment(ticketId: string, authorUserId: string, text: string, isInternal = false) {
     const id = randomUUID();
     await db.execute(
       "INSERT INTO helpdesk_ticket_comment (id, ticket_id, author_user_id, comment_text, is_internal) VALUES (?, ?, ?, ?, ?)",
-      [id, ticketId, authorUserId, text, isInternal ? 1 : 0],
+      [id, ticketId, authorUserId, text, isInternal ? 1 : 0]
     );
     return id;
   },
@@ -516,7 +438,7 @@ export const helpdeskService = {
         WHERE t.status NOT IN ('resolved','closed','cancelled')
         GROUP BY COALESCE(t.assigned_to, 'unassigned'), owner_name
         ORDER BY open_count DESC
-        LIMIT 50`,
+        LIMIT 50`
     );
     return rows;
   },
@@ -529,7 +451,7 @@ export const helpdeskService = {
          SUM(TIMESTAMPDIFF(DAY, created_at, NOW()) BETWEEN 4 AND 7) AS bucket_4_7,
          SUM(TIMESTAMPDIFF(DAY, created_at, NOW()) > 7) AS bucket_7_plus
        FROM helpdesk_ticket
-       WHERE status NOT IN ('resolved','closed','cancelled')`,
+       WHERE status NOT IN ('resolved','closed','cancelled')`
     );
     return rows[0] ?? {};
   },
@@ -540,7 +462,7 @@ export const helpdeskService = {
          FROM helpdesk_ticket
         GROUP BY COALESCE(root_cause, category, 'Unclassified')
         ORDER BY value DESC
-        LIMIT 20`,
+        LIMIT 20`
     );
     return rows;
   },
@@ -599,15 +521,13 @@ export const helpdeskService = {
               updated_at,
               IF(is_anonymous = 0, employee_id, NULL) AS employee_id
          FROM grievance ${where} ORDER BY created_at DESC LIMIT 200`,
-      params,
+      params
     );
     return rows as RowDataPacket[];
   },
 
   async getGrievance(id: string, requestorRoles: string[]) {
-    const isPrivileged = requestorRoles.some((r) =>
-      ["admin", "hr", "super_admin"].includes(r),
-    );
+    const isPrivileged = requestorRoles.some(r => ["admin", "hr", "super_admin"].includes(r));
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT g.*,
               CASE
@@ -623,7 +543,7 @@ export const helpdeskService = {
          FROM grievance g
          LEFT JOIN employees e ON e.id = g.employee_id
         WHERE g.id = ? LIMIT 1`,
-      [isPrivileged ? 1 : 0, isPrivileged ? 1 : 0, id],
+      [isPrivileged ? 1 : 0, isPrivileged ? 1 : 0, id]
     );
     return (rows as RowDataPacket[])[0] ?? null;
   },
@@ -656,22 +576,17 @@ export const helpdeskService = {
          LEFT JOIN employees e ON e.user_id = s.actor_user_id
         WHERE s.entity_type = 'grievance' AND s.entity_id = ?
         ORDER BY s.acted_at ASC`,
-      [id],
+      [id]
     );
 
     const [milestoneRows] = await db.execute<RowDataPacket[]>(
       `SELECT created_at, resolved_at, closed_at, resolution_note FROM grievance WHERE id = ? LIMIT 1`,
-      [id],
+      [id]
     );
     const g = (milestoneRows as RowDataPacket[])[0];
 
     const milestones: Array<Record<string, unknown>> = [];
-    if (g?.created_at)
-      milestones.push({
-        id: `${id}:raised`,
-        action: "GRIEVANCE_RAISED",
-        created_at: g.created_at,
-      });
+    if (g?.created_at) milestones.push({ id: `${id}:raised`, action: "GRIEVANCE_RAISED", created_at: g.created_at });
     if (g?.resolved_at) {
       milestones.push({
         id: `${id}:resolved`,
@@ -680,17 +595,10 @@ export const helpdeskService = {
         created_at: g.resolved_at,
       });
     }
-    if (g?.closed_at)
-      milestones.push({
-        id: `${id}:closed`,
-        action: "GRIEVANCE_CLOSED",
-        created_at: g.closed_at,
-      });
+    if (g?.closed_at) milestones.push({ id: `${id}:closed`, action: "GRIEVANCE_CLOSED", created_at: g.closed_at });
 
     return [...(auditRows as RowDataPacket[]), ...milestones].sort(
-      (a, b) =>
-        new Date(a.created_at as string).getTime() -
-        new Date(b.created_at as string).getTime(),
+      (a, b) => new Date(a.created_at as string).getTime() - new Date(b.created_at as string).getTime()
     );
   },
 
@@ -713,41 +621,34 @@ export const helpdeskService = {
           severity, confidentiality_level, anti_retaliation_flag)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        id,
-        grievanceCode(),
-        data.employee_id,
-        category,
+        id, grievanceCode(), data.employee_id, category,
         packedGrievanceDescription(data),
         data.is_anonymous ? 1 : 0,
         data.severity ?? "medium",
         data.confidentiality_level ?? "standard",
         data.anti_retaliation_flag ? 1 : 0,
-      ],
+      ]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, grievance_code, category, category AS grievance_type,
               severity, confidentiality_level, is_anonymous, status, created_at
-         FROM grievance WHERE id = ? LIMIT 1`,
-      [id],
+         FROM grievance WHERE id = ? LIMIT 1`, [id]
     );
     return (rows as RowDataPacket[])[0];
   },
 
-  async updateGrievance(
-    id: string,
-    data: {
-      status?: string;
-      assigned_to?: string;
-      resolution_note?: string;
-      severity?: string;
-      escalation_level?: number;
-      assigned_committee?: string;
-      due_date?: string;
-      investigation_notes?: string;
-      confidentiality_level?: string;
-      anti_retaliation_flag?: boolean;
-    },
-  ) {
+  async updateGrievance(id: string, data: {
+    status?: string;
+    assigned_to?: string;
+    resolution_note?: string;
+    severity?: string;
+    escalation_level?: number;
+    assigned_committee?: string;
+    due_date?: string;
+    investigation_notes?: string;
+    confidentiality_level?: string;
+    anti_retaliation_flag?: boolean;
+  }) {
     await db.execute(
       `UPDATE grievance SET
          status                = COALESCE(?, status),
@@ -774,39 +675,31 @@ export const helpdeskService = {
         data.due_date ?? null,
         data.investigation_notes ?? null,
         data.confidentiality_level ?? null,
-        data.anti_retaliation_flag != null
-          ? data.anti_retaliation_flag
-            ? 1
-            : 0
-          : null,
+        data.anti_retaliation_flag != null ? (data.anti_retaliation_flag ? 1 : 0) : null,
         data.status ?? "",
         data.status ?? "",
         id,
-      ],
+      ]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, grievance_code, category, severity, status, assigned_to,
               resolution_note, escalation_level, assigned_committee, due_date,
               investigation_notes, closed_at, updated_at
          FROM grievance WHERE id = ? LIMIT 1`,
-      [id],
+      [id]
     );
     return (rows as RowDataPacket[])[0];
   },
 
-  async addEvidenceMetadata(
-    grievanceId: string,
-    actorUserId: string,
-    metadata: {
-      file_name: string;
-      file_type?: string;
-      description?: string;
-      file_url?: string;
-    },
-  ) {
+  async addEvidenceMetadata(grievanceId: string, actorUserId: string, metadata: {
+    file_name: string;
+    file_type?: string;
+    description?: string;
+    file_url?: string;
+  }) {
     await db.execute(
       `UPDATE grievance SET evidence_count = evidence_count + 1, updated_at = NOW() WHERE id = ?`,
-      [grievanceId],
+      [grievanceId]
     );
     await writeSensitiveAuditLog({
       actorUserId,
@@ -826,7 +719,7 @@ export const helpdeskService = {
               escalation_level = COALESCE(escalation_level, 0) + 1,
               updated_at = NOW()
         WHERE id = ?`,
-      [id],
+      [id]
     );
     if (reason) {
       await writeSensitiveAuditLog({
@@ -841,11 +734,7 @@ export const helpdeskService = {
     return this.updateGrievance(id, {});
   },
 
-  async addGrievanceInvestigationNote(
-    id: string,
-    actorUserId: string,
-    note: string,
-  ) {
+  async addGrievanceInvestigationNote(id: string, actorUserId: string, note: string) {
     await writeSensitiveAuditLog({
       actorUserId,
       actionType: "GRIEVANCE_INVESTIGATION_NOTE",
@@ -854,10 +743,7 @@ export const helpdeskService = {
       entityId: id,
       changeSummary: { note_length: note.length },
     });
-    return this.updateGrievance(id, {
-      investigation_notes: note,
-      status: "under_review",
-    });
+    return this.updateGrievance(id, { investigation_notes: note, status: "under_review" });
   },
 
   async addGrievanceEvidence(id: string, evidence: Record<string, unknown>) {
@@ -865,9 +751,7 @@ export const helpdeskService = {
     return this.addEvidenceMetadata(id, "system", {
       file_name: fileName,
       file_type: evidence.file_type ? String(evidence.file_type) : undefined,
-      description: evidence.description
-        ? String(evidence.description)
-        : undefined,
+      description: evidence.description ? String(evidence.description) : undefined,
     });
   },
 
@@ -881,7 +765,7 @@ export const helpdeskService = {
               updated_at  = NOW()
         WHERE id = ?
           AND (assigned_to IS NULL OR assigned_to = ?)`,
-      [userId, ticketId, userId],
+      [userId, ticketId, userId]
     );
     return this.getTicket(ticketId);
   },
@@ -896,7 +780,7 @@ export const helpdeskService = {
               held_at    = NOW(),
               updated_at = NOW()
         WHERE id = ?`,
-      [reason, ticketId],
+      [reason, ticketId]
     );
     await writeSensitiveAuditLog({
       actorUserId,
@@ -924,7 +808,7 @@ export const helpdeskService = {
     if (filters.branch_id) {
       conds.push(
         "(ur.role_key IN ('admin','hr','super_admin','it_admin') OR " +
-          " (ur.role_key IN ('it','branch_it') AND e.branch_id = ?))",
+        " (ur.role_key IN ('it','branch_it') AND e.branch_id = ?))"
       );
       params.push(filters.branch_id);
     }
@@ -963,7 +847,7 @@ export const helpdeskService = {
           CASE WHEN MIN(e.branch_id) = ? THEN 0 ELSE 1 END,
           MIN(COALESCE(NULLIF(e.full_name,''), au.email))
         LIMIT 100`,
-      [...params, filters.branch_id ?? null],
+      [...params, filters.branch_id ?? null]
     );
     return rows as RowDataPacket[];
   },
@@ -977,16 +861,12 @@ export const helpdeskService = {
   }) {
     const conds: string[] = ["a.status = ?"];
     const params: unknown[] = [filters.status ?? "published"];
-    if (filters.category) {
-      conds.push("a.category = ?");
-      params.push(filters.category);
-    }
+    if (filters.category) { conds.push("a.category = ?"); params.push(filters.category); }
 
     const search = filters.search?.trim();
     let searchClause = "";
     if (search) {
-      searchClause =
-        "AND (MATCH(a.title, a.tags) AGAINST(? IN BOOLEAN MODE) OR a.title LIKE ?)";
+      searchClause = "AND (MATCH(a.title, a.tags) AGAINST(? IN BOOLEAN MODE) OR a.title LIKE ?)";
       params.push(search + "*", `%${search}%`);
     }
 
@@ -997,7 +877,7 @@ export const helpdeskService = {
         WHERE ${conds.join(" AND ")} ${searchClause}
         ORDER BY a.helpful_count DESC, a.view_count DESC
         LIMIT 50`,
-      params,
+      params
     );
     return rows as RowDataPacket[];
   },
@@ -1005,7 +885,7 @@ export const helpdeskService = {
   async getKbArticle(id: string) {
     await db.execute(
       "UPDATE helpdesk_kb_article SET view_count = view_count + 1 WHERE id = ?",
-      [id],
+      [id]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT a.*,
@@ -1014,7 +894,7 @@ export const helpdeskService = {
          LEFT JOIN auth_user au ON au.id = a.author_user_id
          LEFT JOIN employees e ON e.user_id = au.id
         WHERE a.id = ? LIMIT 1`,
-      [id],
+      [id]
     );
     return (rows as RowDataPacket[])[0] ?? null;
   },
@@ -1034,19 +914,13 @@ export const helpdeskService = {
          (id, title, category, it_subcategory, content, tags, author_user_id, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        id,
-        data.title,
-        data.category,
-        data.it_subcategory ?? null,
-        data.content,
-        data.tags ?? null,
-        data.author_user_id,
+        id, data.title, data.category, data.it_subcategory ?? null,
+        data.content, data.tags ?? null, data.author_user_id,
         data.status ?? "published",
-      ],
+      ]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM helpdesk_kb_article WHERE id = ? LIMIT 1",
-      [id],
+      "SELECT * FROM helpdesk_kb_article WHERE id = ? LIMIT 1", [id]
     );
     return (rows as RowDataPacket[])[0];
   },
@@ -1056,14 +930,14 @@ export const helpdeskService = {
       `INSERT INTO helpdesk_kb_feedback (id, article_id, user_id, is_helpful)
        VALUES (?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE is_helpful = VALUES(is_helpful)`,
-      [randomUUID(), articleId, userId, isHelpful ? 1 : 0],
+      [randomUUID(), articleId, userId, isHelpful ? 1 : 0]
     );
     await db.execute(
       `UPDATE helpdesk_kb_article SET
          helpful_count     = (SELECT COUNT(*) FROM helpdesk_kb_feedback WHERE article_id = ? AND is_helpful = 1),
          not_helpful_count = (SELECT COUNT(*) FROM helpdesk_kb_feedback WHERE article_id = ? AND is_helpful = 0)
        WHERE id = ?`,
-      [articleId, articleId, articleId],
+      [articleId, articleId, articleId]
     );
   },
 };

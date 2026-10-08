@@ -19,86 +19,13 @@ import { db } from "../../db/mysql.js";
 
 /** Words carrying no discriminating signal in a bug report. */
 const STOP_WORDS = new Set([
-  "the",
-  "a",
-  "an",
-  "is",
-  "are",
-  "was",
-  "were",
-  "be",
-  "been",
-  "being",
-  "and",
-  "or",
-  "but",
-  "if",
-  "then",
-  "than",
-  "that",
-  "this",
-  "these",
-  "those",
-  "it",
-  "its",
-  "in",
-  "on",
-  "at",
-  "to",
-  "for",
-  "of",
-  "with",
-  "from",
-  "by",
-  "as",
-  "not",
-  "no",
-  "so",
-  "we",
-  "i",
-  "my",
-  "me",
-  "you",
-  "your",
-  "our",
-  "us",
-  "he",
-  "she",
-  "they",
-  "them",
-  "his",
-  "her",
-  "their",
-  "showing",
-  "shows",
-  "show",
-  "shown",
-  "getting",
-  "gets",
-  "get",
-  "got",
-  "when",
-  "while",
-  "there",
-  "here",
-  "some",
-  "any",
-  "all",
-  "can",
-  "cannot",
-  "cant",
-  "will",
-  "would",
-  "should",
-  "issue",
-  "problem",
-  "error",
-  "wrong",
-  "incorrect",
-  "bug",
-  "page",
-  "screen",
-  "button",
+  "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "and", "or", "but",
+  "if", "then", "than", "that", "this", "these", "those", "it", "its", "in", "on", "at",
+  "to", "for", "of", "with", "from", "by", "as", "not", "no", "so", "we", "i", "my", "me",
+  "you", "your", "our", "us", "he", "she", "they", "them", "his", "her", "their",
+  "showing", "shows", "show", "shown", "getting", "gets", "get", "got", "when", "while",
+  "there", "here", "some", "any", "all", "can", "cannot", "cant", "will", "would", "should",
+  "issue", "problem", "error", "wrong", "incorrect", "bug", "page", "screen", "button",
 ]);
 
 export function tokenize(text: string): Set<string> {
@@ -166,23 +93,10 @@ interface CandidateRow extends RowDataPacket {
 }
 
 const OPEN_ENOUGH_TO_DUPLICATE = [
-  "scan_blocked",
-  "scan_done",
-  "triaged",
-  "validating",
-  "checklist_passed",
-  "awaiting_governance",
-  "awaiting_approval",
-  "prompt_ready",
-  "build_queued",
-  "build_running",
-  "pr_open",
-  "reviewed",
-  "merged",
-  "deployed_to_uat",
-  "ready_for_retest",
-  "retest_failed",
-  "reopened",
+  "scan_blocked", "scan_done", "triaged", "validating", "checklist_passed",
+  "awaiting_governance", "awaiting_approval", "prompt_ready", "build_queued",
+  "build_running", "pr_open", "reviewed", "merged", "deployed_to_uat",
+  "ready_for_retest", "retest_failed", "reopened",
 ];
 
 /**
@@ -197,7 +111,7 @@ export async function findSimilar(
   title: string,
   pageRoute: string | null,
   pageCode: string | null,
-  opts: { limit?: number; minScore?: number; excludeId?: string } = {},
+  opts: { limit?: number; minScore?: number; excludeId?: string } = {}
 ): Promise<SimilarItem[]> {
   const minScore = opts.minScore ?? 0.4;
   const limit = opts.limit ?? 5;
@@ -214,15 +128,14 @@ export async function findSimilar(
         AND created_at > DATE_SUB(NOW(), INTERVAL 90 DAY)
       ORDER BY created_at DESC
       LIMIT 400`,
-    OPEN_ENOUGH_TO_DUPLICATE,
+    OPEN_ENOUGH_TO_DUPLICATE
   );
 
   const scored: SimilarItem[] = [];
   for (const r of rows) {
     if (opts.excludeId && r.id === opts.excludeId) continue;
     const samePage =
-      (!!pageCode && r.page_code === pageCode) ||
-      (!!pageRoute && r.page_route === pageRoute);
+      (!!pageCode && r.page_code === pageCode) || (!!pageRoute && r.page_route === pageRoute);
     let score = similarity(target, tokenize(r.title));
     // Same page is corroborating evidence, not proof — a bounded nudge, never enough on its
     // own to surface an unrelated title.
@@ -251,35 +164,28 @@ export async function findSimilar(
  * The count is what turns "somebody mentioned this" into "eleven people are blocked", which
  * is the input a prioritisation decision actually needs.
  */
-export async function recordMeToo(
-  canonicalId: string,
-  actorUserId: string,
-): Promise<number> {
+export async function recordMeToo(canonicalId: string, actorUserId: string): Promise<number> {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
     const [rows] = await conn.execute<RowDataPacket[]>(
       `SELECT affected_user_count FROM uat_feedback WHERE id = ? FOR UPDATE`,
-      [canonicalId],
+      [canonicalId]
     );
     if (rows.length === 0) {
-      const e = new Error("UAT feedback not found") as Error & {
-        statusCode?: number;
-      };
+      const e = new Error("UAT feedback not found") as Error & { statusCode?: number };
       e.statusCode = 404;
       throw e;
     }
-    const next =
-      Number((rows[0] as { affected_user_count: number }).affected_user_count) +
-      1;
-    await conn.execute(
-      `UPDATE uat_feedback SET affected_user_count = ? WHERE id = ?`,
-      [next, canonicalId],
-    );
+    const next = Number((rows[0] as { affected_user_count: number }).affected_user_count) + 1;
+    await conn.execute(`UPDATE uat_feedback SET affected_user_count = ? WHERE id = ?`, [
+      next,
+      canonicalId,
+    ]);
     await conn.execute(
       `INSERT INTO uat_feedback_event (feedback_id, event_type, actor_user_id, actor_kind, message, detail_json)
        VALUES (?, 'me_too', ?, 'user', 'another user reported the same issue', ?)`,
-      [canonicalId, actorUserId, JSON.stringify({ affectedUserCount: next })],
+      [canonicalId, actorUserId, JSON.stringify({ affectedUserCount: next })]
     );
     await conn.commit();
     return next;

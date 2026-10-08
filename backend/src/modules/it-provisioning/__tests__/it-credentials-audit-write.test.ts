@@ -27,18 +27,7 @@ const conn = {
 
 const dbExecute = vi.fn(async (sql: string) => {
   if (/FROM it_provisioning_request/.test(sql)) {
-    return [
-      [
-        {
-          id: "task-1",
-          employee_id: "emp-1",
-          task_code: "IT_EMAIL_DOMAIN_ASSET",
-          assigned_role: "it",
-          status: "pending",
-        },
-      ],
-      [],
-    ];
+    return [[{ id: "task-1", employee_id: "emp-1", task_code: "IT_EMAIL_DOMAIN_ASSET", assigned_role: "it", status: "pending" }], []];
   }
   return [[], []];
 });
@@ -46,9 +35,7 @@ const dbExecute = vi.fn(async (sql: string) => {
 vi.mock("../../../db/mysql.js", () => ({
   db: { execute: dbExecute, getConnection: vi.fn(async () => conn) },
 }));
-vi.mock("../../../shared/auditLog.js", () => ({
-  logSensitiveAction: vi.fn(async () => undefined),
-}));
+vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn(async () => undefined) }));
 vi.mock("../../employees/employee-activation.service.js", () => ({
   activateIfJoiningDateReached: vi.fn(async () => undefined),
 }));
@@ -75,15 +62,14 @@ describe("completeItProvisioningTask — the it_credentials audit write is no lo
       return [{ affectedRows: 1 }, []];
     });
 
-    const { completeItProvisioningTask } =
-      await import("../task-completion-handlers.service.js");
+    const { completeItProvisioningTask } = await import("../task-completion-handlers.service.js");
 
     await expect(
       completeItProvisioningTask(
         "task-1",
         { official_email: "a.b@teammas.in", domain_account: "a.b" },
         "actor-1",
-      ),
+      )
     ).rejects.toThrow();
 
     expect(conn.rollback).toHaveBeenCalledTimes(1);
@@ -99,15 +85,14 @@ describe("completeItProvisioningTask — the it_credentials audit write is no lo
       return [{ affectedRows: 1 }, []];
     });
 
-    const { completeItProvisioningTask } =
-      await import("../task-completion-handlers.service.js");
+    const { completeItProvisioningTask } = await import("../task-completion-handlers.service.js");
 
     await expect(
       completeItProvisioningTask(
         "task-1",
         { official_email: "a.b@teammas.in", domain_account: "a.b" },
         "actor-1",
-      ),
+      )
     ).resolves.toBeUndefined();
 
     expect(conn.commit).toHaveBeenCalledTimes(1);

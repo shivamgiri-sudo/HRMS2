@@ -76,10 +76,7 @@ describe("command-center column projection covers every column the helpers read"
   const referenced = new Set<string>();
   for (const fn of RAW_ROW_HELPERS) {
     const body = helperBody(src, fn);
-    expect(
-      body,
-      `${fn}() must exist — this test is derived from its source`,
-    ).toBeTruthy();
+    expect(body, `${fn}() must exist — this test is derived from its source`).toBeTruthy();
     for (const m of body.matchAll(/\brow\.([a-z_][a-z0-9_]*)/g)) {
       // `_`-prefixed reads are derived fields written by enrichCandidate, not table columns.
       if (!m[1].startsWith("_")) referenced.add(m[1]);
@@ -95,9 +92,7 @@ describe("command-center column projection covers every column the helpers read"
   });
 
   it("projects every column the derived-field helpers read", () => {
-    const missing = [...referenced].filter(
-      (c) => !projected.has(c) && !NOT_COLUMNS.has(c),
-    );
+    const missing = [...referenced].filter((c) => !projected.has(c) && !NOT_COLUMNS.has(c));
     expect(
       missing,
       `CANDIDATE_ANALYTICS_COLUMNS is missing ${missing.join(", ")}. commandCenterData() would ` +
@@ -128,9 +123,7 @@ describe("command-center column projection covers every column the helpers read"
     expect(start, "commandCenterData() must exist").toBeGreaterThan(-1);
     const body = src.slice(start, src.indexOf("\n  async ", start + 1));
     expect(body).toContain("candidateSelectAnalytics");
-    expect(body, "c.* here would undo the whole change").not.toMatch(
-      /candidateSelect\(/,
-    );
+    expect(body, "c.* here would undo the whole change").not.toMatch(/candidateSelect\(/);
   });
 
   it("leaves webData on the full column set", () => {

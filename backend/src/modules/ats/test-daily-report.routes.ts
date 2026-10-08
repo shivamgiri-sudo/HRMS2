@@ -20,13 +20,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 const testDailyReportRouter = Router();
 
 /** Who may see recruitment performance across branches. */
-const REPORT_ROLES = [
-  "super_admin",
-  "admin",
-  "hr",
-  "recruitment_hr",
-  "branch_head",
-] as const;
+const REPORT_ROLES = ["super_admin", "admin", "hr", "recruitment_hr", "branch_head"] as const;
 
 /** Only company addresses — the original accepted any address at all. */
 const ALLOWED_RECIPIENT = /@teammas\.(in|co\.in)$/i;
@@ -47,9 +41,7 @@ testDailyReportRouter.post(
     // hardcoded '2026-08-24', which quietly returned a fixed historical day to anyone
     // who omitted it — the report looked like it worked and described the wrong date.
     if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "date must be YYYY-MM-DD" });
+      return res.status(400).json({ success: false, message: "date must be YYYY-MM-DD" });
     }
 
     try {
@@ -73,9 +65,7 @@ testDailyReportRouter.post(
       const result = await runDailyHiringReport(date, target);
       return res.json(result);
     } catch (error: any) {
-      return res
-        .status(500)
-        .json({ success: false, error: error?.message ?? "send failed" });
+      return res.status(500).json({ success: false, error: error?.message ?? "send failed" });
     }
   },
 );

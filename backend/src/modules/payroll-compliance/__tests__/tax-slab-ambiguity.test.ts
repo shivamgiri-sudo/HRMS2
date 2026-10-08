@@ -35,61 +35,45 @@ beforeEach(() => mockExecute.mockReset());
 
 describe("getSlabs refuses an ambiguous slab table", () => {
   it("throws when a band appears twice, naming the duplicated bands", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [
-        slab(0, 400000, 0),
-        slab(0, 400000, 0),
-        slab(400000, 800000, 5),
-        slab(400000, 800000, 5),
-      ],
-    ]);
+    mockExecute.mockResolvedValueOnce([[
+      slab(0, 400000, 0),
+      slab(0, 400000, 0),
+      slab(400000, 800000, 5),
+      slab(400000, 800000, 5),
+    ]]);
 
-    await expect(
-      taxEngineService.getSlabs("2026-27", "new" as never),
-    ).rejects.toMatchObject({
+    await expect(taxEngineService.getSlabs("2026-27", "new" as never)).rejects.toMatchObject({
       statusCode: 409,
       code: "TAX_SLABS_AMBIGUOUS",
     });
   });
 
   it("names the financial year and regime, so the row to deactivate is findable", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [slab(0, 400000, 0), slab(0, 400000, 0)],
-    ]);
-    await expect(
-      taxEngineService.getSlabs("2026-27", "new" as never),
-    ).rejects.toThrow(/financial year 2026-27, new regime/);
+    mockExecute.mockResolvedValueOnce([[slab(0, 400000, 0), slab(0, 400000, 0)]]);
+    await expect(taxEngineService.getSlabs("2026-27", "new" as never)).rejects.toThrow(
+      /financial year 2026-27, new regime/
+    );
   });
 
   it("catches a duplicate that disagrees on rate — the case dedup would have hidden", async () => {
     // If the two rows differ, silently keeping one is a wrong rate nobody can see.
-    mockExecute.mockResolvedValueOnce([
-      [slab(400000, 800000, 5), slab(400000, 800000, 10)],
-    ]);
-    await expect(
-      taxEngineService.getSlabs("2026-27", "new" as never),
-    ).rejects.toMatchObject({
+    mockExecute.mockResolvedValueOnce([[slab(400000, 800000, 5), slab(400000, 800000, 10)]]);
+    await expect(taxEngineService.getSlabs("2026-27", "new" as never)).rejects.toMatchObject({
       code: "TAX_SLABS_AMBIGUOUS",
     });
   });
 
   it("passes a clean slab table straight through", async () => {
-    const clean = [
-      slab(0, 400000, 0),
-      slab(400000, 800000, 5),
-      slab(800000, null, 20),
-    ];
+    const clean = [slab(0, 400000, 0), slab(400000, 800000, 5), slab(800000, null, 20)];
     mockExecute.mockResolvedValueOnce([clean]);
-    await expect(
-      taxEngineService.getSlabs("2026-27", "new" as never),
-    ).resolves.toHaveLength(3);
+    await expect(taxEngineService.getSlabs("2026-27", "new" as never)).resolves.toHaveLength(3);
   });
 
   it("still throws its original error when no slabs exist at all", async () => {
     mockExecute.mockResolvedValueOnce([[]]);
-    await expect(
-      taxEngineService.getSlabs("2026-27", "new" as never),
-    ).rejects.toThrow(/No approved tax slabs/);
+    await expect(taxEngineService.getSlabs("2026-27", "new" as never)).rejects.toThrow(
+      /No approved tax slabs/
+    );
   });
 });
 
@@ -115,14 +99,9 @@ describe("the canonical calculator propagates the refusal instead of silently fa
 
   it("checks for TAX_SLABS_AMBIGUOUS and re-throws before reaching the fallback calculator", () => {
     const catchAt = SOURCE.indexOf("} catch (err: unknown) {");
-    const fallbackCommentAt = SOURCE.indexOf(
-      "Fallback to the synchronous engine",
-    );
+    const fallbackCommentAt = SOURCE.indexOf("Fallback to the synchronous engine");
     expect(catchAt, "the catch block was not found").toBeGreaterThan(-1);
-    expect(
-      fallbackCommentAt,
-      "the fallback branch was not found",
-    ).toBeGreaterThan(catchAt);
+    expect(fallbackCommentAt, "the fallback branch was not found").toBeGreaterThan(catchAt);
 
     const guardBlock = SOURCE.slice(catchAt, fallbackCommentAt);
     expect(guardBlock).toMatch(/code\s*===\s*"TAX_SLABS_AMBIGUOUS"/);
@@ -130,9 +109,7 @@ describe("the canonical calculator propagates the refusal instead of silently fa
   });
 
   it("no longer uses a bare catch that cannot distinguish the two failure modes", () => {
-    expect(SOURCE).not.toMatch(
-      /tdsMonthly = tdsResult\.tds_monthly;\s*\n\s*\} catch \{/,
-    );
+    expect(SOURCE).not.toMatch(/tdsMonthly = tdsResult\.tds_monthly;\s*\n\s*\} catch \{/);
   });
 });
 

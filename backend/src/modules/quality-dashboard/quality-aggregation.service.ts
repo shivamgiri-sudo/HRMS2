@@ -3,16 +3,16 @@
  * Executes quality queries and transforms responses
  */
 
-import { PoolConnection, RowDataPacket } from "mysql2/promise";
+import { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import {
   buildCQScoreQuery,
   buildWeaknessDetailQuery,
   buildCallsReviewQuery,
   buildCallDetailQuery,
   buildTotalCallsCountQuery,
-} from "../../lib/query-builders/quality-queries.js";
-import { cacheInstance } from "../../lib/cache/quality-cache.js";
-import { logger } from "../../logger.js";
+} from '../../lib/query-builders/quality-queries.js';
+import { cacheInstance } from '../../lib/cache/quality-cache.js';
+import { logger } from '../../logger.js';
 
 export interface CQScoreResponse {
   cq_score_current: number;
@@ -26,7 +26,7 @@ export interface CQScoreResponse {
   trend_7day: { direction: string; change_pct: number };
   trend_30day: { direction: string; change_pct: number };
   weekly: Array<{ day: string; avg: number; calls: number }>;
-  status: "On Track" | "Below Target" | "Risk";
+  status: 'On Track' | 'Below Target' | 'Risk';
   last_updated: Date;
 }
 
@@ -35,12 +35,7 @@ export interface WeaknessArea {
   score: number;
   peer_avg: number;
   gap: number;
-  sub_metrics: Array<{
-    name: string;
-    score: number;
-    peer_avg: number;
-    calls_weak: number;
-  }>;
+  sub_metrics: Array<{ name: string; score: number; peer_avg: number; calls_weak: number }>;
   related_calls: Array<{ call_id: string; date: string; cq_pct: number }>;
 }
 
@@ -91,176 +86,129 @@ type DbPoolLike = { getConnection: () => Promise<PoolConnection> };
 export class QualityAggregationService {
   constructor(private db: DbPoolLike) {}
 
-  async getCQScore(
-    employeeCode: string,
-    daysBack: number = 7,
-  ): Promise<CQScoreResponse> {
+  async getCQScore(employeeCode: string, daysBack: number = 7): Promise<CQScoreResponse> {
     const cacheKey = `quality:cq_score:${employeeCode}:${daysBack}d`;
 
-    return cacheInstance.getOrSet(
-      cacheKey,
-      async () => {
-        const { query, params } = buildCQScoreQuery(employeeCode, daysBack);
-        const conn = await this.db.getConnection();
+    return cacheInstance.getOrSet(cacheKey, async () => {
+      const { query, params } = buildCQScoreQuery(employeeCode, daysBack);
+      const conn = await this.db.getConnection();
 
-        try {
-          const [rows] = await conn.execute<RowDataPacket[]>(query, params);
+      try {
+        const [rows] = await conn.execute<RowDataPacket[]>(query, params);
 
-          if (!rows || rows.length === 0) {
-            logger.warn(`No CQ score data for ${employeeCode}`);
-            return this.getEmptyCQScore();
-          }
-
-          const row = rows[0];
-          return {
-            cq_score_current: row.cq_current || 0,
-            cq_score_7day_avg: row.cq_7day_avg || 0,
-            cq_score_30day_avg: row.cq_30day_avg || 0,
-            cq_score_clean: row.cq_clean || 0,
-            rank: {
-              position: row.rank_position || 0,
-              total_agents: row.total_agents || 0,
-            },
-            peer_avg: row.peer_avg || 0,
-            target: 90,
-            gap_pct: 90 - (row.cq_current || 0),
-            trend_7day: {
-              direction:
-                (row.cq_7day_avg || 0) > (row.cq_30day_avg || 0)
-                  ? "↗"
-                  : (row.cq_7day_avg || 0) < (row.cq_30day_avg || 0)
-                    ? "↘"
-                    : "→",
-              change_pct:
-                Math.round(
-                  ((row.cq_7day_avg || 0) - (row.cq_current || 0)) * 10,
-                ) / 10,
-            },
-            trend_30day: (() => {
-              const curr30 = row.cq_30day_avg ?? null;
-              const prev30 = row.cq_prev30day_avg ?? null;
-              if (curr30 === null || prev30 === null || prev30 === 0) {
-                return { direction: "→", change_pct: 0 };
-              }
-              const changePct =
-                Math.round(((curr30 - prev30) / prev30) * 1000) / 10;
-              return {
-                direction: changePct > 0 ? "↗" : changePct < 0 ? "↘" : "→",
-                change_pct: changePct,
-              };
-            })(),
-            weekly: row.weekly_breakdown
-              ? JSON.parse(row.weekly_breakdown)
-              : [],
-            status: this.getStatus(row.cq_current),
-            last_updated: new Date(),
-          };
-        } finally {
-          conn.release();
+        if (!rows || rows.length === 0) {
+          logger.warn(`No CQ score data for ${employeeCode}`);
+          return this.getEmptyCQScore();
         }
-      },
-      300,
-    ); // 5 min TTL
+
+        const row = rows[0];
+        return {
+          cq_score_current: row.cq_current || 0,
+          cq_score_7day_avg: row.cq_7day_avg || 0,
+          cq_score_30day_avg: row.cq_30day_avg || 0,
+          cq_score_clean: row.cq_clean || 0,
+          rank: { position: row.rank_position || 0, total_agents: row.total_agents || 0 },
+          peer_avg: row.peer_avg || 0,
+          target: 90,
+          gap_pct: (90 - (row.cq_current || 0)),
+          trend_7day: {
+            direction: (row.cq_7day_avg || 0) > (row.cq_30day_avg || 0) ? '↗' : (row.cq_7day_avg || 0) < (row.cq_30day_avg || 0) ? '↘' : '→',
+            change_pct: Math.round(((row.cq_7day_avg || 0) - (row.cq_current || 0)) * 10) / 10,
+          },
+          trend_30day: (() => {
+            const curr30 = row.cq_30day_avg ?? null;
+            const prev30 = row.cq_prev30day_avg ?? null;
+            if (curr30 === null || prev30 === null || prev30 === 0) {
+              return { direction: '→', change_pct: 0 };
+            }
+            const changePct = Math.round(((curr30 - prev30) / prev30) * 1000) / 10;
+            return {
+              direction: changePct > 0 ? '↗' : changePct < 0 ? '↘' : '→',
+              change_pct: changePct,
+            };
+          })(),
+          weekly: row.weekly_breakdown ? JSON.parse(row.weekly_breakdown) : [],
+          status: this.getStatus(row.cq_current),
+          last_updated: new Date(),
+        };
+      } finally {
+        conn.release();
+      }
+    }, 300); // 5 min TTL
   }
 
   async getWeaknessDetail(employeeCode: string) {
     const cacheKey = `quality:weakness:${employeeCode}`;
 
-    return cacheInstance.getOrSet(
-      cacheKey,
-      async () => {
-        const { query, params } = buildWeaknessDetailQuery(employeeCode);
-        const conn = await this.db.getConnection();
+    return cacheInstance.getOrSet(cacheKey, async () => {
+      const { query, params } = buildWeaknessDetailQuery(employeeCode);
+      const conn = await this.db.getConnection();
 
-        try {
-          const [rows] = await conn.execute<RowDataPacket[]>(query, params);
+      try {
+        const [rows] = await conn.execute<RowDataPacket[]>(query, params);
 
-          return {
-            weakness_areas: (rows || [])
-              .map((row) => ({
-                category: row.category,
-                score: row.score || 0,
-                peer_avg: row.peer_avg || 0,
-                gap: (row.peer_avg || 0) - (row.score || 0),
-                sub_metrics: this.getSubMetricsForCategory(row.category),
-                related_calls: row.related_calls
-                  ? JSON.parse(row.related_calls)
-                  : [],
-              }))
-              .sort((a, b) => (b.gap || 0) - (a.gap || 0))
-              .slice(0, 5),
-            last_updated: new Date(),
-          };
-        } finally {
-          conn.release();
-        }
-      },
-      600,
-    ); // 10 min TTL
+        return {
+          weakness_areas: (rows || [])
+            .map((row) => ({
+              category: row.category,
+              score: row.score || 0,
+              peer_avg: row.peer_avg || 0,
+              gap: (row.peer_avg || 0) - (row.score || 0),
+              sub_metrics: this.getSubMetricsForCategory(row.category),
+              related_calls: row.related_calls ? JSON.parse(row.related_calls) : [],
+            }))
+            .sort((a, b) => (b.gap || 0) - (a.gap || 0))
+            .slice(0, 5),
+          last_updated: new Date(),
+        };
+      } finally {
+        conn.release();
+      }
+    }, 600); // 10 min TTL
   }
 
-  async getCallsReview(
-    employeeCode: string,
-    limit: number = 10,
-    offset: number = 0,
-    sort: "date" | "cq" | "fatal" = "date",
-  ): Promise<CallReview> {
+  async getCallsReview(employeeCode: string, limit: number = 10, offset: number = 0, sort: 'date' | 'cq' | 'fatal' = 'date'): Promise<CallReview> {
     const cacheKey = `quality:calls_review:${employeeCode}:${sort}:${limit}:${offset}`;
 
-    return cacheInstance.getOrSet(
-      cacheKey,
-      async () => {
-        const { query, params } = buildCallsReviewQuery(
-          employeeCode,
-          limit,
-          offset,
-          sort,
-        );
-        const countQuery = buildTotalCallsCountQuery(employeeCode);
+    return cacheInstance.getOrSet(cacheKey, async () => {
+      const { query, params } = buildCallsReviewQuery(employeeCode, limit, offset, sort);
+      const countQuery = buildTotalCallsCountQuery(employeeCode);
 
-        const conn = await this.db.getConnection();
+      const conn = await this.db.getConnection();
 
-        try {
-          const [rows] = await conn.execute<RowDataPacket[]>(query, params);
-          const [countRows] = await conn.execute<RowDataPacket[]>(
-            countQuery.query,
-            countQuery.params,
-          );
+      try {
+        const [rows] = await conn.execute<RowDataPacket[]>(query, params);
+        const [countRows] = await conn.execute<RowDataPacket[]>(countQuery.query, countQuery.params);
 
-          const totalCalls = countRows?.[0]?.total || 0;
+        const totalCalls = countRows?.[0]?.total || 0;
 
-          return {
-            total_calls: totalCalls,
-            page: {
-              limit,
-              offset,
-              has_next: offset + limit < totalCalls,
-            },
-            calls: (rows || []).map((row) => ({
-              call_id: row.call_id,
-              date: row.date,
-              lead_id: row.lead_id,
-              lead_name: row.lead_name,
-              scenario: row.scenario,
-              cq_pct: row.cq_pct || 0,
-              has_fatal: row.has_fatal === 1,
-              fatal_reason: row.fatal_reason,
-              duration_sec: row.duration_sec || 0,
-            })),
-            last_updated: new Date(),
-          };
-        } finally {
-          conn.release();
-        }
-      },
-      120,
-    ); // 2 min TTL
+        return {
+          total_calls: totalCalls,
+          page: {
+            limit,
+            offset,
+            has_next: offset + limit < totalCalls,
+          },
+          calls: (rows || []).map((row) => ({
+            call_id: row.call_id,
+            date: row.date,
+            lead_id: row.lead_id,
+            lead_name: row.lead_name,
+            scenario: row.scenario,
+            cq_pct: row.cq_pct || 0,
+            has_fatal: row.has_fatal === 1,
+            fatal_reason: row.fatal_reason,
+            duration_sec: row.duration_sec || 0,
+          })),
+          last_updated: new Date(),
+        };
+      } finally {
+        conn.release();
+      }
+    }, 120); // 2 min TTL
   }
 
-  async getCallDetail(
-    callId: string,
-    ownerEmployeeCode: string,
-  ): Promise<CallDetail> {
+  async getCallDetail(callId: string, ownerEmployeeCode: string): Promise<CallDetail> {
     const { query, params } = buildCallDetailQuery(callId, ownerEmployeeCode);
     const conn = await this.db.getConnection();
 
@@ -305,10 +253,10 @@ export class QualityAggregationService {
     }
   }
 
-  private getStatus(score: number): "On Track" | "Below Target" | "Risk" {
-    if (score >= 80) return "On Track";
-    if (score >= 70) return "Below Target";
-    return "Risk";
+  private getStatus(score: number): 'On Track' | 'Below Target' | 'Risk' {
+    if (score >= 80) return 'On Track';
+    if (score >= 70) return 'Below Target';
+    return 'Risk';
   }
 
   private getEmptyCQScore(): CQScoreResponse {
@@ -321,31 +269,26 @@ export class QualityAggregationService {
       peer_avg: 0,
       target: 90,
       gap_pct: 90,
-      trend_7day: { direction: "→", change_pct: 0 },
-      trend_30day: { direction: "→", change_pct: 0 },
+      trend_7day: { direction: '→', change_pct: 0 },
+      trend_30day: { direction: '→', change_pct: 0 },
       weekly: [],
-      status: "Risk",
+      status: 'Risk',
       last_updated: new Date(),
     };
   }
 
   private getSubMetricsForCategory(category: string) {
     const subMetrics: Record<string, Array<{ name: string }>> = {
-      "Soft Skills": [
-        { name: "Empathy (Active Listening)" },
-        { name: "Professionalism" },
-        { name: "Enthusiasm" },
+      'Soft Skills': [
+        { name: 'Empathy (Active Listening)' },
+        { name: 'Professionalism' },
+        { name: 'Enthusiasm' },
       ],
-      Opening: [{ name: "Answer Within 5 Sec" }],
-      "Hold Procedure": [{ name: "Proper Hold" }, { name: "No Dead Air" }],
-      Resolution: [{ name: "Accurate Probing" }, { name: "Grammar" }],
-      Closing: [{ name: "Proper Closure" }, { name: "Further Assistance" }],
+      Opening: [{ name: 'Answer Within 5 Sec' }],
+      'Hold Procedure': [{ name: 'Proper Hold' }, { name: 'No Dead Air' }],
+      Resolution: [{ name: 'Accurate Probing' }, { name: 'Grammar' }],
+      Closing: [{ name: 'Proper Closure' }, { name: 'Further Assistance' }],
     };
-    return (subMetrics[category] || []).map((sm) => ({
-      ...sm,
-      score: 0,
-      peer_avg: 0,
-      calls_weak: 0,
-    }));
+    return (subMetrics[category] || []).map(sm => ({ ...sm, score: 0, peer_avg: 0, calls_weak: 0 }));
   }
 }

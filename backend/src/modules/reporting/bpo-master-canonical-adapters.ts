@@ -32,25 +32,18 @@ function periodOrCurrent(value?: string) {
 function monthEnd(period: string) {
   const [year, month] = period.split("-").map(Number);
   const date = new Date(Date.UTC(year, month, 0));
-  return date
-    .toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      timeZone: "UTC",
-    })
-    .replace(/ /g, "-")
-    .toUpperCase();
+  return date.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).replace(/ /g, "-").toUpperCase();
 }
 
 function monthLabel(period: string) {
   const [year, month] = period.split("-").map(Number);
   return new Date(Date.UTC(year, month - 1, 1))
-    .toLocaleDateString("en-GB", {
-      month: "short",
-      year: "numeric",
-      timeZone: "UTC",
-    })
+    .toLocaleDateString("en-GB", { month: "short", year: "numeric", timeZone: "UTC" })
     .replace(/ /g, "-")
     .toUpperCase();
 }
@@ -80,8 +73,7 @@ function common(row: any, period: string) {
     LOB: null,
     LOB_CODE: null,
     COST_CENTRE: row.costCentreCode ?? null,
-    BILLING_MODEL:
-      row.primaryBillingModel ?? row.billingModels?.join(" + ") ?? null,
+    BILLING_MODEL: row.primaryBillingModel ?? row.billingModels?.join(" + ") ?? null,
     DATA_SOURCE: "CANONICAL_BPO_PNL_SERVICE",
   };
 }
@@ -89,68 +81,44 @@ function common(row: any, period: string) {
 function clientRow(row: any, period: string) {
   return {
     ...common(row, period),
-    CONTRACT_STATUS:
-      row.revenueDataStatus === "configured" ? "ACTIVE" : row.revenueDataStatus,
+    CONTRACT_STATUS: row.revenueDataStatus === "configured" ? "ACTIVE" : row.revenueDataStatus,
     PLANNED_HEADCOUNT: nullableNumber(row.requiredRosterHc),
     ROSTERED_HEADCOUNT: nullableNumber(row.requiredRosterHc),
     PRESENT_HEADCOUNT: nullableNumber(row.activeHc),
     PRODUCTIVE_FTE: nullableNumber(row.billableHc ?? row.agentHeadcount),
-    CAPACITY_UTILISATION_PERCENTAGE: nullableNumber(
-      row.billableSeatUtilizationPct,
-    ),
+    CAPACITY_UTILISATION_PERCENTAGE: nullableNumber(row.billableSeatUtilizationPct),
     FORECAST_VOLUME: nullableNumber(row.plannedDeliveryUnits),
     ACTUAL_VOLUME_RECEIVED: nullableNumber(row.deliveredUnits),
     VOLUME_VARIANCE: n(row.deliveredUnits) - n(row.plannedDeliveryUnits),
-    VOLUME_VARIANCE_PERCENTAGE:
-      n(row.plannedDeliveryUnits) > 0
-        ? ((n(row.deliveredUnits) - n(row.plannedDeliveryUnits)) /
-            n(row.plannedDeliveryUnits)) *
-          100
-        : null,
+    VOLUME_VARIANCE_PERCENTAGE: n(row.plannedDeliveryUnits) > 0
+      ? ((n(row.deliveredUnits) - n(row.plannedDeliveryUnits)) / n(row.plannedDeliveryUnits)) * 100
+      : null,
     TASKS_COMPLETED: nullableNumber(row.acceptedUnits ?? row.billableUnits),
     TASKS_REJECTED: nullableNumber(row.rejectedUnits),
     REWORK_VOLUME: nullableNumber(row.rejectedUnits),
     SLA_ACHIEVED_PERCENTAGE: nullableNumber(row.slaScore),
     TAT_ACHIEVED_MINUTES: null,
-    AHT_ACHIEVED_SECONDS:
-      n(row.deliveredUnits) > 0 && n(row.productiveHours) > 0
-        ? (n(row.productiveHours) * 3600) / n(row.deliveredUnits)
-        : null,
+    AHT_ACHIEVED_SECONDS: n(row.deliveredUnits) > 0 && n(row.productiveHours) > 0
+      ? (n(row.productiveHours) * 3600) / n(row.deliveredUnits)
+      : null,
     QUALITY_SCORE_PERCENTAGE: nullableNumber(row.qualityScore),
     REVENUE_RECOGNISED: nullableNumber(row.recognizedRevenue),
-    SERVICE_CREDIT_OR_PENALTY:
-      n(row.penalty) +
-      n(row.slaDeduction) +
-      n(row.creditNote) +
-      n(row.otherRevenueDecrease),
+    SERVICE_CREDIT_OR_PENALTY: n(row.penalty) + n(row.slaDeduction) + n(row.creditNote) + n(row.otherRevenueDecrease),
     DIRECT_COST: n(row.agentSalary) + n(row.dsc),
     GROSS_MARGIN: nullableNumber(row.ebitda),
     GROSS_MARGIN_PERCENTAGE: nullableNumber(row.ebitdaMarginPct),
     INVOICE_STATUS: n(row.invoicedRevenue) > 0 ? "INVOICED" : "NOT INVOICED",
-    COLLECTION_STATUS:
-      n(row.outstandingReceivable) <= 0 && n(row.invoicedRevenue) > 0
-        ? "COLLECTED"
-        : n(row.collectedRevenue) > 0
-          ? "PARTIALLY COLLECTED"
-          : "PENDING",
+    COLLECTION_STATUS: n(row.outstandingReceivable) <= 0 && n(row.invoicedRevenue) > 0
+      ? "COLLECTED"
+      : n(row.collectedRevenue) > 0 ? "PARTIALLY COLLECTED" : "PENDING",
     GOVERNANCE_STATUS: row.processStatus,
-    RED_FLAG_COUNT:
-      row.processStatus === "loss-making"
-        ? 1
-        : row.processStatus === "at-risk"
-          ? 1
-          : 0,
+    RED_FLAG_COUNT: row.processStatus === "loss-making" ? 1 : row.processStatus === "at-risk" ? 1 : 0,
   };
 }
 
 function financeRow(row: any, period: string) {
   const directCost = n(row.agentSalary) + n(row.dsc);
-  const totalCost =
-    n(row.totalOperatingCost) +
-    n(row.depreciation) +
-    n(row.amortization) +
-    n(row.financeCost) +
-    n(row.tax);
+  const totalCost = n(row.totalOperatingCost) + n(row.depreciation) + n(row.amortization) + n(row.financeCost) + n(row.tax);
   return {
     ...common(row, period),
     FINANCE_PERIOD_STATUS: row.freshness ? "CURRENT" : "UNVERIFIED",
@@ -181,20 +149,15 @@ function financeRow(row: any, period: string) {
     EBITDA_MARGIN_PERCENTAGE: nullableNumber(row.ebitdaMarginPct),
     BUDGET_AMOUNT: nullableNumber(row.approvedBudget),
     BUDGET_VARIANCE: nullableNumber(row.ebitdaVariance),
-    BUDGET_VARIANCE_PERCENTAGE:
-      n(row.ebitdaBudget) !== 0 && row.ebitdaBudget != null
-        ? (n(row.ebitdaVariance) / Math.abs(n(row.ebitdaBudget))) * 100
-        : null,
+    BUDGET_VARIANCE_PERCENTAGE: n(row.ebitdaBudget) !== 0 && row.ebitdaBudget != null
+      ? (n(row.ebitdaVariance) / Math.abs(n(row.ebitdaBudget))) * 100
+      : null,
     GRN_GROSS_AMOUNT: null,
     PNL_RECOGNISED_COST: nullableNumber(row.grnVendorActual),
     VENDOR_PAYABLE: null,
     CASH_PAID: null,
     OUTSTANDING_PAYABLE: null,
-    SERVICE_CREDIT_OR_PENALTY:
-      n(row.penalty) +
-      n(row.slaDeduction) +
-      n(row.creditNote) +
-      n(row.otherRevenueDecrease),
+    SERVICE_CREDIT_OR_PENALTY: n(row.penalty) + n(row.slaDeduction) + n(row.creditNote) + n(row.otherRevenueDecrease),
     PROFITABILITY_RAG: row.processStatus,
     PERIOD_CLOSE_BLOCKER_COUNT: row.processStatus === "loss-making" ? 1 : 0,
     DATA_SOURCE: "CANONICAL_BPO_PNL_ALLOCATION_ENGINE",
@@ -220,21 +183,12 @@ function executiveRow(row: any, period: string) {
     EBITDA_CONTRIBUTION: nullableNumber(row.ebitda),
     BUDGET_VARIANCE: nullableNumber(row.ebitdaVariance),
     RECEIVABLE_OUTSTANDING: nullableNumber(row.outstandingReceivable),
-    OVERALL_BUSINESS_HEALTH_SCORE:
-      row.processStatus === "profitable"
-        ? 100
-        : row.processStatus === "at-risk"
-          ? 60
-          : 20,
+    OVERALL_BUSINESS_HEALTH_SCORE: row.processStatus === "profitable" ? 100 : row.processStatus === "at-risk" ? 60 : 20,
     OVERALL_RAG: row.processStatus,
-    PRIMARY_RISK:
-      row.processStatus === "loss-making"
-        ? "NEGATIVE EBITDA"
-        : n(row.revenueAtRisk) > 0
-          ? "REVENUE AT RISK"
-          : null,
-    MANAGEMENT_DECISION_REQUIRED:
-      row.processStatus === "profitable" ? "NO" : "YES",
+    PRIMARY_RISK: row.processStatus === "loss-making"
+      ? "NEGATIVE EBITDA"
+      : n(row.revenueAtRisk) > 0 ? "REVENUE AT RISK" : null,
+    MANAGEMENT_DECISION_REQUIRED: row.processStatus === "profitable" ? "NO" : "YES",
     DATA_SOURCE: "CANONICAL_BPO_PNL_ALLOCATION_ENGINE",
   };
 }
@@ -242,24 +196,21 @@ function executiveRow(row: any, period: string) {
 function normalizeRow(code: string, raw: Record<string, unknown>) {
   const definition = getBpoMasterReport(code);
   if (!definition) return raw;
-  return Object.fromEntries(
-    definition.columns.map((column) => [column.key, raw[column.key] ?? null]),
-  );
+  return Object.fromEntries(definition.columns.map((column) => [column.key, raw[column.key] ?? null]));
 }
 
 function mappedKeys(code: string, period: string) {
-  const structuralRow =
-    code === "bpo-client-sla-delivery-master"
-      ? clientRow({}, period)
-      : code === "bpo-finance-pnl-profitability-master"
-        ? financeRow({}, period)
-        : executiveRow({}, period);
+  const structuralRow = code === "bpo-client-sla-delivery-master"
+    ? clientRow({}, period)
+    : code === "bpo-finance-pnl-profitability-master"
+      ? financeRow({}, period)
+      : executiveRow({}, period);
   return Object.keys(structuralRow);
 }
 
 export async function runCanonicalBpoMasterAdapter(
   code: string,
-  filters: CanonicalAdapterFilters,
+  filters: CanonicalAdapterFilters
 ): Promise<CanonicalAdapterResult | null> {
   if (!CANONICAL_CODES.has(code)) return null;
   const period = periodOrCurrent(filters.month);
@@ -270,10 +221,8 @@ export async function runCanonicalBpoMasterAdapter(
     clientId: filters.clientId,
   });
   const mapped = summary.rows.map((row) => {
-    if (code === "bpo-client-sla-delivery-master")
-      return clientRow(row, period);
-    if (code === "bpo-finance-pnl-profitability-master")
-      return financeRow(row, period);
+    if (code === "bpo-client-sla-delivery-master") return clientRow(row, period);
+    if (code === "bpo-finance-pnl-profitability-master") return financeRow(row, period);
     return executiveRow(row, period);
   });
   const rows = mapped

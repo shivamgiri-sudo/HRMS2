@@ -31,14 +31,12 @@ interface PageCatalogEntry {
 /**
  * Get all pages in the system (from page_catalog)
  */
-export async function listPageCatalog(
-  includeDisabled = false,
-): Promise<PageCatalogEntry[]> {
+export async function listPageCatalog(includeDisabled = false): Promise<PageCatalogEntry[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT page_code, page_name, page_path, module, description, active_status
      FROM page_catalog
      ${includeDisabled ? "" : "WHERE active_status = 1"}
-     ORDER BY module, page_name`,
+     ORDER BY module, page_name`
   );
   return rows as PageCatalogEntry[];
 }
@@ -46,14 +44,7 @@ export async function listPageCatalog(
 /**
  * Get all users with their email for assignment UI
  */
-export async function listUsersForAccess(): Promise<
-  Array<{
-    id: string;
-    email: string;
-    employee_code: string | null;
-    full_name: string | null;
-  }>
-> {
+export async function listUsersForAccess(): Promise<Array<{ id: string; email: string; employee_code: string | null; full_name: string | null }>> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT u.id, COALESCE(NULLIF(TRIM(e.official_email), ''), u.email) AS email,
             e.employee_code,
@@ -61,29 +52,22 @@ export async function listUsersForAccess(): Promise<
        FROM auth_user u
        LEFT JOIN employees e ON e.user_id = u.id AND e.active_status = 1
       WHERE u.is_blocked = 0
-      ORDER BY full_name, u.email`,
+      ORDER BY full_name, u.email`
   );
-  return rows as Array<{
-    id: string;
-    email: string;
-    employee_code: string | null;
-    full_name: string | null;
-  }>;
+  return rows as Array<{ id: string; email: string; employee_code: string | null; full_name: string | null }>;
 }
 
 /**
  * Get user's direct page access assignments (user_page_access only)
  */
-export async function getUserPageAccess(
-  userId: string,
-): Promise<UserPageAccess[]> {
+export async function getUserPageAccess(userId: string): Promise<UserPageAccess[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       user_id, page_code, can_view, can_create, can_edit, can_delete, can_export,
       assigned_by, assigned_at, notes
      FROM user_page_access
      WHERE user_id = ? AND active_status = 1`,
-    [userId],
+    [userId]
   );
   return rows as UserPageAccess[];
 }
@@ -92,11 +76,7 @@ export async function getUserPageAccess(
  * Get user's effective page access (role-based + user overrides)
  * User overrides take precedence over role-based access
  */
-export async function getUserEffectivePageAccess(
-  userId: string,
-): Promise<
-  Array<PageAccessPermissions & { page_code: string; source: "user" | "role" }>
-> {
+export async function getUserEffectivePageAccess(userId: string): Promise<Array<PageAccessPermissions & { page_code: string; source: 'user' | 'role' }>> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       COALESCE(upa.page_code, rpa.page_code) AS page_code,
@@ -129,11 +109,9 @@ export async function getUserEffectivePageAccess(
        )
 
      ORDER BY page_code`,
-    [userId, userId, userId],
+    [userId, userId, userId]
   );
-  return rows as Array<
-    PageAccessPermissions & { page_code: string; source: "user" | "role" }
-  >;
+  return rows as Array<PageAccessPermissions & { page_code: string; source: 'user' | 'role' }>;
 }
 
 /**
@@ -146,7 +124,7 @@ export async function assignUserPageAccess(
   permissions: PageAccessPermissions,
   assignedBy: string,
   notes?: string,
-  expiresAt?: string | null,
+  expiresAt?: string | null
 ): Promise<void> {
   const conn = await db.getConnection();
   try {
@@ -157,7 +135,7 @@ export async function assignUserPageAccess(
       `SELECT id, can_view, can_create, can_edit, can_delete, can_export
        FROM user_page_access
        WHERE user_id = ? AND page_code = ?`,
-      [userId, pageCode],
+      [userId, pageCode]
     );
 
     if (existing.length > 0) {
@@ -179,8 +157,8 @@ export async function assignUserPageAccess(
           notes || null,
           expiresAt ?? null,
           userId,
-          pageCode,
-        ],
+          pageCode
+        ]
       );
 
       // Audit trail
@@ -191,16 +169,10 @@ export async function assignUserPageAccess(
           userId,
           pageCode,
           assignedBy,
-          JSON.stringify({
-            can_view: old.can_view,
-            can_create: old.can_create,
-            can_edit: old.can_edit,
-            can_delete: old.can_delete,
-            can_export: old.can_export,
-          }),
+          JSON.stringify({ can_view: old.can_view, can_create: old.can_create, can_edit: old.can_edit, can_delete: old.can_delete, can_export: old.can_export }),
           JSON.stringify(permissions),
-          notes || null,
-        ],
+          notes || null
+        ]
       );
     } else {
       // Insert new assignment
@@ -217,21 +189,15 @@ export async function assignUserPageAccess(
           permissions.can_export ? 1 : 0,
           assignedBy,
           notes || null,
-          expiresAt ?? null,
-        ],
+          expiresAt ?? null
+        ]
       );
 
       // Audit trail
       await conn.execute(
         `INSERT INTO user_page_access_audit (user_id, page_code, action, actor_user_id, new_permissions, notes)
          VALUES (?, ?, 'ASSIGN', ?, ?, ?)`,
-        [
-          userId,
-          pageCode,
-          assignedBy,
-          JSON.stringify(permissions),
-          notes || null,
-        ],
+        [userId, pageCode, assignedBy, JSON.stringify(permissions), notes || null]
       );
     }
 
@@ -251,7 +217,7 @@ export async function revokeUserPageAccess(
   userId: string,
   pageCode: string,
   revokedBy: string,
-  notes?: string,
+  notes?: string
 ): Promise<void> {
   const conn = await db.getConnection();
   try {
@@ -262,7 +228,7 @@ export async function revokeUserPageAccess(
       `SELECT can_view, can_create, can_edit, can_delete, can_export
        FROM user_page_access
        WHERE user_id = ? AND page_code = ? AND active_status = 1`,
-      [userId, pageCode],
+      [userId, pageCode]
     );
 
     if (existing.length === 0) {
@@ -274,14 +240,14 @@ export async function revokeUserPageAccess(
       `UPDATE user_page_access
        SET active_status = 0, revoked_by = ?, revoked_at = NOW()
        WHERE user_id = ? AND page_code = ?`,
-      [revokedBy, userId, pageCode],
+      [revokedBy, userId, pageCode]
     );
 
     // Audit trail
     await conn.execute(
       `INSERT INTO user_page_access_audit (user_id, page_code, action, actor_user_id, old_permissions, notes)
        VALUES (?, ?, 'REVOKE', ?, ?, ?)`,
-      [userId, pageCode, revokedBy, JSON.stringify(existing[0]), notes || null],
+      [userId, pageCode, revokedBy, JSON.stringify(existing[0]), notes || null]
     );
 
     await conn.commit();
@@ -299,13 +265,9 @@ export async function revokeUserPageAccess(
  */
 export async function bulkAssignUserPageAccess(
   userId: string,
-  assignments: Array<{
-    page_code: string;
-    permissions: PageAccessPermissions;
-    expires_at?: string | null;
-  }>,
+  assignments: Array<{ page_code: string; permissions: PageAccessPermissions; expires_at?: string | null }>,
   assignedBy: string,
-  notes?: string,
+  notes?: string
 ): Promise<void> {
   for (const assignment of assignments) {
     await assignUserPageAccess(
@@ -314,7 +276,7 @@ export async function bulkAssignUserPageAccess(
       assignment.permissions,
       assignedBy,
       notes,
-      assignment.expires_at ?? null,
+      assignment.expires_at ?? null
     );
   }
 }
@@ -322,11 +284,7 @@ export async function bulkAssignUserPageAccess(
 /**
  * Get audit log for page access assignments
  */
-export async function getUserPageAccessAuditLog(
-  userId?: string,
-  pageCode?: string,
-  limit = 100,
-): Promise<RowDataPacket[]> {
+export async function getUserPageAccessAuditLog(userId?: string, pageCode?: string, limit = 100): Promise<RowDataPacket[]> {
   type AuditRow = RowDataPacket & {
     id: string;
     user_id: string;
@@ -396,38 +354,29 @@ export async function listAllUserPageAccess(): Promise<RowDataPacket[]> {
      LEFT JOIN auth_user admin ON admin.id = upa.assigned_by
      LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
      WHERE upa.active_status = 1
-     ORDER BY u.email, pc.module, pc.page_name`,
+     ORDER BY u.email, pc.module, pc.page_name`
   );
   return rows;
 }
+
 
 export async function setPageCatalogActiveStatus(
   pageCode: string,
   active: boolean,
   actorId: string,
-  notes?: string,
+  notes?: string
 ): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT page_code, page_name, active_status
        FROM page_catalog
       WHERE page_code = ?
       LIMIT 1`,
-    [pageCode],
+    [pageCode]
   );
 
-  const existing = (
-    rows as Array<
-      RowDataPacket & {
-        page_code: string;
-        page_name: string | null;
-        active_status: number;
-      }
-    >
-  )[0];
+  const existing = (rows as Array<RowDataPacket & { page_code: string; page_name: string | null; active_status: number }>)[0];
   if (!existing) {
-    throw Object.assign(new Error("Page not found in catalog"), {
-      statusCode: 404,
-    });
+    throw Object.assign(new Error("Page not found in catalog"), { statusCode: 404 });
   }
 
   const newStatus = active ? 1 : 0;
@@ -435,7 +384,7 @@ export async function setPageCatalogActiveStatus(
 
   await db.execute(
     "UPDATE page_catalog SET active_status = ? WHERE page_code = ?",
-    [newStatus, pageCode],
+    [newStatus, pageCode]
   );
 
   await logSensitiveAction({

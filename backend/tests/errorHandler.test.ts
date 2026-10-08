@@ -2,15 +2,9 @@ import { describe, it, expect } from "vitest";
 import express from "express";
 import request from "supertest";
 import { ZodError, z } from "zod";
-import {
-  errorHandler,
-  notFoundHandler,
-} from "../src/middleware/errorHandler.js";
+import { errorHandler, notFoundHandler } from "../src/middleware/errorHandler.js";
 
-function buildApp(
-  handler: express.RequestHandler | express.ErrorRequestHandler,
-  isError = false,
-) {
+function buildApp(handler: express.RequestHandler | express.ErrorRequestHandler, isError = false) {
   const app = express();
   app.use(express.json());
 

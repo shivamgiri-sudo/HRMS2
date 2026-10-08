@@ -23,7 +23,7 @@ export interface QualityUploadResult {
 
 export async function importQualityRows(
   rows: QualityUploadRow[],
-  importedByUserId: string,
+  importedByUserId: string
 ): Promise<QualityUploadResult> {
   // mas_hrms.quality_audit does not exist, so every INSERT below throws. Because
   // each one sits in a per-row try/catch, an upload of 300 rows returned 300
@@ -53,12 +53,12 @@ export async function importQualityRows(
     throw Object.assign(
       new Error(
         "Manual quality upload is not provisioned: mas_hrms.quality_audit does not exist, " +
-          "and nothing in the application reads it. Call-audit quality already reaches HRMS " +
-          "from db_audit.call_quality_assessment via the 'quality_audit' integration pool. " +
-          "If manual upload should be supported, the table must be created deliberately, " +
-          "including the unique key its ON DUPLICATE KEY UPDATE relies on.",
+        "and nothing in the application reads it. Call-audit quality already reaches HRMS " +
+        "from db_audit.call_quality_assessment via the 'quality_audit' integration pool. " +
+        "If manual upload should be supported, the table must be created deliberately, " +
+        "including the unique key its ON DUPLICATE KEY UPDATE relies on."
       ),
-      { statusCode: 501, code: "QUALITY_AUDIT_STORAGE_ABSENT" },
+      { statusCode: 501, code: "QUALITY_AUDIT_STORAGE_ABSENT" }
     );
   }
 
@@ -73,7 +73,7 @@ export async function importQualityRows(
     const placeholders = codes.map(() => "?").join(",");
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT employee_code, id FROM employees WHERE employee_code IN (${placeholders})`,
-      codes,
+      codes
     );
     for (const e of empRows) {
       empMap.set(String(e.employee_code), String(e.id));
@@ -83,25 +83,15 @@ export async function importQualityRows(
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     try {
-      if (
-        !row.employee_code ||
-        !row.call_date ||
-        row.quality_score === undefined
-      ) {
-        errors.push({
-          row: i + 1,
-          reason: "employee_code, call_date, quality_score are required",
-        });
+      if (!row.employee_code || !row.call_date || row.quality_score === undefined) {
+        errors.push({ row: i + 1, reason: "employee_code, call_date, quality_score are required" });
         skipped++;
         continue;
       }
 
       const empId = empMap.get(String(row.employee_code).trim());
       if (!empId) {
-        errors.push({
-          row: i + 1,
-          reason: `Employee not found: ${row.employee_code}`,
-        });
+        errors.push({ row: i + 1, reason: `Employee not found: ${row.employee_code}` });
         skipped++;
         continue;
       }
@@ -109,23 +99,15 @@ export async function importQualityRows(
       const callDate = String(row.call_date).slice(0, 10);
       const score = parseFloat(String(row.quality_score));
       if (isNaN(score)) {
-        errors.push({
-          row: i + 1,
-          reason: `Invalid quality_score: ${row.quality_score}`,
-        });
+        errors.push({ row: i + 1, reason: `Invalid quality_score: ${row.quality_score}` });
         skipped++;
         continue;
       }
 
       const passVal = row.parameter_pass;
       const parameterPass =
-        passVal === true ||
-        passVal === 1 ||
-        String(passVal).toLowerCase() === "yes" ||
-        String(passVal).toLowerCase() === "pass" ||
-        String(passVal).toLowerCase() === "true"
-          ? 1
-          : 0;
+        passVal === true || passVal === 1 || String(passVal).toLowerCase() === "yes" || String(passVal).toLowerCase() === "pass" || String(passVal).toLowerCase() === "true"
+          ? 1 : 0;
 
       await db.execute(
         `INSERT INTO quality_audit
@@ -140,19 +122,12 @@ export async function importQualityRows(
            parameter_pass = VALUES(parameter_pass),
            remarks = VALUES(remarks)`,
         [
-          randomUUID(),
-          empId,
-          row.employee_code,
-          callDate,
-          score,
-          row.total_score ?? null,
-          row.max_score ?? null,
-          row.parameter_name ?? null,
-          parameterPass,
-          row.auditor_code ?? null,
-          row.remarks ?? null,
+          randomUUID(), empId, row.employee_code, callDate, score,
+          row.total_score ?? null, row.max_score ?? null,
+          row.parameter_name ?? null, parameterPass,
+          row.auditor_code ?? null, row.remarks ?? null,
           importedByUserId,
-        ],
+        ]
       );
       imported++;
     } catch (err: unknown) {

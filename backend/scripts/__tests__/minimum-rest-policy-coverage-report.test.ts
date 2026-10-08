@@ -13,31 +13,22 @@ import path from "path";
  */
 
 const SOURCE = readFileSync(
-  path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "../minimum-rest-policy-coverage-report.ts",
-  ),
-  "utf-8",
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "../minimum-rest-policy-coverage-report.ts"),
+  "utf-8"
 );
 
 describe("minimum-rest-policy-coverage-report.ts", () => {
   it("is strictly read-only — no SQL write statement anywhere in the file", () => {
     // Matches the SQL statement shape (verb + its usual following keyword),
     // not bare English usage of the same word in a comment (e.g. "replace it").
-    const writeVerbs =
-      /\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|ALTER\s+TABLE|DROP\s+TABLE|CREATE\s+TABLE|TRUNCATE\s+TABLE|REPLACE\s+INTO)\b/gi;
+    const writeVerbs = /\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|ALTER\s+TABLE|DROP\s+TABLE|CREATE\s+TABLE|TRUNCATE\s+TABLE|REPLACE\s+INTO)\b/gi;
     const matches = SOURCE.match(writeVerbs) ?? [];
-    expect(
-      matches,
-      `Found a SQL write statement: ${matches.join(", ")}`,
-    ).toEqual([]);
+    expect(matches, `Found a SQL write statement: ${matches.join(", ")}`).toEqual([]);
   });
 
   it("degrades to an informational message, not an error, when wfm_rest_policy doesn't exist yet", () => {
     expect(SOURCE).toMatch(/if \(tableRows\.length === 0\)/);
-    expect(SOURCE).toMatch(
-      /migration 1210_minimum_rest_policy\.sql has not been applied/,
-    );
+    expect(SOURCE).toMatch(/migration 1210_minimum_rest_policy\.sql has not been applied/);
     expect(SOURCE).toMatch(/return;/);
   });
 
@@ -60,15 +51,11 @@ describe("minimum-rest-policy-coverage-report.ts", () => {
   it("scopes every tier check to active, currently-effective policy rows (active_status=1, effective_from/to window)", () => {
     expect(SOURCE).toMatch(/active_status = 1/);
     expect(SOURCE).toMatch(/effective_from <= CURDATE\(\)/);
-    expect(SOURCE).toMatch(
-      /effective_to IS NULL OR .*effective_to >= CURDATE\(\)/,
-    );
+    expect(SOURCE).toMatch(/effective_to IS NULL OR .*effective_to >= CURDATE\(\)/);
   });
 
   it("reports a distinct warning for the expired-policy case, not just the never-configured case", () => {
-    expect(SOURCE).toMatch(
-      /effective_to IS NOT NULL AND p\.effective_to < CURDATE\(\)/,
-    );
+    expect(SOURCE).toMatch(/effective_to IS NOT NULL AND p\.effective_to < CURDATE\(\)/);
     expect(SOURCE).toMatch(/already expired/);
   });
 

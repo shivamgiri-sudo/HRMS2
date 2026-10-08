@@ -9,22 +9,14 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const src = readFileSync(
-  path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "../payroll-process-readiness.routes.ts",
-  ),
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "../payroll-process-readiness.routes.ts"),
   "utf8",
 );
-const handler = src.slice(
-  src.indexOf('"/my-pending-count"'),
-  src.indexOf('"/branch/:branchId"'),
-);
+const handler = src.slice(src.indexOf('"/my-pending-count"'), src.indexOf('"/branch/:branchId"'));
 
 describe("GET /my-pending-count scope refresh", () => {
   it("refreshes scopes concurrently in bounded chunks, not one await per scope in a for-of loop", () => {
-    expect(handler).toMatch(
-      /Promise\.all\(\s*scopes\.slice\(i, i \+ SCOPE_CHUNK\)/,
-    );
+    expect(handler).toMatch(/Promise\.all\(\s*scopes\.slice\(i, i \+ SCOPE_CHUNK\)/);
     expect(handler).not.toMatch(/for \(const scope of scopes\)/);
   });
   it("still skips failing scopes and only lists non-ready ones", () => {

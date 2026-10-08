@@ -23,10 +23,7 @@ interface BatchRow extends RowDataPacket {
 
 export async function importViaSharedInsert(
   batchId: string,
-  insertRows: (
-    rows: Record<string, unknown>[],
-    uploadedBy: string,
-  ) => Promise<{ rowsInserted: number }>,
+  insertRows: (rows: Record<string, unknown>[], uploadedBy: string) => Promise<{ rowsInserted: number }>,
   importedByUserId: string,
   requiredFieldLabel: string,
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
@@ -74,17 +71,11 @@ export async function importViaSharedInsert(
       );
     }
   } else {
-    errors.push(
-      `${errorRows} row(s) were skipped -- missing a required "${requiredFieldLabel}" column.`,
-    );
+    errors.push(`${errorRows} row(s) were skipped -- missing a required "${requiredFieldLabel}" column.`);
   }
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ?,
         error_summary = ?, updated_at = NOW()

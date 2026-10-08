@@ -9,10 +9,7 @@ const policyServiceMocks = vi.hoisted(() => ({
   getDomainHistory: vi.fn(),
 }));
 
-vi.mock(
-  "../src/modules/policy-engine/policy-engine.service.js",
-  () => policyServiceMocks,
-);
+vi.mock("../src/modules/policy-engine/policy-engine.service.js", () => policyServiceMocks);
 
 import { policyEngineRouter } from "../src/modules/policy-engine/policy-engine.routes.js";
 

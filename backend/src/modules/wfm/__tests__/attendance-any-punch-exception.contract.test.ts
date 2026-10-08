@@ -48,9 +48,7 @@ describe("the exception fires on any punch, not only an unpaired one", () => {
   it("still requires real punch evidence", () => {
     // A day with no punch at all must never become present — that is an absence, not an
     // exception, and no flag may manufacture attendance out of nothing.
-    expect(branch).toMatch(
-      /await this\.hasAnyBiometricPunch\(employeeId, date\)/,
-    );
+    expect(branch).toMatch(/await this\.hasAnyBiometricPunch\(employeeId, date\)/);
   });
 
   it("stays off the dialler/APR path", () => {
@@ -66,17 +64,13 @@ describe("the exception fires on any punch, not only an unpaired one", () => {
   });
 
   it("keeps the two cases distinguishable, so old rows still mean what they meant", () => {
-    expect(branch).toMatch(
-      /isUnpairedPunch\s*\?\s*'cosec_single_punch_exception'\s*:\s*'cosec_any_punch_exception'/,
-    );
+    expect(branch).toMatch(/isUnpairedPunch\s*\?\s*'cosec_single_punch_exception'\s*:\s*'cosec_any_punch_exception'/);
   });
 
   it("records the minutes actually worked rather than blanking them", () => {
     // The day is present by exception, but what the person really worked has to stay
     // answerable from the row itself.
-    expect(branch).toMatch(
-      /biometricMinutes: biometricMinutes > 0 \? biometricMinutes : null/,
-    );
+    expect(branch).toMatch(/biometricMinutes: biometricMinutes > 0 \? biometricMinutes : null/);
     expect(branch).toMatch(/^\s*rawMinutes,\s*$/m);
   });
 });
@@ -91,8 +85,6 @@ describe("nobody outside the bucket is re-graded", () => {
   });
 
   it("the branch is reached only through the bucket", () => {
-    expect(branch.startsWith("if (bucket?.singlePunchCountsAsPresent")).toBe(
-      true,
-    );
+    expect(branch.startsWith("if (bucket?.singlePunchCountsAsPresent")).toBe(true);
   });
 });

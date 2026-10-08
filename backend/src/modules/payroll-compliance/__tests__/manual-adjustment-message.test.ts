@@ -24,10 +24,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const ROUTE_SOURCE = readFileSync(
-  resolve(
-    process.cwd(),
-    "src/modules/payroll-compliance/payrollCompliance.routes.ts",
-  ),
+  resolve(process.cwd(), "src/modules/payroll-compliance/payrollCompliance.routes.ts"),
   "utf8",
 );
 const LIVE_ENGINE_SOURCE = readFileSync(
@@ -37,29 +34,21 @@ const LIVE_ENGINE_SOURCE = readFileSync(
 
 describe("the manual-adjustment endpoint no longer claims to affect net pay", () => {
   it("does not tell the caller recalculating will apply the adjustment", () => {
-    const routeStart = ROUTE_SOURCE.indexOf(
-      'router.post("/lines/:lineId/manual-adjustment"',
-    );
+    const routeStart = ROUTE_SOURCE.indexOf('router.post("/lines/:lineId/manual-adjustment"');
     expect(routeStart).toBeGreaterThan(-1);
     const routeBlock = ROUTE_SOURCE.slice(routeStart, routeStart + 3000);
     // The exact false claim this fix removes.
-    expect(routeBlock).not.toMatch(
-      /Recalculate the payroll run to apply final net pay/,
-    );
+    expect(routeBlock).not.toMatch(/Recalculate the payroll run to apply final net pay/);
   });
 
   it("explicitly discloses that no current calculation path applies it", () => {
-    const routeStart = ROUTE_SOURCE.indexOf(
-      'router.post("/lines/:lineId/manual-adjustment"',
-    );
+    const routeStart = ROUTE_SOURCE.indexOf('router.post("/lines/:lineId/manual-adjustment"');
     const routeBlock = ROUTE_SOURCE.slice(routeStart, routeStart + 3000);
     expect(routeBlock).toMatch(/NOT applied to net pay/);
   });
 
   it("still saves and audits the adjustment — the record itself is real, only the claim about its effect changed", () => {
-    const routeStart = ROUTE_SOURCE.indexOf(
-      'router.post("/lines/:lineId/manual-adjustment"',
-    );
+    const routeStart = ROUTE_SOURCE.indexOf('router.post("/lines/:lineId/manual-adjustment"');
     const routeBlock = ROUTE_SOURCE.slice(routeStart, routeStart + 3000);
     expect(routeBlock).toMatch(/payrollComplianceService\.addManualAdjustment/);
     expect(routeBlock).toMatch(/success: true/);

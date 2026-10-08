@@ -20,13 +20,10 @@ vi.mock("../../../db/mysql.js", () => ({
   db: {
     execute: vi.fn(async (sql: string) => {
       const s = String(sql);
-      if (s.includes("employee_epf_compliance_profile"))
-        return [epfRow ? [epfRow] : []];
+      if (s.includes("employee_epf_compliance_profile")) return [epfRow ? [epfRow] : []];
       if (s.includes("candidate_onboarding_family_member")) return [[]];
-      if (s.includes("candidate_onboarding_profile"))
-        return [onboardingRow ? [onboardingRow] : []];
-      if (s.includes("FROM employees e"))
-        return [[{ id: EMPLOYEE, full_name: "TEST MEMBER" }]];
+      if (s.includes("candidate_onboarding_profile")) return [onboardingRow ? [onboardingRow] : []];
+      if (s.includes("FROM employees e")) return [[{ id: EMPLOYEE, full_name: "TEST MEMBER" }]];
       return [[]];
     }),
   },
@@ -37,21 +34,14 @@ vi.mock("../branchPayrollHrSignatory.service.js", () => ({
   mergeBranchSignatureIntoSeal: async () => null,
 }));
 
-const { buildSourceContext } =
-  await import("../universalDigitalFormFill.service.js");
+const { buildSourceContext } = await import("../universalDigitalFormFill.service.js");
 
 const epfOf = async () => {
-  const ctx = (await buildSourceContext(EMPLOYEE, CANDIDATE)) as Record<
-    string,
-    never
-  >;
+  const ctx = (await buildSourceContext(EMPLOYEE, CANDIDATE)) as Record<string, never>;
   return ctx.epf as Record<string, unknown>;
 };
 
-beforeEach(() => {
-  epfRow = null;
-  onboardingRow = null;
-});
+beforeEach(() => { epfRow = null; onboardingRow = null; });
 
 describe("Form 11 previous-membership boxes", () => {
   it("leaves both boxes blank when nobody answered", async () => {
@@ -85,9 +75,7 @@ describe("Form 11 previous-membership boxes", () => {
     // opened the record — which is how SOFIYA SULTAN (MAS63086) came to have
     // previous_pf_member = 0 without anyone asking her.
     epfRow = {
-      previous_pf_member: 0,
-      previous_eps_member: 0,
-      international_worker: 0,
+      previous_pf_member: 0, previous_eps_member: 0, international_worker: 0,
       employee_name: "SOFIYA SULTAN",
     };
     const epf = await epfOf();

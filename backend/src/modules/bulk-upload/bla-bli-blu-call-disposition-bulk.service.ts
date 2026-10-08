@@ -2,10 +2,7 @@ import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { markRowsImported } from "./batch-row-status.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Bla Bli Blu's real Smartping CDR export -- captures ONLY the outcome
@@ -15,28 +12,11 @@ import {
  */
 
 export const BLA_BLI_BLU_CALL_DISPOSITION_HEADERS = [
-  "Session Id",
-  "Date & Time",
-  "Customer Number",
-  "Agent ID",
-  "Agent Name",
-  "Campaign Name",
-  "Queue",
-  "Campaign Type",
-  "Disposition - L1",
-  "Disposition - L2",
-  "Disposition - L3",
-  "Disposition - L4",
-  "Remarks",
-  "Recording",
-  "Team Lead",
-  "Call Rating",
-  "Recording Rating",
-  "Recording Remarks",
-  "Evaluation Form",
-  "Script",
-  "Knowledge Base",
-  "CRM Form",
+  "Session Id", "Date & Time", "Customer Number", "Agent ID", "Agent Name",
+  "Campaign Name", "Queue", "Campaign Type", "Disposition - L1", "Disposition - L2",
+  "Disposition - L3", "Disposition - L4", "Remarks", "Recording", "Team Lead",
+  "Call Rating", "Recording Rating", "Recording Remarks", "Evaluation Form",
+  "Script", "Knowledge Base", "CRM Form",
 ] as const;
 
 export function cleanText(raw: unknown): string | null {
@@ -64,9 +44,7 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 export async function importBlaBliBluCallDispositionBatch(
   batchId: string,
@@ -112,26 +90,20 @@ export async function importBlaBliBluCallDispositionBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Bla Bli Blu" process found to attach this row to`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const callUuid = cleanText(data["Session Id"]);
     if (!callUuid) {
       const msg = `Row ${row.row_no}: "Session Id" is required -- it is this row's identity (matches dialer_db.cdr_bla_bli_blu.call_uuid)`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(),
-        processId,
-        callUuid,
+        randomUUID(), processId, callUuid,
         parseDateTime(data["Date & Time"]),
         cleanText(data["Customer Number"]),
         cleanText(data["Agent ID"]),
@@ -166,8 +138,7 @@ export async function importBlaBliBluCallDispositionBatch(
             disposition_l4, remarks, recording_url, team_lead, call_rating, recording_rating,
             recording_remarks, evaluation_form, script, knowledge_base, crm_form,
             data_source, source_reference, created_by)`,
-    placeholderGroup:
-      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
     insertSuffix: `ON DUPLICATE KEY UPDATE
             disposition_l1 = VALUES(disposition_l1),
             disposition_l2 = VALUES(disposition_l2),
@@ -184,33 +155,22 @@ export async function importBlaBliBluCallDispositionBatch(
 
   if (importedRows > 0) {
     const failedRowIds = new Set(inserted.errorUpdates.map((e) => e.rowId));
-    const successRowIds = toInsert
-      .filter((r) => !failedRowIds.has(r.rowId))
-      .map((r) => r.rowId);
+    const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
     await markRowsImported(successRowIds);
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

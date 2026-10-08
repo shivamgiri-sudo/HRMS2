@@ -9,32 +9,23 @@ const migrationFiles = [
 ];
 
 function readMigration(filename: string) {
-  return readFileSync(
-    new URL(`../../../sql/${filename}`, import.meta.url),
-    "utf8",
-  );
+  return readFileSync(new URL(`../../../sql/${filename}`, import.meta.url), "utf8");
 }
 
 describe("DPDP hardening migrations", () => {
-  it.each(migrationFiles)(
-    "%s uses MySQL-compatible idempotency guards",
-    (filename) => {
-      const sql = readMigration(filename);
+  it.each(migrationFiles)("%s uses MySQL-compatible idempotency guards", (filename) => {
+    const sql = readMigration(filename);
 
-      expect(sql).not.toMatch(/\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b/i);
-      expect(sql).not.toMatch(/\bCREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\b/i);
-      expect(sql).toMatch(/INFORMATION_SCHEMA\.(?:COLUMNS|STATISTICS)/i);
-      expect(sql).toMatch(/PREPARE\s+stmt\s+FROM/i);
-      expect(splitSql(sql).length).toBeGreaterThan(0);
-    },
-  );
+    expect(sql).not.toMatch(/\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b/i);
+    expect(sql).not.toMatch(/\bCREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\b/i);
+    expect(sql).toMatch(/INFORMATION_SCHEMA\.(?:COLUMNS|STATISTICS)/i);
+    expect(sql).toMatch(/PREPARE\s+stmt\s+FROM/i);
+    expect(splitSql(sql).length).toBeGreaterThan(0);
+  });
 
-  it.each(migrationFiles)(
-    "%s remains additive and non-destructive",
-    (filename) => {
-      const sql = readMigration(filename);
+  it.each(migrationFiles)("%s remains additive and non-destructive", (filename) => {
+    const sql = readMigration(filename);
 
-      expect(sql).not.toMatch(/\b(?:DROP|TRUNCATE|DELETE)\b/i);
-    },
-  );
+    expect(sql).not.toMatch(/\b(?:DROP|TRUNCATE|DELETE)\b/i);
+  });
 });

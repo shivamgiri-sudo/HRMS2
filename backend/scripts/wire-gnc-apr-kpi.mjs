@@ -11,11 +11,8 @@ import { randomUUID } from "crypto";
 import "dotenv/config";
 
 const conn = await mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT || 3306,
-  database: process.env.DB_NAME,
+  host: process.env.DB_HOST, user: process.env.DB_USER, password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT || 3306, database: process.env.DB_NAME,
 });
 
 const GNC_PROCESS_ID = "05073ef4-67ba-11f1-adb1-00155d0ab410";
@@ -49,20 +46,13 @@ for (const f of fields) {
 console.log("fields created:", fields.length);
 
 const [metrics] = await conn.query(
-  "SELECT id, metric_code FROM kpi_metric_master WHERE metric_code IN ('AGENT_OCCUPANCY_PCT','AGENT_UTILISATION_PCT')",
+  "SELECT id, metric_code FROM kpi_metric_master WHERE metric_code IN ('AGENT_OCCUPANCY_PCT','AGENT_UTILISATION_PCT')"
 );
 const byCode = Object.fromEntries(metrics.map((m) => [m.metric_code, m.id]));
 
 const defs = [
-  {
-    code: "AGENT_OCCUPANCY_PCT",
-    formula: "PCT(talk_sec + dispo_sec, talk_sec + dispo_sec + wait_sec)",
-  },
-  {
-    code: "AGENT_UTILISATION_PCT",
-    formula:
-      "PCT(talk_sec + dispo_sec + wait_sec, talk_sec + dispo_sec + wait_sec + pause_sec)",
-  },
+  { code: "AGENT_OCCUPANCY_PCT", formula: "PCT(talk_sec + dispo_sec, talk_sec + dispo_sec + wait_sec)" },
+  { code: "AGENT_UTILISATION_PCT", formula: "PCT(talk_sec + dispo_sec + wait_sec, talk_sec + dispo_sec + wait_sec + pause_sec)" },
 ];
 for (const d of defs) {
   await conn.query(

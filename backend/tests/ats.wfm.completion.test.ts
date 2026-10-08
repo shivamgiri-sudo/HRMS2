@@ -42,8 +42,7 @@ import { db } from "../src/db/mysql.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
-const JWT_SECRET =
-  process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
+const JWT_SECRET = process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
 
 /**
  * Real JWTs replace the retired "<role>.token" placeholders. jwt.verify throws
@@ -58,11 +57,7 @@ const JWT_SECRET =
 let subjectCounter = 0;
 const bearer = (sub: string) => ({
   Authorization: `Bearer ${jwt.sign(
-    {
-      sub: `${sub}-${++subjectCounter}`,
-      email: `${sub}@mcn.com`,
-      iat: Math.floor(Date.now() / 1000),
-    },
+    { sub: `${sub}-${++subjectCounter}`, email: `${sub}@mcn.com`, iat: Math.floor(Date.now() / 1000) },
     JWT_SECRET,
     { expiresIn: "1h" },
   )}`,
@@ -74,20 +69,13 @@ const bearer = (sub: string) => ({
  * whether the subject is already cached. Writes answer with affectedRows so
  * audit assertions still see a result.
  */
-function authAs(
-  sub: string,
-  roles: string[],
-  routes: Array<[RegExp, unknown[]]> = [],
-) {
+function authAs(sub: string, roles: string[], routes: Array<[RegExp, unknown[]]> = []) {
   mockExecute.mockImplementation(async (sql: unknown) => {
     const text = String(sql);
-    if (/FROM user_roles/i.test(text))
-      return [roles.map((r) => ({ role_key: r })), []];
+    if (/FROM user_roles/i.test(text)) return [roles.map((r) => ({ role_key: r })), []];
     if (/user_assignment_scope|FROM auth_user/i.test(text)) return [[], []];
-    for (const [pattern, rows] of routes)
-      if (pattern.test(text)) return [rows, []];
-    if (/^\s*(INSERT|UPDATE|DELETE|REPLACE)/i.test(text))
-      return [{ affectedRows: 1 }, []];
+    for (const [pattern, rows] of routes) if (pattern.test(text)) return [rows, []];
+    if (/^\s*(INSERT|UPDATE|DELETE|REPLACE)/i.test(text)) return [{ affectedRows: 1 }, []];
     return [[], []];
   });
   return bearer(sub);
@@ -127,9 +115,7 @@ describe("GET /api/ats-ext/requisitions", () => {
 
   it("returns 403 for employee role", async () => {
     const auth = mockEmployee();
-    const r = await request(app)
-      .get("/api/ats-ext/requisitions")
-      .set(mockEmployee());
+    const r = await request(app).get("/api/ats-ext/requisitions").set(mockEmployee());
     expect(r.status).toBe(403);
   });
 });
@@ -140,10 +126,9 @@ describe("POST /api/ats-ext/requisitions", () => {
     const r = await request(app).post("/api/ats-ext/requisitions").set(auth)
       .send({ requested_count: 5, priority: "high", reason: "Expansion", branch_id: "b-1" });
     expect(r.status).toBe(201);
-    const auditCall = mockExecute.mock.calls.find(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ([sql]: any) =>
-        typeof sql === "string" && sql.includes("sensitive_action_log"),
+    const auditCall = mockExecute.mock.calls.find(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ([sql]: any) =>
+      typeof sql === "string" && sql.includes("sensitive_action_log")
     );
     expect(auditCall).toBeDefined();
   });
@@ -161,9 +146,7 @@ describe("POST /api/ats-ext/requisitions branch scope", () => {
 describe("POST /api/ats-ext/requisitions/:id/approve", () => {
   it("returns 403 for recruiter", async () => {
     const auth = mockRecruiter();
-    const r = await request(app)
-      .post("/api/ats-ext/requisitions/r-1/approve")
-      .set(auth);
+    const r = await request(app).post("/api/ats-ext/requisitions/r-1/approve").set(auth);
     expect(r.status).toBe(403);
   });
 
@@ -186,18 +169,14 @@ describe("POST /api/ats-ext/requisitions/:id/approve", () => {
 describe("POST /api/ats-ext/candidates/:id/bgv/initiate", () => {
   it("returns 403 for recruiter", async () => {
     const auth = mockRecruiter();
-    const r = await request(app)
-      .post("/api/ats-ext/candidates/c-1/bgv/initiate")
-      .set(auth)
+    const r = await request(app).post("/api/ats-ext/candidates/c-1/bgv/initiate").set(auth)
       .send({ bgv_vendor: "VendorX" });
     expect(r.status).toBe(403);
   });
 
   it("initiates BGV for hr and writes audit", async () => {
     const auth = mockHr([{ id: "bgv-1", overall_status: "in_progress" }]);
-    const r = await request(app)
-      .post("/api/ats-ext/candidates/c-1/bgv/initiate")
-      .set(auth)
+    const r = await request(app).post("/api/ats-ext/candidates/c-1/bgv/initiate").set(auth)
       .send({ bgv_vendor: "VendorX" });
     expect(r.status).toBe(201);
   });
@@ -208,9 +187,7 @@ describe("POST /api/ats-ext/candidates/:id/bgv/initiate", () => {
 describe("POST /api/ats-ext/offers", () => {
   it("returns 400 without required fields", async () => {
     const auth = mockHr([{ id: "c-1", candidate_name: "Ravi Kumar" }]);
-    const r = await request(app)
-      .post("/api/ats-ext/offers")
-      .set(auth)
+    const r = await request(app).post("/api/ats-ext/offers").set(auth)
       .send({ offer_date: "2026-06-01" }); // missing candidate_id
     expect(r.status).toBe(400);
   });
@@ -225,25 +202,16 @@ describe("POST /api/ats-ext/offers", () => {
    * Left as a todo rather than deleted: adding the check is a production change
    * to request validation and belongs to a decision, not to a test refactor.
    */
-  it.todo(
-    "returns 400 when offer_date is missing (route validates candidate_id only)",
-  );
+  it.todo("returns 400 when offer_date is missing (route validates candidate_id only)");
 
   it("creates offer for hr with audit", async () => {
     const auth = mockHr([{ id: "o-new", status: "draft" }]);
-    const r = await request(app)
-      .post("/api/ats-ext/offers")
-      .set(auth)
-      .send({
-        candidate_id: "c-1",
-        offer_date: "2026-06-01",
-        offered_ctc: 300000,
-      });
+    const r = await request(app).post("/api/ats-ext/offers").set(auth)
+      .send({ candidate_id: "c-1", offer_date: "2026-06-01", offered_ctc: 300000 });
     expect(r.status).toBe(201);
-    const auditCall = mockExecute.mock.calls.find(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ([sql]: any) =>
-        typeof sql === "string" && sql.includes("sensitive_action_log"),
+    const auditCall = mockExecute.mock.calls.find(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ([sql]: any) =>
+      typeof sql === "string" && sql.includes("sensitive_action_log")
     );
     expect(auditCall).toBeDefined();
   });
@@ -253,14 +221,7 @@ describe("POST /api/ats-ext/offers", () => {
 
 describe("GET /api/ats-ext/analytics/funnel", () => {
   it("returns funnel data for hr", async () => {
-    const auth = mockHr([
-      {
-        sourcing_channel: "Walk-in",
-        total_applied: 100,
-        total_selected: 20,
-        conversion_pct: 20.0,
-      },
-    ]);
+    const auth = mockHr([{ sourcing_channel: "Walk-in", total_applied: 100, total_selected: 20, conversion_pct: 20.0 }]);
     const r = await request(app).get("/api/ats-ext/analytics/funnel").set(auth);
     expect(r.status).toBe(200);
     expect(Array.isArray(r.body.data)).toBe(true);
@@ -300,9 +261,7 @@ describe("POST /api/wfm-ext/roster/swaps", () => {
 
   it("returns 400 without required fields", async () => {
     const auth = mockEmployee([{ id: "emp-1", employee_code: "E001" }]);
-    const r = await request(app)
-      .post("/api/wfm-ext/roster/swaps")
-      .set(auth)
+    const r = await request(app).post("/api/wfm-ext/roster/swaps").set(auth)
       .send({ swap_date: "2026-06-10" }); // missing swap_with_emp_id
     expect(r.status).toBe(400);
   });
@@ -311,9 +270,7 @@ describe("POST /api/wfm-ext/roster/swaps", () => {
 describe("POST /api/wfm-ext/roster/swaps/:id/review", () => {
   it("returns 403 for employee role", async () => {
     const auth = mockEmployee();
-    const r = await request(app)
-      .post("/api/wfm-ext/roster/swaps/sw-1/review")
-      .set(mockEmployee())
+    const r = await request(app).post("/api/wfm-ext/roster/swaps/sw-1/review").set(mockEmployee())
       .send({ status: "approved" });
     expect(r.status).toBe(403);
   });
@@ -324,19 +281,15 @@ describe("POST /api/wfm-ext/roster/swaps/:id/review", () => {
     // test previously seeded no rows at all, so the lookup returned nothing and the route
     // answered 404. Seeding a genuine pending, counterpart-accepted swap is what makes this an
     // approval test rather than a not-found test.
-    const auth = mockManager([
-      {
-        id: "sw-1",
-        status: "pending",
-        counterpart_status: "accepted",
-        requester_emp_id: "emp-1",
-        swap_with_emp_id: "emp-2",
-        process_id: "proc-1",
-      },
-    ]);
-    const r = await request(app)
-      .post("/api/wfm-ext/roster/swaps/sw-1/review")
-      .set(auth)
+    const auth = mockManager([{
+      id: "sw-1",
+      status: "pending",
+      counterpart_status: "accepted",
+      requester_emp_id: "emp-1",
+      swap_with_emp_id: "emp-2",
+      process_id: "proc-1",
+    }]);
+    const r = await request(app).post("/api/wfm-ext/roster/swaps/sw-1/review").set(auth)
       .send({ status: "approved" });
     expect(r.status).toBe(200);
   });
@@ -354,9 +307,7 @@ describe("POST /api/wfm-ext/coverage/snapshot", () => {
    */
   it("returns 403 for a role outside the coverage-snapshot set", async () => {
     const auth = mockRecruiter();
-    const r = await request(app)
-      .post("/api/wfm-ext/coverage/snapshot")
-      .set(auth)
+    const r = await request(app).post("/api/wfm-ext/coverage/snapshot").set(auth)
       .send({ snapshot_date: "2026-06-01", planned_headcount: 100 });
     expect(r.status).toBe(403);
   });
@@ -375,49 +326,24 @@ describe("POST /api/wfm-ext/coverage/snapshot", () => {
 
 describe("POST /api/wfm-ext/attrition/record", () => {
   it("returns 400 without required fields", async () => {
-    const auth = mockHr([
-      {
-        process_id: "proc-1",
-        branch_id: "branch-1",
-        date_of_joining: "2024-01-01",
-      },
-    ]);
-    const r = await request(app)
-      .post("/api/wfm-ext/attrition/record")
-      .set(auth)
+    const auth = mockHr([{ process_id: "proc-1", branch_id: "branch-1", date_of_joining: "2024-01-01" }]);
+    const r = await request(app).post("/api/wfm-ext/attrition/record").set(auth)
       .send({ employee_id: "emp-1" });
     expect(r.status).toBe(400);
   });
 
   it("records attrition for hr", async () => {
-    const auth = mockHr([
-      {
-        process_id: "proc-1",
-        branch_id: "branch-1",
-        date_of_joining: "2024-01-01",
-      },
-    ]);
-    const r = await request(app)
-      .post("/api/wfm-ext/attrition/record")
-      .set(auth)
-      .send({
-        employee_id: "emp-1",
-        exit_date: "2026-06-01",
-        exit_type: "voluntary",
-        tenure_days: 365,
-      });
+    const auth = mockHr([{ process_id: "proc-1", branch_id: "branch-1", date_of_joining: "2024-01-01" }]);
+    const r = await request(app).post("/api/wfm-ext/attrition/record").set(auth)
+      .send({ employee_id: "emp-1", exit_date: "2026-06-01", exit_type: "voluntary", tenure_days: 365 });
     expect(r.status).toBe(201);
   });
 });
 
 describe("GET /api/wfm-ext/attrition/summary", () => {
   it("returns summary for admin", async () => {
-    const auth = mockAdmin([
-      { exit_type: "voluntary", count: 5, avg_tenure_days: 300 },
-    ]);
-    const r = await request(app)
-      .get("/api/wfm-ext/attrition/summary")
-      .set(auth);
+    const auth = mockAdmin([{ exit_type: "voluntary", count: 5, avg_tenure_days: 300 }]);
+    const r = await request(app).get("/api/wfm-ext/attrition/summary").set(auth);
     expect(r.status).toBe(200);
   });
 });

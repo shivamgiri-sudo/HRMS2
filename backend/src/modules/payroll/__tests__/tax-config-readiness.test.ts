@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import {
-  financialYearForMonth,
-  nextFinancialYear,
-} from "../payroll-governance.service.js";
+import { financialYearForMonth, nextFinancialYear } from "../payroll-governance.service.js";
 
 /**
  * taxEngineService refuses when payroll_tax_fy_config / payroll_tax_slab_master
@@ -45,9 +42,7 @@ describe("financialYearForMonth", () => {
     for (const m of ["2026-03", "2026-04", "2026-08", "2027-01"]) {
       const [y, mo] = m.split("-").map(Number);
       const startYear = mo >= 4 ? y : y - 1;
-      expect(financialYearForMonth(m)).toBe(
-        `${startYear}-${String(startYear + 1).slice(2)}`,
-      );
+      expect(financialYearForMonth(m)).toBe(`${startYear}-${String(startYear + 1).slice(2)}`);
     }
   });
 });
@@ -72,9 +67,7 @@ describe("the readiness check reflects how TDS actually runs", () => {
     // configuration gap that cannot affect it.
     const idx = SOURCE.indexOf("TAX_CONFIG_MISSING_FOR_RUN_FY");
     expect(idx).toBeGreaterThan(-1);
-    expect(SOURCE.slice(idx, idx + 200)).toMatch(
-      /tdsMode === "auto" \? "blocker" : "warning"/,
-    );
+    expect(SOURCE.slice(idx, idx + 200)).toMatch(/tdsMode === "auto" \? "blocker" : "warning"/);
   });
 
   it("raises the next-year warning only in the last quarter of the financial year", () => {
@@ -82,22 +75,16 @@ describe("the readiness check reflects how TDS actually runs", () => {
     // January to March also guarantees the Budget has happened, so the rates exist.
     const idx = SOURCE.indexOf("TAX_CONFIG_MISSING_FOR_NEXT_FY");
     expect(idx).toBeGreaterThan(-1);
-    expect(SOURCE.slice(Math.max(0, idx - 300), idx)).toMatch(
-      /runMonthNum >= 1 && runMonthNum <= 3/,
-    );
+    expect(SOURCE.slice(Math.max(0, idx - 300), idx)).toMatch(/runMonthNum >= 1 && runMonthNum <= 3/);
   });
 
   it("names both tables to seed, so the warning is actionable", () => {
-    expect(SOURCE).toMatch(
-      /TAX_CONFIG_MISSING_FOR_NEXT_FY[\s\S]{0,600}payroll_tax_slab_master/,
-    );
+    expect(SOURCE).toMatch(/TAX_CONFIG_MISSING_FOR_NEXT_FY[\s\S]{0,600}payroll_tax_slab_master/);
   });
 
   it("does not invent tax rates anywhere", () => {
     // The check reports a gap; it must never paper over one. Rates come from the
     // Finance Act, and a guessed slab the engine trusts is worse than none.
-    expect(SOURCE).not.toMatch(
-      /INSERT INTO payroll_tax_(fy_config|slab_master)/i,
-    );
+    expect(SOURCE).not.toMatch(/INSERT INTO payroll_tax_(fy_config|slab_master)/i);
   });
 });

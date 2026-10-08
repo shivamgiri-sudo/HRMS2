@@ -52,15 +52,8 @@ export function normalizePath(rawPath: string): string {
   const cutCandidates: number[] = [];
   let depth = 0;
   for (let k = 0; k < path.length; k++) {
-    if (path[k] === "$" && path[k + 1] === "{") {
-      depth++;
-      k++;
-      continue;
-    }
-    if (path[k] === "}" && depth > 0) {
-      depth--;
-      continue;
-    }
+    if (path[k] === "$" && path[k + 1] === "{") { depth++; k++; continue; }
+    if (path[k] === "}" && depth > 0) { depth--; continue; }
     if (depth === 0 && (path[k] === "?" || path[k] === "#")) {
       cutCandidates.push(k);
       break;
@@ -91,15 +84,9 @@ export function normalizePath(rawPath: string): string {
  * arguments — `hrmsApi.get<{ success: boolean; data: T[] }>(...)` — and a generic
  * containing `>` defeats the obvious pattern.
  */
-export function extractFrontendCalls(
-  source: string,
-  file: string,
-): FrontendCall[] {
+export function extractFrontendCalls(source: string, file: string): FrontendCall[] {
   const calls: FrontendCall[] = [];
-  const verbPattern = new RegExp(
-    `hrmsApi\\s*\\.\\s*(${HTTP_VERBS.join("|")})\\b`,
-    "g",
-  );
+  const verbPattern = new RegExp(`hrmsApi\\s*\\.\\s*(${HTTP_VERBS.join("|")})\\b`, "g");
 
   let match: RegExpExecArray | null;
   while ((match = verbPattern.exec(source)) !== null) {
@@ -119,11 +106,7 @@ export function extractFrontendCalls(
     let j = i + 1;
     for (; j < source.length; j += 1) {
       const ch = source[j];
-      if (ch === "\\") {
-        literal += ch + source[j + 1];
-        j += 1;
-        continue;
-      }
+      if (ch === "\\") { literal += ch + source[j + 1]; j += 1; continue; }
       if (ch === quote) break;
       literal += ch;
     }
@@ -152,10 +135,7 @@ export function extractFrontendCalls(
  * at this went wrong and silently produced empty prefixes, which made every route
  * look unmounted.
  */
-export function mountPrefixOf(layer: {
-  regexp?: RegExp;
-  path?: string;
-}): string {
+export function mountPrefixOf(layer: { regexp?: RegExp; path?: string }): string {
   const source = layer.regexp?.source;
   if (!source) return "";
 
@@ -192,21 +172,14 @@ export function enumerateRoutes(app: unknown): RegisteredRoute[] {
       };
 
       if (layer.route) {
-        const paths = Array.isArray(layer.route.path)
-          ? layer.route.path
-          : [layer.route.path ?? ""];
+        const paths = Array.isArray(layer.route.path) ? layer.route.path : [layer.route.path ?? ""];
         for (const routePath of paths) {
-          for (const [method, enabled] of Object.entries(
-            layer.route.methods ?? {},
-          )) {
+          for (const [method, enabled] of Object.entries(layer.route.methods ?? {})) {
             if (!enabled) continue;
             const key = `${method.toUpperCase()} ${normalizePath(prefix + routePath)}`;
             if (seen.has(key)) continue;
             seen.add(key);
-            routes.push({
-              method: method.toUpperCase(),
-              path: normalizePath(prefix + routePath),
-            });
+            routes.push({ method: method.toUpperCase(), path: normalizePath(prefix + routePath) });
           }
         }
         continue;
@@ -218,10 +191,7 @@ export function enumerateRoutes(app: unknown): RegisteredRoute[] {
     }
   };
 
-  const router = app as {
-    _router?: { stack?: unknown[] };
-    router?: { stack?: unknown[] };
-  };
+  const router = (app as { _router?: { stack?: unknown[] }; router?: { stack?: unknown[] } });
   const stack = router._router?.stack ?? router.router?.stack ?? [];
   walk(stack, "");
   return routes;
@@ -235,15 +205,8 @@ export function pathsMatch(callPath: string, routePath: string): boolean {
   // Express wildcards swallow the remainder.
   const wildcard = routeSegments.indexOf("*");
   if (wildcard >= 0) {
-    return (
-      callSegments.length >= wildcard &&
-      routeSegments
-        .slice(0, wildcard)
-        .every(
-          (seg, i) =>
-            seg === callSegments[i] || seg === ":p" || callSegments[i] === ":p",
-        )
-    );
+    return callSegments.length >= wildcard
+      && routeSegments.slice(0, wildcard).every((seg, i) => seg === callSegments[i] || seg === ":p" || callSegments[i] === ":p");
   }
 
   if (callSegments.length !== routeSegments.length) return false;
@@ -256,15 +219,11 @@ export function pathsMatch(callPath: string, routePath: string): boolean {
 }
 
 /** Frontend calls with no registered route that could serve them. */
-export function findOrphans(
-  calls: FrontendCall[],
-  routes: RegisteredRoute[],
-): FrontendCall[] {
+export function findOrphans(calls: FrontendCall[], routes: RegisteredRoute[]): FrontendCall[] {
   return calls.filter((call) => {
     const normalized = normalizePath(call.path);
     return !routes.some(
-      (route) =>
-        route.method === call.method && pathsMatch(normalized, route.path),
+      (route) => route.method === call.method && pathsMatch(normalized, route.path),
     );
   });
 }

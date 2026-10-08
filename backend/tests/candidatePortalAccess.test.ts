@@ -20,19 +20,15 @@ vi.mock("../src/db/mysql.js", () => ({
   db: { execute: vi.fn() },
 }));
 vi.mock("../src/modules/ats/candidate-portal.service.js", () => ({
-  createPortalAccess: vi.fn(
-    async (candidateId: string, tempPassword: string) => {
-      created.push({ candidateId, tempPassword });
-    },
-  ),
+  createPortalAccess: vi.fn(async (candidateId: string, tempPassword: string) => {
+    created.push({ candidateId, tempPassword });
+  }),
 }));
 vi.mock("../src/modules/ats/ats.email.service.js", () => ({
-  sendSelectionCongratulationsEmail: vi.fn(
-    async (params: { to: string; tempPassword: string }) => {
-      emailed.push({ to: params.to, tempPassword: params.tempPassword });
-      return { success: true };
-    },
-  ),
+  sendSelectionCongratulationsEmail: vi.fn(async (params: { to: string; tempPassword: string }) => {
+    emailed.push({ to: params.to, tempPassword: params.tempPassword });
+    return { success: true };
+  }),
 }));
 vi.mock("../src/modules/ats/ats.onboarding.service.js", () => ({
   sendOnboardingToken: vi.fn().mockResolvedValue(undefined),
@@ -57,19 +53,10 @@ describe("issueCandidatePortalAccess", () => {
   });
 
   it("TC-PORTAL-01: writes to the table login actually reads, not the orphaned one", async () => {
-    vi.mocked(db.execute).mockResolvedValueOnce([
-      [
-        {
-          id: "cand-1",
-          full_name: "Test Candidate",
-          email: "test@example.com",
-          applied_for_branch: "Noida",
-          branch_display_name: "NOIDA-2",
-          applied_for_role: "Executive",
-        },
-      ],
-      [],
-    ] as never);
+    vi.mocked(db.execute).mockResolvedValueOnce([[{
+      id: "cand-1", full_name: "Test Candidate", email: "test@example.com",
+      applied_for_branch: "Noida", branch_display_name: "NOIDA-2", applied_for_role: "Executive",
+    }], []] as never);
     // Second SELECT: issueCandidatePortalAccess now looks up a live onboarding token on
     // ats_onboarding_bridge so the email carries one link rather than two. Without a value here
     // the bare vi.fn() resolves undefined and the service's .catch() throws on it.
@@ -89,19 +76,10 @@ describe("issueCandidatePortalAccess", () => {
   });
 
   it("TC-PORTAL-02: the emailed password matches the one that was hashed and stored", async () => {
-    vi.mocked(db.execute).mockResolvedValueOnce([
-      [
-        {
-          id: "cand-1",
-          full_name: "Test Candidate",
-          email: "test@example.com",
-          applied_for_branch: "Noida",
-          branch_display_name: "NOIDA-2",
-          applied_for_role: "Executive",
-        },
-      ],
-      [],
-    ] as never);
+    vi.mocked(db.execute).mockResolvedValueOnce([[{
+      id: "cand-1", full_name: "Test Candidate", email: "test@example.com",
+      applied_for_branch: "Noida", branch_display_name: "NOIDA-2", applied_for_role: "Executive",
+    }], []] as never);
     // Second SELECT: issueCandidatePortalAccess now looks up a live onboarding token on
     // ats_onboarding_bridge so the email carries one link rather than two. Without a value here
     // the bare vi.fn() resolves undefined and the service's .catch() throws on it.
@@ -110,27 +88,16 @@ describe("issueCandidatePortalAccess", () => {
     await issueCandidatePortalAccess("cand-1");
 
     expect(sendSelectionCongratulationsEmail).toHaveBeenCalledTimes(1);
-    expect(
-      emailed[0]?.tempPassword,
-      "the emailed password and the stored one diverged",
-    ).toBe(created[0]?.tempPassword);
+    expect(emailed[0]?.tempPassword, "the emailed password and the stored one diverged")
+      .toBe(created[0]?.tempPassword);
     expect(emailed[0]?.tempPassword.length).toBeGreaterThanOrEqual(8);
   });
 
   it("TC-PORTAL-03: does nothing for a candidate with no email on file", async () => {
-    vi.mocked(db.execute).mockResolvedValueOnce([
-      [
-        {
-          id: "cand-1",
-          full_name: "Test Candidate",
-          email: null,
-          applied_for_branch: "Noida",
-          branch_display_name: "NOIDA-2",
-          applied_for_role: "Executive",
-        },
-      ],
-      [],
-    ] as never);
+    vi.mocked(db.execute).mockResolvedValueOnce([[{
+      id: "cand-1", full_name: "Test Candidate", email: null,
+      applied_for_branch: "Noida", branch_display_name: "NOIDA-2", applied_for_role: "Executive",
+    }], []] as never);
 
     await issueCandidatePortalAccess("cand-1");
 
@@ -157,13 +124,9 @@ describe("issueCandidatePortalAccess", () => {
       // context — assert against the executable code, not the commentary.
       .replace(/\/\/.*$/gm, "")
       .replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(
-      selectionFn,
-      "handleCandidateSelection still generates a temp password directly",
-    ).not.toMatch(/generateTempPassword\(\)/);
-    expect(
-      selectionFn,
-      "handleCandidateSelection still writes the orphaned login table",
-    ).not.toMatch(/ats_candidate_portal_login/);
+    expect(selectionFn, "handleCandidateSelection still generates a temp password directly")
+      .not.toMatch(/generateTempPassword\(\)/);
+    expect(selectionFn, "handleCandidateSelection still writes the orphaned login table")
+      .not.toMatch(/ats_candidate_portal_login/);
   });
 });

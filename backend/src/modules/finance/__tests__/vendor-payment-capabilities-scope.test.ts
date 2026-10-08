@@ -39,16 +39,10 @@ vi.mock("../vendor-payment-ledger.service.js", () => ({
 
 let actor: { id: string; role: string; roles: string[] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<
-      typeof import("../../../middleware/authMiddleware.js")
-    >();
+  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => {
-      req.authUser = actor;
-      next();
-    },
+    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
   };
 });
 
@@ -58,19 +52,13 @@ function appFor(roles: string[]) {
   actor = { id: `u-${roles.join("-")}`, role: roles[0], roles };
   const app = express();
   app.use(express.json());
-  app.use((req: any, _res, next) => {
-    req.authUser = actor;
-    req.userRoles = actor.roles;
-    next();
-  });
+  app.use((req: any, _res, next) => { req.authUser = actor; req.userRoles = actor.roles; next(); });
   app.use("/api/finance", vendorPaymentRouter);
   return app;
 }
 
 const readScope = async (roles: string[]) => {
-  const res = await request(appFor(roles)).get(
-    "/api/finance/vendor-payments/capabilities",
-  );
+  const res = await request(appFor(roles)).get("/api/finance/vendor-payments/capabilities");
   expect(res.status).toBe(200);
   return res.body.data.readScope;
 };
@@ -96,30 +84,19 @@ describe("readScope agrees with the data endpoints", () => {
   it("a branch_admin who also holds finance_head IS organisation", async () => {
     // finance_head is in the overriding set on purpose — at least one live account carries it
     // alongside branch_admin so the budget review chain does not stall.
-    expect(await readScope(["branch_admin", "finance_head"])).toBe(
-      "organisation",
-    );
+    expect(await readScope(["branch_admin", "finance_head"])).toBe("organisation");
   });
 
-  for (const role of [
-    "accounts_head",
-    "finance_head",
-    "finance",
-    "super_admin",
-  ]) {
+  for (const role of ["accounts_head", "finance_head", "finance", "super_admin"]) {
     it(`${role} is organisation`, async () => {
       expect(await readScope([role])).toBe("organisation");
     });
   }
 
   it("canWrite is unchanged — only accounts_head and super_admin", async () => {
-    const app = await request(appFor(["accounts_head"])).get(
-      "/api/finance/vendor-payments/capabilities",
-    );
+    const app = await request(appFor(["accounts_head"])).get("/api/finance/vendor-payments/capabilities");
     expect(app.body.data.canWrite).toBe(true);
-    const nope = await request(appFor(["branch_head"])).get(
-      "/api/finance/vendor-payments/capabilities",
-    );
+    const nope = await request(appFor(["branch_head"])).get("/api/finance/vendor-payments/capabilities");
     expect(nope.body.data.canWrite).toBe(false);
   });
 });

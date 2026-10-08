@@ -26,35 +26,16 @@ const MIGRATION = "sql/1033_sensitive_action_log_entity_id_width.sql";
 
 /** The longest key each composite call site can produce, worst case. */
 const COMPOSITE_KEYS = [
-  {
-    site: "wfm.regularization.secure.routes.ts",
-    shape: "<uuid>:<yyyy-mm-dd>",
-    length: 36 + 1 + 10,
-  },
-  {
-    site: "tds-certificate-part-a.routes.ts",
-    shape: "<uuid>:<fy>",
-    length: 36 + 1 + 7,
-  },
-  {
-    site: "role-page-access.service.ts",
-    shape: "<uuid>::<role_key>",
-    length: 36 + 2 + 20,
-  },
-  {
-    site: "role-page-access.service.ts",
-    shape: "<role>::module::<module>",
-    length: 20 + 10 + 40,
-  },
+  { site: "wfm.regularization.secure.routes.ts", shape: "<uuid>:<yyyy-mm-dd>", length: 36 + 1 + 10 },
+  { site: "tds-certificate-part-a.routes.ts", shape: "<uuid>:<fy>", length: 36 + 1 + 7 },
+  { site: "role-page-access.service.ts", shape: "<uuid>::<role_key>", length: 36 + 2 + 20 },
+  { site: "role-page-access.service.ts", shape: "<role>::module::<module>", length: 20 + 10 + 40 },
 ];
 
 describe("migration 1033 — entity_id width", () => {
   it("exists and is registered in MIGRATION_MANIFEST", () => {
     expect(existsSync(resolve(root, MIGRATION))).toBe(true);
-    const manifest = readFileSync(
-      resolve(root, "src/db/runPendingMigrations.ts"),
-      "utf8",
-    );
+    const manifest = readFileSync(resolve(root, "src/db/runPendingMigrations.ts"), "utf8");
     // A migration missing from the hardcoded manifest never runs — the runner
     // does not scan the directory.
     expect(manifest).toContain("1033_sensitive_action_log_entity_id_width.sql");
@@ -63,9 +44,7 @@ describe("migration 1033 — entity_id width", () => {
   it("widens entity_id to at least VARCHAR(100)", () => {
     const sql = readFileSync(resolve(root, MIGRATION), "utf8");
     expect(sql).toMatch(/MODIFY COLUMN entity_id VARCHAR\((\d+)\)/i);
-    const width = Number(
-      sql.match(/MODIFY COLUMN entity_id VARCHAR\((\d+)\)/i)![1],
-    );
+    const width = Number(sql.match(/MODIFY COLUMN entity_id VARCHAR\((\d+)\)/i)![1]);
     expect(width).toBeGreaterThanOrEqual(100);
   });
 
@@ -89,7 +68,7 @@ describe("migration 1033 — entity_id width", () => {
     for (const k of COMPOSITE_KEYS) {
       expect(
         k.length,
-        `${k.site} builds ${k.shape} (~${k.length} chars) — VARCHAR(${width}) must hold it`,
+        `${k.site} builds ${k.shape} (~${k.length} chars) — VARCHAR(${width}) must hold it`
       ).toBeLessThanOrEqual(width);
     }
   });
@@ -104,24 +83,15 @@ describe("migration 1033 — entity_id width", () => {
 
 describe("the call sites this migration exists for", () => {
   const sites: Array<[string, string]> = [
-    [
-      "src/modules/wfm/wfm.regularization.secure.routes.ts",
-      "ATTENDANCE_RECORD_CORRECTED",
-    ],
-    [
-      "src/modules/payroll/tds-certificate-part-a.routes.ts",
-      "TDS_PART_A_VERIFIED",
-    ],
-    [
-      "src/modules/access/role-page-access.service.ts",
-      "DESIGNATION_ROLE_MAPPED",
-    ],
+    ["src/modules/wfm/wfm.regularization.secure.routes.ts", "ATTENDANCE_RECORD_CORRECTED"],
+    ["src/modules/payroll/tds-certificate-part-a.routes.ts", "TDS_PART_A_VERIFIED"],
+    ["src/modules/access/role-page-access.service.ts", "DESIGNATION_ROLE_MAPPED"],
   ];
 
   for (const [file, actionType] of sites) {
     it(`${actionType} still writes a composite entity_id (the migration is what makes it fit)`, () => {
       const path = resolve(root, file);
-      if (!existsSync(path)) return; // file moved — nothing to assert
+      if (!existsSync(path)) return;   // file moved — nothing to assert
       const src = readFileSync(path, "utf8");
       expect(src).toContain(actionType);
       // If someone shortens these to a bare id, the audit key loses the second

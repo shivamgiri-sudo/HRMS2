@@ -14,17 +14,7 @@ import { canViewEmployee } from "../../shared/enterpriseScope.js";
 export const employee360Router = Router();
 
 employee360Router.use(requireAuth);
-employee360Router.use(
-  requireRole(
-    "hr",
-    "admin",
-    "super_admin",
-    "manager",
-    "wfm",
-    "payroll",
-    "branch_head",
-  ),
-);
+employee360Router.use(requireRole("hr", "admin", "super_admin", "manager", "wfm", "payroll", "branch_head"));
 
 // GET /api/analytics/employee-360/:employeeId?period=YYYY-MM
 // Branch scoping: the role list above says who may open the page, not whose profile they may open.

@@ -1,15 +1,7 @@
 import { z } from "zod";
 
 export const ConsentRecordSchema = z.object({
-  purpose_code: z.enum([
-    "employment",
-    "payroll",
-    "communication",
-    "lms",
-    "portal",
-    "recruitment",
-    "health",
-  ]),
+  purpose_code: z.enum(["employment", "payroll", "communication", "lms", "portal", "recruitment", "health"]),
   decision: z.enum(["accepted", "declined"]),
   language: z.string().max(10).default("en"),
   // version/hash must NOT come from client — resolved server-side
@@ -22,13 +14,7 @@ export const WithdrawalRequestSchema = z.object({
 });
 
 export const RightsRequestSchema = z.object({
-  request_type: z.enum([
-    "access",
-    "correction",
-    "erasure",
-    "nomination",
-    "grievance",
-  ]),
+  request_type: z.enum(["access", "correction", "erasure", "nomination", "grievance"]),
   description: z.string().max(2000).optional(),
   field_name: z.string().max(128).optional(),
   current_value: z.string().max(500).optional(),

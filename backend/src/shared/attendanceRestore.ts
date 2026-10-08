@@ -11,10 +11,10 @@ import type { PoolConnection } from "mysql2/promise";
  */
 
 export type RestoreMode =
-  | "snapshot" // exact restore from the pre-approval snapshot
-  | "delete" // no attendance row existed before the approval; remove the one it created
-  | "partial" // only old_attendance_status / old_lwp_value were saved
-  | "rederive" // nothing usable was saved; the attendance engine rebuilds the day
+  | "snapshot"    // exact restore from the pre-approval snapshot
+  | "delete"      // no attendance row existed before the approval; remove the one it created
+  | "partial"     // only old_attendance_status / old_lwp_value were saved
+  | "rederive"    // nothing usable was saved; the attendance engine rebuilds the day
   | "skip_locked" // another correction owns the row — never overwritten
   | "skip_owned"; // the row now points at a different regularization
 
@@ -46,36 +46,13 @@ export type SnapshotEntry = {
  * are deliberately absent — restoring those would rewrite the row's identity.
  */
 export const SNAPSHOT_RESTORE_COLUMNS = [
-  "attendance_status",
-  "lwp_value",
-  "attendance_source",
-  "source_system",
-  "source_record_date",
-  "source_reference",
-  "dialler_minutes",
-  "biometric_minutes",
-  "raw_minutes",
-  "clock_in_time",
-  "clock_out_time",
-  "work_mode",
-  "late_mark",
-  "late_by_minutes",
-  "apr_status",
-  "biometric_status",
-  "mismatch_flag",
-  "process_id",
-  "branch_id",
-  "rule_config_id",
-  "regularization_id",
-  "override_by",
-  "override_reason",
-  "is_locked",
-  "processed_at",
-  "old_attendance_status",
-  "old_lwp_value",
-  "status_change_reason",
-  "status_changed_by",
-  "status_changed_at",
+  "attendance_status", "lwp_value", "attendance_source", "source_system",
+  "source_record_date", "source_reference", "dialler_minutes", "biometric_minutes",
+  "raw_minutes", "clock_in_time", "clock_out_time", "work_mode", "late_mark",
+  "late_by_minutes", "apr_status", "biometric_status", "mismatch_flag",
+  "process_id", "branch_id", "rule_config_id", "regularization_id", "override_by",
+  "override_reason", "is_locked", "processed_at", "old_attendance_status",
+  "old_lwp_value", "status_change_reason", "status_changed_by", "status_changed_at",
 ];
 
 /**
@@ -84,21 +61,10 @@ export const SNAPSHOT_RESTORE_COLUMNS = [
  * can say what it could not put back rather than implying a clean revert.
  */
 export const UNRECOVERABLE_WITHOUT_SNAPSHOT = [
-  "clock_in_time",
-  "clock_out_time",
-  "raw_minutes",
-  "dialler_minutes",
-  "biometric_minutes",
-  "attendance_source",
-  "source_system",
-  "source_record_date",
-  "source_reference",
-  "late_mark",
-  "late_by_minutes",
-  "biometric_status",
-  "apr_status",
-  "mismatch_flag",
-  "override_reason",
+  "clock_in_time", "clock_out_time", "raw_minutes", "dialler_minutes",
+  "biometric_minutes", "attendance_source", "source_system", "source_record_date",
+  "source_reference", "late_mark", "late_by_minutes", "biometric_status",
+  "apr_status", "mismatch_flag", "override_reason",
 ];
 
 function num(value: unknown): number | null {
@@ -117,24 +83,17 @@ function num(value: unknown): number | null {
  * carries who took it; saying so turns a dead end into the next step.
  */
 function describeLockHolder(adr: any): string {
-  const trim = (v: unknown) =>
-    String(v ?? "")
-      .trim()
-      .slice(0, 80);
+  const trim = (v: unknown) => String(v ?? "").trim().slice(0, 80);
 
   if (adr?.regularization_id) {
     return "an approved regularization or attendance dispute on the same day — discard that one first";
   }
   if (adr?.override_by) {
     const why = trim(adr.override_reason);
-    return why
-      ? `a manual attendance change (${why})`
-      : "a manual attendance change";
+    return why ? `a manual attendance change (${why})` : "a manual attendance change";
   }
   const reason = trim(adr?.status_change_reason);
-  return reason
-    ? `another correction (${reason})`
-    : "another correction or a payroll process";
+  return reason ? `another correction (${reason})` : "another correction or a payroll process";
 }
 
 /**
@@ -146,62 +105,38 @@ export function planRegularizationRestore(
   regId: string,
   sessionDate: string,
   adr: any | undefined,
-  snapshot: SnapshotEntry | undefined,
+  snapshot: SnapshotEntry | undefined
 ): DateRestorePlan {
   const currentStatus = adr ? String(adr.attendance_status ?? "") : null;
   const currentLwp = adr ? num(adr.lwp_value) : null;
   const base = { date: sessionDate, currentStatus, currentLwp };
 
   if (!adr) {
-    return {
-      ...base,
-      mode: "delete",
-      restoredStatus: null,
-      restoredLwp: null,
-      note: "No attendance row exists for this date; nothing to restore.",
-    };
+    return { ...base, mode: "delete", restoredStatus: null, restoredLwp: null,
+      note: "No attendance row exists for this date; nothing to restore." };
   }
 
   // Another correction has taken ownership since. Never overwrite it — that would
   // silently destroy a newer, valid correction.
   const ownedByThis = String(adr.regularization_id ?? "") === regId;
   if (adr.regularization_id && !ownedByThis) {
-    return {
-      ...base,
-      mode: "skip_owned",
-      restoredStatus: currentStatus,
-      restoredLwp: currentLwp,
-      note: "A later correction now owns this attendance row; it was left untouched.",
-    };
+    return { ...base, mode: "skip_owned", restoredStatus: currentStatus, restoredLwp: currentLwp,
+      note: "A later correction now owns this attendance row; it was left untouched." };
   }
   if (Number(adr.is_locked ?? 0) === 1 && !ownedByThis) {
-    return {
-      ...base,
-      mode: "skip_locked",
-      restoredStatus: currentStatus,
-      restoredLwp: currentLwp,
-      note: `Attendance row is locked by ${describeLockHolder(adr)}; it was left untouched.`,
-    };
+    return { ...base, mode: "skip_locked", restoredStatus: currentStatus, restoredLwp: currentLwp,
+      note: `Attendance row is locked by ${describeLockHolder(adr)}; it was left untouched.` };
   }
 
   if (snapshot) {
     if (snapshot.row_existed === 0) {
-      return {
-        ...base,
-        mode: "delete",
-        restoredStatus: null,
-        restoredLwp: null,
-        note: "No attendance row existed before the approval; the row it created is removed.",
-      };
+      return { ...base, mode: "delete", restoredStatus: null, restoredLwp: null,
+        note: "No attendance row existed before the approval; the row it created is removed." };
     }
     const snap = snapshot.snapshot ?? {};
-    return {
-      ...base,
-      mode: "snapshot",
-      restoredStatus:
-        snap.attendance_status != null ? String(snap.attendance_status) : null,
-      restoredLwp: num(snap.lwp_value),
-    };
+    return { ...base, mode: "snapshot",
+      restoredStatus: snap.attendance_status != null ? String(snap.attendance_status) : null,
+      restoredLwp: num(snap.lwp_value) };
   }
 
   // No snapshot: this approval predates migration 1023.
@@ -211,106 +146,61 @@ export function planRegularizationRestore(
   // there, on a row this regularization owns, can only mean the INSERT branch ran
   // — no row existed before, and the correct undo is DELETE, not a status reset.
   const wroteByThisApproval =
-    ownedByThis &&
-    String(adr.status_change_reason ?? "").startsWith(
-      "Regularization approved",
-    );
+    ownedByThis && String(adr.status_change_reason ?? "").startsWith("Regularization approved");
 
   if (adr.old_attendance_status != null) {
-    return {
-      ...base,
-      mode: "partial",
+    return { ...base, mode: "partial",
       restoredStatus: String(adr.old_attendance_status),
       restoredLwp: num(adr.old_lwp_value),
-      note: "Approved before pre-state snapshots existed; status and LWP are restored, then the attendance engine recomputes the day from source data.",
-    };
+      note: "Approved before pre-state snapshots existed; status and LWP are restored, then the attendance engine recomputes the day from source data." };
   }
   if (wroteByThisApproval) {
-    return {
-      ...base,
-      mode: "delete",
-      restoredStatus: null,
-      restoredLwp: null,
-      note: "No attendance row existed before this approval (inferred from the pre-snapshot audit columns); the row it created is removed.",
-    };
+    return { ...base, mode: "delete", restoredStatus: null, restoredLwp: null,
+      note: "No attendance row existed before this approval (inferred from the pre-snapshot audit columns); the row it created is removed." };
   }
-  return {
-    ...base,
-    mode: "rederive",
-    restoredStatus: null,
-    restoredLwp: null,
-    note: "No pre-approval state was recorded; the attendance engine recomputes this day from biometric/dialler source data.",
-  };
+  return { ...base, mode: "rederive", restoredStatus: null, restoredLwp: null,
+    note: "No pre-approval state was recorded; the attendance engine recomputes this day from biometric/dialler source data." };
 }
 
 /** Same, for one calendar day of an approved leave. */
 export function planLeaveRestore(
   date: string,
   adr: any | undefined,
-  snapshot: SnapshotEntry | undefined,
+  snapshot: SnapshotEntry | undefined
 ): DateRestorePlan {
   const currentStatus = adr ? String(adr.attendance_status ?? "") : null;
   const currentLwp = adr ? num(adr.lwp_value) : null;
   const base = { date, currentStatus, currentLwp };
 
   if (!adr) {
-    return {
-      ...base,
-      mode: "delete",
-      restoredStatus: null,
-      restoredLwp: null,
-      note: "No attendance row exists for this date.",
-    };
+    return { ...base, mode: "delete", restoredStatus: null, restoredLwp: null,
+      note: "No attendance row exists for this date." };
   }
   if (Number(adr.is_locked ?? 0) === 1) {
-    return {
-      ...base,
-      mode: "skip_locked",
-      restoredStatus: currentStatus,
-      restoredLwp: currentLwp,
-      note: `Attendance row is locked by ${describeLockHolder(adr)}; it was left untouched.`,
-    };
+    return { ...base, mode: "skip_locked", restoredStatus: currentStatus, restoredLwp: currentLwp,
+      note: `Attendance row is locked by ${describeLockHolder(adr)}; it was left untouched.` };
   }
   // Only days the approval actually marked are reverted. A day already changed to
   // something else since is left alone.
   if (currentStatus !== "leave_approved") {
-    return {
-      ...base,
-      mode: "skip_owned",
-      restoredStatus: currentStatus,
-      restoredLwp: currentLwp,
-      note: "This day is no longer marked as approved leave; it was left untouched.",
-    };
+    return { ...base, mode: "skip_owned", restoredStatus: currentStatus, restoredLwp: currentLwp,
+      note: "This day is no longer marked as approved leave; it was left untouched." };
   }
   if (snapshot) {
     if (snapshot.row_existed === 0) {
-      return {
-        ...base,
-        mode: "delete",
-        restoredStatus: null,
-        restoredLwp: null,
-        note: "No attendance row existed before the approval; the row it created is removed.",
-      };
+      return { ...base, mode: "delete", restoredStatus: null, restoredLwp: null,
+        note: "No attendance row existed before the approval; the row it created is removed." };
     }
     const snap = snapshot.snapshot ?? {};
-    return {
-      ...base,
-      mode: "snapshot",
-      restoredStatus:
-        snap.attendance_status != null ? String(snap.attendance_status) : null,
-      restoredLwp: num(snap.lwp_value),
-    };
+    return { ...base, mode: "snapshot",
+      restoredStatus: snap.attendance_status != null ? String(snap.attendance_status) : null,
+      restoredLwp: num(snap.lwp_value) };
   }
   // Pre-snapshot leave. Deliberately NOT 'absent' + lwp 1.00: the approval wrote
   // every calendar day including weekends and holidays, so blanket-marking them
   // absent invents unpaid days the leave never covered.
-  return {
-    ...base,
-    mode: "rederive",
-    restoredStatus: null,
-    restoredLwp: null,
-    note: "Approved before pre-state snapshots existed; the attendance engine recomputes this day (week-off and holiday are resolved correctly).",
-  };
+  return { ...base, mode: "rederive", restoredStatus: null, restoredLwp: null,
+    note: "Approved before pre-state snapshots existed; the attendance engine recomputes this day (week-off and holiday are resolved correctly)." };
 }
 
 /** Apply a set of plans inside the caller's open transaction. */
@@ -320,7 +210,7 @@ export async function applyRestore(
   plans: DateRestorePlan[],
   snapshots: Map<string, SnapshotEntry>,
   actorUserId: string,
-  reasonText: string,
+  reasonText: string
 ): Promise<void> {
   for (const plan of plans) {
     if (plan.mode === "skip_locked" || plan.mode === "skip_owned") continue;
@@ -338,7 +228,7 @@ export async function applyRestore(
       const [res] = await conn.execute(
         `DELETE FROM attendance_daily_record
           WHERE employee_id = ? AND record_date = ?`,
-        [employeeId, plan.date],
+        [employeeId, plan.date]
       );
       plan.appliedRows = Number((res as any)?.affectedRows ?? 0);
       continue;
@@ -353,7 +243,7 @@ export async function applyRestore(
         `UPDATE attendance_daily_record
             SET ${setSql}
           WHERE employee_id = ? AND record_date = ?`,
-        [...cols.map((c) => (snap as any)[c] ?? null), employeeId, plan.date],
+        [...cols.map((c) => (snap as any)[c] ?? null), employeeId, plan.date]
       );
       plan.appliedRows = Number((res as any)?.affectedRows ?? 0);
       continue;
@@ -372,14 +262,7 @@ export async function applyRestore(
                 is_locked = 0,
                 status_change_reason = ?, status_changed_by = ?, status_changed_at = NOW()
           WHERE employee_id = ? AND record_date = ?`,
-        [
-          plan.restoredStatus,
-          plan.restoredLwp ?? 0,
-          reasonText,
-          actorUserId,
-          employeeId,
-          plan.date,
-        ],
+        [plan.restoredStatus, plan.restoredLwp ?? 0, reasonText, actorUserId, employeeId, plan.date]
       );
       plan.appliedRows = Number((res as any)?.affectedRows ?? 0);
       continue;
@@ -394,7 +277,7 @@ export async function applyRestore(
               is_locked = 0,
               status_change_reason = ?, status_changed_by = ?, status_changed_at = NOW()
         WHERE employee_id = ? AND record_date = ?`,
-      [reasonText, actorUserId, employeeId, plan.date],
+      [reasonText, actorUserId, employeeId, plan.date]
     );
     plan.appliedRows = Number((res as any)?.affectedRows ?? 0);
   }
@@ -403,36 +286,23 @@ export async function applyRestore(
 /** Re-run the attendance engine, after commit, for the days that need rebuilding. */
 export async function rederiveDates(
   employeeId: string,
-  plans: DateRestorePlan[],
+  plans: DateRestorePlan[]
 ): Promise<string[]> {
   const warnings: string[] = [];
-  const dates = plans
-    .filter((p) => p.mode === "rederive" || p.mode === "partial")
-    .map((p) => p.date);
+  const dates = plans.filter((p) => p.mode === "rederive" || p.mode === "partial").map((p) => p.date);
   if (dates.length === 0) return warnings;
   try {
-    const { attendanceEngineService } =
-      await import("../modules/wfm/attendance-engine.service.js");
+    const { attendanceEngineService } = await import("../modules/wfm/attendance-engine.service.js");
     for (const date of dates) {
       try {
-        const result = await attendanceEngineService.processEmployee(
-          employeeId,
-          date,
-        );
-        await attendanceEngineService.upsertDailyRecord(
-          result,
-          "discard_service",
-        );
+        const result = await attendanceEngineService.processEmployee(employeeId, date);
+        await attendanceEngineService.upsertDailyRecord(result, "discard_service");
       } catch (err: any) {
-        warnings.push(
-          `Attendance could not be recomputed for ${date}: ${err?.message ?? String(err)}`,
-        );
+        warnings.push(`Attendance could not be recomputed for ${date}: ${err?.message ?? String(err)}`);
       }
     }
   } catch (err: any) {
-    warnings.push(
-      `Attendance engine unavailable: ${err?.message ?? String(err)}`,
-    );
+    warnings.push(`Attendance engine unavailable: ${err?.message ?? String(err)}`);
   }
   return warnings;
 }

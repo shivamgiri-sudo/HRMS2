@@ -13,9 +13,7 @@ function read(fromRepoRoot: string) {
 
 describe("fallback revenue rows are no longer indistinguishable from configured ones", () => {
   it("CSV export carries a Revenue Data Status column matching each row's field", () => {
-    const overlay = read(
-      "backend/src/modules/process-pnl/bpo-pnl-allocation-overlay.service.ts",
-    );
+    const overlay = read("backend/src/modules/process-pnl/bpo-pnl-allocation-overlay.service.ts");
     expect(overlay).toContain('"Revenue Data Status"');
     expect(overlay).toContain("row.revenueDataStatus");
     // Column count in the header row must match the number of value expressions in each data row —
@@ -23,9 +21,7 @@ describe("fallback revenue rows are no longer indistinguishable from configured 
     const headerMatch = overlay.match(/const headers = \[([\s\S]*?)\];/);
     expect(headerMatch).not.toBeNull();
     const headerCount = (headerMatch![1].match(/"/g) ?? []).length / 2;
-    const rowMatch = overlay.match(
-      /\.\.\.summary\.rows\.map\(\(row\) => \[([\s\S]*?)\]\.map\(escape\)/,
-    );
+    const rowMatch = overlay.match(/\.\.\.summary\.rows\.map\(\(row\) => \[([\s\S]*?)\]\.map\(escape\)/);
     expect(rowMatch).not.toBeNull();
     const valueCount = (rowMatch![1].match(/row\.\w+/g) ?? []).length;
     expect(headerCount).toBe(valueCount);
@@ -47,14 +43,8 @@ describe("classification-rule / allocation-policy effective-dating — audit cor
     // rate rules. No code change was needed here — this test locks in that finding so it
     // doesn't get silently re-broken.
     const service = read("backend/src/modules/process-pnl/bpo-pnl.service.ts");
-    const allocFn = service.slice(
-      service.indexOf("async function getAllocationPolicies"),
-      service.indexOf("async function getAllocationPolicies") + 600,
-    );
-    const classFn = service.slice(
-      service.indexOf("async function getClassificationRules"),
-      service.indexOf("async function getClassificationRules") + 600,
-    );
+    const allocFn = service.slice(service.indexOf("async function getAllocationPolicies"), service.indexOf("async function getAllocationPolicies") + 600);
+    const classFn = service.slice(service.indexOf("async function getClassificationRules"), service.indexOf("async function getClassificationRules") + 600);
     for (const fn of [allocFn, classFn]) {
       expect(fn).toContain("effective_from <= ?");
       expect(fn).toContain("effective_to IS NULL OR effective_to >= ?");

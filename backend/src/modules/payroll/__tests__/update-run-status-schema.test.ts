@@ -32,10 +32,7 @@ describe("updateRunStatusSchema accepts only reachable target statuses", () => {
 
   it("still accepts the optional disbursedAt alongside a valid status", () => {
     expect(
-      updateRunStatusSchema.safeParse({
-        status: "disbursed",
-        disbursedAt: "2026-08-15",
-      }).success,
+      updateRunStatusSchema.safeParse({ status: "disbursed", disbursedAt: "2026-08-15" }).success,
     ).toBe(true);
   });
 });
@@ -43,20 +40,10 @@ describe("updateRunStatusSchema accepts only reachable target statuses", () => {
 describe("the schema and the lifecycle agree on what is reachable", () => {
   it("every accepted status is the target of at least one real transition", () => {
     const everyStatus: RunStatus[] = [
-      "draft",
-      "calculating",
-      "calculated",
-      "under_review",
-      "processing",
-      "finalized",
-      "approved",
-      "locked",
-      "disbursed",
-      "cancelled",
+      "draft", "calculating", "calculated", "under_review",
+      "processing", "finalized", "approved", "locked", "disbursed", "cancelled",
     ];
-    const reachable = new Set(
-      everyStatus.flatMap((s) => getAllowedTransitions(s)),
-    );
+    const reachable = new Set(everyStatus.flatMap((s) => getAllowedTransitions(s)));
 
     for (const status of ACCEPTED) {
       expect(reachable.has(status as RunStatus)).toBe(true);
@@ -65,20 +52,10 @@ describe("the schema and the lifecycle agree on what is reachable", () => {
 
   it("no accepted status is one the lifecycle cannot reach", () => {
     const everyStatus: RunStatus[] = [
-      "draft",
-      "calculating",
-      "calculated",
-      "under_review",
-      "processing",
-      "finalized",
-      "approved",
-      "locked",
-      "disbursed",
-      "cancelled",
+      "draft", "calculating", "calculated", "under_review",
+      "processing", "finalized", "approved", "locked", "disbursed", "cancelled",
     ];
-    const reachable = new Set(
-      everyStatus.flatMap((s) => getAllowedTransitions(s)),
-    );
+    const reachable = new Set(everyStatus.flatMap((s) => getAllowedTransitions(s)));
 
     // 'processing' is deliberately absent: only the calculator writes it, directly.
     expect(reachable.has("processing")).toBe(false);

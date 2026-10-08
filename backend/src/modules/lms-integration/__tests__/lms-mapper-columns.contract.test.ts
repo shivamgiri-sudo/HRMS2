@@ -22,24 +22,13 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const src = fs.readFileSync(
-  path.resolve(__dirname, "../lms-employee-mapper.ts"),
-  "utf8",
-);
+const src = fs.readFileSync(path.resolve(__dirname, "../lms-employee-mapper.ts"), "utf8");
 const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 /** Columns that genuinely exist on lms_employee_mapping, verified against live. */
 const REAL_COLUMNS = [
-  "id",
-  "employee_id",
-  "lms_learner_id",
-  "email",
-  "mapped_at",
-  "is_active",
-  "mapping_source",
-  "mapping_confidence",
-  "hrms_employee_code",
-  "mapped_by",
+  "id", "employee_id", "lms_learner_id", "email", "mapped_at",
+  "is_active", "mapping_source", "mapping_confidence", "hrms_employee_code", "mapped_by",
 ];
 
 describe("lms_employee_mapping cache read", () => {
@@ -66,10 +55,7 @@ describe("lms_employee_mapping cache read", () => {
 
   it("does not reference the non-existent columns anywhere in the read path", () => {
     for (const ghost of ["hrms_employee_id", "lms_employee_id"]) {
-      expect(
-        body,
-        `${ghost} does not exist on lms_employee_mapping`,
-      ).not.toContain(ghost);
+      expect(body, `${ghost} does not exist on lms_employee_mapping`).not.toContain(ghost);
     }
   });
 });

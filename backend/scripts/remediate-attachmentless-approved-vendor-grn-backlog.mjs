@@ -39,28 +39,25 @@
  *   node backend/scripts/remediate-attachmentless-approved-vendor-grn-backlog.mjs            # dry-run
  *   node backend/scripts/remediate-attachmentless-approved-vendor-grn-backlog.mjs --apply     # write
  */
-import "dotenv/config";
-import { randomUUID } from "crypto";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-import mysql from "mysql2/promise";
+import 'dotenv/config';
+import { randomUUID } from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import mysql from 'mysql2/promise';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const APPLY = process.argv.includes("--apply");
+const APPLY = process.argv.includes('--apply');
 const REMEDIATION_REASON =
   "Backlog remediation 2026-09-11: backfill-vendor-grn-approved-status.cjs set status directly " +
   "and never called createFromGrn(); no attachment was ever collected for these pre-2026-09-11 " +
   "GRNs because the requirement did not exist yet at their approval time. See " +
   "remediate-attachmentless-approved-vendor-grn-backlog.mjs.";
-const OUT_FILE = path.join(
-  __dirname,
-  `remediate-grn-backlog-${Date.now()}.json`,
-);
+const OUT_FILE = path.join(__dirname, `remediate-grn-backlog-${Date.now()}.json`);
 // finance_action_audit_log.actor_user_id is NOT NULL — this remediation was requested and
 // authorized directly by Shivam Giri (shivam.giri@teammas.in), so the audit trail attributes
 // it to the actual accountable person rather than a null/system placeholder.
-const ACTOR_USER_ID = "a4a4902e-6222-11f1-adb1-00155d0ab410";
+const ACTOR_USER_ID = 'a4a4902e-6222-11f1-adb1-00155d0ab410';
 
 function roundMoney(n) {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -90,7 +87,7 @@ async function main() {
 
   console.log(`Found ${candidates.length} candidate GRN(s).`);
   if (candidates.length === 0) {
-    console.log("Nothing to do.");
+    console.log('Nothing to do.');
     await conn.end();
     return;
   }
@@ -107,12 +104,10 @@ async function main() {
 
   let totalAmount = 0;
   for (const grn of candidates) {
-    const dueAmount = roundMoney(
-      Number(grn.amount_with_tax ?? grn.amount ?? 0),
-    );
+    const dueAmount = roundMoney(Number(grn.amount_with_tax ?? grn.amount ?? 0));
     totalAmount += dueAmount;
     console.log(
-      `${APPLY ? "REMEDIATING" : "[dry-run]"} ${grn.grn_number ?? grn.id} — ${grn.vendor_name} — Rs${dueAmount.toFixed(2)}`,
+      `${APPLY ? 'REMEDIATING' : '[dry-run]'} ${grn.grn_number ?? grn.id} — ${grn.vendor_name} — Rs${dueAmount.toFixed(2)}`,
     );
     if (!APPLY) continue;
 
@@ -139,7 +134,7 @@ async function main() {
           grn.branch_id,
           grn.process_id ?? null,
           grn.cost_centre_id ?? null,
-          grn.cost_class ?? "indirect",
+          grn.cost_class ?? 'indirect',
           grn.vendor_id,
           grn.vendor_name,
           grn.head,
@@ -186,10 +181,8 @@ async function main() {
     }
   }
 
-  console.log(
-    `\nTotal ${APPLY ? "remediated" : "would remediate"}: Rs${totalAmount.toFixed(2)}`,
-  );
-  if (!APPLY) console.log("Dry run only — re-run with --apply to write.");
+  console.log(`\nTotal ${APPLY ? 'remediated' : 'would remediate'}: Rs${totalAmount.toFixed(2)}`);
+  if (!APPLY) console.log('Dry run only — re-run with --apply to write.');
   await conn.end();
 }
 

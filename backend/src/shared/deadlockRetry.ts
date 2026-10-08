@@ -50,19 +50,13 @@ export interface DeadlockRetryOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-const defaultSleep = (ms: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms));
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export async function withDeadlockRetry<T>(
   operation: () => Promise<T>,
   options: DeadlockRetryOptions = {},
 ): Promise<T> {
-  const {
-    attempts = 5,
-    delayMs = 100,
-    onRetry,
-    sleep = defaultSleep,
-  } = options;
+  const { attempts = 5, delayMs = 100, onRetry, sleep = defaultSleep } = options;
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {

@@ -13,7 +13,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-let vendorPaymentService: (typeof import("../vendor-payment.service.js"))["vendorPaymentService"];
+let vendorPaymentService: typeof import("../vendor-payment.service.js")["vendorPaymentService"];
 beforeAll(async () => {
   ({ vendorPaymentService } = await import("../vendor-payment.service.js"));
 }, 120_000);
@@ -24,9 +24,7 @@ beforeEach(() => {
 });
 
 function callWith(fragment: string) {
-  const hit = execute.mock.calls.find(([sql]) =>
-    String(sql).includes(fragment),
-  );
+  const hit = execute.mock.calls.find(([sql]) => String(sql).includes(fragment));
   if (!hit) {
     throw new Error(
       `no query containing ${fragment}\n` +
@@ -48,9 +46,7 @@ describe("listPayments — branch scope", () => {
 
   it("emits no branch predicate for a global caller", async () => {
     await vendorPaymentService.listPayments({ branchScope: { mode: "all" } });
-    expect(callWith("vendor_payment_tracking").sql).not.toContain(
-      "vpt.branch_id IN (",
-    );
+    expect(callWith("vendor_payment_tracking").sql).not.toContain("vpt.branch_id IN (");
   });
 
   it("still honours a single branchId from an unmigrated caller", async () => {

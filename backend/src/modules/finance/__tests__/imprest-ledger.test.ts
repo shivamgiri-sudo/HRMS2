@@ -21,18 +21,15 @@ import { readFileSync, readdirSync } from "node:fs";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-let svc: (typeof import("../imprest-ledger.service.js"))["imprestLedgerService"];
+let svc: typeof import("../imprest-ledger.service.js")["imprestLedgerService"];
 beforeAll(async () => {
-  ({ imprestLedgerService: svc } =
-    await import("../imprest-ledger.service.js"));
+  ({ imprestLedgerService: svc } = await import("../imprest-ledger.service.js"));
 }, 120_000);
 
 beforeEach(() => execute.mockReset());
 
 /** A stub PoolConnection recording every statement, with a scripted balance. */
-function makeConnection(
-  opts: { credits?: number; debits?: number; managerExists?: boolean } = {},
-) {
+function makeConnection(opts: { credits?: number; debits?: number; managerExists?: boolean } = {}) {
   const statements: string[] = [];
   return {
     statements,
@@ -74,15 +71,8 @@ describe("post", () => {
     // A ledger entry that survives a rolled-back approval claims money moved when it did not.
     await expect(
       svc.post(
-        {
-          imprestManagerId: "m1",
-          branchId: "b1",
-          entryType: "allocation",
-          direction: "credit",
-          amount: 100,
-          transactionDate: "2026-08-05",
-          actorUserId: "u1",
-        },
+        { imprestManagerId: "m1", branchId: "b1", entryType: "allocation", direction: "credit",
+          amount: 100, transactionDate: "2026-08-05", actorUserId: "u1" },
         undefined as never,
       ),
     ).rejects.toThrow(/inside the caller's transaction/i);
@@ -93,26 +83,13 @@ describe("post", () => {
     // figure, and the stored running balance drifts from the derived one.
     const conn = makeConnection({ credits: 1000, debits: 0 });
     await svc.post(
-      {
-        imprestManagerId: "m1",
-        branchId: "b1",
-        entryType: "allocation",
-        direction: "credit",
-        amount: 500,
-        transactionDate: "2026-08-05",
-        actorUserId: "u1",
-      },
+      { imprestManagerId: "m1", branchId: "b1", entryType: "allocation", direction: "credit",
+        amount: 500, transactionDate: "2026-08-05", actorUserId: "u1" },
       conn as never,
     );
-    const lockAt = conn.statements.findIndex((s) =>
-      /FROM imprest_manager .*FOR UPDATE/.test(s),
-    );
-    const readAt = conn.statements.findIndex((s) =>
-      /SUM\(CASE WHEN direction/.test(s),
-    );
-    const writeAt = conn.statements.findIndex((s) =>
-      /INSERT INTO imprest_transaction_ledger/.test(s),
-    );
+    const lockAt = conn.statements.findIndex((s) => /FROM imprest_manager .*FOR UPDATE/.test(s));
+    const readAt = conn.statements.findIndex((s) => /SUM\(CASE WHEN direction/.test(s));
+    const writeAt = conn.statements.findIndex((s) => /INSERT INTO imprest_transaction_ledger/.test(s));
     expect(lockAt).toBeGreaterThanOrEqual(0);
     expect(readAt).toBeGreaterThan(lockAt);
     expect(writeAt).toBeGreaterThan(readAt);
@@ -121,20 +98,11 @@ describe("post", () => {
   it("stores balance_after as the running total, not the entry amount", async () => {
     const conn = makeConnection({ credits: 1000, debits: 0 });
     await svc.post(
-      {
-        imprestManagerId: "m1",
-        branchId: "b1",
-        entryType: "voucher",
-        direction: "debit",
-        amount: 250,
-        transactionDate: "2026-08-05",
-        actorUserId: "u1",
-      },
+      { imprestManagerId: "m1", branchId: "b1", entryType: "voucher", direction: "debit",
+        amount: 250, transactionDate: "2026-08-05", actorUserId: "u1" },
       conn as never,
     );
-    const insert = conn.execute.mock.calls.find(([s]) =>
-      /INSERT INTO imprest_transaction_ledger/.test(String(s)),
-    );
+    const insert = conn.execute.mock.calls.find(([s]) => /INSERT INTO imprest_transaction_ledger/.test(String(s)));
     expect(insert?.[1]).toContain(750);
   });
 
@@ -143,15 +111,8 @@ describe("post", () => {
     for (const amount of [0, -5]) {
       await expect(
         svc.post(
-          {
-            imprestManagerId: "m1",
-            branchId: "b1",
-            entryType: "allocation",
-            direction: "credit",
-            amount,
-            transactionDate: "2026-08-05",
-            actorUserId: "u1",
-          },
+          { imprestManagerId: "m1", branchId: "b1", entryType: "allocation", direction: "credit",
+            amount, transactionDate: "2026-08-05", actorUserId: "u1" },
           conn as never,
         ),
       ).rejects.toThrow(/positive number/i);
@@ -162,15 +123,8 @@ describe("post", () => {
     const conn = makeConnection({ managerExists: false });
     await expect(
       svc.post(
-        {
-          imprestManagerId: "nope",
-          branchId: "b1",
-          entryType: "allocation",
-          direction: "credit",
-          amount: 100,
-          transactionDate: "2026-08-05",
-          actorUserId: "u1",
-        },
+        { imprestManagerId: "nope", branchId: "b1", entryType: "allocation", direction: "credit",
+          amount: 100, transactionDate: "2026-08-05", actorUserId: "u1" },
         conn as never,
       ),
     ).rejects.toThrow(/manager not found/i);
@@ -179,20 +133,11 @@ describe("post", () => {
   it("derives period_code from the transaction date", async () => {
     const conn = makeConnection({ credits: 0, debits: 0 });
     await svc.post(
-      {
-        imprestManagerId: "m1",
-        branchId: "b1",
-        entryType: "allocation",
-        direction: "credit",
-        amount: 100,
-        transactionDate: "2026-08-05",
-        actorUserId: "u1",
-      },
+      { imprestManagerId: "m1", branchId: "b1", entryType: "allocation", direction: "credit",
+        amount: 100, transactionDate: "2026-08-05", actorUserId: "u1" },
       conn as never,
     );
-    const insert = conn.execute.mock.calls.find(([s]) =>
-      /INSERT INTO imprest_transaction_ledger/.test(String(s)),
-    );
+    const insert = conn.execute.mock.calls.find(([s]) => /INSERT INTO imprest_transaction_ledger/.test(String(s)));
     expect(insert?.[1]).toContain("2026-08");
   });
 });
@@ -200,24 +145,18 @@ describe("post", () => {
 describe("assertSufficientBalance", () => {
   it("refuses a voucher larger than the float", async () => {
     const conn = makeConnection({ credits: 1000, debits: 200 });
-    await expect(
-      svc.assertSufficientBalance("m1", 900, conn as never),
-    ).rejects.toThrow(/more than the imprest balance/i);
+    await expect(svc.assertSufficientBalance("m1", 900, conn as never)).rejects.toThrow(/more than the imprest balance/i);
   });
 
   it("allows a voucher exactly equal to the balance", async () => {
     // Spending a float to precisely zero is normal, not an overrun.
     const conn = makeConnection({ credits: 1000, debits: 200 });
-    await expect(
-      svc.assertSufficientBalance("m1", 800, conn as never),
-    ).resolves.toBeUndefined();
+    await expect(svc.assertSufficientBalance("m1", 800, conn as never)).resolves.toBeUndefined();
   });
 
   it("compares in paise so a 0.005 rounding artefact does not block a valid voucher", async () => {
     const conn = makeConnection({ credits: 100.1, debits: 0 });
-    await expect(
-      svc.assertSufficientBalance("m1", 100.1, conn as never),
-    ).resolves.toBeUndefined();
+    await expect(svc.assertSufficientBalance("m1", 100.1, conn as never)).resolves.toBeUndefined();
   });
 });
 
@@ -225,18 +164,13 @@ describe("append-only is enforced by review, so assert it", () => {
   it("no source file updates or deletes the ledger", () => {
     // The single most important invariant here, and the database cannot enforce it: MySQL
     // TRIGGERs are unavailable (see 418's header). A correction must be a contra entry.
-    const roots = [
-      new URL("../", import.meta.url),
-      new URL("../../process-pnl/", import.meta.url),
-    ];
+    const roots = [new URL("../", import.meta.url), new URL("../../process-pnl/", import.meta.url)];
     const offenders: string[] = [];
     for (const root of roots) {
       for (const file of readdirSync(root).filter((f) => f.endsWith(".ts"))) {
         const src = readFileSync(new URL(file, root), "utf8");
-        if (/UPDATE\s+imprest_transaction_ledger/i.test(src))
-          offenders.push(`UPDATE in ${file}`);
-        if (/DELETE\s+FROM\s+imprest_transaction_ledger/i.test(src))
-          offenders.push(`DELETE in ${file}`);
+        if (/UPDATE\s+imprest_transaction_ledger/i.test(src)) offenders.push(`UPDATE in ${file}`);
+        if (/DELETE\s+FROM\s+imprest_transaction_ledger/i.test(src)) offenders.push(`DELETE in ${file}`);
       }
     }
     expect(offenders).toEqual([]);

@@ -33,10 +33,7 @@ const agent: EmployeeOrgContext = {
 
 describe("classifyScope", () => {
   it("ranks an employee-scoped row above everything else", () => {
-    expect(classifyScope({ employee_id: "emp-1" })).toEqual({
-      tier: 0,
-      label: "employee",
-    });
+    expect(classifyScope({ employee_id: "emp-1" })).toEqual({ tier: 0, label: "employee" });
   });
 
   it("treats an employee row as tier 0 even when it also names org units", () => {
@@ -44,44 +41,24 @@ describe("classifyScope", () => {
     // it is the same single human, plus a redundant condition that would make the row stop applying
     // the day they transfer. Ranking it differently would make a transfer silently change someone's
     // target.
-    expect(
-      classifyScope({ employee_id: "emp-1", process_id: PROCESS }),
-    ).toEqual({
+    expect(classifyScope({ employee_id: "emp-1", process_id: PROCESS })).toEqual({
       tier: 0,
       label: "employee",
     });
   });
 
   it("ranks org-unit combinations from most to least specific", () => {
-    expect(
-      classifyScope({
-        branch_id: BRANCH,
-        process_id: PROCESS,
-        designation_id: DESIGNATION,
-      }),
-    ).toEqual({ tier: 1, label: "branch+process+designation" });
-    expect(
-      classifyScope({ process_id: PROCESS, designation_id: DESIGNATION }),
-    ).toEqual({ tier: 2, label: "process+designation" });
-    expect(classifyScope({ branch_id: BRANCH, process_id: PROCESS })).toEqual({
-      tier: 3,
-      label: "branch+process",
-    });
-    expect(classifyScope({ process_id: PROCESS })).toEqual({
-      tier: 4,
-      label: "process",
-    });
-    expect(
-      classifyScope({ branch_id: BRANCH, designation_id: DESIGNATION }),
-    ).toEqual({ tier: 5, label: "branch+designation" });
-    expect(classifyScope({ designation_id: DESIGNATION })).toEqual({
-      tier: 6,
-      label: "designation",
-    });
-    expect(classifyScope({ branch_id: BRANCH })).toEqual({
-      tier: 7,
-      label: "branch",
-    });
+    expect(classifyScope({ branch_id: BRANCH, process_id: PROCESS, designation_id: DESIGNATION }))
+      .toEqual({ tier: 1, label: "branch+process+designation" });
+    expect(classifyScope({ process_id: PROCESS, designation_id: DESIGNATION }))
+      .toEqual({ tier: 2, label: "process+designation" });
+    expect(classifyScope({ branch_id: BRANCH, process_id: PROCESS }))
+      .toEqual({ tier: 3, label: "branch+process" });
+    expect(classifyScope({ process_id: PROCESS })).toEqual({ tier: 4, label: "process" });
+    expect(classifyScope({ branch_id: BRANCH, designation_id: DESIGNATION }))
+      .toEqual({ tier: 5, label: "branch+designation" });
+    expect(classifyScope({ designation_id: DESIGNATION })).toEqual({ tier: 6, label: "designation" });
+    expect(classifyScope({ branch_id: BRANCH })).toEqual({ tier: 7, label: "branch" });
   });
 
   it("ranks process above designation", () => {
@@ -95,55 +72,29 @@ describe("classifyScope", () => {
 
   it("returns null when nothing is scoped", () => {
     expect(classifyScope({})).toBeNull();
-    expect(
-      classifyScope({
-        branch_id: null,
-        process_id: null,
-        designation_id: null,
-        employee_id: null,
-      }),
-    ).toBeNull();
+    expect(classifyScope({ branch_id: null, process_id: null, designation_id: null, employee_id: null })).toBeNull();
   });
 });
 
 describe("scopeMatchesEmployee", () => {
   it("matches when every named dimension agrees", () => {
     expect(scopeMatchesEmployee({ process_id: PROCESS }, agent)).toBe(true);
+    expect(scopeMatchesEmployee({ branch_id: BRANCH, process_id: PROCESS }, agent)).toBe(true);
     expect(
-      scopeMatchesEmployee({ branch_id: BRANCH, process_id: PROCESS }, agent),
-    ).toBe(true);
-    expect(
-      scopeMatchesEmployee(
-        { branch_id: BRANCH, process_id: PROCESS, designation_id: DESIGNATION },
-        agent,
-      ),
+      scopeMatchesEmployee({ branch_id: BRANCH, process_id: PROCESS, designation_id: DESIGNATION }, agent),
     ).toBe(true);
   });
 
   it("treats an absent dimension as 'any', not as 'none'", () => {
     // The opposite reading would make a process-wide target apply to nobody, since no definition
     // names every dimension.
-    expect(
-      scopeMatchesEmployee(
-        { process_id: PROCESS },
-        { ...agent, branch_id: OTHER_BRANCH },
-      ),
-    ).toBe(true);
+    expect(scopeMatchesEmployee({ process_id: PROCESS }, { ...agent, branch_id: OTHER_BRANCH })).toBe(true);
   });
 
   it("rejects when any named dimension disagrees", () => {
-    expect(scopeMatchesEmployee({ process_id: OTHER_PROCESS }, agent)).toBe(
-      false,
-    );
-    expect(
-      scopeMatchesEmployee(
-        { branch_id: OTHER_BRANCH, process_id: PROCESS },
-        agent,
-      ),
-    ).toBe(false);
-    expect(
-      scopeMatchesEmployee({ designation_id: OTHER_DESIGNATION }, agent),
-    ).toBe(false);
+    expect(scopeMatchesEmployee({ process_id: OTHER_PROCESS }, agent)).toBe(false);
+    expect(scopeMatchesEmployee({ branch_id: OTHER_BRANCH, process_id: PROCESS }, agent)).toBe(false);
+    expect(scopeMatchesEmployee({ designation_id: OTHER_DESIGNATION }, agent)).toBe(false);
   });
 
   it("matches an employee-scoped row only for that employee, ignoring org units", () => {
@@ -151,10 +102,7 @@ describe("scopeMatchesEmployee", () => {
     expect(scopeMatchesEmployee({ employee_id: "emp-2" }, agent)).toBe(false);
     // Still theirs after a transfer — which is the point of scoping to a person.
     expect(
-      scopeMatchesEmployee(
-        { employee_id: "emp-1" },
-        { ...agent, process_id: OTHER_PROCESS, branch_id: OTHER_BRANCH },
-      ),
+      scopeMatchesEmployee({ employee_id: "emp-1" }, { ...agent, process_id: OTHER_PROCESS, branch_id: OTHER_BRANCH }),
     ).toBe(true);
   });
 
@@ -163,15 +111,8 @@ describe("scopeMatchesEmployee", () => {
   });
 
   it("does not match an employee whose org unit is null against a scoped definition", () => {
-    const unassigned: EmployeeOrgContext = {
-      id: "emp-9",
-      branch_id: null,
-      process_id: null,
-      designation_id: null,
-    };
-    expect(scopeMatchesEmployee({ process_id: PROCESS }, unassigned)).toBe(
-      false,
-    );
+    const unassigned: EmployeeOrgContext = { id: "emp-9", branch_id: null, process_id: null, designation_id: null };
+    expect(scopeMatchesEmployee({ process_id: PROCESS }, unassigned)).toBe(false);
   });
 });
 
@@ -182,12 +123,7 @@ describe("pickWinningDefinitions", () => {
     const winners = pickWinningDefinitions(
       [
         { metric_id: metric, process_id: PROCESS, target: "process" },
-        {
-          metric_id: metric,
-          process_id: PROCESS,
-          designation_id: DESIGNATION,
-          target: "process+designation",
-        },
+        { metric_id: metric, process_id: PROCESS, designation_id: DESIGNATION, target: "process+designation" },
         { metric_id: metric, branch_id: BRANCH, target: "branch" },
       ],
       agent,
@@ -214,11 +150,7 @@ describe("pickWinningDefinitions", () => {
   it("ignores definitions that do not match the employee at all", () => {
     const winners = pickWinningDefinitions(
       [
-        {
-          metric_id: metric,
-          process_id: OTHER_PROCESS,
-          target: "other process",
-        },
+        { metric_id: metric, process_id: OTHER_PROCESS, target: "other process" },
         { metric_id: metric, employee_id: "emp-2", target: "other person" },
       ],
       agent,
@@ -230,19 +162,12 @@ describe("pickWinningDefinitions", () => {
     const winners = pickWinningDefinitions(
       [
         { metric_id: "metric-aht", process_id: PROCESS, target: "aht" },
-        {
-          metric_id: "metric-quality",
-          designation_id: DESIGNATION,
-          target: "quality",
-        },
+        { metric_id: "metric-quality", designation_id: DESIGNATION, target: "quality" },
       ],
       agent,
     );
     expect(winners).toHaveLength(2);
-    expect(winners.map((w) => (w.definition as any).target).sort()).toEqual([
-      "aht",
-      "quality",
-    ]);
+    expect(winners.map((w) => (w.definition as any).target).sort()).toEqual(["aht", "quality"]);
   });
 
   it("breaks a tie on the same tier by the later start date", () => {
@@ -250,18 +175,8 @@ describe("pickWinningDefinitions", () => {
     // is the current one.
     const winners = pickWinningDefinitions(
       [
-        {
-          metric_id: metric,
-          process_id: PROCESS,
-          effective_from: "2026-01-01",
-          target: "old",
-        },
-        {
-          metric_id: metric,
-          process_id: PROCESS,
-          effective_from: "2026-07-01",
-          target: "new",
-        },
+        { metric_id: metric, process_id: PROCESS, effective_from: "2026-01-01", target: "old" },
+        { metric_id: metric, process_id: PROCESS, effective_from: "2026-07-01", target: "new" },
       ],
       agent,
     );
@@ -272,12 +187,7 @@ describe("pickWinningDefinitions", () => {
     const rows = [
       { metric_id: metric, branch_id: BRANCH, target: "branch" },
       { metric_id: metric, employee_id: "emp-1", target: "employee" },
-      {
-        metric_id: metric,
-        process_id: PROCESS,
-        designation_id: DESIGNATION,
-        target: "process+designation",
-      },
+      { metric_id: metric, process_id: PROCESS, designation_id: DESIGNATION, target: "process+designation" },
       { metric_id: metric, process_id: PROCESS, target: "process" },
     ];
     const forward = pickWinningDefinitions(rows, agent);
@@ -303,33 +213,22 @@ describe("validateDefinition", () => {
   });
 
   it("requires a KPI", () => {
-    expect(validateDefinition({ metric_id: "", process_id: PROCESS }).ok).toBe(
-      false,
-    );
+    expect(validateDefinition({ metric_id: "", process_id: PROCESS }).ok).toBe(false);
   });
 
   it("refuses a definition with no scope", () => {
     // An unscoped row applies to every employee in the company, outranking nothing and outranked
     // by nothing.
-    const result = validateDefinition({
-      metric_id: metricId,
-      target_value: 240,
-    });
+    const result = validateDefinition({ metric_id: metricId, target_value: 240 });
     expect(result.ok).toBe(false);
-    expect(result.message).toContain(
-      "at least a branch, process, designation or employee",
-    );
+    expect(result.message).toContain("at least a branch, process, designation or employee");
   });
 
   it("refuses a formula with no data source", () => {
     // It would validate, save, then produce null for every employee for ever — indistinguishable
     // from a source outage.
     const result = validateDefinition(
-      {
-        metric_id: metricId,
-        process_id: PROCESS,
-        formula_expression: "talk_seconds / calls",
-      },
+      { metric_id: metricId, process_id: PROCESS, formula_expression: "talk_seconds / calls" },
       { availableFields: ["talk_seconds", "calls"], metric: lowerBetter },
     );
     expect(result.ok).toBe(false);
@@ -359,17 +258,10 @@ describe("validateDefinition", () => {
         formula_expression: "SAFE_DIV(talk_seconds + dispo_seconds, calls)",
         target_value: 240,
       },
-      {
-        availableFields: ["talk_seconds", "dispo_seconds", "calls"],
-        metric: lowerBetter,
-      },
+      { availableFields: ["talk_seconds", "dispo_seconds", "calls"], metric: lowerBetter },
     );
     expect(result.ok).toBe(true);
-    expect(result.variables).toEqual([
-      "talk_seconds",
-      "dispo_seconds",
-      "calls",
-    ]);
+    expect(result.variables).toEqual(["talk_seconds", "dispo_seconds", "calls"]);
   });
 
   it("rejects a percentage target above 100", () => {
@@ -383,10 +275,7 @@ describe("validateDefinition", () => {
 
   it("rejects a negative target", () => {
     expect(
-      validateDefinition(
-        { metric_id: metricId, process_id: PROCESS, target_value: -5 },
-        { metric: lowerBetter },
-      ).ok,
+      validateDefinition({ metric_id: metricId, process_id: PROCESS, target_value: -5 }, { metric: lowerBetter }).ok,
     ).toBe(false);
   });
 
@@ -395,23 +284,13 @@ describe("validateDefinition", () => {
     // everyone performing well.
     expect(
       validateDefinition(
-        {
-          metric_id: metricId,
-          process_id: PROCESS,
-          target_value: 240,
-          min_threshold: 360,
-        },
+        { metric_id: metricId, process_id: PROCESS, target_value: 240, min_threshold: 360 },
         { metric: lowerBetter },
       ).ok,
     ).toBe(true);
 
     const wrongSide = validateDefinition(
-      {
-        metric_id: metricId,
-        process_id: PROCESS,
-        target_value: 240,
-        min_threshold: 180,
-      },
+      { metric_id: metricId, process_id: PROCESS, target_value: 240, min_threshold: 180 },
       { metric: lowerBetter },
     );
     expect(wrongSide.ok).toBe(false);
@@ -421,23 +300,13 @@ describe("validateDefinition", () => {
   it("requires the threshold below the target when higher is better", () => {
     expect(
       validateDefinition(
-        {
-          metric_id: metricId,
-          process_id: PROCESS,
-          target_value: 95,
-          min_threshold: 85,
-        },
+        { metric_id: metricId, process_id: PROCESS, target_value: 95, min_threshold: 85 },
         { metric: higherBetter },
       ).ok,
     ).toBe(true);
 
     const wrongSide = validateDefinition(
-      {
-        metric_id: metricId,
-        process_id: PROCESS,
-        target_value: 85,
-        min_threshold: 95,
-      },
+      { metric_id: metricId, process_id: PROCESS, target_value: 85, min_threshold: 95 },
       { metric: higherBetter },
     );
     expect(wrongSide.ok).toBe(false);
@@ -446,26 +315,16 @@ describe("validateDefinition", () => {
 
   it("rejects a weight outside 0-100", () => {
     expect(
-      validateDefinition(
-        { metric_id: metricId, process_id: PROCESS, weightage: 150 },
-        { metric: lowerBetter },
-      ).ok,
+      validateDefinition({ metric_id: metricId, process_id: PROCESS, weightage: 150 }, { metric: lowerBetter }).ok,
     ).toBe(false);
     expect(
-      validateDefinition(
-        { metric_id: metricId, process_id: PROCESS, weightage: -1 },
-        { metric: lowerBetter },
-      ).ok,
+      validateDefinition({ metric_id: metricId, process_id: PROCESS, weightage: -1 }, { metric: lowerBetter }).ok,
     ).toBe(false);
   });
 
   it("rejects an unknown roll-up method", () => {
     const result = validateDefinition(
-      {
-        metric_id: metricId,
-        process_id: PROCESS,
-        aggregation_method: "median",
-      },
+      { metric_id: metricId, process_id: PROCESS, aggregation_method: "median" },
       { metric: lowerBetter },
     );
     expect(result.ok).toBe(false);
@@ -474,22 +333,13 @@ describe("validateDefinition", () => {
 
   it("rejects a malformed start date", () => {
     expect(
-      validateDefinition({
-        metric_id: metricId,
-        process_id: PROCESS,
-        effective_from: "01/07/2026",
-      }).ok,
+      validateDefinition({ metric_id: metricId, process_id: PROCESS, effective_from: "01/07/2026" }).ok,
     ).toBe(false);
   });
 
   it("allows a definition with no target at all", () => {
     // A KPI can be tracked before anyone agrees what good looks like. Forcing a placeholder would
     // create a fake target that then scores people.
-    expect(
-      validateDefinition(
-        { metric_id: metricId, process_id: PROCESS },
-        { metric: lowerBetter },
-      ).ok,
-    ).toBe(true);
+    expect(validateDefinition({ metric_id: metricId, process_id: PROCESS }, { metric: lowerBetter }).ok).toBe(true);
   });
 });

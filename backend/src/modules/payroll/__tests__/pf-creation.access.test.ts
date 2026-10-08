@@ -20,13 +20,11 @@ const SELF_EMPLOYEE_ID = "11111111-1111-1111-1111-111111111111";
 const OTHER_EMPLOYEE_ID = "22222222-2222-2222-2222-222222222222";
 const AUTH_USER_ID = "33333333-3333-3333-3333-333333333333";
 
-const { hasAnyRole, getEmployeeForUser, getEmployeePfStatus } = vi.hoisted(
-  () => ({
-    hasAnyRole: vi.fn(),
-    getEmployeeForUser: vi.fn(),
-    getEmployeePfStatus: vi.fn(),
-  }),
-);
+const { hasAnyRole, getEmployeeForUser, getEmployeePfStatus } = vi.hoisted(() => ({
+  hasAnyRole: vi.fn(),
+  getEmployeeForUser: vi.fn(),
+  getEmployeePfStatus: vi.fn(),
+}));
 
 vi.mock("../payroll-branch-scope.js", async () => (await import("./helpers/orgWideScopeMock.js")).orgWideScopeMock);
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole }));
@@ -35,28 +33,15 @@ vi.mock("../pf-creation.service.js", () => ({
   pfCreationService: { getEmployeePfStatus },
 }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (req as express.Request & { authUser: { id: string } }).authUser = {
-      id: AUTH_USER_ID,
-    };
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: { id: string } }).authUser = { id: AUTH_USER_ID };
     next();
   },
 }));
 // requireRole is the "may you call this" gate; these tests are about "about
 // whom", so it is allowed through and the ownership rule is what gets asserted.
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole:
-    () =>
-    (
-      _req: express.Request,
-      _res: express.Response,
-      next: express.NextFunction,
-    ) =>
-      next(),
+  requireRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
 import { pfCreationRouter } from "../pf-creation.routes.js";
@@ -83,14 +68,9 @@ describe("GET /pf-creation/employee/:employeeId ownership", () => {
 
   it("denies an employee reading another employee's PF record", async () => {
     hasAnyRole.mockResolvedValue(false); // plain employee, no privileged role
-    getEmployeeForUser.mockResolvedValue({
-      id: SELF_EMPLOYEE_ID,
-      employee_code: "E001",
-    });
+    getEmployeeForUser.mockResolvedValue({ id: SELF_EMPLOYEE_ID, employee_code: "E001" });
 
-    const res = await request(buildApp()).get(
-      `/api/pf-creation/employee/${OTHER_EMPLOYEE_ID}`,
-    );
+    const res = await request(buildApp()).get(`/api/pf-creation/employee/${OTHER_EMPLOYEE_ID}`);
 
     expect(res.status).toBe(403);
     // The UAN must not be computed, let alone returned.
@@ -100,14 +80,9 @@ describe("GET /pf-creation/employee/:employeeId ownership", () => {
 
   it("allows an employee to read their own PF record", async () => {
     hasAnyRole.mockResolvedValue(false);
-    getEmployeeForUser.mockResolvedValue({
-      id: SELF_EMPLOYEE_ID,
-      employee_code: "E001",
-    });
+    getEmployeeForUser.mockResolvedValue({ id: SELF_EMPLOYEE_ID, employee_code: "E001" });
 
-    const res = await request(buildApp()).get(
-      `/api/pf-creation/employee/${SELF_EMPLOYEE_ID}`,
-    );
+    const res = await request(buildApp()).get(`/api/pf-creation/employee/${SELF_EMPLOYEE_ID}`);
 
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual(PF_RECORD);
@@ -117,9 +92,7 @@ describe("GET /pf-creation/employee/:employeeId ownership", () => {
     hasAnyRole.mockResolvedValue(false);
     getEmployeeForUser.mockResolvedValue(null);
 
-    const res = await request(buildApp()).get(
-      `/api/pf-creation/employee/${SELF_EMPLOYEE_ID}`,
-    );
+    const res = await request(buildApp()).get(`/api/pf-creation/employee/${SELF_EMPLOYEE_ID}`);
 
     expect(res.status).toBe(403);
     expect(getEmployeePfStatus).not.toHaveBeenCalled();
@@ -127,9 +100,7 @@ describe("GET /pf-creation/employee/:employeeId ownership", () => {
 
   it("leaves payroll and HR reading any employee, as before", async () => {
     hasAnyRole.mockResolvedValue(true); // payroll / hr / admin
-    const res = await request(buildApp()).get(
-      `/api/pf-creation/employee/${OTHER_EMPLOYEE_ID}`,
-    );
+    const res = await request(buildApp()).get(`/api/pf-creation/employee/${OTHER_EMPLOYEE_ID}`);
 
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual(PF_RECORD);

@@ -40,16 +40,7 @@ describe("configured financial years still resolve from the database", () => {
   beforeEach(() => execute.mockReset());
 
   it("returns the approved FY config row unchanged", async () => {
-    execute.mockResolvedValueOnce([
-      [
-        {
-          standard_deduction: 75000,
-          rebate_limit: 1200000,
-          rebate_max_amount: 60000,
-          cess_pct: 4,
-        },
-      ],
-    ]);
+    execute.mockResolvedValueOnce([[{ standard_deduction: 75000, rebate_limit: 1200000, rebate_max_amount: 60000, cess_pct: 4 }]]);
 
     const cfg = await taxEngineService.getConfig("2026-27", "new");
 
@@ -57,12 +48,10 @@ describe("configured financial years still resolve from the database", () => {
   });
 
   it("returns the approved slab rows unchanged", async () => {
-    execute.mockResolvedValueOnce([
-      [
-        { slab_from: 0, slab_to: 400000, rate_pct: 0 },
-        { slab_from: 400000, slab_to: 800000, rate_pct: 5 },
-      ],
-    ]);
+    execute.mockResolvedValueOnce([[
+      { slab_from: 0, slab_to: 400000, rate_pct: 0 },
+      { slab_from: 400000, slab_to: 800000, rate_pct: 5 },
+    ]]);
 
     const slabs = await taxEngineService.getSlabs("2026-27", "new");
 
@@ -77,9 +66,7 @@ describe("an unconfigured financial year refuses instead of guessing", () => {
     it(`getConfig throws for an unseeded FY on the ${regime} regime`, async () => {
       execute.mockResolvedValueOnce([[]]);
 
-      await expect(
-        taxEngineService.getConfig("2027-28", regime),
-      ).rejects.toThrow(
+      await expect(taxEngineService.getConfig("2027-28", regime)).rejects.toThrow(
         /No approved tax configuration for financial year 2027-28/,
       );
     });
@@ -87,9 +74,9 @@ describe("an unconfigured financial year refuses instead of guessing", () => {
     it(`getSlabs throws for an unseeded FY on the ${regime} regime`, async () => {
       execute.mockResolvedValueOnce([[]]);
 
-      await expect(
-        taxEngineService.getSlabs("2027-28", regime),
-      ).rejects.toThrow(/No approved tax slabs for financial year 2027-28/);
+      await expect(taxEngineService.getSlabs("2027-28", regime)).rejects.toThrow(
+        /No approved tax slabs for financial year 2027-28/,
+      );
     });
   }
 
@@ -105,28 +92,14 @@ describe("no tax rate survives as a code constant", () => {
   it("the slab boundaries that used to be hardcoded are gone from the source", () => {
     // The exact literals removed. Their reappearance means someone reinstated a
     // fallback table, which is the defect this exists to prevent.
-    for (const literal of [
-      "slab_to: 400000",
-      "slab_to: 250000",
-      "slab_to: 1000000",
-      "rate_pct: 30",
-    ]) {
-      expect(
-        SOURCE,
-        `hardcoded slab literal is back: ${literal}`,
-      ).not.toContain(literal);
+    for (const literal of ["slab_to: 400000", "slab_to: 250000", "slab_to: 1000000", "rate_pct: 30"]) {
+      expect(SOURCE, `hardcoded slab literal is back: ${literal}`).not.toContain(literal);
     }
   });
 
   it("the standard-deduction and rebate constants are gone too", () => {
-    for (const literal of [
-      "standard_deduction: 75000",
-      "standard_deduction: 50000",
-      "rebate_limit: 1200000",
-    ]) {
-      expect(SOURCE, `hardcoded FY constant is back: ${literal}`).not.toContain(
-        literal,
-      );
+    for (const literal of ["standard_deduction: 75000", "standard_deduction: 50000", "rebate_limit: 1200000"]) {
+      expect(SOURCE, `hardcoded FY constant is back: ${literal}`).not.toContain(literal);
     }
   });
 });

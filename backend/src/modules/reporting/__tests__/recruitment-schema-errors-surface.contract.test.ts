@@ -3,10 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = process.cwd();
-const src = readFileSync(
-  resolve(ROOT, "src/modules/reporting/executors/recruitment.executor.ts"),
-  "utf8",
-);
+const src = readFileSync(resolve(ROOT, "src/modules/reporting/executors/recruitment.executor.ts"), "utf8");
 
 /**
  * The five ATS reports returned a confident zero for a broken query.
@@ -44,15 +41,8 @@ describe("recruitment executor — schema errors must not become empty results",
   });
 
   it("rethrows every schema error code it recognises", () => {
-    for (const code of [
-      "ER_NO_SUCH_TABLE",
-      "ER_BAD_FIELD_ERROR",
-      "ER_PARSE_ERROR",
-    ]) {
-      expect(
-        helpers,
-        `${code} must be handled by rethrowing, not swallowed`,
-      ).toContain(code);
+    for (const code of ["ER_NO_SUCH_TABLE", "ER_BAD_FIELD_ERROR", "ER_PARSE_ERROR"]) {
+      expect(helpers, `${code} must be handled by rethrowing, not swallowed`).toContain(code);
     }
     expect(helpers).toMatch(/\bthrow\b/);
   });
@@ -67,14 +57,9 @@ describe("recruitment executor — schema errors must not become empty results",
   });
 
   it("both helpers route their failures through the rethrow", () => {
-    const query = src.slice(
-      src.indexOf("async function query("),
-      src.indexOf("async function count("),
-    );
+    const query = src.slice(src.indexOf("async function query("), src.indexOf("async function count("));
     const count = src.slice(src.indexOf("async function count("));
     expect(query).toContain("rethrowSchemaError");
-    expect(count.slice(0, count.indexOf("// ----") + 1 || 800)).toContain(
-      "rethrowSchemaError",
-    );
+    expect(count.slice(0, count.indexOf("// ----") + 1 || 800)).toContain("rethrowSchemaError");
   });
 });

@@ -17,7 +17,7 @@ export interface CostCentrePeriod {
  */
 export async function getCostCentreAtDate(
   employeeId: string,
-  asOfDate: string,
+  asOfDate: string
 ): Promise<string | null> {
   // Most recent cost_centre_change on or before asOfDate
   const [historyRows] = await db.execute<RowDataPacket[]>(
@@ -28,7 +28,7 @@ export async function getCostCentreAtDate(
        AND effective_date <= ?
      ORDER BY effective_date DESC, created_at DESC
      LIMIT 1`,
-    [employeeId, asOfDate],
+    [employeeId, asOfDate]
   );
   if ((historyRows as RowDataPacket[])[0]?.to_cost_centre_id) {
     return String((historyRows as RowDataPacket[])[0].to_cost_centre_id);
@@ -42,19 +42,17 @@ export async function getCostCentreAtDate(
        AND change_type = 'cost_centre_change'
      ORDER BY effective_date ASC, created_at ASC
      LIMIT 1`,
-    [employeeId],
+    [employeeId]
   );
   const earliest = (earliestRows as RowDataPacket[])[0];
   if (earliest && asOfDate < String(earliest.effective_date).slice(0, 10)) {
-    return earliest.from_cost_centre_id
-      ? String(earliest.from_cost_centre_id)
-      : null;
+    return earliest.from_cost_centre_id ? String(earliest.from_cost_centre_id) : null;
   }
 
   // No history at all — fall back to current assignment
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT cost_centre_id FROM employees WHERE id = ?`,
-    [employeeId],
+    [employeeId]
   );
   return (empRows as RowDataPacket[])[0]?.cost_centre_id
     ? String((empRows as RowDataPacket[])[0].cost_centre_id)
@@ -71,7 +69,7 @@ export async function getCostCentreAtDate(
 export async function getCostCentrePeriods(
   employeeId: string,
   monthStart: string,
-  monthEnd: string,
+  monthEnd: string
 ): Promise<CostCentrePeriod[]> {
   // Changes that land WITHIN the month (strictly after monthStart, on or before monthEnd)
   const [changeRows] = await db.execute<RowDataPacket[]>(
@@ -81,7 +79,7 @@ export async function getCostCentrePeriods(
        AND change_type = 'cost_centre_change'
        AND effective_date > ? AND effective_date <= ?
      ORDER BY effective_date ASC, created_at ASC`,
-    [employeeId, monthStart, monthEnd],
+    [employeeId, monthStart, monthEnd]
   );
   const changes = changeRows as RowDataPacket[];
 
@@ -103,36 +101,18 @@ export async function getCostCentrePeriods(
 
     if (currentCC && periodStart <= periodEnd) {
       const days =
-        Math.round(
-          (new Date(periodEnd).getTime() - new Date(periodStart).getTime()) /
-            86400000,
-        ) + 1;
-      periods.push({
-        costCentreId: currentCC,
-        fromDate: periodStart,
-        toDate: periodEnd,
-        days,
-      });
+        Math.round((new Date(periodEnd).getTime() - new Date(periodStart).getTime()) / 86400000) + 1;
+      periods.push({ costCentreId: currentCC, fromDate: periodStart, toDate: periodEnd, days });
     }
-    currentCC = change.to_cost_centre_id
-      ? String(change.to_cost_centre_id)
-      : null;
+    currentCC = change.to_cost_centre_id ? String(change.to_cost_centre_id) : null;
     periodStart = changeDate;
   }
 
   // Final period to monthEnd
   if (currentCC && periodStart <= monthEnd) {
     const days =
-      Math.round(
-        (new Date(monthEnd).getTime() - new Date(periodStart).getTime()) /
-          86400000,
-      ) + 1;
-    periods.push({
-      costCentreId: currentCC,
-      fromDate: periodStart,
-      toDate: monthEnd,
-      days,
-    });
+      Math.round((new Date(monthEnd).getTime() - new Date(periodStart).getTime()) / 86400000) + 1;
+    periods.push({ costCentreId: currentCC, fromDate: periodStart, toDate: monthEnd, days });
   }
 
   return periods;

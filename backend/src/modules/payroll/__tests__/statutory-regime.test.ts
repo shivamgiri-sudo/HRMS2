@@ -53,13 +53,9 @@ describe("statutory regime by period", () => {
   it("resolves by financial year start", () => {
     // FY 2025-26 begins 01-04-2025 — old Act. FY 2026-27 begins 01-04-2026 — new.
     expect(statutoryRegimeForFinancialYear(2025).act).toBe("1961");
-    expect(statutoryRegimeForFinancialYear(2025).salaryCertificateForm).toBe(
-      "16",
-    );
+    expect(statutoryRegimeForFinancialYear(2025).salaryCertificateForm).toBe("16");
     expect(statutoryRegimeForFinancialYear(2026).act).toBe("2025");
-    expect(statutoryRegimeForFinancialYear(2026).salaryCertificateForm).toBe(
-      "130",
-    );
+    expect(statutoryRegimeForFinancialYear(2026).salaryCertificateForm).toBe("130");
   });
 
   it("maps the period to the right stored filing type, keeping both valid", () => {
@@ -74,8 +70,6 @@ describe("statutory regime by period", () => {
     expect(() => statutoryRegimeForPeriod("2026")).toThrow(/YYYY-MM/);
     expect(() => statutoryRegimeForPeriod("")).toThrow(/YYYY-MM/);
     expect(() => statutoryRegimeForDate("2026-04")).toThrow(/YYYY-MM-DD/);
-    expect(() => statutoryRegimeForFinancialYear(26 as number)).toThrow(
-      /four-digit/,
-    );
+    expect(() => statutoryRegimeForFinancialYear(26 as number)).toThrow(/four-digit/);
   });
 });

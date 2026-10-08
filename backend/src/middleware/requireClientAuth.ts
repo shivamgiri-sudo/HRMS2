@@ -8,11 +8,7 @@ export interface ClientAuthRequest extends Request {
   portalUser?: PortalTokenPayload;
 }
 
-export function requireClientAuth(
-  req: ClientAuthRequest,
-  res: Response,
-  next: NextFunction,
-) {
+export function requireClientAuth(req: ClientAuthRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Missing portal token" });
@@ -21,8 +17,7 @@ export function requireClientAuth(
   let payload: PortalTokenPayload;
   try {
     payload = portalAuthService.verifyToken(token);
-    if (payload.role !== "client")
-      return res.status(403).json({ error: "Forbidden" });
+    if (payload.role !== "client") return res.status(403).json({ error: "Forbidden" });
   } catch {
     return res.status(401).json({ error: "Invalid or expired portal token" });
   }
@@ -63,7 +58,7 @@ export function requireClientAuth(
             ) AS session_revoked
        FROM client_user cu
       WHERE cu.id = ? LIMIT 1`,
-    [payload.jti ?? null, payload.clientUserId],
+    [payload.jti ?? null, payload.clientUserId]
   )
     .then(([rows]) => {
       if (!rows.length || !rows[0].is_active) {
@@ -92,20 +87,15 @@ export function requireClientAuth(
       let liveProcessIds: string[];
       try {
         const raw = rows[0].process_ids;
-        liveProcessIds =
-          typeof raw === "string" ? JSON.parse(raw) : (raw as string[]);
+        liveProcessIds = typeof raw === "string" ? JSON.parse(raw) : (raw as string[]);
         if (!Array.isArray(liveProcessIds)) throw new Error("not an array");
       } catch {
         // Unreadable scope is not "keep the old scope" — that is the bug this fixes.
         // It is also not an empty scope, which would read as a clean 403. Fail closed loudly.
-        return res
-          .status(503)
-          .json({ error: "Service temporarily unavailable" });
+        return res.status(503).json({ error: "Service temporarily unavailable" });
       }
       if (liveProcessIds.length === 0) {
-        return res
-          .status(403)
-          .json({ error: "No processes in your access list" });
+        return res.status(403).json({ error: "No processes in your access list" });
       }
 
       req.portalUser = { ...payload, processIds: liveProcessIds };

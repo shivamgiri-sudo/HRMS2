@@ -56,9 +56,7 @@ describe("updateRunStatus records who changed the run", () => {
   });
 
   it("names the action after the status, so lock and disburse are distinguishable", () => {
-    expect(body).toMatch(
-      /PAYROLL_RUN_\$\{String\(input\.status\)\.toUpperCase\(\)\}/,
-    );
+    expect(body).toMatch(/PAYROLL_RUN_\$\{String\(input\.status\)\.toUpperCase\(\)\}/);
   });
 
   it("awaits the audit write rather than firing it and forgetting", () => {

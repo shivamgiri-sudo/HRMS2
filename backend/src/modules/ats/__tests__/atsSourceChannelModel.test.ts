@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  canonicalChannel,
-  normaliseChannels,
-} from "../ats-source-channel-model.js";
+import { canonicalChannel, normaliseChannels } from "../ats-source-channel-model.js";
 
 /**
  * Exact sourcing_channel distribution over the 7,760 genuine candidates, production
@@ -27,9 +24,7 @@ const PRODUCTION_CHANNELS = [
 
 describe("canonicalChannel", () => {
   it("maps every value present in production", () => {
-    const unmapped = PRODUCTION_CHANNELS.filter(
-      (c) => canonicalChannel(c.channel) === null,
-    );
+    const unmapped = PRODUCTION_CHANNELS.filter((c) => canonicalChannel(c.channel) === null);
     expect(unmapped.map((c) => c.channel)).toEqual([]);
   });
 
@@ -75,9 +70,7 @@ describe("normaliseChannels", () => {
   it("reports walk-in as one channel of 3,910, not two of 3,564 and 346", () => {
     const walkIn = out.channels.find((c) => c.channel === "walk_in")!;
     expect(walkIn.count).toBe(3564 + 346);
-    expect(walkIn.merged_from).toEqual(
-      expect.arrayContaining(["WALKIN", "Walk-In"]),
-    );
+    expect(walkIn.merged_from).toEqual(expect.arrayContaining(["WALKIN", "Walk-In"]));
   });
 
   it("reports referral as one channel of 145", () => {

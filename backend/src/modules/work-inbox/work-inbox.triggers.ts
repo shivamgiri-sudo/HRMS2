@@ -43,7 +43,7 @@ function dueAt(itemType: string, fallbackHours = 24): string {
 export async function triggerOnboardingStuck(
   candidateId: string,
   candidateName: string,
-  branchId?: string,
+  branchId?: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "ONBOARDING_STUCK",
@@ -62,7 +62,7 @@ export async function triggerOnboardingStuck(
 export async function triggerNameMismatch(
   candidateId: string,
   candidateName: string,
-  mismatches: string[],
+  mismatches: string[]
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "NAME_MISMATCH",
@@ -81,7 +81,7 @@ export async function triggerIncentiveApproval(
   batchId: string,
   batchRef: string,
   approverRole: string,
-  branchId?: string,
+  branchId?: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "INCENTIVE_APPROVAL",
@@ -127,7 +127,7 @@ export async function triggerBulkBatchApproval(
 
 export async function triggerDpdpWithdrawalReview(
   withdrawalId: string,
-  requesterName: string,
+  requesterName: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "DPDP_WITHDRAWAL_REVIEW",
@@ -145,7 +145,7 @@ export async function triggerTatBreach(
   tatInstanceId: string,
   taskType: string,
   entityId: string,
-  assignedRole?: string,
+  assignedRole?: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "TAT_BREACH",
@@ -162,12 +162,11 @@ export async function triggerTatBreach(
 export async function triggerResignationDiscussion(
   exitId: string,
   employeeName: string,
-  discussionType: "manager" | "hr",
+  discussionType: "manager" | "hr"
 ): Promise<void> {
-  const itemType =
-    discussionType === "manager"
-      ? "RESIGNATION_MANAGER_DISCUSSION"
-      : "RESIGNATION_HR_DISCUSSION";
+  const itemType = discussionType === "manager"
+    ? "RESIGNATION_MANAGER_DISCUSSION"
+    : "RESIGNATION_HR_DISCUSSION";
   await createWorkItemIfNotExists({
     itemType,
     title: `Resignation discussion pending: ${employeeName}`,
@@ -182,7 +181,7 @@ export async function triggerResignationDiscussion(
 
 export async function triggerOfferApprovalPending(
   candidateId: string,
-  candidateName: string,
+  candidateName: string
 ): Promise<void> {
   // branch_head_id on ats_branch_head_approval is an employees.id, not an auth_user id
   // (payroll-hr.service.ts:481 joins it straight to `employees e`), so it cannot be passed
@@ -192,8 +191,7 @@ export async function triggerOfferApprovalPending(
   await createWorkItemIfNotExists({
     itemType: "OFFER_APPROVAL_PENDING",
     title: `Offer awaiting branch-head approval: ${candidateName}`,
-    description:
-      "A candidate's offer is pending branch-head approval before onboarding can proceed.",
+    description: "A candidate's offer is pending branch-head approval before onboarding can proceed.",
     moduleCode: "ats",
     entityType: "candidate",
     entityId: candidateId,
@@ -232,11 +230,7 @@ export async function triggerAwolSuspected(
   employeeId: string,
   employeeName: string,
   branchId?: string,
-  opts?: {
-    reportingManagerUserId?: string | null;
-    lastWorkedDate?: string | null;
-    absentDays?: number;
-  },
+  opts?: { reportingManagerUserId?: string | null; lastWorkedDate?: string | null; absentDays?: number }
 ): Promise<void> {
   const absentDays = opts?.absentDays ?? 7;
   const lastWorked = opts?.lastWorkedDate
@@ -284,13 +278,12 @@ export async function triggerAwolSuspected(
 export async function triggerJoiningDocsIncomplete(
   employeeId: string,
   employeeName: string,
-  branchId?: string,
+  branchId?: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "JOINING_DOCS_INCOMPLETE",
     title: `Joining documents incomplete: ${employeeName}`,
-    description:
-      "One or more mandatory joining documents are still pending upload, e-sign, or verification.",
+    description: "One or more mandatory joining documents are still pending upload, e-sign, or verification.",
     moduleCode: "employees",
     entityType: "employee",
     entityId: employeeId,
@@ -304,7 +297,7 @@ export async function triggerJoiningDocsIncomplete(
 export async function triggerPayrollBranchSignOff(
   branchId: string,
   branchName: string,
-  month: string,
+  month: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "PAYROLL_BRANCH_SIGNOFF_NOTIFY",
@@ -323,7 +316,7 @@ export async function triggerPayrollBranchSignOff(
 export async function triggerPayrollBranchReadinessIncomplete(
   branchId: string,
   branchName: string,
-  month: string,
+  month: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "PAYROLL_BRANCH_READINESS",
@@ -342,7 +335,7 @@ export async function triggerPayrollBranchReadinessIncomplete(
 export async function triggerPayrollAttendanceFreezeRequest(
   branchId: string,
   branchName: string,
-  month: string,
+  month: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "PAYROLL_ATTENDANCE_FREEZE_REQUEST",
@@ -369,7 +362,7 @@ export async function triggerCcAttendanceFinalized(
   branchId: string,
   finalizationId: string,
   month: string,
-  employeeCount: number,
+  employeeCount: number
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "CC_ATTENDANCE_FINALIZED",
@@ -388,7 +381,7 @@ export async function triggerCcAttendanceFinalized(
 export async function triggerCcAttendanceBranchApproved(
   branchId: string,
   finalizationId: string,
-  month: string,
+  month: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "CC_ATTENDANCE_BRANCH_APPROVED",
@@ -407,7 +400,7 @@ export async function triggerCcAttendanceBranchApproved(
 export async function triggerCcAttendanceUnlockRequested(
   branchId: string,
   finalizationId: string,
-  month: string,
+  month: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "CC_ATTENDANCE_UNLOCK_REQUESTED",
@@ -428,7 +421,7 @@ export async function triggerPayrollProcessSignOff(
   processId: string,
   processName: string,
   branchName: string,
-  month: string,
+  month: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "PAYROLL_PROCESS_SIGNOFF_NOTIFY",
@@ -447,13 +440,12 @@ export async function triggerPayrollProcessSignOff(
 export async function triggerRegularizationPending(
   regularizationId: string,
   employeeName: string,
-  branchId?: string,
+  branchId?: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "REGULARIZATION_PENDING",
     title: `Regularization awaiting approval: ${employeeName}`,
-    description:
-      "An attendance regularization request is waiting on manager/WFM approval.",
+    description: "An attendance regularization request is waiting on manager/WFM approval.",
     moduleCode: "attendance",
     entityType: "regularization",
     entityId: regularizationId,
@@ -467,13 +459,12 @@ export async function triggerRegularizationPending(
 export async function triggerResignationPendingReview(
   exitRequestId: string,
   employeeName: string,
-  branchId?: string,
+  branchId?: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "RESIGNATION_PENDING_REVIEW",
     title: `Resignation awaiting HR review: ${employeeName}`,
-    description:
-      "A newly submitted resignation is waiting on HR/manager review.",
+    description: "A newly submitted resignation is waiting on HR/manager review.",
     moduleCode: "exit",
     entityType: "resignation",
     entityId: exitRequestId,
@@ -486,7 +477,7 @@ export async function triggerResignationPendingReview(
 
 export async function triggerPayrollSignOffPending(
   runId: string,
-  runMonth: string,
+  runMonth: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "PAYROLL_SIGN_OFF_PENDING",
@@ -506,7 +497,7 @@ export async function triggerPayrollProcessFreezeRequest(
   processId: string,
   processName: string,
   branchName: string,
-  month: string,
+  month: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "PAYROLL_PROCESS_FREEZE_REQUEST",
@@ -540,13 +531,12 @@ export async function triggerPayrollProcessFreezeRequest(
 export async function triggerRosterPublishPending(
   planId: string,
   planName: string,
-  branchId?: string,
+  branchId?: string
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "ROSTER_PUBLISH_PENDING",
     title: `Roster awaiting publish: ${planName}`,
-    description:
-      "This roster has been approved and is waiting to be published.",
+    description: "This roster has been approved and is waiting to be published.",
     moduleCode: "wfm",
     entityType: "roster_draft",
     entityId: planId,
@@ -573,7 +563,7 @@ export async function triggerRosterPublishPending(
 export async function triggerAttendanceMismatchBranchBacklog(
   branchId: string,
   branchName: string,
-  employeeCount: number,
+  employeeCount: number
 ): Promise<void> {
   await createWorkItemIfNotExists({
     itemType: "ATTENDANCE_MISMATCH",

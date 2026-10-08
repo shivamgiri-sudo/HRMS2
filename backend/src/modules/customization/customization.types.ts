@@ -27,7 +27,7 @@ export interface CustomizationRule {
   employee_ids?: string[];
 
   // Config
-  config_type: "override" | "merge" | "extend" | "disable";
+  config_type: 'override' | 'merge' | 'extend' | 'disable';
   config_data: Record<string, unknown>;
 
   // Metadata

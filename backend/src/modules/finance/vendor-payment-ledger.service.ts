@@ -20,10 +20,7 @@ import { assertNotInClosedPeriod } from "./bank-reconciliation-period.service.js
  * 400 for a value typed wrong, 404 for a record that is not there, 409 for a request that is
  * well-formed but conflicts with the record's current state.
  */
-function requestError(
-  statusCode: number,
-  message: string,
-): Error & { statusCode: number } {
+function requestError(statusCode: number, message: string): Error & { statusCode: number } {
   const error = new Error(message) as Error & { statusCode: number };
   error.statusCode = statusCode;
   return error;
@@ -90,7 +87,7 @@ async function writeAudit(
   entityId: string,
   actorUserId: string,
   actorRole: string | undefined,
-  changeSummary: Record<string, unknown>,
+  changeSummary: Record<string, unknown>
 ) {
   await connection.execute(
     `INSERT INTO finance_action_audit_log
@@ -103,7 +100,7 @@ async function writeAudit(
       actorUserId,
       actorRole ?? null,
       JSON.stringify(changeSummary),
-    ],
+    ]
   );
 }
 
@@ -113,7 +110,7 @@ async function lockedPayment(connection: PoolConnection, paymentId: string) {
        FROM vendor_payment_tracking
       WHERE id = ?
       FOR UPDATE`,
-    [paymentId],
+    [paymentId]
   );
   const payment = rows[0] as any;
   if (!payment) throw requestError(404, "Vendor payment record not found");
@@ -132,12 +129,10 @@ function validatePaymentDate(value: string) {
 function paymentReferenceLockName(
   paymentMode: string,
   bankId: string | null,
-  transactionId: string,
+  transactionId: string
 ) {
   return createHash("sha256")
-    .update(
-      `${paymentMode}|${bankId ?? ""}|${transactionId.trim().toUpperCase()}`,
-    )
+    .update(`${paymentMode}|${bankId ?? ""}|${transactionId.trim().toUpperCase()}`)
     .digest("hex");
 }
 
@@ -149,7 +144,7 @@ export const vendorPaymentLedgerService = {
          LEFT JOIN bank_master bm ON bm.id = t.bank_id
         WHERE t.vendor_payment_id = ?
         ORDER BY t.sequence_no ASC, t.created_at ASC`,
-      [paymentId],
+      [paymentId]
     );
     return rows;
   },
@@ -168,7 +163,7 @@ export const vendorPaymentLedgerService = {
      * and block its own release. Left undefined for a direct dispatch from the Vendor Payment
      * Dispatch page, where any active voucher legitimately blocks.
      */
-    callingVoucherId?: string,
+    callingVoucherId?: string
   ) {
     if (!PAYMENT_MODES.includes(payload.paymentMode)) {
       throw requestError(400, "Invalid payment mode");
@@ -185,26 +180,18 @@ export const vendorPaymentLedgerService = {
     // of committing separately — a voucher release and the vendor-payment ledger row it
     // produces are one atomic unit, not two.
     const owns = !externalConnection;
-    const connection = externalConnection ?? (await db.getConnection());
+    const connection = externalConnection ?? await db.getConnection();
     let transactionRowId = "";
     let auditSummary: Record<string, unknown> = {};
     let referenceLock: string | null = null;
     try {
       if (owns) await connection.beginTransaction();
       const payment = await lockedPayment(connection, paymentId);
-      if (
-        ["Paid", "Closed", "Rejected"].includes(String(payment.payment_status))
-      ) {
-        throw requestError(
-          409,
-          `Payment is locked in status ${payment.payment_status}`,
-        );
+      if (["Paid", "Closed", "Rejected"].includes(String(payment.payment_status))) {
+        throw requestError(409, `Payment is locked in status ${payment.payment_status}`);
       }
       if (String(payment.payment_status) === "On Hold") {
-        throw requestError(
-          409,
-          "Release the payment hold before dispatching an installment",
-        );
+        throw requestError(409, "Release the payment hold before dispatching an installment");
       }
 
       // A due can be paid two ways: directly from the Vendor Payment Dispatch page, or through
@@ -226,13 +213,13 @@ export const vendorPaymentLedgerService = {
             AND pv.id <> ?
           ORDER BY pv.raised_at DESC
           LIMIT 1`,
-        [paymentId, callingVoucherId ?? ""],
+        [paymentId, callingVoucherId ?? ""]
       );
       const activeVoucher = activeVoucherRows[0];
       if (activeVoucher) {
         throw requestError(
           409,
-          `Payment Voucher ${activeVoucher.voucher_number} is already ${activeVoucher.status} for this due. Complete it through the voucher's Release action instead of a direct dispatch.`,
+          `Payment Voucher ${activeVoucher.voucher_number} is already ${activeVoucher.status} for this due. Complete it through the voucher's Release action instead of a direct dispatch.`
         );
       }
 
@@ -246,12 +233,12 @@ export const vendorPaymentLedgerService = {
       const currentPaid = roundMoney(Number(payment.paid_amount ?? 0));
       const dueAmount = roundMoney(Number(payment.due_amount ?? 0));
       const balanceBefore = roundMoney(
-        Number(payment.balance_amount ?? dueAmount - currentPaid),
+        Number(payment.balance_amount ?? dueAmount - currentPaid)
       );
       if (amount - balanceBefore > 0.01) {
         throw requestError(
           400,
-          `Payment amount ${amount.toFixed(2)} exceeds outstanding balance ${balanceBefore.toFixed(2)}`,
+          `Payment amount ${amount.toFixed(2)} exceeds outstanding balance ${balanceBefore.toFixed(2)}`
         );
       }
 
@@ -265,17 +252,15 @@ export const vendorPaymentLedgerService = {
       let bankName: string | null = null;
       const bankId = payload.bankId?.trim() || null;
       if (BANK_MODES.has(payload.paymentMode)) {
-        if (!bankId)
-          throw requestError(400, "Bank is required for this payment mode");
+        if (!bankId) throw requestError(400, "Bank is required for this payment mode");
         const [bankRows] = await connection.execute<RowDataPacket[]>(
           `SELECT bank_name
              FROM bank_master
             WHERE id = ? AND active_status = 1
             LIMIT 1`,
-          [bankId],
+          [bankId]
         );
-        if (!bankRows[0])
-          throw requestError(400, "Selected bank is inactive or unavailable");
+        if (!bankRows[0]) throw requestError(400, "Selected bank is inactive or unavailable");
         bankName = String(bankRows[0].bank_name);
       }
 
@@ -286,36 +271,25 @@ export const vendorPaymentLedgerService = {
       // payment-voucher.service.ts's release() (callingVoucherId set): that caller writes its own
       // ledger entry using the voucher's own bank_account_id, so it never supplies this field.
       // A fresh/test tenant with zero bank accounts configured is unaffected either way.
-      if (
-        BANK_MODES.has(payload.paymentMode) &&
-        !callingVoucherId &&
-        !companyBankAccountId
-      ) {
+      if (BANK_MODES.has(payload.paymentMode) && !callingVoucherId && !companyBankAccountId) {
         const [[anyAccount]] = await connection.execute<RowDataPacket[]>(
-          `SELECT id FROM company_bank_account WHERE active_status = 1 LIMIT 1`,
+          `SELECT id FROM company_bank_account WHERE active_status = 1 LIMIT 1`
         );
-        if (anyAccount)
-          throw requestError(
-            400,
-            "Bank account is required for this payment mode",
-          );
+        if (anyAccount) throw requestError(400, "Bank account is required for this payment mode");
       }
 
       if (externalTransactionId) {
         referenceLock = paymentReferenceLockName(
           payload.paymentMode,
           bankId,
-          externalTransactionId,
+          externalTransactionId
         );
         const [lockRows] = await connection.query<RowDataPacket[]>(
           `SELECT GET_LOCK(?, 10) AS acquired`,
-          [referenceLock],
+          [referenceLock]
         );
         if (Number(lockRows[0]?.acquired ?? 0) !== 1) {
-          throw requestError(
-            409,
-            "Payment reference is currently being processed; retry once",
-          );
+          throw requestError(409, "Payment reference is currently being processed; retry once");
         }
 
         if (!payload.allowSharedReference) {
@@ -326,13 +300,10 @@ export const vendorPaymentLedgerService = {
                 AND COALESCE(bank_id, '') = COALESCE(?, '')
                 AND UPPER(transaction_id) = UPPER(?)
               LIMIT 1`,
-            [payload.paymentMode, bankId, externalTransactionId],
+            [payload.paymentMode, bankId, externalTransactionId]
           );
           if (duplicateRows[0]) {
-            throw requestError(
-              409,
-              "This transaction reference is already recorded",
-            );
+            throw requestError(409, "This transaction reference is already recorded");
           }
         }
       }
@@ -344,26 +315,23 @@ export const vendorPaymentLedgerService = {
            JOIN vendor_master vm ON vm.id = gr.vendor_id
           WHERE gr.id = ?
           LIMIT 1`,
-        [payment.grn_request_id],
+        [payment.grn_request_id]
       );
       const tdsEnabled = Number(vendorTdsRows[0]?.tds_enabled ?? 0) === 1;
-      const tdsRatePct = tdsEnabled
-        ? roundMoney(Number(vendorTdsRows[0]?.tds_rate ?? 0))
-        : 0;
+      const tdsRatePct = tdsEnabled ? roundMoney(Number(vendorTdsRows[0]?.tds_rate ?? 0)) : 0;
       const tdsSection: string | null = tdsEnabled
-        ? String(vendorTdsRows[0]?.tds_section ?? "").trim() || null
+        ? (String(vendorTdsRows[0]?.tds_section ?? "").trim() || null)
         : null;
-      const tdsAmount =
-        tdsEnabled && tdsRatePct > 0
-          ? roundMoney((amount * tdsRatePct) / 100)
-          : 0;
+      const tdsAmount = tdsEnabled && tdsRatePct > 0
+        ? roundMoney(amount * tdsRatePct / 100)
+        : 0;
       const netAmount = roundMoney(amount - tdsAmount);
 
       const [sequenceRows] = await connection.execute<RowDataPacket[]>(
         `SELECT COALESCE(MAX(sequence_no), 0) AS last_sequence
            FROM vendor_payment_transaction
           WHERE vendor_payment_id = ?`,
-        [paymentId],
+        [paymentId]
       );
       const sequenceNo = Number(sequenceRows[0]?.last_sequence ?? 0) + 1;
       transactionRowId = randomUUID();
@@ -391,7 +359,7 @@ export const vendorPaymentLedgerService = {
           netAmount,
           payload.remarks?.trim() || null,
           actorUserId,
-        ],
+        ]
       );
 
       // Advisory only: record what the TDS rules say should have been deducted next to what was.
@@ -407,11 +375,8 @@ export const vendorPaymentLedgerService = {
       const balanceAfter = roundMoney(Math.max(0, dueAmount - paidAfter));
       const paymentStatus = balanceAfter <= 0.01 ? "Paid" : "Partially Paid";
       const grnStatus = paymentStatus === "Paid" ? "paid" : "partially_paid";
-      const accountsStatus =
-        paymentStatus === "Paid" ? "paid" : "partially_paid";
-      const tdsDeductedBefore = roundMoney(
-        Number(payment.tds_deducted_amount ?? 0),
-      );
+      const accountsStatus = paymentStatus === "Paid" ? "paid" : "partially_paid";
+      const tdsDeductedBefore = roundMoney(Number(payment.tds_deducted_amount ?? 0));
 
       const [updateResult] = await connection.execute<ResultSetHeader>(
         `UPDATE vendor_payment_tracking
@@ -441,7 +406,7 @@ export const vendorPaymentLedgerService = {
           payload.remarks?.trim() || null,
           actorUserId,
           paymentId,
-        ],
+        ]
       );
       if (updateResult.affectedRows !== 1) {
         throw new Error("Vendor payment aggregate could not be updated");
@@ -451,7 +416,7 @@ export const vendorPaymentLedgerService = {
         `UPDATE grn_request
             SET status = ?, accounts_payment_status = ?
           WHERE id = ?`,
-        [grnStatus, accountsStatus, payment.grn_request_id],
+        [grnStatus, accountsStatus, payment.grn_request_id]
       );
 
       // Bank ledger write — the gap this fix closes. Gated on !callingVoucherId: when dispatch()
@@ -464,39 +429,27 @@ export const vendorPaymentLedgerService = {
         const [[ledgerBankAccount]] = await connection.execute<RowDataPacket[]>(
           `SELECT id, opening_balance, active_status
              FROM company_bank_account WHERE id = ? FOR UPDATE`,
-          [companyBankAccountId],
+          [companyBankAccountId]
         );
-        if (!ledgerBankAccount)
-          throw requestError(404, "Bank account not found");
-        if (!(ledgerBankAccount as any).active_status)
-          throw requestError(400, "This bank account is closed");
+        if (!ledgerBankAccount) throw requestError(404, "Bank account not found");
+        if (!(ledgerBankAccount as any).active_status) throw requestError(400, "This bank account is closed");
         // Covers both inserts below (the debit and, if any, the TDS memo) — same account, same
         // paymentDate.
-        await assertNotInClosedPeriod(
-          connection,
-          companyBankAccountId,
-          payload.paymentDate,
-        );
+        await assertNotInClosedPeriod(connection, companyBankAccountId, payload.paymentDate);
 
         const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
           `SELECT running_balance FROM bank_account_ledger_entry
              WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
-          [companyBankAccountId],
+          [companyBankAccountId]
         );
         let runningBalance = lastEntry
           ? Number((lastEntry as any).running_balance)
           : Number((ledgerBankAccount as any).opening_balance);
 
-        const [[vendorPayableAccount]] = await connection.execute<
-          RowDataPacket[]
-        >(
-          `SELECT id FROM payable_account_master WHERE account_name = 'Vendor Payables' LIMIT 1`,
+        const [[vendorPayableAccount]] = await connection.execute<RowDataPacket[]>(
+          `SELECT id FROM payable_account_master WHERE account_name = 'Vendor Payables' LIMIT 1`
         );
-        if (!vendorPayableAccount)
-          throw requestError(
-            500,
-            "Vendor Payables ledger account is not configured",
-          );
+        if (!vendorPayableAccount) throw requestError(500, "Vendor Payables ledger account is not configured");
 
         runningBalance = roundMoney(runningBalance - amount);
         await connection.execute(
@@ -514,14 +467,14 @@ export const vendorPaymentLedgerService = {
             externalTransactionId,
             runningBalance,
             actorUserId,
-          ],
+          ]
         );
 
         // Same zero-cash TDS liability memo the voucher-release lane writes, so a direct
         // dispatch's TDS withholding is just as visible in the ledger as a voucher-released one.
         if (tdsAmount > 0) {
           const [[tdsAccount]] = await connection.execute<RowDataPacket[]>(
-            `SELECT id FROM payable_account_master WHERE account_name = 'TDS Payable' LIMIT 1`,
+            `SELECT id FROM payable_account_master WHERE account_name = 'TDS Payable' LIMIT 1`
           );
           if (tdsAccount) {
             await connection.execute(
@@ -537,7 +490,7 @@ export const vendorPaymentLedgerService = {
                 `TDS withheld on GRN ${payment.grn_number ?? payment.grn_request_id} — direct dispatch installment #${sequenceNo} (liability memo, no cash movement)`,
                 runningBalance,
                 actorUserId,
-              ],
+              ]
             );
           }
         }
@@ -566,7 +519,7 @@ export const vendorPaymentLedgerService = {
         paymentId,
         actorUserId,
         actorRole,
-        auditSummary,
+        auditSummary
       );
       if (owns) await connection.commit();
     } catch (error) {
@@ -574,9 +527,7 @@ export const vendorPaymentLedgerService = {
       throw error;
     } finally {
       if (referenceLock) {
-        await connection
-          .query(`SELECT RELEASE_LOCK(?)`, [referenceLock])
-          .catch(() => undefined);
+        await connection.query(`SELECT RELEASE_LOCK(?)`, [referenceLock]).catch(() => undefined);
       }
       if (owns) connection.release();
     }
@@ -604,14 +555,7 @@ export const vendorPaymentLedgerService = {
     // caller commits and does its own post-commit logging once the whole transaction lands.
     return {
       payment: { grn_number: (auditSummary as any).grn_number ?? null },
-      transactions: [
-        {
-          id: transactionRowId,
-          tds_amount: (auditSummary as any).tds_amount ?? 0,
-          net_amount: (auditSummary as any).net_amount ?? 0,
-          sequence_no: (auditSummary as any).installment_sequence ?? null,
-        },
-      ],
+      transactions: [{ id: transactionRowId, tds_amount: (auditSummary as any).tds_amount ?? 0, net_amount: (auditSummary as any).net_amount ?? 0, sequence_no: (auditSummary as any).installment_sequence ?? null }],
     };
   },
 
@@ -620,23 +564,17 @@ export const vendorPaymentLedgerService = {
     hold: boolean,
     reason: string | undefined,
     actorUserId: string,
-    actorRole?: string,
+    actorRole?: string
   ) {
-    if (hold && !reason?.trim())
-      throw requestError(400, "Hold reason is required");
+    if (hold && !reason?.trim()) throw requestError(400, "Hold reason is required");
     const connection = await db.getConnection();
     let nextStatus = "Payment Pending";
     let auditSummary: Record<string, unknown> = {};
     try {
       await connection.beginTransaction();
       const payment = await lockedPayment(connection, paymentId);
-      if (
-        ["Paid", "Closed", "Rejected"].includes(String(payment.payment_status))
-      ) {
-        throw requestError(
-          409,
-          `Payment is locked in status ${payment.payment_status}`,
-        );
+      if (["Paid", "Closed", "Rejected"].includes(String(payment.payment_status))) {
+        throw requestError(409, `Payment is locked in status ${payment.payment_status}`);
       }
 
       const paidAmount = roundMoney(Number(payment.paid_amount ?? 0));
@@ -645,8 +583,9 @@ export const vendorPaymentLedgerService = {
         : paidAmount > 0
           ? "Partially Paid"
           : "Payment Pending";
-      const grnStatus =
-        paidAmount > 0 ? "partially_paid" : "pending_accounts_payment";
+      const grnStatus = paidAmount > 0
+        ? "partially_paid"
+        : "pending_accounts_payment";
       const accountsStatus = hold
         ? "on_hold"
         : paidAmount > 0
@@ -660,13 +599,13 @@ export const vendorPaymentLedgerService = {
                 updated_by = ?,
                 updated_at = NOW()
           WHERE id = ?`,
-        [nextStatus, reason?.trim() || null, actorUserId, paymentId],
+        [nextStatus, reason?.trim() || null, actorUserId, paymentId]
       );
       await connection.execute(
         `UPDATE grn_request
             SET status = ?, accounts_payment_status = ?
           WHERE id = ?`,
-        [grnStatus, accountsStatus, payment.grn_request_id],
+        [grnStatus, accountsStatus, payment.grn_request_id]
       );
 
       auditSummary = {
@@ -682,7 +621,7 @@ export const vendorPaymentLedgerService = {
         paymentId,
         actorUserId,
         actorRole,
-        auditSummary,
+        auditSummary
       );
       await connection.commit();
     } catch (error) {
@@ -695,9 +634,7 @@ export const vendorPaymentLedgerService = {
     await logSensitiveAction({
       actor_user_id: actorUserId,
       actor_role: actorRole,
-      action_type: hold
-        ? "VENDOR_PAYMENT_HELD"
-        : "VENDOR_PAYMENT_HOLD_RELEASED",
+      action_type: hold ? "VENDOR_PAYMENT_HELD" : "VENDOR_PAYMENT_HOLD_RELEASED",
       module_key: "FINANCE",
       entity_type: "vendor_payment_tracking",
       entity_id: paymentId,
@@ -714,7 +651,7 @@ export const vendorPaymentLedgerService = {
     filePath: string,
     fileMime: string,
     actorUserId: string,
-    actorRole?: string,
+    actorRole?: string
   ) {
     const connection = await db.getConnection();
     let auditSummary: Record<string, unknown> = {};
@@ -726,16 +663,15 @@ export const vendorPaymentLedgerService = {
            FROM vendor_payment_transaction
           WHERE id = ? AND vendor_payment_id = ?
           FOR UPDATE`,
-        [transactionRowId, paymentId],
+        [transactionRowId, paymentId]
       );
-      if (!transactionRows[0])
-        throw requestError(404, "Payment installment was not found");
+      if (!transactionRows[0]) throw requestError(404, "Payment installment was not found");
 
       await connection.execute(
         `UPDATE vendor_payment_transaction
             SET proof_file_name = ?, proof_file_path = ?, proof_file_mime = ?
           WHERE id = ?`,
-        [fileName, filePath, fileMime, transactionRowId],
+        [fileName, filePath, fileMime, transactionRowId]
       );
       await connection.execute(
         `UPDATE vendor_payment_tracking
@@ -745,7 +681,7 @@ export const vendorPaymentLedgerService = {
                 updated_by = ?,
                 updated_at = NOW()
           WHERE id = ?`,
-        [fileName, filePath, fileMime, actorUserId, paymentId],
+        [fileName, filePath, fileMime, actorUserId, paymentId]
       );
       auditSummary = {
         payment_transaction_id: transactionRowId,
@@ -760,7 +696,7 @@ export const vendorPaymentLedgerService = {
         paymentId,
         actorUserId,
         actorRole,
-        auditSummary,
+        auditSummary
       );
       await connection.commit();
     } catch (error) {
@@ -784,7 +720,7 @@ export const vendorPaymentLedgerService = {
   async getPayment(paymentId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM vendor_payment_tracking WHERE id = ? LIMIT 1`,
-      [paymentId],
+      [paymentId]
     );
     return rows[0] ?? null;
   },

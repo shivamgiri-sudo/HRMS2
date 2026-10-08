@@ -31,13 +31,11 @@ export interface KpiScoreInput {
 export interface KpiScoreResult {
   metricScore: number;
   weightedScore: number;
-  status:
-    "calculated" | "missing_source" | "fatal_breached" | "threshold_failed";
+  status: "calculated" | "missing_source" | "fatal_breached" | "threshold_failed";
   note: string;
 }
 
-const round2 = (value: number) =>
-  Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
+const round2 = (value: number) => (Number.isFinite(value) ? Math.round(value * 100) / 100 : 0);
 
 function toNumber(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined || value === "") return null;
@@ -54,12 +52,7 @@ export function calculateMetricScore(input: KpiScoreInput): KpiScoreResult {
   const scoringType = String(input.scoringType || "higher_better");
 
   if (actual === null && scoringType !== "manual") {
-    return {
-      metricScore: 0,
-      weightedScore: 0,
-      status: "missing_source",
-      note: "Actual value missing",
-    };
+    return { metricScore: 0, weightedScore: 0, status: "missing_source", note: "Actual value missing" };
   }
 
   let metricScore = 0;
@@ -73,10 +66,7 @@ export function calculateMetricScore(input: KpiScoreInput): KpiScoreResult {
   //
   // Opt-in per metric. Honouring it everywhere would zero 87% of ATTENDANCE_PCT rows, since
   // that metric only ever holds 0/50/100 and every half-day sits under the 85 threshold.
-  if (
-    scoringType === "floor_gated_higher" ||
-    scoringType === "floor_gated_lower"
-  ) {
+  if (scoringType === "floor_gated_higher" || scoringType === "floor_gated_lower") {
     const lowerBetter = scoringType === "floor_gated_lower";
     if (min !== null) {
       const failed = lowerBetter ? (actual ?? 0) > min : (actual ?? 0) < min;
@@ -95,22 +85,12 @@ export function calculateMetricScore(input: KpiScoreInput): KpiScoreResult {
       metricScore = 0;
       note = "Invalid target";
     } else if (lowerBetter) {
-      metricScore =
-        actual === 0
-          ? 100
-          : (actual ?? 0) <= 0
-            ? 0
-            : (target / (actual as number)) * 100;
+      metricScore = actual === 0 ? 100 : (actual ?? 0) <= 0 ? 0 : (target / (actual as number)) * 100;
     } else {
       metricScore = ((actual ?? 0) / target) * 100;
     }
     const capped = Math.max(0, Math.min(metricScore, max ?? 120));
-    return {
-      metricScore: round2(capped),
-      weightedScore: round2((capped * weightage) / 100),
-      status: "calculated",
-      note,
-    };
+    return { metricScore: round2(capped), weightedScore: round2((capped * weightage) / 100), status: "calculated", note };
   }
 
   if (scoringType === "lower_better" || scoringType === "lower_is_better") {
@@ -124,14 +104,7 @@ export function calculateMetricScore(input: KpiScoreInput): KpiScoreResult {
       metricScore = (target / actual) * 100;
     }
   } else if (scoringType === "range") {
-    metricScore =
-      actual !== null &&
-      min !== null &&
-      max !== null &&
-      actual >= min &&
-      actual <= max
-        ? 100
-        : 0;
+    metricScore = actual !== null && min !== null && max !== null && actual >= min && actual <= max ? 100 : 0;
     if (metricScore === 0) note = "Actual outside configured range";
   } else if (scoringType === "boolean") {
     metricScore = actual && actual > 0 ? 100 : 0;
@@ -140,23 +113,12 @@ export function calculateMetricScore(input: KpiScoreInput): KpiScoreResult {
     if ((actual ?? 0) > allowedValue) {
       const cap = input.fatalRule?.capFinalScore;
       metricScore = typeof cap === "number" ? cap : 0;
-      return {
-        metricScore: round2(metricScore),
-        weightedScore: round2((metricScore * weightage) / 100),
-        status: "fatal_breached",
-        note: "Fatal threshold breached",
-      };
+      return { metricScore: round2(metricScore), weightedScore: round2((metricScore * weightage) / 100), status: "fatal_breached", note: "Fatal threshold breached" };
     }
     metricScore = 100;
   } else if (scoringType === "threshold") {
     const minRequired = Number(input.thresholdRule?.minRequired ?? target ?? 0);
-    if ((actual ?? 0) < minRequired)
-      return {
-        metricScore: 0,
-        weightedScore: 0,
-        status: "threshold_failed",
-        note: "Threshold not met",
-      };
+    if ((actual ?? 0) < minRequired) return { metricScore: 0, weightedScore: 0, status: "threshold_failed", note: "Threshold not met" };
     metricScore = 100;
   } else {
     if (!target || target <= 0) {
@@ -168,12 +130,7 @@ export function calculateMetricScore(input: KpiScoreInput): KpiScoreResult {
   }
 
   const cappedScore = Math.max(0, Math.min(metricScore, 120));
-  return {
-    metricScore: round2(cappedScore),
-    weightedScore: round2((cappedScore * weightage) / 100),
-    status: "calculated",
-    note,
-  };
+  return { metricScore: round2(cappedScore), weightedScore: round2((cappedScore * weightage) / 100), status: "calculated", note };
 }
 
 export function ratingForScore(score: number): string {

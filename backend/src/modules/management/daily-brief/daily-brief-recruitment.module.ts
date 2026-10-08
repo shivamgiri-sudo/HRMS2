@@ -80,10 +80,7 @@ function resolveScopeMode(scope: RecruitmentScope): ScopeMode {
 }
 
 /** Candidate-alias ("c") scope fragment: recruiter-team filter, or none for hrScope. */
-function candidateScopeClause(
-  scope: RecruitmentScope,
-  mode: ScopeMode,
-): { sql: string; params: unknown[] } {
+function candidateScopeClause(scope: RecruitmentScope, mode: ScopeMode): { sql: string; params: unknown[] } {
   if (mode === "team") {
     const placeholders = scope.teamEmployeeIds!.map(() => "?").join(",");
     return {
@@ -98,21 +95,12 @@ async function buildStageActivity(
   scope: RecruitmentScope,
   mode: ScopeMode,
   reportingDate: string,
-): Promise<{
-  movedD1: BriefSignal | null;
-  stuck: BriefSignal | null;
-  health: SourceHealth;
-}> {
+): Promise<{ movedD1: BriefSignal | null; stuck: BriefSignal | null; health: SourceHealth }> {
   if (mode === "none") {
     return {
       movedD1: null,
       stuck: null,
-      health: {
-        module: "recruitment_stage_activity",
-        state: "NOT_APPLICABLE",
-        detail: "No recruiter/HR scope supplied",
-        asOfDate: reportingDate,
-      },
+      health: { module: "recruitment_stage_activity", state: "NOT_APPLICABLE", detail: "No recruiter/HR scope supplied", asOfDate: reportingDate },
     };
   }
   const scopeClause = candidateScopeClause(scope, mode);
@@ -145,23 +133,9 @@ async function buildStageActivity(
     );
 
     return {
-      movedD1: {
-        key: "recruitment_candidates_moved_d1",
-        label: "Candidates moved (D-1)",
-        value: numberValue(movedRows[0]?.moved_count),
-        unit: "count",
-      },
-      stuck: {
-        key: "recruitment_candidates_stuck",
-        label: `Candidates stuck beyond ${RECRUITMENT_STUCK_THRESHOLD_DAYS} days`,
-        value: numberValue(stuckRows[0]?.stuck_count),
-        unit: "count",
-      },
-      health: {
-        module: "recruitment_stage_activity",
-        state: "AVAILABLE",
-        asOfDate: reportingDate,
-      },
+      movedD1: { key: "recruitment_candidates_moved_d1", label: "Candidates moved (D-1)", value: numberValue(movedRows[0]?.moved_count), unit: "count" },
+      stuck: { key: "recruitment_candidates_stuck", label: `Candidates stuck beyond ${RECRUITMENT_STUCK_THRESHOLD_DAYS} days`, value: numberValue(stuckRows[0]?.stuck_count), unit: "count" },
+      health: { module: "recruitment_stage_activity", state: "AVAILABLE", asOfDate: reportingDate },
     };
   } catch (err) {
     return {
@@ -181,21 +155,12 @@ async function buildInterviews(
   scope: RecruitmentScope,
   mode: ScopeMode,
   reportingDate: string,
-): Promise<{
-  scheduled: BriefSignal | null;
-  held: BriefSignal | null;
-  health: SourceHealth;
-}> {
+): Promise<{ scheduled: BriefSignal | null; held: BriefSignal | null; health: SourceHealth }> {
   if (mode === "none") {
     return {
       scheduled: null,
       held: null,
-      health: {
-        module: "recruitment_interviews",
-        state: "NOT_APPLICABLE",
-        detail: "No recruiter/HR scope supplied",
-        asOfDate: reportingDate,
-      },
+      health: { module: "recruitment_interviews", state: "NOT_APPLICABLE", detail: "No recruiter/HR scope supplied", asOfDate: reportingDate },
     };
   }
   const scopeClause = candidateScopeClause(scope, mode);
@@ -213,23 +178,9 @@ async function buildInterviews(
     );
     const row = rows[0] ?? {};
     return {
-      scheduled: {
-        key: "recruitment_interviews_scheduled_d1",
-        label: "Interviews scheduled (D-1)",
-        value: numberValue(row.scheduled_count),
-        unit: "count",
-      },
-      held: {
-        key: "recruitment_interviews_held_d1",
-        label: "Interviews held (D-1)",
-        value: numberValue(row.held_count),
-        unit: "count",
-      },
-      health: {
-        module: "recruitment_interviews",
-        state: numberValue(row.scheduled_count) > 0 ? "AVAILABLE" : "NO_DATA",
-        asOfDate: reportingDate,
-      },
+      scheduled: { key: "recruitment_interviews_scheduled_d1", label: "Interviews scheduled (D-1)", value: numberValue(row.scheduled_count), unit: "count" },
+      held: { key: "recruitment_interviews_held_d1", label: "Interviews held (D-1)", value: numberValue(row.held_count), unit: "count" },
+      health: { module: "recruitment_interviews", state: numberValue(row.scheduled_count) > 0 ? "AVAILABLE" : "NO_DATA", asOfDate: reportingDate },
     };
   } catch (err) {
     return {
@@ -262,12 +213,7 @@ async function buildActionCentreCounts(
       bgvPending: null,
       documentsPending: null,
       onboardingPending: null,
-      health: {
-        module: "recruitment_action_centre",
-        state: "NOT_APPLICABLE",
-        detail: "No recruiter/HR scope supplied",
-        asOfDate: reportingDate,
-      },
+      health: { module: "recruitment_action_centre", state: "NOT_APPLICABLE", detail: "No recruiter/HR scope supplied", asOfDate: reportingDate },
     };
   }
   try {
@@ -282,15 +228,10 @@ async function buildActionCentreCounts(
              WHERE c.recruiter_id IN (SELECT id FROM ats_recruiter_roster WHERE employee_id IN (${scope.teamEmployeeIds!.map(() => "?").join(",")}))
                AND ${excludeEmployeeShapedCandidatesSql("c")})`
         : "";
-    const candidateScopeParams =
-      mode === "team" ? [...scope.teamEmployeeIds!] : [];
+    const candidateScopeParams = mode === "team" ? [...scope.teamEmployeeIds!] : [];
 
-    const employeeScopeSql =
-      mode === "team"
-        ? `AND wi.entity_id IN (${scope.teamEmployeeIds!.map(() => "?").join(",")})`
-        : "";
-    const employeeScopeParams =
-      mode === "team" ? [...scope.teamEmployeeIds!] : [];
+    const employeeScopeSql = mode === "team" ? `AND wi.entity_id IN (${scope.teamEmployeeIds!.map(() => "?").join(",")})` : "";
+    const employeeScopeParams = mode === "team" ? [...scope.teamEmployeeIds!] : [];
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -298,44 +239,15 @@ async function buildActionCentreCounts(
          (SELECT COUNT(*) FROM work_item wi WHERE wi.item_type = 'BGV_PENDING' AND wi.status NOT IN ('completed','cancelled') ${candidateScopeSql}) AS bgv_pending,
          (SELECT COUNT(*) FROM work_item wi WHERE wi.item_type = 'JOINING_DOCS_INCOMPLETE' AND wi.status NOT IN ('completed','cancelled') ${employeeScopeSql}) AS documents_pending,
          (SELECT COUNT(*) FROM work_item wi WHERE wi.item_type = 'ONBOARDING_STUCK' AND wi.status NOT IN ('completed','cancelled') ${candidateScopeSql}) AS onboarding_pending`,
-      [
-        ...candidateScopeParams,
-        ...candidateScopeParams,
-        ...employeeScopeParams,
-        ...candidateScopeParams,
-      ],
+      [...candidateScopeParams, ...candidateScopeParams, ...employeeScopeParams, ...candidateScopeParams],
     );
     const row = rows[0] ?? {};
     return {
-      offerApprovals: {
-        key: "recruitment_offer_approvals_pending",
-        label: "Offer approvals pending",
-        value: numberValue(row.offer_approvals),
-        unit: "count",
-      },
-      bgvPending: {
-        key: "recruitment_bgv_pending",
-        label: "BGV pending",
-        value: numberValue(row.bgv_pending),
-        unit: "count",
-      },
-      documentsPending: {
-        key: "recruitment_documents_pending",
-        label: "Joining documents pending",
-        value: numberValue(row.documents_pending),
-        unit: "count",
-      },
-      onboardingPending: {
-        key: "recruitment_onboarding_pending",
-        label: "Onboarding pending",
-        value: numberValue(row.onboarding_pending),
-        unit: "count",
-      },
-      health: {
-        module: "recruitment_action_centre",
-        state: "AVAILABLE",
-        asOfDate: reportingDate,
-      },
+      offerApprovals: { key: "recruitment_offer_approvals_pending", label: "Offer approvals pending", value: numberValue(row.offer_approvals), unit: "count" },
+      bgvPending: { key: "recruitment_bgv_pending", label: "BGV pending", value: numberValue(row.bgv_pending), unit: "count" },
+      documentsPending: { key: "recruitment_documents_pending", label: "Joining documents pending", value: numberValue(row.documents_pending), unit: "count" },
+      onboardingPending: { key: "recruitment_onboarding_pending", label: "Onboarding pending", value: numberValue(row.onboarding_pending), unit: "count" },
+      health: { module: "recruitment_action_centre", state: "AVAILABLE", asOfDate: reportingDate },
     };
   } catch (err) {
     return {
@@ -357,21 +269,12 @@ async function buildJoiningWindow(
   scope: RecruitmentScope,
   mode: ScopeMode,
   reportingDate: string,
-): Promise<{
-  today: BriefSignal | null;
-  thisWeek: BriefSignal | null;
-  health: SourceHealth;
-}> {
+): Promise<{ today: BriefSignal | null; thisWeek: BriefSignal | null; health: SourceHealth }> {
   if (mode === "none") {
     return {
       today: null,
       thisWeek: null,
-      health: {
-        module: "recruitment_joining",
-        state: "NOT_APPLICABLE",
-        detail: "No recruiter/HR scope supplied",
-        asOfDate: reportingDate,
-      },
+      health: { module: "recruitment_joining", state: "NOT_APPLICABLE", detail: "No recruiter/HR scope supplied", asOfDate: reportingDate },
     };
   }
   const scopeClause = candidateScopeClause(scope, mode);
@@ -390,23 +293,9 @@ async function buildJoiningWindow(
     );
     const row = rows[0] ?? {};
     return {
-      today: {
-        key: "recruitment_joining_today",
-        label: "Joining today",
-        value: numberValue(row.joining_today),
-        unit: "count",
-      },
-      thisWeek: {
-        key: "recruitment_joining_this_week",
-        label: "Joining this week",
-        value: numberValue(row.joining_this_week),
-        unit: "count",
-      },
-      health: {
-        module: "recruitment_joining",
-        state: "AVAILABLE",
-        asOfDate: reportingDate,
-      },
+      today: { key: "recruitment_joining_today", label: "Joining today", value: numberValue(row.joining_today), unit: "count" },
+      thisWeek: { key: "recruitment_joining_this_week", label: "Joining this week", value: numberValue(row.joining_this_week), unit: "count" },
+      health: { module: "recruitment_joining", state: "AVAILABLE", asOfDate: reportingDate },
     };
   } catch (err) {
     return {
@@ -428,13 +317,12 @@ export async function buildRecruitmentModule(
 ): Promise<RecruitmentModuleResult> {
   const mode = resolveScopeMode(scope);
 
-  const [stageResult, interviewResult, actionResult, joiningResult] =
-    await Promise.all([
-      buildStageActivity(scope, mode, reportingDate),
-      buildInterviews(scope, mode, reportingDate),
-      buildActionCentreCounts(scope, mode, reportingDate),
-      buildJoiningWindow(scope, mode, reportingDate),
-    ]);
+  const [stageResult, interviewResult, actionResult, joiningResult] = await Promise.all([
+    buildStageActivity(scope, mode, reportingDate),
+    buildInterviews(scope, mode, reportingDate),
+    buildActionCentreCounts(scope, mode, reportingDate),
+    buildJoiningWindow(scope, mode, reportingDate),
+  ]);
 
   return {
     applicable: mode !== "none",
@@ -448,11 +336,6 @@ export async function buildRecruitmentModule(
     joiningToday: joiningResult.today,
     joiningThisWeek: joiningResult.thisWeek,
     candidatesStuckBeyondThreshold: stageResult.stuck,
-    sourceHealth: [
-      stageResult.health,
-      interviewResult.health,
-      actionResult.health,
-      joiningResult.health,
-    ],
+    sourceHealth: [stageResult.health, interviewResult.health, actionResult.health, joiningResult.health],
   };
 }

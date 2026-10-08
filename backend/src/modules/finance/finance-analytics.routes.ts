@@ -59,18 +59,18 @@ financeAnalyticsRouter.get(
     // the last one is defined. Each block keeps its own try/catch, so a failure still degrades only
     // that block to its zero/empty fallback, exactly as when they ran back to back.
     const receivablesBlock = (async () => {
-      try {
-        // DSO's collected-total query does not depend on the receivables query; start it now so the
-        // two overlap. The no-op catch stops an unhandled rejection if the receivables await throws
-        // first (the awaited path below still surfaces the failure to the try/catch as before).
-        const collectedPromise = db.query<any[]>(
-          `SELECT SUM(pay_amount) / 12 AS avg_monthly_collected
+    try {
+      // DSO's collected-total query does not depend on the receivables query; start it now so the
+      // two overlap. The no-op catch stops an unhandled rejection if the receivables await throws
+      // first (the awaited path below still surfaces the failure to the try/catch as before).
+      const collectedPromise = db.query<any[]>(
+        `SELECT SUM(pay_amount) / 12 AS avg_monthly_collected
          FROM client_bill_collection_run_snapshot
          WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`,
-        );
-        collectedPromise.catch(() => undefined);
-        const [receivableRows] = await db.query<any[]>(
-          `SELECT
+      );
+      collectedPromise.catch(() => undefined);
+      const [receivableRows] = await db.query<any[]>(
+        `SELECT
            SUM(ci.grand_total) AS total_receivables,
            SUM(CASE WHEN DATEDIFF(CURDATE(), ci.invoice_date) > 30
                     AND (cips.payment_status IS NULL OR cips.payment_status != 'paid')
@@ -82,30 +82,30 @@ financeAnalyticsRouter.get(
          LEFT JOIN client_invoice_payment_status cips ON cips.invoice_id = ci.id
          WHERE ci.invoice_status = 'approved'
            AND (cips.payment_status IS NULL OR cips.payment_status != 'paid')`,
-        );
-        if (receivableRows.length > 0) {
-          totalReceivables = num(receivableRows[0].total_receivables);
-          overdueAmount = num(receivableRows[0].overdue_amount);
-          overdueCount = num(receivableRows[0].overdue_count);
-        }
-
-        // DSO = (open AR / avg monthly collected over 12 months) * 30
-        const [collectedRows] = await collectedPromise;
-        const avgMonthly = num(collectedRows?.[0]?.avg_monthly_collected);
-        if (avgMonthly > 0) {
-          dso = Math.round((totalReceivables / avgMonthly) * 30 * 10) / 10;
-        }
-      } catch {
-        // fallback: leave 0s
+      );
+      if (receivableRows.length > 0) {
+        totalReceivables = num(receivableRows[0].total_receivables);
+        overdueAmount = num(receivableRows[0].overdue_amount);
+        overdueCount = num(receivableRows[0].overdue_count);
       }
+
+      // DSO = (open AR / avg monthly collected over 12 months) * 30
+      const [collectedRows] = await collectedPromise;
+      const avgMonthly = num(collectedRows?.[0]?.avg_monthly_collected);
+      if (avgMonthly > 0) {
+        dso = Math.round((totalReceivables / avgMonthly) * 30 * 10) / 10;
+      }
+    } catch {
+      // fallback: leave 0s
+    }
     })();
 
     // 2. Bank balances — last running_balance per account (or opening_balance if no entries)
     let bankBalances: { id: string; name: string; balance: number }[] = [];
     const bankBlock = (async () => {
-      try {
-        const [bankRows] = await db.query<any[]>(
-          `SELECT
+    try {
+      const [bankRows] = await db.query<any[]>(
+        `SELECT
            cba.id,
            cba.account_name AS name,
            COALESCE(last_entry.running_balance, cba.opening_balance) AS balance
@@ -118,31 +118,31 @@ financeAnalyticsRouter.get(
          LEFT JOIN bank_account_ledger_entry last_entry ON last_entry.id = latest.last_id
          WHERE cba.active_status = 1
          ORDER BY cba.account_name`,
-        );
-        bankBalances = (bankRows ?? []).map((r) => ({
-          id: String(r.id),
-          name: String(r.name),
-          balance: num(r.balance),
-        }));
-      } catch {
-        // fallback: empty array
-      }
+      );
+      bankBalances = (bankRows ?? []).map((r) => ({
+        id: String(r.id),
+        name: String(r.name),
+        balance: num(r.balance),
+      }));
+    } catch {
+      // fallback: empty array
+    }
     })();
 
     // 3. Total payables — vendor_payment_tracking pending/partial
     //    Actual status values: 'Payment Pending', 'Partially Paid'
     let totalPayables = 0;
     const payablesBlock = (async () => {
-      try {
-        const [payableRows] = await db.query<any[]>(
-          `SELECT SUM(due_amount) AS total_payables
+    try {
+      const [payableRows] = await db.query<any[]>(
+        `SELECT SUM(due_amount) AS total_payables
          FROM vendor_payment_tracking
          WHERE payment_status IN ('Payment Pending', 'Partially Paid')`,
-        );
-        totalPayables = num(payableRows?.[0]?.total_payables);
-      } catch {
-        // fallback: 0
-      }
+      );
+      totalPayables = num(payableRows?.[0]?.total_payables);
+    } catch {
+      // fallback: 0
+    }
     })();
 
     await Promise.all([receivablesBlock, bankBlock, payablesBlock]);
@@ -597,8 +597,7 @@ financeAnalyticsRouter.get(
          FROM client_invoice_payment_status
          GROUP BY payment_status`,
     );
-    for (const q of [invQuery, colQuery, cbQuery, psQuery])
-      q.catch(() => undefined);
+    for (const q of [invQuery, colQuery, cbQuery, psQuery]) q.catch(() => undefined);
 
     try {
       const monthMap = new Map<

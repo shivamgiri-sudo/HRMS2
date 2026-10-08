@@ -38,20 +38,14 @@ const CONTROLLER = "src/modules/portal/portal.controller.ts";
  *
  * So: match the assertion itself, and nothing that merely resembles scope-awareness.
  */
-const ASSERTS_SCOPE =
-  /\bassert(ProcessAccess|CommentaryAccess)\s*\(\s*req\s*\)/;
+const ASSERTS_SCOPE = /\bassert(ProcessAccess|CommentaryAccess)\s*\(\s*req\s*\)/;
 
-interface Route {
-  verb: string;
-  path: string;
-  handler: string;
-}
+interface Route { verb: string; path: string; handler: string }
 
 function processRoutes(): Route[] {
   const src = read(ROUTES);
   const out: Route[] = [];
-  const re =
-    /router\.(get|post|put|patch|delete)\s*\(\s*"(\/processes\/:id[^"]*)"[\s\S]{0,200}?c\.(\w+)/g;
+  const re = /router\.(get|post|put|patch|delete)\s*\(\s*"(\/processes\/:id[^"]*)"[\s\S]{0,200}?c\.(\w+)/g;
   for (const m of src.matchAll(re)) {
     out.push({ verb: m[1].toUpperCase(), path: m[2], handler: m[3] });
   }
@@ -97,13 +91,9 @@ describe("client portal process-scope boundary", () => {
 
   it("assertProcessAccess actually compares against the token and fails closed", () => {
     const src = read(CONTROLLER);
-    const fn =
-      /function assertProcessAccess[\s\S]{0,400}?\n}/.exec(src)?.[0] ?? "";
+    const fn = /function assertProcessAccess[\s\S]{0,400}?\n}/.exec(src)?.[0] ?? "";
 
-    expect(
-      fn,
-      "assertProcessAccess must exist — it is the boundary",
-    ).toBeTruthy();
+    expect(fn, "assertProcessAccess must exist — it is the boundary").toBeTruthy();
     // It must read the token side, not just any local variable, and must reject rather than
     // fall through. An `includes` against the wrong array would pass a shallower check.
     expect(fn).toMatch(/portalUser!?\.processIds/);
@@ -124,10 +114,7 @@ describe("client portal process-scope boundary", () => {
   it("the service-side guard still rejects a process outside the allowed list", async () => {
     const kpi = read("src/modules/portal/portal.kpi.service.ts");
     const attr = read("src/modules/portal/portal.attrition.service.ts");
-    for (const [name, src] of [
-      ["kpi", kpi],
-      ["attrition", attr],
-    ] as const) {
+    for (const [name, src] of [["kpi", kpi], ["attrition", attr]] as const) {
       expect(src, `${name} service must still check the allowed list`).toMatch(
         /allowedProcessIds\s*!==\s*undefined\s*&&\s*!allowedProcessIds\.includes\(processId\)/,
       );

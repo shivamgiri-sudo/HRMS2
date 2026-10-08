@@ -12,53 +12,29 @@ import {
 
 describe("createStructureSchema", () => {
   it("accepts valid structure", () => {
-    const r = createStructureSchema.parse({
-      structureCode: "BPO_A",
-      structureName: "BPO Grade A",
-    });
+    const r = createStructureSchema.parse({ structureCode: "BPO_A", structureName: "BPO Grade A" });
     expect(r.structureCode).toBe("BPO_A");
   });
   it("rejects empty structureCode", () => {
-    expect(() =>
-      createStructureSchema.parse({ structureCode: "", structureName: "X" }),
-    ).toThrow();
+    expect(() => createStructureSchema.parse({ structureCode: "", structureName: "X" })).toThrow();
   });
   it("trims whitespace", () => {
-    const r = createStructureSchema.parse({
-      structureCode: "  BPO_A  ",
-      structureName: "  BPO Grade A  ",
-    });
+    const r = createStructureSchema.parse({ structureCode: "  BPO_A  ", structureName: "  BPO Grade A  " });
     expect(r.structureCode).toBe("BPO_A");
   });
 });
 
 describe("createComponentSchema", () => {
   it("accepts valid component", () => {
-    const r = createComponentSchema.parse({
-      componentCode: "BASIC",
-      componentName: "Basic Salary",
-      componentType: "earning",
-    });
+    const r = createComponentSchema.parse({ componentCode: "BASIC", componentName: "Basic Salary", componentType: "earning" });
     expect(r.componentType).toBe("earning");
   });
   it("rejects invalid componentType", () => {
-    expect(() =>
-      createComponentSchema.parse({
-        componentCode: "X",
-        componentName: "X",
-        componentType: "bonus",
-      }),
-    ).toThrow();
+    expect(() => createComponentSchema.parse({ componentCode: "X", componentName: "X", componentType: "bonus" })).toThrow();
   });
   it("accepts all valid types", () => {
     for (const t of ["earning", "deduction", "statutory"]) {
-      expect(() =>
-        createComponentSchema.parse({
-          componentCode: "X",
-          componentName: "X",
-          componentType: t,
-        }),
-      ).not.toThrow();
+      expect(() => createComponentSchema.parse({ componentCode: "X", componentName: "X", componentType: t })).not.toThrow();
     }
   });
 });
@@ -74,14 +50,10 @@ describe("assignSalarySchema", () => {
     expect(() => assignSalarySchema.parse(valid)).not.toThrow();
   });
   it("rejects negative CTC", () => {
-    expect(() =>
-      assignSalarySchema.parse({ ...valid, ctcAnnual: -1 }),
-    ).toThrow();
+    expect(() => assignSalarySchema.parse({ ...valid, ctcAnnual: -1 })).toThrow();
   });
   it("rejects invalid date", () => {
-    expect(() =>
-      assignSalarySchema.parse({ ...valid, effectiveFrom: "01-01-2026" }),
-    ).toThrow();
+    expect(() => assignSalarySchema.parse({ ...valid, effectiveFrom: "01-01-2026" })).toThrow();
   });
 });
 
@@ -111,19 +83,14 @@ describe("updateRunStatusSchema", () => {
 
   it("rejects the two statuses that were removed, so the narrowing cannot regress", () => {
     for (const s of ["processing", "reviewed"]) {
-      expect(
-        () => updateRunStatusSchema.parse({ status: s }),
-        `${s} should no longer be accepted`,
-      ).toThrow();
+      expect(() => updateRunStatusSchema.parse({ status: s }), `${s} should no longer be accepted`).toThrow();
     }
   });
   it("rejects draft (can only move forward)", () => {
     expect(() => updateRunStatusSchema.parse({ status: "draft" })).toThrow();
   });
   it("rejects unknown status", () => {
-    expect(() =>
-      updateRunStatusSchema.parse({ status: "cancelled" }),
-    ).toThrow();
+    expect(() => updateRunStatusSchema.parse({ status: "cancelled" })).toThrow();
   });
 });
 
@@ -180,13 +147,11 @@ describe("advanceSchema", () => {
     expect(() => advanceSchema.parse({})).toThrow();
   });
   it("rejects amount <= 0", () => {
-    expect(() =>
-      advanceSchema.parse({
-        employeeId: "550e8400-e29b-41d4-a716-446655440000",
-        amount: 0,
-        advanceDate: "2026-05-01",
-      }),
-    ).toThrow();
+    expect(() => advanceSchema.parse({
+      employeeId: "550e8400-e29b-41d4-a716-446655440000",
+      amount: 0,
+      advanceDate: "2026-05-01",
+    })).toThrow();
   });
   it("accepts valid advance", () => {
     const r = advanceSchema.parse({

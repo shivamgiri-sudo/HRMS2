@@ -52,27 +52,27 @@
  * (created on first run) with the before value, so the whole run is reversible.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import mysql from "mysql2/promise";
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import mysql from 'mysql2/promise';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const APPLY = process.argv.includes("--apply");
-const INCLUDE_APPROVED = process.argv.includes("--include-approved");
+const APPLY = process.argv.includes('--apply');
+const INCLUDE_APPROVED = process.argv.includes('--include-approved');
 
 /** backend/.env stores values wrapped in double quotes — strip them or auth fails. */
 function readEnv(file) {
   const out = {};
-  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
-    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
+    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
   }
   return out;
 }
 
-const env = readEnv(path.join(__dirname, "..", ".env"));
+const env = readEnv(path.join(__dirname, '..', '.env'));
 
 const REPAIR_LOG_DDL = `
   CREATE TABLE IF NOT EXISTS leave_request_status_repair_log (
@@ -93,39 +93,25 @@ const REPAIR_LOG_DDL = `
  * row was genuinely never decided and stays pending.
  */
 function isDecidedRejection(row) {
-  const status = (row.Status ?? "").trim().toLowerCase();
-  const hasReason = Boolean(
-    row.DisApprovedReason && String(row.DisApprovedReason).trim(),
-  );
-  if (
-    status === "not approved" ||
-    status.includes("reject") ||
-    status.includes("disapprove")
-  )
-    return true;
-  if (status === "" && row.Status !== null && hasReason) return true;
+  const status = (row.Status ?? '').trim().toLowerCase();
+  const hasReason = Boolean(row.DisApprovedReason && String(row.DisApprovedReason).trim());
+  if (status === 'not approved' || status.includes('reject') || status.includes('disapprove')) return true;
+  if (status === '' && row.Status !== null && hasReason) return true;
   return false;
 }
 
 async function main() {
   const hrms = await mysql.createConnection({
-    host: env.DB_HOST,
-    port: Number(env.DB_PORT || 3306),
-    user: env.DB_USER,
-    password: env.DB_PASSWORD,
-    database: env.DB_NAME,
+    host: env.DB_HOST, port: Number(env.DB_PORT || 3306),
+    user: env.DB_USER, password: env.DB_PASSWORD, database: env.DB_NAME,
   });
   const bill = await mysql.createConnection({
-    host: env.BILL_DB_HOST,
-    port: Number(env.BILL_DB_PORT || 3306),
-    user: env.BILL_DB_USER,
-    password: env.BILL_DB_PASSWORD || env.BILL_DB_PASS,
+    host: env.BILL_DB_HOST, port: Number(env.BILL_DB_PORT || 3306),
+    user: env.BILL_DB_USER, password: env.BILL_DB_PASSWORD || env.BILL_DB_PASS,
     database: env.BILL_DB_NAME,
   });
 
-  console.log(
-    `mode: ${APPLY ? "APPLY" : "DRY RUN"}${INCLUDE_APPROVED ? " (+phase 2, approved rows)" : ""}`,
-  );
+  console.log(`mode: ${APPLY ? 'APPLY' : 'DRY RUN'}${INCLUDE_APPROVED ? ' (+phase 2, approved rows)' : ''}`);
 
   const [hrmsRows] = await hrms.query(
     `SELECT id, legacy_leave_id, status, from_date, to_date, total_days
@@ -140,60 +126,36 @@ async function main() {
   );
   const source = new Map(billRows.map((r) => [String(r.Id), r]));
 
-  const phase1 = []; // pending  -> rejected
-  const phase2 = []; // approved -> rejected
+  const phase1 = [];   // pending  -> rejected
+  const phase2 = [];   // approved -> rejected
   let unmatched = 0;
 
   for (const row of hrmsRows) {
     const src = source.get(String(row.legacy_leave_id));
-    if (!src) {
-      unmatched += 1;
-      continue;
-    }
+    if (!src) { unmatched += 1; continue; }
     if (!isDecidedRejection(src)) continue;
-    (row.status === "pending" ? phase1 : phase2).push({ row, src });
+    (row.status === 'pending' ? phase1 : phase2).push({ row, src });
   }
 
-  const days = (list) =>
-    list.reduce((sum, e) => sum + Number(e.row.total_days ?? 0), 0);
-  console.log(
-    `\nphase 1  pending  -> rejected : ${phase1.length} rows, ${days(phase1)} leave days`,
-  );
-  console.log(
-    `phase 2  approved -> rejected : ${phase2.length} rows, ${days(phase2)} leave days` +
-      `${INCLUDE_APPROVED ? "" : "  (skipped — pass --include-approved)"}`,
-  );
-  if (unmatched)
-    console.log(
-      `\n${unmatched} rows carry a legacy_leave_id with no db_bill row; left untouched.`,
-    );
+  const days = (list) => list.reduce((sum, e) => sum + Number(e.row.total_days ?? 0), 0);
+  console.log(`\nphase 1  pending  -> rejected : ${phase1.length} rows, ${days(phase1)} leave days`);
+  console.log(`phase 2  approved -> rejected : ${phase2.length} rows, ${days(phase2)} leave days`
+    + `${INCLUDE_APPROVED ? '' : '  (skipped — pass --include-approved)'}`);
+  if (unmatched) console.log(`\n${unmatched} rows carry a legacy_leave_id with no db_bill row; left untouched.`);
 
   const planned = [
-    ...phase1.map((e) => ({
-      ...e,
-      from: "pending",
-      phase: "pending_to_rejected",
-    })),
-    ...(INCLUDE_APPROVED
-      ? phase2.map((e) => ({
-          ...e,
-          from: "approved",
-          phase: "approved_to_rejected",
-        }))
-      : []),
+    ...phase1.map((e) => ({ ...e, from: 'pending', phase: 'pending_to_rejected' })),
+    ...(INCLUDE_APPROVED ? phase2.map((e) => ({ ...e, from: 'approved', phase: 'approved_to_rejected' })) : []),
   ];
 
   if (!APPLY) {
-    console.log("\nDry run — nothing written. Sample of what would change:");
+    console.log('\nDry run — nothing written. Sample of what would change:');
     for (const e of planned.slice(0, 10)) {
-      console.log(
-        `  ${e.row.id}  legacy ${e.row.legacy_leave_id}  ${e.from} -> rejected` +
-          `  (${String(e.row.from_date).slice(0, 10)} .. ${String(e.row.to_date).slice(0, 10)},` +
-          ` source "${e.src.Status ?? "NULL"}")`,
-      );
+      console.log(`  ${e.row.id}  legacy ${e.row.legacy_leave_id}  ${e.from} -> rejected`
+        + `  (${String(e.row.from_date).slice(0, 10)} .. ${String(e.row.to_date).slice(0, 10)},`
+        + ` source "${e.src.Status ?? 'NULL'}")`);
     }
-    await hrms.end();
-    await bill.end();
+    await hrms.end(); await bill.end();
     return;
   }
 
@@ -218,17 +180,12 @@ async function main() {
     );
     if (res.affectedRows) done += 1;
   }
-  console.log(
-    `\nUpdated ${done} of ${planned.length} rows. Reversal: ` +
-      `UPDATE leave_request lr JOIN leave_request_status_repair_log l ON l.leave_request_id = lr.id ` +
-      `SET lr.status = l.status_before WHERE l.phase = '<phase>';`,
-  );
+  console.log(`\nUpdated ${done} of ${planned.length} rows. Reversal: `
+    + `UPDATE leave_request lr JOIN leave_request_status_repair_log l ON l.leave_request_id = lr.id `
+    + `SET lr.status = l.status_before WHERE l.phase = '<phase>';`);
 
   await hrms.end();
   await bill.end();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main().catch((err) => { console.error(err); process.exit(1); });

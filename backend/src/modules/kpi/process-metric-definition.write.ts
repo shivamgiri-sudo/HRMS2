@@ -17,10 +17,7 @@ import type { RowDataPacket } from "mysql2";
  */
 
 export class MetricDefinitionError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode = 400,
-  ) {
+  constructor(message: string, readonly statusCode = 400) {
     super(message);
   }
 }
@@ -55,9 +52,7 @@ function validate(input: MetricDefinitionInput): void {
     );
   }
   if (!input.displayName?.trim()) {
-    throw new MetricDefinitionError(
-      "displayName is required — it is what this process calls the metric",
-    );
+    throw new MetricDefinitionError("displayName is required — it is what this process calls the metric");
   }
   if (hasLocal && (!input.unit?.trim() || !input.direction)) {
     // A local metric has no canonical row to inherit from, and "62" means
@@ -66,10 +61,7 @@ function validate(input: MetricDefinitionInput): void {
       "A process-local metric needs its own unit and direction — there is no canonical metric to inherit them from",
     );
   }
-  if (
-    input.weightage !== undefined &&
-    (input.weightage < 0 || input.weightage > 100)
-  ) {
+  if (input.weightage !== undefined && (input.weightage < 0 || input.weightage > 100)) {
     throw new MetricDefinitionError("weightage must be between 0 and 100");
   }
 }
@@ -102,10 +94,7 @@ export async function upsertProcessMetricDefinition(
     );
     const current = openRows[0];
 
-    if (
-      current &&
-      String(current.effective_from).slice(0, 10) === input.effectiveFrom
-    ) {
+    if (current && String(current.effective_from).slice(0, 10) === input.effectiveFrom) {
       // Same start date would collide on the unique key. Rejecting is safer than
       // overwriting: the caller may be re-submitting a form by accident.
       throw new MetricDefinitionError(
@@ -134,18 +123,11 @@ export async function upsertProcessMetricDefinition(
           display_order, weightage, is_fatal, effective_from, active_status, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
       [
-        id,
-        input.processId,
-        input.metricId ?? null,
-        input.localCode?.trim() ?? null,
-        input.displayName.trim(),
-        input.unit?.trim() ?? null,
-        input.direction ?? null,
-        input.displayOrder ?? 100,
-        input.weightage ?? 100,
-        input.isFatal ? 1 : 0,
-        input.effectiveFrom,
-        input.createdBy ?? null,
+        id, input.processId, input.metricId ?? null,
+        input.localCode?.trim() ?? null, input.displayName.trim(),
+        input.unit?.trim() ?? null, input.direction ?? null,
+        input.displayOrder ?? 100, input.weightage ?? 100,
+        input.isFatal ? 1 : 0, input.effectiveFrom, input.createdBy ?? null,
       ],
     );
 
@@ -175,8 +157,7 @@ export async function retireProcessMetricDefinition(
     `SELECT effective_from FROM process_metric_definition WHERE id = ? LIMIT 1`,
     [id],
   );
-  if (!rows.length)
-    throw new MetricDefinitionError("Definition not found", 404);
+  if (!rows.length) throw new MetricDefinitionError("Definition not found", 404);
 
   if (String(rows[0].effective_from).slice(0, 10) > effectiveTo) {
     throw new MetricDefinitionError("A definition cannot end before it starts");

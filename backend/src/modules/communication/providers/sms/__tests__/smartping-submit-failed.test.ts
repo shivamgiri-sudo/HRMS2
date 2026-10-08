@@ -22,19 +22,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 vi.mock("axios", () => ({ default: { get: vi.fn() } }));
 
-const axios = (await import("axios")).default as unknown as {
-  get: ReturnType<typeof vi.fn>;
-};
+const axios = (await import("axios")).default as unknown as { get: ReturnType<typeof vi.fn> };
 const { SmartPingProvider } = await import("../smartping.provider.js");
-const { SMARTPING_DLT_REGISTRY } =
-  await import("../../../smartping-dlt-registry.js");
+const { SMARTPING_DLT_REGISTRY } = await import("../../../smartping-dlt-registry.js");
 
-const provider = new SmartPingProvider(
-  "user",
-  "pass",
-  "Ispark",
-  "1001485540000016211",
-);
+const provider = new SmartPingProvider("user", "pass", "Ispark", "1001485540000016211");
 const MOBILE = "9999746258";
 const DLT = SMARTPING_DLT_REGISTRY.candidate_mobile_otp.dltContentId;
 
@@ -44,13 +36,7 @@ describe("SmartPing send outcome is read from the body, not the HTTP status", ()
   it("treats a 200 SUBMIT_FAILED as a failure", async () => {
     axios.get.mockResolvedValue({
       status: 200,
-      data: {
-        transactionId: 0,
-        state: "SUBMIT_FAILED",
-        statusCode: 2070,
-        description: "Authentication failure",
-        pdu: 0,
-      },
+      data: { transactionId: 0, state: "SUBMIT_FAILED", statusCode: 2070, description: "Authentication failure", pdu: 0 },
     });
 
     const res = await provider.send(MOBILE, DLT, "Your OTP is 123456");
@@ -63,12 +49,7 @@ describe("SmartPing send outcome is read from the body, not the HTTP status", ()
   it("keeps SmartPing's diagnosis on a 4xx instead of collapsing it to a status code", async () => {
     axios.get.mockResolvedValue({
       status: 400,
-      data: {
-        transactionId: 3721136044,
-        state: "SUBMIT_FAILED",
-        statusCode: 2054,
-        description: "Invalid Msisdn [910000000000] for country [IN]",
-      },
+      data: { transactionId: 3721136044, state: "SUBMIT_FAILED", statusCode: 2054, description: "Invalid Msisdn [910000000000] for country [IN]" },
     });
 
     const res = await provider.send(MOBILE, DLT, "Your OTP is 123456");
@@ -79,10 +60,7 @@ describe("SmartPing send outcome is read from the body, not the HTTP status", ()
   });
 
   it("does not let axios reject 4xx responses before the body is read", async () => {
-    axios.get.mockResolvedValue({
-      status: 400,
-      data: { state: "SUBMIT_FAILED", description: "x" },
-    });
+    axios.get.mockResolvedValue({ status: 400, data: { state: "SUBMIT_FAILED", description: "x" } });
     await provider.send(MOBILE, DLT, "body");
     expect(axios.get.mock.calls[0][1].validateStatus(400)).toBe(true);
   });
@@ -94,28 +72,17 @@ describe("SmartPing send outcome is read from the body, not the HTTP status", ()
   it("still accepts a genuine submission (SUBMIT_ACCEPTED, observed live)", async () => {
     axios.get.mockResolvedValue({
       status: 200,
-      data: {
-        transactionId: 3721268555,
-        state: "SUBMIT_ACCEPTED",
-        statusCode: 200,
-        description: "Message accepted successfully",
-        pdu: 1,
-      },
+      data: { transactionId: 3721268555, state: "SUBMIT_ACCEPTED", statusCode: 200, description: "Message accepted successfully", pdu: 1 },
     });
 
     const res = await provider.send(MOBILE, DLT, "Your OTP is 123456");
 
-    expect(res.success, "a real send must not be broken by the guard").toBe(
-      true,
-    );
+    expect(res.success, "a real send must not be broken by the guard").toBe(true);
     expect(res.message_id).toBe("3721268555");
   });
 
   it("stays permissive when SmartPing returns no state at all", async () => {
-    axios.get.mockResolvedValue({
-      status: 200,
-      data: { messageId: "sent-123" },
-    });
+    axios.get.mockResolvedValue({ status: 200, data: { messageId: "sent-123" } });
     const res = await provider.send(MOBILE, DLT, "body");
     expect(res.success).toBe(true);
   });

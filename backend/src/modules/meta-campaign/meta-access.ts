@@ -21,8 +21,7 @@ import { ORG_WIDE_EXEMPT_ROLES } from '../../shared/scopeAccess.js';
  */
 export const ALL_BRANCH_ROLES: readonly string[] = ORG_WIDE_EXEMPT_ROLES;
 
-export type BranchScope =
-  { all: true } | { all: false; branchName: string | null };
+export type BranchScope = { all: true } | { all: false; branchName: string | null };
 
 export function hasAllBranchAccess(roles: readonly string[]): boolean {
   return roles.some((r) => ALL_BRANCH_ROLES.includes(r));
@@ -32,10 +31,7 @@ export function hasAllBranchAccess(roles: readonly string[]): boolean {
  * Resolve the caller's branch scope. `roles` is every role the caller holds (a user's primary role
  * alone is not enough — a secondary `hr` role must count).
  */
-export async function resolveBranchScope(
-  userId: string,
-  roles: readonly string[],
-): Promise<BranchScope> {
+export async function resolveBranchScope(userId: string, roles: readonly string[]): Promise<BranchScope> {
   if (hasAllBranchAccess(roles)) return { all: true };
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -44,19 +40,13 @@ export async function resolveBranchScope(
        JOIN branch_master bm ON bm.id = e.branch_id
       WHERE e.user_id = ? AND e.active_status = 1
       LIMIT 1`,
-    [userId],
+    [userId]
   );
-  return {
-    all: false,
-    branchName: (rows[0]?.branch_name as string | null) ?? null,
-  };
+  return { all: false, branchName: (rows[0]?.branch_name as string | null) ?? null };
 }
 
 /** True when the lead belongs to the caller's branch (or the caller sees all branches). */
-export async function canAccessLead(
-  leadId: string,
-  scope: BranchScope,
-): Promise<boolean> {
+export async function canAccessLead(leadId: string, scope: BranchScope): Promise<boolean> {
   if (scope.all) return true;
   if (!scope.branchName) return false;
 
@@ -66,7 +56,7 @@ export async function canAccessLead(
        JOIN job_requisition jr ON jr.id = ml.requisition_id
       WHERE ml.id = ? AND jr.branch_name = ?
       LIMIT 1`,
-    [leadId, scope.branchName],
+    [leadId, scope.branchName]
   );
   return rows.length > 0;
 }
@@ -77,9 +67,7 @@ export async function canAccessLead(
  * invitation via the ATS shortlist flow — the conversation is already open, HR must be able
  * to follow up from the inbox without re-running screening.
  */
-export async function canMessageLead(
-  leadId: string,
-): Promise<{ allowed: boolean; reason?: string }> {
+export async function canMessageLead(leadId: string): Promise<{ allowed: boolean; reason?: string }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ml.screening_result,
             (SELECT COUNT(*) FROM meta_lead_messages m
@@ -87,16 +75,14 @@ export async function canMessageLead(
        FROM meta_lead_raw ml
       WHERE ml.id = ?
       LIMIT 1`,
-    [leadId],
+    [leadId]
   );
   const row = rows[0];
-  if (!row) return { allowed: false, reason: "Lead not found" };
-  if (row.screening_result === "qualified" || Number(row.message_count) > 0)
-    return { allowed: true };
+  if (!row) return { allowed: false, reason: 'Lead not found' };
+  if (row.screening_result === 'qualified' || Number(row.message_count) > 0) return { allowed: true };
   return {
     allowed: false,
-    reason:
-      "Candidate is not shortlisted for this requisition yet — run screening first",
+    reason: 'Candidate is not shortlisted for this requisition yet — run screening first',
   };
 }
 

@@ -4,15 +4,15 @@
  * PeopleOS AI Enhancement Phase 1
  */
 
-import type { AiProvider } from "./ai-provider.types.js";
-import { ruleBasedProvider } from "./providers/ruleBased.provider.js";
-import { geminiProvider } from "./providers/gemini.provider.js";
-import { ollamaProvider } from "./providers/ollama.provider.js";
-import { openRouterProvider } from "./providers/openrouter.provider.js";
-import { claudeProvider } from "./providers/claude.provider.js";
-import { omniRouteProvider } from "./providers/omniroute.provider.js";
-import { aiProviderConfigService } from "./ai-provider-config.service.js";
-import { env } from "../../config/env.js";
+import type { AiProvider } from './ai-provider.types.js';
+import { ruleBasedProvider } from './providers/ruleBased.provider.js';
+import { geminiProvider } from './providers/gemini.provider.js';
+import { ollamaProvider } from './providers/ollama.provider.js';
+import { openRouterProvider } from './providers/openrouter.provider.js';
+import { claudeProvider } from './providers/claude.provider.js';
+import { omniRouteProvider } from './providers/omniroute.provider.js';
+import { aiProviderConfigService } from './ai-provider-config.service.js';
+import { env } from '../../config/env.js';
 
 class AiProviderRegistry {
   private providers: Map<string, AiProvider> = new Map();
@@ -32,9 +32,7 @@ class AiProviderRegistry {
    */
   register(provider: AiProvider): void {
     this.providers.set(provider.key, provider);
-    console.log(
-      `[AI Registry] Registered provider: ${provider.displayName} (${provider.key})`,
-    );
+    console.log(`[AI Registry] Registered provider: ${provider.displayName} (${provider.key})`);
   }
 
   /**
@@ -50,34 +48,24 @@ class AiProviderRegistry {
   async getDefault(): Promise<AiProvider> {
     const config = await aiProviderConfigService.getDefaultProvider(false);
 
-    if (
-      !config ||
-      (config.providerKey === "rule-based" &&
-        (process.env.OPENROUTER_API_KEY || env.GEMINI_API_KEY))
-    ) {
+    if (!config || (config.providerKey === 'rule-based' && (process.env.OPENROUTER_API_KEY || env.GEMINI_API_KEY))) {
       // Prefer OpenRouter env configuration, then Gemini, before the deterministic fallback.
       if (process.env.OPENROUTER_API_KEY) {
-        console.info(
-          "[AI Registry] Using OpenRouter from OPENROUTER_API_KEY env var",
-        );
-        return this.get("openrouter") ?? ruleBasedProvider;
+        console.info('[AI Registry] Using OpenRouter from OPENROUTER_API_KEY env var');
+        return this.get('openrouter') ?? ruleBasedProvider;
       }
       if (env.GEMINI_API_KEY) {
-        console.info("[AI Registry] Using Gemini from GEMINI_API_KEY env var");
-        return this.get("gemini") ?? ruleBasedProvider;
+        console.info('[AI Registry] Using Gemini from GEMINI_API_KEY env var');
+        return this.get('gemini') ?? ruleBasedProvider;
       }
-      console.warn(
-        "[AI Registry] No default provider configured, using rule-based fallback",
-      );
+      console.warn('[AI Registry] No default provider configured, using rule-based fallback');
       return ruleBasedProvider;
     }
 
     const provider = this.get(config.providerKey);
 
     if (!provider) {
-      console.warn(
-        `[AI Registry] Provider ${config.providerKey} not found in registry, using rule-based fallback`,
-      );
+      console.warn(`[AI Registry] Provider ${config.providerKey} not found in registry, using rule-based fallback`);
       return ruleBasedProvider;
     }
 
@@ -103,16 +91,12 @@ class AiProviderRegistry {
   /**
    * List all registered providers
    */
-  listAll(): Array<{
-    key: string;
-    displayName: string;
-    capabilities: {
-      supportsChat: boolean;
-      supportsJson: boolean;
-      supportsStreaming: boolean;
-      supportsEmbeddings: boolean;
-    };
-  }> {
+  listAll(): Array<{ key: string; displayName: string; capabilities: {
+    supportsChat: boolean;
+    supportsJson: boolean;
+    supportsStreaming: boolean;
+    supportsEmbeddings: boolean;
+  }}> {
     return Array.from(this.providers.values()).map((provider) => ({
       key: provider.key,
       displayName: provider.displayName,

@@ -16,10 +16,7 @@ const pdf = readFileSync(
   "utf8",
 );
 const issue = readFileSync(
-  resolve(
-    process.cwd(),
-    "src/modules/letters/appointmentLetterIssue.service.ts",
-  ),
+  resolve(process.cwd(), "src/modules/letters/appointmentLetterIssue.service.ts"),
   "utf8",
 );
 const routes = readFileSync(
@@ -33,38 +30,22 @@ describe("Appointment letter — Salary Date uses salary_start_date, not date_of
   });
 
   it("the Salary Date line reads salaryStartDate (falling back to dateOfJoining)", () => {
-    expect(pdf).toContain(
-      "3.1 Salary Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}",
-    );
+    expect(pdf).toContain("3.1 Salary Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}");
   });
 
   it("the 'effective from' line (1.1) reads salaryStartDate too, not just dateOfJoining", () => {
-    expect(pdf).toContain(
-      "This appointment shall be effective from ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}",
-    );
+    expect(pdf).toContain("This appointment shall be effective from ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}");
   });
 
   it("the closing reference date is now labelled and sourced as Salary Start Date", () => {
-    expect(pdf).toContain(
-      "Salary Start Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}",
-    );
-    expect(pdf).not.toMatch(
-      /Date of Joining: \$\{istDisplayDate\(input\.dateOfJoining\)\}/,
-    );
+    expect(pdf).toContain("Salary Start Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}");
+    expect(pdf).not.toMatch(/Date of Joining: \$\{istDisplayDate\(input\.dateOfJoining\)\}/);
   });
 
   it("every renderAppointmentLetterPdf caller fetches and passes salary_start_date", () => {
-    for (const [label, src] of [
-      ["appointmentLetterIssue.service.ts", issue],
-      ["appointmentLetter.routes.ts", routes],
-    ] as const) {
-      expect(src, `${label} must select e.salary_start_date`).toContain(
-        "e.salary_start_date",
-      );
-      expect(
-        src,
-        `${label} must pass salaryStartDate into renderAppointmentLetterPdf`,
-      ).toContain("salaryStartDate:");
+    for (const [label, src] of [["appointmentLetterIssue.service.ts", issue], ["appointmentLetter.routes.ts", routes]] as const) {
+      expect(src, `${label} must select e.salary_start_date`).toContain("e.salary_start_date");
+      expect(src, `${label} must pass salaryStartDate into renderAppointmentLetterPdf`).toContain("salaryStartDate:");
     }
   });
 });

@@ -55,9 +55,7 @@ describe("engagement health signals query columns that exist", () => {
   it("reads attendance by record_date, not attendance_date", () => {
     const code = liveCode();
     expect(code).not.toMatch(/attendance_date/);
-    expect(code).toMatch(
-      /FROM attendance_daily_record WHERE employee_id = \? AND record_date/,
-    );
+    expect(code).toMatch(/FROM attendance_daily_record WHERE employee_id = \? AND record_date/);
   });
 
   it("filters attendance on attendance_status, the real enum column", () => {
@@ -69,9 +67,7 @@ describe("engagement health signals query columns that exist", () => {
     // the old list named a bare `status` column and values this enum never had.
     // Scoped to the attendance query: line 134 filters a different table whose
     // `status` column is real.
-    expect(code).not.toMatch(
-      /attendance_daily_record[\s\S]{0,200}AND status IN \(/,
-    );
+    expect(code).not.toMatch(/attendance_daily_record[\s\S]{0,200}AND status IN \(/);
     expect(code).not.toContain("'absent','Absent','A','LWP'");
   });
 
@@ -92,9 +88,7 @@ describe("engagement health signals query columns that exist", () => {
 
   it("dates survey responses by response_date", () => {
     const code = liveCode();
-    expect(code).toMatch(
-      /FROM survey_response WHERE employee_id = \? AND response_date/,
-    );
+    expect(code).toMatch(/FROM survey_response WHERE employee_id = \? AND response_date/);
   });
 
   it("selects dept_name in the filter options, which is not wrapped in scalar()", () => {

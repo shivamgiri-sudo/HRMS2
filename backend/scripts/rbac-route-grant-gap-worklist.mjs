@@ -47,16 +47,12 @@ const args = process.argv.slice(2);
 const csvMode = args.includes("--csv");
 const routesPath = (() => {
   const i = args.indexOf("--routes");
-  return i >= 0
-    ? args[i + 1]
-    : path.resolve(process.cwd(), "..", "rbac_routes.json");
+  return i >= 0 ? args[i + 1] : path.resolve(process.cwd(), "..", "rbac_routes.json");
 })();
 
 if (!fs.existsSync(routesPath)) {
   console.error(`route inventory not found at ${routesPath}`);
-  console.error(
-    "Generate it from src/config/routes first (see this file's header).",
-  );
+  console.error("Generate it from src/config/routes first (see this file's header).");
   process.exit(1);
 }
 const routes = JSON.parse(fs.readFileSync(routesPath, "utf8"));
@@ -69,27 +65,9 @@ const routes = JSON.parse(fs.readFileSync(routesPath, "utf8"));
  * without anyone remembering to add it here.
  */
 const PRIVILEGED = [
-  "ACCESS",
-  "SECURITY",
-  "AUDIT",
-  "ADMIN",
-  "PERMISSION",
-  "ROLE",
-  "POLICY",
-  "RBAC",
-  "PAYROLL",
-  "SALARY",
-  "BANK",
-  "DISBURSAL",
-  "STATUTORY",
-  "TDS",
-  "PF_",
-  "ESI",
-  "APPROVAL",
-  "MIGRATION",
-  "CONFIGURATION",
-  "CONTROL_TOWER",
-  "DPDP",
+  "ACCESS", "SECURITY", "AUDIT", "ADMIN", "PERMISSION", "ROLE", "POLICY", "RBAC",
+  "PAYROLL", "SALARY", "BANK", "DISBURSAL", "STATUTORY", "TDS", "PF_", "ESI",
+  "APPROVAL", "MIGRATION", "CONFIGURATION", "CONTROL_TOWER", "DPDP",
 ];
 const isPrivileged = (code) => PRIVILEGED.some((p) => code.includes(p));
 
@@ -120,9 +98,7 @@ const holders = new Map(userRows.map((r) => [r.role_key, Number(r.n)]));
 const [catalogRows] = await conn.execute(
   `SELECT page_code, active_status FROM page_catalog`,
 );
-const catalog = new Map(
-  catalogRows.map((r) => [r.page_code, Number(r.active_status)]),
-);
+const catalog = new Map(catalogRows.map((r) => [r.page_code, Number(r.active_status)]));
 
 const worklist = [];
 for (const r of routes) {
@@ -138,13 +114,8 @@ for (const r of routes) {
   worklist.push({
     page: r.page,
     path: r.path,
-    catalog: catalog.has(r.page)
-      ? catalog.get(r.page) === 1
-        ? "active"
-        : "INACTIVE"
-      : "ABSENT",
-    missing,
-    live,
+    catalog: catalog.has(r.page) ? (catalog.get(r.page) === 1 ? "active" : "INACTIVE") : "ABSENT",
+    missing, live,
     affected: live.reduce((s, m) => s + m.users, 0),
     privileged: isPrivileged(r.page),
   });
@@ -159,86 +130,44 @@ const dormant = worklist.filter((w) => !w.live.length);
 
 if (csvMode) {
   const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  console.log(
-    [
-      "page_code",
-      "path",
-      "catalog",
-      "sensitivity",
-      "recommendation",
-      "users_affected",
-      "missing_roles",
-    ].join(","),
-  );
+  console.log(["page_code","path","catalog","sensitivity","recommendation","users_affected","missing_roles"].join(","));
   for (const w of [...ordinary, ...privileged, ...dormant]) {
-    console.log(
-      [
-        w.page,
-        w.path,
-        w.catalog,
-        w.privileged ? "PRIVILEGED" : "ORDINARY",
-        !w.live.length ? "NO-OP (no holders)" : w.privileged ? "RULE" : "GRANT",
-        w.affected,
-        w.missing.map((m) => `${m.role}(${m.users})`).join(" "),
-      ]
-        .map(esc)
-        .join(","),
-    );
+    console.log([
+      w.page, w.path, w.catalog,
+      w.privileged ? "PRIVILEGED" : "ORDINARY",
+      !w.live.length ? "NO-OP (no holders)" : w.privileged ? "RULE" : "GRANT",
+      w.affected,
+      w.missing.map((m) => `${m.role}(${m.users})`).join(" "),
+    ].map(esc).join(","));
   }
 } else {
   const fmt = (w) => {
     const cat = w.catalog === "active" ? "" : `  [page_catalog: ${w.catalog}]`;
     console.log(`   ${w.page.padEnd(30)} ${w.path}${cat}`);
-    console.log(
-      `     missing: ${w.missing.map((m) => `${m.role}(${m.users} user${m.users === 1 ? "" : "s"})`).join(", ")}`,
-    );
+    console.log(`     missing: ${w.missing.map((m) => `${m.role}(${m.users} user${m.users === 1 ? "" : "s"})`).join(", ")}`);
   };
   console.log(`\nRBAC ROUTE/GRANT GAP WORKLIST`);
-  console.log(
-    `${worklist.length} of ${routes.length} gated routes admit a role the database does not grant.\n`,
-  );
+  console.log(`${worklist.length} of ${routes.length} gated routes admit a role the database does not grant.\n`);
 
-  console.log(
-    `-- ORDINARY pages, real people affected — the route already documents the intent`,
-  );
-  console.log(
-    `   ${ordinary.length} pages, ${ordinary.reduce((s, w) => s + w.affected, 0)} role-assignments blocked`,
-  );
-  console.log(
-    `   Recommendation: GRANT, matching each route's own roles prop (migration 1230's precedent).\n`,
-  );
+  console.log(`-- ORDINARY pages, real people affected — the route already documents the intent`);
+  console.log(`   ${ordinary.length} pages, ${ordinary.reduce((s, w) => s + w.affected, 0)} role-assignments blocked`);
+  console.log(`   Recommendation: GRANT, matching each route's own roles prop (migration 1230's precedent).\n`);
   ordinary.forEach(fmt);
 
-  console.log(
-    `\n-- PRIVILEGED pages — these administer access, security, audit or money`,
-  );
-  console.log(
-    `   ${privileged.length} pages. Recommendation: RULE explicitly. A backfill here is how`,
-  );
-  console.log(
-    `   Access Control ends up granted to admin and the Security Centre to hr.\n`,
-  );
+  console.log(`\n-- PRIVILEGED pages — these administer access, security, audit or money`);
+  console.log(`   ${privileged.length} pages. Recommendation: RULE explicitly. A backfill here is how`);
+  console.log(`   Access Control ends up granted to admin and the Security Centre to hr.\n`);
   privileged.forEach(fmt);
 
   if (dormant.length) {
-    console.log(
-      `\n-- NO-OP — the missing roles have no holders, so nobody is affected today`,
-    );
-    console.log(
-      `   ${dormant.length} pages. Worth aligning eventually so the gap does not surprise`,
-    );
-    console.log(
-      `   someone the day the role is first assigned, but nothing is broken now.\n`,
-    );
+    console.log(`\n-- NO-OP — the missing roles have no holders, so nobody is affected today`);
+    console.log(`   ${dormant.length} pages. Worth aligning eventually so the gap does not surprise`);
+    console.log(`   someone the day the role is first assigned, but nothing is broken now.\n`);
     dormant.forEach(fmt);
   }
 
-  console.log(
-    `\nNothing has been changed. Each line is a decision; the evidence is the route's own`,
-  );
-  console.log(
-    `roles prop, the live grant table, and how many people actually hold each role.\n`,
-  );
+  console.log(`\nNothing has been changed. Each line is a decision; the evidence is the route's own`);
+  console.log(`roles prop, the live grant table, and how many people actually hold each role.\n`);
 }
 
 await conn.end();

@@ -4,23 +4,15 @@ import { describe, expect, it } from "vitest";
 import { BPO_MASTER_REPORTS } from "../bpo-master-report-registry.js";
 
 function source(relativePath: string) {
-  return readFileSync(
-    fileURLToPath(new URL(relativePath, import.meta.url)),
-    "utf8",
-  );
+  return readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), "utf8");
 }
 
 describe("report export format contracts", () => {
   it("all column headers are uppercase in every master report", () => {
     for (const report of BPO_MASTER_REPORTS) {
       for (const col of report.columns) {
-        expect(col.key, `${report.code}: key ${col.key} not uppercase`).toBe(
-          col.key.toUpperCase(),
-        );
-        expect(
-          col.label,
-          `${report.code}: label ${col.label} not uppercase`,
-        ).toBe(col.label.toUpperCase());
+        expect(col.key, `${report.code}: key ${col.key} not uppercase`).toBe(col.key.toUpperCase());
+        expect(col.label, `${report.code}: label ${col.label} not uppercase`).toBe(col.label.toUpperCase());
       }
     }
   });

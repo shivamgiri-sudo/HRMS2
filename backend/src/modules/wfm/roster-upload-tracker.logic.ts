@@ -4,24 +4,12 @@
 // Monday W by the Sunday before it (W-1) at 18:00 IST. All times here are IST wall-clock, turned
 // into epoch ms with a fixed +05:30 offset so the result does not depend on the host timezone.
 
-export const UPLOAD_STATUSES = [
-  "uploaded",
-  "delayed",
-  "partial",
-  "missing",
-  "due",
-] as const;
+export const UPLOAD_STATUSES = ['uploaded', 'delayed', 'partial', 'missing', 'due'] as const;
 export type UploadStatus = (typeof UPLOAD_STATUSES)[number];
 
-export const ESCALATION_STAGES = [
-  "reminder",
-  "heads_up",
-  "missing",
-  "escalated",
-  "late_upload",
-] as const;
+export const ESCALATION_STAGES = ['reminder', 'heads_up', 'missing', 'escalated', 'late_upload'] as const;
 export type EscalationStage = (typeof ESCALATION_STAGES)[number];
-export type RecipientKind = "wfm" | "manager" | "skip_level";
+export type RecipientKind = 'wfm' | 'manager' | 'skip_level';
 
 const IST_OFFSET_MS = 330 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -30,31 +18,24 @@ const HOUR_MS = 60 * 60 * 1000;
 export const DEADLINE_HOUR_IST = 18;
 
 /** Wall-clock hour (IST) of each stage on the day named by its offset from the week's Monday. */
-const STAGE_TRIGGER: Record<
-  Exclude<EscalationStage, "late_upload">,
-  { dayOffset: number; hour: number }
-> = {
+const STAGE_TRIGGER: Record<Exclude<EscalationStage, 'late_upload'>, { dayOffset: number; hour: number }> = {
   reminder: { dayOffset: -3, hour: 10 }, // Friday 10:00
   heads_up: { dayOffset: -1, hour: 12 }, // Sunday 12:00
   missing: { dayOffset: -1, hour: DEADLINE_HOUR_IST }, // Sunday 18:00 = the deadline itself
   escalated: { dayOffset: 0, hour: 10 }, // Monday 10:00
 };
 
-export const STAGE_RECIPIENTS: Record<
-  EscalationStage,
-  readonly RecipientKind[]
-> = {
-  reminder: ["wfm"],
-  heads_up: ["wfm", "manager"],
-  missing: ["wfm", "manager"],
-  escalated: ["wfm", "manager", "skip_level"],
-  late_upload: ["wfm", "manager"],
+export const STAGE_RECIPIENTS: Record<EscalationStage, readonly RecipientKind[]> = {
+  reminder: ['wfm'],
+  heads_up: ['wfm', 'manager'],
+  missing: ['wfm', 'manager'],
+  escalated: ['wfm', 'manager', 'skip_level'],
+  late_upload: ['wfm', 'manager'],
 };
 
 function parseDate(dateStr: string): { y: number; m: number; d: number } {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
-  if (!match)
-    throw new Error(`Invalid date "${dateStr}" — expected YYYY-MM-DD`);
+  if (!match) throw new Error(`Invalid date "${dateStr}" — expected YYYY-MM-DD`);
   return { y: Number(match[1]), m: Number(match[2]), d: Number(match[3]) };
 }
 
@@ -94,10 +75,7 @@ export function deadlineMs(weekStart: string): number {
   return istEpoch(addDays(weekStart, -1), DEADLINE_HOUR_IST);
 }
 
-export function stageTriggerMs(
-  weekStart: string,
-  stage: Exclude<EscalationStage, "late_upload">,
-): number {
+export function stageTriggerMs(weekStart: string, stage: Exclude<EscalationStage, 'late_upload'>): number {
   const { dayOffset, hour } = STAGE_TRIGGER[stage];
   return istEpoch(addDays(weekStart, dayOffset), hour);
 }
@@ -136,23 +114,14 @@ export function classifyCell(input: CellInput): CellResult {
   if (expected > 0 && covered >= expected && fullCoverageAtMs !== null) {
     const late = fullCoverageAtMs - deadline;
     return late <= 0
-      ? { status: "uploaded", hoursLate: null, hoursToDeadline: null }
-      : {
-          status: "delayed",
-          hoursLate: roundHours(late),
-          hoursToDeadline: null,
-        };
+      ? { status: 'uploaded', hoursLate: null, hoursToDeadline: null }
+      : { status: 'delayed', hoursLate: roundHours(late), hoursToDeadline: null };
   }
   const overdue = beforeDeadline ? null : roundHours(nowMs - deadline);
-  if (covered > 0)
-    return {
-      status: "partial",
-      hoursLate: overdue,
-      hoursToDeadline: toDeadline,
-    };
+  if (covered > 0) return { status: 'partial', hoursLate: overdue, hoursToDeadline: toDeadline };
   return beforeDeadline
-    ? { status: "due", hoursLate: null, hoursToDeadline: toDeadline }
-    : { status: "missing", hoursLate: overdue, hoursToDeadline: null };
+    ? { status: 'due', hoursLate: null, hoursToDeadline: toDeadline }
+    : { status: 'missing', hoursLate: overdue, hoursToDeadline: null };
 }
 
 export interface EscalationCandidate {
@@ -167,12 +136,8 @@ export interface EscalationAction {
   stage: EscalationStage;
 }
 
-const INCOMPLETE: ReadonlySet<UploadStatus> = new Set([
-  "due",
-  "partial",
-  "missing",
-]);
-const ACTIVE_STAGES = ["reminder", "heads_up", "missing", "escalated"] as const;
+const INCOMPLETE: ReadonlySet<UploadStatus> = new Set(['due', 'partial', 'missing']);
+const ACTIVE_STAGES = ['reminder', 'heads_up', 'missing', 'escalated'] as const;
 
 /**
  * Which alert (at most one per cell) is owed right now.
@@ -180,25 +145,17 @@ const ACTIVE_STAGES = ["reminder", "heads_up", "missing", "escalated"] as const;
  * skipped rather than replayed, so switching the feature on mid-week sends one message per cell,
  * not four. A cell that became `delayed` after an overdue alert owes a single "uploaded late" note.
  */
-export function planEscalations(
-  cells: readonly EscalationCandidate[],
-  nowMs: number,
-): EscalationAction[] {
+export function planEscalations(cells: readonly EscalationCandidate[], nowMs: number): EscalationAction[] {
   const actions: EscalationAction[] = [];
   for (const cell of cells) {
-    if (cell.status === "delayed") {
-      const alerted =
-        cell.sentStages.has("missing") || cell.sentStages.has("escalated");
-      if (alerted && !cell.sentStages.has("late_upload"))
-        actions.push({ key: cell.key, stage: "late_upload" });
+    if (cell.status === 'delayed') {
+      const alerted = cell.sentStages.has('missing') || cell.sentStages.has('escalated');
+      if (alerted && !cell.sentStages.has('late_upload')) actions.push({ key: cell.key, stage: 'late_upload' });
       continue;
     }
     if (!INCOMPLETE.has(cell.status)) continue;
-    const owed = [...ACTIVE_STAGES]
-      .reverse()
-      .find((stage) => stageTriggerMs(cell.weekStart, stage) <= nowMs);
-    if (owed && !cell.sentStages.has(owed))
-      actions.push({ key: cell.key, stage: owed });
+    const owed = [...ACTIVE_STAGES].reverse().find((stage) => stageTriggerMs(cell.weekStart, stage) <= nowMs);
+    if (owed && !cell.sentStages.has(owed)) actions.push({ key: cell.key, stage: owed });
   }
   return actions;
 }

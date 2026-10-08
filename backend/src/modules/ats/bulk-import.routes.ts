@@ -4,56 +4,33 @@ import multer from "multer";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import {
-  parseHistoricalFile,
-  validateRow,
-  runBulkImport,
-} from "./bulk-import.service.js";
+import { parseHistoricalFile, validateRow, runBulkImport } from "./bulk-import.service.js";
 
 export const bulkImportRouter = Router();
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 },
-});
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 type AH = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
-const h =
-  (fn: AH) => (req: AuthenticatedRequest, res: Response, next: NextFunction) =>
-    void fn(req, res).catch(next);
+const h = (fn: AH) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => void fn(req, res).catch(next);
 
 // ── POST /api/ats/bulk-import/candidates ─────────────────────────────────────
 // Roles: admin, super_admin
 bulkImportRouter.post(
   "/candidates",
-  (req, _res, next) => {
-    req.setTimeout(10 * 60 * 1000);
-    next();
-  },
+  (req, _res, next) => { req.setTimeout(10 * 60 * 1000); next(); },
   requireAuth,
   requireRole("admin", "super_admin"),
   upload.single("file"),
   h(async (req, res) => {
     if (!req.file) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "No file uploaded. Send file as multipart field 'file'.",
-        });
+      return res.status(400).json({ success: false, message: "No file uploaded. Send file as multipart field 'file'." });
     }
 
     const dryRun = String(req.body?.dryRun ?? "false").toLowerCase() === "true";
     const rows = parseHistoricalFile(req.file.buffer, req.file.mimetype);
 
     if (!rows.length) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "File parsed but no data rows found. Check that the file has a header row and at least one data row.",
-        });
+      return res.status(400).json({ success: false, message: "File parsed but no data rows found. Check that the file has a header row and at least one data row." });
     }
 
     const result = await runBulkImport({
@@ -63,7 +40,7 @@ bulkImportRouter.post(
     });
 
     return res.json({ success: true, dryRun, ...result });
-  }),
+  })
 );
 
 // ── POST /api/ats/bulk-import/preview ────────────────────────────────────────
@@ -75,20 +52,14 @@ bulkImportRouter.post(
   upload.single("file"),
   h(async (req, res) => {
     if (!req.file) {
-      return res
-        .status(400)
-        .json({ success: false, message: "No file uploaded." });
+      return res.status(400).json({ success: false, message: "No file uploaded." });
     }
 
     const rows = parseHistoricalFile(req.file.buffer, req.file.mimetype);
     const previewRows = rows.slice(0, 10);
     const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
 
-    const validationSummary: {
-      errors: number;
-      warnings: number;
-      sampleErrors: string[];
-    } = {
+    const validationSummary: { errors: number; warnings: number; sampleErrors: string[] } = {
       errors: 0,
       warnings: 0,
       sampleErrors: [],
@@ -99,9 +70,7 @@ bulkImportRouter.post(
       validationSummary.errors += errors.length;
       validationSummary.warnings += warnings.length;
       if (errors.length && validationSummary.sampleErrors.length < 5) {
-        validationSummary.sampleErrors.push(
-          `Row ${i + 2}: ${errors[0].message}`,
-        );
+        validationSummary.sampleErrors.push(`Row ${i + 2}: ${errors[0].message}`);
       }
     }
 
@@ -112,5 +81,5 @@ bulkImportRouter.post(
       previewRows,
       validationSummary,
     });
-  }),
+  })
 );

@@ -39,18 +39,7 @@ import { getDialerPool } from "../../db/dialerDb.js";
  */
 
 const MONTH_ABBR: Record<string, number> = {
-  jan: 1,
-  feb: 2,
-  mar: 3,
-  apr: 4,
-  may: 5,
-  jun: 6,
-  jul: 7,
-  aug: 8,
-  sep: 9,
-  oct: 10,
-  nov: 11,
-  dec: 12,
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
 };
 
 /** Parses the "D-Mon-YY" text every one of these tables' date columns use
@@ -58,9 +47,7 @@ const MONTH_ABBR: Record<string, number> = {
  * comment for why this is done in JS rather than trusted to a single
  * shared SQL date format across tables with different real conventions. */
 function parseShortDate(raw: unknown): Date | null {
-  const m = String(raw ?? "")
-    .trim()
-    .match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/);
+  const m = String(raw ?? "").trim().match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/);
   if (!m) return null;
   const month = MONTH_ABBR[m[2].toLowerCase()];
   if (!month) return null;
@@ -78,11 +65,7 @@ function timeToSec(raw: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 function num(v: unknown): number {
-  const n = Number(
-    String(v ?? "")
-      .replace(/%/g, "")
-      .trim(),
-  );
+  const n = Number(String(v ?? "").replace(/%/g, "").trim());
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -122,11 +105,7 @@ interface QualityRow { audit_date: unknown; lob: unknown; cq_score: unknown }
 interface RechurnRow { report_date: unknown }
 
 function computeMetricsForRows(
-  cdr: CdrRow[],
-  apr: AprRow[],
-  feedback: FeedbackRow[],
-  quality: QualityRow[],
-  rechurn: RechurnRow[],
+  cdr: CdrRow[], apr: AprRow[], feedback: FeedbackRow[], quality: QualityRow[], rechurn: RechurnRow[],
 ): Record<string, number> {
   const offered = cdr.length;
   const answered = cdr.filter((r) => r.disposition === "A").length;
@@ -137,26 +116,15 @@ function computeMetricsForRows(
   const shortCalls = cdr.filter((r) => r.short_calls === "1").length;
   const answeredRows = cdr.filter((r) => r.disposition === "A");
   const avgOf = (rows: CdrRow[], field: keyof CdrRow) => {
-    const withVal = rows.filter(
-      (r) =>
-        r[field] !== null &&
-        r[field] !== undefined &&
-        String(r[field]).trim() !== "",
-    );
+    const withVal = rows.filter((r) => r[field] !== null && r[field] !== undefined && String(r[field]).trim() !== "");
     if (withVal.length === 0) return 0;
     return withVal.reduce((s, r) => s + num(r[field]), 0) / withVal.length;
   };
-  const achtSec =
-    answeredRows.length > 0
-      ? answeredRows.reduce((s, r) => s + timeToSec(r.total_handled_time), 0) /
-        answeredRows.length
-      : 0;
+  const achtSec = answeredRows.length > 0 ? answeredRows.reduce((s, r) => s + timeToSec(r.total_handled_time), 0) / answeredRows.length : 0;
   const avgQueueSec = avgOf(cdr, "queue_duration");
   const avgAcwSec = avgOf(answeredRows, "acw_duration");
   const avgHoldSec = avgOf(cdr, "hold_time");
-  const distinctAgentsAnswered = new Set(
-    answeredRows.map((r) => String(r.agent_id)),
-  ).size;
+  const distinctAgentsAnswered = new Set(answeredRows.map((r) => String(r.agent_id))).size;
 
   const aprAgents = new Set(apr.map((r) => String(r.mas_id))).size;
   const feedbackReceived = feedback.length;
@@ -165,54 +133,36 @@ function computeMetricsForRows(
   const satisfied = feedback.filter((r) => String(r.csat_dsat).trim() === "1").length;
   const notSatisfied = feedback.filter((r) => String(r.csat_dsat).trim() !== "1").length;
 
-  const inboundQuality = quality.filter(
-    (r) => String(r.lob).trim().toLowerCase() === "inbound",
-  );
-  const avgQualityScore =
-    inboundQuality.length > 0
-      ? inboundQuality.reduce((s, r) => s + num(r.cq_score), 0) /
-        inboundQuality.length
-      : 0;
+  const inboundQuality = quality.filter((r) => String(r.lob).trim().toLowerCase() === "inbound");
+  const avgQualityScore = inboundQuality.length > 0 ? inboundQuality.reduce((s, r) => s + num(r.cq_score), 0) / inboundQuality.length : 0;
 
   return {
     call_offered: offered,
     call_answered: answered,
     unique_calls: uniqueCalls,
     repeat_calls: repeatCalls,
-    repeat_pct:
-      offered > 0 ? Math.round((repeatCalls / offered) * 10000) / 100 : 0,
+    repeat_pct: offered > 0 ? Math.round((repeatCalls / offered) * 10000) / 100 : 0,
     rechurn_calls: rechurn.length,
     al_pct: offered > 0 ? Math.round((answered / offered) * 10000) / 100 : 0,
     abn_calls: abnCalls,
     abn_pct: offered > 0 ? Math.round((abnCalls / offered) * 10000) / 100 : 0,
     call_ans_in_threshold: inThreshold,
     short_calls: shortCalls,
-    short_call_pct:
-      offered > 0 ? Math.round((shortCalls / offered) * 10000) / 100 : 0,
-    sl_pct:
-      answered > 0 ? Math.round((inThreshold / answered) * 10000) / 100 : 0,
+    short_call_pct: offered > 0 ? Math.round((shortCalls / offered) * 10000) / 100 : 0,
+    sl_pct: answered > 0 ? Math.round((inThreshold / answered) * 10000) / 100 : 0,
     acht_sec: Math.round(achtSec),
     avg_queue_sec: Math.round(avgQueueSec),
     avg_acw_sec: Math.round(avgAcwSec),
     avg_hold_sec: Math.round(avgHoldSec),
     quality_score_pct: Math.round(avgQualityScore * 100) / 100,
     feedback_received: feedbackReceived,
-    feedback_pct:
-      answered > 0
-        ? Math.round((feedbackReceived / answered) * 10000) / 100
-        : 0,
+    feedback_pct: answered > 0 ? Math.round((feedbackReceived / answered) * 10000) / 100 : 0,
     feedback_hindi: feedbackHindi,
     feedback_english: feedbackEnglish,
     satisfied,
     not_satisfied: notSatisfied,
-    csat_pct:
-      feedbackReceived > 0
-        ? Math.round((satisfied / feedbackReceived) * 10000) / 100
-        : 0,
-    dsat_pct:
-      feedbackReceived > 0
-        ? Math.round((notSatisfied / feedbackReceived) * 10000) / 100
-        : 0,
+    csat_pct: feedbackReceived > 0 ? Math.round((satisfied / feedbackReceived) * 10000) / 100 : 0,
+    dsat_pct: feedbackReceived > 0 ? Math.round((notSatisfied / feedbackReceived) * 10000) / 100 : 0,
     call_answered_agents: aprAgents || distinctAgentsAnswered,
   };
 }
@@ -222,9 +172,7 @@ function fmtSecs(s: number): string {
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const sec = total % 60;
-  return h > 0
-    ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
-    : `${m}:${String(sec).padStart(2, "0")}`;
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
 }
 
 function isoToDate(s: string): Date {
@@ -260,10 +208,7 @@ export async function getCloviaInboundSnapshot(): Promise<CloviaInboundSnapshot>
 
   const withDate = <T extends object>(rows: T[], field: string) =>
     rows
-      .map((r) => ({
-        ...r,
-        __date: parseShortDate((r as Record<string, unknown>)[field]),
-      }))
+      .map((r) => ({ ...r, __date: parseShortDate((r as Record<string, unknown>)[field]) }))
       .filter((r): r is T & { __date: Date } => r.__date !== null);
   const withIsoDate = <T extends object>(rows: T[]) =>
     rows.map((r) => ({ ...r, __date: isoToDate(String((r as Record<string, unknown>).d)) }));
@@ -276,9 +221,7 @@ export async function getCloviaInboundSnapshot(): Promise<CloviaInboundSnapshot>
 
   const cdrDates = cdr.map((r) => r.__date.getTime()).sort((a, b) => a - b);
   const minDate = cdrDates.length ? isoDate(new Date(cdrDates[0])) : "";
-  const maxDate = cdrDates.length
-    ? isoDate(new Date(cdrDates[cdrDates.length - 1]))
-    : "";
+  const maxDate = cdrDates.length ? isoDate(new Date(cdrDates[cdrDates.length - 1])) : "";
 
   const uniqueDays = [...new Set(cdr.map((r) => isoDate(r.__date)))].sort();
 
@@ -298,59 +241,26 @@ export async function getCloviaInboundSnapshot(): Promise<CloviaInboundSnapshot>
   // MTD -- every uploaded cl_ib_cdr day, not the calendar month (see doc comment).
   periods.push({ key: "mtd", label: "Sept'26 (uploaded)" });
   const mtdSet = filterAll(() => true);
-  perPeriodValues.mtd = computeMetricsForRows(
-    mtdSet.cdr,
-    mtdSet.apr,
-    mtdSet.feedback,
-    mtdSet.quality,
-    mtdSet.rechurn,
-  );
+  perPeriodValues.mtd = computeMetricsForRows(mtdSet.cdr, mtdSet.apr, mtdSet.feedback, mtdSet.quality, mtdSet.rechurn);
 
   // W-1 / W-2 -- calendar day-of-month 1-7 / 8-14, same convention used
   // elsewhere in this app (e.g. Housing Owner's own week field).
   periods.push({ key: "w1", label: "W-1" });
   const w1Set = filterAll((d) => d.getDate() >= 1 && d.getDate() <= 7);
-  perPeriodValues.w1 = computeMetricsForRows(
-    w1Set.cdr,
-    w1Set.apr,
-    w1Set.feedback,
-    w1Set.quality,
-    w1Set.rechurn,
-  );
+  perPeriodValues.w1 = computeMetricsForRows(w1Set.cdr, w1Set.apr, w1Set.feedback, w1Set.quality, w1Set.rechurn);
 
   periods.push({ key: "w2", label: "W-2" });
   const w2Set = filterAll((d) => d.getDate() >= 8 && d.getDate() <= 14);
-  perPeriodValues.w2 = computeMetricsForRows(
-    w2Set.cdr,
-    w2Set.apr,
-    w2Set.feedback,
-    w2Set.quality,
-    w2Set.rechurn,
-  );
+  perPeriodValues.w2 = computeMetricsForRows(w2Set.cdr, w2Set.apr, w2Set.feedback, w2Set.quality, w2Set.rechurn);
 
   for (const day of uniqueDays) {
     periods.push({ key: day, label: day });
     const daySet = filterAll((d) => isoDate(d) === day);
-    perPeriodValues[day] = computeMetricsForRows(
-      daySet.cdr,
-      daySet.apr,
-      daySet.feedback,
-      daySet.quality,
-      daySet.rechurn,
-    );
+    perPeriodValues[day] = computeMetricsForRows(daySet.cdr, daySet.apr, daySet.feedback, daySet.quality, daySet.rechurn);
   }
 
-  const rowDefs: {
-    key: string;
-    label: string;
-    benchmark: string | null;
-    format?: "sec" | "pct";
-  }[] = [
-    {
-      key: "call_offered",
-      label: "Call Offered@500 Calls Per Day",
-      benchmark: "7500",
-    },
+  const rowDefs: { key: string; label: string; benchmark: string | null; format?: "sec" | "pct" }[] = [
+    { key: "call_offered", label: "Call Offered@500 Calls Per Day", benchmark: "7500" },
     { key: "call_answered", label: "Call Answered", benchmark: "7125" },
     { key: "unique_calls", label: "Unique Calls", benchmark: null },
     { key: "repeat_calls", label: "Repeat Calls", benchmark: null },
@@ -359,44 +269,15 @@ export async function getCloviaInboundSnapshot(): Promise<CloviaInboundSnapshot>
     { key: "al_pct", label: "AL %", benchmark: "95%", format: "pct" },
     { key: "abn_calls", label: "Abn Calls", benchmark: null },
     { key: "abn_pct", label: "Abn %", benchmark: "5%", format: "pct" },
-    {
-      key: "call_ans_in_threshold",
-      label: "Call Ans in Threshold",
-      benchmark: null,
-    },
+    { key: "call_ans_in_threshold", label: "Call Ans in Threshold", benchmark: null },
     { key: "short_calls", label: "Short Calls < 20 Sec", benchmark: null },
-    {
-      key: "short_call_pct",
-      label: "Short Call %",
-      benchmark: null,
-      format: "pct",
-    },
+    { key: "short_call_pct", label: "Short Call %", benchmark: null, format: "pct" },
     { key: "sl_pct", label: "SL %", benchmark: "80%", format: "pct" },
     { key: "acht_sec", label: "ACHT", benchmark: "0:05:00", format: "sec" },
-    {
-      key: "avg_queue_sec",
-      label: "Average Queue Time",
-      benchmark: null,
-      format: "sec",
-    },
-    {
-      key: "avg_acw_sec",
-      label: "Average ACW Time",
-      benchmark: null,
-      format: "sec",
-    },
-    {
-      key: "avg_hold_sec",
-      label: "Average Hold Time",
-      benchmark: null,
-      format: "sec",
-    },
-    {
-      key: "quality_score_pct",
-      label: "Quality Score %",
-      benchmark: "90%",
-      format: "pct",
-    },
+    { key: "avg_queue_sec", label: "Average Queue Time", benchmark: null, format: "sec" },
+    { key: "avg_acw_sec", label: "Average ACW Time", benchmark: null, format: "sec" },
+    { key: "avg_hold_sec", label: "Average Hold Time", benchmark: null, format: "sec" },
+    { key: "quality_score_pct", label: "Quality Score %", benchmark: "90%", format: "pct" },
     { key: "feedback_received", label: "Feedback Received", benchmark: null },
     { key: "feedback_pct", label: "Feedback%", benchmark: null, format: "pct" },
     { key: "feedback_hindi", label: "Feedback_Hindi", benchmark: null },
@@ -405,23 +286,14 @@ export async function getCloviaInboundSnapshot(): Promise<CloviaInboundSnapshot>
     { key: "not_satisfied", label: "Not Satisfied", benchmark: null },
     { key: "csat_pct", label: "C-SAT%", benchmark: "95%", format: "pct" },
     { key: "dsat_pct", label: "D-SAT%", benchmark: "5%", format: "pct" },
-    {
-      key: "call_answered_agents",
-      label: "Call Answered (Agents)",
-      benchmark: "85",
-    },
+    { key: "call_answered_agents", label: "Call Answered (Agents)", benchmark: "85" },
   ];
 
   const metrics: SnapshotMetric[] = rowDefs.map((def) => {
     const values: Record<string, number | string> = {};
     for (const p of periods) {
       const raw = perPeriodValues[p.key]?.[def.key] ?? 0;
-      values[p.key] =
-        def.format === "sec"
-          ? fmtSecs(raw)
-          : def.format === "pct"
-            ? `${raw}%`
-            : raw;
+      values[p.key] = def.format === "sec" ? fmtSecs(raw) : def.format === "pct" ? `${raw}%` : raw;
     }
     return { key: def.key, label: def.label, benchmark: def.benchmark, values };
   });

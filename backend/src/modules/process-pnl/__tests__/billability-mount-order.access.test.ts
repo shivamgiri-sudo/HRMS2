@@ -24,22 +24,12 @@ vi.mock("../../../db/mysql.js", () => ({
   db: { execute, query: execute, getConnection: vi.fn() },
 }));
 
-let actor: { id: string; role: string; roles: string[] } = {
-  id: "u1",
-  role: "finance",
-  roles: ["finance"],
-};
+let actor: { id: string; role: string; roles: string[] } = { id: "u1", role: "finance", roles: ["finance"] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<
-      typeof import("../../../middleware/authMiddleware.js")
-    >();
+  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => {
-      req.authUser = actor;
-      next();
-    },
+    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
   };
 });
 
@@ -51,10 +41,7 @@ function appFor(role: string) {
   actor = { id: `u-${role}`, role, roles: [role] };
   const app = express();
   app.use(express.json());
-  app.use((req: any, _res, next) => {
-    req.authUser = actor;
-    next();
-  });
+  app.use((req: any, _res, next) => { req.authUser = actor; next(); });
   app.use("/api/finance", processPnlRouter);
   app.use("/api/finance/billability", billabilityRouter);
   return app;
@@ -70,20 +57,13 @@ beforeEach(() => {
 describe("billability API reached past processPnlRouter", () => {
   // payroll_branch is the one that regressed; the other three are in both lists and would have
   // passed even with the bug, so they are here only to prove the mount itself still works.
-  for (const role of [
-    "payroll_branch",
-    "finance",
-    "payroll_head",
-    "super_admin",
-  ]) {
+  for (const role of ["payroll_branch", "finance", "payroll_head", "super_admin"]) {
     it(`lets ${role} through to billability with processPnlRouter mounted first`, async () => {
-      const res = await request(appFor(role)).get(
-        "/api/finance/billability/cost-centre-activity",
-      );
+      const res = await request(appFor(role)).get("/api/finance/billability/cost-centre-activity");
       expect(
         res.status,
-        `${role} holds a billability grant; a router mounted earlier on the shared /api/finance ` +
-          `base must not be able to answer for it`,
+        `${role} holds a billability grant; a router mounted earlier on the shared /api/finance `
+          + `base must not be able to answer for it`
       ).toBe(200);
     });
   }
@@ -91,19 +71,12 @@ describe("billability API reached past processPnlRouter", () => {
   it("still refuses a role that holds no billability grant", async () => {
     // The fix must not turn into a hole: scoping the P&L gate to /pnl removes an accidental
     // denial, it does not remove billabilityRouter's own guard.
-    const res = await request(appFor("hr")).get(
-      "/api/finance/billability/cost-centre-activity",
-    );
+    const res = await request(appFor("hr")).get("/api/finance/billability/cost-centre-activity");
     expect(res.status).toBe(403);
   });
 
   it("still refuses a non-P&L role on the P&L routes the gate exists to protect", async () => {
-    const res = await request(appFor("hr")).get(
-      "/api/finance/pnl/summary?period=2026-08",
-    );
-    expect(
-      res.status,
-      "scoping the gate to /pnl must not stop it guarding /pnl",
-    ).toBe(403);
+    const res = await request(appFor("hr")).get("/api/finance/pnl/summary?period=2026-08");
+    expect(res.status, "scoping the gate to /pnl must not stop it guarding /pnl").toBe(403);
   });
 });

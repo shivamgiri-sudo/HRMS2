@@ -16,13 +16,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
  * Plus: a non-"experience" letter type (e.g. "increment") is never subject to either check.
  */
 
-const { dbExecute, nocReleaseStatusMock, letterSalaryRowsMock } = vi.hoisted(
-  () => ({
-    dbExecute: vi.fn(),
-    nocReleaseStatusMock: vi.fn(),
-    letterSalaryRowsMock: vi.fn(),
-  }),
-);
+const { dbExecute, nocReleaseStatusMock, letterSalaryRowsMock } = vi.hoisted(() => ({
+  dbExecute: vi.fn(),
+  nocReleaseStatusMock: vi.fn(),
+  letterSalaryRowsMock: vi.fn(),
+}));
 
 vi.mock("../../../db/mysql.js", () => ({
   db: { execute: dbExecute, query: dbExecute },
@@ -45,9 +43,7 @@ function primeDb(opts: {
   dbExecute.mockReset();
   dbExecute
     // 1. letter_template lookup
-    .mockResolvedValueOnce([
-      [{ id: TEMPLATE_ID, letter_type: opts.letterType, template_code: "X" }],
-    ])
+    .mockResolvedValueOnce([[{ id: TEMPLATE_ID, letter_type: opts.letterType, template_code: "X" }]])
     // 2. employees + joins lookup
     .mockResolvedValueOnce([[{
       id: EMP_ID, first_name: "Test", last_name: "Employee", full_name: "Test Employee",
@@ -77,89 +73,47 @@ describe("generateLetter — experience letter NOC/exit gate", () => {
 
   it("refuses an experience letter for a still-active employee, without consulting NOC", async () => {
     const { lettersService } = await loadService();
-    primeDb({
-      letterType: "experience",
-      employmentStatus: "active",
-      dateOfExit: null,
-    });
+    primeDb({ letterType: "experience", employmentStatus: "active", dateOfExit: null });
 
     await expect(
-      lettersService.generateLetter({
-        employee_id: EMP_ID,
-        template_code: "EXPERIENCE_LETTER",
-        generated_by: "u1",
-      }),
-    ).rejects.toMatchObject({
-      statusCode: 409,
-      code: "EXPERIENCE_LETTER_NOT_EXITED",
-    });
+      lettersService.generateLetter({ employee_id: EMP_ID, template_code: "EXPERIENCE_LETTER", generated_by: "u1" }),
+    ).rejects.toMatchObject({ statusCode: 409, code: "EXPERIENCE_LETTER_NOT_EXITED" });
     expect(nocReleaseStatusMock).not.toHaveBeenCalled();
   });
 
   it("refuses an experience letter when NOC clearance is blocked", async () => {
     const { lettersService } = await loadService();
-    primeDb({
-      letterType: "experience",
-      employmentStatus: "inactive",
-      dateOfExit: "2026-09-01",
-    });
+    primeDb({ letterType: "experience", employmentStatus: "inactive", dateOfExit: "2026-09-01" });
     nocReleaseStatusMock.mockResolvedValue({
-      blocked: true,
-      reason:
-        "NOC clearance is in progress — not all signatories have responded.",
-      caseStatus: "in_progress",
-      hasCase: true,
-      overridden: false,
+      blocked: true, reason: "NOC clearance is in progress — not all signatories have responded.",
+      caseStatus: "in_progress", hasCase: true, overridden: false,
     });
 
     await expect(
-      lettersService.generateLetter({
-        employee_id: EMP_ID,
-        template_code: "EXPERIENCE_LETTER",
-        generated_by: "u1",
-      }),
-    ).rejects.toMatchObject({
-      statusCode: 409,
-      code: "EXPERIENCE_LETTER_NOC_BLOCKED",
-    });
+      lettersService.generateLetter({ employee_id: EMP_ID, template_code: "EXPERIENCE_LETTER", generated_by: "u1" }),
+    ).rejects.toMatchObject({ statusCode: 409, code: "EXPERIENCE_LETTER_NOC_BLOCKED" });
     expect(nocReleaseStatusMock).toHaveBeenCalledWith(EMP_ID);
   });
 
   it("issues the letter once exited and NOC is cleared", async () => {
     const { lettersService } = await loadService();
-    primeDb({
-      letterType: "experience",
-      employmentStatus: "inactive",
-      dateOfExit: "2026-09-01",
-    });
+    primeDb({ letterType: "experience", employmentStatus: "inactive", dateOfExit: "2026-09-01" });
     nocReleaseStatusMock.mockResolvedValue({
-      blocked: false,
-      reason: null,
-      caseStatus: "completed",
-      hasCase: true,
-      overridden: false,
+      blocked: false, reason: null, caseStatus: "completed", hasCase: true, overridden: false,
     });
 
     const result = await lettersService.generateLetter({
-      employee_id: EMP_ID,
-      template_code: "EXPERIENCE_LETTER",
-      generated_by: "u1",
+      employee_id: EMP_ID, template_code: "EXPERIENCE_LETTER", generated_by: "u1",
     });
     expect(result.letter_type).toBe("experience");
   });
 
   it("never applies the exit/NOC gate to a non-experience letter type", async () => {
     const { lettersService } = await loadService();
-    primeDb({
-      letterType: "increment",
-      employmentStatus: "active",
-      dateOfExit: null,
-    });
+    primeDb({ letterType: "increment", employmentStatus: "active", dateOfExit: null });
 
     const result = await lettersService.generateLetter({
-      employee_id: EMP_ID,
-      template_code: "INCREMENT_LETTER",
-      generated_by: "u1",
+      employee_id: EMP_ID, template_code: "INCREMENT_LETTER", generated_by: "u1",
     });
     expect(result.letter_type).toBe("increment");
     expect(nocReleaseStatusMock).not.toHaveBeenCalled();

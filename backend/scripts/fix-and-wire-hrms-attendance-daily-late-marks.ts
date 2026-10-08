@@ -20,34 +20,16 @@
  */
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
-import {
-  saveDataSource,
-  saveSourceField,
-  saveDefinition,
-  createMetric,
-} from "../src/modules/kpi/kpi-studio.service.js";
+import { saveDataSource, saveSourceField, saveDefinition, createMetric } from "../src/modules/kpi/kpi-studio.service.js";
 import type { RowDataPacket } from "mysql2";
 
 const SOURCE_ID = "aba5c6ef-a783-11f1-8f5c-00155d0ab410";
 const CREATED_BY = "demo-super-admin-id";
 
-async function ensureMetric(
-  code: string,
-  name: string,
-  unit: string,
-  direction: "higher_is_better" | "lower_is_better",
-) {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM kpi_metric_master WHERE metric_code = ? LIMIT 1`,
-    [code],
-  );
+async function ensureMetric(code: string, name: string, unit: string, direction: "higher_is_better" | "lower_is_better") {
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT id FROM kpi_metric_master WHERE metric_code = ? LIMIT 1`, [code]);
   if (rows.length) return String(rows[0].id);
-  const created = await createMetric({
-    metric_code: code,
-    metric_name: name,
-    unit,
-    direction,
-  } as never);
+  const created = await createMetric({ metric_code: code, metric_name: name, unit, direction } as never);
   return String((created as { id: string }).id);
 }
 
@@ -61,79 +43,48 @@ async function main() {
   const ANCHOR_PROCESS_ID = "04f20ddc-67ba-11f1-adb1-00155d0ab410"; // Onfido
 
   // 1. Fix process_key_kind so this source can back a process-grain metric.
-  await saveDataSource(
-    {
-      id: SOURCE_ID,
-      source_code: "HRMS_ATTENDANCE_DAILY",
-      source_name: "Attendance (this system)",
-      source_type: "local_query",
-      source_object: "attendance_daily_record",
-      date_column: "record_date",
-      employee_key_column: "employee_id",
-      employee_key_kind: "employee_id",
-      description: "Daily attendance rows already in this system.",
-      process_key_kind: "employee",
-      process_id: ANCHOR_PROCESS_ID,
-    } as never,
-    CREATED_BY,
-  );
+  await saveDataSource({
+    id: SOURCE_ID,
+    source_code: "HRMS_ATTENDANCE_DAILY",
+    source_name: "Attendance (this system)",
+    source_type: "local_query",
+    source_object: "attendance_daily_record",
+    date_column: "record_date",
+    employee_key_column: "employee_id",
+    employee_key_kind: "employee_id",
+    description: "Daily attendance rows already in this system.",
+    process_key_kind: "employee",
+    process_id: ANCHOR_PROCESS_ID,
+  } as never, CREATED_BY);
   console.log("[FIX] process_key_kind: none -> employee");
 
   // 2. Fix the late_marks field's filter.
   const [fieldRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM kpi_studio_source_field WHERE data_source_id = ? AND field_name = 'late_marks'`,
-    [SOURCE_ID],
+    `SELECT id FROM kpi_studio_source_field WHERE data_source_id = ? AND field_name = 'late_marks'`, [SOURCE_ID],
   );
   await saveSourceField({
     id: fieldRows[0] ? String(fieldRows[0].id) : undefined,
-    data_source_id: SOURCE_ID,
-    field_name: "late_marks",
-    source_column: "late_by_minutes",
-    aggregate_fn: "COUNT",
+    data_source_id: SOURCE_ID, field_name: "late_marks", source_column: "late_by_minutes", aggregate_fn: "COUNT",
     filter_json: [{ column: "late_by_minutes", op: "gt", value: 0 }],
   } as never);
-  console.log(
-    "[FIX] late_marks: COUNT(late_by_minutes) -> COUNT WHERE late_by_minutes > 0",
-  );
+  console.log("[FIX] late_marks: COUNT(late_by_minutes) -> COUNT WHERE late_by_minutes > 0");
 
   // 3. Wire LATE_MARKS_COUNT for every active process (same pattern as
   //    ATTENDANCE_RECON/ATTENDANCE_REGUL -- one definition per process,
   //    same shared source).
-  const metricId = await ensureMetric(
-    "LATE_MARKS_COUNT",
-    "Late marks",
-    "count",
-    "lower_is_better",
-  );
-  const [processes] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM process_master WHERE active_status = 1`,
-  );
+  const metricId = await ensureMetric("LATE_MARKS_COUNT", "Late marks", "count", "lower_is_better");
+  const [processes] = await db.execute<RowDataPacket[]>(`SELECT id FROM process_master WHERE active_status = 1`);
   let wired = 0;
   for (const proc of processes as any[]) {
-    await saveDefinition(
-      {
-        metric_id: metricId,
-        grain: "process",
-        process_id: String(proc.id),
-        data_source_id: SOURCE_ID,
-        formula_expression: "late_marks",
-        aggregation_method: "sum",
-        scoring_type: "raw",
-        target_source: "none",
-        created_by: CREATED_BY,
-      } as never,
-      CREATED_BY,
-    );
+    await saveDefinition({
+      metric_id: metricId, grain: "process", process_id: String(proc.id),
+      data_source_id: SOURCE_ID, formula_expression: "late_marks",
+      aggregation_method: "sum", scoring_type: "raw", target_source: "none", created_by: CREATED_BY,
+    } as never, CREATED_BY);
     wired++;
-    if (wired % 20 === 0)
-      console.log(
-        `[FIX] ${wired}/${(processes as any[]).length} processes wired`,
-      );
+    if (wired % 20 === 0) console.log(`[FIX] ${wired}/${(processes as any[]).length} processes wired`);
   }
   console.log(`[FIX] Done. LATE_MARKS_COUNT wired for ${wired} processes.`);
   process.exit(0);
 }
-main().catch((e) => {
-  console.error("[FIX] FAILED", e);
-  process.exit(1);
-});
+main().catch((e) => { console.error("[FIX] FAILED", e); process.exit(1); });

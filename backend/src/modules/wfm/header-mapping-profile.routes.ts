@@ -1,21 +1,20 @@
-import { Router } from "express";
-import type { Response } from "express";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
+import { Router } from 'express';
+import type { Response } from 'express';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
 import {
   listProfiles,
   createProfile,
   updateProfile,
   deleteProfile,
   type HeaderMappingProfile,
-} from "./header-mapping-profile.service.js";
+} from './header-mapping-profile.service.js';
 
 const router = Router();
 
 // Middleware to wrap async handlers
-const h =
-  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: any) =>
     fn(req, res).catch(next);
 
@@ -27,8 +26,8 @@ router.use(requireAuth);
  * Auth: wfm, admin, super_admin
  */
 router.get(
-  "/",
-  requireRole("wfm", "admin", "super_admin"),
+  '/',
+  requireRole('wfm', 'admin', 'super_admin'),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const processId = req.query.processId as string | undefined;
     const profiles = await listProfiles(processId);
@@ -41,8 +40,8 @@ router.get(
  * Auth: wfm, admin
  */
 router.post(
-  "/",
-  requireRole("wfm", "admin"),
+  '/',
+  requireRole('wfm', 'admin'),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const {
       processId,
@@ -56,20 +55,18 @@ router.post(
     } = req.body;
 
     if (!profileName) {
-      res.status(400).json({ error: "profileName is required" });
+      res.status(400).json({ error: 'profileName is required' });
       return;
     }
 
-    if (!columnMappings || typeof columnMappings !== "object") {
-      res
-        .status(400)
-        .json({ error: "columnMappings is required and must be an object" });
+    if (!columnMappings || typeof columnMappings !== 'object') {
+      res.status(400).json({ error: 'columnMappings is required and must be an object' });
       return;
     }
 
     const userId = req.authUser?.id;
     if (!userId) {
-      res.status(401).json({ error: "User not authenticated" });
+      res.status(401).json({ error: 'User not authenticated' });
       return;
     }
 
@@ -101,12 +98,12 @@ router.post(
  * Auth: wfm, admin
  */
 router.patch(
-  "/:id",
-  requireRole("wfm", "admin"),
+  '/:id',
+  requireRole('wfm', 'admin'),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isFinite(id) || id <= 0) {
-      res.status(400).json({ error: "Invalid profile id" });
+      res.status(400).json({ error: 'Invalid profile id' });
       return;
     }
 
@@ -122,12 +119,12 @@ router.patch(
  * Auth: admin
  */
 router.delete(
-  "/:id",
-  requireRole("admin"),
+  '/:id',
+  requireRole('admin'),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isFinite(id) || id <= 0) {
-      res.status(400).json({ error: "Invalid profile id" });
+      res.status(400).json({ error: 'Invalid profile id' });
       return;
     }
 

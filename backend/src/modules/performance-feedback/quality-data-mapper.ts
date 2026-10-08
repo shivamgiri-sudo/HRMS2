@@ -17,7 +17,7 @@
 interface ColumnMapping {
   source_column: string;
   target_field: string;
-  data_type: "string" | "number" | "date" | "boolean" | "percentage";
+  data_type: 'string' | 'number' | 'date' | 'boolean' | 'percentage';
   is_required: boolean;
   default_value?: any;
   transform?: (value: any) => any;
@@ -25,7 +25,7 @@ interface ColumnMapping {
 
 interface ValidationRule {
   field: string;
-  rule: "required" | "format" | "range" | "regex" | "exists";
+  rule: 'required' | 'format' | 'range' | 'regex' | 'exists';
   params?: any;
   error_message: string;
 }
@@ -47,89 +47,53 @@ interface ImportResult {
 // Standard field mappings for quality data
 export const STANDARD_QUALITY_FIELDS = {
   employee_code: {
-    aliases: [
-      "employee_code",
-      "emp_code",
-      "empcode",
-      "employee_id",
-      "user",
-      "userid",
-      "agent_id",
-      "agentid",
-    ],
-    data_type: "string",
+    aliases: ['employee_code', 'emp_code', 'empcode', 'employee_id', 'user', 'userid', 'agent_id', 'agentid'],
+    data_type: 'string',
     is_required: true,
-    transform: (val: any) => String(val).trim().toUpperCase(),
+    transform: (val: any) => String(val).trim().toUpperCase()
   },
   call_date: {
-    aliases: [
-      "call_date",
-      "calldate",
-      "date",
-      "audit_date",
-      "auditdate",
-      "date_of_call",
-    ],
-    data_type: "date",
+    aliases: ['call_date', 'calldate', 'date', 'audit_date', 'auditdate', 'date_of_call'],
+    data_type: 'date',
     is_required: true,
-    transform: parseDate,
+    transform: parseDate
   },
   quality_score: {
-    aliases: [
-      "quality_score",
-      "score",
-      "final_score",
-      "total_score",
-      "quality",
-      "percentage",
-    ],
-    data_type: "percentage",
+    aliases: ['quality_score', 'score', 'final_score', 'total_score', 'quality', 'percentage'],
+    data_type: 'percentage',
     is_required: true,
-    transform: parseScore,
+    transform: parseScore
   },
   call_id: {
-    aliases: [
-      "call_id",
-      "callid",
-      "lead_id",
-      "leadid",
-      "ticket_id",
-      "ticketid",
-    ],
-    data_type: "string",
+    aliases: ['call_id', 'callid', 'lead_id', 'leadid', 'ticket_id', 'ticketid'],
+    data_type: 'string',
     is_required: false,
-    transform: (val: any) => (val ? String(val).trim() : null),
+    transform: (val: any) => val ? String(val).trim() : null
   },
   campaign: {
-    aliases: [
-      "campaign",
-      "campaign_name",
-      "process",
-      "process_name",
-      "project",
-    ],
-    data_type: "string",
+    aliases: ['campaign', 'campaign_name', 'process', 'process_name', 'project'],
+    data_type: 'string',
     is_required: false,
-    transform: (val: any) => (val ? String(val).trim() : null),
+    transform: (val: any) => val ? String(val).trim() : null
   },
   auditor: {
-    aliases: ["auditor", "auditor_name", "qa", "qa_name", "reviewer"],
-    data_type: "string",
+    aliases: ['auditor', 'auditor_name', 'qa', 'qa_name', 'reviewer'],
+    data_type: 'string',
     is_required: false,
-    transform: (val: any) => (val ? String(val).trim() : null),
+    transform: (val: any) => val ? String(val).trim() : null
   },
   total_parameters: {
-    aliases: ["total_parameters", "total_params", "max_score", "total_checks"],
-    data_type: "number",
+    aliases: ['total_parameters', 'total_params', 'max_score', 'total_checks'],
+    data_type: 'number',
     is_required: false,
-    transform: (val: any) => (val ? parseInt(val) : null),
+    transform: (val: any) => val ? parseInt(val) : null
   },
   passed_parameters: {
-    aliases: ["passed_parameters", "passed_params", "score", "passed_checks"],
-    data_type: "number",
+    aliases: ['passed_parameters', 'passed_params', 'score', 'passed_checks'],
+    data_type: 'number',
     is_required: false,
-    transform: (val: any) => (val ? parseInt(val) : null),
-  },
+    transform: (val: any) => val ? parseInt(val) : null
+  }
 };
 
 /**
@@ -149,7 +113,7 @@ function parseDate(value: any): string | null {
   const ddmmyyyy = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
   if (ddmmyyyy) {
     const [, day, month, year] = ddmmyyyy;
-    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
   }
 
   // Try MM/DD/YYYY (US format)
@@ -158,16 +122,16 @@ function parseDate(value: any): string | null {
     const [, month, day, year] = mmddyyyy;
     // Ambiguous - assume DD/MM/YYYY unless day > 12
     if (parseInt(day) > 12) {
-      return `${year}-${day.padStart(2, "0")}-${month.padStart(2, "0")}`;
+      return `${year}-${day.padStart(2, '0')}-${month.padStart(2, '0')}`;
     }
-    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
   }
 
   // Try Excel serial date (days since 1900-01-01)
   const num = parseFloat(str);
   if (!isNaN(num) && num > 25000 && num < 100000) {
     const date = new Date((num - 25569) * 86400 * 1000);
-    return date.toISOString().split("T")[0];
+    return date.toISOString().split('T')[0];
   }
 
   return null;
@@ -177,13 +141,13 @@ function parseDate(value: any): string | null {
  * Parse score from various formats
  */
 function parseScore(value: any): number | null {
-  if (value === null || value === undefined || value === "") return null;
+  if (value === null || value === undefined || value === '') return null;
 
   const str = String(value).trim();
 
   // Percentage format: 85% or 85.5%
-  if (str.endsWith("%")) {
-    return parseFloat(str.replace("%", ""));
+  if (str.endsWith('%')) {
+    return parseFloat(str.replace('%', ''));
   }
 
   // Decimal format: 0.85
@@ -216,21 +180,19 @@ export function detectColumnMappings(headers: string[]): {
   let matchedCount = 0;
 
   for (const header of headers) {
-    const normalizedHeader = header.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const normalizedHeader = header.toLowerCase().replace(/[^a-z0-9]/g, '');
     let matched = false;
 
-    for (const [targetField, config] of Object.entries(
-      STANDARD_QUALITY_FIELDS,
-    )) {
+    for (const [targetField, config] of Object.entries(STANDARD_QUALITY_FIELDS)) {
       for (const alias of config.aliases) {
-        const normalizedAlias = alias.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const normalizedAlias = alias.toLowerCase().replace(/[^a-z0-9]/g, '');
         if (normalizedHeader === normalizedAlias) {
           mappings.push({
             source_column: header,
             target_field: targetField,
             data_type: config.data_type as any,
             is_required: config.is_required,
-            transform: config.transform,
+            transform: config.transform
           });
           matched = true;
           matchedCount++;
@@ -245,8 +207,7 @@ export function detectColumnMappings(headers: string[]): {
     }
   }
 
-  const confidence =
-    (matchedCount / Object.keys(STANDARD_QUALITY_FIELDS).length) * 100;
+  const confidence = (matchedCount / Object.keys(STANDARD_QUALITY_FIELDS).length) * 100;
 
   return { mappings, unmapped, confidence };
 }
@@ -257,7 +218,7 @@ export function detectColumnMappings(headers: string[]): {
 export function validateAndTransformRow(
   row: any,
   mappings: ColumnMapping[],
-  rowIndex: number,
+  rowIndex: number
 ): { data: any; errors: any[] } {
   const transformedData: any = {};
   const errors: any[] = [];
@@ -267,15 +228,12 @@ export function validateAndTransformRow(
     const sourceValue = row[mapping.source_column];
 
     // Check required fields
-    if (
-      mapping.is_required &&
-      (sourceValue === null || sourceValue === undefined || sourceValue === "")
-    ) {
+    if (mapping.is_required && (sourceValue === null || sourceValue === undefined || sourceValue === '')) {
       errors.push({
         row: rowIndex,
         field: mapping.target_field,
         value: sourceValue,
-        error: `Required field '${mapping.source_column}' is missing or empty`,
+        error: `Required field '${mapping.source_column}' is missing or empty`
       });
       continue;
     }
@@ -294,7 +252,7 @@ export function validateAndTransformRow(
           row: rowIndex,
           field: mapping.target_field,
           value: sourceValue,
-          error: `Could not parse '${sourceValue}' for field '${mapping.source_column}'`,
+          error: `Could not parse '${sourceValue}' for field '${mapping.source_column}'`
         });
       }
     } catch (error: any) {
@@ -302,7 +260,7 @@ export function validateAndTransformRow(
         row: rowIndex,
         field: mapping.target_field,
         value: sourceValue,
-        error: `Transform error: ${error.message}`,
+        error: `Transform error: ${error.message}`
       });
     }
   }
@@ -326,9 +284,9 @@ function validateQualityRecord(record: any, rowIndex: number): any[] {
     if (!/^(MAS|IDC|[0-9])/i.test(code)) {
       errors.push({
         row: rowIndex,
-        field: "employee_code",
+        field: 'employee_code',
         value: code,
-        error: `Invalid employee code format. Should start with MAS, IDC, or be numeric`,
+        error: `Invalid employee code format. Should start with MAS, IDC, or be numeric`
       });
     }
   }
@@ -340,9 +298,9 @@ function validateQualityRecord(record: any, rowIndex: number): any[] {
     if (callDate > today) {
       errors.push({
         row: rowIndex,
-        field: "call_date",
+        field: 'call_date',
         value: record.call_date,
-        error: `Date cannot be in the future`,
+        error: `Date cannot be in the future`
       });
     }
 
@@ -353,10 +311,10 @@ function validateQualityRecord(record: any, rowIndex: number): any[] {
       // Warning, not error
       errors.push({
         row: rowIndex,
-        field: "call_date",
+        field: 'call_date',
         value: record.call_date,
         error: `Warning: Date is more than 2 years old`,
-        severity: "warning",
+        severity: 'warning'
       });
     }
   }
@@ -367,9 +325,9 @@ function validateQualityRecord(record: any, rowIndex: number): any[] {
     if (score < 0 || score > 100) {
       errors.push({
         row: rowIndex,
-        field: "quality_score",
+        field: 'quality_score',
         value: record.quality_score,
-        error: `Score must be between 0 and 100`,
+        error: `Score must be between 0 and 100`
       });
     }
   }
@@ -379,9 +337,9 @@ function validateQualityRecord(record: any, rowIndex: number): any[] {
     if (record.passed_parameters > record.total_parameters) {
       errors.push({
         row: rowIndex,
-        field: "passed_parameters",
+        field: 'passed_parameters',
         value: record.passed_parameters,
-        error: `Passed parameters (${record.passed_parameters}) cannot exceed total parameters (${record.total_parameters})`,
+        error: `Passed parameters (${record.passed_parameters}) cannot exceed total parameters (${record.total_parameters})`
       });
     }
   }
@@ -395,7 +353,7 @@ function validateQualityRecord(record: any, rowIndex: number): any[] {
 export function processQualityDataset(
   rows: any[],
   headers: string[],
-  customMappings?: ColumnMapping[],
+  customMappings?: ColumnMapping[]
 ): ImportResult {
   // Auto-detect or use custom mappings
   const { mappings, unmapped, confidence } = customMappings
@@ -408,35 +366,31 @@ export function processQualityDataset(
     imported: 0,
     skipped: 0,
     errors: [],
-    warnings: [],
+    warnings: []
   };
 
   // Check if we have minimum required fields
-  const requiredFields = ["employee_code", "call_date", "quality_score"];
-  const mappedFields = mappings.map((m) => m.target_field);
-  const missingRequired = requiredFields.filter(
-    (f) => !mappedFields.includes(f),
-  );
+  const requiredFields = ['employee_code', 'call_date', 'quality_score'];
+  const mappedFields = mappings.map(m => m.target_field);
+  const missingRequired = requiredFields.filter(f => !mappedFields.includes(f));
 
   if (missingRequired.length > 0) {
     result.success = false;
     result.warnings.push(
-      `Missing required fields: ${missingRequired.join(", ")}. ` +
-        `Please provide custom mappings or fix the source file.`,
+      `Missing required fields: ${missingRequired.join(', ')}. ` +
+      `Please provide custom mappings or fix the source file.`
     );
     return result;
   }
 
   if (unmapped.length > 0) {
-    result.warnings.push(
-      `Unmapped columns (will be ignored): ${unmapped.join(", ")}`,
-    );
+    result.warnings.push(`Unmapped columns (will be ignored): ${unmapped.join(', ')}`);
   }
 
   if (confidence < 80) {
     result.warnings.push(
       `Low confidence (${confidence.toFixed(0)}%) in auto-detected mappings. ` +
-        `Please review and adjust if needed.`,
+      `Please review and adjust if needed.`
     );
   }
 
@@ -445,14 +399,14 @@ export function processQualityDataset(
     const { data, errors } = validateAndTransformRow(rows[i], mappings, i + 2); // +2 for header + 1-indexed
 
     if (errors.length > 0) {
-      const criticalErrors = errors.filter((e) => e.severity !== "warning");
+      const criticalErrors = errors.filter(e => e.severity !== 'warning');
       if (criticalErrors.length > 0) {
         result.errors.push(...errors);
         result.skipped++;
       } else {
         // Only warnings, import anyway
         result.imported++;
-        result.warnings.push(...errors.map((e) => `Row ${e.row}: ${e.error}`));
+        result.warnings.push(...errors.map(e => `Row ${e.row}: ${e.error}`));
       }
     } else {
       result.imported++;
@@ -469,7 +423,7 @@ export function processQualityDataset(
  */
 export function generateMappingPreview(
   sampleRows: any[],
-  headers: string[],
+  headers: string[]
 ): {
   headers: string[];
   mappings: any[];
@@ -479,19 +433,19 @@ export function generateMappingPreview(
   const { mappings, unmapped, confidence } = detectColumnMappings(headers);
 
   // Get first 5 rows as samples
-  const samples = sampleRows
-    .slice(0, 5)
-    .map((row) => headers.map((header) => row[header]));
+  const samples = sampleRows.slice(0, 5).map(row =>
+    headers.map(header => row[header])
+  );
 
   return {
     headers,
-    mappings: mappings.map((m) => ({
+    mappings: mappings.map(m => ({
       source: m.source_column,
       target: m.target_field,
       type: m.data_type,
-      required: m.is_required,
+      required: m.is_required
     })),
     samples,
-    confidence,
+    confidence
   };
 }

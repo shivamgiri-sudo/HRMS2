@@ -82,13 +82,7 @@ import {
 // ─── Bucket taxonomy ─────────────────────────────────────────────────────────
 
 /** The five drill-down buckets, in the column order the legacy screen shows them. */
-export const MIS_BUCKETS = [
-  "uploaded",
-  "verified",
-  "pending",
-  "not_uploaded",
-  "rejected",
-] as const;
+export const MIS_BUCKETS = ["uploaded", "verified", "pending", "not_uploaded", "rejected"] as const;
 export type MisBucket = (typeof MIS_BUCKETS)[number];
 
 /** The four states an employee can actually be in. "uploaded" is a union of three of them. */
@@ -117,10 +111,7 @@ export type MisReason =
   | "verified_in_hrms";
 
 /** Whether a class falls inside the requested bucket, honouring "uploaded" as a union. */
-export function classMatchesBucket(
-  bucket_of: ExclusiveBucket,
-  requested: MisBucket,
-): boolean {
+export function classMatchesBucket(bucket_of: ExclusiveBucket, requested: MisBucket): boolean {
   if (requested === "uploaded") return bucket_of !== "not_uploaded";
   return bucket_of === requested;
 }
@@ -172,10 +163,7 @@ export const PAYMENT_MODE = "NEFT/Bank Transfer";
 const UNASSIGNED = "UNASSIGNED";
 
 /** The legacy detail header row, used by the UI table, the CSV export and the catalogue report. */
-export const MIS_DETAIL_COLUMNS: ReadonlyArray<{
-  key: keyof MisDetailRow;
-  label: string;
-}> = [
+export const MIS_DETAIL_COLUMNS: ReadonlyArray<{ key: keyof MisDetailRow; label: string }> = [
   { key: "emp_code", label: "EmpCode" },
   { key: "emp_name", label: "EmpName" },
   { key: "branch", label: "Branch" },
@@ -216,11 +204,7 @@ export interface MisClassification {
  * database. Every branch returns, so exactly one bucket is assigned.
  */
 export function classifyMisBucket(input: MisClassifyInput): MisClassification {
-  const out = (
-    bucket: ExclusiveBucket,
-    reasons: MisReason[],
-    detail: string,
-  ): MisClassification => ({
+  const out = (bucket: ExclusiveBucket, reasons: MisReason[], detail: string): MisClassification => ({
     bucket,
     reasons,
     detail,
@@ -230,11 +214,7 @@ export function classifyMisBucket(input: MisClassifyInput): MisClassification {
   const account = normaliseAccount(input.account_number);
   if (!account) {
     return input.active_primary_count === 0
-      ? out(
-          "not_uploaded",
-          ["no_primary_bank_record"],
-          "No bank account uploaded in HRMS.",
-        )
+      ? out("not_uploaded", ["no_primary_bank_record"], "No bank account uploaded in HRMS.")
       : out(
           "not_uploaded",
           ["account_number_empty"],
@@ -277,9 +257,7 @@ export function classifyMisBucket(input: MisClassifyInput): MisClassification {
     detail.push("account number is not a valid 6-20 digit account number");
   } else if (input.duplicate_of_employee_code) {
     faults.push("account_shared_with_another_employee");
-    detail.push(
-      `account is also the primary account of employee ${input.duplicate_of_employee_code}`,
-    );
+    detail.push(`account is also the primary account of employee ${input.duplicate_of_employee_code}`);
   }
   if (!isValidIfsc(input.ifsc_code)) {
     faults.push("ifsc_invalid_format");
@@ -401,10 +379,7 @@ interface ClassifiedRow {
  * rather than on whichever column happened to be populated — built from the raw legacy column it
  * would miss a collision between an encrypted row and a legacy one.
  */
-async function loadClassified(): Promise<{
-  as_of: string;
-  rows: ClassifiedRow[];
-}> {
+async function loadClassified(): Promise<{ as_of: string; rows: ClassifiedRow[] }> {
   const as_of = new Date().toISOString();
   const raw = await loadBankRows();
 
@@ -424,20 +399,14 @@ async function loadClassified(): Promise<{
     byAccount.set(account, list);
   }
 
-  const status = (
-    v: string | null,
-  ): MisClassifyInput["change_request_status"] => {
-    const s = String(v ?? "")
-      .trim()
-      .toLowerCase();
+  const status = (v: string | null): MisClassifyInput["change_request_status"] => {
+    const s = String(v ?? "").trim().toLowerCase();
     return s === "pending" || s === "approved" || s === "rejected" ? s : null;
   };
 
   const rows = resolved.map(({ row, resolution, account }) => {
     const sharers = account
-      ? (byAccount.get(account) ?? []).filter(
-          (c) => c !== String(row.employee_code ?? ""),
-        )
+      ? (byAccount.get(account) ?? []).filter((c) => c !== String(row.employee_code ?? ""))
       : [];
     return {
       row,
@@ -471,18 +440,12 @@ function applyScope(
   branchId?: string | null,
 ): ClassifiedRow[] {
   let out = rows;
-  if (visibleBranchIds)
-    out = out.filter(
-      (r) => r.row.branch_id && visibleBranchIds.has(r.row.branch_id),
-    );
+  if (visibleBranchIds) out = out.filter((r) => r.row.branch_id && visibleBranchIds.has(r.row.branch_id));
   if (branchId) out = out.filter((r) => r.row.branch_id === branchId);
   return out;
 }
 
-function emptySummaryRow(
-  branch_id: string | null,
-  branch_name: string,
-): MisSummaryRow {
+function emptySummaryRow(branch_id: string | null, branch_name: string): MisSummaryRow {
   return {
     branch_id,
     branch_name,
@@ -535,9 +498,7 @@ export async function buildValidatedBankAccountMisSummary(options: {
 
   return {
     as_of,
-    rows: [...byBranch.values()].sort((a, b) =>
-      a.branch_name.localeCompare(b.branch_name),
-    ),
+    rows: [...byBranch.values()].sort((a, b) => a.branch_name.localeCompare(b.branch_name)),
     totals,
   };
 }
@@ -561,23 +522,15 @@ export async function buildValidatedBankAccountMisDetail(options: {
 
   if (options.bucket) {
     const wanted = options.bucket;
-    rows = rows.filter((r) =>
-      classMatchesBucket(r.classification.bucket, wanted),
-    );
+    rows = rows.filter((r) => classMatchesBucket(r.classification.bucket, wanted));
   }
 
-  const q = String(options.search ?? "")
-    .trim()
-    .toLowerCase();
+  const q = String(options.search ?? "").trim().toLowerCase();
   if (q) {
     rows = rows.filter(
       (r) =>
-        String(r.row.employee_code ?? "")
-          .toLowerCase()
-          .includes(q) ||
-        String(r.row.employee_name ?? "")
-          .toLowerCase()
-          .includes(q),
+        String(r.row.employee_code ?? "").toLowerCase().includes(q) ||
+        String(r.row.employee_name ?? "").toLowerCase().includes(q),
     );
   }
 
@@ -606,8 +559,7 @@ export async function buildValidatedBankAccountMisDetail(options: {
       account_type: String(row.account_type ?? "").trim(),
       // Blank for an employee with no account to pay into, rather than asserting a mode for a
       // payment that cannot be made.
-      payment_mode:
-        classification.bucket === "not_uploaded" ? "" : PAYMENT_MODE,
+      payment_mode: classification.bucket === "not_uploaded" ? "" : PAYMENT_MODE,
       remarks,
       bucket: classification.bucket,
       reasons: classification.reasons,

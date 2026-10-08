@@ -29,7 +29,9 @@ import {
  */
 
 export type PfApplicability =
-  "PF_APPLICABLE" | "PF_NOT_APPLICABLE" | "PF_APPLICABILITY_UNRESOLVED";
+  | "PF_APPLICABLE"
+  | "PF_NOT_APPLICABLE"
+  | "PF_APPLICABILITY_UNRESOLVED";
 
 export type PfApplicabilitySource = ApplicabilitySource;
 
@@ -42,11 +44,9 @@ export interface PfApplicabilityResult {
 }
 
 const toPf = (status: Applicability): PfApplicability =>
-  status === "APPLICABLE"
-    ? "PF_APPLICABLE"
-    : status === "NOT_APPLICABLE"
-      ? "PF_NOT_APPLICABLE"
-      : "PF_APPLICABILITY_UNRESOLVED";
+  status === "APPLICABLE" ? "PF_APPLICABLE"
+  : status === "NOT_APPLICABLE" ? "PF_NOT_APPLICABLE"
+  : "PF_APPLICABILITY_UNRESOLVED";
 
 export async function resolvePfApplicabilityForPeriod(
   payrollMonth: string,
@@ -56,14 +56,8 @@ export async function resolvePfApplicabilityForPeriod(
   for (const [code, r] of all) {
     // An employee whose row resolved ESI but not PF is genuinely PF-unresolved, and is dropped
     // from this map rather than reported as a resolved PF answer — the caller asked about PF.
-    if (r.pf.status === "UNRESOLVED" && r.pf.source === "hrms_statutory_info")
-      continue;
-    out.set(code, {
-      employeeCode: code,
-      status: toPf(r.pf.status),
-      source: r.pf.source,
-      reason: r.pf.reason,
-    });
+    if (r.pf.status === "UNRESOLVED" && r.pf.source === "hrms_statutory_info") continue;
+    out.set(code, { employeeCode: code, status: toPf(r.pf.status), source: r.pf.source, reason: r.pf.reason });
   }
   return out;
 }
@@ -77,30 +71,23 @@ export async function resolvePfApplicability(
   payrollMonth: string,
 ): Promise<PfApplicabilityResult> {
   const all = await resolvePfApplicabilityForPeriod(payrollMonth);
-  const code = String(employeeCode ?? "")
-    .trim()
-    .toUpperCase();
+  const code = String(employeeCode ?? "").trim().toUpperCase();
   return (
     all.get(code) ?? {
       employeeCode: code,
       status: "PF_APPLICABILITY_UNRESOLVED",
       source: "none",
       reason:
-        `Neither the ${payrollMonth} payroll run nor the HRMS statutory record says whether PF ` +
-        `applies to this employee`,
+        `Neither the ${payrollMonth} payroll run nor the HRMS statutory record says whether PF `
+        + `applies to this employee`,
     }
   );
 }
 
 /** Population counts for a readiness screen. Unresolved is reported, never folded into "no". */
-export function summarisePfApplicability(
-  results: Iterable<PfApplicabilityResult>,
-) {
-  let applicable = 0,
-    notApplicable = 0,
-    unresolved = 0;
-  let fromPayroll = 0,
-    fromHrms = 0;
+export function summarisePfApplicability(results: Iterable<PfApplicabilityResult>) {
+  let applicable = 0, notApplicable = 0, unresolved = 0;
+  let fromPayroll = 0, fromHrms = 0;
   for (const r of results) {
     if (r.status === "PF_APPLICABLE") applicable++;
     else if (r.status === "PF_NOT_APPLICABLE") notApplicable++;
@@ -138,8 +125,7 @@ export type UanFilingStatus =
   | "INVALID_UAN"
   | "PF_APPLICABILITY_UNRESOLVED";
 
-export type UanSource =
-  "employees" | "employee_statutory_info" | "employee_uan" | "none";
+export type UanSource = "employees" | "employee_statutory_info" | "employee_uan" | "none";
 
 export interface UanFilingReadinessResult {
   employeeCode: string;
@@ -179,13 +165,10 @@ export async function resolveUanFilingReadinessForPeriod(
   const all = await resolveStatutoryFilingReadinessForPeriod(payrollMonth);
 
   const toPfStatus = (s: FilingStatus): UanFilingStatus =>
-    s === "MISSING_ID"
-      ? "MISSING_UAN"
-      : s === "INVALID_ID"
-        ? "INVALID_UAN"
-        : s === "APPLICABILITY_UNRESOLVED"
-          ? "PF_APPLICABILITY_UNRESOLVED"
-          : s;
+    s === "MISSING_ID" ? "MISSING_UAN"
+    : s === "INVALID_ID" ? "INVALID_UAN"
+    : s === "APPLICABILITY_UNRESOLVED" ? "PF_APPLICABILITY_UNRESOLVED"
+    : s;
 
   const out = new Map<string, UanFilingReadinessResult>();
   for (const [code, r] of all) {
@@ -203,14 +186,8 @@ export async function resolveUanFilingReadinessForPeriod(
 }
 
 /** Population counts for a filing-readiness screen. */
-export function summariseUanFilingReadiness(
-  results: Iterable<UanFilingReadinessResult>,
-) {
-  let ready = 0,
-    notApplicable = 0,
-    missingUan = 0,
-    invalidUan = 0,
-    unresolved = 0;
+export function summariseUanFilingReadiness(results: Iterable<UanFilingReadinessResult>) {
+  let ready = 0, notApplicable = 0, missingUan = 0, invalidUan = 0, unresolved = 0;
   for (const r of results) {
     if (r.status === "READY") ready++;
     else if (r.status === "NOT_APPLICABLE") notApplicable++;

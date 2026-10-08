@@ -52,18 +52,13 @@ describe("getProfileLinks — reading", () => {
       "https://instagram.com/mascallnet",
     );
     // The five platforms with no stored row fall back rather than vanishing.
-    expect(links.find((l) => l.platform === "youtube")?.profile_url).toContain(
-      "youtube.com",
-    );
+    expect(links.find((l) => l.platform === "youtube")?.profile_url).toContain("youtube.com");
   });
 
   it("serves the bundled defaults when migration 1656 has not been applied", async () => {
-    const missingTable = Object.assign(
-      new Error("Table 'social_profile_link' doesn't exist"),
-      {
-        errno: 1146,
-      },
-    );
+    const missingTable = Object.assign(new Error("Table 'social_profile_link' doesn't exist"), {
+      errno: 1146,
+    });
     query.mockRejectedValue(missingTable);
 
     const rows = await repo.getProfileLinks();
@@ -77,9 +72,7 @@ describe("getProfileLinks — reading", () => {
   });
 
   it("does NOT swallow any other database error", async () => {
-    query.mockRejectedValue(
-      Object.assign(new Error("connection lost"), { errno: 2013 }),
-    );
+    query.mockRejectedValue(Object.assign(new Error("connection lost"), { errno: 2013 }));
     await expect(repo.getProfileLinks()).rejects.toThrow(/connection lost/);
   });
 
@@ -105,11 +98,7 @@ describe("getProfileLinks — reading", () => {
 describe("saveProfileLink — writing", () => {
   it("upserts, so a platform whose seed row is missing is created rather than silently skipped", async () => {
     await repo.saveProfileLink(
-      {
-        platform: "instagram",
-        profile_url: "https://instagram.com/mascallnet",
-        handle: "@mascallnet",
-      },
+      { platform: "instagram", profile_url: "https://instagram.com/mascallnet", handle: "@mascallnet" },
       "user-1",
     );
 
@@ -124,14 +113,8 @@ describe("saveProfileLink — writing", () => {
   it("writes every platform it is handed", async () => {
     await service.saveProfileLinks(
       [
-        {
-          platform: "instagram",
-          profile_url: "https://instagram.com/mascallnet",
-        },
-        {
-          platform: "linkedin",
-          profile_url: "https://www.linkedin.com/company/mas-callnet",
-        },
+        { platform: "instagram", profile_url: "https://instagram.com/mascallnet" },
+        { platform: "linkedin", profile_url: "https://www.linkedin.com/company/mas-callnet" },
       ],
       "user-1",
     );
@@ -143,18 +126,13 @@ describe("route wiring", () => {
   const paths = (router: any) =>
     router.stack
       .filter((l: any) => l.route)
-      .map(
-        (l: any) =>
-          `${Object.keys(l.route.methods)[0].toUpperCase()} ${l.route.path}`,
-      );
+      .map((l: any) => `${Object.keys(l.route.methods)[0].toUpperCase()} ${l.route.path}`);
 
   it("exposes the public read with no auth middleware in front of it", () => {
     expect(paths(socialLinksPublicRouter)).toContain("GET /");
     // requireAuth is applied by socialFeedRouter, not here — that is the whole
     // point of this router existing separately.
-    const middlewareBeforeRoutes = socialLinksPublicRouter.stack.filter(
-      (l: any) => !l.route,
-    );
+    const middlewareBeforeRoutes = socialLinksPublicRouter.stack.filter((l: any) => !l.route);
     expect(middlewareBeforeRoutes).toHaveLength(0);
   });
 

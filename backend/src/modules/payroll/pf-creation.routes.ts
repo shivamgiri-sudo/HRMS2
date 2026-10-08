@@ -29,10 +29,7 @@ async function establishmentInScope(req: AuthenticatedRequest, establishmentId: 
 }
 
 const router = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -155,68 +152,24 @@ router.patch("/employee/:employeeId", requireRole("admin", "super_admin", "payro
       `UPDATE employee_epf_compliance_profile SET ${updates.join(", ")} WHERE employee_id = ?`,
       params,
     );
-    if (!isPrivileged) {
-      const own = await getEmployeeForUser(req.authUser!.id);
-      if (!own || own.id !== req.params.employeeId) {
-        return res
-          .status(403)
-          .json({ success: false, message: "Forbidden: not your PF record" });
-      }
-    }
-    const data = await pfCreationService.getEmployeePfStatus(
-      req.params.employeeId,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+  }
 
-router.patch(
-  "/employee/:employeeId",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { employeeId } = req.params;
-    const { uan_number, pf_member_id, pf_applicable, pf_establishment_id } =
-      req.body;
-
-    const updates: string[] = [];
-    const params: unknown[] = [];
-
-    if (uan_number !== undefined) {
-      updates.push("uan_masked = ?");
-      params.push(uan_number);
-    }
-    if (pf_applicable !== undefined) {
-      updates.push("pf_applicable = ?");
-      params.push(pf_applicable ? 1 : 0);
-    }
-    if (pf_establishment_id !== undefined) {
-      updates.push("pf_establishment_id = ?");
-      params.push(pf_establishment_id);
-    }
-
-    if (updates.length > 0) {
-      updates.push("updated_at = NOW()");
-      params.push(employeeId);
-      await (
-        await import("../../db/mysql.js")
-      ).db.execute(
-        `UPDATE employee_epf_compliance_profile SET ${updates.join(", ")} WHERE employee_id = ?`,
-        params,
-      );
-    }
-
-    if (pf_member_id !== undefined || uan_number !== undefined) {
-      const { db } = await import("../../db/mysql.js");
-      const { randomUUID } = await import("crypto");
-      if (uan_number) {
-        await db.execute(
-          `INSERT INTO employee_uan (id, employee_id, uan, member_id, is_active)
+  if (pf_member_id !== undefined || uan_number !== undefined) {
+    const { db } = await import("../../db/mysql.js");
+    const { randomUUID } = await import("crypto");
+    if (uan_number) {
+      await db.execute(
+        `INSERT INTO employee_uan (id, employee_id, uan, member_id, is_active)
          VALUES (?, ?, ?, ?, 1)
          ON DUPLICATE KEY UPDATE uan = VALUES(uan), member_id = VALUES(member_id), is_active = 1`,
-          [randomUUID(), employeeId, uan_number, pf_member_id ?? null],
-        );
-      }
+        [randomUUID(), employeeId, uan_number, pf_member_id ?? null],
+      );
     }
+  }
+
+  const data = await pfCreationService.getEmployeePfStatus(employeeId);
+  return res.json({ success: true, data, message: "Employee PF details updated." });
+}));
 
 router.get("/reports/readiness", requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const narrowed = await narrowBranch(req, req.query.branchId as string | undefined);
@@ -280,27 +233,15 @@ router.post("/establishments", requireRole("admin", "super_admin", "payroll_hr",
     {
       establishment_code,
       establishment_name,
-      branch_id,
-      legal_entity,
-      address,
-      region_office,
-    } = req.body ?? {};
-    const data = await pfCreationService.createEstablishment(
-      {
-        establishment_code,
-        establishment_name,
-        branch_id: branch_id ?? null,
-        legal_entity: legal_entity ?? null,
-        address: address ?? null,
-        region_office: region_office ?? null,
-      },
-      req.authUser!.id,
-    );
-    return res
-      .status(201)
-      .json({ success: true, data, message: "PF establishment created." });
-  }),
-);
+      branch_id: branch_id ?? null,
+      legal_entity: legal_entity ?? null,
+      address: address ?? null,
+      region_office: region_office ?? null,
+    },
+    req.authUser!.id,
+  );
+  return res.status(201).json({ success: true, data, message: "PF establishment created." });
+}));
 
 router.put("/establishments/:id", requireRole("admin", "super_admin", "payroll_hr", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { establishment_code, establishment_name, branch_id, legal_entity, address, region_office } = req.body ?? {};
@@ -317,90 +258,49 @@ router.put("/establishments/:id", requireRole("admin", "super_admin", "payroll_h
   if (address !== undefined) updates.address = address;
   if (region_office !== undefined) updates.region_office = region_office;
 
-    const data = await pfCreationService.updateEstablishment(
-      req.params.id,
-      updates,
-      req.authUser!.id,
-    );
-    return res.json({
-      success: true,
-      data,
-      message: "PF establishment updated.",
-    });
-  }),
-);
+  const data = await pfCreationService.updateEstablishment(req.params.id, updates, req.authUser!.id);
+  return res.json({ success: true, data, message: "PF establishment updated." });
+}));
 
 // Soft activate/deactivate only — no hard DELETE, so a batch or ECR file that
 // already references this establishment_id never loses its foreign key.
 // Restricted to admin/super_admin: deactivating a live establishment removes
 // it from the ECR picker and can block a Payroll user mid-filing.
-router.patch(
-  "/establishments/:id/status",
-  requireRole("admin", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { active_status } = req.body ?? {};
-    if (active_status !== 0 && active_status !== 1) {
-      return res
-        .status(400)
-        .json({ success: false, message: "active_status must be 0 or 1" });
-    }
-    const data = await pfCreationService.setEstablishmentActiveStatus(
-      req.params.id,
-      active_status,
-      req.authUser!.id,
-    );
-    return res.json({
-      success: true,
-      data,
-      message:
-        active_status === 1
-          ? "Establishment activated."
-          : "Establishment deactivated.",
-    });
-  }),
-);
+router.patch("/establishments/:id/status", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { active_status } = req.body ?? {};
+  if (active_status !== 0 && active_status !== 1) {
+    return res.status(400).json({ success: false, message: "active_status must be 0 or 1" });
+  }
+  const data = await pfCreationService.setEstablishmentActiveStatus(req.params.id, active_status, req.authUser!.id);
+  return res.json({ success: true, data, message: active_status === 1 ? "Establishment activated." : "Establishment deactivated." });
+}));
 
-router.get(
-  "/export-templates",
-  requireRole("admin", "super_admin", "payroll_hr", "payroll"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const data = await pfCreationService.getExportTemplates();
-    return res.json({ success: true, data });
-  }),
-);
+router.get("/export-templates", requireRole("admin", "super_admin", "payroll_hr", "payroll"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const data = await pfCreationService.getExportTemplates();
+  return res.json({ success: true, data });
+}));
 
 // GET /api/payroll/pf/ecr-monthly?month=YYYY-MM&establishmentId=<uuid>
 router.get(
   "/ecr-monthly",
-  requireRole(
-    "admin",
-    "super_admin",
-    "payroll_hr",
-    "payroll",
-    "payroll_head",
-    "finance",
-  ),
+  requireRole("admin", "super_admin", "payroll_hr", "payroll", "payroll_head", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { month, establishmentId } = req.query as Record<string, string>;
     if (!month || !/^\d{4}-\d{2}$/.test(month)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "month must be YYYY-MM" });
+      return res.status(400).json({ success: false, error: "month must be YYYY-MM" });
     }
     if (!establishmentId) {
-      return res
-        .status(400)
-        .json({ success: false, error: "establishmentId is required" });
+      return res.status(400).json({ success: false, error: "establishmentId is required" });
     }
     if (!(await establishmentInScope(req, establishmentId))) return res.status(403).json({ success: false, error: OUT_OF_BRANCH.message });
     const result = await pfCreationService.generateEcrFile(month, establishmentId);
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${result.filename}"`,
+      `attachment; filename="${result.filename}"`
     );
     return res.send(result.content);
-  }),
+  })
 );
 
 export { router as pfCreationRouter };

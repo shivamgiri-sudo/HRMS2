@@ -12,12 +12,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type {
-  ExecFilters,
-  ExecScope,
-  ExecOptions,
-  ExecResult,
-} from "./types.js";
+import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -34,7 +29,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params,
+    params
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -68,7 +63,7 @@ function sensitiveCol(canView: boolean, expr: string, alias: string): string {
 export async function employeeDocumentCompliance(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -126,14 +121,9 @@ export async function employeeDocumentCompliance(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
+  const rows  = paged.rows as Record<string, unknown>[];
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor: null,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -178,39 +168,34 @@ export async function employeeDocumentCompliance(
  * `held` is the per-employee aggregate of employee_documents built in the query below.
  */
 export const DOCUMENT_HELD_EXPR: Record<string, string> = {
-  aadhaar: "COALESCE(held.has_aadhaar, 0)",
-  pan: "COALESCE(held.has_pan, 0)",
-  address_proof: "COALESCE(held.has_address_proof, 0)",
+  aadhaar:         "COALESCE(held.has_aadhaar, 0)",
+  pan:             "COALESCE(held.has_pan, 0)",
+  address_proof:   "COALESCE(held.has_address_proof, 0)",
   education_proof: "COALESCE(held.has_education_proof, 0)",
-  resume: "COALESCE(held.has_resume, 0)",
+  resume:          "COALESCE(held.has_resume, 0)",
   // Photos are not documents in this schema; they are columns on the employee master.
-  photo:
-    "CASE WHEN COALESCE(NULLIF(e.photo_url,''), NULLIF(e.avatar_url,'')) IS NOT NULL THEN 1 ELSE 0 END",
+  photo:           "CASE WHEN COALESCE(NULLIF(e.photo_url,''), NULLIF(e.avatar_url,'')) IS NOT NULL THEN 1 ELSE 0 END",
 };
 
 /** The mandatory, non-conditional requirements, straight from the master. */
-async function mandatoryDocuments(): Promise<
-  Array<{ name: string; label: string }>
-> {
+async function mandatoryDocuments(): Promise<Array<{ name: string; label: string }>> {
   const rows = await query(
     `SELECT document_name, COALESCE(NULLIF(display_name,''), document_name) AS display_name
        FROM onboarding_document_master
       WHERE active_flag = 1 AND mandatory_flag = 1 AND conditional_flag = 0
       ORDER BY sort_order, document_name`,
-    [],
+    []
   );
-  return (rows as Array<{ document_name: string; display_name: string }>).map(
-    (r) => ({
-      name: String(r.document_name),
-      label: String(r.display_name),
-    }),
-  );
+  return (rows as Array<{ document_name: string; display_name: string }>).map(r => ({
+    name: String(r.document_name),
+    label: String(r.display_name),
+  }));
 }
 
 export async function missingDocumentsReport(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const required = await mandatoryDocuments();
 
@@ -232,16 +217,13 @@ export async function missingDocumentsReport(
   const reqRelation = required
     .map(() => `SELECT ? AS doc_key, ? AS document_type`)
     .join(" UNION ALL ");
-  const reqParams: unknown[] = required.flatMap((r) => [r.name, r.label]);
+  const reqParams: unknown[] = required.flatMap(r => [r.name, r.label]);
 
   // Unmapped requirements evaluate to 1 (held) so they can never mark everyone non-compliant.
   const heldCase =
     `CASE req.doc_key\n` +
     required
-      .map(
-        (r) =>
-          `             WHEN ${JSON.stringify(r.name)} THEN ${DOCUMENT_HELD_EXPR[r.name] ?? "1"}`,
-      )
+      .map(r => `             WHEN ${JSON.stringify(r.name)} THEN ${DOCUMENT_HELD_EXPR[r.name] ?? "1"}`)
       .join("\n") +
     `\n             ELSE 1 END`;
 
@@ -283,15 +265,9 @@ export async function missingDocumentsReport(
        AND (${heldCase}) = 0
      ORDER BY e.employee_code, req.document_type`;
 
-  const paged = await fetchPageWithTotal(
-    base,
-    allParams,
-    options,
-    query,
-    count,
-  );
-  const rows = paged.rows as Record<string, unknown>[];
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  const paged = await fetchPageWithTotal(base, allParams, options, query, count);
+  const rows  = paged.rows as Record<string, unknown>[];
+  const out   = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? paged.total : out.length,
@@ -303,10 +279,10 @@ export async function missingDocumentsReport(
 export async function uanStatusReport(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[] = [];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -323,11 +299,7 @@ export async function uanStatusReport(
     params.push(options.cursor);
   }
 
-  const uanExpr = sensitiveCol(
-    scope.canViewSensitiveFields,
-    "e.uan_number",
-    "uan",
-  );
+  const uanExpr = sensitiveCol(scope.canViewSensitiveFields, "e.uan_number", "uan");
 
   const base = `
     SELECT e.id AS _cursor,
@@ -356,18 +328,11 @@ export async function uanStatusReport(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -376,10 +341,10 @@ export async function uanStatusReport(
 export async function esicStatusReport(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[] = [];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -417,11 +382,7 @@ export async function esicStatusReport(
     params.push(options.cursor);
   }
 
-  const esicExpr = sensitiveCol(
-    scope.canViewSensitiveFields,
-    "e.esic_number",
-    "esic_number",
-  );
+  const esicExpr = sensitiveCol(scope.canViewSensitiveFields, "e.esic_number", "esic_number");
 
   const base = `
     SELECT e.id AS _cursor,
@@ -453,18 +414,11 @@ export async function esicStatusReport(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -473,10 +427,10 @@ export async function esicStatusReport(
 export async function panVerificationStatus(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[] = [];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -486,9 +440,7 @@ export async function panVerificationStatus(
     } else if (filters.status === "VERIFIED") {
       clauses.push("e.pan_verified_on IS NOT NULL");
     } else if (filters.status === "UNVERIFIED") {
-      clauses.push(
-        "e.pan_number IS NOT NULL AND TRIM(e.pan_number) != '' AND e.pan_verified_on IS NULL",
-      );
+      clauses.push("e.pan_number IS NOT NULL AND TRIM(e.pan_number) != '' AND e.pan_verified_on IS NULL");
     }
   }
 
@@ -497,11 +449,7 @@ export async function panVerificationStatus(
     params.push(options.cursor);
   }
 
-  const panExpr = sensitiveCol(
-    scope.canViewSensitiveFields,
-    "e.pan_number",
-    "pan_number",
-  );
+  const panExpr = sensitiveCol(scope.canViewSensitiveFields, "e.pan_number", "pan_number");
 
   const base = `
     SELECT e.id AS _cursor,
@@ -530,18 +478,11 @@ export async function panVerificationStatus(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -553,23 +494,21 @@ export async function panVerificationStatus(
 export async function bankAccountVerification(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[] = [];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
   if (filters.status) {
     if (filters.status === "MISSING_BANK") {
-      clauses.push(
-        "(e.bank_account_number IS NULL OR TRIM(e.bank_account_number) = '')",
-      );
+      clauses.push("(e.bank_account_number IS NULL OR TRIM(e.bank_account_number) = '')");
     } else if (filters.status === "VERIFIED") {
       // bank_verified column may not exist — skip filter to avoid ER_BAD_FIELD_ERROR
     } else if (filters.status === "UNVERIFIED") {
       clauses.push(
-        "e.bank_account_number IS NOT NULL AND TRIM(e.bank_account_number) != ''",
+        "e.bank_account_number IS NOT NULL AND TRIM(e.bank_account_number) != ''"
       );
     }
   }
@@ -582,7 +521,7 @@ export async function bankAccountVerification(
   const bankExpr = sensitiveCol(
     scope.canViewSensitiveFields,
     "e.bank_account_number",
-    "bank_account_number",
+    "bank_account_number"
   );
 
   const base = `
@@ -613,18 +552,11 @@ export async function bankAccountVerification(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -635,14 +567,14 @@ export async function bankAccountVerification(
 export async function identitySourceSnapshot(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   {
     // Anchor on the snapshot row, not the employee. The seed clause used to be
     // "e.id IS NOT NULL", which — against the LEFT JOIN below — would discard every
     // unmatched source record, i.e. the exceptions this report exists to show.
     const clauses: string[] = ["ris.id IS NOT NULL"];
-    const params: unknown[] = [];
+    const params: unknown[]  = [];
     appendScopeConditions(scope, clauses, params);
     appendFilterConditions(filters, clauses, params);
 
@@ -692,22 +624,12 @@ export async function identitySourceSnapshot(
        ORDER BY ris.id ASC`;
 
     const total = options.includeTotal ? await count(base, params) : 0;
-    const sql =
-      options.mode === "worker"
-        ? `${base} LIMIT ${options.limit}`
-        : applyPagination(base, options);
-    const rows = (await query(sql, params)) as Record<string, unknown>[];
-    const nextCursor =
-      options.mode === "worker" && rows.length > 0
-        ? (rows[rows.length - 1]._cursor as number)
-        : null;
+    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+    const rows  = await query(sql, params) as Record<string, unknown>[];
+    const nextCursor = (options.mode === "worker" && rows.length > 0)
+      ? (rows[rows.length - 1]._cursor as number) : null;
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
-    return {
-      rows: out,
-      rowCount: options.includeTotal ? total : rows.length,
-      isTruncated: total > out.length,
-      nextCursor,
-    };
+    return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
   }
   // No catch. A failure here must surface: an empty identity-exceptions report reads as
   // "nothing to fix", which is the most dangerous wrong answer this report can give.

@@ -56,10 +56,7 @@ describe("onboarding submit does not auto-approve BGV", () => {
 
 describe("the dashboard does not report unavailable data as good news", () => {
   const MANAGEMENT = code(
-    readFileSync(
-      resolve(process.cwd(), "src/modules/management/management.service.ts"),
-      "utf8",
-    ),
+    readFileSync(resolve(process.cwd(), "src/modules/management/management.service.ts"), "utf8"),
   );
 
   // Both of these query things that do not exist — auth_user has no 2FA column,
@@ -76,12 +73,8 @@ describe("the dashboard does not report unavailable data as good news", () => {
       expect(at, `${needle} not found — the query moved`).toBeGreaterThan(-1);
       // The .catch() follows the query within a short window.
       const window = MANAGEMENT.slice(at, at + 260);
-      expect(window).toMatch(
-        /catch\(\(\)\s*=>\s*\[\[\{\s*count:\s*null\s*\}\]\]/,
-      );
-      expect(window).not.toMatch(
-        /catch\(\(\)\s*=>\s*\[\[\{\s*count:\s*0\s*\}\]\]/,
-      );
+      expect(window).toMatch(/catch\(\(\)\s*=>\s*\[\[\{\s*count:\s*null\s*\}\]\]/);
+      expect(window).not.toMatch(/catch\(\(\)\s*=>\s*\[\[\{\s*count:\s*0\s*\}\]\]/);
     });
   }
 });

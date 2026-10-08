@@ -34,37 +34,23 @@ const CANDIDATE_ID = "a7edfea8-fcfd-4744-9223-f109eefcadaf";
 // profile lookup, the bank-detail write, and the profile_status update, plus
 // whatever getFullOnboardingStatus reads afterward) goes through one
 // SQL-sniffing mock rather than a brittle call-order chain.
-function installTokenAwareMock(
-  bankVerificationStatus: string | null = "verified",
-) {
+function installTokenAwareMock(bankVerificationStatus: string | null = "verified") {
   execute.mockImplementation(async (sql: string) => {
     const s = String(sql);
     // The penny-drop gate added 2026-09-02 reads this before it will save anything.
     // Without an answer here every case below fails on the gate rather than on what
     // it means to assert.
     if (s.includes("candidate_bank_verification")) {
-      return [
-        bankVerificationStatus
-          ? [{ verification_status: bankVerificationStatus }]
-          : [],
-        [],
-      ];
+      return [bankVerificationStatus ? [{ verification_status: bankVerificationStatus }] : [], []];
     }
     if (s.includes("ats_onboarding_bridge")) {
-      return [
-        [
-          {
-            candidate_id: CANDIDATE_ID,
-            onboarding_token_expires_at: new Date(
-              Date.now() + 3600_000,
-            ).toISOString(),
-            id: CANDIDATE_ID,
-            candidate_code: "MAS63413",
-            full_name: "UDAY KUMAR",
-          },
-        ],
-        [],
-      ];
+      return [[{
+        candidate_id: CANDIDATE_ID,
+        onboarding_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        id: CANDIDATE_ID,
+        candidate_code: "MAS63413",
+        full_name: "UDAY KUMAR",
+      }], []];
     }
     if (s.trim().startsWith("INSERT") || s.trim().startsWith("UPDATE")) {
       return [{ affectedRows: 1 }, undefined];
@@ -89,14 +75,10 @@ describe("saveBankDetails — account number resave does not wipe a stored value
       ifscCode: "CBIN0281806",
     });
 
-    const insertCall = execute.mock.calls.find(([sql]) =>
-      String(sql).includes("candidate_onboarding_bank_detail"),
-    );
+    const insertCall = execute.mock.calls.find(([sql]) => String(sql).includes("candidate_onboarding_bank_detail"));
     expect(insertCall).toBeDefined();
     const [sql, params] = insertCall!;
-    expect(String(sql)).toContain(
-      "account_no_encrypted = COALESCE(VALUES(account_no_encrypted), account_no_encrypted)",
-    );
+    expect(String(sql)).toContain("account_no_encrypted = COALESCE(VALUES(account_no_encrypted), account_no_encrypted)");
     expect(params).toContain("enc(1234567890126026)");
   });
 
@@ -113,15 +95,11 @@ describe("saveBankDetails — account number resave does not wipe a stored value
       ifscCode: "CBIN0281806",
     });
 
-    const insertCall = execute.mock.calls.find(([sql]) =>
-      String(sql).includes("candidate_onboarding_bank_detail"),
-    );
+    const insertCall = execute.mock.calls.find(([sql]) => String(sql).includes("candidate_onboarding_bank_detail"));
     const [sql, params] = insertCall!;
     // The guard must be present in the SQL (this is what makes a blank
     // resubmission a no-op on the encrypted column instead of a wipe).
-    expect(String(sql)).toContain(
-      "account_no_encrypted = COALESCE(VALUES(account_no_encrypted), account_no_encrypted)",
-    );
+    expect(String(sql)).toContain("account_no_encrypted = COALESCE(VALUES(account_no_encrypted), account_no_encrypted)");
     // And the value bound for this submission is NULL, relying on COALESCE
     // in the SQL (not JS) to keep the previously-stored ciphertext.
     expect(params).toContain(null);
@@ -160,9 +138,7 @@ describe("saveBankDetails — a name variance is a warning, not a wall", () => {
 
     await saveBankDetails(TOKEN, submission);
 
-    const insertCall = execute.mock.calls.find(([sql]) =>
-      String(sql).includes("candidate_onboarding_bank_detail"),
-    );
+    const insertCall = execute.mock.calls.find(([sql]) => String(sql).includes("candidate_onboarding_bank_detail"));
     expect(insertCall).toBeDefined();
     // Saved as manual_review, not as an untested 'not_started': Payroll HR has to be able
     // to see that this account is waiting on a human.
@@ -172,8 +148,6 @@ describe("saveBankDetails — a name variance is a warning, not a wall", () => {
   it("still refuses an account no penny drop has ever reached", async () => {
     installTokenAwareMock(null);
 
-    await expect(saveBankDetails(TOKEN, submission)).rejects.toThrow(
-      /penny-drop verification has not passed/,
-    );
+    await expect(saveBankDetails(TOKEN, submission)).rejects.toThrow(/penny-drop verification has not passed/);
   });
 });

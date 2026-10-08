@@ -2,12 +2,7 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { assertSafeIdentifier } from "../integration-hub/adapters/databaseAdapter.js";
-import {
-  dateExpression,
-  buildProcessEmployeeBreakdownPlan,
-  type SourceField,
-  type DataSourceConfig,
-} from "../kpi/kpi-studio.sources.js";
+import { dateExpression, buildProcessEmployeeBreakdownPlan, type SourceField, type DataSourceConfig } from "../kpi/kpi-studio.sources.js";
 import { evaluateFormula } from "../kpi/kpi-formula.engine.js";
 import { getCachedAllocationSummary } from "../process-pnl/canonical-pnl.service.js";
 
@@ -40,20 +35,9 @@ import { getCachedAllocationSummary } from "../process-pnl/canonical-pnl.service
 // Mutable on purpose: buildScopeWhereClause takes string[], and `as const` here
 // makes the array readonly, which it will not accept.
 const VIEWER_ROLES: string[] = [
-  "admin",
-  "ceo",
-  "coo",
-  "manager",
-  "process_manager",
-  "operations_manager",
-  "branch_head",
-  "qa",
-  "quality_analyst",
-  "tq_head",
-  "hr",
-  "team_leader",
-  "wfm",
-  "branch_wfm", // scoped by the user's own assignment (all / branch); see routes file
+  "admin", "ceo", "coo", "manager", "process_manager", "operations_manager",
+  "branch_head", "qa", "quality_analyst", "tq_head", "hr", "team_leader",
+  "wfm", "branch_wfm", // scoped by the user's own assignment (all / branch); see routes file
 ];
 
 /** How long a section's metrics may go without a reading before they read as history. */
@@ -95,12 +79,7 @@ export interface MetricReading {
    */
   targetValue: number | null;
   /** Chronological daily points for a sparkline. Gaps are gaps, not zeroes. */
-  trend: Array<{
-    date: string;
-    value: number | null;
-    numerator: number | null;
-    denominator: number | null;
-  }>;
+  trend: Array<{ date: string; value: number | null; numerator: number | null; denominator: number | null }>;
   /** Parts behind a ratio, when the compute stored them. */
   numerator: number | null;
   denominator: number | null;
@@ -138,32 +117,16 @@ export interface MetricSection {
  * page). Quality itself keeps its prior internal order (coverage before the
  * rates it qualifies, outcomes before the behaviour that explains them).
  */
-const SECTIONS: Array<{
-  key: string;
-  title: string;
-  blurb: string;
-  members: string[];
-}> = [
+const SECTIONS: Array<{ key: string; title: string; blurb: string; members: string[] }> = [
   {
     key: "operations",
     title: "Headcount & operations",
-    blurb:
-      "Staffing and dialler reality for this process, this period -- what the rest of the page explains.",
+    blurb: "Staffing and dialler reality for this process, this period -- what the rest of the page explains.",
     members: [
-      "AHT",
-      "INBOUND_SL_PCT",
-      "INBOUND_AL_PCT",
-      "BLA_INBOUND_AL_PCT",
-      "OUTBOUND_CONNECT_PCT",
-      "AGENT_OCCUPANCY_PCT",
-      "AGENT_UTILISATION_PCT",
-      "CHAT_TICKETS",
-      "CHAT_RESOLVED_PCT",
-      "CHAT_FRT_SLA_PCT",
-      "SHRINKAGE_PCT",
-      "SHIFT_MINUTES_AVG",
-      "PROCESS_JOINERS",
-      "PROCESS_EXITS",
+      "AHT", "INBOUND_SL_PCT", "INBOUND_AL_PCT", "BLA_INBOUND_AL_PCT",
+      "OUTBOUND_CONNECT_PCT", "AGENT_OCCUPANCY_PCT", "AGENT_UTILISATION_PCT",
+      "CHAT_TICKETS", "CHAT_RESOLVED_PCT", "CHAT_FRT_SLA_PCT",
+      "SHRINKAGE_PCT", "SHIFT_MINUTES_AVG", "PROCESS_JOINERS", "PROCESS_EXITS",
       "PROC_ATTENDANCE_PCT",
     ],
   },
@@ -173,114 +136,75 @@ const SECTIONS: Array<{
     blurb:
       "Scoring coverage first: every rate here is measured only over the calls the AI pass actually judged.",
     members: [
-      "FUNNEL_SCORED_PCT",
-      "FUNNEL_OPENING_PCT",
-      "FUNNEL_OFFER_PCT",
-      "FUNNEL_SALE_PCT",
-      "FUNNEL_OFFER_TO_SALE_PCT",
-      "SALES_COUNT",
+      "FUNNEL_SCORED_PCT", "FUNNEL_OPENING_PCT", "FUNNEL_OFFER_PCT",
+      "FUNNEL_SALE_PCT", "FUNNEL_OFFER_TO_SALE_PCT", "SALES_COUNT",
     ],
   },
   {
     key: "risk",
     title: "Customer risk & sentiment",
-    blurb:
-      "Raised by an AI pass over each call. A zero here means the calls were examined and none carried the flag.",
+    blurb: "Raised by an AI pass over each call. A zero here means the calls were examined and none carried the flag.",
     members: [
-      "RISK_REFUND_PCT",
-      "RISK_CANCELLATION_PCT",
-      "RISK_SCAM_PCT",
-      "RISK_SOCIAL_PCT",
-      "RISK_LEGAL_PCT",
-      "SENTIMENT_POSITIVE_PCT",
+      "RISK_REFUND_PCT", "RISK_CANCELLATION_PCT", "RISK_SCAM_PCT",
+      "RISK_SOCIAL_PCT", "RISK_LEGAL_PCT", "SENTIMENT_POSITIVE_PCT",
     ],
   },
   {
     key: "conduct",
     title: "What the agent did",
-    blurb:
-      "Behaviour on the call, as opposed to how the customer reacted to it.",
+    blurb: "Behaviour on the call, as opposed to how the customer reacted to it.",
     members: [
-      "UPSELL_ATTEMPT_PCT",
-      "OFFER_URGENCY_PCT",
-      "SENSITIVE_WORD_PCT",
-      "AGENT_PROFANITY_PCT",
-      "COMPETITOR_MENTION_PCT",
-      "VOC_LOGISTICS_NEG_PCT",
-      "VOC_PRODUCT_NEG_PCT",
+      "UPSELL_ATTEMPT_PCT", "OFFER_URGENCY_PCT", "SENSITIVE_WORD_PCT",
+      "AGENT_PROFANITY_PCT", "COMPETITOR_MENTION_PCT",
+      "VOC_LOGISTICS_NEG_PCT", "VOC_PRODUCT_NEG_PCT",
     ],
   },
   {
     key: "quality",
     title: "Audited quality",
-    blurb:
-      "Scored parameters from the call-audit pass. Only processes whose people are audited have these.",
+    blurb: "Scored parameters from the call-audit pass. Only processes whose people are audited have these.",
     members: [
-      "QA_QUALITY_PCT",
-      "QA_EMPATHY_PCT",
-      "QA_CONCERN_PCT",
-      "QA_ACCURACY_PCT",
-      "QA_PROBING_PCT",
-      "QA_CLOSURE_PCT",
-      "QA_LISTENING_PCT",
-      "QA_CONCERN_ACK_PCT",
-      "QA_INFO_ACCURACY_PCT",
-      "BLA_CALL_QUALITY_PCT",
+      "QA_QUALITY_PCT", "QA_EMPATHY_PCT", "QA_CONCERN_PCT", "QA_ACCURACY_PCT",
+      "QA_PROBING_PCT", "QA_CLOSURE_PCT", "QA_LISTENING_PCT",
+      "QA_CONCERN_ACK_PCT", "QA_INFO_ACCURACY_PCT", "BLA_CALL_QUALITY_PCT",
       // kpi_metric_master's own category column confirms these five belong
       // here (category='quality'), not a guess: opening/offer compliance,
       // mis-selling and requirement-probing checks, and the AI-scored
       // opening/offer outcomes -- the same audit pass, not a duplicate of
       // the funnel section's calls-scored coverage numbers.
-      "CALL_OPENING_PCT",
-      "NO_MISSELLING_PCT",
-      "PLAN_RECOMMENDATION_PCT",
-      "REQUIREMENT_PROBING_PCT",
-      "OFFER_SUCCESS_PCT",
-      "OPENING_SUCCESS_PCT",
+      "CALL_OPENING_PCT", "NO_MISSELLING_PCT", "PLAN_RECOMMENDATION_PCT",
+      "REQUIREMENT_PROBING_PCT", "OFFER_SUCCESS_PCT", "OPENING_SUCCESS_PCT",
       // TNI (Training Need Identification) findings are the quality-audit
       // pass's own coaching output -- see tni-derivation.service.ts -- so
       // they belong with the rest of what that pass produces, not floating
       // in "Other metrics".
-      "PROCESS_EXTREME_TNI_COUNT",
-      "PROCESS_OPEN_TNI_COUNT",
+      "PROCESS_EXTREME_TNI_COUNT", "PROCESS_OPEN_TNI_COUNT",
     ],
   },
   {
     key: "hygiene",
     title: "Hygiene",
-    blurb:
-      "Data-quality housekeeping -- real gaps, but the least urgent read on this page.",
+    blurb: "Data-quality housekeeping -- real gaps, but the least urgent read on this page.",
     members: [
-      "UNRESOLVED_PUNCH_PCT",
-      "CORRECTION_LOAD_PCT",
-      "ROSTER_ACK_PCT",
-      "ATTENDANCE_ISSUES_OPEN",
-      "ATTENDANCE_NO_EVIDENCE",
+      "UNRESOLVED_PUNCH_PCT", "CORRECTION_LOAD_PCT", "ROSTER_ACK_PCT",
+      "ATTENDANCE_ISSUES_OPEN", "ATTENDANCE_NO_EVIDENCE",
     ],
   },
 ];
 
 const SECTION_OF = new Map<string, { key: string; rank: number }>();
-SECTIONS.forEach((s) =>
-  s.members.forEach((m, i) => SECTION_OF.set(m, { key: s.key, rank: i })),
-);
+SECTIONS.forEach((s) => s.members.forEach((m, i) => SECTION_OF.set(m, { key: s.key, rank: i })));
 
 export async function readableProcessIds(userId: string): Promise<Set<string>> {
-  const scope = await buildScopeWhereClause(
-    userId,
-    VIEWER_ROLES,
-    {
-      processId: "p.id",
-      branchId: "p.branch_id",
-    },
-    { allowAdminBypass: true, allowCeoAllRead: true },
-  );
+  const scope = await buildScopeWhereClause(userId, VIEWER_ROLES, {
+    processId: "p.id", branchId: "p.branch_id",
+  }, { allowAdminBypass: true, allowCeoAllRead: true });
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT p.id FROM process_master p WHERE ${scope.sql}`,
-    scope.params,
+    `SELECT p.id FROM process_master p WHERE ${scope.sql}`, scope.params,
   );
   return new Set(rows.map((r) => String(r.id)));
 }
+
 
 /**
  * A ratio's parts, back in the units a person counts in.
@@ -293,13 +217,10 @@ export async function readableProcessIds(userId: string): Promise<Set<string>> {
  *
  * Only percentages are scaled this way; every other unit is stored as counted.
  */
-function unscaleNumerator(
-  numerator: number | null,
-  unit: string | null,
-): number | null {
+function unscaleNumerator(numerator: number | null, unit: string | null): number | null {
   if (numerator === null) return null;
-  const u = (unit ?? "").toLowerCase();
-  return u === "percentage" || u === "percent" ? numerator / 100 : numerator;
+  const u = (unit ?? '').toLowerCase();
+  return u === 'percentage' || u === 'percent' ? numerator / 100 : numerator;
 }
 
 /** Local calendar date. Never toISOString: in IST that lands on the previous day. */
@@ -384,8 +305,7 @@ export async function listProcesses(userId: string, windowDays = 45) {
     .filter((r) => allowed.has(String(r.process_id)))
     .map((r) => {
       const metrics = Number(r.metrics);
-      const automatedMetrics =
-        automatedByProcess.get(String(r.process_id)) ?? 0;
+      const automatedMetrics = automatedByProcess.get(String(r.process_id)) ?? 0;
       return {
         processId: String(r.process_id),
         processName: String(r.process_name),
@@ -434,63 +354,30 @@ export interface ProcessOperations {
  * Week starts Monday, matching the roster and shrinkage-config convention
  * already in use elsewhere in this codebase (day_of_week 0 = Monday there).
  */
-function periodRange(
-  period: ReportPeriod,
-  today: Date,
-): { from: string; to: string; priorFrom: string; priorTo: string } | null {
+function periodRange(period: ReportPeriod, today: Date):
+  { from: string; to: string; priorFrom: string; priorTo: string } | null {
   const iso = (d: Date) => isoDate(d);
-  const clone = (d: Date) =>
-    new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const clone = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
   if (period === "today") {
-    const y = clone(today);
-    y.setDate(y.getDate() - 1);
-    return {
-      from: iso(today),
-      to: iso(today),
-      priorFrom: iso(y),
-      priorTo: iso(y),
-    };
+    const y = clone(today); y.setDate(y.getDate() - 1);
+    return { from: iso(today), to: iso(today), priorFrom: iso(y), priorTo: iso(y) };
   }
   if (period === "wtd") {
     const dow = today.getDay(); // 0 = Sunday
     const sinceMonday = (dow + 6) % 7;
-    const monday = clone(today);
-    monday.setDate(monday.getDate() - sinceMonday);
-    const priorMonday = clone(monday);
-    priorMonday.setDate(priorMonday.getDate() - 7);
-    const priorSameWeekday = clone(monday);
-    priorSameWeekday.setDate(priorSameWeekday.getDate() - 7 + sinceMonday);
-    return {
-      from: iso(monday),
-      to: iso(today),
-      priorFrom: iso(priorMonday),
-      priorTo: iso(priorSameWeekday),
-    };
+    const monday = clone(today); monday.setDate(monday.getDate() - sinceMonday);
+    const priorMonday = clone(monday); priorMonday.setDate(priorMonday.getDate() - 7);
+    const priorSameWeekday = clone(monday); priorSameWeekday.setDate(priorSameWeekday.getDate() - 7 + sinceMonday);
+    return { from: iso(monday), to: iso(today), priorFrom: iso(priorMonday), priorTo: iso(priorSameWeekday) };
   }
   if (period === "mtd") {
     const first = new Date(today.getFullYear(), today.getMonth(), 1);
     const dayOfMonth = today.getDate();
-    const priorMonthFirst = new Date(
-      today.getFullYear(),
-      today.getMonth() - 1,
-      1,
-    );
-    const priorMonthLastDay = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      0,
-    ).getDate();
+    const priorMonthFirst = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const priorMonthLastDay = new Date(today.getFullYear(), today.getMonth(), 0).getDate();
     const priorMonthSameDay = new Date(
-      today.getFullYear(),
-      today.getMonth() - 1,
-      Math.min(dayOfMonth, priorMonthLastDay),
-    );
-    return {
-      from: iso(first),
-      to: iso(today),
-      priorFrom: iso(priorMonthFirst),
-      priorTo: iso(priorMonthSameDay),
-    };
+      today.getFullYear(), today.getMonth() - 1, Math.min(dayOfMonth, priorMonthLastDay));
+    return { from: iso(first), to: iso(today), priorFrom: iso(priorMonthFirst), priorTo: iso(priorMonthSameDay) };
   }
   return null; // "trend" -- the existing rolling-window behaviour, unchanged.
 }
@@ -507,66 +394,36 @@ function periodRange(
  * period, it is left out of it.
  */
 function aggregateRange(
-  trend: MetricReading["trend"],
-  unit: string | null,
-  from: string,
-  to: string,
-): {
-  value: number | null;
-  numerator: number | null;
-  denominator: number | null;
-  daysWithData: number;
-} {
+  trend: MetricReading["trend"], unit: string | null, from: string, to: string,
+): { value: number | null; numerator: number | null; denominator: number | null; daysWithData: number } {
   const inRange = trend.filter((p) => p.date >= from && p.date <= to);
   const withValue = inRange.filter((p) => p.value !== null);
-  if (!withValue.length)
-    return { value: null, numerator: null, denominator: null, daysWithData: 0 };
+  if (!withValue.length) return { value: null, numerator: null, denominator: null, daysWithData: 0 };
 
-  const withParts = withValue.filter(
-    (p) => p.numerator !== null && p.denominator !== null,
-  );
+  const withParts = withValue.filter((p) => p.numerator !== null && p.denominator !== null);
   const u = (unit ?? "").toLowerCase();
   const isRatio = u === "percentage" || u === "percent" || u === "ratio";
 
   if (isRatio && withParts.length) {
     const num = withParts.reduce((s, p) => s + (p.numerator as number), 0);
     const den = withParts.reduce((s, p) => s + (p.denominator as number), 0);
-    return {
-      value: den > 0 ? (num / den) * 100 : null,
-      numerator: num,
-      denominator: den,
-      daysWithData: withValue.length,
-    };
+    return { value: den > 0 ? (num / den) * 100 : null, numerator: num, denominator: den, daysWithData: withValue.length };
   }
   const isVolume = ["count", "currency", "number", "volume"].includes(u);
   if (isVolume) {
     const total = withValue.reduce((s, p) => s + (p.value as number), 0);
-    return {
-      value: total,
-      numerator: null,
-      denominator: null,
-      daysWithData: withValue.length,
-    };
+    return { value: total, numerator: null, denominator: null, daysWithData: withValue.length };
   }
   // No parts and not a plain volume (e.g. an average-of-minutes metric with no
   // numerator/denominator behind it): the mean of the days that did read is the
   // closest honest answer available, the same caveat this codebase already
   // states wherever this fallback is used.
-  const mean =
-    withValue.reduce((s, p) => s + (p.value as number), 0) / withValue.length;
-  return {
-    value: mean,
-    numerator: null,
-    denominator: null,
-    daysWithData: withValue.length,
-  };
+  const mean = withValue.reduce((s, p) => s + (p.value as number), 0) / withValue.length;
+  return { value: mean, numerator: null, denominator: null, daysWithData: withValue.length };
 }
 
 export async function getProcessOperations(
-  userId: string,
-  processId: string,
-  windowDays = 30,
-  period: ReportPeriod = "trend",
+  userId: string, processId: string, windowDays = 30, period: ReportPeriod = "trend",
 ): Promise<ProcessOperations | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
@@ -583,23 +440,18 @@ export async function getProcessOperations(
  * kpi-scorecard.service.ts's getKpiScorecardsForProcessId already uses for the portal.
  */
 export async function getProcessOperationsForPortal(
-  processId: string,
-  windowDays = 30,
-  period: ReportPeriod = "trend",
+  processId: string, windowDays = 30, period: ReportPeriod = "trend",
 ): Promise<ProcessOperations | null> {
   return computeProcessOperations(processId, windowDays, period);
 }
 
 async function computeProcessOperations(
-  processId: string,
-  windowDays: number,
-  period: ReportPeriod,
+  processId: string, windowDays: number, period: ReportPeriod,
 ): Promise<ProcessOperations | null> {
   const [procRows] = await db.execute<RowDataPacket[]>(
     `SELECT p.id, p.process_name,
             (SELECT COUNT(*) FROM employees e WHERE e.process_id = p.id AND e.active_status = 1) headcount
-       FROM process_master p WHERE p.id = ? LIMIT 1`,
-    [processId],
+       FROM process_master p WHERE p.id = ? LIMIT 1`, [processId],
   );
   const proc = (procRows as any[])[0];
   if (!proc) return null;
@@ -637,11 +489,7 @@ async function computeProcessOperations(
     [processId],
   );
   const targets = new Map<string, number>(
-    (targetRows as any[]).map((r) => [
-      String(r.metric_code),
-      Number(r.target_value),
-    ]),
-  );
+    (targetRows as any[]).map((r) => [String(r.metric_code), Number(r.target_value)]));
 
   const byMetric = new Map<string, MetricReading>();
   for (const r of rows as any[]) {
@@ -652,34 +500,17 @@ async function computeProcessOperations(
         label: r.metric_name ? String(r.metric_name) : key,
         unit: r.unit ? String(r.unit) : null,
         direction: r.direction ? String(r.direction) : null,
-        value: null,
-        staleDays: null,
-        latestDate: null,
-        provisional: false,
-        priorValue: null,
-        targetValue: targets.get(key) ?? null,
-        trend: [],
-        numerator: null,
-        denominator: null,
-        source: null,
-        computedAt: null,
+        value: null, staleDays: null, latestDate: null, provisional: false,
+        priorValue: null, targetValue: targets.get(key) ?? null, trend: [],
+        numerator: null, denominator: null, source: null, computedAt: null,
       });
     }
     const m = byMetric.get(key)!;
     const date = isoDate(r.score_date);
     const value = r.actual_value === null ? null : Number(r.actual_value);
-    const dayNumerator =
-      r.rollup_numerator === null
-        ? null
-        : unscaleNumerator(Number(r.rollup_numerator), m.unit);
-    const dayDenominator =
-      r.rollup_denominator === null ? null : Number(r.rollup_denominator);
-    m.trend.push({
-      date,
-      value,
-      numerator: dayNumerator,
-      denominator: dayDenominator,
-    });
+    const dayNumerator = r.rollup_numerator === null ? null : unscaleNumerator(Number(r.rollup_numerator), m.unit);
+    const dayDenominator = r.rollup_denominator === null ? null : Number(r.rollup_denominator);
+    m.trend.push({ date, value, numerator: dayNumerator, denominator: dayDenominator });
     // The headline is the most recent day that actually produced a number. A
     // no_data day must not blank out a metric that was reading fine yesterday.
     // Overwritten below for a period view, which aggregates instead of reading
@@ -705,25 +536,16 @@ async function computeProcessOperations(
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 7);
     const cutoffIso = isoDate(cutoff);
-    const earlier = m.trend.filter(
-      (p) => p.value !== null && p.date < cutoffIso,
-    );
-    m.priorValue =
-      earlier.length >= 3
-        ? earlier.reduce((sum, p) => sum + (p.value as number), 0) /
-          earlier.length
-        : null;
+    const earlier = m.trend.filter((p) => p.value !== null && p.date < cutoffIso);
+    m.priorValue = earlier.length >= 3
+      ? earlier.reduce((sum, p) => sum + (p.value as number), 0) / earlier.length
+      : null;
   }
 
   if (range) {
     for (const m of byMetric.values()) {
       const current = aggregateRange(m.trend, m.unit, range.from, range.to);
-      const prior = aggregateRange(
-        m.trend,
-        m.unit,
-        range.priorFrom,
-        range.priorTo,
-      );
+      const prior = aggregateRange(m.trend, m.unit, range.priorFrom, range.priorTo);
       m.value = current.value;
       m.numerator = current.numerator;
       m.denominator = current.denominator;
@@ -731,23 +553,16 @@ async function computeProcessOperations(
       // staleDays/provisional still describe the single latest reading -- a
       // metric can be mid-week with a perfectly fresh MTD figure and still be
       // worth flagging if yesterday specifically never reported.
-      m.trend = m.trend.filter(
-        (pt) => pt.date >= range.from && pt.date <= range.to,
-      );
+      m.trend = m.trend.filter((pt) => pt.date >= range.from && pt.date <= range.to);
     }
   }
 
   const sections: MetricSection[] = SECTIONS.map((s) => ({
-    key: s.key,
-    title: s.title,
-    blurb: s.blurb,
+    key: s.key, title: s.title, blurb: s.blurb,
     metrics: [...byMetric.values()]
       .filter((m) => SECTION_OF.get(m.metricKey)?.key === s.key)
-      .sort(
-        (a, b) =>
-          (SECTION_OF.get(a.metricKey)?.rank ?? 99) -
-          (SECTION_OF.get(b.metricKey)?.rank ?? 99),
-      ),
+      .sort((a, b) =>
+        (SECTION_OF.get(a.metricKey)?.rank ?? 99) - (SECTION_OF.get(b.metricKey)?.rank ?? 99)),
   })).filter((s) => s.metrics.length > 0);
 
   const ungrouped = [...byMetric.values()]
@@ -817,29 +632,20 @@ export interface MetricDrilldown {
   } | null;
   /** The fields the formula draws on, with the filter each one applies. */
   fields: Array<{
-    fieldName: string;
-    displayName: string | null;
-    sourceColumn: string | null;
-    aggregateFn: string | null;
-    filter: string | null;
+    fieldName: string; displayName: string | null; sourceColumn: string | null;
+    aggregateFn: string | null; filter: string | null;
   }>;
   /** Every reading in the window, newest first. A null value is a real no_data day. */
   readings: Array<{
-    date: string;
-    value: number | null;
-    numerator: number | null;
-    denominator: number | null;
-    note: string | null;
+    date: string; value: number | null;
+    numerator: number | null; denominator: number | null; note: string | null;
     /** 'manual' or 'connector' for a real reading; null for a no_data day. */
     source: string | null;
   }>;
 }
 
 export async function getMetricDrilldown(
-  userId: string,
-  processId: string,
-  metricKey: string,
-  windowDays = 30,
+  userId: string, processId: string, metricKey: string, windowDays = 30,
   period: ReportPeriod = "trend",
 ): Promise<MetricDrilldown | null> {
   const allowed = await readableProcessIds(userId);
@@ -860,18 +666,14 @@ export async function getMetricDrilldown(
  * detail about their own account (a real scoping call, not a default to assume).
  */
 export async function getMetricDrilldownForPortal(
-  processId: string,
-  metricKey: string,
-  windowDays = 30,
+  processId: string, metricKey: string, windowDays = 30,
   period: ReportPeriod = "trend",
 ): Promise<MetricDrilldown | null> {
   return computeMetricDrilldown(processId, metricKey, windowDays, period);
 }
 
 async function computeMetricDrilldown(
-  processId: string,
-  metricKey: string,
-  windowDays: number,
+  processId: string, metricKey: string, windowDays: number,
   period: ReportPeriod,
 ): Promise<MetricDrilldown | null> {
   // A period other than the plain trend fetches the wider window a
@@ -883,16 +685,14 @@ async function computeMetricDrilldown(
   const effectiveWindowDays = range ? 66 : windowDays;
 
   const [procRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, process_name FROM process_master WHERE id = ? LIMIT 1`,
-    [processId],
+    `SELECT id, process_name FROM process_master WHERE id = ? LIMIT 1`, [processId],
   );
   const proc = (procRows as any[])[0];
   if (!proc) return null;
 
   const [metricRows] = await db.execute<RowDataPacket[]>(
     `SELECT metric_code, metric_name, unit, direction FROM kpi_metric_master
-      WHERE metric_code = ? LIMIT 1`,
-    [metricKey],
+      WHERE metric_code = ? LIMIT 1`, [metricKey],
   );
   const metric = (metricRows as any[])[0];
   const unit = metric?.unit ?? null;
@@ -906,8 +706,7 @@ async function computeMetricDrilldown(
        JOIN kpi_metric_master m ON m.id = d.metric_id
       WHERE m.metric_code = ? AND d.process_id = ? AND d.active_status = 1
       ORDER BY (d.effective_to IS NULL) DESC, d.effective_from DESC
-      LIMIT 1`,
-    [metricKey, processId],
+      LIMIT 1`, [metricKey, processId],
   );
   const def = (defRows as any[])[0] ?? null;
 
@@ -917,18 +716,14 @@ async function computeMetricDrilldown(
     const [srcRows] = await db.execute<RowDataPacket[]>(
       `SELECT source_code, source_name, source_type, source_object, date_column,
               process_key_kind, process_key_column, process_key_value
-         FROM kpi_studio_data_source WHERE id = ? LIMIT 1`,
-      [def.data_source_id],
+         FROM kpi_studio_data_source WHERE id = ? LIMIT 1`, [def.data_source_id],
     );
     const sr = (srcRows as any[])[0];
     if (sr) {
       source = {
-        sourceCode: String(sr.source_code),
-        sourceName: sr.source_name ?? null,
-        sourceType: sr.source_type ?? null,
-        sourceObject: sr.source_object ?? null,
-        dateColumn: sr.date_column ?? null,
-        processKeyKind: sr.process_key_kind ?? null,
+        sourceCode: String(sr.source_code), sourceName: sr.source_name ?? null,
+        sourceType: sr.source_type ?? null, sourceObject: sr.source_object ?? null,
+        dateColumn: sr.date_column ?? null, processKeyKind: sr.process_key_kind ?? null,
         processKeyColumn: sr.process_key_column ?? null,
         processKeyValue: sr.process_key_value ?? null,
       };
@@ -937,20 +732,15 @@ async function computeMetricDrilldown(
       `SELECT field_name, display_name, source_column, aggregate_fn, filter_json
          FROM kpi_studio_source_field
         WHERE data_source_id = ? AND active_status = 1
-        ORDER BY field_name`,
-      [def.data_source_id],
+        ORDER BY field_name`, [def.data_source_id],
     );
     fields = (fieldRows as any[]).map((f) => ({
       fieldName: String(f.field_name),
       displayName: f.display_name ?? null,
       sourceColumn: f.source_column ?? null,
       aggregateFn: f.aggregate_fn ?? null,
-      filter:
-        f.filter_json == null
-          ? null
-          : typeof f.filter_json === "string"
-            ? f.filter_json
-            : JSON.stringify(f.filter_json),
+      filter: f.filter_json == null ? null
+        : (typeof f.filter_json === "string" ? f.filter_json : JSON.stringify(f.filter_json)),
     }));
   }
 
@@ -959,8 +749,7 @@ async function computeMetricDrilldown(
        FROM process_metric_actual
       WHERE process_id = ? AND metric_key = ?
         AND score_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-      ORDER BY score_date DESC`,
-    [processId, metricKey, effectiveWindowDays],
+      ORDER BY score_date DESC`, [processId, metricKey, effectiveWindowDays],
   );
 
   // Nothing known about it and nothing ever recorded: this metric does not exist
@@ -989,36 +778,27 @@ async function computeMetricDrilldown(
     period,
     periodFrom: range?.from ?? null,
     periodTo: range?.to ?? null,
-    definition: def
-      ? {
-          id: String(def.id),
-          formula: def.formula_expression ?? null,
-          grain: def.grain ?? null,
-          effectiveFrom: def.effective_from
-            ? isoDate(def.effective_from)
-            : null,
-          effectiveTo: def.effective_to ? isoDate(def.effective_to) : null,
-          targetValue:
-            def.target_value === null ? null : Number(def.target_value),
-          createdBy: def.created_by ?? null,
-          createdAt: def.created_at ? String(def.created_at) : null,
-          notes: def.notes ?? null,
-        }
-      : null,
+    definition: def ? {
+      id: String(def.id),
+      formula: def.formula_expression ?? null,
+      grain: def.grain ?? null,
+      effectiveFrom: def.effective_from ? isoDate(def.effective_from) : null,
+      effectiveTo: def.effective_to ? isoDate(def.effective_to) : null,
+      targetValue: def.target_value === null ? null : Number(def.target_value),
+      createdBy: def.created_by ?? null,
+      createdAt: def.created_at ? String(def.created_at) : null,
+      notes: def.notes ?? null,
+    } : null,
     source,
     fields,
     readings: readingsInRange.map((r) => ({
       date: isoDate(r.score_date),
       value: r.actual_value === null ? null : Number(r.actual_value),
       numerator: unscaleNumerator(
-        r.rollup_numerator === null ? null : Number(r.rollup_numerator),
-        unit,
-      ),
-      denominator:
-        r.rollup_denominator === null ? null : Number(r.rollup_denominator),
+        r.rollup_numerator === null ? null : Number(r.rollup_numerator), unit),
+      denominator: r.rollup_denominator === null ? null : Number(r.rollup_denominator),
       note: r.note ?? null,
-      source:
-        r.actual_value === null ? null : r.source ? String(r.source) : null,
+      source: r.actual_value === null ? null : (r.source ? String(r.source) : null),
     })),
   };
 }
@@ -1059,10 +839,7 @@ const RAW_ROWS_LIMIT = 200;
  * without a source are the ones with a manual-only entry and nothing else.
  */
 export async function getMetricRawRows(
-  userId: string,
-  processId: string,
-  metricKey: string,
-  date: string,
+  userId: string, processId: string, metricKey: string, date: string,
 ): Promise<MetricRawRows | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
@@ -1074,36 +851,22 @@ export async function getMetricRawRows(
        JOIN kpi_metric_master m ON m.id = d.metric_id
       WHERE m.metric_code = ? AND d.process_id = ? AND d.active_status = 1
       ORDER BY (d.effective_to IS NULL) DESC, d.effective_from DESC
-      LIMIT 1`,
-    [metricKey, processId],
+      LIMIT 1`, [metricKey, processId],
   );
   const def = (defRows as any[])[0] ?? null;
-  const noSource = (
-    reason: string,
-    sourceCode: string | null = null,
-  ): MetricRawRows => ({
-    date,
-    available: false,
-    reason,
-    sourceCode,
-    sourceObject: null,
-    totalRows: null,
-    truncated: false,
-    columns: [],
-    rows: [],
+  const noSource = (reason: string, sourceCode: string | null = null): MetricRawRows => ({
+    date, available: false, reason, sourceCode, sourceObject: null,
+    totalRows: null, truncated: false, columns: [], rows: [],
   });
   if (!def?.data_source_id) {
-    return noSource(
-      "This metric has no configured data source to trace individual records back to.",
-    );
+    return noSource("This metric has no configured data source to trace individual records back to.");
   }
 
   const [srcRows] = await db.execute<RowDataPacket[]>(
     `SELECT source_code, source_object, date_column, date_format,
             process_key_kind, process_key_column, process_key_value,
             employee_key_column, employee_key_kind
-       FROM kpi_studio_data_source WHERE id = ? LIMIT 1`,
-    [def.data_source_id],
+       FROM kpi_studio_data_source WHERE id = ? LIMIT 1`, [def.data_source_id],
   );
   const src = (srcRows as any[])[0] ?? null;
   if (!src?.source_object || !src?.date_column) {
@@ -1116,8 +879,7 @@ export async function getMetricRawRows(
   const [fieldRows] = await db.execute<RowDataPacket[]>(
     `SELECT source_column, filter_json FROM kpi_studio_source_field
       WHERE data_source_id = ? AND active_status = 1 AND source_column IS NOT NULL
-      ORDER BY field_name`,
-    [def.data_source_id],
+      ORDER BY field_name`, [def.data_source_id],
   );
   const columnSet = new Set<string>();
   for (const f of fieldRows as any[]) {
@@ -1129,14 +891,11 @@ export async function getMetricRawRows(
     // the field itself is: this is meant to be the full working, not a summary.
     try {
       const raw = f.filter_json;
-      const parsed =
-        raw == null ? [] : Array.isArray(raw) ? raw : JSON.parse(String(raw));
+      const parsed = raw == null ? [] : Array.isArray(raw) ? raw : JSON.parse(String(raw));
       for (const cond of Array.isArray(parsed) ? parsed : []) {
         if (cond && typeof cond.column === "string") columnSet.add(cond.column);
       }
-    } catch {
-      /* an unreadable filter just contributes no extra column */
-    }
+    } catch { /* an unreadable filter just contributes no extra column */ }
   }
   const columns = [...columnSet];
   if (!columns.length) {
@@ -1153,87 +912,55 @@ export async function getMetricRawRows(
     const joinsEmployees = kind === "employee";
     const q = joinsEmployees ? "s." : "";
     const dateExpr = dateExpression(dateColumn, src.date_format, q);
-    const quotedTable = table
-      .split(".")
-      .map((p) => `\`${p}\``)
-      .join(".");
+    const quotedTable = table.split(".").map((p) => `\`${p}\``).join(".");
 
-    const where = [
-      `${dateExpr} >= ?`,
-      `${dateExpr} < DATE_ADD(?, INTERVAL 1 DAY)`,
-    ];
+    const where = [`${dateExpr} >= ?`, `${dateExpr} < DATE_ADD(?, INTERVAL 1 DAY)`];
     const params: unknown[] = [date, date];
 
     if (kind === "column") {
-      if (!src.process_key_column)
-        throw new Error("this source maps by column but names none");
-      const keyColumn = assertSafeIdentifier(
-        src.process_key_column,
-        "process key column",
-      );
+      if (!src.process_key_column) throw new Error("this source maps by column but names none");
+      const keyColumn = assertSafeIdentifier(src.process_key_column, "process key column");
       where.push(`${q}\`${keyColumn}\` = ?`);
       params.push(src.process_key_value ?? "");
     }
 
     let join = "";
     if (joinsEmployees) {
-      if (!src.employee_key_column)
-        throw new Error(
-          "this source looks the process up from the employee but names no employee column",
-        );
-      const employeeColumn = assertSafeIdentifier(
-        src.employee_key_column,
-        "employee key column",
-      );
-      const employeeSide =
-        src.employee_key_kind === "employee_id" ? "id" : "employee_code";
+      if (!src.employee_key_column) throw new Error("this source looks the process up from the employee but names no employee column");
+      const employeeColumn = assertSafeIdentifier(src.employee_key_column, "employee key column");
+      const employeeSide = src.employee_key_kind === "employee_id" ? "id" : "employee_code";
       join = `JOIN employees e ON e.\`${employeeSide}\` = s.\`${employeeColumn}\``;
       where.push("e.process_id = ?");
       params.push(processId);
     }
 
-    const safeColumns = columns.map((c) =>
-      assertSafeIdentifier(c, "source column"),
-    );
-    const selectCols = safeColumns
-      .map((c) => `${q}\`${c}\` AS \`${c}\``)
-      .join(", ");
+    const safeColumns = columns.map((c) => assertSafeIdentifier(c, "source column"));
+    const selectCols = safeColumns.map((c) => `${q}\`${c}\` AS \`${c}\``).join(", ");
     const fromClause = `FROM ${quotedTable}${joinsEmployees ? " s" : ""} ${join}`;
     const whereClause = `WHERE ${where.join(" AND ")}`;
 
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS n ${fromClause} ${whereClause}`,
-      params,
+      `SELECT COUNT(*) AS n ${fromClause} ${whereClause}`, params,
     );
     const totalRows = Number((countRows as any[])[0]?.n ?? 0);
 
     const [dataRows] = await db.execute<RowDataPacket[]>(
-      `SELECT ${selectCols} ${fromClause} ${whereClause} LIMIT ${RAW_ROWS_LIMIT}`,
-      params,
+      `SELECT ${selectCols} ${fromClause} ${whereClause} LIMIT ${RAW_ROWS_LIMIT}`, params,
     );
 
     return {
-      date,
-      available: true,
-      reason: null,
-      sourceCode: String(src.source_code),
-      sourceObject: String(src.source_object),
-      totalRows,
-      truncated: totalRows > (dataRows as any[]).length,
+      date, available: true, reason: null,
+      sourceCode: String(src.source_code), sourceObject: String(src.source_object),
+      totalRows, truncated: totalRows > (dataRows as any[]).length,
       columns: safeColumns,
       rows: (dataRows as any[]).map((r) => ({ ...r })),
     };
   } catch (err) {
     return {
-      date,
-      available: false,
+      date, available: false,
       reason: `Could not read individual records: ${(err as Error).message}`,
-      sourceCode: String(src.source_code),
-      sourceObject: String(src.source_object),
-      totalRows: null,
-      truncated: false,
-      columns: [],
-      rows: [],
+      sourceCode: String(src.source_code), sourceObject: String(src.source_object),
+      totalRows: null, truncated: false, columns: [], rows: [],
     };
   }
 }
@@ -1256,12 +983,7 @@ export interface AnalystScore {
   /** True when this score came from process_metric_employee_actual (hand-entered) rather than the metric's own automated per-employee source. */
   manual: boolean;
   /** The real reporting chain, closest manager first — whatever titles actually exist, not a fabricated TL/AM pair. */
-  reportsTo: Array<{
-    employeeCode: string;
-    name: string;
-    designation: string | null;
-    depth: number;
-  }>;
+  reportsTo: Array<{ employeeCode: string; name: string; designation: string | null; depth: number }>;
   /** Picked out of reportsTo when a real Team Leader / Assistant Manager exists in the chain. Null is honest when neither does. */
   teamLeader: { employeeCode: string; name: string } | null;
   assistantManager: { employeeCode: string; name: string } | null;
@@ -1295,24 +1017,14 @@ export interface MetricAnalystBreakdown {
  * than return an empty table that looks like zero analysts scored anything.
  */
 export async function getMetricAnalystBreakdown(
-  userId: string,
-  processId: string,
-  metricKey: string,
-  period: ReportPeriod = "trend",
+  userId: string, processId: string, metricKey: string, period: ReportPeriod = "trend",
 ): Promise<MetricAnalystBreakdown | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
   const unavailable = (reason: string): MetricAnalystBreakdown => ({
-    available: false,
-    reason,
-    metricName: null,
-    unit: null,
-    direction: null,
-    targetValue: null,
-    periodFrom: null,
-    periodTo: null,
-    analysts: [],
+    available: false, reason, metricName: null, unit: null, direction: null,
+    targetValue: null, periodFrom: null, periodTo: null, analysts: [],
   });
 
   const [metricRows] = await db.execute<RowDataPacket[]>(
@@ -1327,41 +1039,29 @@ export async function getMetricAnalystBreakdown(
        JOIN kpi_metric_master m ON m.id = d.metric_id
       WHERE m.metric_code = ? AND d.process_id = ? AND d.active_status = 1
       ORDER BY (d.effective_to IS NULL) DESC, d.effective_from DESC
-      LIMIT 1`,
-    [metricKey, processId],
+      LIMIT 1`, [metricKey, processId],
   );
   const def = (defRows as any[])[0] ?? null;
-  if (!def?.data_source_id)
-    return unavailable(
-      "This metric has no configured data source to recompute per analyst.",
-    );
-  if (!def?.formula_expression)
-    return unavailable(
-      "This metric has no formula recorded — there is nothing to recompute per analyst.",
-    );
+  if (!def?.data_source_id) return unavailable("This metric has no configured data source to recompute per analyst.");
+  if (!def?.formula_expression) return unavailable("This metric has no formula recorded — there is nothing to recompute per analyst.");
 
   const [srcRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, source_code, source_name, source_type, source_object, date_column, date_format,
             process_key_kind, process_key_column, process_key_value,
             employee_key_column, employee_key_kind
-       FROM kpi_studio_data_source WHERE id = ? LIMIT 1`,
-    [def.data_source_id],
+       FROM kpi_studio_data_source WHERE id = ? LIMIT 1`, [def.data_source_id],
   );
-  const src = (srcRows as any[])[0] as
-    (DataSourceConfig & { date_format?: string | null }) | undefined;
+  const src = (srcRows as any[])[0] as (DataSourceConfig & { date_format?: string | null }) | undefined;
   if (!src) return unavailable("This metric's data source no longer exists.");
   if ((src.process_key_kind ?? "none") !== "employee") {
-    return unavailable(
-      "This metric is measured at the whole-process level, not attributed to individual employees — there is no analyst to break it down by.",
-    );
+    return unavailable("This metric is measured at the whole-process level, not attributed to individual employees — there is no analyst to break it down by.");
   }
 
   const [fieldRows] = await db.execute<RowDataPacket[]>(
     `SELECT field_name, source_column, aggregate_fn, source_expression, filter_json
        FROM kpi_studio_source_field
       WHERE data_source_id = ? AND active_status = 1
-      ORDER BY field_name`,
-    [def.data_source_id],
+      ORDER BY field_name`, [def.data_source_id],
   );
   const fields: SourceField[] = (fieldRows as any[]).map((f) => ({
     field_name: String(f.field_name),
@@ -1370,8 +1070,7 @@ export async function getMetricAnalystBreakdown(
     source_expression: f.source_expression ?? null,
     filter_json: f.filter_json ?? null,
   }));
-  if (!fields.length)
-    return unavailable("This data source has no fields configured yet.");
+  if (!fields.length) return unavailable("This data source has no fields configured yet.");
 
   // "trend" has no fixed calendar window (the card above shows the latest
   // reading, not a range), so the breakdown uses the single most recent date
@@ -1381,8 +1080,7 @@ export async function getMetricAnalystBreakdown(
   let to: string;
   const range = periodRange(period, new Date());
   if (range) {
-    from = range.from;
-    to = range.to;
+    from = range.from; to = range.to;
   } else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(score_date) latest FROM process_metric_actual
@@ -1415,8 +1113,7 @@ export async function getMetricAnalystBreakdown(
     // whatever date range is passed in, so this default costs nothing once
     // a real entry exists.
     const d = latest ? isoDate(latest) : isoDate(new Date());
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   let plan: ReturnType<typeof buildProcessEmployeeBreakdownPlan>;
@@ -1427,34 +1124,20 @@ export async function getMetricAnalystBreakdown(
   }
 
   const direction = metric?.direction ?? null;
-  const targetValue =
-    def.target_value === null ? null : Number(def.target_value);
+  const targetValue = def.target_value === null ? null : Number(def.target_value);
 
   let rows: RowDataPacket[];
   try {
     [rows] = await db.execute<RowDataPacket[]>(plan.sql, plan.params);
   } catch (err) {
-    return unavailable(
-      `Could not compute per-analyst scores: ${(err as Error).message}`,
-    );
+    return unavailable(`Could not compute per-analyst scores: ${(err as Error).message}`);
   }
   const base = {
-    available: true as const,
-    reason: null,
+    available: true as const, reason: null,
     metricName: metric?.metric_name ? String(metric.metric_name) : metricKey,
-    unit: metric?.unit ?? null,
-    direction,
-    targetValue,
-    periodFrom: from,
-    periodTo: to,
+    unit: metric?.unit ?? null, direction, targetValue, periodFrom: from, periodTo: to,
   };
-  let scored: Array<{
-    employeeId: string;
-    employeeCode: string;
-    name: string;
-    value: number | null;
-    manual: boolean;
-  }>;
+  let scored: Array<{ employeeId: string; employeeCode: string; name: string; value: number | null; manual: boolean }>;
 
   if ((rows as any[]).length) {
     scored = (rows as any[]).map((r) => {
@@ -1464,9 +1147,7 @@ export async function getMetricAnalystBreakdown(
       return {
         employeeId: String(r.__employee_id),
         employeeCode: String(r.__employee_code ?? ""),
-        name:
-          `${r.__first_name ?? ""} ${r.__last_name ?? ""}`.trim() ||
-          String(r.__employee_code ?? "Unknown"),
+        name: `${r.__first_name ?? ""} ${r.__last_name ?? ""}`.trim() || String(r.__employee_code ?? "Unknown"),
         value: evaluated.value,
         manual: false,
       };
@@ -1497,9 +1178,7 @@ export async function getMetricAnalystBreakdown(
     scored = (manualRows as any[]).map((r) => ({
       employeeId: String(r.employee_id),
       employeeCode: String(r.employee_code ?? ""),
-      name:
-        `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim() ||
-        String(r.employee_code ?? "Unknown"),
+      name: `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim() || String(r.employee_code ?? "Unknown"),
       value: r.actual_value === null ? null : Number(r.actual_value),
       manual: true,
     }));
@@ -1515,10 +1194,7 @@ export async function getMetricAnalystBreakdown(
     employeeIds,
   );
   const designationById = new Map<string, string | null>(
-    (desigRows as any[]).map((r) => [
-      String(r.id),
-      r.designation_name ? String(r.designation_name) : null,
-    ]),
+    (desigRows as any[]).map((r) => [String(r.id), r.designation_name ? String(r.designation_name) : null]),
   );
 
   // The real reporting chain, capped at 6 levels and guarded against a cycle
@@ -1561,24 +1237,15 @@ export async function getMetricAnalystBreakdown(
 
   const analysts: AnalystScore[] = scored.map((s) => {
     const chain = chainByAnalyst.get(s.employeeId) ?? [];
-    const tl = chain.find(
-      (c) => c.designation && TL_PATTERN.test(c.designation),
-    );
-    const am = chain.find(
-      (c) => c.designation && AM_PATTERN.test(c.designation),
-    );
+    const tl = chain.find((c) => c.designation && TL_PATTERN.test(c.designation));
+    const am = chain.find((c) => c.designation && AM_PATTERN.test(c.designation));
     return {
-      employeeId: s.employeeId,
-      employeeCode: s.employeeCode,
-      name: s.name,
+      employeeId: s.employeeId, employeeCode: s.employeeCode, name: s.name,
       designation: designationById.get(s.employeeId) ?? null,
-      value: s.value,
-      manual: s.manual,
+      value: s.value, manual: s.manual,
       reportsTo: chain,
       teamLeader: tl ? { employeeCode: tl.employeeCode, name: tl.name } : null,
-      assistantManager: am
-        ? { employeeCode: am.employeeCode, name: am.name }
-        : null,
+      assistantManager: am ? { employeeCode: am.employeeCode, name: am.name } : null,
     };
   });
 
@@ -1590,9 +1257,7 @@ export async function getMetricAnalystBreakdown(
     if (a.value === null && b.value === null) return 0;
     if (a.value === null) return 1;
     if (b.value === null) return -1;
-    return direction === "lower_is_better"
-      ? b.value - a.value
-      : a.value - b.value;
+    return direction === "lower_is_better" ? b.value - a.value : a.value - b.value;
   });
 
   return { ...base, analysts };
@@ -1638,12 +1303,8 @@ const CLAP_CASE = `
   END`;
 
 export interface VocQuote {
-  employeeCode: string;
-  employeeName: string;
-  callDate: string;
-  quote: string;
-  hasTranscript: boolean;
-  hasRecording: boolean;
+  employeeCode: string; employeeName: string; callDate: string; quote: string;
+  hasTranscript: boolean; hasRecording: boolean;
 }
 export interface ClapVoiceOfCustomer {
   available: boolean;
@@ -1652,11 +1313,7 @@ export interface ClapVoiceOfCustomer {
   periodTo: string | null;
   totalAuditedCalls: number;
   /** Real root-cause split — who/what the customer's issue is actually about, not agent quality alone. */
-  clapBreakdown: Array<{
-    clap: "Customer" | "Logistic" | "Agent" | "Product";
-    count: number;
-    pct: number;
-  }>;
+  clapBreakdown: Array<{ clap: "Customer" | "Logistic" | "Agent" | "Product"; count: number; pct: number }>;
   quotes: {
     agent: { positive: VocQuote[]; negative: VocQuote[] };
     logistic: { positive: VocQuote[]; negative: VocQuote[] };
@@ -1665,24 +1322,15 @@ export interface ClapVoiceOfCustomer {
 }
 
 export async function getProcessVoiceOfCustomer(
-  userId: string,
-  processId: string,
-  period: ReportPeriod = "trend",
+  userId: string, processId: string, period: ReportPeriod = "trend",
 ): Promise<ClapVoiceOfCustomer | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
   const unavailable = (reason: string): ClapVoiceOfCustomer => ({
-    available: false,
-    reason,
-    periodFrom: null,
-    periodTo: null,
-    totalAuditedCalls: 0,
-    clapBreakdown: [],
-    quotes: {
-      agent: { positive: [], negative: [] },
-      logistic: { positive: [], negative: [] },
-      product: { positive: [], negative: [] },
+    available: false, reason, periodFrom: null, periodTo: null, totalAuditedCalls: 0,
+    clapBreakdown: [], quotes: {
+      agent: { positive: [], negative: [] }, logistic: { positive: [], negative: [] }, product: { positive: [], negative: [] },
     },
   });
 
@@ -1701,25 +1349,14 @@ export async function getProcessVoiceOfCustomer(
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
-  const nameByCode = new Map<string, string>(
-    (empRows as any[]).map((r) => [
-      String(r.employee_code),
-      String(r.name).trim(),
-    ]),
-  );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     // Bounded to the last 90 days, the same "recent enough to matter" window
     // feed-health checks already use elsewhere on this page -- an honest
     // "nothing recent" beats a scan of years-old rows nobody is looking at.
@@ -1730,13 +1367,9 @@ export async function getProcessVoiceOfCustomer(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const [breakdownRows] = await db.execute<RowDataPacket[]>(
@@ -1749,24 +1382,15 @@ export async function getProcessVoiceOfCustomer(
   );
   const total = (breakdownRows as any[]).reduce((s, r) => s + Number(r.n), 0);
   if (!total) {
-    return {
-      ...unavailable(
-        "This process has no call-quality audit configured, or none this period — Voice of the Customer only exists where calls are actually audited.",
-      ),
-      available: true,
-      periodFrom: from,
-      periodTo: to,
-    };
+    return { ...unavailable(
+      "This process has no call-quality audit configured, or none this period — Voice of the Customer only exists where calls are actually audited.",
+    ), available: true, periodFrom: from, periodTo: to };
   }
-  const clapBreakdown = (breakdownRows as any[])
-    .map((r) => ({
-      clap: String(
-        r.clap,
-      ) as ClapVoiceOfCustomer["clapBreakdown"][number]["clap"],
-      count: Number(r.n),
-      pct: Math.round((Number(r.n) / total) * 1000) / 10,
-    }))
-    .sort((a, b) => b.count - a.count);
+  const clapBreakdown = (breakdownRows as any[]).map((r) => ({
+    clap: String(r.clap) as ClapVoiceOfCustomer["clapBreakdown"][number]["clap"],
+    count: Number(r.n),
+    pct: Math.round((Number(r.n) / total) * 1000) / 10,
+  })).sort((a, b) => b.count - a.count);
 
   const quoteQuery = async (col: string): Promise<VocQuote[]> => {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -1781,31 +1405,20 @@ export async function getProcessVoiceOfCustomer(
     );
     return (rows as any[]).map((r) => ({
       employeeCode: String(r.employee_code),
-      employeeName:
-        nameByCode.get(String(r.employee_code)) || String(r.employee_code),
-      callDate: String(r.call_date),
-      quote: String(r.quote),
-      hasTranscript: Boolean(r.has_transcript),
-      hasRecording: Boolean(r.has_recording),
+      employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+      callDate: String(r.call_date), quote: String(r.quote),
+      hasTranscript: Boolean(r.has_transcript), hasRecording: Boolean(r.has_recording),
     }));
   };
 
-  const [agentPos, agentNeg, logPos, logNeg, prodPos, prodNeg] =
-    await Promise.all([
-      quoteQuery("customer_voc_agent_positive"),
-      quoteQuery("customer_voc_agent_negative"),
-      quoteQuery("customer_voc_logistic_positive"),
-      quoteQuery("customer_voc_logistic_negative"),
-      quoteQuery("customer_voc_product_positive"),
-      quoteQuery("customer_voc_product_negative"),
-    ]);
+  const [agentPos, agentNeg, logPos, logNeg, prodPos, prodNeg] = await Promise.all([
+    quoteQuery("customer_voc_agent_positive"), quoteQuery("customer_voc_agent_negative"),
+    quoteQuery("customer_voc_logistic_positive"), quoteQuery("customer_voc_logistic_negative"),
+    quoteQuery("customer_voc_product_positive"), quoteQuery("customer_voc_product_negative"),
+  ]);
 
   return {
-    available: true,
-    reason: null,
-    periodFrom: from,
-    periodTo: to,
-    totalAuditedCalls: total,
+    available: true, reason: null, periodFrom: from, periodTo: to, totalAuditedCalls: total,
     clapBreakdown,
     quotes: {
       agent: { positive: agentPos, negative: agentNeg },
@@ -1816,17 +1429,10 @@ export async function getProcessVoiceOfCustomer(
 }
 
 export interface ClapDailyHeatmap {
-  available: boolean;
-  reason: string | null;
+  available: boolean; reason: string | null;
   days: Array<{
-    date: string;
-    total: number;
-    counts: {
-      Customer: number;
-      Logistic: number;
-      Agent: number;
-      Product: number;
-    };
+    date: string; total: number;
+    counts: { Customer: number; Logistic: number; Agent: number; Product: number };
   }>;
 }
 
@@ -1841,27 +1447,19 @@ export interface ClapDailyHeatmap {
  * already proven correct in the breakdown/scenario work above.
  */
 export async function getClapDailyHeatmap(
-  userId: string,
-  processId: string,
+  userId: string, processId: string,
 ): Promise<ClapDailyHeatmap | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
-  const unavailable = (reason: string): ClapDailyHeatmap => ({
-    available: false,
-    reason,
-    days: [],
-  });
+  const unavailable = (reason: string): ClapDailyHeatmap => ({ available: false, reason, days: [] });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
   const inList = employeeCodes.map(() => "?").join(",");
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -1873,34 +1471,17 @@ export async function getClapDailyHeatmap(
       ORDER BY d ASC`,
     employeeCodes,
   );
-  if (!(rows as any[]).length)
-    return {
-      ...unavailable("No audited calls in the last 14 days for this process."),
-      available: true,
-    };
+  if (!(rows as any[]).length) return { ...unavailable("No audited calls in the last 14 days for this process."), available: true };
 
-  const byDay = new Map<
-    string,
-    { Customer: number; Logistic: number; Agent: number; Product: number }
-  >();
+  const byDay = new Map<string, { Customer: number; Logistic: number; Agent: number; Product: number }>();
   for (const r of rows as any[]) {
     const d = String(r.d);
-    const bucket = byDay.get(d) ?? {
-      Customer: 0,
-      Logistic: 0,
-      Agent: 0,
-      Product: 0,
-    };
-    bucket[String(r.clap) as "Customer" | "Logistic" | "Agent" | "Product"] =
-      Number(r.n);
+    const bucket = byDay.get(d) ?? { Customer: 0, Logistic: 0, Agent: 0, Product: 0 };
+    bucket[String(r.clap) as "Customer" | "Logistic" | "Agent" | "Product"] = Number(r.n);
     byDay.set(d, bucket);
   }
   const days = [...byDay.entries()]
-    .map(([date, counts]) => ({
-      date,
-      counts,
-      total: counts.Customer + counts.Logistic + counts.Agent + counts.Product,
-    }))
+    .map(([date, counts]) => ({ date, counts, total: counts.Customer + counts.Logistic + counts.Agent + counts.Product }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
   return { available: true, reason: null, days };
@@ -1924,20 +1505,13 @@ export interface ClapScenarioBreakdown {
  * the same rows, one level more granular, not a new data source.
  */
 export async function getClapScenarioBreakdown(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
-  clap: "Customer" | "Logistic" | "Agent" | "Product",
+  userId: string, processId: string, period: ReportPeriod, clap: "Customer" | "Logistic" | "Agent" | "Product",
 ): Promise<ClapScenarioBreakdown | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
   const unavailable = (reason: string): ClapScenarioBreakdown => ({
-    available: false,
-    reason,
-    clap,
-    total: 0,
-    scenarios: [],
+    available: false, reason, clap, total: 0, scenarios: [],
   });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -1945,19 +1519,13 @@ export async function getClapScenarioBreakdown(
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -1965,13 +1533,9 @@ export async function getClapScenarioBreakdown(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   // Caught live verifying this: for rows that reach CLAP_CASE's
@@ -1999,11 +1563,7 @@ export async function getClapScenarioBreakdown(
     [...employeeCodes, from, to, clap],
   );
   const total = (rows as any[]).reduce((s, r) => s + Number(r.n), 0);
-  if (!total)
-    return {
-      ...unavailable(`No ${clap}-classified calls in this period.`),
-      available: true,
-    };
+  if (!total) return { ...unavailable(`No ${clap}-classified calls in this period.`), available: true };
 
   const scenarios = (rows as any[]).map((r) => ({
     scenario: String(r.scenario ?? "").trim() || "(blank)",
@@ -2018,12 +1578,8 @@ export interface ClapScenarioCall {
   available: boolean;
   reason: string | null;
   calls: Array<{
-    employeeCode: string;
-    employeeName: string;
-    callDate: string;
-    qualityPercentage: number | null;
-    hasTranscript: boolean;
-    hasRecording: boolean;
+    employeeCode: string; employeeName: string; callDate: string;
+    qualityPercentage: number | null; hasTranscript: boolean; hasRecording: boolean;
   }>;
 }
 
@@ -2036,20 +1592,13 @@ export interface ClapScenarioCall {
  * click into getCallDetail from.
  */
 export async function getClapScenarioCalls(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
-  clap: "Customer" | "Logistic" | "Agent" | "Product",
-  scenario: string,
+  userId: string, processId: string, period: ReportPeriod,
+  clap: "Customer" | "Logistic" | "Agent" | "Product", scenario: string,
 ): Promise<ClapScenarioCall | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
-  const unavailable = (reason: string): ClapScenarioCall => ({
-    available: false,
-    reason,
-    calls: [],
-  });
+  const unavailable = (reason: string): ClapScenarioCall => ({ available: false, reason, calls: [] });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
@@ -2057,25 +1606,14 @@ export async function getClapScenarioCalls(
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
-  const nameByCode = new Map<string, string>(
-    (empRows as any[]).map((r) => [
-      String(r.employee_code),
-      String(r.name).trim(),
-    ]),
-  );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -2083,13 +1621,9 @@ export async function getClapScenarioCalls(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   // Same resolved-scenario expression as getClapScenarioBreakdown, filtered
@@ -2120,33 +1654,22 @@ export async function getClapScenarioCalls(
 
   const calls = (rows as any[]).map((r) => ({
     employeeCode: String(r.employee_code),
-    employeeName:
-      nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+    employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
     callDate: String(r.call_date),
-    qualityPercentage:
-      r.quality_percentage === null ? null : Number(r.quality_percentage),
+    qualityPercentage: r.quality_percentage === null ? null : Number(r.quality_percentage),
     hasTranscript: Boolean(r.has_transcript),
     hasRecording: Boolean(r.has_recording),
   }));
 
-  if (!calls.length)
-    return {
-      ...unavailable(`No calls found for "${scenario}" in this period.`),
-      available: true,
-    };
+  if (!calls.length) return { ...unavailable(`No calls found for "${scenario}" in this period.`), available: true };
   return { available: true, reason: null, calls };
 }
 
 export interface FatalCallsResult {
-  available: boolean;
-  reason: null | string;
+  available: boolean; reason: null | string;
   calls: Array<{
-    employeeCode: string;
-    employeeName: string;
-    callDate: string;
-    scenario: string | null;
-    hasTranscript: boolean;
-    hasRecording: boolean;
+    employeeCode: string; employeeName: string; callDate: string;
+    scenario: string | null; hasTranscript: boolean; hasRecording: boolean;
   }>;
 }
 
@@ -2163,27 +1686,17 @@ export interface FatalCallsResult {
  * later, not speculative infrastructure built ahead of a real second use.
  */
 const FATAL_PARAM_COLS = [
-  "address_recorded_completely",
-  "correct_and_complete_information",
-  "case_escalated_correctly",
-  "customer_concern_acknowledged",
-  "proper_hold_procedure",
-  "proper_transfer_and_language",
+  "address_recorded_completely", "correct_and_complete_information", "case_escalated_correctly",
+  "customer_concern_acknowledged", "proper_hold_procedure", "proper_transfer_and_language",
 ];
 
 export async function getFatalCalls(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
+  userId: string, processId: string, period: ReportPeriod,
 ): Promise<FatalCallsResult | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
-  const unavailable = (reason: string): FatalCallsResult => ({
-    available: false,
-    reason,
-    calls: [],
-  });
+  const unavailable = (reason: string): FatalCallsResult => ({ available: false, reason, calls: [] });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
@@ -2191,25 +1704,14 @@ export async function getFatalCalls(
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
-  const nameByCode = new Map<string, string>(
-    (empRows as any[]).map((r) => [
-      String(r.employee_code),
-      String(r.name).trim(),
-    ]),
-  );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -2217,13 +1719,9 @@ export async function getFatalCalls(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const fatalSql = FATAL_PARAM_COLS.map((c) => `q.\`${c}\` = 0`).join(" AND ");
@@ -2242,39 +1740,28 @@ export async function getFatalCalls(
 
   const calls = (rows as any[]).map((r) => ({
     employeeCode: String(r.employee_code),
-    employeeName:
-      nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+    employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
     callDate: String(r.call_date),
     scenario: r.scenario ?? null,
     hasTranscript: Boolean(r.has_transcript),
     hasRecording: Boolean(r.has_recording),
   }));
 
-  if (!calls.length)
-    return {
-      ...unavailable("No fatal calls in this period — a genuine, good result."),
-      available: true,
-    };
+  if (!calls.length) return { ...unavailable("No fatal calls in this period — a genuine, good result."), available: true };
   return { available: true, reason: null, calls };
 }
 
 export interface AgentAuditSummaryRow {
-  employeeCode: string;
-  employeeName: string;
-  auditCount: number;
-  cqScore: number | null;
-  fatalCount: number;
-  fatalPct: number;
-  tqCount: number;
-  mqCount: number;
-  bqCount: number;
+  employeeCode: string; employeeName: string;
+  auditCount: number; cqScore: number | null;
+  fatalCount: number; fatalPct: number;
+  tqCount: number; mqCount: number; bqCount: number;
   /** The agent's own dominant band by call count -- TQ/MQ/BQ, same three
    *  bands as the totals below, just picked per row for a scannable badge. */
   band: "TQ" | "MQ" | "BQ";
 }
 export interface AgentAuditSummary {
-  available: boolean;
-  reason: string | null;
+  available: boolean; reason: string | null;
   totals: { tq: number; mq: number; bq: number };
   rows: AgentAuditSummaryRow[];
 }
@@ -2290,19 +1777,13 @@ export interface AgentAuditSummary {
  * that isn't about grading quality at all.
  */
 export async function getAgentAuditSummary(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
+  userId: string, processId: string, period: ReportPeriod,
 ): Promise<AgentAuditSummary | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
-  const unavailable = (reason: string): AgentAuditSummary => ({
-    available: false,
-    reason,
-    totals: { tq: 0, mq: 0, bq: 0 },
-    rows: [],
-  });
+  const unavailable = (reason: string): AgentAuditSummary =>
+    ({ available: false, reason, totals: { tq: 0, mq: 0, bq: 0 }, rows: [] });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
@@ -2310,25 +1791,14 @@ export async function getAgentAuditSummary(
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
-  const nameByCode = new Map<string, string>(
-    (empRows as any[]).map((r) => [
-      String(r.employee_code),
-      String(r.name).trim(),
-    ]),
-  );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -2336,13 +1806,9 @@ export async function getAgentAuditSummary(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const fatalSql = FATAL_PARAM_COLS.map((c) => `q.\`${c}\` = 0`).join(" AND ");
@@ -2371,58 +1837,34 @@ export async function getAgentAuditSummary(
     const bqCount = Number(r.bq_count) || 0;
     const fatalCount = Number(r.fatal_count) || 0;
     const band: "TQ" | "MQ" | "BQ" =
-      tqCount >= mqCount && tqCount >= bqCount
-        ? "TQ"
-        : mqCount >= bqCount
-          ? "MQ"
-          : "BQ";
+      tqCount >= mqCount && tqCount >= bqCount ? "TQ" : mqCount >= bqCount ? "MQ" : "BQ";
     return {
       employeeCode: String(r.employee_code),
-      employeeName:
-        nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+      employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
       auditCount,
       cqScore: r.cq_score !== null ? Number(r.cq_score) : null,
       fatalCount,
-      fatalPct:
-        auditCount > 0 ? Math.round((fatalCount / auditCount) * 1000) / 10 : 0,
-      tqCount,
-      mqCount,
-      bqCount,
-      band,
+      fatalPct: auditCount > 0 ? Math.round((fatalCount / auditCount) * 1000) / 10 : 0,
+      tqCount, mqCount, bqCount, band,
     };
   });
 
-  if (!parsed.length)
-    return {
-      ...unavailable("No audited calls in this period for this process."),
-      available: true,
-    };
+  if (!parsed.length) return { ...unavailable("No audited calls in this period for this process."), available: true };
 
   const totals = parsed.reduce(
-    (acc, r) => ({
-      tq: acc.tq + r.tqCount,
-      mq: acc.mq + r.mqCount,
-      bq: acc.bq + r.bqCount,
-    }),
+    (acc, r) => ({ tq: acc.tq + r.tqCount, mq: acc.mq + r.mqCount, bq: acc.bq + r.bqCount }),
     { tq: 0, mq: 0, bq: 0 },
   );
   return { available: true, reason: null, totals, rows: parsed };
 }
 
-export interface ScenarioDistributionChild {
-  scenario1: string;
-  count: number;
-  pct: number;
-}
+export interface ScenarioDistributionChild { scenario1: string; count: number; pct: number; }
 export interface ScenarioDistributionItem {
-  scenario: string;
-  count: number;
-  pct: number;
+  scenario: string; count: number; pct: number;
   children: ScenarioDistributionChild[];
 }
 export interface ScenarioDistribution {
-  available: boolean;
-  reason: string | null;
+  available: boolean; reason: string | null;
   items: ScenarioDistributionItem[];
 }
 
@@ -2440,37 +1882,25 @@ export interface ScenarioDistribution {
  * an unverified merge.
  */
 export async function getScenarioDistribution(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
+  userId: string, processId: string, period: ReportPeriod,
 ): Promise<ScenarioDistribution | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
-  const unavailable = (reason: string): ScenarioDistribution => ({
-    available: false,
-    reason,
-    items: [],
-  });
+  const unavailable = (reason: string): ScenarioDistribution => ({ available: false, reason, items: [] });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -2478,13 +1908,9 @@ export async function getScenarioDistribution(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -2502,16 +1928,9 @@ export async function getScenarioDistribution(
   );
 
   const total = (rows as any[]).reduce((s, r) => s + Number(r.cnt), 0);
-  if (!total)
-    return {
-      ...unavailable("No audited calls in this period for this process."),
-      available: true,
-    };
+  if (!total) return { ...unavailable("No audited calls in this period for this process."), available: true };
 
-  const scenMap = new Map<
-    string,
-    { children: ScenarioDistributionChild[]; total: number }
-  >();
+  const scenMap = new Map<string, { children: ScenarioDistributionChild[]; total: number }>();
   for (const r of rows as any[]) {
     const scen = String(r.scenario);
     const cnt = Number(r.cnt);
@@ -2527,11 +1946,7 @@ export async function getScenarioDistribution(
       count: scenTotal,
       pct: Math.round((scenTotal / total) * 1000) / 10,
       children: children
-        .map((c) => ({
-          ...c,
-          pct:
-            scenTotal > 0 ? Math.round((c.count / scenTotal) * 1000) / 10 : 0,
-        }))
+        .map((c) => ({ ...c, pct: scenTotal > 0 ? Math.round((c.count / scenTotal) * 1000) / 10 : 0 }))
         .sort((a, b) => b.count - a.count),
     }))
     .sort((a, b) => b.count - a.count);
@@ -2546,55 +1961,23 @@ export async function getScenarioDistribution(
  * (which of the 20 CQ parameters belongs to which "skill") is a domain
  * judgement call already made and verified there, not something to guess.
  */
-const SCORE_COMPONENT_GROUPS: Array<{
-  key: string;
-  label: string;
-  cols: string[];
-}> = [
+const SCORE_COMPONENT_GROUPS: Array<{ key: string; label: string; cols: string[] }> = [
+  { key: "opening_skill", label: "Opening skill", cols: ["call_answered_within_5_seconds"] },
   {
-    key: "opening_skill",
-    label: "Opening skill",
-    cols: ["call_answered_within_5_seconds"],
-  },
-  {
-    key: "soft_skill",
-    label: "Soft skill",
-    cols: [
-      "professionalism_maintained",
-      "assurance_or_appreciation_provided",
-      "pronunciation_and_clarity",
-      "enthusiasm_and_no_fumbling",
-      "active_listening",
-      "politeness_and_no_sarcasm",
-      "proper_grammar",
-      "accurate_issue_probing",
-      "customer_concern_acknowledged",
+    key: "soft_skill", label: "Soft skill", cols: [
+      "professionalism_maintained", "assurance_or_appreciation_provided", "pronunciation_and_clarity",
+      "enthusiasm_and_no_fumbling", "active_listening", "politeness_and_no_sarcasm",
+      "proper_grammar", "accurate_issue_probing", "customer_concern_acknowledged",
     ],
   },
+  { key: "hold_procedure", label: "Hold procedure", cols: ["proper_hold_procedure", "proper_transfer_and_language", "dead_air_under_10_seconds"] },
   {
-    key: "hold_procedure",
-    label: "Hold procedure",
-    cols: [
-      "proper_hold_procedure",
-      "proper_transfer_and_language",
-      "dead_air_under_10_seconds",
+    key: "resolution", label: "Resolution", cols: [
+      "case_escalated_correctly", "address_recorded_completely",
+      "correct_and_complete_information", "upselling_or_offers_suggested",
     ],
   },
-  {
-    key: "resolution",
-    label: "Resolution",
-    cols: [
-      "case_escalated_correctly",
-      "address_recorded_completely",
-      "correct_and_complete_information",
-      "upselling_or_offers_suggested",
-    ],
-  },
-  {
-    key: "closing",
-    label: "Closing",
-    cols: ["further_assistance_offered", "proper_call_closure"],
-  },
+  { key: "closing", label: "Closing", cols: ["further_assistance_offered", "proper_call_closure"] },
 ];
 /** Scenario1 values where the call structurally can't be graded on any of
  *  the five skill groups (dropped/blank) -- counted as a full pass for every
@@ -2602,14 +1985,9 @@ const SCORE_COMPONENT_GROUPS: Array<{
  *  exception Mydashboards' source applies to every Score Components bucket. */
 const UNGRADABLE_SCENARIO1 = ["Call Drop in between", "Short Call/Blank Call"];
 
-export interface ScoreComponent {
-  key: string;
-  label: string;
-  scorePct: number | null;
-}
+export interface ScoreComponent { key: string; label: string; scorePct: number | null; }
 export interface ScoreComponents {
-  available: boolean;
-  reason: string | null;
+  available: boolean; reason: string | null;
   components: ScoreComponent[];
 }
 
@@ -2623,37 +2001,25 @@ export interface ScoreComponents {
  * pass for every group since there was nothing to grade.
  */
 export async function getScoreComponents(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
+  userId: string, processId: string, period: ReportPeriod,
 ): Promise<ScoreComponents | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
-  const unavailable = (reason: string): ScoreComponents => ({
-    available: false,
-    reason,
-    components: [],
-  });
+  const unavailable = (reason: string): ScoreComponents => ({ available: false, reason, components: [] });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -2661,26 +2027,15 @@ export async function getScoreComponents(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const ungradableSql = `q.scenario1 IN (${UNGRADABLE_SCENARIO1.map(() => "?").join(",")})`;
   const groupSelects = SCORE_COMPONENT_GROUPS.map((g) => {
-    const num = g.cols
-      .map(
-        (c) =>
-          `(CASE WHEN q.\`${c}\` IS NOT NULL THEN IF(q.\`${c}\` = 1, 1, 0) ELSE 0 END)`,
-      )
-      .join(" + ");
-    const den = g.cols
-      .map((c) => `(CASE WHEN q.\`${c}\` IS NOT NULL THEN 1 ELSE 0 END)`)
-      .join(" + ");
+    const num = g.cols.map((c) => `(CASE WHEN q.\`${c}\` IS NOT NULL THEN IF(q.\`${c}\` = 1, 1, 0) ELSE 0 END)`).join(" + ");
+    const den = g.cols.map((c) => `(CASE WHEN q.\`${c}\` IS NOT NULL THEN 1 ELSE 0 END)`).join(" + ");
     return `ROUND(AVG(CASE WHEN ${ungradableSql} THEN 1 ELSE (${num}) / NULLIF(${den}, 0) END) * 100, 1) AS ${g.key}`;
   }).join(",\n        ");
 
@@ -2692,22 +2047,15 @@ export async function getScoreComponents(
         AND q.quality_percentage IS NOT NULL`,
     [
       ...SCORE_COMPONENT_GROUPS.map(() => UNGRADABLE_SCENARIO1).flat(),
-      ...employeeCodes,
-      from,
-      to,
+      ...employeeCodes, from, to,
     ],
   );
 
   const row = (rows as any[])[0];
-  if (!row)
-    return {
-      ...unavailable("No audited calls in this period for this process."),
-      available: true,
-    };
+  if (!row) return { ...unavailable("No audited calls in this period for this process."), available: true };
 
   const components: ScoreComponent[] = SCORE_COMPONENT_GROUPS.map((g) => ({
-    key: g.key,
-    label: g.label,
+    key: g.key, label: g.label,
     scorePct: row[g.key] !== null ? Number(row[g.key]) : null,
   }));
   return { available: true, reason: null, components };
@@ -2715,30 +2063,18 @@ export async function getScoreComponents(
 
 const ACHT_CATEGORIES = [
   { key: "short", label: "Short (<1 min)", test: "< 60" },
-  {
-    key: "average",
-    label: "Average (1-5 min)",
-    test: ">= 60 AND CAST(q.length_in_sec AS UNSIGNED) < 301",
-  },
-  {
-    key: "long",
-    label: "Long (5-10 min)",
-    test: ">= 301 AND CAST(q.length_in_sec AS UNSIGNED) < 600",
-  },
+  { key: "average", label: "Average (1-5 min)", test: ">= 60 AND CAST(q.length_in_sec AS UNSIGNED) < 301" },
+  { key: "long", label: "Long (5-10 min)", test: ">= 301 AND CAST(q.length_in_sec AS UNSIGNED) < 600" },
   { key: "extreme", label: "Extremely long (>10 min)", test: ">= 600" },
 ] as const;
 
 export interface AchtRow {
-  key: string;
-  label: string;
-  auditCount: number;
-  scorePct: number | null;
-  fatalCount: number;
-  fatalPct: number;
+  key: string; label: string;
+  auditCount: number; scorePct: number | null;
+  fatalCount: number; fatalPct: number;
 }
 export interface AchtCategorization {
-  available: boolean;
-  reason: string | null;
+  available: boolean; reason: string | null;
   rows: AchtRow[];
 }
 
@@ -2754,37 +2090,25 @@ export interface AchtCategorization {
  * has to guess whether a missing bucket means "empty" or "not computed".
  */
 export async function getAchtCategorization(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
+  userId: string, processId: string, period: ReportPeriod,
 ): Promise<AchtCategorization | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
-  const unavailable = (reason: string): AchtCategorization => ({
-    available: false,
-    reason,
-    rows: [],
-  });
+  const unavailable = (reason: string): AchtCategorization => ({ available: false, reason, rows: [] });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -2792,13 +2116,9 @@ export async function getAchtCategorization(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const fatalSql = FATAL_PARAM_COLS.map((c) => `q.\`${c}\` = 0`).join(" AND ");
@@ -2824,30 +2144,19 @@ export async function getAchtCategorization(
     [...employeeCodes, from, to],
   );
 
-  const byKey = new Map<string, any>(
-    (rows as any[]).map((r) => [String(r.category), r]),
-  );
-  if (byKey.size === 0)
-    return {
-      ...unavailable("No audited calls with call-length data in this period."),
-      available: true,
-    };
+  const byKey = new Map<string, any>((rows as any[]).map((r) => [String(r.category), r]));
+  if (byKey.size === 0) return { ...unavailable("No audited calls with call-length data in this period."), available: true };
 
   const result: AchtRow[] = ACHT_CATEGORIES.map((cat) => {
     const r = byKey.get(cat.key);
     const auditCount = r ? Number(r.audit_count) : 0;
     const fatalCount = r ? Number(r.fatal_count) : 0;
     return {
-      key: cat.key,
-      label: cat.label,
+      key: cat.key, label: cat.label,
       auditCount,
-      scorePct:
-        r?.score_pct !== undefined && r?.score_pct !== null
-          ? Number(r.score_pct)
-          : null,
+      scorePct: r?.score_pct !== undefined && r?.score_pct !== null ? Number(r.score_pct) : null,
       fatalCount,
-      fatalPct:
-        auditCount > 0 ? Math.round((fatalCount / auditCount) * 1000) / 10 : 0,
+      fatalPct: auditCount > 0 ? Math.round((fatalCount / auditCount) * 1000) / 10 : 0,
     };
   });
   return { available: true, reason: null, rows: result };
@@ -3062,13 +2371,7 @@ const CRITICAL_SIGNALS_CASE = `CASE
   ELSE 'No'
 END`;
 
-const CRITICAL_SIGNAL_KEYS = [
-  "Frustration",
-  "Threat",
-  "Abuse",
-  "Slang",
-  "Sarcasm",
-] as const;
+const CRITICAL_SIGNAL_KEYS = ["Frustration", "Threat", "Abuse", "Slang", "Sarcasm"] as const;
 const CRITICAL_SIGNAL_META: Record<string, { label: string; emoji: string }> = {
   Frustration: { label: "Frustration", emoji: "😤" },
   Threat: { label: "Threat", emoji: "⚠️" },
@@ -3077,16 +2380,9 @@ const CRITICAL_SIGNAL_META: Record<string, { label: string; emoji: string }> = {
   Sarcasm: { label: "Sarcasm", emoji: "🙃" },
 };
 
-export interface CriticalSignal {
-  key: string;
-  label: string;
-  emoji: string;
-  count: number;
-  pct: number;
-}
+export interface CriticalSignal { key: string; label: string; emoji: string; count: number; pct: number; }
 export interface CriticalSignals {
-  available: boolean;
-  reason: string | null;
+  available: boolean; reason: string | null;
   totalExamined: number;
   signals: CriticalSignal[];
 }
@@ -3101,38 +2397,25 @@ export interface CriticalSignals {
  * examined at all.
  */
 export async function getCriticalSignals(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
+  userId: string, processId: string, period: ReportPeriod,
 ): Promise<CriticalSignals | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
-  const unavailable = (reason: string): CriticalSignals => ({
-    available: false,
-    reason,
-    totalExamined: 0,
-    signals: [],
-  });
+  const unavailable = (reason: string): CriticalSignals => ({ available: false, reason, totalExamined: 0, signals: [] });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -3140,13 +2423,9 @@ export async function getCriticalSignals(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -3162,36 +2441,22 @@ export async function getCriticalSignals(
   );
 
   const total = (rows as any[]).reduce((s, r) => s + Number(r.cnt), 0);
-  if (!total)
-    return {
-      ...unavailable("No audited calls in this period for this process."),
-      available: true,
-    };
+  if (!total) return { ...unavailable("No audited calls in this period for this process."), available: true };
 
-  const byCategory = new Map<string, number>(
-    (rows as any[]).map((r) => [String(r.category), Number(r.cnt)]),
-  );
+  const byCategory = new Map<string, number>((rows as any[]).map((r) => [String(r.category), Number(r.cnt)]));
   const signals: CriticalSignal[] = CRITICAL_SIGNAL_KEYS.map((key) => {
     const count = byCategory.get(key) ?? 0;
     return {
-      key,
-      label: CRITICAL_SIGNAL_META[key]!.label,
-      emoji: CRITICAL_SIGNAL_META[key]!.emoji,
-      count,
-      pct: Math.round((count / total) * 1000) / 10,
+      key, label: CRITICAL_SIGNAL_META[key]!.label, emoji: CRITICAL_SIGNAL_META[key]!.emoji,
+      count, pct: Math.round((count / total) * 1000) / 10,
     };
   });
   return { available: true, reason: null, totalExamined: total, signals };
 }
 
-export interface DailyQualityScore {
-  date: string;
-  avgScore: number | null;
-  auditCount: number;
-}
+export interface DailyQualityScore { date: string; avgScore: number | null; auditCount: number; }
 export interface DailyQualityTrend {
-  available: boolean;
-  reason: string | null;
+  available: boolean; reason: string | null;
   targetPct: number;
   days: DailyQualityScore[];
 }
@@ -3208,30 +2473,20 @@ export interface DailyQualityTrend {
  * that could vary per process).
  */
 export async function getDailyQualityTrend(
-  userId: string,
-  processId: string,
-  days = 7,
+  userId: string, processId: string, days = 7,
 ): Promise<DailyQualityTrend | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
   const clampedDays = Math.min(31, Math.max(1, Math.trunc(days)));
-  const unavailable = (reason: string): DailyQualityTrend => ({
-    available: false,
-    reason,
-    targetPct: 95,
-    days: [],
-  });
+  const unavailable = (reason: string): DailyQualityTrend => ({ available: false, reason, targetPct: 95, days: [] });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
   const inList = employeeCodes.map(() => "?").join(",");
 
   const [latestRows] = await db.execute<RowDataPacket[]>(
@@ -3241,10 +2496,7 @@ export async function getDailyQualityTrend(
     employeeCodes,
   );
   const latest = (latestRows as any[])[0]?.latest;
-  if (!latest)
-    return unavailable(
-      "No audited calls in the last 90 days for this process.",
-    );
+  if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
   const endDate = isoDate(latest);
 
   const fatalSql = FATAL_PARAM_COLS.map((c) => `q.\`${c}\` = 0`).join(" AND ");
@@ -3262,22 +2514,16 @@ export async function getDailyQualityTrend(
     [...employeeCodes, endDate, clampedDays - 1, endDate],
   );
 
-  const byDate = new Map<string, any>(
-    (rows as any[]).map((r) => [String(r.call_date), r]),
-  );
+  const byDate = new Map<string, any>((rows as any[]).map((r) => [String(r.call_date), r]));
   const days_: DailyQualityScore[] = [];
   const end = new Date(`${endDate}T00:00:00Z`);
   for (let i = clampedDays - 1; i >= 0; i--) {
-    const d = new Date(end);
-    d.setUTCDate(d.getUTCDate() - i);
+    const d = new Date(end); d.setUTCDate(d.getUTCDate() - i);
     const key = d.toISOString().slice(0, 10);
     const r = byDate.get(key);
     days_.push({
       date: key,
-      avgScore:
-        r?.avg_score !== undefined && r?.avg_score !== null
-          ? Number(r.avg_score)
-          : null,
+      avgScore: r?.avg_score !== undefined && r?.avg_score !== null ? Number(r.avg_score) : null,
       auditCount: r ? Number(r.audit_count) : 0,
     });
   }
@@ -3286,13 +2532,10 @@ export async function getDailyQualityTrend(
 }
 
 export interface CustomerRiskCards {
-  available: boolean;
-  reason: string | null;
+  available: boolean; reason: string | null;
   totalExamined: number;
-  socialMediaCourtThreat: number;
-  socialMediaCourtThreatPct: number;
-  potentialScam: number;
-  potentialScamPct: number;
+  socialMediaCourtThreat: number; socialMediaCourtThreatPct: number;
+  potentialScam: number; potentialScamPct: number;
 }
 
 /**
@@ -3305,21 +2548,15 @@ export interface CustomerRiskCards {
  * columns, confirmed live on db_audit.call_quality_assessment.
  */
 export async function getCustomerRiskCards(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
+  userId: string, processId: string, period: ReportPeriod,
 ): Promise<CustomerRiskCards | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
   const unavailable = (reason: string): CustomerRiskCards => ({
-    available: false,
-    reason,
-    totalExamined: 0,
-    socialMediaCourtThreat: 0,
-    socialMediaCourtThreatPct: 0,
-    potentialScam: 0,
-    potentialScamPct: 0,
+    available: false, reason, totalExamined: 0,
+    socialMediaCourtThreat: 0, socialMediaCourtThreatPct: 0,
+    potentialScam: 0, potentialScamPct: 0,
   });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -3327,19 +2564,13 @@ export async function getCustomerRiskCards(
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -3347,13 +2578,9 @@ export async function getCustomerRiskCards(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -3374,51 +2601,25 @@ export async function getCustomerRiskCards(
 
   const row = (rows as any[])[0];
   const total = Number(row?.total ?? 0);
-  if (!total)
-    return {
-      ...unavailable("No audited calls in this period for this process."),
-      available: true,
-    };
+  if (!total) return { ...unavailable("No audited calls in this period for this process."), available: true };
 
   const socialThreat = Number(row.social_threat ?? 0);
   const scam = Number(row.scam ?? 0);
   return {
-    available: true,
-    reason: null,
-    totalExamined: total,
-    socialMediaCourtThreat: socialThreat,
-    socialMediaCourtThreatPct: Math.round((socialThreat / total) * 1000) / 10,
-    potentialScam: scam,
-    potentialScamPct: Math.round((scam / total) * 1000) / 10,
+    available: true, reason: null, totalExamined: total,
+    socialMediaCourtThreat: socialThreat, socialMediaCourtThreatPct: Math.round((socialThreat / total) * 1000) / 10,
+    potentialScam: scam, potentialScamPct: Math.round((scam / total) * 1000) / 10,
   };
 }
 
 const FATAL_SCENARIOS = ["Query", "Complaint", "Request", "Sale Done"] as const;
 
-export interface FatalScenarioRow {
-  scenario: string;
-  fatalCount: number;
-  fatalPct: number;
-}
-export interface FatalDayRow {
-  date: string;
-  totalCount: number;
-  totalFatal: number;
-}
-export interface FatalContributorRow {
-  employeeCode: string;
-  employeeName: string;
-  auditCount: number;
-  fatalCount: number;
-  fatalPct: number;
-}
+export interface FatalScenarioRow { scenario: string; fatalCount: number; fatalPct: number; }
+export interface FatalDayRow { date: string; totalCount: number; totalFatal: number; }
+export interface FatalContributorRow { employeeCode: string; employeeName: string; auditCount: number; fatalCount: number; fatalPct: number; }
 export interface FatalAnalysis {
-  available: boolean;
-  reason: string | null;
-  auditCount: number;
-  cqScore: number | null;
-  fatalCount: number;
-  fatalPct: number;
+  available: boolean; reason: string | null;
+  auditCount: number; cqScore: number | null; fatalCount: number; fatalPct: number;
   byScenario: FatalScenarioRow[];
   dayWise: FatalDayRow[];
   topContributors: FatalContributorRow[];
@@ -3435,23 +2636,14 @@ export interface FatalAnalysis {
  * per agent) on this page.
  */
 export async function getFatalAnalysis(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
+  userId: string, processId: string, period: ReportPeriod,
 ): Promise<FatalAnalysis | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
   const unavailable = (reason: string): FatalAnalysis => ({
-    available: false,
-    reason,
-    auditCount: 0,
-    cqScore: null,
-    fatalCount: 0,
-    fatalPct: 0,
-    byScenario: [],
-    dayWise: [],
-    topContributors: [],
+    available: false, reason, auditCount: 0, cqScore: null, fatalCount: 0, fatalPct: 0,
+    byScenario: [], dayWise: [], topContributors: [],
   });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -3460,25 +2652,14 @@ export async function getFatalAnalysis(
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
-  const nameByCode = new Map<string, string>(
-    (empRows as any[]).map((r) => [
-      String(r.employee_code),
-      String(r.name).trim(),
-    ]),
-  );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -3486,20 +2667,15 @@ export async function getFatalAnalysis(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const fatalSql = FATAL_PARAM_COLS.map((c) => `q.\`${c}\` = 0`).join(" AND ");
-  const scenarioSums = FATAL_SCENARIOS.map(
-    (s) =>
-      `SUM(CASE WHEN TRIM(q.scenario) = '${s}' AND (${fatalSql}) THEN 1 ELSE 0 END) AS \`${s.toLowerCase().replace(" ", "_")}\``,
-  ).join(",\n        ");
+  const scenarioSums = FATAL_SCENARIOS
+    .map((s) => `SUM(CASE WHEN TRIM(q.scenario) = '${s}' AND (${fatalSql}) THEN 1 ELSE 0 END) AS \`${s.toLowerCase().replace(" ", "_")}\``)
+    .join(",\n        ");
 
   const [[kpiRows], [dayRows], [topRows]] = await Promise.all([
     db.execute<RowDataPacket[]>(
@@ -3543,68 +2719,37 @@ export async function getFatalAnalysis(
 
   const k = (kpiRows as any[])[0];
   const auditCount = Number(k?.audit_count ?? 0);
-  if (!auditCount)
-    return {
-      ...unavailable("No audited calls in this period for this process."),
-      available: true,
-    };
+  if (!auditCount) return { ...unavailable("No audited calls in this period for this process."), available: true };
 
   const fatalCount = Number(k.fatal_count ?? 0);
   const byScenario: FatalScenarioRow[] = FATAL_SCENARIOS.map((s) => {
     const count = Number(k[s.toLowerCase().replace(" ", "_")] ?? 0);
-    return {
-      scenario: s,
-      fatalCount: count,
-      fatalPct:
-        auditCount > 0 ? Math.round((count / auditCount) * 1000) / 10 : 0,
-    };
+    return { scenario: s, fatalCount: count, fatalPct: auditCount > 0 ? Math.round((count / auditCount) * 1000) / 10 : 0 };
   });
 
   const dayWise: FatalDayRow[] = (dayRows as any[]).map((r) => ({
-    date: String(r.call_date),
-    totalCount: Number(r.total_count),
-    totalFatal: Number(r.total_fatal),
+    date: String(r.call_date), totalCount: Number(r.total_count), totalFatal: Number(r.total_fatal),
   }));
 
   const topContributors: FatalContributorRow[] = (topRows as any[]).map((r) => {
-    const ac = Number(r.audit_count);
-    const fc = Number(r.fatal_count);
+    const ac = Number(r.audit_count); const fc = Number(r.fatal_count);
     return {
       employeeCode: String(r.employee_code),
-      employeeName:
-        nameByCode.get(String(r.employee_code)) || String(r.employee_code),
-      auditCount: ac,
-      fatalCount: fc,
-      fatalPct: ac > 0 ? Math.round((fc / ac) * 1000) / 10 : 0,
+      employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+      auditCount: ac, fatalCount: fc, fatalPct: ac > 0 ? Math.round((fc / ac) * 1000) / 10 : 0,
     };
   });
 
   return {
-    available: true,
-    reason: null,
-    auditCount,
-    cqScore: k.cq_score !== null ? Number(k.cq_score) : null,
-    fatalCount,
-    fatalPct: Math.round((fatalCount / auditCount) * 1000) / 10,
-    byScenario,
-    dayWise,
-    topContributors,
+    available: true, reason: null,
+    auditCount, cqScore: k.cq_score !== null ? Number(k.cq_score) : null,
+    fatalCount, fatalPct: Math.round((fatalCount / auditCount) * 1000) / 10,
+    byScenario, dayWise, topContributors,
   };
 }
 
-export interface DayWiseScenarioRow {
-  date: string;
-  complaint: number;
-  request: number;
-  query: number;
-  saleDone: number;
-  total: number;
-}
-export interface DayWiseScenarioAudit {
-  available: boolean;
-  reason: string | null;
-  days: DayWiseScenarioRow[];
-}
+export interface DayWiseScenarioRow { date: string; complaint: number; request: number; query: number; saleDone: number; total: number; }
+export interface DayWiseScenarioAudit { available: boolean; reason: string | null; days: DayWiseScenarioRow[]; }
 
 /**
  * Detail Analysis tab's distinctive piece -- ported from Mydashboards'
@@ -3615,37 +2760,25 @@ export interface DayWiseScenarioAudit {
  * duplicated here.
  */
 export async function getDayWiseScenarioAudit(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
+  userId: string, processId: string, period: ReportPeriod,
 ): Promise<DayWiseScenarioAudit | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
-  const unavailable = (reason: string): DayWiseScenarioAudit => ({
-    available: false,
-    reason,
-    days: [],
-  });
+  const unavailable = (reason: string): DayWiseScenarioAudit => ({ available: false, reason, days: [] });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -3653,13 +2786,9 @@ export async function getDayWiseScenarioAudit(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -3678,35 +2807,20 @@ export async function getDayWiseScenarioAudit(
     [...employeeCodes, from, to],
   );
 
-  if (!(rows as any[]).length)
-    return {
-      ...unavailable("No audited calls in this period for this process."),
-      available: true,
-    };
+  if (!(rows as any[]).length) return { ...unavailable("No audited calls in this period for this process."), available: true };
 
   const days: DayWiseScenarioRow[] = (rows as any[]).map((r) => ({
     date: String(r.call_date),
-    complaint: Number(r.complaint),
-    request: Number(r.request),
-    query: Number(r.query),
-    saleDone: Number(r.sale_done),
+    complaint: Number(r.complaint), request: Number(r.request), query: Number(r.query), saleDone: Number(r.sale_done),
     total: Number(r.total),
   }));
   return { available: true, reason: null, days };
 }
 
-export interface DayWiseRepeatRow {
-  date: string;
-  uniqueCalls: number;
-  repeatCalls: number;
-  repeatPct: number;
-}
+export interface DayWiseRepeatRow { date: string; uniqueCalls: number; repeatCalls: number; repeatPct: number; }
 export interface RepeatAnalysis {
-  available: boolean;
-  reason: string | null;
-  grandUnique: number;
-  grandRepeat: number;
-  grandPct: number;
+  available: boolean; reason: string | null;
+  grandUnique: number; grandRepeat: number; grandPct: number;
   dayWise: DayWiseRepeatRow[];
 }
 
@@ -3725,20 +2839,13 @@ export interface RepeatAnalysis {
  * far -- left out rather than risk an unbounded result set.
  */
 export async function getRepeatAnalysis(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
+  userId: string, processId: string, period: ReportPeriod,
 ): Promise<RepeatAnalysis | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
   const unavailable = (reason: string): RepeatAnalysis => ({
-    available: false,
-    reason,
-    grandUnique: 0,
-    grandRepeat: 0,
-    grandPct: 0,
-    dayWise: [],
+    available: false, reason, grandUnique: 0, grandRepeat: 0, grandPct: 0, dayWise: [],
   });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -3746,19 +2853,13 @@ export async function getRepeatAnalysis(
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -3766,13 +2867,9 @@ export async function getRepeatAnalysis(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const [[grandRows], [dayRows]] = await Promise.all([
@@ -3810,34 +2907,17 @@ export async function getRepeatAnalysis(
   const g = (grandRows as any[])[0];
   const grandUnique = Number(g?.grand_unique ?? 0);
   const grandRepeat = Number(g?.grand_repeat ?? 0);
-  if (!grandUnique && !grandRepeat)
-    return {
-      ...unavailable(
-        "No audited calls with a caller number in this period for this process.",
-      ),
-      available: true,
-    };
+  if (!grandUnique && !grandRepeat) return { ...unavailable("No audited calls with a caller number in this period for this process."), available: true };
 
   const dayWise: DayWiseRepeatRow[] = (dayRows as any[]).map((r) => {
-    const uniqueCalls = Number(r.unique_calls);
-    const repeatCalls = Number(r.repeat_calls);
-    return {
-      date: String(r.call_date),
-      uniqueCalls,
-      repeatCalls,
-      repeatPct:
-        uniqueCalls > 0 ? Math.round((repeatCalls / uniqueCalls) * 100) : 0,
-    };
+    const uniqueCalls = Number(r.unique_calls); const repeatCalls = Number(r.repeat_calls);
+    return { date: String(r.call_date), uniqueCalls, repeatCalls, repeatPct: uniqueCalls > 0 ? Math.round((repeatCalls / uniqueCalls) * 100) : 0 };
   });
 
   const totalCalls = grandUnique + grandRepeat;
   return {
-    available: true,
-    reason: null,
-    grandUnique,
-    grandRepeat,
-    grandPct:
-      totalCalls > 0 ? Math.round((grandRepeat / totalCalls) * 1000) / 10 : 0,
+    available: true, reason: null, grandUnique, grandRepeat,
+    grandPct: totalCalls > 0 ? Math.round((grandRepeat / totalCalls) * 1000) / 10 : 0,
     dayWise,
   };
 }
@@ -3849,30 +2929,19 @@ export async function getRepeatAnalysis(
  * columns confirmed live: fraud_detected_sentence had 2 real flagged calls
  * in the last 30 days across all processes.
  */
-const FRAUD_SENTENCE_CHECK = `q.fraud_detected_sentence IS NOT NULL AND TRIM(q.fraud_detected_sentence) != ''
+const FRAUD_SENTENCE_CHECK =
+  `q.fraud_detected_sentence IS NOT NULL AND TRIM(q.fraud_detected_sentence) != ''
    AND LOWER(TRIM(q.fraud_detected_sentence)) NOT IN ('none', 'na', 'n/a', 'null')`;
 
 export interface FraudCallRow {
-  employeeCode: string;
-  employeeName: string;
-  callDate: string;
-  scenario: string | null;
-  sentence: string;
-  hasTranscript: boolean;
-  hasRecording: boolean;
+  employeeCode: string; employeeName: string;
+  callDate: string; scenario: string | null;
+  sentence: string; hasTranscript: boolean; hasRecording: boolean;
 }
-export interface FraudAgentRow {
-  employeeCode: string;
-  employeeName: string;
-  flagged: number;
-  total: number;
-  riskPct: number;
-}
+export interface FraudAgentRow { employeeCode: string; employeeName: string; flagged: number; total: number; riskPct: number; }
 export interface FraudCallSummary {
-  available: boolean;
-  reason: string | null;
-  total: number;
-  flagged: number;
+  available: boolean; reason: string | null;
+  total: number; flagged: number;
   calls: FraudCallRow[];
   byAgent: FraudAgentRow[];
 }
@@ -3884,21 +2953,12 @@ export interface FraudCallSummary {
  * other real-call list on this page already uses.
  */
 export async function getFraudCallSummary(
-  userId: string,
-  processId: string,
-  period: ReportPeriod,
+  userId: string, processId: string, period: ReportPeriod,
 ): Promise<FraudCallSummary | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
-  const unavailable = (reason: string): FraudCallSummary => ({
-    available: false,
-    reason,
-    total: 0,
-    flagged: 0,
-    calls: [],
-    byAgent: [],
-  });
+  const unavailable = (reason: string): FraudCallSummary => ({ available: false, reason, total: 0, flagged: 0, calls: [], byAgent: [] });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
@@ -3906,25 +2966,14 @@ export async function getFraudCallSummary(
     [processId],
   );
   const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
-  if (!employeeCodes.length)
-    return unavailable(
-      "This process has no employees to attribute audited calls to.",
-    );
-  const nameByCode = new Map<string, string>(
-    (empRows as any[]).map((r) => [
-      String(r.employee_code),
-      String(r.name).trim(),
-    ]),
-  );
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
   const inList = employeeCodes.map(() => "?").join(",");
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
@@ -3932,13 +2981,9 @@ export async function getFraudCallSummary(
       employeeCodes,
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls in the last 90 days for this process.",
-      );
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const [[callRows], [agentRows], [totalRows]] = await Promise.all([
@@ -3978,56 +3023,34 @@ export async function getFraudCallSummary(
   ]);
 
   const total = Number((totalRows as any[])[0]?.total ?? 0);
-  if (!total)
-    return {
-      ...unavailable("No audited calls in this period for this process."),
-      available: true,
-    };
+  if (!total) return { ...unavailable("No audited calls in this period for this process."), available: true };
 
   const calls: FraudCallRow[] = (callRows as any[]).map((r) => ({
     employeeCode: String(r.employee_code),
-    employeeName:
-      nameByCode.get(String(r.employee_code)) || String(r.employee_code),
-    callDate: String(r.call_date),
-    scenario: r.scenario ?? null,
+    employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+    callDate: String(r.call_date), scenario: r.scenario ?? null,
     sentence: String(r.sentence ?? ""),
-    hasTranscript: Boolean(r.has_transcript),
-    hasRecording: Boolean(r.has_recording),
+    hasTranscript: Boolean(r.has_transcript), hasRecording: Boolean(r.has_recording),
   }));
 
   const byAgent: FraudAgentRow[] = (agentRows as any[]).map((r) => {
-    const flagged = Number(r.flagged);
-    const agentTotal = Number(r.total);
+    const flagged = Number(r.flagged); const agentTotal = Number(r.total);
     return {
       employeeCode: String(r.employee_code),
-      employeeName:
-        nameByCode.get(String(r.employee_code)) || String(r.employee_code),
-      flagged,
-      total: agentTotal,
-      riskPct:
-        agentTotal > 0 ? Math.round((flagged / agentTotal) * 1000) / 10 : 0,
+      employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+      flagged, total: agentTotal,
+      riskPct: agentTotal > 0 ? Math.round((flagged / agentTotal) * 1000) / 10 : 0,
     };
   });
 
-  return {
-    available: true,
-    reason: null,
-    total,
-    flagged: calls.length,
-    calls,
-    byAgent,
-  };
+  return { available: true, reason: null, total, flagged: calls.length, calls, byAgent };
 }
 
 export interface EmployeeRecentCalls {
-  available: boolean;
-  reason: string | null;
+  available: boolean; reason: string | null;
   calls: Array<{
-    callDate: string;
-    qualityPercentage: number | null;
-    scenario: string | null;
-    hasTranscript: boolean;
-    hasRecording: boolean;
+    callDate: string; qualityPercentage: number | null; scenario: string | null;
+    hasTranscript: boolean; hasRecording: boolean;
   }>;
 }
 
@@ -4041,19 +3064,12 @@ export interface EmployeeRecentCalls {
  * reason, not an empty list indistinguishable from "audited, zero calls".
  */
 export async function getEmployeeRecentCalls(
-  userId: string,
-  processId: string,
-  employeeCode: string,
-  period: ReportPeriod,
+  userId: string, processId: string, employeeCode: string, period: ReportPeriod,
 ): Promise<EmployeeRecentCalls | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
-  const unavailable = (reason: string): EmployeeRecentCalls => ({
-    available: false,
-    reason,
-    calls: [],
-  });
+  const unavailable = (reason: string): EmployeeRecentCalls => ({ available: false, reason, calls: [] });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT 1 FROM employees WHERE process_id = ? AND employee_code = ? LIMIT 1`,
@@ -4062,12 +3078,9 @@ export async function getEmployeeRecentCalls(
   if (!(empRows as any[]).length) return null;
 
   const range = periodRange(period, new Date());
-  let from: string;
-  let to: string;
-  if (range) {
-    from = range.from;
-    to = range.to;
-  } else {
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
     const [latestRows] = await db.execute<RowDataPacket[]>(
       `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
         WHERE User = ? AND quality_percentage IS NOT NULL
@@ -4075,13 +3088,9 @@ export async function getEmployeeRecentCalls(
       [employeeCode],
     );
     const latest = (latestRows as any[])[0]?.latest;
-    if (!latest)
-      return unavailable(
-        "No audited calls for this analyst in the last 90 days — this metric may come from a different source than the quality-audit pass.",
-      );
+    if (!latest) return unavailable("No audited calls for this analyst in the last 90 days — this metric may come from a different source than the quality-audit pass.");
     const d = isoDate(latest);
-    from = d;
-    to = d;
+    from = d; to = d;
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -4097,18 +3106,13 @@ export async function getEmployeeRecentCalls(
 
   const calls = (rows as any[]).map((r) => ({
     callDate: String(r.call_date),
-    qualityPercentage:
-      r.quality_percentage === null ? null : Number(r.quality_percentage),
+    qualityPercentage: r.quality_percentage === null ? null : Number(r.quality_percentage),
     scenario: r.scenario ?? null,
     hasTranscript: Boolean(r.has_transcript),
     hasRecording: Boolean(r.has_recording),
   }));
 
-  if (!calls.length)
-    return {
-      ...unavailable("No audited calls for this analyst in this period."),
-      available: true,
-    };
+  if (!calls.length) return { ...unavailable("No audited calls for this analyst in this period."), available: true };
   return { available: true, reason: null, calls };
 }
 
@@ -4143,40 +3147,22 @@ const CQ_PARAM_LABELS: Record<string, string> = {
   express_empathy: "Express empathy",
 };
 const CQ_PARAM_COLS = [
-  "call_answered_within_5_seconds",
-  "customer_concern_acknowledged",
-  "professionalism_maintained",
-  "assurance_or_appreciation_provided",
-  "pronunciation_and_clarity",
-  "enthusiasm_and_no_fumbling",
-  "active_listening",
-  "politeness_and_no_sarcasm",
-  "proper_grammar",
-  "accurate_issue_probing",
-  "proper_hold_procedure",
-  "proper_transfer_and_language",
-  "dead_air_under_10_seconds",
-  "case_escalated_correctly",
-  "address_recorded_completely",
-  "correct_and_complete_information",
-  "upselling_or_offers_suggested",
-  "further_assistance_offered",
-  "proper_call_closure",
+  "call_answered_within_5_seconds", "customer_concern_acknowledged", "professionalism_maintained",
+  "assurance_or_appreciation_provided", "pronunciation_and_clarity", "enthusiasm_and_no_fumbling",
+  "active_listening", "politeness_and_no_sarcasm", "proper_grammar", "accurate_issue_probing",
+  "proper_hold_procedure", "proper_transfer_and_language", "dead_air_under_10_seconds",
+  "case_escalated_correctly", "address_recorded_completely", "correct_and_complete_information",
+  "upselling_or_offers_suggested", "further_assistance_offered", "proper_call_closure",
   "express_empathy",
 ];
 
 export interface CallDetail {
   available: boolean;
   reason: string | null;
-  employeeCode: string;
-  employeeName: string;
-  callDate: string;
+  employeeCode: string; employeeName: string; callDate: string;
   qualityPercentage: number | null;
-  scenario: string | null;
-  scenario1: string | null;
-  transcript: string | null;
-  recordingUrl: string | null;
-  mobileNumber: string | null;
+  scenario: string | null; scenario1: string | null;
+  transcript: string | null; recordingUrl: string | null; mobileNumber: string | null;
   parameters: Array<{ column: string; label: string; value: boolean | null }>;
 }
 
@@ -4188,10 +3174,7 @@ export interface CallDetail {
  * table's columns were inspected for this phase.
  */
 export async function getCallDetail(
-  userId: string,
-  processId: string,
-  employeeCode: string,
-  callDate: string,
+  userId: string, processId: string, employeeCode: string, callDate: string,
 ): Promise<CallDetail | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
@@ -4219,40 +3202,25 @@ export async function getCallDetail(
   const row = (rows as any[])[0];
   if (!row) {
     return {
-      available: false,
-      reason: "No audit record found for this call.",
-      employeeCode,
-      employeeName: String(emp.name).trim(),
-      callDate,
-      qualityPercentage: null,
-      scenario: null,
-      scenario1: null,
-      transcript: null,
-      recordingUrl: null,
-      mobileNumber: null,
-      parameters: [],
+      available: false, reason: "No audit record found for this call.",
+      employeeCode, employeeName: String(emp.name).trim(), callDate,
+      qualityPercentage: null, scenario: null, scenario1: null, transcript: null, recordingUrl: null, mobileNumber: null, parameters: [],
     };
   }
 
-  const parameters = CQ_PARAM_COLS.filter((c) => row[c] !== undefined) // express_empathy is absent from most clients' rows entirely
+  const parameters = CQ_PARAM_COLS
+    .filter((c) => row[c] !== undefined) // express_empathy is absent from most clients' rows entirely
     .map((c) => ({
-      column: c,
-      label: CQ_PARAM_LABELS[c] ?? c,
+      column: c, label: CQ_PARAM_LABELS[c] ?? c,
       value: row[c] === null ? null : Number(row[c]) === 1,
     }));
 
   return {
-    available: true,
-    reason: null,
-    employeeCode,
-    employeeName: String(emp.name).trim(),
-    callDate,
-    qualityPercentage:
-      row.quality_percentage === null ? null : Number(row.quality_percentage),
-    scenario: row.scenario ?? null,
-    scenario1: row.scenario1 ?? null,
-    transcript: row.Transcribe_Text ?? null,
-    recordingUrl: row.call_recording ?? null,
+    available: true, reason: null,
+    employeeCode, employeeName: String(emp.name).trim(), callDate,
+    qualityPercentage: row.quality_percentage === null ? null : Number(row.quality_percentage),
+    scenario: row.scenario ?? null, scenario1: row.scenario1 ?? null,
+    transcript: row.Transcribe_Text ?? null, recordingUrl: row.call_recording ?? null,
     mobileNumber: row.MobileNo ?? null,
     parameters,
   };
@@ -4299,21 +3267,14 @@ const REAL_ROSTER_GUARD =
   "NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL)";
 
 export async function getWorkforceCorrelation(
-  userId: string,
-  processId: string,
-  period: ReportPeriod = "trend",
+  userId: string, processId: string, period: ReportPeriod = "trend",
 ): Promise<WorkforceCorrelation | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
 
   const unavailable = (reason: string): WorkforceCorrelation => ({
-    available: false,
-    reason,
-    periodFrom: null,
-    periodTo: null,
-    daily: [],
-    weeklyAttrition: [],
-    rosterCoverageDays: 0,
+    available: false, reason, periodFrom: null, periodTo: null,
+    daily: [], weeklyAttrition: [], rosterCoverageDays: 0,
   });
 
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -4321,33 +3282,20 @@ export async function getWorkforceCorrelation(
        FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
     [processId],
   );
-  const employees = (empRows as any[])
-    .map((r) => ({
-      code: String(r.employee_code),
-      joined: r.date_of_joining ? isoDate(r.date_of_joining) : null,
-      exited: r.date_of_exit ? isoDate(r.date_of_exit) : null,
-    }))
-    .filter((e) => e.joined);
-  if (!employees.length)
-    return unavailable(
-      "This process has no employees with a recorded joining date.",
-    );
+  const employees = (empRows as any[]).map((r) => ({
+    code: String(r.employee_code),
+    joined: r.date_of_joining ? isoDate(r.date_of_joining) : null,
+    exited: r.date_of_exit ? isoDate(r.date_of_exit) : null,
+  })).filter((e) => e.joined);
+  if (!employees.length) return unavailable("This process has no employees with a recorded joining date.");
 
-  const range =
-    periodRange(period, new Date()) ??
-    (() => {
-      // "trend" has no calendar-aligned range of its own -- default the daily
-      // series to a bounded 30-day trailing window rather than an open scan.
-      const to = new Date();
-      const from = new Date(to);
-      from.setDate(from.getDate() - 30);
-      return {
-        from: isoDate(from),
-        to: isoDate(to),
-        priorFrom: isoDate(from),
-        priorTo: isoDate(to),
-      };
-    })();
+  const range = periodRange(period, new Date()) ?? (() => {
+    // "trend" has no calendar-aligned range of its own -- default the daily
+    // series to a bounded 30-day trailing window rather than an open scan.
+    const to = new Date();
+    const from = new Date(to); from.setDate(from.getDate() - 30);
+    return { from: isoDate(from), to: isoDate(to), priorFrom: isoDate(from), priorTo: isoDate(to) };
+  })();
   const { from, to } = range;
 
   const employeeCodes = employees.map((e) => e.code);
@@ -4366,10 +3314,7 @@ export async function getWorkforceCorrelation(
     [...employeeCodes, from, to],
   );
   const clapByDay = new Map<string, { agent: number; total: number }>(
-    (clapDailyRows as any[]).map((r) => [
-      String(r.d),
-      { agent: Number(r.agent_n), total: Number(r.total_n) },
-    ]),
+    (clapDailyRows as any[]).map((r) => [String(r.d), { agent: Number(r.agent_n), total: Number(r.total_n) }]),
   );
 
   // Present headcount per day -- attendance_daily_record carries process_id
@@ -4382,9 +3327,7 @@ export async function getWorkforceCorrelation(
       GROUP BY d`,
     [processId, from, to],
   );
-  const presentByDay = new Map<string, number>(
-    (presentRows as any[]).map((r) => [String(r.d), Number(r.present_n)]),
-  );
+  const presentByDay = new Map<string, number>((presentRows as any[]).map((r) => [String(r.d), Number(r.present_n)]));
 
   // Planned headcount per day from the live roster table, real rows only.
   const [rosterRows] = await db.execute<RowDataPacket[]>(
@@ -4395,9 +3338,7 @@ export async function getWorkforceCorrelation(
       GROUP BY d`,
     [processId, from, to],
   );
-  const plannedByDay = new Map<string, number>(
-    (rosterRows as any[]).map((r) => [String(r.d), Number(r.planned_n)]),
-  );
+  const plannedByDay = new Map<string, number>((rosterRows as any[]).map((r) => [String(r.d), Number(r.planned_n)]));
   const rosterCoverageDays = plannedByDay.size;
 
   // Daily active headcount / ramp-cohort share computed in JS from the small
@@ -4410,10 +3351,8 @@ export async function getWorkforceCorrelation(
   const end = new Date(to + "T00:00:00");
   while (cursor <= end) {
     const d = isoDate(cursor);
-    let active = 0;
-    let ramp = 0;
-    const rampCutoff = new Date(cursor);
-    rampCutoff.setDate(rampCutoff.getDate() - 30);
+    let active = 0; let ramp = 0;
+    const rampCutoff = new Date(cursor); rampCutoff.setDate(rampCutoff.getDate() - 30);
     for (const e of employees) {
       if (e.joined! > d) continue;
       if (e.exited && e.exited <= d) continue;
@@ -4423,14 +3362,10 @@ export async function getWorkforceCorrelation(
     const clap = clapByDay.get(d);
     daily.push({
       date: d,
-      agentClapPct:
-        clap && clap.total > 0
-          ? Math.round((clap.agent / clap.total) * 1000) / 10
-          : null,
+      agentClapPct: clap && clap.total > 0 ? Math.round((clap.agent / clap.total) * 1000) / 10 : null,
       auditedCalls: clap?.total ?? 0,
       activeHeadcount: active,
-      rampCohortPct:
-        active > 0 ? Math.round((ramp / active) * 1000) / 10 : null,
+      rampCohortPct: active > 0 ? Math.round((ramp / active) * 1000) / 10 : null,
       presentHeadcount: presentByDay.has(d) ? presentByDay.get(d)! : null,
       plannedHeadcount: plannedByDay.has(d) ? plannedByDay.get(d)! : null,
     });
@@ -4457,13 +3392,8 @@ export async function getWorkforceCorrelation(
     .sort((a, b) => a.weekStart.localeCompare(b.weekStart));
 
   return {
-    available: true,
-    reason: null,
-    periodFrom: from,
-    periodTo: to,
-    daily,
-    weeklyAttrition,
-    rosterCoverageDays,
+    available: true, reason: null, periodFrom: from, periodTo: to,
+    daily, weeklyAttrition, rosterCoverageDays,
   };
 }
 
@@ -4543,8 +3473,7 @@ export interface ProcessBusinessHealth {
 }
 
 export async function getProcessBusinessHealth(
-  userId: string,
-  processId: string,
+  userId: string, processId: string,
 ): Promise<ProcessBusinessHealth | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
@@ -4574,10 +3503,7 @@ export async function getProcessBusinessHealthForPortal(
 }
 
 /** How long this panel waits for the org-wide P&L allocation before degrading honestly. 8s by default; overridable for slow links (tests / remote checks). */
-const PNL_WAIT_MS = Math.max(
-  1000,
-  Number(process.env.BUSINESS_HEALTH_PNL_WAIT_MS) || 12000,
-);
+const PNL_WAIT_MS = Math.max(1000, Number(process.env.BUSINESS_HEALTH_PNL_WAIT_MS) || 12000);
 
 /**
  * The org-wide P&L allocation takes ~19-33s cold but its own cache lives only 60s, so most requests met a cold cache,
@@ -4587,40 +3513,15 @@ const PNL_WAIT_MS = Math.max(
  */
 const pnlLastGood = new Map<string, { at: number; summary: any }>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 const PNL_STALE_MAX_MS = 6 * 60 * 60_000;
-async function pnlSummaryWithFallback(
-  period: string,
-): Promise<{ summary: any; ageMinutes: number | null }> {
-  // eslint-disable-line @typescript-eslint/no-explicit-any
-  const live = getCachedAllocationSummary({ period }).then((summary: any) => {
-    pnlLastGood.set(period, { at: Date.now(), summary });
-    return summary;
-  }); // eslint-disable-line @typescript-eslint/no-explicit-any
-  live.catch(() => {
-    /* handled below; keeps a late failure from becoming an unhandled rejection */
-  });
+async function pnlSummaryWithFallback(period: string): Promise<{ summary: any; ageMinutes: number | null }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const live = getCachedAllocationSummary({ period }).then((summary: any) => { pnlLastGood.set(period, { at: Date.now(), summary }); return summary; }); // eslint-disable-line @typescript-eslint/no-explicit-any
+  live.catch(() => { /* handled below; keeps a late failure from becoming an unhandled rejection */ });
   try {
-    const summary = await Promise.race([
-      live,
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new Error(
-                `P&L allocation summary timed out after ${PNL_WAIT_MS / 1000}s`,
-              ),
-            ),
-          PNL_WAIT_MS,
-        ),
-      ),
-    ]);
+    const summary = await Promise.race([live, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`P&L allocation summary timed out after ${PNL_WAIT_MS / 1000}s`)), PNL_WAIT_MS))]);
     return { summary, ageMinutes: null };
   } catch (err) {
     const good = pnlLastGood.get(period);
-    if (good && Date.now() - good.at < PNL_STALE_MAX_MS)
-      return {
-        summary: good.summary,
-        ageMinutes: Math.max(1, Math.round((Date.now() - good.at) / 60_000)),
-      };
+    if (good && Date.now() - good.at < PNL_STALE_MAX_MS) return { summary: good.summary, ageMinutes: Math.max(1, Math.round((Date.now() - good.at) / 60_000)) };
     throw err;
   }
 }
@@ -4632,40 +3533,23 @@ async function pnlSummaryWithFallback(
  */
 function warmPnlSummary(): void {
   const now = new Date();
-  const code = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  const periods = [
-    code(now),
-    code(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
-  ];
+  const code = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const periods = [code(now), code(new Date(now.getFullYear(), now.getMonth() - 1, 1))];
   void (async () => {
     for (const period of periods) {
-      try {
-        await getCachedAllocationSummary({ period }).then((summary: any) => {
-          pnlLastGood.set(period, { at: Date.now(), summary });
-        });
-      } catch {
-        // eslint-disable-line @typescript-eslint/no-explicit-any
-        /* a failed warm-up is harmless: the panel degrades exactly as before */
-      }
+      try { await getCachedAllocationSummary({ period }).then((summary: any) => { pnlLastGood.set(period, { at: Date.now(), summary }); }); } // eslint-disable-line @typescript-eslint/no-explicit-any
+      catch { /* a failed warm-up is harmless: the panel degrades exactly as before */ }
     }
   })();
 }
-if (
-  process.env.BUSINESS_HEALTH_PNL_WARM !== "false" &&
-  !process.env.VITEST &&
-  process.env.NODE_ENV !== "test"
-) {
+if (process.env.BUSINESS_HEALTH_PNL_WARM !== "false" && !process.env.VITEST && process.env.NODE_ENV !== "test") {
   setTimeout(warmPnlSummary, 10_000).unref();
   setInterval(warmPnlSummary, 30 * 60_000).unref();
 }
 
-async function computeProcessBusinessHealth(
-  processId: string,
-): Promise<ProcessBusinessHealth | null> {
+async function computeProcessBusinessHealth(processId: string): Promise<ProcessBusinessHealth | null> {
   const [processRows] = await db.execute<RowDataPacket[]>(
-    `SELECT process_name FROM process_master WHERE id = ?`,
-    [processId],
+    `SELECT process_name FROM process_master WHERE id = ?`, [processId],
   );
   const processName = (processRows as any[])[0]?.process_name ?? null;
 
@@ -4692,33 +3576,18 @@ async function computeProcessBusinessHealth(
     // existing try/catch below can degrade from, so race it against a timeout
     // and degrade the same honest way the catch block already does for a
     // real error -- this endpoint must always answer, even if finance can't.
-    const { summary, ageMinutes: summaryAgeMin } =
-      await pnlSummaryWithFallback(periodCode);
-    const row =
-      (summary?.rows as any[] | undefined)?.find(
-        (r) => r.processId === processId,
-      ) ?? null;
+    const { summary, ageMinutes: summaryAgeMin } = await pnlSummaryWithFallback(periodCode);
+    const row = (summary?.rows as any[] | undefined)?.find((r) => r.processId === processId) ?? null;
     if (!row) {
       finance = {
-        available: false,
-        reason: "No P&L allocation row for this process this month.",
-        revenue: null,
-        revenueStatus: null,
-        grn: null,
-        agentSalary: null,
-        agentSalaryIsRealThisMonth: false,
-        ebit: null,
-        operatingProfitPct: null,
-        operatingPeriod: null,
-        operatingFromPriorMonth: false,
+        available: false, reason: "No P&L allocation row for this process this month.",
+        revenue: null, revenueStatus: null, grn: null, agentSalary: null, agentSalaryIsRealThisMonth: false,
+        ebit: null, operatingProfitPct: null, operatingPeriod: null, operatingFromPriorMonth: false,
       };
     } else {
       finance = {
         available: true,
-        reason:
-          summaryAgeMin !== null
-            ? `Figures from a calculation ${summaryAgeMin} minute${summaryAgeMin === 1 ? "" : "s"} ago; a fresh one is being computed.`
-            : null,
+        reason: summaryAgeMin !== null ? `Figures from a calculation ${summaryAgeMin} minute${summaryAgeMin === 1 ? "" : "s"} ago; a fresh one is being computed.` : null,
         revenue: row.recognizedRevenue ?? null,
         revenueStatus: row.revenueDataStatus ?? null,
         grn: row.grnVendorActual ?? null,
@@ -4726,8 +3595,7 @@ async function computeProcessBusinessHealth(
         agentSalaryIsRealThisMonth: true, // corrected below
         ebit: row.ebit ?? row.operatingProfit ?? null,
         operatingProfitPct: row.operatingProfitPct ?? null,
-        operatingPeriod: periodCode,
-        operatingFromPriorMonth: false,
+        operatingPeriod: periodCode, operatingFromPriorMonth: false,
       };
 
       /*
@@ -4754,16 +3622,14 @@ async function computeProcessBusinessHealth(
       // production (it's a company-wide run) -- scoping only works through which
       // employees actually appear in salary_prep_line for that run, same as the
       // P&L engine's own getPayrollPeople() does it.
-      const [runRows] = await db
-        .execute<RowDataPacket[]>(
-          `SELECT COUNT(*) n
+      const [runRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) n
            FROM salary_prep_line spl
            JOIN salary_prep_run spr ON spr.id = spl.run_id
            JOIN employees e ON e.id = spl.employee_id
           WHERE spr.run_month = ? AND e.process_id = ?`,
-          [periodCode, processId],
-        )
-        .catch(() => [[{ n: 0 }]] as any);
+        [periodCode, processId],
+      ).catch(() => [[{ n: 0 }]] as any);
       const hasRealRun = Number((runRows as any[])[0]?.n ?? 0) > 0;
       if (!hasRealRun) {
         finance.agentSalaryIsRealThisMonth = false;
@@ -4781,16 +3647,10 @@ async function computeProcessBusinessHealth(
         try {
           const [prevRun] = await db.execute<RowDataPacket[]>(
             `SELECT COUNT(*) n FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id
-               JOIN employees e ON e.id = spl.employee_id WHERE spr.run_month = ? AND e.process_id = ?`,
-            [prevCode, processId],
-          );
+               JOIN employees e ON e.id = spl.employee_id WHERE spr.run_month = ? AND e.process_id = ?`, [prevCode, processId]);
           if (Number((prevRun as any[])[0]?.n ?? 0) > 0) {
-            const { summary: prevSummary } =
-              await pnlSummaryWithFallback(prevCode);
-            const prow =
-              (prevSummary?.rows as any[] | undefined)?.find(
-                (r) => r.processId === processId,
-              ) ?? null;
+            const { summary: prevSummary } = await pnlSummaryWithFallback(prevCode);
+            const prow = (prevSummary?.rows as any[] | undefined)?.find((r) => r.processId === processId) ?? null;
             const pct = prow?.operatingProfitPct ?? null;
             if (prow && pct !== null) {
               finance.agentSalary = prow.agentSalary ?? null;
@@ -4801,24 +3661,14 @@ async function computeProcessBusinessHealth(
               finance.reason += ` Operating % shown is for ${prevCode}, the last month with a processed payroll.`;
             }
           }
-        } catch {
-          /* keep it withheld; the reason above already says why */
-        }
+        } catch { /* keep it withheld; the reason above already says why */ }
       }
     }
   } catch (err) {
     finance = {
-      available: false,
-      reason: `P&L engine error: ${err instanceof Error ? err.message : "unknown"}`,
-      revenue: null,
-      revenueStatus: null,
-      grn: null,
-      agentSalary: null,
-      agentSalaryIsRealThisMonth: false,
-      ebit: null,
-      operatingProfitPct: null,
-      operatingPeriod: null,
-      operatingFromPriorMonth: false,
+      available: false, reason: `P&L engine error: ${err instanceof Error ? err.message : "unknown"}`,
+      revenue: null, revenueStatus: null, grn: null, agentSalary: null, agentSalaryIsRealThisMonth: false,
+      ebit: null, operatingProfitPct: null, operatingPeriod: null, operatingFromPriorMonth: false,
     };
   }
 
@@ -4838,8 +3688,7 @@ async function computeProcessBusinessHealth(
   // to say which is right. So: show whichever exists; show BOTH, clearly
   // labelled, when both exist -- never quietly resolve a disagreement.
   const [hcRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS active_hc FROM employees WHERE process_id = ? AND active_status = 1`,
-    [processId],
+    `SELECT COUNT(*) AS active_hc FROM employees WHERE process_id = ? AND active_status = 1`, [processId],
   );
   const activeHc = Number((hcRows as any[])[0]?.active_hc ?? 0);
   const [mandateRows] = await db.execute<RowDataPacket[]>(
@@ -4850,10 +3699,7 @@ async function computeProcessBusinessHealth(
     [processId],
   );
   const mandatedHcRaw = (mandateRows as any[])[0]?.total_mandated_hc;
-  const hcMandate =
-    mandatedHcRaw !== null && mandatedHcRaw !== undefined
-      ? Number(mandatedHcRaw)
-      : null;
+  const hcMandate = mandatedHcRaw !== null && mandatedHcRaw !== undefined ? Number(mandatedHcRaw) : null;
 
   const [seatRows] = await db.execute<RowDataPacket[]>(
     `SELECT SUM(mandated_seats) AS total_seats
@@ -4863,65 +3709,36 @@ async function computeProcessBusinessHealth(
     [processId],
   );
   const seatRaw = (seatRows as any[])[0]?.total_seats;
-  const revenueRuleSeats =
-    seatRaw !== null && seatRaw !== undefined ? Number(seatRaw) : null;
+  const revenueRuleSeats = seatRaw !== null && seatRaw !== undefined ? Number(seatRaw) : null;
 
   // Buffer/shortfall are derived from the mandate gap, so null when no mandate
   // exists -- factored out so all three headcount branches below stay in sync
   // rather than repeating the max(...,0) pair three times. availableCount is
   // NOT part of that gap: it's activeHc itself, always real regardless of
   // whether a mandate is configured.
-  const staffingSplit = (
-    mandate: number | null,
-  ): {
-    availableCount: number;
-    buffer: number | null;
-    shortfall: number | null;
-  } =>
+  const staffingSplit = (mandate: number | null): { availableCount: number; buffer: number | null; shortfall: number | null } =>
     mandate === null
       ? { availableCount: activeHc, buffer: null, shortfall: null }
-      : {
-          availableCount: activeHc,
-          buffer: Math.max(activeHc - mandate, 0),
-          shortfall: Math.max(mandate - activeHc, 0),
-        };
+      : { availableCount: activeHc, buffer: Math.max(activeHc - mandate, 0), shortfall: Math.max(mandate - activeHc, 0) };
 
   let headcount: ProcessBusinessHealth["headcount"];
   if (hcMandate === null && revenueRuleSeats === null) {
     headcount = {
-      available: false,
-      reason:
-        "No sanctioned headcount mandate or contracted seat count configured for this process.",
-      activeHc,
-      mandatedHc: null,
-      gap: null,
-      ...staffingSplit(null),
+      available: false, reason: "No sanctioned headcount mandate or contracted seat count configured for this process.",
+      activeHc, mandatedHc: null, gap: null, ...staffingSplit(null),
     };
-  } else if (
-    hcMandate !== null &&
-    revenueRuleSeats !== null &&
-    hcMandate !== revenueRuleSeats
-  ) {
+  } else if (hcMandate !== null && revenueRuleSeats !== null && hcMandate !== revenueRuleSeats) {
     headcount = {
       available: true,
       reason: `Two disagreeing sources: HC mandate says ${hcMandate}, the revenue rule's contracted seats say ${revenueRuleSeats}. Shown separately rather than picking one.`,
-      activeHc,
-      mandatedHc: hcMandate,
-      gap: activeHc - hcMandate,
-      ...staffingSplit(hcMandate),
+      activeHc, mandatedHc: hcMandate, gap: activeHc - hcMandate, ...staffingSplit(hcMandate),
     };
   } else {
     const resolved = hcMandate ?? revenueRuleSeats!;
     headcount = {
       available: true,
-      reason:
-        hcMandate === null
-          ? "From the revenue rule's contracted seats — no formal HC mandate configured."
-          : null,
-      activeHc,
-      mandatedHc: resolved,
-      gap: activeHc - resolved,
-      ...staffingSplit(resolved),
+      reason: hcMandate === null ? "From the revenue rule's contracted seats — no formal HC mandate configured." : null,
+      activeHc, mandatedHc: resolved, gap: activeHc - resolved, ...staffingSplit(resolved),
     };
   }
 
@@ -4950,27 +3767,14 @@ async function computeProcessBusinessHealth(
   let candidatesInPipeline = 0;
   if (processName) {
     const [candRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS n FROM ats_candidate WHERE applied_for_process = ?`,
-      [processName],
+      `SELECT COUNT(*) AS n FROM ats_candidate WHERE applied_for_process = ?`, [processName],
     );
     candidatesInPipeline = Number((candRows as any[])[0]?.n ?? 0);
   }
   const hiring: ProcessBusinessHealth["hiring"] = {
-    available: true,
-    reason: null,
-    openRequisitions,
-    openPositions,
-    candidatesInPipeline,
-    hiredCount,
-    pendingHiringCount: openPositions,
+    available: true, reason: null, openRequisitions, openPositions, candidatesInPipeline,
+    hiredCount, pendingHiringCount: openPositions,
   };
 
-  return {
-    available: true,
-    reason: null,
-    periodCode,
-    finance,
-    headcount,
-    hiring,
-  };
+  return { available: true, reason: null, periodCode, finance, headcount, hiring };
 }

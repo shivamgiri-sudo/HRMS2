@@ -22,30 +22,19 @@ const REPO = resolve(__dirname, "../../../../..");
 
 /** The upload types the frontend actually offers, read from its own source. */
 function frontendUploadTypes(): string[] {
-  const src = readFileSync(
-    resolve(REPO, "src/pages/NativeSalesDashboard.tsx"),
-    "utf8",
-  );
-  const block = src.slice(
-    src.indexOf("UPLOAD_OPTIONS"),
-    src.indexOf("function UploadPanel"),
-  );
+  const src = readFileSync(resolve(REPO, "src/pages/NativeSalesDashboard.tsx"), "utf8");
+  const block = src.slice(src.indexOf("UPLOAD_OPTIONS"), src.indexOf("function UploadPanel"));
   return [...block.matchAll(/type:\s*"([a-z0-9-]+)"/g)].map((m) => m[1]);
 }
 
 /** Paths registered on the router, with the method, in registration order. */
 function registeredRoutes(): Array<{ method: string; path: string }> {
-  const stack =
-    (salesUploadRouter as unknown as { stack: Array<Record<string, any>> })
-      .stack ?? [];
+  const stack = (salesUploadRouter as unknown as { stack: Array<Record<string, any>> }).stack ?? [];
   const out: Array<{ method: string; path: string }> = [];
   for (const layer of stack) {
     if (!layer.route) continue;
     for (const method of Object.keys(layer.route.methods ?? {})) {
-      out.push({
-        method: method.toUpperCase(),
-        path: String(layer.route.path),
-      });
+      out.push({ method: method.toUpperCase(), path: String(layer.route.path) });
     }
   }
   return out;
@@ -57,11 +46,11 @@ describe("sales upload routes exist", () => {
     expect(
       routes.some((r) => r.method === "POST" && r.path === "/upload/:type"),
       `POST /upload/:type is not registered. The page cannot upload anything without it. ` +
-        `Registered: ${routes.map((r) => `${r.method} ${r.path}`).join(", ")}`,
+        `Registered: ${routes.map((r) => `${r.method} ${r.path}`).join(", ")}`
     ).toBe(true);
     expect(
       routes.some((r) => r.method === "DELETE" && r.path === "/batch/:batchId"),
-      "DELETE /batch/:batchId is not registered, so 'delete this upload batch' cannot succeed.",
+      "DELETE /batch/:batchId is not registered, so 'delete this upload batch' cannot succeed."
     ).toBe(true);
   });
 
@@ -71,13 +60,11 @@ describe("sales upload routes exist", () => {
     const routes = registeredRoutes();
     const firstBareParam = routes.findIndex((r) => /^\/:[^/]+$/.test(r.path));
     if (firstBareParam === -1) return;
-    const literalsAfter = routes
-      .slice(firstBareParam)
-      .filter((r) => !r.path.includes(":"));
+    const literalsAfter = routes.slice(firstBareParam).filter((r) => !r.path.includes(":"));
     expect(
       literalsAfter,
       `these literal routes are registered after a bare /:param and are unreachable: ` +
-        literalsAfter.map((r) => r.path).join(", "),
+        literalsAfter.map((r) => r.path).join(", ")
     ).toEqual([]);
   });
 });
@@ -86,31 +73,21 @@ describe("the page and the server agree on the upload types", () => {
   const types = frontendUploadTypes();
 
   it("finds the frontend's list, so this test cannot pass by reading nothing", () => {
-    expect(
-      types.length,
-      "UPLOAD_OPTIONS not parsed from NativeSalesDashboard.tsx",
-    ).toBeGreaterThanOrEqual(7);
+    expect(types.length, "UPLOAD_OPTIONS not parsed from NativeSalesDashboard.tsx").toBeGreaterThanOrEqual(7);
   });
 
   it("every type the page offers is handled by the server", () => {
     // The handler map lives in the routes file; reading its source keeps this honest even
     // though the map itself is not exported.
-    const routeSrc = readFileSync(
-      resolve(__dirname, "../sales-upload.routes.ts"),
-      "utf8",
-    );
-    const handled = new Set(
-      [...routeSrc.matchAll(/\["([a-z0-9-]+)",\s*svc\.upload/g)].map(
-        (m) => m[1],
-      ),
-    );
+    const routeSrc = readFileSync(resolve(__dirname, "../sales-upload.routes.ts"), "utf8");
+    const handled = new Set([...routeSrc.matchAll(/\["([a-z0-9-]+)",\s*svc\.upload/g)].map((m) => m[1]));
 
     const missing = types.filter((t) => !handled.has(t));
     expect(
       missing,
       `The Sales Dashboard offers upload type(s) the server cannot handle: ${missing.join(", ")}.\n` +
         `They would return 400 "Unknown upload type". Add them to UPLOAD_HANDLERS in ` +
-        `sales-upload.routes.ts, pointing at the matching svc.upload* function.`,
+        `sales-upload.routes.ts, pointing at the matching svc.upload* function.`
     ).toEqual([]);
   });
 });

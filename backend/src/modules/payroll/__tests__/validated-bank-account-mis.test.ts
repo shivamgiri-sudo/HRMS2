@@ -40,16 +40,11 @@ const CLEAN: MisClassifyInput = {
   change_request_status: null,
 };
 
-const classify = (over: Partial<MisClassifyInput> = {}) =>
-  classifyMisBucket({ ...CLEAN, ...over });
+const classify = (over: Partial<MisClassifyInput> = {}) => classifyMisBucket({ ...CLEAN, ...over });
 
 describe("not uploaded", () => {
   it("reports an employee with no bank record", () => {
-    const r = classify({
-      active_primary_count: 0,
-      account_number: null,
-      verified: false,
-    });
+    const r = classify({ active_primary_count: 0, account_number: null, verified: false });
     expect(r.bucket).toBe("not_uploaded");
     expect(r.reasons).toContain("no_primary_bank_record");
   });
@@ -124,10 +119,7 @@ describe("rejected", () => {
     // Every distinct number that rounds to the same mantissa collapses to the same string, so
     // corrupt values look identical to each other. Reporting that as a shared account sends
     // someone to investigate a fraud that does not exist; the real defect is destroyed digits.
-    const r = classify({
-      account_number: "6.276E+15",
-      duplicate_of_employee_code: "MAS27845",
-    });
+    const r = classify({ account_number: "6.276E+15", duplicate_of_employee_code: "MAS27845" });
     expect(r.bucket).toBe("rejected");
     expect(r.reasons).toContain("account_number_corrupt");
     expect(r.reasons).not.toContain("account_shared_with_another_employee");
@@ -176,9 +168,7 @@ describe("verified", () => {
   });
 
   it("is unaffected by an already-approved past request", () => {
-    expect(classify({ change_request_status: "approved" }).bucket).toBe(
-      "verified",
-    );
+    expect(classify({ change_request_status: "approved" }).bucket).toBe("verified");
   });
 
   it("accepts a lowercase IFSC — it is uppercased before matching", () => {
@@ -187,12 +177,7 @@ describe("verified", () => {
 });
 
 describe("bucket membership", () => {
-  const EXCLUSIVE: ExclusiveBucket[] = [
-    "verified",
-    "pending",
-    "not_uploaded",
-    "rejected",
-  ];
+  const EXCLUSIVE: ExclusiveBucket[] = ["verified", "pending", "not_uploaded", "rejected"];
 
   it("treats 'uploaded' as everyone except not_uploaded", () => {
     for (const b of EXCLUSIVE) {
@@ -228,14 +213,7 @@ describe("bucket membership", () => {
 describe("summary arithmetic", () => {
   /** The same counting buildValidatedBankAccountMisSummary does. */
   const tally = (buckets: ExclusiveBucket[]) => {
-    const row = {
-      uploaded: 0,
-      verified: 0,
-      pending: 0,
-      not_uploaded: 0,
-      rejected: 0,
-      total: 0,
-    };
+    const row = { uploaded: 0, verified: 0, pending: 0, not_uploaded: 0, rejected: 0, total: 0 };
     for (const b of buckets) {
       row[b]++;
       row.total++;
@@ -246,14 +224,10 @@ describe("summary arithmetic", () => {
 
   it("cross-foots on a mixed population", () => {
     const row = tally([
-      "verified",
-      "verified",
-      "verified",
-      "pending",
-      "pending",
+      "verified", "verified", "verified",
+      "pending", "pending",
       "rejected",
-      "not_uploaded",
-      "not_uploaded",
+      "not_uploaded", "not_uploaded",
     ]);
     expect(row.total).toBe(8);
     expect(row.total).toBe(row.uploaded + row.not_uploaded);
@@ -292,12 +266,7 @@ describe("summary arithmetic", () => {
 
   it("cross-foots for every single-employee case the classifier can produce", () => {
     // Guards the identity itself rather than one hand-built population.
-    for (const b of [
-      "verified",
-      "pending",
-      "not_uploaded",
-      "rejected",
-    ] as ExclusiveBucket[]) {
+    for (const b of ["verified", "pending", "not_uploaded", "rejected"] as ExclusiveBucket[]) {
       const row = tally([b]);
       expect(row.total).toBe(row.uploaded + row.not_uploaded);
       expect(row.uploaded).toBe(row.verified + row.pending + row.rejected);

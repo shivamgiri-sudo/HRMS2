@@ -22,14 +22,8 @@ vi.mock("../../document-vault/documentVault.service.js", () => ({
 }));
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (
-      req as express.Request & { authUser: { id: string; role?: string } }
-    ).authUser = {
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: { id: string; role?: string } }).authUser = {
       id: "11111111-1111-1111-1111-111111111111",
       role: String(req.headers["x-test-role"] ?? "employee"),
     };
@@ -38,116 +32,45 @@ vi.mock("../../../middleware/authMiddleware.js", () => ({
 }));
 
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole:
-    (...roles: string[]) =>
-    (
-      req: express.Request,
-      res: express.Response,
-      next: express.NextFunction,
-    ) => {
-      const currentRole = String(
-        (req as express.Request & { authUser?: { role?: string } }).authUser
-          ?.role ?? "employee",
-      );
+  requireRole: (...roles: string[]) =>
+    (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const currentRole = String((req as express.Request & { authUser?: { role?: string } }).authUser?.role ?? "employee");
       if (!roles.includes(currentRole)) {
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message: "Access denied. Required: " + roles.join(" or "),
-          });
+        return res.status(403).json({ success: false, message: "Access denied. Required: " + roles.join(" or ") });
       }
       return next();
     },
 }));
 
 vi.mock("../../../shared/accessGuard.js", () => ({
-  selfOrAdminHr:
-    (..._args: string[]) =>
-    (
-      _req: express.Request,
-      _res: express.Response,
-      next: express.NextFunction,
-    ) =>
-      next(),
+  selfOrAdminHr: (..._args: string[]) =>
+    (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
 vi.mock("../engagement.controller.js", () => ({
   engagementController: {
-    getMySummary: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: null }),
-    ),
-    listBadges: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: [] }),
-    ),
-    awardBadge: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: null }),
-    ),
-    getEmployeeBadges: vi.fn(
-      async (_req: express.Request, res: express.Response) =>
-        res.json({ success: true, data: [] }),
-    ),
-    getLeaderboard: vi.fn(
-      async (_req: express.Request, res: express.Response) =>
-        res.json({ success: true, data: [] }),
-    ),
-    adjustPoints: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: null }),
-    ),
-    getPoints: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: [] }),
-    ),
-    listTiers: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: [] }),
-    ),
-    getEmployeeTier: vi.fn(
-      async (_req: express.Request, res: express.Response) =>
-        res.json({ success: true, data: null }),
-    ),
-    listKudosTemplates: vi.fn(
-      async (_req: express.Request, res: express.Response) =>
-        res.json({ success: true, data: [] }),
-    ),
-    getMyKudosLimit: vi.fn(
-      async (_req: express.Request, res: express.Response) =>
-        res.json({ success: true, data: null }),
-    ),
-    listKudos: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: [] }),
-    ),
-    sendKudos: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: null }),
-    ),
-    listSurveys: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: [] }),
-    ),
-    createSurvey: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: null }),
-    ),
-    getSurveyResults: vi.fn(
-      async (_req: express.Request, res: express.Response) =>
-        res.json({ success: true, data: null }),
-    ),
-    getENPS: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: null }),
-    ),
-    getSurvey: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: null }),
-    ),
-    submitSurvey: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: null }),
-    ),
-    getMyPulseChecks: vi.fn(
-      async (_req: express.Request, res: express.Response) =>
-        res.json({ success: true, data: [] }),
-    ),
-    getPulseSummary: vi.fn(
-      async (_req: express.Request, res: express.Response) =>
-        res.json({ success: true, data: null }),
-    ),
-    submitPulse: vi.fn(async (_req: express.Request, res: express.Response) =>
-      res.json({ success: true, data: null }),
-    ),
+    getMySummary: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
+    listBadges: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: [] })),
+    awardBadge: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
+    getEmployeeBadges: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: [] })),
+    getLeaderboard: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: [] })),
+    adjustPoints: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
+    getPoints: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: [] })),
+    listTiers: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: [] })),
+    getEmployeeTier: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
+    listKudosTemplates: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: [] })),
+    getMyKudosLimit: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
+    listKudos: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: [] })),
+    sendKudos: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
+    listSurveys: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: [] })),
+    createSurvey: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
+    getSurveyResults: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
+    getENPS: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
+    getSurvey: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
+    submitSurvey: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
+    getMyPulseChecks: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: [] })),
+    getPulseSummary: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
+    submitPulse: vi.fn(async (_req: express.Request, res: express.Response) => res.json({ success: true, data: null })),
   },
 }));
 
@@ -171,19 +94,12 @@ function createApp(router: express.Router) {
   const app = express();
   app.use(express.json());
   app.use("/api/engagement", router);
-  app.use(
-    (
-      error: any,
-      _req: express.Request,
-      res: express.Response,
-      _next: express.NextFunction,
-    ) => {
-      return res.status(error?.statusCode ?? 500).json({
-        success: false,
-        message: error?.message ?? "Internal server error",
-      });
-    },
-  );
+  app.use((error: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    return res.status(error?.statusCode ?? 500).json({
+      success: false,
+      message: error?.message ?? "Internal server error",
+    });
+  });
   return app;
 }
 
@@ -235,10 +151,7 @@ describe("company post engagement routes", () => {
   });
 
   it("creates a company post with authenticated actor context", async () => {
-    vi.mocked(createCompanyPost).mockResolvedValueOnce({
-      id: "post-1",
-      status: "pending_approval",
-    } as any);
+    vi.mocked(createCompanyPost).mockResolvedValueOnce({ id: "post-1", status: "pending_approval" } as any);
 
     const response = await request(app)
       .post("/api/engagement/company-posts")
@@ -257,9 +170,7 @@ describe("company post engagement routes", () => {
   });
 
   it("uploads a company-feed image for an authorized creator", async () => {
-    vi.mocked(assertCanCreateCompanyPost).mockResolvedValueOnce(
-      undefined as never,
-    );
+    vi.mocked(assertCanCreateCompanyPost).mockResolvedValueOnce(undefined as never);
     vi.mocked(registerUpload).mockResolvedValueOnce("vault-1");
 
     const response = await request(app)
@@ -281,9 +192,7 @@ describe("company post engagement routes", () => {
   });
 
   it("blocks company-feed image upload for unauthorized creators", async () => {
-    const error = new Error(
-      "Company post creator access is required",
-    ) as Error & { statusCode?: number };
+    const error = new Error("Company post creator access is required") as Error & { statusCode?: number };
     error.statusCode = 403;
     vi.mocked(assertCanCreateCompanyPost).mockRejectedValueOnce(error);
 
@@ -300,9 +209,7 @@ describe("company post engagement routes", () => {
   });
 
   it("rejects non-image company-feed uploads", async () => {
-    vi.mocked(assertCanCreateCompanyPost).mockResolvedValueOnce(
-      undefined as never,
-    );
+    vi.mocked(assertCanCreateCompanyPost).mockResolvedValueOnce(undefined as never);
 
     const response = await request(app)
       .post("/api/engagement/company-posts/upload")
@@ -367,15 +274,10 @@ describe("company post engagement routes", () => {
   });
 
   it("approves a company post with authenticated actor context", async () => {
-    vi.mocked(approveCompanyPost).mockResolvedValueOnce({
-      id: "post-1",
-      status: "approved",
-    } as any);
+    vi.mocked(approveCompanyPost).mockResolvedValueOnce({ id: "post-1", status: "approved" } as any);
 
     const response = await request(app)
-      .post(
-        "/api/engagement/company-posts/22222222-2222-2222-2222-222222222222/approve",
-      )
+      .post("/api/engagement/company-posts/22222222-2222-2222-2222-222222222222/approve")
       .set("Authorization", "Bearer test-token")
       .send({ review_notes: "Approved for publish", actor_user_id: "ignored" });
 
@@ -396,15 +298,10 @@ describe("company post engagement routes", () => {
   });
 
   it("rejects a company post with authenticated actor context", async () => {
-    vi.mocked(rejectCompanyPost).mockResolvedValueOnce({
-      id: "post-1",
-      status: "rejected",
-    } as any);
+    vi.mocked(rejectCompanyPost).mockResolvedValueOnce({ id: "post-1", status: "rejected" } as any);
 
     const response = await request(app)
-      .post(
-        "/api/engagement/company-posts/22222222-2222-2222-2222-222222222222/reject",
-      )
+      .post("/api/engagement/company-posts/22222222-2222-2222-2222-222222222222/reject")
       .set("Authorization", "Bearer test-token")
       .send({ reason: "Needs revision", review_notes: "Too promotional" });
 
@@ -424,9 +321,7 @@ describe("company post engagement routes", () => {
     vi.mocked(deleteCompanyPost).mockResolvedValueOnce(undefined);
 
     const response = await request(app)
-      .delete(
-        "/api/engagement/company-posts/22222222-2222-2222-2222-222222222222",
-      )
+      .delete("/api/engagement/company-posts/22222222-2222-2222-2222-222222222222")
       .set("Authorization", "Bearer test-token")
       .send({ reason: "Removed after review" });
 
@@ -452,10 +347,7 @@ describe("company post engagement routes", () => {
 
   it("lists creator access assignments for super admin callers", async () => {
     vi.mocked(listCompanyPostCreators).mockResolvedValueOnce([
-      {
-        employee_id: "33333333-3333-3333-3333-333333333333",
-        active_status: true,
-      },
+      { employee_id: "33333333-3333-3333-3333-333333333333", active_status: true },
     ] as any);
 
     const response = await request(app)
@@ -482,20 +374,13 @@ describe("company post engagement routes", () => {
   });
 
   it("grants creator access with authenticated actor context", async () => {
-    vi.mocked(grantCompanyPostCreator).mockResolvedValueOnce({
-      employee_id: "33333333-3333-3333-3333-333333333333",
-    } as any);
+    vi.mocked(grantCompanyPostCreator).mockResolvedValueOnce({ employee_id: "33333333-3333-3333-3333-333333333333" } as any);
 
     const response = await request(app)
-      .post(
-        "/api/engagement/company-post-creators/33333333-3333-3333-3333-333333333333/grant",
-      )
+      .post("/api/engagement/company-post-creators/33333333-3333-3333-3333-333333333333/grant")
       .set("Authorization", "Bearer test-token")
       .set("x-test-role", "super_admin")
-      .send({
-        user_id: "44444444-4444-4444-4444-444444444444",
-        actorUserId: "ignored",
-      });
+      .send({ user_id: "44444444-4444-4444-4444-444444444444", actorUserId: "ignored" });
 
     expect(response.status).toBe(200);
     expect(grantCompanyPostCreator).toHaveBeenCalledWith({
@@ -506,14 +391,10 @@ describe("company post engagement routes", () => {
   });
 
   it("revokes creator access with authenticated actor context", async () => {
-    vi.mocked(revokeCompanyPostCreator).mockResolvedValueOnce({
-      employee_id: "33333333-3333-3333-3333-333333333333",
-    } as any);
+    vi.mocked(revokeCompanyPostCreator).mockResolvedValueOnce({ employee_id: "33333333-3333-3333-3333-333333333333" } as any);
 
     const response = await request(app)
-      .post(
-        "/api/engagement/company-post-creators/33333333-3333-3333-3333-333333333333/revoke",
-      )
+      .post("/api/engagement/company-post-creators/33333333-3333-3333-3333-333333333333/revoke")
       .set("Authorization", "Bearer test-token")
       .set("x-test-role", "super_admin");
 

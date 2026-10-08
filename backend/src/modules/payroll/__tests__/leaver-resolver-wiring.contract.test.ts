@@ -26,14 +26,9 @@ import { EMPLOYMENT_END_DATE_SELECT } from "../employment-end-date.js";
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 /** The service documents the OLD behaviour at length; assert on code, never on the prose. */
 const stripComments = (s: string) =>
-  s
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "")
-    .replace(/^\s*--.*$/gm, "");
+  s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/^\s*--.*$/gm, "");
 
-const CALC = stripComments(
-  read("src/modules/payroll/payrollCalculate.service.ts"),
-);
+const CALC = stripComments(read("src/modules/payroll/payrollCalculate.service.ts"));
 const HOL = stripComments(read("src/modules/payroll/holiday-work.service.ts"));
 
 describe("the calculation service is wired to the one resolver", () => {
@@ -69,9 +64,7 @@ describe("no second leaver definition may reappear", () => {
     // Status is folded INTO the window predicate, and only as the end-date-NULL arm. A separate
     // status filter would re-exclude the mid-month leavers the ruling exists to pay.
     expect(CALC).not.toMatch(/employment_status\s*\)?\s*=\s*'active'/i);
-    expect(CALC).not.toMatch(
-      /LOWER\(\s*e\.employment_status\s*\)\s*=\s*'active'/i,
-    );
+    expect(CALC).not.toMatch(/LOWER\(\s*e\.employment_status\s*\)\s*=\s*'active'/i);
   });
 
   it("does not read date_of_exit directly — precedence belongs to the resolver", () => {

@@ -5,10 +5,8 @@ import * as svc from "./inbound-quality.service.js";
 import { requireClientInScope } from "../call-master/call-master.scope.js";
 
 const router = Router();
-const h =
-  (fn: (req: Request, res: Response) => Promise<unknown>) =>
-  (req: Request, res: Response, next: (e?: unknown) => void) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
+  (req: Request, res: Response, next: (e?: unknown) => void) => fn(req, res).catch(next);
 
 // Fixed 2026-08-18 (Section M RBAC audit, user decision): manager and process_manager were
 // removed from this list. Every endpoint below takes clientId as an OPTIONAL filter — omitted,
@@ -38,14 +36,10 @@ router.use(
 );
 
 function parseFilters(q: Record<string, unknown>): svc.InboundQualityFilters {
-  const now = new Date();
-  const endDate = q.endDate
-    ? String(q.endDate)
-    : now.toISOString().slice(0, 10);
-  const startDate = q.startDate
-    ? String(q.startDate)
-    : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-  const clientId = q.clientId ? String(q.clientId) : undefined;
+  const now       = new Date();
+  const endDate   = q.endDate   ? String(q.endDate)   : now.toISOString().slice(0, 10);
+  const startDate = q.startDate ? String(q.startDate) : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const clientId  = q.clientId  ? String(q.clientId)  : undefined;
   return { startDate, endDate, clientId };
 }
 
@@ -87,99 +81,41 @@ router.get("/raw-data",              h(async (req, res) => {
 }));
 
 // ── CLAP VOC Quotes (verbatim customer voice, 2026-07-17+) ───────────────────
-router.get(
-  "/clap-voc-quotes",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getClapVocQuotes(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/clap-product-voc-summary",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getClapProductVocSummary(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/clap-product-voc-quotes",
-  h(async (req, res) => {
-    const f = parseFilters(req.query as Record<string, unknown>);
-    // Passed through unnarrowed on purpose: the service owns the allowlist, because it is the
-    // service that interpolates this value into a column name. A cast here proved nothing.
-    res.json({
-      data: await svc.getClapProductVocQuotes({
-        ...f,
-        branch: req.query.branch,
-      }),
-    });
-  }),
-);
-router.get(
-  "/clap-intelligence",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getClapIntelligence(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
+router.get("/clap-voc-quotes",         h(async (req, res) => res.json({ data: await svc.getClapVocQuotes(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/clap-product-voc-summary",h(async (req, res) => res.json({ data: await svc.getClapProductVocSummary(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/clap-product-voc-quotes", h(async (req, res) => {
+  const f = parseFilters(req.query as Record<string, unknown>);
+  // Passed through unnarrowed on purpose: the service owns the allowlist, because it is the
+  // service that interpolates this value into a column name. A cast here proved nothing.
+  res.json({ data: await svc.getClapProductVocQuotes({ ...f, branch: req.query.branch }) });
+}));
+router.get("/clap-intelligence",       h(async (req, res) => res.json({ data: await svc.getClapIntelligence(parseFilters(req.query as Record<string, unknown>)) })));
 
 // ── Agent master management (super_admin / qa only) ────────────────────────
-router.get(
-  "/agent-master",
-  h(async (_req, res) => res.json({ data: await svc.getAgentMaster() })),
-);
-router.get(
-  "/missing-agents",
-  h(async (req, res) =>
-    res.json({
-      data: await svc.getMissingAgents(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
+router.get("/agent-master",          h(async (_req, res) => res.json({ data: await svc.getAgentMaster() })));
+router.get("/missing-agents",        h(async (req, res) => res.json({ data: await svc.getMissingAgents(parseFilters(req.query as Record<string, unknown>)) })));
 router.post(
   "/agent-master",
   requireRole("super_admin", "qa"),
   h(async (req, res) => {
-    const { masId, agentName } = req.body as {
-      masId: string;
-      agentName: string;
-    };
-    if (!masId || !agentName)
-      return res.status(400).json({ error: "masId and agentName required" });
+    const { masId, agentName } = req.body as { masId: string; agentName: string };
+    if (!masId || !agentName) return res.status(400).json({ error: "masId and agentName required" });
     await svc.insertAgentMaster(masId, agentName);
     res.json({ ok: true });
-  }),
+  })
 );
 
 // ── Neg-keywords management (super_admin / qa only) ───────────────────────
-router.get(
-  "/neg-keywords",
-  h(async (_req, res) => res.json({ data: await svc.getNegKeywords() })),
-);
+router.get("/neg-keywords",  h(async (_req, res) => res.json({ data: await svc.getNegKeywords() })));
 router.post(
   "/neg-keywords",
   requireRole("super_admin", "qa"),
   h(async (req, res) => {
-    const { pattern, category } = req.body as {
-      pattern: string;
-      category: string;
-    };
-    if (!pattern || !category)
-      return res.status(400).json({ error: "pattern and category required" });
+    const { pattern, category } = req.body as { pattern: string; category: string };
+    if (!pattern || !category) return res.status(400).json({ error: "pattern and category required" });
     await svc.addNegKeyword(pattern, category);
     res.json({ ok: true });
-  }),
+  })
 );
 router.patch(
   "/neg-keywords/:id",
@@ -189,7 +125,7 @@ router.patch(
     const { enabled } = req.body as { enabled: boolean };
     await svc.updateNegKeyword(id, enabled);
     res.json({ ok: true });
-  }),
+  })
 );
 router.post(
   "/reload-neg-rules",
@@ -197,7 +133,7 @@ router.post(
   h(async (_req, res) => {
     await svc.reloadNegRules();
     res.json({ ok: true });
-  }),
+  })
 );
 
 export { router as inboundQualityRouter };

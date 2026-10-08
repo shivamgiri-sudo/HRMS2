@@ -40,10 +40,10 @@ interface RowEntry {
   rowNumber: number;
   employeeIdRaw: string;
   employeeNameRaw: string;
-  rosterDate: string; // YYYY-MM-DD
+  rosterDate: string;        // YYYY-MM-DD
   rawValue: string;
   normalizedType: string;
-  validationState: "VALID" | "WARNING" | "ERROR";
+  validationState: 'VALID' | 'WARNING' | 'ERROR';
   messages: string[];
   extraMetadata: Record<string, string>;
   /** Internal: duplicate key → index into rowEntries array */
@@ -54,8 +54,8 @@ interface RowEntry {
 
 function toYMD(d: Date): string {
   const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
 
@@ -79,24 +79,19 @@ function toYMD(d: Date): string {
  * import — but it now logs, because silence is what hid this for so long.
  */
 async function approvedLeaveLookup(
-  targets: Array<{ employeeIdRaw: string; rosterDate: string }>,
+  targets: Array<{ employeeIdRaw: string; rosterDate: string }>
 ): Promise<{ keys: Set<string>; usable: boolean }> {
   if (targets.length === 0) return { keys: new Set(), usable: true };
 
-  const codes = [
-    ...new Set(targets.map((t) => t.employeeIdRaw).filter(Boolean)),
-  ];
+  const codes = [...new Set(targets.map((t) => t.employeeIdRaw).filter(Boolean))];
   if (codes.length === 0) return { keys: new Set(), usable: true };
 
-  const dates = targets
-    .map((t) => t.rosterDate)
-    .filter(Boolean)
-    .sort();
+  const dates = targets.map((t) => t.rosterDate).filter(Boolean).sort();
   const windowStart = dates[0];
   const windowEnd = dates[dates.length - 1];
 
   try {
-    const placeholders = codes.map(() => "?").join(", ");
+    const placeholders = codes.map(() => '?').join(', ');
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.employee_code AS code, lr.from_date AS fromDate, lr.to_date AS toDate
          FROM leave_request lr
@@ -105,15 +100,11 @@ async function approvedLeaveLookup(
           AND e.employee_code IN (${placeholders})
           AND lr.to_date   >= ?
           AND lr.from_date <= ?`,
-      [...codes, windowStart, windowEnd],
+      [...codes, windowStart, windowEnd]
     );
 
     const keys = new Set<string>();
-    for (const r of rows as Array<{
-      code: string;
-      fromDate: Date | string;
-      toDate: Date | string;
-    }>) {
+    for (const r of rows as Array<{ code: string; fromDate: Date | string; toDate: Date | string }>) {
       const from = new Date(r.fromDate);
       const to = new Date(r.toDate);
       for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
@@ -122,10 +113,7 @@ async function approvedLeaveLookup(
     }
     return { keys, usable: true };
   } catch (err) {
-    console.error(
-      "[roster-import] approved-leave cross-check unavailable",
-      err,
-    );
+    console.error('[roster-import] approved-leave cross-check unavailable', err);
     return { keys: new Set(), usable: false };
   }
 }
@@ -150,7 +138,7 @@ export async function createImportBatch(params: {
    */
   branchId?: string;
   cycleId?: string;
-  importMode: "NEW" | "UPDATE";
+  importMode: 'NEW' | 'UPDATE';
   fileBuffer: Buffer;
   fileName: string;
   createdBy: string;
@@ -184,10 +172,7 @@ export async function createImportBatch(params: {
     // (date headers come back as Excel serials), and the old string[][] cast made
     // header-alias.service.ts throw 'trim is not a function' on the first real file. Every read
     // below already coerces with String(...).
-    XLSX.utils.sheet_to_json(wb.Sheets[name], {
-      header: 1,
-      defval: "",
-    }) as unknown[][];
+    XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' }) as unknown[][];
 
   //
   // "First sheet with a detectable header row" is NOT good enough, and shipping it would have
@@ -206,26 +191,23 @@ export async function createImportBatch(params: {
   // So a candidate must map employeeId or employeeName. Among those, prefer the one that
   // identifies people most strongly, then the one with the most dated columns, then the largest —
   // the main roster rather than a 31-row offcut.
-  const scoreSheet = (
-    h: ReturnType<typeof analyzeHeaders>,
-    rowCount: number,
-  ): number => {
+  const scoreSheet = (h: ReturnType<typeof analyzeHeaders>, rowCount: number): number => {
     const mapped = new Set(
       (h.identityColumns ?? [])
         .map((c) => c.mapping?.mappedTo)
-        .filter((m): m is string => Boolean(m)),
+        .filter((m): m is string => Boolean(m))
     );
-    if (!mapped.has("employeeId") && !mapped.has("employeeName")) return -1; // not a roster
+    if (!mapped.has('employeeId') && !mapped.has('employeeName')) return -1; // not a roster
     let score = 0;
-    if (mapped.has("employeeId")) score += 1000;
-    if (mapped.has("employeeName")) score += 1000;
+    if (mapped.has('employeeId')) score += 1000;
+    if (mapped.has('employeeName')) score += 1000;
     score += mapped.size * 10;
     score += (h.dateColumns?.length ?? 0) * 5;
     score += Math.min(rowCount, 5000) / 1000;
     return score;
   };
 
-  const firstOnly = XLSX.read(fileBuffer, { type: "buffer", sheets: [0] });
+  const firstOnly = XLSX.read(fileBuffer, { type: 'buffer', sheets: [0] });
   let sheetName = firstOnly.SheetNames[0];
   let rows = readRows(firstOnly, sheetName);
   let headerResult = analyzeHeaders(rows);
@@ -237,44 +219,32 @@ export async function createImportBatch(params: {
     // sheetRows: 25 — detection only needs the header band, and reading all 12 tabs of a 7.6 MB
     // workbook in full exhausts Node's heap (verified: FATAL ERROR JavaScript heap out of memory).
     // Some tabs here are 291 rows x 765 columns. Detect cheaply, then re-read only the winner.
-    const probe = XLSX.read(fileBuffer, { type: "buffer", sheetRows: 25 });
+    const probe = XLSX.read(fileBuffer, { type: 'buffer', sheetRows: 25 });
     allSheetNames = probe.SheetNames;
-    let best = { score: -1, name: "" };
+    let best = { score: -1, name: '' };
     for (const candidate of probe.SheetNames) {
       const probeRows = readRows(probe, candidate);
       const probeHeader = analyzeHeaders(probeRows);
       const score = scoreSheet(probeHeader, probeRows.length);
-      if (score < 0) {
-        rejectedSheets.push(candidate);
-        continue;
-      }
+      if (score < 0) { rejectedSheets.push(candidate); continue; }
       candidates.push(candidate);
-      const wins = requestedSheet
-        ? candidate === requestedSheet
-        : score > best.score;
-      if (wins)
-        best = {
-          score: requestedSheet ? Number.MAX_SAFE_INTEGER : score,
-          name: candidate,
-        };
+      const wins = requestedSheet ? candidate === requestedSheet : score > best.score;
+      if (wins) best = { score: requestedSheet ? Number.MAX_SAFE_INTEGER : score, name: candidate };
     }
     if (requestedSheet && best.name !== requestedSheet) {
       throw Object.assign(
         new Error(
           `Sheet '${requestedSheet}' is not a roster sheet in this file. ` +
-            (candidates.length
-              ? `Candidates: ${candidates.map((c) => `'${c}'`).join(", ")}.`
-              : `No sheet in this file looks like a roster.`),
+          (candidates.length
+            ? `Candidates: ${candidates.map((c) => `'${c}'`).join(', ')}.`
+            : `No sheet in this file looks like a roster.`)
         ),
-        { statusCode: 400, code: "ROSTER_IMPORT_SHEET_NOT_FOUND", candidates },
+        { statusCode: 400, code: 'ROSTER_IMPORT_SHEET_NOT_FOUND', candidates }
       );
     }
     if (best.score >= 0 && !(!requestedSheet && candidates.length > 1)) {
       // Full read of the chosen sheet only.
-      const chosen = XLSX.read(fileBuffer, {
-        type: "buffer",
-        sheets: [best.name],
-      });
+      const chosen = XLSX.read(fileBuffer, { type: 'buffer', sheets: [best.name] });
       sheetName = best.name;
       rows = readRows(chosen, best.name);
       headerResult = analyzeHeaders(rows);
@@ -294,9 +264,9 @@ export async function createImportBatch(params: {
       throw Object.assign(
         new Error(
           `This file has ${candidates.length} sheets that could be the roster: ` +
-            `${candidates.map((c) => `'${c}'`).join(", ")}. Choose which one to import.`,
+          `${candidates.map((c) => `'${c}'`).join(', ')}. Choose which one to import.`
         ),
-        { statusCode: 409, code: "ROSTER_IMPORT_AMBIGUOUS_SHEET", candidates },
+        { statusCode: 409, code: 'ROSTER_IMPORT_AMBIGUOUS_SHEET', candidates }
       );
     }
   }
@@ -307,14 +277,14 @@ export async function createImportBatch(params: {
     // statusCode the message is replaced by a generic 500 in production and the uploader is told
     // nothing they can act on. Now that every tab is checked, name them all — the useful question
     // is no longer "why not the first sheet" but "which of these was supposed to be the roster".
-    const tabs = allSheetNames.map((n) => `'${n}'`).join(", ");
+    const tabs = allSheetNames.map((n) => `'${n}'`).join(', ');
     throw Object.assign(
       new Error(
         `No sheet in this file looks like a roster. Checked ${allSheetNames.length} sheet(s): ${tabs}. ` +
-          `A roster sheet needs a header row with at least 2 date columns AND a column identifying ` +
-          `the employee (employee code or name).`,
+        `A roster sheet needs a header row with at least 2 date columns AND a column identifying ` +
+        `the employee (employee code or name).`
       ),
-      { statusCode: 400, code: "ROSTER_IMPORT_NO_HEADER_ROW" },
+      { statusCode: 400, code: 'ROSTER_IMPORT_NO_HEADER_ROW' }
     );
   }
 
@@ -325,14 +295,14 @@ export async function createImportBatch(params: {
     `INSERT INTO wfm_roster_import_batch
        (process_id, branch_id, cycle_id, import_mode, file_name, status, created_by)
      VALUES (?, ?, ?, ?, ?, 'PARSING', ?)`,
-    [processId, branchId, cycleId ?? null, importMode, fileName, createdBy],
+    [processId, branchId, cycleId ?? null, importMode, fileName, createdBy]
   );
   const batchId = batchInsert.insertId;
 
   // ── Step 4: Build normalizer config ─────────────────────────────────────
   const normConfig: NormalizerConfig = {
     importMode,
-    hdMapsTo: "NEEDS_MAPPING",
+    hdMapsTo: 'NEEDS_MAPPING',
   };
 
   // ── Step 5: Process data rows ────────────────────────────────────────────
@@ -347,16 +317,16 @@ export async function createImportBatch(params: {
     const absoluteRowNumber = headerRowIndex + 2 + ri; // 1-based spreadsheet row
 
     // Extract identity field values
-    let employeeIdRaw = "";
-    let employeeNameRaw = "";
+    let employeeIdRaw = '';
+    let employeeNameRaw = '';
     const extraMetadata: Record<string, string> = {};
 
     for (const idCol of identityColumns) {
-      const val = String(dataRow[idCol.index] ?? "").trim();
+      const val = String(dataRow[idCol.index] ?? '').trim();
       const canonical = idCol.mapping.mappedTo;
-      if (canonical === "employeeId") {
+      if (canonical === 'employeeId') {
         employeeIdRaw = val;
-      } else if (canonical === "employeeName") {
+      } else if (canonical === 'employeeName') {
         employeeNameRaw = val;
       } else if (canonical !== null) {
         extraMetadata[canonical] = val;
@@ -367,34 +337,32 @@ export async function createImportBatch(params: {
     }
 
     // Skip entirely blank data rows
-    const rowHasData = dataRow.some((c) => String(c ?? "").trim() !== "");
+    const rowHasData = dataRow.some((c) => String(c ?? '').trim() !== '');
     if (!rowHasData) continue;
 
     // For each date column, create one row entry
     for (const dateCol of dateColumns) {
-      const cellValue = String(dataRow[dateCol.index] ?? "").trim();
+      const cellValue = String(dataRow[dateCol.index] ?? '').trim();
       const rosterDate = toYMD(dateCol.parsedDate);
 
       const normalized = normalizeAssignment(cellValue, normConfig);
 
-      let validationState: "VALID" | "WARNING" | "ERROR" = "VALID";
+      let validationState: 'VALID' | 'WARNING' | 'ERROR' = 'VALID';
       const messages: string[] = [];
 
       // ── Validation Rules ────────────────────────────────────────────────
       if (!employeeIdRaw) {
-        validationState = "ERROR";
-        messages.push("Missing employee ID in row");
-      } else if (normalized.type === "HARD_ERROR") {
-        validationState = "ERROR";
-        messages.push("Literal 0 is not a valid assignment");
-      } else if (normalized.type === "NEEDS_MAPPING") {
-        validationState = "ERROR";
-        messages.push(
-          `Shift/status '${cellValue}' not recognized — add to alias map`,
-        );
-      } else if (normalized.type === "UNASSIGNED") {
-        validationState = "WARNING";
-        messages.push("Cell is blank — will be UNASSIGNED");
+        validationState = 'ERROR';
+        messages.push('Missing employee ID in row');
+      } else if (normalized.type === 'HARD_ERROR') {
+        validationState = 'ERROR';
+        messages.push('Literal 0 is not a valid assignment');
+      } else if (normalized.type === 'NEEDS_MAPPING') {
+        validationState = 'ERROR';
+        messages.push(`Shift/status '${cellValue}' not recognized — add to alias map`);
+      } else if (normalized.type === 'UNASSIGNED') {
+        validationState = 'WARNING';
+        messages.push('Cell is blank — will be UNASSIGNED');
       }
       // LEAVE check will be done after initial pass (async DB check)
 
@@ -425,22 +393,18 @@ export async function createImportBatch(params: {
       const first = rowEntries[firstIdx];
       if (first.normalizedType === entry.normalizedType) {
         // Same value: keep first, mark duplicate as WARNING
-        if (entry.validationState !== "ERROR") {
-          entry.validationState = "WARNING";
+        if (entry.validationState !== 'ERROR') {
+          entry.validationState = 'WARNING';
         }
-        entry.messages.push("Duplicate assignment — deduplicated");
+        entry.messages.push('Duplicate assignment — deduplicated');
       } else {
         // Different value: both are ERROR
-        first.validationState = "ERROR";
-        if (
-          !first.messages.includes(
-            "Conflicting assignments for same employee+date",
-          )
-        ) {
-          first.messages.push("Conflicting assignments for same employee+date");
+        first.validationState = 'ERROR';
+        if (!first.messages.includes('Conflicting assignments for same employee+date')) {
+          first.messages.push('Conflicting assignments for same employee+date');
         }
-        entry.validationState = "ERROR";
-        entry.messages.push("Conflicting assignments for same employee+date");
+        entry.validationState = 'ERROR';
+        entry.messages.push('Conflicting assignments for same employee+date');
       }
     }
   }
@@ -451,30 +415,20 @@ export async function createImportBatch(params: {
   // approved leave. Flagged as an ERROR at preview so it is seen before someone commits several
   // thousand rows, and refused again at commit.
   {
-    const { loadApprovedLeave, checkLeaveConflict } =
-      await import("./roster-leave-guard.service.js");
-    const codes = [
-      ...new Set(rowEntries.map((e) => e.employeeIdRaw).filter(Boolean)),
-    ];
+    const { loadApprovedLeave, checkLeaveConflict } = await import('./roster-leave-guard.service.js');
+    const codes = [...new Set(rowEntries.map((e) => e.employeeIdRaw).filter(Boolean))];
     if (codes.length) {
       const [empRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id, employee_code FROM employees WHERE employee_code IN (${codes.map(() => "?").join(",")})`,
-        codes,
+        `SELECT id, employee_code FROM employees WHERE employee_code IN (${codes.map(() => '?').join(',')})`,
+        codes
       );
       const codeToEmpId = new Map<string, string>();
-      for (const e of empRows)
-        codeToEmpId.set(String(e.employee_code), String(e.id));
+      for (const e of empRows) codeToEmpId.set(String(e.employee_code), String(e.id));
 
-      const dates = rowEntries
-        .map((e) => e.rosterDate)
-        .filter(Boolean)
-        .sort();
+      const dates = rowEntries.map((e) => e.rosterDate).filter(Boolean).sort();
       if (dates.length && codeToEmpId.size) {
         const leaveMap = await loadApprovedLeave(
-          [...codeToEmpId.values()],
-          dates[0],
-          dates[dates.length - 1],
-        );
+          [...codeToEmpId.values()], dates[0], dates[dates.length - 1]);
         for (const entry of rowEntries) {
           const empId = codeToEmpId.get(entry.employeeIdRaw);
           if (!empId) continue;
@@ -482,11 +436,11 @@ export async function createImportBatch(params: {
             assignmentType: entry.normalizedType,
           });
           if (v.blocked) {
-            entry.validationState = "ERROR";
-            entry.messages.push(v.reason ?? "Blocked by approved leave");
-          } else if (v.warning && entry.validationState === "VALID") {
-            entry.validationState = "WARNING";
-            entry.messages.push(v.reason ?? "Half-day approved leave");
+            entry.validationState = 'ERROR';
+            entry.messages.push(v.reason ?? 'Blocked by approved leave');
+          } else if (v.warning && entry.validationState === 'VALID') {
+            entry.validationState = 'WARNING';
+            entry.messages.push(v.reason ?? 'Half-day approved leave');
           }
         }
       }
@@ -495,20 +449,14 @@ export async function createImportBatch(params: {
 
   // ── Step 7: LEAVE cross-check (one query for the whole batch) ───────────
   const leaveTargets = rowEntries.filter(
-    (e) =>
-      e.normalizedType === "LEAVE" &&
-      e.validationState !== "ERROR" &&
-      e.employeeIdRaw,
+    (e) => e.normalizedType === 'LEAVE' && e.validationState !== 'ERROR' && e.employeeIdRaw
   );
-  const { keys: approvedLeave, usable: leaveCheckUsable } =
-    await approvedLeaveLookup(leaveTargets);
+  const { keys: approvedLeave, usable: leaveCheckUsable } = await approvedLeaveLookup(leaveTargets);
   if (leaveCheckUsable) {
     for (const entry of leaveTargets) {
       if (!approvedLeave.has(`${entry.employeeIdRaw}|${entry.rosterDate}`)) {
-        entry.validationState = "WARNING";
-        entry.messages.push(
-          "Roster marks LEAVE but no approved leave request found",
-        );
+        entry.validationState = 'WARNING';
+        entry.messages.push('Roster marks LEAVE but no approved leave request found');
       }
     }
   }
@@ -541,7 +489,7 @@ export async function createImportBatch(params: {
     const values: unknown[] = [];
     const tuples: string[] = [];
     for (const entry of chunk) {
-      tuples.push("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+      tuples.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
       values.push(
         batchId,
         entry.rowNumber,
@@ -562,35 +510,22 @@ export async function createImportBatch(params: {
          (batch_id, \`row_number\`, employee_id_raw, employee_name_raw,
           roster_date, raw_value, normalized_type,
           validation_state, validation_messages, extra_metadata_json)
-       VALUES ${tuples.join(", ")}`,
-      values,
+       VALUES ${tuples.join(', ')}`,
+      values
     );
   }
 
   // ── Step 9: Build summary ────────────────────────────────────────────────
-  const uniqueEmployees = new Set(
-    rowEntries.map((r) => r.employeeIdRaw).filter(Boolean),
-  );
-  const validCount = rowEntries.filter(
-    (r) => r.validationState === "VALID",
-  ).length;
-  const warningCount = rowEntries.filter(
-    (r) => r.validationState === "WARNING",
-  ).length;
-  const errorCount = rowEntries.filter(
-    (r) => r.validationState === "ERROR",
-  ).length;
-  const needsMappingCount = rowEntries.filter(
-    (r) => r.normalizedType === "NEEDS_MAPPING",
-  ).length;
-  const unassignedCount = rowEntries.filter(
-    (r) => r.normalizedType === "UNASSIGNED",
-  ).length;
+  const uniqueEmployees = new Set(rowEntries.map((r) => r.employeeIdRaw).filter(Boolean));
+  const validCount = rowEntries.filter((r) => r.validationState === 'VALID').length;
+  const warningCount = rowEntries.filter((r) => r.validationState === 'WARNING').length;
+  const errorCount = rowEntries.filter((r) => r.validationState === 'ERROR').length;
+  const needsMappingCount = rowEntries.filter((r) => r.normalizedType === 'NEEDS_MAPPING').length;
+  const unassignedCount = rowEntries.filter((r) => r.normalizedType === 'UNASSIGNED').length;
 
   const allDates = rowEntries.map((r) => r.rosterDate).sort();
   const dateRangeStart = allDates.length > 0 ? allDates[0] : null;
-  const dateRangeEnd =
-    allDates.length > 0 ? allDates[allDates.length - 1] : null;
+  const dateRangeEnd = allDates.length > 0 ? allDates[allDates.length - 1] : null;
 
   const summary: BatchSummary = {
     totalEmployees: uniqueEmployees.size,
@@ -603,8 +538,7 @@ export async function createImportBatch(params: {
     dateRangeStart,
     dateRangeEnd,
   };
-  if (offdayPolicyWarnings > 0)
-    summary.offdayPolicyWarnings = offdayPolicyWarnings;
+  if (offdayPolicyWarnings > 0) summary.offdayPolicyWarnings = offdayPolicyWarnings;
 
   // ── Step 10: Update batch record to PREVIEW ──────────────────────────────
   await db.execute(
@@ -629,29 +563,27 @@ export async function createImportBatch(params: {
       dateRangeEnd,
       JSON.stringify(summary),
       batchId,
-    ],
+    ]
   );
 
   return { batchId, summary, sheetName };
 }
 
 export async function getImportBatch(
-  batchId: number,
+  batchId: number
 ): Promise<{ batch: any; summary: BatchSummary }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM wfm_roster_import_batch WHERE id = ?`,
-    [batchId],
+    [batchId]
   );
   if (rows.length === 0) {
-    throw Object.assign(new Error("Import batch not found"), {
-      statusCode: 404,
-    });
+    throw Object.assign(new Error('Import batch not found'), { statusCode: 404 });
   }
   const batch = rows[0];
   const summary: BatchSummary = batch.validation_summary_json
-    ? typeof batch.validation_summary_json === "string"
-      ? JSON.parse(batch.validation_summary_json)
-      : batch.validation_summary_json
+    ? (typeof batch.validation_summary_json === 'string'
+        ? JSON.parse(batch.validation_summary_json)
+        : batch.validation_summary_json)
     : {
         totalEmployees: 0,
         totalAssignments: batch.total_rows ?? 0,
@@ -710,7 +642,7 @@ export async function listImportBatches(options: {
   const statuses =
     options.status && options.status.length > 0
       ? options.status
-      : ["PARSING", "PREVIEW", "VALIDATING", "READY"];
+      : ['PARSING', 'PREVIEW', 'VALIDATING', 'READY'];
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
   const placeholders = statuses.map(() => '?').join(',');
   const queryParams: unknown[] = [...statuses];
@@ -794,7 +726,7 @@ async function notifyEmployeesForImportBatch(batchId: number): Promise<number> {
     // (publish-to-employees), which this function must not race or duplicate-notify against.
     const [batchRows] = await conn.execute(
       `SELECT cycle_id FROM wfm_roster_import_batch WHERE id = ? LIMIT 1`,
-      [batchId],
+      [batchId]
     );
     if ((batchRows as RowDataPacket[])[0]?.cycle_id) {
       await conn.commit();
@@ -809,7 +741,7 @@ async function notifyEmployeesForImportBatch(batchId: number): Promise<number> {
               employee_rejection_reason = NULL
         WHERE import_batch_id = ?
           AND final_roster_status = 'generated'`,
-      [batchId],
+      [batchId]
     );
     const moved = movedResult as ResultSetHeader;
 
@@ -835,7 +767,7 @@ async function notifyEmployeesForImportBatch(batchId: number): Promise<number> {
                  AND w.type = 'ROSTER_ACK_PENDING'
                  AND w.entity_id = ?
                  AND w.is_actioned = 0)`,
-      [String(batchId), String(batchId), String(batchId)],
+      [String(batchId), String(batchId), String(batchId)]
     );
     const notified = notifiedResult as ResultSetHeader;
 
@@ -847,10 +779,7 @@ async function notifyEmployeesForImportBatch(batchId: number): Promise<number> {
     // assignments are real and correct either way. Logged, not swallowed silently: this is the
     // exact class of bug ("looked like it ran, didn't") that broke the cycle-based publish route
     // for weeks before it was caught.
-    console.error(
-      "[roster-import] employee notification failed (roster commit itself already succeeded):",
-      err,
-    );
+    console.error('[roster-import] employee notification failed (roster commit itself already succeeded):', err);
     return 0;
   } finally {
     conn.release();
@@ -867,42 +796,38 @@ export async function commitImportBatch(
   // Step 1: Fetch batch
   const [batchRows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM wfm_roster_import_batch WHERE id = ?`,
-    [batchId],
+    [batchId]
   );
   if ((batchRows as RowDataPacket[]).length === 0) {
-    throw new Error("Import batch not found");
+    throw new Error('Import batch not found');
   }
   const batch = (batchRows as RowDataPacket[])[0];
 
   // Step 2: Check status
-  if (batch.status !== "PREVIEW" && batch.status !== "READY") {
-    throw new Error("Batch is not in a committable state");
+  if (batch.status !== 'PREVIEW' && batch.status !== 'READY') {
+    throw new Error('Batch is not in a committable state');
   }
 
   // Step 3: Check for hard errors
   const [errorCountRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM wfm_roster_import_row
      WHERE batch_id = ? AND validation_state = 'ERROR'`,
-    [batchId],
+    [batchId]
   );
   const errorCount = (errorCountRows as RowDataPacket[])[0].cnt as number;
   if (errorCount > 0 && !options.overrideWarnings) {
-    throw new Error(
-      `Batch has ${errorCount} errors — resolve or use overrideWarnings`,
-    );
+    throw new Error(`Batch has ${errorCount} errors — resolve or use overrideWarnings`);
   }
 
   // Step 4: Check warnings
   const [warnCountRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM wfm_roster_import_row
      WHERE batch_id = ? AND validation_state = 'WARNING'`,
-    [batchId],
+    [batchId]
   );
   const warnCount = (warnCountRows as RowDataPacket[])[0].cnt as number;
   if (warnCount > 0 && !options.overrideWarnings) {
-    throw new Error(
-      "Batch has warnings — pass overrideWarnings: true to proceed",
-    );
+    throw new Error('Batch has warnings — pass overrideWarnings: true to proceed');
   }
 
   // Step 5: Maker-checker removed (owner ruling 2026-09-11) — the uploader is now allowed to
@@ -917,7 +842,7 @@ export async function commitImportBatch(
      WHERE batch_id = ?
        AND validation_state IN ('VALID', 'WARNING')
        AND normalized_type NOT IN ('NO_CHANGE', 'NEEDS_MAPPING', 'HARD_ERROR')`,
-    [batchId],
+    [batchId]
   );
   const rows = importRows as RowDataPacket[];
 
@@ -950,16 +875,9 @@ export async function commitImportBatch(
   // 4,186 rows reported created 0 / skipped 4,179 and wrote nothing. Verified live 2026-08-20.
   // Also carries process_id/branch_id now, so the rest-policy check below can resolve scope
   // without a per-employee query once inside the lock.
-  const codes = [
-    ...new Set(
-      rows.map((r) => String(r.employee_id_raw ?? "")).filter(Boolean),
-    ),
-  ];
+  const codes = [...new Set(rows.map((r) => String(r.employee_id_raw ?? '')).filter(Boolean))];
   const codeToId = new Map<string, string>();
-  const codeToScope = new Map<
-    string,
-    { processId: string | null; branchId: string | null }
-  >();
+  const codeToScope = new Map<string, { processId: string | null; branchId: string | null }>();
   if (codes.length) {
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, employee_code, process_id, branch_id${options.scope && !isOrgWide(options.scope) ? ', reporting_manager_id' : ''} FROM employees WHERE employee_code IN (${codes.map(() => '?').join(',')})`,
@@ -989,46 +907,33 @@ export async function commitImportBatch(
   // This path had no leave check at all, which mattered more than the generators having one — the
   // spreadsheet is how rosters actually get built here. Loaded once for the batch rather than per
   // row. A night shift is judged by the day it ENDS as well as the day it starts.
-  const { loadApprovedLeave, checkLeaveConflict } =
-    await import("./roster-leave-guard.service.js");
-  const rosterDates = rows
-    .map((r) => String(r.roster_date).slice(0, 10))
-    .filter(Boolean)
-    .sort();
+  const { loadApprovedLeave, checkLeaveConflict } = await import('./roster-leave-guard.service.js');
+  const rosterDates = rows.map((r) => String(r.roster_date).slice(0, 10)).filter(Boolean).sort();
   const leaveMap = rosterDates.length
-    ? await loadApprovedLeave(
-        [...codeToId.values()],
-        rosterDates[0],
-        rosterDates[rosterDates.length - 1],
-      )
+    ? await loadApprovedLeave([...codeToId.values()], rosterDates[0], rosterDates[rosterDates.length - 1])
     : new Map();
   const nightTemplates = new Set<string>();
   {
     const [nightRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM wfm_shift_template WHERE end_time IS NOT NULL AND start_time IS NOT NULL AND end_time <= start_time`,
+      `SELECT id FROM wfm_shift_template WHERE end_time IS NOT NULL AND start_time IS NOT NULL AND end_time <= start_time`
     );
-    for (const t of nightRows as RowDataPacket[])
-      nightTemplates.add(String(t.id));
+    for (const t of nightRows as RowDataPacket[]) nightTemplates.add(String(t.id));
   }
   const restFeatureActive = await isRestPolicyFeatureActive();
 
-  const importMode = batch.import_mode as "NEW" | "UPDATE";
+  const importMode = batch.import_mode as 'NEW' | 'UPDATE';
 
   // Group by employee so the lock is acquired once per employee, not once per row — a real file is
   // one employee across up to a whole month of dates, and a per-row GET_LOCK/RELEASE_LOCK round trip
   // each would be needlessly slow for no extra safety.
   const rowsByCode = new Map<string, RowDataPacket[]>();
   for (const row of rows) {
-    const code = String(row.employee_id_raw ?? "");
+    const code = String(row.employee_id_raw ?? '');
     if (!code) continue;
     if (!rowsByCode.has(code)) rowsByCode.set(code, []);
     rowsByCode.get(code)!.push(row);
   }
-  for (const code of [
-    ...new Set(
-      rows.map((r) => String(r.employee_id_raw ?? "")).filter(Boolean),
-    ),
-  ]) {
+  for (const code of [...new Set(rows.map((r) => String(r.employee_id_raw ?? '')).filter(Boolean))]) {
     if (!codeToId.has(code)) {
       // Counted separately from "skipped": a code with no matching employee is a data problem
       // the uploader can act on, not a duplicate row.
@@ -1046,11 +951,7 @@ export async function commitImportBatch(
       for (const row of employeeRows) {
         const rosterDate = String(row.roster_date).slice(0, 10);
 
-        const lockCheck = await checkEmployeeDateNotLocked(
-          conn,
-          employeeId,
-          rosterDate,
-        );
+        const lockCheck = await checkEmployeeDateNotLocked(conn, employeeId, rosterDate);
         if (lockCheck.blocked) {
           blockedByLock++;
           continue;
@@ -1068,28 +969,19 @@ export async function commitImportBatch(
         let shiftStartTime: string | null = null;
         let shiftEndTime: string | null = null;
         let isNightShift = false;
-        if (row.normalized_type === "SHIFT") {
-          const parsed = parseShiftString(String(row.raw_value ?? ""));
-          if (
-            parsed.success &&
-            parsed.parsed?.startTime &&
-            parsed.parsed?.endTime
-          ) {
+        if (row.normalized_type === 'SHIFT') {
+          const parsed = parseShiftString(String(row.raw_value ?? ''));
+          if (parsed.success && parsed.parsed?.startTime && parsed.parsed?.endTime) {
             shiftStartTime = parsed.parsed.startTime;
             shiftEndTime = parsed.parsed.endTime;
             isNightShift = parsed.parsed.isOvernight;
           }
         }
 
-        const leaveVerdict = checkLeaveConflict(
-          leaveMap,
-          employeeId,
-          rosterDate,
-          {
-            isNightShift,
-            assignmentType: row.normalized_type,
-          },
-        );
+        const leaveVerdict = checkLeaveConflict(leaveMap, employeeId, rosterDate, {
+          isNightShift,
+          assignmentType: row.normalized_type,
+        });
         if (leaveVerdict.blocked) {
           // Counted and reported, never written. The rest of the file still imports — one protected
           // day must not cost the planner the whole upload.
@@ -1099,15 +991,10 @@ export async function commitImportBatch(
 
         if (shiftStartTime && shiftEndTime && restFeatureActive) {
           const restCheck = await validateMinimumRest(
-            {
-              employeeId,
-              processId: scope.processId,
-              branchId: scope.branchId,
-              forDate: rosterDate,
-            },
+            { employeeId, processId: scope.processId, branchId: scope.branchId, forDate: rosterDate },
             { startTime: shiftStartTime, endTime: shiftEndTime },
             null,
-            conn,
+            conn
           );
           if (!restCheck.ok) {
             // No emergency-override path here — bulk import has no UI to collect a reason +
@@ -1115,11 +1002,7 @@ export async function commitImportBatch(
             // WARN-mode policy this still commits (applyRestDecision records a warning and
             // allows it through); only BLOCK mode or a genuinely unresolved policy refuses the
             // row outright.
-            const decision = await applyRestDecision(
-              restCheck,
-              { employeeId, rosterDate },
-              conn,
-            );
+            const decision = await applyRestDecision(restCheck, { employeeId, rosterDate }, conn);
             if (!decision.allowed) {
               blockedByRest++;
               continue;
@@ -1136,39 +1019,22 @@ export async function commitImportBatch(
          * Measured on live data before this fix: 916 rows with assignment_type='WEEK_OFF' and
          * is_week_off=1 on exactly ZERO of them.
          */
-        const isWeekOff = row.normalized_type === "WEEK_OFF" ? 1 : 0;
+        const isWeekOff = row.normalized_type === 'WEEK_OFF' ? 1 : 0;
 
-        if (importMode === "NEW") {
+        if (importMode === 'NEW') {
           // INSERT IGNORE — skip if already exists
           const [result] = options.cycleId
             ? await conn.execute(
                 `INSERT IGNORE INTO wfm_roster_assignment
                    (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, cycle_id, created_at)
                  VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW())`,
-                [
-                  employeeId,
-                  rosterDate,
-                  row.normalized_type,
-                  isWeekOff,
-                  shiftStartTime,
-                  shiftEndTime,
-                  batchId,
-                  options.cycleId,
-                ],
+                [employeeId, rosterDate, row.normalized_type, isWeekOff, shiftStartTime, shiftEndTime, batchId, options.cycleId]
               )
             : await conn.execute(
                 `INSERT IGNORE INTO wfm_roster_assignment
                    (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, created_at)
                  VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, NOW())`,
-                [
-                  employeeId,
-                  rosterDate,
-                  row.normalized_type,
-                  isWeekOff,
-                  shiftStartTime,
-                  shiftEndTime,
-                  batchId,
-                ],
+                [employeeId, rosterDate, row.normalized_type, isWeekOff, shiftStartTime, shiftEndTime, batchId]
               );
           if ((result as unknown as ResultSetHeader).affectedRows > 0) {
             assignmentsCreated++;
@@ -1190,16 +1056,7 @@ export async function commitImportBatch(
                    lifecycle_state = 'DRAFT',
                    import_batch_id = VALUES(import_batch_id),
                    cycle_id = VALUES(cycle_id)`,
-                [
-                  employeeId,
-                  rosterDate,
-                  row.normalized_type,
-                  isWeekOff,
-                  shiftStartTime,
-                  shiftEndTime,
-                  batchId,
-                  options.cycleId,
-                ],
+                [employeeId, rosterDate, row.normalized_type, isWeekOff, shiftStartTime, shiftEndTime, batchId, options.cycleId]
               )
             : await conn.execute(
                 `INSERT INTO wfm_roster_assignment
@@ -1212,15 +1069,7 @@ export async function commitImportBatch(
                    shift_end_time = VALUES(shift_end_time),
                    lifecycle_state = 'DRAFT',
                    import_batch_id = VALUES(import_batch_id)`,
-                [
-                  employeeId,
-                  rosterDate,
-                  row.normalized_type,
-                  isWeekOff,
-                  shiftStartTime,
-                  shiftEndTime,
-                  batchId,
-                ],
+                [employeeId, rosterDate, row.normalized_type, isWeekOff, shiftStartTime, shiftEndTime, batchId]
               );
           const header = result as unknown as ResultSetHeader;
           if (header.affectedRows === 1) {
@@ -1238,10 +1087,7 @@ export async function commitImportBatch(
   }
 
   // File the written rows under their process/LOB (fills NULLs only; no-op before migration 1849).
-  await stampImportBatchRows(
-    batchId,
-    batch.process_id ? String(batch.process_id) : null,
-  );
+  await stampImportBatchRows(batchId, batch.process_id ? String(batch.process_id) : null);
 
   // Update batch status. Deliberately after every employee's lock scope has released, on the plain
   // pool — matches "partial success is still success" for the tallies above (unmatchedEmployees,
@@ -1251,7 +1097,7 @@ export async function commitImportBatch(
     `UPDATE wfm_roster_import_batch
      SET status = 'COMMITTED', committed_by = ?, committed_at = NOW()
      WHERE id = ?`,
-    [committedBy, batchId],
+    [committedBy, batchId]
   );
 
   // Owner-reported gap (2026-08-22): a committed spreadsheet roster never told anyone. The
@@ -1281,7 +1127,7 @@ export async function commitImportBatch(
        WHERE wra.import_batch_id = ?
          AND UPPER(COALESCE(wra.assignment_type, '')) NOT IN ('WEEK_OFF','LEAVE','HOLIDAY')
          AND COALESCE(wra.shift_start_time, wsm.start_time) IS NOT NULL`,
-      [batchId],
+      [batchId]
     );
   }
 
@@ -1311,21 +1157,12 @@ export async function commitImportBatch(
           } catch {
             // Non-critical: nightly sweep will recompute any that fail here
           }
-        })().catch(() => {});
-      })
-      .catch(() => {});
+        }
+      })().catch(() => {});
+    }).catch(() => {});
   }
 
-  return {
-    assignmentsCreated,
-    assignmentsUpdated,
-    skipped,
-    unmatchedEmployees,
-    blockedByLeave,
-    blockedByRest,
-    blockedByLock,
-    employeesNotified,
-  };
+  return { assignmentsCreated, assignmentsUpdated, skipped, unmatchedEmployees, blockedByLeave, blockedByRest, blockedByLock, employeesNotified };
 }
 
 // ── getImportRows ─────────────────────────────────────────────────────────────
@@ -1335,18 +1172,18 @@ export async function getImportRows(
   options: {
     page: number;
     limit: number;
-    state?: "VALID" | "WARNING" | "ERROR";
-  },
+    state?: 'VALID' | 'WARNING' | 'ERROR';
+  }
 ): Promise<{ rows: any[]; total: number }> {
   const { page, limit, state } = options;
   const offset = (page - 1) * limit;
 
-  const stateClause = state ? " AND validation_state = ?" : "";
+  const stateClause = state ? ' AND validation_state = ?' : '';
   const stateParams = state ? [state] : [];
 
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM wfm_roster_import_row WHERE batch_id = ?${stateClause}`,
-    [batchId, ...stateParams],
+    [batchId, ...stateParams]
   );
   const total = (countRows[0] as any).cnt as number;
 
@@ -1360,7 +1197,7 @@ export async function getImportRows(
      WHERE batch_id = ?${stateClause}
      ORDER BY \`row_number\` ASC, roster_date ASC
      ${sqlLimitOffset(limit, offset, { defaultLimit: 50, maxLimit: 5000 })}`,
-    [batchId, ...stateParams],
+    [batchId, ...stateParams]
   );
 
   return { rows: await attachEmployeeLobNames(rows as any[]), total };
@@ -1372,25 +1209,20 @@ export async function getImportRows(
  * cross-table collation comparison is introduced.
  */
 async function attachEmployeeLobNames(rows: any[]): Promise<any[]> {
-  const codes = [
-    ...new Set(
-      rows.map((r) => String(r.employee_id_raw ?? "").trim()).filter(Boolean),
-    ),
-  ];
+  const codes = [...new Set(rows.map((r) => String(r.employee_id_raw ?? '').trim()).filter(Boolean))];
   if (!codes.length) return rows.map((r) => ({ ...r, lob_name: null }));
   const codeToLobId = new Map<string, string>();
   for (let i = 0; i < codes.length; i += 500) {
     const chunk = codes.slice(i, i + 500);
     const [emps] = await db.execute<RowDataPacket[]>(
-      `SELECT employee_code, lob_id FROM employees WHERE employee_code IN (${chunk.map(() => "?").join(",")}) AND lob_id IS NOT NULL`,
-      chunk,
+      `SELECT employee_code, lob_id FROM employees WHERE employee_code IN (${chunk.map(() => '?').join(',')}) AND lob_id IS NOT NULL`,
+      chunk
     );
-    for (const e of emps ?? [])
-      codeToLobId.set(String(e.employee_code), String(e.lob_id));
+    for (const e of emps ?? []) codeToLobId.set(String(e.employee_code), String(e.lob_id));
   }
   const names = await loadLobNames(codeToLobId.values());
   return rows.map((r) => {
-    const lobId = codeToLobId.get(String(r.employee_id_raw ?? "").trim());
+    const lobId = codeToLobId.get(String(r.employee_id_raw ?? '').trim());
     return { ...r, lob_name: lobId ? (names.get(lobId) ?? null) : null };
   });
 }
@@ -1406,50 +1238,40 @@ export async function updateImportRow(
   // Verify row belongs to batch
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM wfm_roster_import_row WHERE id = ? AND batch_id = ?`,
-    [rowId, batchId],
+    [rowId, batchId]
   );
   if ((existing as RowDataPacket[]).length === 0) {
-    throw Object.assign(new Error("Row not found in this batch"), {
-      statusCode: 404,
-    });
+    throw Object.assign(new Error('Row not found in this batch'), { statusCode: 404 });
   }
   const prev = (existing as RowDataPacket[])[0];
 
   // Fetch batch import mode
   const [batchRows] = await db.execute<RowDataPacket[]>(
     `SELECT import_mode FROM wfm_roster_import_batch WHERE id = ?`,
-    [batchId],
+    [batchId]
   );
-  const importMode = ((batchRows as RowDataPacket[])[0]?.import_mode ??
-    "NEW") as "NEW" | "UPDATE";
+  const importMode = ((batchRows as RowDataPacket[])[0]?.import_mode ?? 'NEW') as 'NEW' | 'UPDATE';
 
   // Re-normalize
-  const normalized = normalizeAssignment(newRawValue, {
-    importMode,
-    hdMapsTo: "NEEDS_MAPPING",
-  });
+  const normalized = normalizeAssignment(newRawValue, { importMode, hdMapsTo: 'NEEDS_MAPPING' });
 
-  let newState: "VALID" | "WARNING" | "ERROR" = "VALID";
+  let newState: 'VALID' | 'WARNING' | 'ERROR' = 'VALID';
   const messages: string[] = [];
   if (!prev.employee_id_raw) {
-    newState = "ERROR";
-    messages.push("Missing employee ID");
-  } else if (normalized.type === "HARD_ERROR") {
-    newState = "ERROR";
-    messages.push("Literal 0 is not valid");
-  } else if (normalized.type === "NEEDS_MAPPING") {
-    newState = "ERROR";
-    messages.push(`Shift/status '${newRawValue}' not recognized`);
-  } else if (normalized.type === "UNASSIGNED") {
-    newState = "WARNING";
-    messages.push("Cell is blank — will be UNASSIGNED");
+    newState = 'ERROR'; messages.push('Missing employee ID');
+  } else if (normalized.type === 'HARD_ERROR') {
+    newState = 'ERROR'; messages.push('Literal 0 is not valid');
+  } else if (normalized.type === 'NEEDS_MAPPING') {
+    newState = 'ERROR'; messages.push(`Shift/status '${newRawValue}' not recognized`);
+  } else if (normalized.type === 'UNASSIGNED') {
+    newState = 'WARNING'; messages.push('Cell is blank — will be UNASSIGNED');
   }
 
   await db.execute(
     `UPDATE wfm_roster_import_row
      SET raw_value = ?, normalized_type = ?, validation_state = ?, validation_messages = ?
      WHERE id = ?`,
-    [newRawValue, normalized.type, newState, JSON.stringify(messages), rowId],
+    [newRawValue, normalized.type, newState, JSON.stringify(messages), rowId]
   );
 
   // Recompute batch totals
@@ -1461,26 +1283,18 @@ export async function updateImportRow(
        SUM(validation_state = 'ERROR') AS error_rows,
        SUM(normalized_type = 'NEEDS_MAPPING') AS needs_mapping_rows
      FROM wfm_roster_import_row WHERE batch_id = ?`,
-    [batchId],
+    [batchId]
   );
   const t = (totals as RowDataPacket[])[0];
   await db.execute(
     `UPDATE wfm_roster_import_batch
      SET total_rows=?, valid_rows=?, warning_rows=?, error_rows=?, needs_mapping_rows=?
      WHERE id=?`,
-    [
-      t.total_rows,
-      t.valid_rows,
-      t.warning_rows,
-      t.error_rows,
-      t.needs_mapping_rows,
-      batchId,
-    ],
+    [t.total_rows, t.valid_rows, t.warning_rows, t.error_rows, t.needs_mapping_rows, batchId]
   );
 
   const [updated] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM wfm_roster_import_row WHERE id = ?`,
-    [rowId],
+    `SELECT * FROM wfm_roster_import_row WHERE id = ?`, [rowId]
   );
   return { row: (updated as RowDataPacket[])[0] };
 }
@@ -1494,21 +1308,18 @@ export async function getMissingEmployees(
 ): Promise<{ employees: any[]; total: number }> {
   // Get process_id / branch_id for this batch
   const [batchRows] = await db.execute<RowDataPacket[]>(
-    `SELECT process_id, branch_id FROM wfm_roster_import_batch WHERE id = ?`,
-    [batchId],
+    `SELECT process_id, branch_id FROM wfm_roster_import_batch WHERE id = ?`, [batchId]
   );
   if ((batchRows as RowDataPacket[]).length === 0) {
-    throw Object.assign(new Error("Batch not found"), { statusCode: 404 });
+    throw Object.assign(new Error('Batch not found'), { statusCode: 404 });
   }
-  const { process_id: processId, branch_id: branchId } = (
-    batchRows as RowDataPacket[]
-  )[0];
+  const { process_id: processId, branch_id: branchId } = (batchRows as RowDataPacket[])[0];
 
   // A process-scoped batch keeps checking against that one process. A branch-scoped batch
   // (process_id NULL, branch_id set) checks against every active employee in the branch,
   // regardless of process — that's the whole point of a whole-branch upload. If neither is
   // set there is nothing to compare against; return empty rather than matching everyone.
-  const scopeColumn = processId ? "process_id" : branchId ? "branch_id" : null;
+  const scopeColumn = processId ? 'process_id' : branchId ? 'branch_id' : null;
   const scopeValue = processId ?? branchId;
   if (!scopeColumn) {
     return { employees: [], total: 0 };
@@ -1517,12 +1328,10 @@ export async function getMissingEmployees(
   // Get all employee_id_raw values already in this batch
   const [importedRows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT employee_id_raw FROM wfm_roster_import_row WHERE batch_id = ? AND employee_id_raw IS NOT NULL`,
-    [batchId],
+    [batchId]
   );
   const importedIds = new Set(
-    (importedRows as RowDataPacket[]).map((r) =>
-      (r.employee_id_raw as string).toUpperCase(),
-    ),
+    (importedRows as RowDataPacket[]).map((r) => (r.employee_id_raw as string).toUpperCase())
   );
 
   // Get all active employees in scope. `employees` has no `designation` column — it's
@@ -1534,11 +1343,11 @@ export async function getMissingEmployees(
      LEFT JOIN designation_master desig ON desig.id = e.designation_id
      WHERE e.${scopeColumn} = ? AND e.employment_status = 'active'
      ORDER BY e.full_name`,
-    [scopeValue],
+    [scopeValue]
   );
 
   const missing = (empRows as RowDataPacket[]).filter(
-    (e) => !importedIds.has(((e.employee_code as string) ?? "").toUpperCase()),
+    (e) => !importedIds.has((e.employee_code as string ?? '').toUpperCase())
   );
 
   return { employees: missing, total: missing.length };

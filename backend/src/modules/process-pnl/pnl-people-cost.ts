@@ -68,12 +68,8 @@ function build(parts: {
   other: string[]; leave: string[];
 }): PeopleCostExprs {
   const ctcPaid = `(${parts.gross} + ${parts.pfEmployer} + ${parts.esicEmployer} + ${parts.gratuity})`;
-  const otherDeduction = parts.other.length
-    ? `(${parts.other.join(" + ")})`
-    : "0";
-  const leaveDeduction = parts.leave.length
-    ? `(${parts.leave.join(" + ")})`
-    : "0";
+  const otherDeduction = parts.other.length ? `(${parts.other.join(" + ")})` : "0";
+  const leaveDeduction = parts.leave.length ? `(${parts.leave.join(" + ")})` : "0";
   return {
     gross: parts.gross,
     pfEmployer: parts.pfEmployer,
@@ -110,17 +106,13 @@ export function peopleCostSql(alias: string): string {
  * contributes 0, and a missing gratuity column falls back to basic × 4.81% exactly as those readers
  * did before this file existed.
  */
-export function peopleCostExprsForColumns(
-  alias: string,
-  columns: ReadonlySet<string>,
-): PeopleCostExprs {
-  const opt = (column: string) =>
-    columns.has(column) ? col(alias, column) : "0";
+export function peopleCostExprsForColumns(alias: string, columns: ReadonlySet<string>): PeopleCostExprs {
+  const opt = (column: string) => (columns.has(column) ? col(alias, column) : "0");
   const gratuity = columns.has("gratuity")
     ? col(alias, "gratuity")
     : columns.has("basic")
-      ? `${col(alias, "basic")} * ${GRATUITY_BASIC_RATE}`
-      : "0";
+    ? `${col(alias, "basic")} * ${GRATUITY_BASIC_RATE}`
+    : "0";
   return build({
     gross: opt("gross_salary"),
     pfEmployer: opt("pf_employer"),
@@ -133,9 +125,6 @@ export function peopleCostExprsForColumns(
 }
 
 /** Column-aware per-line People Cost SQL expression. */
-export function peopleCostSqlForColumns(
-  alias: string,
-  columns: ReadonlySet<string>,
-): string {
+export function peopleCostSqlForColumns(alias: string, columns: ReadonlySet<string>): string {
   return peopleCostExprsForColumns(alias, columns).peopleCost;
 }

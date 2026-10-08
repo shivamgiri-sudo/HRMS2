@@ -13,10 +13,8 @@ import { annualBudgetSummaryService } from "./annual-budget-summary.service.js";
  * [[hrms2-grn-cost-allocation-budget-blind-spot]].
  */
 const router = Router();
-const h =
-  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: (e?: unknown) => void) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: (e?: unknown) => void) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -32,10 +30,9 @@ router.get(
   "/branches",
   requireRole(...ALLOWED_ROLES),
   h(async (_req, res) => {
-    const data =
-      await annualBudgetSummaryService.getAnnualBudgetSummaryBranches();
+    const data = await annualBudgetSummaryService.getAnnualBudgetSummaryBranches();
     res.json({ success: true, data });
-  }),
+  })
 );
 
 router.get(
@@ -44,25 +41,16 @@ router.get(
   h(async (req, res) => {
     const financialYear = String(req.query.financialYear || "");
     if (!/^\d{4}-\d{2}$/.test(financialYear)) {
-      return res
-        .status(400)
-        .json({ error: "financialYear must be YYYY-YY, e.g. 2026-27" });
+      return res.status(400).json({ error: "financialYear must be YYYY-YY, e.g. 2026-27" });
     }
     const branchIdsParam = req.query.branchIds;
-    const branchIds =
-      typeof branchIdsParam === "string" && branchIdsParam.trim()
-        ? branchIdsParam
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : undefined;
+    const branchIds = typeof branchIdsParam === "string" && branchIdsParam.trim()
+      ? branchIdsParam.split(",").map((s) => s.trim()).filter(Boolean)
+      : undefined;
 
-    const data = await annualBudgetSummaryService.getAnnualBudgetSummary(
-      financialYear,
-      branchIds,
-    );
+    const data = await annualBudgetSummaryService.getAnnualBudgetSummary(financialYear, branchIds);
     res.json({ success: true, data });
-  }),
+  })
 );
 
 export { router as annualBudgetSummaryRouter };

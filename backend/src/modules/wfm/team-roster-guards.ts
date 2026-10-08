@@ -14,26 +14,13 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  checkLeaveConflict,
-  loadApprovedLeave,
-} from "./roster-leave-guard.service.js";
-import {
-  computeImportPolicyWarnings,
-  type ImportRowLike,
-} from "./roster-offday-apply.js";
+import { checkLeaveConflict, loadApprovedLeave } from "./roster-leave-guard.service.js";
+import { computeImportPolicyWarnings, type ImportRowLike } from "./roster-offday-apply.js";
 import { loadActivePolicies } from "./roster-offday-policy.loader.js";
 import type { EmployeeOffScope } from "./roster-offday-resolver.js";
+import { isRestPolicyFeatureActive, validateMinimumRest } from "./rest-policy.service.js";
 import {
-  isRestPolicyFeatureActive,
-  validateMinimumRest,
-} from "./rest-policy.service.js";
-import {
-  cellKey,
-  placeholders,
-  rowsOf,
-  type NewAssignmentType,
-  type SqlExecutor,
+  cellKey, placeholders, rowsOf, type NewAssignmentType, type SqlExecutor,
 } from "./team-roster-types.js";
 
 export interface EmployeeGuardInfo {
@@ -60,10 +47,7 @@ export interface GuardVerdict {
 /** Max SHIFT lines whose rest gap is pre-checked at submit; apply re-checks every line regardless. */
 export const REST_PRECHECK_LIMIT = 1000;
 
-export async function loadEmployeeGuardInfo(
-  ids: string[],
-  exec: SqlExecutor = db,
-): Promise<Map<string, EmployeeGuardInfo>> {
+export async function loadEmployeeGuardInfo(ids: string[], exec: SqlExecutor = db): Promise<Map<string, EmployeeGuardInfo>> {
   const map = new Map<string, EmployeeGuardInfo>();
   const unique = [...new Set(ids)];
   for (let i = 0; i < unique.length; i += 500) {
@@ -83,12 +67,7 @@ export async function loadEmployeeGuardInfo(
   return map;
 }
 
-async function loadLockedCells(
-  ids: string[],
-  from: string,
-  to: string,
-  exec: SqlExecutor,
-): Promise<Set<string>> {
+async function loadLockedCells(ids: string[], from: string, to: string, exec: SqlExecutor): Promise<Set<string>> {
   const locked = new Set<string>();
   const unique = [...new Set(ids)];
   for (let i = 0; i < unique.length; i += 500) {
@@ -98,52 +77,25 @@ async function loadLockedCells(
         WHERE is_locked = 1 AND employee_id IN (${placeholders(chunk.length)}) AND record_date BETWEEN ? AND ?`,
       [...chunk, from, to],
     );
-    for (const r of rowsOf<RowDataPacket>(result))
-      locked.add(cellKey(String(r.employee_id), String(r.d)));
+    for (const r of rowsOf<RowDataPacket>(result)) locked.add(cellKey(String(r.employee_id), String(r.d)));
   }
   return locked;
 }
 
-async function offdayWarnings(
-  lines: GuardLine[],
-  info: Map<string, EmployeeGuardInfo>,
-  exec: SqlExecutor,
-): Promise<Map<number, string>> {
+async function offdayWarnings(lines: GuardLine[], info: Map<string, EmployeeGuardInfo>, exec: SqlExecutor): Promise<Map<number, string>> {
   try {
     const scopes = new Map<string, EmployeeOffScope>();
-    for (const [id, i] of info)
-      scopes.set(id, {
-        processId: i.processId,
-        lobId: i.lobId,
-        branchId: i.branchId,
-      });
-    const processIds = [
-      ...new Set(
-        [...scopes.values()]
-          .map((s) => s.processId)
-          .filter((p): p is string => !!p),
-      ),
-    ];
+    for (const [id, i] of info) scopes.set(id, { processId: i.processId, lobId: i.lobId, branchId: i.branchId });
+    const processIds = [...new Set([...scopes.values()].map((s) => s.processId).filter((p): p is string => !!p))];
     if (!processIds.length) return new Map();
     const policies = await loadActivePolicies(processIds, exec as any);
     if (!policies.length) return new Map();
     const rows: ImportRowLike[] = lines.map((l) => ({
-      employeeIdRaw: l.employeeId,
-      rosterDate: l.date,
-      normalizedType: l.newType,
-      messages: [],
-      extraMetadata: {},
+      employeeIdRaw: l.employeeId, rosterDate: l.date, normalizedType: l.newType, messages: [], extraMetadata: {},
     }));
-    return computeImportPolicyWarnings(
-      rows,
-      { get: (id: string) => scopes.get(id) },
-      policies,
-    );
+    return computeImportPolicyWarnings(rows, { get: (id: string) => scopes.get(id) }, policies);
   } catch (err) {
-    console.error(
-      "[team-roster] off-day policy check skipped:",
-      (err as Error)?.message,
-    );
+    console.error("[team-roster] off-day policy check skipped:", (err as Error)?.message);
     return new Map();
   }
 }
@@ -161,10 +113,7 @@ export async function evaluateGuards(
   const verdictOf = (l: GuardLine) => {
     const key = cellKey(l.employeeId, l.date);
     let v = verdicts.get(key);
-    if (!v) {
-      v = { warnings: [], block: null };
-      verdicts.set(key, v);
-    }
+    if (!v) { v = { warnings: [], block: null }; verdicts.set(key, v); }
     return v;
   };
 
@@ -180,65 +129,40 @@ export async function evaluateGuards(
   lines.forEach((l) => {
     const v = verdictOf(l);
     if (locked.has(cellKey(l.employeeId, l.date))) {
-      v.block =
-        "Attendance for this date is already locked for payroll; it can no longer be rostered.";
+      v.block = "Attendance for this date is already locked for payroll; it can no longer be rostered.";
       return;
     }
     const verdict = checkLeaveConflict(leave, l.employeeId, l.date, {
-      isNightShift: Boolean(
-        l.shiftStart && l.shiftEnd && l.shiftEnd < l.shiftStart,
-      ),
-      assignmentType:
-        l.newType === "SHIFT" || l.newType === "TRAINING"
-          ? "SHIFT"
-          : "UNASSIGNED",
+      isNightShift: Boolean(l.shiftStart && l.shiftEnd && l.shiftEnd < l.shiftStart),
+      assignmentType: l.newType === "SHIFT" || l.newType === "TRAINING" ? "SHIFT" : "UNASSIGNED",
     });
-    if (verdict.blocked)
-      v.block = verdict.reason ?? "Employee is on approved leave.";
+    if (verdict.blocked) v.block = verdict.reason ?? "Employee is on approved leave.";
     else if (verdict.warning && verdict.reason) v.warnings.push(verdict.reason);
   });
 
   const policyWarnings = await offdayWarnings(lines, info, exec);
-  policyWarnings.forEach((message, index) =>
-    verdictOf(lines[index]).warnings.push(message),
-  );
+  policyWarnings.forEach((message, index) => verdictOf(lines[index]).warnings.push(message));
 
   await restWarnings(lines, info, verdicts, exec);
   return verdicts;
 }
 
 async function restWarnings(
-  lines: GuardLine[],
-  info: Map<string, EmployeeGuardInfo>,
-  verdicts: Map<string, GuardVerdict>,
-  exec: SqlExecutor,
+  lines: GuardLine[], info: Map<string, EmployeeGuardInfo>,
+  verdicts: Map<string, GuardVerdict>, exec: SqlExecutor,
 ): Promise<void> {
   try {
     if (!(await isRestPolicyFeatureActive(exec as any))) return;
     let checked = 0;
     for (const l of lines) {
       const v = verdicts.get(cellKey(l.employeeId, l.date));
-      if (
-        l.newType !== "SHIFT" ||
-        !l.shiftStart ||
-        !l.shiftEnd ||
-        !v ||
-        v.block
-      )
-        continue;
+      if (l.newType !== "SHIFT" || !l.shiftStart || !l.shiftEnd || !v || v.block) continue;
       if (checked >= REST_PRECHECK_LIMIT) break;
       checked += 1;
       const emp = info.get(l.employeeId);
       const rest = await validateMinimumRest(
-        {
-          employeeId: l.employeeId,
-          processId: emp?.processId ?? null,
-          branchId: emp?.branchId ?? null,
-          forDate: l.date,
-        },
-        { startTime: l.shiftStart, endTime: l.shiftEnd },
-        l.oldAssignmentId,
-        exec as any,
+        { employeeId: l.employeeId, processId: emp?.processId ?? null, branchId: emp?.branchId ?? null, forDate: l.date },
+        { startTime: l.shiftStart, endTime: l.shiftEnd }, l.oldAssignmentId, exec as any,
       );
       if (rest.ok) continue;
       v.warnings.push(
@@ -248,9 +172,7 @@ async function restWarnings(
       );
     }
   } catch (err) {
-    console.error(
-      "[team-roster] rest pre-check skipped:",
-      (err as Error)?.message,
-    );
+    console.error("[team-roster] rest pre-check skipped:", (err as Error)?.message);
   }
 }
+

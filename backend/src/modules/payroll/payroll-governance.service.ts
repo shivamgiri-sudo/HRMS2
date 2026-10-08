@@ -1,10 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
-import {
-  findSalaryStartDateMismatches,
-  isSalaryStartDateGateEnforced,
-} from "./salary-start-date.service.js";
+import { findSalaryStartDateMismatches, isSalaryStartDateGateEnforced } from "./salary-start-date.service.js";
 
 export type PayrollReadinessSeverity = "blocker" | "warning";
 
@@ -37,8 +34,7 @@ export interface PayrollReadinessIssue {
 }
 
 function monthRange(runMonth: string) {
-  if (!/^\d{4}-\d{2}$/.test(runMonth))
-    throw new Error("Invalid run_month format");
+  if (!/^\d{4}-\d{2}$/.test(runMonth)) throw new Error("Invalid run_month format");
   const [year, month] = runMonth.split("-").map(Number);
   const lastDay = new Date(year, month, 0).getDate();
   return {
@@ -116,31 +112,19 @@ export function runEmployeeScopeSql(run: any, restrictToRunLines = false) {
     );
     params.push(run.id);
   } else {
-    if (run.branch_id) {
-      clauses.push("e.branch_id = ?");
-      params.push(run.branch_id);
-    }
-    if (run.process_id) {
-      clauses.push("e.process_id = ?");
-      params.push(run.process_id);
-    }
+    if (run.branch_id) { clauses.push("e.branch_id = ?"); params.push(run.branch_id); }
+    if (run.process_id) { clauses.push("e.process_id = ?"); params.push(run.process_id); }
     if (run.branch_filter) {
-      clauses.push(
-        "e.branch_id IN (SELECT id FROM branch_master WHERE branch_name = ?)",
-      );
+      clauses.push("e.branch_id IN (SELECT id FROM branch_master WHERE branch_name = ?)");
       params.push(run.branch_filter);
     }
     if (run.process_filter) {
-      clauses.push(
-        "e.process_id IN (SELECT id FROM process_master WHERE process_name = ?)",
-      );
+      clauses.push("e.process_id IN (SELECT id FROM process_master WHERE process_name = ?)");
       params.push(run.process_filter);
     }
   }
   if (restrictToRunLines) {
-    clauses.push(
-      "EXISTS (SELECT 1 FROM salary_prep_line spl_scope WHERE spl_scope.run_id = ? AND spl_scope.employee_id = e.id)",
-    );
+    clauses.push("EXISTS (SELECT 1 FROM salary_prep_line spl_scope WHERE spl_scope.run_id = ? AND spl_scope.employee_id = e.id)");
     params.push(run.id);
   }
 
@@ -181,34 +165,14 @@ export function esiContributionPeriodStart(runMonth: string): string {
   return `${year - 1}-10`; // Jan-Mar belongs to the period that opened last October
 }
 
-async function countIssue(
-  sql: string,
-  params: unknown[],
-  code: string,
-  severity: PayrollReadinessSeverity,
-  message: string,
-  category: PayrollReadinessCategory,
-): Promise<PayrollReadinessIssue | null> {
+async function countIssue(sql: string, params: unknown[], code: string, severity: PayrollReadinessSeverity, message: string, category: PayrollReadinessCategory): Promise<PayrollReadinessIssue | null> {
   // Use db.query (text protocol) instead of db.execute (prepared statements) to avoid
   // "Incorrect arguments to mysqld_stmt_execute" when ? placeholders appear inside subqueries.
-  const [countRows] = (await (db as any).query(
-    `SELECT COUNT(*) AS count FROM (${sql}) issue_rows`,
-    params,
-  )) as [RowDataPacket[], unknown];
+  const [countRows] = await (db as any).query(`SELECT COUNT(*) AS count FROM (${sql}) issue_rows`, params) as [RowDataPacket[], unknown];
   const count = Number((countRows as any)[0]?.count ?? 0);
   if (count === 0) return null;
-  const [sample] = (await (db as any).query(`${sql} LIMIT 10`, params)) as [
-    RowDataPacket[],
-    unknown,
-  ];
-  return {
-    code,
-    severity,
-    category,
-    count,
-    message,
-    sample: sample as Array<Record<string, unknown>>,
-  };
+  const [sample] = await (db as any).query(`${sql} LIMIT 10`, params) as [RowDataPacket[], unknown];
+  return { code, severity, category, count, message, sample: sample as Array<Record<string, unknown>> };
 }
 
 /**
@@ -258,10 +222,7 @@ function monthCalendarSql() {
 export const payrollGovernanceService = {
   async readiness(runId: string) {
     const run = await getRun(runId);
-    const { where, params, range } = runEmployeeScopeSql(
-      run,
-      await runHasPrepLines(run.id),
-    );
+    const { where, params, range } = runEmployeeScopeSql(run, await runHasPrepLines(run.id));
     const effectiveEnd = readinessEndDate(range.end);
     const issues: PayrollReadinessIssue[] = [];
 
@@ -280,24 +241,16 @@ export const payrollGovernanceService = {
     // they are choosing to seal payroll before that data lands.
     const today = todayIstDate();
     const [runYear, runMonthNum] = run.run_month.split("-").map(Number);
-    const nextMonthYear = runMonthNum === 12 ? runYear + 1 : runYear;
-    const nextMonthNum = runMonthNum === 12 ? 1 : runMonthNum + 1;
+    const nextMonthYear  = runMonthNum === 12 ? runYear + 1 : runYear;
+    const nextMonthNum   = runMonthNum === 12 ? 1 : runMonthNum + 1;
     const configuredDay = Number(
-      await getPolicyValue(
-        "payroll",
-        "readiness",
-        "earliest_calc_day_of_next_month",
-        "2",
-      ),
+      await getPolicyValue("payroll", "readiness", "earliest_calc_day_of_next_month", "2"),
     );
     // A malformed or out-of-range value must not silently open the gate on the 1st or
     // push it into the middle of the month; refuse it and stand on the default.
-    const earliestCalcDay =
-      Number.isFinite(configuredDay) &&
-      configuredDay >= 1 &&
-      configuredDay <= 28
-        ? Math.trunc(configuredDay)
-        : 2;
+    const earliestCalcDay = Number.isFinite(configuredDay) && configuredDay >= 1 && configuredDay <= 28
+      ? Math.trunc(configuredDay)
+      : 2;
     const earliestCalcDate = `${nextMonthYear}-${String(nextMonthNum).padStart(2, "0")}-${String(earliestCalcDay).padStart(2, "0")}`;
     if (today < earliestCalcDate) {
       issues.push({
@@ -325,11 +278,7 @@ export const payrollGovernanceService = {
     const [fyRows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT financial_year FROM payroll_tax_fy_config WHERE active_status = 1`,
     );
-    const seededFys = new Set(
-      (fyRows as Array<{ financial_year: string }>).map(
-        (r) => r.financial_year,
-      ),
-    );
+    const seededFys = new Set((fyRows as Array<{ financial_year: string }>).map((r) => r.financial_year));
     const runFy = financialYearForMonth(run.run_month);
     const tdsMode = String((run as { tds_mode?: string }).tds_mode ?? "manual");
 
@@ -434,14 +383,7 @@ export const payrollGovernanceService = {
                  AND adr.record_date = cal.record_date
             )
           GROUP BY e.id, e.employee_code, employee_name`,
-        [
-          range.start,
-          effectiveEnd,
-          range.start,
-          range.start,
-          effectiveEnd,
-          ...params,
-        ],
+        [range.start, effectiveEnd, range.start, range.start, effectiveEnd, ...params],
         "PARTIAL_ATTENDANCE_DAYS_MISSING",
         "blocker",
         "Eligible employees have one or more missing attendance_daily_record dates in the payroll month",
@@ -797,19 +739,17 @@ export const payrollGovernanceService = {
       // incentive_upload_line (backend/src/modules/incentives/incentives.service.ts).
       // This one DOES work: payrollCalculate.service.ts pulls approved lines
       // automatically on every calculation (no manual step required).
-      checkedIssue("variable_pay", "INCENTIVE_BATCH_PENDING_APPROVAL", () =>
-        countIssue(
-          `SELECT ib.id, ib.batch_ref, ib.total_employees, ib.total_amount, ib.status
+      checkedIssue("variable_pay", "INCENTIVE_BATCH_PENDING_APPROVAL", () => countIssue(
+        `SELECT ib.id, ib.batch_ref, ib.total_employees, ib.total_amount, ib.status
            FROM incentive_upload_batch ib
           WHERE ib.pay_month = ?
             AND ib.status IN ('draft', 'pending_approval')`,
-          [run.run_month],
-          "INCENTIVE_BATCH_PENDING_APPROVAL",
-          "warning",
-          "Incentive batches for this payroll month are not yet approved (status draft/pending_approval) — their amounts will not be included until approved.",
-          "variable_pay",
-        ),
-      ),
+        [run.run_month],
+        "INCENTIVE_BATCH_PENDING_APPROVAL",
+        "warning",
+        "Incentive batches for this payroll month are not yet approved (status draft/pending_approval) — their amounts will not be included until approved.",
+        "variable_pay",
+      )),
       // REMOVED 2026-08-27: INCENTIVE_APPLY_TO_RUN_DOUBLE_COUNT_RISK.
       //
       // This raised a BLOCKER on any batch at status='applied' — which is the normal,
@@ -838,23 +778,18 @@ export const payrollGovernanceService = {
       // gross/net or salary_prep_line.reimbursement_total. Any approved claim
       // for this run's month is proof of real money that structurally cannot be
       // paid through the current calculation path.
-      checkedIssue(
-        "reimbursement",
-        "REIMBURSEMENT_APPROVED_NOT_INTEGRATED",
-        () =>
-          countIssue(
-            `SELECT erc.id, erc.employee_id, e.employee_code, erc.claim_type, erc.amount_approved, erc.status
+      checkedIssue("reimbursement", "REIMBURSEMENT_APPROVED_NOT_INTEGRATED", () => countIssue(
+        `SELECT erc.id, erc.employee_id, e.employee_code, erc.claim_type, erc.amount_approved, erc.status
            FROM employee_reimbursement_claim erc
            JOIN employees e ON e.id = erc.employee_id
           WHERE erc.claim_month = ?
             AND erc.status = 'approved'`,
-            [run.run_month],
-            "REIMBURSEMENT_APPROVED_NOT_INTEGRATED",
-            "blocker",
-            "Approved reimbursement claims exist for this payroll month, but payrollCalculate.service.ts's automatic pull references a non-existent column (claim_amount instead of amount_approved) and fails silently on every run — these approved amounts never reach gross/net pay. This is a live integration bug in existing code, reported per the payroll-arithmetic change restriction; needs a one-line column-name correction with Payroll/Engineering sign-off.",
-            "reimbursement",
-          ),
-      ),
+        [run.run_month],
+        "REIMBURSEMENT_APPROVED_NOT_INTEGRATED",
+        "blocker",
+        "Approved reimbursement claims exist for this payroll month, but payrollCalculate.service.ts's automatic pull references a non-existent column (claim_amount instead of amount_approved) and fails silently on every run — these approved amounts never reach gross/net pay. This is a live integration bug in existing code, reported per the payroll-arithmetic change restriction; needs a one-line column-name correction with Payroll/Engineering sign-off.",
+        "reimbursement",
+      )),
 
       // RECOVERY / DEDUCTION — sources: salary_advance_log + employee_loans +
       // employee_deduction_entries, all read by payrollCalculate.service.ts.
@@ -865,50 +800,40 @@ export const payrollGovernanceService = {
       // outstanding. This is real, incorrect money movement (employee is paid
       // more than owed because a recovery silently stopped) — a P0-class gap by
       // the standing severity model, not a cosmetic status quirk.
-      checkedIssue(
-        "recovery_deduction",
-        "RECOVERY_APPROVAL_STATUS_STOPS_DEDUCTION",
-        () =>
-          countIssue(
-            `${eligibleSql}
+      checkedIssue("recovery_deduction", "RECOVERY_APPROVAL_STATUS_STOPS_DEDUCTION", () => countIssue(
+        `${eligibleSql}
           AND EXISTS (
             SELECT 1 FROM salary_advance_log sal
              WHERE sal.employee_id = e.id
                AND sal.status = 'approved'
                AND COALESCE(sal.recovered_amount, 0) < sal.amount
           )`,
-            params,
-            "RECOVERY_APPROVAL_STATUS_STOPS_DEDUCTION",
-            "blocker",
-            "Salary advances with status='approved' are excluded from the recovery query (payrollCalculate.service.ts sums only status='active' rows) while a balance remains outstanding — approving an advance silently stops its recovery instead of confirming it. These employees will not have their outstanding advance deducted this run.",
-            "recovery_deduction",
-          ),
-      ),
+        params,
+        "RECOVERY_APPROVAL_STATUS_STOPS_DEDUCTION",
+        "blocker",
+        "Salary advances with status='approved' are excluded from the recovery query (payrollCalculate.service.ts sums only status='active' rows) while a balance remains outstanding — approving an advance silently stops its recovery instead of confirming it. These employees will not have their outstanding advance deducted this run.",
+        "recovery_deduction",
+      )),
       // 2026-08-19: excludes status='pending_approval' — that is the new loan-approval-gate
       // state (loans.routes.ts POST /:id/approve), an expected pre-activation hold with real
       // provenance, not an anomalous "recovery stopped" condition this warning exists to catch.
       // 'rejected' loans are deliberately still flagged: an approver explicitly declined the
       // loan, but if pending_amount is still nonzero that is worth a human look, same as any
       // other non-active status with a balance.
-      checkedIssue(
-        "recovery_deduction",
-        "LOAN_RECOVERY_STOPPED_WITH_BALANCE",
-        () =>
-          countIssue(
-            `${eligibleSql}
+      checkedIssue("recovery_deduction", "LOAN_RECOVERY_STOPPED_WITH_BALANCE", () => countIssue(
+        `${eligibleSql}
           AND EXISTS (
             SELECT 1 FROM employee_loans el
              WHERE el.employee_id = e.id
                AND el.status NOT IN ('active', 'pending_approval')
                AND COALESCE(el.pending_amount, 0) > 0.01
           )`,
-            params,
-            "LOAN_RECOVERY_STOPPED_WITH_BALANCE",
-            "warning",
-            "Employee loans have an outstanding pending_amount but status is not 'active' (deduction_per_month is only summed from status='active' rows) — recovery has stopped while a balance remains. Verify whether this is an intended hold or a status error. (Loans awaiting approval, status='pending_approval', are excluded — that is an expected pre-activation state, not an anomaly.)",
-            "recovery_deduction",
-          ),
-      ),
+        params,
+        "LOAN_RECOVERY_STOPPED_WITH_BALANCE",
+        "warning",
+        "Employee loans have an outstanding pending_amount but status is not 'active' (deduction_per_month is only summed from status='active' rows) — recovery has stopped while a balance remains. Verify whether this is an intended hold or a status error. (Loans awaiting approval, status='pending_approval', are excluded — that is an expected pre-activation state, not an anomaly.)",
+        "recovery_deduction",
+      )),
 
       // FULL & FINAL — source: full_final_calculation, joined by employee_id.
       // No calculation ENGINE exists for F&F (net_payable is summed client-side
@@ -926,9 +851,8 @@ export const payrollGovernanceService = {
       // to exits in this run's month or the prior month so the count is
       // actionable against the current cycle, not the full historical backlog
       // (that backlog is a separate, org-wide finding — see report).
-      checkedIssue("full_and_final", "FF_MISSING_FOR_RECENT_EXIT", () =>
-        countIssue(
-          `SELECT e.id, e.employee_code,
+      checkedIssue("full_and_final", "FF_MISSING_FOR_RECENT_EXIT", () => countIssue(
+        `SELECT e.id, e.employee_code,
                 COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
                 COALESCE(e.date_of_exit, e.date_of_leaving) AS exit_date,
                 e.employment_status
@@ -938,13 +862,12 @@ export const payrollGovernanceService = {
             AND NOT EXISTS (
               SELECT 1 FROM full_final_calculation ffc WHERE ffc.employee_id = e.id
             )`,
-          [range.start, range.end],
-          "FF_MISSING_FOR_RECENT_EXIT",
-          "blocker",
-          "Employees who exited in this run's month or the previous month have no full_final_calculation record at all. The tracked exit_request -> F&F workflow is effectively unused in production (see report for full scope) — real exits bypass it.",
-          "full_and_final",
-        ),
-      ),
+        [range.start, range.end],
+        "FF_MISSING_FOR_RECENT_EXIT",
+        "blocker",
+        "Employees who exited in this run's month or the previous month have no full_final_calculation record at all. The tracked exit_request -> F&F workflow is effectively unused in production (see report for full scope) — real exits bypass it.",
+        "full_and_final",
+      )),
 
       // PAYMENT FILE — sources: employee_bank_detail (export input),
       // profile_update_approval (bank-change approval queue). One reachable
@@ -970,42 +893,32 @@ export const payrollGovernanceService = {
       // stay regardless: surfacing the affected population before an export is
       // attempted is worth more than a refusal at the point of export, which
       // arrives after payroll believes it is finished.
-      checkedIssue(
-        "payment_file",
-        "PAYMENT_FILE_NEFT_EXPORT_OVERSTATEMENT_RISK",
-        () =>
-          countIssue(
-            `${eligibleSql}
+      checkedIssue("payment_file", "PAYMENT_FILE_NEFT_EXPORT_OVERSTATEMENT_RISK", () => countIssue(
+        `${eligibleSql}
           AND NOT EXISTS (
             SELECT 1 FROM employee_bank_detail ebd
              WHERE ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
           )`,
-            params,
-            "PAYMENT_FILE_NEFT_EXPORT_OVERSTATEMENT_RISK",
-            "warning",
-            "Employees have no active primary bank record, so they cannot be paid by bank transfer. GET /api/payroll/runs/:id/neft-export no longer overstates the total for them — they are excluded from TOTAL and itemised in an EXCLUDED block, and the route now refuses the file outright because its payable set will not reconcile against bank payment readiness. The consequence is therefore a REFUSED export, not a wrong one: resolve MISSING_VERIFIED_BANK for these employees, or they will be left unpaid while the rest of the run waits on them. The second exporter that would have emitted a file without them was retired on 2026-08-17.",
-            "payment_file",
-          ),
-      ),
-      checkedIssue(
+        params,
+        "PAYMENT_FILE_NEFT_EXPORT_OVERSTATEMENT_RISK",
+        "warning",
+        "Employees have no active primary bank record, so they cannot be paid by bank transfer. GET /api/payroll/runs/:id/neft-export no longer overstates the total for them — they are excluded from TOTAL and itemised in an EXCLUDED block, and the route now refuses the file outright because its payable set will not reconcile against bank payment readiness. The consequence is therefore a REFUSED export, not a wrong one: resolve MISSING_VERIFIED_BANK for these employees, or they will be left unpaid while the rest of the run waits on them. The second exporter that would have emitted a file without them was retired on 2026-08-17.",
         "payment_file",
-        "PAYMENT_FILE_PENDING_BANK_CHANGE_AT_RISK",
-        () =>
-          countIssue(
-            `${eligibleSql}
+      )),
+      checkedIssue("payment_file", "PAYMENT_FILE_PENDING_BANK_CHANGE_AT_RISK", () => countIssue(
+        `${eligibleSql}
           AND EXISTS (
             SELECT 1 FROM profile_update_approval pua
              WHERE pua.employee_id = e.id
                AND pua.request_type = 'bank_details'
                AND pua.status = 'pending'
           )`,
-            params,
-            "PAYMENT_FILE_PENDING_BANK_CHANGE_AT_RISK",
-            "blocker",
-            "Employees have a pending, unapproved bank-change request, so the account on file may be about to be superseded. GET /api/payroll/runs/:id/neft-export now refuses the file for them — bank payment readiness classes a pending request PENDING_APPROVAL rather than READY, and the export reconciles against it. The second exporter that would have paid to the stale account while the change was in flight was retired on 2026-08-17. Resolve via /api/payroll/bank-change-requests before export.",
-            "payment_file",
-          ),
-      ),
+        params,
+        "PAYMENT_FILE_PENDING_BANK_CHANGE_AT_RISK",
+        "blocker",
+        "Employees have a pending, unapproved bank-change request, so the account on file may be about to be superseded. GET /api/payroll/runs/:id/neft-export now refuses the file for them — bank payment readiness classes a pending request PENDING_APPROVAL rather than READY, and the export reconciles against it. The second exporter that would have paid to the stale account while the change was in flight was retired on 2026-08-17. Resolve via /api/payroll/bank-change-requests before export.",
+        "payment_file",
+      )),
     ];
 
     for (const issue of await Promise.all(checks)) {
@@ -1064,7 +977,7 @@ export const payrollGovernanceService = {
            FROM employee_payroll_head_review phr
            JOIN employees e ON e.id = phr.employee_id
           WHERE phr.status = 'pending_review'
-            AND ${where.replace(/\be\./g, "e.")}
+            AND ${where.replace(/\be\./g, 'e.')}
           LIMIT 20`,
         params,
       );
@@ -1082,14 +995,7 @@ export const payrollGovernanceService = {
         });
       }
     } catch (phrErr) {
-      issues.push({
-        code: "NEW_JOINER_PAYROLL_HEAD_REVIEW_CHECK_ERROR",
-        severity: "warning",
-        category: "employee_master",
-        count: 0,
-        message: "Could not check payroll head review status for new joiners.",
-        sample: [],
-      });
+      issues.push({ code: "NEW_JOINER_PAYROLL_HEAD_REVIEW_CHECK_ERROR", severity: "warning", category: "employee_master", count: 0, message: "Could not check payroll head review status for new joiners.", sample: [] });
     }
 
     // ── NEW JOINER: No salary structure assigned ──────────────────────────────
@@ -1118,24 +1024,15 @@ export const payrollGovernanceService = {
           category: "employee_master",
           count: (noSalaryRows as RowDataPacket[]).length,
           message: `${(noSalaryRows as RowDataPacket[]).length} employee(s) have no salary structure. Payroll HR must complete the salary component assignment in ATS before payroll can be calculated.`,
-          sample: (noSalaryRows as RowDataPacket[])
-            .slice(0, 5)
-            .map((r: any) => ({
-              employee_code: r.employee_code,
-              full_name: r.full_name,
-              date_of_joining: r.date_of_joining,
-            })),
+          sample: (noSalaryRows as RowDataPacket[]).slice(0, 5).map((r: any) => ({
+            employee_code: r.employee_code,
+            full_name: r.full_name,
+            date_of_joining: r.date_of_joining,
+          })),
         });
       }
     } catch (noSalErr) {
-      issues.push({
-        code: "NEW_JOINER_SALARY_STRUCTURE_CHECK_ERROR",
-        severity: "warning",
-        category: "employee_master",
-        count: 0,
-        message: "Could not check salary structure for new joiners.",
-        sample: [],
-      });
+      issues.push({ code: "NEW_JOINER_SALARY_STRUCTURE_CHECK_ERROR", severity: "warning", category: "employee_master", count: 0, message: "Could not check salary structure for new joiners.", sample: [] });
     }
 
     // ── NEW JOINER: salary start date must be identical everywhere ─────────────
@@ -1146,12 +1043,7 @@ export const payrollGovernanceService = {
     // the existing mismatches are repaired; the salary_start_date_gate_enforced flag makes it a
     // blocker. A check that cannot run is a blocker either way: missing evidence is not green.
     try {
-      const mismatches = await findSalaryStartDateMismatches(
-        db as any,
-        where,
-        params,
-        200,
-      );
+      const mismatches = await findSalaryStartDateMismatches(db as any, where, params, 200);
       if (mismatches.length > 0) {
         const enforced = await isSalaryStartDateGateEnforced();
         issues.push({
@@ -1187,9 +1079,7 @@ export const payrollGovernanceService = {
       params,
     );
     const eligibleEmployees = Number(eligibleCountRows[0]?.count ?? 0);
-    const blockerCount = issues.filter(
-      (issue) => issue.severity === "blocker",
-    ).length;
+    const blockerCount = issues.filter((issue) => issue.severity === "blocker").length;
 
     // Layered readiness: a payroll month can be "calculation technically
     // available" (source_data/attendance_payable_days/employee_master/bank/
@@ -1201,16 +1091,8 @@ export const payrollGovernanceService = {
     // failed to run at all, outside the try/catch) must not read the same as one
     // that ran clean.
     const ALL_CATEGORIES: PayrollReadinessCategory[] = [
-      "source_data",
-      "employee_master",
-      "attendance_payable_days",
-      "bank",
-      "statutory",
-      "variable_pay",
-      "reimbursement",
-      "recovery_deduction",
-      "full_and_final",
-      "payment_file",
+      "source_data", "employee_master", "attendance_payable_days", "bank",
+      "statutory", "variable_pay", "reimbursement", "recovery_deduction", "full_and_final", "payment_file",
     ];
     // LEGACY_SCOPE_UNVERIFIED sits between BLOCKED and WARNING deliberately.
     //
@@ -1222,34 +1104,18 @@ export const payrollGovernanceService = {
     //
     // Any issue whose code ends _SCOPE_UNVERIFIED raises it, so a future category can adopt the
     // same treatment without touching this logic.
-    const categories: Record<
-      PayrollReadinessCategory,
-      {
-        status:
-          | "PASS"
-          | "WARNING"
-          | "BLOCKED"
-          | "CHECK_ERROR"
-          | "LEGACY_SCOPE_UNVERIFIED";
-        blockers: number;
-        warnings: number;
-        issueCodes: string[];
-      }
-    > = {} as any;
+    const categories: Record<PayrollReadinessCategory, {
+      status: "PASS" | "WARNING" | "BLOCKED" | "CHECK_ERROR" | "LEGACY_SCOPE_UNVERIFIED";
+      blockers: number;
+      warnings: number;
+      issueCodes: string[];
+    }> = {} as any;
     for (const cat of ALL_CATEGORIES) {
       const catIssues = issues.filter((issue) => issue.category === cat);
-      const hasCheckError = catIssues.some((issue) =>
-        issue.code.endsWith("_CHECK_ERROR"),
-      );
-      const hasUnverifiedScope = catIssues.some((issue) =>
-        issue.code.endsWith("_SCOPE_UNVERIFIED"),
-      );
-      const blockers = catIssues.filter(
-        (issue) => issue.severity === "blocker",
-      ).length;
-      const warnings = catIssues.filter(
-        (issue) => issue.severity === "warning",
-      ).length;
+      const hasCheckError = catIssues.some((issue) => issue.code.endsWith("_CHECK_ERROR"));
+      const hasUnverifiedScope = catIssues.some((issue) => issue.code.endsWith("_SCOPE_UNVERIFIED"));
+      const blockers = catIssues.filter((issue) => issue.severity === "blocker").length;
+      const warnings = catIssues.filter((issue) => issue.severity === "warning").length;
       categories[cat] = {
         status: hasCheckError
           ? "CHECK_ERROR"
@@ -1286,20 +1152,12 @@ export const payrollGovernanceService = {
   async freezeAttendance(runId: string, actorUserId: string) {
     const run = await getRun(runId);
     const readiness = await this.readiness(runId);
-    const hardBlockers = readiness.issues.filter(
-      (issue) =>
-        issue.severity === "blocker" && issue.code !== "ATTENDANCE_NOT_LOCKED",
-    );
+    const hardBlockers = readiness.issues.filter((issue) => issue.severity === "blocker" && issue.code !== "ATTENDANCE_NOT_LOCKED");
     if (hardBlockers.length > 0) {
-      throw new Error(
-        `Cannot freeze attendance. Resolve blockers first: ${hardBlockers.map((issue) => issue.code).join(", ")}`,
-      );
+      throw new Error(`Cannot freeze attendance. Resolve blockers first: ${hardBlockers.map((issue) => issue.code).join(", ")}`);
     }
 
-    const { where, params, range } = runEmployeeScopeSql(
-      run,
-      await runHasPrepLines(run.id),
-    );
+    const { where, params, range } = runEmployeeScopeSql(run, await runHasPrepLines(run.id));
     const [result] = await db.execute<any>(
       `UPDATE attendance_daily_record adr
          JOIN employees e ON e.id = adr.employee_id
@@ -1327,15 +1185,7 @@ export const payrollGovernanceService = {
       `INSERT INTO payroll_calculation_audit
          (id, run_id, employee_id, event_type, event_detail, actor_user_id)
        VALUES (UUID(), ?, NULL, 'ATTENDANCE_FREEZE', ?, ?)`,
-      [
-        runId,
-        JSON.stringify({
-          runMonth: run.run_month,
-          lockedRows: result?.affectedRows ?? 0,
-          issues: readiness.issues,
-        }),
-        actorUserId,
-      ],
+      [runId, JSON.stringify({ runMonth: run.run_month, lockedRows: result?.affectedRows ?? 0, issues: readiness.issues }), actorUserId],
     );
 
     return {

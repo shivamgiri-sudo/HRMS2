@@ -14,46 +14,33 @@
  *   node backend/scripts/sync-incentive-deduction-from-dbbill.mjs --dry-run
  */
 
-import mysql from "mysql2/promise";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+import mysql from 'mysql2/promise';
+import fs    from 'fs';
+import path  from 'path';
+import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function arg(name, fallback) {
-  return (
-    process.argv.find((a) => a.startsWith(`--${name}=`))?.split("=")[1] ??
-    fallback
-  );
+  return process.argv.find(a => a.startsWith(`--${name}=`))?.split('=')[1] ?? fallback;
 }
 function fromEnvFile(key) {
   try {
-    const env = fs.readFileSync(path.join(__dirname, "../.env"), "utf8");
-    const m = env.match(new RegExp(`^${key}=(.*)$`, "m"));
-    return m?.[1]?.replace(/^["']|["']$/g, "").trim() ?? null;
-  } catch {
-    return null;
-  }
+    const env = fs.readFileSync(path.join(__dirname, '../.env'), 'utf8');
+    const m = env.match(new RegExp(`^${key}=(.*)$`, 'm'));
+    return m?.[1]?.replace(/^["']|["']$/g, '').trim() ?? null;
+  } catch { return null; }
 }
 
-const HRMS_HOST = arg(
-  "hrms-host",
-  process.env.DB_HOST ?? fromEnvFile("DB_HOST") ?? "192.168.10.6",
-);
-const BILL_HOST = arg(
-  "bill-host",
-  process.env.BILL_DB_HOST ?? fromEnvFile("BILL_DB_HOST") ?? "192.168.10.22",
-);
-const DB_USER = process.env.DB_USER ?? fromEnvFile("DB_USER");
-const DB_PASS = process.env.DB_PASSWORD ?? fromEnvFile("DB_PASSWORD");
-const DRY_RUN = process.argv.includes("--dry-run");
+const HRMS_HOST = arg('hrms-host', process.env.DB_HOST ?? fromEnvFile('DB_HOST') ?? '192.168.10.6');
+const BILL_HOST = arg('bill-host', process.env.BILL_DB_HOST ?? fromEnvFile('BILL_DB_HOST') ?? '192.168.10.22');
+const DB_USER   = process.env.DB_USER     ?? fromEnvFile('DB_USER');
+const DB_PASS   = process.env.DB_PASSWORD ?? fromEnvFile('DB_PASSWORD');
+const DRY_RUN   = process.argv.includes('--dry-run');
 const PAGE_SIZE = 2000;
-const BATCH = 500;
+const BATCH     = 500;
 
-function log(m) {
-  process.stdout.write(`[${new Date().toLocaleTimeString("en-IN")}] ${m}\n`);
-}
+function log(m) { process.stdout.write(`[${new Date().toLocaleTimeString('en-IN')}] ${m}\n`); }
 
 async function upsertBatch(hrms, table, rows) {
   if (rows.length === 0 || DRY_RUN) return 0;
@@ -61,11 +48,11 @@ async function upsertBatch(hrms, table, rows) {
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH);
     const keys = Object.keys(batch[0]);
-    const ph = batch.map(() => `(${keys.map(() => "?").join(",")})`).join(",");
-    const vals = batch.flatMap((r) => keys.map((k) => r[k]));
+    const ph = batch.map(() => `(${keys.map(() => '?').join(',')})`).join(',');
+    const vals = batch.flatMap(r => keys.map(k => r[k]));
     const [res] = await hrms.execute(
-      `INSERT IGNORE INTO ${table} (${keys.join(",")}) VALUES ${ph}`,
-      vals,
+      `INSERT IGNORE INTO ${table} (${keys.join(',')}) VALUES ${ph}`,
+      vals
     );
     inserted += res.affectedRows;
   }
@@ -74,25 +61,15 @@ async function upsertBatch(hrms, table, rows) {
 
 // ─── 1. upload_incentive_breakup → incentive_upload_snapshot ─────────────────
 async function syncIncentive(bill, hrms) {
-  log("Syncing upload_incentive_breakup → incentive_upload_snapshot ...");
+  log('Syncing upload_incentive_breakup → incentive_upload_snapshot ...');
 
-  const [total] = await bill.execute(
-    "SELECT COUNT(*) as c FROM upload_incentive_breakup",
-  );
-  const [existing] = await hrms.execute(
-    "SELECT COUNT(*) as c FROM incentive_upload_snapshot",
-  );
-  log(
-    `  db_bill: ${total[0].c}  mas_hrms existing: ${existing[0].c}  expected gap: ${total[0].c - existing[0].c}`,
-  );
+  const [total] = await bill.execute('SELECT COUNT(*) as c FROM upload_incentive_breakup');
+  const [existing] = await hrms.execute('SELECT COUNT(*) as c FROM incentive_upload_snapshot');
+  log(`  db_bill: ${total[0].c}  mas_hrms existing: ${existing[0].c}  expected gap: ${total[0].c - existing[0].c}`);
 
-  if (DRY_RUN) {
-    log("  [DRY-RUN] skipping insert");
-    return 0;
-  }
+  if (DRY_RUN) { log('  [DRY-RUN] skipping insert'); return 0; }
 
-  let offset = 0,
-    totalInserted = 0;
+  let offset = 0, totalInserted = 0;
   while (true) {
     const [rows] = await bill.execute(`
       SELECT Id AS id, BranchName AS branch_name, CostCenter AS cost_center,
@@ -106,38 +83,26 @@ async function syncIncentive(bill, hrms) {
       LIMIT ${PAGE_SIZE} OFFSET ${offset}
     `);
     if (rows.length === 0) break;
-    const inserted = await upsertBatch(hrms, "incentive_upload_snapshot", rows);
+    const inserted = await upsertBatch(hrms, 'incentive_upload_snapshot', rows);
     totalInserted += inserted;
     offset += rows.length;
     if (rows.length < PAGE_SIZE) break;
   }
-  log(
-    `  Done. Inserted ${totalInserted} new rows (${total[0].c} total in db_bill).`,
-  );
+  log(`  Done. Inserted ${totalInserted} new rows (${total[0].c} total in db_bill).`);
   return totalInserted;
 }
 
 // ─── 2. upload_deduction → upload_deduction_snapshot ─────────────────────────
 async function syncDeduction(bill, hrms) {
-  log("Syncing upload_deduction → upload_deduction_snapshot ...");
+  log('Syncing upload_deduction → upload_deduction_snapshot ...');
 
-  const [total] = await bill.execute(
-    "SELECT COUNT(*) as c FROM upload_deduction",
-  );
-  const [existing] = await hrms.execute(
-    "SELECT COUNT(*) as c FROM upload_deduction_snapshot",
-  );
-  log(
-    `  db_bill: ${total[0].c}  mas_hrms existing: ${existing[0].c}  gap: ${total[0].c - existing[0].c}`,
-  );
+  const [total] = await bill.execute('SELECT COUNT(*) as c FROM upload_deduction');
+  const [existing] = await hrms.execute('SELECT COUNT(*) as c FROM upload_deduction_snapshot');
+  log(`  db_bill: ${total[0].c}  mas_hrms existing: ${existing[0].c}  gap: ${total[0].c - existing[0].c}`);
 
-  if (DRY_RUN) {
-    log("  [DRY-RUN] skipping insert");
-    return 0;
-  }
+  if (DRY_RUN) { log('  [DRY-RUN] skipping insert'); return 0; }
 
-  let offset = 0,
-    totalInserted = 0;
+  let offset = 0, totalInserted = 0;
   while (true) {
     const [rows] = await bill.execute(`
       SELECT Id AS id, BranchName AS branch_name, CostCenter AS cost_center,
@@ -159,38 +124,26 @@ async function syncDeduction(bill, hrms) {
       LIMIT ${PAGE_SIZE} OFFSET ${offset}
     `);
     if (rows.length === 0) break;
-    const inserted = await upsertBatch(hrms, "upload_deduction_snapshot", rows);
+    const inserted = await upsertBatch(hrms, 'upload_deduction_snapshot', rows);
     totalInserted += inserted;
     offset += rows.length;
     if (rows.length < PAGE_SIZE) break;
   }
-  log(
-    `  Done. Inserted ${totalInserted} new rows (${total[0].c} total in db_bill).`,
-  );
+  log(`  Done. Inserted ${totalInserted} new rows (${total[0].c} total in db_bill).`);
   return totalInserted;
 }
 
 // ─── 3. qual_incentive → qual_incentive_snapshot ──────────────────────────────
 async function syncQualIncentive(bill, hrms) {
-  log("Syncing qual_incentive → qual_incentive_snapshot ...");
+  log('Syncing qual_incentive → qual_incentive_snapshot ...');
 
-  const [total] = await bill.execute(
-    "SELECT COUNT(*) as c FROM qual_incentive",
-  );
-  const [existing] = await hrms.execute(
-    "SELECT COUNT(*) as c FROM qual_incentive_snapshot",
-  );
-  log(
-    `  db_bill: ${total[0].c}  mas_hrms existing: ${existing[0].c}  gap: ${total[0].c - existing[0].c}`,
-  );
+  const [total] = await bill.execute('SELECT COUNT(*) as c FROM qual_incentive');
+  const [existing] = await hrms.execute('SELECT COUNT(*) as c FROM qual_incentive_snapshot');
+  log(`  db_bill: ${total[0].c}  mas_hrms existing: ${existing[0].c}  gap: ${total[0].c - existing[0].c}`);
 
-  if (DRY_RUN) {
-    log("  [DRY-RUN] skipping insert");
-    return 0;
-  }
+  if (DRY_RUN) { log('  [DRY-RUN] skipping insert'); return 0; }
 
-  let offset = 0,
-    totalInserted = 0;
+  let offset = 0, totalInserted = 0;
   while (true) {
     const [rows] = await bill.execute(`
       SELECT id, EmpCode AS employee_code,
@@ -202,44 +155,21 @@ async function syncQualIncentive(bill, hrms) {
       LIMIT ${PAGE_SIZE} OFFSET ${offset}
     `);
     if (rows.length === 0) break;
-    const inserted = await upsertBatch(hrms, "qual_incentive_snapshot", rows);
+    const inserted = await upsertBatch(hrms, 'qual_incentive_snapshot', rows);
     totalInserted += inserted;
     offset += rows.length;
     if (rows.length < PAGE_SIZE) break;
   }
-  log(
-    `  Done. Inserted ${totalInserted} new rows (${total[0].c} total in db_bill).`,
-  );
+  log(`  Done. Inserted ${totalInserted} new rows (${total[0].c} total in db_bill).`);
   return totalInserted;
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
-  log(
-    `Connecting HRMS=${HRMS_HOST}  db_bill=${BILL_HOST}${DRY_RUN ? " [DRY-RUN]" : ""}`,
-  );
-  const hrms = await mysql.createPool({
-    host: HRMS_HOST,
-    port: 3306,
-    user: DB_USER,
-    password: DB_PASS,
-    database: "mas_hrms",
-    connectTimeout: 30000,
-    waitForConnections: true,
-    connectionLimit: 3,
-  });
-  const bill = await mysql.createPool({
-    host: BILL_HOST,
-    port: 3306,
-    user: DB_USER,
-    password: DB_PASS,
-    database: "db_bill",
-    connectTimeout: 30000,
-    waitForConnections: true,
-    connectionLimit: 3,
-    dateStrings: true,
-  });
-  log("Connected.\n");
+  log(`Connecting HRMS=${HRMS_HOST}  db_bill=${BILL_HOST}${DRY_RUN ? ' [DRY-RUN]' : ''}`);
+  const hrms = await mysql.createPool({ host: HRMS_HOST, port: 3306, user: DB_USER, password: DB_PASS, database: 'mas_hrms', connectTimeout: 30000, waitForConnections: true, connectionLimit: 3 });
+  const bill = await mysql.createPool({ host: BILL_HOST, port: 3306, user: DB_USER, password: DB_PASS, database: 'db_bill',  connectTimeout: 30000, waitForConnections: true, connectionLimit: 3, dateStrings: true });
+  log('Connected.\n');
 
   try {
     // Create new tables if needed (run migration first — or they already exist)
@@ -287,44 +217,32 @@ async function main() {
     `);
 
     await syncIncentive(bill, hrms);
-    log("");
+    log('');
     await syncDeduction(bill, hrms);
-    log("");
+    log('');
     await syncQualIncentive(bill, hrms);
 
-    log("\n══════════════════════════════════════════════");
-    log("FINAL COUNTS in mas_hrms:");
-    const [fi] = await hrms.execute(
-      "SELECT COUNT(*) as c FROM incentive_upload_snapshot",
-    );
-    const [fd] = await hrms.execute(
-      "SELECT COUNT(*) as c FROM upload_deduction_snapshot",
-    );
-    const [fq] = await hrms.execute(
-      "SELECT COUNT(*) as c FROM qual_incentive_snapshot",
-    );
+    log('\n══════════════════════════════════════════════');
+    log('FINAL COUNTS in mas_hrms:');
+    const [fi] = await hrms.execute('SELECT COUNT(*) as c FROM incentive_upload_snapshot');
+    const [fd] = await hrms.execute('SELECT COUNT(*) as c FROM upload_deduction_snapshot');
+    const [fq] = await hrms.execute('SELECT COUNT(*) as c FROM qual_incentive_snapshot');
     log(`  incentive_upload_snapshot   : ${fi[0].c}`);
     log(`  upload_deduction_snapshot   : ${fd[0].c}`);
     log(`  qual_incentive_snapshot     : ${fq[0].c}`);
 
-    log("\ndb_bill source counts:");
-    const [bi] = await bill.execute(
-      "SELECT COUNT(*) as c FROM upload_incentive_breakup",
-    );
-    const [bd] = await bill.execute(
-      "SELECT COUNT(*) as c FROM upload_deduction",
-    );
-    const [bq] = await bill.execute("SELECT COUNT(*) as c FROM qual_incentive");
+    log('\ndb_bill source counts:');
+    const [bi] = await bill.execute('SELECT COUNT(*) as c FROM upload_incentive_breakup');
+    const [bd] = await bill.execute('SELECT COUNT(*) as c FROM upload_deduction');
+    const [bq] = await bill.execute('SELECT COUNT(*) as c FROM qual_incentive');
     log(`  upload_incentive_breakup    : ${bi[0].c}`);
     log(`  upload_deduction            : ${bd[0].c}`);
     log(`  qual_incentive              : ${bq[0].c}`);
+
   } finally {
     await hrms.end();
     await bill.end();
   }
 }
 
-main().catch((e) => {
-  console.error("FATAL:", e.message);
-  process.exit(1);
-});
+main().catch(e => { console.error('FATAL:', e.message); process.exit(1); });

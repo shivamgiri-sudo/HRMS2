@@ -19,15 +19,7 @@ import { registerUpload } from "../document-vault/documentVault.service.js";
 // Use process.cwd() — resolves to backend/ in both dev and production
 const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
 
-const ALLOWED_EXT = new Set([
-  ".pdf",
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".webp",
-  ".doc",
-  ".docx",
-]);
+const ALLOWED_EXT = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx"]);
 
 const empDocStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
@@ -59,10 +51,7 @@ export function withoutFileUrl<T extends object>(row: T): Omit<T, "file_url"> & 
 }
 
 const router = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -135,17 +124,15 @@ router.post("/:employeeId/upload", selfOrAdminHr("employeeId"), (req: any, res: 
       accessLevel: "pii",
       ownerEmployeeId: employeeId,
     });
-  },
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!req.file)
-      return res
-        .status(400)
-        .json({ success: false, message: "No file uploaded" });
-    const { employeeId } = req.params;
-    const documentType = (req.body?.document_type as string) || "other";
-    const documentName =
-      (req.body?.document_name as string) || req.file.originalname;
-    const fileUrl = `/api/files/employee-documents/${req.file.filename}`;
+  } catch (vaultErr) {
+    console.error("[employee-docs] Failed to register upload in document vault:", vaultErr);
+    try { fs.unlinkSync(req.file.path); } catch {}
+    return res.status(500).json({
+      success: false,
+      message: "Failed to register file in document vault. Upload rolled back.",
+      code: "VAULT_REGISTRATION_FAILED",
+    });
+  }
 
   const id = randomUUID();
   await db.execute(
@@ -160,49 +147,28 @@ router.post("/:employeeId/upload", selfOrAdminHr("employeeId"), (req: any, res: 
 }));
 
 // POST /api/employee-docs/:employeeId — register document metadata (file URL from caller)
-router.post(
-  "/:employeeId",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { document_type, document_name, file_url } = req.body as {
-      document_type: string;
-      document_name: string;
-      file_url: string;
-    };
-    if (!document_type || !file_url)
-      return res
-        .status(400)
-        .json({ error: "document_type and file_url required" });
-    if (file_url.length > 2048)
-      return res.status(400).json({ error: "file_url too long" });
-    // Reject javascript: URLs and other dangerous schemes
-    const dangerousScheme = /^(javascript|data|vbscript):/i;
-    if (dangerousScheme.test(file_url))
-      return res.status(400).json({ error: "Invalid file_url scheme" });
-    if (document_name && document_name.length > 255) {
-      return res
-        .status(400)
-        .json({ error: "document_name must be 255 characters or fewer" });
-    }
-    const id = randomUUID();
-    await db.execute(
-      "INSERT INTO employee_documents (id, employee_id, doc_type, doc_name, file_url, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)",
-      [
-        id,
-        req.params.employeeId,
-        document_type,
-        document_name ?? null,
-        file_url,
-        req.authUser!.id,
-      ],
-    );
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at FROM employee_documents WHERE id = ? LIMIT 1",
-      [id],
-    );
-    res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
-  }),
-);
+router.post("/:employeeId", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { document_type, document_name, file_url } = req.body as {
+    document_type: string;
+    document_name: string;
+    file_url: string;
+  };
+  if (!document_type || !file_url) return res.status(400).json({ error: "document_type and file_url required" });
+  if (file_url.length > 2048) return res.status(400).json({ error: "file_url too long" });
+  // Reject javascript: URLs and other dangerous schemes
+  const dangerousScheme = /^(javascript|data|vbscript):/i;
+  if (dangerousScheme.test(file_url)) return res.status(400).json({ error: "Invalid file_url scheme" });
+  if (document_name && document_name.length > 255) {
+    return res.status(400).json({ error: "document_name must be 255 characters or fewer" });
+  }
+  const id = randomUUID();
+  await db.execute(
+    "INSERT INTO employee_documents (id, employee_id, doc_type, doc_name, file_url, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)",
+    [id, req.params.employeeId, document_type, document_name ?? null, file_url, req.authUser!.id]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at FROM employee_documents WHERE id = ? LIMIT 1", [id]);
+  res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
+}));
 
 // PATCH /api/employee-docs/:employeeId/:docId/verify — verify or reject a document
 // payroll_head added per the Payroll Head salary/journey review gate (migration
@@ -214,49 +180,40 @@ router.patch("/:employeeId/:docId/verify", requireRole("admin", "hr", "super_adm
     return res.status(400).json({ success: false, message: "action must be 'verified' or 'rejected'" });
   }
 
-    const [check] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM employee_documents WHERE id = ? AND employee_id = ? LIMIT 1",
-      [req.params.docId, req.params.employeeId],
-    );
-    if (!(check as RowDataPacket[]).length) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Document not found" });
-    }
+  const [check] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM employee_documents WHERE id = ? AND employee_id = ? LIMIT 1",
+    [req.params.docId, req.params.employeeId]
+  );
+  if (!(check as RowDataPacket[]).length) {
+    return res.status(404).json({ success: false, message: "Document not found" });
+  }
 
-    const verified = action === "verified" ? 1 : 0;
-    // No updated_at here: employee_documents does not have that column. Verified live
-    // 2026-08-15 — it holds id, employee_id, doc_type, doc_category, legacy_source,
-    // legacy_ref_id, doc_name, file_url, verified, uploaded_by, created_at, expiry_date,
-    // verified_by, verification_date, verification_remarks, and nothing else. Setting it
-    // raised ER_BAD_FIELD_ERROR, so this endpoint 500'd on every call and no document
-    // could ever be verified or rejected through it.
-    //
-    // Dropped rather than added as a column: nothing in the codebase reads
-    // employee_documents.updated_at, and verification_date = NOW() already records when
-    // the decision was made. Adding an unread column to a 207,616-row table to satisfy
-    // one statement is the wrong trade.
-    await db.execute(
-      `UPDATE employee_documents
+  const verified = action === "verified" ? 1 : 0;
+  // No updated_at here: employee_documents does not have that column. Verified live
+  // 2026-08-15 — it holds id, employee_id, doc_type, doc_category, legacy_source,
+  // legacy_ref_id, doc_name, file_url, verified, uploaded_by, created_at, expiry_date,
+  // verified_by, verification_date, verification_remarks, and nothing else. Setting it
+  // raised ER_BAD_FIELD_ERROR, so this endpoint 500'd on every call and no document
+  // could ever be verified or rejected through it.
+  //
+  // Dropped rather than added as a column: nothing in the codebase reads
+  // employee_documents.updated_at, and verification_date = NOW() already records when
+  // the decision was made. Adding an unread column to a 207,616-row table to satisfy
+  // one statement is the wrong trade.
+  await db.execute(
+    `UPDATE employee_documents
      SET verified = ?, verified_by = ?, verification_date = NOW(),
          verification_remarks = ?
      WHERE id = ? AND employee_id = ?`,
-      [
-        verified,
-        req.authUser!.id,
-        remarks ?? null,
-        req.params.docId,
-        req.params.employeeId,
-      ],
-    );
+    [verified, req.authUser!.id, remarks ?? null, req.params.docId, req.params.employeeId]
+  );
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, verification_remarks, created_at AS uploaded_at FROM employee_documents WHERE id = ? LIMIT 1",
-      [req.params.docId],
-    );
-    res.json({ success: true, data: (rows as RowDataPacket[])[0] });
-  }),
-);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, verification_remarks, created_at AS uploaded_at FROM employee_documents WHERE id = ? LIMIT 1",
+    [req.params.docId]
+  );
+  res.json({ success: true, data: (rows as RowDataPacket[])[0] });
+}));
 
 // GET /api/employee-docs/:employeeId/:docId/download — download with original filename
 // The owner may download their own tax paperwork (Form 16 etc.); every other document needs an
@@ -296,25 +253,17 @@ router.get("/:employeeId/:docId/download", markOwnTaxDoc, unlessOwnTaxDoc(requir
   const filename = path.basename(String(doc.file_url ?? ""));
   const filePath = path.join(UPLOADS_ROOT, "employee-documents", filename);
 
-    if (!fs.existsSync(filePath)) {
-      return res
-        .status(404)
-        .json({ success: false, message: "File not found on disk" });
-    }
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ success: false, message: "File not found on disk" });
+  }
 
-    const originalName = String(doc.doc_name ?? filename);
-    const ext = path.extname(filename);
-    const safeOriginalName = originalName.endsWith(ext)
-      ? originalName
-      : `${originalName}${ext}`;
+  const originalName = String(doc.doc_name ?? filename);
+  const ext = path.extname(filename);
+  const safeOriginalName = originalName.endsWith(ext) ? originalName : `${originalName}${ext}`;
 
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${safeOriginalName}"`,
-    );
-    res.sendFile(filePath);
-  }),
-);
+  res.setHeader("Content-Disposition", `attachment; filename="${safeOriginalName}"`);
+  res.sendFile(filePath);
+}));
 
 // DELETE /api/employee-docs/:employeeId/:docId
 router.delete("/:employeeId/:docId", requireRole("admin", "hr"), guardEmployeeScope("employeeId"), h(async (req: AuthenticatedRequest, res: Response) => {

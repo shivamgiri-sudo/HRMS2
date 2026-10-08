@@ -52,9 +52,7 @@ export interface PartAAvailability {
 
 function assertFinancialYear(year: number): void {
   if (!Number.isInteger(year) || year < 1900 || year > 2999) {
-    throw new Error(
-      `A four-digit financial year start is required, received "${year}"`,
-    );
+    throw new Error(`A four-digit financial year start is required, received "${year}"`);
   }
 }
 
@@ -70,8 +68,7 @@ export async function getPartAAvailability(
   financialYear: number,
 ): Promise<PartAAvailability> {
   assertFinancialYear(financialYear);
-  const expectedFormNumber =
-    statutoryRegimeForFinancialYear(financialYear).salaryCertificateForm;
+  const expectedFormNumber = statutoryRegimeForFinancialYear(financialYear).salaryCertificateForm;
 
   let rows: RowDataPacket[] = [];
   try {
@@ -169,9 +166,7 @@ export async function recordPartA(input: {
   notes?: string | null;
 }): Promise<{ id: string; formNumber: string }> {
   assertFinancialYear(input.financialYear);
-  const formNumber = statutoryRegimeForFinancialYear(
-    input.financialYear,
-  ).salaryCertificateForm;
+  const formNumber = statutoryRegimeForFinancialYear(input.financialYear).salaryCertificateForm;
 
   const { randomUUID } = await import("crypto");
   const id = randomUUID();

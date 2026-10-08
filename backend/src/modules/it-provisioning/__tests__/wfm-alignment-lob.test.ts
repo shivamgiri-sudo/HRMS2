@@ -1,65 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { poolExecute, connExecute, lobMapped } = vi.hoisted(() => ({
-  poolExecute: vi.fn(),
-  connExecute: vi.fn(),
-  lobMapped: vi.fn(),
+  poolExecute: vi.fn(), connExecute: vi.fn(), lobMapped: vi.fn(),
 }));
 
 const conn = {
   execute: connExecute,
-  beginTransaction: vi.fn(),
-  commit: vi.fn(),
-  rollback: vi.fn(),
-  release: vi.fn(),
+  beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(),
 };
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: poolExecute, getConnection: vi.fn(async () => conn) },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: poolExecute, getConnection: vi.fn(async () => conn) } }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn() }));
-vi.mock("../../employees/employee-activation.service.js", () => ({
-  activateIfJoiningDateReached: vi.fn(),
-}));
+vi.mock("../../employees/employee-activation.service.js", () => ({ activateIfJoiningDateReached: vi.fn() }));
 vi.mock("../../communication/email.service.js", () => ({ emailService: {} }));
 vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: {} }));
-vi.mock("../../management/manager-attribution.service.js", () => ({
-  recordSupervisoryChange: vi.fn(),
-}));
-vi.mock("../../wfm/process-lob-map.service.js", () => ({
-  isLobMappedToProcess: lobMapped,
-}));
+vi.mock("../../management/manager-attribution.service.js", () => ({ recordSupervisoryChange: vi.fn() }));
+vi.mock("../../wfm/process-lob-map.service.js", () => ({ isLobMappedToProcess: lobMapped }));
 
 import { completeWfmAlignmentTask } from "../task-completion-handlers.service.js";
 
-const base = {
-  process_id: "p1",
-  roster_effective_date: "2026-09-25",
-  attendance_effective_date: "2026-09-25",
-};
-const employeeUpdates = () =>
-  connExecute.mock.calls.filter(([sql]) =>
-    /UPDATE employees SET lob_id/.test(String(sql)),
-  );
+const base = { process_id: "p1", roster_effective_date: "2026-09-25", attendance_effective_date: "2026-09-25" };
+const employeeUpdates = () => connExecute.mock.calls.filter(([sql]) => /UPDATE employees SET lob_id/.test(String(sql)));
 
 beforeEach(() => {
   poolExecute.mockReset();
   connExecute.mockReset();
   lobMapped.mockReset();
-  Object.values(conn).forEach(
-    (f) => typeof f === "function" && (f as any).mockClear?.(),
-  );
-  poolExecute.mockResolvedValue([
-    [
-      {
-        id: "t1",
-        employee_id: "e1",
-        task_code: "WFM_PROCESS_ALIGNMENT",
-        assigned_role: "wfm",
-        status: "pending",
-        date_of_joining: null,
-      },
-    ],
-  ]);
+  Object.values(conn).forEach((f) => typeof f === "function" && (f as any).mockClear?.());
+  poolExecute.mockResolvedValue([[{ id: "t1", employee_id: "e1", task_code: "WFM_PROCESS_ALIGNMENT", assigned_role: "wfm", status: "pending", date_of_joining: null }]]);
   connExecute.mockImplementation(async (sql: string) =>
     /FROM process_master pm/.test(String(sql))
       ? [[{ process_branch_id: "b1", employee_branch_id: "b1" }]]
@@ -86,9 +53,7 @@ describe("completeWfmAlignmentTask LOB handling", () => {
 
   it("rejects a LOB not mapped to the process and rolls back (task stays open)", async () => {
     lobMapped.mockResolvedValue(false);
-    await expect(
-      completeWfmAlignmentTask("t1", { ...base, lob_id: "l9" }, "u1"),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    await expect(completeWfmAlignmentTask("t1", { ...base, lob_id: "l9" }, "u1")).rejects.toMatchObject({ statusCode: 400 });
     expect(conn.rollback).toHaveBeenCalled();
     expect(conn.commit).not.toHaveBeenCalled();
     expect(employeeUpdates()).toHaveLength(0);

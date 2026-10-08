@@ -1,37 +1,21 @@
 import { Router, type NextFunction, type Response } from "express";
-import {
-  requireAuth,
-  requireWriteAccess,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./salary-revision.service.js";
 import { db } from "../../db/mysql.js";
 import { guardEmployee, filterVisibleEmployeeIds, OUT_OF_SCOPE_BODY } from "../payroll/payroll-branch-scope.js";
 
 const router = Router();
-type AsyncHandler = (
-  req: AuthenticatedRequest,
-  res: Response,
-) => Promise<unknown>;
-const h =
-  (fn: AsyncHandler) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    void fn(req, res).catch(next);
-  };
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 
 // Only Payroll Head and Super Admin approve a salary date revision; admin may raise one (FIXER_ROLES) but not approve it.
 const REVIEWER_ROLES = ["payroll_head", "super_admin"] as const;
 // "payroll" is what a payroll_hr-only account is resolved to before requireRole runs (payroll_hr is aliased to
 // payroll), so without it Payroll HR -- the primary requester -- was refused on every write.
-const FIXER_ROLES = [
-  "payroll_hr",
-  "payroll",
-  "branch_head",
-  "hr",
-  "admin",
-  "super_admin",
-] as const;
+const FIXER_ROLES    = ["payroll_hr", "payroll", "branch_head", "hr", "admin", "super_admin"] as const;
 
 router.post("/", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES), h(async (req, res) => {
   const { employee_id, requested_effective_from, reason } = req.body as Record<string, unknown>;
@@ -50,32 +34,18 @@ router.post("/", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES), h
 }));
 
 // Requesters (HR / Payroll HR / Branch Head) see the requests THEY raised, in every status.
-router.get(
-  "/mine",
-  requireAuth,
-  requireRole(...FIXER_ROLES),
-  h(async (req, res) => {
-    const data = await svc.listMyRevisionRequests(String(req.authUser!.id));
-    res.json({ success: true, data });
-  }),
-);
+router.get("/mine", requireAuth, requireRole(...FIXER_ROLES), h(async (req, res) => {
+  const data = await svc.listMyRevisionRequests(String(req.authUser!.id));
+  res.json({ success: true, data });
+}));
 
-router.get(
-  "/",
-  requireAuth,
-  requireRole(...REVIEWER_ROLES),
-  h(async (req, res) => {
-    const data = await svc.listRevisionRequests({
-      status:
-        typeof req.query.status === "string" ? req.query.status : undefined,
-      employee_id:
-        typeof req.query.employee_id === "string"
-          ? req.query.employee_id
-          : undefined,
-    });
-    res.json({ success: true, data });
-  }),
-);
+router.get("/", requireAuth, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.listRevisionRequests({
+    status: typeof req.query.status === "string" ? req.query.status : undefined,
+    employee_id: typeof req.query.employee_id === "string" ? req.query.employee_id : undefined,
+  });
+  res.json({ success: true, data });
+}));
 
 router.post("/bulk-validate", requireAuth, requireRole(...FIXER_ROLES), h(async (req, res) => {
   const { employee_codes, requested_effective_from } = req.body as Record<string, unknown>;
@@ -127,30 +97,19 @@ router.post("/bulk", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES
   res.json({ success: true, ...result });
 }));
 
-router.post(
-  "/:id/review",
-  requireAuth,
-  requireWriteAccess,
-  requireRole(...REVIEWER_ROLES),
-  h(async (req, res) => {
-    const { action, remarks } = req.body as Record<string, unknown>;
-    if (action !== "approve" && action !== "reject") {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "action must be 'approve' or 'reject'.",
-        });
-    }
-    await svc.reviewRevisionRequest(
-      Number(req.params.id),
-      action as "approve" | "reject",
-      String(req.authUser!.id),
-      typeof remarks === "string" ? remarks : undefined,
-      req.authUser!.roles,
-    );
-    res.json({ success: true });
-  }),
-);
+router.post("/:id/review", requireAuth, requireWriteAccess, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
+  const { action, remarks } = req.body as Record<string, unknown>;
+  if (action !== "approve" && action !== "reject") {
+    return res.status(400).json({ success: false, message: "action must be 'approve' or 'reject'." });
+  }
+  await svc.reviewRevisionRequest(
+    Number(req.params.id),
+    action as "approve" | "reject",
+    String(req.authUser!.id),
+    typeof remarks === "string" ? remarks : undefined,
+    req.authUser!.roles
+  );
+  res.json({ success: true });
+}));
 
 export const salaryRevisionRouter = router;

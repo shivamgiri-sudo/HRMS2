@@ -16,55 +16,32 @@ import { describe, expect, it } from "vitest";
  * showing the amounts being decided on.
  */
 const QUEUE = readFileSync(
-  resolve(
-    process.cwd(),
-    "..",
-    "src",
-    "pages",
-    "payroll",
-    "PayrollHeadSalaryReviewQueue.tsx",
-  ),
+  resolve(process.cwd(), "..", "src", "pages", "payroll", "PayrollHeadSalaryReviewQueue.tsx"),
   "utf8",
 );
 const SERVICE = readFileSync(
-  resolve(
-    process.cwd(),
-    "src/modules/payroll-head-review/payroll-head-review.service.ts",
-  ),
+  resolve(process.cwd(), "src/modules/payroll-head-review/payroll-head-review.service.ts"),
   "utf8",
 );
 
 describe("Final salary is not shown as final before approval", () => {
   it("gates the row's figure on an approved review, not on a package existing", () => {
-    expect(QUEUE).toMatch(
-      /const showFinal = row\.status === 'approved' && row\.final_ctc != null;/,
-    );
+    expect(QUEUE).toMatch(/const showFinal = row\.status === 'approved' && row\.final_ctc != null;/);
   });
 
   it("labels the figure so it cannot be misread as final while pending", () => {
-    const block = QUEUE.slice(
-      QUEUE.indexOf("const showFinal ="),
-      QUEUE.indexOf("const showFinal =") + 1600,
-    );
-    expect(block).toMatch(
-      /showFinal \? 'final monthly CTC' : 'offered monthly CTC'/,
-    );
+    const block = QUEUE.slice(QUEUE.indexOf("const showFinal ="), QUEUE.indexOf("const showFinal =") + 1600);
+    expect(block).toMatch(/showFinal \? 'final monthly CTC' : 'offered monthly CTC'/);
   });
 
   it("falls back to the offered figure rather than hiding the column", () => {
     // Blanking it would read as missing data; the offer is a real, decided number.
-    const block = QUEUE.slice(
-      QUEUE.indexOf("const amount = showFinal"),
-      QUEUE.indexOf("const amount = showFinal") + 400,
-    );
+    const block = QUEUE.slice(QUEUE.indexOf("const amount = showFinal"), QUEUE.indexOf("const amount = showFinal") + 400);
     expect(block).toContain("row.offered_ctc");
   });
 
   it("the section tile withholds an amount until the review is approved", () => {
-    const tile = QUEUE.slice(
-      QUEUE.indexOf("case 'final': {"),
-      QUEUE.indexOf("case 'final': {") + 900,
-    );
+    const tile = QUEUE.slice(QUEUE.indexOf("case 'final': {"), QUEUE.indexOf("case 'final': {") + 900);
     expect(tile).toMatch(/const decided = row\.status === 'approved';/);
     // "Validated", not "Accepted" — the button was renamed to Validate Package on
     // 2026-08-27 (owner request) and this tile's copy follows it. What the assertion
@@ -75,9 +52,7 @@ describe("Final salary is not shown as final before approval", () => {
   });
 
   it("leaves the drawer's Final Salary panel intact — it is the approval tool", () => {
-    const drawer = QUEUE.slice(
-      QUEUE.indexOf("export function FinalSalarySection"),
-    );
+    const drawer = QUEUE.slice(QUEUE.indexOf("export function FinalSalarySection"));
     expect(drawer).toMatch(/\{sc \?/);
   });
 

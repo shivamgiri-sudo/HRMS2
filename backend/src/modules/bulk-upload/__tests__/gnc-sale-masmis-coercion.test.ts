@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  parseGncDate,
-  GNC_SALE_HEADERS,
-} from "../gnc-sale-masmis-bulk.service.js";
+import { parseGncDate, GNC_SALE_HEADERS } from "../gnc-sale-masmis-bulk.service.js";
 
 describe("parseGncDate", () => {
   it("reads a real Excel serial (46235 = 2026-08-01)", () => {

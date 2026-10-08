@@ -41,7 +41,7 @@ export const workflowService = {
        LEFT JOIN approval_workflow_step s ON s.workflow_id = w.id AND s.active_status = 1
        WHERE w.active_status = 1
        GROUP BY w.id
-       ORDER BY w.workflow_name`,
+       ORDER BY w.workflow_name`
     );
     return rows as RowDataPacket[];
   },
@@ -49,7 +49,7 @@ export const workflowService = {
   async getWorkflowByCode(code: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM approval_workflow_master WHERE workflow_code = ? AND active_status = 1 LIMIT 1",
-      [code],
+      [code]
     );
     return (rows as RowDataPacket[])[0] ?? null;
   },
@@ -63,29 +63,16 @@ export const workflowService = {
     summary_text?: string;
   }): Promise<ApprovalRequest> {
     const workflow = await this.getWorkflowByCode(data.workflow_code);
-    if (!workflow)
-      throw Object.assign(
-        new Error(`Workflow not found: ${data.workflow_code}`),
-        { statusCode: 404 },
-      );
+    if (!workflow) throw Object.assign(new Error(`Workflow not found: ${data.workflow_code}`), { statusCode: 404 });
 
     const id = randomUUID();
     await db.execute(
       `INSERT INTO approval_request (id, workflow_id, module_key, entity_type, entity_id, requested_by, summary_text)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        workflow.id,
-        data.module_key,
-        data.entity_type,
-        data.entity_id,
-        data.requested_by,
-        data.summary_text ?? null,
-      ],
+      [id, workflow.id, data.module_key, data.entity_type, data.entity_id, data.requested_by, data.summary_text ?? null]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM approval_request WHERE id = ? LIMIT 1",
-      [id],
+      "SELECT * FROM approval_request WHERE id = ? LIMIT 1", [id]
     );
     return (rows as RowDataPacket[])[0] as ApprovalRequest;
   },
@@ -125,20 +112,14 @@ export const workflowService = {
     return rows as RowDataPacket[];
   },
 
-  async listRequestsByUser(
-    userId: string,
-    filters?: { status?: string; page?: number; limit?: number },
-  ) {
+  async listRequestsByUser(userId: string, filters?: { status?: string; page?: number; limit?: number }) {
     const page = filters?.page ?? 1;
     const limit = filters?.limit ?? 25;
     const offset = (page - 1) * limit;
-    const conditions = ["r.requested_by = ?"];
+    const conditions = ['r.requested_by = ?'];
     const params: unknown[] = [userId];
-    if (filters?.status) {
-      conditions.push("r.status = ?");
-      params.push(filters.status);
-    }
-    const where = conditions.join(" AND ");
+    if (filters?.status) { conditions.push('r.status = ?'); params.push(filters.status); }
+    const where = conditions.join(' AND ');
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT r.*, r.summary_text AS summary, w.workflow_name, w.workflow_code
        FROM approval_request r
@@ -146,7 +127,7 @@ export const workflowService = {
        WHERE ${where}
        ORDER BY r.created_at DESC
        LIMIT ${limit} OFFSET ${offset}`,
-      params,
+      params
     );
     return rows as RowDataPacket[];
   },
@@ -177,7 +158,7 @@ export const workflowService = {
        ${where}
        ORDER BY r.created_at DESC
        LIMIT ${limit} OFFSET ${offset}`,
-      params,
+      params
     );
     return rows as RowDataPacket[];
   },
@@ -212,40 +193,23 @@ export const workflowService = {
        -- approval trail by it raised ER_BAD_FIELD_ERROR and the history could
        -- never be read.
        ORDER BY al.acted_at ASC`,
-      [requestId],
+      [requestId]
     );
     return rows as RowDataPacket[];
   },
 
-  async act(
-    requestId: string,
-    actorUserId: string,
-    action: "approved" | "rejected" | "withdrawn",
-    remarks?: string,
-  ) {
+  async act(requestId: string, actorUserId: string, action: "approved" | "rejected" | "withdrawn", remarks?: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM approval_request WHERE id = ? LIMIT 1",
-      [requestId],
+      "SELECT * FROM approval_request WHERE id = ? LIMIT 1", [requestId]
     );
     const req = (rows as RowDataPacket[])[0];
-    if (!req)
-      throw Object.assign(new Error("Request not found"), { statusCode: 404 });
-    if (req.status !== "pending")
-      throw Object.assign(new Error(`Request is already ${req.status}`), {
-        statusCode: 409,
-      });
+    if (!req) throw Object.assign(new Error("Request not found"), { statusCode: 404 });
+    if (req.status !== "pending") throw Object.assign(new Error(`Request is already ${req.status}`), { statusCode: 409 });
 
     // Log the action
     await db.execute(
       "INSERT INTO approval_action_log (id, request_id, step_order, actor_user_id, action, remarks) VALUES (?, ?, ?, ?, ?, ?)",
-      [
-        randomUUID(),
-        requestId,
-        req.current_step,
-        actorUserId,
-        action,
-        remarks ?? null,
-      ],
+      [randomUUID(), requestId, req.current_step, actorUserId, action, remarks ?? null]
     );
 
     if (action === "approved") {
@@ -253,32 +217,31 @@ export const workflowService = {
       const [stepRows] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total FROM approval_workflow_step
          WHERE workflow_id = ? AND step_order > ? AND active_status = 1`,
-        [req.workflow_id, req.current_step],
+        [req.workflow_id, req.current_step]
       );
       const hasMore = (stepRows as RowDataPacket[])[0].total > 0;
 
       if (hasMore) {
         await db.execute(
           "UPDATE approval_request SET current_step = current_step + 1, updated_at = NOW() WHERE id = ?",
-          [requestId],
+          [requestId]
         );
       } else {
         await db.execute(
           "UPDATE approval_request SET status = 'approved', updated_at = NOW() WHERE id = ?",
-          [requestId],
+          [requestId]
         );
       }
     } else {
       const newStatus = action === "rejected" ? "rejected" : "withdrawn";
       await db.execute(
         "UPDATE approval_request SET status = ?, updated_at = NOW() WHERE id = ?",
-        [newStatus, requestId],
+        [newStatus, requestId]
       );
     }
 
     const [updated] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM approval_request WHERE id = ? LIMIT 1",
-      [requestId],
+      "SELECT * FROM approval_request WHERE id = ? LIMIT 1", [requestId]
     );
     return (updated as RowDataPacket[])[0] as ApprovalRequest;
   },

@@ -12,15 +12,11 @@ import { readFileSync } from "node:fs";
  */
 
 const { execute, query, getConnection } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  query: vi.fn(),
-  getConnection: vi.fn(),
+  execute: vi.fn(), query: vi.fn(), getConnection: vi.fn(),
 }));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute, query, getConnection },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute, query, getConnection } }));
 
-let grnService: (typeof import("../grn.service.js"))["grnService"];
+let grnService: typeof import("../grn.service.js")["grnService"];
 beforeAll(async () => {
   ({ grnService } = await import("../grn.service.js"));
 }, 120_000);
@@ -44,27 +40,17 @@ beforeEach(() => {
   query.mockReset();
   connectionExecute.mockReset();
   execute.mockResolvedValue([[{ id: "g1", billing_cycle_status: null }], []]);
-  connectionExecute.mockResolvedValue([
-    [{ id: "g1", billing_cycle_status: null }],
-    [],
-  ]);
+  connectionExecute.mockResolvedValue([[{ id: "g1", billing_cycle_status: null }], []]);
   query.mockResolvedValue([[], []]);
   getConnection.mockReset();
   getConnection.mockResolvedValue(connection);
 });
 
 function statementMatching(pattern: RegExp) {
-  const calls = [
-    ...execute.mock.calls,
-    ...query.mock.calls,
-    ...connectionExecute.mock.calls,
-  ];
+  const calls = [...execute.mock.calls, ...query.mock.calls, ...connectionExecute.mock.calls];
   const hit = calls.find(([sql]) => pattern.test(String(sql)));
   if (!hit) throw new Error(`no statement matching ${pattern}`);
-  return {
-    sql: String(hit[0]).replace(/\s+/g, " "),
-    params: (hit[1] ?? []) as unknown[],
-  };
+  return { sql: String(hit[0]).replace(/\s+/g, " "), params: (hit[1] ?? []) as unknown[] };
 }
 
 describe("setBillingCycleStatus", () => {
@@ -72,10 +58,8 @@ describe("setBillingCycleStatus", () => {
     await grnService.setBillingCycleStatus("g1", "CLOSED", "u1");
     const update = statementMatching(/UPDATE grn_request/);
     expect(update.sql).toContain("billing_cycle_status = ?");
-    expect(
-      update.sql,
-      "closing a billing cycle must not move the approval chain",
-    ).not.toMatch(/\bstatus\s*=/);
+    expect(update.sql, "closing a billing cycle must not move the approval chain")
+      .not.toMatch(/\bstatus\s*=/);
     expect(update.params).toContain("CLOSED");
   });
 
@@ -100,9 +84,7 @@ describe("setBillingCycleStatus", () => {
   it("refuses a GRN that does not exist", async () => {
     // The lookup runs on the transaction's connection now, so that is the mock to script.
     connectionExecute.mockResolvedValue([[], []]);
-    await expect(
-      grnService.setBillingCycleStatus("nope", "OPEN", "u1"),
-    ).rejects.toThrow(/not found/i);
+    await expect(grnService.setBillingCycleStatus("nope", "OPEN", "u1")).rejects.toThrow(/not found/i);
   });
 
   it("records an approval event carrying the previous value", async () => {
@@ -116,9 +98,7 @@ describe("setBillingCycleStatus", () => {
     const event = statementMatching(/INSERT INTO finance_approval_event/);
     expect(event.params).toContain("billing_cycle_set");
     expect(event.params, "from_status carries what it was").toContain("OPEN");
-    expect(event.params, "to_status carries what it became").toContain(
-      "CLOSED",
-    );
+    expect(event.params, "to_status carries what it became").toContain("CLOSED");
   });
 });
 
@@ -163,9 +143,7 @@ describe("listGrns — search filters", () => {
     // Otherwise a period filter hides every GRN raised before accounting_period existed.
     await grnService.listGrns({ accountingPeriod: "2026-08" });
     const { sql, params } = call();
-    expect(sql).toContain(
-      "COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m')) = ?",
-    );
+    expect(sql).toContain("COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m')) = ?");
     expect(params).toContain("2026-08");
   });
 
@@ -179,19 +157,10 @@ describe("listGrns — search filters", () => {
   it("keeps placeholder count equal to parameter count across many filters", async () => {
     // A mismatch is a runtime bind error, not a compile error.
     await grnService.listGrns({
-      grnNumber: "MAS",
-      invoiceNumber: "INV",
-      vendorId: "v1",
-      head: "Office Rent",
-      subHead: "Rent",
-      billingCycleStatus: "OPEN",
-      accountingPeriod: "2026-08",
-      billDateFrom: "2026-08-01",
-      billDateTo: "2026-08-31",
-      amountFrom: 1,
-      amountTo: 2,
-      createdBy: "u1",
-      multiMonth: true,
+      grnNumber: "MAS", invoiceNumber: "INV", vendorId: "v1", head: "Office Rent",
+      subHead: "Rent", billingCycleStatus: "OPEN", accountingPeriod: "2026-08",
+      billDateFrom: "2026-08-01", billDateTo: "2026-08-31",
+      amountFrom: 1, amountTo: 2, createdBy: "u1", multiMonth: true,
       branchScope: { mode: "branches", branchIds: ["b1", "b2"] },
     });
     const { sql, params } = call();
@@ -204,10 +173,7 @@ describe("listGrns — search filters", () => {
 
 describe("source contract — the two statuses stay apart", () => {
   it("no statement writes billing_cycle_status and status together", async () => {
-    const src = readFileSync(
-      new URL("../grn.service.ts", import.meta.url),
-      "utf8",
-    );
+    const src = readFileSync(new URL("../grn.service.ts", import.meta.url), "utf8");
     for (const stmt of src.split(/`/)) {
       if (!/UPDATE\s+grn_request/i.test(stmt)) continue;
       const setsBilling = /billing_cycle_status\s*=/.test(stmt);

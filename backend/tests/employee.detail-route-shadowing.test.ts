@@ -29,10 +29,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
 const backendRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SECURE_ROUTES = join(
-  backendRoot,
-  "src/modules/employees/employee.secure.routes.ts",
-);
+const SECURE_ROUTES = join(backendRoot, "src/modules/employees/employee.secure.routes.ts");
 
 describe("employee.secure.routes.ts no longer defines a plain GET /:id", () => {
   const source = readFileSync(SECURE_ROUTES, "utf8");
@@ -60,17 +57,11 @@ describe("GET /api/employees/:id falls through to the redacted handler", () => {
     // Mirrors the real employee.secure.routes.ts surface post-fix: UUID-suffixed
     // routes only, no bare UUID_ROUTE handler.
     const secure = express.Router();
-    secure.get("/:id([0-9a-fA-F-]{36})/stat-card", (_req, res) =>
-      res.json({ servedBy: "secure-stat-card" }),
-    );
-    secure.get("/:id([0-9a-fA-F-]{36})/ctc", (_req, res) =>
-      res.json({ servedBy: "secure-ctc" }),
-    );
+    secure.get("/:id([0-9a-fA-F-]{36})/stat-card", (_req, res) => res.json({ servedBy: "secure-stat-card" }));
+    secure.get("/:id([0-9a-fA-F-]{36})/ctc", (_req, res) => res.json({ servedBy: "secure-ctc" }));
 
     const generic = express.Router();
-    generic.get("/:id", (_req, res) =>
-      res.json({ servedBy: "generic-redacted" }),
-    );
+    generic.get("/:id", (_req, res) => res.json({ servedBy: "generic-redacted" }));
 
     const app = express()
       .use("/api/employees", secure)
@@ -84,29 +75,19 @@ describe("GET /api/employees/:id falls through to the redacted handler", () => {
 
   it("stat-card and ctc sub-paths are unaffected and still resolve on the secure router", async () => {
     const secure = express.Router();
-    secure.get("/:id([0-9a-fA-F-]{36})/stat-card", (_req, res) =>
-      res.json({ servedBy: "secure-stat-card" }),
-    );
-    secure.get("/:id([0-9a-fA-F-]{36})/ctc", (_req, res) =>
-      res.json({ servedBy: "secure-ctc" }),
-    );
+    secure.get("/:id([0-9a-fA-F-]{36})/stat-card", (_req, res) => res.json({ servedBy: "secure-stat-card" }));
+    secure.get("/:id([0-9a-fA-F-]{36})/ctc", (_req, res) => res.json({ servedBy: "secure-ctc" }));
 
     const generic = express.Router();
-    generic.get("/:id", (_req, res) =>
-      res.json({ servedBy: "generic-redacted" }),
-    );
-    generic.get("/:id/stat-card", (_req, res) =>
-      res.json({ servedBy: "generic-stat-card" }),
-    );
+    generic.get("/:id", (_req, res) => res.json({ servedBy: "generic-redacted" }));
+    generic.get("/:id/stat-card", (_req, res) => res.json({ servedBy: "generic-stat-card" }));
 
     const app = express()
       .use("/api/employees", secure)
       .use("/api/employees", generic);
 
     const uuid = "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
-    const statCardRes = await request(app).get(
-      `/api/employees/${uuid}/stat-card`,
-    );
+    const statCardRes = await request(app).get(`/api/employees/${uuid}/stat-card`);
     const ctcRes = await request(app).get(`/api/employees/${uuid}/ctc`);
 
     expect(statCardRes.body.servedBy).toBe("secure-stat-card");

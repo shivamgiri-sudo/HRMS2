@@ -7,15 +7,7 @@ export class NodemailerProvider implements CommunicationProvider {
   private transporter: nodemailer.Transporter;
   private _from: string | undefined;
 
-  constructor(
-    host?: string,
-    port?: number,
-    secure?: boolean,
-    user?: string,
-    pass?: string,
-    from?: string,
-    fromName?: string,
-  ) {
+  constructor(host?: string, port?: number, secure?: boolean, user?: string, pass?: string, from?: string, fromName?: string) {
     this.transporter = nodemailer.createTransport({
       host:   host   ?? process.env.SMTP_HOST,
       port:   port   ?? parseInt(process.env.SMTP_PORT ?? '587'),
@@ -31,18 +23,12 @@ export class NodemailerProvider implements CommunicationProvider {
         pass: pass ?? process.env.SMTP_PASS,
       },
     });
-    const fromAddress =
-      from ?? process.env.SMTP_FROM ?? process.env.SMTP_USER ?? "";
-    const name = fromName ?? process.env.SMTP_FROM_NAME ?? "";
+    const fromAddress = from ?? process.env.SMTP_FROM ?? process.env.SMTP_USER ?? '';
+    const name = fromName ?? process.env.SMTP_FROM_NAME ?? '';
     this._from = name ? `"${name}" <${fromAddress}>` : fromAddress;
   }
 
-  async send(
-    recipient: string,
-    subject: string,
-    body: string,
-    attachments?: Attachment[],
-  ): Promise<ProviderResponse> {
+  async send(recipient: string, subject: string, body: string, attachments?: Attachment[]): Promise<ProviderResponse> {
     try {
       const result = await withSmtpRetry(() => this.transporter.sendMail({
         from: this._from,
@@ -51,23 +37,18 @@ export class NodemailerProvider implements CommunicationProvider {
       }));
       return { success: true, message_id: result.messageId };
     } catch (e) {
-      return {
-        success: false,
-        error: e instanceof Error ? e.message : String(e),
-      };
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
 
   async getDeliveryStatus(_messageId: string): Promise<DeliveryStatus> {
     // Nodemailer has no delivery tracking API; status is assumed sent
-    return { status: "sent" };
+    return { status: 'sent' };
   }
 
   validateRecipient(contact: string): boolean {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact);
   }
 
-  getName(): string {
-    return "nodemailer";
-  }
+  getName(): string { return 'nodemailer'; }
 }

@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseCount,
-  parseDate,
-  CLOVIA_CHAT_DAILY_HEADERS,
+  parseCount, parseDate, CLOVIA_CHAT_DAILY_HEADERS,
 } from "../clovia-chat-daily-bulk.service.js";
 
 describe("parseCount", () => {
@@ -38,8 +36,6 @@ describe("headers", () => {
     expect(CLOVIA_CHAT_DAILY_HEADERS).toHaveLength(4);
     expect(CLOVIA_CHAT_DAILY_HEADERS).toContain("C-Sat Count");
     // Response%/Chat-CSAT% are deliberately never accepted -- derivable from raw counts.
-    expect(CLOVIA_CHAT_DAILY_HEADERS as readonly string[]).not.toContain(
-      "Response%",
-    );
+    expect(CLOVIA_CHAT_DAILY_HEADERS as readonly string[]).not.toContain("Response%");
   });
 });

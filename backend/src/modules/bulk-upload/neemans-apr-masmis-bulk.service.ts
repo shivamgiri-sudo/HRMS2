@@ -15,10 +15,5 @@ export async function importNeemansAprMasmisBatch(
   batchId: string,
   importedByUserId: string,
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
-  return importViaSharedInsert(
-    batchId,
-    insertNeemansAprRows,
-    importedByUserId,
-    "empName",
-  );
+  return importViaSharedInsert(batchId, insertNeemansAprRows, importedByUserId, "empName");
 }

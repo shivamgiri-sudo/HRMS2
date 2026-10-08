@@ -32,8 +32,7 @@ export const MINIMUM_EMPLOYMENT_AGE = 18;
 /** The letter states retirement at 58. Flagged, never blocked — that is a policy call, not a legal bar to onboarding. */
 export const SUPERANNUATION_AGE = 58;
 
-export type DobSource =
-  "bgv_verified" | "ocr_document" | "self_declared" | "none";
+export type DobSource = "bgv_verified" | "ocr_document" | "self_declared" | "none";
 
 export type AgeVerification = {
   dob: string | null;
@@ -58,10 +57,7 @@ function toIsoDate(v: unknown): string | null {
   // Format in IST: a DOB stored at 18:30 UTC is the next day in India, and being
   // a day out matters at the 18th-birthday boundary.
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(d);
 }
 
@@ -80,27 +76,20 @@ export function extractDobFromText(text: string): string | null {
   if (!text) return null;
   const patterns: Array<[RegExp, (m: RegExpMatchArray) => string]> = [
     // DOB: 01/02/1990 or 01-02-1990 (dd/mm/yyyy — Aadhaar and marksheets)
-    [
-      /\b(?:DOB|D\.O\.B|Date of Birth|Birth)\D{0,12}(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\b/i,
-      (m) => `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`,
-    ],
+    [/\b(?:DOB|D\.O\.B|Date of Birth|Birth)\D{0,12}(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\b/i,
+      (m) => `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`],
     // Year of Birth: 1990 — Aadhaar prints this when only the year is known.
     [/\b(?:YOB|Year of Birth)\D{0,8}(\d{4})\b/i, (m) => `${m[1]}-01-01`],
     // Bare dd/mm/yyyy anywhere, as a last resort.
-    [
-      /\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\b/,
-      (m) => `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`,
-    ],
+    [/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\b/,
+      (m) => `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`],
   ];
 
   // A date printed next to "issued", "generated", "downloaded" etc. is a document date, never a
   // birth date (an Aadhaar back page reads "Aadhaar no. issued: 19/11/2011").
-  const DOCUMENT_DATE_LABEL =
-    /(issued?|issue date|date of issue|generated|downloaded|printed|valid(ity)?|dated?)\W{0,12}$/i;
+  const DOCUMENT_DATE_LABEL = /(issued?|issue date|date of issue|generated|downloaded|printed|valid(ity)?|dated?)\W{0,12}$/i;
   const isDocumentDate = (m: RegExpMatchArray) =>
-    DOCUMENT_DATE_LABEL.test(
-      text.slice(Math.max(0, (m.index ?? 0) - 30), m.index ?? 0),
-    );
+    DOCUMENT_DATE_LABEL.test(text.slice(Math.max(0, (m.index ?? 0) - 30), m.index ?? 0));
 
   for (const [re, build] of patterns) {
     const m = text.match(re);
@@ -131,59 +120,45 @@ export async function resolveVerifiedDob(
   const candidates: Array<{ source: DobSource; dob: string }> = [];
 
   // 1. provider-verified
-  const [bgv] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT matched_dob FROM candidate_bgv_check
+  const [bgv] = await db.execute<RowDataPacket[]>(
+    `SELECT matched_dob FROM candidate_bgv_check
       WHERE candidate_id = ? AND matched_dob IS NOT NULL
       ORDER BY updated_at DESC LIMIT 1`,
-      [candidateId],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    [candidateId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   const bgvDob = toIsoDate((bgv as RowDataPacket[])[0]?.matched_dob);
   if (bgvDob) candidates.push({ source: "bgv_verified", dob: bgvDob });
 
   // 2. OCR of an uploaded identity/age document
-  const [docs] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT ocr_raw_text FROM candidate_onboarding_document
+  const [docs] = await db.execute<RowDataPacket[]>(
+    `SELECT ocr_raw_text FROM candidate_onboarding_document
       WHERE candidate_id = ? AND ocr_raw_text IS NOT NULL AND ocr_raw_text <> ''
         AND (LOWER(doc_type) LIKE '%aadhaar%' OR LOWER(doc_type) LIKE '%aadhar%'
              OR LOWER(doc_type) LIKE '%10th%' OR LOWER(doc_name) LIKE '%10th%')
       ORDER BY uploaded_at DESC LIMIT 5`,
-      [candidateId],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    [candidateId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   for (const d of docs as RowDataPacket[]) {
     const dob = extractDobFromText(String(d.ocr_raw_text ?? ""));
-    if (dob) {
-      candidates.push({ source: "ocr_document", dob });
-      break;
-    }
+    if (dob) { candidates.push({ source: "ocr_document", dob }); break; }
   }
 
   // 3. self-declared
-  const [prof] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT COALESCE(p.date_of_birth, c.date_of_birth) AS dob
+  const [prof] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(p.date_of_birth, c.date_of_birth) AS dob
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
       WHERE c.id = ? LIMIT 1`,
-      [candidateId],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    [candidateId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   const declared = toIsoDate((prof as RowDataPacket[])[0]?.dob);
   if (declared) candidates.push({ source: "self_declared", dob: declared });
 
   if (candidates.length === 0) {
     return {
-      dob: null,
-      source: "none",
-      age: null,
-      isMinor: false,
-      verified: false,
+      dob: null, source: "none", age: null, isMinor: false, verified: false,
       conflicts: [],
-      reason:
-        "No date of birth is on record from any source, so age could not be verified.",
+      reason: "No date of birth is on record from any source, so age could not be verified.",
     };
   }
 
@@ -195,9 +170,7 @@ export async function resolveVerifiedDob(
   // Disagreement beyond a day is worth HR's attention; a one-day gap is a
   // timezone artefact, not a discrepancy.
   const conflicts = candidates.slice(1).filter((c) => {
-    const diff = Math.abs(
-      new Date(c.dob).getTime() - new Date(chosen.dob).getTime(),
-    );
+    const diff = Math.abs(new Date(c.dob).getTime() - new Date(chosen.dob).getTime());
     return diff > 36 * 3600 * 1000;
   });
 
@@ -257,19 +230,11 @@ export async function assertEmployableAge(
  * legal block on employing anyone under MINIMUM_EMPLOYMENT_AGE lives in
  * assertEmployableAge, above, and is unaffected by this flag either way.
  */
-export async function persistMinorFlag(
-  candidateId: string,
-  v: AgeVerification,
-): Promise<void> {
-  await db
-    .execute(
-      `UPDATE ats_candidate SET is_minor = ?, updated_at = NOW() WHERE id = ?`,
-      [v.isMinor ? 1 : 0, candidateId],
-    )
-    .catch((err: unknown) => {
-      logger.error(
-        { err, candidateId, isMinor: v.isMinor },
-        "[ageVerification] Failed to persist is_minor flag",
-      );
-    });
+export async function persistMinorFlag(candidateId: string, v: AgeVerification): Promise<void> {
+  await db.execute(
+    `UPDATE ats_candidate SET is_minor = ?, updated_at = NOW() WHERE id = ?`,
+    [v.isMinor ? 1 : 0, candidateId],
+  ).catch((err: unknown) => {
+    logger.error({ err, candidateId, isMinor: v.isMinor }, '[ageVerification] Failed to persist is_minor flag');
+  });
 }

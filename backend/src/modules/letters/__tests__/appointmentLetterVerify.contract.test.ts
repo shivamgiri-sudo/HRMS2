@@ -20,8 +20,7 @@ let lastParams: unknown[] = [];
 vi.mock("../../../db/mysql.js", () => ({
   db: {
     execute: vi.fn(async (sql: string, params?: unknown[]) => {
-      lastSql = String(sql);
-      lastParams = params ?? [];
+      lastSql = String(sql); lastParams = params ?? [];
       return [row ? [row] : []];
     }),
   },
@@ -47,11 +46,7 @@ const baseRow = {
   revoked_at: null,
 };
 
-beforeEach(() => {
-  row = undefined;
-  lastSql = "";
-  lastParams = [];
-});
+beforeEach(() => { row = undefined; lastSql = ""; lastParams = []; });
 
 describe("token handling", () => {
   it("mints a token and stores only its hash", () => {
@@ -65,9 +60,7 @@ describe("token handling", () => {
     row = { ...baseRow };
     await verifyAppointmentLetter(TOKEN);
     expect(lastSql).toContain("verify_token_hash = ?");
-    expect(lastParams[0]).toBe(
-      createHash("sha256").update(TOKEN).digest("hex"),
-    );
+    expect(lastParams[0]).toBe(createHash("sha256").update(TOKEN).digest("hex"));
     expect(lastParams[0]).not.toBe(TOKEN);
   });
 
@@ -85,8 +78,7 @@ describe("token handling", () => {
 
   it("builds a verification URL from the token", () => {
     expect(verificationUrl("https://mcnhrms.teammas.in/", "abc")).toBe(
-      "https://mcnhrms.teammas.in/verify/appointment/abc",
-    );
+      "https://mcnhrms.teammas.in/verify/appointment/abc");
   });
 });
 
@@ -123,11 +115,7 @@ describe("what a verifier is told", () => {
   });
 
   it("reports a revoked letter as not to be relied upon", async () => {
-    row = {
-      ...baseRow,
-      status: "revoked",
-      revoked_at: new Date("2026-01-05T06:00:00Z"),
-    };
+    row = { ...baseRow, status: "revoked", revoked_at: new Date("2026-01-05T06:00:00Z") };
     const r = await verifyAppointmentLetter(TOKEN);
     if (!r.found) throw new Error("expected found");
     expect(r.valid).toBe(false);
@@ -146,25 +134,12 @@ describe("discloses nothing sensitive", () => {
     row = {
       ...baseRow,
       // Even if these were selected by mistake, they must not reach the caller.
-      basic: 17000,
-      gross_salary: 30000,
-      ctc: 30000,
-      address: "somewhere private",
-      aadhaar_number: "1234",
-      pan_number: "ABCDE1234F",
+      basic: 17000, gross_salary: 30000, ctc: 30000,
+      address: "somewhere private", aadhaar_number: "1234", pan_number: "ABCDE1234F",
     };
     const r = await verifyAppointmentLetter(TOKEN);
     const json = JSON.stringify(r);
-    for (const leak of [
-      "17000",
-      "30000",
-      "somewhere private",
-      "1234",
-      "ABCDE1234F",
-      "salary",
-      "aadhaar",
-      "pan_number",
-    ]) {
+    for (const leak of ["17000", "30000", "somewhere private", "1234", "ABCDE1234F", "salary", "aadhaar", "pan_number"]) {
       expect(json.toLowerCase()).not.toContain(leak.toLowerCase());
     }
   });
@@ -172,12 +147,7 @@ describe("discloses nothing sensitive", () => {
   it("selects only the disclosable columns", async () => {
     row = { ...baseRow };
     await verifyAppointmentLetter(TOKEN);
-    for (const col of [
-      "salary_snapshot_json",
-      "signed_file_path",
-      "esign_transaction_id",
-      "certificate_id",
-    ]) {
+    for (const col of ["salary_snapshot_json", "signed_file_path", "esign_transaction_id", "certificate_id"]) {
       expect(lastSql).not.toContain(col);
     }
   });

@@ -22,28 +22,22 @@ try {
   await conn.query("SET SESSION lock_wait_timeout = 30");
 
   const [cols] = await conn.query(
-    "SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
-    [TABLE, COLUMN],
-  );
+    "SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?", [TABLE, COLUMN]);
   if ((cols as unknown[]).length === 0) {
     const t = Date.now();
     await conn.query(
       `ALTER TABLE ${TABLE} ADD COLUMN ${COLUMN} VARCHAR(100)
          GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(raw_data, '$."Task Information Task Type Old"'))) VIRTUAL,
-         ALGORITHM = INSTANT`,
-    );
+         ALGORITHM = INSTANT`);
     console.log(`column added in ${Date.now() - t} ms`);
   } else console.log("column already present");
 
   const [idx] = await conn.query(
-    "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
-    [TABLE, INDEX],
-  );
+    "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", [TABLE, INDEX]);
   if ((idx as unknown[]).length === 0) {
     const t = Date.now();
     await conn.query(
-      `ALTER TABLE ${TABLE} ADD INDEX ${INDEX} (report_date, ${COLUMN}, manual_processing_time_secs), ALGORITHM = INPLACE, LOCK = NONE`,
-    );
+      `ALTER TABLE ${TABLE} ADD INDEX ${INDEX} (report_date, ${COLUMN}, manual_processing_time_secs), ALGORITHM = INPLACE, LOCK = NONE`);
     console.log(`index built in ${((Date.now() - t) / 1000).toFixed(1)} s`);
   } else console.log("index already present");
 } finally {

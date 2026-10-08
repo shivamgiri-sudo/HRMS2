@@ -102,11 +102,11 @@ export function buildAttendanceSourceWorkbook(
   const dateRow = ws.getRow(1);
   const headerRow = ws.getRow(2);
   const IDENTITY_WIDTHS: Record<number, number> = {
-    1: 26, // Employee name
-    4: 22, // Department
-    5: 22, // Designation
-    8: 22, // Process Name
-    9: 18, // Process LOB
+    1: 26,  // Employee name
+    4: 22,  // Department
+    5: 22,  // Designation
+    8: 22,  // Process Name
+    9: 18,  // Process LOB
     11: 14, // Date of Leaving
   };
   IDENTITY_HEADERS.forEach((h, i) => {
@@ -163,11 +163,7 @@ export function buildAttendanceSourceWorkbook(
       // After DOL: blank cell with a light grey fill, no code
       if (afterDOL) {
         cells.forEach((c) => {
-          c.fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: { argb: "FFE2E8F0" },
-          };
+          c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
         });
         return;
       }

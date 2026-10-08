@@ -32,47 +32,29 @@ export interface DomainGuardResult {
 // ai-input-guard.ts's INJECTION_PATTERNS.
 const UNSAFE_PATTERNS: Array<[RegExp, string]> = [
   // Requests to view another named person's sensitive data via "fix this bug" framing.
-  [
-    /\b(show|give|send|tell)\s+me\s+.{0,40}(salary|bank\s*(account|detail)|pan\s*(number|card)|aadhaar|password|passwor)\b/i,
-    "requests another person's sensitive data",
-  ],
-  [
-    /\b(his|her|their)\s+(salary|bank\s*(account|detail)|pan|aadhaar|password)\b/i,
-    "references a third party's sensitive data",
-  ],
+  [/\b(show|give|send|tell)\s+me\s+.{0,40}(salary|bank\s*(account|detail)|pan\s*(number|card)|aadhaar|password|passwor)\b/i,
+    "requests another person's sensitive data"],
+  [/\b(his|her|their)\s+(salary|bank\s*(account|detail)|pan|aadhaar|password)\b/i,
+    "references a third party's sensitive data"],
 
   // Requests to bypass controls that exist deliberately — approval gates, RBAC, row scope.
   [/\bskip\s+(the\s+)?approval\b/i, "asks to skip an approval step"],
-  [
-    /\bbypass\s+(rbac|role|permission|approval|access\s*control)/i,
-    "asks to bypass access control",
-  ],
-  [
-    /\b(give|grant)\s+me\s+(admin|super\s*admin|full)\s+(access|rights|permission)/i,
-    "asks to be granted elevated access",
-  ],
-  [
-    /\bdisable\s+(the\s+)?(check|guard|validation|rbac|scope)/i,
-    "asks to disable a safety check",
-  ],
+  [/\bbypass\s+(rbac|role|permission|approval|access\s*control)/i, "asks to bypass access control"],
+  [/\b(give|grant)\s+me\s+(admin|super\s*admin|full)\s+(access|rights|permission)/i,
+    "asks to be granted elevated access"],
+  [/\bdisable\s+(the\s+)?(check|guard|validation|rbac|scope)/i, "asks to disable a safety check"],
 
   // Destructive data operations, however phrased.
-  [
-    /\b(delete|wipe|truncate|drop|clear)\s+(all|every|the)\s+.{0,40}(record|table|data|employee|payroll|attendance)/i,
-    "asks for a destructive bulk data operation",
-  ],
+  [/\b(delete|wipe|truncate|drop|clear)\s+(all|every|the)\s+.{0,40}(record|table|data|employee|payroll|attendance)/i,
+    "asks for a destructive bulk data operation"],
   [/\bdrop\s+table\b/i, "contains a DROP TABLE reference"],
 
   // Payroll arithmetic — this codebase's own hardest rule: payroll calculation is never
   // touched based on a user request, no matter how it's phrased.
-  [
-    /\b(change|fix|increase|decrease|adjust)\s+.{0,30}(salary|payroll)\s+(calculation|formula|amount)\b/i,
-    "asks to change payroll calculation logic",
-  ],
-  [
-    /\bmy\s+salary\s+(is|should be|needs to be)\s+(wrong|higher|more|increased)/i,
-    "is a salary-amount dispute, not a software bug — needs HR/Payroll, not a code fix",
-  ],
+  [/\b(change|fix|increase|decrease|adjust)\s+.{0,30}(salary|payroll)\s+(calculation|formula|amount)\b/i,
+    "asks to change payroll calculation logic"],
+  [/\bmy\s+salary\s+(is|should be|needs to be)\s+(wrong|higher|more|increased)/i,
+    "is a salary-amount dispute, not a software bug — needs HR/Payroll, not a code fix"],
 
   // Credential/secret exposure. Both word orders: "what is the API key" AND "the API key ...
   // what is it supposed to be" — a request phrased as "X seems wrong, what should it be"
@@ -81,14 +63,10 @@ const UNSAFE_PATTERNS: Array<[RegExp, string]> = [
   // an AI-drafted diagnosis correctly refused it on its own that time, but the deterministic
   // guard must not depend on the model getting it right — that is the whole point of having
   // a guard in front of the model at all.
-  [
-    /\b(what\s+is|show\s+me|give\s+me)\s+.{0,20}(api\s*key|secret|credential|token)\b/i,
-    "asks for a credential or secret value",
-  ],
-  [
-    /\b(api\s*key|secret|credential|token)\b.{0,60}\b(what\s+is\s+it|what\s+should\s+it\s+be|supposed\s+to\s+be)\b/i,
-    "references a credential or secret value and asks what it should be",
-  ],
+  [/\b(what\s+is|show\s+me|give\s+me)\s+.{0,20}(api\s*key|secret|credential|token)\b/i,
+    "asks for a credential or secret value"],
+  [/\b(api\s*key|secret|credential|token)\b.{0,60}\b(what\s+is\s+it|what\s+should\s+it\s+be|supposed\s+to\s+be)\b/i,
+    "references a credential or secret value and asks what it should be"],
 ];
 
 export function checkDomainSafety(text: string): DomainGuardResult {

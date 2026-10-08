@@ -58,15 +58,13 @@ export async function getBranchPayrollHrSignatory(
 ): Promise<BranchPayrollHrSignatory | null> {
   if (!branchId) return null;
 
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT branch_id, hr_name, hr_designation, employee_id, signature_file
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_id, hr_name, hr_designation, employee_id, signature_file
        FROM branch_payroll_hr_signatory
       WHERE branch_id = ? AND active_status = 1
       LIMIT 1`,
-      [branchId],
-    )
-    .catch(() => [[] as RowDataPacket[]]);
+    [branchId],
+  ).catch(() => [[] as RowDataPacket[]]);
 
   const row = (rows as RowDataPacket[])[0];
   if (!row) return null;
@@ -92,18 +90,13 @@ export async function getPayrollHrSignatoryForEmployee(
   employeeId: string,
   options: { withImage?: boolean } = {},
 ): Promise<BranchPayrollHrSignatory | null> {
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`,
-      [employeeId],
-    )
-    .catch(() => [[] as RowDataPacket[]]);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`,
+    [employeeId],
+  ).catch(() => [[] as RowDataPacket[]]);
 
   const branchId = (rows as RowDataPacket[])[0]?.branch_id;
-  return getBranchPayrollHrSignatory(
-    branchId ? String(branchId) : null,
-    options,
-  );
+  return getBranchPayrollHrSignatory(branchId ? String(branchId) : null, options);
 }
 
 /**
@@ -124,48 +117,38 @@ export async function getPayrollHrSignatoryForEmployee(
  * because an image has not been uploaded yet.
  */
 export function mergeBranchSignatureIntoSeal<
-  T extends {
-    signature: Buffer | null;
-    stamp: Buffer | null;
-    signatoryName: string | null;
-    signatoryDesignation: string | null;
-  },
+  T extends { signature: Buffer | null; stamp: Buffer | null; signatoryName: string | null; signatoryDesignation: string | null },
 >(companySeal: T, branch: BranchPayrollHrSignatory | null): T {
   if (!branch) return companySeal;
   return {
     ...companySeal,
     signature: branch.signature ?? companySeal.signature,
     signatoryName: branch.hrName || companySeal.signatoryName,
-    signatoryDesignation:
-      branch.hrDesignation ?? companySeal.signatoryDesignation,
+    signatoryDesignation: branch.hrDesignation ?? companySeal.signatoryDesignation,
   };
 }
 
 /** Every branch with its signatory, for the Super Admin configuration screen. */
-export async function listBranchPayrollHrSignatories(): Promise<
-  Array<{
-    branchId: string;
-    branchName: string;
-    branchCode: string | null;
-    hrName: string | null;
-    hrDesignation: string | null;
-    employeeId: string | null;
-    hasSignature: boolean;
-    updatedAt: string | null;
-  }>
-> {
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      // LEFT JOIN so unconfigured branches are listed too — the point of the
-      // screen is seeing which branches still have nobody.
-      `SELECT b.id AS branch_id, b.branch_name, b.branch_code,
+export async function listBranchPayrollHrSignatories(): Promise<Array<{
+  branchId: string;
+  branchName: string;
+  branchCode: string | null;
+  hrName: string | null;
+  hrDesignation: string | null;
+  employeeId: string | null;
+  hasSignature: boolean;
+  updatedAt: string | null;
+}>> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    // LEFT JOIN so unconfigured branches are listed too — the point of the
+    // screen is seeing which branches still have nobody.
+    `SELECT b.id AS branch_id, b.branch_name, b.branch_code,
             s.hr_name, s.hr_designation, s.employee_id, s.signature_file, s.updated_at
        FROM branch_master b
        LEFT JOIN branch_payroll_hr_signatory s
               ON s.branch_id = b.id AND s.active_status = 1
       ORDER BY b.branch_name ASC`,
-    )
-    .catch(() => [[] as RowDataPacket[]]);
+  ).catch(() => [[] as RowDataPacket[]]);
 
   return (rows as RowDataPacket[]).map((r) => ({
     branchId: String(r.branch_id),
@@ -189,18 +172,14 @@ export async function upsertBranchPayrollHrSignatory(input: {
   actorUserId?: string | null;
 }): Promise<void> {
   const name = String(input.hrName ?? "").trim();
-  if (!name)
-    throw Object.assign(new Error("The Payroll HR name is required."), {
-      statusCode: 400,
-    });
+  if (!name) throw Object.assign(new Error("The Payroll HR name is required."), { statusCode: 400 });
 
   // Keep any signature already uploaded when the caller is only editing the
   // name, so saving a typo fix does not silently drop the image.
   const existing = await getBranchPayrollHrSignatory(input.branchId);
-  const signatureFile =
-    input.signatureFile !== undefined
-      ? input.signatureFile
-      : (existing?.signatureFile ?? null);
+  const signatureFile = input.signatureFile !== undefined
+    ? input.signatureFile
+    : existing?.signatureFile ?? null;
 
   await db.execute(
     `UPDATE branch_payroll_hr_signatory SET active_status = 0, updated_by = ?, updated_at = NOW()

@@ -8,7 +8,8 @@ import * as faceapi from "@vladmandic/face-api/dist/face-api.node-wasm.js";
 faceapi.env.monkeyPatch({ Canvas, Image, ImageData } as any);
 
 const MODELS_PATH = path.resolve(
-  process.env.FACE_MODELS_PATH ?? path.join(process.cwd(), "face-models"),
+  process.env.FACE_MODELS_PATH ??
+  path.join(process.cwd(), "face-models")
 );
 
 async function main() {

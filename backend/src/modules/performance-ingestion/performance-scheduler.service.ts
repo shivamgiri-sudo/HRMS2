@@ -34,14 +34,14 @@ function parseJson(value: unknown): Record<string, unknown> {
     try {
       const parsed = JSON.parse(value);
       return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
+        ? parsed as Record<string, unknown>
         : {};
     } catch {
       return {};
     }
   }
   return typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
+    ? value as Record<string, unknown>
     : {};
 }
 
@@ -78,9 +78,7 @@ export function validatePerformanceCron(
     const second = interval.next().toDate();
     if (second.getTime() - first.getTime() < MINIMUM_SCHEDULE_INTERVAL_MS) {
       throw Object.assign(
-        new Error(
-          "Performance source schedules cannot run more often than every five minutes",
-        ),
+        new Error("Performance source schedules cannot run more often than every five minutes"),
         { statusCode: 400 },
       );
     }
@@ -90,14 +88,9 @@ export function validatePerformanceCron(
       nextRunAt: first.toISOString(),
     };
   } catch (error) {
-    if (error && typeof error === "object" && "statusCode" in error)
-      throw error;
+    if (error && typeof error === "object" && "statusCode" in error) throw error;
     throw Object.assign(
-      new Error(
-        error instanceof Error
-          ? `Invalid cron expression: ${error.message}`
-          : "Invalid cron expression",
-      ),
+      new Error(error instanceof Error ? `Invalid cron expression: ${error.message}` : "Invalid cron expression"),
       { statusCode: 400 },
     );
   }
@@ -111,9 +104,7 @@ function nextRunAt(
   return CronExpressionParser.parse(expression, {
     currentDate,
     tz: timezone,
-  })
-    .next()
-    .toDate();
+  }).next().toDate();
 }
 
 function dateInTimezone(date: Date, timezone: string): string {
@@ -123,9 +114,7 @@ function dateInTimezone(date: Date, timezone: string): string {
     month: "2-digit",
     day: "2-digit",
   }).formatToParts(date);
-  const values = Object.fromEntries(
-    parts.map((part) => [part.type, part.value]),
-  );
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
 }
 
@@ -188,11 +177,9 @@ async function executeScheduledDataset(row: ScheduleRow): Promise<void> {
   const to = dateInTimezone(new Date(), timezone);
   const config = parseJson(row.config_json);
   const overlapDays = lookbackDays(config);
-  const checkpoint =
-    row.checkpoint_value &&
-    /^\d{4}-\d{2}-\d{2}$/.test(String(row.checkpoint_value))
-      ? String(row.checkpoint_value)
-      : to;
+  const checkpoint = row.checkpoint_value && /^\d{4}-\d{2}-\d{2}$/.test(String(row.checkpoint_value))
+    ? String(row.checkpoint_value)
+    : to;
   const anchor = checkpoint < to ? checkpoint : to;
   const from = subtractDays(anchor, overlapDays - 1);
 
@@ -251,10 +238,7 @@ async function dueScheduledDatasets(now = new Date()): Promise<ScheduleRow[]> {
       const reference = row.last_schedule_attempt_at
         ? new Date(row.last_schedule_attempt_at)
         : new Date(row.created_at);
-      return (
-        nextRunAt(row.schedule_cron, timezone, reference).getTime() <=
-        now.getTime()
-      );
+      return nextRunAt(row.schedule_cron, timezone, reference).getTime() <= now.getTime();
     } catch (error) {
       console.error(
         `[${WORKER_NAME}] invalid schedule for ${row.dataset_key}:`,
@@ -332,40 +316,24 @@ export const performanceSchedulerService = {
       lastRunAt: row.last_schedule_attempt_at
         ? new Date(row.last_schedule_attempt_at).toISOString()
         : null,
-      lastRunStatus: row.last_schedule_status
-        ? String(row.last_schedule_status)
-        : null,
-      automaticSourceSupported: ["mysql", "mssql", "google_sheet"].includes(
-        row.source_type,
-      ),
+      lastRunStatus: row.last_schedule_status ? String(row.last_schedule_status) : null,
+      automaticSourceSupported: ["mysql", "mssql", "google_sheet"].includes(row.source_type),
     };
   },
 
-  async setSchedule(
-    userId: string,
-    datasetId: string,
-    input: {
-      cronExpression: string | null;
-      scheduleLookbackDays: number;
-    },
-  ) {
-    const dataset = await performanceGovernanceService.assertDatasetAccess(
-      userId,
-      datasetId,
-    );
+  async setSchedule(userId: string, datasetId: string, input: {
+    cronExpression: string | null;
+    scheduleLookbackDays: number;
+  }) {
+    const dataset = await performanceGovernanceService.assertDatasetAccess(userId, datasetId);
     if (["excel", "csv"].includes(dataset.sourceType) && input.cronExpression) {
       throw Object.assign(
-        new Error(
-          "Excel and CSV sources require a file upload and cannot be scheduled automatically",
-        ),
+        new Error("Excel and CSV sources require a file upload and cannot be scheduled automatically"),
         { statusCode: 409 },
       );
     }
 
-    const lookback = Math.max(
-      1,
-      Math.min(31, Math.trunc(input.scheduleLookbackDays)),
-    );
+    const lookback = Math.max(1, Math.min(31, Math.trunc(input.scheduleLookbackDays)));
     const cron = input.cronExpression?.trim() || null;
     const validated = cron
       ? validatePerformanceCron(cron, dataset.timezoneName)
@@ -394,10 +362,7 @@ export const performanceSchedulerService = {
   },
 
   async runNow(userId: string, datasetId: string) {
-    const dataset = await performanceGovernanceService.assertDatasetAccess(
-      userId,
-      datasetId,
-    );
+    const dataset = await performanceGovernanceService.assertDatasetAccess(userId, datasetId);
     if (["excel", "csv"].includes(dataset.sourceType)) {
       throw Object.assign(
         new Error("Excel and CSV sources must be run with an uploaded file"),
@@ -408,11 +373,9 @@ export const performanceSchedulerService = {
     const timezone = validTimezone(row.timezone_name ?? "Asia/Kolkata");
     const to = dateInTimezone(new Date(), timezone);
     const config = parseJson(row.config_json);
-    const checkpoint =
-      row.checkpoint_value &&
-      /^\d{4}-\d{2}-\d{2}$/.test(String(row.checkpoint_value))
-        ? String(row.checkpoint_value)
-        : to;
+    const checkpoint = row.checkpoint_value && /^\d{4}-\d{2}-\d{2}$/.test(String(row.checkpoint_value))
+      ? String(row.checkpoint_value)
+      : to;
     const anchor = checkpoint < to ? checkpoint : to;
     const from = subtractDays(anchor, lookbackDays(config) - 1);
 

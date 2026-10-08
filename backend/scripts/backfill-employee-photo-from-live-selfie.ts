@@ -74,26 +74,14 @@ async function main() {
 
   // Some employees have more than one Live Selfie doc (re-uploads); rows are
   // already ordered most-recent-first, so the first one seen per employee wins.
-  const byEmployee = new Map<
-    string,
-    { employeeCode: string; filePath: string }
-  >();
-  for (const r of rows as Array<{
-    employee_id: string;
-    employee_code: string;
-    file_path: string;
-  }>) {
+  const byEmployee = new Map<string, { employeeCode: string; filePath: string }>();
+  for (const r of rows as Array<{ employee_id: string; employee_code: string; file_path: string }>) {
     if (!byEmployee.has(r.employee_id)) {
-      byEmployee.set(r.employee_id, {
-        employeeCode: r.employee_code,
-        filePath: r.file_path,
-      });
+      byEmployee.set(r.employee_id, { employeeCode: r.employee_code, filePath: r.file_path });
     }
   }
 
-  console.log(
-    `${DRY_RUN ? "[DRY RUN] " : ""}${byEmployee.size} employee(s) to backfill.`,
-  );
+  console.log(`${DRY_RUN ? "[DRY RUN] " : ""}${byEmployee.size} employee(s) to backfill.`);
 
   let promoted = 0;
   let missingFile = 0;
@@ -125,27 +113,13 @@ async function main() {
     }
   }
 
-  console.log(
-    JSON.stringify(
-      {
-        dryRun: DRY_RUN,
-        total: byEmployee.size,
-        promoted,
-        missingFile,
-        failed,
-      },
-      null,
-      2,
-    ),
-  );
+  console.log(JSON.stringify({ dryRun: DRY_RUN, total: byEmployee.size, promoted, missingFile, failed }, null, 2));
   if (failed > 0) process.exitCode = 1;
 }
 
 main()
   .then(() => process.exit(process.exitCode ?? 0))
   .catch((error) => {
-    console.error(
-      error instanceof Error ? error.stack || error.message : String(error),
-    );
+    console.error(error instanceof Error ? error.stack || error.message : String(error));
     process.exit(1);
   });

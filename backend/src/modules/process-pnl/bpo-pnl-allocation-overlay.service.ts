@@ -2,11 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { bpoPnlService, safeRows, type BpoPnlRow } from "./bpo-pnl.service.js";
-import {
-  allocatePoolAmount,
-  type AllocationShare,
-  type ManualAllocationWarning,
-} from "./bpo-pnl.calculation.js";
+import { allocatePoolAmount, type AllocationShare, type ManualAllocationWarning } from "./bpo-pnl.calculation.js";
 import { getAdjustedTotal } from "./pnl-manual-adjustment.service.js";
 import { costComponentDataFlags } from "./pnl-cost-component-flags.js";
 import { grnAllocationExGstSql, grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
@@ -98,52 +94,31 @@ const emptyLegacy = (): LegacyAmounts => ({ direct: 0, bmc: 0 });
 
 function addBucket(target: BucketAmounts, bucket: string, amount: number) {
   switch (bucket) {
-    case "dsc_non_people":
-      target.dscNonPeople += amount;
-      break;
-    case "bmc_non_people":
-      target.bmcNonPeople += amount;
-      break;
-    case "depreciation":
-      target.depreciation += amount;
-      break;
-    case "amortization":
-      target.amortization += amount;
-      break;
-    case "finance_cost":
-      target.financeCost += amount;
-      break;
-    case "tax":
-      target.tax += amount;
-      break;
+    case "dsc_non_people": target.dscNonPeople += amount; break;
+    case "bmc_non_people": target.bmcNonPeople += amount; break;
+    case "depreciation": target.depreciation += amount; break;
+    case "amortization": target.amortization += amount; break;
+    case "finance_cost": target.financeCost += amount; break;
+    case "tax": target.tax += amount; break;
     case "capex":
-    case "excluded":
-      target.excluded += amount;
-      break;
-    default:
-      target.bmcNonPeople += amount;
-      break;
+    case "excluded": target.excluded += amount; break;
+    default: target.bmcNonPeople += amount; break;
   }
 }
 
 function driverValue(row: BpoPnlRow, driver: AllocationDriver) {
   switch (driver) {
-    case "billable_hc":
-      return n(row.billableHc);
-    case "contracted_seats":
-      return n(row.contractedSeats);
-    case "revenue":
-      return n(row.recognizedRevenue);
-    case "equal":
-      return 1;
+    case "billable_hc": return n(row.billableHc);
+    case "contracted_seats": return n(row.contractedSeats);
+    case "revenue": return n(row.recognizedRevenue);
+    case "equal": return 1;
     // See SUPPORTED_ALLOCATION_DRIVERS in bpo-pnl.service.ts: there is no per-process floor area
     // or device count, so these cannot be honoured. Named here so the fallback to headcount is
     // deliberate and greppable rather than an unnoticed `default`.
     case "floor_area":
     case "device_count":
     case "active_hc":
-    default:
-      return n(row.activeHc);
+    default: return n(row.activeHc);
   }
 }
 
@@ -151,15 +126,12 @@ function findPolicy(
   policies: AllocationPolicyRow[],
   branchId: string,
   poolType: string,
-  processId?: string,
+  processId?: string
 ) {
-  return policies.find(
-    (policy) =>
-      String(policy.branch_id) === branchId &&
-      policy.pool_type === poolType &&
-      (processId
-        ? String(policy.process_id ?? "") === processId
-        : !policy.process_id),
+  return policies.find((policy) =>
+    String(policy.branch_id) === branchId
+    && policy.pool_type === poolType
+    && (processId ? String(policy.process_id ?? "") === processId : !policy.process_id)
   );
 }
 
@@ -169,18 +141,14 @@ export function allocateBranchPool(
   poolType: string,
   amount: number,
   policies: AllocationPolicyRow[],
-  warnings?: ManualAllocationWarning[],
+  warnings?: ManualAllocationWarning[]
 ) {
   const branchRows = rows.filter((row) => row.branchId === branchId);
   const result = new Map<string, number>();
   if (branchRows.length === 0 || amount === 0) return result;
 
-  const processPolicies = branchRows.map((row) =>
-    findPolicy(policies, branchId, poolType, row.processId),
-  );
-  const hasManual = processPolicies.some(
-    (policy) => policy?.allocation_driver === "manual",
-  );
+  const processPolicies = branchRows.map((row) => findPolicy(policies, branchId, poolType, row.processId));
+  const hasManual = processPolicies.some((policy) => policy?.allocation_driver === "manual");
   if (hasManual) {
     const shares: AllocationShare[] = branchRows.map((row, index) => ({
       key: row.processId,
@@ -190,16 +158,11 @@ export function allocateBranchPool(
     if (!outcome.balanced) {
       console.warn(
         `[bpo-pnl-allocation-overlay] manual allocation for branch ${branchId} / pool ${poolType} sums to ` +
-          `${outcome.percentTotal}% (expected 100%) — amounts are applied as configured, not rebalanced.`,
+        `${outcome.percentTotal}% (expected 100%) — amounts are applied as configured, not rebalanced.`
       );
-      warnings?.push({
-        branchId,
-        poolType,
-        percentTotal: outcome.percentTotal ?? 0,
-      });
+      warnings?.push({ branchId, poolType, percentTotal: outcome.percentTotal ?? 0 });
     }
-    for (const [processId, allocated] of outcome.amounts)
-      result.set(processId, allocated);
+    for (const [processId, allocated] of outcome.amounts) result.set(processId, allocated);
     return result;
   }
 
@@ -209,19 +172,13 @@ export function allocateBranchPool(
     key: row.processId,
     weight: driverValue(row, driver),
   }));
-  const outcome = allocatePoolAmount(
-    amount,
-    shares,
-    driver === "equal" ? "equal" : "weighted",
-  );
-  for (const [processId, allocated] of outcome.amounts)
-    result.set(processId, allocated);
+  const outcome = allocatePoolAmount(amount, shares, driver === "equal" ? "equal" : "weighted");
+  for (const [processId, allocated] of outcome.amounts) result.set(processId, allocated);
   return result;
 }
 
 async function allocationPolicies(period: string) {
-  if (!(await tableExists("pnl_allocation_policy")))
-    return [] as AllocationPolicyRow[];
+  if (!(await tableExists("pnl_allocation_policy"))) return [] as AllocationPolicyRow[];
   const [year, month] = period.split("-").map(Number);
   const lastDay = new Date(year, month, 0).getDate();
   const start = `${period}-01`;
@@ -238,7 +195,7 @@ async function allocationPolicies(period: string) {
         AND effective_from <= ?
         AND (effective_to IS NULL OR effective_to >= ?)
       ORDER BY branch_id, pool_type, process_id`,
-    [end, start],
+    [end, start]
   );
 }
 
@@ -273,15 +230,13 @@ async function newAllocationRows(period: string) {
   // bare equality throws ER_CANT_AGGREGATE_2COLLATIONS on every call (confirmed live, 2026-08-22).
   // Fixed at the query layer (no view/DDL change) — same COLLATE-on-comparison idiom used
   // throughout ceo-overview.service.ts for the same class of bug.
-  const amountColumn = (await allocationViewHasExGst())
-    ? "ex_gst_amount"
-    : "pnl_cost_amount";
+  const amountColumn = (await allocationViewHasExGst()) ? "ex_gst_amount" : "pnl_cost_amount";
   return safeRows<AllocationViewRow>(
     `SELECT process_id, branch_id, period_code, pnl_bucket,
             ${amountColumn} AS amount, allocation_count, freshness
        FROM vw_process_pnl_grn_allocation
       WHERE period_code COLLATE utf8mb4_unicode_ci = ?`,
-    [period],
+    [period]
   );
 }
 
@@ -325,7 +280,7 @@ async function reservedAllocationRows(period: string) {
        ) r
       WHERE period_code COLLATE utf8mb4_unicode_ci = ?
       GROUP BY process_id, branch_id, period_code, pnl_bucket`,
-    [period],
+    [period]
   );
 }
 
@@ -355,16 +310,8 @@ function bucketRowsByProcess(
     const separator = key.indexOf("|");
     const branchId = key.slice(0, separator);
     const bucket = key.slice(separator + 1);
-    const poolType =
-      bucket === "bmc_non_people" ? "bmc_non_people" : "shared_service";
-    for (const [processId, allocated] of allocateBranchPool(
-      rows,
-      branchId,
-      poolType,
-      amount,
-      policies,
-      warnings,
-    )) {
+    const poolType = bucket === "bmc_non_people" ? "bmc_non_people" : "shared_service";
+    for (const [processId, allocated] of allocateBranchPool(rows, branchId, poolType, amount, policies, warnings)) {
       const current = byProcess.get(processId) ?? emptyBuckets();
       addBucket(current, bucket, allocated);
       byProcess.set(processId, current);
@@ -376,12 +323,7 @@ function bucketRowsByProcess(
 /** The P&L-reaching part of a bucket set (everything but capex/excluded) — the same sum
  *  adjustedRow adds to grnVendorActual as includedNewGrn. */
 const pnlBucketTotal = (b: BucketAmounts): number =>
-  b.dscNonPeople +
-  b.bmcNonPeople +
-  b.depreciation +
-  b.amortization +
-  b.financeCost +
-  b.tax;
+  b.dscNonPeople + b.bmcNonPeople + b.depreciation + b.amortization + b.financeCost + b.tax;
 
 const mergeBuckets = (a: BucketAmounts, b: BucketAmounts): BucketAmounts => ({
   dscNonPeople: a.dscNonPeople + b.dscNonPeople,
@@ -422,7 +364,7 @@ async function legacyAllocatedGrnRows(period: string) {
           'partially paid','paid','closed'
         )
       GROUP BY process_id, vpt.branch_id, cost_class`,
-    [period],
+    [period]
   );
 
   const grnRows = await safeRows<LegacyAttributionRow>(
@@ -452,7 +394,7 @@ async function legacyAllocatedGrnRows(period: string) {
           'partially paid','paid','posted'
         )
       GROUP BY process_id, g.branch_id, cost_class`,
-    [period],
+    [period]
   );
 
   return [...vendorRows, ...grnRows];
@@ -474,14 +416,12 @@ async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
 
   for (const allocation of allocations) {
     const amount = n(allocation.amount);
-    latestFreshness =
-      [latestFreshness, allocation.freshness]
-        .filter((value): value is string => Boolean(value))
-        .sort()
-        .at(-1) ?? null;
+    latestFreshness = [latestFreshness, allocation.freshness]
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) ?? null;
     if (allocation.process_id) {
-      const current =
-        bucketsByProcess.get(String(allocation.process_id)) ?? emptyBuckets();
+      const current = bucketsByProcess.get(String(allocation.process_id)) ?? emptyBuckets();
       addBucket(current, String(allocation.pnl_bucket), amount);
       bucketsByProcess.set(String(allocation.process_id), current);
     } else if (allocation.branch_id) {
@@ -520,8 +460,7 @@ async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
   for (const legacy of legacyRows) {
     const amount = n(legacy.amount);
     if (legacy.process_id && String(legacy.cost_class) === "direct") {
-      const current =
-        legacyByProcess.get(String(legacy.process_id)) ?? emptyLegacy();
+      const current = legacyByProcess.get(String(legacy.process_id)) ?? emptyLegacy();
       current.direct += amount;
       legacyByProcess.set(String(legacy.process_id), current);
     } else if (legacy.branch_id && String(legacy.cost_class) === "indirect") {
@@ -534,16 +473,8 @@ async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
     const separator = key.indexOf("|");
     const branchId = key.slice(0, separator);
     const bucket = key.slice(separator + 1);
-    const poolType =
-      bucket === "bmc_non_people" ? "bmc_non_people" : "shared_service";
-    for (const [processId, allocated] of allocateBranchPool(
-      rows,
-      branchId,
-      poolType,
-      amount,
-      policies,
-      warnings,
-    )) {
+    const poolType = bucket === "bmc_non_people" ? "bmc_non_people" : "shared_service";
+    for (const [processId, allocated] of allocateBranchPool(rows, branchId, poolType, amount, policies, warnings)) {
       const current = bucketsByProcess.get(processId) ?? emptyBuckets();
       addBucket(current, bucket, allocated);
       bucketsByProcess.set(processId, current);
@@ -551,14 +482,7 @@ async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
   }
 
   for (const [branchId, amount] of legacyBranchPools.entries()) {
-    for (const [processId, allocated] of allocateBranchPool(
-      rows,
-      branchId,
-      "bmc_non_people",
-      amount,
-      policies,
-      warnings,
-    )) {
+    for (const [processId, allocated] of allocateBranchPool(rows, branchId, "bmc_non_people", amount, policies, warnings)) {
       const current = legacyByProcess.get(processId) ?? emptyLegacy();
       current.bmc += allocated;
       legacyByProcess.set(processId, current);
@@ -569,26 +493,14 @@ async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
   // into the same per-process buckets (so EBITDA / EBIT / Operating Profit subtract it) while its
   // own per-process total is kept to publish as grnCommitted.
   const committedByProcess = new Map<string, number>();
-  for (const [processId, reserved] of bucketRowsByProcess(
-    rows,
-    reservedRows,
-    policies,
-    warnings,
-  )) {
-    bucketsByProcess.set(
-      processId,
-      mergeBuckets(bucketsByProcess.get(processId) ?? emptyBuckets(), reserved),
-    );
+  for (const [processId, reserved] of bucketRowsByProcess(rows, reservedRows, policies, warnings)) {
+    bucketsByProcess.set(processId, mergeBuckets(bucketsByProcess.get(processId) ?? emptyBuckets(), reserved));
     committedByProcess.set(processId, pnlBucketTotal(reserved));
   }
 
   return {
-    bucketsByProcess,
-    legacyByProcess,
-    latestFreshness,
-    committedByProcess,
-    allocationCount: allocations.length + reservedRows.length,
-    warnings,
+    bucketsByProcess, legacyByProcess, latestFreshness, committedByProcess,
+    allocationCount: allocations.length + reservedRows.length, warnings,
   };
 }
 
@@ -598,7 +510,7 @@ function adjustedRow(
   legacy: LegacyAmounts,
   freshness: string | null,
   /** GRN Committed (reserved) already included in `buckets`; published so it can be shown apart. */
-  grnCommitted = 0,
+  grnCommitted = 0
 ): BpoPnlRow {
   const dscNonPeople = row.dscNonPeople - legacy.direct + buckets.dscNonPeople;
   const bmcNonPeople = row.bmcNonPeople - legacy.bmc + buckets.bmcNonPeople;
@@ -618,24 +530,15 @@ function adjustedRow(
   const pbt = ebit - financeCost + existingBelowEbitExFinance;
   const tax = row.tax + buckets.tax;
   const pat = pbt - tax;
-  const includedNewGrn =
-    buckets.dscNonPeople +
-    buckets.bmcNonPeople +
-    buckets.depreciation +
-    buckets.amortization +
-    buckets.financeCost +
-    buckets.tax;
+  const includedNewGrn = buckets.dscNonPeople + buckets.bmcNonPeople
+    + buckets.depreciation + buckets.amortization + buckets.financeCost + buckets.tax;
   const removedLegacyGrn = legacy.direct + legacy.bmc;
-  const grnVendorActual =
-    row.grnVendorActual - removedLegacyGrn + includedNewGrn;
-  const processStatus: BpoPnlRow["processStatus"] =
-    ebitda < 0
-      ? "loss-making"
-      : row.recognizedRevenue <= 0 ||
-          row.revenueAtRisk > 0 ||
-          (row.deliveryAttainmentPct != null && row.deliveryAttainmentPct < 90)
-        ? "at-risk"
-        : "profitable";
+  const grnVendorActual = row.grnVendorActual - removedLegacyGrn + includedNewGrn;
+  const processStatus: BpoPnlRow["processStatus"] = ebitda < 0
+    ? "loss-making"
+    : row.recognizedRevenue <= 0 || row.revenueAtRisk > 0 || (row.deliveryAttainmentPct != null && row.deliveryAttainmentPct < 90)
+    ? "at-risk"
+    : "profitable";
 
   return {
     ...row,
@@ -661,19 +564,11 @@ function adjustedRow(
     tax,
     pat,
     totalOperatingCost,
-    totalCostPctRevenue: pct(
-      totalOperatingCost + depreciation + amortization,
-      row.recognizedRevenue,
-    ),
-    loadedCostPerBillableSeat:
-      n(row.billableHc) > 0 ? totalOperatingCost / n(row.billableHc) : null,
+    totalCostPctRevenue: pct(totalOperatingCost + depreciation + amortization, row.recognizedRevenue),
+    loadedCostPerBillableSeat: n(row.billableHc) > 0 ? totalOperatingCost / n(row.billableHc) : null,
     ebitdaVariance: row.ebitdaBudget == null ? null : ebitda - row.ebitdaBudget,
     processStatus,
-    freshness:
-      [row.freshness, freshness]
-        .filter((value): value is string => Boolean(value))
-        .sort()
-        .at(-1) ?? null,
+    freshness: [row.freshness, freshness].filter((value): value is string => Boolean(value)).sort().at(-1) ?? null,
   };
 }
 
@@ -681,16 +576,11 @@ function sum(rows: BpoPnlRow[], field: keyof BpoPnlRow) {
   return rows.reduce((total, row) => total + n(row[field]), 0);
 }
 
-function applySummaryTotals(
-  summary: BpoPnlSummary,
-  rows: BpoPnlRow[],
-): BpoPnlSummary {
+function applySummaryTotals(summary: BpoPnlSummary, rows: BpoPnlRow[]): BpoPnlSummary {
   const revenue = sum(rows, "recognizedRevenue");
   const ebitda = sum(rows, "ebitda");
   const operatingProfit = sum(rows, "operatingProfit");
-  const alerts: BpoPnlSummary["alerts"] = summary.alerts.filter(
-    (alert) => alert.code !== "NEGATIVE_EBITDA",
-  );
+  const alerts: BpoPnlSummary["alerts"] = summary.alerts.filter((alert) => alert.code !== "NEGATIVE_EBITDA");
   for (const row of rows.filter((item) => item.ebitda < 0)) {
     alerts.push({
       type: "critical",
@@ -724,9 +614,7 @@ function applySummaryTotals(
       operatingProfitPct: pct(operatingProfit, revenue),
       pbt: sum(rows, "pbt"),
       pat: sum(rows, "pat"),
-      lossMakingProcesses: rows.filter(
-        (row) => row.processStatus === "loss-making",
-      ).length,
+      lossMakingProcesses: rows.filter((row) => row.processStatus === "loss-making").length,
     },
     costMix: {
       ...summary.costMix,
@@ -749,7 +637,7 @@ function applySummaryTotals(
  *  branch+poolType, the alert appears twice rather than being silently dropped. */
 function withAllocationWarnings<T extends { alerts: BpoPnlSummary["alerts"] }>(
   summary: T,
-  warnings: ManualAllocationWarning[],
+  warnings: ManualAllocationWarning[]
 ): T {
   if (warnings.length === 0) return summary;
   const seen = new Set<string>();
@@ -762,8 +650,7 @@ function withAllocationWarnings<T extends { alerts: BpoPnlSummary["alerts"] }>(
       type: "critical",
       code: "MANUAL_ALLOCATION_NOT_BALANCED",
       title: "Manual allocation not balanced",
-      detail:
-        `Branch ${warning.branchId} manual allocation policy for ${warning.poolType} sums to ` +
+      detail: `Branch ${warning.branchId} manual allocation policy for ${warning.poolType} sums to ` +
         `${warning.percentTotal.toFixed(2)}% (expected 100%). Amounts are applied as configured, not rebalanced.`,
     });
   }
@@ -794,33 +681,26 @@ export const bpoPnlAllocationOverlayService = {
       : filters;
     const scoped = (result: BpoPnlSummary): BpoPnlSummary => {
       if (!requestedProcessId) return result;
-      const rows = result.rows.filter(
-        (row) => row.processId === requestedProcessId,
-      );
+      const rows = result.rows.filter((row) => row.processId === requestedProcessId);
       const rescoped = applySummaryTotals(result, rows);
       return {
         ...rescoped,
-        alerts: rescoped.alerts.filter(
-          (alert) => !alert.processId || alert.processId === requestedProcessId,
-        ),
+        alerts: rescoped.alerts.filter((alert) => !alert.processId || alert.processId === requestedProcessId),
       };
     };
 
     const summary = await bpoPnlService.getSummary(branchFilters);
     if (!(await tableExists("grn_cost_allocation"))) return scoped(summary);
     const maps = await buildAllocationMaps(summary.rows, summary.period);
-    if (maps.allocationCount === 0)
-      return scoped(withAllocationWarnings(summary, maps.warnings));
+    if (maps.allocationCount === 0) return scoped(withAllocationWarnings(summary, maps.warnings));
     const withWarnings = withAllocationWarnings(summary, maps.warnings);
-    const rows = withWarnings.rows.map((row) =>
-      adjustedRow(
-        row,
-        maps.bucketsByProcess.get(row.processId) ?? emptyBuckets(),
-        maps.legacyByProcess.get(row.processId) ?? emptyLegacy(),
-        maps.latestFreshness,
-        maps.committedByProcess.get(row.processId) ?? 0,
-      ),
-    );
+    const rows = withWarnings.rows.map((row) => adjustedRow(
+      row,
+      maps.bucketsByProcess.get(row.processId) ?? emptyBuckets(),
+      maps.legacyByProcess.get(row.processId) ?? emptyLegacy(),
+      maps.latestFreshness,
+      maps.committedByProcess.get(row.processId) ?? 0
+    ));
     return scoped(applySummaryTotals(withWarnings, rows));
   },
 
@@ -829,8 +709,7 @@ export const bpoPnlAllocationOverlayService = {
       bpoPnlService.getProcessDetail(processId, filters),
       this.getSummary({ ...filters, processId }),
     ]);
-    const row =
-      summary.rows.find((item) => item.processId === processId) ?? detail.row;
+    const row = summary.rows.find((item) => item.processId === processId) ?? detail.row;
     /*
      * Manual Adjustments (Part B, 2026-09-01): a SEPARATE figure alongside the pure system
      * `row.recognizedRevenue` — never blended into it. Only APPROVED projected_revenue/penalty/
@@ -876,93 +755,29 @@ export const bpoPnlAllocationOverlayService = {
   async exportCsv(filters: Partial<PnlQueryFilters>) {
     const summary = await this.getSummary(filters);
     const headers = [
-      "Process",
-      "Client",
-      "Branch",
-      "Cost Centre",
-      "Billing Model",
-      "Mandated Seats",
-      "Active HC",
-      "Agent HC",
-      "Planned Units",
-      "Delivered Units",
-      "Billable Units",
-      "Delivery %",
-      "Potential Revenue",
-      "Earned Revenue",
-      "Recognized Revenue",
-      "Invoiced Revenue",
-      "Collected Revenue",
-      "Outstanding",
-      "Unbilled Revenue",
-      "Agent Salary",
-      "Agent Salary %",
-      "DSC",
-      "DSC %",
-      "BMC",
-      "BMC %",
-      "GRN Allocation Actual",
-      "EBITDA",
-      "EBITDA %",
-      "EBIT",
-      "Operating Profit %",
-      "PBT",
-      "PAT",
-      "Approved Budget",
-      "Reserved Budget",
-      "Consumed Budget",
-      "Available Budget",
-      "Status",
-      "Revenue Data Status",
+      "Process", "Client", "Branch", "Cost Centre", "Billing Model", "Mandated Seats", "Active HC", "Agent HC",
+      "Planned Units", "Delivered Units", "Billable Units", "Delivery %", "Potential Revenue", "Earned Revenue",
+      "Recognized Revenue", "Invoiced Revenue", "Collected Revenue", "Outstanding", "Unbilled Revenue",
+      "Agent Salary", "Agent Salary %", "DSC", "DSC %", "BMC", "BMC %", "GRN Allocation Actual",
+      "EBITDA", "EBITDA %", "EBIT", "Operating Profit %", "PBT", "PAT", "Approved Budget",
+      "Reserved Budget", "Consumed Budget", "Available Budget", "Status", "Revenue Data Status",
     ];
-    const escape = (value: unknown) =>
-      `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
     return [
       headers.map(escape).join(","),
-      ...summary.rows.map((row) =>
-        [
-          row.processName,
-          row.clientName,
-          row.branchName,
-          row.costCentreCode,
-          row.billingModels.join(" + "),
-          row.mandatedSeats,
-          row.activeHc,
-          row.agentHeadcount,
-          row.plannedDeliveryUnits,
-          row.deliveredUnits,
-          row.billableUnits,
-          row.deliveryAttainmentPct?.toFixed(2),
-          row.grossPotentialRevenue.toFixed(2),
-          row.earnedRevenue.toFixed(2),
-          row.recognizedRevenue.toFixed(2),
-          row.invoicedRevenue.toFixed(2),
-          row.collectedRevenue.toFixed(2),
-          row.outstandingReceivable.toFixed(2),
-          row.unbilledRevenue.toFixed(2),
-          row.agentSalary.toFixed(2),
-          row.agentSalaryPctRevenue?.toFixed(2),
-          row.dsc.toFixed(2),
-          row.dscPctRevenue?.toFixed(2),
-          row.bmc.toFixed(2),
-          row.bmcPctRevenue?.toFixed(2),
-          row.grnVendorActual.toFixed(2),
-          row.ebitda.toFixed(2),
-          row.ebitdaMarginPct?.toFixed(2),
-          row.ebit.toFixed(2),
-          row.operatingProfitPct?.toFixed(2),
-          row.pbt.toFixed(2),
-          row.pat.toFixed(2),
-          row.approvedBudget.toFixed(2),
-          row.reservedBudget.toFixed(2),
-          row.consumedBudget.toFixed(2),
-          row.availableBudget.toFixed(2),
-          row.processStatus,
-          row.revenueDataStatus,
-        ]
-          .map(escape)
-          .join(","),
-      ),
+      ...summary.rows.map((row) => [
+        row.processName, row.clientName, row.branchName, row.costCentreCode, row.billingModels.join(" + "),
+        row.mandatedSeats, row.activeHc, row.agentHeadcount, row.plannedDeliveryUnits, row.deliveredUnits,
+        row.billableUnits, row.deliveryAttainmentPct?.toFixed(2), row.grossPotentialRevenue.toFixed(2),
+        row.earnedRevenue.toFixed(2), row.recognizedRevenue.toFixed(2), row.invoicedRevenue.toFixed(2),
+        row.collectedRevenue.toFixed(2), row.outstandingReceivable.toFixed(2), row.unbilledRevenue.toFixed(2),
+        row.agentSalary.toFixed(2), row.agentSalaryPctRevenue?.toFixed(2), row.dsc.toFixed(2),
+        row.dscPctRevenue?.toFixed(2), row.bmc.toFixed(2), row.bmcPctRevenue?.toFixed(2),
+        row.grnVendorActual.toFixed(2), row.ebitda.toFixed(2), row.ebitdaMarginPct?.toFixed(2),
+        row.ebit.toFixed(2), row.operatingProfitPct?.toFixed(2), row.pbt.toFixed(2), row.pat.toFixed(2),
+        row.approvedBudget.toFixed(2), row.reservedBudget.toFixed(2), row.consumedBudget.toFixed(2),
+        row.availableBudget.toFixed(2), row.processStatus, row.revenueDataStatus,
+      ].map(escape).join(",")),
     ].join("\n");
   },
 };

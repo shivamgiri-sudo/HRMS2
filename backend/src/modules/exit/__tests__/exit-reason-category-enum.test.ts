@@ -27,42 +27,27 @@ describe("exitReasonCategory enum", () => {
       "other",
     ];
     for (const exitReasonCategory of codes) {
-      const parsed = createExitRequestSchema.parse({
-        ...base,
-        exitReasonCategory,
-      });
+      const parsed = createExitRequestSchema.parse({ ...base, exitReasonCategory });
       expect(parsed.exitReasonCategory).toBe(exitReasonCategory);
     }
   });
 
   it("accepts a null/omitted category", () => {
+    expect(createExitRequestSchema.parse({ ...base }).exitReasonCategory).toBeNull();
     expect(
-      createExitRequestSchema.parse({ ...base }).exitReasonCategory,
-    ).toBeNull();
-    expect(
-      createExitRequestSchema.parse({ ...base, exitReasonCategory: null })
-        .exitReasonCategory,
+      createExitRequestSchema.parse({ ...base, exitReasonCategory: null }).exitReasonCategory,
     ).toBeNull();
   });
 
   it("rejects free-text values that are not a known category code", () => {
     expect(() =>
-      createExitRequestSchema.parse({
-        ...base,
-        exitReasonCategory: "Health Problem",
-      }),
+      createExitRequestSchema.parse({ ...base, exitReasonCategory: "Health Problem" }),
     ).toThrow();
     expect(() =>
-      createExitRequestSchema.parse({
-        ...base,
-        exitReasonCategory: "Absconded",
-      }),
+      createExitRequestSchema.parse({ ...base, exitReasonCategory: "Absconded" }),
     ).toThrow();
     expect(() =>
-      createExitRequestSchema.parse({
-        ...base,
-        exitReasonCategory: "termination_performance",
-      }),
+      createExitRequestSchema.parse({ ...base, exitReasonCategory: "termination_performance" }),
     ).toThrow();
   });
 });

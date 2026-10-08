@@ -23,12 +23,9 @@ const { dbExecute, logSensitiveAction, sendSMS } = vi.hoisted(() => ({
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 vi.mock("../../communication/sms.helper.js", () => ({ sendSMS }));
-vi.mock("../../../shared/fieldEncryption.js", () => ({
-  encryptField: vi.fn((v: string) => `enc(${v})`),
-}));
+vi.mock("../../../shared/fieldEncryption.js", () => ({ encryptField: vi.fn((v: string) => `enc(${v})`) }));
 
-const { profileApprovalService, submitStatutoryDetailsForApproval } =
-  await import("../profile-approval.service.js");
+const { profileApprovalService, submitStatutoryDetailsForApproval } = await import("../profile-approval.service.js");
 
 const EMPLOYEE_ID = "11111111-1111-1111-1111-111111111111";
 const USER_ID = "22222222-2222-2222-2222-222222222222";
@@ -44,8 +41,8 @@ describe("submitBankDetailsForApproval — pending-request dedup", () => {
   it("reuses the existing pending row's id instead of inserting a new one", async () => {
     dbExecute
       .mockResolvedValueOnce([[{ id: EXISTING_PENDING_ID, old_values: {} }]]) // SELECT existing pending
-      .mockResolvedValueOnce([{}]) // INSERT bank_penny_drop_log
-      .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE profile_update_approval
+      .mockResolvedValueOnce([{}])  // INSERT bank_penny_drop_log
+      .mockResolvedValueOnce([{}])  // INSERT ... ON DUPLICATE KEY UPDATE profile_update_approval
       .mockResolvedValueOnce([[]]); // SELECT employee for SMS (empty -> no SMS)
 
     const result = await profileApprovalService.submitBankDetailsForApproval(
@@ -56,18 +53,16 @@ describe("submitBankDetailsForApproval — pending-request dedup", () => {
 
     expect(result.id).toBe(EXISTING_PENDING_ID);
 
-    const insertCall = dbExecute.mock.calls.find((c) =>
-      String(c[0]).includes("INSERT INTO profile_update_approval"),
-    );
+    const insertCall = dbExecute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO profile_update_approval"));
     expect(insertCall).toBeTruthy();
     expect(insertCall![1][0]).toBe(EXISTING_PENDING_ID); // id param reused, not a fresh UUID
   });
 
   it("generates a fresh id when no pending request exists for this employee", async () => {
     dbExecute
-      .mockResolvedValueOnce([[]]) // SELECT existing pending — none
-      .mockResolvedValueOnce([{}]) // INSERT bank_penny_drop_log
-      .mockResolvedValueOnce([{}]) // INSERT profile_update_approval
+      .mockResolvedValueOnce([[]])  // SELECT existing pending — none
+      .mockResolvedValueOnce([{}])  // INSERT bank_penny_drop_log
+      .mockResolvedValueOnce([{}])  // INSERT profile_update_approval
       .mockResolvedValueOnce([[]]); // SELECT employee for SMS
 
     const result = await profileApprovalService.submitBankDetailsForApproval(
@@ -107,16 +102,10 @@ describe("submitStatutoryDetailsForApproval — pending-request dedup", () => {
   it("reuses the existing pending row's id instead of inserting a new one", async () => {
     stubStatutoryFlow([{ id: EXISTING_PENDING_ID }]);
 
-    const result = await submitStatutoryDetailsForApproval(
-      USER_ID,
-      EMPLOYEE_ID,
-      { pan_number: "ABCDE1234F" },
-    );
+    const result = await submitStatutoryDetailsForApproval(USER_ID, EMPLOYEE_ID, { pan_number: "ABCDE1234F" });
 
     expect(result.id).toBe(EXISTING_PENDING_ID);
-    const insertCall = dbExecute.mock.calls.find((c) =>
-      String(c[0]).includes("INSERT INTO profile_update_approval"),
-    );
+    const insertCall = dbExecute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO profile_update_approval"));
     expect(insertCall![1][0]).toBe(EXISTING_PENDING_ID);
     // Replaces in place: the statement is an upsert on that id, carrying before and after.
     expect(String(insertCall![0])).toContain("ON DUPLICATE KEY UPDATE");
@@ -130,11 +119,7 @@ describe("submitStatutoryDetailsForApproval — pending-request dedup", () => {
   it("generates a fresh id when no pending statutory request exists", async () => {
     stubStatutoryFlow([]);
 
-    const result = await submitStatutoryDetailsForApproval(
-      USER_ID,
-      EMPLOYEE_ID,
-      { pan_number: "ABCDE1234F" },
-    );
+    const result = await submitStatutoryDetailsForApproval(USER_ID, EMPLOYEE_ID, { pan_number: "ABCDE1234F" });
 
     expect(result.id).not.toBe(EXISTING_PENDING_ID);
     expect(result.id).toMatch(/^[0-9a-f-]{36}$/);
@@ -145,9 +130,7 @@ describe("submitStatutoryDetailsForApproval — pending-request dedup", () => {
   it("bank and statutory dedup lookups are scoped independently by request_type", async () => {
     stubStatutoryFlow([]); // no pending statutory_details, even if a bank one is pending
 
-    await submitStatutoryDetailsForApproval(USER_ID, EMPLOYEE_ID, {
-      pan_number: "ABCDE1234F",
-    });
+    await submitStatutoryDetailsForApproval(USER_ID, EMPLOYEE_ID, { pan_number: "ABCDE1234F" });
 
     const selectCall = dbExecute.mock.calls[0];
     expect(String(selectCall[0])).toContain("request_type = ?");

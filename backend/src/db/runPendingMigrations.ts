@@ -130,23 +130,12 @@ export function isIndexOnlyMigrationSql(sql: string): boolean {
     .replace(/--[^\n]*/g, " ")
     .replace(/#[^\n]*/g, " ")
     .toLowerCase();
-  if (
-    !/\b(add\s+(unique\s+)?(index|key)|create\s+(unique\s+)?index)\b/.test(
-      stripped,
-    )
-  )
-    return false;
+  if (!/\b(add\s+(unique\s+)?(index|key)|create\s+(unique\s+)?index)\b/.test(stripped)) return false;
   // Anything that changes data, structure other than an index, or removes something disqualifies it.
   if (
-    /\b(drop|delete|update|insert|truncate|replace|rename|grant|revoke|modify|change|call)\b/.test(
-      stripped,
-    ) ||
-    /\badd\s+(column|constraint|foreign|primary|fulltext|spatial|check)\b/.test(
-      stripped,
-    ) ||
-    /\bcreate\s+(table|temporary|trigger|view|procedure|function|event|database|schema)\b/.test(
-      stripped,
-    ) ||
+    /\b(drop|delete|update|insert|truncate|replace|rename|grant|revoke|modify|change|call)\b/.test(stripped) ||
+    /\badd\s+(column|constraint|foreign|primary|fulltext|spatial|check)\b/.test(stripped) ||
+    /\bcreate\s+(table|temporary|trigger|view|procedure|function|event|database|schema)\b/.test(stripped) ||
     /\bforeign\s+key\b/.test(stripped)
   ) {
     return false;
@@ -159,8 +148,7 @@ export function isIndexOnlyMigrationSql(sql: string): boolean {
     for (const raw of clauses) {
       const c = raw.trim();
       if (!c) continue;
-      if (!/^(add\s+(unique\s+)?(index|key)\b|algorithm\s*=|lock\s*=)/.test(c))
-        return false;
+      if (!/^(add\s+(unique\s+)?(index|key)\b|algorithm\s*=|lock\s*=)/.test(c)) return false;
     }
   }
   return true;
@@ -2210,9 +2198,7 @@ export async function runPendingMigrations(
           let deferIndexOnly = false;
           if (isTransientMigrationError(error)) {
             try {
-              deferIndexOnly = isIndexOnlyMigrationSql(
-                fs.readFileSync(filePath, "utf8"),
-              );
+              deferIndexOnly = isIndexOnlyMigrationSql(fs.readFileSync(filePath, "utf8"));
             } catch {
               deferIndexOnly = false;
             }

@@ -61,9 +61,7 @@ type CertificationInput = {
   publicationFactCount: number | null;
 };
 
-function check(
-  input: Omit<PerformanceCertificationCheck, "passed"> & { passed: boolean },
-): PerformanceCertificationCheck {
+function check(input: Omit<PerformanceCertificationCheck, "passed"> & { passed: boolean }): PerformanceCertificationCheck {
   return input;
 }
 
@@ -79,9 +77,7 @@ export function evaluatePerformanceRunCertification(
       passed: terminal,
       expected: "preview_complete or published",
       actual: input.status,
-      detail: terminal
-        ? "The run reached a successful terminal state."
-        : "The run is failed, queued, or still running.",
+      detail: terminal ? "The run reached a successful terminal state." : "The run is failed, queued, or still running.",
     }),
     check({
       code: "SOURCE_TO_RAW",
@@ -89,8 +85,7 @@ export function evaluatePerformanceRunCertification(
       passed: input.sourceRows === input.rawRows,
       expected: input.sourceRows,
       actual: input.rawRows,
-      detail:
-        "Every extracted source row must have exactly one raw evidence record.",
+      detail: "Every extracted source row must have exactly one raw evidence record.",
     }),
     check({
       code: "STAGING_TO_RAW",
@@ -98,8 +93,7 @@ export function evaluatePerformanceRunCertification(
       passed: input.stagedRows === input.rawRows,
       expected: input.stagedRows,
       actual: input.rawRows,
-      detail:
-        "The persisted run counters and raw evidence table must reconcile.",
+      detail: "The persisted run counters and raw evidence table must reconcile.",
     }),
     check({
       code: "ROW_CLASSIFICATION",
@@ -107,8 +101,7 @@ export function evaluatePerformanceRunCertification(
       passed: input.mappedRows + input.invalidRows === input.stagedRows,
       expected: input.stagedRows,
       actual: input.mappedRows + input.invalidRows,
-      detail:
-        "No staged row may disappear between validation and classification.",
+      detail: "No staged row may disappear between validation and classification.",
     }),
     check({
       code: "INVALID_ROW_EVIDENCE",
@@ -116,8 +109,7 @@ export function evaluatePerformanceRunCertification(
       passed: input.invalidRows === input.invalidRawRows,
       expected: input.invalidRows,
       actual: input.invalidRawRows,
-      detail:
-        "Every invalid row must be represented by at least one error-level validation record.",
+      detail: "Every invalid row must be represented by at least one error-level validation record.",
     }),
     check({
       code: "NO_INVALID_ROWS",
@@ -125,10 +117,9 @@ export function evaluatePerformanceRunCertification(
       passed: input.invalidRows === 0,
       expected: 0,
       actual: input.invalidRows,
-      detail:
-        input.invalidRows === 0
-          ? "All rows passed identity, process, date, and metric validation."
-          : "Resolve validation and mapping exceptions before certification.",
+      detail: input.invalidRows === 0
+        ? "All rows passed identity, process, date, and metric validation."
+        : "Resolve validation and mapping exceptions before certification.",
     }),
     check({
       code: "RECONCILIATIONS_PRESENT",
@@ -136,8 +127,7 @@ export function evaluatePerformanceRunCertification(
       passed: input.reconciliationRows >= (published ? 3 : 2),
       expected: published ? 3 : 2,
       actual: input.reconciliationRows,
-      detail:
-        "Preview requires source/staging and staging/classification controls; publish also requires fact publication reconciliation.",
+      detail: "Preview requires source/staging and staging/classification controls; publish also requires fact publication reconciliation.",
     }),
     check({
       code: "RECONCILIATIONS_PASSED",
@@ -173,8 +163,7 @@ export function evaluatePerformanceRunCertification(
         passed: input.lineageRows === input.publishedFacts,
         expected: input.publishedFacts,
         actual: input.lineageRows,
-        detail:
-          "Every published fact must retain source-specific lineage evidence.",
+        detail: "Every published fact must retain source-specific lineage evidence.",
       }),
       check({
         code: "PUBLISHED_TO_CANONICAL",
@@ -182,8 +171,7 @@ export function evaluatePerformanceRunCertification(
         passed: input.canonicalRows === input.publishedFacts,
         expected: input.publishedFacts,
         actual: input.canonicalRows,
-        detail:
-          "Each aggregated fact must be visible in the canonical daily KPI table for this run.",
+        detail: "Each aggregated fact must be visible in the canonical daily KPI table for this run.",
       }),
     );
   }
@@ -221,9 +209,7 @@ function number(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export async function verifyPerformanceRun(
-  runId: string,
-): Promise<PerformanceRunCertification> {
+export async function verifyPerformanceRun(runId: string): Promise<PerformanceRunCertification> {
   const [runRows] = await db.execute<RowDataPacket[]>(
     `SELECT r.id,
             r.dataset_id,
@@ -244,19 +230,10 @@ export async function verifyPerformanceRun(
   );
   const run = runRows[0];
   if (!run) {
-    throw Object.assign(new Error("Performance ingestion run not found"), {
-      statusCode: 404,
-    });
+    throw Object.assign(new Error("Performance ingestion run not found"), { statusCode: 404 });
   }
 
-  const [
-    [raw],
-    [validation],
-    [lineage],
-    [canonical],
-    [reconciliation],
-    [publication],
-  ] = await Promise.all([
+  const [[raw], [validation], [lineage], [canonical], [reconciliation], [publication]] = await Promise.all([
     db.execute<RowDataPacket[]>(
       "SELECT COUNT(*) AS raw_rows FROM performance_raw_record WHERE run_id = ?",
       [runId],
@@ -315,12 +292,9 @@ export async function verifyPerformanceRun(
     canonicalRows: number(canonical[0]?.canonical_rows),
     reconciliationRows: number(reconciliation[0]?.reconciliation_rows),
     failedReconciliations: number(reconciliation[0]?.failed_reconciliations),
-    publicationStatus: publication[0]?.status
-      ? String(publication[0].status)
-      : null,
-    publicationFactCount:
-      publication[0]?.published_fact_count === undefined
-        ? null
-        : number(publication[0].published_fact_count),
+    publicationStatus: publication[0]?.status ? String(publication[0].status) : null,
+    publicationFactCount: publication[0]?.published_fact_count === undefined
+      ? null
+      : number(publication[0].published_fact_count),
   });
 }

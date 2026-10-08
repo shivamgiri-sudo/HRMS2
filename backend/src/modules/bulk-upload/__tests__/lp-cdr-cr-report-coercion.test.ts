@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseNullableAmount,
-  parseDate,
-  LP_CR_REPORT_HEADERS,
+  parseNullableAmount, parseDate, LP_CR_REPORT_HEADERS,
 } from "../lp-cdr-cr-report-bulk.service.js";
 
 describe("parseDate", () => {

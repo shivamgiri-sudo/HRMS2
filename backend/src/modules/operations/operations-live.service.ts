@@ -1,9 +1,4 @@
-import type {
-  FieldPacket,
-  PoolConnection,
-  QueryResult,
-  RowDataPacket,
-} from "mysql2/promise";
+import type { FieldPacket, PoolConnection, QueryResult, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 
@@ -18,13 +13,10 @@ import { logger } from "../../logger.js";
  *
  * The underlying tables store branch/process NAMES rather than FK ids, hence names.
  */
-export type OperationsScopeFilter =
-  | {
-      branchNames?: readonly string[] | null;
-      processNames?: readonly string[] | null;
-    }
-  | null
-  | undefined;
+export type OperationsScopeFilter = {
+  branchNames?: readonly string[] | null;
+  processNames?: readonly string[] | null;
+} | null | undefined;
 
 export function buildOperationsScopeClause(
   scope: OperationsScopeFilter,
@@ -37,22 +29,16 @@ export function buildOperationsScopeClause(
 
   if (scope.branchNames) {
     if (scope.branchNames.length === 0) return { sql: "1=0", params: [] };
-    clauses.push(
-      `${alias}.branch_name IN (${scope.branchNames.map(() => "?").join(",")})`,
-    );
+    clauses.push(`${alias}.branch_name IN (${scope.branchNames.map(() => "?").join(",")})`);
     params.push(...scope.branchNames);
   }
   if (scope.processNames) {
     if (scope.processNames.length === 0) return { sql: "1=0", params: [] };
-    clauses.push(
-      `${alias}.process_name IN (${scope.processNames.map(() => "?").join(",")})`,
-    );
+    clauses.push(`${alias}.process_name IN (${scope.processNames.map(() => "?").join(",")})`);
     params.push(...scope.processNames);
   }
 
-  return clauses.length
-    ? { sql: clauses.join(" AND "), params }
-    : { sql: "1=1", params: [] };
+  return clauses.length ? { sql: clauses.join(" AND "), params } : { sql: "1=1", params: [] };
 }
 
 export interface AgentStatus {
@@ -97,8 +83,7 @@ export interface RosterVsActualResponse {
 }
 
 export interface AttritionSignal {
-  type:
-    "resignation_notice" | "attendance_drop" | "quality_decline" | "escalation";
+  type: "resignation_notice" | "attendance_drop" | "quality_decline" | "escalation";
   severity: "low" | "medium" | "high";
   description: string;
 }
@@ -121,18 +106,13 @@ export interface AttritionRiskResponse {
 }
 
 type DbExecutor = {
-  execute<T extends QueryResult = RowDataPacket[]>(
-    sql: string,
-    params?: unknown[],
-  ): Promise<[T, FieldPacket[]]>;
+  execute<T extends QueryResult = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, FieldPacket[]]>;
   getConnection?: () => Promise<PoolConnection>;
 };
 
 class OperationsLiveService {
   private db: DbExecutor;
-  constructor(dbPool?: DbExecutor) {
-    this.db = dbPool ?? db;
-  }
+  constructor(dbPool?: DbExecutor) { this.db = dbPool ?? db; }
 
   /**
    * Get live agent status for all agents or filtered by process/branch
@@ -140,7 +120,7 @@ class OperationsLiveService {
   async getLiveStatus(
     processName?: string,
     branchName?: string,
-    scope?: OperationsScopeFilter,
+    scope?: OperationsScopeFilter
   ): Promise<LiveStatusResponse> {
     try {
       const conditions: string[] = ["e.employment_status = 'Active'"];
@@ -193,7 +173,7 @@ class OperationsLiveService {
         WHERE ${whereClause}
         ORDER BY ra.process_name, e.employee_code
         `,
-        params,
+        params
       );
 
       const agentList: AgentStatus[] = (agents as any[]).map((row) => ({
@@ -216,8 +196,7 @@ class OperationsLiveService {
         logged_out: agentList.filter((a) => a.status === "Logged Out").length,
         absent: agentList.filter((a) => a.status === "Absent").length,
         avg_call_duration: Math.round(
-          agentList.reduce((sum, a) => sum + a.duration, 0) /
-            Math.max(agentList.length, 1),
+          agentList.reduce((sum, a) => sum + a.duration, 0) / Math.max(agentList.length, 1)
         ),
       };
 
@@ -235,9 +214,7 @@ class OperationsLiveService {
   /**
    * Get roster vs actual utilization comparison by process
    */
-  async getRosterVsActual(
-    scope?: OperationsScopeFilter,
-  ): Promise<RosterVsActualResponse> {
+  async getRosterVsActual(scope?: OperationsScopeFilter): Promise<RosterVsActualResponse> {
     try {
       // Previously returned every process org-wide regardless of who asked. A
       // branch- or process-scoped caller must only see their own.
@@ -255,34 +232,26 @@ class OperationsLiveService {
         GROUP BY ra.process_name
         ORDER BY ra.process_name
         `,
-        scopeClause.params,
+        scopeClause.params
       );
 
-      const processUtilization: ProcessUtilization[] = (processes as any[]).map(
-        (p) => {
-          const utilization_pct =
-            p.planned_headcount > 0
-              ? Math.round((p.actual_logged_in / p.planned_headcount) * 100)
-              : 0;
+      const processUtilization: ProcessUtilization[] = (processes as any[]).map((p) => {
+        const utilization_pct =
+          p.planned_headcount > 0
+            ? Math.round((p.actual_logged_in / p.planned_headcount) * 100)
+            : 0;
 
-          return {
-            process_name: p.process_name,
-            planned_headcount: p.planned_headcount,
-            actual_logged_in: p.actual_logged_in,
-            utilization_pct,
-            shrinkage_forecast: 100 - utilization_pct,
-          };
-        },
-      );
+        return {
+          process_name: p.process_name,
+          planned_headcount: p.planned_headcount,
+          actual_logged_in: p.actual_logged_in,
+          utilization_pct,
+          shrinkage_forecast: 100 - utilization_pct,
+        };
+      });
 
-      const totalPlanned = processUtilization.reduce(
-        (sum, p) => sum + p.planned_headcount,
-        0,
-      );
-      const totalActual = processUtilization.reduce(
-        (sum, p) => sum + p.actual_logged_in,
-        0,
-      );
+      const totalPlanned = processUtilization.reduce((sum, p) => sum + p.planned_headcount, 0);
+      const totalActual = processUtilization.reduce((sum, p) => sum + p.actual_logged_in, 0);
       const overallUtilization =
         totalPlanned > 0 ? Math.round((totalActual / totalPlanned) * 100) : 0;
 
@@ -302,34 +271,25 @@ class OperationsLiveService {
    */
   async getAttritionRiskScores(
     minRiskScore: number = 0,
-    employeeScope?: {
-      branchIds?: readonly string[] | null;
-      processIds?: readonly string[] | null;
-    } | null,
+    employeeScope?: { branchIds?: readonly string[] | null; processIds?: readonly string[] | null } | null,
   ): Promise<AttritionRiskResponse> {
     try {
       // This read had no scope at all: a branch_head or manager received per-employee
       // attrition risk for the entire organisation. `employees` carries FK ids, so it is
       // scoped on branch_id / process_id rather than by name.
-      const conditions: string[] = [
-        "e.employment_status IN ('Active', 'Resigned')",
-      ];
+      const conditions: string[] = ["e.employment_status IN ('Active', 'Resigned')"];
       const params: unknown[] = [];
       if (employeeScope?.branchIds) {
         if (employeeScope.branchIds.length === 0) conditions.push("1=0");
         else {
-          conditions.push(
-            `e.branch_id IN (${employeeScope.branchIds.map(() => "?").join(",")})`,
-          );
+          conditions.push(`e.branch_id IN (${employeeScope.branchIds.map(() => "?").join(",")})`);
           params.push(...employeeScope.branchIds);
         }
       }
       if (employeeScope?.processIds) {
         if (employeeScope.processIds.length === 0) conditions.push("1=0");
         else {
-          conditions.push(
-            `e.process_id IN (${employeeScope.processIds.map(() => "?").join(",")})`,
-          );
+          conditions.push(`e.process_id IN (${employeeScope.processIds.map(() => "?").join(",")})`);
           params.push(...employeeScope.processIds);
         }
       }
@@ -364,7 +324,7 @@ class OperationsLiveService {
         LEFT JOIN exit_request res ON res.employee_id = e.id
         WHERE ${conditions.join(" AND ")}
         `,
-        params,
+        params
       );
 
       const riskList: EmployeeAttritionRisk[] = [];
@@ -392,7 +352,7 @@ class OperationsLiveService {
           FROM wfm_attendance_session
           WHERE employee_id = ? AND session_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
           `,
-          [emp.employee_id],
+          [emp.employee_id]
         );
 
         const attData = attendance?.[0] as any;
@@ -421,8 +381,7 @@ class OperationsLiveService {
             employee_name: emp.employee_name,
             risk_score: Math.min(100, riskScore),
             signals,
-            retention_action:
-              riskScore >= 60 ? "Schedule retention discussion" : null,
+            retention_action: riskScore >= 60 ? "Schedule retention discussion" : null,
             last_updated: new Date().toISOString(),
           });
         }
@@ -432,9 +391,7 @@ class OperationsLiveService {
       riskList.sort((a, b) => b.risk_score - a.risk_score);
 
       const highRiskCount = riskList.filter((r) => r.risk_score >= 70).length;
-      const mediumRiskCount = riskList.filter(
-        (r) => r.risk_score >= 50 && r.risk_score < 70,
-      ).length;
+      const mediumRiskCount = riskList.filter((r) => r.risk_score >= 50 && r.risk_score < 70).length;
 
       return {
         employees: riskList,

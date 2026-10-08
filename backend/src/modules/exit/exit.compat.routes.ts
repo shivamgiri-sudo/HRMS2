@@ -1,9 +1,6 @@
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
@@ -25,10 +22,7 @@ import { exitController } from "./exit.controller.js";
 export const exitCompatRouter = Router();
 exitCompatRouter.use(requireAuth);
 
-const h =
-  (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 function normalizeStatus(status: unknown) {
   const next = String(status ?? "").trim();
@@ -54,12 +48,10 @@ async function finalExitBlockers(exitRequestId: string) {
   const ff = ffRows[0];
   const blockers: string[] = [];
   const openClearance = Number(clearanceRows[0]?.open_count ?? 0);
-  if (openClearance > 0)
-    blockers.push(`${openClearance} clearance task(s) still open`);
+  if (openClearance > 0) blockers.push(`${openClearance} clearance task(s) still open`);
   if (!ff) blockers.push("F&F calculation is missing");
   else {
-    if (!["approved", "paid"].includes(String(ff.status)))
-      blockers.push(`F&F is ${ff.status}`);
+    if (!["approved", "paid"].includes(String(ff.status))) blockers.push(`F&F is ${ff.status}`);
     if (Number(ff.is_ff_provisional) === 1) blockers.push("F&F is provisional");
   }
   return blockers;
@@ -69,17 +61,13 @@ const guardedStatusUpdate = [
   requireRole("admin", "hr", "manager"),
   h(async (req: AuthenticatedRequest, res) => {
     const nextStatus = normalizeStatus(req.body?.status);
-    if (!nextStatus)
-      return res
-        .status(400)
-        .json({ success: false, message: "status is required" });
+    if (!nextStatus) return res.status(400).json({ success: false, message: "status is required" });
     if (nextStatus === "exited") {
       const blockers = await finalExitBlockers(req.params.id);
       if (blockers.length) {
         return res.status(409).json({
           success: false,
-          message:
-            "Cannot mark employee exited until exit controls are complete.",
+          message: "Cannot mark employee exited until exit controls are complete.",
           blockers,
         });
       }
@@ -92,72 +80,44 @@ const guardedStatusUpdate = [
 exitCompatRouter.patch("/:id/status", ...guardedStatusUpdate);
 exitCompatRouter.post("/:id/status", ...guardedStatusUpdate);
 
-exitCompatRouter.get(
-  "/",
-  h(async (req, res) => {
-    const userId = req.authUser!.id;
-    const isAdminHr = await hasRole(userId, "admin", "hr");
-    const isFinancePayroll = await hasRole(userId, "finance", "payroll");
-    const isManager = await hasRole(userId, "manager");
-    const callerEmp = await getEmployeeForUser(userId);
+exitCompatRouter.get("/", h(async (req, res) => {
+  const userId = req.authUser!.id;
+  const isAdminHr = await hasRole(userId, "admin", "hr");
+  const isFinancePayroll = await hasRole(userId, "finance", "payroll");
+  const isManager = await hasRole(userId, "manager");
+  const callerEmp = await getEmployeeForUser(userId);
 
-    const page = Math.max(1, Number(req.query.page ?? 1) || 1);
-    const limit = Math.min(
-      Math.max(1, Number(req.query.limit ?? 20) || 20),
-      100,
-    );
-    const offset = (page - 1) * limit;
-    const where: string[] = [];
-    const params: unknown[] = [];
+  const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+  const limit = Math.min(Math.max(1, Number(req.query.limit ?? 20) || 20), 100);
+  const offset = (page - 1) * limit;
+  const where: string[] = [];
+  const params: unknown[] = [];
 
-    if (!isAdminHr && !isFinancePayroll) {
-      if (!callerEmp?.id)
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message: "No employee record linked to your login",
-          });
-      if (isManager) {
-        where.push(
-          "(e.reporting_manager_id = ? OR e.manager_id = ? OR er.employee_id = ?)",
-        );
-        params.push(callerEmp.id, callerEmp.id, callerEmp.id);
-      } else {
-        where.push("er.employee_id = ?");
-        params.push(callerEmp.id);
-      }
-    } else if (req.query.employeeId) {
+  if (!isAdminHr && !isFinancePayroll) {
+    if (!callerEmp?.id) return res.status(403).json({ success: false, message: "No employee record linked to your login" });
+    if (isManager) {
+      where.push("(e.reporting_manager_id = ? OR e.manager_id = ? OR er.employee_id = ?)");
+      params.push(callerEmp.id, callerEmp.id, callerEmp.id);
+    } else {
       where.push("er.employee_id = ?");
-      params.push(String(req.query.employeeId));
+      params.push(callerEmp.id);
     }
+  } else if (req.query.employeeId) {
+    where.push("er.employee_id = ?");
+    params.push(String(req.query.employeeId));
+  }
 
-    if (req.query.status) {
-      where.push("er.status = ?");
-      params.push(
-        String(req.query.status) === "exit_confirmed"
-          ? "exited"
-          : String(req.query.status),
-      );
-    }
-    if (req.query.branchId) {
-      where.push("e.branch_id = ?");
-      params.push(String(req.query.branchId));
-    }
-    if (req.query.processId) {
-      where.push("e.process_id = ?");
-      params.push(String(req.query.processId));
-    }
-    if (req.query.search) {
-      const q = `%${String(req.query.search).trim()}%`;
-      where.push(
-        "(e.employee_code LIKE ? OR e.full_name LIKE ? OR CONCAT_WS(' ', e.first_name, e.last_name) LIKE ? OR er.resignation_reason LIKE ? OR er.exit_reason_category LIKE ?)",
-      );
-      params.push(q, q, q, q, q);
-    }
+  if (req.query.status) { where.push("er.status = ?"); params.push(String(req.query.status) === "exit_confirmed" ? "exited" : String(req.query.status)); }
+  if (req.query.branchId) { where.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+  if (req.query.processId) { where.push("e.process_id = ?"); params.push(String(req.query.processId)); }
+  if (req.query.search) {
+    const q = `%${String(req.query.search).trim()}%`;
+    where.push("(e.employee_code LIKE ? OR e.full_name LIKE ? OR CONCAT_WS(' ', e.first_name, e.last_name) LIKE ? OR er.resignation_reason LIKE ? OR er.exit_reason_category LIKE ?)");
+    params.push(q, q, q, q, q);
+  }
 
-    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-    const fromSql = `
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const fromSql = `
     FROM exit_request er
     LEFT JOIN employees e ON e.id = er.employee_id
     LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -171,8 +131,8 @@ exitCompatRouter.get(
     ) clearance ON clearance.exit_request_id = er.id
   `;
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT er.*,
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT er.*,
             e.employee_code,
             COALESCE(NULLIF(e.full_name, ''), CONCAT_WS(' ', e.first_name, e.last_name)) AS employee_name,
             b.branch_name,
@@ -186,20 +146,13 @@ exitCompatRouter.get(
        ${whereSql}
       ORDER BY er.created_at DESC
       LIMIT ${limit} OFFSET ${offset}`,
-      params,
-    );
+    params,
+  );
 
-    const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total ${fromSql} ${whereSql}`,
-      params,
-    );
+  const [countRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total ${fromSql} ${whereSql}`,
+    params,
+  );
 
-    return res.json({
-      success: true,
-      data: rows,
-      total: Number(countRows[0]?.total ?? 0),
-      page,
-      limit,
-    });
-  }),
-);
+  return res.json({ success: true, data: rows, total: Number(countRows[0]?.total ?? 0), page, limit });
+}));

@@ -11,7 +11,7 @@ import {
   resolveAprBulkUploadAttribution,
   createAprBulkUploadBatch,
   finaliseAprBulkUploadBatch,
-} from "./attendance-apr-bulk-attribution.service.js";
+} from './attendance-apr-bulk-attribution.service.js';
 
 /**
  * The sentinel campaign this route used to WRITE, and now only READS.
@@ -27,7 +27,7 @@ import {
  * unattributed upload is still not mistaken for a synced day. It must never appear in an INSERT
  * again; migration 1640's BEFORE INSERT trigger on `apr` rejects a manual row carrying it.
  */
-const LEGACY_MANUAL_UPLOAD_CAMPAIGN = "MANUAL_UPLOAD";
+const LEGACY_MANUAL_UPLOAD_CAMPAIGN = 'MANUAL_UPLOAD';
 
 const router = Router();
 router.use(requireAuth);
@@ -94,8 +94,7 @@ const MAX_NET_LOGIN_MINUTES = 1080;
 
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size)
-    chunks.push(items.slice(i, i + size));
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
   return chunks;
 }
 
@@ -103,18 +102,13 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
   fileFilter(_req, file, cb) {
-    if (
-      file.mimetype === "text/csv" ||
-      file.originalname.toLowerCase().endsWith(".csv")
-    ) {
+    if (file.mimetype === 'text/csv' || file.originalname.toLowerCase().endsWith('.csv')) {
       cb(null, true);
     } else {
-      cb(
-        new Error(
-          "This upload reads CSV files only — it cannot read an Excel workbook. " +
-            "In Excel choose File > Save As > CSV (Comma delimited) (*.csv) and upload that file.",
-        ),
-      );
+      cb(new Error(
+        'This upload reads CSV files only — it cannot read an Excel workbook. ' +
+        'In Excel choose File > Save As > CSV (Comma delimited) (*.csv) and upload that file.',
+      ));
     }
   },
 });
@@ -131,17 +125,17 @@ const upload = multer({
  * 500. Answering the rejection here, with a status, keeps it out of the masking branch.
  */
 function acceptCsvUpload(req: any, res: any, next: any) {
-  upload.single("file")(req, res, (err: unknown) => {
+  upload.single('file')(req, res, (err: unknown) => {
     if (!err) return next();
     const code = (err as { code?: string })?.code;
     const message =
-      code === "LIMIT_FILE_SIZE"
+      code === 'LIMIT_FILE_SIZE'
         ? `The file is larger than ${MAX_UPLOAD_MB} MB. Split it into smaller files and upload them one at a time.`
-        : code === "LIMIT_UNEXPECTED_FILE"
+        : code === 'LIMIT_UNEXPECTED_FILE'
           ? 'Attach the CSV as a single file named "file".'
           : err instanceof Error && err.message
             ? err.message
-            : "The uploaded file could not be read.";
+            : 'The uploaded file could not be read.';
     return res.status(400).json({ success: false, message });
   });
 }
@@ -160,25 +154,18 @@ interface RowError {
 }
 
 function parseCsv(content: string): { rows: CsvRow[]; errors: RowError[] } {
-  const lines = content.split(/\r?\n/).filter((l) => l.trim());
+  const lines = content.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return { rows: [], errors: [] };
 
-  const header = lines[0]!.split(",").map((h) => h.trim().toLowerCase());
-  const codeIdx = header.indexOf("employee_code");
-  const dateIdx = header.indexOf("attendance_date");
-  const minsIdx = header.indexOf("net_login_minutes");
+  const header = lines[0]!.split(',').map(h => h.trim().toLowerCase());
+  const codeIdx = header.indexOf('employee_code');
+  const dateIdx = header.indexOf('attendance_date');
+  const minsIdx = header.indexOf('net_login_minutes');
 
   if (codeIdx < 0 || dateIdx < 0 || minsIdx < 0) {
     return {
       rows: [],
-      errors: [
-        {
-          row: 0,
-          employee_code: "",
-          reason:
-            "CSV header must contain: employee_code, attendance_date, net_login_minutes",
-        },
-      ],
+      errors: [{ row: 0, employee_code: '', reason: 'CSV header must contain: employee_code, attendance_date, net_login_minutes' }],
     };
   }
 
@@ -189,121 +176,61 @@ function parseCsv(content: string): { rows: CsvRow[]; errors: RowError[] } {
   const ninetyDaysAgo = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
 
   for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i]!.split(",").map((c) => c.trim());
-    const employee_code = cols[codeIdx] ?? "";
-    const attendance_date = cols[dateIdx] ?? "";
-    const minsRaw = cols[minsIdx] ?? "";
+    const cols = lines[i]!.split(',').map(c => c.trim());
+    const employee_code = cols[codeIdx] ?? '';
+    const attendance_date = cols[dateIdx] ?? '';
+    const minsRaw = cols[minsIdx] ?? '';
 
     if (!employee_code && !attendance_date && !minsRaw) continue;
 
     const rowNum = i + 1;
 
-    if (!employee_code) {
-      errors.push({
-        row: rowNum,
-        employee_code,
-        reason: "employee_code is required",
-      });
-      continue;
-    }
+    if (!employee_code) { errors.push({ row: rowNum, employee_code, reason: 'employee_code is required' }); continue; }
     // Accept DD-MM-YYYY and convert to YYYY-MM-DD
     let normalised_date = attendance_date;
     if (/^\d{2}-\d{2}-\d{4}$/.test(attendance_date)) {
-      const [d, m, y] = attendance_date.split("-");
+      const [d, m, y] = attendance_date.split('-');
       normalised_date = `${y}-${m}-${d}`;
     } else if (!/^\d{4}-\d{2}-\d{2}$/.test(attendance_date)) {
-      errors.push({
-        row: rowNum,
-        employee_code,
-        reason: "attendance_date must be DD-MM-YYYY (e.g. 14-07-2026)",
-      });
-      continue;
+      errors.push({ row: rowNum, employee_code, reason: 'attendance_date must be DD-MM-YYYY (e.g. 14-07-2026)' }); continue;
     }
 
     const dateVal = new Date(normalised_date);
-    if (isNaN(dateVal.getTime())) {
-      errors.push({
-        row: rowNum,
-        employee_code,
-        reason: "attendance_date is invalid",
-      });
-      continue;
-    }
-    if (dateVal > today) {
-      errors.push({
-        row: rowNum,
-        employee_code,
-        reason: "attendance_date cannot be in the future",
-      });
-      continue;
-    }
-    if (dateVal < ninetyDaysAgo) {
-      errors.push({
-        row: rowNum,
-        employee_code,
-        reason: "attendance_date is older than 90 days",
-      });
-      continue;
-    }
+    if (isNaN(dateVal.getTime())) { errors.push({ row: rowNum, employee_code, reason: 'attendance_date is invalid' }); continue; }
+    if (dateVal > today) { errors.push({ row: rowNum, employee_code, reason: 'attendance_date cannot be in the future' }); continue; }
+    if (dateVal < ninetyDaysAgo) { errors.push({ row: rowNum, employee_code, reason: 'attendance_date is older than 90 days' }); continue; }
 
     // Upper bound raised 600 -> MAX_NET_LOGIN_MINUTES (1080 = 18h). 600 (10h) rejected genuine
     // long/double-shift dialler days outright, which the uploader could then not record at all.
     const net_login_minutes = parseInt(minsRaw, 10);
-    if (
-      isNaN(net_login_minutes) ||
-      net_login_minutes < 0 ||
-      net_login_minutes > MAX_NET_LOGIN_MINUTES
-    ) {
-      errors.push({
-        row: rowNum,
-        employee_code,
-        reason: `net_login_minutes must be an integer 0–${MAX_NET_LOGIN_MINUTES}`,
-      });
-      continue;
+    if (isNaN(net_login_minutes) || net_login_minutes < 0 || net_login_minutes > MAX_NET_LOGIN_MINUTES) {
+      errors.push({ row: rowNum, employee_code, reason: `net_login_minutes must be an integer 0–${MAX_NET_LOGIN_MINUTES}` }); continue;
     }
 
-    rows.push({
-      rowNum,
-      employee_code,
-      attendance_date: normalised_date,
-      net_login_minutes,
-    });
+    rows.push({ rowNum, employee_code, attendance_date: normalised_date, net_login_minutes });
   }
 
   return { rows, errors };
 }
 
 router.post(
-  "/apr-bulk-upload",
-  requireRole("wfm", "hr", "payroll_head", "super_admin", "admin"),
+  '/apr-bulk-upload',
+  requireRole('wfm', 'hr', 'payroll_head', 'super_admin', 'admin'),
   acceptCsvUpload,
   async (req: any, res: any) => {
     if (!req.file) {
-      return res
-        .status(400)
-        .json({ success: false, message: "No CSV file uploaded" });
+      return res.status(400).json({ success: false, message: 'No CSV file uploaded' });
     }
 
-    const content = req.file.buffer.toString("utf-8");
+    const content = req.file.buffer.toString('utf-8');
     const { rows: csvRows, errors: parseErrors } = parseCsv(content);
 
     if (parseErrors.length > 0 && csvRows.length === 0) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: parseErrors[0]!.reason,
-          errors: parseErrors,
-        });
+      return res.status(400).json({ success: false, message: parseErrors[0]!.reason, errors: parseErrors });
     }
 
     if (csvRows.length === 0) {
-      return res.json({
-        success: true,
-        uploaded: 0,
-        skipped_locked: 0,
-        errors: parseErrors,
-      });
+      return res.json({ success: true, uploaded: 0, skipped_locked: 0, errors: parseErrors });
     }
 
     // Fetch all unique employee codes in one query.
@@ -318,8 +245,8 @@ router.post(
     // `await`s inside loops, and this one is not in a loop, but it was still bare
     // and still upstream of the fixed phases, so a DB error here still crashed the
     // process exactly as before the chunked-insert fix.
-    const codes = [...new Set(csvRows.map((r) => r.employee_code))];
-    const ph = codes.map(() => "?").join(", ");
+    const codes = [...new Set(csvRows.map(r => r.employee_code))];
+    const ph = codes.map(() => '?').join(', ');
     let empRows: RowDataPacket[];
     try {
       [empRows] = await db.execute<RowDataPacket[]>(
@@ -337,8 +264,7 @@ router.post(
       return res.status(502).json({
         success: false,
         message: `Could not look up employees for this upload — the upload was not processed at all and no rows were saved. Retry the upload. (${
-          err instanceof Error ? err.message : String(err)
-        })`,
+          err instanceof Error ? err.message : String(err)})`,
       });
     }
     const empMap = new Map<string, any>();
@@ -369,7 +295,7 @@ router.post(
     const lockedSet = new Set<string>();
     const protectedReasonByKey = new Map<string, string>();
     for (const pairChunk of chunkArray(lockPairs, SELECT_CHUNK_SIZE)) {
-      const placeholders = pairChunk.map(() => "(?,?)").join(",");
+      const placeholders = pairChunk.map(() => '(?,?)').join(',');
       const params = pairChunk.flat();
       let lockedRows: RowDataPacket[];
       try {
@@ -409,8 +335,7 @@ router.post(
         // safety check itself errored, which is worse than under-writing rows a
         // caller can safely retry.
         const reason = `Lock status could not be verified for this row — the safety check that protects payroll-locked and regularization-approved attendance failed, so this row was skipped rather than risk an unsafe overwrite. Retry the upload. (${
-          err instanceof Error ? err.message : String(err)
-        })`;
+          err instanceof Error ? err.message : String(err)})`;
         for (const [employeeId, attendanceDate] of pairChunk) {
           const key = `${employeeId}:${attendanceDate}`;
           lockedSet.add(key);
@@ -424,10 +349,10 @@ router.post(
         protectedReasonByKey.set(
           key,
           r.approved_regularization_id || r.regularization_id
-            ? "Approved regularization already controls payroll attendance for this date"
+            ? 'Approved regularization already controls payroll attendance for this date'
             : r.override_by
-              ? "Manual attendance override already controls payroll attendance for this date"
-              : "Attendance record is locked for payroll",
+              ? 'Manual attendance override already controls payroll attendance for this date'
+              : 'Attendance record is locked for payroll'
         );
       }
     }
@@ -458,24 +383,19 @@ router.post(
     // same row-constructor form.
     for (const rowChunk of chunkArray(csvRows, SELECT_CHUNK_SIZE)) {
       const pairParams: string[] = [];
-      const pairPlaceholders = rowChunk
-        .map((r) => {
-          pairParams.push(r.employee_code, r.attendance_date);
-          return "(?,?)";
-        })
-        .join(",");
-      const [syncedRows] = await db
-        .execute<RowDataPacket[]>(
-          `SELECT UserID, DATE_FORMAT(ReportDate,'%Y-%m-%d') AS d
+      const pairPlaceholders = rowChunk.map((r) => {
+        pairParams.push(r.employee_code, r.attendance_date);
+        return '(?,?)';
+      }).join(',');
+      const [syncedRows] = await db.execute<RowDataPacket[]>(
+        `SELECT UserID, DATE_FORMAT(ReportDate,'%Y-%m-%d') AS d
            FROM apr
           WHERE (UserID, ReportDate) IN (${pairPlaceholders})
             AND source <> 'manual'
             AND campaign_id <> ?`,
-          [...pairParams, LEGACY_MANUAL_UPLOAD_CAMPAIGN],
-        )
-        .catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
-      for (const r of syncedRows as any[])
-        aprAlreadySynced.add(`${r.UserID}:${r.d}`);
+        [...pairParams, LEGACY_MANUAL_UPLOAD_CAMPAIGN],
+      ).catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
+      for (const r of syncedRows as any[]) aprAlreadySynced.add(`${r.UserID}:${r.d}`);
     }
 
     const rowErrors: RowError[] = [...parseErrors];
@@ -493,9 +413,7 @@ router.post(
     // Resolved once for the whole upload, not per row: a bulk file can carry
     // thousands of rows and this is a database read. Resolving it inside the loop
     // would also let the floor change midway through a single upload.
-    const netLoginHalfDayFloor = await resolveHalfDayFloorMinutes(
-      "netlogin_half_day_floor_minutes",
-    );
+    const netLoginHalfDayFloor = await resolveHalfDayFloorMinutes('netlogin_half_day_floor_minutes');
 
     // Phase 1 — validate and classify every row (no DB writes here). Unchanged
     // skip reasons, unchanged call sites for isOperationsExecutive /
@@ -520,19 +438,7 @@ router.post(
       // keeps coming from whatever source the engine already uses for that employee. Phase 3 reads
       // this to word its per-row failures truthfully ("Attendance saved, but ..." is false here).
       attendanceWritten: boolean;
-      params:
-        | [
-            string,
-            string,
-            unknown,
-            unknown,
-            number,
-            number,
-            string,
-            number,
-            string,
-          ]
-        | null;
+      params: [string, string, unknown, unknown, number, number, string, number, string] | null;
     }
     const toInsert: InsertCandidate[] = [];
     // Non-Operations-Executive rows. Stored as evidence in phase 3, skipped by phase 2.
@@ -543,11 +449,7 @@ router.post(
     for (const row of csvRows) {
       const emp = empMap.get(row.employee_code);
       if (!emp) {
-        rowErrors.push({
-          row: row.rowNum,
-          employee_code: row.employee_code,
-          reason: "Employee not found or inactive",
-        });
+        rowErrors.push({ row: row.rowNum, employee_code: row.employee_code, reason: 'Employee not found or inactive' });
         continue;
       }
 
@@ -557,9 +459,7 @@ router.post(
         rowErrors.push({
           row: row.rowNum,
           employee_code: row.employee_code,
-          reason:
-            protectedReasonByKey.get(lockKey) ??
-            "Attendance record is locked for payroll",
+          reason: protectedReasonByKey.get(lockKey) ?? 'Attendance record is locked for payroll',
         });
         continue;
       }
@@ -596,10 +496,7 @@ router.post(
         continue;
       }
 
-      const { status, lwpValue } = classifyOperationsNetLogin(
-        row.net_login_minutes,
-        netLoginHalfDayFloor,
-      );
+      const { status, lwpValue } = classifyOperationsNetLogin(row.net_login_minutes, netLoginHalfDayFloor);
 
       toInsert.push({
         rowNum: row.rowNum,
@@ -610,14 +507,9 @@ router.post(
         net_login_minutes: row.net_login_minutes,
         attendanceWritten: true,
         params: [
-          emp.employee_id,
-          row.attendance_date,
-          emp.branch_id,
-          emp.process_id,
-          row.net_login_minutes,
-          row.net_login_minutes,
-          status,
-          lwpValue,
+          emp.employee_id, row.attendance_date, emp.branch_id, emp.process_id,
+          row.net_login_minutes, row.net_login_minutes,
+          status, lwpValue,
           (req.authUser as any).id,
         ],
       });
@@ -650,15 +542,10 @@ router.post(
     // chunks that succeed are never rolled back by a later chunk's failure.
     const succeededInsertRows: InsertCandidate[] = [];
     for (const insertChunk of chunkArray(toInsert, INSERT_CHUNK_SIZE)) {
-      const valuesSql = insertChunk
-        .map(
-          () =>
-            "(UUID(), ?, ?, ?, ?, 'dialler', 'apr_bulk', ?, ?, ?, ?, 0, 0, 1, NOW(), ?)",
-        )
-        .join(",\n           ");
+      const valuesSql = insertChunk.map(() => '(UUID(), ?, ?, ?, ?, \'dialler\', \'apr_bulk\', ?, ?, ?, ?, 0, 0, 1, NOW(), ?)').join(',\n           ');
       // Non-null asserted: only phase-1's Operations-Executive branch reaches toInsert, and it
       // always builds params. Evidence-only candidates (params: null) never enter this list.
-      const flatParams = insertChunk.flatMap((c) => c.params!);
+      const flatParams = insertChunk.flatMap(c => c.params!);
       try {
         await db.execute(
           `INSERT INTO attendance_daily_record
@@ -685,14 +572,9 @@ router.post(
         succeededInsertRows.push(...insertChunk);
       } catch (err) {
         const reason = `Attendance not saved: batch insert failed (rows ${insertChunk[0]!.rowNum}-${insertChunk[insertChunk.length - 1]!.rowNum} of this file) — ${
-          err instanceof Error ? err.message : String(err)
-        }`;
+          err instanceof Error ? err.message : String(err)}`;
         for (const c of insertChunk) {
-          failedRows.push({
-            row: c.rowNum,
-            employee_code: c.employee_code,
-            reason,
-          });
+          failedRows.push({ row: c.rowNum, employee_code: c.employee_code, reason });
         }
       }
     }
@@ -732,7 +614,7 @@ router.post(
     // Both are evidenced identically - same campaign, same attributed batch, same `apr` write - so
     // that the minutes are on record either way. They differ only in what a failure here means,
     // which is why `attendanceWritten` is carried through to the message wording below.
-    const toEvidence = [...succeededInsertRows, ...evidenceOnly].filter((c) => {
+    const toEvidence = [...succeededInsertRows, ...evidenceOnly].filter(c => {
       if (aprAlreadySynced.has(`${c.employee_code}:${c.attendance_date}`)) {
         evidenceSkippedAlreadySynced++;
         return false;
@@ -744,31 +626,21 @@ router.post(
     // the latter, no attendance record was ever meant to be written, so saying one was saved would
     // misreport the outcome to the uploader.
     const evidenceFailurePrefix = (c: InsertCandidate) =>
-      c.attendanceWritten
-        ? "Attendance saved, but "
-        : "This row was stored as dialler evidence only (no attendance record is written for a non-Operations-Executive employee), but ";
+      c.attendanceWritten ? 'Attendance saved, but ' : 'This row was stored as dialler evidence only (no attendance record is written for a non-Operations-Executive employee), but ';
 
     // Resolved once per request, before any evidence row is written, and never per row: it is two
     // reads plus at most two inserts, and it is the same answer for every row in the file. A
     // failure here means NO row can be attributed, so every row is reported and the phase writes
     // nothing - the one behaviour criterion 17.10 forbids is falling back to an unattributed write.
-    let attribution: { diallerSourceId: string; campaignCode: string } | null =
-      null;
+    let attribution: { diallerSourceId: string; campaignCode: string } | null = null;
     if (toEvidence.length > 0) {
       try {
-        attribution = await resolveAprBulkUploadAttribution(
-          (req.authUser as any).id ?? null,
-        );
+        attribution = await resolveAprBulkUploadAttribution((req.authUser as any).id ?? null);
       } catch (err) {
         const detail = `the dialler evidence row was not recorded: this upload could not be attributed to a registered dialler source, and an unattributed evidence row is no longer written. Retry the upload. (${
-          err instanceof Error ? err.message : String(err)
-        })`;
+          err instanceof Error ? err.message : String(err)})`;
         for (const c of toEvidence) {
-          rowErrors.push({
-            row: c.rowNum,
-            employee_code: c.employee_code,
-            reason: evidenceFailurePrefix(c) + detail,
-          });
+          rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason: evidenceFailurePrefix(c) + detail });
         }
       }
     }
@@ -804,10 +676,8 @@ router.post(
     if (attribution !== null && toEvidence.length > 0) {
       // The digest of the bytes actually uploaded (criterion 17.2). Computed once; every group's
       // batch row carries the same digest because they all came from the one file.
-      const contentDigest = createHash("sha256")
-        .update(req.file.buffer)
-        .digest("hex");
-      const fileName: string = req.file.originalname ?? "apr-bulk-upload.csv";
+      const contentDigest = createHash('sha256').update(req.file.buffer).digest('hex');
+      const fileName: string = req.file.originalname ?? 'apr-bulk-upload.csv';
 
       const byScope = new Map<string, InsertCandidate[]>();
       const unattributableRows: InsertCandidate[] = [];
@@ -830,42 +700,32 @@ router.post(
         rowErrors.push({
           row: c.rowNum,
           employee_code: c.employee_code,
-          reason:
-            evidenceFailurePrefix(c) +
-            "no dialler evidence row was recorded: this employee has no branch and/or no process mapping, so the upload batch that every evidence row must reference cannot be created. Set the employee's branch and process, then re-upload this row.",
+          reason: evidenceFailurePrefix(c) + 'no dialler evidence row was recorded: this employee has no branch and/or no process mapping, so the upload batch that every evidence row must reference cannot be created. Set the employee\'s branch and process, then re-upload this row.',
         });
       }
 
       for (const group of byScope.values()) {
-        const dates = group.map((c) => c.attendance_date).sort();
+        const dates = group.map(c => c.attendance_date).sort();
         let batchId: string;
         try {
-          batchId = await createAprBulkUploadBatch(
-            attribution.diallerSourceId,
-            {
-              branchId: group[0]!.branch_id!,
-              processId: group[0]!.process_id!,
-              dateFrom: dates[0]!,
-              dateTo: dates[dates.length - 1]!,
-              fileName,
-              contentDigest,
-              uploadedBy: (req.authUser as any).id,
-              submittedRowCount: group.length,
-            },
-          );
+          batchId = await createAprBulkUploadBatch(attribution.diallerSourceId, {
+            branchId: group[0]!.branch_id!,
+            processId: group[0]!.process_id!,
+            dateFrom: dates[0]!,
+            dateTo: dates[dates.length - 1]!,
+            fileName,
+            contentDigest,
+            uploadedBy: (req.authUser as any).id,
+            submittedRowCount: group.length,
+          });
         } catch (err) {
           // Fail closed for this group only, exactly as a failed insert chunk does. Other groups
           // are independent and still write; the attendance rows already committed in phase 2 are
           // never rolled back.
           const detail = `the dialler evidence row was not recorded: the upload batch record it must reference could not be created, and an unattributed evidence row is no longer written. Retry the upload. (${
-            err instanceof Error ? err.message : String(err)
-          })`;
+            err instanceof Error ? err.message : String(err)})`;
           for (const c of group) {
-            rowErrors.push({
-              row: c.rowNum,
-              employee_code: c.employee_code,
-              reason: evidenceFailurePrefix(c) + detail,
-            });
+            rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason: evidenceFailurePrefix(c) + detail });
           }
           continue;
         }
@@ -874,16 +734,10 @@ router.post(
         let groupAccepted = 0;
         let groupRejected = 0;
         for (const evidenceChunk of chunkArray(group, INSERT_CHUNK_SIZE)) {
-          const valuesSql = evidenceChunk
-            .map(() => `(?, ?, ?, SEC_TO_TIME(? * 60), 'manual', ?, ?)`)
-            .join(",\n           ");
-          const flatParams = evidenceChunk.flatMap((c) => [
-            c.attendance_date,
-            c.employee_code,
-            attribution!.campaignCode,
-            c.net_login_minutes,
-            (req.authUser as any).id,
-            batchId,
+          const valuesSql = evidenceChunk.map(() => `(?, ?, ?, SEC_TO_TIME(? * 60), 'manual', ?, ?)`).join(',\n           ');
+          const flatParams = evidenceChunk.flatMap(c => [
+            c.attendance_date, c.employee_code, attribution!.campaignCode, c.net_login_minutes,
+            (req.authUser as any).id, batchId,
           ]);
           try {
             // source='manual' both protects the row from sync overwrites (the vicidial worker's
@@ -903,33 +757,21 @@ router.post(
               flatParams,
             );
             evidenceRecorded += evidenceChunk.length;
-            storedWithoutAttendance += evidenceChunk.filter(
-              (c) => !c.attendanceWritten,
-            ).length;
+            storedWithoutAttendance += evidenceChunk.filter(c => !c.attendanceWritten).length;
             groupAccepted += evidenceChunk.length;
           } catch (err) {
             groupRejected += evidenceChunk.length;
             const detail = `the dialler evidence row could not be recorded (batch rows ${
-              evidenceChunk[0]!.rowNum
-            }-${evidenceChunk[evidenceChunk.length - 1]!.rowNum} of this file): ${
-              err instanceof Error ? err.message : String(err)
-            }`;
+              evidenceChunk[0]!.rowNum}-${evidenceChunk[evidenceChunk.length - 1]!.rowNum} of this file): ${
+              err instanceof Error ? err.message : String(err)}`;
             for (const c of evidenceChunk) {
-              rowErrors.push({
-                row: c.rowNum,
-                employee_code: c.employee_code,
-                reason: evidenceFailurePrefix(c) + detail,
-              });
+              rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason: evidenceFailurePrefix(c) + detail });
             }
           }
         }
 
         try {
-          await finaliseAprBulkUploadBatch(
-            batchId,
-            groupAccepted,
-            groupRejected,
-          );
+          await finaliseAprBulkUploadBatch(batchId, groupAccepted, groupRejected);
         } catch (err) {
           // The rows themselves are saved and attributed - the batch id on them is real. Only the
           // batch's own counts are unrecorded, so this is a warning about the audit trail, not a
@@ -937,8 +779,7 @@ router.post(
           // land had not, and would bury a real row error under one line per row.
           evidenceWarnings.push(
             `Upload batch ${batchId} recorded ${group.length} evidence row(s) but its own row counts could not be written, so it is still marked pending: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
+              err instanceof Error ? err.message : String(err)}`,
           );
         }
       }
@@ -1005,7 +846,7 @@ interface BatchHistoryRow extends RowDataPacket {
   submitted_row_count: number;
   accepted_row_count: number;
   rejected_row_count: number;
-  status: "pending" | "accepted" | "rejected" | "superseded";
+  status: 'pending' | 'accepted' | 'rejected' | 'superseded';
   supersedes_batch_id: string | null;
   superseded_by_batch_id: string | null;
   dialler_source_name: string | null;
@@ -1015,28 +856,16 @@ interface BatchHistoryRow extends RowDataPacket {
 }
 
 router.get(
-  "/apr-bulk-upload/batches",
-  requireRole("wfm", "hr", "payroll_head", "super_admin", "admin"),
+  '/apr-bulk-upload/batches',
+  requireRole('wfm', 'hr', 'payroll_head', 'super_admin', 'admin'),
   async (req: any, res: any) => {
-    const { branchId, processId, status, limit } = req.query as Record<
-      string,
-      string | undefined
-    >;
+    const { branchId, processId, status, limit } = req.query as Record<string, string | undefined>;
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (branchId) {
-      conds.push("pub.branch_id = ?");
-      params.push(branchId);
-    }
-    if (processId) {
-      conds.push("pub.process_id = ?");
-      params.push(processId);
-    }
-    if (status) {
-      conds.push("pub.status = ?");
-      params.push(status);
-    }
-    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+    if (branchId) { conds.push('pub.branch_id = ?'); params.push(branchId); }
+    if (processId) { conds.push('pub.process_id = ?'); params.push(processId); }
+    if (status) { conds.push('pub.status = ?'); params.push(status); }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
     const limitClause = `LIMIT ${Math.min(Number(limit) || 100, 500)}`;
 
     try {
@@ -1062,11 +891,10 @@ router.get(
       );
       res.json({ success: true, data: rows });
     } catch (err) {
-      console.error("[apr-bulk-upload] batch history query failed", err);
+      console.error('[apr-bulk-upload] batch history query failed', err);
       res.status(500).json({
         success: false,
-        message:
-          "The upload history could not be loaded because of a server error. Please retry.",
+        message: 'The upload history could not be loaded because of a server error. Please retry.',
       });
     }
   },

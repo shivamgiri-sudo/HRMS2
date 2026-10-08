@@ -32,18 +32,15 @@ describe("bulk upload row error recording", () => {
     expect(services.length).toBeGreaterThanOrEqual(7);
   });
 
-  it.each(services)(
-    "%s writes to error_messages, not error_message",
-    (file) => {
-      const code = fs.readFileSync(path.join(DIR, file), "utf8");
-      const live = code
-        .split("\n")
-        .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
-        .join("\n");
-      // the singular column does not exist on the table
-      expect(live).not.toMatch(/error_message\s*=\s*\?/);
-    },
-  );
+  it.each(services)("%s writes to error_messages, not error_message", (file) => {
+    const code = fs.readFileSync(path.join(DIR, file), "utf8");
+    const live = code
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    // the singular column does not exist on the table
+    expect(live).not.toMatch(/error_message\s*=\s*\?/);
+  });
 
   it.each(services)("%s encodes the value as a JSON array", (file) => {
     const code = fs.readFileSync(path.join(DIR, file), "utf8");

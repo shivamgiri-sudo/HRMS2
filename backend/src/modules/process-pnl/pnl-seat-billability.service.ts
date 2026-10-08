@@ -49,9 +49,7 @@ export interface PnlSeatBillabilityResult {
   };
 }
 
-export async function getSeatBillability(
-  filters: { branchId?: string; processId?: string } = {},
-): Promise<PnlSeatBillabilityResult> {
+export async function getSeatBillability(filters: { branchId?: string; processId?: string } = {}): Promise<PnlSeatBillabilityResult> {
   const branchClause = filters.branchId ? "AND ccm.branch_id = ?" : "";
   const processClause = filters.processId ? "AND ccm.process_id = ?" : "";
   const params: unknown[] = [];
@@ -72,12 +70,11 @@ export async function getSeatBillability(
        LEFT JOIN process_master pm ON pm.id = ccm.process_id
       WHERE ccm.active_status = 1 ${branchClause} ${processClause}
       ORDER BY ccm.cost_centre_name`,
-    params,
+    params
   );
 
   const costCentres: PnlSeatBillabilityRow[] = rows.map((row) => {
-    const mandatedSeats =
-      row.mandatedSeats != null ? n(row.mandatedSeats) : null;
+    const mandatedSeats = row.mandatedSeats != null ? n(row.mandatedSeats) : null;
     const actualHeadcount = n(row.actualHeadcount);
     const configured = mandatedSeats != null && mandatedSeats > 0;
     return {
@@ -89,20 +86,13 @@ export async function getSeatBillability(
       branchId: row.branchId != null ? String(row.branchId) : null,
       mandatedSeats,
       actualHeadcount,
-      billabilityPct: configured
-        ? (actualHeadcount / (mandatedSeats as number)) * 100
-        : null,
+      billabilityPct: configured ? (actualHeadcount / (mandatedSeats as number)) * 100 : null,
       seatConfigStatus: configured ? "configured" : "not_configured",
-      approvedSeatRateMonthly:
-        row.approvedSeatRateMonthly != null
-          ? n(row.approvedSeatRateMonthly)
-          : null,
+      approvedSeatRateMonthly: row.approvedSeatRateMonthly != null ? n(row.approvedSeatRateMonthly) : null,
     };
   });
 
-  const configuredCount = costCentres.filter(
-    (c) => c.seatConfigStatus === "configured",
-  ).length;
+  const configuredCount = costCentres.filter((c) => c.seatConfigStatus === "configured").length;
 
   return {
     costCentres,

@@ -19,9 +19,7 @@ import fs from "fs";
 import path from "path";
 
 const SRC = fs.readFileSync(
-  path.resolve(__dirname, "..", "joiningKitPublic.service.ts"),
-  "utf8",
-);
+  path.resolve(__dirname, "..", "joiningKitPublic.service.ts"), "utf8");
 
 describe("kit public endpoints use columns that exist", () => {
   it("orders esign transactions by initiated_at", () => {
@@ -34,9 +32,7 @@ describe("kit public endpoints use columns that exist", () => {
   });
 
   it("writes the joining-document audit log with created_at", () => {
-    expect(SRC).toMatch(
-      /employee_joining_document_audit_log[\s\S]{0,220}created_at\)/,
-    );
+    expect(SRC).toMatch(/employee_joining_document_audit_log[\s\S]{0,220}created_at\)/);
   });
 
   it("never uses acted_at (that column is on sensitive_action_log)", () => {

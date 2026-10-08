@@ -23,15 +23,10 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(
-  path.resolve(__dirname, "../cleanup.cron.ts"),
-  "utf8",
-);
+const source = fs.readFileSync(path.resolve(__dirname, "../cleanup.cron.ts"), "utf8");
 // The explanation above the implementation discusses resending in order to rule it out;
 // stripping comments keeps that prose from satisfying the assertions below.
-const code = source
-  .replace(/\/\*[\s\S]*?\*\//g, "")
-  .replace(/^\s*\/\/.*$/gm, "");
+const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("stale queued dispatches", () => {
   it("looks for rows left in queued past a threshold", () => {
@@ -47,20 +42,10 @@ describe("stale queued dispatches", () => {
   });
 
   it("does NOT resend or requeue them", () => {
-    const fn = code.slice(
-      code.indexOf("export async function reportStaleQueuedDispatches"),
-    );
+    const fn = code.slice(code.indexOf("export async function reportStaleQueuedDispatches"));
     const body = fn.slice(0, fn.indexOf("\n}"));
-    for (const forbidden of [
-      "UPDATE dispatch_log",
-      "INSERT INTO dispatch_log",
-      "DELETE FROM dispatch_log",
-      "send(",
-    ]) {
-      expect(
-        body,
-        `${forbidden} would risk delivering a message twice`,
-      ).not.toContain(forbidden);
+    for (const forbidden of ["UPDATE dispatch_log", "INSERT INTO dispatch_log", "DELETE FROM dispatch_log", "send("]) {
+      expect(body, `${forbidden} would risk delivering a message twice`).not.toContain(forbidden);
     }
   });
 
@@ -70,9 +55,7 @@ describe("stale queued dispatches", () => {
 
   it("cannot break the pruning it runs alongside", () => {
     // Cleanup's job is deleting old rows; a failure in this addition must not stop it.
-    const runner = code.slice(
-      code.indexOf("export async function runCommunicationCleanup"),
-    );
+    const runner = code.slice(code.indexOf("export async function runCommunicationCleanup"));
     const call = runner.slice(runner.indexOf("reportStaleQueuedDispatches"));
     expect(runner).toContain("try {");
     expect(call.slice(0, 200)).toContain("catch");

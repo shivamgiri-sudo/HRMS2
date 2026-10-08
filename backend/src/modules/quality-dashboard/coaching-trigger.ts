@@ -54,9 +54,7 @@ const SEVERE_SHORTFALL = 0.75;
  */
 const MIN_SAMPLE_FOR_TREND = 3;
 
-export function evaluateCoachingTrigger(
-  signal: QualitySignal,
-): CoachingTrigger | null {
+export function evaluateCoachingTrigger(signal: QualitySignal): CoachingTrigger | null {
   // A fatal breach is actionable on its own, regardless of sample size or
   // target: it is a compliance event, not a performance average.
   if (signal.fatalTriggered) {
@@ -74,8 +72,7 @@ export function evaluateCoachingTrigger(
 
   // Without a target there is no shortfall to measure. Inventing one would
   // apply a company-wide bar to processes that range from 23.7% to 72.7%.
-  if (signal.targetPercentage === null || signal.targetPercentage <= 0)
-    return null;
+  if (signal.targetPercentage === null || signal.targetPercentage <= 0) return null;
 
   const ratio = signal.qualityPercentage / signal.targetPercentage;
   if (ratio >= MATERIAL_SHORTFALL) return null;

@@ -35,16 +35,14 @@ const PRODUCTION_RESPONSE = {
     clientTransactionId: "95e9f57e-1508-4b21-87db-3cf1c9ba7207",
     current_address_details: {
       state: "Madhya Pradesh",
-      address:
-        "242 kh mukhtiyar ganj ward no 6, mukhtiyar ganj railway crasing, satna nagar",
+      address: "242 kh mukhtiyar ganj ward no 6, mukhtiyar ganj railway crasing, satna nagar",
       pincode: "485001",
       district_or_city: "Satna",
       locality_or_post_office: "MP nagar sectar no 2 gali no 2",
     },
     permanent_address_details: {
       state: "Madhya Pradesh",
-      address:
-        "242 kh mukhtiyar ganj ward no 6, mukhtiyar ganj railway crasing, satna nagar",
+      address: "242 kh mukhtiyar ganj ward no 6, mukhtiyar ganj railway crasing, satna nagar",
       pincode: "485001",
       district_or_city: "Satna",
       locality_or_post_office: "MP nagar sectar no 2 gali no 2",
@@ -63,8 +61,7 @@ describe("extractDigilockerDemographics on a real response", () => {
     expect(d.dateOfBirth).toBe("2005-03-15");
   });
 
-  it("normalises the single-letter gender", () =>
-    expect(d.gender).toBe("Male"));
+  it("normalises the single-letter gender", () => expect(d.gender).toBe("Male"));
 
   it("takes only the last four digits of the Aadhaar", () => {
     // The provider already masks it; nothing here should ever hold more.
@@ -81,9 +78,7 @@ describe("extractDigilockerDemographics on a real response", () => {
 
   it("works when handed the inner data object instead of the envelope", () => {
     // The response is stored in more than one place and not wrapped identically.
-    expect(
-      extractDigilockerDemographics(PRODUCTION_RESPONSE.data).fullName,
-    ).toBe("Aryan Singh");
+    expect(extractDigilockerDemographics(PRODUCTION_RESPONSE.data).fullName).toBe("Aryan Singh");
   });
 });
 
@@ -111,11 +106,7 @@ describe("it never fails a candidate's onboarding", () => {
 
   it("survives a malformed date rather than storing a wrong one", () => {
     const r = extractDigilockerDemographics({
-      data: {
-        documentList: [
-          { name: "X", dob: "not-a-date", document_type: "AADHAAR" },
-        ],
-      },
+      data: { documentList: [{ name: "X", dob: "not-a-date", document_type: "AADHAAR" }] },
     });
     expect(r.fullName).toBe("X");
     expect(r.dateOfBirth).toBeNull();
@@ -141,8 +132,7 @@ describe("a tokenized/masked response is discarded, not partially trusted", () =
       ],
       current_address_details: {
         state: "Delhi",
-        address:
-          "K84ts_cafkc1oSEdKRP4BTAu-0w8SUHfnOc9OCX91b2CfEyWJ7HsK7ltbCHZuEQd1iVaWKKa2CRmmR1m",
+        address: "K84ts_cafkc1oSEdKRP4BTAu-0w8SUHfnOc9OCX91b2CfEyWJ7HsK7ltbCHZuEQd1iVaWKKa2CRmmR1m",
         pincode: "110008",
         district_or_city: "Central Delhi",
         locality_or_post_office: "Baba Farid Puri",
@@ -159,14 +149,7 @@ describe("a tokenized/masked response is discarded, not partially trusted", () =
 
   it("still reads a real name that happens to be long, since it has whitespace", () => {
     const r = extractDigilockerDemographics({
-      data: {
-        documentList: [
-          {
-            name: "Venkata Naga Sai Ramakrishna Prasad",
-            document_type: "AADHAAR",
-          },
-        ],
-      },
+      data: { documentList: [{ name: "Venkata Naga Sai Ramakrishna Prasad", document_type: "AADHAAR" }] },
     });
     expect(r.fullName).toBe("Venkata Naga Sai Ramakrishna Prasad");
   });

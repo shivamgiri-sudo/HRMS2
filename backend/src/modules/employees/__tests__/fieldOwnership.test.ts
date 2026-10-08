@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  FIELD_OWNERSHIP,
-  SELF_EDITABLE_PERSONAL_COLUMNS,
-  dbColumnFor,
-} from "../fieldOwnership.js";
+import { FIELD_OWNERSHIP, SELF_EDITABLE_PERSONAL_COLUMNS, dbColumnFor } from "../fieldOwnership.js";
 
 describe("FIELD_OWNERSHIP", () => {
   it("every entry has exactly one ownership shape it can honestly claim", () => {
@@ -11,13 +7,8 @@ describe("FIELD_OWNERSHIP", () => {
     // self-contradictory (nothing can be both unwritable and directly writable).
     for (const [key, f] of Object.entries(FIELD_OWNERSHIP)) {
       if (f.immutable) {
-        expect(
-          f.employeeEditable,
-          `${key}: immutable but marked employeeEditable`,
-        ).toBe(false);
-        expect(f.hrEditable, `${key}: immutable but marked hrEditable`).toBe(
-          false,
-        );
+        expect(f.employeeEditable, `${key}: immutable but marked employeeEditable`).toBe(false);
+        expect(f.hrEditable, `${key}: immutable but marked hrEditable`).toBe(false);
       }
     }
   });
@@ -34,10 +25,7 @@ describe("FIELD_OWNERSHIP", () => {
   it("every Employment-tab field is closed to direct employee edits", () => {
     for (const [key, f] of Object.entries(FIELD_OWNERSHIP)) {
       if (f.tab === "employment") {
-        expect(
-          f.employeeEditable,
-          `${key}: an Employment field must not be employeeEditable`,
-        ).toBe(false);
+        expect(f.employeeEditable, `${key}: an Employment field must not be employeeEditable`).toBe(false);
       }
     }
   });
@@ -46,10 +34,7 @@ describe("FIELD_OWNERSHIP", () => {
     for (const [key, f] of Object.entries(FIELD_OWNERSHIP)) {
       if (f.tab === "identity" || f.tab === "bank") {
         if (f.employeeEditable || f.hrEditable) {
-          expect(
-            f.approvalRequired,
-            `${key}: identity/bank fields must be approval-gated for the employee`,
-          ).toBe(true);
+          expect(f.approvalRequired, `${key}: identity/bank fields must be approval-gated for the employee`).toBe(true);
         }
       }
     }
@@ -60,22 +45,10 @@ describe("SELF_EDITABLE_PERSONAL_COLUMNS", () => {
   it("matches the live PATCH /me allowlist exactly — this is what that route now imports", () => {
     expect(SELF_EDITABLE_PERSONAL_COLUMNS.sort()).toEqual(
       [
-        "mobile",
-        "personal_email",
-        "personal_phone",
-        "alternate_mobile",
-        "address_line1",
-        "address_line2",
-        "city",
-        "state",
-        "pincode",
-        "date_of_birth",
-        "gender",
-        "marital_status",
-        "blood_group",
-        "working_hours_start",
-        "working_hours_end",
-        "working_days",
+        "mobile", "personal_email", "personal_phone", "alternate_mobile",
+        "address_line1", "address_line2", "city", "state", "pincode",
+        "date_of_birth", "gender", "marital_status", "blood_group",
+        "working_hours_start", "working_hours_end", "working_days",
       ].sort(),
     );
   });
@@ -103,8 +76,6 @@ describe("dbColumnFor", () => {
   it("falls back to the field name itself when no override is declared", () => {
     expect(dbColumnFor("mobile")).toBe("mobile");
     expect(dbColumnFor("city")).toBe("city");
-    expect(dbColumnFor("some_field_not_in_the_matrix")).toBe(
-      "some_field_not_in_the_matrix",
-    );
+    expect(dbColumnFor("some_field_not_in_the_matrix")).toBe("some_field_not_in_the_matrix");
   });
 });

@@ -14,8 +14,7 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function resolveEmployeeRef(
   employeeId: string | null | undefined,
@@ -24,13 +23,9 @@ export async function resolveEmployeeRef(
   const id = String(employeeId ?? "").trim();
   if (id && UUID_RE.test(id)) return id;
 
-  const code = String(employeeCode ?? "")
-    .trim()
-    .toUpperCase();
+  const code = String(employeeCode ?? "").trim().toUpperCase();
   if (!code) {
-    throw Object.assign(new Error("employeeId or employeeCode is required"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error("employeeId or employeeCode is required"), { statusCode: 400 });
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -41,9 +36,7 @@ export async function resolveEmployeeRef(
   if (!resolved) {
     // Names the code back, because "employee not found" against a form that just took a code
     // is the kind of message that sends people looking in the wrong place.
-    throw Object.assign(new Error(`No employee found with code ${code}`), {
-      statusCode: 404,
-    });
+    throw Object.assign(new Error(`No employee found with code ${code}`), { statusCode: 404 });
   }
   return resolved;
 }

@@ -19,13 +19,8 @@ async function main() {
       WHERE e.active_status = 1 AND e.employee_code IS NOT NULL`,
   );
   const active = activeRows as Array<{
-    id: string;
-    employee_code: string;
-    date_of_joining: string;
-    basic: number | null;
-    gross: number | null;
-    epf_employee: number | null;
-    epf_employer: number | null;
+    id: string; employee_code: string; date_of_joining: string;
+    basic: number | null; gross: number | null; epf_employee: number | null; epf_employer: number | null;
   }>;
 
   const resolved = await resolvePfApplicabilityForPeriod(runMonth);
@@ -34,73 +29,35 @@ async function main() {
     return resolved.get(code)?.status === "PF_NOT_APPLICABLE";
   });
 
-  console.log(
-    `${disagreement.length} employees: live default says PF applicable, resolver (db_bill) says NOT applicable.\n`,
-  );
+  console.log(`${disagreement.length} employees: live default says PF applicable, resolver (db_bill) says NOT applicable.\n`);
 
-  const withBasic = disagreement.filter(
-    (e) => e.basic != null && Number(e.basic) > 0,
-  );
-  console.log(
-    `Of those, ${withBasic.length} have a real basic wage on file in employee_salary_snapshot.basic (not estimated).`,
-  );
+  const withBasic = disagreement.filter((e) => e.basic != null && Number(e.basic) > 0);
+  console.log(`Of those, ${withBasic.length} have a real basic wage on file in employee_salary_snapshot.basic (not estimated).`);
 
-  const aboveCeiling = withBasic.filter(
-    (e) => Number(e.basic) > PF_WAGE_CEILING,
-  );
-  const atOrBelowCeiling = withBasic.filter(
-    (e) => Number(e.basic) <= PF_WAGE_CEILING,
-  );
-  console.log(
-    `  basic > Rs 15,000/month (legally COULD opt out): ${aboveCeiling.length}`,
-  );
-  console.log(
-    `  basic <= Rs 15,000/month (legally MUST be covered, cannot opt out): ${atOrBelowCeiling.length}`,
-  );
+  const aboveCeiling = withBasic.filter((e) => Number(e.basic) > PF_WAGE_CEILING);
+  const atOrBelowCeiling = withBasic.filter((e) => Number(e.basic) <= PF_WAGE_CEILING);
+  console.log(`  basic > Rs 15,000/month (legally COULD opt out): ${aboveCeiling.length}`);
+  console.log(`  basic <= Rs 15,000/month (legally MUST be covered, cannot opt out): ${atOrBelowCeiling.length}`);
 
-  const zeroEpfAtHire = disagreement.filter(
-    (e) => e.epf_employee != null && Number(e.epf_employee) === 0,
-  );
-  const nonZeroEpfAtHire = disagreement.filter(
-    (e) => e.epf_employee != null && Number(e.epf_employee) > 0,
-  );
+  const zeroEpfAtHire = disagreement.filter((e) => e.epf_employee != null && Number(e.epf_employee) === 0);
+  const nonZeroEpfAtHire = disagreement.filter((e) => e.epf_employee != null && Number(e.epf_employee) > 0);
   const noSnapshotRow = disagreement.filter((e) => e.epf_employee == null);
-  console.log(
-    `\nWhat their OWN HRMS salary snapshot (set at hire time) says about PF:`,
-  );
-  console.log(
-    `  epf_employee = 0 at hire (consistent with "opted out from day one"): ${zeroEpfAtHire.length}`,
-  );
-  console.log(
-    `  epf_employee > 0 at hire (HRMS itself expected PF to be deducted): ${nonZeroEpfAtHire.length}`,
-  );
+  console.log(`\nWhat their OWN HRMS salary snapshot (set at hire time) says about PF:`);
+  console.log(`  epf_employee = 0 at hire (consistent with "opted out from day one"): ${zeroEpfAtHire.length}`);
+  console.log(`  epf_employee > 0 at hire (HRMS itself expected PF to be deducted): ${nonZeroEpfAtHire.length}`);
   console.log(`  no salary snapshot row at all: ${noSnapshotRow.length}`);
 
-  console.log(
-    `\nSample of the 20 above the wage ceiling (basic > 15000) — the only group that could legitimately opt out:`,
-  );
+  console.log(`\nSample of the 20 above the wage ceiling (basic > 15000) — the only group that could legitimately opt out:`);
   for (const e of aboveCeiling.slice(0, 20)) {
-    console.log(
-      `  ${e.employee_code}  joined=${e.date_of_joining}  basic=${e.basic}  epf_employee_at_hire=${e.epf_employee}`,
-    );
+    console.log(`  ${e.employee_code}  joined=${e.date_of_joining}  basic=${e.basic}  epf_employee_at_hire=${e.epf_employee}`);
   }
 
-  console.log(
-    `\nSample of 20 AT/BELOW the ceiling (basic <= 15000) — should be mandatorily covered, cannot legally opt out:`,
-  );
+  console.log(`\nSample of 20 AT/BELOW the ceiling (basic <= 15000) — should be mandatorily covered, cannot legally opt out:`);
   for (const e of atOrBelowCeiling.slice(0, 20)) {
-    console.log(
-      `  ${e.employee_code}  joined=${e.date_of_joining}  basic=${e.basic}  epf_employee_at_hire=${e.epf_employee}`,
-    );
+    console.log(`  ${e.employee_code}  joined=${e.date_of_joining}  basic=${e.basic}  epf_employee_at_hire=${e.epf_employee}`);
   }
 }
 
 main()
-  .catch((err) => {
-    console.error("FATAL", err);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await db.end().catch(() => {});
-    await closeBillPool().catch(() => {});
-  });
+  .catch((err) => { console.error("FATAL", err); process.exitCode = 1; })
+  .finally(async () => { await db.end().catch(() => {}); await closeBillPool().catch(() => {}); });

@@ -72,12 +72,7 @@ export async function buildPeopleRiskModule(
       countRequiringAttention: null,
       severity: null,
       actionLabel: null,
-      sourceHealth: {
-        module: "people_risk",
-        state: "NOT_APPLICABLE",
-        detail: "Role not people-manager-adjacent",
-        asOfDate: reportingDate,
-      },
+      sourceHealth: { module: "people_risk", state: "NOT_APPLICABLE", detail: "Role not people-manager-adjacent", asOfDate: reportingDate },
     };
   }
   if (teamEmployeeIds.length === 0) {
@@ -86,12 +81,7 @@ export async function buildPeopleRiskModule(
       countRequiringAttention: null,
       severity: null,
       actionLabel: null,
-      sourceHealth: {
-        module: "people_risk",
-        state: "NOT_APPLICABLE",
-        detail: "No team members in scope",
-        asOfDate: reportingDate,
-      },
+      sourceHealth: { module: "people_risk", state: "NOT_APPLICABLE", detail: "No team members in scope", asOfDate: reportingDate },
     };
   }
 
@@ -112,11 +102,8 @@ export async function buildPeopleRiskModule(
     );
     const resultRows = rows as RowDataPacket[];
     const count = resultRows.length;
-    const hasCritical = resultRows.some(
-      (r) => r.risk_label === "critical_people_risk",
-    );
-    const severity: PeopleRiskSeverity | null =
-      count === 0 ? null : hasCritical ? "critical" : "high";
+    const hasCritical = resultRows.some((r) => r.risk_label === "critical_people_risk");
+    const severity: PeopleRiskSeverity | null = count === 0 ? null : hasCritical ? "critical" : "high";
 
     return {
       applicable: true,
@@ -128,11 +115,7 @@ export async function buildPeopleRiskModule(
       },
       severity,
       actionLabel: count > 0 ? "Review in HRMS" : null,
-      sourceHealth: {
-        module: "people_risk",
-        state: count > 0 ? "AVAILABLE" : "NO_DATA",
-        asOfDate: reportingDate,
-      },
+      sourceHealth: { module: "people_risk", state: count > 0 ? "AVAILABLE" : "NO_DATA", asOfDate: reportingDate },
     };
   } catch (err) {
     return {

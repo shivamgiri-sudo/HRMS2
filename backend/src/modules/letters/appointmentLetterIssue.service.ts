@@ -22,28 +22,17 @@ import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { evaluateAppointmentLetterEligibility } from "./appointmentLetterEligibility.service.js";
 import { resolveAppointmentLetterSalary } from "./appointmentLetterData.service.js";
-import {
-  resolveEmployeeLetterhead,
-  assertPrintableLetterhead,
-} from "../org/branchAddress.service.js";
+import { resolveEmployeeLetterhead, assertPrintableLetterhead } from "../org/branchAddress.service.js";
 import { renderAppointmentLetterPdf } from "./appointmentLetterPdf.service.js";
 import { signPdfAsCompany } from "./dscSigner.service.js";
-import {
-  allocateLetterNumber,
-  mintVerificationToken,
-  verificationUrl,
-} from "./appointmentLetterVerify.service.js";
+import { allocateLetterNumber, mintVerificationToken, verificationUrl } from "./appointmentLetterVerify.service.js";
 import { mintAcceptToken, acceptUrl } from "./appointmentLetterAcceptToken.js";
 import { istDisplayDate } from "./letterFormat.js";
 
-const STORAGE_ROOT = () =>
-  path.resolve(process.cwd(), "private-storage", "appointment-letters");
+const STORAGE_ROOT = () => path.resolve(process.cwd(), "private-storage", "appointment-letters");
 
 function frontendBaseUrl(): string {
-  return String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(
-    /\/+$/,
-    "",
-  );
+  return String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(/\/+$/, "");
 }
 
 export type IssueResult = {
@@ -57,25 +46,12 @@ export type IssueResult = {
   employeeEsignUrl: string | null;
 };
 
-async function audit(
-  issueId: string | null,
-  action: string,
-  actorUserId: string | null,
-  detail: unknown,
-) {
-  await db
-    .execute(
-      `INSERT INTO appointment_letter_issue_audit (id, issue_id, action, actor_user_id, detail_json)
+async function audit(issueId: string | null, action: string, actorUserId: string | null, detail: unknown) {
+  await db.execute(
+    `INSERT INTO appointment_letter_issue_audit (id, issue_id, action, actor_user_id, detail_json)
      VALUES (?, ?, ?, ?, CAST(? AS JSON))`,
-      [
-        randomUUID(),
-        issueId,
-        action,
-        actorUserId,
-        JSON.stringify(detail ?? {}),
-      ],
-    )
-    .catch(() => undefined);
+    [randomUUID(), issueId, action, actorUserId, JSON.stringify(detail ?? {})],
+  ).catch(() => undefined);
 }
 
 /**
@@ -92,37 +68,25 @@ export async function issueAppointmentLetter(params: {
   force?: boolean;
   overrideReason?: string | null;
 }): Promise<IssueResult> {
-  const eligibility = await evaluateAppointmentLetterEligibility(
-    params.employeeId,
-  );
+  const eligibility = await evaluateAppointmentLetterEligibility(params.employeeId);
 
   if (eligibility.alreadyIssued) {
     throw Object.assign(
-      new Error(
-        `An appointment letter (${eligibility.existingLetterNumber}) has already been issued to this employee. Revoke it before issuing another.`,
-      ),
+      new Error(`An appointment letter (${eligibility.existingLetterNumber}) has already been issued to this employee. Revoke it before issuing another.`),
       { statusCode: 409, code: "already_issued" },
     );
   }
   if (eligibility.blockers.length > 0) {
     // Critical blockers are never forceable.
     throw Object.assign(
-      new Error(
-        `Cannot issue: ${eligibility.blockers.map((b) => b.reason).join(" ")}`,
-      ),
+      new Error(`Cannot issue: ${eligibility.blockers.map((b) => b.reason).join(" ")}`),
       { statusCode: 409, code: "not_eligible", blockers: eligibility.blockers },
     );
   }
   if (eligibility.warnings.length > 0 && !params.force) {
     throw Object.assign(
-      new Error(
-        `Confirm before issuing: ${eligibility.warnings.map((w) => w.reason).join(" ")}`,
-      ),
-      {
-        statusCode: 409,
-        code: "needs_confirmation",
-        warnings: eligibility.warnings,
-      },
+      new Error(`Confirm before issuing: ${eligibility.warnings.map((w) => w.reason).join(" ")}`),
+      { statusCode: 409, code: "needs_confirmation", warnings: eligibility.warnings },
     );
   }
 
@@ -143,13 +107,10 @@ export async function issueAppointmentLetter(params: {
     [params.employeeId],
   );
   const emp = (empRows as RowDataPacket[])[0];
-  if (!emp)
-    throw Object.assign(new Error("Employee not found"), { statusCode: 404 });
+  if (!emp) throw Object.assign(new Error("Employee not found"), { statusCode: 404 });
 
   const salary = await resolveAppointmentLetterSalary(params.employeeId);
-  const letterhead = assertPrintableLetterhead(
-    await resolveEmployeeLetterhead(params.employeeId),
-  );
+  const letterhead = assertPrintableLetterhead(await resolveEmployeeLetterhead(params.employeeId));
 
   // The letter number is allocated under a transaction so two concurrent
   // issuances cannot mint the same one.
@@ -157,8 +118,7 @@ export async function issueAppointmentLetter(params: {
   let letterNumber: string, letterSeq: number, letterYear: number;
   try {
     await conn.beginTransaction();
-    ({ letterNumber, letterSeq, letterYear } =
-      await allocateLetterNumber(conn));
+    ({ letterNumber, letterSeq, letterYear } = await allocateLetterNumber(conn));
     await conn.commit();
   } catch (e) {
     await conn.rollback().catch(() => undefined);
@@ -172,9 +132,7 @@ export async function issueAppointmentLetter(params: {
   // PDF as a QR and shown to third parties, so it must not open the accept flow.
   const { token: acceptToken, tokenHash: acceptTokenHash } = mintAcceptToken();
   const verifyUrl = verificationUrl(frontendBaseUrl(), token);
-  const qr = await QRCode.toDataURL(verifyUrl, { width: 220, margin: 1 }).catch(
-    () => null,
-  );
+  const qr = await QRCode.toDataURL(verifyUrl, { width: 220, margin: 1 }).catch(() => null);
 
   const unsigned = await renderAppointmentLetterPdf({
     employeeName: String(emp.full_name ?? ""),
@@ -212,9 +170,7 @@ export async function issueAppointmentLetter(params: {
     salary,
     signerName: cert.signerName,
     signerDesignation: cert.signerDesignation,
-    selfSignedNotice: cert.isCaIssued
-      ? null
-      : "Internal draft — not a CCA-licensed digital signature",
+    selfSignedNotice: cert.isCaIssued ? null : "Internal draft — not a CCA-licensed digital signature",
   });
   void unsigned;
 
@@ -240,37 +196,17 @@ export async function issueAppointmentLetter(params: {
         accept_token_hash, status, issued_by)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,NOW(),?,?,?,?,'issued',?)`,
     [
-      issueId,
-      letterNumber,
-      letterSeq,
-      letterYear,
-      params.employeeId,
-      emp.candidate_id ?? null,
-      emp.employee_code ?? null,
-      emp.full_name ?? null,
-      emp.designation_name ?? null,
-      emp.branch_id ?? null,
-      emp.branch_name ?? null,
-      emp.date_of_joining ?? null,
-      salary.source,
-      JSON.stringify(salary),
-      signed.certificateId,
-      signed.signerName,
-      signed.signerDesignation,
-      signed.isCaIssued ? 1 : 0,
-      filePath,
-      fileSha,
-      tokenHash,
-      acceptTokenHash,
-      params.actorUserId,
+      issueId, letterNumber, letterSeq, letterYear, params.employeeId,
+      emp.candidate_id ?? null, emp.employee_code ?? null, emp.full_name ?? null,
+      emp.designation_name ?? null, emp.branch_id ?? null, emp.branch_name ?? null,
+      emp.date_of_joining ?? null, salary.source, JSON.stringify(salary),
+      signed.certificateId, signed.signerName, signed.signerDesignation,
+      signed.isCaIssued ? 1 : 0, filePath, fileSha, tokenHash, acceptTokenHash, params.actorUserId,
     ],
   );
   await audit(issueId, "ISSUE", params.actorUserId, {
-    letterNumber,
-    salarySource: salary.source,
-    isCaIssued: signed.isCaIssued,
-    forced: Boolean(params.force),
-    overrideReason: params.overrideReason ?? null,
+    letterNumber, salarySource: salary.source, isCaIssued: signed.isCaIssued,
+    forced: Boolean(params.force), overrideReason: params.overrideReason ?? null,
   });
 
   // Email the employee. A delivery failure must not lose the letter — it is
@@ -278,9 +214,8 @@ export async function issueAppointmentLetter(params: {
   const emailedTo: string[] = [];
   try {
     const { emailService } = await import("../communication/email.service.js");
-    const to = [emp.personal_email, emp.official_email].filter(
-      (e): e is string => typeof e === "string" && e.includes("@"),
-    );
+    const to = [emp.personal_email, emp.official_email]
+      .filter((e): e is string => typeof e === "string" && e.includes("@"));
     for (const addr of [...new Set(to)]) {
       await emailService.send({
         to: addr,
@@ -289,36 +224,24 @@ export async function issueAppointmentLetter(params: {
           employeeName: String(emp.full_name ?? ""),
           employeeCode: emp.employee_code ? String(emp.employee_code) : null,
           processName: emp.process_name ? String(emp.process_name) : null,
-          reportingManagerName: emp.reporting_manager_name
-            ? String(emp.reporting_manager_name)
-            : null,
+          reportingManagerName: emp.reporting_manager_name ? String(emp.reporting_manager_name) : null,
           letterNumber,
           designation: String(emp.designation_name ?? ""),
           dateOfJoining: istDisplayDate(emp.date_of_joining as Date | null),
           verifyUrl,
           acceptUrl: acceptUrl(frontendBaseUrl(), acceptToken),
         }),
-        attachments: [
-          { filename: `${letterNumber}.pdf`, content: signed.bytes },
-        ],
+        attachments: [{ filename: `${letterNumber}.pdf`, content: signed.bytes }],
       });
       emailedTo.push(addr);
     }
     if (emailedTo.length === 0) {
-      console.warn(
-        `[appointment-letter] ${letterNumber} not emailed — employee ${params.employeeId} has no email on record`,
-      );
+      console.warn(`[appointment-letter] ${letterNumber} not emailed — employee ${params.employeeId} has no email on record`);
     }
   } catch (err) {
-    console.warn(
-      `[appointment-letter] ${letterNumber} email failed:`,
-      err instanceof Error ? err.message : err,
-    );
+    console.warn(`[appointment-letter] ${letterNumber} email failed:`, err instanceof Error ? err.message : err);
   }
-  if (emailedTo.length)
-    await audit(issueId, "EMAILED", params.actorUserId, {
-      to: emailedTo.length,
-    });
+  if (emailedTo.length) await audit(issueId, "EMAILED", params.actorUserId, { to: emailedTo.length });
 
   return {
     issueId,
@@ -355,22 +278,14 @@ export async function autoIssueAppointmentLetterForCandidate(candidateId: string
 }
 
 export async function revokeAppointmentLetter(params: {
-  issueId: string;
-  actorUserId: string;
-  reason: string;
+  issueId: string; actorUserId: string; reason: string;
 }): Promise<void> {
   if (!params.reason?.trim()) {
-    throw Object.assign(
-      new Error("A reason is required to revoke an appointment letter."),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error("A reason is required to revoke an appointment letter."), { statusCode: 400 });
   }
   const [r] = await db.execute<RowDataPacket[]>(
-    `SELECT status FROM appointment_letter_issue WHERE id = ?`,
-    [params.issueId],
-  );
-  if (!(r as RowDataPacket[])[0])
-    throw Object.assign(new Error("Letter not found"), { statusCode: 404 });
+    `SELECT status FROM appointment_letter_issue WHERE id = ?`, [params.issueId]);
+  if (!(r as RowDataPacket[])[0]) throw Object.assign(new Error("Letter not found"), { statusCode: 404 });
 
   await db.execute(
     `UPDATE appointment_letter_issue
@@ -378,21 +293,13 @@ export async function revokeAppointmentLetter(params: {
       WHERE id = ?`,
     [params.actorUserId, params.reason.trim(), params.issueId],
   );
-  await audit(params.issueId, "REVOKE", params.actorUserId, {
-    reason: params.reason.trim(),
-  });
+  await audit(params.issueId, "REVOKE", params.actorUserId, { reason: params.reason.trim() });
 }
 
 export function buildAppointmentLetterEmailHtml(d: {
-  employeeName: string;
-  employeeCode?: string | null;
-  processName?: string | null;
-  reportingManagerName?: string | null;
-  letterNumber: string;
-  designation: string;
-  dateOfJoining: string;
-  verifyUrl: string | null;
-  acceptUrl: string;
+  employeeName: string; employeeCode?: string | null; processName?: string | null;
+  reportingManagerName?: string | null; letterNumber: string; designation: string;
+  dateOfJoining: string; verifyUrl: string | null; acceptUrl: string;
 }): string {
   return `<!doctype html><html><body style="margin:0;background:#0f172a;font-family:Segoe UI,Arial,sans-serif">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f172a;padding:28px 12px">
@@ -425,14 +332,10 @@ export function buildAppointmentLetterEmailHtml(d: {
             Please review it and confirm your acceptance by signing electronically.
           </p>
           <a href="${d.acceptUrl}" style="display:block;background:#0891b2;color:#ffffff;text-decoration:none;padding:14px;border-radius:10px;font-weight:700;text-align:center;font-size:15px">Review &amp; Accept</a>
-          ${
-            d.verifyUrl
-              ? `<p style="margin:16px 0 0;color:#64748b;font-size:12px;line-height:1.6">
+          ${d.verifyUrl ? `<p style="margin:16px 0 0;color:#64748b;font-size:12px;line-height:1.6">
             Anyone can confirm this letter is genuine at<br>
             <a href="${d.verifyUrl}" style="color:#0891b2;word-break:break-all">${d.verifyUrl}</a>
-          </p>`
-              : ""
-          }
+          </p>` : ""}
         </td></tr>
         <tr><td style="background:#f8fafc;padding:14px 26px;color:#94a3b8;font-size:11px;text-align:center">
           This is an automated message from MAS Callnet HRMS.

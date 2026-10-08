@@ -7,7 +7,6 @@ description: Systematic debugging workflow: reproduce, minimize, hypotheses, ins
 Read and apply the `superpowers-debug` skill.
 
 Use the required reporting format:
-
 - Symptom
 - Repro steps
 - Root cause
@@ -16,11 +15,10 @@ Use the required reporting format:
 - Verification
 
 ## Persist (mandatory)
-
 After generating the debug content above, you MUST write it to disk:
 
-1. Copy the full debug markdown output.
-2. Run:
+1) Copy the full debug markdown output.
+2) Run:
 
 ```bash
 python .agent/skills/superpowers-workflow/scripts/write_artifact.py --path artifacts/superpowers/debug.md

@@ -27,7 +27,7 @@ describe("worker registration parity", () => {
   const serverStarters = new Set(
     [...server.matchAll(/\b((?:start|init)[A-Z][A-Za-z]+)\(/g)]
       .map((m) => m[1])
-      .filter((n) => n !== "startServer"),
+      .filter((n) => n !== "startServer")
   );
 
   /**
@@ -83,7 +83,7 @@ describe("worker registration parity", () => {
     expect(
       missing,
       `Registered in server.ts but not all-workers.ts. With WORKERS_PROCESS=external ` +
-        `these run NOWHERE:\n  ${missing.join("\n  ")}`,
+        `these run NOWHERE:\n  ${missing.join("\n  ")}`
     ).toEqual([]);
   });
 
@@ -115,9 +115,7 @@ describe("worker registration parity", () => {
       "privacy-retention",
       "business-action-sync",
     ]) {
-      expect(workers, `${name} missing from the WORKERS array`).toContain(
-        `name: "${name}"`,
-      );
+      expect(workers, `${name} missing from the WORKERS array`).toContain(`name: "${name}"`);
     }
   });
 });

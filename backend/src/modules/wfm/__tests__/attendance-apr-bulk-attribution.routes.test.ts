@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import request from "supertest";
-import express from "express";
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import request from 'supertest';
+import express from 'express';
 
 /**
  * attendance-apr-bulk.routes.ts, phase 3: the evidence write into `apr` is ATTRIBUTED
@@ -24,12 +24,12 @@ import express from "express";
  */
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({
+vi.mock('../../../db/mysql.js', () => ({
   db: { execute, query: execute, getConnection: vi.fn() },
 }));
 
 let actor: { id: string; role: string; roles: string[] };
-vi.mock("../../../middleware/authMiddleware.js", () => ({
+vi.mock('../../../middleware/authMiddleware.js', () => ({
   requireAuth: (req: any, _res: any, next: any) => {
     req.authUser = actor;
     next();
@@ -38,35 +38,26 @@ vi.mock("../../../middleware/authMiddleware.js", () => ({
 
 // requireRole is NOT mocked - the real role gate runs, same as the sibling contract test for this
 // route, so a change to its role list cannot pass unnoticed here.
-import { attendanceAprBulkRouter } from "../attendance-apr-bulk.routes.js";
-import {
-  APR_BULK_CAMPAIGN_CODE,
-  APR_BULK_SOURCE_KEY,
-} from "../attendance-apr-bulk-attribution.service.js";
+import { attendanceAprBulkRouter } from '../attendance-apr-bulk.routes.js';
+import { APR_BULK_CAMPAIGN_CODE, APR_BULK_SOURCE_KEY } from '../attendance-apr-bulk-attribution.service.js';
 
 function appFor(role: string) {
-  actor = { id: "user-1", role, roles: [role] };
+  actor = { id: 'user-1', role, roles: [role] };
   const app = express();
   app.use(express.json());
-  app.use("/api/wfm/attendance", attendanceAprBulkRouter);
+  app.use('/api/wfm/attendance', attendanceAprBulkRouter);
   return app;
 }
 
 const EMP_A = {
-  employee_id: "emp-a",
-  employee_code: "E001",
-  dept_name: "operations",
-  designation_name: "executive",
-  branch_id: "branch-1",
-  process_id: "process-1",
+  employee_id: 'emp-a', employee_code: 'E001',
+  dept_name: 'operations', designation_name: 'executive',
+  branch_id: 'branch-1', process_id: 'process-1',
 };
 const EMP_B = {
-  employee_id: "emp-b",
-  employee_code: "E002",
-  dept_name: "operations",
-  designation_name: "executive",
-  branch_id: "branch-2",
-  process_id: "process-2",
+  employee_id: 'emp-b', employee_code: 'E002',
+  dept_name: 'operations', designation_name: 'executive',
+  branch_id: 'branch-2', process_id: 'process-2',
 };
 
 interface StubOptions {
@@ -87,29 +78,22 @@ function stub(opts: StubOptions = {}) {
   execute.mockReset();
   execute.mockImplementation(async (sql: string, _params: unknown[] = []) => {
     if (/FROM employees e/.test(sql)) return [opts.employees ?? [EMP_A], []];
-    if (
-      /FROM attendance_daily_record adr/.test(sql) &&
-      /LEFT JOIN attendance_regularization/.test(sql)
-    ) {
+    if (/FROM attendance_daily_record adr/.test(sql) && /LEFT JOIN attendance_regularization/.test(sql)) {
       return [opts.locked ?? [], []];
     }
     if (/FROM apr\s+WHERE \(UserID, ReportDate\)/.test(sql)) return [[], []];
     if (/attendance_feature_config/i.test(sql)) return [[], []];
     if (/FROM dialler_source WHERE source_key/.test(sql)) {
-      return [opts.sourceMissing ? [] : [{ id: "ds-apr-bulk" }], []];
+      return [opts.sourceMissing ? [] : [{ id: 'ds-apr-bulk' }], []];
     }
-    if (/FROM campaign_master WHERE campaign_code/.test(sql))
-      return [[{ id: "camp-apr-bulk" }], []];
-    if (/INSERT INTO attendance_daily_record/.test(sql))
-      return [{ affectedRows: 1 }, []];
+    if (/FROM campaign_master WHERE campaign_code/.test(sql)) return [[{ id: 'camp-apr-bulk' }], []];
+    if (/INSERT INTO attendance_daily_record/.test(sql)) return [{ affectedRows: 1 }, []];
     if (/INSERT INTO productivity_upload_batch/.test(sql)) {
-      if (opts.batchInsertThrows)
-        throw new Error("ER_NO_SUCH_TABLE: productivity_upload_batch");
+      if (opts.batchInsertThrows) throw new Error('ER_NO_SUCH_TABLE: productivity_upload_batch');
       return [{ affectedRows: 1 }, []];
     }
     if (/UPDATE productivity_upload_batch/.test(sql)) {
-      if (opts.batchFinaliseThrows)
-        throw new Error("Lock wait timeout exceeded");
+      if (opts.batchFinaliseThrows) throw new Error('Lock wait timeout exceeded');
       return [{ affectedRows: 1 }, []];
     }
     if (/INSERT INTO apr /.test(sql)) return [{ affectedRows: 1 }, []];
@@ -117,33 +101,28 @@ function stub(opts: StubOptions = {}) {
   });
 }
 
-function csvOf(
-  rows: Array<{ code: string; date: string; mins: number }>,
-): string {
+function csvOf(rows: Array<{ code: string; date: string; mins: number }>): string {
   return [
-    "employee_code,attendance_date,net_login_minutes",
-    ...rows.map((r) => `${r.code},${r.date},${r.mins}`),
-  ].join("\n");
+    'employee_code,attendance_date,net_login_minutes',
+    ...rows.map(r => `${r.code},${r.date},${r.mins}`),
+  ].join('\n');
 }
 
-function post(csv: string, role = "wfm") {
+function post(csv: string, role = 'wfm') {
   return request(appFor(role))
-    .post("/api/wfm/attendance/apr-bulk-upload")
-    .attach("file", Buffer.from(csv), "apr.csv");
+    .post('/api/wfm/attendance/apr-bulk-upload')
+    .attach('file', Buffer.from(csv), 'apr.csv');
 }
 
-const callsFor = (pattern: RegExp) =>
-  execute.mock.calls.filter(([sql]) => pattern.test(String(sql)));
+const callsFor = (pattern: RegExp) => execute.mock.calls.filter(([sql]) => pattern.test(String(sql)));
 
 beforeEach(() => {
   stub();
 });
 
-describe("the evidence write is attributed", () => {
-  it("files the apr row under the registered campaign, never the MANUAL_UPLOAD sentinel", async () => {
-    const res = await post(
-      csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]),
-    );
+describe('the evidence write is attributed', () => {
+  it('files the apr row under the registered campaign, never the MANUAL_UPLOAD sentinel', async () => {
+    const res = await post(csvOf([{ code: 'E001', date: '01-08-2026', mins: 500 }]));
 
     expect(res.status).toBe(200);
     expect(res.body.evidence_recorded).toBe(1);
@@ -153,13 +132,11 @@ describe("the evidence write is attributed", () => {
     const [sql, params] = aprCalls[0]!;
     expect(sql).toMatch(/upload_batch_id/);
     expect(params).toContain(APR_BULK_CAMPAIGN_CODE);
-    expect(params).not.toContain("MANUAL_UPLOAD");
+    expect(params).not.toContain('MANUAL_UPLOAD');
   });
 
-  it("carries a non-null upload_batch_id naming a batch row it actually created", async () => {
-    const res = await post(
-      csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]),
-    );
+  it('carries a non-null upload_batch_id naming a batch row it actually created', async () => {
+    const res = await post(csvOf([{ code: 'E001', date: '01-08-2026', mins: 500 }]));
 
     const batchInserts = callsFor(/INSERT INTO productivity_upload_batch/);
     expect(batchInserts.length).toBe(1);
@@ -172,29 +149,25 @@ describe("the evidence write is attributed", () => {
     expect(aprParams[aprParams.length - 1]).toBeTruthy();
   });
 
-  it("writes the batch row before the apr rows that reference it, and finalises its counts", async () => {
-    await post(csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]));
+  it('writes the batch row before the apr rows that reference it, and finalises its counts', async () => {
+    await post(csvOf([{ code: 'E001', date: '01-08-2026', mins: 500 }]));
 
     const order = execute.mock.calls.map(([sql]) => String(sql));
-    const batchAt = order.findIndex((s) =>
-      /INSERT INTO productivity_upload_batch/.test(s),
-    );
-    const aprAt = order.findIndex((s) => /INSERT INTO apr /.test(s));
+    const batchAt = order.findIndex(s => /INSERT INTO productivity_upload_batch/.test(s));
+    const aprAt = order.findIndex(s => /INSERT INTO apr /.test(s));
     expect(batchAt).toBeGreaterThan(-1);
     expect(batchAt).toBeLessThan(aprAt);
 
     const finalise = callsFor(/UPDATE productivity_upload_batch/);
     expect(finalise.length).toBe(1);
     // accepted 1, rejected 0, status accepted (criterion 17.11 on the batch's own scope).
-    expect(finalise[0]![1]).toEqual([1, 0, "accepted", expect.any(String)]);
+    expect(finalise[0]![1]).toEqual([1, 0, 'accepted', expect.any(String)]);
   });
 
-  it("registers the Dialler_Source on first use, idempotently, when none exists yet", async () => {
+  it('registers the Dialler_Source on first use, idempotently, when none exists yet', async () => {
     stub({ sourceMissing: true });
 
-    const res = await post(
-      csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]),
-    );
+    const res = await post(csvOf([{ code: 'E001', date: '01-08-2026', mins: 500 }]));
 
     // The re-select after the insert answers from the same "missing" branch, so the route must
     // report the failure rather than write an unattributed row.
@@ -206,15 +179,13 @@ describe("the evidence write is attributed", () => {
     expect(callsFor(/INSERT INTO apr /).length).toBe(0);
   });
 
-  it("opens one batch per (branch, process), not one per file", async () => {
+  it('opens one batch per (branch, process), not one per file', async () => {
     stub({ employees: [EMP_A, EMP_B] });
 
-    const res = await post(
-      csvOf([
-        { code: "E001", date: "01-08-2026", mins: 500 },
-        { code: "E002", date: "02-08-2026", mins: 500 },
-      ]),
-    );
+    const res = await post(csvOf([
+      { code: 'E001', date: '01-08-2026', mins: 500 },
+      { code: 'E002', date: '02-08-2026', mins: 500 },
+    ]));
 
     expect(res.body.uploaded).toBe(2);
     expect(res.body.evidence_recorded).toBe(2);
@@ -223,23 +194,18 @@ describe("the evidence write is attributed", () => {
     const batchInserts = callsFor(/INSERT INTO productivity_upload_batch/);
     expect(batchInserts.length).toBe(2);
     const branchIds = batchInserts.map(([, p]) => p![3]);
-    expect(branchIds.sort()).toEqual(["branch-1", "branch-2"]);
+    expect(branchIds.sort()).toEqual(['branch-1', 'branch-2']);
     // Every column of the batch row is true of the rows pointing at it: the branch's own process
     // and the group's own single date, not the file's span.
-    expect(batchInserts.map(([, p]) => p![4]).sort()).toEqual([
-      "process-1",
-      "process-2",
-    ]);
+    expect(batchInserts.map(([, p]) => p![4]).sort()).toEqual(['process-1', 'process-2']);
   });
 });
 
-describe("attribution cannot be established: per-row errors, never an unattributed write", () => {
-  it("reports every row and writes no apr row when the batch record cannot be created", async () => {
+describe('attribution cannot be established: per-row errors, never an unattributed write', () => {
+  it('reports every row and writes no apr row when the batch record cannot be created', async () => {
     stub({ batchInsertThrows: true });
 
-    const res = await post(
-      csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]),
-    );
+    const res = await post(csvOf([{ code: 'E001', date: '01-08-2026', mins: 500 }]));
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -252,21 +218,17 @@ describe("attribution cannot be established: per-row errors, never an unattribut
       expect.arrayContaining([
         expect.objectContaining({
           row: 2,
-          employee_code: "E001",
-          reason: expect.stringMatching(
-            /unattributed evidence row is no longer written/i,
-          ),
+          employee_code: 'E001',
+          reason: expect.stringMatching(/unattributed evidence row is no longer written/i),
         }),
       ]),
     );
   });
 
-  it("reports the row and writes no apr row when the employee has no branch or process", async () => {
+  it('reports the row and writes no apr row when the employee has no branch or process', async () => {
     stub({ employees: [{ ...EMP_A, branch_id: null, process_id: null }] });
 
-    const res = await post(
-      csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]),
-    );
+    const res = await post(csvOf([{ code: 'E001', date: '01-08-2026', mins: 500 }]));
 
     expect(res.body.uploaded).toBe(1);
     expect(res.body.evidence_recorded).toBe(0);
@@ -274,21 +236,15 @@ describe("attribution cannot be established: per-row errors, never an unattribut
     expect(callsFor(/INSERT INTO apr /).length).toBe(0);
     expect(res.body.errors).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          reason: expect.stringMatching(
-            /no branch and\/or no process mapping/i,
-          ),
-        }),
+        expect.objectContaining({ reason: expect.stringMatching(/no branch and\/or no process mapping/i) }),
       ]),
     );
   });
 
-  it("treats a finalise failure as an audit warning, not a row failure - the rows did land", async () => {
+  it('treats a finalise failure as an audit warning, not a row failure - the rows did land', async () => {
     stub({ batchFinaliseThrows: true });
 
-    const res = await post(
-      csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]),
-    );
+    const res = await post(csvOf([{ code: 'E001', date: '01-08-2026', mins: 500 }]));
 
     expect(res.body.evidence_recorded).toBe(1);
     expect(res.body.errors).toEqual([]);
@@ -298,56 +254,37 @@ describe("attribution cannot be established: per-row errors, never an unattribut
   });
 });
 
-describe("nothing the UI or the earlier phases depended on has changed", () => {
-  it("returns the response fields AprBulkUpload.tsx reads, with the same meanings", async () => {
-    const res = await post(
-      csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]),
-    );
+describe('nothing the UI or the earlier phases depended on has changed', () => {
+  it('returns the response fields AprBulkUpload.tsx reads, with the same meanings', async () => {
+    const res = await post(csvOf([{ code: 'E001', date: '01-08-2026', mins: 500 }]));
 
-    expect(res.body).toMatchObject({
-      success: true,
-      uploaded: 1,
-      skipped_locked: 0,
-    });
+    expect(res.body).toMatchObject({ success: true, uploaded: 1, skipped_locked: 0 });
     expect(Array.isArray(res.body.errors)).toBe(true);
     expect(res.body.errors).toEqual([]);
   });
 
-  it("still writes attendance_daily_record with is_locked = 1 and the override precedence guard", async () => {
-    await post(csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]));
+  it('still writes attendance_daily_record with is_locked = 1 and the override precedence guard', async () => {
+    await post(csvOf([{ code: 'E001', date: '01-08-2026', mins: 500 }]));
 
     const [sql] = callsFor(/INSERT INTO attendance_daily_record/)[0]!;
-    expect(String(sql)).toMatch(
-      /is_locked\s*=\s*IF\(override_by IS NULL AND regularization_id IS NULL, 1,/,
-    );
+    expect(String(sql)).toMatch(/is_locked\s*=\s*IF\(override_by IS NULL AND regularization_id IS NULL, 1,/);
   });
 
-  it("still skips a protected day, counts it in skipped_locked, and writes no evidence for it", async () => {
+  it('still skips a protected day, counts it in skipped_locked, and writes no evidence for it', async () => {
     stub({
-      locked: [
-        {
-          employee_id: "emp-a",
-          record_date: "2026-08-01",
-          is_locked: 1,
-          regularization_id: null,
-          override_by: "someone",
-          approved_regularization_id: null,
-        },
-      ],
+      locked: [{
+        employee_id: 'emp-a', record_date: '2026-08-01', is_locked: 1,
+        regularization_id: null, override_by: 'someone', approved_regularization_id: null,
+      }],
     });
 
-    const res = await post(
-      csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]),
-    );
+    const res = await post(csvOf([{ code: 'E001', date: '01-08-2026', mins: 500 }]));
 
     expect(res.body.uploaded).toBe(0);
     expect(res.body.skipped_locked).toBe(1);
     expect(res.body.errors).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          reason:
-            "Manual attendance override already controls payroll attendance for this date",
-        }),
+        expect.objectContaining({ reason: 'Manual attendance override already controls payroll attendance for this date' }),
       ]),
     );
     expect(callsFor(/INSERT INTO apr /).length).toBe(0);

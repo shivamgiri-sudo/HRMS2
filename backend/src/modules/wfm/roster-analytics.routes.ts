@@ -13,17 +13,10 @@ import {
   getShrinkageForecast,
 } from "./roster-analytics.service.js";
 import { getProcessTeamRosterView } from "./process-team-roster.service.js";
-import {
-  getProcessRosterMemberDetail,
-  DATE_RE,
-} from "./process-team-roster-detail.service.js";
+import { getProcessRosterMemberDetail, DATE_RE } from "./process-team-roster-detail.service.js";
 import { todayLocalDateStr } from "./shift-due.util.js";
 import { monthBounds } from "./month-bounds.util.js";
-import {
-  lobAnd,
-  readLobFilter,
-  type LobFilter,
-} from "../../shared/lobFilter.js";
+import { lobAnd, readLobFilter, type LobFilter } from "../../shared/lobFilter.js";
 import {
   getBreakCompliance,
   getEmployeeBreakDetail,
@@ -33,12 +26,7 @@ import {
   type ScopeFilter as ShiftScope,
 } from "./shift-effectiveness.service.js";
 import { analyticsCache } from "../../shared/analyticsCache.js";
-import {
-  isValidDate,
-  isValidPeriod,
-  mondayOf,
-  previousPeriod,
-} from "./roster-analytics.calc.js";
+import { isValidDate, isValidPeriod, mondayOf, previousPeriod } from "./roster-analytics.calc.js";
 import { rosterAnalyticsDetailRouter } from "./roster-analytics-detail.routes.js";
 import { rosterTrendsRouter } from "./roster-trends.routes.js";
 import { consoleScopeGuard, branchParamGuard, employeeParamGuard } from "./console-scope.js";
@@ -111,15 +99,11 @@ router.get(
       if (!lob) return;
 
       // Default to Monday of the current week (local calendar, not UTC).
-      const weekStart = req.query.weekStart
-        ? String(req.query.weekStart)
-        : mondayOf();
+      const weekStart = req.query.weekStart ? String(req.query.weekStart) : mondayOf();
       if (!isValidDate(weekStart)) {
         return res.status(400).json({ error: "weekStart must be YYYY-MM-DD" });
       }
-      const processId = req.query.processId
-        ? String(req.query.processId)
-        : undefined;
+      const processId = req.query.processId ? String(req.query.processId) : undefined;
 
       const data = await getWeeklyShrinkageIntelligence(
         branchId,
@@ -151,9 +135,7 @@ router.get(
       const lob = readLobFilter(req, res);
       if (!lob) return;
       // Default to previous month
-      const period = req.query.period
-        ? String(req.query.period)
-        : previousPeriod();
+      const period = req.query.period ? String(req.query.period) : previousPeriod();
       if (!isValidPeriod(period)) {
         return res.status(400).json({ error: "period must be YYYY-MM" });
       }
@@ -195,9 +177,7 @@ router.get(
       const lob = readLobFilter(req, res);
       if (!lob) return;
       // Default to previous month
-      const period = req.query.period
-        ? String(req.query.period)
-        : previousPeriod();
+      const period = req.query.period ? String(req.query.period) : previousPeriod();
       if (!isValidPeriod(period)) {
         return res.status(400).json({ error: "period must be YYYY-MM" });
       }
@@ -236,9 +216,7 @@ router.get(
       const { branchId } = req.params;
       const lob = readLobFilter(req, res);
       if (!lob) return;
-      const processId = req.query.processId
-        ? String(req.query.processId)
-        : undefined;
+      const processId = req.query.processId ? String(req.query.processId) : undefined;
       const data = await getShrinkageForecast(branchId, lob, processId);
       res.json(data);
     } catch (err: unknown) {
@@ -635,9 +613,7 @@ router.get(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.error("[roster-analytics] shift-effectiveness error:", msg);
-      res
-        .status(500)
-        .json({ error: `Failed to get shift effectiveness: ${msg}` });
+      res.status(500).json({ error: `Failed to get shift effectiveness: ${msg}` });
     }
   },
 );
@@ -650,10 +626,7 @@ router.get(
     try {
       const lob = readLobFilter(req, res);
       if (!lob) return;
-      const detail = await getShiftDetail(
-        String(req.params.shiftId),
-        scopeOf(req, lob),
-      );
+      const detail = await getShiftDetail(String(req.params.shiftId), scopeOf(req, lob));
       if (!detail) {
         res.status(404).json({ error: "Shift not found" });
         return;
@@ -691,9 +664,7 @@ router.get(
   requireRole(...ANALYTICS_ROLES, "manager", "process_manager"),
   async (req, res) => {
     try {
-      const detail = await getEmployeeBreakDetail(
-        String(req.params.employeeId),
-      );
+      const detail = await getEmployeeBreakDetail(String(req.params.employeeId));
       if (!detail) {
         res.status(404).json({ error: "Employee not found" });
         return;
@@ -702,9 +673,7 @@ router.get(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.error("[roster-analytics] break-employee-detail error:", msg);
-      res
-        .status(500)
-        .json({ error: `Failed to get employee break detail: ${msg}` });
+      res.status(500).json({ error: `Failed to get employee break detail: ${msg}` });
     }
   },
 );
@@ -1108,15 +1077,8 @@ router.get(
         return;
       }
 
-      const branchId = req.query.branchId
-        ? String(req.query.branchId)
-        : undefined;
-      const view = await getProcessTeamRosterView(
-        processId,
-        date,
-        lob,
-        branchId,
-      );
+      const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+      const view = await getProcessTeamRosterView(processId, date, lob, branchId);
       res.json(view);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -1147,10 +1109,7 @@ router.get(
         res.status(400).json({ error: "date cannot be in the future" });
         return;
       }
-      const detail = await getProcessRosterMemberDetail(
-        String(req.params.employeeId),
-        date,
-      );
+      const detail = await getProcessRosterMemberDetail(String(req.params.employeeId), date);
       if (!detail) {
         res.status(404).json({ error: "Employee not found" });
         return;
@@ -1159,9 +1118,7 @@ router.get(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.error("[roster-analytics] process-roster member error:", msg);
-      res
-        .status(500)
-        .json({ error: `Failed to get team roster member detail: ${msg}` });
+      res.status(500).json({ error: `Failed to get team roster member detail: ${msg}` });
     }
   },
 );
@@ -1172,149 +1129,75 @@ router.get(
  * NULL assignment_type kept, shrinkage != unplanned, approved-leave attendance treated as
  * planned, LOB honoured). New code should call /api/roster-analytics/trends/* instead.
  */
-const TEAM_SHRINKAGE_ROLES = [
-  ...ANALYTICS_ROLES,
-  "manager",
-  "process_manager",
-] as const;
+const TEAM_SHRINKAGE_ROLES = [...ANALYTICS_ROLES, "manager", "process_manager"] as const;
 
 function legacyRange(req: import("express").Request) {
   const today = todayLocalDateStr();
   const monthStart = `${today.slice(0, 7)}-01`;
   const from = req.query.fromDate ? String(req.query.fromDate) : monthStart;
   const to = req.query.toDate ? String(req.query.toDate) : today;
-  return {
-    from,
-    to,
-    valid: isValidDate(from) && isValidDate(to) && from <= to,
-  };
+  return { from, to, valid: isValidDate(from) && isValidDate(to) && from <= to };
 }
 
-router.get(
-  "/process-shrinkage-mtd",
-  requireRole(...ANALYTICS_ROLES),
-  async (req, res) => {
-    try {
-      const lob = readLobFilter(req, res);
-      if (!lob) return;
-      const r = legacyRange(req);
-      if (!r.valid) {
-        res
-          .status(400)
-          .json({
-            error:
-              "fromDate/toDate must be valid YYYY-MM-DD with fromDate <= toDate",
-          });
-        return;
-      }
-      const { getProcessShrinkage } =
-        await import("./roster-trends.shrinkage.service.js");
-      const out = await getProcessShrinkage({
-        from: r.from,
-        to: r.to,
-        lob,
-        branchId: req.query.branchId ? String(req.query.branchId) : undefined,
-        processId: req.query.processId
-          ? String(req.query.processId)
-          : undefined,
-      });
-      res.json({ from: out.from, to: out.to, processes: out.processes });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      console.error("[roster-analytics] process-shrinkage-mtd error:", msg);
-      res
-        .status(500)
-        .json({ error: `Failed to get process shrinkage: ${msg}` });
-    }
-  },
-);
+router.get("/process-shrinkage-mtd", requireRole(...ANALYTICS_ROLES), async (req, res) => {
+  try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const r = legacyRange(req);
+    if (!r.valid) { res.status(400).json({ error: "fromDate/toDate must be valid YYYY-MM-DD with fromDate <= toDate" }); return; }
+    const { getProcessShrinkage } = await import("./roster-trends.shrinkage.service.js");
+    const out = await getProcessShrinkage({
+      from: r.from, to: r.to, lob,
+      branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      processId: req.query.processId ? String(req.query.processId) : undefined,
+    });
+    res.json({ from: out.from, to: out.to, processes: out.processes });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    console.error("[roster-analytics] process-shrinkage-mtd error:", msg);
+    res.status(500).json({ error: `Failed to get process shrinkage: ${msg}` });
+  }
+});
 
-router.get(
-  "/process-member-mtd",
-  requireRole(...TEAM_SHRINKAGE_ROLES),
-  async (req, res) => {
-    try {
-      const lob = readLobFilter(req, res);
-      if (!lob) return;
-      const processId = req.query.processId
-        ? String(req.query.processId)
-        : null;
-      if (!processId) {
-        res.status(400).json({ error: "processId is required" });
-        return;
-      }
-      const r = legacyRange(req);
-      if (!r.valid) {
-        res
-          .status(400)
-          .json({
-            error:
-              "fromDate/toDate must be valid YYYY-MM-DD with fromDate <= toDate",
-          });
-        return;
-      }
-      const { getProcessMembers } =
-        await import("./roster-trends.shrinkage.service.js");
-      const out = await getProcessMembers(processId, {
-        from: r.from,
-        to: r.to,
-        lob,
-        branchId: req.query.branchId ? String(req.query.branchId) : undefined,
-      });
-      res.json({ processId, from: out.from, to: out.to, members: out.members });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      console.error("[roster-analytics] process-member-mtd error:", msg);
-      res
-        .status(500)
-        .json({ error: `Failed to get process member MTD: ${msg}` });
-    }
-  },
-);
+router.get("/process-member-mtd", requireRole(...TEAM_SHRINKAGE_ROLES), async (req, res) => {
+  try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const processId = req.query.processId ? String(req.query.processId) : null;
+    if (!processId) { res.status(400).json({ error: "processId is required" }); return; }
+    const r = legacyRange(req);
+    if (!r.valid) { res.status(400).json({ error: "fromDate/toDate must be valid YYYY-MM-DD with fromDate <= toDate" }); return; }
+    const { getProcessMembers } = await import("./roster-trends.shrinkage.service.js");
+    const out = await getProcessMembers(processId, {
+      from: r.from, to: r.to, lob, branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    res.json({ processId, from: out.from, to: out.to, members: out.members });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    console.error("[roster-analytics] process-member-mtd error:", msg);
+    res.status(500).json({ error: `Failed to get process member MTD: ${msg}` });
+  }
+});
 
-router.get(
-  "/member-daily",
-  requireRole(...TEAM_SHRINKAGE_ROLES),
-  async (req, res) => {
-    try {
-      const employeeId = req.query.employeeId
-        ? String(req.query.employeeId)
-        : null;
-      if (!employeeId) {
-        res.status(400).json({ error: "employeeId is required" });
-        return;
-      }
-      const r = legacyRange(req);
-      if (!r.valid) {
-        res
-          .status(400)
-          .json({
-            error:
-              "fromDate/toDate must be valid YYYY-MM-DD with fromDate <= toDate",
-          });
-        return;
-      }
-      const { getMemberDetail } =
-        await import("./roster-trends.shrinkage.service.js");
-      const d = await getMemberDetail(employeeId, r.from, r.to);
-      if (!d) {
-        res.status(404).json({ error: "Employee not found" });
-        return;
-      }
-      res.json({
-        employeeId,
-        employeeName: d.employee.employeeName,
-        employeeCode: d.employee.employeeCode,
-        from: d.from,
-        to: d.to,
-        days: d.days.map(({ rosterStatus: _rs, ...day }) => day),
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      console.error("[roster-analytics] member-daily error:", msg);
-      res.status(500).json({ error: `Failed to get member daily: ${msg}` });
-    }
-  },
-);
+router.get("/member-daily", requireRole(...TEAM_SHRINKAGE_ROLES), async (req, res) => {
+  try {
+    const employeeId = req.query.employeeId ? String(req.query.employeeId) : null;
+    if (!employeeId) { res.status(400).json({ error: "employeeId is required" }); return; }
+    const r = legacyRange(req);
+    if (!r.valid) { res.status(400).json({ error: "fromDate/toDate must be valid YYYY-MM-DD with fromDate <= toDate" }); return; }
+    const { getMemberDetail } = await import("./roster-trends.shrinkage.service.js");
+    const d = await getMemberDetail(employeeId, r.from, r.to);
+    if (!d) { res.status(404).json({ error: "Employee not found" }); return; }
+    res.json({
+      employeeId, employeeName: d.employee.employeeName, employeeCode: d.employee.employeeCode,
+      from: d.from, to: d.to,
+      days: d.days.map(({ rosterStatus: _rs, ...day }) => day),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    console.error("[roster-analytics] member-daily error:", msg);
+    res.status(500).json({ error: `Failed to get member daily: ${msg}` });
+  }
+});
 
 export const rosterAnalyticsRouter = router;

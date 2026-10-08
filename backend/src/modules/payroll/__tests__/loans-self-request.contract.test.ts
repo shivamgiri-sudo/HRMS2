@@ -36,14 +36,8 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (
-      req as express.Request & { authUser: { id: string; role: string } }
-    ).authUser = {
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: { id: string; role: string } }).authUser = {
       id: USER_ID,
       role: "employee",
     };
@@ -63,28 +57,20 @@ function app() {
 /** employee lookup -> open-request check (none) -> INSERT -> SELECT * */
 function mockHappyPath() {
   execute
-    .mockResolvedValueOnce([
-      [{ id: OWN_EMPLOYEE_ID, employee_code: "MAS00001", branch_name: "HQ" }],
-    ])
+    .mockResolvedValueOnce([[{ id: OWN_EMPLOYEE_ID, employee_code: "MAS00001", branch_name: "HQ" }]])
     .mockResolvedValueOnce([[]])
     .mockResolvedValueOnce([{}])
-    .mockResolvedValueOnce([
-      [
-        {
-          id: LOAN_ID,
-          employee_id: OWN_EMPLOYEE_ID,
-          status: "pending_approval",
-          approved_by: null,
-          approved_at: null,
-        },
-      ],
-    ]);
+    .mockResolvedValueOnce([[{
+      id: LOAN_ID,
+      employee_id: OWN_EMPLOYEE_ID,
+      status: "pending_approval",
+      approved_by: null,
+      approved_at: null,
+    }]]);
 }
 
 const insertCall = () =>
-  execute.mock.calls.find((c) =>
-    String(c[0]).includes("INSERT INTO employee_loans"),
-  );
+  execute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO employee_loans"));
 
 beforeEach(() => {
   execute.mockReset();
@@ -117,12 +103,14 @@ describe("POST /api/payroll/loans/request — employee self-service entry point"
   it("resolves the employee from the caller's own login and IGNORES a foreign employee_id", async () => {
     mockHappyPath();
 
-    await request(app()).post("/api/payroll/loans/request").send({
-      employee_id: OTHER_EMPLOYEE_ID, // attempt to raise against someone else
-      loan_type: "Salary Advance",
-      amount: 9000,
-      installments: 3,
-    });
+    await request(app())
+      .post("/api/payroll/loans/request")
+      .send({
+        employee_id: OTHER_EMPLOYEE_ID, // attempt to raise against someone else
+        loan_type: "Salary Advance",
+        amount: 9000,
+        installments: 3,
+      });
 
     // The employee lookup keys on user_id, not on anything from the body.
     const lookup = execute.mock.calls[0];
@@ -138,13 +126,15 @@ describe("POST /api/payroll/loans/request — employee self-service entry point"
   it("derives deduction_per_month server-side and ignores a client-supplied one", async () => {
     mockHappyPath();
 
-    await request(app()).post("/api/payroll/loans/request").send({
-      loan_type: "Salary Advance",
-      amount: 12000,
-      installments: 4,
-      deduction_per_month: 1, // would stretch repayment to 12,000 months
-      start_date: "2020-01-01", // would backdate into a long-closed month
-    });
+    await request(app())
+      .post("/api/payroll/loans/request")
+      .send({
+        loan_type: "Salary Advance",
+        amount: 12000,
+        installments: 4,
+        deduction_per_month: 1, // would stretch repayment to 12,000 months
+        start_date: "2020-01-01", // would backdate into a long-closed month
+      });
 
     const params = insertCall()![1] as unknown[];
     expect(params).toContain(3000); // 12000 / 4, not the 1 that was sent
@@ -159,9 +149,7 @@ describe("POST /api/payroll/loans/request — employee self-service entry point"
   });
 
   it("refuses a loan type an employee may not raise for themselves", async () => {
-    execute.mockResolvedValueOnce([
-      [{ id: OWN_EMPLOYEE_ID, employee_code: "MAS00001", branch_name: "HQ" }],
-    ]);
+    execute.mockResolvedValueOnce([[{ id: OWN_EMPLOYEE_ID, employee_code: "MAS00001", branch_name: "HQ" }]]);
 
     const res = await request(app())
       .post("/api/payroll/loans/request")
@@ -173,9 +161,7 @@ describe("POST /api/payroll/loans/request — employee self-service entry point"
 
   it("refuses a second request while one is still awaiting approval", async () => {
     execute
-      .mockResolvedValueOnce([
-        [{ id: OWN_EMPLOYEE_ID, employee_code: "MAS00001", branch_name: "HQ" }],
-      ])
+      .mockResolvedValueOnce([[{ id: OWN_EMPLOYEE_ID, employee_code: "MAS00001", branch_name: "HQ" }]])
       .mockResolvedValueOnce([[{ id: LOAN_ID }]]); // an open pending_approval row exists
 
     const res = await request(app())
@@ -198,34 +184,15 @@ describe("POST /api/payroll/loans/request — employee self-service entry point"
   });
 
   it.each([
-    [
-      "zero amount",
-      { loan_type: "Salary Advance", amount: 0, installments: 3 },
-    ],
-    [
-      "negative amount",
-      { loan_type: "Salary Advance", amount: -5000, installments: 3 },
-    ],
-    [
-      "zero installments",
-      { loan_type: "Salary Advance", amount: 5000, installments: 0 },
-    ],
-    [
-      "installments over cap",
-      { loan_type: "Salary Advance", amount: 5000, installments: 25 },
-    ],
-    [
-      "fractional installments",
-      { loan_type: "Salary Advance", amount: 5000, installments: 2.5 },
-    ],
+    ["zero amount", { loan_type: "Salary Advance", amount: 0, installments: 3 }],
+    ["negative amount", { loan_type: "Salary Advance", amount: -5000, installments: 3 }],
+    ["zero installments", { loan_type: "Salary Advance", amount: 5000, installments: 0 }],
+    ["installments over cap", { loan_type: "Salary Advance", amount: 5000, installments: 25 }],
+    ["fractional installments", { loan_type: "Salary Advance", amount: 5000, installments: 2.5 }],
   ])("rejects %s", async (_label, body) => {
-    execute.mockResolvedValueOnce([
-      [{ id: OWN_EMPLOYEE_ID, employee_code: "MAS00001", branch_name: "HQ" }],
-    ]);
+    execute.mockResolvedValueOnce([[{ id: OWN_EMPLOYEE_ID, employee_code: "MAS00001", branch_name: "HQ" }]]);
 
-    const res = await request(app())
-      .post("/api/payroll/loans/request")
-      .send(body);
+    const res = await request(app()).post("/api/payroll/loans/request").send(body);
 
     expect(res.status).toBe(400);
     expect(insertCall()).toBeUndefined();

@@ -97,25 +97,12 @@ const BELOW_PROCESS_NOTE =
  * where it applied.
  */
 const QUALITY_PARAMS = [
-  "call_answered_within_5_seconds",
-  "customer_concern_acknowledged",
-  "professionalism_maintained",
-  "assurance_or_appreciation_provided",
-  "pronunciation_and_clarity",
-  "enthusiasm_and_no_fumbling",
-  "active_listening",
-  "politeness_and_no_sarcasm",
-  "proper_grammar",
-  "accurate_issue_probing",
-  "proper_hold_procedure",
-  "proper_transfer_and_language",
-  "dead_air_under_10_seconds",
-  "case_escalated_correctly",
-  "address_recorded_completely",
-  "correct_and_complete_information",
-  "upselling_or_offers_suggested",
-  "further_assistance_offered",
-  "proper_call_closure",
+  "call_answered_within_5_seconds", "customer_concern_acknowledged", "professionalism_maintained",
+  "assurance_or_appreciation_provided", "pronunciation_and_clarity", "enthusiasm_and_no_fumbling",
+  "active_listening", "politeness_and_no_sarcasm", "proper_grammar", "accurate_issue_probing",
+  "proper_hold_procedure", "proper_transfer_and_language", "dead_air_under_10_seconds",
+  "case_escalated_correctly", "address_recorded_completely", "correct_and_complete_information",
+  "upselling_or_offers_suggested", "further_assistance_offered", "proper_call_closure",
   "express_empathy",
 ] as const;
 
@@ -155,36 +142,20 @@ export interface PerfFilters {
 
 /** Employee-grain scope predicate, applied at every level rather than only the top filter. */
 async function employeeScope(userId: string, allowedRoles: string[]) {
-  return buildScopeWhereClause(
-    userId,
-    allowedRoles,
-    {
-      processId: "e.process_id",
-      branchId: "e.branch_id",
-      managerEmployeeId: "e.reporting_manager_id",
-      employeeId: "e.id",
-    },
-    { allowAdminBypass: true, allowCeoAllRead: true },
-  );
+  return buildScopeWhereClause(userId, allowedRoles, {
+    processId: "e.process_id",
+    branchId: "e.branch_id",
+    managerEmployeeId: "e.reporting_manager_id",
+    employeeId: "e.id",
+  }, { allowAdminBypass: true, allowCeoAllRead: true });
 }
 
 // Kept identical to the route's list plus super_admin, and to the roles granted
 // OPERATIONS_DASHBOARD in page_catalog -- three gates that must agree, or a role
 // passes one and is refused by another.
 const VIEWER_ROLES = [
-  "super_admin",
-  "admin",
-  "ceo",
-  "coo",
-  "manager",
-  "process_manager",
-  "operations_manager",
-  "branch_head",
-  "branch_wfm",
-  "wfm",
-  "qa",
-  "quality_analyst",
-  "tq_head",
+  "super_admin", "admin", "ceo", "coo", "manager", "process_manager",
+  "operations_manager", "branch_head", "branch_wfm", "wfm", "qa", "quality_analyst", "tq_head",
 ];
 
 /** 'YYYY-MM-DD' -> 'YYYY-MM', the grain `pnl_running_salary_snapshot.period_code` uses. */
@@ -194,29 +165,22 @@ const toPeriod = (d: string) => d.slice(0, 7);
  * `cost_centre_master.mandated_seats` is a VARCHAR holding "4", "0", "" and "NA".
  * Anything that is not a plain number is absent data, not zero.
  */
-const NUMERIC_SEATS =
-  "CASE WHEN c.mandated_seats REGEXP '^[0-9]+([.][0-9]+)?$' THEN c.mandated_seats + 0 ELSE NULL END";
+const NUMERIC_SEATS = "CASE WHEN c.mandated_seats REGEXP '^[0-9]+([.][0-9]+)?$' THEN c.mandated_seats + 0 ELSE NULL END";
 
 function groupColumns(groupBy: Grain) {
   return {
     groupCol:
-      groupBy === "process"
-        ? "e.process_id"
-        : groupBy === "manager"
-          ? "e.reporting_manager_id"
-          : "e.id",
+      groupBy === "process" ? "e.process_id"
+      : groupBy === "manager" ? "e.reporting_manager_id"
+      : "e.id",
     nameCol:
-      groupBy === "process"
-        ? "pm.process_name"
-        : groupBy === "manager"
-          ? "mgr.full_name"
-          : "e.full_name",
+      groupBy === "process" ? "pm.process_name"
+      : groupBy === "manager" ? "mgr.full_name"
+      : "e.full_name",
     subtitleCol:
-      groupBy === "process"
-        ? "pm.process_code"
-        : groupBy === "manager"
-          ? "mgr.employee_code"
-          : "e.employee_code",
+      groupBy === "process" ? "pm.process_code"
+      : groupBy === "manager" ? "mgr.employee_code"
+      : "e.employee_code",
   };
 }
 
@@ -353,14 +317,7 @@ async function fetchCoverage(filters: PerfFilters): Promise<Coverage> {
          WHERE COALESCE(date_of_exit, resignation_date) BETWEEN ? AND ?) AS exits,
        (SELECT DATE_FORMAT(MAX(COALESCE(date_of_exit, resignation_date)), '%Y-%m-%d')
           FROM employees)                                          AS last_exit`,
-    [
-      filters.from,
-      filters.to,
-      filters.from,
-      filters.to,
-      filters.from,
-      filters.to,
-    ],
+    [filters.from, filters.to, filters.from, filters.to, filters.from, filters.to],
   );
   const r = rows[0] ?? {};
   return {
@@ -372,10 +329,8 @@ async function fetchCoverage(filters: PerfFilters): Promise<Coverage> {
 }
 
 const NOT_RUN_NOTE = {
-  lateMarking:
-    "Late marking was not applied to attendance in this period, so there is no late data to report.",
-  reconciliation:
-    "Attendance reconciliation did not run in this period, so records hygiene cannot be scored.",
+  lateMarking: "Late marking was not applied to attendance in this period, so there is no late data to report.",
+  reconciliation: "Attendance reconciliation did not run in this period, so records hygiene cannot be scored.",
 };
 
 /**
@@ -425,10 +380,7 @@ async function fetchQuality(
     return new Map(
       rows.map((r) => [
         String(r.group_id),
-        {
-          quality_sum: Number(r.quality_sum),
-          audited_calls: Number(r.audited_calls),
-        },
+        { quality_sum: Number(r.quality_sum), audited_calls: Number(r.audited_calls) },
       ]),
     );
   } catch {
@@ -449,10 +401,7 @@ interface RowContext {
    * Per-group quality totals from db_audit, merged after the main query so a
    * slow audit DB does not block headcount/shrinkage. Null = quality fetch failed.
    */
-  qualityByGroupId: Map<
-    string,
-    { quality_sum: number; audited_calls: number }
-  > | null;
+  qualityByGroupId: Map<string, { quality_sum: number; audited_calls: number }> | null;
 }
 
 /** Turns one aggregate row plus its out-of-band context into the cells the UI renders. */
@@ -489,13 +438,9 @@ function toSections(r: RowDataPacket, ctx: RowContext): SectionValue[] {
     direction: SectionValue["direction"],
     note?: string,
   ): SectionValue => {
-    const belowProcess =
-      ctx.grain !== "process" && PROCESS_GRAIN_ONLY.includes(key);
-    const availability: Availability = belowProcess
-      ? "not_tracked"
-      : value === null
-        ? "no_data"
-        : "ok";
+    const belowProcess = ctx.grain !== "process" && PROCESS_GRAIN_ONLY.includes(key);
+    const availability: Availability =
+      belowProcess ? "not_tracked" : value === null ? "no_data" : "ok";
     return {
       key,
       label: SECTION_LABELS[key],
@@ -504,9 +449,7 @@ function toSections(r: RowDataPacket, ctx: RowContext): SectionValue[] {
       availability,
       note: belowProcess
         ? BELOW_PROCESS_NOTE
-        : availability === "no_data"
-          ? (note ?? "No records in this period.")
-          : undefined,
+        : availability === "no_data" ? note ?? "No records in this period." : undefined,
       direction,
       hasRootCause: availability === "ok" && ROOT_CAUSE_AVAILABILITY[key],
     };
@@ -514,46 +457,24 @@ function toSections(r: RowDataPacket, ctx: RowContext): SectionValue[] {
 
   return [
     sec("headcount", "count", headcount || null, "higher_is_better"),
-    sec(
-      "mandate",
-      "count",
-      mandate,
-      null,
-      "No cost centre in this group carries a contracted seat count.",
-    ),
+    sec("mandate", "count", mandate, null,
+      "No cost centre in this group carries a contracted seat count."),
     // Buffer is the real surplus (or, negative, the shortfall) of people against
     // contracted seats. Both sides are counted figures, so the difference is too.
-    sec(
-      "buffer",
-      "count",
-      mandate == null ? null : headcount - mandate,
-      null,
-      "Needs a contracted seat count to compare headcount against.",
-    ),
-    sec(
-      "shrinkage",
-      "percent",
-      pct(lost, scheduledDays),
-      "lower_is_better",
-      "No scheduled attendance days for this group in the period.",
-    ),
+    sec("buffer", "count", mandate == null ? null : headcount - mandate, null,
+      "Needs a contracted seat count to compare headcount against."),
+    sec("shrinkage", "percent", pct(lost, scheduledDays), "lower_is_better",
+      "No scheduled attendance days for this group in the period."),
     // Attrition is exits over the population that was present during the window
     // (those still active, plus those who left). Dividing by the surviving
     // headcount alone would push the figure above 100% for a small team.
-    sec(
-      "attrition",
-      "percent",
-      ctx.coverage.exitsPosted && exits != null
-        ? pct(exits, headcount + exits)
-        : null,
+    sec("attrition", "percent",
+      ctx.coverage.exitsPosted && exits != null ? pct(exits, headcount + exits) : null,
       "lower_is_better",
       ctx.coverage.exitsPosted
         ? "No exits or headcount recorded for this group in the period."
-        : staleExitsNote(ctx.coverage.lastExitOn),
-    ),
-    sec(
-      "quality",
-      "percent",
+        : staleExitsNote(ctx.coverage.lastExitOn)),
+    sec("quality", "percent",
       (() => {
         if (!ctx.qualityByGroupId) return null; // db_audit unavailable — degrade gracefully
         const q = ctx.qualityByGroupId.get(String(r.group_id));
@@ -563,42 +484,24 @@ function toSections(r: RowDataPacket, ctx: RowContext): SectionValue[] {
       "higher_is_better",
       ctx.qualityByGroupId === null
         ? "Quality data could not be loaded for this period."
-        : "No call was audited for this group in the period.",
-    ),
-    sec(
-      "operations",
-      "seconds",
+        : "No call was audited for this group in the period."),
+    sec("operations", "seconds",
       r.aht == null ? null : Math.round(Number(r.aht)),
-      "lower_is_better",
-      "No dialler activity recorded for this group in the period.",
-    ),
-    sec(
-      "hygiene",
-      "percent",
+      "lower_is_better", "No dialler activity recorded for this group in the period."),
+    sec("hygiene", "percent",
       ctx.coverage.reconciliation ? pct(cleanDays, hygieneSlots) : null,
       "higher_is_better",
       ctx.coverage.reconciliation
         ? "No attendance day-slots for this group in the period."
-        : NOT_RUN_NOTE.reconciliation,
-    ),
-    sec(
-      "late_comers",
-      "percent",
-      ctx.coverage.lateMarking
-        ? pct(Number(r.late_days ?? 0), presentDays)
-        : null,
+        : NOT_RUN_NOTE.reconciliation),
+    sec("late_comers", "percent",
+      ctx.coverage.lateMarking ? pct(Number(r.late_days ?? 0), presentDays) : null,
       "lower_is_better",
       ctx.coverage.lateMarking
         ? "Nobody in this group attended a day in the period."
-        : NOT_RUN_NOTE.lateMarking,
-    ),
-    sec(
-      "pnl",
-      "currency",
-      peopleCost == null ? null : Math.round(peopleCost),
-      null,
-      "No running-salary snapshot exists for this period. It is written by the Process P&L module's refresh, which has no scheduler -- it only runs when someone triggers it, so open months stay blank until then.",
-    ),
+        : NOT_RUN_NOTE.lateMarking),
+    sec("pnl", "currency", peopleCost == null ? null : Math.round(peopleCost), null,
+      "No running-salary snapshot exists for this period. It is written by the Process P&L module's refresh, which has no scheduler -- it only runs when someone triggers it, so open months stay blank until then."),
   ];
 }
 
@@ -606,18 +509,9 @@ function toSections(r: RowDataPacket, ctx: RowContext): SectionValue[] {
 function narrowing(filters: PerfFilters) {
   const sql: string[] = [];
   const params: unknown[] = [];
-  if (filters.processId) {
-    sql.push("e.process_id = ?");
-    params.push(filters.processId);
-  }
-  if (filters.managerId) {
-    sql.push("e.reporting_manager_id = ?");
-    params.push(filters.managerId);
-  }
-  if (filters.employeeId) {
-    sql.push("e.id = ?");
-    params.push(filters.employeeId);
-  }
+  if (filters.processId) { sql.push("e.process_id = ?"); params.push(filters.processId); }
+  if (filters.managerId) { sql.push("e.reporting_manager_id = ?"); params.push(filters.managerId); }
+  if (filters.employeeId) { sql.push("e.id = ?"); params.push(filters.employeeId); }
   return { sql: sql.length ? `AND ${sql.join(" AND ")}` : "", params };
 }
 
@@ -695,59 +589,39 @@ async function fetchRows(
     LIMIT 200`;
 
   const params = [
-    filters.from,
-    filters.to, // attendance window
-    filters.from,
-    filters.to, // hygiene window
-    toPeriod(filters.from),
-    toPeriod(filters.to), // people-cost periods
-    filters.from,
-    filters.to, // operations window
+    filters.from, filters.to,                       // attendance window
+    filters.from, filters.to,                       // hygiene window
+    toPeriod(filters.from), toPeriod(filters.to),   // people-cost periods
+    filters.from, filters.to,                       // operations window
     ...scope.params,
     ...narrow.params,
   ];
 
   // Run all independent queries in parallel — previously sequential awaits added
   // ~3–5 round trips of latency on every page load.
-  const [
-    rowsResult,
-    exitsResult,
-    coverageResult,
-    mandateResult,
-    qualityResult,
-  ] = await Promise.allSettled([
-    db.execute<RowDataPacket[]>(sql, params),
-    fetchExits(grain, scope, filters),
-    fetchCoverage(filters),
-    grain === "process"
-      ? fetchMandate(scope, filters)
-      : Promise.resolve(new Map<string, number>()),
-    fetchQuality(grain, scope, filters),
-  ]);
+  const [rowsResult, exitsResult, coverageResult, mandateResult, qualityResult] =
+    await Promise.allSettled([
+      db.execute<RowDataPacket[]>(sql, params),
+      fetchExits(grain, scope, filters),
+      fetchCoverage(filters),
+      grain === "process"
+        ? fetchMandate(scope, filters)
+        : Promise.resolve(new Map<string, number>()),
+      fetchQuality(grain, scope, filters),
+    ]);
 
   if (rowsResult.status === "rejected") throw rowsResult.reason;
 
   const rows = (rowsResult.value as [RowDataPacket[], unknown])[0];
-  const exits =
-    exitsResult.status === "fulfilled"
-      ? exitsResult.value
-      : new Map<string, number>();
-  const coverage =
-    coverageResult.status === "fulfilled"
-      ? coverageResult.value
-      : {
-          lateMarking: false,
-          reconciliation: false,
-          exitsPosted: false,
-          lastExitOn: null,
-        };
-  const mandate =
-    mandateResult.status === "fulfilled"
-      ? mandateResult.value
-      : new Map<string, number>();
+  const exits = exitsResult.status === "fulfilled" ? exitsResult.value : new Map<string, number>();
+  const coverage = coverageResult.status === "fulfilled"
+    ? coverageResult.value
+    : { lateMarking: false, reconciliation: false, exitsPosted: false, lastExitOn: null };
+  const mandate = mandateResult.status === "fulfilled"
+    ? mandateResult.value
+    : new Map<string, number>();
   // qualityResult is already null-safe: fetchQuality returns null on error
-  const qualityByGroupId =
-    qualityResult.status === "fulfilled" ? qualityResult.value : null;
+  const qualityByGroupId = qualityResult.status === "fulfilled" ? qualityResult.value : null;
 
   return rows.map((r) => {
     const id = String(r.group_id);
@@ -761,19 +635,16 @@ async function fetchRows(
         grain,
         coverage,
         exits: exits.get(id) ?? 0,
-        mandate: grain === "process" ? (mandate.get(id) ?? null) : null,
+        mandate: grain === "process" ? mandate.get(id) ?? null : null,
         qualityByGroupId,
       }),
     };
   });
 }
 
-export const getProcessRows = (userId: string, f: PerfFilters) =>
-  fetchRows(userId, "process", f);
-export const getManagerRows = (userId: string, f: PerfFilters) =>
-  fetchRows(userId, "manager", f);
-export const getAgentRows = (userId: string, f: PerfFilters) =>
-  fetchRows(userId, "agent", f);
+export const getProcessRows = (userId: string, f: PerfFilters) => fetchRows(userId, "process", f);
+export const getManagerRows = (userId: string, f: PerfFilters) => fetchRows(userId, "manager", f);
+export const getAgentRows = (userId: string, f: PerfFilters) => fetchRows(userId, "agent", f);
 
 export interface FilterOptions {
   processes: Array<{ id: string; name: string }>;
@@ -791,10 +662,7 @@ export interface FilterOptions {
  * Deriving both lists from the same predicate makes the picker and the table
  * incapable of disagreeing.
  */
-export async function getFilterOptions(
-  userId: string,
-  filters: PerfFilters,
-): Promise<FilterOptions> {
+export async function getFilterOptions(userId: string, filters: PerfFilters): Promise<FilterOptions> {
   const scope = await employeeScope(userId, VIEWER_ROLES);
 
   const [procRows] = await db.execute<RowDataPacket[]>(
@@ -824,10 +692,7 @@ export async function getFilterOptions(
   );
 
   return {
-    processes: procRows.map((r) => ({
-      id: String(r.id),
-      name: String(r.name),
-    })),
+    processes: procRows.map((r) => ({ id: String(r.id), name: String(r.name) })),
     managers: mgrRows.map((r) => ({ id: String(r.id), name: String(r.name) })),
   };
 }
@@ -856,10 +721,7 @@ export interface MetricDetail {
 const share = (rows: Array<{ label: string; value: number }>) => {
   const total = rows.reduce((a, r) => a + r.value, 0);
   if (!total) return null;
-  return rows.map((r) => ({
-    ...r,
-    share: Math.round((r.value / total) * 10000) / 100,
-  }));
+  return rows.map((r) => ({ ...r, share: Math.round((r.value / total) * 10000) / 100 }));
 };
 
 /**
@@ -883,61 +745,40 @@ export async function getMetricDetail(
   const label = SECTION_LABELS[section];
   const narrow = narrowing(filters);
   const unit: SectionValue["unit"] =
-    section === "pnl"
-      ? "currency"
-      : section === "operations"
-        ? "seconds"
-        : section === "headcount" ||
-            section === "mandate" ||
-            section === "buffer"
-          ? "count"
-          : "percent";
+    section === "pnl" ? "currency"
+    : section === "operations" ? "seconds"
+    : section === "headcount" || section === "mandate" || section === "buffer" ? "count"
+    : "percent";
 
   // Below process grain the record list is people, not managers, so drilling one
   // more level would filter a person as if they were a manager and return
   // nothing. The list is a leaf there.
-  const drillAs: DetailRecord["drillAs"] = filters.employeeId
-    ? null
-    : filters.managerId
-      ? "employee"
-      : "manager";
+  const drillAs: DetailRecord["drillAs"] =
+    filters.employeeId ? null : filters.managerId ? "employee" : "manager";
 
   const base: MetricDetail = {
-    section,
-    label,
-    availability: "no_data",
-    unit,
-    trend: [],
-    rootCause: null,
-    rootCauseNote: null,
+    section, label, availability: "no_data", unit,
+    trend: [], rootCause: null, rootCauseNote: null,
     recordsLabel: drillAs === "manager" ? "Managers" : "Employees",
     records: [],
   };
 
   // The same coverage gate the table applies, so opening a cell can never
   // contradict the number (or the absence of one) that was clicked.
-  if (
-    section === "hygiene" ||
-    section === "late_comers" ||
-    section === "attrition"
-  ) {
+  if (section === "hygiene" || section === "late_comers" || section === "attrition") {
     const coverage = await fetchCoverage(filters);
     const ran =
-      section === "hygiene"
-        ? coverage.reconciliation
-        : section === "late_comers"
-          ? coverage.lateMarking
-          : coverage.exitsPosted;
+      section === "hygiene" ? coverage.reconciliation
+      : section === "late_comers" ? coverage.lateMarking
+      : coverage.exitsPosted;
     if (!ran) {
       return {
         ...base,
         availability: "no_data",
         rootCauseNote:
-          section === "hygiene"
-            ? NOT_RUN_NOTE.reconciliation
-            : section === "late_comers"
-              ? NOT_RUN_NOTE.lateMarking
-              : staleExitsNote(coverage.lastExitOn),
+          section === "hygiene" ? NOT_RUN_NOTE.reconciliation
+          : section === "late_comers" ? NOT_RUN_NOTE.lateMarking
+          : staleExitsNote(coverage.lastExitOn),
       };
     }
   }
@@ -946,15 +787,10 @@ export async function getMetricDetail(
   const scopedParams = [...scope.params, ...narrow.params];
   // The list groups by manager at process grain and by person below it, so the
   // drill-down mirrors the table's own process -> manager -> agent hierarchy.
-  const recordKey =
-    drillAs === "manager"
-      ? {
-          id: "e.reporting_manager_id",
-          name: "mgr.full_name",
-          sub: "mgr.employee_code",
-          join: "JOIN employees mgr ON mgr.id = e.reporting_manager_id",
-        }
-      : { id: "e.id", name: "e.full_name", sub: "e.employee_code", join: "" };
+  const recordKey = drillAs === "manager"
+    ? { id: "e.reporting_manager_id", name: "mgr.full_name", sub: "mgr.employee_code",
+        join: "JOIN employees mgr ON mgr.id = e.reporting_manager_id" }
+    : { id: "e.id", name: "e.full_name", sub: "e.employee_code", join: "" };
 
   // -- Mandate and Buffer: cost-centre configuration, not a time series -------
   if (section === "mandate" || section === "buffer") {
@@ -975,28 +811,19 @@ export async function getMetricDetail(
     );
     const rc = rows
       .filter((r) => r.seats != null)
-      .map((r) => ({
-        label: String(r.name ?? r.subtitle ?? "Cost centre"),
-        value: Number(r.seats),
-      }));
+      .map((r) => ({ label: String(r.name ?? r.subtitle ?? "Cost centre"), value: Number(r.seats) }));
     return {
       ...base,
       availability: rows.length ? "ok" : "no_data",
       recordsLabel: "Cost centres",
       rootCause: share(rc),
-      rootCauseNote: rc.length
-        ? null
-        : "No cost centre in this group carries a contracted seat count.",
+      rootCauseNote: rc.length ? null : "No cost centre in this group carries a contracted seat count.",
       records: rows.map((r) => ({
         id: String(r.id),
         name: String(r.name ?? "Unnamed cost centre"),
         subtitle: r.subtitle ? String(r.subtitle) : null,
-        value:
-          r.seats == null
-            ? null
-            : section === "mandate"
-              ? Number(r.seats)
-              : Number(r.headcount) - Number(r.seats),
+        value: r.seats == null ? null
+          : section === "mandate" ? Number(r.seats) : Number(r.headcount) - Number(r.seats),
         drillAs: null,
       })),
     };
@@ -1007,39 +834,35 @@ export async function getMetricDetail(
     const exitScoped = `AND (${scope.sql}) ${narrow.sql}`;
     const [[tr], [recs]] = await Promise.all([
       db.execute<RowDataPacket[]>(
-        `SELECT DATE_FORMAT(COALESCE(e.date_of_exit, e.resignation_date), '%Y-%m') AS period,
+      `SELECT DATE_FORMAT(COALESCE(e.date_of_exit, e.resignation_date), '%Y-%m') AS period,
               COUNT(*) AS value
          FROM employees e
         WHERE COALESCE(e.date_of_exit, e.resignation_date) BETWEEN ? AND ?
           ${exitScoped}
         GROUP BY period ORDER BY period ASC`,
-        [filters.from, filters.to, ...scope.params, ...narrow.params],
+      [filters.from, filters.to, ...scope.params, ...narrow.params],
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT e.id, e.full_name AS name, e.employee_code AS subtitle,
+      `SELECT e.id, e.full_name AS name, e.employee_code AS subtitle,
               DATEDIFF(COALESCE(e.date_of_exit, e.resignation_date), e.date_of_joining) AS value
          FROM employees e
         WHERE COALESCE(e.date_of_exit, e.resignation_date) BETWEEN ? AND ?
           ${exitScoped}
         ORDER BY value ASC
         LIMIT 100`,
-        [filters.from, filters.to, ...scope.params, ...narrow.params],
+      [filters.from, filters.to, ...scope.params, ...narrow.params],
       ),
     ]);
     return {
       ...base,
       availability: tr.length || recs.length ? "ok" : "no_data",
       unit: "count",
-      trend: tr.map((r) => ({
-        period: String(r.period),
-        value: Number(r.value),
-      })),
+      trend: tr.map((r) => ({ period: String(r.period), value: Number(r.value) })),
       // Deliberate: `employees` has date_of_exit / resignation_date only, with no
       // categorised exit reason anywhere, so there is nothing truthful to break
       // this down by. The count above is real; the reasons are not recorded.
       rootCause: null,
-      rootCauseNote:
-        "Exit reasons are not categorised in the system yet, so no breakdown can be shown. Each leaver is listed below with their tenure in days.",
+      rootCauseNote: "Exit reasons are not categorised in the system yet, so no breakdown can be shown. Each leaver is listed below with their tenure in days.",
       recordsLabel: "Leavers (tenure in days)",
       records: recs.map((r) => ({
         id: String(r.id),
@@ -1074,29 +897,27 @@ export async function getMetricDetail(
     // One pass over the window returns a fail count and an applicable count for
     // every parameter, so the breakdown is 20 numbers from one query rather than
     // 20 queries.
-    const failCols = QUALITY_PARAMS.map(
-      (c) => `SUM(q.${c} = 0) AS f_${c}, SUM(q.${c} IS NOT NULL) AS n_${c}`,
-    ).join(", ");
+    const failCols = QUALITY_PARAMS
+      .map((c) => `SUM(q.${c} = 0) AS f_${c}, SUM(q.${c} IS NOT NULL) AS n_${c}`)
+      .join(", ");
     const rcRowsP = db.execute<RowDataPacket[]>(
       `SELECT ${failCols} FROM employees e ${auditJoin} ${scoped}`,
       auditParams,
     );
     const [[tr], [rcRows], [recs]] = await Promise.all([trP, rcRowsP, recsP]);
     const rcRow = rcRows[0] ?? {};
-    const causes = QUALITY_PARAMS.map((c) => ({
-      label: c.replace(/_/g, " "),
-      value: Number(rcRow[`f_${c}`] ?? 0),
-      applicable: Number(rcRow[`n_${c}`] ?? 0),
-    }))
+    const causes = QUALITY_PARAMS
+      .map((c) => ({
+        label: c.replace(/_/g, " "),
+        value: Number(rcRow[`f_${c}`] ?? 0),
+        applicable: Number(rcRow[`n_${c}`] ?? 0),
+      }))
       .filter((x) => x.applicable > 0 && x.value > 0)
       .sort((a, b) => b.value - a.value);
     return {
       ...base,
       availability: tr.length || recs.length ? "ok" : "no_data",
-      trend: tr.map((r) => ({
-        period: String(r.period),
-        value: r.value == null ? null : Number(r.value),
-      })),
+      trend: tr.map((r) => ({ period: String(r.period), value: r.value == null ? null : Number(r.value) })),
       rootCause: share(causes.map(({ label, value }) => ({ label, value }))),
       rootCauseNote: causes.length
         ? null
@@ -1120,19 +941,19 @@ export async function getMetricDetail(
       WHERE k.score_date BETWEEN ? AND ?`;
     const [[tr], [recs]] = await Promise.all([
       db.execute<RowDataPacket[]>(
-        `SELECT DATE_FORMAT(k.score_date, '%Y-%m') AS period, ROUND(AVG(k.actual_value), 2) AS value
+      `SELECT DATE_FORMAT(k.score_date, '%Y-%m') AS period, ROUND(AVG(k.actual_value), 2) AS value
          FROM employees e ${kpiJoin} ${scoped}
         GROUP BY period ORDER BY period ASC`,
-        [code, filters.from, filters.to, ...scopedParams],
+      [code, filters.from, filters.to, ...scopedParams],
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT ${recordKey.id} AS id, ${recordKey.name} AS name, ${recordKey.sub} AS subtitle,
+      `SELECT ${recordKey.id} AS id, ${recordKey.name} AS name, ${recordKey.sub} AS subtitle,
               ROUND(AVG(k.actual_value), 2) AS value
          FROM employees e ${recordKey.join} ${kpiJoin} ${scoped}
         GROUP BY id, name, subtitle
         ORDER BY value ASC
         LIMIT 100`,
-        [code, filters.from, filters.to, ...scopedParams],
+      [code, filters.from, filters.to, ...scopedParams],
       ),
     ]);
     return {
@@ -1140,10 +961,7 @@ export async function getMetricDetail(
       availability: tr.length || recs.length ? "ok" : "no_data",
       rootCause: null,
       rootCauseNote: `${label} is stored in kpi_daily_actual as a score with no failure category, so no cause breakdown exists in the source data.`,
-      trend: tr.map((r) => ({
-        period: String(r.period),
-        value: r.value == null ? null : Number(r.value),
-      })),
+      trend: tr.map((r) => ({ period: String(r.period), value: r.value == null ? null : Number(r.value) })),
       records: recs.map((r) => ({
         id: String(r.id),
         name: String(r.name ?? "Unknown"),
@@ -1158,45 +976,35 @@ export async function getMetricDetail(
   if (section === "pnl") {
     const snapJoin = `JOIN pnl_running_salary_snapshot s ON s.employee_id = e.id
       WHERE s.period_code BETWEEN ? AND ?`;
-    const pnlParams = [
-      toPeriod(filters.from),
-      toPeriod(filters.to),
-      ...scopedParams,
-    ];
+    const pnlParams = [toPeriod(filters.from), toPeriod(filters.to), ...scopedParams];
     const [[tr], [rc], [recs]] = await Promise.all([
       db.execute<RowDataPacket[]>(
-        `SELECT s.period_code AS period, ROUND(SUM(s.earned_salary_till_date)) AS value
+      `SELECT s.period_code AS period, ROUND(SUM(s.earned_salary_till_date)) AS value
          FROM employees e ${snapJoin} ${scoped}
         GROUP BY period ORDER BY period ASC`,
-        pnlParams,
+      pnlParams,
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT s.pnl_bucket AS label, ROUND(SUM(s.earned_salary_till_date)) AS value
+      `SELECT s.pnl_bucket AS label, ROUND(SUM(s.earned_salary_till_date)) AS value
          FROM employees e ${snapJoin} ${scoped}
         GROUP BY label ORDER BY value DESC`,
-        pnlParams,
+      pnlParams,
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT ${recordKey.id} AS id, ${recordKey.name} AS name, ${recordKey.sub} AS subtitle,
+      `SELECT ${recordKey.id} AS id, ${recordKey.name} AS name, ${recordKey.sub} AS subtitle,
               ROUND(SUM(s.earned_salary_till_date)) AS value
          FROM employees e ${recordKey.join} ${snapJoin} ${scoped}
         GROUP BY id, name, subtitle
         ORDER BY value DESC
         LIMIT 100`,
-        pnlParams,
+      pnlParams,
       ),
     ]);
-    const buckets = rc.map((r) => ({
-      label: String(r.label ?? "unclassified"),
-      value: Number(r.value ?? 0),
-    }));
+    const buckets = rc.map((r) => ({ label: String(r.label ?? "unclassified"), value: Number(r.value ?? 0) }));
     return {
       ...base,
       availability: tr.length || recs.length ? "ok" : "no_data",
-      trend: tr.map((r) => ({
-        period: String(r.period),
-        value: r.value == null ? null : Number(r.value),
-      })),
+      trend: tr.map((r) => ({ period: String(r.period), value: r.value == null ? null : Number(r.value) })),
       rootCause: share(buckets),
       rootCauseNote: buckets.length
         ? null
@@ -1236,22 +1044,14 @@ export async function getMetricDetail(
         LIMIT 100`,
       [filters.from, filters.to, ...scopedParams],
     );
-    const causes = rc.map((r) => ({
-      label: String(r.label),
-      value: Number(r.value),
-    }));
+    const causes = rc.map((r) => ({ label: String(r.label), value: Number(r.value) }));
     return {
       ...base,
       availability: tr.length || recs.length ? "ok" : "no_data",
       unit: "count",
-      trend: tr.map((r) => ({
-        period: String(r.period),
-        value: Number(r.value),
-      })),
+      trend: tr.map((r) => ({ period: String(r.period), value: Number(r.value) })),
       rootCause: share(causes),
-      rootCauseNote: causes.length
-        ? null
-        : "No unresolved reconciliation issues in this period.",
+      rootCauseNote: causes.length ? null : "No unresolved reconciliation issues in this period.",
       recordsLabel: `${drillAs === "manager" ? "Managers" : "Employees"} by open issues`,
       records: recs.map((r) => ({
         id: String(r.id),
@@ -1266,17 +1066,15 @@ export async function getMetricDetail(
   // -- Headcount, shrinkage and late comers: attendance -----------------------
   const attJoin = `JOIN attendance_daily_record a ON a.employee_id = e.id
     WHERE a.record_date BETWEEN ? AND ?`;
-  const SCHEDULED =
-    "NULLIF(SUM(a.attendance_status NOT IN ('week_off','holiday')), 0)";
-  const LOST =
-    "(SUM(a.attendance_status='absent') + SUM(a.attendance_status='leave_approved')" +
-    " + SUM(a.attendance_status='missing_punch') + SUM(a.attendance_status='half_day')/2)";
+  const SCHEDULED = "NULLIF(SUM(a.attendance_status NOT IN ('week_off','holiday')), 0)";
+  const LOST = "(SUM(a.attendance_status='absent') + SUM(a.attendance_status='leave_approved')"
+    + " + SUM(a.attendance_status='missing_punch') + SUM(a.attendance_status='half_day')/2)";
   const expr =
     section === "late_comers"
       ? "ROUND(100 * SUM(a.attendance_status = 'present' AND a.late_mark = 1) / NULLIF(SUM(a.attendance_status = 'present'), 0), 2)"
       : section === "shrinkage"
-        ? `ROUND(100 * ${LOST} / ${SCHEDULED}, 2)`
-        : "COUNT(DISTINCT e.id)";
+      ? `ROUND(100 * ${LOST} / ${SCHEDULED}, 2)`
+      : "COUNT(DISTINCT e.id)";
 
   const [tr] = await db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(a.record_date, '%Y-%m') AS period, ${expr} AS value
@@ -1294,21 +1092,18 @@ export async function getMetricDetail(
         GROUP BY label ORDER BY value DESC`,
       [filters.from, filters.to, ...scopedParams],
     );
-    rootCause = share(
-      rc.map((r) => ({ label: String(r.label), value: Number(r.value) })),
-    );
+    rootCause = share(rc.map((r) => ({ label: String(r.label), value: Number(r.value) })));
     if (!rootCause) rootCauseNote = "No attendance records in this period.";
   } else {
-    rootCauseNote =
-      "Headcount is a count of people, not an outcome with a cause. The list below is who is in scope and how many days each attended.";
+    rootCauseNote = "Headcount is a count of people, not an outcome with a cause. The list below is who is in scope and how many days each attended.";
   }
 
   const recordExpr =
     section === "headcount"
       ? "COUNT(DISTINCT a.record_date)"
       : section === "late_comers"
-        ? "ROUND(100 * SUM(a.attendance_status='present' AND a.late_mark = 1) / NULLIF(SUM(a.attendance_status='present'), 0), 2)"
-        : `ROUND(100 * ${LOST} / ${SCHEDULED}, 2)`;
+      ? "ROUND(100 * SUM(a.attendance_status='present' AND a.late_mark = 1) / NULLIF(SUM(a.attendance_status='present'), 0), 2)"
+      : `ROUND(100 * ${LOST} / ${SCHEDULED}, 2)`;
 
   const [recs] = await db.execute<RowDataPacket[]>(
     `SELECT ${recordKey.id} AS id, ${recordKey.name} AS name, ${recordKey.sub} AS subtitle,
@@ -1324,16 +1119,12 @@ export async function getMetricDetail(
     ...base,
     availability: tr.length || recs.length ? "ok" : "no_data",
     unit: section === "headcount" ? "count" : "percent",
-    trend: tr.map((r) => ({
-      period: String(r.period),
-      value: r.value == null ? null : Number(r.value),
-    })),
+    trend: tr.map((r) => ({ period: String(r.period), value: r.value == null ? null : Number(r.value) })),
     rootCause,
     rootCauseNote,
-    recordsLabel:
-      section === "headcount"
-        ? `${drillAs === "manager" ? "Managers" : "Employees"} (days attended)`
-        : base.recordsLabel,
+    recordsLabel: section === "headcount"
+      ? `${drillAs === "manager" ? "Managers" : "Employees"} (days attended)`
+      : base.recordsLabel,
     records: recs.map((r) => ({
       id: String(r.id),
       name: String(r.name ?? "Unknown"),

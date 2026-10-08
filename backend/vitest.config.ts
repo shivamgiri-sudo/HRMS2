@@ -1,15 +1,11 @@
-import { defineConfig } from "vitest/config";
-import { loadEnv } from "vite";
+import { defineConfig } from 'vitest/config';
+import { loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => ({
   test: {
     environment: "node",
     globals: true,
-    include: [
-      "tests/**/*.test.ts",
-      "src/**/__tests__/**/*.test.ts",
-      "scripts/**/*.test.ts",
-    ],
+    include: ["tests/**/*.test.ts", "src/**/__tests__/**/*.test.ts", "scripts/**/*.test.ts"],
     setupFiles: ["./tests/setup.ts"],
     // This backend suite is intentionally broad: it includes hundreds of DB,
     // route, static contract, and worker tests. On Windows, the default file

@@ -35,10 +35,8 @@ qualityAggregationRouter.use(requireAuth);
 
 // Typed error handler wrapper
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 const qualityService = new QualityAggregationService(db);
 
@@ -61,12 +59,10 @@ qualityAggregationRouter.get(
       const employeeCode = req.agentCode;
       const daysBack = Math.min(
         Math.max(1, Number(req.query.daysBack) || 7),
-        90, // Limit to 90 days max
+        90 // Limit to 90 days max
       );
 
-      logger.info(
-        `CQ Score request: agent=${employeeCode}, daysBack=${daysBack}`,
-      );
+      logger.info(`CQ Score request: agent=${employeeCode}, daysBack=${daysBack}`);
 
       const result = await qualityService.getCQScore(employeeCode, daysBack);
 
@@ -100,7 +96,7 @@ qualityAggregationRouter.get(
         message: "Unable to fetch quality data and no cache available",
       });
     }
-  }),
+  })
 );
 
 // ─── GET /api/agent/weakness-detail ─────────────────────────────────────────
@@ -152,7 +148,7 @@ qualityAggregationRouter.get(
         message: "Unable to fetch weakness data and no cache available",
       });
     }
-  }),
+  })
 );
 
 // ─── GET /api/agent/calls-review ────────────────────────────────────────────
@@ -178,8 +174,7 @@ qualityAggregationRouter.get(
       // Parse and validate query params
       let limit = Number(req.query.limit) || 10;
       let offset = Number(req.query.offset) || 0;
-      const sort = ((req.query.sort as string) || "date") as
-        "date" | "cq" | "fatal";
+      const sort = (req.query.sort as string || "date") as "date" | "cq" | "fatal";
 
       // Validate params
       if (isNaN(limit) || limit < 1 || limit > 50) {
@@ -202,16 +197,11 @@ qualityAggregationRouter.get(
       }
 
       logger.info(
-        `Calls Review request: agent=${employeeCode}, limit=${limit}, offset=${offset}, sort=${sort}`,
+        `Calls Review request: agent=${employeeCode}, limit=${limit}, offset=${offset}, sort=${sort}`
       );
 
       limit = Math.min(limit, 50); // Safety cap
-      const result = await qualityService.getCallsReview(
-        employeeCode,
-        limit,
-        offset,
-        sort,
-      );
+      const result = await qualityService.getCallsReview(employeeCode, limit, offset, sort);
 
       res.status(200).json({
         success: true,
@@ -243,7 +233,7 @@ qualityAggregationRouter.get(
         message: "Unable to fetch calls data and no cache available",
       });
     }
-  }),
+  })
 );
 
 // ─── GET /api/agent/call/:callId/detail ─────────────────────────────────────
@@ -273,9 +263,7 @@ qualityAggregationRouter.get(
         });
       }
 
-      logger.info(
-        `Call Detail request: callId=${callId}, agent=${employeeCode}`,
-      );
+      logger.info(`Call Detail request: callId=${callId}, agent=${employeeCode}`);
 
       const result = await qualityService.getCallDetail(callId, employeeCode);
 
@@ -301,7 +289,7 @@ qualityAggregationRouter.get(
         message: "Unable to fetch call detail",
       });
     }
-  }),
+  })
 );
 
 // GET /api/agent/apr — self-service AHT / APR trend (last 30 days, scoped to calling agent)
@@ -314,27 +302,18 @@ qualityAggregationRouter.get(
       const employeeCode = (req as unknown as { agentCode?: string }).agentCode;
 
       if (!employeeCode) {
-        return res
-          .status(403)
-          .json({
-            success: false,
-            error: "Agent code not found for this user",
-          });
+        return res.status(403).json({ success: false, error: "Agent code not found for this user" });
       }
 
       const now = new Date();
-      const to = req.query.to
-        ? String(req.query.to)
-        : now.toISOString().slice(0, 10);
+      const to = req.query.to ? String(req.query.to) : now.toISOString().slice(0, 10);
       const fromDate = new Date(now);
       fromDate.setDate(fromDate.getDate() - 30);
-      const from = req.query.from
-        ? String(req.query.from)
+      const from = req.query.from ? String(req.query.from)
         : `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, "0")}-${String(fromDate.getDate()).padStart(2, "0")}`;
 
       const pool = getShivamgiriPool();
-      const [rows] = await pool.execute<RowDataPacket[]>(
-        `
+      const [rows] = await pool.execute<RowDataPacket[]>(`
         SELECT
           apr.UserID             AS agent_code,
           DATE_FORMAT(apr.ReportDate, '%Y-%m-%d') AS date,
@@ -355,9 +334,7 @@ qualityAggregationRouter.get(
           AND apr.ReportDate BETWEEN ? AND ?
         ORDER BY apr.ReportDate ASC
         LIMIT 31
-      `,
-        [employeeCode, from, to],
-      );
+      `, [employeeCode, from, to]);
 
       return res.json({ success: true, data: rows });
     } catch (err) {
@@ -365,7 +342,7 @@ qualityAggregationRouter.get(
       const msg = err instanceof Error ? err.message : "APR data unavailable";
       return res.json({ success: true, data: [], _error: msg });
     }
-  },
+  }
 );
 
 export default qualityAggregationRouter;

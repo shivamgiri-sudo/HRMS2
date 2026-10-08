@@ -75,12 +75,7 @@ function captureSubmit(): Captured[] {
 
 const RATINGS = {
   competencies: [
-    {
-      competency_id: "7",
-      competency_name: "",
-      rating: 2,
-      comment: "needs work",
-    },
+    { competency_id: "7", competency_name: "", rating: 2, comment: "needs work" },
     { competency_id: "8", competency_name: "", rating: 5, comment: "strong" },
   ],
 };
@@ -96,12 +91,10 @@ describe("performance feedback writes use the real schema", () => {
 
     const result = await service.submitFeedback(
       { request_id: REQUEST_ID, ratings_json: RATINGS } as never,
-      REVIEWER_ID,
+      REVIEWER_ID
     );
 
-    const inserts = calls.filter((c) =>
-      /INSERT INTO performance_feedback_response/i.test(c.sql),
-    );
+    const inserts = calls.filter((c) => /INSERT INTO performance_feedback_response/i.test(c.sql));
     expect(inserts).toHaveLength(2);
     expect(result.competencies_recorded).toBe(2);
 
@@ -124,11 +117,9 @@ describe("performance feedback writes use the real schema", () => {
     const calls = captureSubmit();
     await service.submitFeedback(
       { request_id: REQUEST_ID, ratings_json: RATINGS } as never,
-      REVIEWER_ID,
+      REVIEWER_ID
     );
-    const insert = calls.find((c) =>
-      /INSERT INTO performance_feedback_response/i.test(c.sql),
-    )!;
+    const insert = calls.find((c) => /INSERT INTO performance_feedback_response/i.test(c.sql))!;
     expect(insert.sql).toMatch(/ON DUPLICATE KEY UPDATE/i);
   });
 
@@ -140,12 +131,10 @@ describe("performance feedback writes use the real schema", () => {
         ratings_json: RATINGS,
         development_areas: "closing narrative",
       } as never,
-      REVIEWER_ID,
+      REVIEWER_ID
     );
 
-    const update = calls.find((c) =>
-      /UPDATE performance_feedback_request/i.test(c.sql),
-    )!;
+    const update = calls.find((c) => /UPDATE performance_feedback_request/i.test(c.sql))!;
     expect(update.sql).toContain("'completed'");
     expect(update.sql).not.toContain("'submitted'");
     // submitted_at does not exist on this table; completed_at does
@@ -165,12 +154,9 @@ describe("performance feedback writes use the real schema", () => {
             kpis: [{ kpi_id: "1", kpi_name: "AHT", rating: 4 }],
           },
         } as never,
-        REVIEWER_ID,
-      ),
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      code: "KPI_RATINGS_UNSUPPORTED",
-    });
+        REVIEWER_ID
+      )
+    ).rejects.toMatchObject({ statusCode: 400, code: "KPI_RATINGS_UNSUPPORTED" });
   });
 
   it("rejects a rating outside the 1-5 CHECK constraint before writing", async () => {
@@ -179,24 +165,13 @@ describe("performance feedback writes use the real schema", () => {
       service.submitFeedback(
         {
           request_id: REQUEST_ID,
-          ratings_json: {
-            competencies: [
-              { competency_id: "7", competency_name: "", rating: 9 },
-            ],
-          },
+          ratings_json: { competencies: [{ competency_id: "7", competency_name: "", rating: 9 }] },
         } as never,
-        REVIEWER_ID,
-      ),
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      code: "INVALID_COMPETENCY_RATING",
-    });
+        REVIEWER_ID
+      )
+    ).rejects.toMatchObject({ statusCode: 400, code: "INVALID_COMPETENCY_RATING" });
 
-    expect(
-      calls.some((c) =>
-        /INSERT INTO performance_feedback_response/i.test(c.sql),
-      ),
-    ).toBe(false);
+    expect(calls.some((c) => /INSERT INTO performance_feedback_response/i.test(c.sql))).toBe(false);
   });
 
   it("authorises against reviewer_id, the column that exists", async () => {
@@ -204,8 +179,8 @@ describe("performance feedback writes use the real schema", () => {
     await expect(
       service.submitFeedback(
         { request_id: REQUEST_ID, ratings_json: RATINGS } as never,
-        "someone-else",
-      ),
+        "someone-else"
+      )
     ).rejects.toThrow(/Unauthorized/);
   });
 
@@ -213,17 +188,12 @@ describe("performance feedback writes use the real schema", () => {
     const calls: Captured[] = [];
     mockExecute.mockImplementation((sql: string, params: unknown[] = []) => {
       calls.push({ sql, params });
-      return Promise.resolve([
-        [{ competency_id: 1, competency_name: "Communication" }],
-        [],
-      ]);
+      return Promise.resolve([[{ competency_id: 1, competency_name: "Communication" }], []]);
     });
 
     await service.createCompetency({ competency_name: "Communication" });
 
-    const insert = calls.find((c) =>
-      /INSERT INTO competency_master/i.test(c.sql),
-    )!;
+    const insert = calls.find((c) => /INSERT INTO competency_master/i.test(c.sql))!;
     expect(insert.sql).not.toContain("display_order");
     expect(insert.sql).toContain("competency_name");
   });
@@ -234,9 +204,7 @@ describe("development plans hang off a generated report", () => {
   let calls: Captured[];
 
   async function connection() {
-    return await (
-      db as unknown as { getConnection: () => Promise<typeof conn> }
-    ).getConnection();
+    return (await (db as unknown as { getConnection: () => Promise<typeof conn> }).getConnection());
   }
 
   beforeEach(async () => {
@@ -250,10 +218,8 @@ describe("development plans hang off a generated report", () => {
   function wire(reportRows: unknown[]) {
     conn.execute.mockImplementation((sql: string, params: unknown[] = []) => {
       calls.push({ sql, params });
-      if (/FROM performance_feedback_report/i.test(sql))
-        return Promise.resolve([reportRows, []]);
-      if (/SELECT id FROM employees/i.test(sql))
-        return Promise.resolve([[{ id: REVIEWER_ID }], []]);
+      if (/FROM performance_feedback_report/i.test(sql)) return Promise.resolve([reportRows, []]);
+      if (/SELECT id FROM employees/i.test(sql)) return Promise.resolve([[{ id: REVIEWER_ID }], []]);
       return Promise.resolve([{ affectedRows: 1 } as never, []]);
     });
   }
@@ -265,17 +231,13 @@ describe("development plans hang off a generated report", () => {
         {
           employee_id: EMPLOYEE_ID,
           cycle_id: CYCLE_ID,
-          goals: [
-            { description: "Improve clarity", target_date: "2026-12-31" },
-          ],
+          goals: [{ description: "Improve clarity", target_date: "2026-12-31" }],
         } as never,
-        REVIEWER_ID,
-      ),
+        REVIEWER_ID
+      )
     ).rejects.toMatchObject({ statusCode: 409, code: "REPORT_NOT_GENERATED" });
 
-    expect(calls.some((c) => /INSERT INTO development_plan/i.test(c.sql))).toBe(
-      false,
-    );
+    expect(calls.some((c) => /INSERT INTO development_plan/i.test(c.sql))).toBe(false);
   });
 
   it("writes the columns the table actually has, and links the goal to a real plan id", async () => {
@@ -291,21 +253,14 @@ describe("development plans hang off a generated report", () => {
             { description: "Lead a review", target_date: "2026-12-31" },
           ],
         } as never,
-        REVIEWER_ID,
+        REVIEWER_ID
       )
       .catch(() => undefined); // the post-insert fetch reads through the pool stub
 
-    const plan = calls.find((c) =>
-      /INSERT INTO development_plan\b/i.test(c.sql),
-    )!;
+    const plan = calls.find((c) => /INSERT INTO development_plan\b/i.test(c.sql))!;
     expect(plan.sql).not.toContain("created_by");
     expect(plan.sql).not.toMatch(/\btarget_date\b/);
-    for (const col of [
-      "report_id",
-      "manager_id",
-      "plan_start_date",
-      "plan_end_date",
-    ]) {
+    for (const col of ["report_id", "manager_id", "plan_start_date", "plan_end_date"]) {
       expect(plan.sql).toContain(col);
     }
     expect(plan.params).toContain(REPORT_ID);
@@ -315,9 +270,7 @@ describe("development plans hang off a generated report", () => {
     const planId = String(plan.params[0]);
     expect(planId).toMatch(/^[0-9a-f-]{36}$/i);
 
-    const goals = calls.filter((c) =>
-      /INSERT INTO development_plan_goal/i.test(c.sql),
-    );
+    const goals = calls.filter((c) => /INSERT INTO development_plan_goal/i.test(c.sql));
     expect(goals).toHaveLength(2);
     for (const g of goals) {
       expect(g.sql).toContain("goal_description");
@@ -338,11 +291,8 @@ describe("development plans hang off a generated report", () => {
           cycle_id: CYCLE_ID,
           goals: [{ description: "Improve clarity" }],
         } as never,
-        REVIEWER_ID,
-      ),
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      code: "PLAN_END_DATE_REQUIRED",
-    });
+        REVIEWER_ID
+      )
+    ).rejects.toMatchObject({ statusCode: 400, code: "PLAN_END_DATE_REQUIRED" });
   });
 });

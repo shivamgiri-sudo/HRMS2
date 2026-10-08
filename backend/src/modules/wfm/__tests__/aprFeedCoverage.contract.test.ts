@@ -25,9 +25,7 @@ import fs from "fs";
 import path from "path";
 
 const ENGINE = fs.readFileSync(
-  path.resolve(__dirname, "..", "attendance-engine.service.ts"),
-  "utf8",
-);
+  path.resolve(__dirname, "..", "attendance-engine.service.ts"), "utf8");
 
 describe("APR-only judgement is scoped to the covered population", () => {
   it("exposes an enrolment check", () => {
@@ -73,9 +71,7 @@ describe("APR-only judgement is scoped to the covered population", () => {
     // The fallback block must still exist — removing it outright is the change
     // that takes 461 people to zero paid days.
     expect(ENGINE).toMatch(/classifyAsApr = false;/);
-    expect(ENGINE).toMatch(
-      /attendance_source: 'biometric', full_day_minutes: 540/,
-    );
+    expect(ENGINE).toMatch(/attendance_source: 'biometric', full_day_minutes: 540/);
   });
 
   it("does not invent thresholds — 480/240 stay with the engine's classifiers", () => {

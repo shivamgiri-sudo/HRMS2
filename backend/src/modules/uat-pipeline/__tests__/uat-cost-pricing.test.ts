@@ -32,25 +32,19 @@ beforeEach(() => {
 describe("computeCostMicros", () => {
   it("prices input and output at their separate rates", () => {
     // 1M input at $5 + 1M output at $25 = $30 = 30,000,000 micros.
-    expect(
-      computeCostMicros(
-        { inputTokens: 1_000_000, outputTokens: 1_000_000 },
-        OPUS,
-      ),
-    ).toBe(30_000_000);
+    expect(computeCostMicros({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, OPUS)).toBe(
+      30_000_000
+    );
   });
 
   it("ADDS cache reads rather than subtracting them from input", () => {
     // Anthropic reports cache_read_input_tokens as a separate figure, not as a subset of
     // input_tokens. Treating it as a subset understates every cached call — which is most of
     // them, since the checklist prefix is deliberately cacheable.
-    const uncached = computeCostMicros(
-      { inputTokens: 1_000_000, outputTokens: 0 },
-      OPUS,
-    );
+    const uncached = computeCostMicros({ inputTokens: 1_000_000, outputTokens: 0 }, OPUS);
     const withCache = computeCostMicros(
       { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 1_000_000 },
-      OPUS,
+      OPUS
     );
     expect(withCache).toBeGreaterThan(uncached);
     // The cached million costs a tenth of the uncached million.
@@ -58,24 +52,17 @@ describe("computeCostMicros", () => {
   });
 
   it("charges cache reads at the multiplier, not the full input rate", () => {
-    expect(computeCostMicros({ cacheReadTokens: 1_000_000 }, OPUS)).toBe(
-      500_000,
-    );
+    expect(computeCostMicros({ cacheReadTokens: 1_000_000 }, OPUS)).toBe(500_000);
   });
 
   it("returns an integer, so a sum over thousands of rows carries no float drift", () => {
-    const c = computeCostMicros(
-      { inputTokens: 1234, outputTokens: 567, cacheReadTokens: 89 },
-      OPUS,
-    );
+    const c = computeCostMicros({ inputTokens: 1234, outputTokens: 567, cacheReadTokens: 89 }, OPUS);
     expect(Number.isInteger(c)).toBe(true);
   });
 
   it("treats missing and negative token counts as zero rather than throwing", () => {
     expect(computeCostMicros({}, OPUS)).toBe(0);
-    expect(computeCostMicros({ inputTokens: -5, outputTokens: -5 }, OPUS)).toBe(
-      0,
-    );
+    expect(computeCostMicros({ inputTokens: -5, outputTokens: -5 }, OPUS)).toBe(0);
   });
 });
 
@@ -127,9 +114,7 @@ describe("resolveRate", () => {
     const rate = await resolveRate("claude", "claude-opus-5");
     // Without Number(), "5.0000" * tokens is NaN and every cost silently becomes null.
     expect(typeof rate?.inputUsdPerMTok).toBe("number");
-    expect(computeCostMicros({ inputTokens: 1_000_000 }, rate!)).toBe(
-      5_000_000,
-    );
+    expect(computeCostMicros({ inputTokens: 1_000_000 }, rate!)).toBe(5_000_000);
   });
 });
 
@@ -144,9 +129,7 @@ describe("checkDailyBudget", () => {
     expect(verdict.spentUsd).toBe(1.5);
     expect(verdict.allowed).toBe(true);
     // It reads cost_usd_micros directly — no join to the pricing table on read.
-    expect(String(mockQuery.mock.calls[0][0])).toMatch(
-      /SUM\(cost_usd_micros\)/,
-    );
+    expect(String(mockQuery.mock.calls[0][0])).toMatch(/SUM\(cost_usd_micros\)/);
     expect(String(mockQuery.mock.calls[0][0])).not.toMatch(/uat_model_pricing/);
   });
 

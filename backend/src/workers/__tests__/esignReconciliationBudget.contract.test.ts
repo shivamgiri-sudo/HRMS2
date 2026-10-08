@@ -52,10 +52,7 @@ const statusCode = stripComments(statusService);
 
 function constantExpression(src: string, name: string): string {
   const m = src.match(new RegExp(`const ${name}\\s*=\\s*([^;]+);`));
-  expect(
-    m,
-    `${name} is not declared in esign-reconciliation.worker.ts`,
-  ).not.toBeNull();
+  expect(m, `${name} is not declared in esign-reconciliation.worker.ts`).not.toBeNull();
   return m![1].trim();
 }
 
@@ -96,11 +93,7 @@ describe("esign reconciliation polling budget (R1.2, R11.2)", () => {
   });
 
   it("keeps BATCH_SIZE at 25", () => {
-    const value = Number(
-      new Function(
-        `return (${constantExpression(workerCode, "BATCH_SIZE")});`,
-      )(),
-    );
+    const value = Number(new Function(`return (${constantExpression(workerCode, "BATCH_SIZE")});`)());
     expect(
       value,
       "BATCH_SIZE is the per-tick ceiling on billed calls: every row claimBatch " +
@@ -111,9 +104,7 @@ describe("esign reconciliation polling budget (R1.2, R11.2)", () => {
 
   it("keeps GIVE_UP_AFTER_DAYS at 30", () => {
     const value = Number(
-      new Function(
-        `return (${constantExpression(workerCode, "GIVE_UP_AFTER_DAYS")});`,
-      )(),
+      new Function(`return (${constantExpression(workerCode, "GIVE_UP_AFTER_DAYS")});`)(),
     );
     expect(
       value,
@@ -127,9 +118,7 @@ describe("esign reconciliation polling budget (R1.2, R11.2)", () => {
     // Deliberately not asserting a literal `enabled=true`: runEsignReconciliationOnce
     // is callable with the flag off (the backfill runner and tests do exactly that),
     // so reading env is the honest form. R1.5 asks for the enabled state, not a constant.
-    const logMatch = workerCode.match(
-      /\[esign-reconciliation\] enabled=\$\{([^}]+)\}/,
-    );
+    const logMatch = workerCode.match(/\[esign-reconciliation\] enabled=\$\{([^}]+)\}/);
     expect(
       logMatch,
       "the tick log line must interpolate the enabled state rather than hard-code it",
@@ -141,15 +130,10 @@ describe("esign reconciliation polling budget (R1.2, R11.2)", () => {
 describe("claimBatch selection predicate (R11.2)", () => {
   const claimBatch = (() => {
     const start = workerCode.indexOf("async function claimBatch(");
-    expect(
-      start,
-      "claimBatch is not declared in esign-reconciliation.worker.ts",
-    ).toBeGreaterThan(-1);
+    expect(start, "claimBatch is not declared in esign-reconciliation.worker.ts").toBeGreaterThan(-1);
     const next = workerCode.indexOf("\nasync function ", start + 1);
     const alt = workerCode.indexOf("\n/** Push a transaction", start + 1);
-    const end =
-      [next, alt].filter((i) => i > -1).sort((a, b) => a - b)[0] ??
-      workerCode.length;
+    const end = [next, alt].filter((i) => i > -1).sort((a, b) => a - b)[0] ?? workerCode.length;
     return workerCode.slice(start, end);
   })();
 
@@ -173,26 +157,18 @@ describe("claimBatch selection predicate (R11.2)", () => {
 });
 
 describe("kit-scope completion delegates before the per-document download (R1.3)", () => {
-  const kitBranchAt = statusCode.search(
-    /String\(row\.scope \?\? "document"\) === "kit"/,
-  );
+  const kitBranchAt = statusCode.search(/String\(row\.scope \?\? "document"\) === "kit"/);
   const finalizeAt = statusCode.indexOf("finalizeKitEsign(");
   const downloadAt = statusCode.indexOf("downloadESignDocument(");
 
   it("a scope === 'kit' branch exists and delegates to finalizeKitEsign", () => {
-    expect(
-      kitBranchAt,
-      "the scope === 'kit' branch is gone from luckpay-status.service.ts",
-    ).toBeGreaterThan(-1);
+    expect(kitBranchAt, "the scope === 'kit' branch is gone from luckpay-status.service.ts").toBeGreaterThan(-1);
     expect(finalizeAt, "nothing calls finalizeKitEsign").toBeGreaterThan(-1);
     expect(finalizeAt).toBeGreaterThan(kitBranchAt);
   });
 
   it("the inline per-document downloadESignDocument block still exists", () => {
-    expect(
-      downloadAt,
-      "the per-document download block is gone",
-    ).toBeGreaterThan(-1);
+    expect(downloadAt, "the per-document download block is gone").toBeGreaterThan(-1);
   });
 
   it("the kit delegation appears BEFORE the per-document download", () => {

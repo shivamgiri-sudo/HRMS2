@@ -15,21 +15,20 @@ function readArg(name: string): string | undefined {
 async function main() {
   const from = readArg("from");
   const to = readArg("to");
-  const result =
-    from && to
-      ? await runSafePerformanceSyncRange({
-          from,
-          to,
-          yearMonth: readArg("year-month"),
-          sources: readArg("sources"),
-          apply: process.argv.includes("--apply"),
-        })
-      : await runSafePerformanceSync({
-          date: readArg("date"),
-          yearMonth: readArg("year-month"),
-          sources: readArg("sources"),
-          apply: process.argv.includes("--apply"),
-        });
+  const result = from && to
+    ? await runSafePerformanceSyncRange({
+      from,
+      to,
+      yearMonth: readArg("year-month"),
+      sources: readArg("sources"),
+      apply: process.argv.includes("--apply"),
+    })
+    : await runSafePerformanceSync({
+      date: readArg("date"),
+      yearMonth: readArg("year-month"),
+      sources: readArg("sources"),
+      apply: process.argv.includes("--apply"),
+    });
 
   console.log("Performance safe sync");
   console.log(`Mode: ${result.mode}`);
@@ -43,10 +42,7 @@ async function main() {
 
 main()
   .catch((error) => {
-    console.error(
-      "Performance safe sync failed:",
-      error instanceof Error ? error.message : error,
-    );
+    console.error("Performance safe sync failed:", error instanceof Error ? error.message : error);
     process.exitCode = 1;
   })
   .finally(async () => {

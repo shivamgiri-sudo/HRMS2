@@ -12,14 +12,9 @@ function parseArgs(argv: string[]): Args {
     else if (arg === "--run-id") args.runId = argv[++i];
   }
   if (!args.from || !args.to) {
-    throw new Error(
-      "Usage: npm run apr:reconcile -- --from YYYY-MM-DD --to YYYY-MM-DD [--run-id ID] [--apply]",
-    );
+    throw new Error("Usage: npm run apr:reconcile -- --from YYYY-MM-DD --to YYYY-MM-DD [--run-id ID] [--apply]");
   }
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(args.from) ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(args.to)
-  ) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(args.from) || !/^\d{4}-\d{2}-\d{2}$/.test(args.to)) {
     throw new Error("--from and --to must be YYYY-MM-DD");
   }
   return args;
@@ -27,8 +22,7 @@ function parseArgs(argv: string[]): Args {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const { aprPayrollReconciliationService } =
-    await import("../src/modules/wfm/apr-payroll-reconciliation.service.js");
+  const { aprPayrollReconciliationService } = await import("../src/modules/wfm/apr-payroll-reconciliation.service.js");
   const { closePool } = await import("../src/db/mysql.js");
   try {
     const result = await aprPayrollReconciliationService.audit({
@@ -38,10 +32,7 @@ async function main() {
       apply: args.apply,
     });
     console.dir(result, { depth: null });
-    if (!args.apply)
-      console.log(
-        "Dry-run ledger update only. Re-run with --apply to repair safe unlocked ADR rows.",
-      );
+    if (!args.apply) console.log("Dry-run ledger update only. Re-run with --apply to repair safe unlocked ADR rows.");
   } finally {
     await closePool();
   }

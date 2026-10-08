@@ -10,9 +10,7 @@ import { parseDeclaredSchema } from "../runPendingMigrations.js";
  */
 describe("parseDeclaredSchema", () => {
   it("reads a plain CREATE TABLE", () => {
-    const d = parseDeclaredSchema(
-      "CREATE TABLE IF NOT EXISTS statutory_filing_record (id CHAR(36));",
-    );
+    const d = parseDeclaredSchema("CREATE TABLE IF NOT EXISTS statutory_filing_record (id CHAR(36));");
     expect(d.tables).toEqual(["statutory_filing_record"]);
     expect(d.skipped).toBe(false);
   });
@@ -30,12 +28,8 @@ describe("parseDeclaredSchema", () => {
   });
 
   it("lowercases identifiers so MySQL's real case cannot cause a false miss", () => {
-    const d = parseDeclaredSchema(
-      "ALTER TABLE Salary_Prep_Run ADD COLUMN Incentives_Applied_At DATETIME NULL;",
-    );
-    expect(d.columns).toEqual([
-      { table: "salary_prep_run", column: "incentives_applied_at" },
-    ]);
+    const d = parseDeclaredSchema("ALTER TABLE Salary_Prep_Run ADD COLUMN Incentives_Applied_At DATETIME NULL;");
+    expect(d.columns).toEqual([{ table: "salary_prep_run", column: "incentives_applied_at" }]);
   });
 
   // ─── the refusals ──────────────────────────────────────────────────────────
@@ -64,13 +58,9 @@ describe("parseDeclaredSchema", () => {
    * would be the exact outage this guard is supposed to prevent.
    */
   it("ignores schema-qualified objects in another database", () => {
-    const d = parseDeclaredSchema(
-      "CREATE TABLE IF NOT EXISTS db_masmis.bvo_order_export (id INT);",
-    );
+    const d = parseDeclaredSchema("CREATE TABLE IF NOT EXISTS db_masmis.bvo_order_export (id INT);");
     expect(d.tables).toEqual([]);
-    const a = parseDeclaredSchema(
-      "ALTER TABLE db_masmis.foo ADD COLUMN bar INT;",
-    );
+    const a = parseDeclaredSchema("ALTER TABLE db_masmis.foo ADD COLUMN bar INT;");
     expect(a.columns).toEqual([]);
   });
 
@@ -101,9 +91,7 @@ describe("parseDeclaredSchema", () => {
   });
 
   it("asserts nothing for a data-only migration", () => {
-    const d = parseDeclaredSchema(
-      "INSERT INTO page_catalog (code) VALUES ('FINANCE_GRN');",
-    );
+    const d = parseDeclaredSchema("INSERT INTO page_catalog (code) VALUES ('FINANCE_GRN');");
     expect(d.tables).toEqual([]);
     expect(d.columns).toEqual([]);
     expect(d.skipped).toBe(false);

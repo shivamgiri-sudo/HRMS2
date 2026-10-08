@@ -1,15 +1,11 @@
-import type { RowDataPacket } from "mysql2";
-import { db } from "../db/mysql.js";
-import { calculatePayrollRun } from "../modules/payroll/payrollCalculate.service.js";
-import { writeAuditLog } from "../shared/auditLog.js";
-import {
-  withWorkerLock,
-  registerTimer,
-  unregisterTimer,
-} from "./worker-utils.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../db/mysql.js';
+import { calculatePayrollRun } from '../modules/payroll/payrollCalculate.service.js';
+import { writeAuditLog } from '../shared/auditLog.js';
+import { withWorkerLock, registerTimer, unregisterTimer } from './worker-utils.js';
 
-const WORKER_NAME = "payroll-nightly-recalc";
-const SYSTEM_ACTOR_ID = "system-auto-recalc";
+const WORKER_NAME = 'payroll-nightly-recalc';
+const SYSTEM_ACTOR_ID = 'system-auto-recalc';
 
 // Track timers for graceful shutdown
 let scheduledTimer: NodeJS.Timeout | null = null;
@@ -19,7 +15,7 @@ function currentRunMonth(): string {
   // Use IST date (UTC+5:30)
   const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
   const y = now.getUTCFullYear();
-  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const m = String(now.getUTCMonth() + 1).padStart(2, '0');
   return `${y}-${m}`;
 }
 
@@ -37,34 +33,24 @@ async function runNightlyRecalcInternal(): Promise<void> {
         AND ceo_acknowledged_at IS NULL
         AND COALESCE(validation_status, 'pending') <> 'validated'
       ORDER BY created_at ASC`,
-    [runMonth],
+    [runMonth]
   );
 
   if (!runs.length) {
-    console.log(
-      `[${WORKER_NAME}] No open runs for ${runMonth} — nothing to do.`,
-    );
+    console.log(`[${WORKER_NAME}] No open runs for ${runMonth} — nothing to do.`);
     return;
   }
 
-  for (const run of runs as Array<{
-    id: string;
-    run_month: string;
-    status: string;
-  }>) {
+  for (const run of runs as Array<{ id: string; run_month: string; status: string }>) {
     try {
-      console.log(
-        `[${WORKER_NAME}] Recalculating run ${run.id} (${run.run_month}, ${run.status})...`,
-      );
+      console.log(`[${WORKER_NAME}] Recalculating run ${run.id} (${run.run_month}, ${run.status})...`);
       const result = await calculatePayrollRun(run.id, SYSTEM_ACTOR_ID);
-      console.log(
-        `[${WORKER_NAME}] Run ${run.id} done — employees: ${result.employees_processed}, gross: ${result.total_gross}, net: ${result.total_net}`,
-      );
+      console.log(`[${WORKER_NAME}] Run ${run.id} done — employees: ${result.employees_processed}, gross: ${result.total_gross}, net: ${result.total_net}`);
       await writeAuditLog({
         actor_user_id: SYSTEM_ACTOR_ID,
-        action_type: "PAYROLL_AUTO_RECALC",
-        module_key: "payroll",
-        entity_type: "salary_prep_run",
+        action_type: 'PAYROLL_AUTO_RECALC',
+        module_key: 'payroll',
+        entity_type: 'salary_prep_run',
         entity_id: run.id,
         metadata: {
           run_month: run.run_month,
@@ -104,23 +90,20 @@ export async function startPayrollNightlyRecalcWorker(): Promise<void> {
       target.setUTCDate(target.getUTCDate() + 1);
     }
     const delay = target.getTime() - now.getTime();
-    console.log(
-      `[${WORKER_NAME}] Next run scheduled at ${target.toISOString()} (in ${Math.round(delay / 60000)} min)`,
-    );
+    console.log(`[${WORKER_NAME}] Next run scheduled at ${target.toISOString()} (in ${Math.round(delay / 60000)} min)`);
 
     scheduledTimer = setTimeout(async () => {
-      await runNightlyRecalc().catch((err) => {
+      await runNightlyRecalc().catch(err => {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[${WORKER_NAME}] Error:`, message);
       });
 
       intervalTimer = setInterval(
-        () =>
-          runNightlyRecalc().catch((err) => {
-            const message = err instanceof Error ? err.message : String(err);
-            console.error(`[${WORKER_NAME}] Error:`, message);
-          }),
-        24 * 60 * 60 * 1000,
+        () => runNightlyRecalc().catch(err => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[${WORKER_NAME}] Error:`, message);
+        }),
+        24 * 60 * 60 * 1000
       );
       registerTimer(`${WORKER_NAME}-interval`, intervalTimer);
     }, delay);

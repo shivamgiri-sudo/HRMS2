@@ -45,7 +45,7 @@ const fakeRun = {
 const fakeEmployee = {
   employee_id: "emp-1",
   employee_code: "EMP001",
-  ctc_annual: 300000, // ₹3L pa → ₹25k/month gross
+  ctc_annual: 300000,  // ₹3L pa → ₹25k/month gross
   basic_pct: 40,
   hra_pct: 20,
   // resolveProfessionalTax refuses to guess when the branch has no state, since
@@ -66,10 +66,10 @@ const fakeAttendance = {
 
 // Key-value rows matching SELECT config_key, config_value FROM statutory_config
 const fakeStatKvRows = [
-  { config_key: "pf_employee_pct", config_value: 12 },
+  { config_key: "pf_employee_pct",  config_value: 12 },
   { config_key: "esic_employee_pct", config_value: 0.75 },
-  { config_key: "esic_wage_limit", config_value: 21000 },
-  { config_key: "pf_wage_limit", config_value: 15000 },
+  { config_key: "esic_wage_limit",  config_value: 21000 },
+  { config_key: "pf_wage_limit",    config_value: 15000 },
   { config_key: "professional_tax", config_value: 200 },
   { config_key: "tds_standard_deduction", config_value: 75000 },
   { config_key: "tds_rebate_87a_limit", config_value: 700000 },
@@ -83,16 +83,12 @@ describe("calculatePayrollRun", () => {
 
   it("throws when run not found", async () => {
     mockExecute.mockResolvedValueOnce([[]]); // getRun
-    await expect(calculatePayrollRun("missing-run", "user-1")).rejects.toThrow(
-      "Run not found",
-    );
+    await expect(calculatePayrollRun("missing-run", "user-1")).rejects.toThrow("Run not found");
   });
 
   it("throws when run is locked/disbursed", async () => {
     mockExecute.mockResolvedValueOnce([[{ ...fakeRun, status: "locked" }]]);
-    await expect(calculatePayrollRun("run-1", "user-1")).rejects.toThrow(
-      "locked",
-    );
+    await expect(calculatePayrollRun("run-1", "user-1")).rejects.toThrow("locked");
   });
 
   /**
@@ -110,9 +106,7 @@ describe("calculatePayrollRun", () => {
    * Keyed by SQL, inserting another query is harmless: it falls through to the
    * empty default instead of silently stealing the next fixture.
    */
-  function mockOneEmployeeRun(
-    overrideUpsert?: (sql: string, params: unknown[]) => unknown,
-  ) {
+  function mockOneEmployeeRun(overrideUpsert?: (sql: string, params: unknown[]) => unknown) {
     // The run is re-fetched after the status update, and must reflect it.
     let runStatus = "draft";
 
@@ -120,37 +114,24 @@ describe("calculatePayrollRun", () => {
       const q = String(sql);
 
       if (/UPDATE\s+salary_prep_run/i.test(q)) {
-        if (
-          /status\s*=\s*'processing'/i.test(q) ||
-          (params ?? []).includes("processing")
-        )
-          runStatus = "processing";
+        if (/status\s*=\s*'processing'/i.test(q) || (params ?? []).includes("processing")) runStatus = "processing";
         return [{ affectedRows: 1 }];
       }
-      if (/FROM\s+salary_prep_run/i.test(q))
-        return [[{ ...fakeRun, status: runStatus }]];
+      if (/FROM\s+salary_prep_run/i.test(q)) return [[{ ...fakeRun, status: runStatus }]];
 
       if (/FROM\s+statutory_config/i.test(q)) return [fakeStatKvRows];
 
       // The employee list for the run — distinguished from the per-employee
       // designation/department lookup by the filter columns the test asserts on.
-      if (
-        /FROM\s+employees/i.test(q) &&
-        /process_filter|process_id|process_name|branch/i.test(q)
-      ) {
+      if (/FROM\s+employees/i.test(q) && /process_filter|process_id|process_name|branch/i.test(q)) {
         return [[fakeEmployee]];
       }
 
       // cnt = 0 drives the wfm_attendance_session fallback path this fixture models.
-      if (
-        /COUNT\(\*\)\s+AS\s+cnt/i.test(q) &&
-        /attendance_daily_record/i.test(q)
-      )
-        return [[{ cnt: 0 }]];
+      if (/COUNT\(\*\)\s+AS\s+cnt/i.test(q) && /attendance_daily_record/i.test(q)) return [[{ cnt: 0 }]];
       if (/FROM\s+wfm_attendance_session/i.test(q)) return [[fakeAttendance]];
 
-      if (/FROM\s+salary_advance_log/i.test(q))
-        return [[{ monthly_recovery: 0 }]];
+      if (/FROM\s+salary_advance_log/i.test(q)) return [[{ monthly_recovery: 0 }]];
 
       // A configured slab for the employee's state. Returning no rows would be a
       // different scenario entirely — the service treats an unconfigured state as
@@ -184,14 +165,9 @@ describe("calculatePayrollRun", () => {
     // own process is exactly the failure this test is named for.
     const employeeQuery = mockExecute.mock.calls.find(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ([sql]: any) =>
-        /FROM\s+employees/i.test(String(sql)) &&
-        /date_of_leaving/i.test(String(sql)),
+      ([sql]: any) => /FROM\s+employees/i.test(String(sql)) && /date_of_leaving/i.test(String(sql)),
     );
-    expect(
-      employeeQuery,
-      "the run's employee query was never issued",
-    ).toBeDefined();
+    expect(employeeQuery, "the run's employee query was never issued").toBeDefined();
 
     const [sql, params] = employeeQuery as [string, unknown[]];
     expect(sql).toMatch(/process_name\s*=\s*\?/);
@@ -202,13 +178,9 @@ describe("calculatePayrollRun", () => {
     mockOneEmployeeRun();
     await calculatePayrollRun("run-1", "user-1");
 
-    const calls = mockExecute.mock.calls.map(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ([sql]: any) => sql as string,
-    );
-    const upsert = calls.find(
-      (s: string) => /salary_prep_line/i.test(s) && /INSERT|REPLACE/i.test(s),
-    );
+    const calls = mockExecute.mock.calls.map(// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ([sql]: any) => sql as string);
+    const upsert = calls.find((s: string) => /salary_prep_line/i.test(s) && /INSERT|REPLACE/i.test(s));
     expect(upsert).toBeDefined();
   });
 
@@ -222,10 +194,7 @@ describe("calculatePayrollRun", () => {
     await calculatePayrollRun("run-1", "user-1");
 
     // net_salary should be positive and < gross
-    const netSalary = upsertParams.find(
-      (p) =>
-        typeof p === "number" && (p as number) > 0 && (p as number) < 30000,
-    );
+    const netSalary = upsertParams.find((p) => typeof p === "number" && (p as number) > 0 && (p as number) < 30000);
     expect(netSalary).toBeDefined();
   });
 

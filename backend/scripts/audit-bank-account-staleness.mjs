@@ -36,29 +36,25 @@
  *   node backend/scripts/audit-bank-account-staleness.mjs
  *   node backend/scripts/audit-bank-account-staleness.mjs --run-month=2026-07
  */
-import { connect } from "./lib/db-connect.mjs";
+import { connect } from './lib/db-connect.mjs';
 
-const arg = (n, fb) =>
-  process.argv.find((a) => a.startsWith(`--${n}=`))?.split("=")[1] ?? fb;
-const RUN_MONTH = arg("run-month", null);
-const HRMS_HOST = arg("hrms-host", null);
-const BILL_HOST = arg("bill-host", null);
-const norm = (v) =>
-  String(v ?? "")
-    .trim()
-    .replace(/\s+/g, "");
-const mask = (v) => (v ? `***${String(v).slice(-4)}` : "(none)");
-const log = (m) => process.stdout.write(m + "\n");
+const arg = (n, fb) => process.argv.find(a => a.startsWith(`--${n}=`))?.split('=')[1] ?? fb;
+const RUN_MONTH = arg('run-month', null);
+const HRMS_HOST = arg('hrms-host', null);
+const BILL_HOST = arg('bill-host', null);
+const norm = (v) => String(v ?? '').trim().replace(/\s+/g, '');
+const mask = (v) => (v ? `***${String(v).slice(-4)}` : '(none)');
+const log = (m) => process.stdout.write(m + '\n');
 
 async function main() {
-  const hrms = await connect("mas_hrms", { host: HRMS_HOST, log: () => {} });
-  const bill = await connect("db_bill", { host: BILL_HOST, log: () => {} });
+  const hrms = await connect('mas_hrms', { host: HRMS_HOST, log: () => {} });
+  const bill = await connect('db_bill',  { host: BILL_HOST, log: () => {} });
 
   // HRMS side: the account each payment path would actually use.
   const scope = RUN_MONTH
     ? `JOIN salary_prep_line spl ON spl.employee_id = e.id
        JOIN salary_prep_run spr ON spr.id = spl.run_id AND spr.run_month = ${hrms.escape(RUN_MONTH)}`
-    : "";
+    : '';
   const [hRows] = await hrms.query(`
     SELECT DISTINCT TRIM(e.employee_code) AS code,
            CONVERT(ebd.account_number USING utf8mb4) AS acc,
@@ -93,84 +89,42 @@ async function main() {
   for (const r of jclr) if (!jclrMap.has(r.c)) jclrMap.set(r.c, r);
 
   const stale = [];
-  let agree = 0,
-    noEvidence = 0,
-    ciphertext = 0;
+  let agree = 0, noEvidence = 0, ciphertext = 0;
   for (const h of hRows) {
     const code = norm(h.code).toUpperCase();
     const acc = norm(h.acc);
     // Encrypted rows cannot be compared without the production key. Counted, not guessed at.
-    if (!/^[0-9]{6,20}$/.test(acc)) {
-      ciphertext++;
-      continue;
-    }
+    if (!/^[0-9]{6,20}$/.test(acc)) { ciphertext++; continue; }
 
     const cr = creditMap.get(code);
     const jc = jclrMap.get(code);
     const evidence = [];
-    if (cr)
-      evidence.push({
-        src: `salary_data ${cr.mon}`,
-        acc: norm(cr.AcNo),
-        when: cr.mon,
-      });
-    if (jc)
-      evidence.push({
-        src: `masjclrentry ${String(jc.lastUpdated ?? "").slice(0, 10)}`,
-        acc: norm(jc.AcNo),
-        when: String(jc.lastUpdated ?? ""),
-      });
-    if (!evidence.length) {
-      noEvidence++;
-      continue;
-    }
+    if (cr) evidence.push({ src: `salary_data ${cr.mon}`, acc: norm(cr.AcNo), when: cr.mon });
+    if (jc) evidence.push({ src: `masjclrentry ${String(jc.lastUpdated ?? '').slice(0, 10)}`, acc: norm(jc.AcNo), when: String(jc.lastUpdated ?? '') });
+    if (!evidence.length) { noEvidence++; continue; }
 
-    if (evidence.some((e) => e.acc === acc)) {
-      agree++;
-      continue;
-    }
-    stale.push({
-      code,
-      hrms: acc,
-      hrmsIfsc: h.ifsc_code,
-      hrmsUpdated: h.updated_at,
-      evidence,
-      jc,
-    });
+    if (evidence.some((e) => e.acc === acc)) { agree++; continue; }
+    stale.push({ code, hrms: acc, hrmsIfsc: h.ifsc_code, hrmsUpdated: h.updated_at, evidence, jc });
   }
 
-  log("");
+  log('');
   log(`  agrees with db_bill evidence .......... ${agree}`);
   log(`  NO db_bill evidence (new hire) ........ ${noEvidence}`);
   log(`  account encrypted, not comparable ..... ${ciphertext}`);
   log(`  STALE — disagrees with latest evidence . ${stale.length}`);
   if (stale.length) {
-    log("");
-    log("  CODE          HRMS PAYS   db_bill LATEST EVIDENCE");
+    log('');
+    log('  CODE          HRMS PAYS   db_bill LATEST EVIDENCE');
     for (const s of stale) {
       const best = s.evidence[0];
-      log(
-        `  ${s.code.padEnd(13)} ${mask(s.hrms).padEnd(11)} ${mask(best.acc)} via ${best.src}` +
-          (s.jc?.AcValidationDate
-            ? `  [validated ${String(s.jc.AcValidationDate).slice(0, 10)}]`
-            : ""),
-      );
+      log(`  ${s.code.padEnd(13)} ${mask(s.hrms).padEnd(11)} ${mask(best.acc)} via ${best.src}` +
+          (s.jc?.AcValidationDate ? `  [validated ${String(s.jc.AcValidationDate).slice(0, 10)}]` : ''));
     }
-    log("");
-    log(
-      "  ACTION: each line above is a possible wrong-account payment. Confirm with the employee,",
-    );
-    log(
-      "  then correct employee_bank_detail ON THE PRODUCTION HOST (the local FIELD_ENCRYPTION_KEY",
-    );
-    log(
-      "  cannot read existing ciphertext — writes made off-host are permanently unreadable).",
-    );
+    log('');
+    log('  ACTION: each line above is a possible wrong-account payment. Confirm with the employee,');
+    log('  then correct employee_bank_detail ON THE PRODUCTION HOST (the local FIELD_ENCRYPTION_KEY');
+    log('  cannot read existing ciphertext — writes made off-host are permanently unreadable).');
   }
-  await hrms.end();
-  await bill.end();
+  await hrms.end(); await bill.end();
 }
-main().catch((e) => {
-  console.error("FATAL:", e.message);
-  process.exit(1);
-});
+main().catch((e) => { console.error('FATAL:', e.message); process.exit(1); });

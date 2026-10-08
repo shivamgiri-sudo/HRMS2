@@ -42,9 +42,7 @@ describe("reviewRegularization — replay guard", () => {
     const conn = connSpy();
     getConnection.mockResolvedValue(conn);
     // getRegularization's SELECT
-    execute.mockResolvedValue([
-      [{ id: "reg-1", status: "approved", employee_id: "e1" }],
-    ]);
+    execute.mockResolvedValue([[{ id: "reg-1", status: "approved", employee_id: "e1" }]]);
 
     const out = await wfmService.reviewRegularization(
       "reg-1",
@@ -63,16 +61,10 @@ describe("reviewRegularization — replay guard", () => {
     const { wfmService } = await import("../wfm.service.js");
     const conn = connSpy();
     getConnection.mockResolvedValue(conn);
-    execute.mockResolvedValue([
-      [{ id: "reg-2", status: "approved", employee_id: "e2" }],
-    ]);
+    execute.mockResolvedValue([[{ id: "reg-2", status: "approved", employee_id: "e2" }]]);
 
     await wfmService
-      .reviewRegularization(
-        "reg-2",
-        { status: "rejected", reviewerNote: "reversed" },
-        "approver-1",
-      )
+      .reviewRegularization("reg-2", { status: "rejected", reviewerNote: "reversed" }, "approver-1")
       .catch(() => undefined); // downstream attendance work is not what this asserts
 
     expect(getConnection).toHaveBeenCalled();

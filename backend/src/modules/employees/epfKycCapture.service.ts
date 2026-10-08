@@ -18,16 +18,8 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  generateChecklistDraft,
-  type TransientFieldValues,
-} from "./universalDigitalFormFill.service.js";
-import {
-  maskAadhaar,
-  maskPan,
-  maskUan,
-  hashIdentifier,
-} from "./employeeCompliancePrivacy.js";
+import { generateChecklistDraft, type TransientFieldValues } from "./universalDigitalFormFill.service.js";
+import { maskAadhaar, maskPan, maskUan, hashIdentifier } from "./employeeCompliancePrivacy.js";
 import { isValidAadhaarChecksum } from "../../shared/aadhaarChecksum.js";
 
 export type EpfKycInput = {
@@ -46,10 +38,7 @@ const UAN_RE = /^[0-9]{12}$/;
 const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 const ACCOUNT_RE = /^[0-9]{5,20}$/;
 
-const clean = (v: unknown) =>
-  String(v ?? "")
-    .replace(/[\s-]/g, "")
-    .trim();
+const clean = (v: unknown) => String(v ?? "").replace(/[\s-]/g, "").trim();
 
 // Aadhaar's Verhoeff checksum. A typo'd Aadhaar that passes a length check would
 // be filed with EPFO and rejected weeks later, so validate it properly here.
@@ -67,40 +56,15 @@ export function validateEpfKyc(input: EpfKycInput): EpfKycValidationError[] {
   const ifsc = clean(input.bankIfsc).toUpperCase();
 
   // Bank account + IFSC are marked mandatory on the EPFO form itself.
-  if (!account)
-    errors.push({
-      field: "bankAccountNumber",
-      message: "Bank account number is required by EPFO.",
-    });
-  else if (!ACCOUNT_RE.test(account))
-    errors.push({
-      field: "bankAccountNumber",
-      message: "Enter digits only (5-20).",
-    });
+  if (!account) errors.push({ field: "bankAccountNumber", message: "Bank account number is required by EPFO." });
+  else if (!ACCOUNT_RE.test(account)) errors.push({ field: "bankAccountNumber", message: "Enter digits only (5-20)." });
 
-  if (!ifsc)
-    errors.push({
-      field: "bankIfsc",
-      message: "IFSC code is required by EPFO.",
-    });
-  else if (!IFSC_RE.test(ifsc))
-    errors.push({
-      field: "bankIfsc",
-      message: "IFSC must look like HDFC0001234.",
-    });
+  if (!ifsc) errors.push({ field: "bankIfsc", message: "IFSC code is required by EPFO." });
+  else if (!IFSC_RE.test(ifsc)) errors.push({ field: "bankIfsc", message: "IFSC must look like HDFC0001234." });
 
-  if (pan && !PAN_RE.test(pan))
-    errors.push({
-      field: "panNumber",
-      message: "PAN must look like ABCDE1234F.",
-    });
-  if (aadhaar && !isValidAadhaar(aadhaar))
-    errors.push({
-      field: "aadhaarNumber",
-      message: "Aadhaar number is not valid.",
-    });
-  if (uan && !UAN_RE.test(uan))
-    errors.push({ field: "uanNumber", message: "UAN must be 12 digits." });
+  if (pan && !PAN_RE.test(pan)) errors.push({ field: "panNumber", message: "PAN must look like ABCDE1234F." });
+  if (aadhaar && !isValidAadhaar(aadhaar)) errors.push({ field: "aadhaarNumber", message: "Aadhaar number is not valid." });
+  if (uan && !UAN_RE.test(uan)) errors.push({ field: "uanNumber", message: "UAN must be 12 digits." });
 
   return errors;
 }
@@ -108,9 +72,7 @@ export function validateEpfKyc(input: EpfKycInput): EpfKycValidationError[] {
 /** Maps the captured values onto the EPF template's field keys. */
 function toTransientFieldValues(input: EpfKycInput): TransientFieldValues {
   const out: TransientFieldValues = {};
-  const set = (k: string, v: string) => {
-    if (v) out[k] = v;
-  };
+  const set = (k: string, v: string) => { if (v) out[k] = v; };
 
   set("kyc_pan_number", clean(input.panNumber).toUpperCase());
   set("kyc_aadhaar_number", clean(input.aadhaarNumber));
@@ -128,18 +90,14 @@ function toTransientFieldValues(input: EpfKycInput): TransientFieldValues {
  * Records only the masked form and a hash — the same shape the profile already
  * stores. Deliberately does not accept or write the raw values.
  */
-async function recordMaskedAudit(
-  employeeId: string,
-  input: EpfKycInput,
-): Promise<void> {
+async function recordMaskedAudit(employeeId: string, input: EpfKycInput): Promise<void> {
   const pan = clean(input.panNumber).toUpperCase();
   const aadhaar = clean(input.aadhaarNumber);
   const uan = clean(input.uanNumber);
   const account = clean(input.bankAccountNumber);
 
-  await db
-    .execute(
-      `UPDATE employee_epf_compliance_profile
+  await db.execute(
+    `UPDATE employee_epf_compliance_profile
         SET pan_masked      = COALESCE(NULLIF(?, ''), pan_masked),
             pan_hash        = COALESCE(NULLIF(?, ''), pan_hash),
             aadhaar_masked  = COALESCE(NULLIF(?, ''), aadhaar_masked),
@@ -147,43 +105,30 @@ async function recordMaskedAudit(
             uan_hash        = COALESCE(NULLIF(?, ''), uan_hash),
             updated_at      = NOW()
       WHERE employee_id = ?`,
-      [
-        pan ? maskPan(pan) : "",
-        pan ? hashIdentifier(pan) : "",
-        aadhaar ? maskAadhaar(aadhaar) : "",
-        uan ? maskUan(uan) : "",
-        uan ? hashIdentifier(uan) : "",
-        employeeId,
-      ],
-    )
-    .catch((err: unknown) => {
-      console.error(
-        "[epfKycCapture] masked audit update failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-    });
+    [
+      pan ? maskPan(pan) : "",
+      pan ? hashIdentifier(pan) : "",
+      aadhaar ? maskAadhaar(aadhaar) : "",
+      uan ? maskUan(uan) : "",
+      uan ? hashIdentifier(uan) : "",
+      employeeId,
+    ],
+  ).catch((err: unknown) => {
+    console.error("[epfKycCapture] masked audit update failed:", err instanceof Error ? err.message : String(err));
+  });
 
-  await db
-    .execute(
-      `INSERT INTO employee_joining_document_audit_log
+  await db.execute(
+    `INSERT INTO employee_joining_document_audit_log
        (employee_id, action_type, actor_user_id, remarks, created_at)
      VALUES (?, 'EPF_KYC_CAPTURED', NULL, ?, NOW())`,
-      [
-        employeeId,
-        `Statutory KYC supplied by member for the EPF declaration. Written to the generated form only; ` +
-          `stored masked. Provided: ${
-            [
-              pan && "PAN",
-              aadhaar && "Aadhaar",
-              uan && "UAN",
-              account && "bank account",
-            ]
-              .filter(Boolean)
-              .join(", ") || "none"
-          }.`,
-      ],
-    )
-    .catch(() => undefined);
+    [
+      employeeId,
+      `Statutory KYC supplied by member for the EPF declaration. Written to the generated form only; ` +
+      `stored masked. Provided: ${[
+        pan && "PAN", aadhaar && "Aadhaar", uan && "UAN", account && "bank account",
+      ].filter(Boolean).join(", ") || "none"}.`,
+    ],
+  ).catch(() => undefined);
 }
 
 /**
@@ -203,26 +148,15 @@ export async function applyEpfKycAndRegenerate(params: {
     `SELECT document_code FROM employee_joining_document_checklist WHERE id = ? AND employee_id = ? LIMIT 1`,
     [params.checklistId, params.employeeId],
   );
-  const documentCode = String(
-    (rows as RowDataPacket[])[0]?.document_code ?? "",
-  );
+  const documentCode = String((rows as RowDataPacket[])[0]?.document_code ?? "");
   if (documentCode !== "EPF_DECLARATION") {
     return {
       regenerated: false,
-      errors: [
-        {
-          field: "checklistId",
-          message: "Statutory KYC capture applies only to the EPF declaration.",
-        },
-      ],
+      errors: [{ field: "checklistId", message: "Statutory KYC capture applies only to the EPF declaration." }],
     };
   }
 
-  await generateChecklistDraft(
-    params.checklistId,
-    null,
-    toTransientFieldValues(params.input),
-  );
+  await generateChecklistDraft(params.checklistId, null, toTransientFieldValues(params.input));
   await recordMaskedAudit(params.employeeId, params.input);
 
   return { regenerated: true, errors: [] };

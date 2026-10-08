@@ -10,31 +10,14 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import {
-  getBatch,
-  markDecided,
-  releaseClaim,
-  auditBatchAction,
-  BulkUploadError,
-  type BatchRecord,
-  APPROVAL_GATED_TYPES,
-  verifyRowsActuallyApplied,
+  getBatch, markDecided, releaseClaim, auditBatchAction,
+  BulkUploadError, type BatchRecord,
+  APPROVAL_GATED_TYPES, verifyRowsActuallyApplied,
 } from "./bulk-approval.service.js";
-import {
-  applyRegularizationBatch,
-  rejectRegularizationBatch,
-} from "./attendance-regularization-bulk.service.js";
-import {
-  applyLeaveBatch,
-  rejectLeaveBatch,
-} from "./leave-application-bulk.service.js";
-import {
-  applyIncentiveBatch,
-  rejectIncentiveBatch,
-} from "./incentive-bulk.service.js";
-import {
-  applyDeductionBatch,
-  rejectDeductionBatch,
-} from "./deduction-bulk.service.js";
+import { applyRegularizationBatch, rejectRegularizationBatch } from "./attendance-regularization-bulk.service.js";
+import { applyLeaveBatch, rejectLeaveBatch } from "./leave-application-bulk.service.js";
+import { applyIncentiveBatch, rejectIncentiveBatch } from "./incentive-bulk.service.js";
+import { applyDeductionBatch, rejectDeductionBatch } from "./deduction-bulk.service.js";
 
 export interface ApprovalJob {
   id: string;
@@ -76,19 +59,12 @@ export async function queueApprovalJob(
   remarks: string | null,
 ): Promise<string> {
   const jobId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  const job: ApprovalJob = {
-    id: jobId,
-    batch_id: batch.id,
-    decision,
-    user_id: userId,
-    remarks,
-    status: "queued",
-  };
+  const job: ApprovalJob = { id: jobId, batch_id: batch.id, decision, user_id: userId, remarks, status: "queued" };
 
   jobMap.set(jobId, job);
 
   // Fire and forget — run approval in background
-  runApprovalAsync(job, batch).catch((err) => {
+  runApprovalAsync(job, batch).catch(err => {
     job.status = "failed";
     job.error = (err as Error)?.message ?? String(err);
   });
@@ -103,10 +79,7 @@ export function getApprovalJob(jobId: string): ApprovalJob | undefined {
 /**
  * Run approval asynchronously, update batch and job state.
  */
-async function runApprovalAsync(
-  job: ApprovalJob,
-  batch: BatchRecord,
-): Promise<void> {
+async function runApprovalAsync(job: ApprovalJob, batch: BatchRecord): Promise<void> {
   job.status = "running";
 
   try {
@@ -114,26 +87,15 @@ async function runApprovalAsync(
     if (job.decision === "approve") {
       switch (batch.upload_type_code) {
         case "ATTENDANCE_REGULARIZATION_BULK":
-          outcome = await applyRegularizationBatch(
-            batch,
-            job.user_id,
-            job.remarks,
-          );
-          break;
+          outcome = await applyRegularizationBatch(batch, job.user_id, job.remarks); break;
         case "LEAVE_APPLICATION_BULK":
-          outcome = await applyLeaveBatch(batch, job.user_id, job.remarks);
-          break;
+          outcome = await applyLeaveBatch(batch, job.user_id, job.remarks); break;
         case "INCENTIVE_BULK":
-          outcome = await applyIncentiveBatch(batch, job.user_id, job.remarks);
-          break;
+          outcome = await applyIncentiveBatch(batch, job.user_id, job.remarks); break;
         case "DEDUCTION_BULK":
-          outcome = await applyDeductionBatch(batch, job.user_id, job.remarks);
-          break;
+          outcome = await applyDeductionBatch(batch, job.user_id, job.remarks); break;
         default:
-          throw new BulkUploadError(
-            `No apply handler for ${batch.upload_type_code}`,
-            501,
-          );
+          throw new BulkUploadError(`No apply handler for ${batch.upload_type_code}`, 501);
       }
 
       const entityType = ENTITY_TYPE_BY_UPLOAD_TYPE[batch.upload_type_code];
@@ -155,86 +117,40 @@ async function runApprovalAsync(
     } else {
       switch (batch.upload_type_code) {
         case "ATTENDANCE_REGULARIZATION_BULK":
-          outcome = await rejectRegularizationBatch(
-            batch,
-            job.user_id,
-            job.remarks ?? "",
-          );
-          break;
+          outcome = await rejectRegularizationBatch(batch, job.user_id, job.remarks ?? ""); break;
         case "LEAVE_APPLICATION_BULK":
-          outcome = await rejectLeaveBatch(
-            batch,
-            job.user_id,
-            job.remarks ?? "",
-          );
-          break;
+          outcome = await rejectLeaveBatch(batch, job.user_id, job.remarks ?? ""); break;
         case "INCENTIVE_BULK":
-          outcome = await rejectIncentiveBatch(
-            batch,
-            job.user_id,
-            job.remarks ?? "",
-          );
-          break;
+          outcome = await rejectIncentiveBatch(batch, job.user_id, job.remarks ?? ""); break;
         case "DEDUCTION_BULK":
-          outcome = await rejectDeductionBatch(
-            batch,
-            job.user_id,
-            job.remarks ?? "",
-          );
-          break;
+          outcome = await rejectDeductionBatch(batch, job.user_id, job.remarks ?? ""); break;
         default:
-          throw new BulkUploadError(
-            `No reject handler for ${batch.upload_type_code}`,
-            501,
-          );
+          throw new BulkUploadError(`No reject handler for ${batch.upload_type_code}`, 501);
       }
     }
 
     const finalStatus =
-      job.decision === "reject"
-        ? "rejected"
-        : outcome.failed > 0
-          ? "partially_applied"
-          : "approved";
+      job.decision === "reject" ? "rejected" : outcome.failed > 0 ? "partially_applied" : "approved";
     const summary =
       job.decision === "reject"
         ? `Rejected by Branch Head: ${outcome.applied} row(s) cancelled. ${job.remarks}`
         : `${outcome.applied} row(s) applied, ${outcome.failed} failed.` +
           (outcome.errors.length ? ` First error: ${outcome.errors[0]}` : "");
 
-    await markDecided(
-      batch.id,
-      finalStatus,
-      job.user_id,
-      job.remarks ?? null,
-      summary,
-      {
-        applied: outcome.applied,
-        failed: outcome.failed,
-      },
-    );
+    await markDecided(batch.id, finalStatus, job.user_id, job.remarks ?? null, summary, {
+      applied: outcome.applied, failed: outcome.failed,
+    });
     await auditBatchAction({
       userId: job.user_id,
-      actionType:
-        job.decision === "approve"
-          ? "BULK_UPLOAD_APPROVED"
-          : "BULK_UPLOAD_REJECTED",
+      actionType: job.decision === "approve" ? "BULK_UPLOAD_APPROVED" : "BULK_UPLOAD_REJECTED",
       batch,
       reason: job.remarks ?? undefined,
-      detail: {
-        applied: outcome.applied,
-        failed: outcome.failed,
-        final_status: finalStatus,
-      },
+      detail: { applied: outcome.applied, failed: outcome.failed, final_status: finalStatus },
       req: undefined as never,
     });
 
     job.status = "completed";
-    job.result = {
-      applied: outcome.applied,
-      failed: outcome.failed,
-      final_status: finalStatus,
-    };
+    job.result = { applied: outcome.applied, failed: outcome.failed, final_status: finalStatus };
   } catch (err) {
     job.status = "failed";
     job.error = (err as Error)?.message ?? String(err);

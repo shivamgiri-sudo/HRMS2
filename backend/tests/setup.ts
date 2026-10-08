@@ -1,4 +1,4 @@
-import { vi } from "vitest";
+import { vi } from 'vitest';
 
 // ── Critical env overrides (before any module loads / dotenv runs) ──────────
 // These MUST be set early so env.ts schema validates correctly and auth bypass
@@ -9,9 +9,9 @@ import { vi } from "vitest";
 // The two bypass flags happen to be 'true' in .env so they survive by luck, not
 // by design. Never write a test guard as `process.env.NODE_ENV === 'test'`; use
 // `process.env.VITEST === 'true'`, which is set by the runner and absent from .env.
-process.env.NODE_ENV = "test";
-process.env.INTERNAL_DEMO_BYPASS = "true";
-process.env.PORTAL_DEMO_BYPASS = "true";
+process.env.NODE_ENV = 'test';
+process.env.INTERNAL_DEMO_BYPASS = 'true';
+process.env.PORTAL_DEMO_BYPASS = 'true';
 
 /**
  * Global test setup
@@ -27,7 +27,7 @@ process.env.PORTAL_DEMO_BYPASS = "true";
 // ── Global mock: db.execute always returns empty results by default ─────────
 // Individual tests override with mockResolvedValueOnce for specific queries.
 // This prevents Express app bootstrap from crashing on real DB connections.
-vi.mock("../src/db/mysql.js", () => {
+vi.mock('../src/db/mysql.js', () => {
   const mockExecute = vi.fn().mockResolvedValue([[], []]);
   // getConnection is part of the shape too. Several services take a pooled
   // connection rather than querying the pool — payroll's calculate path, the
@@ -54,27 +54,22 @@ vi.mock("../src/db/mysql.js", () => {
 });
 
 // ── Global mock: authService — some tests import it indirectly ──────────────
-vi.mock("../src/modules/auth/auth.service.js", () => {
-  const jwt = require("jsonwebtoken");
-  const secret =
-    process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
+vi.mock('../src/modules/auth/auth.service.js', () => {
+  const jwt = require('jsonwebtoken');
+  const secret = process.env.JWT_SECRET || 'change-me-jwt-secret-32characters!!';
   return {
     authService: {
       verifyAccessToken: vi.fn((token: string) => {
         try {
           const payload = jwt.verify(token, secret) as any;
-          return {
-            id: payload.sub || payload.id,
-            email: payload.email,
-            scope: payload.scope,
-          };
+          return { id: payload.sub || payload.id, email: payload.email, scope: payload.scope };
         } catch {
           return null;
         }
       }),
-      generateAccessToken: vi.fn(() => "mocked-access-token"),
-      generateRefreshToken: vi.fn(() => "mocked-refresh-token"),
-      generatePreAuthToken: vi.fn(() => "mocked-pre-auth-token"),
+      generateAccessToken: vi.fn(() => 'mocked-access-token'),
+      generateRefreshToken: vi.fn(() => 'mocked-refresh-token'),
+      generatePreAuthToken: vi.fn(() => 'mocked-pre-auth-token'),
     },
   };
 });

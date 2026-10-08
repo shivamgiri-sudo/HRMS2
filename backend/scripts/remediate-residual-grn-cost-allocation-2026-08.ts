@@ -50,11 +50,7 @@ import {
   getHeadSubHeadCoverage,
   allocateAcrossLines,
 } from "../src/modules/process-pnl/budget-headroom-gate.service.js";
-import {
-  calculateBudgetLine,
-  type BudgetTaxTreatment,
-  type BudgetGstType,
-} from "../src/modules/process-pnl/branch-budget.service.js";
+import { calculateBudgetLine, type BudgetTaxTreatment, type BudgetGstType } from "../src/modules/process-pnl/branch-budget.service.js";
 
 const APPLY = process.argv.includes("--apply");
 
@@ -102,15 +98,8 @@ function formatMoney(value: number) {
  * this produces numerically identical results to what the live gate would have computed had this
  * GRN gone through it originally.
  */
-function requiredQuotedAmount(
-  grossTarget: number,
-  taxTreatment: string,
-  gstRate: number,
-): number {
-  if (
-    ["exclusive", "reverse_charge"].includes(taxTreatment) &&
-    Number(gstRate) > 0
-  ) {
+function requiredQuotedAmount(grossTarget: number, taxTreatment: string, gstRate: number): number {
+  if (["exclusive", "reverse_charge"].includes(taxTreatment) && Number(gstRate) > 0) {
     return grossTarget / (1 + Number(gstRate) / 100);
   }
   return grossTarget;
@@ -133,38 +122,27 @@ function requiredQuotedAmount(
  * its true reserved-vs-consumed state cannot be inferred safely from the string alone, so this
  * remediation refuses to guess and leaves it for manual review instead.
  */
-function mapLifecycle(
-  status: string,
-): "consumed" | "reserved" | "draft" | null {
-  if ((CONSUMED_GRN_STATUSES as readonly string[]).includes(status))
-    return "consumed";
+function mapLifecycle(status: string): "consumed" | "reserved" | "draft" | null {
+  if ((CONSUMED_GRN_STATUSES as readonly string[]).includes(status)) return "consumed";
   if (status === "branch_head_approved") return "reserved";
   if (status === "submitted") return "draft";
   return null;
 }
 
 type Outcome =
-  | {
-      kind: "WOULD-WRITE";
-      row: UnlinkedGrnRow;
-      draws: number;
-      grossTotal: number;
-    }
+  | { kind: "WOULD-WRITE"; row: UnlinkedGrnRow; draws: number; grossTotal: number }
   | { kind: "REFUSED"; row: UnlinkedGrnRow; reason: string }
   | { kind: "SKIPPED"; row: UnlinkedGrnRow; reason: string };
 
-async function fetchProcessIds(
-  grnIds: string[],
-): Promise<Map<string, string | null>> {
+async function fetchProcessIds(grnIds: string[]): Promise<Map<string, string | null>> {
   const map = new Map<string, string | null>();
   if (!grnIds.length) return map;
   const placeholders = grnIds.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, process_id FROM grn_request WHERE id IN (${placeholders})`,
-    grnIds,
+    grnIds
   );
-  for (const r of rows)
-    map.set(String(r.id), r.process_id ? String(r.process_id) : null);
+  for (const r of rows) map.set(String(r.id), r.process_id ? String(r.process_id) : null);
   return map;
 }
 
@@ -178,24 +156,13 @@ async function fetchProcessIds(
 async function processRow(
   row: UnlinkedGrnRow,
   processId: string | null,
-  connection: {
-    execute: (sql: string, params?: unknown[]) => Promise<any>;
-  } | null,
+  connection: { execute: (sql: string, params?: unknown[]) => Promise<any> } | null,
   drawnAmountByLineId: Map<string, number>,
-  drawnQuantityByLineId: Map<string, number>,
+  drawnQuantityByLineId: Map<string, number>
 ): Promise<Outcome> {
-  const coverage = await getHeadSubHeadCoverage(
-    row.branchId,
-    row.accountingPeriod,
-    row.head,
-    row.subHead,
-  );
+  const coverage = await getHeadSubHeadCoverage(row.branchId, row.accountingPeriod, row.head, row.subHead);
   if (!coverage.headerActive || !coverage.lines.length) {
-    return {
-      kind: "SKIPPED",
-      row,
-      reason: "no real coverage found — re-classify manually",
-    };
+    return { kind: "SKIPPED", row, reason: "no real coverage found — re-classify manually" };
   }
 
   // Net out whatever earlier rows in this same run already drew against each of these lines —
@@ -203,13 +170,7 @@ async function processRow(
   const netLines = coverage.lines.map((candidate) => {
     const already = drawnAmountByLineId.get(String(candidate.id)) ?? 0;
     return already > 0
-      ? {
-          ...candidate,
-          available_gross_amount: Math.max(
-            0,
-            Number(candidate.available_gross_amount) - already,
-          ),
-        }
+      ? { ...candidate, available_gross_amount: Math.max(0, Number(candidate.available_gross_amount) - already) }
       : candidate;
   });
 
@@ -218,45 +179,27 @@ async function processRow(
     draws = allocateAcrossLines(null, row.amountWithTax, netLines);
   } catch (error: any) {
     if (error?.code === "HEADROOM_EXCEEDED") {
-      return {
-        kind: "REFUSED",
-        row,
-        reason: `shortfall ${formatMoney(error.shortfall ?? 0)} across the branch aggregate for ${row.head}/${row.subHead ?? ""}`,
-      };
+      return { kind: "REFUSED", row, reason: `shortfall ${formatMoney(error.shortfall ?? 0)} across the branch aggregate for ${row.head}/${row.subHead ?? ""}` };
     }
     throw error;
   }
 
   const lifecycle = mapLifecycle(row.status);
   if (lifecycle === null) {
-    return {
-      kind: "SKIPPED",
-      row,
-      reason: `ambiguous status: ${row.status} — needs manual review`,
-    };
+    return { kind: "SKIPPED", row, reason: `ambiguous status: ${row.status} — needs manual review` };
   }
 
   let grossTotal = 0;
   for (let drawIndex = 0; drawIndex < draws.length; drawIndex += 1) {
     const draw = draws[drawIndex];
-    const fundingLine = coverage.lines.find(
-      (candidate) => String(candidate.id) === String(draw.lineId),
-    );
-    if (!fundingLine)
-      throw new Error(
-        `internal error resolving funding line ${draw.lineId} for ${row.grnNumber}`,
-      );
+    const fundingLine = coverage.lines.find((candidate) => String(candidate.id) === String(draw.lineId));
+    if (!fundingLine) throw new Error(`internal error resolving funding line ${draw.lineId} for ${row.grnNumber}`);
 
     // Reproduce exactly draw.amount as this draw's own grossAmount, from the FUNDING line's own
     // tax profile — not the GRN's own stale tax_treatment/gst_rate.
-    const quotedAmount = requiredQuotedAmount(
-      draw.amount,
-      String(fundingLine.tax_treatment),
-      Number(fundingLine.gst_rate),
-    );
+    const quotedAmount = requiredQuotedAmount(draw.amount, String(fundingLine.tax_treatment), Number(fundingLine.gst_rate));
     const fundingUnitRate = Number(fundingLine.unit_rate);
-    const drawQuantity =
-      fundingUnitRate > 0 ? roundQuantity(quotedAmount / fundingUnitRate) : 0;
+    const drawQuantity = fundingUnitRate > 0 ? roundQuantity(quotedAmount / fundingUnitRate) : 0;
 
     const amounts = calculateBudgetLine({
       head: String(fundingLine.head),
@@ -269,9 +212,7 @@ async function processRow(
       gstRate: Number(fundingLine.gst_rate),
       gstType: String(fundingLine.gst_type) as BudgetGstType,
       recoverableTaxPct: Number(fundingLine.recoverable_tax_pct),
-      justification: String(
-        fundingLine.justification || "Approved budget allocation",
-      ),
+      justification: String(fundingLine.justification || "Approved budget allocation"),
     });
 
     grossTotal = roundMoney(grossTotal + amounts.grossAmount);
@@ -281,12 +222,12 @@ async function processRow(
       if (lifecycle === "reserved") {
         await connection.execute(
           `UPDATE finance_budget_line SET reserved_amount = reserved_amount + ?, reserved_quantity = reserved_quantity + ? WHERE id = ?`,
-          [amounts.grossAmount, drawQuantity, String(fundingLine.id)],
+          [amounts.grossAmount, drawQuantity, String(fundingLine.id)]
         );
       } else if (lifecycle === "consumed") {
         await connection.execute(
           `UPDATE finance_budget_line SET consumed_amount = consumed_amount + ?, consumed_quantity = consumed_quantity + ? WHERE id = ?`,
-          [amounts.grossAmount, drawQuantity, String(fundingLine.id)],
+          [amounts.grossAmount, drawQuantity, String(fundingLine.id)]
         );
       }
       await connection.execute(
@@ -299,55 +240,28 @@ async function processRow(
           reserved_at, consumed_at, created_by)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?)`,
         [
-          randomUUID(),
-          row.grnId,
-          drawIndex + 1,
-          String(fundingLine.budget_id),
-          String(fundingLine.id),
-          row.branchId,
-          processId,
-          row.costCentreId,
-          "direct",
+          randomUUID(), row.grnId, drawIndex + 1, String(fundingLine.budget_id), String(fundingLine.id),
+          row.branchId, processId, row.costCentreId, "direct",
           // allocation_percentage: weighted by this draw's own share of the GRN's total; the
           // caller (main) corrects rounding drift on the last draw the same way
           // grn-smart.service.ts's saveAllocations() does.
-          row.amountWithTax > 0
-            ? roundMoney((amounts.grossAmount / row.amountWithTax) * 100)
-            : 0,
-          drawQuantity,
-          String(fundingLine.unit),
-          fundingUnitRate,
-          String(fundingLine.tax_treatment),
-          Number(fundingLine.gst_rate),
-          String(fundingLine.gst_type),
-          Number(fundingLine.recoverable_tax_pct),
-          amounts.baseAmount,
-          amounts.taxAmount,
-          amounts.cgstAmount,
-          amounts.sgstAmount,
-          amounts.igstAmount,
-          amounts.grossAmount,
-          amounts.recoverableTaxAmount,
-          amounts.pnlCostAmount,
-          lifecycle,
+          row.amountWithTax > 0 ? roundMoney((amounts.grossAmount / row.amountWithTax) * 100) : 0,
+          drawQuantity, String(fundingLine.unit), fundingUnitRate,
+          String(fundingLine.tax_treatment), Number(fundingLine.gst_rate), String(fundingLine.gst_type),
+          Number(fundingLine.recoverable_tax_pct), amounts.baseAmount,
+          amounts.taxAmount, amounts.cgstAmount, amounts.sgstAmount,
+          amounts.igstAmount, amounts.grossAmount,
+          amounts.recoverableTaxAmount, amounts.pnlCostAmount, lifecycle,
           drawIndex === 0
             ? `Remediated 2026-08-22 — residual GRN-to-budget linkage fix, drawn from branch aggregate`
             : `Remediated 2026-08-22 — residual GRN-to-budget linkage fix, spillover draw from branch aggregate`,
-          lifecycle === "reserved" ? now : null,
-          lifecycle === "consumed" ? now : null,
-          REMEDIATION_USER,
-        ],
+          lifecycle === "reserved" ? now : null, lifecycle === "consumed" ? now : null, REMEDIATION_USER,
+        ]
       );
     }
 
-    drawnAmountByLineId.set(
-      String(fundingLine.id),
-      (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + draw.amount,
-    );
-    drawnQuantityByLineId.set(
-      String(fundingLine.id),
-      (drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0) + drawQuantity,
-    );
+    drawnAmountByLineId.set(String(fundingLine.id), (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + draw.amount);
+    drawnQuantityByLineId.set(String(fundingLine.id), (drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0) + drawQuantity);
   }
 
   return { kind: "WOULD-WRITE", row, draws: draws.length, grossTotal };
@@ -367,11 +281,7 @@ function groupByHeader(rows: UnlinkedGrnRow[]): Map<string, UnlinkedGrnRow[]> {
 async function main() {
   const review = await getUnlinkedGrnReview({});
 
-  console.log(
-    "=== Category breakdown (as of period",
-    review.asOfPeriod,
-    ") ===",
-  );
+  console.log("=== Category breakdown (as of period", review.asOfPeriod, ") ===");
   const categoryOrder: UnlinkedGrnCategory[] = [
     "NO_MATCHING_LINE",
     "HEADROOM_EXCEEDED",
@@ -381,29 +291,20 @@ async function main() {
   ];
   for (const cat of categoryOrder) {
     const s = review.summary.find((x) => x.category === cat);
-    console.log(
-      `  ${cat.padEnd(18)} count=${String(s?.count ?? 0).padStart(5)}  amount=${formatMoney(s?.amount ?? 0)}`,
-    );
+    console.log(`  ${cat.padEnd(18)} count=${String(s?.count ?? 0).padStart(5)}  amount=${formatMoney(s?.amount ?? 0)}`);
   }
-  console.log(
-    `  TOTAL (excl. FUTURE_DEFERRED)  count=${review.totalCount}  amount=${formatMoney(review.totalAmount)}\n`,
-  );
+  console.log(`  TOTAL (excl. FUTURE_DEFERRED)  count=${review.totalCount}  amount=${formatMoney(review.totalAmount)}\n`);
 
   const candidateRows = review.rows.filter(
-    (r) =>
-      r.category === "NO_MATCHING_LINE" || r.category === "HEADROOM_EXCEEDED",
+    (r) => r.category === "NO_MATCHING_LINE" || r.category === "HEADROOM_EXCEEDED"
   );
-  const processIdByGrn = await fetchProcessIds(
-    candidateRows.map((r) => r.grnId),
-  );
+  const processIdByGrn = await fetchProcessIds(candidateRows.map((r) => r.grnId));
 
   const drawnAmountByLineId = new Map<string, number>();
   const drawnQuantityByLineId = new Map<string, number>();
   const outcomes: Outcome[] = [];
 
-  console.log(
-    "=== Per-row remediation log (NO_MATCHING_LINE / HEADROOM_EXCEEDED only) ===",
-  );
+  console.log("=== Per-row remediation log (NO_MATCHING_LINE / HEADROOM_EXCEEDED only) ===");
   const headerGroups = groupByHeader(candidateRows);
   for (const [key, rows] of headerGroups) {
     const [branchId, period] = key.split("|");
@@ -416,21 +317,15 @@ async function main() {
           processIdByGrn.get(row.grnId) ?? null,
           connection,
           drawnAmountByLineId,
-          drawnQuantityByLineId,
+          drawnQuantityByLineId
         );
         outcomes.push(outcome);
         if (outcome.kind === "WOULD-WRITE") {
-          console.log(
-            `  WOULD-WRITE ${row.grnNumber} (${row.category})  ${formatMoney(outcome.grossTotal)}  ${outcome.draws} draw(s)  branch=${branchId.slice(0, 8)} period=${period}`,
-          );
+          console.log(`  WOULD-WRITE ${row.grnNumber} (${row.category})  ${formatMoney(outcome.grossTotal)}  ${outcome.draws} draw(s)  branch=${branchId.slice(0, 8)} period=${period}`);
         } else if (outcome.kind === "REFUSED") {
-          console.log(
-            `  REFUSED     ${row.grnNumber} (${row.category})  ${formatMoney(row.amountWithTax)}  ${outcome.reason}`,
-          );
+          console.log(`  REFUSED     ${row.grnNumber} (${row.category})  ${formatMoney(row.amountWithTax)}  ${outcome.reason}`);
         } else {
-          console.log(
-            `  SKIPPED     ${row.grnNumber} (${row.category})  ${formatMoney(row.amountWithTax)}  ${outcome.reason}`,
-          );
+          console.log(`  SKIPPED     ${row.grnNumber} (${row.category})  ${formatMoney(row.amountWithTax)}  ${outcome.reason}`);
         }
       }
       if (APPLY) {
@@ -442,92 +337,52 @@ async function main() {
       }
     } catch (error) {
       await connection.rollback();
-      console.log(
-        `  FAILED header ${branchId.slice(0, 8)} ${period}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      console.log(`  FAILED header ${branchId.slice(0, 8)} ${period}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       connection.release();
     }
   }
 
-  const noBranchBudget = review.rows.filter(
-    (r) => r.category === "NO_BRANCH_BUDGET",
-  );
-  const noCostCentre = review.rows.filter(
-    (r) => r.category === "NO_COST_CENTRE",
-  );
+  const noBranchBudget = review.rows.filter((r) => r.category === "NO_BRANCH_BUDGET");
+  const noCostCentre = review.rows.filter((r) => r.category === "NO_COST_CENTRE");
 
-  console.log(
-    "\n=== NO_BRANCH_BUDGET — manual Finance review (never written by this script) ===",
-  );
+  console.log("\n=== NO_BRANCH_BUDGET — manual Finance review (never written by this script) ===");
   if (!noBranchBudget.length) {
     console.log("  (none)");
   } else {
     for (const r of noBranchBudget) {
-      console.log(
-        `  ${r.grnNumber}  branch=${r.branchName}  period=${r.accountingPeriod}  ${r.head}/${r.subHead ?? ""}  ${formatMoney(r.amountWithTax)}`,
-      );
+      console.log(`  ${r.grnNumber}  branch=${r.branchName}  period=${r.accountingPeriod}  ${r.head}/${r.subHead ?? ""}  ${formatMoney(r.amountWithTax)}`);
     }
-    console.log(
-      `  ${noBranchBudget.length} row(s), total ${formatMoney(noBranchBudget.reduce((s, r) => s + r.amountWithTax, 0))}`,
-    );
+    console.log(`  ${noBranchBudget.length} row(s), total ${formatMoney(noBranchBudget.reduce((s, r) => s + r.amountWithTax, 0))}`);
   }
 
-  console.log(
-    "\n=== NO_COST_CENTRE — GRN-record data-quality issue, out of scope for this script ===",
-  );
+  console.log("\n=== NO_COST_CENTRE — GRN-record data-quality issue, out of scope for this script ===");
   if (!noCostCentre.length) {
     console.log("  (none)");
   } else {
     for (const r of noCostCentre) {
-      console.log(
-        `  ${r.grnNumber}  branch=${r.branchName}  period=${r.accountingPeriod}  ${r.head}/${r.subHead ?? ""}  ${formatMoney(r.amountWithTax)}`,
-      );
+      console.log(`  ${r.grnNumber}  branch=${r.branchName}  period=${r.accountingPeriod}  ${r.head}/${r.subHead ?? ""}  ${formatMoney(r.amountWithTax)}`);
     }
-    console.log(
-      `  ${noCostCentre.length} row(s), total ${formatMoney(noCostCentre.reduce((s, r) => s + r.amountWithTax, 0))}`,
-    );
+    console.log(`  ${noCostCentre.length} row(s), total ${formatMoney(noCostCentre.reduce((s, r) => s + r.amountWithTax, 0))}`);
   }
 
   const wouldWrite = outcomes.filter((o) => o.kind === "WOULD-WRITE");
   const refused = outcomes.filter((o) => o.kind === "REFUSED");
   const skipped = outcomes.filter((o) => o.kind === "SKIPPED");
-  const wouldWriteAmount = wouldWrite.reduce(
-    (s, o) => s + (o as any).grossTotal,
-    0,
-  );
-  const refusedAmount = refused.reduce(
-    (s, o) => s + (o as any).row.amountWithTax,
-    0,
-  );
-  const skippedAmount = skipped.reduce(
-    (s, o) => s + (o as any).row.amountWithTax,
-    0,
-  );
+  const wouldWriteAmount = wouldWrite.reduce((s, o) => s + (o as any).grossTotal, 0);
+  const refusedAmount = refused.reduce((s, o) => s + (o as any).row.amountWithTax, 0);
+  const skippedAmount = skipped.reduce((s, o) => s + (o as any).row.amountWithTax, 0);
   const manualReviewCount = noBranchBudget.length + noCostCentre.length;
-  const manualReviewAmount =
-    noBranchBudget.reduce((s, r) => s + r.amountWithTax, 0) +
-    noCostCentre.reduce((s, r) => s + r.amountWithTax, 0);
+  const manualReviewAmount = noBranchBudget.reduce((s, r) => s + r.amountWithTax, 0)
+    + noCostCentre.reduce((s, r) => s + r.amountWithTax, 0);
 
   console.log("\n=== Summary ===");
-  console.log(
-    `  WOULD-WRITE:          ${wouldWrite.length} row(s), ${formatMoney(wouldWriteAmount)}`,
-  );
-  console.log(
-    `  REFUSED:              ${refused.length} row(s), ${formatMoney(refusedAmount)}`,
-  );
-  console.log(
-    `  SKIPPED:              ${skipped.length} row(s), ${formatMoney(skippedAmount)}`,
-  );
-  console.log(
-    `  MANUAL REVIEW NEEDED: ${manualReviewCount} row(s), ${formatMoney(manualReviewAmount)} (NO_BRANCH_BUDGET + NO_COST_CENTRE)`,
-  );
+  console.log(`  WOULD-WRITE:          ${wouldWrite.length} row(s), ${formatMoney(wouldWriteAmount)}`);
+  console.log(`  REFUSED:              ${refused.length} row(s), ${formatMoney(refusedAmount)}`);
+  console.log(`  SKIPPED:              ${skipped.length} row(s), ${formatMoney(skippedAmount)}`);
+  console.log(`  MANUAL REVIEW NEEDED: ${manualReviewCount} row(s), ${formatMoney(manualReviewAmount)} (NO_BRANCH_BUDGET + NO_COST_CENTRE)`);
 
-  console.log(
-    APPLY
-      ? "\nAPPLIED."
-      : "\nDRY RUN — nothing written. Pass --apply to write.",
-  );
+  console.log(APPLY ? "\nAPPLIED." : "\nDRY RUN — nothing written. Pass --apply to write.");
 }
 
 // Only run main() when executed directly (tsx scripts/remediate-residual-grn-cost-allocation-2026-08.ts),

@@ -15,14 +15,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const CONTROLLER = readFileSync(
-  resolve(process.cwd(), "src/modules/ats/ats.controller.ts"),
-  "utf8",
-);
-const ROUTES = readFileSync(
-  resolve(process.cwd(), "src/modules/ats/ats.routes.ts"),
-  "utf8",
-);
+const CONTROLLER = readFileSync(resolve(process.cwd(), "src/modules/ats/ats.controller.ts"), "utf8");
+const ROUTES = readFileSync(resolve(process.cwd(), "src/modules/ats/ats.routes.ts"), "utf8");
 
 const mockDb = { execute: vi.fn() };
 vi.mock("../../../db/mysql.js", () => ({ db: mockDb }));
@@ -118,9 +112,7 @@ describe("an out-of-scope candidate is refused on the by-id path", () => {
   it("denies when the actor has no scope, without querying the candidate", async () => {
     mockRoleKeys.mockResolvedValue(["recruiter"]);
     expect(await canAccessCandidate("u1", "cand-1")).toBe(false);
-    const probes = mockDb.execute.mock.calls.filter((c: any[]) =>
-      /FROM ats_candidate/.test(String(c[0])),
-    );
+    const probes = mockDb.execute.mock.calls.filter((c: any[]) => /FROM ats_candidate/.test(String(c[0])));
     expect(probes).toHaveLength(0);
   });
 
@@ -131,9 +123,7 @@ describe("an out-of-scope candidate is refused on the by-id path", () => {
 
     expect(await canAccessCandidate("u1", "cand-b")).toBe(false);
 
-    const probe = mockDb.execute.mock.calls.find((c: any[]) =>
-      /FROM ats_candidate/.test(String(c[0])),
-    );
+    const probe = mockDb.execute.mock.calls.find((c: any[]) => /FROM ats_candidate/.test(String(c[0])));
     expect(String(probe![0])).toMatch(/applied_for_branch IN/);
     expect((probe![1] as unknown[])[0]).toBe("cand-b");
     expect(probe![1]).toContain("Noida");
@@ -168,22 +158,14 @@ describe("every by-id candidate surface carries the guard", () => {
     ["moveStage", "async moveStage"],
     ["listStageLogs", "async listStageLogs"],
   ])("%s asserts scope", (_label, marker) => {
-    const body = CONTROLLER.slice(
-      CONTROLLER.indexOf(marker),
-      CONTROLLER.indexOf(marker) + 1200,
-    );
+    const body = CONTROLLER.slice(CONTROLLER.indexOf(marker), CONTROLLER.indexOf(marker) + 1200);
     expect(body).toMatch(/assertCandidateInScope/);
   });
 
   it("updateCandidate and moveStage guard BEFORE parsing the body", () => {
     for (const marker of ["async updateCandidate", "async moveStage"]) {
-      const body = CONTROLLER.slice(
-        CONTROLLER.indexOf(marker),
-        CONTROLLER.indexOf(marker) + 1200,
-      );
-      expect(body.indexOf("assertCandidateInScope")).toBeLessThan(
-        body.indexOf(".parse(req.body)"),
-      );
+      const body = CONTROLLER.slice(CONTROLLER.indexOf(marker), CONTROLLER.indexOf(marker) + 1200);
+      expect(body.indexOf("assertCandidateInScope")).toBeLessThan(body.indexOf(".parse(req.body)"));
     }
   });
 
@@ -215,10 +197,7 @@ describe("refusal does not disclose that the candidate exists", () => {
 
     expect(ok).toBe(false);
     expect(res.status).toHaveBeenCalledWith(404);
-    expect(json).toHaveBeenCalledWith({
-      success: false,
-      message: "Candidate not found",
-    });
+    expect(json).toHaveBeenCalledWith({ success: false, message: "Candidate not found" });
   });
 
   it("returns true and writes no response when access is allowed", async () => {

@@ -65,11 +65,7 @@ async function getActiveEmployeeEmails(): Promise<EmployeeEmail[]> {
 
 // ─── Core sweep ──────────────────────────────────────────────────────────────
 
-export async function runFestivalGreetingSweep(): Promise<{
-  festivals: number;
-  emailsSent: number;
-  failed: number;
-}> {
+export async function runFestivalGreetingSweep(): Promise<{ festivals: number; emailsSent: number; failed: number }> {
   const [festivalRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, festival_name, festival_date, greeting_subject, greeting_body, emoji
        FROM festival_calendar
@@ -122,20 +118,14 @@ export async function runFestivalGreetingSweep(): Promise<{
           emailsSent++;
         } catch (err) {
           failed++;
-          console.error(
-            `[festival] Email failed for ${emp.id} (${festival.festival_name}):`,
-            err,
-          );
+          console.error(`[festival] Email failed for ${emp.id} (${festival.festival_name}):`, err);
         }
       }
 
       festivalCount++;
     } catch (err) {
       failed++;
-      console.error(
-        `[festival] Sweep failed for ${festival.festival_name}:`,
-        err,
-      );
+      console.error(`[festival] Sweep failed for ${festival.festival_name}:`, err);
     }
   }
 
@@ -157,9 +147,7 @@ async function tick(): Promise<void> {
   try {
     const result = await runFestivalGreetingSweep();
     if (result.festivals > 0) {
-      console.log(
-        `[festival] Sweep complete: ${result.festivals} festival(s), ${result.emailsSent} emails sent, ${result.failed} failed`,
-      );
+      console.log(`[festival] Sweep complete: ${result.festivals} festival(s), ${result.emailsSent} emails sent, ${result.failed} failed`);
     }
   } catch (err) {
     console.error("[festival] Sweep threw:", err);

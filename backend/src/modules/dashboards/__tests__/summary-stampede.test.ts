@@ -22,39 +22,22 @@ describe("sharedInFlight", () => {
 
   it("runs one computation for concurrent callers of the same key", async () => {
     let release: (v: Record<string, unknown>) => void = () => undefined;
-    const compute = vi.fn(
-      () =>
-        new Promise<Record<string, unknown>>((resolve) => {
-          release = resolve;
-        }),
-    );
+    const compute = vi.fn(() => new Promise<Record<string, unknown>>((resolve) => { release = resolve; }));
 
-    const [a, b, c] = [
-      sharedInFlight("k", compute),
-      sharedInFlight("k", compute),
-      sharedInFlight("k", compute),
-    ];
+    const [a, b, c] = [sharedInFlight("k", compute), sharedInFlight("k", compute), sharedInFlight("k", compute)];
     expect(compute).toHaveBeenCalledTimes(1);
     release({ hc: 1 });
-    expect(await Promise.all([a, b, c])).toEqual([
-      { hc: 1 },
-      { hc: 1 },
-      { hc: 1 },
-    ]);
+    expect(await Promise.all([a, b, c])).toEqual([{ hc: 1 }, { hc: 1 }, { hc: 1 }]);
   });
 
   it("keeps different keys independent", async () => {
     const compute = vi.fn(async () => ({}));
-    await Promise.all([
-      sharedInFlight("x", compute),
-      sharedInFlight("y", compute),
-    ]);
+    await Promise.all([sharedInFlight("x", compute), sharedInFlight("y", compute)]);
     expect(compute).toHaveBeenCalledTimes(2);
   });
 
   it("forgets the computation once settled, and does not cache a failure", async () => {
-    const compute = vi
-      .fn()
+    const compute = vi.fn()
       .mockRejectedValueOnce(new Error("boom"))
       .mockResolvedValueOnce({ ok: true });
     await expect(sharedInFlight("f", compute)).rejects.toThrow("boom");
@@ -64,14 +47,8 @@ describe("sharedInFlight", () => {
 });
 
 describe("dashboard summary sources", () => {
-  const routes = readFileSync(
-    resolve(__dirname, "../dashboard.routes.ts"),
-    "utf-8",
-  );
-  const metrics = readFileSync(
-    resolve(__dirname, "../dashboard-metric.service.ts"),
-    "utf-8",
-  );
+  const routes = readFileSync(resolve(__dirname, "../dashboard.routes.ts"), "utf-8");
+  const metrics = readFileSync(resolve(__dirname, "../dashboard-metric.service.ts"), "utf-8");
 
   it("routes the metric bundle through sharedInFlight in front of the TTL cache", () => {
     expect(routes).toMatch(/sharedInFlight\(\s*metricsCacheKey,/);
@@ -81,22 +58,13 @@ describe("dashboard summary sources", () => {
   it("compares wfm_attendance_session.session_date directly", () => {
     expect(metrics).not.toMatch(/DATE\(s\.session_date\)/);
     expect(metrics).not.toMatch(/DATE\(CONVERT_TZ\(s\.session_date/);
-    expect(
-      metrics.match(/WHERE s\.session_date = \$\{IST_DATE_EXPR\}/g),
-    ).toHaveLength(2);
+    expect(metrics.match(/WHERE s\.session_date = \$\{IST_DATE_EXPR\}/g)).toHaveLength(2);
   });
 
   it("issues the open-issue and cleared attendance-exception reads together", () => {
-    const at = metrics.indexOf(
-      "export async function getAttendanceExceptionMetrics",
-    );
-    const body = metrics.slice(
-      at,
-      metrics.indexOf("export async function", at + 10),
-    );
-    expect(body).toMatch(
-      /await Promise\.all\(\[openIssuesQuery, clearedQuery\]\)/,
-    );
+    const at = metrics.indexOf("export async function getAttendanceExceptionMetrics");
+    const body = metrics.slice(at, metrics.indexOf("export async function", at + 10));
+    expect(body).toMatch(/await Promise\.all\(\[openIssuesQuery, clearedQuery\]\)/);
     expect(body).not.toMatch(/await db\.execute/);
   });
 });

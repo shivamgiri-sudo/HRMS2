@@ -15,10 +15,7 @@ import type {
   SurveyWithQuestionsResponse,
 } from "./engagement.types.js";
 
-export async function createSurvey(
-  data: CreateSurveyDTO,
-  createdBy: string,
-): Promise<string> {
+export async function createSurvey(data: CreateSurveyDTO, createdBy: string): Promise<string> {
   const surveyId = randomUUID();
   await db.execute(
     `INSERT INTO survey_master
@@ -35,11 +32,9 @@ export async function createSurvey(
       data.is_anonymous ?? false,
       data.is_active ?? true,
       data.points_reward ?? 0,
-      data.target_audience_json
-        ? JSON.stringify(data.target_audience_json)
-        : null,
+      data.target_audience_json ? JSON.stringify(data.target_audience_json) : null,
       createdBy,
-    ],
+    ]
   );
 
   for (const question of data.questions) {
@@ -56,15 +51,13 @@ export async function createSurvey(
         question.display_order ?? question.question_order,
         question.is_required ?? false,
         question.options_json ? JSON.stringify(question.options_json) : null,
-      ],
+      ]
     );
   }
   return surveyId;
 }
 
-export async function listSurveys(
-  filters: SurveyFilters = {},
-): Promise<SurveyMaster[]> {
+export async function listSurveys(filters: SurveyFilters = {}): Promise<SurveyMaster[]> {
   const conditions: string[] = [];
   const params: unknown[] = [];
   if (filters.survey_type) {
@@ -90,50 +83,39 @@ export async function listSurveys(
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM survey_master ${where} ORDER BY created_at DESC`,
-    params,
+    params
   );
   return rows as SurveyMaster[];
 }
 
-export async function getSurvey(
-  id: string,
-): Promise<SurveyWithQuestionsResponse | null> {
+export async function getSurvey(id: string): Promise<SurveyWithQuestionsResponse | null> {
   const [surveyRows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM survey_master WHERE survey_id = ? LIMIT 1",
-    [id],
+    [id]
   );
   if (!surveyRows[0]) return null;
   const [questionRows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM survey_question WHERE survey_id = ? ORDER BY question_order",
-    [id],
+    [id]
   );
-  return {
-    ...(surveyRows[0] as SurveyMaster),
-    questions: questionRows as SurveyQuestion[],
-  };
+  return { ...(surveyRows[0] as SurveyMaster), questions: questionRows as SurveyQuestion[] };
 }
 
-export async function submitSurveyResponse(
-  data: SubmitSurveyResponseDTO,
-): Promise<void> {
+export async function submitSurveyResponse(data: SubmitSurveyResponseDTO): Promise<void> {
   const survey = await getSurvey(data.survey_id);
-  if (!survey || !survey.is_active)
-    throw new Error("Survey not found or inactive");
+  if (!survey || !survey.is_active) throw new Error("Survey not found or inactive");
 
   if (data.employee_id && !survey.is_anonymous) {
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM survey_response WHERE survey_id = ? AND employee_id = ? LIMIT 1",
-      [data.survey_id, data.employee_id],
+      [data.survey_id, data.employee_id]
     );
     if (existing.length) throw new Error("Survey already completed");
   }
 
-  const validQuestions = new Set(
-    survey.questions.map((question) => question.id),
-  );
+  const validQuestions = new Set(survey.questions.map((question) => question.id));
   for (const response of data.responses) {
-    if (!validQuestions.has(response.question_id))
-      throw new Error("Invalid survey question");
+    if (!validQuestions.has(response.question_id)) throw new Error("Invalid survey question");
     await db.execute(
       /*
        * survey_response has one answer column, not three. Its real shape is
@@ -153,13 +135,11 @@ export async function submitSurveyResponse(
         randomUUID(),
         data.survey_id,
         response.question_id,
-        survey.is_anonymous ? null : (data.employee_id ?? null),
-        response.response_value ??
-          response.response_text ??
-          (response.response_choices_json
-            ? JSON.stringify(response.response_choices_json)
-            : null),
-      ],
+        survey.is_anonymous ? null : data.employee_id ?? null,
+        response.response_value
+          ?? response.response_text
+          ?? (response.response_choices_json ? JSON.stringify(response.response_choices_json) : null),
+      ]
     );
   }
 
@@ -169,7 +149,7 @@ export async function submitSurveyResponse(
       survey.points_reward,
       "survey_completed",
       `Survey completed: ${survey.survey_title}`,
-      data.survey_id,
+      data.survey_id
     );
   }
   if (data.employee_id && !survey.is_anonymous) {
@@ -187,32 +167,25 @@ export async function getSurveyResults(id: string): Promise<RowDataPacket[]> {
       WHERE sq.survey_id = ?
       GROUP BY sq.id, sq.question_text, sq.question_type, sq.question_order
       ORDER BY sq.question_order`,
-    [id],
+    [id]
   );
   return rows;
 }
 
 export async function calculateENPS(
   surveyId: string,
-  questionId: string,
-): Promise<{
-  score: number;
-  promoters: number;
-  passives: number;
-  detractors: number;
-}> {
+  questionId: string
+): Promise<{ score: number; promoters: number; passives: number; detractors: number }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT response_value FROM survey_response
       WHERE survey_id = ? AND question_id = ? AND response_value IS NOT NULL`,
-    [surveyId, questionId],
+    [surveyId, questionId]
   );
   const values = rows.map((row) => Number(row.response_value));
   const promoters = values.filter((value) => value >= 9).length;
   const passives = values.filter((value) => value >= 7 && value <= 8).length;
   const detractors = values.filter((value) => value <= 6).length;
-  const score = values.length
-    ? Math.round(((promoters - detractors) / values.length) * 100)
-    : 0;
+  const score = values.length ? Math.round(((promoters - detractors) / values.length) * 100) : 0;
   return { score, promoters, passives, detractors };
 }
 
@@ -238,18 +211,13 @@ export async function calculateENPS(
  * Re-submitting on the same day overwrites rather than stacking, which is what the previous
  * ON DUPLICATE KEY UPDATE intended.
  */
-const PULSE_TYPE_BY_FIELD: ReadonlyArray<{
-  field: keyof SubmitPulseCheckDTO;
-  pulseType: string;
-}> = [
+const PULSE_TYPE_BY_FIELD: ReadonlyArray<{ field: keyof SubmitPulseCheckDTO; pulseType: string }> = [
   { field: "mood_rating", pulseType: "mood" },
   { field: "stress_level", pulseType: "stress" },
   { field: "workload_perception", pulseType: "workload" },
 ];
 
-export async function submitPulseCheck(
-  data: SubmitPulseCheckDTO,
-): Promise<void> {
+export async function submitPulseCheck(data: SubmitPulseCheckDTO): Promise<void> {
   const responseDate = data.week_start_date;
 
   for (const { field, pulseType } of PULSE_TYPE_BY_FIELD) {
@@ -260,7 +228,7 @@ export async function submitPulseCheck(
       `SELECT id FROM pulse_check
         WHERE pulse_type = ? AND active_status = 1
         ORDER BY id LIMIT 1`,
-      [pulseType],
+      [pulseType]
     );
     const pulseId = questionRows[0]?.id;
     if (!pulseId) continue; // no active question of this type; nothing to answer
@@ -268,21 +236,19 @@ export async function submitPulseCheck(
     await db.execute(
       `DELETE FROM pulse_response
         WHERE pulse_id = ? AND employee_id = ? AND response_date = ?`,
-      [pulseId, data.employee_id, responseDate],
+      [pulseId, data.employee_id, responseDate]
     );
     await db.execute(
       `INSERT INTO pulse_response (id, pulse_id, employee_id, response_value, response_date)
        VALUES (?, ?, ?, ?, ?)`,
-      [randomUUID(), pulseId, data.employee_id, String(value), responseDate],
+      [randomUUID(), pulseId, data.employee_id, String(value), responseDate]
     );
   }
 
   queueAutoAwards(data.employee_id, "survey_completed");
 }
 
-export async function listPulseChecks(
-  filters: PulseCheckFilters = {},
-): Promise<PulseCheck[]> {
+export async function listPulseChecks(filters: PulseCheckFilters = {}): Promise<PulseCheck[]> {
   const conditions: string[] = [];
   const params: unknown[] = [];
   /*
@@ -320,7 +286,7 @@ export async function listPulseChecks(
        JOIN pulse_check pc ON pc.id = pr.pulse_id
        ${where}
       ORDER BY pr.response_date DESC`,
-    params,
+    params
   );
   return rows as PulseCheck[];
 }
@@ -347,7 +313,7 @@ export async function getPulseSummary(): Promise<RowDataPacket | null> {
             ROUND(AVG(CASE WHEN pc.pulse_type = 'stress' THEN CAST(pr.response_value AS DECIMAL(10,2)) END), 2) as average_stress
        FROM pulse_response pr
        JOIN pulse_check pc ON pc.id = pr.pulse_id
-      WHERE pr.response_date >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)`,
+      WHERE pr.response_date >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)`
   );
   return rows[0] ?? null;
 }

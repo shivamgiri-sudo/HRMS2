@@ -1,10 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * DU Digital's Korea/Thailand "Team Details" sheet: Agent ID -> MAS employee
@@ -16,11 +13,7 @@ import {
  * kept as free text rather than forced to resolve.
  */
 
-export const DU_TEAM_MAPPING_HEADERS = [
-  "Agent_ID",
-  "Agent_Name",
-  "MAS_ID",
-] as const;
+export const DU_TEAM_MAPPING_HEADERS = ["Agent_ID", "Agent_Name", "MAS_ID"] as const;
 
 /**
  * "NA" appears as a literal Agent_ID in the real Thailand sample (for a row
@@ -38,9 +31,7 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 async function importBatch(
   batchId: string,
@@ -53,8 +44,7 @@ async function importBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0)
-    return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
 
   const [procRows] = await db.execute<Ref[]>(
     "SELECT id FROM process_master WHERE process_name = 'DU Digital' AND active_status = 1 LIMIT 1",
@@ -73,27 +63,20 @@ async function importBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "DU Digital" process found to attach this row to`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const agentId = normalizeAgentId(data["Agent_ID"]);
     if (!agentId) {
       const msg = `Row ${row.row_no}: "Agent_ID" is required — it is the row's identity`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(),
-        processId,
-        dashboardLabel,
-        agentId,
+        randomUUID(), processId, dashboardLabel, agentId,
         String(data["Agent_Name"] ?? "").trim() || null,
         String(data["MAS_ID"] ?? "").trim() || null,
         batchId,
@@ -118,32 +101,21 @@ async function importBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
   return { importedRows, errorRows, errors };
 }
 
-export async function importDuTeamMappingKoreaBatch(
-  batchId: string,
-  importedByUserId: string,
-) {
+export async function importDuTeamMappingKoreaBatch(batchId: string, importedByUserId: string) {
   return importBatch(batchId, importedByUserId, "KOREA");
 }
-export async function importDuTeamMappingThailandBatch(
-  batchId: string,
-  importedByUserId: string,
-) {
+export async function importDuTeamMappingThailandBatch(batchId: string, importedByUserId: string) {
   return importBatch(batchId, importedByUserId, "THAILAND");
 }

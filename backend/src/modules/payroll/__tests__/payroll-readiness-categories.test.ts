@@ -83,10 +83,7 @@ const RUN_ID = "run-under-test";
 
 /** Every table the checks probe exists unless a test says otherwise. */
 function schemaComplete(): Rule {
-  return {
-    match: /information_schema\.TABLES|information_schema\.COLUMNS/,
-    rows: [{ c: 1 }],
-  };
+  return { match: /information_schema\.TABLES|information_schema\.COLUMNS/, rows: [{ c: 1 }] };
 }
 
 /** A run that is calculated, approved and locked — the clean baseline. */
@@ -108,51 +105,20 @@ function healthyRun(): Rule[] {
     },
     {
       match: /SELECT status, approved_by, finance_approved_by/,
-      rows: [
-        {
-          status: "approved",
-          approved_by: "u1",
-          attendance_snapshot_locked: 1,
-        },
-      ],
+      rows: [{ status: "approved", approved_by: "u1", attendance_snapshot_locked: 1 }],
     },
     {
       match: /FROM payroll_disbursement pd/,
-      rows: [
-        {
-          id: "b1",
-          status: "completed",
-          employee_count: 10,
-          total_amount: 1000,
-          payable_employees: 10,
-          payable_net_total: 1000,
-        },
-      ],
+      rows: [{ id: "b1", status: "completed", employee_count: 10, total_amount: 1000, payable_employees: 10, payable_net_total: 1000 }],
     },
   ];
 }
 
 /** Makes one check's population query return `count` offending rows. */
-function population(
-  match: RegExp,
-  count: number,
-  sample: Array<Record<string, unknown>> = [],
-): Rule[] {
+function population(match: RegExp, count: number, sample: Array<Record<string, unknown>> = []): Rule[] {
   return [
-    {
-      match: new RegExp(
-        `SELECT COUNT\\(\\*\\) AS c FROM \\([\\s\\S]*${match.source}`,
-      ),
-      rows: [{ c: count }],
-    },
-    {
-      match,
-      rows: sample.length
-        ? sample
-        : Array.from({ length: Math.min(count, 10) }, () => ({
-            employee_code: "MAS0001",
-          })),
-    },
+    { match: new RegExp(`SELECT COUNT\\(\\*\\) AS c FROM \\([\\s\\S]*${match.source}`), rows: [{ c: count }] },
+    { match, rows: sample.length ? sample : Array.from({ length: Math.min(count, 10) }, () => ({ employee_code: "MAS0001" })) },
   ];
 }
 
@@ -210,9 +176,7 @@ describe("1. incentive amount readiness", () => {
 
   it("FAILS when an approved incentive is missing from payroll", async () => {
     baseline(...population(/HAVING approved_amount > COALESCE/, 3));
-    const { check, result } = await checkByCode(
-      "INCENTIVE_APPROVED_NOT_IN_PAYROLL",
-    );
+    const { check, result } = await checkByCode("INCENTIVE_APPROVED_NOT_IN_PAYROLL");
     expect(check.state).toBe("FAIL");
     expect(check.severity).toBe("P0");
     expect(check.affectedEmployees).toBe(3);
@@ -221,26 +185,22 @@ describe("1. incentive amount readiness", () => {
 
   it("FAILS when payroll carries an incentive with no approval behind it", async () => {
     baseline(...population(/spl\.incentive_total > COALESCE/, 2));
-    const { check } = await checkByCode(
-      "INCENTIVE_IN_PAYROLL_WITHOUT_APPROVAL",
-    );
+    const { check } = await checkByCode("INCENTIVE_IN_PAYROLL_WITHOUT_APPROVAL");
     expect(check.state).toBe("FAIL");
     expect(check.severity).toBe("P0");
   });
 
   it("FAILS when the same employee has a duplicate approved line for one period", async () => {
-    baseline(
-      ...population(
-        /GROUP BY e\.id, e\.employee_code, employee_name, iub\.incentive_id/,
-        4,
-      ),
-    );
+    baseline(...population(/GROUP BY e\.id, e\.employee_code, employee_name, iub\.incentive_id/, 4));
     const { check } = await checkByCode("INCENTIVE_DUPLICATE_FOR_PERIOD");
     expect(check.state).toBe("FAIL");
   });
 
   it("reports SOURCE_MISSING, never PASS, when the incentive tables do not exist", async () => {
-    rules = [{ match: /TABLE_NAME = \?/, rows: [{ c: 0 }] }, ...healthyRun()];
+    rules = [
+      { match: /TABLE_NAME = \?/, rows: [{ c: 0 }] },
+      ...healthyRun(),
+    ];
     const { check } = await checkByCode("INCENTIVE_SOURCE_OF_TRUTH");
     expect(check.state).toBe("SOURCE_MISSING");
     expect(isGreen(check.state)).toBe(false);
@@ -256,9 +216,7 @@ describe("2. reimbursement readiness", () => {
       { match: /information_schema\.TABLES/, rows: [{ c: 1 }] },
       ...healthyRun(),
     ];
-    const { check, result } = await checkByCode(
-      "REIMBURSEMENT_PAYROLL_INTEGRATION",
-    );
+    const { check, result } = await checkByCode("REIMBURSEMENT_PAYROLL_INTEGRATION");
     expect(check.state).toBe("SOURCE_MISSING");
     expect(result.canPay).toBe(false);
   });
@@ -269,9 +227,7 @@ describe("2. reimbursement readiness", () => {
   });
 
   it("FAILS when an approved reimbursement is left unsettled", async () => {
-    baseline(
-      ...population(/erc\.claim_month = \? AND erc\.status = 'approved'/, 5),
-    );
+    baseline(...population(/erc\.claim_month = \? AND erc\.status = 'approved'/, 5));
     const { check } = await checkByCode("REIMBURSEMENT_APPROVED_NOT_SETTLED");
     expect(check.state).toBe("FAIL");
     expect(check.affectedEmployees).toBe(5);
@@ -279,20 +235,13 @@ describe("2. reimbursement readiness", () => {
 
   it("FAILS when payroll settles more than the approved amount", async () => {
     baseline(...population(/spl\.reimbursement_total > /, 1));
-    const { check } = await checkByCode(
-      "REIMBURSEMENT_IN_PAYROLL_WITHOUT_APPROVAL",
-    );
+    const { check } = await checkByCode("REIMBURSEMENT_IN_PAYROLL_WITHOUT_APPROVAL");
     expect(check.state).toBe("FAIL");
     expect(check.severity).toBe("P0");
   });
 
   it("FAILS on a duplicate approved reimbursement for the same type and month", async () => {
-    baseline(
-      ...population(
-        /GROUP BY e\.id, e\.employee_code, employee_name, erc\.claim_type/,
-        2,
-      ),
-    );
+    baseline(...population(/GROUP BY e\.id, e\.employee_code, employee_name, erc\.claim_type/, 2));
     const { check } = await checkByCode("REIMBURSEMENT_DUPLICATE_FOR_PERIOD");
     expect(check.state).toBe("FAIL");
   });
@@ -310,12 +259,8 @@ describe("3. recovery / deduction readiness", () => {
   });
 
   it("FAILS when a recovery obligation is outstanding but no longer being recovered", async () => {
-    baseline(
-      ...population(/l\.end_date IS NOT NULL[\s\S]*l\.end_date < \?/, 60),
-    );
-    const { check } = await checkByCode(
-      "RECOVERY_OUTSTANDING_NOT_BEING_RECOVERED",
-    );
+    baseline(...population(/l\.end_date IS NOT NULL[\s\S]*l\.end_date < \?/, 60));
+    const { check } = await checkByCode("RECOVERY_OUTSTANDING_NOT_BEING_RECOVERED");
     expect(check.state).toBe("FAIL");
     expect(check.affectedEmployees).toBe(60);
   });
@@ -356,31 +301,20 @@ describe("4. full & final readiness", () => {
   });
 
   it("FAILS when an exited employee is still being paid ordinary payroll", async () => {
-    baseline(
-      ...population(
-        /COALESCE\(e\.date_of_exit, e\.date_of_leaving, e\.resignation_date\) < \?/,
-        114,
-      ),
-    );
-    const { check } = await checkByCode(
-      "FF_EXITED_EMPLOYEE_IN_ORDINARY_PAYROLL",
-    );
+    baseline(...population(/COALESCE\(e\.date_of_exit, e\.date_of_leaving, e\.resignation_date\) < \?/, 114));
+    const { check } = await checkByCode("FF_EXITED_EMPLOYEE_IN_ORDINARY_PAYROLL");
     expect(check.state).toBe("FAIL");
     expect(check.severity).toBe("P0");
     expect(check.affectedEmployees).toBe(114);
   });
 
   it("PASSES when no exited employee carries positive net pay", async () => {
-    const { check } = await checkByCode(
-      "FF_EXITED_EMPLOYEE_IN_ORDINARY_PAYROLL",
-    );
+    const { check } = await checkByCode("FF_EXITED_EMPLOYEE_IN_ORDINARY_PAYROLL");
     expect(check.state).toBe("PASS");
   });
 
   it("FAILS when an exit has no settlement record at all", async () => {
-    baseline(
-      ...population(/NOT EXISTS \(SELECT 1 FROM full_final_calculation f/, 7),
-    );
+    baseline(...population(/NOT EXISTS \(SELECT 1 FROM full_final_calculation f/, 7));
     const { check } = await checkByCode("FF_MISSING_FOR_EXITED_EMPLOYEE");
     expect(check.state).toBe("FAIL");
   });
@@ -393,12 +327,7 @@ describe("4. full & final readiness", () => {
   });
 
   it("FAILS when a settlement is still provisional or unapproved", async () => {
-    baseline(
-      ...population(
-        /f\.status IN \('draft', 'verified'\) OR f\.is_ff_provisional = 1/,
-        1,
-      ),
-    );
+    baseline(...population(/f\.status IN \('draft', 'verified'\) OR f\.is_ff_provisional = 1/, 1));
     const { check } = await checkByCode("FF_PENDING_APPROVAL");
     expect(check.state).toBe("FAIL");
   });
@@ -448,12 +377,7 @@ describe("payroll-calculation readiness reads the column the engine actually mai
   });
 
   it("FAILS when lines are in a non-calculated state", async () => {
-    baseline(
-      ...population(
-        /NOT IN \('calculated', 'approved', 'excluded', 'blocked'\)/,
-        12,
-      ),
-    );
+    baseline(...population(/NOT IN \('calculated', 'approved', 'excluded', 'blocked'\)/, 12));
     const { check } = await checkByCode("PAYFILE_CALCULATION_INCOMPLETE");
     expect(check.state).toBe("FAIL");
     expect(check.affectedEmployees).toBe(12);
@@ -464,14 +388,9 @@ describe("payroll-calculation readiness reads the column the engine actually mai
     // the values out-of-band scripts had left there, so it flagged 100% of every run — an
     // always-red gate is indistinguishable from no gate. Pinned so it cannot come back.
     const src = readFileSync(
-      resolve(
-        process.cwd(),
-        "src/modules/payroll/payroll-readiness-categories.service.ts",
-      ),
+      resolve(process.cwd(), "src/modules/payroll/payroll-readiness-categories.service.ts"),
       "utf8",
-    )
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^\s*\/\/.*$/gm, "");
+    ).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     expect(src).not.toMatch(/spl\.calculation_status/);
   });
 
@@ -479,9 +398,7 @@ describe("payroll-calculation readiness reads the column the engine actually mai
     // The engine derives gross FROM payable days, so a line with money and zero days did not
     // come from it. Live: July 1, June 1,215, May 1,148 — it discriminates.
     baseline(...population(/COALESCE\(spl\.final_payable_days, 0\) = 0/, 1215));
-    const { check, result } = await checkByCode(
-      "PAYFILE_GROSS_WITHOUT_PAYABLE_DAYS_BASIS",
-    );
+    const { check, result } = await checkByCode("PAYFILE_GROSS_WITHOUT_PAYABLE_DAYS_BASIS");
     expect(check.state).toBe("FAIL");
     expect(check.severity).toBe("P0");
     expect(check.affectedEmployees).toBe(1215);
@@ -489,17 +406,13 @@ describe("payroll-calculation readiness reads the column the engine actually mai
   });
 
   it("PASSES when every line carrying gross has a payable-days basis", async () => {
-    const { check } = await checkByCode(
-      "PAYFILE_GROSS_WITHOUT_PAYABLE_DAYS_BASIS",
-    );
+    const { check } = await checkByCode("PAYFILE_GROSS_WITHOUT_PAYABLE_DAYS_BASIS");
     expect(check.state).toBe("PASS");
   });
 
   it("tells the reader not to fix it by recalculating", async () => {
     baseline(...population(/COALESCE\(spl\.final_payable_days, 0\) = 0/, 3));
-    const { check } = await checkByCode(
-      "PAYFILE_GROSS_WITHOUT_PAYABLE_DAYS_BASIS",
-    );
+    const { check } = await checkByCode("PAYFILE_GROSS_WITHOUT_PAYABLE_DAYS_BASIS");
     expect(check.message).toMatch(/Do not resolve this by recalculating/);
   });
 });
@@ -521,9 +434,7 @@ describe("5. payment-file readiness", () => {
   it("never returns a raw account number in the sample", async () => {
     baseline(...population(/no_primary_active_bank_record/, 1));
     const { check } = await checkByCode("PAYFILE_BANK_DETAIL_UNUSABLE");
-    const keys = Object.keys(check.sample?.[0] ?? {})
-      .join(" ")
-      .toLowerCase();
+    const keys = Object.keys(check.sample?.[0] ?? {}).join(" ").toLowerCase();
     expect(keys).not.toContain("account_number");
     expect(keys).not.toContain("ifsc_code");
   });
@@ -531,18 +442,9 @@ describe("5. payment-file readiness", () => {
   it("FAILS when the run is not approved and locked", async () => {
     baseline({
       match: /SELECT status, approved_by, finance_approved_by/,
-      rows: [
-        {
-          status: "processing",
-          approved_by: null,
-          finance_approved_by: null,
-          attendance_snapshot_locked: 0,
-        },
-      ],
+      rows: [{ status: "processing", approved_by: null, finance_approved_by: null, attendance_snapshot_locked: 0 }],
     });
-    const { check, result } = await checkByCode(
-      "PAYFILE_RUN_NOT_APPROVED_OR_LOCKED",
-    );
+    const { check, result } = await checkByCode("PAYFILE_RUN_NOT_APPROVED_OR_LOCKED");
     expect(check.state).toBe("FAIL");
     expect(result.canPay).toBe(false);
   });
@@ -557,17 +459,8 @@ describe("5. payment-file readiness", () => {
   // self-approval.
   it("PASSES when no approval-side action was taken by the same user who created the run", async () => {
     baseline({
-      match:
-        /SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by/,
-      rows: [
-        {
-          created_by: "u1",
-          approved_by: "u2",
-          finance_approved_by: "u3",
-          ceo_acknowledged_by: null,
-          validated_by: null,
-        },
-      ],
+      match: /SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by/,
+      rows: [{ created_by: "u1", approved_by: "u2", finance_approved_by: "u3", ceo_acknowledged_by: null, validated_by: null }],
     });
     const { check } = await checkByCode("APPROVAL_MAKER_CHECKER_GAP");
     expect(check.state).toBe("PASS");
@@ -575,17 +468,8 @@ describe("5. payment-file readiness", () => {
 
   it("FAILS when the creator also finance-approved their own run, naming which action(s) overlapped", async () => {
     baseline({
-      match:
-        /SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by/,
-      rows: [
-        {
-          created_by: "u1",
-          approved_by: null,
-          finance_approved_by: "u1",
-          ceo_acknowledged_by: null,
-          validated_by: null,
-        },
-      ],
+      match: /SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by/,
+      rows: [{ created_by: "u1", approved_by: null, finance_approved_by: "u1", ceo_acknowledged_by: null, validated_by: null }],
     });
     const { check, result } = await checkByCode("APPROVAL_MAKER_CHECKER_GAP");
     expect(check.state).toBe("FAIL");
@@ -598,40 +482,18 @@ describe("5. payment-file readiness", () => {
 
   it("FAILS on every overlapping action, not just the first one found", async () => {
     baseline({
-      match:
-        /SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by/,
-      rows: [
-        {
-          created_by: "u1",
-          approved_by: "u1",
-          finance_approved_by: "u1",
-          ceo_acknowledged_by: null,
-          validated_by: "u1",
-        },
-      ],
+      match: /SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by/,
+      rows: [{ created_by: "u1", approved_by: "u1", finance_approved_by: "u1", ceo_acknowledged_by: null, validated_by: "u1" }],
     });
     const { check } = await checkByCode("APPROVAL_MAKER_CHECKER_GAP");
     expect(check.state).toBe("FAIL");
-    expect(check.detail?.sameActorOn).toEqual([
-      "status-approved",
-      "finance-approved",
-      "Head-Payroll-validated",
-    ]);
+    expect(check.detail?.sameActorOn).toEqual(["status-approved", "finance-approved", "Head-Payroll-validated"]);
   });
 
   it("PASSES (nothing to compare) when the run has no creator on record at all", async () => {
     baseline({
-      match:
-        /SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by/,
-      rows: [
-        {
-          created_by: null,
-          approved_by: "u2",
-          finance_approved_by: "u3",
-          ceo_acknowledged_by: null,
-          validated_by: null,
-        },
-      ],
+      match: /SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by/,
+      rows: [{ created_by: null, approved_by: "u2", finance_approved_by: "u3", ceo_acknowledged_by: null, validated_by: null }],
     });
     const { check } = await checkByCode("APPROVAL_MAKER_CHECKER_GAP");
     expect(check.state).toBe("PASS");
@@ -653,16 +515,7 @@ describe("5. payment-file readiness", () => {
   it("FAILS when the payment batch total does not reconcile to payroll", async () => {
     baseline({
       match: /FROM payroll_disbursement pd/,
-      rows: [
-        {
-          id: "b1",
-          status: "completed",
-          employee_count: 10,
-          total_amount: 999,
-          payable_employees: 10,
-          payable_net_total: 1000,
-        },
-      ],
+      rows: [{ id: "b1", status: "completed", employee_count: 10, total_amount: 999, payable_employees: 10, payable_net_total: 1000 }],
     });
     const { check } = await checkByCode("PAYFILE_BATCH_TOTAL_MISMATCH");
     expect(check.state).toBe("FAIL");
@@ -672,16 +525,7 @@ describe("5. payment-file readiness", () => {
   it("FAILS when the payment batch employee count does not reconcile to payroll", async () => {
     baseline({
       match: /FROM payroll_disbursement pd/,
-      rows: [
-        {
-          id: "b1",
-          status: "completed",
-          employee_count: 9,
-          total_amount: 1000,
-          payable_employees: 10,
-          payable_net_total: 1000,
-        },
-      ],
+      rows: [{ id: "b1", status: "completed", employee_count: 9, total_amount: 1000, payable_employees: 10, payable_net_total: 1000 }],
     });
     const { check } = await checkByCode("PAYFILE_BATCH_TOTAL_MISMATCH");
     expect(check.state).toBe("FAIL");
@@ -711,15 +555,8 @@ describe("5. payment-file readiness", () => {
   });
 
   it("FAILS component-total reconciliation when a line's components do not sum to gross", async () => {
-    baseline(
-      ...population(
-        /JOIN \(\s*SELECT line_id, SUM\(amount\) AS earning_sum/,
-        837,
-      ),
-    );
-    const { check, result } = await checkByCode(
-      "PAYSLIP_COMPONENT_TOTAL_MISMATCH",
-    );
+    baseline(...population(/JOIN \(\s*SELECT line_id, SUM\(amount\) AS earning_sum/, 837));
+    const { check, result } = await checkByCode("PAYSLIP_COMPONENT_TOTAL_MISMATCH");
     expect(check.state).toBe("FAIL");
     expect(check.severity).toBe("P1");
     expect(check.affectedEmployees).toBe(837);
@@ -732,22 +569,13 @@ describe("5. payment-file readiness", () => {
   });
 
   it("FAILS components-not-generated (only) when a positive-gross line has zero earning component rows, and does not conflate it with the mismatch check", async () => {
-    baseline(
-      ...population(
-        /NOT EXISTS \(\s*SELECT 1 FROM salary_prep_line_component c\s*WHERE c\.line_id = spl\.id AND c\.component_type = 'earning'/,
-        11,
-      ),
-    );
-    const { check: notGenerated } = await checkByCode(
-      "PAYSLIP_COMPONENTS_NOT_GENERATED",
-    );
+    baseline(...population(/NOT EXISTS \(\s*SELECT 1 FROM salary_prep_line_component c\s*WHERE c\.line_id = spl\.id AND c\.component_type = 'earning'/, 11));
+    const { check: notGenerated } = await checkByCode("PAYSLIP_COMPONENTS_NOT_GENERATED");
     expect(notGenerated.state).toBe("FAIL");
     expect(notGenerated.severity).toBe("P2"); // not a money defect — lower severity than the mismatch check
     expect(notGenerated.affectedEmployees).toBe(11);
 
-    const { check: mismatch } = await checkByCode(
-      "PAYSLIP_COMPONENT_TOTAL_MISMATCH",
-    );
+    const { check: mismatch } = await checkByCode("PAYSLIP_COMPONENT_TOTAL_MISMATCH");
     expect(mismatch.state).toBe("PASS"); // a line with zero component rows is excluded from the INNER JOIN this check uses
   });
 
@@ -762,11 +590,7 @@ describe("5. payment-file readiness", () => {
 
   it("reports SOURCE_MISSING for payment-file reproducibility when no history table exists", async () => {
     rules = [
-      {
-        match:
-          /payroll_payment_file|payroll_bank_file_log|payment_file_history/,
-        rows: [{ c: 0 }],
-      },
+      { match: /payroll_payment_file|payroll_bank_file_log|payment_file_history/, rows: [{ c: 0 }] },
       // The probe is one parameterised statement, so distinguish by the bound table name is not
       // possible here; drive it by making every table probe report absent for these three only.
       { match: /information_schema\.TABLES/, rows: [{ c: 1 }] },
@@ -790,27 +614,17 @@ describe("5. payment-file readiness", () => {
  * and both read through the population() helper (db.query with a COUNT wrapper) rather than
  * db.execute directly.
  */
-const PF_RESOLVER_QUERY =
-  /FROM employees e\s+JOIN salary_prep_line spl ON spl\.run_id = \? AND spl\.employee_id = e\.id\s+WHERE(?![\s\S]*pf_employee > 0)/;
+const PF_RESOLVER_QUERY = /FROM employees e\s+JOIN salary_prep_line spl ON spl\.run_id = \? AND spl\.employee_id = e\.id\s+WHERE(?![\s\S]*pf_employee > 0)/;
 
 describe("statutory: canonical PF applicability resolver vs. what payroll deducted", () => {
   it("PASSes when the resolver (db_bill) agrees with the run's PF deductions", async () => {
     baseline({
       match: PF_RESOLVER_QUERY,
-      rows: [
-        {
-          employee_id: "e1",
-          employee_code: "MAS0001",
-          employee_name: "Deducted Employee",
-          pf_deducted: 1800,
-        },
-      ],
+      rows: [{ employee_id: "e1", employee_code: "MAS0001", employee_name: "Deducted Employee", pf_deducted: 1800 }],
     });
     fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0001", PFELig: "YES" }]);
 
-    const { check } = await checkByCode(
-      "STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION",
-    );
+    const { check } = await checkByCode("STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION");
     expect(check.state).toBe("PASS");
     expect(check.severity).toBe("P2");
   });
@@ -818,20 +632,11 @@ describe("statutory: canonical PF applicability resolver vs. what payroll deduct
   it("FAILs when PF was deducted but the resolver says not applicable", async () => {
     baseline({
       match: PF_RESOLVER_QUERY,
-      rows: [
-        {
-          employee_id: "e1",
-          employee_code: "MAS0001",
-          employee_name: "Deducted Employee",
-          pf_deducted: 1800,
-        },
-      ],
+      rows: [{ employee_id: "e1", employee_code: "MAS0001", employee_name: "Deducted Employee", pf_deducted: 1800 }],
     });
     fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0001", PFELig: "NO" }]);
 
-    const { check } = await checkByCode(
-      "STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION",
-    );
+    const { check } = await checkByCode("STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION");
     expect(check.state).toBe("FAIL");
     expect(check.affectedEmployees).toBe(1);
     expect(check.message).toContain("disagree between what payroll deducted");
@@ -840,20 +645,11 @@ describe("statutory: canonical PF applicability resolver vs. what payroll deduct
   it("FAILs when nothing was deducted but the resolver says applicable", async () => {
     baseline({
       match: PF_RESOLVER_QUERY,
-      rows: [
-        {
-          employee_id: "e1",
-          employee_code: "MAS0001",
-          employee_name: "Not Deducted",
-          pf_deducted: 0,
-        },
-      ],
+      rows: [{ employee_id: "e1", employee_code: "MAS0001", employee_name: "Not Deducted", pf_deducted: 0 }],
     });
     fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0001", PFELig: "YES" }]);
 
-    const { check } = await checkByCode(
-      "STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION",
-    );
+    const { check } = await checkByCode("STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION");
     expect(check.state).toBe("FAIL");
     expect(check.affectedEmployees).toBe(1);
   });
@@ -861,20 +657,11 @@ describe("statutory: canonical PF applicability resolver vs. what payroll deduct
   it("does not flag PF_APPLICABILITY_UNRESOLVED as a disagreement", async () => {
     baseline({
       match: PF_RESOLVER_QUERY,
-      rows: [
-        {
-          employee_id: "e1",
-          employee_code: "MAS9999",
-          employee_name: "Unresolved Employee",
-          pf_deducted: 1800,
-        },
-      ],
+      rows: [{ employee_id: "e1", employee_code: "MAS9999", employee_name: "Unresolved Employee", pf_deducted: 1800 }],
     });
     fakeBillQuery.mockResolvedValue([]); // MAS9999 never appears in db_bill or employee_statutory_info -> unresolved
 
-    const { check } = await checkByCode(
-      "STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION",
-    );
+    const { check } = await checkByCode("STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION");
     expect(check.state).toBe("PASS");
   });
 
@@ -882,9 +669,7 @@ describe("statutory: canonical PF applicability resolver vs. what payroll deduct
     baseline({ match: PF_RESOLVER_QUERY, rows: [] });
     fakeBillQuery.mockRejectedValue(new Error("ETIMEDOUT"));
 
-    const { check } = await checkByCode(
-      "STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION",
-    );
+    const { check } = await checkByCode("STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION");
     expect(check.state).toBe("SOURCE_MISSING");
     expect(check.message).toContain("could not run");
   });
@@ -892,67 +677,35 @@ describe("statutory: canonical PF applicability resolver vs. what payroll deduct
   it("never blocks canPay at P2, even when it disagrees", async () => {
     baseline({
       match: PF_RESOLVER_QUERY,
-      rows: [
-        {
-          employee_id: "e1",
-          employee_code: "MAS0001",
-          employee_name: "Deducted Employee",
-          pf_deducted: 1800,
-        },
-      ],
+      rows: [{ employee_id: "e1", employee_code: "MAS0001", employee_name: "Deducted Employee", pf_deducted: 1800 }],
     });
     fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0001", PFELig: "NO" }]);
 
     const result = await evaluateReadinessCategories(RUN_ID);
-    expect(result.canPayBlockedBy).not.toContain(
-      "STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION",
-    );
+    expect(result.canPayBlockedBy).not.toContain("STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION");
   });
 });
 
 // Distinguished from PF_RESOLVER_QUERY above by the absence of ", ROUND(spl.pf_employee, 2) AS
 // pf_deducted" between "employee_name" and "FROM employees e" — this check's payable-population
 // query selects identity columns only, no deduction amount.
-const UAN_READINESS_QUERY =
-  /AS employee_name\s*\n\s*FROM employees e\s+JOIN salary_prep_line spl ON spl\.run_id = \? AND spl\.employee_id = e\.id\s+WHERE/;
+const UAN_READINESS_QUERY = /AS employee_name\s*\n\s*FROM employees e\s+JOIN salary_prep_line spl ON spl\.run_id = \? AND spl\.employee_id = e\.id\s+WHERE/;
 // resolveUanFilingReadinessForPeriod's own UAN-store lookup (pf-applicability.service.ts) —
 // distinct SQL text, so it needs its own Rule alongside UAN_READINESS_QUERY's payable-population
 // rule rather than colliding with it.
-const UAN_STORE_LOOKUP_QUERY =
-  /uan_employees,\s*si\.uan_number AS uan_statutory_info/;
+const UAN_STORE_LOOKUP_QUERY = /uan_employees,\s*si\.uan_number AS uan_statutory_info/;
 
-function uanReady(row: {
-  employee_code: string;
-  uan_employees?: string | null;
-  uan_statutory_info?: string | null;
-  uan_employee_uan?: string | null;
-}): Rule {
+function uanReady(row: { employee_code: string; uan_employees?: string | null; uan_statutory_info?: string | null; uan_employee_uan?: string | null }): Rule {
   return {
     match: UAN_STORE_LOOKUP_QUERY,
-    rows: [
-      {
-        uan_employees: null,
-        uan_statutory_info: null,
-        uan_employee_uan: null,
-        ...row,
-      },
-    ],
+    rows: [{ uan_employees: null, uan_statutory_info: null, uan_employee_uan: null, ...row }],
   };
 }
 
 describe("statutory: UAN filing readiness (applicability plus identity)", () => {
   it("PASSes when every PF-applicable employee in the run has a valid UAN", async () => {
     baseline(
-      {
-        match: UAN_READINESS_QUERY,
-        rows: [
-          {
-            employee_id: "e1",
-            employee_code: "MAS0001",
-            employee_name: "Ready Employee",
-          },
-        ],
-      },
+      { match: UAN_READINESS_QUERY, rows: [{ employee_id: "e1", employee_code: "MAS0001", employee_name: "Ready Employee" }] },
       uanReady({ employee_code: "MAS0001", uan_employees: "123456789012" }),
     );
     fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0001", PFELig: "YES" }]);
@@ -964,16 +717,7 @@ describe("statutory: UAN filing readiness (applicability plus identity)", () => 
 
   it("FAILs and names the employee when a PF-applicable payable employee has no UAN", async () => {
     baseline(
-      {
-        match: UAN_READINESS_QUERY,
-        rows: [
-          {
-            employee_id: "e1",
-            employee_code: "MAS0002",
-            employee_name: "Missing UAN Employee",
-          },
-        ],
-      },
+      { match: UAN_READINESS_QUERY, rows: [{ employee_id: "e1", employee_code: "MAS0002", employee_name: "Missing UAN Employee" }] },
       uanReady({ employee_code: "MAS0002" }),
     );
     fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0002", PFELig: "YES" }]);
@@ -981,24 +725,12 @@ describe("statutory: UAN filing readiness (applicability plus identity)", () => 
     const { check } = await checkByCode("STATUTORY_UAN_FILING_NOT_READY");
     expect(check.state).toBe("FAIL");
     expect(check.affectedEmployees).toBe(1);
-    expect(check.sample?.[0]).toMatchObject({
-      employee_code: "MAS0002",
-      status: "MISSING_UAN",
-    });
+    expect(check.sample?.[0]).toMatchObject({ employee_code: "MAS0002", status: "MISSING_UAN" });
   });
 
   it("FAILs on an invalid (non-12-digit) UAN, distinctly from a missing one", async () => {
     baseline(
-      {
-        match: UAN_READINESS_QUERY,
-        rows: [
-          {
-            employee_id: "e1",
-            employee_code: "MAS0003",
-            employee_name: "Bad UAN Employee",
-          },
-        ],
-      },
+      { match: UAN_READINESS_QUERY, rows: [{ employee_id: "e1", employee_code: "MAS0003", employee_name: "Bad UAN Employee" }] },
       uanReady({ employee_code: "MAS0003", uan_employees: "12345" }),
     );
     fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0003", PFELig: "YES" }]);
@@ -1010,16 +742,7 @@ describe("statutory: UAN filing readiness (applicability plus identity)", () => 
 
   it("PASSes (does not flag) an employee the resolver says is not PF-applicable", async () => {
     baseline(
-      {
-        match: UAN_READINESS_QUERY,
-        rows: [
-          {
-            employee_id: "e1",
-            employee_code: "MAS0004",
-            employee_name: "Not Applicable Employee",
-          },
-        ],
-      },
+      { match: UAN_READINESS_QUERY, rows: [{ employee_id: "e1", employee_code: "MAS0004", employee_name: "Not Applicable Employee" }] },
       uanReady({ employee_code: "MAS0004" }),
     );
     fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0004", PFELig: "NO" }]);
@@ -1038,24 +761,13 @@ describe("statutory: UAN filing readiness (applicability plus identity)", () => 
 
   it("never blocks canPay at P2", async () => {
     baseline(
-      {
-        match: UAN_READINESS_QUERY,
-        rows: [
-          {
-            employee_id: "e1",
-            employee_code: "MAS0005",
-            employee_name: "Missing UAN Employee",
-          },
-        ],
-      },
+      { match: UAN_READINESS_QUERY, rows: [{ employee_id: "e1", employee_code: "MAS0005", employee_name: "Missing UAN Employee" }] },
       uanReady({ employee_code: "MAS0005" }),
     );
     fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0005", PFELig: "YES" }]);
 
     const result = await evaluateReadinessCategories(RUN_ID);
-    expect(result.canPayBlockedBy).not.toContain(
-      "STATUTORY_UAN_FILING_NOT_READY",
-    );
+    expect(result.canPayBlockedBy).not.toContain("STATUTORY_UAN_FILING_NOT_READY");
   });
 });
 
@@ -1063,20 +775,14 @@ describe("statutory: UAN filing readiness (applicability plus identity)", () => 
 
 describe("fail-closed behaviour (the guard is disabled to prove it is load-bearing)", () => {
   it("turns a thrown check into CHECK_ERROR instead of dropping it", async () => {
-    baseline({
-      match: /no_primary_active_bank_record/,
-      throws: "ER_BAD_FIELD_ERROR: Unknown column 'x'",
-    });
+    baseline({ match: /no_primary_active_bank_record/, throws: "ER_BAD_FIELD_ERROR: Unknown column 'x'" });
     const { check } = await checkByCode("PAYFILE_BANK_DETAIL_UNUSABLE");
     expect(check.state).toBe("CHECK_ERROR");
     expect(check.message).toContain("missing evidence is not readiness");
   });
 
   it("holds canPay shut on a CHECK_ERROR, so a broken check cannot open the gate", async () => {
-    baseline({
-      match: /no_primary_active_bank_record/,
-      throws: "connection lost",
-    });
+    baseline({ match: /no_primary_active_bank_record/, throws: "connection lost" });
     const result = await evaluateReadinessCategories(RUN_ID);
     expect(result.canPay).toBe(false);
     expect(result.canPayBlockedBy).toContain("PAYFILE_BANK_DETAIL_UNUSABLE");
@@ -1088,26 +794,17 @@ describe("fail-closed behaviour (the guard is disabled to prove it is load-beari
     const result = await evaluateReadinessCategories(RUN_ID);
     // A rejected Promise.all would have lost every sibling result.
     expect(result.checks.length).toBeGreaterThan(20);
-    expect(result.checks.filter((c) => c.state === "CHECK_ERROR")).toHaveLength(
-      1,
-    );
+    expect(result.checks.filter((c) => c.state === "CHECK_ERROR")).toHaveLength(1);
   });
 
   it("treats CHECK_ERROR as the worst state when summarising a layer", async () => {
     baseline({ match: /no_primary_active_bank_record/, throws: "boom" });
     const result = await evaluateReadinessCategories(RUN_ID);
-    expect(result.layers.find((l) => l.layer === "BANK")?.state).toBe(
-      "CHECK_ERROR",
-    );
+    expect(result.layers.find((l) => l.layer === "BANK")?.state).toBe("CHECK_ERROR");
   });
 
   it("never reports a not-green state as green", async () => {
-    for (const state of [
-      "FAIL",
-      "BLOCKED",
-      "SOURCE_MISSING",
-      "CHECK_ERROR",
-    ] as const) {
+    for (const state of ["FAIL", "BLOCKED", "SOURCE_MISSING", "CHECK_ERROR"] as const) {
       expect(isGreen(state)).toBe(false);
     }
     expect(isGreen("PASS")).toBe(true);
@@ -1115,13 +812,8 @@ describe("fail-closed behaviour (the guard is disabled to prove it is load-beari
   });
 
   it("propagates only a run-load failure, because there is then nothing to report on", async () => {
-    rules = [
-      { match: /FROM salary_prep_run WHERE id = \? LIMIT 1/, rows: [] },
-      schemaComplete(),
-    ];
-    await expect(evaluateReadinessCategories(RUN_ID)).rejects.toThrow(
-      "Payroll run not found",
-    );
+    rules = [{ match: /FROM salary_prep_run WHERE id = \? LIMIT 1/, rows: [] }, schemaComplete()];
+    await expect(evaluateReadinessCategories(RUN_ID)).rejects.toThrow("Payroll run not found");
   });
 });
 
@@ -1131,9 +823,7 @@ describe("canPay is separate from canCalculate", () => {
     // The clean baseline carries no FAIL at P0 — the only thing holding the gate shut is the
     // structural P1 SOURCE_MISSING for the F&F engine. Naming it explicitly is what makes this
     // test bite: a gate narrowed to "FAIL at P0 only" would open here, and this would go red.
-    const ffEngine = result.checks.find(
-      (c) => c.code === "FF_CALCULATION_ENGINE",
-    )!;
+    const ffEngine = result.checks.find((c) => c.code === "FF_CALCULATION_ENGINE")!;
     expect(ffEngine.severity).toBe("P1");
     expect(ffEngine.state).toBe("SOURCE_MISSING");
     expect(result.canPayBlockedBy).toContain("FF_CALCULATION_ENGINE");
@@ -1142,9 +832,7 @@ describe("canPay is separate from canCalculate", () => {
 
   it("does not count P2 findings as payment blockers", async () => {
     const result = await evaluateReadinessCategories(RUN_ID);
-    const p2Codes = result.checks
-      .filter((c) => c.severity === "P2" && !isGreen(c.state))
-      .map((c) => c.code);
+    const p2Codes = result.checks.filter((c) => c.severity === "P2" && !isGreen(c.state)).map((c) => c.code);
     for (const code of p2Codes) {
       expect(result.canPayBlockedBy).not.toContain(code);
     }

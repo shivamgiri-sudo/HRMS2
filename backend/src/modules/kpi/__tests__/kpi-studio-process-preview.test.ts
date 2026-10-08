@@ -12,9 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *    counting them as zero, which would understate every metric it previews.
  */
 const execute = vi.fn();
-vi.mock("../../../db/mysql.js", () => ({
-  db: { query: vi.fn(), execute: (...args: unknown[]) => execute(...args) },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { query: vi.fn(), execute: (...args: unknown[]) => execute(...args) } }));
 
 const capability = vi.fn();
 const readProcessGrainValues = vi.fn();
@@ -24,32 +22,22 @@ vi.mock("../kpi-studio.service.js", () => ({
   resolveStudioForEmployee: vi.fn(),
   // Every definition reads exactly its own primary source in these tests; the
   // extra-source fan-out has its own file.
-  getDefinitionSourceIds: async (
-    defs: Array<{ id: string; data_source_id: string }>,
-  ) => new Map(defs.map((d) => [d.id, [d.data_source_id]])),
+  getDefinitionSourceIds: async (defs: Array<{ id: string; data_source_id: string }>) =>
+    new Map(defs.map((d) => [d.id, [d.data_source_id]])),
   StudioNotInstalledError: class extends Error {},
 }));
 vi.mock("../kpi-studio.sources.js", () => ({
   readMergedSourceValues: vi.fn(),
   readSourceValues: vi.fn(),
-  readProcessGrainValues: (...args: unknown[]) =>
-    readProcessGrainValues(...args),
+  readProcessGrainValues: (...args: unknown[]) => readProcessGrainValues(...args),
 }));
 
 const { previewProcessFormula } = await import("../kpi-studio.compute.js");
 
-const INSTALLED = {
-  tables: true,
-  resolution: true,
-  processGrain: true,
-  fieldFilters: true,
-};
+const INSTALLED = { tables: true, resolution: true, processGrain: true, fieldFilters: true };
 
 /** Two rows back from the source-and-fields load loadSourcesWithFields performs. */
-function sourceLoads(
-  source: Record<string, unknown>,
-  fields: Record<string, unknown>[],
-) {
+function sourceLoads(source: Record<string, unknown>, fields: Record<string, unknown>[]) {
   execute.mockReset();
   execute
     .mockResolvedValueOnce([[source], []])
@@ -57,31 +45,14 @@ function sourceLoads(
 }
 
 const SOURCE = {
-  id: "s1",
-  source_code: "DIALER_IN",
-  source_name: "Dialer inbound",
-  source_type: "integration_connector",
-  integration_key: "dialer_db",
-  source_object: "cdr_in_10_4",
-  date_column: "CallDate",
-  process_key_kind: "constant",
-  process_id: "p-bla",
+  id: "s1", source_code: "DIALER_IN", source_name: "Dialer inbound",
+  source_type: "integration_connector", integration_key: "dialer_db",
+  source_object: "cdr_in_10_4", date_column: "CallDate",
+  process_key_kind: "constant", process_id: "p-bla",
 };
 const FIELDS = [
-  {
-    id: "f1",
-    data_source_id: "s1",
-    field_name: "answered",
-    source_column: "a",
-    aggregate_fn: "SUM",
-  },
-  {
-    id: "f2",
-    data_source_id: "s1",
-    field_name: "offered",
-    source_column: "b",
-    aggregate_fn: "SUM",
-  },
+  { id: "f1", data_source_id: "s1", field_name: "answered", source_column: "a", aggregate_fn: "SUM" },
+  { id: "f2", data_source_id: "s1", field_name: "offered", source_column: "b", aggregate_fn: "SUM" },
 ];
 
 beforeEach(() => {
@@ -94,10 +65,7 @@ describe("previewProcessFormula", () => {
   it("names the missing migration instead of reporting an empty result", async () => {
     capability.mockResolvedValue({ ...INSTALLED, processGrain: false });
     const result = await previewProcessFormula({
-      formula: "PCT(answered, offered)",
-      dataSourceId: "s1",
-      from: "2026-08-01",
-      to: "2026-08-03",
+      formula: "PCT(answered, offered)", dataSourceId: "s1", from: "2026-08-01", to: "2026-08-03",
     });
     expect(result.ok).toBe(false);
     expect(result.message).toContain("1680_kpi_studio_process_grain.sql");
@@ -107,15 +75,9 @@ describe("previewProcessFormula", () => {
 
   it("says the source is not mapped to a process, rather than returning nothing", async () => {
     sourceLoads({ ...SOURCE, process_id: null }, FIELDS);
-    readProcessGrainValues.mockResolvedValue({
-      values: new Map(),
-      rowsRead: 0,
-    });
+    readProcessGrainValues.mockResolvedValue({ values: new Map(), rowsRead: 0 });
     const result = await previewProcessFormula({
-      formula: "PCT(answered, offered)",
-      dataSourceId: "s1",
-      from: "2026-08-01",
-      to: "2026-08-03",
+      formula: "PCT(answered, offered)", dataSourceId: "s1", from: "2026-08-01", to: "2026-08-03",
     });
     expect(result.ok).toBe(false);
     expect(result.message).toContain("mapped to a process");
@@ -126,33 +88,15 @@ describe("previewProcessFormula", () => {
     readProcessGrainValues.mockResolvedValue({
       rowsRead: 2,
       values: new Map([
-        [
-          "2026-08-01",
-          new Map([
-            ["answered", 97],
-            ["offered", 100],
-          ]),
-        ],
-        [
-          "2026-08-02",
-          new Map([
-            ["answered", 98],
-            ["offered", 100],
-          ]),
-        ],
+        ["2026-08-01", new Map([["answered", 97], ["offered", 100]])],
+        ["2026-08-02", new Map([["answered", 98], ["offered", 100]])],
       ]),
     });
     const result = await previewProcessFormula({
-      formula: "PCT(answered, offered)",
-      dataSourceId: "s1",
-      from: "2026-08-01",
-      to: "2026-08-02",
+      formula: "PCT(answered, offered)", dataSourceId: "s1", from: "2026-08-01", to: "2026-08-02",
     });
     expect(result.ok).toBe(true);
-    expect(result.days.map((day) => day.date)).toEqual([
-      "2026-08-01",
-      "2026-08-02",
-    ]);
+    expect(result.days.map((day) => day.date)).toEqual(["2026-08-01", "2026-08-02"]);
     expect(result.days[0].value).toBeCloseTo(97);
     expect(result.days[0].inputs).toEqual({ answered: 97, offered: 100 });
     expect(result.value).toBeCloseTo(97.5);
@@ -165,29 +109,14 @@ describe("previewProcessFormula", () => {
     readProcessGrainValues.mockResolvedValue({
       rowsRead: 3,
       values: new Map([
-        [
-          "2026-08-01",
-          new Map([
-            ["answered", 90],
-            ["offered", 100],
-          ]),
-        ],
+        ["2026-08-01", new Map([["answered", 90], ["offered", 100]])],
         // Nothing was measured on the 2nd. Counting it as 0 would drag the
         // headline to 45 and make a healthy metric look broken.
-        [
-          "2026-08-02",
-          new Map([
-            ["answered", null],
-            ["offered", null],
-          ]),
-        ],
+        ["2026-08-02", new Map([["answered", null], ["offered", null]])],
       ]),
     });
     const result = await previewProcessFormula({
-      formula: "PCT(answered, offered)",
-      dataSourceId: "s1",
-      from: "2026-08-01",
-      to: "2026-08-02",
+      formula: "PCT(answered, offered)", dataSourceId: "s1", from: "2026-08-01", to: "2026-08-02",
     });
     expect(result.value).toBeCloseTo(90);
     expect(result.days[1].status).toBe("no_data");
@@ -197,21 +126,10 @@ describe("previewProcessFormula", () => {
     sourceLoads(SOURCE, FIELDS);
     readProcessGrainValues.mockResolvedValue({
       rowsRead: 1,
-      values: new Map([
-        [
-          "2026-08-01",
-          new Map([
-            ["answered", 5],
-            ["offered", 10],
-          ]),
-        ],
-      ]),
+      values: new Map([["2026-08-01", new Map([["answered", 5], ["offered", 10]])]]),
     });
     const result = await previewProcessFormula({
-      formula: "PCT(answered, nonexistent_field)",
-      dataSourceId: "s1",
-      from: "2026-08-01",
-      to: "2026-08-01",
+      formula: "PCT(answered, nonexistent_field)", dataSourceId: "s1", from: "2026-08-01", to: "2026-08-01",
     });
     expect(result.days[0].status).toBe("error");
     expect(result.days[0].value).toBeNull();
@@ -219,16 +137,9 @@ describe("previewProcessFormula", () => {
 
   it("carries a source failure through instead of swallowing it", async () => {
     sourceLoads(SOURCE, FIELDS);
-    readProcessGrainValues.mockResolvedValue({
-      values: new Map(),
-      rowsRead: 0,
-      error: "Unknown column 'CallDate'",
-    });
+    readProcessGrainValues.mockResolvedValue({ values: new Map(), rowsRead: 0, error: "Unknown column 'CallDate'" });
     const result = await previewProcessFormula({
-      formula: "PCT(answered, offered)",
-      dataSourceId: "s1",
-      from: "2026-08-01",
-      to: "2026-08-01",
+      formula: "PCT(answered, offered)", dataSourceId: "s1", from: "2026-08-01", to: "2026-08-01",
     });
     expect(result.source_error).toContain("Unknown column 'CallDate'");
     expect(result.message).toContain("could not be read");
@@ -236,10 +147,7 @@ describe("previewProcessFormula", () => {
 
   it("refuses a backwards date range", async () => {
     const result = await previewProcessFormula({
-      formula: "answered",
-      dataSourceId: "s1",
-      from: "2026-08-31",
-      to: "2026-08-01",
+      formula: "answered", dataSourceId: "s1", from: "2026-08-31", to: "2026-08-01",
     });
     expect(result.ok).toBe(false);
     expect(result.message).toContain("after the end date");
@@ -249,29 +157,15 @@ describe("previewProcessFormula", () => {
     sourceLoads(SOURCE, FIELDS);
     readProcessGrainValues.mockResolvedValue({
       rowsRead: 1,
-      values: new Map([
-        [
-          "2026-08-01",
-          new Map([
-            ["answered", 1],
-            ["offered", 2],
-          ]),
-        ],
-      ]),
+      values: new Map([["2026-08-01", new Map([["answered", 1], ["offered", 2]])]]),
     });
     await previewProcessFormula({
-      formula: "PCT(answered, offered)",
-      dataSourceId: "s1",
-      from: "2026-08-01",
-      to: "2026-08-31",
+      formula: "PCT(answered, offered)", dataSourceId: "s1", from: "2026-08-01", to: "2026-08-31",
     });
     expect(readProcessGrainValues).toHaveBeenCalledTimes(1);
     // Dates in positions 2 and 3; a 4th argument carries the process for a source
     // that finds it through the employee, so the range is asserted by position.
-    expect(readProcessGrainValues.mock.calls[0].slice(2, 4)).toEqual([
-      "2026-08-01",
-      "2026-08-31",
-    ]);
+    expect(readProcessGrainValues.mock.calls[0].slice(2, 4)).toEqual(["2026-08-01", "2026-08-31"]);
   });
 });
 
@@ -296,41 +190,24 @@ describe("computeStudioKpis honours a process filter", () => {
       const text = String(sql);
       if (text.includes("FROM kpi_studio_definition d")) {
         return Promise.resolve([
-          [
-            {
-              id: "d1",
-              metric_id: "m1",
-              metric_code: "OTHER_CLIENT_METRIC",
-              data_source_id: "s1",
-              formula_expression: "answered",
-              grain: "process",
-              effective_from: "2026-08-01",
-              branch_id: null,
-              process_id: null,
-              designation_id: null,
-              employee_id: null,
-            },
-          ],
+          [{
+            id: "d1", metric_id: "m1", metric_code: "OTHER_CLIENT_METRIC",
+            data_source_id: "s1", formula_expression: "answered", grain: "process",
+            effective_from: "2026-08-01", branch_id: null, process_id: null,
+            designation_id: null, employee_id: null,
+          }],
           [],
         ]);
       }
       if (text.includes("FROM kpi_studio_data_source")) {
         // Mapped to p-other, not the p-wanted the caller asked for.
-        return Promise.resolve([
-          [{ ...SOURCE, id: "s1", process_id: "p-other" }],
-          [],
-        ]);
+        return Promise.resolve([[{ ...SOURCE, id: "s1", process_id: "p-other" }], []]);
       }
-      if (text.includes("FROM kpi_studio_source_field"))
-        return Promise.resolve([FIELDS, []]);
+      if (text.includes("FROM kpi_studio_source_field")) return Promise.resolve([FIELDS, []]);
       return Promise.resolve([[], []]);
     });
 
-    await computeStudioKpis({
-      date: "2026-08-05",
-      processId: "p-wanted",
-      dryRun: true,
-    });
+    await computeStudioKpis({ date: "2026-08-05", processId: "p-wanted", dryRun: true });
 
     // The decisive assertion: the other client's source was never read at all.
     expect(readProcessGrainValues).not.toHaveBeenCalled();
@@ -349,29 +226,22 @@ describe("computeStudioKpis honours a process filter", () => {
 describe("ratioParts", () => {
   it("takes the two bare fields of a simple ratio", async () => {
     const { ratioParts } = await import("../kpi-studio.compute.js");
-    expect(
-      ratioParts("PCT(answered, offered)", { answered: 97, offered: 100 }),
-    ).toEqual({ numerator: 9700, denominator: 100 });
+    expect(ratioParts("PCT(answered, offered)", { answered: 97, offered: 100 }))
+      .toEqual({ numerator: 9700, denominator: 100 });
   });
 
   it("handles a compound ratio, which is how occupancy is written", async () => {
     const { ratioParts } = await import("../kpi-studio.compute.js");
     // PCT(talk + dispo, talk + dispo + wait): both sides are sums of fields, so
     // summing them over a month still divides to the month's real occupancy.
-    expect(
-      ratioParts("PCT(talk + dispo, talk + dispo + wait)", {
-        talk: 60,
-        dispo: 20,
-        wait: 20,
-      }),
-    ).toEqual({ numerator: 8000, denominator: 100 });
+    expect(ratioParts("PCT(talk + dispo, talk + dispo + wait)", { talk: 60, dispo: 20, wait: 20 }))
+      .toEqual({ numerator: 8000, denominator: 100 });
   });
 
   it("leaves SAFE_DIV unscaled, unlike PCT", async () => {
     const { ratioParts } = await import("../kpi-studio.compute.js");
-    expect(
-      ratioParts("SAFE_DIV(total_sec, calls)", { total_sec: 500, calls: 10 }),
-    ).toEqual({ numerator: 500, denominator: 10 });
+    expect(ratioParts("SAFE_DIV(total_sec, calls)", { total_sec: 500, calls: 10 }))
+      .toEqual({ numerator: 500, denominator: 10 });
   });
 
   it("refuses a formula whose parts do not survive being summed", async () => {
@@ -406,64 +276,31 @@ describe("no_data clears a stale reading", () => {
     readProcessGrainValues.mockResolvedValue({
       rowsRead: 1,
       // Read successfully; the formula simply has nothing to divide.
-      values: new Map([
-        [
-          "2026-06-10",
-          new Map([
-            ["answered", null],
-            ["offered", null],
-          ]),
-        ],
-      ]),
+      values: new Map([["2026-06-10", new Map([["answered", null], ["offered", null]])]]),
     });
 
     execute.mockReset();
     execute.mockImplementation((sql: string) => {
       const text = String(sql);
       if (text.includes("FROM kpi_studio_definition d")) {
-        return Promise.resolve([
-          [
-            {
-              id: "d1",
-              metric_id: "m1",
-              metric_code: "SHIFT_MINUTES_AVG",
-              data_source_id: "s1",
-              formula_expression: "PCT(answered, offered)",
-              grain: "process",
-              effective_from: "2026-06-01",
-              branch_id: null,
-              process_id: "p1",
-              designation_id: null,
-              employee_id: null,
-            },
-          ],
-          [],
-        ]);
+        return Promise.resolve([[{
+          id: "d1", metric_id: "m1", metric_code: "SHIFT_MINUTES_AVG",
+          data_source_id: "s1", formula_expression: "PCT(answered, offered)", grain: "process",
+          effective_from: "2026-06-01", branch_id: null, process_id: "p1",
+          designation_id: null, employee_id: null,
+        }], []]);
       }
-      if (text.includes("FROM kpi_studio_data_source"))
-        return Promise.resolve([
-          [{ ...SOURCE, id: "s1", process_id: "p1" }],
-          [],
-        ]);
-      if (text.includes("FROM kpi_studio_source_field"))
-        return Promise.resolve([FIELDS, []]);
-      if (text.includes("INFORMATION_SCHEMA.COLUMNS"))
-        return Promise.resolve([[{ n: 2 }], []]);
+      if (text.includes("FROM kpi_studio_data_source")) return Promise.resolve([[{ ...SOURCE, id: "s1", process_id: "p1" }], []]);
+      if (text.includes("FROM kpi_studio_source_field")) return Promise.resolve([FIELDS, []]);
+      if (text.includes("INFORMATION_SCHEMA.COLUMNS")) return Promise.resolve([[{ n: 2 }], []]);
       return Promise.resolve([[], []]);
     });
 
-    const out = await computeStudioKpis({
-      date: "2026-06-10",
-      processId: "p1",
-      dryRun: false,
-    });
+    const out = await computeStudioKpis({ date: "2026-06-10", processId: "p1", dryRun: false });
     expect(out.no_data).toBe(1);
 
-    const cleared = execute.mock.calls.find(
-      ([sql]) =>
-        String(sql).includes("UPDATE process_metric_actual") &&
-        String(sql).includes("actual_value = NULL"),
-    );
+    const cleared = execute.mock.calls.find(([sql]) =>
+      String(sql).includes("UPDATE process_metric_actual") && String(sql).includes("actual_value = NULL"));
     expect(cleared).toBeTruthy();
     expect(cleared?.[1]).toContain("p1");
     expect(cleared?.[1]).toContain("2026-06-10");
@@ -475,59 +312,26 @@ describe("no_data clears a stale reading", () => {
     readProcessGrainValues.mockReset();
     readProcessGrainValues.mockResolvedValue({
       rowsRead: 1,
-      values: new Map([
-        [
-          "2026-06-10",
-          new Map([
-            ["answered", null],
-            ["offered", null],
-          ]),
-        ],
-      ]),
+      values: new Map([["2026-06-10", new Map([["answered", null], ["offered", null]])]]),
     });
     execute.mockReset();
     execute.mockImplementation((sql: string) => {
       const text = String(sql);
       if (text.includes("FROM kpi_studio_definition d")) {
-        return Promise.resolve([
-          [
-            {
-              id: "d1",
-              metric_id: "m1",
-              metric_code: "SHIFT_MINUTES_AVG",
-              data_source_id: "s1",
-              formula_expression: "PCT(answered, offered)",
-              grain: "process",
-              effective_from: "2026-06-01",
-              branch_id: null,
-              process_id: "p1",
-              designation_id: null,
-              employee_id: null,
-            },
-          ],
-          [],
-        ]);
+        return Promise.resolve([[{
+          id: "d1", metric_id: "m1", metric_code: "SHIFT_MINUTES_AVG",
+          data_source_id: "s1", formula_expression: "PCT(answered, offered)", grain: "process",
+          effective_from: "2026-06-01", branch_id: null, process_id: "p1",
+          designation_id: null, employee_id: null,
+        }], []]);
       }
-      if (text.includes("FROM kpi_studio_data_source"))
-        return Promise.resolve([
-          [{ ...SOURCE, id: "s1", process_id: "p1" }],
-          [],
-        ]);
-      if (text.includes("FROM kpi_studio_source_field"))
-        return Promise.resolve([FIELDS, []]);
+      if (text.includes("FROM kpi_studio_data_source")) return Promise.resolve([[{ ...SOURCE, id: "s1", process_id: "p1" }], []]);
+      if (text.includes("FROM kpi_studio_source_field")) return Promise.resolve([FIELDS, []]);
       return Promise.resolve([[], []]);
     });
 
-    await computeStudioKpis({
-      date: "2026-06-10",
-      processId: "p1",
-      dryRun: true,
-    });
-    expect(
-      execute.mock.calls.some(([sql]) =>
-        String(sql).includes("UPDATE process_metric_actual"),
-      ),
-    ).toBe(false);
+    await computeStudioKpis({ date: "2026-06-10", processId: "p1", dryRun: true });
+    expect(execute.mock.calls.some(([sql]) => String(sql).includes("UPDATE process_metric_actual"))).toBe(false);
   });
 });
 
@@ -547,15 +351,7 @@ describe("a contended write is retried", () => {
     readProcessGrainValues.mockReset();
     readProcessGrainValues.mockResolvedValue({
       rowsRead: 1,
-      values: new Map([
-        [
-          "2026-08-31",
-          new Map([
-            ["answered", 90],
-            ["offered", 100],
-          ]),
-        ],
-      ]),
+      values: new Map([["2026-08-31", new Map([["answered", 90], ["offered", 100]])]]),
     });
 
     let insertAttempts = 0;
@@ -563,40 +359,20 @@ describe("a contended write is retried", () => {
     execute.mockImplementation((sql: string) => {
       const text = String(sql);
       if (text.includes("FROM kpi_studio_definition d")) {
-        return Promise.resolve([
-          [
-            {
-              id: "d1",
-              metric_id: "m1",
-              metric_code: "PROCESS_EXITS",
-              data_source_id: "s1",
-              formula_expression: "PCT(answered, offered)",
-              grain: "process",
-              effective_from: "2026-08-01",
-              branch_id: null,
-              process_id: "p1",
-              designation_id: null,
-              employee_id: null,
-            },
-          ],
-          [],
-        ]);
+        return Promise.resolve([[{
+          id: "d1", metric_id: "m1", metric_code: "PROCESS_EXITS",
+          data_source_id: "s1", formula_expression: "PCT(answered, offered)", grain: "process",
+          effective_from: "2026-08-01", branch_id: null, process_id: "p1",
+          designation_id: null, employee_id: null,
+        }], []]);
       }
-      if (text.includes("FROM kpi_studio_data_source"))
-        return Promise.resolve([
-          [{ ...SOURCE, id: "s1", process_id: "p1" }],
-          [],
-        ]);
-      if (text.includes("FROM kpi_studio_source_field"))
-        return Promise.resolve([FIELDS, []]);
-      if (text.includes("INFORMATION_SCHEMA.COLUMNS"))
-        return Promise.resolve([[{ n: 2 }], []]);
+      if (text.includes("FROM kpi_studio_data_source")) return Promise.resolve([[{ ...SOURCE, id: "s1", process_id: "p1" }], []]);
+      if (text.includes("FROM kpi_studio_source_field")) return Promise.resolve([FIELDS, []]);
+      if (text.includes("INFORMATION_SCHEMA.COLUMNS")) return Promise.resolve([[{ n: 2 }], []]);
       if (text.includes("INSERT INTO process_metric_actual")) {
         insertAttempts++;
         if (insertAttempts === 1) {
-          const err = new Error(
-            "Lock wait timeout exceeded; try restarting transaction",
-          ) as Error & { errno: number };
+          const err = new Error("Lock wait timeout exceeded; try restarting transaction") as Error & { errno: number };
           err.errno = 1205;
           return Promise.reject(err);
         }
@@ -605,11 +381,7 @@ describe("a contended write is retried", () => {
       return Promise.resolve([[], []]);
     });
 
-    const out = await computeStudioKpis({
-      date: "2026-08-31",
-      processId: "p1",
-      dryRun: false,
-    });
+    const out = await computeStudioKpis({ date: "2026-08-31", processId: "p1", dryRun: false });
     expect(insertAttempts).toBe(2);
     expect(out.written).toBe(1);
     expect(out.errors).toBe(0);

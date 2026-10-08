@@ -1,23 +1,14 @@
 import { Router, type NextFunction, type Response } from "express";
-import {
-  requireAuth,
-  requireWriteAccess,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./salary-change.service.js";
 import { employeeScopeFor, guardEmployee } from "../payroll/payroll-branch-scope.js";
 
 const router = Router();
-type AsyncHandler = (
-  req: AuthenticatedRequest,
-  res: Response,
-) => Promise<unknown>;
-const h =
-  (fn: AsyncHandler) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    void fn(req, res).catch(next);
-  };
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 
 // Same authority as the Salary Review Queue's REVIEWER_ROLES — Payroll Head is already the
 // final approver in this app, so a submit here takes effect immediately (per explicit

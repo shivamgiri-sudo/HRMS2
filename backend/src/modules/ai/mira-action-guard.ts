@@ -31,38 +31,21 @@ const UNSAFE_ACTION_PATTERNS: Array<[RegExp, string]> = [
   // Acting for someone else — self-scope is already enforced server-side on the
   // real leave endpoint, but a request phrased this way should never even reach
   // the draft stage pretending it might work.
-  [
-    /\b(his|her|their|someone else'?s?)\s+leave\b/i,
-    "asks Mira to act on another person's behalf",
-  ],
-  [
-    /\bfor\s+(?!me\b|myself\b)[a-z][a-z .'-]{1,40}\b(?:'s)?\s+leave\b/i,
-    "names someone other than the caller as the leave subject",
-  ],
+  [/\b(his|her|their|someone else'?s?)\s+leave\b/i, "asks Mira to act on another person's behalf"],
+  [/\bfor\s+(?!me\b|myself\b)[a-z][a-z .'-]{1,40}\b(?:'s)?\s+leave\b/i,
+    "names someone other than the caller as the leave subject"],
   [/\bon behalf of\b/i, "explicitly asks to act on someone else's behalf"],
 
   // Approval / workflow bypass — Mira drafts and files, it never approves.
   [/\bskip\s+(the\s+)?approval\b/i, "asks to skip an approval step"],
   [/\bauto[- ]?approve\b/i, "asks Mira to approve rather than submit"],
-  [
-    /\bapprove\s+(my|this|the)\s+leave\b/i,
-    "asks Mira to approve a leave request",
-  ],
-  [
-    /\bbypass\s+(rbac|role|permission|approval|access\s*control)/i,
-    "asks to bypass access control",
-  ],
+  [/\bapprove\s+(my|this|the)\s+leave\b/i, "asks Mira to approve a leave request"],
+  [/\bbypass\s+(rbac|role|permission|approval|access\s*control)/i, "asks to bypass access control"],
 
   // Bulk/mass action requests — every action Mira takes is one explicit,
   // individually-confirmed request; nothing here is a batch operation.
-  [
-    /\b(all|every)\s+(employees?|staff|team)\b.{0,30}\bleave\b/i,
-    "asks for a bulk action across multiple employees",
-  ],
-  [
-    /\bfor (?:all|every) (?:my )?(?:team|reports?)\b/i,
-    "asks for a bulk action across multiple employees",
-  ],
+  [/\b(all|every)\s+(employees?|staff|team)\b.{0,30}\bleave\b/i, "asks for a bulk action across multiple employees"],
+  [/\bfor (?:all|every) (?:my )?(?:team|reports?)\b/i, "asks for a bulk action across multiple employees"],
 ];
 
 export function checkActionSafety(text: string): ActionGuardResult {

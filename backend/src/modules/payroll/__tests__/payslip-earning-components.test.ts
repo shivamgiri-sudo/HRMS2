@@ -57,32 +57,18 @@ function sum(components: Array<{ amount: number }>): number {
 }
 
 describe("buildPayslipEarningComponents — MAS00175-equivalent (leftover leakage)", () => {
-  const basic = 34700,
-    hra = 17350,
-    conv = 1600,
-    bonus = 2891,
-    portfolio = 15000;
-  const special = 80096 - basic - hra - conv; // 26446, the assignment's own value
+  const basic = 34700, hra = 17350, conv = 1600, bonus = 2891, portfolio = 15000;
+  const special = 80096 - basic - hra - conv;   // 26446, the assignment's own value
   const gross_salary = 80096;
 
   it("with compAmounts reset to the assignment's own components, the total reconciles to gross exactly", () => {
     const components = buildPayslipEarningComponents({
-      hasFixedComponents: true,
-      usedScaRowAssignment: true,
+      hasFixedComponents: true, usedScaRowAssignment: true,
       compAmounts: { BASIC: basic, HRA: hra, CONV: conv, SPECIAL: special },
-      ratio: 1,
-      calcBasic: 0,
-      calcHra: 0,
-      calcSpecialAllowance: 0,
-      convAllowanceDefault: 0,
-      medicalAllowanceDefault: 0,
+      ratio: 1, calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0,
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
     });
-    expect(components.map((c) => c.code).sort()).toEqual([
-      "BASIC",
-      "CONV",
-      "HRA",
-      "SPECIAL",
-    ]);
+    expect(components.map((c) => c.code).sort()).toEqual(["BASIC", "CONV", "HRA", "SPECIAL"]);
     expect(components.find((c) => c.code === "PORTFOLIO")).toBeUndefined();
     expect(sum(components)).toBe(gross_salary);
   });
@@ -94,22 +80,10 @@ describe("buildPayslipEarningComponents — MAS00175-equivalent (leftover leakag
     // shows up in the total again — the more useful failure, because a wrong total is
     // detectable and a quietly wrong itemisation is not.
     const components = buildPayslipEarningComponents({
-      hasFixedComponents: true,
-      usedScaRowAssignment: true,
-      compAmounts: {
-        BASIC: basic,
-        HRA: hra,
-        CONV: conv,
-        SPECIAL: special,
-        BONUS: bonus,
-        PORTFOLIO: portfolio,
-      },
-      ratio: 1,
-      calcBasic: 0,
-      calcHra: 0,
-      calcSpecialAllowance: 0,
-      convAllowanceDefault: 0,
-      medicalAllowanceDefault: 0,
+      hasFixedComponents: true, usedScaRowAssignment: true,
+      compAmounts: { BASIC: basic, HRA: hra, CONV: conv, SPECIAL: special, BONUS: bonus, PORTFOLIO: portfolio },
+      ratio: 1, calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0,
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
     });
     expect(sum(components) - gross_salary).toBe(bonus + portfolio);
   });
@@ -121,30 +95,16 @@ describe("buildPayslipEarningComponents — MAS63025-equivalent (stored SPECIAL 
   // MAS63025 is the row that originally justified the residual: its stored
   // special_allowance was 0 while real gross existed. After the db_bill rebuild the
   // package is exact, so 0 here is the truth — the 666 hole belongs to BONUS.
-  const basic = 8000,
-    hra = 4793,
-    conv = 1600,
-    bonus = 666,
-    special = 0;
+  const basic = 8000, hra = 4793, conv = 1600, bonus = 666, special = 0;
   const gross_salary = basic + hra + conv + bonus + special; // 15059
 
   it("emits BONUS at its own value and no SPECIAL line, reconciling to gross exactly", () => {
     const components = buildPayslipEarningComponents({
-      hasFixedComponents: true,
-      usedScaRowAssignment: true,
-      compAmounts: {
-        BASIC: basic,
-        HRA: hra,
-        CONV: conv,
-        BONUS: bonus,
-        SPECIAL: special,
-      },
-      ratio: 1,
-      calcBasic: 0,
-      calcHra: 0,
-      calcSpecialAllowance: gross_salary - basic - hra, // 2266 — deliberately ignored now
-      convAllowanceDefault: 0,
-      medicalAllowanceDefault: 0,
+      hasFixedComponents: true, usedScaRowAssignment: true,
+      compAmounts: { BASIC: basic, HRA: hra, CONV: conv, BONUS: bonus, SPECIAL: special },
+      ratio: 1, calcBasic: 0, calcHra: 0,
+      calcSpecialAllowance: gross_salary - basic - hra,   // 2266 — deliberately ignored now
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
     });
     // The old residual path emitted SPECIAL=666 here: db_bill's Bonus, mislabelled.
     expect(components.find((c) => c.code === "SPECIAL")).toBeUndefined();
@@ -153,22 +113,13 @@ describe("buildPayslipEarningComponents — MAS63025-equivalent (stored SPECIAL 
   });
 
   it("a band that does carry a special allowance emits it at its stored value", () => {
-    const b = 9600,
-      h = 4800,
-      c = 1600,
-      bo = 800,
-      sp = 1617;
+    const b = 9600, h = 4800, c = 1600, bo = 800, sp = 1617;
     const g = b + h + c + bo + sp;
     const components = buildPayslipEarningComponents({
-      hasFixedComponents: true,
-      usedScaRowAssignment: true,
+      hasFixedComponents: true, usedScaRowAssignment: true,
       compAmounts: { BASIC: b, HRA: h, CONV: c, BONUS: bo, SPECIAL: sp },
-      ratio: 1,
-      calcBasic: 0,
-      calcHra: 0,
-      calcSpecialAllowance: 0,
-      convAllowanceDefault: 0,
-      medicalAllowanceDefault: 0,
+      ratio: 1, calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0,
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
     });
     expect(components.find((c2) => c2.code === "SPECIAL")?.amount).toBe(sp);
     expect(sum(components)).toBe(g);
@@ -253,46 +204,9 @@ describe("buildPayslipEarningComponents — required coverage scenarios", () => 
 
   it("no duplicate earning component codes are ever produced, across assignment, structure-with-leftovers, and structure-only inputs", () => {
     const scenarios = [
-      {
-        hasFixedComponents: true,
-        usedScaRowAssignment: true,
-        compAmounts: { BASIC: 34700, HRA: 17350, CONV: 1600 },
-        ratio: 0.77,
-        calcBasic: 0,
-        calcHra: 0,
-        calcSpecialAllowance: 21713.03,
-        convAllowanceDefault: 0,
-        medicalAllowanceDefault: 0,
-      },
-      {
-        hasFixedComponents: true,
-        usedScaRowAssignment: false,
-        compAmounts: {
-          BASIC: 4500,
-          HRA: 2393,
-          BONUS: 375,
-          CONV: 1600,
-          PORTFOLIO: 7000,
-          SPECIAL: 7374,
-        },
-        ratio: 1,
-        calcBasic: 0,
-        calcHra: 0,
-        calcSpecialAllowance: 0,
-        convAllowanceDefault: 0,
-        medicalAllowanceDefault: 0,
-      },
-      {
-        hasFixedComponents: false,
-        usedScaRowAssignment: false,
-        compAmounts: {},
-        ratio: 1,
-        calcBasic: 5000,
-        calcHra: 2500,
-        calcSpecialAllowance: 3000,
-        convAllowanceDefault: 800,
-        medicalAllowanceDefault: 1250,
-      },
+      { hasFixedComponents: true, usedScaRowAssignment: true, compAmounts: { BASIC: 34700, HRA: 17350, CONV: 1600 }, ratio: 0.77, calcBasic: 0, calcHra: 0, calcSpecialAllowance: 21713.03, convAllowanceDefault: 0, medicalAllowanceDefault: 0 },
+      { hasFixedComponents: true, usedScaRowAssignment: false, compAmounts: { BASIC: 4500, HRA: 2393, BONUS: 375, CONV: 1600, PORTFOLIO: 7000, SPECIAL: 7374 }, ratio: 1, calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0, convAllowanceDefault: 0, medicalAllowanceDefault: 0 },
+      { hasFixedComponents: false, usedScaRowAssignment: false, compAmounts: {}, ratio: 1, calcBasic: 5000, calcHra: 2500, calcSpecialAllowance: 3000, convAllowanceDefault: 800, medicalAllowanceDefault: 1250 },
     ];
     for (const scenario of scenarios) {
       const components = buildPayslipEarningComponents(scenario);
@@ -302,11 +216,7 @@ describe("buildPayslipEarningComponents — required coverage scenarios", () => 
   });
 
   it("assignment path with a structure genuinely lacking Portfolio (no leftover keys) reconciles exactly — the clean baseline", () => {
-    const basic = 4500,
-      hra = 2393,
-      conv = 1600,
-      bonus = 375,
-      special = 7374;
+    const basic = 4500, hra = 2393, conv = 1600, bonus = 375, special = 7374;
     const gross = basic + hra + conv + bonus + special; // 16242
 
     const components = buildPayslipEarningComponents({
@@ -314,13 +224,7 @@ describe("buildPayslipEarningComponents — required coverage scenarios", () => 
       usedScaRowAssignment: true,
       // Portfolio genuinely absent. Every component the assignment holds is passed in,
       // SPECIAL included - that is the whole contract now.
-      compAmounts: {
-        BASIC: basic,
-        HRA: hra,
-        CONV: conv,
-        BONUS: bonus,
-        SPECIAL: special,
-      },
+      compAmounts: { BASIC: basic, HRA: hra, CONV: conv, BONUS: bonus, SPECIAL: special },
       ratio: 1,
       calcBasic: 0,
       calcHra: 0,
@@ -344,14 +248,10 @@ describe("the calling code resets compAmounts and passes the assignment SPECIAL 
   );
 
   it("clears compAmounts before repopulating it from scaRow", () => {
-    const scaBlockStart = SOURCE.indexOf(
-      "if (scaRow && Number(scaRow.gross) > 0) {",
-    );
+    const scaBlockStart = SOURCE.indexOf("if (scaRow && Number(scaRow.gross) > 0) {");
     expect(scaBlockStart).toBeGreaterThan(-1);
     const scaBlock = SOURCE.slice(scaBlockStart, scaBlockStart + 1500);
-    expect(scaBlock).toMatch(
-      /for \(const key of Object\.keys\(compAmounts\)\) delete compAmounts\[key\]/,
-    );
+    expect(scaBlock).toMatch(/for \(const key of Object\.keys\(compAmounts\)\) delete compAmounts\[key\]/);
   });
 
   it("sources compAmounts.SPECIAL from scaRow.special_allowance — the db_bill contract", () => {
@@ -360,9 +260,7 @@ describe("the calling code resets compAmounts and passes the assignment SPECIAL 
     // from db_bill and exact, and db_bill computes SpecialAllowance1 directly. A residual
     // cannot reproduce that to the rupee. This assertion is load-bearing for parity: if the
     // caller stops passing SPECIAL through, the component disappears from every payslip.
-    expect(SOURCE).toMatch(
-      /compAmounts\.SPECIAL\s*=\s*Number\(scaRow\.special_allowance\)/,
-    );
+    expect(SOURCE).toMatch(/compAmounts\.SPECIAL\s*=\s*Number\(scaRow\.special_allowance\)/);
   });
 
   it("no longer rebuilds SPECIAL from calculateNetSalary's residual", () => {
@@ -370,22 +268,14 @@ describe("the calling code resets compAmounts and passes the assignment SPECIAL 
   });
 
   it("calls the extracted, tested builder instead of inlining the loop again", () => {
-    expect(SOURCE).toMatch(
-      /const payslipEarnings = buildPayslipEarningComponents\(/,
-    );
+    expect(SOURCE).toMatch(/const payslipEarnings = buildPayslipEarningComponents\(/);
     // Guards against a future edit re-inlining the old, unreset loop right
     // next to the new call — the whole point of extraction is one place.
-    expect(
-      SOURCE.match(
-        /for \(const \[code, val\] of Object\.entries\(params\.compAmounts\)\)/g,
-      ) ?? [],
-    ).toHaveLength(1);
+    expect(SOURCE.match(/for \(const \[code, val\] of Object\.entries\(params\.compAmounts\)\)/g) ?? []).toHaveLength(1);
   });
 
   it("the caller still filters non-positive component amounts before batch insert", () => {
-    expect(SOURCE).toMatch(
-      /for \(const comp of payslipEarnings\) \{\s*\n\s*if \(comp\.amount <= 0\) continue;/,
-    );
+    expect(SOURCE).toMatch(/for \(const comp of payslipEarnings\) \{\s*\n\s*if \(comp\.amount <= 0\) continue;/);
   });
 
   it("did not touch reconcileNetAndDeductions or calculateNetSalary's call site", () => {
@@ -416,26 +306,17 @@ describe("sumProratedComponents — gross is the sum of whole-rupee earned compo
 });
 
 describe("buildPayslipEarningComponents — db_bill parity and proration", () => {
-  const basic = 8000,
-    hra = 4793,
-    conv = 1600,
-    bonus = 666;
+  const basic = 8000, hra = 4793, conv = 1600, bonus = 666;
   const pkgGross = basic + hra + conv + bonus; // 15059, special 0
 
   it("part month: every component prorates independently, as db_bill does", () => {
     const ratio = 26 / 31;
     const components = buildPayslipEarningComponents({
-      hasFixedComponents: true,
-      usedScaRowAssignment: true,
+      hasFixedComponents: true, usedScaRowAssignment: true,
       compAmounts: { BASIC: basic, HRA: hra, CONV: conv, BONUS: bonus },
-      ratio,
-      ratioNumerator: 26,
-      ratioDenominator: 31,
-      calcBasic: 0,
-      calcHra: 0,
-      calcSpecialAllowance: 0,
-      convAllowanceDefault: 0,
-      medicalAllowanceDefault: 0,
+      ratio, ratioNumerator: 26, ratioDenominator: 31,
+      calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0,
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
     });
     // db_bill earns every component to a whole rupee: ROUND(component * EarnedDays / WorkingDays).
     expect(components.find((c) => c.code === "BASIC")?.amount).toBe(Math.round((basic * 26) / 31));
@@ -450,32 +331,23 @@ describe("buildPayslipEarningComponents — db_bill parity and proration", () =>
     // reproduce it: 8.5/31 is not representable in binary floating point, so
     // 1333 * (8.5/31) = 365.49999999999994 and rounds DOWN to 365.
     const components = buildPayslipEarningComponents({
-      hasFixedComponents: true,
-      usedScaRowAssignment: true,
+      hasFixedComponents: true, usedScaRowAssignment: true,
       compAmounts: { BONUS: 1333 },
-      ratio: 8.5 / 31, // the lossy form, deliberately still passed
-      ratioNumerator: 8.5, // the exact pair, which must win
+      ratio: 8.5 / 31,        // the lossy form, deliberately still passed
+      ratioNumerator: 8.5,    // the exact pair, which must win
       ratioDenominator: 31,
-      calcBasic: 0,
-      calcHra: 0,
-      calcSpecialAllowance: 0,
-      convAllowanceDefault: 0,
-      medicalAllowanceDefault: 0,
+      calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0,
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
     });
     expect(components.find((c) => c.code === "BONUS")?.amount).toBe(366);
   });
 
   it("falls back to the precomputed ratio when no pair is supplied", () => {
     const components = buildPayslipEarningComponents({
-      hasFixedComponents: true,
-      usedScaRowAssignment: true,
-      compAmounts: { BASIC: 8000 },
-      ratio: 0.5,
-      calcBasic: 0,
-      calcHra: 0,
-      calcSpecialAllowance: 0,
-      convAllowanceDefault: 0,
-      medicalAllowanceDefault: 0,
+      hasFixedComponents: true, usedScaRowAssignment: true,
+      compAmounts: { BASIC: 8000 }, ratio: 0.5,
+      calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0,
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
     });
     expect(components.find((c) => c.code === "BASIC")?.amount).toBe(4000);
   });

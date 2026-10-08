@@ -19,12 +19,7 @@ function metricMeta(metricCode: string) {
   if (["AHT", "AOV", "QUALITY_SCORE", "FATAL_RATE"].includes(metricCode)) {
     return {
       aggregationMethod: metricCode === "QUALITY_SCORE" ? "ratio" : "ratio",
-      unit:
-        metricCode === "AHT"
-          ? "seconds"
-          : metricCode === "AOV"
-            ? "currency"
-            : "percent",
+      unit: metricCode === "AHT" ? "seconds" : metricCode === "AOV" ? "currency" : "percent",
     };
   }
   return { aggregationMethod: "average", unit: "percent" };
@@ -52,10 +47,9 @@ function fact(
     targetValue: metricCode === "AHT" ? 100 : 90,
     weightage: 100,
     maxAchievementPct: 120,
-    direction:
-      metricCode === "AHT" || metricCode === "FATAL_RATE"
-        ? "lower_is_better"
-        : "higher_is_better",
+    direction: metricCode === "AHT" || metricCode === "FATAL_RATE"
+      ? "lower_is_better"
+      : "higher_is_better",
     sourceSystem: "test-source",
     sourceRecordCount: 1,
     formulaVersion: null,
@@ -75,7 +69,10 @@ function byCode(
 
 describe("aggregateMetricFacts", () => {
   it("sums call volume", () => {
-    const result = aggregateMetricFacts([fact("CALLS", 10), fact("CALLS", 15)]);
+    const result = aggregateMetricFacts([
+      fact("CALLS", 10),
+      fact("CALLS", 15),
+    ]);
 
     expect(byCode(result, "CALLS").value).toBe(25);
   });
@@ -120,50 +117,35 @@ describe("aggregateMetricFacts", () => {
   });
 
   it("uses explicit ratio multipliers instead of display units", () => {
-    expect(
-      byCode(
-        aggregateMetricFacts([
-          fact("QUALITY_SCORE", 95, {
-            numeratorValue: 95,
-            denominatorValue: 100,
-            calculationMultiplier: 100,
-            unit: "%",
-            formulaVersion: "QUALITY_RATIO:v1",
-          }),
-        ]),
-        "QUALITY_SCORE",
-      ).value,
-    ).toBe(95);
+    expect(byCode(aggregateMetricFacts([
+      fact("QUALITY_SCORE", 95, {
+        numeratorValue: 95,
+        denominatorValue: 100,
+        calculationMultiplier: 100,
+        unit: "%",
+        formulaVersion: "QUALITY_RATIO:v1",
+      }),
+    ]), "QUALITY_SCORE").value).toBe(95);
 
-    expect(
-      byCode(
-        aggregateMetricFacts([
-          fact("QUALITY_SCORE", 0.95, {
-            numeratorValue: 95,
-            denominatorValue: 100,
-            calculationMultiplier: 1,
-            unit: "percent",
-            formulaVersion: "QUALITY_RATIO:v1",
-          }),
-        ]),
-        "QUALITY_SCORE",
-      ).value,
-    ).toBe(0.95);
+    expect(byCode(aggregateMetricFacts([
+      fact("QUALITY_SCORE", 0.95, {
+        numeratorValue: 95,
+        denominatorValue: 100,
+        calculationMultiplier: 1,
+        unit: "percent",
+        formulaVersion: "QUALITY_RATIO:v1",
+      }),
+    ]), "QUALITY_SCORE").value).toBe(0.95);
 
-    expect(
-      byCode(
-        aggregateMetricFacts([
-          fact("QUALITY_SCORE", 750, {
-            numeratorValue: 3,
-            denominatorValue: 4,
-            calculationMultiplier: 1000,
-            unit: "percentage",
-            formulaVersion: "QUALITY_RATIO:v1",
-          }),
-        ]),
-        "QUALITY_SCORE",
-      ).value,
-    ).toBe(750);
+    expect(byCode(aggregateMetricFacts([
+      fact("QUALITY_SCORE", 750, {
+        numeratorValue: 3,
+        denominatorValue: 4,
+        calculationMultiplier: 1000,
+        unit: "percentage",
+        formulaVersion: "QUALITY_RATIO:v1",
+      }),
+    ]), "QUALITY_SCORE").value).toBe(750);
   });
 
   it("keeps simple and weighted averages explicit", () => {
@@ -216,15 +198,9 @@ describe("aggregateMetricFacts", () => {
       }),
     ]);
 
-    expect(byCode(result, "REVENUE")).toMatchObject({
-      value: 2000,
-      unit: "currency",
-    });
+    expect(byCode(result, "REVENUE")).toMatchObject({ value: 2000, unit: "currency" });
     expect(byCode(result, "SALES_COUNT").value).toBe(3);
-    expect(byCode(result, "AOV")).toMatchObject({
-      value: 666.67,
-      unit: "currency",
-    });
+    expect(byCode(result, "AOV")).toMatchObject({ value: 666.67, unit: "currency" });
   });
 
   it("does not label a component-free fallback as verified", () => {
@@ -234,9 +210,7 @@ describe("aggregateMetricFacts", () => {
     ]);
 
     expect(byCode(result, "QUALITY_SCORE").value).toBe(85);
-    expect(byCode(result, "QUALITY_SCORE").calculationStatus).toBe(
-      "legacy_unverified",
-    );
+    expect(byCode(result, "QUALITY_SCORE").calculationStatus).toBe("legacy_unverified");
   });
 
   it("supports a process-specific custom metric without a code deployment", () => {

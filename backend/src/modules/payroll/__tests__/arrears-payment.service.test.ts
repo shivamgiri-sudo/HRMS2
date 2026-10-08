@@ -15,10 +15,7 @@ const { execute, logSensitiveAction } = vi.hoisted(() => ({
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 
-import {
-  arrearsPaymentService,
-  ArrearsPaymentError,
-} from "../arrears-payment.service.js";
+import { arrearsPaymentService, ArrearsPaymentError } from "../arrears-payment.service.js";
 
 const ROW = (overrides: Partial<Record<string, unknown>> = {}) => ({
   id: "pay-1",
@@ -50,20 +47,14 @@ beforeEach(() => {
 describe("create", () => {
   it("rejects a non-positive amount before touching the database", async () => {
     await expect(
-      arrearsPaymentService.create(
-        { employeeId: "emp-1", amount: 0, reason: "x" },
-        "actor-1",
-      ),
+      arrearsPaymentService.create({ employeeId: "emp-1", amount: 0, reason: "x" }, "actor-1"),
     ).rejects.toMatchObject({ statusCode: 422 });
     expect(execute).not.toHaveBeenCalled();
   });
 
   it("rejects a missing reason before touching the database", async () => {
     await expect(
-      arrearsPaymentService.create(
-        { employeeId: "emp-1", amount: 100, reason: "  " },
-        "actor-1",
-      ),
+      arrearsPaymentService.create({ employeeId: "emp-1", amount: 100, reason: "  " }, "actor-1"),
     ).rejects.toMatchObject({ statusCode: 422 });
     expect(execute).not.toHaveBeenCalled();
   });
@@ -71,10 +62,7 @@ describe("create", () => {
   it("rejects an employee that does not exist", async () => {
     execute.mockResolvedValueOnce([[]]); // employee lookup: no rows
     await expect(
-      arrearsPaymentService.create(
-        { employeeId: "ghost", amount: 100, reason: "x" },
-        "actor-1",
-      ),
+      arrearsPaymentService.create({ employeeId: "ghost", amount: 100, reason: "x" }, "actor-1"),
     ).rejects.toMatchObject({ statusCode: 404 });
   });
 
@@ -94,10 +82,7 @@ describe("create", () => {
     expect(insertSql).toMatch(/INSERT INTO payroll_arrears_payment/);
     expect(insertSql).toMatch(/'pending_approval'/);
     expect(logSensitiveAction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action_type: "ARREARS_PAYMENT_REQUESTED",
-        employee_id: "emp-1",
-      }),
+      expect.objectContaining({ action_type: "ARREARS_PAYMENT_REQUESTED", employee_id: "emp-1" }),
     );
   });
 });
@@ -107,9 +92,7 @@ describe("approve", () => {
     execute
       .mockResolvedValueOnce([[ROW({ status: "pending_approval" })]]) // getById (pre-check)
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE
-      .mockResolvedValueOnce([
-        [ROW({ status: "approved", approved_by: "approver-1" })],
-      ]); // getById (post)
+      .mockResolvedValueOnce([[ROW({ status: "approved", approved_by: "approver-1" })]]); // getById (post)
 
     const result = await arrearsPaymentService.approve("pay-1", "approver-1");
     expect(result.status).toBe("approved");
@@ -120,9 +103,7 @@ describe("approve", () => {
 
   it("refuses to approve a row that is not pending_approval", async () => {
     execute.mockResolvedValueOnce([[ROW({ status: "approved" })]]); // already approved
-    await expect(
-      arrearsPaymentService.approve("pay-1", "approver-1"),
-    ).rejects.toMatchObject({
+    await expect(arrearsPaymentService.approve("pay-1", "approver-1")).rejects.toMatchObject({
       statusCode: 409,
     });
     // Must not attempt the UPDATE at all once the pre-check fails.
@@ -133,18 +114,14 @@ describe("approve", () => {
     execute
       .mockResolvedValueOnce([[ROW({ status: "pending_approval" })]]) // pre-check sees pending
       .mockResolvedValueOnce([{ affectedRows: 0 }]); // but someone else won the race
-    await expect(
-      arrearsPaymentService.approve("pay-1", "approver-1"),
-    ).rejects.toMatchObject({
+    await expect(arrearsPaymentService.approve("pay-1", "approver-1")).rejects.toMatchObject({
       statusCode: 409,
     });
   });
 
   it("404s on an unknown id", async () => {
     execute.mockResolvedValueOnce([[]]);
-    await expect(
-      arrearsPaymentService.approve("ghost", "approver-1"),
-    ).rejects.toMatchObject({
+    await expect(arrearsPaymentService.approve("ghost", "approver-1")).rejects.toMatchObject({
       statusCode: 404,
     });
   });
@@ -152,9 +129,7 @@ describe("approve", () => {
 
 describe("reject", () => {
   it("requires a reason", async () => {
-    await expect(
-      arrearsPaymentService.reject("pay-1", "approver-1", "  "),
-    ).rejects.toMatchObject({
+    await expect(arrearsPaymentService.reject("pay-1", "approver-1", "  ")).rejects.toMatchObject({
       statusCode: 422,
     });
     expect(execute).not.toHaveBeenCalled();
@@ -164,29 +139,18 @@ describe("reject", () => {
     execute
       .mockResolvedValueOnce([[ROW({ status: "pending_approval" })]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
-      .mockResolvedValueOnce([
-        [ROW({ status: "rejected", rejection_reason: "wrong employee" })],
-      ]);
+      .mockResolvedValueOnce([[ROW({ status: "rejected", rejection_reason: "wrong employee" })]]);
 
-    const result = await arrearsPaymentService.reject(
-      "pay-1",
-      "approver-1",
-      "wrong employee",
-    );
+    const result = await arrearsPaymentService.reject("pay-1", "approver-1", "wrong employee");
     expect(result.status).toBe("rejected");
     expect(logSensitiveAction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action_type: "ARREARS_PAYMENT_REJECTED",
-        reason: "wrong employee",
-      }),
+      expect.objectContaining({ action_type: "ARREARS_PAYMENT_REJECTED", reason: "wrong employee" }),
     );
   });
 
   it("refuses to reject an already-approved row", async () => {
     execute.mockResolvedValueOnce([[ROW({ status: "approved" })]]);
-    await expect(
-      arrearsPaymentService.reject("pay-1", "approver-1", "too late"),
-    ).rejects.toMatchObject({
+    await expect(arrearsPaymentService.reject("pay-1", "approver-1", "too late")).rejects.toMatchObject({
       statusCode: 409,
     });
   });
@@ -194,9 +158,7 @@ describe("reject", () => {
 
 describe("markPaid", () => {
   it("requires a payment reference", async () => {
-    await expect(
-      arrearsPaymentService.markPaid("pay-1", "finance-1", ""),
-    ).rejects.toMatchObject({
+    await expect(arrearsPaymentService.markPaid("pay-1", "finance-1", "")).rejects.toMatchObject({
       statusCode: 422,
     });
     expect(execute).not.toHaveBeenCalled();
@@ -206,15 +168,9 @@ describe("markPaid", () => {
     execute
       .mockResolvedValueOnce([[ROW({ status: "approved" })]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
-      .mockResolvedValueOnce([
-        [ROW({ status: "paid", payment_reference: "UTR123" })],
-      ]);
+      .mockResolvedValueOnce([[ROW({ status: "paid", payment_reference: "UTR123" })]]);
 
-    const result = await arrearsPaymentService.markPaid(
-      "pay-1",
-      "finance-1",
-      "UTR123",
-    );
+    const result = await arrearsPaymentService.markPaid("pay-1", "finance-1", "UTR123");
     expect(result.status).toBe("paid");
     expect(logSensitiveAction).toHaveBeenCalledWith(
       expect.objectContaining({ action_type: "ARREARS_PAYMENT_MARKED_PAID" }),
@@ -223,18 +179,14 @@ describe("markPaid", () => {
 
   it("refuses to mark paid a row that was never approved", async () => {
     execute.mockResolvedValueOnce([[ROW({ status: "pending_approval" })]]);
-    await expect(
-      arrearsPaymentService.markPaid("pay-1", "finance-1", "UTR123"),
-    ).rejects.toMatchObject({
+    await expect(arrearsPaymentService.markPaid("pay-1", "finance-1", "UTR123")).rejects.toMatchObject({
       statusCode: 409,
     });
   });
 
   it("refuses to mark an already-paid row paid again", async () => {
     execute.mockResolvedValueOnce([[ROW({ status: "paid" })]]);
-    await expect(
-      arrearsPaymentService.markPaid("pay-1", "finance-1", "UTR456"),
-    ).rejects.toMatchObject({
+    await expect(arrearsPaymentService.markPaid("pay-1", "finance-1", "UTR456")).rejects.toMatchObject({
       statusCode: 409,
     });
   });
@@ -248,10 +200,7 @@ describe("list / getById", () => {
 
   it("list filters by status and employeeId when supplied", async () => {
     execute.mockResolvedValueOnce([[ROW()]]);
-    await arrearsPaymentService.list({
-      employeeId: "emp-1",
-      status: "approved",
-    });
+    await arrearsPaymentService.list({ employeeId: "emp-1", status: "approved" });
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toMatch(/WHERE employee_id = \? AND status = \?/);
     expect(params).toEqual(["emp-1", "approved"]);
@@ -273,10 +222,7 @@ describe("never touches payroll calculation tables", () => {
       .mockResolvedValueOnce([[{ id: "emp-1" }]])
       .mockResolvedValueOnce([{}])
       .mockResolvedValueOnce([[ROW()]]);
-    await arrearsPaymentService.create(
-      { employeeId: "emp-1", amount: 10, reason: "x" },
-      "actor-1",
-    );
+    await arrearsPaymentService.create({ employeeId: "emp-1", amount: 10, reason: "x" }, "actor-1");
 
     execute
       .mockResolvedValueOnce([[ROW({ status: "pending_approval" })]])

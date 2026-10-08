@@ -30,18 +30,8 @@ export async function securityEventScope(user: { id: string }): Promise<{ sql: s
 export const securityCenterRouter = Router();
 securityCenterRouter.use(requireAuth);
 
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
-const securityRoles = requireRole(
-  "admin",
-  "ceo",
-  "hr",
-  "it",
-  "security",
-  "dpo",
-);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const securityRoles = requireRole("admin", "ceo", "hr", "it", "security", "dpo");
 let initialized = false;
 
 async function ensureSecurityTables() {
@@ -94,9 +84,8 @@ async function readCounts(scope?: Awaited<ReturnType<typeof securityEventScope>>
      WHERE DATE(created_at) = CURDATE() AND ${scope?.sql ?? '1=1'}`,
     scope?.params ?? []
   );
-  const [userRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT
+  const [userRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
        SUM(CASE WHEN active_status = 1 THEN 1 ELSE 0 END) AS active_users,
        SUM(CASE WHEN active_status = 0 THEN 1 ELSE 0 END) AS inactive_users
      FROM auth_user WHERE ${scope?.userSql ?? '1=1'}`,
@@ -149,73 +138,55 @@ securityCenterRouter.get("/events", securityRoles, h(async (req, res) => {
   return res.json({ success: true, data: rows, meta: { count: rows.length, limit } });
 }));
 
-securityCenterRouter.post(
-  "/events",
-  securityRoles,
-  h(async (req, res) => {
-    await ensureSecurityTables();
-    const body = req.body ?? {};
-    const eventType = String(
-      body.event_type ?? body.eventType ?? "MANUAL_SECURITY_EVENT",
-    ).toUpperCase();
-    const severity = ["info", "low", "medium", "high", "critical"].includes(
-      String(body.severity),
-    )
-      ? String(body.severity)
-      : "medium";
-    await db.execute(
-      `INSERT INTO security_audit_event
+securityCenterRouter.post("/events", securityRoles, h(async (req, res) => {
+  await ensureSecurityTables();
+  const body = req.body ?? {};
+  const eventType = String(body.event_type ?? body.eventType ?? "MANUAL_SECURITY_EVENT").toUpperCase();
+  const severity = ["info", "low", "medium", "high", "critical"].includes(String(body.severity)) ? String(body.severity) : "medium";
+  await db.execute(
+    `INSERT INTO security_audit_event
       (event_type, severity, module_key, entity_type, entity_id, actor_user_id, actor_role, target_employee_id, title, description, old_value, new_value, reason, ip_address, user_agent)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        eventType,
-        severity,
-        body.module_key ?? body.moduleKey ?? null,
-        body.entity_type ?? body.entityType ?? null,
-        body.entity_id ?? body.entityId ?? null,
-        req.authUser?.id ?? null,
-        req.authUser?.role ?? null,
-        body.target_employee_id ?? body.targetEmployeeId ?? null,
-        String(body.title ?? eventType),
-        body.description ?? null,
-        body.old_value == null ? null : JSON.stringify(body.old_value),
-        body.new_value == null ? null : JSON.stringify(body.new_value),
-        body.reason ?? null,
-        req.ip ?? null,
-        req.get?.("user-agent") ?? null,
-      ],
-    );
-    return res
-      .status(201)
-      .json({ success: true, message: "Security event logged" });
-  }),
-);
+    [
+      eventType,
+      severity,
+      body.module_key ?? body.moduleKey ?? null,
+      body.entity_type ?? body.entityType ?? null,
+      body.entity_id ?? body.entityId ?? null,
+      req.authUser?.id ?? null,
+      req.authUser?.role ?? null,
+      body.target_employee_id ?? body.targetEmployeeId ?? null,
+      String(body.title ?? eventType),
+      body.description ?? null,
+      body.old_value == null ? null : JSON.stringify(body.old_value),
+      body.new_value == null ? null : JSON.stringify(body.new_value),
+      body.reason ?? null,
+      req.ip ?? null,
+      req.get?.("user-agent") ?? null,
+    ],
+  );
+  return res.status(201).json({ success: true, message: "Security event logged" });
+}));
 
-securityCenterRouter.post(
-  "/export-audit",
-  securityRoles,
-  h(async (req, res) => {
-    await ensureSecurityTables();
-    const body = req.body ?? {};
-    await db.execute(
-      `INSERT INTO security_audit_event
+securityCenterRouter.post("/export-audit", securityRoles, h(async (req, res) => {
+  await ensureSecurityTables();
+  const body = req.body ?? {};
+  await db.execute(
+    `INSERT INTO security_audit_event
       (event_type, severity, module_key, entity_type, entity_id, actor_user_id, actor_role, title, description, reason, ip_address, user_agent)
      VALUES ('EXPORT', 'high', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        body.module_key ?? body.moduleKey ?? "unknown",
-        body.entity_type ?? body.entityType ?? "export",
-        body.entity_id ?? body.entityId ?? null,
-        req.authUser?.id ?? null,
-        req.authUser?.role ?? null,
-        `Export: ${body.report_name ?? body.reportName ?? body.module_key ?? "data"}`,
-        `Records exported: ${body.record_count ?? body.recordCount ?? "unknown"}`,
-        body.reason ?? null,
-        req.ip ?? null,
-        req.get?.("user-agent") ?? null,
-      ],
-    );
-    return res
-      .status(201)
-      .json({ success: true, message: "Export audit logged" });
-  }),
-);
+    [
+      body.module_key ?? body.moduleKey ?? "unknown",
+      body.entity_type ?? body.entityType ?? "export",
+      body.entity_id ?? body.entityId ?? null,
+      req.authUser?.id ?? null,
+      req.authUser?.role ?? null,
+      `Export: ${body.report_name ?? body.reportName ?? body.module_key ?? "data"}`,
+      `Records exported: ${body.record_count ?? body.recordCount ?? "unknown"}`,
+      body.reason ?? null,
+      req.ip ?? null,
+      req.get?.("user-agent") ?? null,
+    ],
+  );
+  return res.status(201).json({ success: true, message: "Export audit logged" });
+}));

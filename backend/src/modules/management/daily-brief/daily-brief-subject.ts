@@ -17,15 +17,12 @@ import type { ExecutiveDailyBrief } from "./daily-brief-aggregator.service.js";
 export function buildDailyBriefSubject(
   brief: Pick<ManagerDailyBrief, "businessDate" | "attention" | "actions">,
 ): string {
-  const criticalCount = (brief.attention ?? []).filter(
-    (s) => s.priority === "critical",
-  ).length;
+  const criticalCount = (brief.attention ?? []).filter((s) => s.priority === "critical").length;
   const actionCount = brief.actions?.length ?? 0;
 
   const parts: string[] = [];
   if (criticalCount > 0) parts.push(`${criticalCount} critical`);
-  if (actionCount > 0)
-    parts.push(`${actionCount} action${actionCount === 1 ? "" : "s"}`);
+  if (actionCount > 0) parts.push(`${actionCount} action${actionCount === 1 ? "" : "s"}`);
 
   const suffix = parts.length > 0 ? ` (${parts.join(", ")})` : "";
   return `Your Daily Team Briefing — ${brief.businessDate}${suffix}`;
@@ -37,18 +34,13 @@ export function buildDailyBriefSubject(
  * bare counts only, sourced from the rollup's top-N business actions
  * (business_action_queue) — never a branch/employee name.
  */
-export function buildExecutiveDailyBriefSubject(
-  brief: Pick<ExecutiveDailyBrief, "businessDate" | "rollup">,
-): string {
-  const criticalCount = brief.rollup.topActions.filter(
-    (a) => a.severity === "critical",
-  ).length;
+export function buildExecutiveDailyBriefSubject(brief: Pick<ExecutiveDailyBrief, "businessDate" | "rollup">): string {
+  const criticalCount = brief.rollup.topActions.filter((a) => a.severity === "critical").length;
   const actionCount = brief.rollup.topActions.length;
 
   const parts: string[] = [];
   if (criticalCount > 0) parts.push(`${criticalCount} critical`);
-  if (actionCount > 0)
-    parts.push(`${actionCount} org-wide action${actionCount === 1 ? "" : "s"}`);
+  if (actionCount > 0) parts.push(`${actionCount} org-wide action${actionCount === 1 ? "" : "s"}`);
 
   const suffix = parts.length > 0 ? ` (${parts.join(", ")})` : "";
   return `Your Executive Daily Briefing — ${brief.businessDate}${suffix}`;

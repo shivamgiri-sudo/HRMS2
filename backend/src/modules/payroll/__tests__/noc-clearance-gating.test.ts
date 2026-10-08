@@ -22,14 +22,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute, getConnection: vi.fn() },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection: vi.fn() } }));
 
-const { stageBlockReason, evaluateAssetGate } =
-  await import("../noc-case.service.js");
-const { nocReleaseStatusForEmployee, nocReleaseClearedSql } =
-  await import("../noc-release-gate.service.js");
+const { stageBlockReason, evaluateAssetGate } = await import("../noc-case.service.js");
+const { nocReleaseStatusForEmployee, nocReleaseClearedSql } = await import("../noc-release-gate.service.js");
 
 type Sig = Parameters<typeof stageBlockReason>[1][number];
 type NocCase = Parameters<typeof stageBlockReason>[0];
@@ -46,28 +42,26 @@ function chain(overrides: Partial<Record<string, Sig["status"]>> = {}): Sig[] {
     ["accounts", 7, 5, "Accounts", 0],
     ["finance", 8, 5, "Finance", 1],
   ];
-  return spec.map(
-    ([stage_key, display_no, tier, stage_label, requires_asset_clearance]) => ({
-      id: `sig-${stage_key}`,
-      noc_case_id: "case-1",
-      display_no,
-      tier,
-      stage_key,
-      stage_label,
-      role_key: stage_key,
-      fallback_role_key: null,
-      requires_asset_clearance,
-      status: overrides[stage_key] ?? "pending",
-      acted_by_user_id: null,
-      acted_by_name: null,
-      acted_by_role: null,
-      acted_at: null,
-      remarks: null,
-      sla_due_at: null,
-      notified_at: null,
-      reminder_count: 0,
-    }),
-  ) as Sig[];
+  return spec.map(([stage_key, display_no, tier, stage_label, requires_asset_clearance]) => ({
+    id: `sig-${stage_key}`,
+    noc_case_id: "case-1",
+    display_no,
+    tier,
+    stage_key,
+    stage_label,
+    role_key: stage_key,
+    fallback_role_key: null,
+    requires_asset_clearance,
+    status: overrides[stage_key] ?? "pending",
+    acted_by_user_id: null,
+    acted_by_name: null,
+    acted_by_role: null,
+    acted_at: null,
+    remarks: null,
+    sla_due_at: null,
+    notified_at: null,
+    reminder_count: 0,
+  })) as Sig[];
 }
 
 function nocCase(overrides: Partial<NocCase> = {}): NocCase {
@@ -113,9 +107,7 @@ function find(all: Sig[], key: string): Sig {
   return s;
 }
 
-beforeEach(() => {
-  execute.mockReset();
-});
+beforeEach(() => { execute.mockReset(); });
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -124,20 +116,11 @@ describe("tier gating", () => {
     const all = chain();
     const c = nocCase();
 
-    expect(
-      stageBlockReason(c, all, find(all, "team_leader"), CLEAR_GATE),
-    ).toBeNull();
+    expect(stageBlockReason(c, all, find(all, "team_leader"), CLEAR_GATE)).toBeNull();
 
-    for (const key of [
-      "process_manager",
-      "branch_manager",
-      "hr",
-      "it",
-      "finance",
-    ]) {
-      expect(stageBlockReason(c, all, find(all, key), CLEAR_GATE)?.code).toBe(
-        "PRIOR_TIER_PENDING",
-      );
+    for (const key of ["process_manager", "branch_manager", "hr", "it", "finance"]) {
+      expect(stageBlockReason(c, all, find(all, key), CLEAR_GATE)?.code)
+        .toBe("PRIOR_TIER_PENDING");
     }
   });
 
@@ -146,121 +129,64 @@ describe("tier gating", () => {
     // difference in workflow effect. If only 'accepted' advanced the chain, an acknowledged
     // stage would deadlock the case forever.
     const all = chain({ team_leader: "acknowledged" });
-    expect(
-      stageBlockReason(
-        nocCase(),
-        all,
-        find(all, "process_manager"),
-        CLEAR_GATE,
-      ),
-    ).toBeNull();
+    expect(stageBlockReason(nocCase(), all, find(all, "process_manager"), CLEAR_GATE)).toBeNull();
   });
 
   it("clears HR only after the Branch Manager, despite HR printing as #3 and BM as #4", () => {
     // The regression this exists to catch: ordering the chain by the certificate's display_no
     // instead of by tier would let HR sign before the Branch Manager.
-    const upToBm = chain({
-      team_leader: "accepted",
-      process_manager: "accepted",
-    });
-    expect(
-      stageBlockReason(nocCase(), upToBm, find(upToBm, "hr"), CLEAR_GATE)?.code,
-    ).toBe("PRIOR_TIER_PENDING");
-    expect(
-      stageBlockReason(
-        nocCase(),
-        upToBm,
-        find(upToBm, "branch_manager"),
-        CLEAR_GATE,
-      ),
-    ).toBeNull();
+    const upToBm = chain({ team_leader: "accepted", process_manager: "accepted" });
+    expect(stageBlockReason(nocCase(), upToBm, find(upToBm, "hr"), CLEAR_GATE)?.code)
+      .toBe("PRIOR_TIER_PENDING");
+    expect(stageBlockReason(nocCase(), upToBm, find(upToBm, "branch_manager"), CLEAR_GATE)).toBeNull();
 
-    const hrTurn = chain({
-      team_leader: "accepted",
-      process_manager: "accepted",
-      branch_manager: "accepted",
-    });
-    expect(
-      stageBlockReason(nocCase(), hrTurn, find(hrTurn, "hr"), CLEAR_GATE),
-    ).toBeNull();
+    const hrTurn = chain({ team_leader: "accepted", process_manager: "accepted", branch_manager: "accepted" });
+    expect(stageBlockReason(nocCase(), hrTurn, find(hrTurn, "hr"), CLEAR_GATE)).toBeNull();
   });
 
   it("opens IT, Admin, Accounts and Finance together once HR clears", () => {
     const all = chain({
-      team_leader: "accepted",
-      process_manager: "accepted",
-      branch_manager: "accepted",
-      hr: "accepted",
+      team_leader: "accepted", process_manager: "accepted",
+      branch_manager: "accepted", hr: "accepted",
     });
     const c = nocCase();
     for (const key of ["it", "admin", "accounts"]) {
       expect(stageBlockReason(c, all, find(all, key), CLEAR_GATE)).toBeNull();
     }
     // Finance too, but only because the asset gate is satisfied in this fixture.
-    expect(
-      stageBlockReason(c, all, find(all, "finance"), CLEAR_GATE),
-    ).toBeNull();
+    expect(stageBlockReason(c, all, find(all, "finance"), CLEAR_GATE)).toBeNull();
   });
 
   it("does not let one tier-5 department block another", () => {
     const all = chain({
-      team_leader: "accepted",
-      process_manager: "accepted",
-      branch_manager: "accepted",
-      hr: "accepted",
-      it: "accepted",
+      team_leader: "accepted", process_manager: "accepted",
+      branch_manager: "accepted", hr: "accepted", it: "accepted",
     });
-    expect(
-      stageBlockReason(nocCase(), all, find(all, "accounts"), CLEAR_GATE),
-    ).toBeNull();
+    expect(stageBlockReason(nocCase(), all, find(all, "accounts"), CLEAR_GATE)).toBeNull();
   });
 
   it("blocks HR's own stage until the Last Working Day is recorded", () => {
     // HR owns the LWD, and the FNF route, the 45-day window and final pay all derive from it.
-    const all = chain({
-      team_leader: "accepted",
-      process_manager: "accepted",
-      branch_manager: "accepted",
-    });
+    const all = chain({ team_leader: "accepted", process_manager: "accepted", branch_manager: "accepted" });
     const c = nocCase({ last_working_day: null });
-    expect(stageBlockReason(c, all, find(all, "hr"), CLEAR_GATE)?.code).toBe(
-      "LWD_NOT_SET",
-    );
+    expect(stageBlockReason(c, all, find(all, "hr"), CLEAR_GATE)?.code).toBe("LWD_NOT_SET");
   });
 
   it("blocks every stage until the employee has submitted the form", () => {
     const all = chain();
     const c = nocCase({ status: "invited", employee_submitted_at: null });
-    expect(
-      stageBlockReason(c, all, find(all, "team_leader"), CLEAR_GATE)?.code,
-    ).toBe("EMPLOYEE_FORM_PENDING");
+    expect(stageBlockReason(c, all, find(all, "team_leader"), CLEAR_GATE)?.code)
+      .toBe("EMPLOYEE_FORM_PENDING");
   });
 });
 
 describe("Finance asset gate", () => {
-  const asset = (
-    over: Partial<{
-      item_label: string;
-      is_mandatory_for_finance: number;
-      status: string;
-      waived_at: string | null;
-    }> = {},
-  ) =>
-    ({
-      id: "a",
-      item_no: 1,
-      item_code: "ID_CARD",
-      item_label: "ID Card",
-      is_mandatory_for_finance: 1,
-      shown_on_form: 1,
-      quantity: 1,
-      status: "na",
-      remarks: null,
-      waived_by: null,
-      waived_at: null,
-      waiver_reason: null,
-      ...over,
-    }) as Parameters<typeof evaluateAssetGate>[0][number];
+  const asset = (over: Partial<{ item_label: string; is_mandatory_for_finance: number; status: string; waived_at: string | null }> = {}) => ({
+    id: "a", item_no: 1, item_code: "ID_CARD", item_label: "ID Card",
+    is_mandatory_for_finance: 1, shown_on_form: 1, quantity: 1,
+    status: "na", remarks: null, waived_by: null, waived_at: null, waiver_reason: null,
+    ...over,
+  }) as Parameters<typeof evaluateAssetGate>[0][number];
 
   it("does NOT accept 'na' as cleared", () => {
     // 'na' is the column default. If it satisfied the gate, every case would pass it at creation
@@ -271,95 +197,61 @@ describe("Finance asset gate", () => {
   });
 
   it("does not accept 'not_returned'", () => {
-    expect(
-      evaluateAssetGate([asset({ status: "not_returned" })]).satisfied,
-    ).toBe(false);
+    expect(evaluateAssetGate([asset({ status: "not_returned" })]).satisfied).toBe(false);
   });
 
   it("accepts 'returned'", () => {
-    expect(evaluateAssetGate([asset({ status: "returned" })]).satisfied).toBe(
-      true,
-    );
+    expect(evaluateAssetGate([asset({ status: "returned" })]).satisfied).toBe(true);
   });
 
   it("accepts an explicit waiver on an unreturned item", () => {
-    const gate = evaluateAssetGate([
-      asset({ status: "not_returned", waived_at: "2026-08-10 12:00:00" }),
-    ]);
+    const gate = evaluateAssetGate([asset({ status: "not_returned", waived_at: "2026-08-10 12:00:00" })]);
     expect(gate.satisfied).toBe(true);
   });
 
   it("ignores non-mandatory items entirely", () => {
     const gate = evaluateAssetGate([
-      asset({
-        item_label: "SIM Card",
-        is_mandatory_for_finance: 0,
-        status: "not_returned",
-      }),
+      asset({ item_label: "SIM Card", is_mandatory_for_finance: 0, status: "not_returned" }),
     ]);
     expect(gate.satisfied).toBe(true);
   });
 
   it("blocks Finance, and only Finance, when property is outstanding", () => {
     const all = chain({
-      team_leader: "accepted",
-      process_manager: "accepted",
-      branch_manager: "accepted",
-      hr: "accepted",
+      team_leader: "accepted", process_manager: "accepted",
+      branch_manager: "accepted", hr: "accepted",
     });
     const c = nocCase();
     const outstanding = { satisfied: false, outstanding: ["ID Card", "CPU"] };
 
-    expect(
-      stageBlockReason(c, all, find(all, "finance"), outstanding)?.code,
-    ).toBe("ASSETS_OUTSTANDING");
+    expect(stageBlockReason(c, all, find(all, "finance"), outstanding)?.code).toBe("ASSETS_OUTSTANDING");
     // Admin and IT are the ones who resolve it, so they must stay actionable.
-    expect(
-      stageBlockReason(c, all, find(all, "admin"), outstanding),
-    ).toBeNull();
+    expect(stageBlockReason(c, all, find(all, "admin"), outstanding)).toBeNull();
     expect(stageBlockReason(c, all, find(all, "it"), outstanding)).toBeNull();
-    expect(
-      stageBlockReason(c, all, find(all, "accounts"), outstanding),
-    ).toBeNull();
+    expect(stageBlockReason(c, all, find(all, "accounts"), outstanding)).toBeNull();
   });
 });
 
 describe("decline locks the case", () => {
   it("blocks every remaining stage once any signatory declines", () => {
     const all = chain({ team_leader: "accepted", process_manager: "declined" });
-    const c = nocCase({
-      status: "declined",
-      declined_stage_key: "process_manager",
-    });
+    const c = nocCase({ status: "declined", declined_stage_key: "process_manager" });
 
-    for (const key of [
-      "branch_manager",
-      "hr",
-      "it",
-      "admin",
-      "accounts",
-      "finance",
-    ]) {
-      expect(stageBlockReason(c, all, find(all, key), CLEAR_GATE)?.code).toBe(
-        "CASE_NOT_OPEN",
-      );
+    for (const key of ["branch_manager", "hr", "it", "admin", "accounts", "finance"]) {
+      expect(stageBlockReason(c, all, find(all, key), CLEAR_GATE)?.code).toBe("CASE_NOT_OPEN");
     }
   });
 
   it("reports an already-actioned stage as such rather than as a case-level block", () => {
     const all = chain({ team_leader: "accepted" });
-    expect(
-      stageBlockReason(nocCase(), all, find(all, "team_leader"), CLEAR_GATE)
-        ?.code,
-    ).toBe("ALREADY_ACTIONED");
+    expect(stageBlockReason(nocCase(), all, find(all, "team_leader"), CLEAR_GATE)?.code)
+      .toBe("ALREADY_ACTIONED");
   });
 });
 
 describe("salary release gate", () => {
   /** payroll_config_flags read — the kill switch. */
-  function mockGateEnabled() {
-    execute.mockResolvedValueOnce([[{ config_value: "true" }]]);
-  }
+  function mockGateEnabled() { execute.mockResolvedValueOnce([[{ config_value: "true" }]]); }
 
   it("never withholds an ACTIVE employee, and does not look for a case", async () => {
     mockGateEnabled();
@@ -387,9 +279,7 @@ describe("salary release gate", () => {
   it("withholds an inactive employee whose clearance is still in progress", async () => {
     mockGateEnabled();
     execute.mockResolvedValueOnce([[{ employment_status: "Resigned" }]]);
-    execute.mockResolvedValueOnce([
-      [{ status: "in_progress", override_at: null, declined_stage_key: null }],
-    ]);
+    execute.mockResolvedValueOnce([[{ status: "in_progress", override_at: null, declined_stage_key: null }]]);
 
     const status = await nocReleaseStatusForEmployee("emp-1");
 
@@ -400,9 +290,7 @@ describe("salary release gate", () => {
   it("releases an inactive employee once the clearance is completed", async () => {
     mockGateEnabled();
     execute.mockResolvedValueOnce([[{ employment_status: "Exited" }]]);
-    execute.mockResolvedValueOnce([
-      [{ status: "completed", override_at: null, declined_stage_key: null }],
-    ]);
+    execute.mockResolvedValueOnce([[{ status: "completed", override_at: null, declined_stage_key: null }]]);
 
     const status = await nocReleaseStatusForEmployee("emp-1");
 
@@ -415,15 +303,7 @@ describe("salary release gate", () => {
     // what tells the caller which of the two released the money.
     mockGateEnabled();
     execute.mockResolvedValueOnce([[{ employment_status: "Exited" }]]);
-    execute.mockResolvedValueOnce([
-      [
-        {
-          status: "in_progress",
-          override_at: "2026-08-20 11:00:00",
-          declined_stage_key: null,
-        },
-      ],
-    ]);
+    execute.mockResolvedValueOnce([[{ status: "in_progress", override_at: "2026-08-20 11:00:00", declined_stage_key: null }]]);
 
     const status = await nocReleaseStatusForEmployee("emp-1");
 
@@ -435,15 +315,7 @@ describe("salary release gate", () => {
   it("withholds a declined clearance and names the declining stage", async () => {
     mockGateEnabled();
     execute.mockResolvedValueOnce([[{ employment_status: "Exited" }]]);
-    execute.mockResolvedValueOnce([
-      [
-        {
-          status: "declined",
-          override_at: null,
-          declined_stage_key: "finance",
-        },
-      ],
-    ]);
+    execute.mockResolvedValueOnce([[{ status: "declined", override_at: null, declined_stage_key: "finance" }]]);
 
     const status = await nocReleaseStatusForEmployee("emp-1");
 

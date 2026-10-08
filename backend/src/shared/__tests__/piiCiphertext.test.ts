@@ -1,14 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { encryptField } from "../fieldEncryption.js";
-import {
-  encrypt as legacyEncrypt,
-  decrypt as legacyDecrypt,
-} from "../../utils/encryption.js";
-import {
-  detectPiiCiphertextFormat,
-  decryptPii,
-  tryDecryptPii,
-} from "../piiCiphertext.js";
+import { encrypt as legacyEncrypt, decrypt as legacyDecrypt } from "../../utils/encryption.js";
+import { detectPiiCiphertextFormat, decryptPii, tryDecryptPii } from "../piiCiphertext.js";
 
 /**
  * Regression coverage for the two-rival-ciphertexts defect on ats_candidate.
@@ -35,15 +28,11 @@ const PAN = "ABCDE1234F";
 
 describe("detectPiiCiphertextFormat", () => {
   it("classifies a canonical AES-GCM envelope", () => {
-    expect(detectPiiCiphertextFormat(encryptField(ACCOUNT))).toBe(
-      "gcm_envelope",
-    );
+    expect(detectPiiCiphertextFormat(encryptField(ACCOUNT))).toBe("gcm_envelope");
   });
 
   it("classifies a legacy AES-CBC value", () => {
-    expect(detectPiiCiphertextFormat(legacyEncrypt(ACCOUNT))).toBe(
-      "legacy_cbc",
-    );
+    expect(detectPiiCiphertextFormat(legacyEncrypt(ACCOUNT))).toBe("legacy_cbc");
   });
 
   it("does not mistake plaintext in an encrypted column for ciphertext", () => {
@@ -54,13 +43,11 @@ describe("detectPiiCiphertextFormat", () => {
 
   it("does not report arbitrary base64 as a canonical envelope", () => {
     // Base64 that decodes to JSON, but not to the envelope contract.
-    const notAnEnvelope = Buffer.from(
-      JSON.stringify({ hello: "world" }),
-    ).toString("base64");
+    const notAnEnvelope = Buffer.from(JSON.stringify({ hello: "world" })).toString("base64");
     expect(detectPiiCiphertextFormat(notAnEnvelope)).toBe("unrecognised");
-    expect(
-      detectPiiCiphertextFormat(Buffer.from("plain text").toString("base64")),
-    ).toBe("unrecognised");
+    expect(detectPiiCiphertextFormat(Buffer.from("plain text").toString("base64"))).toBe(
+      "unrecognised",
+    );
   });
 });
 
@@ -88,18 +75,12 @@ describe("decryptPii", () => {
   });
 
   it("reads both shapes from one column, which is the whole point", () => {
-    const column = [
-      encryptField(ACCOUNT),
-      legacyEncrypt(ACCOUNT),
-      encryptField(PAN),
-    ];
+    const column = [encryptField(ACCOUNT), legacyEncrypt(ACCOUNT), encryptField(PAN)];
     expect(column.map(decryptPii)).toEqual([ACCOUNT, ACCOUNT, PAN]);
   });
 
   it("rejects a value that is in neither format instead of returning it raw", () => {
-    expect(() => decryptPii(ACCOUNT)).toThrow(
-      /matches no known ciphertext format/,
-    );
+    expect(() => decryptPii(ACCOUNT)).toThrow(/matches no known ciphertext format/);
   });
 
   it("names the format in the diagnostic when a canonical value will not decrypt", () => {
@@ -111,9 +92,7 @@ describe("decryptPii", () => {
     const corrupt = Buffer.from(JSON.stringify(tampered)).toString("base64");
 
     expect(detectPiiCiphertextFormat(corrupt)).toBe("gcm_envelope");
-    expect(() => decryptPii(corrupt)).toThrow(
-      /FIELD_ENCRYPTION_KEY does not match/,
-    );
+    expect(() => decryptPii(corrupt)).toThrow(/FIELD_ENCRYPTION_KEY does not match/);
   });
 });
 
@@ -146,15 +125,7 @@ describe("tryDecryptPii", () => {
   });
 
   it("never throws, whatever it is handed", () => {
-    for (const input of [
-      null,
-      undefined,
-      "",
-      "   ",
-      "x",
-      "a:b",
-      encryptField(ACCOUNT),
-    ]) {
+    for (const input of [null, undefined, "", "   ", "x", "a:b", encryptField(ACCOUNT)]) {
       expect(() => tryDecryptPii(input)).not.toThrow();
     }
   });

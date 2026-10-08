@@ -49,11 +49,7 @@
 
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import type {
-  PortalKpiMetric,
-  PortalRag,
-  SparklinePoint,
-} from "./portal.types.js";
+import type { PortalKpiMetric, PortalRag, SparklinePoint } from "./portal.types.js";
 
 /** How many months of history a sparkline carries, including the selected period. */
 const TREND_MONTHS = 6;
@@ -61,8 +57,7 @@ const TREND_MONTHS = 6;
 const PERIOD_RE = /^\d{4}-\d{2}$/;
 
 function assertPeriod(period: string): void {
-  if (!PERIOD_RE.test(period))
-    throw new Error(`Invalid period format: ${period}`);
+  if (!PERIOD_RE.test(period)) throw new Error(`Invalid period format: ${period}`);
 }
 
 /** Shifts a YYYY-MM period by whole months. Pure string maths, no Date involved. */
@@ -108,10 +103,7 @@ export function computeAchievement(
  * `no_data` is a first-class state, not an absence of one. Collapsing it into red is the single
  * defect that made the old scorecard untrustworthy.
  */
-export function computeRag(
-  achievement: number | null,
-  amberThreshold: number,
-): PortalRag {
+export function computeRag(achievement: number | null, amberThreshold: number): PortalRag {
   if (achievement === null) return "no_data";
   if (achievement >= 100) return "green";
   if (achievement >= amberThreshold) return "amber";
@@ -142,79 +134,13 @@ interface MetricConfig {
  * migration lands.
  */
 const FALLBACK_METRICS: readonly Omit<MetricConfig, "target_source">[] = [
-  {
-    metric_code: "ATT",
-    metric_name: "Attendance Rate",
-    unit: "percent",
-    direction: "higher_is_better",
-    target_value: 95,
-    amber_threshold: 85,
-    display_order: 10,
-    description:
-      "Days actually worked as a share of days the roster expected work.",
-  },
-  {
-    metric_code: "ABN",
-    metric_name: "Absenteeism Rate",
-    unit: "percent",
-    direction: "lower_is_better",
-    target_value: 3,
-    amber_threshold: 85,
-    display_order: 20,
-    description: "Unplanned absence as a share of expected working days.",
-  },
-  {
-    metric_code: "LAT",
-    metric_name: "Late Arrival Rate",
-    unit: "percent",
-    direction: "lower_is_better",
-    target_value: 5,
-    amber_threshold: 85,
-    display_order: 30,
-    description: "Days flagged as a late arrival as a share of days present.",
-  },
-  {
-    metric_code: "LVE",
-    metric_name: "Leave Rate",
-    unit: "percent",
-    direction: "lower_is_better",
-    target_value: 5,
-    amber_threshold: 85,
-    display_order: 40,
-    description: "Approved leave days as a share of expected working days.",
-  },
-  {
-    metric_code: "RET",
-    metric_name: "Retention Rate",
-    unit: "percent",
-    direction: "higher_is_better",
-    target_value: 97,
-    amber_threshold: 95,
-    display_order: 50,
-    description:
-      "Share of the month's opening headcount still employed at month end.",
-  },
-  {
-    metric_code: "HDY",
-    metric_name: "Half Day Rate",
-    unit: "percent",
-    direction: "lower_is_better",
-    target_value: 5,
-    amber_threshold: 85,
-    display_order: 60,
-    description:
-      "Days worked as a half shift, as a share of expected working days.",
-  },
-  {
-    metric_code: "DQ",
-    metric_name: "Attendance Data Completeness",
-    unit: "percent",
-    direction: "higher_is_better",
-    target_value: 98,
-    amber_threshold: 90,
-    display_order: 70,
-    description: "Share of attendance days with a confirmed status.",
-  },
+  { metric_code: "ATT", metric_name: "Attendance Rate", unit: "percent", direction: "higher_is_better", target_value: 95, amber_threshold: 85, display_order: 10, description: "Days actually worked as a share of days the roster expected work." },
+  { metric_code: "ABN", metric_name: "Absenteeism Rate", unit: "percent", direction: "lower_is_better", target_value: 3, amber_threshold: 85, display_order: 20, description: "Unplanned absence as a share of expected working days." },
+  { metric_code: "LAT", metric_name: "Late Arrival Rate", unit: "percent", direction: "lower_is_better", target_value: 5, amber_threshold: 85, display_order: 30, description: "Days flagged as a late arrival as a share of days present." },
+  { metric_code: "LVE", metric_name: "Leave Rate", unit: "percent", direction: "lower_is_better", target_value: 5, amber_threshold: 85, display_order: 40, description: "Approved leave days as a share of expected working days." },
+  { metric_code: "RET", metric_name: "Retention Rate", unit: "percent", direction: "higher_is_better", target_value: 97, amber_threshold: 95, display_order: 50, description: "Share of the month's opening headcount still employed at month end." },
+  { metric_code: "HDY", metric_name: "Half Day Rate", unit: "percent", direction: "lower_is_better", target_value: 5, amber_threshold: 85, display_order: 60, description: "Days worked as a half shift, as a share of expected working days." },
+  { metric_code: "DQ", metric_name: "Attendance Data Completeness", unit: "percent", direction: "higher_is_better", target_value: 98, amber_threshold: 90, display_order: 70, description: "Share of attendance days with a confirmed status." },
 ];
 
 let configTableExists: boolean | null = null;
@@ -252,9 +178,7 @@ export function resetPortalConfigProbe(): void {
  *   3. portal_kpi_config with process_id IS NULL — the default set.
  *   4. FALLBACK_METRICS, only when the table does not exist yet.
  */
-export async function resolveMetricConfig(
-  processId: string,
-): Promise<MetricConfig[]> {
+export async function resolveMetricConfig(processId: string): Promise<MetricConfig[]> {
   const byCode = new Map<string, MetricConfig>();
 
   if (await portalConfigAvailable()) {
@@ -285,10 +209,7 @@ export async function resolveMetricConfig(
 
   if (byCode.size === 0) {
     for (const metric of FALLBACK_METRICS) {
-      byCode.set(metric.metric_code, {
-        ...metric,
-        target_source: "engine_fallback",
-      });
+      byCode.set(metric.metric_code, { ...metric, target_source: "engine_fallback" });
     }
   }
 
@@ -309,9 +230,7 @@ export async function resolveMetricConfig(
   // leave/employees), and inventing a mapping to the nearest-sounding engine metric would
   // silently misrepresent what was actually agreed with the client. Left as a flagged gap
   // for whoever decides whether/how those two belong in a future metric.
-  const KPI_PROCESS_CONFIG_ALIASES: Record<string, string> = {
-    ATTENDANCE_PCT: "ATT",
-  };
+  const KPI_PROCESS_CONFIG_ALIASES: Record<string, string> = { ATTENDANCE_PCT: "ATT" };
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT m.metric_code, c.target_value, c.min_threshold
@@ -327,11 +246,7 @@ export async function resolveMetricConfig(
       if (!existing) continue;
       const target = Number(row.target_value);
       if (!Number.isFinite(target) || target === 0) continue;
-      byCode.set(existing.metric_code, {
-        ...existing,
-        target_value: target,
-        target_source: "process_specific",
-      });
+      byCode.set(existing.metric_code, { ...existing, target_value: target, target_source: "process_specific" });
     }
   } catch {
     // kpi_process_config or kpi_metric_master unavailable — the resolved defaults still stand. A
@@ -405,15 +320,9 @@ async function loadE2eEmployeeIds(): Promise<string[]> {
 /** `AND col NOT IN (?, ?, ...)`, or "" when the exclusion list is empty -- appending an empty
  *  `NOT IN ()` is invalid SQL, and skipping the clause entirely when there is nothing to
  *  exclude is also the fast path for the common case (0 E2E employees in production today). */
-function excludeIdsClause(
-  column: string,
-  ids: readonly string[],
-): { sql: string; params: string[] } {
+function excludeIdsClause(column: string, ids: readonly string[]): { sql: string; params: string[] } {
   if (ids.length === 0) return { sql: "", params: [] };
-  return {
-    sql: ` AND ${column} NOT IN (${ids.map(() => "?").join(",")})`,
-    params: [...ids],
-  };
+  return { sql: ` AND ${column} NOT IN (${ids.map(() => "?").join(",")})`, params: [...ids] };
 }
 
 const ATTENDANCE_AGGREGATE_SELECT = `
@@ -443,26 +352,18 @@ const ATTENDANCE_AGGREGATE_SELECT = `
 
 /** Merges one AttendanceCounters row into an accumulator map, adding rather than overwriting
  *  -- needed because the same period can now be produced by BOTH query branches below. */
-function mergeAttendanceRow(
-  result: Map<string, AttendanceCounters>,
-  row: RowDataPacket,
-): void {
+function mergeAttendanceRow(result: Map<string, AttendanceCounters>, row: RowDataPacket): void {
   const period = String(row.period);
   const existing = result.get(period);
   const next: AttendanceCounters = {
     period,
     total_days: (existing?.total_days ?? 0) + (Number(row.total_days) || 0),
-    expected_days:
-      (existing?.expected_days ?? 0) + (Number(row.expected_days) || 0),
-    confirmed_expected_days:
-      (existing?.confirmed_expected_days ?? 0) +
-      (Number(row.confirmed_expected_days) || 0),
-    present_days:
-      (existing?.present_days ?? 0) + (Number(row.present_days) || 0),
+    expected_days: (existing?.expected_days ?? 0) + (Number(row.expected_days) || 0),
+    confirmed_expected_days: (existing?.confirmed_expected_days ?? 0) + (Number(row.confirmed_expected_days) || 0),
+    present_days: (existing?.present_days ?? 0) + (Number(row.present_days) || 0),
     half_days: (existing?.half_days ?? 0) + (Number(row.half_days) || 0),
     absent_days: (existing?.absent_days ?? 0) + (Number(row.absent_days) || 0),
-    unconfirmed_days:
-      (existing?.unconfirmed_days ?? 0) + (Number(row.unconfirmed_days) || 0),
+    unconfirmed_days: (existing?.unconfirmed_days ?? 0) + (Number(row.unconfirmed_days) || 0),
     leave_days: (existing?.leave_days ?? 0) + (Number(row.leave_days) || 0),
     late_days: (existing?.late_days ?? 0) + (Number(row.late_days) || 0),
     // employees_seen is COUNT(DISTINCT ...) PER BRANCH -- summing the two branches can
@@ -471,11 +372,8 @@ function mergeAttendanceRow(
     // process_id NULL but their current employee record also on this process). Accepted as
     // a rare, minor overcount in a summary field nothing else derives a percentage from,
     // rather than adding a third cross-branch DISTINCT query for a number only shown as-is.
-    employees_seen:
-      (existing?.employees_seen ?? 0) + (Number(row.employees_seen) || 0),
-    inferred_process_days:
-      (existing?.inferred_process_days ?? 0) +
-      (Number(row.inferred_process_days) || 0),
+    employees_seen: (existing?.employees_seen ?? 0) + (Number(row.employees_seen) || 0),
+    inferred_process_days: (existing?.inferred_process_days ?? 0) + (Number(row.inferred_process_days) || 0),
   };
   result.set(period, next);
 }
@@ -537,10 +435,8 @@ async function loadAttendanceCounters(
   );
 
   const result = new Map<string, AttendanceCounters>();
-  for (const row of directRows as RowDataPacket[])
-    mergeAttendanceRow(result, row);
-  for (const row of fallbackRows as RowDataPacket[])
-    mergeAttendanceRow(result, row);
+  for (const row of directRows as RowDataPacket[]) mergeAttendanceRow(result, row);
+  for (const row of fallbackRows as RowDataPacket[]) mergeAttendanceRow(result, row);
   return result;
 }
 
@@ -643,11 +539,7 @@ async function loadRetentionCounters(
   // "no value" rather than a fabricated number, just via the opening-headcount check
   // instead of the month list omitting it.
   const months: string[] = [];
-  for (
-    let cursor = fromPeriod;
-    cursor <= toPeriod;
-    cursor = shiftPeriod(cursor, 1)
-  ) {
+  for (let cursor = fromPeriod; cursor <= toPeriod; cursor = shiftPeriod(cursor, 1)) {
     months.push(cursor);
   }
   if (months.length === 0) return result;
@@ -660,14 +552,8 @@ async function loadRetentionCounters(
   // MySQL/MariaDB version this codebase might realistically run against, so there is no
   // reason to take on the newer, less universally-supported syntax for no behavioural
   // benefit.
-  const monthSelects = months
-    .map(() => "SELECT ? AS period, ? AS period_start, ? AS period_end")
-    .join(" UNION ALL ");
-  const monthParams = months.flatMap((period) => [
-    period,
-    periodStart(period),
-    periodEndExclusive(period),
-  ]);
+  const monthSelects = months.map(() => "SELECT ? AS period, ? AS period_start, ? AS period_end").join(" UNION ALL ");
+  const monthParams = months.flatMap((period) => [period, periodStart(period), periodEndExclusive(period)]);
   const exclusion = excludeIdsClause("e.id", e2eEmployeeIds);
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -724,10 +610,7 @@ function computeMetric(
 ): MetricValue {
   if (code === "RET") {
     if (!retention || retention.opening === 0) {
-      return {
-        actual: null,
-        reason: "Opening headcount for this month could not be established",
-      };
+      return { actual: null, reason: "Opening headcount for this month could not be established" };
     }
     const retained = retention.opening - retention.exits;
     return {
@@ -738,10 +621,7 @@ function computeMetric(
   }
 
   if (!attendance || attendance.total_days === 0) {
-    return {
-      actual: null,
-      reason: "No attendance records for this process in this month",
-    };
+    return { actual: null, reason: "No attendance records for this process in this month" };
   }
 
   switch (code) {
@@ -754,8 +634,7 @@ function computeMetric(
       if (attendance.confirmed_expected_days === 0) {
         return {
           actual: null,
-          reason:
-            "Every attendance day this month is still awaiting punch reconciliation",
+          reason: "Every attendance day this month is still awaiting punch reconciliation",
         };
       }
       const worked = attendance.present_days + attendance.half_days * 0.5;
@@ -768,15 +647,10 @@ function computeMetric(
 
     case "ABN": {
       if (attendance.confirmed_expected_days === 0) {
-        return {
-          actual: null,
-          reason: "No confirmed attendance days to measure against",
-        };
+        return { actual: null, reason: "No confirmed attendance days to measure against" };
       }
       return {
-        actual: round2(
-          (attendance.absent_days / attendance.confirmed_expected_days) * 100,
-        ),
+        actual: round2((attendance.absent_days / attendance.confirmed_expected_days) * 100),
         numerator: attendance.absent_days,
         denominator: attendance.confirmed_expected_days,
       };
@@ -784,15 +658,10 @@ function computeMetric(
 
     case "HDY": {
       if (attendance.confirmed_expected_days === 0) {
-        return {
-          actual: null,
-          reason: "No confirmed attendance days to measure against",
-        };
+        return { actual: null, reason: "No confirmed attendance days to measure against" };
       }
       return {
-        actual: round2(
-          (attendance.half_days / attendance.confirmed_expected_days) * 100,
-        ),
+        actual: round2((attendance.half_days / attendance.confirmed_expected_days) * 100),
         numerator: attendance.half_days,
         denominator: attendance.confirmed_expected_days,
       };
@@ -801,18 +670,14 @@ function computeMetric(
     case "LAT": {
       const presentBase = attendance.present_days;
       if (presentBase === 0) {
-        return {
-          actual: null,
-          reason: "Nobody was recorded present this month",
-        };
+        return { actual: null, reason: "Nobody was recorded present this month" };
       }
       if (!lateMarkCaptured(attendance)) {
         // The instrumentation gap, stated rather than scored. Verified: 2026-04 and 2026-05 have
         // 39,126 attendance rows and zero late marks.
         return {
           actual: null,
-          reason:
-            "Arrival time was not captured for this month, so lateness cannot be measured",
+          reason: "Arrival time was not captured for this month, so lateness cannot be measured",
         };
       }
       return {
@@ -824,10 +689,7 @@ function computeMetric(
 
     case "LVE": {
       if (attendance.expected_days === 0) {
-        return {
-          actual: null,
-          reason: "No expected working days to measure against",
-        };
+        return { actual: null, reason: "No expected working days to measure against" };
       }
       // Leave taken is counted from leave_request where available, because attendance carries only 25
       // rows marked leave_approved against 29,189 approved leave requests — the attendance status is
@@ -891,25 +753,13 @@ export const portalKpiEngine = {
   shiftPeriod,
   resolveMetricConfig,
 
-  async computeKpisForProcess(
-    processId: string,
-    period: string,
-  ): Promise<PortalKpiMetric[]> {
-    const result = await portalKpiEngine.computeProcessKpiResult(
-      processId,
-      period,
-    );
+  async computeKpisForProcess(processId: string, period: string): Promise<PortalKpiMetric[]> {
+    const result = await portalKpiEngine.computeProcessKpiResult(processId, period);
     return result.metrics;
   },
 
-  async computeProcessKpiResult(
-    processId: string,
-    period: string,
-  ): Promise<ProcessKpiResult> {
-    if (!processId)
-      throw Object.assign(new Error("processId is required"), {
-        statusCode: 400,
-      });
+  async computeProcessKpiResult(processId: string, period: string): Promise<ProcessKpiResult> {
+    if (!processId) throw Object.assign(new Error("processId is required"), { statusCode: 400 });
     assertPeriod(period);
 
     const fromPeriod = shiftPeriod(period, -(TREND_MONTHS - 1));
@@ -958,23 +808,16 @@ export const portalKpiEngine = {
           leave.get(trendPeriod),
           retention.get(trendPeriod),
         );
-        if (value.actual !== null)
-          sparkline.push({ period: trendPeriod, value: value.actual });
+        if (value.actual !== null) sparkline.push({ period: trendPeriod, value: value.actual });
       }
 
-      const achievement = computeAchievement(
-        current.actual,
-        metric.target_value,
-        metric.direction,
-      );
+      const achievement = computeAchievement(current.actual, metric.target_value, metric.direction);
 
       // Month-on-month movement, direction-aware. The previous point is the last month that HAS a
       // value, not literally last month, so a gap in the data does not read as a change.
-      const previous =
-        sparkline.length >= 2 ? sparkline[sparkline.length - 2] : null;
+      const previous = sparkline.length >= 2 ? sparkline[sparkline.length - 2] : null;
       const isCurrentLast =
-        sparkline.length > 0 &&
-        sparkline[sparkline.length - 1].period === period;
+        sparkline.length > 0 && sparkline[sparkline.length - 1].period === period;
       const delta =
         isCurrentLast && previous && current.actual !== null
           ? round2(current.actual - previous.value)
@@ -991,8 +834,7 @@ export const portalKpiEngine = {
         achievement_pct: achievement,
         rag: computeRag(achievement, metric.amber_threshold),
         description: metric.description,
-        no_data_reason:
-          current.actual === null ? (current.reason ?? "No data") : null,
+        no_data_reason: current.actual === null ? (current.reason ?? "No data") : null,
         numerator: current.numerator ?? null,
         denominator: current.denominator ?? null,
         delta_vs_previous: delta,
@@ -1016,23 +858,15 @@ export const portalKpiEngine = {
       period,
       metrics,
       summary: {
-        active_headcount: Number(
-          (headcountRows[0] as RowDataPacket[])[0]?.active_headcount ?? 0,
-        ),
+        active_headcount: Number((headcountRows[0] as RowDataPacket[])[0]?.active_headcount ?? 0),
         employees_with_activity: currentAttendance?.employees_seen ?? 0,
         expected_days: currentAttendance?.expected_days ?? 0,
         unconfirmed_days: currentAttendance?.unconfirmed_days ?? 0,
         inferred_process_pct:
           currentAttendance && currentAttendance.total_days > 0
-            ? round2(
-                (currentAttendance.inferred_process_days /
-                  currentAttendance.total_days) *
-                  100,
-              )
+            ? round2((currentAttendance.inferred_process_days / currentAttendance.total_days) * 100)
             : 0,
-        data_through: periodsWithData.length
-          ? periodsWithData[periodsWithData.length - 1]
-          : null,
+        data_through: periodsWithData.length ? periodsWithData[periodsWithData.length - 1] : null,
       },
     };
   },
@@ -1045,21 +879,9 @@ export const portalKpiEngine = {
    * with no data sort last, because "we cannot measure this" is not the headline for a card whose
    * job is to flag risk.
    */
-  async computeHeadlineMetrics(
-    processId: string,
-    period: string,
-    limit = 3,
-  ): Promise<PortalKpiMetric[]> {
-    const { metrics } = await portalKpiEngine.computeProcessKpiResult(
-      processId,
-      period,
-    );
-    const rank: Record<PortalRag, number> = {
-      red: 0,
-      amber: 1,
-      green: 2,
-      no_data: 3,
-    };
+  async computeHeadlineMetrics(processId: string, period: string, limit = 3): Promise<PortalKpiMetric[]> {
+    const { metrics } = await portalKpiEngine.computeProcessKpiResult(processId, period);
+    const rank: Record<PortalRag, number> = { red: 0, amber: 1, green: 2, no_data: 3 };
     return [...metrics]
       .sort((left, right) => {
         const byRag = rank[left.rag] - rank[right.rag];

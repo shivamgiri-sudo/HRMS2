@@ -19,9 +19,7 @@ const src = await import("../process-metric-source.js");
  * Index-based assertions would otherwise be inspecting the probe.
  */
 function firstDataQuery(): [string, unknown[]] {
-  const call = execute.mock.calls.find(
-    ([sql]) => !String(sql).includes("INFORMATION_SCHEMA"),
-  );
+  const call = execute.mock.calls.find(([sql]) => !String(sql).includes("INFORMATION_SCHEMA"));
   if (!call) throw new Error("no data query was issued");
   return call as [string, unknown[]];
 }
@@ -38,31 +36,17 @@ describe("fetchProcessMetricValues", () => {
 
   it("returns no entry for a metric with no rows, rather than a zero", async () => {
     execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]);
-    const out = await src.fetchProcessMetricValues(
-      "p1",
-      ["abc_roi"],
-      "2026-08-01",
-      "2026-08-31",
-    );
+    const out = await src.fetchProcessMetricValues("p1", ["abc_roi"], "2026-08-01", "2026-08-31");
     expect(out.get("abc_roi")).toBeUndefined();
   });
 
   it("averages rate metrics and carries a monthly trend", async () => {
     execute
-      .mockResolvedValueOnce([
-        [{ metric_key: "abc_prepaid_pct", value: "82.5", n: 3 }],
-        [],
-      ])
-      .mockResolvedValueOnce([
-        [{ metric_key: "abc_prepaid_pct", period: "2026-08", value: "82.5" }],
-        [],
-      ]);
-    const out = await src.fetchProcessMetricValues(
-      "p1",
-      ["abc_prepaid_pct"],
-      "2026-08-01",
-      "2026-08-31",
-    );
+      .mockResolvedValueOnce([[{ metric_key: "abc_prepaid_pct", value: "82.5", n: 3 }], []])
+      .mockResolvedValueOnce([[
+        { metric_key: "abc_prepaid_pct", period: "2026-08", value: "82.5" },
+      ], []]);
+    const out = await src.fetchProcessMetricValues("p1", ["abc_prepaid_pct"], "2026-08-01", "2026-08-31");
     expect(out.get("abc_prepaid_pct")).toEqual({
       value: 82.5,
       count: 3,
@@ -81,28 +65,15 @@ describe("fetchProcessMetricValues", () => {
     // COUNT(actual_value) skips NULLs, so a row entered with an empty value
     // cell reports n=0 and must not surface as a reading.
     execute
-      .mockResolvedValueOnce([
-        [{ metric_key: "abc_roi", value: null, n: 0 }],
-        [],
-      ])
+      .mockResolvedValueOnce([[{ metric_key: "abc_roi", value: null, n: 0 }], []])
       .mockResolvedValueOnce([[], []]);
-    const out = await src.fetchProcessMetricValues(
-      "p1",
-      ["abc_roi"],
-      "2026-08-01",
-      "2026-08-31",
-    );
+    const out = await src.fetchProcessMetricValues("p1", ["abc_roi"], "2026-08-01", "2026-08-31");
     expect(out.get("abc_roi")).toBeUndefined();
   });
 
   it("scopes every query to the process it was asked for", async () => {
     execute.mockResolvedValue([[], []]);
-    await src.fetchProcessMetricValues(
-      "p-target",
-      ["m1"],
-      "2026-08-01",
-      "2026-08-31",
-    );
+    await src.fetchProcessMetricValues("p-target", ["m1"], "2026-08-01", "2026-08-31");
     // The 1685 capability probe reads INFORMATION_SCHEMA and takes no
     // parameters, so it is excluded — every query that touches DATA must scope.
     const dataQueries = execute.mock.calls.filter(
@@ -115,12 +86,7 @@ describe("fetchProcessMetricValues", () => {
   });
 
   it("does not query at all when asked for no metrics", async () => {
-    const out = await src.fetchProcessMetricValues(
-      "p1",
-      [],
-      "2026-08-01",
-      "2026-08-31",
-    );
+    const out = await src.fetchProcessMetricValues("p1", [], "2026-08-01", "2026-08-31");
     expect(out.size).toBe(0);
     expect(execute).not.toHaveBeenCalled();
   });
@@ -139,21 +105,11 @@ describe("metric_code aliases", () => {
     // a hand-entered figure is keyed by the registry's own metricKey. The caller
     // asks for the registry key and must get an answer either way.
     execute
-      .mockResolvedValueOnce([
-        [{ metric_key: "GS1_EMAIL_TAT_SEC", value: "3100", n: 4 }],
-        [],
-      ])
-      .mockResolvedValueOnce([
-        [{ metric_key: "GS1_EMAIL_TAT_SEC", period: "2026-08", value: "3100" }],
-        [],
-      ]);
+      .mockResolvedValueOnce([[{ metric_key: "GS1_EMAIL_TAT_SEC", value: "3100", n: 4 }], []])
+      .mockResolvedValueOnce([[{ metric_key: "GS1_EMAIL_TAT_SEC", period: "2026-08", value: "3100" }], []]);
 
     const out = await src.fetchProcessMetricValues(
-      "p1",
-      ["gs1_email_tat_sec"],
-      "2026-08-01",
-      "2026-08-31",
-      [],
+      "p1", ["gs1_email_tat_sec"], "2026-08-01", "2026-08-31", [],
       { gs1_email_tat_sec: "GS1_EMAIL_TAT_SEC" },
     );
 
@@ -173,11 +129,7 @@ describe("metric_code aliases", () => {
   it("queries for both spellings", async () => {
     execute.mockResolvedValue([[], []]);
     await src.fetchProcessMetricValues(
-      "p1",
-      ["gs1_email_tat_sec"],
-      "2026-08-01",
-      "2026-08-31",
-      [],
+      "p1", ["gs1_email_tat_sec"], "2026-08-01", "2026-08-31", [],
       { gs1_email_tat_sec: "GS1_EMAIL_TAT_SEC" },
     );
     const params = firstDataQuery()[1] as unknown[];
@@ -188,12 +140,7 @@ describe("metric_code aliases", () => {
   it("ignores an alias identical to the key rather than double-listing it", async () => {
     execute.mockResolvedValue([[], []]);
     await src.fetchProcessMetricValues(
-      "p1",
-      ["same_key"],
-      "2026-08-01",
-      "2026-08-31",
-      [],
-      { same_key: "same_key" },
+      "p1", ["same_key"], "2026-08-01", "2026-08-31", [], { same_key: "same_key" },
     );
     const params = firstDataQuery()[1] as unknown[];
     expect(params.filter((p) => p === "same_key")).toHaveLength(1);
@@ -224,18 +171,8 @@ describe("exact period ratio", () => {
   }
 
   it("asks for SUM(numerator)/SUM(denominator) when the columns exist", async () => {
-    withColumns(true, {
-      metric_key: "inbound_al_pct",
-      value: "97.96",
-      n: 6,
-      exact_ratio: 1,
-    });
-    const out = await src.fetchProcessMetricValues(
-      "p1",
-      ["inbound_al_pct"],
-      "2026-08-01",
-      "2026-08-31",
-    );
+    withColumns(true, { metric_key: "inbound_al_pct", value: "97.96", n: 6, exact_ratio: 1 });
+    const out = await src.fetchProcessMetricValues("p1", ["inbound_al_pct"], "2026-08-01", "2026-08-31");
     const sql = String(execute.mock.calls[1][0]);
     expect(sql).toContain("SUM(rollup_numerator) / SUM(rollup_denominator)");
     // Only when EVERY counted day has parts — a partial numerator over a partial
@@ -246,30 +183,15 @@ describe("exact period ratio", () => {
   });
 
   it("falls back to the average, and says it is not exact, when a day lacks its parts", async () => {
-    withColumns(true, {
-      metric_key: "inbound_al_pct",
-      value: "98.20",
-      n: 6,
-      exact_ratio: 0,
-    });
-    const out = await src.fetchProcessMetricValues(
-      "p1",
-      ["inbound_al_pct"],
-      "2026-08-01",
-      "2026-08-31",
-    );
+    withColumns(true, { metric_key: "inbound_al_pct", value: "98.20", n: 6, exact_ratio: 0 });
+    const out = await src.fetchProcessMetricValues("p1", ["inbound_al_pct"], "2026-08-01", "2026-08-31");
     expect(out.get("inbound_al_pct")?.exactRatio).toBe(false);
     expect(out.get("inbound_al_pct")?.value).toBeCloseTo(98.2);
   });
 
   it("never names the columns on a database that does not have them", async () => {
     withColumns(false, { metric_key: "inbound_al_pct", value: "98.20", n: 6 });
-    const out = await src.fetchProcessMetricValues(
-      "p1",
-      ["inbound_al_pct"],
-      "2026-08-01",
-      "2026-08-31",
-    );
+    const out = await src.fetchProcessMetricValues("p1", ["inbound_al_pct"], "2026-08-01", "2026-08-31");
     const sql = String(execute.mock.calls[1][0]);
     expect(sql).not.toContain("rollup_numerator");
     expect(sql).not.toContain("rollup_denominator");
@@ -294,24 +216,10 @@ describe("volume rule versus stored ratio", () => {
   it("divides the parts even when the metric is named as a volume to sum", async () => {
     execute
       .mockResolvedValueOnce([[{ n: 2 }], []])
-      .mockResolvedValueOnce([
-        [
-          {
-            metric_key: "shift_minutes_avg",
-            value: "601",
-            n: 3,
-            exact_ratio: 1,
-          },
-        ],
-        [],
-      ])
+      .mockResolvedValueOnce([[{ metric_key: "shift_minutes_avg", value: "601", n: 3, exact_ratio: 1 }], []])
       .mockResolvedValueOnce([[], []]);
     await src.fetchProcessMetricValues(
-      "p1",
-      ["shift_minutes_avg"],
-      "2026-06-01",
-      "2026-06-30",
-      ["shift_minutes_avg"],
+      "p1", ["shift_minutes_avg"], "2026-06-01", "2026-06-30", ["shift_minutes_avg"],
     );
     const sql = String(execute.mock.calls[1][0]);
     const ratioAt = sql.indexOf("SUM(rollup_numerator)");
@@ -325,28 +233,12 @@ describe("volume rule versus stored ratio", () => {
   it("still sums a genuine volume that recorded no parts", async () => {
     execute
       .mockResolvedValueOnce([[{ n: 2 }], []])
-      .mockResolvedValueOnce([
-        [
-          {
-            metric_key: "pan_submission_count",
-            value: "120",
-            n: 3,
-            exact_ratio: 0,
-          },
-        ],
-        [],
-      ])
+      .mockResolvedValueOnce([[{ metric_key: "pan_submission_count", value: "120", n: 3, exact_ratio: 0 }], []])
       .mockResolvedValueOnce([[], []]);
     const out = await src.fetchProcessMetricValues(
-      "p1",
-      ["pan_submission_count"],
-      "2026-08-01",
-      "2026-08-31",
-      ["pan_submission_count"],
+      "p1", ["pan_submission_count"], "2026-08-01", "2026-08-31", ["pan_submission_count"],
     );
-    expect(String(execute.mock.calls[1][0])).toContain(
-      "THEN SUM(actual_value)",
-    );
+    expect(String(execute.mock.calls[1][0])).toContain("THEN SUM(actual_value)");
     expect(out.get("pan_submission_count")?.value).toBe(120);
   });
 });

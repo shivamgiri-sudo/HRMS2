@@ -3,8 +3,7 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 
 const moduleDir = path.resolve(__dirname, "..");
-const read = (file: string) =>
-  fs.readFileSync(path.join(moduleDir, file), "utf8");
+const read = (file: string) => fs.readFileSync(path.join(moduleDir, file), "utf8");
 
 /**
  * Recognised revenue has to be an accrual number, not a raw invoice-line number.

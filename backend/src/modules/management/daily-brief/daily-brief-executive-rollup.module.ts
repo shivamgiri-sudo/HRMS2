@@ -105,16 +105,8 @@ export interface ExecutiveRollupModuleResult {
    * branchAttendance rows (not a second query) — spec §29's "major positive wins" /
    * "major operational deterioration" at the coarse attendance-comparison level. Null
    * when fewer than 2 branches have data (no meaningful comparison). */
-  bestPerformingBranch: {
-    branchId: string;
-    branchName: string;
-    attendancePct: number;
-  } | null;
-  worstPerformingBranch: {
-    branchId: string;
-    branchName: string;
-    attendancePct: number;
-  } | null;
+  bestPerformingBranch: { branchId: string; branchName: string; attendancePct: number } | null;
+  worstPerformingBranch: { branchId: string; branchName: string; attendancePct: number } | null;
   topActions: TopBusinessAction[];
   hiringAttrition: HiringAttritionRollup;
   sourceHealth: SourceHealth[];
@@ -125,40 +117,22 @@ function numberValue(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function scopeClause(
-  scope: ExecutiveRollupScope,
-  branchCol: string,
-  processCol: string,
-): { sql: string; params: string[] } {
+function scopeClause(scope: ExecutiveRollupScope, branchCol: string, processCol: string): { sql: string; params: string[] } {
   const conditions: string[] = [];
   const params: string[] = [];
   if (scope.branchIds.length > 0) {
-    conditions.push(
-      `${branchCol} IN (${scope.branchIds.map(() => "?").join(",")})`,
-    );
+    conditions.push(`${branchCol} IN (${scope.branchIds.map(() => "?").join(",")})`);
     params.push(...scope.branchIds);
   }
   if (scope.processIds.length > 0) {
-    conditions.push(
-      `${processCol} IN (${scope.processIds.map(() => "?").join(",")})`,
-    );
+    conditions.push(`${processCol} IN (${scope.processIds.map(() => "?").join(",")})`);
     params.push(...scope.processIds);
   }
-  return conditions.length > 0
-    ? { sql: `AND ${conditions.join(" AND ")}`, params }
-    : { sql: "", params: [] };
+  return conditions.length > 0 ? { sql: `AND ${conditions.join(" AND ")}`, params } : { sql: "", params: [] };
 }
 
 function emptyOrgAttendance(): OrgAttendanceRollup {
-  return {
-    present: 0,
-    halfDay: 0,
-    absent: 0,
-    missingPunch: 0,
-    lateCount: 0,
-    expectedToWork: 0,
-    attendancePct: null,
-  };
+  return { present: 0, halfDay: 0, absent: 0, missingPunch: 0, lateCount: 0, expectedToWork: 0, attendancePct: null };
 }
 
 /**
@@ -197,19 +171,12 @@ async function buildOrgAttendance(
       missingPunch: numberValue(row.missing_punch),
       lateCount: numberValue(row.late_count),
       expectedToWork,
-      attendancePct:
-        expectedToWork > 0
-          ? Number(((attendedDays / expectedToWork) * 100).toFixed(2))
-          : null,
+      attendancePct: expectedToWork > 0 ? Number(((attendedDays / expectedToWork) * 100).toFixed(2)) : null,
     };
     const total = numberValue(row.total);
     return {
       rollup,
-      health: {
-        module: "executive_org_attendance",
-        state: total > 0 ? "AVAILABLE" : "NO_DATA",
-        asOfDate: businessDate,
-      },
+      health: { module: "executive_org_attendance", state: total > 0 ? "AVAILABLE" : "NO_DATA", asOfDate: businessDate },
     };
   } catch (err) {
     return {
@@ -257,9 +224,7 @@ async function buildBranchAttendance(
        LIMIT ${EXECUTIVE_ROLLUP_MAX_BRANCH_ROWS}`,
       [businessDate, ...clause.params],
     );
-    const branchRows: BranchAttendanceRollupRow[] = (
-      rows as RowDataPacket[]
-    ).map((r) => {
+    const branchRows: BranchAttendanceRollupRow[] = (rows as RowDataPacket[]).map((r) => {
       const expectedToWork = numberValue(r.expected_to_work);
       const attendedDays = numberValue(r.attended_days);
       return {
@@ -271,19 +236,12 @@ async function buildBranchAttendance(
         missingPunch: numberValue(r.missing_punch),
         lateCount: numberValue(r.late_count),
         expectedToWork,
-        attendancePct:
-          expectedToWork > 0
-            ? Number(((attendedDays / expectedToWork) * 100).toFixed(2))
-            : null,
+        attendancePct: expectedToWork > 0 ? Number(((attendedDays / expectedToWork) * 100).toFixed(2)) : null,
       };
     });
     return {
       rows: branchRows,
-      health: {
-        module: "executive_branch_attendance",
-        state: branchRows.length > 0 ? "AVAILABLE" : "NO_DATA",
-        asOfDate: businessDate,
-      },
+      health: { module: "executive_branch_attendance", state: branchRows.length > 0 ? "AVAILABLE" : "NO_DATA", asOfDate: businessDate },
     };
   } catch (err) {
     return {
@@ -308,9 +266,7 @@ async function buildBranchAttendance(
  * an org-wide/HQ recipient's rollup always sees the true org-wide top actions, which
  * matches spec §29's "high-severity business actions" being an org-level signal.
  */
-async function buildTopActions(
-  businessDate: string,
-): Promise<{ actions: TopBusinessAction[]; health: SourceHealth }> {
+async function buildTopActions(businessDate: string): Promise<{ actions: TopBusinessAction[]; health: SourceHealth }> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, title, risk_type, severity, status, due_date
@@ -329,11 +285,7 @@ async function buildTopActions(
     }));
     return {
       actions,
-      health: {
-        module: "executive_top_actions",
-        state: actions.length > 0 ? "AVAILABLE" : "NO_DATA",
-        asOfDate: businessDate,
-      },
+      health: { module: "executive_top_actions", state: actions.length > 0 ? "AVAILABLE" : "NO_DATA", asOfDate: businessDate },
     };
   } catch (err) {
     return {
@@ -363,9 +315,7 @@ async function buildTopActions(
  * instruction to reuse the COUNTING LOGIC at GROUP BY/org scale, not the modules
  * themselves.
  */
-async function buildHiringAttrition(
-  businessDate: string,
-): Promise<{ rollup: HiringAttritionRollup; health: SourceHealth }> {
+async function buildHiringAttrition(businessDate: string): Promise<{ rollup: HiringAttritionRollup; health: SourceHealth }> {
   try {
     const [recruitmentRows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -397,22 +347,13 @@ async function buildHiringAttrition(
     };
     return {
       rollup,
-      health: {
-        module: "executive_hiring_attrition",
-        state: "AVAILABLE",
-        asOfDate: businessDate,
-      },
+      health: { module: "executive_hiring_attrition", state: "AVAILABLE", asOfDate: businessDate },
     };
   } catch (err) {
     return {
       rollup: {
-        candidatesMovedD1: 0,
-        offerApprovalsPending: 0,
-        joiningToday: 0,
-        joiningThisWeek: 0,
-        resignationsSubmittedD1: 0,
-        openExitRequests: 0,
-        upcomingLwdNext7Days: 0,
+        candidatesMovedD1: 0, offerApprovalsPending: 0, joiningToday: 0, joiningThisWeek: 0,
+        resignationsSubmittedD1: 0, openExitRequests: 0, upcomingLwdNext7Days: 0,
       },
       health: {
         module: "executive_hiring_attrition",
@@ -428,41 +369,22 @@ export async function buildExecutiveRollupModule(
   scope: ExecutiveRollupScope,
   businessDate: string,
 ): Promise<ExecutiveRollupModuleResult> {
-  const [
-    orgAttendanceResult,
-    branchAttendanceResult,
-    topActionsResult,
-    hiringAttritionResult,
-  ] = await Promise.all([
+  const [orgAttendanceResult, branchAttendanceResult, topActionsResult, hiringAttritionResult] = await Promise.all([
     buildOrgAttendance(scope, businessDate),
     buildBranchAttendance(scope, businessDate),
     buildTopActions(businessDate),
     buildHiringAttrition(businessDate),
   ]);
 
-  const withData = branchAttendanceResult.rows.filter(
-    (r) => r.attendancePct != null,
-  );
-  let bestPerformingBranch: ExecutiveRollupModuleResult["bestPerformingBranch"] =
-    null;
-  let worstPerformingBranch: ExecutiveRollupModuleResult["worstPerformingBranch"] =
-    null;
+  const withData = branchAttendanceResult.rows.filter((r) => r.attendancePct != null);
+  let bestPerformingBranch: ExecutiveRollupModuleResult["bestPerformingBranch"] = null;
+  let worstPerformingBranch: ExecutiveRollupModuleResult["worstPerformingBranch"] = null;
   if (withData.length >= 2) {
-    const sorted = [...withData].sort(
-      (a, b) => (b.attendancePct as number) - (a.attendancePct as number),
-    );
+    const sorted = [...withData].sort((a, b) => (b.attendancePct as number) - (a.attendancePct as number));
     const best = sorted[0];
     const worst = sorted[sorted.length - 1];
-    bestPerformingBranch = {
-      branchId: best.branchId,
-      branchName: best.branchName,
-      attendancePct: best.attendancePct as number,
-    };
-    worstPerformingBranch = {
-      branchId: worst.branchId,
-      branchName: worst.branchName,
-      attendancePct: worst.attendancePct as number,
-    };
+    bestPerformingBranch = { branchId: best.branchId, branchName: best.branchName, attendancePct: best.attendancePct as number };
+    worstPerformingBranch = { branchId: worst.branchId, branchName: worst.branchName, attendancePct: worst.attendancePct as number };
   }
 
   return {
@@ -484,5 +406,4 @@ export async function buildExecutiveRollupModule(
 }
 
 // Exported for the exclusion-list unit test that pins this module to the shared vocabulary.
-export const _EXPECTED_TO_WORK_EXCLUSIONS_FOR_TEST =
-  EXPECTED_TO_WORK_EXCLUSIONS;
+export const _EXPECTED_TO_WORK_EXCLUSIONS_FOR_TEST = EXPECTED_TO_WORK_EXCLUSIONS;

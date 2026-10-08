@@ -8,10 +8,10 @@
  * 4. attendance_source mismatch — record set to biometric but should be dialler
  */
 
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { getAprMonthly } from "./apr-attendance.service.js";
-import { classifyOperationsNetLogin } from "./attendance-engine.service.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { getAprMonthly } from './apr-attendance.service.js';
+import { classifyOperationsNetLogin } from './attendance-engine.service.js';
 
 export interface AttendanceDiagnostic {
   employee_code: string;
@@ -45,7 +45,7 @@ export async function diagnoseAttendanceMismatch(
 
   const emp = empRows[0]!;
   const empId = String(emp.id);
-  const empName = `${emp.first_name} ${emp.last_name || ""}`.trim();
+  const empName = `${emp.first_name} ${emp.last_name || ''}`.trim();
 
   // Fetch HRMS attendance record for that day
   const [hrmRows] = await db.execute<RowDataPacket[]>(
@@ -71,16 +71,12 @@ export async function diagnoseAttendanceMismatch(
   let issue: string | null = null;
 
   if (!hrmRecord) {
-    issue = "No HRMS attendance record found for this date";
-  } else if (hrmRecord.attendance_source === "biometric" && !aprRecord) {
-    issue =
-      "HRMS source=biometric but employee has no APR records (not in ViciDial)";
+    issue = 'No HRMS attendance record found for this date';
+  } else if (hrmRecord.attendance_source === 'biometric' && !aprRecord) {
+    issue = 'HRMS source=biometric but employee has no APR records (not in ViciDial)';
   } else if (aprRecord && aprRecord.net_minutes === 0) {
-    issue = `APR found but zero net login (${aprRecord.net_login || "0:00:00"}). HRMS shows ${hrmRecord.attendance_status} from ${hrmRecord.attendance_source} instead.`;
-  } else if (
-    aprRecord &&
-    hrmRecord.attendance_status !== aprRecord.attendance_status
-  ) {
+    issue = `APR found but zero net login (${aprRecord.net_login || '0:00:00'}). HRMS shows ${hrmRecord.attendance_status} from ${hrmRecord.attendance_source} instead.`;
+  } else if (aprRecord && hrmRecord.attendance_status !== aprRecord.attendance_status) {
     issue = `Status mismatch: HRMS=${hrmRecord.attendance_status}, APR=${aprRecord.attendance_status}. Check if record was manually overridden.`;
   }
 
@@ -88,8 +84,8 @@ export async function diagnoseAttendanceMismatch(
     employee_code: empCode,
     employee_name: empName,
     record_date: recordDate,
-    hrms_status: hrmRecord?.attendance_status ?? "no_record",
-    hrms_source: hrmRecord?.attendance_source ?? "unknown",
+    hrms_status: hrmRecord?.attendance_status ?? 'no_record',
+    hrms_source: hrmRecord?.attendance_source ?? 'unknown',
     apr_found: !!aprRecord,
     apr_net_minutes: aprRecord?.net_minutes ?? null,
     apr_status: aprRecord?.attendance_status ?? null,
@@ -127,7 +123,7 @@ export async function batchDiagnose(
     if (empRows.length === 0) continue;
 
     const emp = empRows[0]!;
-    const empName = `${emp.first_name} ${emp.last_name || ""}`.trim();
+    const empName = `${emp.first_name} ${emp.last_name || ''}`.trim();
 
     // Fetch APR month
     const aprData = await getAprMonthly(
@@ -145,10 +141,10 @@ export async function batchDiagnose(
       const apr = aprData.find((r) => r.record_date === hrm.record_date);
       let issue: string | null = null;
 
-      if (hrm.attendance_source === "biometric" && !apr) {
-        issue = "No APR record; using biometric source";
+      if (hrm.attendance_source === 'biometric' && !apr) {
+        issue = 'No APR record; using biometric source';
       } else if (apr && apr.net_minutes === 0) {
-        issue = `APR zero net login (${apr.net_login || "0:00"}); HRMS shows ${hrm.attendance_status}`;
+        issue = `APR zero net login (${apr.net_login || '0:00'}); HRMS shows ${hrm.attendance_status}`;
       } else if (apr && hrm.attendance_status !== apr.attendance_status) {
         issue = `Mismatch: HRMS=${hrm.attendance_status}, APR=${apr.attendance_status}`;
       }

@@ -1,13 +1,13 @@
-import { Router, Request, Response } from "express";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
+import { Router, Request, Response } from 'express';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
 import {
   listAliases,
   createAlias,
   updateAlias,
   deleteAlias,
   resolveAliases,
-} from "./shift-alias.service.js";
+} from './shift-alias.service.js';
 
 const router = Router();
 
@@ -16,19 +16,19 @@ const router = Router();
  * List all shift aliases, optionally filtered by shiftId
  */
 router.get(
-  "/",
+  '/',
   requireAuth,
-  requireRole("wfm", "admin", "super_admin"),
+  requireRole('wfm', 'admin', 'super_admin'),
   async (req: Request, res: Response) => {
     try {
       const shiftId = req.query.shiftId as string | undefined;
       const aliases = await listAliases(shiftId);
       res.json({ aliases });
     } catch (error) {
-      console.error("Error listing shift aliases:", error);
-      res.status(500).json({ error: "Failed to list shift aliases" });
+      console.error('Error listing shift aliases:', error);
+      res.status(500).json({ error: 'Failed to list shift aliases' });
     }
-  },
+  }
 );
 
 /**
@@ -36,9 +36,9 @@ router.get(
  * Create a new shift alias
  */
 router.post(
-  "/",
+  '/',
   requireAuth,
-  requireRole("wfm", "admin"),
+  requireRole('wfm', 'admin'),
   async (req: Request, res: Response) => {
     try {
       const { shiftId, alias } = req.body;
@@ -46,7 +46,7 @@ router.post(
       if (!shiftId || !alias) {
         return res
           .status(400)
-          .json({ error: "shiftId and alias are required" });
+          .json({ error: 'shiftId and alias are required' });
       }
 
       const userId = (req as any).userId;
@@ -54,12 +54,12 @@ router.post(
       res.status(201).json({ alias: newAlias });
     } catch (error: any) {
       if (error.statusCode === 409) {
-        return res.status(409).json({ error: "Alias already exists" });
+        return res.status(409).json({ error: 'Alias already exists' });
       }
-      console.error("Error creating shift alias:", error);
-      res.status(500).json({ error: "Failed to create shift alias" });
+      console.error('Error creating shift alias:', error);
+      res.status(500).json({ error: 'Failed to create shift alias' });
     }
-  },
+  }
 );
 
 /**
@@ -67,16 +67,16 @@ router.post(
  * Update a shift alias
  */
 router.patch(
-  "/:id",
+  '/:id',
   requireAuth,
-  requireRole("wfm", "admin"),
+  requireRole('wfm', 'admin'),
   async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id, 10);
       const { alias, isActive } = req.body;
 
       if (isNaN(id)) {
-        return res.status(400).json({ error: "Invalid alias ID" });
+        return res.status(400).json({ error: 'Invalid alias ID' });
       }
 
       const updates: { alias?: string; isActive?: boolean } = {};
@@ -86,10 +86,10 @@ router.patch(
       const updated = await updateAlias(id, updates);
       res.json({ alias: updated });
     } catch (error) {
-      console.error("Error updating shift alias:", error);
-      res.status(500).json({ error: "Failed to update shift alias" });
+      console.error('Error updating shift alias:', error);
+      res.status(500).json({ error: 'Failed to update shift alias' });
     }
-  },
+  }
 );
 
 /**
@@ -97,24 +97,24 @@ router.patch(
  * Delete a shift alias
  */
 router.delete(
-  "/:id",
+  '/:id',
   requireAuth,
-  requireRole("admin"),
+  requireRole('admin'),
   async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id, 10);
 
       if (isNaN(id)) {
-        return res.status(400).json({ error: "Invalid alias ID" });
+        return res.status(400).json({ error: 'Invalid alias ID' });
       }
 
       await deleteAlias(id);
       res.json({ success: true });
     } catch (error) {
-      console.error("Error deleting shift alias:", error);
-      res.status(500).json({ error: "Failed to delete shift alias" });
+      console.error('Error deleting shift alias:', error);
+      res.status(500).json({ error: 'Failed to delete shift alias' });
     }
-  },
+  }
 );
 
 /**
@@ -122,15 +122,15 @@ router.delete(
  * Resolve shift aliases - case-insensitive mapping from alias string to shiftId
  */
 router.post(
-  "/resolve",
+  '/resolve',
   requireAuth,
-  requireRole("wfm", "admin", "super_admin"),
+  requireRole('wfm', 'admin', 'super_admin'),
   async (req: Request, res: Response) => {
     try {
       const { aliases } = req.body;
 
       if (!Array.isArray(aliases)) {
-        return res.status(400).json({ error: "aliases must be an array" });
+        return res.status(400).json({ error: 'aliases must be an array' });
       }
 
       const result = await resolveAliases(aliases);
@@ -143,10 +143,10 @@ router.post(
 
       res.json({ resolved });
     } catch (error) {
-      console.error("Error resolving shift aliases:", error);
-      res.status(500).json({ error: "Failed to resolve shift aliases" });
+      console.error('Error resolving shift aliases:', error);
+      res.status(500).json({ error: 'Failed to resolve shift aliases' });
     }
-  },
+  }
 );
 
 export default router;

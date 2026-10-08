@@ -15,12 +15,12 @@
  * MAS{n} or {n}C), so standardising on this generator is safe and needs no
  * back-fill.
  */
-import type { PoolConnection } from "mysql2/promise";
-import type { RowDataPacket } from "mysql2";
+import type { PoolConnection } from 'mysql2/promise';
+import type { RowDataPacket } from 'mysql2';
 
 /** Employment types issued an off-roll style code, matched exactly (kept for reference --
  *  isOffRollType() below is what actually runs; this is retained as the exact-match core). */
-const OFF_ROLL_TYPES = new Set(["Trainee", "OffRoll"]);
+const OFF_ROLL_TYPES = new Set(['Trainee', 'OffRoll']);
 
 /**
  * Whether an employment-type label should get an off-roll {n}C code.
@@ -44,16 +44,10 @@ const OFF_ROLL_TYPES = new Set(["Trainee", "OffRoll"]);
  */
 export function isOffRollType(empType: string | null | undefined): boolean {
   if (OFF_ROLL_TYPES.has(String(empType))) return true;
-  const normalized = String(empType ?? "")
-    .trim()
-    .toUpperCase();
+  const normalized = String(empType ?? '').trim().toUpperCase();
   if (!normalized) return false;
-  if (normalized.includes("TRAINEE")) return true;
-  return (
-    normalized === "OFFROLL" ||
-    normalized === "OFF ROLL" ||
-    normalized === "OFF-ROLL"
-  );
+  if (normalized.includes('TRAINEE')) return true;
+  return normalized === 'OFFROLL' || normalized === 'OFF ROLL' || normalized === 'OFF-ROLL';
 }
 
 /**
@@ -74,10 +68,7 @@ export function isOffRollType(empType: string | null | undefined): boolean {
  * inside the lock, which makes them authoritative; the employees scan below remains as a
  * floor for codes written by paths that never touch the sequence (sync, bulk upload).
  */
-export async function generateEmployeeCode(
-  conn: PoolConnection,
-  empType: string,
-): Promise<string> {
+export async function generateEmployeeCode(conn: PoolConnection, empType: string): Promise<string> {
   const isOffRoll = isOffRollType(empType);
 
   // Fixed order (id) so two transactions can never lock the rows in opposite order.
@@ -94,7 +85,7 @@ export async function generateEmployeeCode(
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^IDC[0-9]+$'),0),
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,1,CHAR_LENGTH(employee_code)-1) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^[0-9]+C$'),0),
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4,CHAR_LENGTH(employee_code)-4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^IDC[0-9]+C$'),0)
-     ) AS global_max`,
+     ) AS global_max`
   );
   const scanMax = Number((maxRows as RowDataPacket[])[0]?.global_max) || 0;
 

@@ -19,13 +19,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * the round-trip test below is what would catch a future caller that forgets one.
  */
 
-const { execute, getConnection } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  getConnection: vi.fn(),
-}));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute, query: execute, getConnection },
-}));
+const { execute, getConnection } = vi.hoisted(() => ({ execute: vi.fn(), getConnection: vi.fn() }));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute, getConnection } }));
 
 import { budgetConsumptionService } from "../budget-consumption.service.js";
 
@@ -33,14 +28,9 @@ const GROSS = 118_000;
 const NET = 100_000;
 
 /** A budget line with Rs 1,02,000 of headroom, and a connection that records the writes. */
-function lineConnection(
-  taxTreatment: string,
-  over: Partial<Record<string, unknown>> = {},
-) {
+function lineConnection(taxTreatment: string, over: Partial<Record<string, unknown>> = {}) {
   const line = {
-    id: "bl1",
-    tax_treatment: taxTreatment,
-    budget_status: "active",
+    id: "bl1", tax_treatment: taxTreatment, budget_status: "active",
     /*
      * pnl_cost_amount is the ceiling availability() measures against, NOT gross_amount.
      * gross_amount was a mixed-unit ceiling that silently allowed roughly (1/costRatio - 1)
@@ -50,13 +40,9 @@ function lineConnection(
      * which is what production shows: pnl_cost_amount is populated on all 753 live budget lines
      * and equals gross on the 641 non-ITC ones.
      */
-    gross_amount: 102_000,
-    pnl_cost_amount: 102_000,
-    quantity: 10,
-    reserved_amount: 0,
-    reserved_quantity: 0,
-    consumed_amount: 0,
-    consumed_quantity: 0,
+    gross_amount: 102_000, pnl_cost_amount: 102_000, quantity: 10,
+    reserved_amount: 0, reserved_quantity: 0,
+    consumed_amount: 0, consumed_quantity: 0,
     ...over,
   };
   const writes: Array<{ sql: string; params: unknown[] }> = [];
@@ -92,16 +78,14 @@ describe("a non-taxable budget line is charged the taxable value", () => {
   it("reserve() no longer refuses a purchase that fits on the net", async () => {
     // The exact scenario the helper's own comment describes: 1,18,000 against 1,02,000 threw.
     const conn = lineConnection("non_gst");
-    await expect(
-      budgetConsumptionService.reserve(conn, "bl1", GROSS, 1, NET),
-    ).resolves.not.toThrow();
+    await expect(budgetConsumptionService.reserve(conn, "bl1", GROSS, 1, NET)).resolves.not.toThrow();
   });
 
   it("still refuses a purchase that does not fit even on the net", async () => {
     // The correction must not become a way past the ceiling.
     const conn = lineConnection("non_gst");
     await expect(
-      budgetConsumptionService.reserve(conn, "bl1", 200_000, 1, 150_000),
+      budgetConsumptionService.reserve(conn, "bl1", 200_000, 1, 150_000)
     ).rejects.toThrow(/exceeds available budget amount/);
   });
 
@@ -121,20 +105,14 @@ describe("a non-taxable budget line is charged the taxable value", () => {
      * non-ITC lines pnl_cost_amount equals gross_amount, so charging the base changes nothing.
      * Measured live, that holds for 641 of 753 budget lines.
      */
-    const conn = lineConnection("exclusive", {
-      gross_amount: 200_000,
-      pnl_cost_amount: 200_000,
-    });
+    const conn = lineConnection("exclusive", { gross_amount: 200_000, pnl_cost_amount: 200_000 });
     await budgetConsumptionService.reserve(conn, "bl1", GROSS, 1, NET);
     expect(chargedAmount(conn)).toBe(NET);
   });
 
   it("falls back to the gross when no net is supplied", async () => {
     // Keeps an un-updated caller on its previous behaviour rather than consuming zero.
-    const conn = lineConnection("non_gst", {
-      gross_amount: 200_000,
-      pnl_cost_amount: 200_000,
-    });
+    const conn = lineConnection("non_gst", { gross_amount: 200_000, pnl_cost_amount: 200_000 });
     await budgetConsumptionService.reserve(conn, "bl1", GROSS, 1);
     expect(chargedAmount(conn)).toBe(GROSS);
   });
@@ -143,37 +121,22 @@ describe("a non-taxable budget line is charged the taxable value", () => {
 describe("release and reverseConsumption use the same basis", () => {
   it("release() credits back exactly what reserve() charged", async () => {
     // Asymmetry here is not a rounding difference — it throws and blocks the rejection.
-    const conn = lineConnection("non_gst", {
-      reserved_amount: NET,
-      reserved_quantity: 1,
-    });
+    const conn = lineConnection("non_gst", { reserved_amount: NET, reserved_quantity: 1 });
     await budgetConsumptionService.release(conn, "bl1", GROSS, 1, NET);
     expect(chargedAmount(conn)).toBe(NET);
   });
 
   it("release() without the net would exceed the reservation and throw", async () => {
     // Proves the asymmetry is real: the same call omitting the net is refused.
-    const conn = lineConnection("non_gst", {
-      reserved_amount: NET,
-      reserved_quantity: 1,
-    });
+    const conn = lineConnection("non_gst", { reserved_amount: NET, reserved_quantity: 1 });
     await expect(
-      budgetConsumptionService.release(conn, "bl1", GROSS, 1),
+      budgetConsumptionService.release(conn, "bl1", GROSS, 1)
     ).rejects.toThrow(/Cannot release more budget amount than is reserved/);
   });
 
   it("reverseConsumption() credits back exactly what consume() charged", async () => {
-    const conn = lineConnection("non_gst", {
-      consumed_amount: NET,
-      consumed_quantity: 1,
-    });
-    await budgetConsumptionService.reverseConsumption(
-      conn,
-      "bl1",
-      GROSS,
-      1,
-      NET,
-    );
+    const conn = lineConnection("non_gst", { consumed_amount: NET, consumed_quantity: 1 });
+    await budgetConsumptionService.reverseConsumption(conn, "bl1", GROSS, 1, NET);
     expect(chargedAmount(conn)).toBe(NET);
   });
 });

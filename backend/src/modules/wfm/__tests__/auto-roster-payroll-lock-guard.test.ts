@@ -23,18 +23,13 @@ import path from "path";
  */
 
 const SOURCE = readFileSync(
-  path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "../auto-roster-synced.service.ts",
-  ),
-  "utf-8",
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "../auto-roster-synced.service.ts"),
+  "utf-8"
 );
 
 describe("generateDraft's per-employee attendance/payroll-lock guard (Area 3)", () => {
   it("imports the shared roster-lock-guard module rather than a private copy of the query", () => {
-    expect(SOURCE).toMatch(
-      /import \{ checkEmployeeDateNotLocked \} from "\.\.\/roster\/roster-lock-guard\.js";/,
-    );
+    expect(SOURCE).toMatch(/import \{ checkEmployeeDateNotLocked \} from "\.\.\/roster\/roster-lock-guard\.js";/);
   });
 
   it("checks the lock inside the per-employee assignment loop, before the row is added to assignedToday", () => {
@@ -43,12 +38,8 @@ describe("generateDraft's per-employee attendance/payroll-lock guard (Area 3)", 
     // 2026-08-13: ~3444 chars) rather than pinned tight to it — a comment edit shifting
     // this by a couple lines shouldn't make an unrelated ordering assertion fail.
     const loopBody = SOURCE.slice(loopStart, loopStart + 4000);
-    const lockCheckIdx = loopBody.indexOf(
-      "checkEmployeeDateNotLocked(db, String(emp.id)",
-    );
-    const assignedTodayIdx = loopBody.indexOf(
-      "assignedToday.add(String(emp.id))",
-    );
+    const lockCheckIdx = loopBody.indexOf("checkEmployeeDateNotLocked(db, String(emp.id)");
+    const assignedTodayIdx = loopBody.indexOf("assignedToday.add(String(emp.id))");
     expect(lockCheckIdx).toBeGreaterThan(-1);
     expect(assignedTodayIdx).toBeGreaterThan(-1);
     expect(lockCheckIdx).toBeLessThan(assignedTodayIdx);
@@ -58,8 +49,6 @@ describe("generateDraft's per-employee attendance/payroll-lock guard (Area 3)", 
     const loopStart = SOURCE.indexOf("for (const emp of selected) {");
     const loopBody = SOURCE.slice(loopStart, loopStart + 4000);
     expect(loopBody).toMatch(/conflict_type: "attendance_payroll_locked"/);
-    expect(loopBody).toMatch(
-      /continue; \/\/ not assigned to this slot; the date is off-limits to ordinary regeneration/,
-    );
+    expect(loopBody).toMatch(/continue; \/\/ not assigned to this slot; the date is off-limits to ordinary regeneration/);
   });
 });

@@ -1,12 +1,5 @@
 export type BusinessActionSeverity = "critical" | "high" | "medium" | "low";
-export type BusinessActionStatus =
-  | "open"
-  | "in_progress"
-  | "blocked"
-  | "escalated"
-  | "completed"
-  | "cancelled"
-  | "overdue";
+export type BusinessActionStatus = "open" | "in_progress" | "blocked" | "escalated" | "completed" | "cancelled" | "overdue";
 
 export const BUSINESS_ACTION_SOURCE_MODULES = [
   "people_experience",

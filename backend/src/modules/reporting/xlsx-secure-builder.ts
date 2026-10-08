@@ -21,9 +21,7 @@ import type { ExecResult } from './executors/types.js';
 
 // ── Configurable thresholds (read from env with defaults) ──────────────────────
 const MAX_XLSX_ROWS = Number(process.env.REPORT_MAX_XLSX_ROWS ?? 100_000);
-const ATTACHMENT_MAX_BYTES = Number(
-  process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520,
-); // 20 MB
+const ATTACHMENT_MAX_BYTES = Number(process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520); // 20 MB
 
 // Columns whose values must be preserved as text (leading zeros matter)
 const TEXT_COLUMN_PATTERNS = [
@@ -43,30 +41,24 @@ const TEXT_COLUMN_PATTERNS = [
 // ── Error classes ──────────────────────────────────────────────────────────────
 
 export class XlsxRowLimitError extends Error {
-  constructor(
-    public readonly rowCount: number,
-    public readonly limit: number,
-  ) {
+  constructor(public readonly rowCount: number, public readonly limit: number) {
     super(`Row count ${rowCount} exceeds limit ${limit}`);
-    this.name = "XlsxRowLimitError";
+    this.name = 'XlsxRowLimitError';
   }
 }
 
 export class XlsxFileSizeError extends Error {
-  constructor(
-    public readonly bytes: number,
-    public readonly limit: number,
-  ) {
+  constructor(public readonly bytes: number, public readonly limit: number) {
     super(`File size ${bytes} bytes exceeds limit ${limit} bytes`);
-    this.name = "XlsxFileSizeError";
+    this.name = 'XlsxFileSizeError';
   }
 }
 
 // ── Formula injection sanitiser ────────────────────────────────────────────────
 
 function sanitiseCellValue(value: unknown, columnName: string): unknown {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
   if (value instanceof Date) return value.toISOString().slice(0, 10);
 
   const str = String(value);
@@ -78,7 +70,7 @@ function sanitiseCellValue(value: unknown, columnName: string): unknown {
 }
 
 function isTextColumn(columnName: string): boolean {
-  return TEXT_COLUMN_PATTERNS.some((p) => p.test(columnName));
+  return TEXT_COLUMN_PATTERNS.some(p => p.test(columnName));
 }
 
 // ── Filename sanitiser ─────────────────────────────────────────────────────────
@@ -92,17 +84,10 @@ function isTextColumn(columnName: string): boolean {
  * screen; using the code here produced filenames like "PUNCH_RAW_EXPORT_..."
  * for a report the UI labelled "Punch Raw Data Export".
  */
-export function buildSecureFilename(
-  reportName: string,
-  requestReference: string,
-): string {
-  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const name = reportName
-    .toUpperCase()
-    .trim()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  const ref = requestReference.replace(/[^A-Z0-9_\-]/gi, "_");
+export function buildSecureFilename(reportName: string, requestReference: string): string {
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const name = reportName.toUpperCase().trim().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const ref = requestReference.replace(/[^A-Z0-9_\-]/gi, '_');
   return `${name}_${ref}_${dateStr}.xlsx`;
 }
 
@@ -125,9 +110,7 @@ export interface XlsxBuildParams {
   skipSizeCap?: boolean;
 }
 
-export async function buildSecureXlsxBuffer(
-  params: XlsxBuildParams,
-): Promise<Buffer> {
+export async function buildSecureXlsxBuffer(params: XlsxBuildParams): Promise<Buffer> {
   const { rows, totalRows } = params;
 
   // Row count guard
@@ -237,13 +220,9 @@ export async function buildSecureXlsxBuffer(
  * Strip the internal keyset cursor field (_cursor) from executor output rows.
  * Each executor adds _cursor for pagination; it must not appear in XLSX output.
  */
-export function stripCursorField(
-  rows: Record<string, unknown>[],
-): Record<string, unknown>[] {
-  return rows.map((row) => {
-    const { _cursor: _, ...rest } = row as Record<string, unknown> & {
-      _cursor?: unknown;
-    };
+export function stripCursorField(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  return rows.map(row => {
+    const { _cursor: _, ...rest } = row as Record<string, unknown> & { _cursor?: unknown };
     return rest;
   });
 }

@@ -27,9 +27,7 @@ describe("dashboard access registry", () => {
   it("does not grant business dashboards to admin implicitly", () => {
     expect(canAccessDashboard("CEO_DASHBOARD", ["admin"])).toBe(false);
     expect(canAccessDashboard("SUPER_ADMIN_DASHBOARD", ["admin"])).toBe(false);
-    expect(canAccessDashboard("SUPER_ADMIN_DASHBOARD", ["super_admin"])).toBe(
-      true,
-    );
+    expect(canAccessDashboard("SUPER_ADMIN_DASHBOARD", ["super_admin"])).toBe(true);
   });
 
   it("grants only explicitly listed role-dashboard combinations", () => {
@@ -50,46 +48,16 @@ describe("dashboard access registry", () => {
       branch_admin: ["EMPLOYEE_SELF_DASHBOARD"],
       interviewer: ["EMPLOYEE_SELF_DASHBOARD"],
       super_admin: Object.keys(DASHBOARD_ACCESS_REGISTRY),
-      ceo: [
-        "CEO_DASHBOARD",
-        "QUALITY_DASHBOARD",
-        "OPERATIONS_DASHBOARD",
-        "MANAGEMENT_DASHBOARD",
-        "EMPLOYEE_SELF_DASHBOARD",
-        "PERFORMANCE_SCORECARD",
-      ],
-      hr: [
-        "HR_DASHBOARD",
-        "WFM_ATTENDANCE_DASHBOARD",
-        "RECRUITER_DASHBOARD",
-        "EMPLOYEE_SELF_DASHBOARD",
-        "PERFORMANCE_SCORECARD",
-      ],
-      wfm: [
-        "WFM_DASHBOARD",
-        "WFM_ATTENDANCE_DASHBOARD",
-        "EMPLOYEE_SELF_DASHBOARD",
-      ],
+      ceo: ["CEO_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD", "PERFORMANCE_SCORECARD"],
+      hr: ["HR_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "RECRUITER_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD", "PERFORMANCE_SCORECARD"],
+      wfm: ["WFM_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       payroll: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
-      qa: [
-        "QUALITY_DASHBOARD",
-        "OPERATIONS_DASHBOARD",
-        "EMPLOYEE_SELF_DASHBOARD",
-      ],
-      operations_manager: [
-        "WFM_ATTENDANCE_DASHBOARD",
-        "QUALITY_DASHBOARD",
-        "OPERATIONS_DASHBOARD",
-        "EMPLOYEE_SELF_DASHBOARD",
-      ],
+      qa: ["QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      operations_manager: ["WFM_ATTENDANCE_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       recruiter: ["RECRUITER_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       it: ["IT_MANAGER_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       it_head: ["IT_MANAGER_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
-      tq_head: [
-        "QUALITY_DASHBOARD",
-        "OPERATIONS_DASHBOARD",
-        "EMPLOYEE_SELF_DASHBOARD",
-      ],
+      tq_head: ["QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       finance_head: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       accounts_head: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       // 2026-09-16 (68d08723a): owner request — branch heads see their branch's WFM
@@ -98,21 +66,13 @@ describe("dashboard access registry", () => {
       // 2026-08-22: manager had no WFM_DASHBOARD grant at all and a deactivated
       // QUALITY_DASHBOARD grant (leftover from the 2026-07-25 RBAC cleanup) — neither was
       // deliberate, both fixed to match the parity manager already had on OPERATIONS_DASHBOARD.
-      manager: [
-        "WFM_DASHBOARD",
-        "QUALITY_DASHBOARD",
-        "OPERATIONS_DASHBOARD",
-        "MANAGEMENT_DASHBOARD",
-        "EMPLOYEE_SELF_DASHBOARD",
-        "PERFORMANCE_SCORECARD",
-      ],
+      manager: ["WFM_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD", "PERFORMANCE_SCORECARD"],
       employee: ["EMPLOYEE_SELF_DASHBOARD"],
     };
 
     for (const [role, dashboardCodes] of Object.entries(expected)) {
-      const actual = Object.keys(DASHBOARD_ACCESS_REGISTRY).filter((code) =>
-        canAccessDashboard(code, [role]),
-      );
+      const actual = Object.keys(DASHBOARD_ACCESS_REGISTRY)
+        .filter((code) => canAccessDashboard(code, [role]));
       expect(actual, role).toEqual(dashboardCodes);
     }
   });
@@ -124,12 +84,8 @@ describe("dashboard access registry", () => {
     );
 
     expect(routes).toContain('router.param("dashboardCode"');
-    expect(routes).toContain(
-      'requireFixedDashboard("EMPLOYEE_SELF_DASHBOARD")',
-    );
+    expect(routes).toContain('requireFixedDashboard("EMPLOYEE_SELF_DASHBOARD")');
     expect(routes).toContain('requireFixedDashboard("PAYROLL_HR_DASHBOARD")');
-    expect(routes).toContain(
-      "throw dashboardAccessError(`Not entitled to ${definition.code}`, 403)",
-    );
+    expect(routes).toContain('throw dashboardAccessError(`Not entitled to ${definition.code}`, 403)');
   });
 });

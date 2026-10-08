@@ -62,30 +62,19 @@ describe("updateShift", () => {
       // service code makes exactly 4 well-formed calls here, verified by
       // instrumenting db.execute directly outside any assertion).
       if (!sql) return [[], []];
-      if (
-        sql.includes("SELECT * FROM wfm_shift_master") ||
-        sql.includes("SELECT 1 FROM wfm_shift_master")
-      ) {
+      if (sql.includes("SELECT * FROM wfm_shift_master") || sql.includes("SELECT 1 FROM wfm_shift_master")) {
         // getShift() and isShiftLocked()'s first branch
-        if (sql.startsWith("SELECT * FROM wfm_shift_master"))
-          return [[BASE_SHIFT], []];
+        if (sql.startsWith("SELECT * FROM wfm_shift_master")) return [[BASE_SHIFT], []];
       }
       if (sql.includes("UNION ALL")) return [[], []]; // isShiftLocked: not referenced anywhere
-      if (sql.startsWith("UPDATE wfm_shift_master"))
-        return [{ affectedRows: 1 }, []];
+      if (sql.startsWith("UPDATE wfm_shift_master")) return [{ affectedRows: 1 }, []];
       return [[], []];
     });
 
-    const result = await wfmService.updateShift(
-      "shift-gen-001",
-      { startTime: "09:30" } as any,
-      "user-1",
-    );
+    const result = await wfmService.updateShift("shift-gen-001", { startTime: "09:30" } as any, "user-1");
 
     expect(result.versioned).toBeUndefined();
-    const updateCall = execute.mock.calls.find(([sql]: [string]) =>
-      sql?.startsWith("UPDATE wfm_shift_master SET"),
-    );
+    const updateCall = execute.mock.calls.find(([sql]: [string]) => sql?.startsWith("UPDATE wfm_shift_master SET"));
     expect(updateCall, "expected an in-place UPDATE").toBeDefined();
   });
 
@@ -118,11 +107,7 @@ describe("updateShift", () => {
       return [[], []];
     });
 
-    const result = await wfmService.updateShift(
-      "shift-gen-001",
-      { startTime: "09:30" } as any,
-      "user-1",
-    );
+    const result = await wfmService.updateShift("shift-gen-001", { startTime: "09:30" } as any, "user-1");
 
     expect(result.versioned).toBe(true);
     expect(result.id).not.toBe("shift-gen-001");
@@ -131,66 +116,41 @@ describe("updateShift", () => {
 
     // The OLD row must be closed out (effective_to set) and locked, never its
     // start_time/end_time touched.
-    const closeCall = execute.mock.calls.find(([sql]: [string]) =>
-      sql?.startsWith("UPDATE wfm_shift_master SET effective_to"),
-    );
+    const closeCall = execute.mock.calls.find(([sql]: [string]) => sql?.startsWith("UPDATE wfm_shift_master SET effective_to"));
     expect(closeCall, "old version was not closed out").toBeDefined();
     const noInPlaceTimeUpdate = execute.mock.calls.find(
-      ([sql]: [string]) =>
-        sql?.startsWith("UPDATE wfm_shift_master SET") &&
-        sql.includes("start_time"),
+      ([sql]: [string]) => sql?.startsWith("UPDATE wfm_shift_master SET") && sql.includes("start_time"),
     );
-    expect(
-      noInPlaceTimeUpdate,
-      "the locked row's start_time must never be updated in place",
-    ).toBeUndefined();
+    expect(noInPlaceTimeUpdate, "the locked row's start_time must never be updated in place").toBeUndefined();
   });
 
   it("still updates in place for a metadata-only edit (name/active_status), even when the shift is locked", async () => {
     execute.mockImplementation(async (sql?: string) => {
       if (!sql) return [[], []]; // see note in the first updateShift test
-      if (sql.startsWith("SELECT * FROM wfm_shift_master"))
-        return [[BASE_SHIFT], []];
-      if (sql.startsWith("UPDATE wfm_shift_master"))
-        return [{ affectedRows: 1 }, []];
+      if (sql.startsWith("SELECT * FROM wfm_shift_master")) return [[BASE_SHIFT], []];
+      if (sql.startsWith("UPDATE wfm_shift_master")) return [{ affectedRows: 1 }, []];
       return [[], []];
     });
 
-    const result = await wfmService.updateShift(
-      "shift-gen-001",
-      { shiftName: "General Shift (renamed)" } as any,
-      "user-1",
-    );
+    const result = await wfmService.updateShift("shift-gen-001", { shiftName: "General Shift (renamed)" } as any, "user-1");
 
     expect(result.versioned).toBeUndefined();
     // isShiftLocked must never even be queried for a non-time-defining edit.
-    const lockCheck = execute.mock.calls.find(([sql]: [string]) =>
-      sql?.includes("UNION ALL"),
-    );
+    const lockCheck = execute.mock.calls.find(([sql]: [string]) => sql?.includes("UNION ALL"));
     expect(lockCheck).toBeUndefined();
   });
 });
 
 describe("isTimeDefiningShiftEdit", () => {
   it("is true for startTime, endTime, or requiredMinutes", () => {
-    expect(
-      wfmService.isTimeDefiningShiftEdit({ startTime: "09:00" } as any),
-    ).toBe(true);
-    expect(
-      wfmService.isTimeDefiningShiftEdit({ endTime: "18:00" } as any),
-    ).toBe(true);
-    expect(
-      wfmService.isTimeDefiningShiftEdit({ requiredMinutes: 480 } as any),
-    ).toBe(true);
+    expect(wfmService.isTimeDefiningShiftEdit({ startTime: "09:00" } as any)).toBe(true);
+    expect(wfmService.isTimeDefiningShiftEdit({ endTime: "18:00" } as any)).toBe(true);
+    expect(wfmService.isTimeDefiningShiftEdit({ requiredMinutes: 480 } as any)).toBe(true);
   });
 
   it("is false for name/branch/process/active-status-only edits", () => {
-    expect(wfmService.isTimeDefiningShiftEdit({ shiftName: "x" } as any)).toBe(
-      false,
-    );
-    expect(
-      wfmService.isTimeDefiningShiftEdit({ activeStatus: false } as any),
-    ).toBe(false);
+    expect(wfmService.isTimeDefiningShiftEdit({ shiftName: "x" } as any)).toBe(false);
+    expect(wfmService.isTimeDefiningShiftEdit({ activeStatus: false } as any)).toBe(false);
     expect(wfmService.isTimeDefiningShiftEdit({} as any)).toBe(false);
   });
 });

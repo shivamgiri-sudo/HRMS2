@@ -25,10 +25,7 @@ function exGstFromParts(alias: string, grossExpr: string): string {
 
 /** grn_request: taxable value; gross falls back to the legacy `amount` column. */
 export function grnRequestExGstSql(alias = "g"): string {
-  return exGstFromParts(
-    alias,
-    `COALESCE(NULLIF(${alias}.amount_with_tax, 0), ${alias}.amount, 0)`,
-  );
+  return exGstFromParts(alias, `COALESCE(NULLIF(${alias}.amount_with_tax, 0), ${alias}.amount, 0)`);
 }
 
 /** grn_cost_allocation: taxable value of one Smart GRN allocation row. */
@@ -41,10 +38,7 @@ export function grnAllocationExGstSql(alias = "a"): string {
  * gross (vendor-payment.service.ts writes amount_with_tax into it), so the fallback is due - tax.
  */
 export function vendorPayableExGstSql(alias = "vpt"): string {
-  return exGstFromParts(
-    alias,
-    `COALESCE(NULLIF(${alias}.amount_with_tax, 0), ${alias}.due_amount, 0)`,
-  );
+  return exGstFromParts(alias, `COALESCE(NULLIF(${alias}.amount_with_tax, 0), ${alias}.due_amount, 0)`);
 }
 
 /**

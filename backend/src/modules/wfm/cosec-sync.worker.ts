@@ -75,9 +75,7 @@ export function backfillDayOrder(today: Date, backfillDays: number): string[] {
  * from the first hour instead of being discovered a payroll run later.
  */
 /** Warn below this share of the trailing median. 0.8 catches 2026-08-07 (68%) without firing on normal variance. */
-const INCOMPLETE_DAY_RATIO = Number(
-  process.env.NCOSEC_INCOMPLETE_DAY_RATIO ?? 0.8,
-);
+const INCOMPLETE_DAY_RATIO = Number(process.env.NCOSEC_INCOMPLETE_DAY_RATIO ?? 0.8);
 /** Unmapped users are punches thrown away. 171 active employees were unenrolled on 2026-08-11. */
 const UNMAPPED_ALERT = Number(process.env.NCOSEC_UNMAPPED_ALERT ?? 25);
 
@@ -90,29 +88,23 @@ async function warnIfFeedStale(staleHours: number): Promise<void> {
     );
     const newest = (rows[0] as any)?.newest;
     if (!newest) {
-      console.error(
-        "[cosec-sync] STALE: integration_biometric_daily is empty — payroll attendance has no biometric source",
-      );
+      console.error("[cosec-sync] STALE: integration_biometric_daily is empty — payroll attendance has no biometric source");
       return;
     }
-    const ageHours =
-      (Date.now() - new Date(String(newest).replace(" ", "T")).getTime()) /
-      3_600_000;
+    const ageHours = (Date.now() - new Date(String(newest).replace(" ", "T")).getTime()) / 3_600_000;
     if (ageHours > staleHours) {
       console.error(
-        `[cosec-sync] STALE: newest biometric record is ${ageHours.toFixed(1)}h old ` +
-          `(threshold ${staleHours}h, newest=${newest}). Payroll attendance for every ` +
-          `non-Operations employee is being built from stale data — check the NCOSEC link.`,
+        `[cosec-sync] STALE: newest biometric record is ${ageHours.toFixed(1)}h old `
+        + `(threshold ${staleHours}h, newest=${newest}). Payroll attendance for every `
+        + `non-Operations employee is being built from stale data — check the NCOSEC link.`,
       );
     }
   } catch (error) {
     // Never let the freshness probe take the sync down with it.
-    console.warn(
-      "[cosec-sync] freshness check failed",
-      error instanceof Error ? error.message : String(error),
-    );
+    console.warn("[cosec-sync] freshness check failed", error instanceof Error ? error.message : String(error));
   }
 }
+
 
 /**
  * Completeness, as opposed to freshness.
@@ -152,18 +144,15 @@ async function warnIfDayIncomplete(): Promise<void> {
     const ratio = Number(latest.n) / median;
     if (ratio < INCOMPLETE_DAY_RATIO) {
       console.error(
-        `[cosec-sync] INCOMPLETE: ${latest.d} ingested ${latest.n} punch-days against a ` +
-          `trailing median of ${median} (${Math.round(ratio * 100)}%). Punches exist upstream ` +
-          `that never reached HRMS; unresolved days pay zero. Re-run ` +
-          `scripts/cosec-sync-backfill.ts ${latest.d} ${latest.d} and check the cause.`,
+        `[cosec-sync] INCOMPLETE: ${latest.d} ingested ${latest.n} punch-days against a `
+        + `trailing median of ${median} (${Math.round(ratio * 100)}%). Punches exist upstream `
+        + `that never reached HRMS; unresolved days pay zero. Re-run `
+        + `scripts/cosec-sync-backfill.ts ${latest.d} ${latest.d} and check the cause.`,
       );
     }
   } catch (error) {
     // Never let a probe take the sync down.
-    console.warn(
-      "[cosec-sync] completeness check failed",
-      error instanceof Error ? error.message : String(error),
-    );
+    console.warn("[cosec-sync] completeness check failed", error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -171,17 +160,17 @@ export function startCosecSyncWorker() {
   if (intervalHandle) return;
   const explicitlyDisabled = process.env.NCOSEC_SYNC_ENABLED === "false";
   const configured = Boolean(
-    process.env.NCOSEC_DB_HOST &&
-    process.env.NCOSEC_DB_USER &&
-    process.env.NCOSEC_DB_PASSWORD,
+    process.env.NCOSEC_DB_HOST
+    && process.env.NCOSEC_DB_USER
+    && process.env.NCOSEC_DB_PASSWORD
   );
   if (explicitlyDisabled || !configured) {
     // error, not log: on the API host this is the difference between "COSEC is
     // deliberately off here" and "payroll attendance silently has no source", and
     // the quiet console.log meant nobody could tell which had happened.
     console.error(
-      `[cosec-sync] NOT RUNNING — ${explicitlyDisabled ? "NCOSEC_SYNC_ENABLED=false" : "NCOSEC_DB_HOST/USER/PASSWORD not configured"}. ` +
-        `Biometric payroll attendance will not update in this process.`,
+      `[cosec-sync] NOT RUNNING — ${explicitlyDisabled ? "NCOSEC_SYNC_ENABLED=false" : "NCOSEC_DB_HOST/USER/PASSWORD not configured"}. `
+      + `Biometric payroll attendance will not update in this process.`,
     );
     return;
   }
@@ -201,24 +190,19 @@ export function startCosecSyncWorker() {
         from: dateOnly(from),
         to: dateOnly(to),
       });
-      console.log(
-        `[cosec-sync] migrated=${result.migratedDays} unchanged=${result.skippedUnchanged} pulled=${result.pulledEvents} unmapped=${result.unmappedUsers.length} failed=${result.failed.length}`,
-      );
+      console.log(`[cosec-sync] migrated=${result.migratedDays} unchanged=${result.skippedUnchanged} pulled=${result.pulledEvents} unmapped=${result.unmappedUsers.length} failed=${result.failed.length}`);
       // An unmapped user is a person whose punches were discarded outright. Logged at
       // info level this reads as routine; it is how 171 active employees came to have no
       // attendance at all while the sync reported success every five minutes.
       if (result.unmappedUsers.length > UNMAPPED_ALERT) {
         console.error(
-          `[cosec-sync] UNMAPPED: ${result.unmappedUsers.length} COSEC users have no employee mapping; ` +
-            `their punches are being discarded. Any that are active employees have no attendance ` +
-            `and therefore nothing to be paid on — see scripts/enrol-unenrolled-punchers.ts.`,
+          `[cosec-sync] UNMAPPED: ${result.unmappedUsers.length} COSEC users have no employee mapping; `
+          + `their punches are being discarded. Any that are active employees have no attendance `
+          + `and therefore nothing to be paid on — see scripts/enrol-unenrolled-punchers.ts.`,
         );
       }
     } catch (error) {
-      console.error(
-        "[cosec-sync] error",
-        error instanceof Error ? error.message : String(error),
-      );
+      console.error("[cosec-sync] error", error instanceof Error ? error.message : String(error));
     }
     await warnIfFeedStale(staleHours);
     await warnIfDayIncomplete();
@@ -256,9 +240,7 @@ export function startCosecSyncWorker() {
   const backfill = async () => {
     if (cosecSyncService.isRunning()) return;
     const today = new Date();
-    let migrated = 0,
-      failedDays = 0,
-      doneDays = 0;
+    let migrated = 0, failedDays = 0, doneDays = 0;
     // Yesterday first — see backfillDayOrder(). It is the day whose live-mode verdicts
     // have just gone stale, and the day the old oldest-first order almost never reached.
     const days = backfillDayOrder(today, backfillDays);
@@ -271,25 +253,16 @@ export function startCosecSyncWorker() {
         doneDays += 1;
       } catch (error) {
         failedDays += 1;
-        console.error(
-          `[cosec-sync] backfill ${day} failed`,
-          error instanceof Error ? error.message : String(error),
-        );
+        console.error(`[cosec-sync] backfill ${day} failed`, error instanceof Error ? error.message : String(error));
       }
     }
-    console.log(
-      `[cosec-sync] backfill ${backfillDays}d days=${doneDays}/${backfillDays + 1} migrated=${migrated} failedDays=${failedDays}`,
-    );
+    console.log(`[cosec-sync] backfill ${backfillDays}d days=${doneDays}/${backfillDays + 1} migrated=${migrated} failedDays=${failedDays}`);
   };
 
   intervalHandle = setInterval(execute, intervalMs);
-  backfillHandle = setInterval(() => {
-    void backfill();
-  }, backfillMs);
+  backfillHandle = setInterval(() => { void backfill(); }, backfillMs);
   void execute();
-  console.log(
-    `[cosec-sync] started intervalMs=${intervalMs} lookbackDays=${lookbackDays} backfillMs=${backfillMs} backfillDays=${backfillDays}`,
-  );
+  console.log(`[cosec-sync] started intervalMs=${intervalMs} lookbackDays=${lookbackDays} backfillMs=${backfillMs} backfillDays=${backfillDays}`);
 }
 
 export function stopCosecSyncWorker() {

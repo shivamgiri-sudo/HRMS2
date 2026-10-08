@@ -26,16 +26,12 @@ describe("sla-breach worker kill switch", () => {
   it("checks worker_config before doing any alerting work", () => {
     expect(worker).toContain("isWorkerEnabled");
     // The guard must sit in the function that sends, not merely be imported.
-    const body =
-      worker.match(/async function processSLABreaches\(\)[\s\S]*?\n\}/)?.[0] ??
-      "";
+    const body = worker.match(/async function processSLABreaches\(\)[\s\S]*?\n\}/)?.[0] ?? "";
     expect(body).toContain("isWorkerEnabled(WORKER_NAME)");
   });
 
   it("guards before the send, not after it", () => {
-    const body =
-      worker.match(/async function processSLABreaches\(\)[\s\S]*?\n\}/)?.[0] ??
-      "";
+    const body = worker.match(/async function processSLABreaches\(\)[\s\S]*?\n\}/)?.[0] ?? "";
     const guardAt = body.indexOf("isWorkerEnabled");
     const sendAt = body.indexOf("notifySLABreach");
     expect(guardAt).toBeGreaterThanOrEqual(0);
@@ -50,9 +46,7 @@ describe("sla-breach worker kill switch", () => {
 
   it("still fails open, so an unmanaged worker is not silently killed", () => {
     const helper = read("src/shared/worker-config.ts");
-    expect(helper).toContain(
-      "rows.length ? Number(rows[0].enabled) === 1 : true",
-    );
+    expect(helper).toContain("rows.length ? Number(rows[0].enabled) === 1 : true");
   });
 });
 
@@ -83,7 +77,7 @@ describe("sla-breach only alerts on candidates actually still queued", () => {
     for (const terminal of ["no_show", "completed"]) {
       expect(
         query.includes(`'${terminal}'`),
-        `query should not special-case ${terminal}; the queue_status = 'waiting' equality already excludes it`,
+        `query should not special-case ${terminal}; the queue_status = 'waiting' equality already excludes it`
       ).toBe(false);
     }
     expect(query).not.toContain("qt.queue_status IN");
@@ -100,8 +94,7 @@ describe("interview-delay-alert kill switch", () => {
   const worker = read("src/workers/interview-delay-alert.worker.ts");
 
   it("checks worker_config before alerting", () => {
-    const body =
-      worker.match(/async function checkDelays\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+    const body = worker.match(/async function checkDelays\(\)[\s\S]*?\n\}/)?.[0] ?? "";
     expect(body).toContain("isWorkerEnabled(WORKER_NAME)");
     const guardAt = body.indexOf("isWorkerEnabled");
     const sendAt = body.indexOf("sendDelayAlert");
@@ -126,7 +119,7 @@ describe("alert cooldown survives a restart", () => {
       // A module-level Map is what reset on every pm2 restart and re-alerted
       // everyone; ecosystem.config.cjs permits 10 restarts.
       expect(source, `${f} still holds its cooldown in a Map`).not.toMatch(
-        /new Map<string, number>\(\)/,
+        /new Map<string, number>\(\)/
       );
       expect(source).toMatch(/from ['"]\.\.\/shared\/alert-cooldown\.js['"]/);
     }
@@ -173,18 +166,14 @@ describe("migration manifest completeness", () => {
       "1053_qa_evaluation_page_access.sql",
       "1054_branch_head_approval_pending_status.sql",
     ]) {
-      expect(
-        runner,
-        `${file} is missing from MIGRATION_MANIFEST, so it will never run`,
-      ).toContain(`"${file}"`);
+      expect(runner, `${file} is missing from MIGRATION_MANIFEST, so it will never run`).toContain(
+        `"${file}"`
+      );
     }
   });
 
   it("every sql file referenced by these workers exists on disk", () => {
     const p = path.join(backendRoot, "sql/1054_alert_worker_governance.sql");
-    expect(
-      fs.existsSync(p),
-      "1054_alert_worker_governance.sql is listed but absent",
-    ).toBe(true);
+    expect(fs.existsSync(p), "1054_alert_worker_governance.sql is listed but absent").toBe(true);
   });
 });

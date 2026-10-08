@@ -1,10 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseDateTime,
-  parseNullableDecimal,
-  parseNullableSeconds,
-  parseAgentCode,
-  cleanText,
+  parseDateTime, parseNullableDecimal, parseNullableSeconds, parseAgentCode, cleanText,
   BLA_BLI_BLU_DD_TAGGING_HEADERS,
 } from "../bla-bli-blu-dd-tagging-bulk.service.js";
 

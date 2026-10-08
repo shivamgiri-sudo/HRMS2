@@ -66,14 +66,9 @@ function parseArgs(argv: string[]): Args {
     else if (arg === "--limit") out.limit = Number(argv[++i]);
   }
   if (!out.from || !out.to) {
-    throw new Error(
-      "Usage: tsx scripts/night-shift-payroll-audit.ts --from YYYY-MM-DD --to YYYY-MM-DD [--run-month YYYY-MM] [--run-id ID] [--limit N]",
-    );
+    throw new Error("Usage: tsx scripts/night-shift-payroll-audit.ts --from YYYY-MM-DD --to YYYY-MM-DD [--run-month YYYY-MM] [--run-id ID] [--limit N]");
   }
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(out.from) ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(out.to)
-  ) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(out.from) || !/^\d{4}-\d{2}-\d{2}$/.test(out.to)) {
     throw new Error("--from and --to must be YYYY-MM-DD");
   }
   if (out.runMonth && !/^\d{4}-\d{2}$/.test(out.runMonth)) {
@@ -215,16 +210,7 @@ async function main() {
        WHERE wra.roster_date BETWEEN ? AND ?
          AND COALESCE(wra.shift_end_time, wsm.end_time) < COALESCE(wra.shift_start_time, wsm.start_time)
        ORDER BY wra.roster_date, e.employee_code`,
-      [
-        args.from,
-        args.to,
-        args.from,
-        args.to,
-        runId,
-        runId,
-        args.from,
-        args.to,
-      ],
+      [args.from, args.to, args.from, args.to, runId, runId, args.from, args.to],
     );
 
     const [inferredRows] = await db.query<any[]>(
@@ -295,18 +281,7 @@ async function main() {
          AND COALESCE(apr2.apr_minutes, 0) >= 60
          AND apr1.apr_minutes + COALESCE(apr2.apr_minutes, 0) >= 240
        ORDER BY apr1.report_date, e.employee_code`,
-      [
-        args.from,
-        args.to,
-        args.from,
-        args.to,
-        args.from,
-        args.to,
-        args.from,
-        args.to,
-        args.from,
-        args.to,
-      ],
+      [args.from, args.to, args.from, args.to, args.from, args.to, args.from, args.to, args.from, args.to],
     );
 
     const mapped: AuditRow[] = rows.map((row) => ({
@@ -314,110 +289,70 @@ async function main() {
       employee_code: String(row.employee_code),
       employee_name: String(row.employee_name ?? "").trim(),
       roster_date: String(row.roster_date),
-      shift_start_time: row.shift_start_time
-        ? String(row.shift_start_time)
-        : null,
+      shift_start_time: row.shift_start_time ? String(row.shift_start_time) : null,
       shift_end_time: row.shift_end_time ? String(row.shift_end_time) : null,
-      attendance_source: row.attendance_source
-        ? String(row.attendance_source)
-        : null,
-      attendance_status: row.attendance_status
-        ? String(row.attendance_status)
-        : null,
+      attendance_source: row.attendance_source ? String(row.attendance_source) : null,
+      attendance_status: row.attendance_status ? String(row.attendance_status) : null,
       source_system: row.source_system ? String(row.source_system) : null,
       raw_minutes: row.raw_minutes === null ? null : Number(row.raw_minutes),
-      dialler_minutes:
-        row.dialler_minutes === null ? null : Number(row.dialler_minutes),
-      biometric_minutes:
-        row.biometric_minutes === null ? null : Number(row.biometric_minutes),
+      dialler_minutes: row.dialler_minutes === null ? null : Number(row.dialler_minutes),
+      biometric_minutes: row.biometric_minutes === null ? null : Number(row.biometric_minutes),
       lwp_value: row.lwp_value === null ? null : Number(row.lwp_value),
       is_locked: row.is_locked === null ? null : Number(row.is_locked),
-      apr_total_minutes:
-        row.apr_total_minutes === null ? null : Number(row.apr_total_minutes),
-      dialler_total_minutes:
-        row.dialler_total_minutes === null
-          ? null
-          : Number(row.dialler_total_minutes),
-      expected_apr_status: classifyAprMinutes(
-        row.apr_total_minutes === null ? null : Number(row.apr_total_minutes),
-      ),
-      payable_credit: payableCredit(
-        row.attendance_status ? String(row.attendance_status) : null,
-      ),
+      apr_total_minutes: row.apr_total_minutes === null ? null : Number(row.apr_total_minutes),
+      dialler_total_minutes: row.dialler_total_minutes === null ? null : Number(row.dialler_total_minutes),
+      expected_apr_status: classifyAprMinutes(row.apr_total_minutes === null ? null : Number(row.apr_total_minutes)),
+      payable_credit: payableCredit(row.attendance_status ? String(row.attendance_status) : null),
       run_id: row.run_id ? String(row.run_id) : null,
-      final_payable_days:
-        row.final_payable_days === null ? null : Number(row.final_payable_days),
-      paid_working_days:
-        row.paid_working_days === null ? null : Number(row.paid_working_days),
-      eligible_weekoff_days:
-        row.eligible_weekoff_days === null
-          ? null
-          : Number(row.eligible_weekoff_days),
-      eligible_holiday_days:
-        row.eligible_holiday_days === null
-          ? null
-          : Number(row.eligible_holiday_days),
+      final_payable_days: row.final_payable_days === null ? null : Number(row.final_payable_days),
+      paid_working_days: row.paid_working_days === null ? null : Number(row.paid_working_days),
+      eligible_weekoff_days: row.eligible_weekoff_days === null ? null : Number(row.eligible_weekoff_days),
+      eligible_holiday_days: row.eligible_holiday_days === null ? null : Number(row.eligible_holiday_days),
     }));
 
-    const inferredNightShiftRows: InferredNightShiftRow[] = inferredRows.map(
-      (row) => {
-        const aprCombinedMinutes = Number(row.apr_combined_minutes ?? 0);
-        return {
-          employee_id: String(row.employee_id),
-          employee_code: String(row.employee_code),
-          employee_name: String(row.employee_name ?? "").trim(),
-          department_name: row.department_name
-            ? String(row.department_name)
-            : null,
-          designation_name: row.designation_name
-            ? String(row.designation_name)
-            : null,
-          start_date: String(row.start_date),
-          next_date: String(row.next_date ?? nextDate(String(row.start_date))),
-          apr_day1_minutes: Number(row.apr_day1_minutes ?? 0),
-          apr_day2_minutes: Number(row.apr_day2_minutes ?? 0),
-          apr_combined_minutes: aprCombinedMinutes,
-          dialler_day1_minutes: Number(row.dialler_day1_minutes ?? 0),
-          dialler_day2_minutes: Number(row.dialler_day2_minutes ?? 0),
-          dialler_combined_minutes: Number(row.dialler_combined_minutes ?? 0),
-          adr_status: row.adr_status ? String(row.adr_status) : null,
-          adr_source: row.adr_source ? String(row.adr_source) : null,
-          adr_raw_minutes:
-            row.adr_raw_minutes === null ? null : Number(row.adr_raw_minutes),
-          inferred_expected_status:
-            classifyAprMinutes(aprCombinedMinutes) ?? "absent",
-          inferred_authority:
-            /operations?/.test(String(row.department_name ?? "")) &&
-            /^executive(?:\s*-\s*.+)?$/.test(String(row.designation_name ?? ""))
-              ? "apr"
-              : "biometric",
-        };
-      },
-    );
+    const inferredNightShiftRows: InferredNightShiftRow[] = inferredRows.map((row) => {
+      const aprCombinedMinutes = Number(row.apr_combined_minutes ?? 0);
+      return {
+        employee_id: String(row.employee_id),
+        employee_code: String(row.employee_code),
+        employee_name: String(row.employee_name ?? "").trim(),
+        department_name: row.department_name ? String(row.department_name) : null,
+        designation_name: row.designation_name ? String(row.designation_name) : null,
+        start_date: String(row.start_date),
+        next_date: String(row.next_date ?? nextDate(String(row.start_date))),
+        apr_day1_minutes: Number(row.apr_day1_minutes ?? 0),
+        apr_day2_minutes: Number(row.apr_day2_minutes ?? 0),
+        apr_combined_minutes: aprCombinedMinutes,
+        dialler_day1_minutes: Number(row.dialler_day1_minutes ?? 0),
+        dialler_day2_minutes: Number(row.dialler_day2_minutes ?? 0),
+        dialler_combined_minutes: Number(row.dialler_combined_minutes ?? 0),
+        adr_status: row.adr_status ? String(row.adr_status) : null,
+        adr_source: row.adr_source ? String(row.adr_source) : null,
+        adr_raw_minutes: row.adr_raw_minutes === null ? null : Number(row.adr_raw_minutes),
+        inferred_expected_status: classifyAprMinutes(aprCombinedMinutes) ?? "absent",
+        inferred_authority:
+          /operations?/.test(String(row.department_name ?? "")) && /^executive(?:\s*-\s*.+)?$/.test(String(row.designation_name ?? ""))
+            ? "apr"
+            : "biometric",
+      };
+    });
 
     const missingAdr = mapped.filter((row) => !row.attendance_status);
-    const aprConflict = mapped.filter(
-      (row) =>
-        row.attendance_source === "dialler" &&
-        row.expected_apr_status !== null &&
-        row.attendance_status !== null &&
-        !["leave_approved", "holiday", "week_off", "week_off_worked"].includes(
-          row.attendance_status,
-        ) &&
-        row.expected_apr_status !== row.attendance_status,
+    const aprConflict = mapped.filter((row) =>
+      row.attendance_source === "dialler" &&
+      row.expected_apr_status !== null &&
+      row.attendance_status !== null &&
+      !["leave_approved", "holiday", "week_off", "week_off_worked"].includes(row.attendance_status) &&
+      row.expected_apr_status !== row.attendance_status
     );
-    const sourceWindowGap = mapped.filter(
-      (row) =>
-        row.attendance_source === "dialler" &&
-        (row.apr_total_minutes ?? row.dialler_total_minutes ?? 0) > 0 &&
-        (row.raw_minutes ?? 0) === 0,
+    const sourceWindowGap = mapped.filter((row) =>
+      row.attendance_source === "dialler" &&
+      (row.apr_total_minutes ?? row.dialler_total_minutes ?? 0) > 0 &&
+      (row.raw_minutes ?? 0) === 0
     );
     const payrollLinesMissing = mapped.filter((row) => runId && !row.run_id);
 
-    const monthlyEmployeeTotals = new Map<
-      string,
-      { employee_code: string; employee_name: string; payable: number }
-    >();
+    const monthlyEmployeeTotals = new Map<string, { employee_code: string; employee_name: string; payable: number }>();
     for (const row of mapped) {
       const key = row.employee_id;
       const existing = monthlyEmployeeTotals.get(key) ?? {
@@ -434,10 +369,8 @@ async function main() {
       if (!runId || row.final_payable_days === null) continue;
       const total = monthlyEmployeeTotals.get(row.employee_id);
       if (!total) continue;
-      const recomputedKnownNightShiftPaid =
-        Math.round(total.payable * 100) / 100;
-      const finalPayable =
-        Math.round(Number(row.final_payable_days) * 100) / 100;
+      const recomputedKnownNightShiftPaid = Math.round(total.payable * 100) / 100;
+      const finalPayable = Math.round(Number(row.final_payable_days) * 100) / 100;
       if (Math.abs(finalPayable - recomputedKnownNightShiftPaid) >= 0.01) {
         payrollMismatch.push({
           employee_code: row.employee_code,
@@ -448,64 +381,33 @@ async function main() {
       }
     }
 
-    const inferredAdrGap = inferredNightShiftRows.filter(
-      (row) => !row.adr_status,
+    const inferredAdrGap = inferredNightShiftRows.filter((row) => !row.adr_status);
+    const inferredAdrConflict = inferredNightShiftRows.filter((row) =>
+      row.adr_status !== null &&
+      !["leave_approved", "holiday", "week_off", "week_off_worked"].includes(row.adr_status) &&
+      row.adr_status !== row.inferred_expected_status
     );
-    const inferredAdrConflict = inferredNightShiftRows.filter(
-      (row) =>
-        row.adr_status !== null &&
-        !["leave_approved", "holiday", "week_off", "week_off_worked"].includes(
-          row.adr_status,
-        ) &&
-        row.adr_status !== row.inferred_expected_status,
-    );
-    const aprAuthorityRows = inferredNightShiftRows.filter(
-      (row) => row.inferred_authority === "apr",
-    );
-    const biometricAuthorityRows = inferredNightShiftRows.filter(
-      (row) => row.inferred_authority === "biometric",
-    );
+    const aprAuthorityRows = inferredNightShiftRows.filter((row) => row.inferred_authority === "apr");
+    const biometricAuthorityRows = inferredNightShiftRows.filter((row) => row.inferred_authority === "biometric");
     const truePayrollRisk = inferredNightShiftRows.filter((row) => {
       if (row.inferred_authority === "apr") {
         if (row.adr_status === null) return true;
-        if (
-          ["leave_approved", "holiday", "week_off", "week_off_worked"].includes(
-            row.adr_status,
-          )
-        )
-          return false;
+        if (["leave_approved", "holiday", "week_off", "week_off_worked"].includes(row.adr_status)) return false;
         const actual = row.adr_status;
         const expected = row.inferred_expected_status;
-        if (
-          expected === "present" &&
-          (actual === "half_day" ||
-            actual === "absent" ||
-            actual === "missing_punch")
-        )
-          return true;
-        if (
-          expected === "half_day" &&
-          (actual === "absent" || actual === "missing_punch")
-        )
-          return true;
+        if (expected === "present" && (actual === "half_day" || actual === "absent" || actual === "missing_punch")) return true;
+        if (expected === "half_day" && (actual === "absent" || actual === "missing_punch")) return true;
         return false;
       }
       if (row.inferred_authority === "biometric") {
-        return (
-          row.adr_status === "missing_punch" && row.adr_source === "biometric"
-        );
+        return row.adr_status === "missing_punch" && row.adr_source === "biometric";
       }
       return false;
     });
     const managerReviewCandidates = inferredNightShiftRows.filter((row) => {
       if (truePayrollRisk.includes(row)) return false;
       if (row.adr_status === null) return false;
-      if (
-        ["leave_approved", "holiday", "week_off", "week_off_worked"].includes(
-          row.adr_status,
-        )
-      )
-        return false;
+      if (["leave_approved", "holiday", "week_off", "week_off_worked"].includes(row.adr_status)) return false;
       return row.adr_status !== row.inferred_expected_status;
     });
 
@@ -516,40 +418,16 @@ async function main() {
       { metric: "night_shift_roster_rows", count: mapped.length },
       { metric: "night_shift_rows_missing_adr", count: missingAdr.length },
       { metric: "night_shift_apr_status_conflicts", count: aprConflict.length },
-      {
-        metric: "night_shift_source_window_gaps",
-        count: sourceWindowGap.length,
-      },
-      {
-        metric: "night_shift_rows_missing_payroll_line",
-        count: payrollLinesMissing.length,
-      },
-      {
-        metric: "night_shift_employee_payroll_mismatch",
-        count: payrollMismatch.length,
-      },
-      {
-        metric: "inferred_night_shift_rows_without_roster",
-        count: inferredNightShiftRows.length,
-      },
+      { metric: "night_shift_source_window_gaps", count: sourceWindowGap.length },
+      { metric: "night_shift_rows_missing_payroll_line", count: payrollLinesMissing.length },
+      { metric: "night_shift_employee_payroll_mismatch", count: payrollMismatch.length },
+      { metric: "inferred_night_shift_rows_without_roster", count: inferredNightShiftRows.length },
       { metric: "inferred_apr_authority_rows", count: aprAuthorityRows.length },
-      {
-        metric: "inferred_biometric_authority_rows",
-        count: biometricAuthorityRows.length,
-      },
-      {
-        metric: "inferred_night_shift_rows_missing_adr",
-        count: inferredAdrGap.length,
-      },
-      {
-        metric: "inferred_night_shift_adr_conflicts",
-        count: inferredAdrConflict.length,
-      },
+      { metric: "inferred_biometric_authority_rows", count: biometricAuthorityRows.length },
+      { metric: "inferred_night_shift_rows_missing_adr", count: inferredAdrGap.length },
+      { metric: "inferred_night_shift_adr_conflicts", count: inferredAdrConflict.length },
       { metric: "true_payroll_risk_rows", count: truePayrollRisk.length },
-      {
-        metric: "manager_review_candidate_rows",
-        count: managerReviewCandidates.length,
-      },
+      { metric: "manager_review_candidate_rows", count: managerReviewCandidates.length },
     ]);
 
     console.log("Sample missing ADR rows:");

@@ -16,16 +16,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const source = readFileSync(
-  resolve(process.cwd(), "scripts/backfill-unbanked-from-dbbill.ts"),
-  "utf8",
-);
+const source = readFileSync(resolve(process.cwd(), "scripts/backfill-unbanked-from-dbbill.ts"), "utf8");
 
 describe("backfill-unbanked-from-dbbill.ts refuses to --apply under either dev key", () => {
   it("imports isUsingDevBlindIndexKey alongside isUsingDevEncryptionKey", () => {
-    expect(source).toMatch(
-      /import\s*\{[^}]*isUsingDevBlindIndexKey[^}]*\}\s*from\s*"\.\.\/src\/shared\/fieldEncryption\.js"/,
-    );
+    expect(source).toMatch(/import\s*\{[^}]*isUsingDevBlindIndexKey[^}]*\}\s*from\s*"\.\.\/src\/shared\/fieldEncryption\.js"/);
   });
 
   it("refuses --apply when the blind-index key is the dev fallback", () => {

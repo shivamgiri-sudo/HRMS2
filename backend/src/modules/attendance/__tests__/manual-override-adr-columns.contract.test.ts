@@ -24,58 +24,20 @@ import { describe, expect, it } from "vitest";
  * truthful value: the attendance record has no shift to capture. Sourcing one from
  * the roster would be a feature decision, not a column rename.
  */
-const SRC = readFileSync(
-  resolve(__dirname, "../attendance.manual-override.routes.ts"),
-  "utf8",
-);
+const SRC = readFileSync(resolve(__dirname, "../attendance.manual-override.routes.ts"), "utf8");
 
 /** attendance_daily_record, as it exists in production on 2026-08-15. */
 const ADR_COLUMNS = new Set([
-  "id",
-  "employee_id",
-  "record_date",
-  "clock_in_time",
-  "clock_out_time",
-  "work_mode",
-  "clock_in_lat",
-  "clock_in_lng",
-  "clock_in_location",
-  "clock_out_lat",
-  "clock_out_lng",
-  "clock_out_location",
-  "process_id",
-  "branch_id",
-  "attendance_source",
-  "source_system",
-  "source_record_date",
-  "source_reference",
-  "dialler_minutes",
-  "biometric_minutes",
-  "biometric_status",
-  "apr_status",
-  "mismatch_flag",
-  "mismatch_resolved_at",
-  "mismatch_resolved_by",
-  "mismatch_resolution_reason",
-  "raw_minutes",
-  "attendance_status",
-  "lwp_value",
-  "late_mark",
-  "late_by_minutes",
-  "rule_config_id",
-  "regularization_id",
-  "override_by",
-  "override_reason",
-  "is_locked",
-  "processed_at",
-  "created_by",
-  "created_at",
-  "updated_at",
-  "old_attendance_status",
-  "old_lwp_value",
-  "status_change_reason",
-  "status_changed_by",
-  "status_changed_at",
+  "id", "employee_id", "record_date", "clock_in_time", "clock_out_time", "work_mode",
+  "clock_in_lat", "clock_in_lng", "clock_in_location", "clock_out_lat", "clock_out_lng",
+  "clock_out_location", "process_id", "branch_id", "attendance_source", "source_system",
+  "source_record_date", "source_reference", "dialler_minutes", "biometric_minutes",
+  "biometric_status", "apr_status", "mismatch_flag", "mismatch_resolved_at",
+  "mismatch_resolved_by", "mismatch_resolution_reason", "raw_minutes", "attendance_status",
+  "lwp_value", "late_mark", "late_by_minutes", "rule_config_id", "regularization_id",
+  "override_by", "override_reason", "is_locked", "processed_at", "created_by", "created_at",
+  "updated_at", "old_attendance_status", "old_lwp_value", "status_change_reason",
+  "status_changed_by", "status_changed_at",
 ]);
 
 /** Columns named in any `SELECT ... FROM attendance_daily_record` in this file. */
@@ -84,11 +46,7 @@ function selectedFromAdr(src: string): string[] {
   const re = /SELECT\s+([\s\S]*?)\s+FROM\s+attendance_daily_record/gi;
   for (const m of src.matchAll(re)) {
     for (const raw of m[1].split(",")) {
-      const token = raw
-        .trim()
-        .split(/\s+AS\s+/i)[0]
-        .trim()
-        .replace(/^[a-z_]+\./i, "");
+      const token = raw.trim().split(/\s+AS\s+/i)[0].trim().replace(/^[a-z_]+\./i, "");
       if (/^[a-z_][a-z0-9_]*$/i.test(token)) out.add(token.toLowerCase());
     }
   }

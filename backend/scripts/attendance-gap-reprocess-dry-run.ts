@@ -38,10 +38,8 @@ import { db } from "../src/db/mysql.js";
 import { attendanceEngineService } from "../src/modules/wfm/attendance-engine.service.js";
 import { assessAggregatePunches } from "../src/modules/wfm/cosec-punch-interpretation.service.js";
 
-const FROM =
-  process.argv.find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a)) ?? "2026-07-01";
-const TO =
-  process.argv.filter((a) => /^\d{4}-\d{2}-\d{2}$/.test(a))[1] ?? "2026-08-11"; // yesterday relative to 2026-08-12
+const FROM = process.argv.find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a)) ?? "2026-07-01";
+const TO = process.argv.filter((a) => /^\d{4}-\d{2}-\d{2}$/.test(a))[1] ?? "2026-08-11"; // yesterday relative to 2026-08-12
 
 type PunchGroup = {
   cosecUserId: string;
@@ -52,10 +50,7 @@ type PunchGroup = {
   workingMinutes: number;
 };
 
-async function pullCosecPunches(
-  from: string,
-  to: string,
-): Promise<PunchGroup[]> {
+async function pullCosecPunches(from: string, to: string): Promise<PunchGroup[]> {
   const pool = await sql.connect({
     server: process.env.NCOSEC_DB_HOST!,
     port: Number(process.env.NCOSEC_DB_PORT ?? 1433),
@@ -66,10 +61,7 @@ async function pullCosecPunches(
     connectionTimeout: 45_000,
     requestTimeout: 180_000,
   });
-  const r = await pool
-    .request()
-    .input("fromDate", sql.Date, from)
-    .input("toDate", sql.Date, to).query(`
+  const r = await pool.request().input("fromDate", sql.Date, from).input("toDate", sql.Date, to).query(`
     SELECT
       CAST([UserID] AS NVARCHAR(100)) AS user_id,
       CONVERT(CHAR(10), CAST([Edatetime] AS DATE), 23) AS punch_date,
@@ -114,9 +106,7 @@ async function pullCosecPunches(
     if (!punchesByCode.has(p.cosecUserId)) punchesByCode.set(p.cosecUserId, []);
     punchesByCode.get(p.cosecUserId)!.push(p);
   }
-  console.log(
-    `cohort employees with at least one punch in window: ${punchesByCode.size}`,
-  );
+  console.log(`cohort employees with at least one punch in window: ${punchesByCode.size}`);
 
   const ids = employees.map((e) => e.id);
   const ph = ids.map(() => "?").join(",");
@@ -126,57 +116,29 @@ async function pullCosecPunches(
     ids,
   );
   const adrKey = (empId: string, date: string) => `${empId}__${date}`;
-  const existingAdrMap = new Map(
-    existingAdr.map((r) => [
-      adrKey(
-        r.employee_id,
-        r.record_date.toISOString?.().slice(0, 10) ?? r.record_date,
-      ),
-      r,
-    ]),
-  );
+  const existingAdrMap = new Map(existingAdr.map((r) => [adrKey(r.employee_id, r.record_date.toISOString?.().slice(0, 10) ?? r.record_date), r]));
 
   const ruleCache = new Map<string, any>();
-  async function rule(
-    designationId: string | null,
-    processId: string | null,
-    branchId: string | null,
-    date: string,
-  ) {
+  async function rule(designationId: string | null, processId: string | null, branchId: string | null, date: string) {
     const key = `${designationId}|${processId}|${branchId}|${date}`;
-    if (!ruleCache.has(key))
-      ruleCache.set(
-        key,
-        await attendanceEngineService.resolveRule(
-          designationId,
-          processId,
-          branchId,
-          date,
-        ),
-      );
+    if (!ruleCache.has(key)) ruleCache.set(key, await attendanceEngineService.resolveRule(designationId, processId, branchId, date));
     return ruleCache.get(key);
   }
 
   type EmpReport = {
-    code: string;
-    doj: string;
-    branch: string;
-    punchDays: number;
-    alreadyInAdr: number;
-    gapDaysToCreate: number;
+    code: string; doj: string; branch: string;
+    punchDays: number; alreadyInAdr: number; gapDaysToCreate: number;
     proposed: { present: number; half_day: number; absent: number };
     proposedLwpDays: number;
     zeroPunchesAtAll: boolean;
   };
   const reports: EmpReport[] = [];
-  let totalGapDays = 0,
-    totalProposedLwp = 0;
+  let totalGapDays = 0, totalProposedLwp = 0;
   const conflicts: any[] = [];
 
   for (const emp of employees) {
     const groups = punchesByCode.get(emp.employee_code) ?? [];
-    let alreadyInAdr = 0,
-      gapDaysToCreate = 0;
+    let alreadyInAdr = 0, gapDaysToCreate = 0;
     const proposed = { present: 0, half_day: 0, absent: 0 };
     let empLwp = 0;
 
@@ -187,19 +149,12 @@ async function pullCosecPunches(
         continue;
       }
       const assessed = assessAggregatePunches({
-        firstPunch: g.firstPunch,
-        lastPunch: g.lastPunch,
-        totalPunches: g.totalPunches,
-        workingMinutes: g.workingMinutes,
+        firstPunch: g.firstPunch, lastPunch: g.lastPunch,
+        totalPunches: g.totalPunches, workingMinutes: g.workingMinutes,
         mode: "historical",
       });
       const rawMinutes = Math.round(assessed.effectiveWorkingMinutes);
-      const r = await rule(
-        emp.designation_id,
-        emp.process_id,
-        emp.branch_id,
-        g.punchDate,
-      );
+      const r = await rule(emp.designation_id, emp.process_id, emp.branch_id, g.punchDate);
       const cls = attendanceEngineService.classifyMinutes(rawMinutes, r);
       proposed[cls.status]++;
       empLwp += cls.lwpValue;
@@ -209,14 +164,8 @@ async function pullCosecPunches(
     totalGapDays += gapDaysToCreate;
     totalProposedLwp += empLwp;
     reports.push({
-      code: emp.employee_code,
-      doj: emp.date_of_joining,
-      branch: emp.branch_name,
-      punchDays: groups.length,
-      alreadyInAdr,
-      gapDaysToCreate,
-      proposed,
-      proposedLwpDays: empLwp,
+      code: emp.employee_code, doj: emp.date_of_joining, branch: emp.branch_name,
+      punchDays: groups.length, alreadyInAdr, gapDaysToCreate, proposed, proposedLwpDays: empLwp,
       zeroPunchesAtAll: groups.length === 0,
     });
   }
@@ -225,54 +174,32 @@ async function pullCosecPunches(
   const withGaps = reports.filter((r) => r.gapDaysToCreate > 0);
 
   console.log(`\n=== SUMMARY ===`);
-  console.log(
-    `employees with zero NCOSEC punches at all in window (still a real gap — device mapping or non-attendance): ${zeroPunchers.length}`,
-  );
-  console.log(
-    `employees with at least one gap day to create: ${withGaps.length}`,
-  );
+  console.log(`employees with zero NCOSEC punches at all in window (still a real gap — device mapping or non-attendance): ${zeroPunchers.length}`);
+  console.log(`employees with at least one gap day to create: ${withGaps.length}`);
   console.log(`total ADR rows that would be created: ${totalGapDays}`);
-  console.log(
-    `total proposed LWP-days across all created rows (ceiling, pre-override): ${totalProposedLwp.toFixed(1)}`,
-  );
+  console.log(`total proposed LWP-days across all created rows (ceiling, pre-override): ${totalProposedLwp.toFixed(1)}`);
 
   console.log(`\n=== PER-EMPLOYEE (only those with gap days) ===`);
   console.table(
     withGaps
       .sort((a, b) => b.gapDaysToCreate - a.gapDaysToCreate)
       .map((r) => ({
-        code: r.code,
-        branch: r.branch,
-        doj: r.doj,
-        punchDays: r.punchDays,
-        alreadyInAdr: r.alreadyInAdr,
-        gapDays: r.gapDaysToCreate,
-        present: r.proposed.present,
-        half_day: r.proposed.half_day,
-        absent: r.proposed.absent,
+        code: r.code, branch: r.branch, doj: r.doj,
+        punchDays: r.punchDays, alreadyInAdr: r.alreadyInAdr, gapDays: r.gapDaysToCreate,
+        present: r.proposed.present, half_day: r.proposed.half_day, absent: r.proposed.absent,
         lwpDays: r.proposedLwpDays.toFixed(1),
       })),
   );
 
   if (zeroPunchers.length) {
-    console.log(
-      `\n=== ZERO-PUNCH EMPLOYEES (need separate investigation, not a reprocessing target) ===`,
-    );
-    console.table(
-      zeroPunchers.map((r) => ({ code: r.code, branch: r.branch, doj: r.doj })),
-    );
+    console.log(`\n=== ZERO-PUNCH EMPLOYEES (need separate investigation, not a reprocessing target) ===`);
+    console.table(zeroPunchers.map((r) => ({ code: r.code, branch: r.branch, doj: r.doj })));
   }
 
-  console.log(
-    `\nDRY RUN COMPLETE — nothing written. Re-verify FIDELITY CAVEAT above before treating proposedLwpDays as final.`,
-  );
+  console.log(`\nDRY RUN COMPLETE — nothing written. Re-verify FIDELITY CAVEAT above before treating proposedLwpDays as final.`);
   await db.end();
 })().catch(async (e) => {
   console.error("ERR", e?.message ?? e);
-  try {
-    await db.end();
-  } catch {
-    /* ignore */
-  }
+  try { await db.end(); } catch { /* ignore */ }
   process.exit(1);
 });

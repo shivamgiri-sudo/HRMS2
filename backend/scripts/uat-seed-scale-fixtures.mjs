@@ -40,23 +40,15 @@ const EMPLOYEES = Number(arg("employees", 30000));
 
 // Two independent conditions, both required. A local host with a production database name is
 // a port-forward; a _test name on a remote host is a shared server. Neither is acceptable.
-const LOCAL = ["127.0.0.1", "localhost", "::1", "mysql", "uatdb"].includes(
-  HOST,
-);
+const LOCAL = ["127.0.0.1", "localhost", "::1", "mysql", "uatdb"].includes(HOST);
 if (!LOCAL) {
   console.error(`[scale-fixtures] REFUSING: host "${HOST}" is not local.`);
-  console.error(
-    "  These fixtures write tens of thousands of rows. They run against a",
-  );
-  console.error(
-    "  disposable local database only, never a shared or production server.",
-  );
+  console.error("  These fixtures write tens of thousands of rows. They run against a");
+  console.error("  disposable local database only, never a shared or production server.");
   process.exit(2);
 }
 if (!/_test$/.test(DB)) {
-  console.error(
-    `[scale-fixtures] REFUSING: database "${DB}" does not end in _test.`,
-  );
+  console.error(`[scale-fixtures] REFUSING: database "${DB}" does not end in _test.`);
   process.exit(2);
 }
 
@@ -73,7 +65,7 @@ const conn = await mysql.createConnection({
 async function has(table) {
   const [rows] = await conn.query(
     `SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
-    [DB, table],
+    [DB, table]
   );
   return rows.length > 0;
 }
@@ -83,7 +75,7 @@ async function columns(table) {
   const [rows] = await conn.query(
     `SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_DEFAULT, DATA_TYPE
        FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
-    [DB, table],
+    [DB, table]
   );
   return rows;
 }
@@ -97,21 +89,15 @@ let seeded = 0;
 
 try {
   if (!(await has("employees"))) {
-    console.error(
-      "[scale-fixtures] employees table is absent; run the migrations first.",
-    );
+    console.error("[scale-fixtures] employees table is absent; run the migrations first.");
     process.exit(1);
   }
 
-  const [[{ n: existing }]] = await conn.query(
-    `SELECT COUNT(*) AS n FROM employees`,
-  );
+  const [[{ n: existing }]] = await conn.query(`SELECT COUNT(*) AS n FROM employees`);
   if (existing > 0) {
     // A populated employees table in a _test database on localhost is still not something
     // to add 30,000 synthetic rows to — the mix would make every later count meaningless.
-    console.error(
-      `[scale-fixtures] employees already has ${existing} rows; refusing to mix.`,
-    );
+    console.error(`[scale-fixtures] employees already has ${existing} rows; refusing to mix.`);
     process.exit(2);
   }
 
@@ -123,23 +109,14 @@ try {
     .filter(
       (c) =>
         c.COLUMN_NAME === "id" ||
-        (c.IS_NULLABLE === "NO" &&
-          c.COLUMN_DEFAULT === null &&
-          c.DATA_TYPE !== "timestamp"),
+        (c.IS_NULLABLE === "NO" && c.COLUMN_DEFAULT === null && c.DATA_TYPE !== "timestamp")
     )
     .map((c) => c.COLUMN_NAME);
 
-  const wanted = [
-    "id",
-    "employee_code",
-    "full_name",
-    "email",
-    "status",
-    "branch_id",
-  ].filter((c) => byName.has(c));
-  const insertCols = [...new Set([...required, ...wanted])].filter((c) =>
-    byName.has(c),
+  const wanted = ["id", "employee_code", "full_name", "email", "status", "branch_id"].filter((c) =>
+    byName.has(c)
   );
+  const insertCols = [...new Set([...required, ...wanted])].filter((c) => byName.has(c));
 
   const value = (col, i) => {
     switch (col) {
@@ -181,20 +158,15 @@ try {
     }
     await conn.query(sql + rows.join(","), params);
     seeded += end - start;
-    if (seeded % 10000 === 0)
-      console.log(`[scale-fixtures] ${seeded}/${EMPLOYEES} employees`);
+    if (seeded % 10000 === 0) console.log(`[scale-fixtures] ${seeded}/${EMPLOYEES} employees`);
   }
 
   // ANALYZE so the optimiser has statistics. Without it the planner may still choose
   // small-table plans and the whole exercise proves nothing.
   await conn.query(`ANALYZE TABLE employees`);
 
-  console.log(
-    `[scale-fixtures] seeded ${seeded} synthetic employees into ${DB} on ${HOST}.`,
-  );
-  console.log(
-    "[scale-fixtures] every value is generated; no production data was read.",
-  );
+  console.log(`[scale-fixtures] seeded ${seeded} synthetic employees into ${DB} on ${HOST}.`);
+  console.log("[scale-fixtures] every value is generated; no production data was read.");
 } catch (error) {
   console.error(`[scale-fixtures] failed after ${seeded} rows:`, error.message);
   process.exitCode = 1;

@@ -19,14 +19,7 @@ import { fileURLToPath } from "node:url";
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
-const scriptPath = join(
-  here,
-  "..",
-  "..",
-  "..",
-  "scripts",
-  "write-build-info.mjs",
-);
+const scriptPath = join(here, "..", "..", "..", "scripts", "write-build-info.mjs");
 
 describe("write-build-info.mjs", () => {
   it("exists and is wired into the backend build script", () => {
@@ -40,16 +33,11 @@ describe("write-build-info.mjs", () => {
 
   it("writes a stamp carrying the commit, and exits 0", () => {
     // Runs the real script; it writes to backend/dist, which the build owns anyway.
-    const out = execFileSync(process.execPath, [scriptPath], {
-      encoding: "utf8",
-    });
+    const out = execFileSync(process.execPath, [scriptPath], { encoding: "utf8" });
     expect(out).toContain("[build-info]");
 
     const stamp = JSON.parse(
-      readFileSync(
-        join(here, "..", "..", "..", "dist", "build-info.json"),
-        "utf8",
-      ),
+      readFileSync(join(here, "..", "..", "..", "dist", "build-info.json"), "utf8"),
     ) as Record<string, string>;
 
     expect(stamp.commit).toMatch(/^[0-9a-f]{40}$|^unknown$/);
@@ -64,10 +52,7 @@ describe("write-build-info.mjs", () => {
       env: { ...process.env, GITHUB_SHA: sha, GITHUB_REF_NAME: "main" },
     });
     const stamp = JSON.parse(
-      readFileSync(
-        join(here, "..", "..", "..", "dist", "build-info.json"),
-        "utf8",
-      ),
+      readFileSync(join(here, "..", "..", "..", "dist", "build-info.json"), "utf8"),
     ) as Record<string, string>;
     expect(stamp.commit).toBe(sha);
     expect(stamp.branch).toBe("main");
@@ -80,12 +65,7 @@ describe("write-build-info.mjs", () => {
       const out = execFileSync(process.execPath, [scriptPath], {
         encoding: "utf8",
         cwd: isolated,
-        env: {
-          ...process.env,
-          GITHUB_SHA: "",
-          GIT_SHA: "",
-          GITHUB_REF_NAME: "",
-        },
+        env: { ...process.env, GITHUB_SHA: "", GIT_SHA: "", GITHUB_REF_NAME: "" },
       });
       expect(out).toContain("[build-info]");
     } finally {
@@ -113,11 +93,7 @@ describe("readBuildInfo", () => {
     });
 
     const { readBuildInfo } = await import("../health.routes.js");
-    expect(readBuildInfo()).toEqual({
-      commit: "unknown",
-      branch: "unknown",
-      builtAt: "unknown",
-    });
+    expect(readBuildInfo()).toEqual({ commit: "unknown", branch: "unknown", builtAt: "unknown" });
   });
 
   it("reports 'unknown' instead of throwing when the stamp is corrupt", async () => {
@@ -126,9 +102,7 @@ describe("readBuildInfo", () => {
       return {
         ...actual,
         readFileSync: (p: unknown, ...rest: unknown[]) =>
-          String(p).endsWith("build-info.json")
-            ? "{not json"
-            : (actual.readFileSync as any)(p, ...rest),
+          String(p).endsWith("build-info.json") ? "{not json" : (actual.readFileSync as any)(p, ...rest),
       };
     });
 

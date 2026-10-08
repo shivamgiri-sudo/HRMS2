@@ -1,11 +1,8 @@
-import { db } from "../../db/mysql.js";
-import { getPoolForKey } from "../external-db/external-db.service.js";
-import type { Pool } from "mysql2/promise";
-import type { RowDataPacket } from "mysql2";
-import {
-  aprSourceReadBudgetMs,
-  readAprSourceAggregates,
-} from "./performance-apr-source-reader.js";
+import { db } from '../../db/mysql.js';
+import { getPoolForKey } from '../external-db/external-db.service.js';
+import type { Pool } from 'mysql2/promise';
+import type { RowDataPacket } from 'mysql2';
+import { aprSourceReadBudgetMs, readAprSourceAggregates } from './performance-apr-source-reader.js';
 
 export type PreviewMetric = {
   metricCode: string;
@@ -15,7 +12,7 @@ export type PreviewMetric = {
 };
 
 export type SourcePreview = {
-  key: "apr" | "quality" | "conversion" | "salesBrandMis" | "salesOrders";
+  key: 'apr' | 'quality' | 'conversion' | 'salesBrandMis' | 'salesOrders';
   connectorKey: string;
   configured: boolean;
   active: boolean;
@@ -62,12 +59,10 @@ type SourceRow = {
   quality_denominator?: number | string | null;
 };
 
-type SourceRowsResult =
-  | SourceRow[]
-  | {
-      rows: SourceRow[];
-      errors?: string[];
-    };
+type SourceRowsResult = SourceRow[] | {
+  rows: SourceRow[];
+  errors?: string[];
+};
 
 type ConnectorStatus = {
   integration_key: string;
@@ -78,11 +73,11 @@ type ConnectorStatus = {
 };
 
 const CONNECTORS = {
-  apr: "apr_productivity",
-  quality: "quality_audit",
-  conversion: "outbound_calls",
-  salesBrandMis: "sales_brand_mis",
-  salesOrders: "sales_brand_mis",
+  apr: 'apr_productivity',
+  quality: 'quality_audit',
+  conversion: 'outbound_calls',
+  salesBrandMis: 'sales_brand_mis',
+  salesOrders: 'sales_brand_mis',
 } as const;
 
 function numberValue(value: unknown): number {
@@ -99,9 +94,7 @@ function round2(value: number): number {
 }
 
 function normalizeIdentifier(value: unknown): string {
-  return String(value ?? "")
-    .trim()
-    .toUpperCase();
+  return String(value ?? '').trim().toUpperCase();
 }
 
 function nextDate(date: string): string {
@@ -111,7 +104,7 @@ function nextDate(date: string): string {
 }
 
 function monthBounds(yearMonth: string): { from: string; to: string } {
-  const [year, month] = yearMonth.split("-").map(Number);
+  const [year, month] = yearMonth.split('-').map(Number);
   const d = new Date(Date.UTC(year, month, 1));
   return { from: `${yearMonth}-01`, to: d.toISOString().slice(0, 10) };
 }
@@ -120,21 +113,13 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  label: string,
-): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(new Error(`${label} preview query timed out after ${ms}ms`)),
-          ms,
-        );
+        timer = setTimeout(() => reject(new Error(`${label} preview query timed out after ${ms}ms`)), ms);
       }),
     ]);
   } finally {
@@ -144,7 +129,7 @@ async function withTimeout<T>(
 
 async function connectorStatuses(): Promise<Map<string, ConnectorStatus>> {
   const keys = Object.values(CONNECTORS);
-  const placeholders = keys.map(() => "?").join(",");
+  const placeholders = keys.map(() => '?').join(',');
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT integration_key,
             active_status,
@@ -155,22 +140,13 @@ async function connectorStatuses(): Promise<Map<string, ConnectorStatus>> {
       WHERE integration_key IN (${placeholders})`,
     keys,
   );
-  return new Map(
-    (rows as any[]).map((row) => [
-      String(row.integration_key),
-      row as ConnectorStatus,
-    ]),
-  );
+  return new Map((rows as any[]).map((row) => [String(row.integration_key), row as ConnectorStatus]));
 }
 
 async function employeeMapFor(rows: SourceRow[]): Promise<Map<string, string>> {
-  const identifiers = [
-    ...new Set(
-      rows.map((row) => normalizeIdentifier(row.agent_user)).filter(Boolean),
-    ),
-  ];
+  const identifiers = [...new Set(rows.map((row) => normalizeIdentifier(row.agent_user)).filter(Boolean))];
   if (!identifiers.length) return new Map();
-  const placeholders = identifiers.map(() => "?").join(",");
+  const placeholders = identifiers.map(() => '?').join(',');
   const [employeeRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_code, biometric_code
        FROM employees
@@ -183,28 +159,20 @@ async function employeeMapFor(rows: SourceRow[]): Promise<Map<string, string>> {
   for (const employee of employeeRows as any[]) {
     const employeeCode = normalizeIdentifier(employee.employee_code);
     const biometricCode = normalizeIdentifier(employee.biometric_code);
-    if (employeeCode && !map.has(employeeCode))
-      map.set(employeeCode, String(employee.id));
-    if (biometricCode && !map.has(biometricCode))
-      map.set(biometricCode, String(employee.id));
+    if (employeeCode && !map.has(employeeCode)) map.set(employeeCode, String(employee.id));
+    if (biometricCode && !map.has(biometricCode)) map.set(biometricCode, String(employee.id));
   }
   return map;
 }
 
-function emptyPreview(
-  key: keyof typeof CONNECTORS,
-  status?: ConnectorStatus,
-): SourcePreview {
+function emptyPreview(key: keyof typeof CONNECTORS, status?: ConnectorStatus): SourcePreview {
   return {
     key,
     connectorKey: CONNECTORS[key],
     configured: Boolean(status),
     active: Number(status?.active_status ?? 0) === 1,
     hasCredentials: Number(status?.has_credentials ?? 0) === 1,
-    lastTestOk:
-      status?.test_ok === null || status?.test_ok === undefined
-        ? null
-        : Number(status.test_ok) === 1,
+    lastTestOk: status?.test_ok === null || status?.test_ok === undefined ? null : Number(status.test_ok) === 1,
     ok: false,
     sourceRows: 0,
     mappedRows: 0,
@@ -225,10 +193,10 @@ async function previewRows(
   const status = statuses.get(CONNECTORS[key]);
   const preview = emptyPreview(key, status);
   try {
-    const pool = (await getPoolForKey(CONNECTORS[key])) as Pool;
+    const pool = await getPoolForKey(CONNECTORS[key]) as Pool;
     const result = await withTimeout(query(pool), timeoutMs, key);
     const rows = Array.isArray(result) ? result : result.rows;
-    const queryErrors = Array.isArray(result) ? [] : (result.errors ?? []);
+    const queryErrors = Array.isArray(result) ? [] : result.errors ?? [];
     preview.errors.push(...queryErrors);
     const employees = await employeeMapFor(rows);
     for (const row of rows) {
@@ -243,9 +211,7 @@ async function previewRows(
     }
     preview.ok = queryErrors.length === 0;
     preview.sourceRows = rows.length;
-    preview.unmappedIdentifiers = [
-      ...new Set(preview.unmappedIdentifiers),
-    ].slice(0, 25);
+    preview.unmappedIdentifiers = [...new Set(preview.unmappedIdentifiers)].slice(0, 25);
     return preview;
   } catch (error) {
     preview.errors.push(errorMessage(error));
@@ -253,56 +219,29 @@ async function previewRows(
   }
 }
 
-export async function previewPerformanceSources(input: {
-  date: string;
-  yearMonth?: string;
-}): Promise<PerformanceSourcePreview> {
+export async function previewPerformanceSources(input: { date: string; yearMonth?: string }): Promise<PerformanceSourcePreview> {
   const yearMonth = input.yearMonth ?? input.date.slice(0, 7);
   const statuses = await connectorStatuses();
   const bounds = monthBounds(yearMonth);
 
-  const apr = await previewRows(
-    "apr",
-    statuses,
-    async (pool) => {
-      return readAprSourceAggregates(pool, input.date);
-    },
-    (row) => {
-      const calls = numberValue(row.total_calls);
-      const talk = numberValue(row.total_talk);
-      const dispo = numberValue(row.total_dispo);
-      if (calls <= 0) return [];
-      return [
-        {
-          metricCode: "AHT",
-          value: round1((talk + dispo) / calls),
-          numerator: talk + dispo,
-          denominator: calls,
-        },
-        {
-          metricCode: "TALK_TIME",
-          value: round1(talk / calls),
-          numerator: talk,
-          denominator: calls,
-        },
-        { metricCode: "DIALS", value: calls, numerator: calls },
-        {
-          metricCode: "ACW",
-          value: round1(dispo / calls),
-          numerator: dispo,
-          denominator: calls,
-        },
-      ];
-    },
-    aprSourceReadBudgetMs(),
-  );
+  const apr = await previewRows('apr', statuses, async (pool) => {
+    return readAprSourceAggregates(pool, input.date);
+  }, (row) => {
+    const calls = numberValue(row.total_calls);
+    const talk = numberValue(row.total_talk);
+    const dispo = numberValue(row.total_dispo);
+    if (calls <= 0) return [];
+    return [
+      { metricCode: 'AHT', value: round1((talk + dispo) / calls), numerator: talk + dispo, denominator: calls },
+      { metricCode: 'TALK_TIME', value: round1(talk / calls), numerator: talk, denominator: calls },
+      { metricCode: 'DIALS', value: calls, numerator: calls },
+      { metricCode: 'ACW', value: round1(dispo / calls), numerator: dispo, denominator: calls },
+    ];
+  }, aprSourceReadBudgetMs());
 
-  const quality = await previewRows(
-    "quality",
-    statuses,
-    async (pool) => {
-      const [rows] = await pool.execute(
-        `SELECT UPPER(TRIM(\`User\`)) AS agent_user,
+  const quality = await previewRows('quality', statuses, async (pool) => {
+    const [rows] = await pool.execute(
+      `SELECT UPPER(TRIM(\`User\`)) AS agent_user,
               SUM(COALESCE(total_score, 0)) AS points_earned,
               SUM(COALESCE(max_score, 0)) AS points_possible,
               SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END) AS fatal_audits,
@@ -311,68 +250,39 @@ export async function previewPerformanceSources(input: {
          FROM call_quality_assessment
         WHERE CallDate >= ? AND CallDate < ?
         GROUP BY UPPER(TRIM(\`User\`))`,
-        [bounds.from, bounds.to],
-      );
-      return rows as SourceRow[];
-    },
-    (row) => {
-      const possible = numberValue(row.points_possible);
-      const audits = numberValue(row.total_audits);
-      const metrics: PreviewMetric[] = [];
-      if (possible > 0)
-        metrics.push({
-          metricCode: "QUALITY_SCORE",
-          value: round2((numberValue(row.points_earned) / possible) * 100),
-          numerator: numberValue(row.points_earned),
-          denominator: possible,
-        });
-      if (audits > 0)
-        metrics.push({
-          metricCode: "FATAL_RATE",
-          value: round2((numberValue(row.fatal_audits) / audits) * 100),
-          numerator: numberValue(row.fatal_audits),
-          denominator: audits,
-        });
-      return metrics;
-    },
-  );
+      [bounds.from, bounds.to],
+    );
+    return rows as SourceRow[];
+  }, (row) => {
+    const possible = numberValue(row.points_possible);
+    const audits = numberValue(row.total_audits);
+    const metrics: PreviewMetric[] = [];
+    if (possible > 0) metrics.push({ metricCode: 'QUALITY_SCORE', value: round2((numberValue(row.points_earned) / possible) * 100), numerator: numberValue(row.points_earned), denominator: possible });
+    if (audits > 0) metrics.push({ metricCode: 'FATAL_RATE', value: round2((numberValue(row.fatal_audits) / audits) * 100), numerator: numberValue(row.fatal_audits), denominator: audits });
+    return metrics;
+  });
 
-  const conversion = await previewRows(
-    "conversion",
-    statuses,
-    async (pool) => {
-      const [rows] = await pool.execute(
-        `SELECT UPPER(TRIM(AgentName)) AS agent_user,
+  const conversion = await previewRows('conversion', statuses, async (pool) => {
+    const [rows] = await pool.execute(
+      `SELECT UPPER(TRIM(AgentName)) AS agent_user,
               SUM(CASE WHEN SaleDone = 1 THEN 1 ELSE 0 END) AS converted_sales,
               COUNT(*) AS eligible_contacts,
               COUNT(*) AS source_records
          FROM CallDetails
         WHERE CallDate >= ? AND CallDate < ?
         GROUP BY UPPER(TRIM(AgentName))`,
-        [input.date, nextDate(input.date)],
-      );
-      return rows as SourceRow[];
-    },
-    (row) => {
-      const eligible = numberValue(row.eligible_contacts);
-      if (eligible <= 0) return [];
-      return [
-        {
-          metricCode: "CONVERSION_RATE",
-          value: round2((numberValue(row.converted_sales) / eligible) * 100),
-          numerator: numberValue(row.converted_sales),
-          denominator: eligible,
-        },
-      ];
-    },
-  );
+      [input.date, nextDate(input.date)],
+    );
+    return rows as SourceRow[];
+  }, (row) => {
+    const eligible = numberValue(row.eligible_contacts);
+    if (eligible <= 0) return [];
+    return [{ metricCode: 'CONVERSION_RATE', value: round2((numberValue(row.converted_sales) / eligible) * 100), numerator: numberValue(row.converted_sales), denominator: eligible }];
+  });
 
-  const salesBrandMis = await previewRows(
-    "salesBrandMis",
-    statuses,
-    async (pool) => {
-      const [rows] = await pool.execute(
-        `SELECT UPPER(TRIM(agent_user)) AS agent_user,
+  const salesBrandMis = await previewRows('salesBrandMis', statuses, async (pool) => {
+    const [rows] = await pool.execute(
+      `SELECT UPPER(TRIM(agent_user)) AS agent_user,
               SUM(total_calls) AS total_calls,
               0 AS converted_sales,
               SUM(total_aht) AS total_aht,
@@ -434,46 +344,26 @@ export async function previewPerformanceSources(input: {
             WHERE STR_TO_DATE(\`date\`, '%d-%b-%Y') = ?
          ) brand_apr
         GROUP BY UPPER(TRIM(agent_user))`,
-        [input.date, input.date, input.date],
+      [input.date, input.date, input.date],
+    );
+    return rows as SourceRow[];
+  }, (row) => {
+    const calls = numberValue(row.total_calls);
+    const metrics: PreviewMetric[] = [];
+    if (calls > 0) {
+      metrics.push(
+        { metricCode: 'DIALS', value: calls, numerator: calls },
+        { metricCode: 'AHT', value: round1(numberValue(row.total_aht) / calls), numerator: numberValue(row.total_aht), denominator: calls },
+        { metricCode: 'TALK_TIME', value: round1(numberValue(row.total_talk) / calls), numerator: numberValue(row.total_talk), denominator: calls },
+        { metricCode: 'ACW', value: round1(numberValue(row.total_dispo) / calls), numerator: numberValue(row.total_dispo), denominator: calls },
       );
-      return rows as SourceRow[];
-    },
-    (row) => {
-      const calls = numberValue(row.total_calls);
-      const metrics: PreviewMetric[] = [];
-      if (calls > 0) {
-        metrics.push(
-          { metricCode: "DIALS", value: calls, numerator: calls },
-          {
-            metricCode: "AHT",
-            value: round1(numberValue(row.total_aht) / calls),
-            numerator: numberValue(row.total_aht),
-            denominator: calls,
-          },
-          {
-            metricCode: "TALK_TIME",
-            value: round1(numberValue(row.total_talk) / calls),
-            numerator: numberValue(row.total_talk),
-            denominator: calls,
-          },
-          {
-            metricCode: "ACW",
-            value: round1(numberValue(row.total_dispo) / calls),
-            numerator: numberValue(row.total_dispo),
-            denominator: calls,
-          },
-        );
-      }
-      return metrics;
-    },
-  );
+    }
+    return metrics;
+  });
 
-  const salesOrders = await previewRows(
-    "salesOrders",
-    statuses,
-    async (pool) => {
-      const [rows] = await pool.execute(
-        `SELECT UPPER(TRIM(agent_user)) AS agent_user,
+  const salesOrders = await previewRows('salesOrders', statuses, async (pool) => {
+    const [rows] = await pool.execute(
+      `SELECT UPPER(TRIM(agent_user)) AS agent_user,
               SUM(converted_sales) AS converted_sales,
               SUM(revenue) AS revenue,
               SUM(cod_orders) AS cod_orders,
@@ -511,38 +401,21 @@ export async function previewPerformanceSources(input: {
             GROUP BY CONVERT(COALESCE(NULLIF(emp_id, ''), name) USING utf8mb4) COLLATE utf8mb4_unicode_ci
          ) brand_sales
         GROUP BY UPPER(TRIM(agent_user))`,
-        [input.date, input.date, input.date, input.date, input.date],
-      );
-      return rows as SourceRow[];
-    },
-    (row) => {
-      const sales = numberValue(row.converted_sales);
-      const revenue = numberValue(row.revenue);
-      if (sales <= 0) return [];
-      return [
-        { metricCode: "SALES_COUNT", value: sales, numerator: sales },
-        { metricCode: "REVENUE", value: round2(revenue), numerator: revenue },
-        {
-          metricCode: "AOV",
-          value: round2(revenue / sales),
-          numerator: revenue,
-          denominator: sales,
-        },
-        {
-          metricCode: "COD_SHARE",
-          value: round2((numberValue(row.cod_orders) / sales) * 100),
-          numerator: numberValue(row.cod_orders),
-          denominator: sales,
-        },
-        {
-          metricCode: "RTO_RATE",
-          value: round2((numberValue(row.rto_orders) / sales) * 100),
-          numerator: numberValue(row.rto_orders),
-          denominator: sales,
-        },
-      ];
-    },
-  );
+      [input.date, input.date, input.date, input.date, input.date],
+    );
+    return rows as SourceRow[];
+  }, (row) => {
+    const sales = numberValue(row.converted_sales);
+    const revenue = numberValue(row.revenue);
+    if (sales <= 0) return [];
+    return [
+      { metricCode: 'SALES_COUNT', value: sales, numerator: sales },
+      { metricCode: 'REVENUE', value: round2(revenue), numerator: revenue },
+      { metricCode: 'AOV', value: round2(revenue / sales), numerator: revenue, denominator: sales },
+      { metricCode: 'COD_SHARE', value: round2((numberValue(row.cod_orders) / sales) * 100), numerator: numberValue(row.cod_orders), denominator: sales },
+      { metricCode: 'RTO_RATE', value: round2((numberValue(row.rto_orders) / sales) * 100), numerator: numberValue(row.rto_orders), denominator: sales },
+    ];
+  });
   return {
     date: input.date,
     yearMonth,

@@ -1,11 +1,10 @@
-import { randomUUID } from "crypto";
+import { randomUUID } from 'crypto';
 import { sqlLimitOffset } from "../../db/pagination.js";
-import { db } from "../../db/mysql.js";
-import { addPoints } from "./gamification.service.js";
-import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
+import { db } from '../../db/mysql.js';
+import { addPoints } from './gamification.service.js';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 
-export type TriviaCategory =
-  "company" | "process" | "industry" | "general" | "fun";
+export type TriviaCategory = 'company' | 'process' | 'industry' | 'general' | 'fun';
 
 export interface TriviaQuestion {
   id: string;
@@ -23,10 +22,7 @@ export interface TriviaQuestion {
   created_at: string;
 }
 
-export interface TriviaQuestionPublic extends Omit<
-  TriviaQuestion,
-  "correct_option"
-> {
+export interface TriviaQuestionPublic extends Omit<TriviaQuestion, 'correct_option'> {
   correct_option?: string; // only exposed after answering
 }
 
@@ -59,14 +55,12 @@ export interface AnswerResult {
 interface QuestionRow extends RowDataPacket, TriviaQuestion {}
 interface ResponseRow extends RowDataPacket, TriviaResponse {}
 
-export async function getTodayQuestion(
-  employeeId: string,
-): Promise<TodayTriviaResult | null> {
-  const today = new Date().toISOString().split("T")[0];
+export async function getTodayQuestion(employeeId: string): Promise<TodayTriviaResult | null> {
+  const today = new Date().toISOString().split('T')[0];
 
   const [qRows] = await db.execute<QuestionRow[]>(
     `SELECT * FROM daily_trivia_question WHERE question_date = ?`,
-    [today],
+    [today]
   );
   if (qRows.length === 0) return null;
 
@@ -74,14 +68,14 @@ export async function getTodayQuestion(
 
   const [rRows] = await db.execute<ResponseRow[]>(
     `SELECT * FROM daily_trivia_response WHERE question_id = ? AND employee_id = ?`,
-    [question.id, employeeId],
+    [question.id, employeeId]
   );
   const myResponse = rRows[0] || null;
 
   const [statsRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) as total, SUM(is_correct) as correct_count
      FROM daily_trivia_response WHERE question_id = ?`,
-    [question.id],
+    [question.id]
   );
   const stats = statsRows[0];
 
@@ -103,27 +97,27 @@ export async function submitAnswer(
   employeeId: string,
   questionId: string,
   selectedOption: string,
-  timeTakenSeconds?: number,
+  timeTakenSeconds?: number
 ): Promise<AnswerResult> {
   const [qRows] = await db.execute<QuestionRow[]>(
     `SELECT * FROM daily_trivia_question WHERE id = ?`,
-    [questionId],
+    [questionId]
   );
-  if (qRows.length === 0) throw new Error("Question not found");
+  if (qRows.length === 0) throw new Error('Question not found');
 
   const question = qRows[0];
 
   // Check already answered
   const [existing] = await db.execute<ResponseRow[]>(
     `SELECT * FROM daily_trivia_response WHERE question_id = ? AND employee_id = ?`,
-    [questionId, employeeId],
+    [questionId, employeeId]
   );
   if (existing.length > 0) {
     const prev = existing[0];
     const [rankRow] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) + 1 as \`rank\` FROM daily_trivia_response
        WHERE question_id = ? AND is_correct = 1 AND answered_at < ?`,
-      [questionId, prev.answered_at],
+      [questionId, prev.answered_at]
     );
     return {
       correct: prev.is_correct,
@@ -134,34 +128,23 @@ export async function submitAnswer(
     };
   }
 
-  const isCorrect =
-    selectedOption.toUpperCase() === question.correct_option.toUpperCase();
-  const pointsToAward = isCorrect
-    ? question.points_correct
-    : question.points_participate;
+  const isCorrect = selectedOption.toUpperCase() === question.correct_option.toUpperCase();
+  const pointsToAward = isCorrect ? question.points_correct : question.points_participate;
   const responseId = randomUUID();
 
   await db.execute<ResultSetHeader>(
     `INSERT INTO daily_trivia_response
        (id, question_id, employee_id, selected_option, is_correct, time_taken_seconds, points_awarded, answered_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-    [
-      responseId,
-      questionId,
-      employeeId,
-      selectedOption.toUpperCase(),
-      isCorrect ? 1 : 0,
-      timeTakenSeconds ?? null,
-      pointsToAward,
-    ],
+    [responseId, questionId, employeeId, selectedOption.toUpperCase(), isCorrect ? 1 : 0, timeTakenSeconds ?? null, pointsToAward]
   );
 
   await addPoints(
     employeeId,
     pointsToAward,
-    isCorrect ? "trivia_correct" : "trivia_participate",
-    `Daily trivia: ${isCorrect ? "correct answer" : "participated"}`,
-    responseId,
+    isCorrect ? 'trivia_correct' : 'trivia_participate',
+    `Daily trivia: ${isCorrect ? 'correct answer' : 'participated'}`,
+    responseId
   );
 
   // Get rank among correct answers
@@ -170,7 +153,7 @@ export async function submitAnswer(
     const [rankRow] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as \`rank\` FROM daily_trivia_response
        WHERE question_id = ? AND is_correct = 1 AND answered_at <= NOW()`,
-      [questionId],
+      [questionId]
     );
     rank = Number(rankRow[0].rank);
   }
@@ -184,16 +167,14 @@ export async function submitAnswer(
   };
 }
 
-export async function getTriviaLeaderboard(date?: string): Promise<
-  Array<{
-    employee_id: string;
-    employee_name: string;
-    is_correct: boolean;
-    time_taken_seconds: number | null;
-    answered_at: string;
-  }>
-> {
-  const targetDate = date || new Date().toISOString().split("T")[0];
+export async function getTriviaLeaderboard(date?: string): Promise<Array<{
+  employee_id: string;
+  employee_name: string;
+  is_correct: boolean;
+  time_taken_seconds: number | null;
+  answered_at: string;
+}>> {
+  const targetDate = date || new Date().toISOString().split('T')[0];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT r.employee_id, e.full_name as employee_name, r.is_correct, r.time_taken_seconds, r.answered_at
      FROM daily_trivia_response r
@@ -202,7 +183,7 @@ export async function getTriviaLeaderboard(date?: string): Promise<
      WHERE q.question_date = ?
      ORDER BY r.is_correct DESC, r.time_taken_seconds ASC
      LIMIT 20`,
-    [targetDate],
+    [targetDate]
   );
   return rows as any[];
 }
@@ -221,7 +202,7 @@ export async function createQuestion(
     points_correct?: number;
     points_participate?: number;
   },
-  createdBy: string,
+  createdBy: string
 ): Promise<TriviaQuestion> {
   const id = randomUUID();
   await db.execute<ResultSetHeader>(
@@ -230,42 +211,29 @@ export async function createQuestion(
         correct_option, explanation, points_correct, points_participate, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      id,
-      data.question_date,
-      data.question_text,
-      data.category,
-      data.option_a,
-      data.option_b,
-      data.option_c ?? null,
-      data.option_d ?? null,
-      data.correct_option.toUpperCase(),
-      data.explanation ?? null,
-      data.points_correct ?? 10,
-      data.points_participate ?? 2,
-      createdBy,
-    ],
+      id, data.question_date, data.question_text, data.category,
+      data.option_a, data.option_b, data.option_c ?? null, data.option_d ?? null,
+      data.correct_option.toUpperCase(), data.explanation ?? null,
+      data.points_correct ?? 10, data.points_participate ?? 2, createdBy,
+    ]
   );
-  const [rows] = await db.execute<QuestionRow[]>(
-    `SELECT * FROM daily_trivia_question WHERE id = ?`,
-    [id],
-  );
+  const [rows] = await db.execute<QuestionRow[]>(`SELECT * FROM daily_trivia_question WHERE id = ?`, [id]);
   return rows[0];
 }
 
 export async function getQuestionBank(
-  options: { limit?: number; offset?: number; category?: TriviaCategory } = {},
+  options: { limit?: number; offset?: number; category?: TriviaCategory } = {}
 ): Promise<{ questions: TriviaQuestion[]; total: number }> {
   const { limit = 50, offset = 0, category } = options;
-  const where = category ? "WHERE category = ?" : "";
+  const where = category ? 'WHERE category = ?' : '';
   const params: any[] = category ? [category] : [];
 
   const [countRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as total FROM daily_trivia_question ${where}`,
-    params,
+    `SELECT COUNT(*) as total FROM daily_trivia_question ${where}`, params
   );
   const [rows] = await db.execute<QuestionRow[]>(
     `SELECT * FROM daily_trivia_question ${where} ORDER BY question_date DESC ${sqlLimitOffset(limit, offset)}`,
-    params,
+    params
   );
   return { questions: rows, total: Number(countRows[0].total) };
 }

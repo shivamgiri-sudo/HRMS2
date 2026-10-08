@@ -21,18 +21,9 @@ function createApp() {
   const app = express();
   app.use(express.json());
   app.use("/api/visitor", visitorSecurityRouter);
-  app.use(
-    (
-      error: any,
-      _req: express.Request,
-      res: express.Response,
-      _next: express.NextFunction,
-    ) => {
-      return res
-        .status(error?.issues ? 400 : (error?.statusCode ?? 500))
-        .json({ success: false });
-    },
-  );
+  app.use((error: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    return res.status(error?.issues ? 400 : error?.statusCode ?? 500).json({ success: false });
+  });
   return app;
 }
 
@@ -59,10 +50,7 @@ describe("visitor security routes", () => {
   });
 
   it("allows an authorized administrator to process check-in", async () => {
-    vi.mocked(visitorService.checkEvent).mockResolvedValueOnce({
-      id: visitId,
-      status: "checked_in",
-    });
+    vi.mocked(visitorService.checkEvent).mockResolvedValueOnce({ id: visitId, status: "checked_in" });
 
     const response = await request(createApp())
       .post(`/api/visitor/visits/${visitId}/check-in`)
@@ -103,9 +91,7 @@ describe("visitor security routes", () => {
     expect(response.status).toBe(201);
     expect(visitorService.createDeskVisit).toHaveBeenCalledWith(
       "demo-admin-id",
-      expect.objectContaining({
-        host_employee_id: "06c012c0-a297-485d-9868-88d78ce14de2",
-      }),
+      expect.objectContaining({ host_employee_id: "06c012c0-a297-485d-9868-88d78ce14de2" }),
       expect.anything(),
     );
   });
@@ -122,31 +108,15 @@ describe("visitor security routes", () => {
 
 describe("visitor persistence security", () => {
   it("stores only a tracking-token hash and contains no Aadhaar field", () => {
-    const migration = readFileSync(
-      new URL(
-        "../../../../sql/409_visitor_management_foundation.sql",
-        import.meta.url,
-      ),
-      "utf8",
-    );
+    const migration = readFileSync(new URL("../../../../sql/409_visitor_management_foundation.sql", import.meta.url), "utf8");
     expect(migration).toContain("tracking_token_hash");
     expect(migration).not.toMatch(/tracking_token\s+(?:CHAR|VARCHAR|TEXT)/i);
     expect(migration).not.toMatch(/aadhaar|aadhar/i);
   });
 
   it("scopes badge identity and configuration uniqueness by branch", () => {
-    const migration = readFileSync(
-      new URL(
-        "../../../../sql/409_visitor_management_foundation.sql",
-        import.meta.url,
-      ),
-      "utf8",
-    );
-    expect(migration).toContain(
-      "uq_visitor_badge_branch_number (branch_id, badge_number)",
-    );
-    expect(migration).toContain(
-      "uq_visitor_config_scope (scope_key, config_key)",
-    );
+    const migration = readFileSync(new URL("../../../../sql/409_visitor_management_foundation.sql", import.meta.url), "utf8");
+    expect(migration).toContain("uq_visitor_badge_branch_number (branch_id, badge_number)");
+    expect(migration).toContain("uq_visitor_config_scope (scope_key, config_key)");
   });
 });

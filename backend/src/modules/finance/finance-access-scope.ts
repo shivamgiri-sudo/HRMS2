@@ -19,7 +19,7 @@ function normalizedRoles(primaryRole?: string, userRoles?: string[]) {
   return new Set(
     [primaryRole, ...(userRoles ?? [])]
       .filter((role): role is string => Boolean(role))
-      .map((role) => role.toLowerCase()),
+      .map((role) => role.toLowerCase())
   );
 }
 
@@ -55,13 +55,9 @@ const OVERRIDING_GLOBAL_FINANCE_ROLES = new Set([
   "hr_admin",
 ]);
 
-export function hasGlobalFinanceScope(
-  primaryRole?: string,
-  userRoles?: string[],
-) {
+export function hasGlobalFinanceScope(primaryRole?: string, userRoles?: string[]) {
   const roles = Array.from(normalizedRoles(primaryRole, userRoles));
-  if (roles.some((role) => OVERRIDING_GLOBAL_FINANCE_ROLES.has(role)))
-    return true;
+  if (roles.some((role) => OVERRIDING_GLOBAL_FINANCE_ROLES.has(role))) return true;
   if (roles.some((role) => BRANCH_BOUND_FINANCE_ROLES.has(role))) return false;
   return roles.some((role) => GLOBAL_FINANCE_ROLES.has(role));
 }
@@ -75,13 +71,11 @@ export async function getUserBranchId(userId: string) {
         AND branch_id IS NOT NULL
       ORDER BY updated_at DESC, created_at DESC
       LIMIT 1`,
-    [userId],
+    [userId]
   );
   const branchId = rows[0]?.branch_id ? String(rows[0].branch_id) : null;
   if (!branchId) {
-    throw new Error(
-      "Your user account is not mapped to an active employee branch",
-    );
+    throw new Error("Your user account is not mapped to an active employee branch");
   }
   return branchId;
 }
@@ -96,7 +90,8 @@ export async function getUserBranchId(userId: string) {
  * to get wrong, and `resolveFinanceBranchScopeSet` throws rather than ever constructing one.
  */
 export type FinanceBranchScope =
-  { mode: "all" } | { mode: "branches"; branchIds: string[] };
+  | { mode: "all" }
+  | { mode: "branches"; branchIds: string[] };
 
 /** Scope rows that carry a branch. `process`, `lob`, `department`, `team` and `self` do not. */
 const BRANCH_BEARING_SCOPE_TYPES = new Set(["branch", "branch_process"]);
@@ -131,22 +126,14 @@ export async function resolveFinanceBranchScopeSet(input: {
   const requested = input.requestedBranchId?.trim() || undefined;
 
   if (hasGlobalFinanceScope(input.primaryRole, input.userRoles)) {
-    return requested
-      ? { mode: "branches", branchIds: [requested] }
-      : { mode: "all" };
+    return requested ? { mode: "branches", branchIds: [requested] } : { mode: "all" };
   }
 
-  const allowed = await resolveGrantedBranchIds(
-    input.userId,
-    input.primaryRole,
-    input.userRoles,
-  );
+  const allowed = await resolveGrantedBranchIds(input.userId, input.primaryRole, input.userRoles);
 
   if (requested) {
     if (!allowed.includes(requested)) {
-      throw new Error(
-        "You can only access finance records for your assigned branch",
-      );
+      throw new Error("You can only access finance records for your assigned branch");
     }
     return { mode: "branches", branchIds: [requested] };
   }
@@ -215,9 +202,7 @@ async function resolveGrantedBranchIds(
     employeeBranchId = null;
   }
 
-  return Array.from(
-    new Set(employeeBranchId ? [employeeBranchId, ...granted] : granted),
-  );
+  return Array.from(new Set(employeeBranchId ? [employeeBranchId, ...granted] : granted));
 }
 
 /**
@@ -232,10 +217,7 @@ export function financeBranchFilter(
 ): { sql: string; params: string[] } {
   if (scope.mode === "all") return { sql: "1=1", params: [] };
   const placeholders = scope.branchIds.map(() => "?").join(", ");
-  return {
-    sql: `${column} IN (${placeholders})`,
-    params: [...scope.branchIds],
-  };
+  return { sql: `${column} IN (${placeholders})`, params: [...scope.branchIds] };
 }
 
 /**
@@ -283,9 +265,7 @@ export async function assertFinanceRecordBranch(input: {
 
   // A record with no branch reads as a denial, never as unrestricted. getMeterBranchId and
   // getCostCentreBranchId return null for a missing or unmapped record.
-  const recordBranchId = input.recordBranchId
-    ? String(input.recordBranchId)
-    : null;
+  const recordBranchId = input.recordBranchId ? String(input.recordBranchId) : null;
   if (!recordBranchId || !scope.branchIds.includes(recordBranchId)) {
     throw new Error("You cannot access a finance record from another branch");
   }
@@ -305,12 +285,10 @@ const PROCESS_SCOPED_ROLES = new Set(["process_manager"]);
  * cost-centre-mapping.service.ts. Returns null when the process does not exist or is unmapped;
  * assertFinanceRecordBranch treats null as a denial, not as unrestricted.
  */
-export async function getProcessBranchId(
-  processId: string,
-): Promise<string | null> {
+export async function getProcessBranchId(processId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id FROM process_master WHERE id = ? LIMIT 1`,
-    [processId],
+    [processId]
   );
   return rows[0]?.branch_id ? String(rows[0].branch_id) : null;
 }
@@ -328,9 +306,7 @@ async function getUserProcessId(userId: string) {
   );
   const processId = rows[0]?.process_id ? String(rows[0].process_id) : null;
   if (!processId) {
-    throw new Error(
-      "Your user account is not mapped to an active employee process",
-    );
+    throw new Error("Your user account is not mapped to an active employee process");
   }
   return processId;
 }
@@ -349,20 +325,15 @@ export async function resolveFinanceProcessScope(input: {
   requestedProcessId?: string | null;
 }) {
   const requested = input.requestedProcessId?.trim() || undefined;
-  if (hasGlobalFinanceScope(input.primaryRole, input.userRoles))
-    return requested;
+  if (hasGlobalFinanceScope(input.primaryRole, input.userRoles)) return requested;
 
   const roles = normalizedRoles(input.primaryRole, input.userRoles);
-  const restricted = Array.from(roles).some((role) =>
-    PROCESS_SCOPED_ROLES.has(role),
-  );
+  const restricted = Array.from(roles).some((role) => PROCESS_SCOPED_ROLES.has(role));
   if (!restricted) return requested;
 
   const assignedProcessId = await getUserProcessId(input.userId);
   if (requested && requested !== assignedProcessId) {
-    throw new Error(
-      "You can only access finance records for your assigned process",
-    );
+    throw new Error("You can only access finance records for your assigned process");
   }
   return assignedProcessId;
 }

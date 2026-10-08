@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseCount,
-  parseDate,
-  CLOVIA_EMAIL_DAILY_HEADERS,
+  parseCount, parseDate, CLOVIA_EMAIL_DAILY_HEADERS,
 } from "../clovia-email-daily-bulk.service.js";
 
 describe("parseCount", () => {

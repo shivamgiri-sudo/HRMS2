@@ -54,11 +54,11 @@
  *   node scripts/backfill-cost-centre-from-dbbill.cjs            # dry run
  *   node scripts/backfill-cost-centre-from-dbbill.cjs --apply    # writes
  */
-const mysql = require("mysql2/promise");
-const fs = require("fs");
-const path = require("path");
+const mysql = require('mysql2/promise');
+const fs = require('fs');
+const path = require('path');
 
-const APPLY = process.argv.includes("--apply");
+const APPLY = process.argv.includes('--apply');
 
 /**
  * Credentials come from backend/.env, never from this file - a hardcoded password in a
@@ -68,96 +68,46 @@ const APPLY = process.argv.includes("--apply");
  * and is not.
  */
 function envFile() {
-  const p = path.resolve(__dirname, "..", ".env");
+  const p = path.resolve(__dirname, '..', '.env');
   const out = {};
   if (!fs.existsSync(p)) return out;
-  for (const line of fs.readFileSync(p, "utf8").split(/\r?\n/)) {
+  for (const line of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
     const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
-    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
+    if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
   }
   return out;
 }
 const E = envFile();
 const pick = (k, d) => process.env[k] || E[k] || d;
-const USER = pick("DB_USER"),
-  PASS = pick("DB_PASSWORD");
-if (!USER || !PASS) {
-  console.error(
-    "DB_USER / DB_PASSWORD not found in environment or backend/.env",
-  );
-  process.exit(1);
-}
+const USER = pick('DB_USER'), PASS = pick('DB_PASSWORD');
+if (!USER || !PASS) { console.error('DB_USER / DB_PASSWORD not found in environment or backend/.env'); process.exit(1); }
 
-const HRMS_HOSTS = [pick("DB_HOST", "192.168.10.6"), "122.184.128.90"];
-const BILL_HOSTS = [pick("BILL_DB_HOST", "192.168.10.22"), "14.97.30.236"];
+const HRMS_HOSTS = [pick('DB_HOST', '192.168.10.6'), '122.184.128.90'];
+const BILL_HOSTS = [pick('BILL_DB_HOST', '192.168.10.22'), '14.97.30.236'];
 
 async function connectAny(hosts, database, label) {
   for (const host of hosts) {
     try {
-      const c = await mysql.createConnection({
-        host,
-        user: USER,
-        password: PASS,
-        database,
-        connectTimeout: 20000,
-      });
+      const c = await mysql.createConnection({ host, user: USER, password: PASS, database, connectTimeout: 20000 });
       console.log(`  ${label}: connected via ${host}`);
       return c;
-    } catch (e) {
-      console.log(`  ${label}: ${host} -> ${e.code}`);
-    }
+    } catch (e) { console.log(`  ${label}: ${host} -> ${e.code}`); }
   }
   throw new Error(`${label} unreachable on every known address`);
 }
 
 /** db_bill tables to read, in descending measured accuracy. */
 const BILL_SOURCES = [
-  {
-    key: "attendance",
-    table: "Attandence",
-    cc: "CostCenter",
-    emp: "EmpCode",
-    dateCol: "AttandDate",
-  },
-  {
-    key: "jclr",
-    table: "masjclrentry",
-    cc: "CostCenter",
-    emp: "EmpCode",
-    dateCol: null,
-  },
-  {
-    key: "salary",
-    table: "salary_data",
-    cc: "CostCenter",
-    emp: "EmpCode",
-    dateCol: null,
-  },
-  {
-    key: "onboarding",
-    table: "emp_onboard_trigger_services",
-    cc: "cost_center",
-    emp: "emp_code",
-    dateCol: null,
-  },
+  { key: 'attendance', table: 'Attandence', cc: 'CostCenter', emp: 'EmpCode', dateCol: 'AttandDate' },
+  { key: 'jclr', table: 'masjclrentry', cc: 'CostCenter', emp: 'EmpCode', dateCol: null },
+  { key: 'salary', table: 'salary_data', cc: 'CostCenter', emp: 'EmpCode', dateCol: null },
+  { key: 'onboarding', table: 'emp_onboard_trigger_services', cc: 'cost_center', emp: 'emp_code', dateCol: null },
 ];
 
 (async () => {
-  console.log(
-    APPLY
-      ? "=== APPLY MODE - this will write ==="
-      : "=== DRY RUN - no writes ===",
-  );
-  const hrms = await connectAny(
-    HRMS_HOSTS,
-    pick("DB_NAME", "mas_hrms"),
-    "mas_hrms",
-  );
-  const bill = await connectAny(
-    BILL_HOSTS,
-    pick("BILL_DB_NAME", "db_bill"),
-    "db_bill",
-  );
+  console.log(APPLY ? '=== APPLY MODE - this will write ===' : '=== DRY RUN - no writes ===');
+  const hrms = await connectAny(HRMS_HOSTS, pick('DB_NAME', 'mas_hrms'), 'mas_hrms');
+  const bill = await connectAny(BILL_HOSTS, pick('BILL_DB_NAME', 'db_bill'), 'db_bill');
 
   const [targets] = await hrms.query(
     `SELECT e.id, e.employee_code, e.candidate_id, e.branch_id,
@@ -166,20 +116,15 @@ const BILL_SOURCES = [
        LEFT JOIN branch_master b ON b.id = e.branch_id
       WHERE e.active_status = 1
         AND e.cost_centre_id IS NULL
-        ${process.env.BACKFILL_ALL === "1" ? "" : "AND e.date_of_joining >= '2026-07-20'"}`,
-  );
+        ${process.env.BACKFILL_ALL === '1' ? '' : "AND e.date_of_joining >= '2026-07-20'"}`);
   console.log(`\nEmployees missing a cost centre: ${targets.length}`);
-  if (targets.length === 0) {
-    await hrms.end();
-    await bill.end();
-    return;
-  }
+  if (targets.length === 0) { await hrms.end(); await bill.end(); return; }
 
-  const codes = targets.map((t) => t.employee_code);
-  const ph = codes.map(() => "?").join(",");
+  const codes = targets.map(t => t.employee_code);
+  const ph = codes.map(() => '?').join(',');
 
   // candidates: employee_code -> [{ source, value }]
-  const candidates = new Map(codes.map((c) => [c, []]));
+  const candidates = new Map(codes.map(c => [c, []]));
 
   // Source: the onboarding offer.
   const [offerRows] = await hrms.query(
@@ -187,12 +132,10 @@ const BILL_SOURCES = [
        FROM employees e
        LEFT JOIN ats_employment_offer o      ON o.candidate_id = e.candidate_id
        LEFT JOIN ats_payroll_hr_validation v ON v.candidate_id = e.candidate_id
-      WHERE e.employee_code IN (${ph}) AND COALESCE(o.cost_centre, v.cost_centre_id) IS NOT NULL`,
-    codes,
-  );
+      WHERE e.employee_code IN (${ph}) AND COALESCE(o.cost_centre, v.cost_centre_id) IS NOT NULL`, codes);
   for (const r of offerRows) {
     const list = candidates.get(r.employee_code);
-    if (list) list.push({ source: "ats_offer", value: String(r.cc) });
+    if (list) list.push({ source: 'ats_offer', value: String(r.cc) });
   }
 
   // Sources: db_bill. Where a table is dated, the newest value wins a transfer.
@@ -206,12 +149,8 @@ const BILL_SOURCES = [
            FROM \`${s.table}\`
           WHERE \`${s.emp}\` IN (${ph}) AND NULLIF(TRIM(\`${s.cc}\`),'') IS NOT NULL`;
     let rows = [];
-    try {
-      [rows] = await bill.query(sql, codes);
-    } catch (e) {
-      console.log(`  (${s.table} unreadable: ${e.message.slice(0, 60)})`);
-      continue;
-    }
+    try { [rows] = await bill.query(sql, codes); }
+    catch (e) { console.log(`  (${s.table} unreadable: ${e.message.slice(0, 60)})`); continue; }
 
     const seen = new Set();
     for (const r of rows) {
@@ -224,69 +163,41 @@ const BILL_SOURCES = [
   }
 
   // Resolve every distinct raw value to exactly one ACTIVE master row.
-  const allValues = [
-    ...new Set([...candidates.values()].flat().map((c) => c.value)),
-  ];
+  const allValues = [...new Set([...candidates.values()].flat().map(c => c.value))];
   const resolved = new Map();
   const unresolved = [];
   for (const raw of allValues) {
     const [m] = await hrms.query(
       `SELECT id, cost_centre_name, branch_id FROM cost_centre_master
         WHERE active_status = 1 AND (id = ? OR cost_centre_code = ? OR cost_centre_name = ?)`,
-      [raw, raw, raw],
-    );
-    if (m.length === 1)
-      resolved.set(raw, {
-        id: m[0].id,
-        name: m[0].cost_centre_name,
-        branch_id: m[0].branch_id,
-      });
+      [raw, raw, raw]);
+    if (m.length === 1) resolved.set(raw, { id: m[0].id, name: m[0].cost_centre_name, branch_id: m[0].branch_id });
     else unresolved.push({ value: raw, matches: m.length });
   }
 
   // Decide.
-  const plan = [],
-    skipped = [];
+  const plan = [], skipped = [];
   for (const t of targets) {
-    const raw = (candidates.get(t.employee_code) || []).filter((c) =>
-      resolved.has(c.value),
-    );
-    if (raw.length === 0) {
-      skipped.push({
-        employee_code: t.employee_code,
-        reason: "no usable cost centre in any source",
-      });
-      continue;
-    }
+    const raw = (candidates.get(t.employee_code) || []).filter(c => resolved.has(c.value));
+    if (raw.length === 0) { skipped.push({ employee_code: t.employee_code, reason: 'no usable cost centre in any source' }); continue; }
 
-    const distinct = [...new Set(raw.map((c) => resolved.get(c.value).id))];
+    const distinct = [...new Set(raw.map(c => resolved.get(c.value).id))];
     if (distinct.length > 1) {
-      const inBranch = [
-        ...new Set(
-          raw
-            .filter((c) => resolved.get(c.value).branch_id === t.branch_id)
-            .map((c) => resolved.get(c.value).name),
-        ),
-      ];
+      const inBranch = [...new Set(raw.filter(c => resolved.get(c.value).branch_id === t.branch_id)
+        .map(c => resolved.get(c.value).name))];
       skipped.push({
         employee_code: t.employee_code,
-        reason: "sources disagree - needs a human decision",
+        reason: 'sources disagree - needs a human decision',
         employee_branch: t.branch_name,
-        candidates: raw.map((c) => `${c.source}=${resolved.get(c.value).name}`),
-        matches_employee_branch: inBranch.length ? inBranch : ["none"],
+        candidates: raw.map(c => `${c.source}=${resolved.get(c.value).name}`),
+        matches_employee_branch: inBranch.length ? inBranch : ['none'],
       });
       continue;
     }
 
     const chosen = raw[0];
     const r = resolved.get(chosen.value);
-    plan.push({
-      id: t.id,
-      employee_code: t.employee_code,
-      cost_centre_id: r.id,
-      cost_centre_name: r.name,
-      source: chosen.source,
-    });
+    plan.push({ id: t.id, employee_code: t.employee_code, cost_centre_id: r.id, cost_centre_name: r.name, source: chosen.source });
   }
 
   const bySource = {};
@@ -295,40 +206,26 @@ const BILL_SOURCES = [
   console.log(`    by source                  : ${JSON.stringify(bySource)}`);
   console.log(`  skipped                      : ${skipped.length}`);
   if (skipped.length) console.log(`    ${JSON.stringify(skipped, null, 2)}`);
-  if (unresolved.length)
-    console.log(
-      `  values not in cost_centre_master: ${JSON.stringify(unresolved)}`,
-    );
+  if (unresolved.length) console.log(`  values not in cost_centre_master: ${JSON.stringify(unresolved)}`);
 
   const byCc = {};
-  for (const p of plan)
-    byCc[p.cost_centre_name] = (byCc[p.cost_centre_name] ?? 0) + 1;
+  for (const p of plan) byCc[p.cost_centre_name] = (byCc[p.cost_centre_name] ?? 0) + 1;
   console.log(`\n  distribution: ${JSON.stringify(byCc)}`);
 
-  const outDir = path.resolve(__dirname, "..", "backups");
+  const outDir = path.resolve(__dirname, '..', 'backups');
   fs.mkdirSync(outDir, { recursive: true });
-  const stamp = process.env.BACKFILL_STAMP || "run";
-  fs.writeFileSync(
-    path.join(outDir, `cost-centre-backfill-plan-${stamp}.json`),
-    JSON.stringify({ plan, skipped, unresolved }, null, 2),
-  );
-  console.log(
-    `\n  plan written to backend/backups/cost-centre-backfill-plan-${stamp}.json`,
-  );
+  const stamp = process.env.BACKFILL_STAMP || 'run';
+  fs.writeFileSync(path.join(outDir, `cost-centre-backfill-plan-${stamp}.json`),
+    JSON.stringify({ plan, skipped, unresolved }, null, 2));
+  console.log(`\n  plan written to backend/backups/cost-centre-backfill-plan-${stamp}.json`);
 
-  if (!APPLY) {
-    console.log("\nDry run only. Re-run with --apply to write.");
-    await hrms.end();
-    await bill.end();
-    return;
-  }
+  if (!APPLY) { console.log('\nDry run only. Re-run with --apply to write.'); await hrms.end(); await bill.end(); return; }
 
   let updated = 0;
   for (const p of plan) {
     const [res] = await hrms.execute(
       `UPDATE employees SET cost_centre_id = ? WHERE id = ? AND cost_centre_id IS NULL`,
-      [p.cost_centre_id, p.id],
-    );
+      [p.cost_centre_id, p.id]);
     updated += res.affectedRows;
   }
   console.log(`\n  rows updated: ${updated} of ${plan.length} planned`);
@@ -337,12 +234,7 @@ const BILL_SOURCES = [
     // different set than was just written and reads as success while work remains.
     `SELECT COUNT(*) still_null FROM employees
       WHERE active_status = 1 AND cost_centre_id IS NULL
-        ${process.env.BACKFILL_ALL === "1" ? "" : "AND date_of_joining >= '2026-07-20'"}`,
-  );
+        ${process.env.BACKFILL_ALL === '1' ? '' : "AND date_of_joining >= '2026-07-20'"}`);
   console.log(`  still missing a cost centre: ${after[0].still_null}`);
-  await hrms.end();
-  await bill.end();
-})().catch((e) => {
-  console.error("FAILED: " + e.message);
-  process.exit(1);
-});
+  await hrms.end(); await bill.end();
+})().catch(e => { console.error('FAILED: ' + e.message); process.exit(1); });

@@ -40,18 +40,10 @@ const BACKEND = path.resolve(HERE, "..");
 const APPLY = process.argv.includes("--apply");
 
 const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
-const norm = (v) =>
-  String(v ?? "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, " ");
-const digits = (v) =>
-  String(v ?? "")
-    .replace(/\D/g, "")
-    .slice(-10);
+const norm = (v) => String(v ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+const digits = (v) => String(v ?? "").replace(/\D/g, "").slice(-10);
 const mask = (pan) => `${pan.slice(0, 2)}****${pan.slice(-1)}`;
-const chunk = (arr, n) =>
-  arr.length ? [arr.slice(0, n), ...chunk(arr.slice(n), n)] : [];
+const chunk = (arr, n) => (arr.length ? [arr.slice(0, n), ...chunk(arr.slice(n), n)] : []);
 
 function env(key) {
   const raw = fs.readFileSync(path.join(BACKEND, ".env"), "utf8");
@@ -68,13 +60,8 @@ async function connect(label, hosts, database) {
   for (const host of hosts) {
     try {
       const c = await mysql.createConnection({
-        host,
-        port: 3306,
-        database,
-        user: env("DB_USER") ?? "shivam_user",
-        password:
-          env(label === "bill" ? "BILL_DB_PASSWORD" : "DB_PASSWORD") ??
-          env("DB_PASSWORD"),
+        host, port: 3306, database, user: env("DB_USER") ?? "shivam_user",
+        password: env(label === "bill" ? "BILL_DB_PASSWORD" : "DB_PASSWORD") ?? env("DB_PASSWORD"),
         connectTimeout: 12_000,
       });
       console.log(`  ${label}: ${host}`);
@@ -87,16 +74,8 @@ async function connect(label, hosts, database) {
 }
 
 console.log(APPLY ? "MODE: APPLY (will write)" : "MODE: dry run (no writes)");
-const hrms = await connect(
-  "mas_hrms",
-  [env("DB_HOST"), "192.168.10.6", "122.184.128.90"].filter(Boolean),
-  "mas_hrms",
-);
-const bill = await connect(
-  "bill",
-  [env("BILL_DB_HOST"), "192.168.10.22", "14.97.30.236"].filter(Boolean),
-  "db_bill",
-);
+const hrms = await connect("mas_hrms", [env("DB_HOST"), "192.168.10.6", "122.184.128.90"].filter(Boolean), "mas_hrms");
+const bill = await connect("bill", [env("BILL_DB_HOST"), "192.168.10.22", "14.97.30.236"].filter(Boolean), "db_bill");
 
 const [needy] = await hrms.query(
   `SELECT id, employee_code, full_name, mobile FROM employees
@@ -120,12 +99,7 @@ for (const e of needy) {
  * Candidate" and "dsd dsd" before this check existed.
  */
 function namesCorroborate(a, b) {
-  const clean = (v) =>
-    String(v ?? "")
-      .toUpperCase()
-      .replace(/[^A-Z ]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+  const clean = (v) => String(v ?? "").toUpperCase().replace(/[^A-Z ]/g, " ").replace(/\s+/g, " ").trim();
   const left = clean(a);
   const right = clean(b);
   if (!left || !right) return false;
@@ -142,11 +116,7 @@ const rejectedByName = [];
 const offer = (code, source, pan, sourceName) => {
   if (!PAN_RE.test(pan) || !byCode.has(code)) return;
   if (!namesCorroborate(byCode.get(code).full_name, sourceName)) {
-    rejectedByName.push({
-      code,
-      source,
-      theirs: String(sourceName ?? "").slice(0, 24),
-    });
+    rejectedByName.push({ code, source, theirs: String(sourceName ?? "").slice(0, 24) });
     return;
   }
   if (!candidates.has(code)) candidates.set(code, new Map());
@@ -155,16 +125,11 @@ const offer = (code, source, pan, sourceName) => {
   forCode.get(pan).add(source);
 };
 
-for (const [table, column] of [
-  ["masjclrentry", "PanNo"],
-  ["his_masjsclrentry", "PanNo"],
-]) {
+for (const [table, column] of [["masjclrentry", "PanNo"], ["his_masjsclrentry", "PanNo"]]) {
   for (const part of chunk([...byCode.keys()], 300)) {
     const [rows] = await bill.query(
       `SELECT EmpCode, EmpName, \`${column}\` AS pan FROM \`${table}\`
-        WHERE EmpCode IN (${part.map(() => "?").join(",")})`,
-      part,
-    );
+        WHERE EmpCode IN (${part.map(() => "?").join(",")})`, part);
     for (const r of rows) offer(norm(r.EmpCode), table, norm(r.pan), r.EmpName);
   }
 }
@@ -173,15 +138,10 @@ for (const part of chunk([...byMobile.keys()], 300)) {
   const [rows] = await bill.query(
     `SELECT Mobile_No, Mobile_Number, Employee_Name, Name, Pan_Number AS pan FROM Interview_master
       WHERE RIGHT(REPLACE(COALESCE(Mobile_No,''),' ',''),10) IN (${marks})
-         OR RIGHT(REPLACE(COALESCE(Mobile_Number,''),' ',''),10) IN (${marks})`,
-    [...part, ...part],
-  );
+         OR RIGHT(REPLACE(COALESCE(Mobile_Number,''),' ',''),10) IN (${marks})`, [...part, ...part]);
   for (const r of rows) {
-    const code =
-      byMobile.get(digits(r.Mobile_No)) ??
-      byMobile.get(digits(r.Mobile_Number));
-    if (code)
-      offer(code, "Interview_master", norm(r.pan), r.Employee_Name || r.Name);
+    const code = byMobile.get(digits(r.Mobile_No)) ?? byMobile.get(digits(r.Mobile_Number));
+    if (code) offer(code, "Interview_master", norm(r.pan), r.Employee_Name || r.Name);
   }
 }
 await bill.end();
@@ -197,27 +157,20 @@ for (const [code, pans] of candidates) {
   }
 }
 
-console.log(
-  `\nrejected — code/mobile hit, but the NAME is someone else: ${rejectedByName.length}`,
-);
+console.log(`\nrejected — code/mobile hit, but the NAME is someone else: ${rejectedByName.length}`);
 for (const r of rejectedByName) {
   const ours = String(byCode.get(r.code)?.full_name ?? "").slice(0, 24);
-  console.log(
-    `  x ${r.code.padEnd(10)} ours "${ours}"  theirs "${r.theirs}"  [${r.source}]`,
-  );
+  console.log(`  x ${r.code.padEnd(10)} ours "${ours}"  theirs "${r.theirs}"  [${r.source}]`);
 }
 
 console.log(`\nrecoverable with sources agreeing : ${agreed.length}`);
 console.log(`sources DISAGREE — skipped        : ${conflicted.length}`);
-for (const c of conflicted)
-  console.log(`  ! ${c.code}: ${c.distinct} different PANs offered`);
+for (const c of conflicted) console.log(`  ! ${c.code}: ${c.distinct} different PANs offered`);
 
 console.log("\nplan:");
 for (const a of agreed) {
   const e = byCode.get(a.code);
-  console.log(
-    `  ${a.code.padEnd(10)} ${String(e.full_name).slice(0, 26).padEnd(28)} ${mask(a.pan)}  [${a.sources}]`,
-  );
+  console.log(`  ${a.code.padEnd(10)} ${String(e.full_name).slice(0, 26).padEnd(28)} ${mask(a.pan)}  [${a.sources}]`);
 }
 
 // Would any proposed PAN already belong to a DIFFERENT employee?
@@ -238,13 +191,10 @@ if (proposed.length) {
 PAN COLLISIONS — these are already held by another employee:`);
     for (const c of clashes) {
       const taker = agreed.find((a) => a.pan === c.pan);
-      console.log(
-        `  ! ${mask(c.pan)} held by ${c.employee_code} (${c.full_name}) — would also go to ${taker?.code}`,
-      );
+      console.log(`  ! ${mask(c.pan)} held by ${c.employee_code} (${c.full_name}) — would also go to ${taker?.code}`);
     }
     const blocked = new Set(clashes.map((c) => c.pan));
-    for (let i = agreed.length - 1; i >= 0; i--)
-      if (blocked.has(agreed[i].pan)) agreed.splice(i, 1);
+    for (let i = agreed.length - 1; i >= 0; i--) if (blocked.has(agreed[i].pan)) agreed.splice(i, 1);
     console.log(`  dropped from the plan; ${agreed.length} remain`);
   } else {
     console.log(`
@@ -253,9 +203,7 @@ no PAN collisions with existing employees — ${agreed.length} safe to write`);
 }
 
 if (!APPLY) {
-  console.log(
-    `\nDry run — nothing written. Re-run with --apply to write ${agreed.length} PANs.`,
-  );
+  console.log(`\nDry run — nothing written. Re-run with --apply to write ${agreed.length} PANs.`);
   await hrms.end();
   process.exit(0);
 }

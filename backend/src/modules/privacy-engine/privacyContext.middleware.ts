@@ -33,23 +33,17 @@ export function privacyContextMiddleware(action: PrivacyAction) {
     const authUserAny = authReq.authUser as Record<string, unknown>;
     req.privacyContext = {
       actorUserId: authReq.authUser.id,
-      actorRoles: (authUserAny.roleKeys as string[] | undefined) ?? [
-        authReq.authUser.role ?? "employee",
-      ],
+      actorRoles: (authUserAny.roleKeys as string[] | undefined) ?? [authReq.authUser.role ?? "employee"],
       primaryRole: authReq.authUser.role ?? "employee",
       principalId,
       principalType: "employee",
       requestedAction: action,
       purposeCode: req.headers["x-privacy-purpose"] as string | undefined,
-      branchId:
-        (req.query.branch_id as string | undefined) ??
-        (authUserAny.branchId as string | undefined),
+      branchId: (req.query.branch_id as string | undefined) ?? (authUserAny.branchId as string | undefined),
       processId: req.query.process_id as string | undefined,
       ipAddress: req.ip ?? undefined,
       userAgent: req.headers["user-agent"] ?? undefined,
-      isSelfAccess:
-        principalId === authReq.authUser.id ||
-        principalId === (authUserAny.employeeId as string | undefined),
+      isSelfAccess: principalId === authReq.authUser.id || principalId === (authUserAny.employeeId as string | undefined),
     };
 
     next();

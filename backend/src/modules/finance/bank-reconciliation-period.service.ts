@@ -67,31 +67,17 @@ export async function assertNotInClosedPeriod(
   if (closed) {
     throw new BankReconciliationPeriodError(
       `This account's books are closed through ${String((closed as any).to_date).slice(0, 10)}. ` +
-        `Entries dated on or before that cannot be posted; reopen the period first.`,
+      `Entries dated on or before that cannot be posted; reopen the period first.`,
       409,
     );
   }
 }
 
 export const bankReconciliationPeriodService = {
-  async create(
-    bankAccountId: string,
-    fromDate: string,
-    toDate: string,
-    actorUserId: string,
-  ): Promise<{ id: string }> {
-    const [[account]] = await db.execute<RowDataPacket[]>(
-      `SELECT opening_balance FROM company_bank_account WHERE id = ?`,
-      [bankAccountId],
-    );
-    const [[openPeriod]] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM bank_reconciliation_period WHERE bank_account_id = ? AND status = 'open'`,
-      [bankAccountId],
-    );
-    if (openPeriod)
-      throw new BankReconciliationPeriodError(
-        "This account already has an open reconciliation period. Close it before starting a new one.",
-      );
+  async create(bankAccountId: string, fromDate: string, toDate: string, actorUserId: string): Promise<{ id: string }> {
+    const [[account]] = await db.execute<RowDataPacket[]>(`SELECT opening_balance FROM company_bank_account WHERE id = ?`, [bankAccountId]);
+    const [[openPeriod]] = await db.execute<RowDataPacket[]>(`SELECT id FROM bank_reconciliation_period WHERE bank_account_id = ? AND status = 'open'`, [bankAccountId]);
+    if (openPeriod) throw new BankReconciliationPeriodError("This account already has an open reconciliation period. Close it before starting a new one.");
 
     // The open-period check above only ever stops a SECOND open period from existing at once —
     // it says nothing about the new window's dates. A back-dated fromDate/toDate can still land
@@ -112,44 +98,22 @@ export const bankReconciliationPeriodService = {
     const id = randomUUID();
     await db.execute(
       `INSERT INTO bank_reconciliation_period (id, bank_account_id, from_date, to_date, opening_balance, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        bankAccountId,
-        fromDate,
-        toDate,
-        Number(account?.opening_balance ?? 0),
-        actorUserId,
-      ],
+      [id, bankAccountId, fromDate, toDate, Number(account?.opening_balance ?? 0), actorUserId],
     );
     return { id };
   },
 
-  async close(
-    periodId: string,
-    statementClosingBalance: number,
-    actorUserId: string,
-  ): Promise<{ closed: true }> {
-    const [[period]] = await db.execute<RowDataPacket[]>(
-      `SELECT id, bank_account_id, from_date, to_date, status FROM bank_reconciliation_period WHERE id = ?`,
-      [periodId],
-    );
-    if (!period)
-      throw new BankReconciliationPeriodError(
-        "Reconciliation period not found.",
-        404,
-      );
-    if (period.status !== "open")
-      throw new BankReconciliationPeriodError("Period is not open.");
+  async close(periodId: string, statementClosingBalance: number, actorUserId: string): Promise<{ closed: true }> {
+    const [[period]] = await db.execute<RowDataPacket[]>(`SELECT id, bank_account_id, from_date, to_date, status FROM bank_reconciliation_period WHERE id = ?`, [periodId]);
+    if (!period) throw new BankReconciliationPeriodError("Reconciliation period not found.", 404);
+    if (period.status !== "open") throw new BankReconciliationPeriodError("Period is not open.");
 
     const [[unmatched]] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM bank_statement_line bsl JOIN bank_statement_import bsi ON bsi.id = bsl.import_id
         WHERE bsi.period_id = ? AND bsl.match_status = 'unmatched'`,
       [periodId],
     );
-    if (Number(unmatched.cnt) > 0)
-      throw new BankReconciliationPeriodError(
-        `${unmatched.cnt} statement line(s) are still unmatched. Match or post them as adjustments before closing.`,
-      );
+    if (Number(unmatched.cnt) > 0) throw new BankReconciliationPeriodError(`${unmatched.cnt} statement line(s) are still unmatched. Match or post them as adjustments before closing.`);
 
     const [[last]] = await db.execute<RowDataPacket[]>(
       `SELECT running_balance FROM bank_account_ledger_entry WHERE bank_account_id = ? AND entry_date <= ? ORDER BY entry_date DESC, created_at DESC, id DESC LIMIT 1`,
@@ -164,12 +128,8 @@ export const bankReconciliationPeriodService = {
     );
     const outstandingTotal = round2(Number(outstanding.total));
 
-    const expectedStatementBalance = round2(
-      computedClosingBalance - outstandingTotal,
-    );
-    const difference = round2(
-      expectedStatementBalance - round2(statementClosingBalance),
-    );
+    const expectedStatementBalance = round2(computedClosingBalance - outstandingTotal);
+    const difference = round2(expectedStatementBalance - round2(statementClosingBalance));
     if (difference !== 0) {
       throw new BankReconciliationPeriodError(
         `Doesn't balance: HRMS says ₹${expectedStatementBalance} after outstanding items, statement says ₹${round2(statementClosingBalance)} — difference of ₹${Math.abs(difference)}.`,
@@ -217,10 +177,7 @@ export const bankReconciliationPeriodService = {
     // event as jel.creditAmount (bank_account credited), and bale.credit_amount (cash in) is
     // the same event as jel.debitAmount — so Σ(bale.credit-debit) and Σ(jel.debit-credit) both
     // land on the same signed number when the two systems agree.
-    const journalDifference = round2(
-      Number(bankLedgerMovement.net_change) -
-        Number(journalMovement.net_change),
-    );
+    const journalDifference = round2(Number(bankLedgerMovement.net_change) - Number(journalMovement.net_change));
     if (journalDifference !== 0) {
       throw new BankReconciliationPeriodError(
         `The general ledger disagrees with the bank ledger for this period (${period.from_date} to ${period.to_date}): bank ledger moved ₹${round2(Number(bankLedgerMovement.net_change))}, journal moved ₹${round2(Number(journalMovement.net_change))} — difference of ₹${Math.abs(journalDifference)}. Refusing to close rather than lock books the two systems don't agree on.`,
@@ -229,13 +186,7 @@ export const bankReconciliationPeriodService = {
 
     await db.execute(
       `UPDATE bank_reconciliation_period SET status = 'closed', statement_closing_balance = ?, computed_closing_balance = ?, outstanding_total = ?, closed_by = ?, closed_at = NOW() WHERE id = ?`,
-      [
-        round2(statementClosingBalance),
-        computedClosingBalance,
-        outstandingTotal,
-        actorUserId,
-        periodId,
-      ],
+      [round2(statementClosingBalance), computedClosingBalance, outstandingTotal, actorUserId, periodId],
     );
     await db.execute(
       `UPDATE bank_account_ledger_entry SET reconciliation_period_id = ?
@@ -247,66 +198,35 @@ export const bankReconciliationPeriodService = {
       [round2(statementClosingBalance), period.to_date, period.bank_account_id],
     );
     await logSensitiveAction({
-      actor_user_id: actorUserId,
-      action_type: "BANK_RECONCILIATION_PERIOD_CLOSED",
-      module_key: "FINANCE",
-      entity_type: "bank_reconciliation_period",
-      entity_id: periodId,
-      change_summary: {
-        computed_closing_balance: computedClosingBalance,
-        outstanding_total: outstandingTotal,
-        statement_closing_balance: round2(statementClosingBalance),
-      },
+      actor_user_id: actorUserId, action_type: "BANK_RECONCILIATION_PERIOD_CLOSED", module_key: "FINANCE",
+      entity_type: "bank_reconciliation_period", entity_id: periodId,
+      change_summary: { computed_closing_balance: computedClosingBalance, outstanding_total: outstandingTotal, statement_closing_balance: round2(statementClosingBalance) },
     }).catch(() => undefined);
     return { closed: true };
   },
 
-  async reopen(
-    periodId: string,
-    reason: string,
-    actorUserId: string,
-  ): Promise<void> {
-    if (!reason || !reason.trim())
-      throw new BankReconciliationPeriodError(
-        "A reason is required to reopen a closed period.",
-      );
-    const [[period]] = await db.execute<RowDataPacket[]>(
-      `SELECT id, bank_account_id, to_date, status FROM bank_reconciliation_period WHERE id = ?`,
-      [periodId],
-    );
-    if (!period)
-      throw new BankReconciliationPeriodError(
-        "Reconciliation period not found.",
-        404,
-      );
-    if (period.status !== "closed")
-      throw new BankReconciliationPeriodError("Period is not closed.");
+  async reopen(periodId: string, reason: string, actorUserId: string): Promise<void> {
+    if (!reason || !reason.trim()) throw new BankReconciliationPeriodError("A reason is required to reopen a closed period.");
+    const [[period]] = await db.execute<RowDataPacket[]>(`SELECT id, bank_account_id, to_date, status FROM bank_reconciliation_period WHERE id = ?`, [periodId]);
+    if (!period) throw new BankReconciliationPeriodError("Reconciliation period not found.", 404);
+    if (period.status !== "closed") throw new BankReconciliationPeriodError("Period is not closed.");
 
     const [laterClosed] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM bank_reconciliation_period WHERE bank_account_id = ? AND status = 'closed' AND from_date > ? LIMIT 1`,
       [period.bank_account_id, period.to_date],
     );
     if ((laterClosed as RowDataPacket[]).length > 0) {
-      throw new BankReconciliationPeriodError(
-        "A later period for this account is already closed. Reopen that one first.",
-      );
+      throw new BankReconciliationPeriodError("A later period for this account is already closed. Reopen that one first.");
     }
 
-    await db.execute(
-      `UPDATE bank_account_ledger_entry SET reconciliation_period_id = NULL WHERE reconciliation_period_id = ?`,
-      [periodId],
-    );
+    await db.execute(`UPDATE bank_account_ledger_entry SET reconciliation_period_id = NULL WHERE reconciliation_period_id = ?`, [periodId]);
     await db.execute(
       `UPDATE bank_reconciliation_period SET status = 'open', reopened_by = ?, reopened_at = NOW(), reopen_reason = ? WHERE id = ?`,
       [actorUserId, reason.trim(), periodId],
     );
     await logSensitiveAction({
-      actor_user_id: actorUserId,
-      action_type: "BANK_RECONCILIATION_PERIOD_REOPENED",
-      module_key: "FINANCE",
-      entity_type: "bank_reconciliation_period",
-      entity_id: periodId,
-      change_summary: { reason: reason.trim() },
+      actor_user_id: actorUserId, action_type: "BANK_RECONCILIATION_PERIOD_REOPENED", module_key: "FINANCE",
+      entity_type: "bank_reconciliation_period", entity_id: periodId, change_summary: { reason: reason.trim() },
     }).catch(() => undefined);
   },
 };

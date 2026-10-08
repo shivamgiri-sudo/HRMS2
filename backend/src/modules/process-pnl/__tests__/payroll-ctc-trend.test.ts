@@ -19,10 +19,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
  *   People Cost total 2,25,074 (CTC 2,45,074 less the 20,000 loan EMI).
  */
 
-type Sqlite = {
-  exec(sql: string): void;
-  prepare(sql: string): { all(...p: unknown[]): unknown[] };
-};
+type Sqlite = { exec(sql: string): void; prepare(sql: string): { all(...p: unknown[]): unknown[] } };
 let sqlite: Sqlite | null = null;
 try {
   const mod = await import("node:sqlite" as string);
@@ -31,14 +28,10 @@ try {
   sqlite = null;
 }
 
-const PAYROLL_SQL =
-  /salary_prep_line|pnl_running_salary_snapshot|pnl_employee_cost_centre_override/;
+const PAYROLL_SQL = /salary_prep_line|pnl_running_salary_snapshot|pnl_employee_cost_centre_override/;
 
 /** mysql2 `query()` expands an array bound to `IN (?)`; do the same before handing SQL to SQLite. */
-function expandArrays(
-  sql: string,
-  params: unknown[],
-): { sql: string; params: unknown[] } {
+function expandArrays(sql: string, params: unknown[]): { sql: string; params: unknown[] } {
   const out: unknown[] = [];
   let i = 0;
   const text = sql.replace(/\?/g, () => {
@@ -56,28 +49,18 @@ function expandArrays(
 function run(sql: string, params: unknown[] = []): unknown[] {
   const db = sqlite!;
   if (/information_schema\.tables/i.test(sql)) {
-    return db
-      .prepare(
-        `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?`,
-      )
-      .all(String(params[0]));
+    return db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?`).all(String(params[0]));
   }
   if (/information_schema\.columns/i.test(sql)) {
     const table = String(params[0]).replace(/[^a-z0-9_]/gi, "");
-    return (
-      db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
-    ).map((c) => ({ column_name: c.name }));
+    return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
+      .map((c) => ({ column_name: c.name }));
   }
   // The trend's "real months" come from billing row counts; the fixture's one real month is 2026-05.
-  if (
-    /FROM billing_invoice_particular_snapshot\s+GROUP BY period_code/i.test(sql)
-  ) {
+  if (/FROM billing_invoice_particular_snapshot\s+GROUP BY period_code/i.test(sql)) {
     return [{ period_code: "2026-05", n: 150 }];
   }
-  const expanded = expandArrays(
-    sql.replace(/COLLATE\s+utf8mb4_unicode_ci/gi, ""),
-    params,
-  );
+  const expanded = expandArrays(sql.replace(/COLLATE\s+utf8mb4_unicode_ci/gi, ""), params);
   try {
     return db.prepare(expanded.sql).all(...expanded.params);
   } catch (error) {
@@ -91,11 +74,7 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute } }));
 vi.mock("../../../shared/auditLog.js", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("../pnl-trend-history.service.js", () => ({
   getDbBillHistory: vi.fn(async () => ({
-    months: [],
-    revenueRealRange: null,
-    costRealRange: null,
-    overlapRange: null,
-    caveat: "test",
+    months: [], revenueRealRange: null, costRealRange: null, overlapRange: null, caveat: "test",
   })),
   getDbBillHistoryByProcess: vi.fn(async () => []),
 }));
@@ -142,85 +121,50 @@ const PEOPLE_COST_TOTAL = 225074;
 beforeAll(() => {
   if (!sqlite) return;
   sqlite.exec(SCHEMA);
-  execute.mockImplementation(async (sql: string, params?: unknown[]) => [
-    run(String(sql), params ?? []),
-    [],
-  ]);
+  execute.mockImplementation(async (sql: string, params?: unknown[]) => [run(String(sql), params ?? []), []]);
 });
 
-describe.skipIf(!sqlite)(
-  "P&L people cost = CTC paid less other and leave deductions (owner rule 2026-09-24)",
-  () => {
-    it("trend sums CTC less loan EMI / other / advance / LWP, drafts included", async () => {
-      const { getPnlTrend } = await import("../pnl-trend.service.js");
-      const out = await getPnlTrend();
-      const may = out.company.find((m) => m.period === "2026-05");
-      expect(
-        may?.cost,
-        "CTC less the 20,000 loan EMI, and the draft run counts",
-      ).toBe(PEOPLE_COST_TOTAL);
-      expect(may?.headcount).toBe(3);
-      const p1 = out.processes
-        .find((p) => p.processId === "P1")
-        ?.months.find((m) => m.period === "2026-05");
-      expect(p1?.cost).toBe(PEOPLE_COST_TOTAL);
-    });
+describe.skipIf(!sqlite)("P&L people cost = CTC paid less other and leave deductions (owner rule 2026-09-24)", () => {
+  it("trend sums CTC less loan EMI / other / advance / LWP, drafts included", async () => {
+    const { getPnlTrend } = await import("../pnl-trend.service.js");
+    const out = await getPnlTrend();
+    const may = out.company.find((m) => m.period === "2026-05");
+    expect(may?.cost, "CTC less the 20,000 loan EMI, and the draft run counts").toBe(PEOPLE_COST_TOTAL);
+    expect(may?.headcount).toBe(3);
+    const p1 = out.processes.find((p) => p.processId === "P1")?.months.find((m) => m.period === "2026-05");
+    expect(p1?.cost).toBe(PEOPLE_COST_TOTAL);
+  });
 
-    it("branch-filtered trend uses the same People Cost sum", async () => {
-      const { getPnlTrend } = await import("../pnl-trend.service.js");
-      const out = await getPnlTrend({ branchId: "B1" });
-      expect(out.company.find((m) => m.period === "2026-05")?.cost).toBe(
-        PEOPLE_COST_TOTAL,
-      );
-    });
+  it("branch-filtered trend uses the same People Cost sum", async () => {
+    const { getPnlTrend } = await import("../pnl-trend.service.js");
+    const out = await getPnlTrend({ branchId: "B1" });
+    expect(out.company.find((m) => m.period === "2026-05")?.cost).toBe(PEOPLE_COST_TOTAL);
+  });
 
-    it("trend equals the Live P&L tile (readPayroll) for the same month", async () => {
-      const { getPnlTrend } = await import("../pnl-trend.service.js");
-      const { getPnlReconciliation } =
-        await import("../pnl-reconciliation.service.js");
-      const tile = (
-        await getPnlReconciliation("2026-05", { asOfDate: "2026-09-15" })
-      ).totals.payrollCost;
-      const trend = (await getPnlTrend()).company.find(
-        (m) => m.period === "2026-05",
-      )?.cost;
-      expect(tile).toBe(PEOPLE_COST_TOTAL);
-      expect(trend).toBe(tile);
-    });
+  it("trend equals the Live P&L tile (readPayroll) for the same month", async () => {
+    const { getPnlTrend } = await import("../pnl-trend.service.js");
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const tile = (await getPnlReconciliation("2026-05", { asOfDate: "2026-09-15" })).totals.payrollCost;
+    const trend = (await getPnlTrend()).company.find((m) => m.period === "2026-05")?.cost;
+    expect(tile).toBe(PEOPLE_COST_TOTAL);
+    expect(trend).toBe(tile);
+  });
 
-    it("the people drilldown (list and aggregated) totals equal the tile", async () => {
-      const { getPnlDrilldown } = await import("../pnl-drilldown.service.js");
-      const list = await getPnlDrilldown({
-        metric: "people",
-        period: "2026-05",
-        branchId: "B1",
-      });
-      const grouped = await getPnlDrilldown({
-        metric: "people",
-        period: "2026-05",
-        branchId: "B1",
-        aggregatePeople: true,
-      });
-      expect(list.total).toBe(PEOPLE_COST_TOTAL);
-      expect(grouped.total).toBe(PEOPLE_COST_TOTAL);
-      const mas47814 = list.rows.find(
-        (r) =>
-          r.label.includes("MAS47814") ||
-          String(r.detail ?? "").includes("MAS47814"),
-      );
-      expect(
-        mas47814?.amount,
-        "loan EMI 20,000 is inside the person's people cost",
-      ).toBe(83074);
-    });
+  it("the people drilldown (list and aggregated) totals equal the tile", async () => {
+    const { getPnlDrilldown } = await import("../pnl-drilldown.service.js");
+    const list = await getPnlDrilldown({ metric: "people", period: "2026-05", branchId: "B1" });
+    const grouped = await getPnlDrilldown({ metric: "people", period: "2026-05", branchId: "B1", aggregatePeople: true });
+    expect(list.total).toBe(PEOPLE_COST_TOTAL);
+    expect(grouped.total).toBe(PEOPLE_COST_TOTAL);
+    const mas47814 = list.rows.find((r) => r.label.includes("MAS47814") || String(r.detail ?? "").includes("MAS47814"));
+    expect(mas47814?.amount, "loan EMI 20,000 is inside the person's people cost").toBe(83074);
+  });
 
-    it("cost-centre activity salary follows the same rule (gratuity included, NULL-safe)", async () => {
-      const { getCostCentreActivity } =
-        await import("../cost-centre-activity.service.js");
-      const rows = await getCostCentreActivity("2026-05");
-      const cc1 = rows.find((r) => r.costCentreId === "cc1");
-      expect(cc1?.salaryCost).toBe(PEOPLE_COST_TOTAL);
-      expect(cc1?.peoplePaid).toBe(3);
-    });
-  },
-);
+  it("cost-centre activity salary follows the same rule (gratuity included, NULL-safe)", async () => {
+    const { getCostCentreActivity } = await import("../cost-centre-activity.service.js");
+    const rows = await getCostCentreActivity("2026-05");
+    const cc1 = rows.find((r) => r.costCentreId === "cc1");
+    expect(cc1?.salaryCost).toBe(PEOPLE_COST_TOTAL);
+    expect(cc1?.peoplePaid).toBe(3);
+  });
+});

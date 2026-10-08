@@ -17,9 +17,7 @@ describe("buildIdentityMappingExceptionsSql", () => {
     // The per-employee "missing source" branch is gated on the source being loaded at all, so an
     // unreadable source (Masbiometric / db_masmis) does not flag every active employee.
     expect(report.sql).toContain("source_system IN ('MASBIOMETRIC_EMPLOYEE')");
-    expect(report.sql).toContain(
-      "source_system IN ('MASMIS_AGENT','SHIVAMGIRI_AGENT')",
-    );
+    expect(report.sql).toContain("source_system IN ('MASMIS_AGENT','SHIVAMGIRI_AGENT')");
     expect(report.sql).not.toContain("PENDING_DATA_BUILDER");
     expect(report.sql).not.toContain("db_masmis.nms_Agent_Details");
     expect(report.sql).not.toContain("Masbiometric.EmployeeDetails");
@@ -38,20 +36,13 @@ describe("buildIdentityMappingExceptionsSql", () => {
     expect(report.sql).not.toContain("branch-1");
     expect(report.sql).not.toContain("process-9");
     expect(report.params).toEqual([
-      "branch-1",
-      "process-9",
-      "branch-1",
-      "process-9",
-      "branch-1",
-      "process-9",
-      "branch-1",
-      "process-9",
-      "branch-1",
-      "process-9",
-      "branch-1",
-      "process-9",
-      "branch-1",
-      "process-9",
+      "branch-1", "process-9",
+      "branch-1", "process-9",
+      "branch-1", "process-9",
+      "branch-1", "process-9",
+      "branch-1", "process-9",
+      "branch-1", "process-9",
+      "branch-1", "process-9",
     ]);
   });
 });

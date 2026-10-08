@@ -17,21 +17,14 @@
  * asserts a rule the live data already satisfies rather than inventing one.
  */
 import { describe, it, expect } from "vitest";
-import {
-  TEMPLATE_DEFINITIONS,
-  templateTokens,
-} from "../joiningDocumentTemplates.js";
+import { TEMPLATE_DEFINITIONS, templateTokens } from "../joiningDocumentTemplates.js";
 import { matchPlaceholderField } from "../universalDigitalFormFill.service.js";
 
 /**
  * Injected by joiningDocumentPdf.service at render time from the branch
  * letterhead and the company constant, not from a field value.
  */
-const RENDERER_INJECTED = new Set([
-  "branch_address",
-  "branch_name",
-  "company_registered_office",
-]);
+const RENDERER_INJECTED = new Set(["branch_address", "branch_name", "company_registered_office"]);
 
 /**
  * Tokens deliberately left for a human to complete on the printed page. Each
@@ -46,30 +39,20 @@ const CODES = TEMPLATE_DEFINITIONS.map((entry) => entry.code);
 
 describe("template token coverage", () => {
   it("covers every structured document", () => {
-    expect(CODES).toEqual(
-      expect.arrayContaining([
-        "EMPLOYMENT_CONTRACT",
-        "NDA_CONFIDENTIALITY",
-        "IT_COMPLIANCE",
-        "BAMS_DECLARATION",
-        "PI_PROCESSING_CONSENT",
-        "ZERO_TOLERANCE_ACK",
-      ]),
-    );
+    expect(CODES).toEqual(expect.arrayContaining([
+      "EMPLOYMENT_CONTRACT", "NDA_CONFIDENTIALITY", "IT_COMPLIANCE",
+      "BAMS_DECLARATION", "PI_PROCESSING_CONSENT", "ZERO_TOLERANCE_ACK",
+    ]));
   });
 
   for (const code of CODES) {
     it(`${code}: every token is backed by a field with a source`, () => {
       const unresolved = templateTokens(code).filter((token) => {
-        if (RENDERER_INJECTED.has(token) || token in COMPLETED_BY_HAND)
-          return false;
+        if (RENDERER_INJECTED.has(token) || token in COMPLETED_BY_HAND) return false;
         return !matchPlaceholderField(token)?.source_path;
       });
 
-      expect(
-        unresolved,
-        `${code} would render these as empty strings: ${unresolved.join(", ")}`,
-      ).toEqual([]);
+      expect(unresolved, `${code} would render these as empty strings: ${unresolved.join(", ")}`).toEqual([]);
     });
   }
 
@@ -79,10 +62,7 @@ describe("template token coverage", () => {
     // The literal is what printed on a real signed contract. It may only reach
     // the page as a deliberate fallback for an unknown gender, never as template
     // text that no code path can resolve.
-    const blocks = JSON.stringify(
-      TEMPLATE_DEFINITIONS.find((e) => e.code === "EMPLOYMENT_CONTRACT")
-        ?.blocks,
-    );
+    const blocks = JSON.stringify(TEMPLATE_DEFINITIONS.find((e) => e.code === "EMPLOYMENT_CONTRACT")?.blocks);
     expect(blocks).not.toContain("s/o | d/o");
   });
 
@@ -100,10 +80,7 @@ describe("template token coverage", () => {
 
   it("every hand-completed exemption states why", () => {
     for (const [token, reason] of Object.entries(COMPLETED_BY_HAND)) {
-      expect(
-        reason.length,
-        `${token} is exempted without a reason`,
-      ).toBeGreaterThan(20);
+      expect(reason.length, `${token} is exempted without a reason`).toBeGreaterThan(20);
     }
   });
 });

@@ -9,10 +9,7 @@ import { scopePredicate } from "./branch-scope.js";
 export const rosterActualSecureRouter = Router();
 rosterActualSecureRouter.use(requireAuth);
 
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 // team_leader and tl are two distinct, independently assignable roles (team_leader is
 // canonical elsewhere in the backend); buildScopeWhereClause/hasAnyRole (scopeAccess.js)
 // do a literal string match with no ROLE_ALIASES expansion, so this array needed both
@@ -20,15 +17,7 @@ const h =
 // LEAVE_VIEW_SCOPE_ROLES (leave.secure.routes.ts) and WFM_VIEW_SCOPE_ROLES
 // (wfm.regularization.secure.routes.ts) earlier the same day; this array is the same
 // team-leadership-tier role set, just for actual-roster data.
-const ROSTER_SCOPE_ROLES = [
-  "wfm",
-  "process_manager",
-  "branch_head",
-  "manager",
-  "assistant_manager",
-  "tl",
-  "team_leader",
-];
+const ROSTER_SCOPE_ROLES = ["wfm", "process_manager", "branch_head", "manager", "assistant_manager", "tl", "team_leader"];
 
 async function actualRosterScope(userId: string) {
   // Org-wide roles only (owner ruling 2026-10-01): hr no longer sees every branch.
@@ -44,8 +33,7 @@ async function actualRosterScope(userId: string) {
       branchId: "e.branch_id",
       processId: "e.process_id",
       departmentId: "e.department_id",
-      managerEmployeeId:
-        "COALESCE(a.manager_employee_id, e.reporting_manager_id)",
+      managerEmployeeId: "COALESCE(a.manager_employee_id, e.reporting_manager_id)",
       employeeId: "e.id",
     },
     { allowAdminBypass: true, allowCeoAllRead: true },
@@ -55,12 +43,10 @@ async function actualRosterScope(userId: string) {
   return { sql: `(${own.sql}) OR (${assigned.sql})`, params: [...own.params, ...assigned.params] };
 }
 
-rosterActualSecureRouter.get(
-  "/actual-process",
-  h(async (req: any, res: any) => {
-    const scope = await actualRosterScope(req.authUser!.id);
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.process_id, p.process_name
+rosterActualSecureRouter.get("/actual-process", h(async (req: any, res: any) => {
+  const scope = await actualRosterScope(req.authUser!.id);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.process_id, p.process_name
        FROM wfm_roster_assignment a
        JOIN employees e ON e.id = a.employee_id
        JOIN process_master p ON p.id = e.process_id
@@ -69,40 +55,22 @@ rosterActualSecureRouter.get(
         AND (${scope.sql})
       ORDER BY a.roster_date DESC
       LIMIT 1`,
-      scope.params,
-    );
-    return res.json({ success: true, data: rows[0] ?? null });
-  }),
-);
+    scope.params,
+  );
+  return res.json({ success: true, data: rows[0] ?? null });
+}));
 
-rosterActualSecureRouter.get(
-  "/actual-assignments",
-  h(async (req: any, res: any) => {
-    const scope = await actualRosterScope(req.authUser!.id);
-    const conds: string[] = [`(${scope.sql})`];
-    const params: unknown[] = [...scope.params];
-    if (req.query.processId) {
-      conds.push("e.process_id = ?");
-      params.push(String(req.query.processId));
-    }
-    if (req.query.branchId) {
-      conds.push("e.branch_id = ?");
-      params.push(String(req.query.branchId));
-    }
-    if (req.query.fromDate) {
-      conds.push("a.roster_date >= ?");
-      params.push(String(req.query.fromDate));
-    }
-    if (req.query.toDate) {
-      conds.push("a.roster_date <= ?");
-      params.push(String(req.query.toDate));
-    }
-    const limit = Math.min(
-      Math.max(Number(req.query.limit ?? 500) || 500, 1),
-      1000,
-    );
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT a.id,
+rosterActualSecureRouter.get("/actual-assignments", h(async (req: any, res: any) => {
+  const scope = await actualRosterScope(req.authUser!.id);
+  const conds: string[] = [`(${scope.sql})`];
+  const params: unknown[] = [...scope.params];
+  if (req.query.processId) { conds.push("e.process_id = ?"); params.push(String(req.query.processId)); }
+  if (req.query.branchId) { conds.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+  if (req.query.fromDate) { conds.push("a.roster_date >= ?"); params.push(String(req.query.fromDate)); }
+  if (req.query.toDate) { conds.push("a.roster_date <= ?"); params.push(String(req.query.toDate)); }
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 500) || 500, 1), 1000);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT a.id,
             a.employee_id,
             e.process_id,
             e.employee_code,
@@ -124,8 +92,7 @@ rosterActualSecureRouter.get(
       WHERE ${conds.join(" AND ")}
       ORDER BY a.roster_date DESC, e.employee_code ASC
       LIMIT ${limit}`,
-      params,
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    params,
+  );
+  return res.json({ success: true, data: rows });
+}));

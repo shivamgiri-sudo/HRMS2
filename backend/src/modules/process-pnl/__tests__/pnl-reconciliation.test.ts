@@ -372,21 +372,20 @@ describe("P&L reconciliation — OP% scope rules (2026-09-15 OP% check)", () => 
       : undefined;
 
   it("counts pay of staff with no cost centre in branch and company cost, but in no row", async () => {
-    withOverrides(
-      (q) =>
-        hrmsConsumedGrn(q) ??
-        (q.includes("cost_centre_id") &&
-        q.includes("IS NULL") &&
-        q.includes("GROUP BY e.branch_id")
-          ? [
-              {
-                branch_id: "branch-noida",
-                branch_name: "NOIDA",
-                staff: 3,
-                amount: L(6),
-              },
-            ]
-          : undefined),
+    withOverrides((q) =>
+      hrmsConsumedGrn(q) ??
+      (q.includes("cost_centre_id") &&
+      q.includes("IS NULL") &&
+      q.includes("GROUP BY e.branch_id")
+        ? [
+            {
+              branch_id: "branch-noida",
+              branch_name: "NOIDA",
+              staff: 3,
+              amount: L(6),
+            },
+          ]
+        : undefined),
     );
     const { getPnlReconciliation } =
       await import("../pnl-reconciliation.service.js");
@@ -711,12 +710,12 @@ describe("P&L reconciliation — below-the-line (depreciation, finance cost, tax
             { cost_centre_id: "cc-noida-2", amount: L(5) },
           ]
         : q.includes("FROM process_pnl_cost_component")
-          ? [
-              { cost_type: "depreciation", amount: L(10) },
-              { cost_type: "finance_cost", amount: L(3) },
-              { cost_type: "tax", amount: L(1) },
-            ]
-          : undefined,
+        ? [
+            { cost_type: "depreciation", amount: L(10) },
+            { cost_type: "finance_cost", amount: L(3) },
+            { cost_type: "tax", amount: L(1) },
+          ]
+        : undefined,
     );
     const { getPnlReconciliation } =
       await import("../pnl-reconciliation.service.js");

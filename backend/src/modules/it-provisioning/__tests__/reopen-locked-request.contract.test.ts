@@ -29,8 +29,7 @@ const ACTOR_ID = "actor-1";
 
 const dbExecute = vi.fn(async (sql: string, params: unknown[] = []) => {
   const s = String(sql);
-  if (s.includes("SELECT * FROM it_provisioning_request WHERE id"))
-    return [state.request ?? []];
+  if (s.includes("SELECT * FROM it_provisioning_request WHERE id")) return [state.request ?? []];
   return [{ affectedRows: 1 }];
 });
 const logSensitiveAction = vi.fn(async () => {});
@@ -49,51 +48,25 @@ beforeEach(() => {
 describe("reopenLockedRequest", () => {
   it("404s when the request does not exist", async () => {
     state.request = [];
-    await expect(
-      reopenLockedRequest(REQUEST_ID, ACTOR_ID, "a valid ten char reason"),
-    ).rejects.toMatchObject({
+    await expect(reopenLockedRequest(REQUEST_ID, ACTOR_ID, "a valid ten char reason")).rejects.toMatchObject({
       statusCode: 404,
     });
     expect(logSensitiveAction).not.toHaveBeenCalled();
   });
 
   it("400s when the request is not locked — nothing to reopen", async () => {
-    state.request = [
-      {
-        id: REQUEST_ID,
-        locked: 0,
-        status: "actioned",
-        task_code: "ADMIN_BIOMETRIC_ID_CARD",
-        employee_id: "emp-1",
-      },
-    ];
-    await expect(
-      reopenLockedRequest(REQUEST_ID, ACTOR_ID, "a valid ten char reason"),
-    ).rejects.toMatchObject({
+    state.request = [{ id: REQUEST_ID, locked: 0, status: "actioned", task_code: "ADMIN_BIOMETRIC_ID_CARD", employee_id: "emp-1" }];
+    await expect(reopenLockedRequest(REQUEST_ID, ACTOR_ID, "a valid ten char reason")).rejects.toMatchObject({
       statusCode: 400,
     });
     expect(logSensitiveAction).not.toHaveBeenCalled();
   });
 
   it("reverses status and locked, and writes a durable audit entry with the reason", async () => {
-    state.request = [
-      {
-        id: REQUEST_ID,
-        locked: 1,
-        status: "confirmed",
-        task_code: "ADMIN_BIOMETRIC_ID_CARD",
-        employee_id: "emp-1",
-      },
-    ];
-    await reopenLockedRequest(
-      REQUEST_ID,
-      ACTOR_ID,
-      "ID card printed was ticked by mistake",
-    );
+    state.request = [{ id: REQUEST_ID, locked: 1, status: "confirmed", task_code: "ADMIN_BIOMETRIC_ID_CARD", employee_id: "emp-1" }];
+    await reopenLockedRequest(REQUEST_ID, ACTOR_ID, "ID card printed was ticked by mistake");
 
-    const updateCall = dbExecute.mock.calls.find(([sql]) =>
-      String(sql).includes("UPDATE it_provisioning_request"),
-    );
+    const updateCall = dbExecute.mock.calls.find(([sql]) => String(sql).includes("UPDATE it_provisioning_request"));
     expect(updateCall, "must issue the reversing UPDATE").toBeTruthy();
     expect(String(updateCall![0])).toContain("status = 'actioned'");
     expect(String(updateCall![0])).toContain("locked = 0");
@@ -110,20 +83,9 @@ describe("reopenLockedRequest", () => {
   });
 
   it("does not touch evidence_note — the original completion evidence stays intact", async () => {
-    state.request = [
-      {
-        id: REQUEST_ID,
-        locked: 1,
-        status: "confirmed",
-        task_code: "ADMIN_BIOMETRIC_ID_CARD",
-        employee_id: "emp-1",
-        evidence_note: "original evidence",
-      },
-    ];
+    state.request = [{ id: REQUEST_ID, locked: 1, status: "confirmed", task_code: "ADMIN_BIOMETRIC_ID_CARD", employee_id: "emp-1", evidence_note: "original evidence" }];
     await reopenLockedRequest(REQUEST_ID, ACTOR_ID, "a valid ten char reason");
-    const updateCall = dbExecute.mock.calls.find(([sql]) =>
-      String(sql).includes("UPDATE it_provisioning_request"),
-    );
+    const updateCall = dbExecute.mock.calls.find(([sql]) => String(sql).includes("UPDATE it_provisioning_request"));
     expect(String(updateCall![0])).not.toContain("evidence_note");
   });
 });
@@ -157,10 +119,7 @@ describe("POST /tasks/:id/reopen route", () => {
     const callAt = handler.indexOf("reopenLockedRequest(");
     expect(reasonCheckAt, "must validate reason length").toBeGreaterThan(-1);
     expect(callAt, "must call reopenLockedRequest").toBeGreaterThan(-1);
-    expect(
-      reasonCheckAt,
-      "the length check must run before reopenLockedRequest is called",
-    ).toBeLessThan(callAt);
+    expect(reasonCheckAt, "the length check must run before reopenLockedRequest is called").toBeLessThan(callAt);
     expect(handler).toContain("res.status(400)");
   });
 });

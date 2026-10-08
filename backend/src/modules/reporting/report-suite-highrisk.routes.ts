@@ -19,10 +19,7 @@ export const reportSuiteHighRiskRouter = Router();
 reportSuiteHighRiskRouter.use(requireAuth);
 reportSuiteHighRiskRouter.use(reportScopeMiddleware);
 
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 const roles = reportCatalogAccessMiddleware;
 // Include all post-calculation statuses so reports show data regardless of approval stage
 // "draft" is excluded — draft runs have no calculated lines yet
@@ -36,9 +33,7 @@ function dateParam(value: unknown, fallback: string) {
 }
 function monthParam(value: unknown) {
   const text = String(value ?? "").trim();
-  return /^\d{4}-\d{2}$/.test(text)
-    ? text
-    : new Date().toISOString().slice(0, 7);
+  return /^\d{4}-\d{2}$/.test(text) ? text : new Date().toISOString().slice(0, 7);
 }
 function limitParam(value: unknown) {
   const n = Number(value ?? 5000);
@@ -75,39 +70,25 @@ function offsetParam(value: unknown) {
  * there genuinely are more rows.
  */
 async function sendRows(
-  res: any,
-  code: string,
-  sql: string,
-  params: unknown[],
-  limit: number,
-  meta: Record<string, unknown> = {},
-  offset = 0,
+  res: any, code: string, sql: string, params: unknown[],
+  limit: number, meta: Record<string, unknown> = {}, offset = 0
 ) {
-  const [raw] = await db.execute<RowDataPacket[]>(
-    `${sql} LIMIT ${limit} OFFSET ${offset}`,
-    params,
-  );
+  const [raw] = await db.execute<RowDataPacket[]>(`${sql} LIMIT ${limit} OFFSET ${offset}`, params);
 
   // Drop the internal keyset column before the rows leave the server, exactly as the executors
   // do. It became visible here when payroll-register started sharing its SELECT with the
   // executor: the executor stripped _cursor and this did not, so the screen carried one column
   // the downloaded file did not and the two disagreed by a column that is not part of the
   // report at all.
-  const rows = raw.map(
-    ({ _cursor: _cursor, ...rest }) => rest,
-  ) as RowDataPacket[];
+  const rows = raw.map(({ _cursor: _cursor, ...rest }) => rest) as RowDataPacket[];
 
   let totalCount: number;
   if (rows.length < limit) {
     totalCount = offset + rows.length;
   } else {
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM (${sql}) AS count_query`,
-      params,
-    );
-    totalCount = Number(
-      (countRows as Array<{ total?: number }>)[0]?.total ?? rows.length,
-    );
+      `SELECT COUNT(*) AS total FROM (${sql}) AS count_query`, params);
+    totalCount = Number((countRows as Array<{ total?: number }>)[0]?.total ?? rows.length);
   }
 
   return res.json({
@@ -115,31 +96,19 @@ async function sendRows(
     code,
     data: rows,
     totalCount,
-    meta: {
-      count: rows.length,
-      totalCount,
-      limit,
-      offset,
-      highRiskRoute: true,
-      ...meta,
-    },
+    meta: { count: rows.length, totalCount, limit, offset, highRiskRoute: true, ...meta },
   });
 }
 
-reportSuiteHighRiskRouter.get(
-  "/employee-movement",
-  roles,
-  h(async (req, res) => {
-    const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-    const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-    const clauses: string[] = [];
-    const filterParams: unknown[] = [];
-    addScopedEmployeeFilters(req, clauses, filterParams);
-    clauses.push(
-      "(e.date_of_joining BETWEEN ? AND ? OR COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) BETWEEN ? AND ?)",
-    );
-    filterParams.push(from, to, from, to);
-    const sql = `SELECT e.employee_code,
+reportSuiteHighRiskRouter.get("/employee-movement", roles, h(async (req, res) => {
+  const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+  const clauses: string[] = [];
+  const filterParams: unknown[] = [];
+  addScopedEmployeeFilters(req, clauses, filterParams);
+  clauses.push("(e.date_of_joining BETWEEN ? AND ? OR COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) BETWEEN ? AND ?)");
+  filterParams.push(from, to, from, to);
+  const sql = `SELECT e.employee_code,
                       COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                       e.date_of_joining,
                       COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) AS exit_date,
@@ -160,17 +129,8 @@ reportSuiteHighRiskRouter.get(
                  LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY COALESCE(e.date_of_joining,e.date_of_exit,e.date_of_leaving,e.resignation_date) DESC`;
-    return sendRows(
-      res,
-      "employee-movement",
-      sql,
-      [from, to, ...filterParams],
-      limitParam(req.query.limit),
-      {},
-      offsetParam(req.query.offset),
-    );
-  }),
-);
+  return sendRows(res, "employee-movement", sql, [from, to, ...filterParams], limitParam(req.query.limit), {}, offsetParam(req.query.offset));
+}));
 
 // NOTE: "leave-balance" is deliberately NOT handled here.
 //
@@ -183,92 +143,50 @@ reportSuiteHighRiskRouter.get(
 // applies the same reportScopeMiddleware + reportCatalogAccessMiddleware gate and
 // dispatches to the canonical executor. Do not re-add a handler for it here.
 
-reportSuiteHighRiskRouter.get(
-  "/payroll-register",
-  roles,
-  h(async (req, res) => {
-    const clauses: string[] = [];
-    const params: unknown[] = [];
-    addScopedEmployeeFilters(req, clauses, params);
-    clauses.push("spr.run_month = ?");
-    params.push(await resolvePayrollMonth(req.query.month));
-    clauses.push(payrollStatusClause("spr"));
-    params.push(...PAYROLL_STATUSES);
-    // One SQL body, shared with the executor that serves the download. These were two
-    // separately maintained SELECTs and they had drifted into different reports: this side
-    // carried run_status, net_mismatch_amount and payroll_risk, the executor carried the
-    // component breakdown plus employee_state, deduction_applied and line_flag, and neither
-    // had the other's. Merged rather than one trimmed to the other, because both sets were
-    // deliberate — see the note on PAYROLL_REGISTER_BODY.
-    const sql = `${PAYROLL_REGISTER_BODY}
+reportSuiteHighRiskRouter.get("/payroll-register", roles, h(async (req, res) => {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  addScopedEmployeeFilters(req, clauses, params);
+  clauses.push("spr.run_month = ?"); params.push(await resolvePayrollMonth(req.query.month));
+  clauses.push(payrollStatusClause("spr")); params.push(...PAYROLL_STATUSES);
+  // One SQL body, shared with the executor that serves the download. These were two
+  // separately maintained SELECTs and they had drifted into different reports: this side
+  // carried run_status, net_mismatch_amount and payroll_risk, the executor carried the
+  // component breakdown plus employee_state, deduction_applied and line_flag, and neither
+  // had the other's. Merged rather than one trimmed to the other, because both sets were
+  // deliberate — see the note on PAYROLL_REGISTER_BODY.
+  const sql = `${PAYROLL_REGISTER_BODY}
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY employee_name`;
-    return sendRows(
-      res,
-      "payroll-register",
-      sql,
-      params,
-      limitParam(req.query.limit),
-      { payrollStatuses: PAYROLL_STATUSES },
-      offsetParam(req.query.offset),
-    );
-  }),
-);
+  return sendRows(res, "payroll-register", sql, params, limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES }, offsetParam(req.query.offset));
+}));
 
-reportSuiteHighRiskRouter.get(
-  "/payroll-variance",
-  roles,
-  h(async (req, res) => {
-    const clauses: string[] = [];
-    const params: unknown[] = [];
-    addScopedEmployeeFilters(req, clauses, params);
-    clauses.push("spr.run_month = ?");
-    params.push(await resolvePayrollMonth(req.query.month));
-    clauses.push(payrollStatusClause("spr"));
-    params.push(...PAYROLL_STATUSES);
-    // Shared with the executor that serves the download — see PAYROLL_VARIANCE_BODY. The
-    // status placeholders sit inside the previous-month JOIN, ahead of the WHERE, so the
-    // status list is prepended to the parameters below.
-    const sql = `${PAYROLL_VARIANCE_BODY.replace("__STATUS_PLACEHOLDERS__", PAYROLL_STATUSES.map(() => "?").join(","))}
+reportSuiteHighRiskRouter.get("/payroll-variance", roles, h(async (req, res) => {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  addScopedEmployeeFilters(req, clauses, params);
+  clauses.push("spr.run_month = ?"); params.push(await resolvePayrollMonth(req.query.month));
+  clauses.push(payrollStatusClause("spr")); params.push(...PAYROLL_STATUSES);
+  // Shared with the executor that serves the download — see PAYROLL_VARIANCE_BODY. The
+  // status placeholders sit inside the previous-month JOIN, ahead of the WHERE, so the
+  // status list is prepended to the parameters below.
+  const sql = `${PAYROLL_VARIANCE_BODY.replace("__STATUS_PLACEHOLDERS__", PAYROLL_STATUSES.map(() => "?").join(","))}
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY ABS(COALESCE(net_variance_pct,0)) DESC`;
-    return sendRows(
-      res,
-      "payroll-variance",
-      sql,
-      [...PAYROLL_STATUSES, ...params],
-      limitParam(req.query.limit),
-      { payrollStatuses: PAYROLL_STATUSES },
-      offsetParam(req.query.offset),
-    );
-  }),
-);
+  return sendRows(res, "payroll-variance", sql, [...PAYROLL_STATUSES, ...params], limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES }, offsetParam(req.query.offset));
+}));
 
-reportSuiteHighRiskRouter.get(
-  "/payslip-status",
-  roles,
-  h(async (req, res) => {
-    const clauses: string[] = [];
-    const params: unknown[] = [];
-    addScopedEmployeeFilters(req, clauses, params);
-    clauses.push("spr.run_month = ?");
-    params.push(await resolvePayrollMonth(req.query.month));
-    clauses.push(payrollStatusClause("spr"));
-    params.push(...PAYROLL_STATUSES);
-    // Shared with the executor that serves the download — see PAYSLIP_STATUS_BODY. The union
-    // of the two former shapes, which is also the only one carrying employee code, cost
-    // centre and process together.
-    const sql = `${PAYSLIP_STATUS_BODY}
+reportSuiteHighRiskRouter.get("/payslip-status", roles, h(async (req, res) => {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  addScopedEmployeeFilters(req, clauses, params);
+  clauses.push("spr.run_month = ?"); params.push(await resolvePayrollMonth(req.query.month));
+  clauses.push(payrollStatusClause("spr")); params.push(...PAYROLL_STATUSES);
+  // Shared with the executor that serves the download — see PAYSLIP_STATUS_BODY. The union
+  // of the two former shapes, which is also the only one carrying employee code, cost
+  // centre and process together.
+  const sql = `${PAYSLIP_STATUS_BODY}
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY payslip_status DESC, employee_name`;
-    return sendRows(
-      res,
-      "payslip-status",
-      sql,
-      params,
-      limitParam(req.query.limit),
-      { payrollStatuses: PAYROLL_STATUSES },
-      offsetParam(req.query.offset),
-    );
-  }),
-);
+  return sendRows(res, "payslip-status", sql, params, limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES }, offsetParam(req.query.offset));
+}));

@@ -18,27 +18,21 @@ describe("branch budget delete guard — approved budgets are superseded, never 
     const fnBody = service.slice(fnStart, fnStart + 6500);
 
     // The approved-status list must be checked independently of GRN touch.
-    expect(fnBody).toContain(
-      'APPROVED_STATUSES = ["branch_head_approved", "finance_head_approved", "active"]',
-    );
+    expect(fnBody).toContain('APPROVED_STATUSES = ["branch_head_approved", "finance_head_approved", "active"]');
     // GRN touch forces supersede for everyone; an approval decision forces it for everyone except
     // super_admin, which is the one role trusted to delete an approved-but-unspent budget. This
     // assertion previously demanded the pre-override form and had been failing silently against
     // the shipped code — pinned to the real expression now.
     expect(fnBody).toContain(
-      "requiresSupersede = touchedByGrn || (APPROVED_STATUSES.includes(status) && !isSuperAdminActor)",
+      "requiresSupersede = touchedByGrn || (APPROVED_STATUSES.includes(status) && !isSuperAdminActor)"
     );
     // touchedByGrn is never overridable: real spend history is not deletable by anyone.
     expect(fnBody).toMatch(/requiresSupersede = touchedByGrn \|\|/);
 
     // The supersede branch (not the hard-delete branch) must be the one gated on requiresSupersede.
-    const supersedeBranch = fnBody.slice(
-      fnBody.indexOf("if (requiresSupersede)"),
-    );
+    const supersedeBranch = fnBody.slice(fnBody.indexOf("if (requiresSupersede)"));
     expect(supersedeBranch).toContain("status = 'closed'");
-    expect(supersedeBranch.indexOf("status = 'closed'")).toBeLessThan(
-      supersedeBranch.indexOf("DELETE FROM finance_budget_header"),
-    );
+    expect(supersedeBranch.indexOf("status = 'closed'")).toBeLessThan(supersedeBranch.indexOf("DELETE FROM finance_budget_header"));
   });
 
   it("still allows a true hard delete for an untouched draft/submitted/revision_required budget", () => {
@@ -60,9 +54,7 @@ describe("branch budget delete guard — who may delete", () => {
     // created_by has to be read for the ownership test to be possible at all.
     expect(fnBody).toContain("created_by FROM finance_budget_header");
     // A non-super-admin must fail both the ownership check and the draft-only check.
-    expect(fnBody).toContain(
-      "Only the person who raised this budget can delete it",
-    );
+    expect(fnBody).toContain("Only the person who raised this budget can delete it");
     expect(fnBody).toMatch(/if \(!isSuperAdminActor\)/);
     expect(fnBody).toMatch(/status !== "draft"/);
   });
@@ -72,16 +64,10 @@ describe("branch budget delete guard — who may delete", () => {
     // budget. If this check ever moves out of the service, any of those roles could delete any
     // other branch admin's draft.
     const routes = read("src/modules/process-pnl/process-pnl.routes.ts");
-    const deleteRoute = routes.slice(
-      routes.indexOf('router.delete(\n  "/pnl/budgets/:id"'),
-    );
-    expect(deleteRoute).toContain(
-      'requireRole("super_admin", "admin", "branch_admin")',
-    );
+    const deleteRoute = routes.slice(routes.indexOf('router.delete(\n  "/pnl/budgets/:id"'));
+    expect(deleteRoute).toContain('requireRole("super_admin", "admin", "branch_admin")');
 
     const service = read("src/modules/process-pnl/branch-budget.service.ts");
-    expect(service).toContain(
-      "Only the person who raised this budget can delete it",
-    );
+    expect(service).toContain("Only the person who raised this budget can delete it");
   });
 });

@@ -31,21 +31,15 @@ export type EmailSendInput = {
 };
 
 function smtpSecure(): boolean {
-  const explicit = String(process.env.SMTP_SECURE || "")
-    .trim()
-    .toLowerCase();
+  const explicit = String(process.env.SMTP_SECURE || "").trim().toLowerCase();
   if (["true", "1", "yes"].includes(explicit)) return true;
   if (["false", "0", "no"].includes(explicit)) return false;
   return Number(env.SMTP_PORT) === 465;
 }
 
 function fromAddress(): string {
-  const name = String(process.env.SMTP_FROM_NAME || "MAS Callnet HRMS")
-    .trim()
-    .replace(/"/g, "");
-  const from = String(
-    env.SMTP_FROM || env.SMTP_USER || "noreply@mascallnet.com",
-  ).trim();
+  const name = String(process.env.SMTP_FROM_NAME || "MAS Callnet HRMS").trim().replace(/"/g, "");
+  const from = String(env.SMTP_FROM || env.SMTP_USER || "noreply@mascallnet.com").trim();
   return name ? `"${name}" <${from}>` : from;
 }
 
@@ -95,11 +89,7 @@ function getTransporter() {
 
 /** Drops the pooled connections. For tests and for a deliberate reconnect. */
 export function resetTransporter(): void {
-  try {
-    cachedTransporter?.close();
-  } catch {
-    /* already closed */
-  }
+  try { cachedTransporter?.close(); } catch { /* already closed */ }
   cachedTransporter = null;
 }
 
@@ -118,14 +108,8 @@ export function resetTransporter(): void {
  * set, so it never fires. The escape hatch exists for deliberately testing a
  * template against a local server.
  */
-export function assertNoLocalhostLinks(
-  input: Pick<EmailSendInput, "to" | "html" | "text">,
-) {
-  if (
-    String(process.env.ALLOW_LOCALHOST_EMAIL_LINKS ?? "").toLowerCase() ===
-    "true"
-  )
-    return;
+export function assertNoLocalhostLinks(input: Pick<EmailSendInput, "to" | "html" | "text">) {
+  if (String(process.env.ALLOW_LOCALHOST_EMAIL_LINKS ?? "").toLowerCase() === "true") return;
   const body = `${input.html ?? ""}${input.text ?? ""}`;
   // The host must end where it is matched, or "localhost-tools.teammas.in" —
   // a perfectly reachable host — would be rejected as loopback.
@@ -133,24 +117,16 @@ export function assertNoLocalhostLinks(
     /https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?(?=[/?#"'\s>]|$)/i,
   );
   if (!match) return;
-  const to = Array.isArray(input.to)
-    ? input.to.join(", ")
-    : String(input.to ?? "");
+  const to = Array.isArray(input.to) ? input.to.join(", ") : String(input.to ?? "");
   throw new Error(
-    `Refusing to email a ${match[0]} link to ${to} — the recipient cannot open it. ` +
-      "Set FRONTEND_URL to the public address, or ALLOW_LOCALHOST_EMAIL_LINKS=true for a local template test.",
+    `Refusing to email a ${match[0]} link to ${to} — the recipient cannot open it. `
+    + "Set FRONTEND_URL to the public address, or ALLOW_LOCALHOST_EMAIL_LINKS=true for a local template test.",
   );
 }
 
 export const emailService = {
   isConfigured(): boolean {
-    return Boolean(
-      env.SMTP_HOST &&
-      env.SMTP_PORT &&
-      env.SMTP_FROM &&
-      env.SMTP_USER &&
-      smtpPassword(),
-    );
+    return Boolean(env.SMTP_HOST && env.SMTP_PORT && env.SMTP_FROM && env.SMTP_USER && smtpPassword());
   },
 
   safeConfig() {
@@ -174,9 +150,7 @@ export const emailService = {
 
   async send(input: EmailSendInput): Promise<{ messageId?: string }> {
     if (!this.isConfigured()) {
-      throw new Error(
-        "SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM.",
-      );
+      throw new Error("SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM.");
     }
 
     assertNoLocalhostLinks(input);

@@ -21,17 +21,14 @@
  * The returned handle is registered with worker-utils.registerTimer so clearAllTimers()
  * (called from server.ts gracefulShutdown) covers it automatically.
  */
-import type { RowDataPacket } from "mysql2";
-import {
-  findUntriagedMiraFeedback,
-  triageWorkItem,
-} from "./mira-issue-triage.service.js";
-import { generateFixDraftForWorkItem } from "./mira-fix-draft-generate.service.js";
-import { registerTimer } from "../../workers/worker-utils.js";
-import { db } from "../../db/mysql.js";
-import { env } from "../../config/env.js";
+import type { RowDataPacket } from 'mysql2';
+import { findUntriagedMiraFeedback, triageWorkItem } from './mira-issue-triage.service.js';
+import { generateFixDraftForWorkItem } from './mira-fix-draft-generate.service.js';
+import { registerTimer } from '../../workers/worker-utils.js';
+import { db } from '../../db/mysql.js';
+import { env } from '../../config/env.js';
 
-const SCHEDULER_NAME = "mira-triage-scheduler";
+const SCHEDULER_NAME = 'mira-triage-scheduler';
 
 /**
  * Runs one triage pass: find all untriaged MIRA_FEEDBACK items and triage each in turn.
@@ -48,18 +45,12 @@ export async function runTriagePass(): Promise<Record<string, number>> {
       const outcome = await triageWorkItem(item.id, item.description);
       counts[outcome.status] = (counts[outcome.status] ?? 0) + 1;
     } catch (err) {
-      counts["error"] = (counts["error"] ?? 0) + 1;
-      console.error(
-        `[mira-triage] item ${item.id} threw:`,
-        err instanceof Error ? err.message : String(err),
-      );
+      counts['error'] = (counts['error'] ?? 0) + 1;
+      console.error(`[mira-triage] item ${item.id} threw:`, err instanceof Error ? err.message : String(err));
     }
   }
 
-  console.log(
-    `[mira-triage] processed ${items.length} item(s):`,
-    JSON.stringify(counts),
-  );
+  console.log(`[mira-triage] processed ${items.length} item(s):`, JSON.stringify(counts));
 
   // Stage 2 of the same pass: turn the diagnoses just written into candidate diffs.
   //
@@ -73,11 +64,7 @@ export async function runTriagePass(): Promise<Record<string, number>> {
   // is independent — drafting can run for weeks with nothing shipping.
   if (env.MIRA_AUTO_DRAFT_ENABLED) {
     const drafted = await runDraftPass();
-    if (Object.keys(drafted).length)
-      counts.drafted_outcomes = Object.values(drafted).reduce(
-        (a, b) => a + b,
-        0,
-      );
+    if (Object.keys(drafted).length) counts.drafted_outcomes = Object.values(drafted).reduce((a, b) => a + b, 0);
   }
 
   return counts;
@@ -109,18 +96,11 @@ export async function runDraftPass(): Promise<Record<string, number>> {
       const outcome = await generateFixDraftForWorkItem(String(row.id));
       counts[outcome.status] = (counts[outcome.status] ?? 0) + 1;
     } catch (err) {
-      counts["error"] = (counts["error"] ?? 0) + 1;
-      console.error(
-        `[mira-draft] item ${row.id} threw:`,
-        err instanceof Error ? err.message : String(err),
-      );
+      counts['error'] = (counts['error'] ?? 0) + 1;
+      console.error(`[mira-draft] item ${row.id} threw:`, err instanceof Error ? err.message : String(err));
     }
   }
-  if (rows.length)
-    console.log(
-      `[mira-draft] attempted ${rows.length} draft(s):`,
-      JSON.stringify(counts),
-    );
+  if (rows.length) console.log(`[mira-draft] attempted ${rows.length} draft(s):`, JSON.stringify(counts));
   return counts;
 }
 
@@ -132,30 +112,20 @@ export async function runDraftPass(): Promise<Record<string, number>> {
  * @param intervalMs  How often to check for untriaged complaints. Defaults to 15 min.
  * @returns  The interval handle (also registered with registerTimer for shutdown).
  */
-export function startMiraTriageScheduler(
-  intervalMs = 15 * 60 * 1_000,
-): NodeJS.Timeout {
+export function startMiraTriageScheduler(intervalMs = 15 * 60 * 1_000): NodeJS.Timeout {
   // Run once immediately on startup so untriaged items from before a restart are
   // processed without waiting a full interval.
   runTriagePass().catch((err) =>
-    console.error(
-      "[mira-triage] initial pass error:",
-      err instanceof Error ? err.message : String(err),
-    ),
+    console.error('[mira-triage] initial pass error:', err instanceof Error ? err.message : String(err)),
   );
 
   const handle = setInterval(() => {
     runTriagePass().catch((err) =>
-      console.error(
-        "[mira-triage] scheduled pass error:",
-        err instanceof Error ? err.message : String(err),
-      ),
+      console.error('[mira-triage] scheduled pass error:', err instanceof Error ? err.message : String(err)),
     );
   }, intervalMs);
 
   registerTimer(SCHEDULER_NAME, handle);
-  console.log(
-    `[mira-triage] scheduler started (interval: ${intervalMs / 1000}s)`,
-  );
+  console.log(`[mira-triage] scheduler started (interval: ${intervalMs / 1000}s)`);
   return handle;
 }

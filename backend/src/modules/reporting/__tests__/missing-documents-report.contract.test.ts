@@ -26,8 +26,7 @@ import { REPORT_CATALOG } from "../report-catalog.js";
  */
 
 const ROOT = process.cwd();
-const src = (p: string) =>
-  readFileSync(resolve(ROOT, "src/modules/reporting", p), "utf8");
+const src = (p: string) => readFileSync(resolve(ROOT, "src/modules/reporting", p), "utf8");
 
 /**
  * The mandatory, non-conditional rows of onboarding_document_master, read live 2026-08-09.
@@ -35,12 +34,7 @@ const src = (p: string) =>
  * this list and DOCUMENT_HELD_EXPR must both grow, which is the point.
  */
 const MANDATORY_FROM_MASTER = [
-  "aadhaar",
-  "pan",
-  "address_proof",
-  "education_proof",
-  "photo",
-  "resume",
+  "aadhaar", "pan", "address_proof", "education_proof", "photo", "resume",
 ] as const;
 
 describe("missing-documents-report", () => {
@@ -50,25 +44,17 @@ describe("missing-documents-report", () => {
   });
 
   it("is no longer advertised as blocked", () => {
-    const entry = REPORT_CATALOG.find(
-      (r) => r.code === "missing-documents-report",
-    );
-    expect(
-      entry,
-      "the catalogue entry must survive — it is what the grid draws",
-    ).toBeDefined();
+    const entry = REPORT_CATALOG.find(r => r.code === "missing-documents-report");
+    expect(entry, "the catalogue entry must survive — it is what the grid draws").toBeDefined();
     expect(entry!.availabilityStatus).not.toBe("blocked");
   });
 
   it("every mandatory requirement in the master has a storage mapping", () => {
-    const unmapped = MANDATORY_FROM_MASTER.filter(
-      (d) => !DOCUMENT_HELD_EXPR[d],
-    );
+    const unmapped = MANDATORY_FROM_MASTER.filter(d => !DOCUMENT_HELD_EXPR[d]);
     expect(
       unmapped,
       "these are mandatory per onboarding_document_master but the executor does not know where a " +
-        "satisfied copy is recorded, so it will silently treat them as held:\n" +
-        unmapped.join("\n"),
+        "satisfied copy is recorded, so it will silently treat them as held:\n" + unmapped.join("\n"),
     ).toEqual([]);
   });
 
@@ -80,27 +66,15 @@ describe("missing-documents-report", () => {
   });
 
   it("declares the three mandatory identity columns the audit requires", () => {
-    const entry = REPORT_CATALOG.find(
-      (r) => r.code === "missing-documents-report",
-    )!;
-    const keys = entry.columns.map((c) => c.key);
-    for (const required of [
-      "employee_code",
-      "cost_centre_code",
-      "cost_centre_name",
-      "process_name",
-    ]) {
-      expect(
-        keys,
-        `${required} is mandatory on every employee-grain report`,
-      ).toContain(required);
+    const entry = REPORT_CATALOG.find(r => r.code === "missing-documents-report")!;
+    const keys = entry.columns.map(c => c.key);
+    for (const required of ["employee_code", "cost_centre_code", "cost_centre_name", "process_name"]) {
+      expect(keys, `${required} is mandatory on every employee-grain report`).toContain(required);
     }
   });
 
   it("names onboarding_document_master as a source table", () => {
-    const entry = REPORT_CATALOG.find(
-      (r) => r.code === "missing-documents-report",
-    )!;
+    const entry = REPORT_CATALOG.find(r => r.code === "missing-documents-report")!;
     expect(entry.sourceTables).toContain("onboarding_document_master");
   });
 

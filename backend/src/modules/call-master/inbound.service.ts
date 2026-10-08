@@ -35,35 +35,20 @@ function memo<T>(key: string, fn: () => Promise<T>): Promise<T> {
   if (hit && Date.now() - hit.at < MEMO_TTL_MS) return hit.p as Promise<T>;
   const p = fn();
   memoStore.set(key, { at: Date.now(), p });
-  p.catch(() => {
-    if (memoStore.get(key)?.p === p) memoStore.delete(key);
-  });
-  if (memoStore.size > 200)
-    for (const k of memoStore.keys()) {
-      memoStore.delete(k);
-      break;
-    }
+  p.catch(() => { if (memoStore.get(key)?.p === p) memoStore.delete(key); });
+  if (memoStore.size > 200) for (const k of memoStore.keys()) { memoStore.delete(k); break; }
   return p;
 }
-const memoKey = (name: string, projectKey: string, f: InboundFilters) =>
-  `${name}|${projectKey}|${f.startDate}|${f.endDate}`;
+const memoKey = (name: string, projectKey: string, f: InboundFilters) => `${name}|${projectKey}|${f.startDate}|${f.endDate}`;
 
-function runProjectQuery(
-  p: ProjectConfig,
-  filters: InboundFilters,
-): Promise<DailyRow[]> {
-  return memo(memoKey("daily", p.key, filters), () =>
-    runProjectQueryRaw(p, filters),
-  );
+function runProjectQuery(p: ProjectConfig, filters: InboundFilters): Promise<DailyRow[]> {
+  return memo(memoKey("daily", p.key, filters), () => runProjectQueryRaw(p, filters));
 }
 
-async function runProjectQueryRaw(
-  p: ProjectConfig,
-  filters: InboundFilters,
-): Promise<DailyRow[]> {
+async function runProjectQueryRaw(p: ProjectConfig, filters: InboundFilters): Promise<DailyRow[]> {
   const { startDate, endDate } = filters;
   const pool = await getDialerPool();
-  const ph = p.campaigns.map(() => "?").join(",");
+  const ph   = p.campaigns.map(() => "?").join(",");
   const params: (string | number)[] = [startDate, endDate, ...p.campaigns];
 
   let sql: string;
@@ -109,7 +94,7 @@ async function getFCRData(p: ProjectConfig, filters: InboundFilters) {
      WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
        AND ClientId = ? AND Field1 = 'Inbound'
      GROUP BY DATE_FORMAT(CallDate,'%Y-%m-%d')`,
-    [startDate, endDate, p.fcrClientId],
+    [startDate, endDate, p.fcrClientId]
   );
   return rows as { date: string; fcr_pct: number }[];
 }
@@ -118,37 +103,25 @@ const n = (v: unknown) => Number(v) || 0;
 
 function aggregateRows(rows: DailyRow[]) {
   const totals = {
-    login_count: 0,
-    offered: 0,
-    answered: 0,
-    sl_num: 0,
-    acht_sum: 0,
-    acht_count: 0,
-    unique_phones: 0,
+    login_count: 0, offered: 0, answered: 0, sl_num: 0, acht_sum: 0, acht_count: 0, unique_phones: 0,
   };
   for (const r of rows) {
-    totals.login_count = Math.max(totals.login_count, n(r.login_count));
-    totals.offered += n(r.offered);
-    totals.answered += n(r.answered);
-    totals.sl_num += n(r.sl_num);
-    totals.acht_sum += n(r.acht) * n(r.answered);
-    totals.acht_count += n(r.answered);
+    totals.login_count   = Math.max(totals.login_count, n(r.login_count));
+    totals.offered      += n(r.offered);
+    totals.answered     += n(r.answered);
+    totals.sl_num       += n(r.sl_num);
+    totals.acht_sum     += n(r.acht) * n(r.answered);
+    totals.acht_count   += n(r.answered);
     totals.unique_phones += n(r.unique_phones);
   }
-  const sl_pct = totals.answered
-    ? Math.round((totals.sl_num / totals.answered) * 10000) / 100
-    : 0;
-  const aht = totals.acht_count
-    ? Math.round(totals.acht_sum / totals.acht_count)
-    : 0;
-  const ans_pct = totals.offered
-    ? Math.round((totals.answered / totals.offered) * 10000) / 100
-    : 0;
+  const sl_pct     = totals.answered ? Math.round(totals.sl_num / totals.answered * 10000) / 100 : 0;
+  const aht        = totals.acht_count ? Math.round(totals.acht_sum / totals.acht_count) : 0;
+  const ans_pct    = totals.offered ? Math.round(totals.answered / totals.offered * 10000) / 100 : 0;
   // AL % redefined 2026-09-23 at explicit user request: Answered / Offered
   // (previously Abandoned / Offered) -- identical to ans_pct now, kept as its
   // own field/name so every existing "AL%" consumer keeps reading abandon_pct.
   const abandon_pct = ans_pct;
-  const avg_wait = aht; // use AHT as proxy; replace with actual queue time if available
+  const avg_wait   = aht; // use AHT as proxy; replace with actual queue time if available
   return {
     total: totals.offered,
     answered: totals.answered,
@@ -175,22 +148,14 @@ export async function getProjectSummary(filters: InboundFilters, projectKey?: st
       const fcrRows = await getFCRData(p, filters);
       const summary = aggregateRows(rows);
       const fcr_pct = fcrRows.length
-        ? Math.round(
-            (fcrRows.reduce((s, r) => s + r.fcr_pct, 0) / fcrRows.length) * 100,
-          ) / 100
+        ? Math.round(fcrRows.reduce((s, r) => s + r.fcr_pct, 0) / fcrRows.length * 100) / 100
         : null;
       return {
-        key: p.key,
-        name: p.name,
-        icon: p.icon,
-        color: p.color,
-        mandate: p.mandate,
-        required: p.required,
-        hasFCR: p.hasFCR,
-        ...summary,
-        fcr_pct,
+        key: p.key, name: p.name, icon: p.icon, color: p.color,
+        mandate: p.mandate, required: p.required, hasFCR: p.hasFCR,
+        ...summary, fcr_pct,
       };
-    }),
+    })
   );
 
   return results;
@@ -208,26 +173,13 @@ export async function getProjectOverview(filters: InboundFilters, projectKey: st
   const p = await getInboundProject(projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
 
-  const [rows, fcrRows] = await Promise.all([
-    runProjectQuery(p, filters),
-    getFCRData(p, filters),
-  ]);
+  const [rows, fcrRows] = await Promise.all([runProjectQuery(p, filters), getFCRData(p, filters)]);
   const fcr_pct = fcrRows.length
-    ? Math.round(
-        (fcrRows.reduce((s, r) => s + r.fcr_pct, 0) / fcrRows.length) * 100,
-      ) / 100
+    ? Math.round(fcrRows.reduce((s, r) => s + r.fcr_pct, 0) / fcrRows.length * 100) / 100
     : null;
 
   return {
-    summary: {
-      key: p.key,
-      name: p.name,
-      mandate: p.mandate,
-      required: p.required,
-      hasFCR: p.hasFCR,
-      ...aggregateRows(rows),
-      fcr_pct,
-    },
+    summary: { key: p.key, name: p.name, mandate: p.mandate, required: p.required, hasFCR: p.hasFCR, ...aggregateRows(rows), fcr_pct },
     trend: rows,
   };
 }
@@ -239,7 +191,7 @@ export async function getProjectTrend(filters: InboundFilters, projectKey?: stri
     projects.map(async (p) => {
       const rows = await runProjectQuery(p, filters);
       return { key: p.key, name: p.name, color: p.color, trend: rows };
-    }),
+    })
   );
 }
 
@@ -249,29 +201,19 @@ export async function getConsolidatedTrend(filters: InboundFilters, allow?: Proj
 
   for (const proj of trendData) {
     for (const row of proj.trend) {
-      if (!byDate[row.date])
-        byDate[row.date] = {
-          date: row.date,
-          offered: 0,
-          answered: 0,
-          sl_num: 0,
-        };
-      byDate[row.date].offered += n(row.offered);
-      byDate[row.date].answered += n(row.answered);
-      byDate[row.date].sl_num += n(row.sl_num);
+      if (!byDate[row.date]) byDate[row.date] = { date: row.date, offered: 0, answered: 0, sl_num: 0 };
+      byDate[row.date].offered   += n(row.offered);
+      byDate[row.date].answered  += n(row.answered);
+      byDate[row.date].sl_num    += n(row.sl_num);
     }
   }
 
   return Object.values(byDate)
     .map((r) => ({
       ...r,
-      sl_pct: r.answered
-        ? Math.round((r.sl_num / r.answered) * 100 * 100) / 100
-        : 0,
+      sl_pct:    r.answered ? Math.round(r.sl_num / r.answered * 100 * 100) / 100 : 0,
       // AL % = Answered / Offered (redefined 2026-09-23, see aggregateRows).
-      abandon_pct: r.offered
-        ? Math.round((r.answered / r.offered) * 100 * 100) / 100
-        : 0,
+      abandon_pct: r.offered ? Math.round(r.answered / r.offered * 100 * 100) / 100 : 0,
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -348,9 +290,7 @@ export async function getProjectAgentSummary(filters: InboundFilters, projectKey
       // by `answered` explicitly to match the formula used everywhere else.
       sl_pct: answered ? Math.round((sl_num / answered) * 10000) / 100 : 0,
       acht: n(r.acht),
-      repeat_pct: offered
-        ? Math.round(((offered - unique_phones) / offered) * 10000) / 100
-        : 0,
+      repeat_pct: offered ? Math.round(((offered - unique_phones) / offered) * 10000) / 100 : 0,
     };
   });
 }
@@ -374,7 +314,7 @@ export async function getProjectHourlyByDate(filters: InboundFilters, projectKey
 
   const { startDate, endDate } = filters;
   const pool = await getDialerPool();
-  const ph = p.campaigns.map(() => "?").join(",");
+  const ph   = p.campaigns.map(() => "?").join(",");
   const params: (string | number)[] = [startDate, endDate, ...p.campaigns];
 
   let sql: string;
@@ -402,23 +342,12 @@ export async function getProjectHourlyByDate(filters: InboundFilters, projectKey
   }
 
   const [rows] = await pool.execute(sql, params);
-  return (
-    rows as {
-      date: string;
-      hour: number;
-      offered: number;
-      answered: number;
-      sl_num: number;
-      acht: number;
-    }[]
-  ).map((r) => ({
+  return (rows as { date: string; hour: number; offered: number; answered: number; sl_num: number; acht: number }[]).map((r) => ({
     date: r.date,
     hour: n(r.hour),
     offered: n(r.offered),
     answered: n(r.answered),
-    sl_pct: n(r.answered)
-      ? Math.round((n(r.sl_num) / n(r.answered)) * 10000) / 100
-      : 0,
+    sl_pct: n(r.answered) ? Math.round((n(r.sl_num) / n(r.answered)) * 10000) / 100 : 0,
     acht: n(r.acht),
   }));
 }
@@ -437,7 +366,7 @@ async function getProjectHourlyRaw(filters: InboundFilters, projectKey: string) 
 
   const { startDate, endDate } = filters;
   const pool = await getDialerPool();
-  const ph = p.campaigns.map(() => "?").join(",");
+  const ph   = p.campaigns.map(() => "?").join(",");
   const params: (string | number)[] = [startDate, endDate, ...p.campaigns];
 
   let sql: string;
@@ -538,19 +467,9 @@ async function getProjectLobSummaryRaw(filters: InboundFilters, projectKey: stri
   });
 }
 
-export function getProjectHourly(
-  filters: InboundFilters,
-  projectKey: string,
-): ReturnType<typeof getProjectHourlyRaw> {
-  return memo(memoKey("hourly", projectKey, filters), () =>
-    getProjectHourlyRaw(filters, projectKey),
-  );
+export function getProjectHourly(filters: InboundFilters, projectKey: string): ReturnType<typeof getProjectHourlyRaw> {
+  return memo(memoKey("hourly", projectKey, filters), () => getProjectHourlyRaw(filters, projectKey));
 }
-export function getProjectLobSummary(
-  filters: InboundFilters,
-  projectKey: string,
-): ReturnType<typeof getProjectLobSummaryRaw> {
-  return memo(memoKey("lob", projectKey, filters), () =>
-    getProjectLobSummaryRaw(filters, projectKey),
-  );
+export function getProjectLobSummary(filters: InboundFilters, projectKey: string): ReturnType<typeof getProjectLobSummaryRaw> {
+  return memo(memoKey("lob", projectKey, filters), () => getProjectLobSummaryRaw(filters, projectKey));
 }

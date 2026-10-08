@@ -55,28 +55,14 @@ describe("changeSalary()", () => {
       .mockResolvedValueOnce([{ affectedRows: 1 } as unknown]); // INSERT employee_salary_change_log
 
     getPackageById.mockResolvedValueOnce({
-      id: "pkg-1",
-      basic: 25000,
-      hra: 10000,
-      conveyance: 1600,
-      special_allowance: 3400,
-      gross: 40000,
-      epf_employee: 3000,
-      esic_employee: 0,
-      epf_employer: 3000,
-      esic_employer: 0,
-      ctc: 50000,
-      net_in_hand: 37000,
+      id: "pkg-1", basic: 25000, hra: 10000, conveyance: 1600, special_allowance: 3400,
+      gross: 40000, epf_employee: 3000, esic_employee: 0, epf_employer: 3000, esic_employer: 0,
+      ctc: 50000, net_in_hand: 37000,
     });
 
     await changeSalary({
-      employeeId: "e1",
-      packageId: "pkg-1",
-      effectiveDate: "2026-09-01",
-      actorRoles: ["payroll_head"], // historical date: run as an exempt role
-      reason: "Annual increment",
-      requestedByUserId: "req-1",
-      requestedByName: "Manager X",
+      employeeId: "e1", packageId: "pkg-1", effectiveDate: "2026-09-01", actorRoles: ["payroll_head"], // historical date: run as an exempt role
+      reason: "Annual increment", requestedByUserId: "req-1", requestedByName: "Manager X",
       actorUserId: "actor-1",
     });
 
@@ -104,26 +90,14 @@ describe("changeSalary()", () => {
     const logCall = connExecute.mock.calls[2];
     expect(logCall[0]).toContain("INSERT INTO employee_salary_change_log");
     expect(logCall[1]).toEqual(
-      expect.arrayContaining([
-        "e1",
-        "old-assign-1",
-        "req-1",
-        "Manager X",
-        "actor-1",
-        "Annual increment",
-        40000,
-        50000,
-        "2026-09-01",
-      ]),
+      expect.arrayContaining(["e1", "old-assign-1", "req-1", "Manager X", "actor-1", "Annual increment", 40000, 50000, "2026-09-01"])
     );
 
-    expect(logSensitiveAction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action_type: "SALARY_CHANGED",
-        module_key: "payroll",
-        entity_id: "e1",
-      }),
-    );
+    expect(logSensitiveAction).toHaveBeenCalledWith(expect.objectContaining({
+      action_type: "SALARY_CHANGED",
+      module_key: "payroll",
+      entity_id: "e1",
+    }));
   });
 
   it("copies the bonus and every other component so the package row adds up to its gross (band G, gross 15,059)", async () => {
@@ -159,18 +133,10 @@ describe("changeSalary()", () => {
     execute.mockResolvedValueOnce([[{ id: "e1" }]]);
     getPackageById.mockResolvedValueOnce({ id: "pkg-1" });
 
-    await expect(
-      changeSalary({
-        employeeId: "e1",
-        packageId: "pkg-1",
-        effectiveDate: "2026-09-01",
-        actorRoles: ["payroll_head"], // historical date: run as an exempt role
-        reason: "   ",
-        requestedByUserId: null,
-        requestedByName: null,
-        actorUserId: "actor-1",
-      }),
-    ).rejects.toThrow(/reason/i);
+    await expect(changeSalary({
+      employeeId: "e1", packageId: "pkg-1", effectiveDate: "2026-09-01", actorRoles: ["payroll_head"], // historical date: run as an exempt role
+      reason: "   ", requestedByUserId: null, requestedByName: null, actorUserId: "actor-1",
+    })).rejects.toThrow(/reason/i);
   });
 });
 

@@ -36,12 +36,8 @@ const APPLY = process.argv.includes("--apply");
 
 (async () => {
   const c = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    port: process.env.DB_PORT,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
-    connectTimeout: 20000,
+    host: process.env.DB_HOST, port: process.env.DB_PORT, user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD, database: process.env.DB_NAME, connectTimeout: 20000,
   });
 
   // ── 1. dead designation pointers ────────────────────────────────────────────────────────
@@ -54,18 +50,10 @@ const APPLY = process.argv.includes("--apply");
                 AND d2.active_status = 1 LIMIT 1) new_id
        FROM employees e
        JOIN designation_master d ON d.id = e.designation_id
-      WHERE e.active_status = 1 AND d.active_status <> 1`,
-  );
+      WHERE e.active_status = 1 AND d.active_status <> 1`);
   const repoint = dead.filter((r) => r.new_id && r.new_id !== r.old_id);
   console.log("## 1. employees on a dead designation row");
-  console.table(
-    dead.map((r) => ({
-      code: r.employee_code,
-      name: r.name,
-      designation: r.designation_name,
-      hasActiveTwin: r.new_id ? "yes" : "NO — cannot repoint",
-    })),
-  );
+  console.table(dead.map((r) => ({ code: r.employee_code, name: r.name, designation: r.designation_name, hasActiveTwin: r.new_id ? "yes" : "NO — cannot repoint" })));
 
   // ── 2. live test account ────────────────────────────────────────────────────────────────
   const [tests] = await c.query(
@@ -74,8 +62,7 @@ const APPLY = process.argv.includes("--apply");
       WHERE e.active_status = 1
         AND UPPER(CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) REGEXP 'TEST|DEMO|DUMMY'
         AND NOT EXISTS (SELECT 1 FROM employees r WHERE r.active_status=1
-                         AND COALESCE(r.reporting_manager_id,r.manager_id) = e.id)`,
-  );
+                         AND COALESCE(r.reporting_manager_id,r.manager_id) = e.id)`);
   console.log("## 2. live test accounts (no direct reports)");
   console.table(tests.map((t) => ({ code: t.employee_code, name: t.name })));
 
@@ -89,103 +76,49 @@ const APPLY = process.argv.includes("--apply");
         AND e.date_of_exit IS NOT NULL
         AND e.date_of_exit < CURDATE()
         AND NOT EXISTS (SELECT 1 FROM employees r WHERE r.active_status=1
-                         AND COALESCE(r.reporting_manager_id,r.manager_id) = e.id)`,
-  );
+                         AND COALESCE(r.reporting_manager_id,r.manager_id) = e.id)`);
   console.log(`## 3. exited but still active: ${exited.length}`);
-  console.table(
-    exited
-      .slice(0, 8)
-      .map((e) => ({
-        code: e.employee_code,
-        name: e.name,
-        status: e.employment_status,
-        exit: e.exit_date,
-      })),
-  );
+  console.table(exited.slice(0, 8).map((e) => ({ code: e.employee_code, name: e.name, status: e.employment_status, exit: e.exit_date })));
   if (exited.length > 8) console.log(`   (+${exited.length - 8} more)`);
 
-  if (!APPLY) {
-    console.log("\nDRY RUN — pass --apply to write.");
-    await c.end();
-    process.exit(0);
-  }
+  if (!APPLY) { console.log("\nDRY RUN — pass --apply to write."); await c.end(); process.exit(0); }
 
-  fs.writeFileSync(
-    "_fixall_rollback.json",
-    JSON.stringify(
-      {
-        repointedDesignations: repoint.map((r) => ({
-          id: r.id,
-          code: r.employee_code,
-          previousDesignationId: r.old_id,
-        })),
-        deactivatedTestAccounts: tests.map((t) => ({
-          id: t.id,
-          code: t.employee_code,
-          previousActiveStatus: 1,
-        })),
-        deactivatedExited: exited.map((e) => ({
-          id: e.id,
-          code: e.employee_code,
-          previousActiveStatus: 1,
-        })),
-      },
-      null,
-      1,
-    ),
-  );
+  fs.writeFileSync("_fixall_rollback.json", JSON.stringify({
+    repointedDesignations: repoint.map((r) => ({ id: r.id, code: r.employee_code, previousDesignationId: r.old_id })),
+    deactivatedTestAccounts: tests.map((t) => ({ id: t.id, code: t.employee_code, previousActiveStatus: 1 })),
+    deactivatedExited: exited.map((e) => ({ id: e.id, code: e.employee_code, previousActiveStatus: 1 })),
+  }, null, 1));
 
-  let a = 0,
-    b = 0,
-    d = 0;
+  let a = 0, b = 0, d = 0;
   for (const r of repoint) {
     const [res] = await c.execute(
       `UPDATE employees SET designation_id = ? WHERE id = ? AND designation_id = ?`,
-      [r.new_id, r.id, r.old_id],
-    );
+      [r.new_id, r.id, r.old_id]);
     if (!res.affectedRows) continue;
     a++;
     await c.execute(
       `INSERT INTO employee_job_history (id, employee_id, effective_date, change_type, from_designation_id, to_designation_id, reason)
        VALUES (UUID(), ?, ?, 'designation_change', ?, ?, ?)`,
-      [
-        r.id,
-        r.doj,
-        r.old_id,
-        r.new_id,
-        `Repointed to the ACTIVE designation_master row for "${r.designation_name}". designation_master holds duplicate names with one row deactivated; this employee pointed at the dead twin, so joins filtering on active_status = 1 dropped their designation. Title unchanged. 2026-08-28.`,
-      ],
-    );
+      [r.id, r.doj, r.old_id, r.new_id,
+       `Repointed to the ACTIVE designation_master row for "${r.designation_name}". designation_master holds duplicate names with one row deactivated; this employee pointed at the dead twin, so joins filtering on active_status = 1 dropped their designation. Title unchanged. 2026-08-28.`]);
   }
   for (const t of tests) {
     const [res] = await c.execute(
-      `UPDATE employees SET active_status = 0 WHERE id = ? AND active_status = 1`,
-      [t.id],
-    );
+      `UPDATE employees SET active_status = 0 WHERE id = ? AND active_status = 1`, [t.id]);
     if (res.affectedRows) b++;
   }
   for (const e of exited) {
     const [res] = await c.execute(
-      `UPDATE employees SET active_status = 0 WHERE id = ? AND active_status = 1`,
-      [e.id],
-    );
+      `UPDATE employees SET active_status = 0 WHERE id = ? AND active_status = 1`, [e.id]);
     if (res.affectedRows) d++;
   }
 
-  console.log(
-    `\nrepointed designations: ${a}   test accounts deactivated: ${b}   exited deactivated: ${d}`,
-  );
+  console.log(`\nrepointed designations: ${a}   test accounts deactivated: ${b}   exited deactivated: ${d}`);
   const [after] = await c.query(
     `SELECT COUNT(*) active,
             SUM(e.designation_id IS NULL) no_designation,
             SUM(COALESCE(e.reporting_manager_id,e.manager_id) IS NULL) no_manager
-       FROM employees e WHERE e.active_status = 1`,
-  );
-  console.log("## headcount after");
-  console.table(after);
-  await c.end();
-  process.exit(0);
-})().catch((e) => {
-  console.error("ERR:", e.message);
-  process.exit(1);
-});
+       FROM employees e WHERE e.active_status = 1`);
+  console.log("## headcount after"); console.table(after);
+  await c.end(); process.exit(0);
+})().catch((e) => { console.error("ERR:", e.message); process.exit(1); });

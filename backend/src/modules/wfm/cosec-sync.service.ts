@@ -8,14 +8,8 @@ import { assessAggregatePunches } from "./cosec-punch-interpretation.service.js"
 import { tableExists } from "../../shared/dbHelpers.js";
 import { logger } from "../../lib/logger.js";
 import type { PunchAssessmentMode } from "./cosec-punch-interpretation.service.js";
-import {
-  buildSourceUserMaps,
-  classifySourceUser,
-} from "./attendance-reconciliation-mapping.js";
-import {
-  queuePayrollRecalculation,
-  drainPayrollRecalcQueue,
-} from "../payroll/payroll-targeted-recalculation.service.js";
+import { buildSourceUserMaps, classifySourceUser } from "./attendance-reconciliation-mapping.js";
+import { queuePayrollRecalculation, drainPayrollRecalcQueue } from "../payroll/payroll-targeted-recalculation.service.js";
 import { CLOSED_RUN_STATUSES_SQL } from "../payroll/run-status.js";
 
 export type PunchGroup = {
@@ -44,16 +38,8 @@ type SyncResult = {
    */
   skippedUnchanged: number;
   ignoredExcludedUsers: number;
-  inactiveUsers: Array<{
-    cosecUserId: string;
-    punchDate: string;
-    totalPunches: number;
-  }>;
-  unmappedUsers: Array<{
-    cosecUserId: string;
-    punchDate: string;
-    totalPunches: number;
-  }>;
+  inactiveUsers: Array<{ cosecUserId: string; punchDate: string; totalPunches: number }>;
+  unmappedUsers: Array<{ cosecUserId: string; punchDate: string; totalPunches: number }>;
   failed: Array<{ cosecUserId: string; punchDate: string; error: string }>;
 };
 
@@ -81,9 +67,7 @@ let runningSince: number | null = null;
  * early risks two concurrent syncs, and the writes are upserts but the source
  * pull is expensive.
  */
-const STALE_LOCK_MS = Number(
-  process.env.COSEC_SYNC_STALE_LOCK_MS ?? 60 * 60 * 1000,
-);
+const STALE_LOCK_MS = Number(process.env.COSEC_SYNC_STALE_LOCK_MS ?? 60 * 60 * 1000);
 
 export type CosecLockDecision =
   | { action: "acquire" }
@@ -101,9 +85,7 @@ export function decideCosecLock(
 ): CosecLockDecision {
   if (heldSince === null) return { action: "acquire" };
   const heldMs = now - heldSince;
-  return heldMs < staleAfterMs
-    ? { action: "reject", heldMs }
-    : { action: "takeover", heldMs };
+  return heldMs < staleAfterMs ? { action: "reject", heldMs } : { action: "takeover", heldMs };
 }
 
 function boolEnv(name: string, fallback = false): boolean {
@@ -133,9 +115,7 @@ function assertIdentifier(value: string, label: string): string {
 }
 
 function quoteTable(tableName: string): string {
-  const parts = tableName
-    .split(".")
-    .map((part) => assertIdentifier(part.trim(), "COSEC table name"));
+  const parts = tableName.split(".").map((part) => assertIdentifier(part.trim(), "COSEC table name"));
   return parts.map((part) => `[${part}]`).join(".");
 }
 
@@ -183,10 +163,7 @@ function getConfig() {
   };
 }
 
-async function pullCosecAttendance(
-  from: string,
-  to: string,
-): Promise<PunchGroup[]> {
+async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup[]> {
   const cfg = getConfig();
   const table = quoteTable(cfg.table);
   const userColumn = quoteColumn(cfg.userColumn);
@@ -202,16 +179,8 @@ async function pullCosecAttendance(
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeoutRace = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
-      try {
-        request.cancel();
-      } catch {
-        /* ignore cancel errors */
-      }
-      reject(
-        new Error(
-          `pullCosecAttendance timed out after ${QUERY_TIMEOUT_MS / 1000}s`,
-        ),
-      );
+      try { request.cancel(); } catch { /* ignore cancel errors */ }
+      reject(new Error(`pullCosecAttendance timed out after ${QUERY_TIMEOUT_MS / 1000}s`));
     }, QUERY_TIMEOUT_MS);
   });
   const queryPromise = request.query(`
@@ -246,44 +215,38 @@ async function pullCosecAttendance(
       sourceSystem: "cosec_sqlserver",
       sourceTable: cfg.table,
     }))
-    .filter(
-      (row: PunchGroup) =>
-        row.cosecUserId &&
-        /^\d{4}-\d{2}-\d{2}$/.test(row.punchDate) &&
-        /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.firstPunch) &&
-        /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.lastPunch) &&
-        Number.isFinite(row.totalPunches) &&
-        Number.isFinite(row.workingMinutes),
+    .filter((row: PunchGroup) =>
+      row.cosecUserId
+      && /^\d{4}-\d{2}-\d{2}$/.test(row.punchDate)
+      && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.firstPunch)
+      && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.lastPunch)
+      && Number.isFinite(row.totalPunches)
+      && Number.isFinite(row.workingMinutes)
     );
 }
 
-async function pullMysqlAttendance(
-  from: string,
-  to: string,
-): Promise<PunchGroup[]> {
+
+async function pullMysqlAttendance(from: string, to: string): Promise<PunchGroup[]> {
   const groups = new Map<string, PunchGroup>();
   const add = (row: any, sourceSystem: string, sourceTable: string) => {
     const cosecUserId = String(row.user_id ?? "").trim();
     const punchDate = String(row.attendance_date ?? "").trim();
     const rawFirst = row.first_punch;
     const rawLast = row.last_punch;
-    const firstPunch =
-      rawFirst instanceof Date
-        ? `${rawFirst.getFullYear()}-${String(rawFirst.getMonth() + 1).padStart(2, "0")}-${String(rawFirst.getDate()).padStart(2, "0")} ${String(rawFirst.getHours()).padStart(2, "0")}:${String(rawFirst.getMinutes()).padStart(2, "0")}:${String(rawFirst.getSeconds()).padStart(2, "0")}`
-        : String(rawFirst ?? "").trim();
-    const lastPunch =
-      rawLast instanceof Date
-        ? `${rawLast.getFullYear()}-${String(rawLast.getMonth() + 1).padStart(2, "0")}-${String(rawLast.getDate()).padStart(2, "0")} ${String(rawLast.getHours()).padStart(2, "0")}:${String(rawLast.getMinutes()).padStart(2, "0")}:${String(rawLast.getSeconds()).padStart(2, "0")}`
-        : String(rawLast ?? "").trim();
+    const firstPunch = rawFirst instanceof Date
+      ? `${rawFirst.getFullYear()}-${String(rawFirst.getMonth()+1).padStart(2,"0")}-${String(rawFirst.getDate()).padStart(2,"0")} ${String(rawFirst.getHours()).padStart(2,"0")}:${String(rawFirst.getMinutes()).padStart(2,"0")}:${String(rawFirst.getSeconds()).padStart(2,"0")}`
+      : String(rawFirst ?? "").trim();
+    const lastPunch = rawLast instanceof Date
+      ? `${rawLast.getFullYear()}-${String(rawLast.getMonth()+1).padStart(2,"0")}-${String(rawLast.getDate()).padStart(2,"0")} ${String(rawLast.getHours()).padStart(2,"0")}:${String(rawLast.getMinutes()).padStart(2,"0")}:${String(rawLast.getSeconds()).padStart(2,"0")}`
+      : String(rawLast ?? "").trim();
     const totalPunches = Math.max(0, Number(row.total_punches ?? 0));
     const workingMinutes = Math.max(0, Number(row.working_minutes ?? 0));
     if (
-      !cosecUserId ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(punchDate) ||
-      !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(firstPunch) ||
-      !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(lastPunch)
-    )
-      return;
+      !cosecUserId
+      || !/^\d{4}-\d{2}-\d{2}$/.test(punchDate)
+      || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(firstPunch)
+      || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(lastPunch)
+    ) return;
     const key = `${cosecUserId}__${punchDate}`;
     if (!groups.has(key)) {
       groups.set(key, {
@@ -314,8 +277,7 @@ async function pullMysqlAttendance(
         ORDER BY activity_date DESC, updated_at DESC`,
       [from, to],
     );
-    for (const row of rows)
-      add(row, "cosec_mysql", "mas_hrms.integration_biometric_daily");
+    for (const row of rows) add(row, "cosec_mysql", "mas_hrms.integration_biometric_daily");
   }
 
   if (await tableExists("wfm_external_punch_staging")) {
@@ -333,8 +295,7 @@ async function pullMysqlAttendance(
         GROUP BY employee_code, DATE(punch_time)`,
       [from, to],
     );
-    for (const row of rows)
-      add(row, "cosec_mysql", "mas_hrms.wfm_external_punch_staging");
+    for (const row of rows) add(row, "cosec_mysql", "mas_hrms.wfm_external_punch_staging");
   }
 
   if (await tableExists("stg_legacy_attendance")) {
@@ -351,8 +312,7 @@ async function pullMysqlAttendance(
           AND employee_code IS NOT NULL`,
       [from, to],
     );
-    for (const row of rows)
-      add(row, "cosec_mysql", "mas_hrms.stg_legacy_attendance");
+    for (const row of rows) add(row, "cosec_mysql", "mas_hrms.stg_legacy_attendance");
   }
 
   return [...groups.values()];
@@ -396,23 +356,15 @@ function tagIST(val: string): string {
   return val; // pass bare string through unchanged
 }
 
-export function assessmentModeForPunchDate(
-  punchDate: string,
-  syncToDate: string,
-): PunchAssessmentMode {
-  return punchDate < defaultToDate() || punchDate < syncToDate
-    ? "historical"
-    : "live";
+export function assessmentModeForPunchDate(punchDate: string, syncToDate: string): PunchAssessmentMode {
+  return punchDate < defaultToDate() || punchDate < syncToDate ? "historical" : "live";
 }
 
 // Exported so a targeted, scoped backfill script (e.g. for re-materialising a specific
 // employee cohort's historical attendance) can drive the exact production write path one
 // punch group at a time, instead of the full-population sync() sweep. Behaviour is
 // unchanged — this is the same function sync() has always called internally.
-export async function migratePunchGroup(
-  group: PunchGroup,
-  mode: PunchAssessmentMode,
-): Promise<"migrated" | "unmapped"> {
+export async function migratePunchGroup(group: PunchGroup, mode: PunchAssessmentMode): Promise<"migrated" | "unmapped"> {
   const employee = await resolveEmployee(group.cosecUserId);
   if (!employee) return "unmapped";
 
@@ -425,9 +377,7 @@ export async function migratePunchGroup(
   });
   const rawMinutes = Math.round(assessed.effectiveWorkingMinutes);
   const firstPunchIST = tagIST(assessed.effectivePunchIn ?? group.firstPunch);
-  const lastPunchIST = assessed.effectivePunchOut
-    ? tagIST(assessed.effectivePunchOut)
-    : null;
+  const lastPunchIST  = assessed.effectivePunchOut ? tagIST(assessed.effectivePunchOut) : null;
   await db.execute(
     `INSERT INTO employee_biometric_enrollment
        (id, employee_id, cosec_user_id, is_active, last_sync_at)
@@ -448,16 +398,7 @@ export async function migratePunchGroup(
        total_punches = VALUES(total_punches),
        raw_minutes = VALUES(raw_minutes),
        migrated_at = NOW()`,
-    [
-      employee.employee_id,
-      group.cosecUserId,
-      group.punchDate,
-      firstPunchIST,
-      lastPunchIST,
-      assessed.effectivePunchCount,
-      rawMinutes,
-      group.sourceSystem,
-    ],
+    [employee.employee_id, group.cosecUserId, group.punchDate, firstPunchIST, lastPunchIST, assessed.effectivePunchCount, rawMinutes, group.sourceSystem],
   );
 
   await db.execute(
@@ -471,16 +412,7 @@ export async function migratePunchGroup(
        total_punches = VALUES(total_punches),
        biometric_minutes = VALUES(biometric_minutes),
        updated_at = NOW()`,
-    [
-      group.sourceSystem,
-      group.sourceTable,
-      employee.employee_code,
-      group.punchDate,
-      firstPunchIST,
-      lastPunchIST,
-      assessed.effectivePunchCount,
-      rawMinutes,
-    ],
+    [group.sourceSystem, group.sourceTable, employee.employee_code, group.punchDate, firstPunchIST, lastPunchIST, assessed.effectivePunchCount, rawMinutes],
   );
 
   await db.execute(
@@ -500,11 +432,7 @@ export async function migratePunchGroup(
       firstPunchIST,
       lastPunchIST,
       rawMinutes,
-      assessed.effectivePunchOut
-        ? rawMinutes >= 540
-          ? "Logged Out"
-          : "Partial"
-        : "Logged In",
+      assessed.effectivePunchOut ? (rawMinutes >= 540 ? "Logged Out" : "Partial") : "Logged In",
       employee.branch_name ?? null,
       employee.process_name ?? null,
     ],
@@ -515,14 +443,8 @@ export async function migratePunchGroup(
     [employee.employee_id, group.cosecUserId],
   );
 
-  const attendance = await attendanceEngineService.processEmployee(
-    employee.employee_id,
-    group.punchDate,
-  );
-  await attendanceEngineService.upsertDailyRecord(
-    attendance,
-    `${group.sourceSystem}_sync`,
-  );
+  const attendance = await attendanceEngineService.processEmployee(employee.employee_id, group.punchDate);
+  await attendanceEngineService.upsertDailyRecord(attendance, `${group.sourceSystem}_sync`);
   await db.execute(
     `UPDATE attendance_daily_record
         SET clock_in_time = ?, clock_out_time = ?
@@ -542,11 +464,7 @@ export async function migratePunchGroup(
       ],
     );
   }
-  await attendanceEngineService.checkAndNotifyBiometricMismatch(
-    employee.employee_id,
-    group.punchDate,
-    attendance,
-  );
+  await attendanceEngineService.checkAndNotifyBiometricMismatch(employee.employee_id, group.punchDate, attendance);
 
   return "migrated";
 }
@@ -571,17 +489,11 @@ type RosterDay = { isNightShift: boolean; isWeekOff: boolean };
  * Only published/approved_final rows are used; missing key = no roster data.
  * A shift is a night shift when end_time < start_time (crosses midnight).
  */
-async function fetchRosterMap(
-  groups: PunchGroup[],
-): Promise<Map<string, RosterDay>> {
+async function fetchRosterMap(groups: PunchGroup[]): Promise<Map<string, RosterDay>> {
   if (!groups.length) return new Map();
 
-  const userIds = [...new Set(groups.map((g) => g.cosecUserId))];
-  const dates = [
-    ...new Set(
-      groups.flatMap((g) => [g.punchDate, nextCalendarDate(g.punchDate)]),
-    ),
-  ];
+  const userIds = [...new Set(groups.map(g => g.cosecUserId))];
+  const dates   = [...new Set(groups.flatMap(g => [g.punchDate, nextCalendarDate(g.punchDate)]))];
 
   const up = userIds.map(() => "?").join(",");
   const dp = dates.map(() => "?").join(",");
@@ -609,9 +521,9 @@ async function fetchRosterMap(
 
   const map = new Map<string, RosterDay>();
   for (const row of rows) {
-    const key = `${row.cosec_user_id}__${String(row.roster_date).slice(0, 10)}`;
+    const key   = `${row.cosec_user_id}__${String(row.roster_date).slice(0, 10)}`;
     const start = row.shift_start_time ?? "";
-    const end = row.shift_end_time ?? "";
+    const end   = row.shift_end_time   ?? "";
     map.set(key, {
       isNightShift: !!start && !!end && end < start,
       isWeekOff: !!row.is_week_off,
@@ -659,14 +571,12 @@ async function writeMissingPunchRecord(
   );
 
   // Best-effort audit log — table created by migration 099; not fatal if absent
-  await db
-    .execute(
-      `INSERT IGNORE INTO night_shift_incomplete_punch_log
+  await db.execute(
+    `INSERT IGNORE INTO night_shift_incomplete_punch_log
        (id, employee_id, punch_date, punch_in_time, reason, created_at)
      VALUES (UUID(), ?, ?, ?, ?, NOW())`,
-      [employeeId, date, punchIn, reason],
-    )
-    .catch(() => {});
+    [employeeId, date, punchIn, reason],
+  ).catch(() => {});
 }
 
 /**
@@ -688,7 +598,7 @@ export async function mergeNightShiftRollover(
   groups: PunchGroup[],
   rosterMap?: Map<string, RosterDay>,
 ): Promise<PunchGroup[]> {
-  const map = rosterMap ?? (await fetchRosterMap(groups));
+  const map = rosterMap ?? await fetchRosterMap(groups);
 
   const byUser = new Map<string, PunchGroup[]>();
   for (const g of groups) {
@@ -719,11 +629,8 @@ export async function mergeNightShiftRollover(
       }
 
       const expectedNextDate = nextCalendarDate(current.punchDate);
-      const nextIdx =
-        i + 1 < userGroups.length &&
-        userGroups[i + 1].punchDate === expectedNextDate
-          ? i + 1
-          : -1;
+      const nextIdx = (i + 1 < userGroups.length && userGroups[i + 1].punchDate === expectedNextDate)
+        ? i + 1 : -1;
 
       if (nextIdx !== -1) {
         const next = userGroups[nextIdx];
@@ -736,7 +643,7 @@ export async function mergeNightShiftRollover(
           const gap = diffMinutes(current.lastPunch, next.firstPunch);
           merged.push({
             ...current,
-            lastPunch: next.lastPunch,
+            lastPunch:    next.lastPunch,
             totalPunches: current.totalPunches + next.totalPunches,
             workingMinutes: current.workingMinutes + next.workingMinutes + gap,
           });
@@ -749,9 +656,7 @@ export async function mergeNightShiftRollover(
         const rosterNext = map.get(`${userId}__${expectedNextDate}`);
         if (rosterNext?.isWeekOff) {
           // Guard 3: rostered week-off with no exit scan → missing_punch
-          merged.push({ ...current, missingPunch: true } as PunchGroup & {
-            missingPunch: boolean;
-          });
+          merged.push({ ...current, missingPunch: true } as PunchGroup & { missingPunch: boolean });
         } else {
           // Spill-over date outside sync range — next sync run will merge
           merged.push(current);
@@ -794,10 +699,7 @@ export async function triggerPostSyncPayrollRecalc(
     try {
       await drainPayrollRecalcQueue(month);
     } catch (err) {
-      logger.warn(
-        { month, err },
-        "[CosecSync] post-sync recalc drain failed — sync result unaffected",
-      );
+      logger.warn({ month, err }, "[CosecSync] post-sync recalc drain failed — sync result unaffected");
     }
   }
 }
@@ -829,16 +731,10 @@ export async function triggerPostSyncPayrollRecalc(
  */
 // Exported for test: the failure mode here is silent — a filter that is slightly too eager drops
 // attendance without erroring — so it is exercised directly rather than only through sync().
-export async function filterUnchangedGroups(
-  groups: PunchGroup[],
-  syncToDate: string,
-): Promise<PunchGroup[]> {
+export async function filterUnchangedGroups(groups: PunchGroup[], syncToDate: string): Promise<PunchGroup[]> {
   if (groups.length === 0) return groups;
   try {
-    const known = new Map<
-      string,
-      { punches: number; first: string; last: string; minutes: number }
-    >();
+    const known = new Map<string, { punches: number; first: string; last: string; minutes: number }>();
     const CHUNK = 500;
     for (let i = 0; i < groups.length; i += CHUNK) {
       const slice = groups.slice(i, i + CHUNK);
@@ -878,11 +774,10 @@ export async function filterUnchangedGroups(
         mode: assessmentModeForPunchDate(group.punchDate, syncToDate),
       });
       return (
-        seen.punches !== assessed.effectivePunchCount ||
-        seen.minutes !== Math.round(assessed.effectiveWorkingMinutes) ||
-        seen.first !==
-          String(assessed.effectivePunchIn ?? group.firstPunch ?? "") ||
-        seen.last !== String(assessed.effectivePunchOut ?? "")
+        seen.punches !== assessed.effectivePunchCount
+        || seen.minutes !== Math.round(assessed.effectiveWorkingMinutes)
+        || seen.first !== String(assessed.effectivePunchIn ?? group.firstPunch ?? "")
+        || seen.last !== String(assessed.effectivePunchOut ?? "")
       );
     });
   } catch (error) {
@@ -903,9 +798,7 @@ export const cosecSyncService = {
     return runningSince !== null;
   },
 
-  async sync(
-    options: { from?: string; to?: string } = {},
-  ): Promise<SyncResult> {
+  async sync(options: { from?: string; to?: string } = {}): Promise<SyncResult> {
     const lock = decideCosecLock(runningSince, Date.now(), STALE_LOCK_MS);
     if (lock.action === "reject") {
       throw new Error(
@@ -924,10 +817,9 @@ export const cosecSyncService = {
     const from = normalizeDateInput(options.from, defaultFromDate());
     const to = normalizeDateInput(options.to, defaultToDate());
     const config = getConfig();
-    const sourceTable =
-      config.sourceMode === "mysql"
-        ? "mas_hrms.integration_biometric_daily,wfm_external_punch_staging,stg_legacy_attendance"
-        : config.table;
+    const sourceTable = config.sourceMode === "mysql"
+      ? "mas_hrms.integration_biometric_daily,wfm_external_punch_staging,stg_legacy_attendance"
+      : config.table;
 
     const result: SyncResult = {
       success: true,
@@ -945,15 +837,11 @@ export const cosecSyncService = {
     };
 
     try {
-      const rawGroups =
-        config.sourceMode === "mysql"
-          ? await pullMysqlAttendance(from, to)
-          : await pullCosecAttendance(from, to);
+      const rawGroups = config.sourceMode === "mysql"
+        ? await pullMysqlAttendance(from, to)
+        : await pullCosecAttendance(from, to);
       const groups = await mergeNightShiftRollover(rawGroups);
-      result.pulledEvents = groups.reduce(
-        (total, group) => total + group.totalPunches,
-        0,
-      );
+      result.pulledEvents = groups.reduce((total, group) => total + group.totalPunches, 0);
       result.groupedDays = groups.length;
       const [excludedRows, employeeRows] = await Promise.all([
         db.query<RowDataPacket[]>(
@@ -970,9 +858,7 @@ export const cosecSyncService = {
       ]);
       const sourceMaps = buildSourceUserMaps(
         employeeRows[0] as any[],
-        (excludedRows[0] as any[]).map((row) =>
-          String(row.cosec_user_id ?? ""),
-        ),
+        (excludedRows[0] as any[]).map((row) => String(row.cosec_user_id ?? "")),
       );
 
       /*
@@ -1003,11 +889,7 @@ export const cosecSyncService = {
       result.skippedUnchanged = skipped;
       if (skipped > 0) {
         logger.info(
-          {
-            pulled: groups.length,
-            unchanged: skipped,
-            reprocessing: changedGroups.length,
-          },
+          { pulled: groups.length, unchanged: skipped, reprocessing: changedGroups.length },
           "[COSEC Sync] skipping days whose punch count and last punch are unchanged",
         );
       }
@@ -1022,11 +904,7 @@ export const cosecSyncService = {
             continue;
           }
           if (sourceUser.kind === "inactive") {
-            result.inactiveUsers.push({
-              cosecUserId: group.cosecUserId,
-              punchDate: group.punchDate,
-              totalPunches: group.totalPunches,
-            });
+            result.inactiveUsers.push({ cosecUserId: group.cosecUserId, punchDate: group.punchDate, totalPunches: group.totalPunches });
             continue;
           }
           if (isMissingPunch) {
@@ -1043,36 +921,23 @@ export const cosecSyncService = {
               );
               result.migratedDays += 1;
               const month = group.punchDate.slice(0, 7);
-              if (!writtenByMonth.has(month))
-                writtenByMonth.set(month, new Set());
+              if (!writtenByMonth.has(month)) writtenByMonth.set(month, new Set());
               writtenByMonth.get(month)!.add(employee.employee_id);
             } else {
-              result.unmappedUsers.push({
-                cosecUserId: group.cosecUserId,
-                punchDate: group.punchDate,
-                totalPunches: group.totalPunches,
-              });
+              result.unmappedUsers.push({ cosecUserId: group.cosecUserId, punchDate: group.punchDate, totalPunches: group.totalPunches });
             }
           } else {
-            const status = await migratePunchGroup(
-              group,
-              assessmentModeForPunchDate(group.punchDate, to),
-            );
+            const status = await migratePunchGroup(group, assessmentModeForPunchDate(group.punchDate, to));
             if (status === "migrated") {
               result.migratedDays += 1;
               const month = group.punchDate.slice(0, 7);
               const employee = await resolveEmployee(group.cosecUserId);
               if (employee?.employee_id) {
-                if (!writtenByMonth.has(month))
-                  writtenByMonth.set(month, new Set());
+                if (!writtenByMonth.has(month)) writtenByMonth.set(month, new Set());
                 writtenByMonth.get(month)!.add(employee.employee_id);
               }
             } else {
-              result.unmappedUsers.push({
-                cosecUserId: group.cosecUserId,
-                punchDate: group.punchDate,
-                totalPunches: group.totalPunches,
-              });
+              result.unmappedUsers.push({ cosecUserId: group.cosecUserId, punchDate: group.punchDate, totalPunches: group.totalPunches });
             }
           }
         } catch (error) {
@@ -1086,21 +951,13 @@ export const cosecSyncService = {
       }
       // Fire-and-forget post-sync recalc — errors are caught inside, never mask sync result
       void triggerPostSyncPayrollRecalc(writtenByMonth).catch((err) => {
-        logger.warn(
-          { err },
-          "[CosecSync] triggerPostSyncPayrollRecalc threw unexpectedly",
-        );
+        logger.warn({ err }, "[CosecSync] triggerPostSyncPayrollRecalc threw unexpectedly");
       });
 
       if (result.unmappedUsers.length > 0) {
         logger.warn(
-          {
-            unmappedCount: result.unmappedUsers.length,
-            from,
-            to,
-            users: result.unmappedUsers.slice(0, 20),
-          },
-          "[COSEC Sync] Unmapped COSEC user IDs — attendance data dropped for these employees. Ensure employee_code is linked in mas_hrms.",
+          { unmappedCount: result.unmappedUsers.length, from, to, users: result.unmappedUsers.slice(0, 20) },
+          "[COSEC Sync] Unmapped COSEC user IDs — attendance data dropped for these employees. Ensure employee_code is linked in mas_hrms."
         );
         // Persist so ops team can query without reading log files.
         // Column names were records_pulled/records_migrated — verified live,
@@ -1110,9 +967,8 @@ export const cosecSyncService = {
         // has zero rows for any status, for either key. Also: idx_isr_key_started
         // is a plain index, not unique, so ON DUPLICATE KEY UPDATE never
         // actually triggers here (harmless, just dead).
-        await db
-          .execute(
-            `INSERT INTO integration_sync_run
+        await db.execute(
+          `INSERT INTO integration_sync_run
              (integration_key, started_at, completed_at, status, records_read, records_written,
               records_failed, error_summary)
            VALUES ('cosec_unmapped', ?, NOW(), 'warning', ?, 0, ?, ?)
@@ -1121,33 +977,21 @@ export const cosecSyncService = {
              records_read = VALUES(records_read),
              records_failed = VALUES(records_failed),
              error_summary = VALUES(error_summary)`,
-            [
-              new Date(),
-              result.unmappedUsers.length,
-              result.unmappedUsers.length,
-              `${result.unmappedUsers.length} unmapped COSEC user(s) for ${from}→${to}: ${result.unmappedUsers
-                .slice(0, 5)
-                .map((u) => u.cosecUserId)
-                .join(", ")}`,
-            ],
-          )
-          .catch((err) => {
-            logger.warn(
-              { err },
-              "[COSEC Sync] failed to persist unmapped-user sync_run row (non-critical, does not affect sync result)",
-            );
-          });
+          [
+            new Date(),
+            result.unmappedUsers.length,
+            result.unmappedUsers.length,
+            `${result.unmappedUsers.length} unmapped COSEC user(s) for ${from}→${to}: ${result.unmappedUsers.slice(0, 5).map(u => u.cosecUserId).join(", ")}`,
+          ]
+        ).catch((err) => {
+          logger.warn({ err }, "[COSEC Sync] failed to persist unmapped-user sync_run row (non-critical, does not affect sync result)");
+        });
       }
 
       if (result.inactiveUsers.length > 0) {
         logger.warn(
-          {
-            inactiveCount: result.inactiveUsers.length,
-            from,
-            to,
-            users: result.inactiveUsers.slice(0, 20),
-          },
-          "[COSEC Sync] Inactive or resigned COSEC users are still generating punches.",
+          { inactiveCount: result.inactiveUsers.length, from, to, users: result.inactiveUsers.slice(0, 20) },
+          "[COSEC Sync] Inactive or resigned COSEC users are still generating punches."
         );
       }
 
@@ -1173,45 +1017,31 @@ export const cosecSyncService = {
       // because someone's exit wasn't processed on the badge system. That
       // count is still fully visible below (informational, not status-
       // gating) and via the existing logger.warn a few lines up.
-      const cosecStatus = !result.success
-        ? "failed"
-        : result.failed.length > 0 || result.unmappedUsers.length > 0
-          ? "warning"
-          : "success";
+      const cosecStatus = !result.success ? "failed"
+        : (result.failed.length > 0 || result.unmappedUsers.length > 0) ? "warning"
+        : "success";
       const errorSummaryParts: string[] = [];
       if (result.failed.length > 0) {
-        errorSummaryParts.push(
-          `${result.failed.length} failed punch group(s): ${result.failed
-            .slice(0, 5)
-            .map((f) => f.error)
-            .join("; ")}`,
-        );
+        errorSummaryParts.push(`${result.failed.length} failed punch group(s): ${result.failed.slice(0, 5).map((f) => f.error).join("; ")}`);
       }
       if (result.inactiveUsers.length > 0) {
-        errorSummaryParts.push(
-          `(info, not a sync failure) ${result.inactiveUsers.length} inactive/resigned employee(s) still generating punches`,
-        );
+        errorSummaryParts.push(`(info, not a sync failure) ${result.inactiveUsers.length} inactive/resigned employee(s) still generating punches`);
       }
-      await db
-        .execute(
-          `INSERT INTO integration_sync_run
+      await db.execute(
+        `INSERT INTO integration_sync_run
            (integration_key, started_at, completed_at, status, records_read, records_written, records_failed, error_summary)
          VALUES ('cosec', ?, NOW(), ?, ?, ?, ?, ?)`,
-          [
-            new Date(runningSince),
-            cosecStatus,
-            result.pulledEvents,
-            result.migratedDays,
-            result.failed.length,
-            errorSummaryParts.length > 0 ? errorSummaryParts.join(" | ") : null,
-          ],
-        )
-        .catch((err) => {
-          logger.warn(
-            { err },
-            "[COSEC Sync] failed to persist 'cosec' sync_run status row (non-critical, does not affect sync result)",
-          );
-        });
+        [
+          new Date(runningSince),
+          cosecStatus,
+          result.pulledEvents,
+          result.migratedDays,
+          result.failed.length,
+          errorSummaryParts.length > 0 ? errorSummaryParts.join(" | ") : null,
+        ],
+      ).catch((err) => {
+        logger.warn({ err }, "[COSEC Sync] failed to persist 'cosec' sync_run status row (non-critical, does not affect sync result)");
+      });
 
       lastSyncResult = result;
       return result;
@@ -1235,10 +1065,7 @@ export const cosecSyncService = {
           counts[table] = 0;
           continue;
         }
-        const [rows] = await db.query<RowDataPacket[]>(
-          "SELECT COUNT(*) AS total FROM ??",
-          [table],
-        );
+        const [rows] = await db.query<RowDataPacket[]>("SELECT COUNT(*) AS total FROM ??", [table]);
         counts[table] = Number(rows[0]?.total ?? 0);
       }
       return {
@@ -1263,13 +1090,13 @@ export const cosecSyncService = {
           AND ${datetimeColumn} IS NOT NULL
         ORDER BY ${datetimeColumn} DESC
       `);
-    const row = result.recordset[0];
-    return {
-      ok: true,
-      source: `${cfg.database}.${cfg.table}`,
-      accessMode: "SELECT_ONLY",
-      latestUserId: row?.user_id ? String(row.user_id) : null,
-      latestEventAt: row?.event_datetime ?? null,
-    };
+      const row = result.recordset[0];
+      return {
+        ok: true,
+        source: `${cfg.database}.${cfg.table}`,
+        accessMode: "SELECT_ONLY",
+        latestUserId: row?.user_id ? String(row.user_id) : null,
+        latestEventAt: row?.event_datetime ?? null,
+      };
   },
 };

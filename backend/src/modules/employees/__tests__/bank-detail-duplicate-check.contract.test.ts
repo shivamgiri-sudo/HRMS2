@@ -18,10 +18,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const rawSource = readFileSync(
-  resolve(process.cwd(), "src/modules/employees/employee.routes.ts"),
-  "utf8",
-);
+const rawSource = readFileSync(resolve(process.cwd(), "src/modules/employees/employee.routes.ts"), "utf8");
 
 const stripComments = (s: string): string =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -57,10 +54,7 @@ describe("PUT /:employeeId/bank-details checks for a cross-employee duplicate ac
   });
 
   it("refuses with 409 naming the other employee when a duplicate is found", () => {
-    const checkBlock = body.slice(
-      body.indexOf("findDuplicateAccountOwner"),
-      body.indexOf("findDuplicateAccountOwner") + 400,
-    );
+    const checkBlock = body.slice(body.indexOf("findDuplicateAccountOwner"), body.indexOf("findDuplicateAccountOwner") + 400);
     expect(checkBlock).toMatch(/status\(409\)/);
     expect(checkBlock).toMatch(/dup\.employeeCode/);
   });
@@ -73,12 +67,8 @@ describe("PUT /:employeeId/bank-details checks for a cross-employee duplicate ac
   });
 
   it("computes and stores account_number_blind_index alongside the encrypted value", () => {
-    expect(body).toMatch(
-      /computeAccountBlindIndex\(String\(account_number\)\)/,
-    );
+    expect(body).toMatch(/computeAccountBlindIndex\(String\(account_number\)\)/);
     expect(body).toContain('fields.push("account_number_blind_index")');
-    expect(body).toContain(
-      "account_number_blind_index = VALUES(account_number_blind_index)",
-    );
+    expect(body).toContain("account_number_blind_index = VALUES(account_number_blind_index)");
   });
 });

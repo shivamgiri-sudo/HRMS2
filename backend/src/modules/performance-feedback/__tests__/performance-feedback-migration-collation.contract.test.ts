@@ -21,10 +21,7 @@ describe("performance feedback migration", () => {
       "development_plan_goal",
     ]) {
       const createTable = migration.match(
-        new RegExp(
-          `CREATE TABLE IF NOT EXISTS ${table}[\\s\\S]*?\\) ENGINE=InnoDB;`,
-          "i",
-        ),
+        new RegExp(`CREATE TABLE IF NOT EXISTS ${table}[\\s\\S]*?\\) ENGINE=InnoDB;`, "i"),
       )?.[0];
 
       expect(createTable, `${table} definition`).toBeTruthy();

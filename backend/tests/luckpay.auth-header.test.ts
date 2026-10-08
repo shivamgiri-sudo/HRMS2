@@ -36,9 +36,7 @@ describe("luckpayAuthHeader", () => {
 
   it("produces a decodable header for arbitrary client ids", () => {
     for (const id of ["LPM14", "LPM4", "ABC123", "X"]) {
-      expect(
-        Buffer.from(luckpayAuthHeader(id), "base64").toString("utf8"),
-      ).toBe(id);
+      expect(Buffer.from(luckpayAuthHeader(id), "base64").toString("utf8")).toBe(id);
     }
   });
 });

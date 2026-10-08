@@ -22,22 +22,15 @@ import { describe, expect, it } from "vitest";
  * and a blocked row must not reach that write.
  */
 
-const source = readFileSync(
-  resolve(__dirname, "../roster-generation.service.ts"),
-  "utf-8",
-);
+const source = readFileSync(resolve(__dirname, "../roster-generation.service.ts"), "utf-8");
 
 describe("syncGeneratedToLiveAssignments — attendance/payroll lock guard", () => {
   it("imports the shared roster-lock-guard function, not a private copy of the query", () => {
-    expect(source).toMatch(
-      /import\s*\{\s*checkEmployeeDateNotLocked\s*\}\s*from\s*["']\.\/roster-lock-guard\.js["']/,
-    );
+    expect(source).toMatch(/import\s*\{\s*checkEmployeeDateNotLocked\s*\}\s*from\s*["']\.\/roster-lock-guard\.js["']/);
   });
 
   it("calls the lock check inside the per-row sync loop, before the INSERT into wfm_roster_assignment", () => {
-    const fnStart = source.indexOf(
-      "async function syncGeneratedToLiveAssignments",
-    );
+    const fnStart = source.indexOf("async function syncGeneratedToLiveAssignments");
     expect(fnStart).toBeGreaterThan(-1);
     const fnBody = source.slice(fnStart, fnStart + 8000);
 
@@ -49,9 +42,7 @@ describe("syncGeneratedToLiveAssignments — attendance/payroll lock guard", () 
   });
 
   it("skips (continues past) a locked row rather than writing it", () => {
-    const fnStart = source.indexOf(
-      "async function syncGeneratedToLiveAssignments",
-    );
+    const fnStart = source.indexOf("async function syncGeneratedToLiveAssignments");
     const fnBody = source.slice(fnStart, fnStart + 8000);
     const lockBlockIdx = fnBody.indexOf("if (lockResult.blocked)");
     expect(lockBlockIdx).toBeGreaterThan(-1);
@@ -60,9 +51,7 @@ describe("syncGeneratedToLiveAssignments — attendance/payroll lock guard", () 
   });
 
   it("checked before the rest-policy validation (a locked date is a harder stop)", () => {
-    const fnStart = source.indexOf(
-      "async function syncGeneratedToLiveAssignments",
-    );
+    const fnStart = source.indexOf("async function syncGeneratedToLiveAssignments");
     const fnBody = source.slice(fnStart, fnStart + 8000);
     const lockIdx = fnBody.indexOf("checkEmployeeDateNotLocked(db,");
     const restIdx = fnBody.indexOf("validateMinimumRest(");

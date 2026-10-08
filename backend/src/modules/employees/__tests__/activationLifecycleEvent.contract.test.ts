@@ -26,12 +26,7 @@ function liveCode(): string {
   return fs
     .readFileSync(SERVICE, "utf8")
     .split("\n")
-    .filter(
-      (l) =>
-        !l.trim().startsWith("//") &&
-        !l.trim().startsWith("*") &&
-        !l.trim().startsWith("/*"),
-    )
+    .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*") && !l.trim().startsWith("/*"))
     .join("\n");
 }
 
@@ -39,21 +34,13 @@ describe("activation lifecycle event", () => {
   it("does not name columns the table lacks", () => {
     const code = liveCode();
     for (const col of ["from_status", "to_status", "actor_user_id"]) {
-      expect(
-        code,
-        `${col} is not a column of employee_lifecycle_event`,
-      ).not.toContain(col);
+      expect(code, `${col} is not a column of employee_lifecycle_event`).not.toContain(col);
     }
   });
 
   it("uses the columns the table actually has", () => {
     const code = liveCode();
-    for (const col of [
-      "old_value_json",
-      "new_value_json",
-      "initiated_by",
-      "effective_date",
-    ]) {
+    for (const col of ["old_value_json", "new_value_json", "initiated_by", "effective_date"]) {
       expect(code).toContain(col);
     }
   });

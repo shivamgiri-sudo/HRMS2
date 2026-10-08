@@ -8,9 +8,9 @@
  * Nothing sends today — every attendance event ships enabled=0, dispatch_mode='shadow'
  * (migration 1022).
  */
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { notificationGateway } from "../communication/notification.gateway.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { notificationGateway } from '../communication/notification.gateway.js';
 
 interface RegContextRow extends RowDataPacket {
   employee_id: string;
@@ -27,9 +27,7 @@ interface RegContextRow extends RowDataPacket {
   reviewer_name: string | null;
 }
 
-async function loadRegContext(
-  regularizationId: string,
-): Promise<RegContextRow | null> {
+async function loadRegContext(regularizationId: string): Promise<RegContextRow | null> {
   const [rows] = await db.execute<RegContextRow[]>(
     `SELECT ar.employee_id,
             e.employee_code,
@@ -69,11 +67,7 @@ async function loadRegContext(
 async function attendancePercentForMonth(
   employeeId: string,
   onDate: string,
-): Promise<{
-  pct: number | null;
-  presentDays: number | null;
-  workingDays: number | null;
-}> {
+): Promise<{ pct: number | null; presentDays: number | null; workingDays: number | null }> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -88,11 +82,7 @@ async function attendancePercentForMonth(
     const present = Number(rows[0]?.present_days ?? 0);
     const working = Number(rows[0]?.working_days ?? 0);
     if (!working) return { pct: null, presentDays: null, workingDays: null };
-    return {
-      pct: Math.round((present / working) * 1000) / 10,
-      presentDays: present,
-      workingDays: working,
-    };
+    return { pct: Math.round((present / working) * 1000) / 10, presentDays: present, workingDays: working };
   } catch {
     return { pct: null, presentDays: null, workingDays: null };
   }
@@ -106,25 +96,18 @@ async function attendancePercentForMonth(
  */
 export async function notifyRegularizationDecision(
   regularizationId: string,
-  status: "approved" | "rejected",
+  status: 'approved' | 'rejected',
   reviewerNote?: string | null,
 ): Promise<void> {
   try {
     const ctx = await loadRegContext(regularizationId);
     if (!ctx) return;
-    const att = await attendancePercentForMonth(
-      ctx.employee_id,
-      ctx.session_date,
-    );
+    const att = await attendancePercentForMonth(ctx.employee_id, ctx.session_date);
     await notificationGateway.notify({
-      eventCode: "regularization_decision",
+      eventCode: 'regularization_decision',
       dedupeKey: `attendance_regularization:${regularizationId}:${status}`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "attendance_regularization",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'attendance_regularization',
       entityId: regularizationId,
       correlationId: `regularization:${regularizationId}`,
       data: {
@@ -137,20 +120,17 @@ export async function notifyRegularizationDecision(
         session_date: String(ctx.session_date).slice(0, 10),
         requested_status: ctx.requested_status,
         reviewer_note: reviewerNote ?? null,
-        remarks: reviewerNote ?? "",
-        reviewer_name: ctx.reviewer_name ?? "",
+        remarks: reviewerNote ?? '',
+        reviewer_name: ctx.reviewer_name ?? '',
         // analytics strip (catalogue 6.3): days corrected · attendance % after
-        days_corrected: status === "approved" ? 1 : 0,
+        days_corrected: status === 'approved' ? 1 : 0,
         attendance_pct_mtd: att.pct,
         present_days_mtd: att.presentDays,
         working_days_mtd: att.workingDays,
       },
     });
   } catch (err) {
-    console.error(
-      `[attendance-notify] decision ${regularizationId}:`,
-      (err as Error).message,
-    );
+    console.error(`[attendance-notify] decision ${regularizationId}:`, (err as Error).message);
   }
 }
 
@@ -161,33 +141,22 @@ export async function notifyRegularizationDecision(
  * branch_wfm_spoc_config is empty in production, so a bare wfm_spoc recipient would
  * address nobody and this queue would sit unworked with no one told.
  */
-export async function notifyRegularizationStage2Pending(
-  regularizationId: string,
-): Promise<void> {
+export async function notifyRegularizationStage2Pending(regularizationId: string): Promise<void> {
   try {
     const ctx = await loadRegContext(regularizationId);
     if (!ctx) return;
-    const [queue] = await db
-      .execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS pending,
+    const [queue] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS pending,
               MIN(created_at) AS oldest
          FROM attendance_regularization
         WHERE status = 'manager_approved'`,
-      )
-      .catch(
-        () =>
-          [[{ pending: null, oldest: null }]] as unknown as [RowDataPacket[]],
-      );
+    ).catch(() => [[{ pending: null, oldest: null }]] as unknown as [RowDataPacket[]]);
 
     await notificationGateway.notify({
-      eventCode: "regularization_stage2_pending",
+      eventCode: 'regularization_stage2_pending',
       dedupeKey: `attendance_regularization:${regularizationId}:stage2`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "attendance_regularization",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'attendance_regularization',
       entityId: regularizationId,
       correlationId: `regularization:${regularizationId}`,
       data: {
@@ -199,39 +168,26 @@ export async function notifyRegularizationStage2Pending(
         requested_status: ctx.requested_status,
         // analytics: how deep the queue is, so the SPOC knows whether this is one item
         // or a backlog
-        queue_depth:
-          queue[0]?.pending == null ? null : Number(queue[0].pending),
+        queue_depth: queue[0]?.pending == null ? null : Number(queue[0].pending),
         oldest_pending: queue[0]?.oldest ?? null,
       },
     });
   } catch (err) {
-    console.error(
-      `[attendance-notify] stage2 ${regularizationId}:`,
-      (err as Error).message,
-    );
+    console.error(`[attendance-notify] stage2 ${regularizationId}:`, (err as Error).message);
   }
 }
 
 /** Submission alert to the approver. */
-export async function notifyRegularizationSubmitted(
-  regularizationId: string,
-): Promise<void> {
+export async function notifyRegularizationSubmitted(regularizationId: string): Promise<void> {
   try {
     const ctx = await loadRegContext(regularizationId);
     if (!ctx) return;
-    const att = await attendancePercentForMonth(
-      ctx.employee_id,
-      ctx.session_date,
-    );
+    const att = await attendancePercentForMonth(ctx.employee_id, ctx.session_date);
     await notificationGateway.notify({
-      eventCode: "regularization_submitted",
+      eventCode: 'regularization_submitted',
       dedupeKey: `attendance_regularization:${regularizationId}:submitted`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "attendance_regularization",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'attendance_regularization',
       entityId: regularizationId,
       correlationId: `regularization:${regularizationId}`,
       data: {
@@ -247,9 +203,6 @@ export async function notifyRegularizationSubmitted(
       },
     });
   } catch (err) {
-    console.error(
-      `[attendance-notify] submitted ${regularizationId}:`,
-      (err as Error).message,
-    );
+    console.error(`[attendance-notify] submitted ${regularizationId}:`, (err as Error).message);
   }
 }

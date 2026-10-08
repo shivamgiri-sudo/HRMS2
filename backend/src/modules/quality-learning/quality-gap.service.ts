@@ -63,7 +63,7 @@ export async function listActiveTriggerRules(): Promise<QaTriggerRuleRow[]> {
             threshold_period_days, severity, tat_hours, block_dialer, process_id
        FROM qa_trigger_rule
       WHERE active_status = 1
-      ORDER BY updated_at DESC`,
+      ORDER BY updated_at DESC`
   );
   return rows;
 }
@@ -73,12 +73,8 @@ export async function listActiveTriggerRules(): Promise<QaTriggerRuleRow[]> {
  * Returns null when no alias row exists — the accepted ~9.5% gap, not an error.
  */
 async function resolveEmployeeForDialerUser(
-  dialerUser: string,
-): Promise<{
-  employeeId: string;
-  employeeCode: string;
-  userId: string | null;
-} | null> {
+  dialerUser: string
+): Promise<{ employeeId: string; employeeCode: string; userId: string | null } | null> {
   const rows = await querySource<{
     employee_id: string;
     employee_code: string;
@@ -91,14 +87,10 @@ async function resolveEmployeeForDialerUser(
         AND a.source_system = 'db_audit'
         AND e.active_status = 1
       LIMIT 1`,
-    [dialerUser],
+    [dialerUser]
   );
   if (!rows.length) return null;
-  return {
-    employeeId: rows[0].employee_id,
-    employeeCode: rows[0].employee_code,
-    userId: rows[0].user_id,
-  };
+  return { employeeId: rows[0].employee_id, employeeCode: rows[0].employee_code, userId: rows[0].user_id };
 }
 
 /**
@@ -109,7 +101,7 @@ async function resolveEmployeeForDialerUser(
  */
 async function fetchRecentScores(
   dialerUser: string,
-  lookbackDays: number,
+  lookbackDays: number
 ): Promise<Array<{ CallDate: string; quality_percentage: number }>> {
   return querySource<{ CallDate: string; quality_percentage: number }>(
     `SELECT CallDate, quality_percentage
@@ -118,28 +110,21 @@ async function fetchRecentScores(
         AND CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
       ORDER BY CallDate DESC
       LIMIT 50`,
-    [dialerUser, lookbackDays],
+    [dialerUser, lookbackDays]
   );
 }
 
 /** Whether a rule's pattern is met by the given score history (newest first). */
 function evaluateRule(
   rule: QaTriggerRuleRow,
-  scores: Array<{ CallDate: string; quality_percentage: number }>,
+  scores: Array<{ CallDate: string; quality_percentage: number }>
 ): { triggered: boolean; evidence: TriggerEvidenceCall[] } {
   if (rule.trigger_pattern === "single_critical") {
     const hit = scores[0];
     if (hit && Number(hit.quality_percentage) <= Number(rule.threshold_score)) {
       return {
         triggered: true,
-        evidence: [
-          {
-            source: "db_audit.call_quality_assessment",
-            dialer_user: "",
-            call_date: hit.CallDate,
-            score: Number(hit.quality_percentage),
-          },
-        ],
+        evidence: [{ source: "db_audit.call_quality_assessment", dialer_user: "", call_date: hit.CallDate, score: Number(hit.quality_percentage) }],
       };
     }
     return { triggered: false, evidence: [] };
@@ -149,41 +134,24 @@ function evaluateRule(
     const count = rule.threshold_count ?? 2;
     if (scores.length < count) return { triggered: false, evidence: [] };
     const window = scores.slice(0, count);
-    const allBelow = window.every(
-      (s) => Number(s.quality_percentage) < Number(rule.threshold_score),
-    );
+    const allBelow = window.every((s) => Number(s.quality_percentage) < Number(rule.threshold_score));
     if (!allBelow) return { triggered: false, evidence: [] };
     return {
       triggered: true,
-      evidence: window.map((s) => ({
-        source: "db_audit.call_quality_assessment",
-        dialer_user: "",
-        call_date: s.CallDate,
-        score: Number(s.quality_percentage),
-      })),
+      evidence: window.map((s) => ({ source: "db_audit.call_quality_assessment", dialer_user: "", call_date: s.CallDate, score: Number(s.quality_percentage) })),
     };
   }
 
   // 'average'
   const periodDays = rule.threshold_period_days ?? 7;
   const cutoff = Date.now() - periodDays * 24 * 60 * 60 * 1000;
-  const inWindow = scores.filter(
-    (s) => new Date(s.CallDate).getTime() >= cutoff,
-  );
+  const inWindow = scores.filter((s) => new Date(s.CallDate).getTime() >= cutoff);
   if (!inWindow.length) return { triggered: false, evidence: [] };
-  const avg =
-    inWindow.reduce((sum, s) => sum + Number(s.quality_percentage), 0) /
-    inWindow.length;
-  if (avg >= Number(rule.threshold_score))
-    return { triggered: false, evidence: [] };
+  const avg = inWindow.reduce((sum, s) => sum + Number(s.quality_percentage), 0) / inWindow.length;
+  if (avg >= Number(rule.threshold_score)) return { triggered: false, evidence: [] };
   return {
     triggered: true,
-    evidence: inWindow.map((s) => ({
-      source: "db_audit.call_quality_assessment",
-      dialer_user: "",
-      call_date: s.CallDate,
-      score: Number(s.quality_percentage),
-    })),
+    evidence: inWindow.map((s) => ({ source: "db_audit.call_quality_assessment", dialer_user: "", call_date: s.CallDate, score: Number(s.quality_percentage) })),
   };
 }
 
@@ -194,10 +162,7 @@ function evaluateRule(
  * status is looked up via the FK rather than duplicated on training_assignment (US2.1
  * scenario 2: "no duplicate assignment is created ... deadline is NOT extended").
  */
-async function hasPendingAssignment(
-  employeeId: string,
-  skillCategoryId: string,
-): Promise<boolean> {
+async function hasPendingAssignment(employeeId: string, skillCategoryId: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ta.id
        FROM training_assignment ta
@@ -206,17 +171,13 @@ async function hasPendingAssignment(
         AND ta.skill_category_id = ?
         AND (ta.tat_instance_id IS NULL OR t.status NOT IN ('completed', 'cancelled'))
       LIMIT 1`,
-    [employeeId, skillCategoryId],
+    [employeeId, skillCategoryId]
   );
   return rows.length > 0;
 }
 
 /** Appends a note to an existing pending assignment rather than creating a duplicate. */
-async function annotateExistingAssignment(
-  employeeId: string,
-  skillCategoryId: string,
-  note: string,
-): Promise<void> {
+async function annotateExistingAssignment(employeeId: string, skillCategoryId: string, note: string): Promise<void> {
   await db.execute(
     `UPDATE training_assignment
         SET notes = TRIM(CONCAT(COALESCE(notes, ''), '\n', ?)),
@@ -224,28 +185,22 @@ async function annotateExistingAssignment(
       WHERE employee_id = ? AND skill_category_id = ?
       ORDER BY created_at DESC
       LIMIT 1`,
-    [note, employeeId, skillCategoryId],
+    [note, employeeId, skillCategoryId]
   );
 }
 
 /** Active content mapped to a skill category, in assignment order. */
 async function fetchMappedContent(
-  skillCategoryId: string,
-): Promise<
-  Array<{ id: string; lms_content_id: string; lms_content_name: string | null }>
-> {
+  skillCategoryId: string
+): Promise<Array<{ id: string; lms_content_id: string; lms_content_name: string | null }>> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, lms_content_id, lms_content_name
        FROM skill_content_mapping
       WHERE skill_category_id = ? AND active_status = 1
       ORDER BY sequence_order ASC`,
-    [skillCategoryId],
+    [skillCategoryId]
   );
-  return rows as Array<{
-    id: string;
-    lms_content_id: string;
-    lms_content_name: string | null;
-  }>;
+  return rows as Array<{ id: string; lms_content_id: string; lms_content_name: string | null }>;
 }
 
 /**
@@ -258,7 +213,7 @@ async function recordContentMissingGap(
   skillCategoryId: string,
   triggerRuleId: string,
   severity: QaTriggerRuleRow["severity"],
-  evidence: TriggerEvidenceCall[],
+  evidence: TriggerEvidenceCall[]
 ): Promise<string> {
   const id = randomUUID();
   await db.execute(
@@ -268,14 +223,7 @@ async function recordContentMissingGap(
      VALUES (?, ?, ?, ?, 'QA_SKILL_GAP', ?, ?, NULL, NULL, 'SYSTEM',
              'No active LMS content mapped for this skill category at detection time. Needs manual training-admin action.',
              NOW(), NOW())`,
-    [
-      id,
-      employeeId,
-      skillCategoryId,
-      triggerRuleId,
-      JSON.stringify(evidence),
-      severity,
-    ],
+    [id, employeeId, skillCategoryId, triggerRuleId, JSON.stringify(evidence), severity]
   );
   return id;
 }
@@ -296,11 +244,7 @@ async function createAssignmentWithTat(params: {
   ruleId: string;
   severity: QaTriggerRuleRow["severity"];
   evidence: TriggerEvidenceCall[];
-  content: Array<{
-    id: string;
-    lms_content_id: string;
-    lms_content_name: string | null;
-  }>;
+  content: Array<{ id: string; lms_content_id: string; lms_content_name: string | null }>;
 }): Promise<string> {
   const assignmentId = randomUUID();
   await db.execute(
@@ -316,7 +260,7 @@ async function createAssignmentWithTat(params: {
       JSON.stringify(params.evidence),
       params.severity,
       JSON.stringify(params.content.map((c) => c.id)),
-    ],
+    ]
   );
 
   // Reuses the existing TAT/escalation engine end to end: due_at from tat_matrix_master,
@@ -329,12 +273,12 @@ async function createAssignmentWithTat(params: {
     "quality_coaching_required",
     "training_assignment",
     assignmentId,
-    params.userId ?? params.employeeId,
+    params.userId ?? params.employeeId
   );
 
   await db.execute(
     `UPDATE training_assignment SET tat_instance_id = ?, updated_at = NOW() WHERE id = ?`,
-    [tatInstanceId, assignmentId],
+    [tatInstanceId, assignmentId]
   );
 
   // Best-effort LMS learner-identity confirmation. Must never block or roll back the
@@ -343,15 +287,9 @@ async function createAssignmentWithTat(params: {
   // provisionLmsIdentityForEmployee() itself already applies. A failure here just leaves
   // lms_provisioning_status at 'provisioning_failed' for a training admin to see and retry.
   try {
-    await provisionLmsForAssignment({
-      assignmentId,
-      employeeCode: params.employeeCode,
-    });
+    await provisionLmsForAssignment({ assignmentId, employeeCode: params.employeeCode });
   } catch (err) {
-    console.error(
-      `[quality-gap] LMS provisioning failed for assignment ${assignmentId}:`,
-      (err as Error).message,
-    );
+    console.error(`[quality-gap] LMS provisioning failed for assignment ${assignmentId}:`, (err as Error).message);
   }
 
   return assignmentId;
@@ -365,7 +303,7 @@ async function createAssignmentWithTat(params: {
  */
 export async function evaluateRuleForDialerUser(
   rule: QaTriggerRuleRow,
-  dialerUser: string,
+  dialerUser: string
 ): Promise<GapDetectionResult> {
   const identity = await resolveEmployeeForDialerUser(dialerUser);
   if (!identity) {
@@ -380,14 +318,10 @@ export async function evaluateRuleForDialerUser(
     };
   }
 
-  const lookbackDays =
-    rule.trigger_pattern === "average" ? (rule.threshold_period_days ?? 7) : 30;
+  const lookbackDays = rule.trigger_pattern === "average" ? (rule.threshold_period_days ?? 7) : 30;
   const scores = await fetchRecentScores(dialerUser, lookbackDays);
   const { triggered, evidence } = evaluateRule(rule, scores);
-  const evidenceWithUser = evidence.map((e) => ({
-    ...e,
-    dialer_user: dialerUser,
-  }));
+  const evidenceWithUser = evidence.map((e) => ({ ...e, dialer_user: dialerUser }));
 
   if (!triggered) {
     return {
@@ -401,15 +335,12 @@ export async function evaluateRuleForDialerUser(
     };
   }
 
-  const alreadyPending = await hasPendingAssignment(
-    identity.employeeId,
-    rule.skill_category_id,
-  );
+  const alreadyPending = await hasPendingAssignment(identity.employeeId, rule.skill_category_id);
   if (alreadyPending) {
     await annotateExistingAssignment(
       identity.employeeId,
       rule.skill_category_id,
-      `Additional gap detected ${new Date().toISOString().slice(0, 10)} (rule ${rule.id}) — deadline not extended.`,
+      `Additional gap detected ${new Date().toISOString().slice(0, 10)} (rule ${rule.id}) — deadline not extended.`
     );
     return {
       employeeCode: identity.employeeCode,
@@ -417,8 +348,7 @@ export async function evaluateRuleForDialerUser(
       skillCategoryId: rule.skill_category_id,
       ruleId: rule.id,
       triggered: true,
-      reason:
-        "gap detected but a pending assignment for this skill already exists — annotated, not duplicated",
+      reason: "gap detected but a pending assignment for this skill already exists — annotated, not duplicated",
       assignmentCreated: false,
     };
   }
@@ -430,7 +360,7 @@ export async function evaluateRuleForDialerUser(
       rule.skill_category_id,
       rule.id,
       rule.severity,
-      evidenceWithUser,
+      evidenceWithUser
     );
     return {
       employeeCode: identity.employeeCode,
@@ -472,15 +402,13 @@ export async function evaluateRuleForDialerUser(
  * Dialer users with at least one call in the given lookback window — the candidate pool the
  * detector sweeps per rule, so it never scans the full historical User set on every poll.
  */
-export async function listRecentDialerUsers(
-  lookbackDays: number,
-): Promise<string[]> {
+export async function listRecentDialerUsers(lookbackDays: number): Promise<string[]> {
   const rows = await querySource<{ User: string }>(
     `SELECT DISTINCT User
        FROM db_audit.call_quality_assessment
       WHERE User IS NOT NULL AND User <> ''
         AND CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)`,
-    [lookbackDays],
+    [lookbackDays]
   );
   return rows.map((r) => r.User);
 }

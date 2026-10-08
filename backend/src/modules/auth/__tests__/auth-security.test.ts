@@ -4,10 +4,7 @@ import path from "path";
 
 const AUTH_SERVICE_PATH = path.resolve(__dirname, "../auth.service.ts");
 const AUTH_ROUTES_PATH = path.resolve(__dirname, "../auth.routes.ts");
-const REQUIRE_ROLE_PATH = path.resolve(
-  __dirname,
-  "../../../middleware/requireRole.ts",
-);
+const REQUIRE_ROLE_PATH = path.resolve(__dirname, "../../../middleware/requireRole.ts");
 
 describe("Auth Security Hardening", () => {
   let authServiceCode: string;
@@ -25,9 +22,7 @@ describe("Auth Security Hardening", () => {
       // The login function should check twoFactorRequired BEFORE creating refresh token
       // Look for the pattern where we check 2FA and return with refreshToken: null
       expect(authServiceCode).toContain("refreshToken: null");
-      expect(authServiceCode).toContain(
-        "SECURITY: No refresh token until 2FA completes",
-      );
+      expect(authServiceCode).toContain("SECURITY: No refresh token until 2FA completes");
     });
 
     it("login() should create pre_auth_challenge record for 2FA flow", () => {
@@ -36,9 +31,7 @@ describe("Auth Security Hardening", () => {
 
     it("exchangePreAuthToken() should create refresh token only after 2FA verification", () => {
       // The refresh token creation should only happen in exchangePreAuthToken after 2FA
-      expect(authServiceCode).toContain(
-        "SECURITY: This is the ONLY place where a refresh token is created after 2FA verification",
-      );
+      expect(authServiceCode).toContain("SECURITY: This is the ONLY place where a refresh token is created after 2FA verification");
     });
 
     it("exchangePreAuthToken() should verify pre_auth_challenge is not consumed", () => {
@@ -49,15 +42,11 @@ describe("Auth Security Hardening", () => {
   describe("Registration Security", () => {
     it("register route should require an invitation/onboarding token", () => {
       expect(authRoutesCode).toContain("INVITATION_REQUIRED");
-      expect(authRoutesCode).toContain(
-        "Registration requires a valid invitation",
-      );
+      expect(authRoutesCode).toContain("Registration requires a valid invitation");
     });
 
     it("register route should have rate limiting", () => {
-      expect(authRoutesCode).toMatch(
-        /router\.post\("\/register",\s*authLimiter/,
-      );
+      expect(authRoutesCode).toMatch(/router\.post\("\/register",\s*authLimiter/);
     });
 
     it("register route should validate invitation token", () => {
@@ -80,17 +69,13 @@ describe("Auth Security Hardening", () => {
     });
 
     it("refreshAccess() should revoke entire token family on reuse", () => {
-      expect(authServiceCode).toContain(
-        "UPDATE auth_refresh_token SET revoked = 1 WHERE token_family_id",
-      );
+      expect(authServiceCode).toContain("UPDATE auth_refresh_token SET revoked = 1 WHERE token_family_id");
     });
 
     it("refresh route should set new refresh token via httpOnly cookie", () => {
       // After migration to httpOnly cookies, refresh tokens are no longer in response body
       // They are set via setRefreshTokenCookie() for XSS protection
-      expect(authRoutesCode).toContain(
-        "setRefreshTokenCookie(res, tokens.refreshToken)",
-      );
+      expect(authRoutesCode).toContain("setRefreshTokenCookie(res, tokens.refreshToken)");
     });
   });
 

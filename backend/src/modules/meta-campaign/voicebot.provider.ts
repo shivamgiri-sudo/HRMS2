@@ -16,7 +16,7 @@
  *   { phone, name, language, script_template, callback_url, reference_id }
  */
 
-import axios from "axios";
+import axios from 'axios';
 
 export interface VoiceTriggerInput {
   phone: string;
@@ -28,7 +28,7 @@ export interface VoiceTriggerInput {
 }
 
 export interface VoiceTriggerResult {
-  status: "triggered" | "skipped" | "failed";
+  status: 'triggered' | 'skipped' | 'failed';
   detail: string | null;
   providerCallId: string | null;
 }
@@ -37,38 +37,22 @@ export function isVoicebotConfigured(): boolean {
   return Boolean(process.env.VOICEBOT_TRIGGER_URL);
 }
 
-export function buildTriggerBody(
-  input: VoiceTriggerInput,
-): Record<string, unknown> {
-  const callbackBase =
-    process.env.VOICEBOT_CALLBACK_BASE_URL ??
-    process.env.BACKEND_PUBLIC_URL ??
-    "";
+export function buildTriggerBody(input: VoiceTriggerInput): Record<string, unknown> {
+  const callbackBase = process.env.VOICEBOT_CALLBACK_BASE_URL ?? process.env.BACKEND_PUBLIC_URL ?? '';
   return {
     phone: input.phone,
-    name: input.name ?? "",
-    language: input.language ?? process.env.VOICEBOT_DEFAULT_LANGUAGE ?? "hi",
-    script_template:
-      input.scriptTemplate ??
-      process.env.VOICEBOT_SCRIPT_TEMPLATE ??
-      "recruitment_invite",
-    callback_url: callbackBase
-      ? `${callbackBase.replace(/\/+$/, "")}/api/meta/voice-callback`
-      : null,
+    name: input.name ?? '',
+    language: input.language ?? process.env.VOICEBOT_DEFAULT_LANGUAGE ?? 'hi',
+    script_template: input.scriptTemplate ?? process.env.VOICEBOT_SCRIPT_TEMPLATE ?? 'recruitment_invite',
+    callback_url: callbackBase ? `${callbackBase.replace(/\/+$/, '')}/api/meta/voice-callback` : null,
     reference_id: input.referenceId,
   };
 }
 
-export async function triggerVoiceCall(
-  input: VoiceTriggerInput,
-): Promise<VoiceTriggerResult> {
+export async function triggerVoiceCall(input: VoiceTriggerInput): Promise<VoiceTriggerResult> {
   const url = process.env.VOICEBOT_TRIGGER_URL;
   if (!url) {
-    return {
-      status: "skipped",
-      detail: "VOICEBOT_TRIGGER_URL is not configured",
-      providerCallId: null,
-    };
+    return { status: 'skipped', detail: 'VOICEBOT_TRIGGER_URL is not configured', providerCallId: null };
   }
 
   const authHeader = process.env.VOICEBOT_API_KEY
@@ -77,20 +61,18 @@ export async function triggerVoiceCall(
 
   try {
     const { data } = await axios.post(url, buildTriggerBody(input), {
-      headers: { "Content-Type": "application/json", ...authHeader },
+      headers: { 'Content-Type': 'application/json', ...authHeader },
       timeout: 15000,
     });
     return {
-      status: "triggered",
+      status: 'triggered',
       detail: null,
       providerCallId:
-        (data?.call_id as string | undefined) ??
-        (data?.id as string | undefined) ??
-        null,
+        (data?.call_id as string | undefined) ?? (data?.id as string | undefined) ?? null,
     };
   } catch (err) {
     return {
-      status: "failed",
+      status: 'failed',
       detail: err instanceof Error ? err.message : String(err),
       providerCallId: null,
     };

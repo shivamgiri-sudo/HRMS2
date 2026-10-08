@@ -4,10 +4,7 @@ import { db } from "../../db/mysql.js";
 import type { UserBusinessScope } from "../../shared/enterpriseScope.js";
 import { scopePredicate } from "../wfm/branch-scope.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
-import {
-  recordManagerChange,
-  recordSupervisoryChange,
-} from "../management/manager-attribution.service.js";
+import { recordManagerChange, recordSupervisoryChange } from "../management/manager-attribution.service.js";
 
 /**
  * The pool wrapper or a single transaction-bound connection — whichever the caller has.
@@ -26,10 +23,7 @@ type SqlExecutor = {
  * that does not resolve. The production error handler replaces the message of any throw
  * carrying no statusCode, so these arrived as a bare 500 with the reason stripped.
  */
-function mobilityError(
-  statusCode: number,
-  message: string,
-): Error & { statusCode: number } {
+function mobilityError(statusCode: number, message: string): Error & { statusCode: number } {
   return Object.assign(new Error(message), { statusCode });
 }
 
@@ -45,22 +39,13 @@ async function applyTransferOn(
   exec: SqlExecutor,
   employee_id: string,
   transfer_type: string,
-  to_value: string,
+  to_value: string
 ): Promise<void> {
-  const resolveMaster = async (
-    sql: string,
-    label: string,
-    table: string,
-  ): Promise<string> => {
+  const resolveMaster = async (sql: string, label: string, table: string): Promise<string> => {
     const [r] = await exec.execute(sql, [to_value, to_value]);
-    const masterId =
-      ((r as RowDataPacket[])[0] as { id?: unknown } | undefined)?.id ?? null;
+    const masterId = ((r as RowDataPacket[])[0] as { id?: unknown } | undefined)?.id ?? null;
     // Message wording preserved: existing callers and logs key off "not found in <table>".
-    if (!masterId)
-      throw mobilityError(
-        422,
-        `Transfer: ${label} '${to_value}' not found in ${table}`,
-      );
+    if (!masterId) throw mobilityError(422, `Transfer: ${label} '${to_value}' not found in ${table}`);
     return String(masterId);
   };
 
@@ -68,76 +53,59 @@ async function applyTransferOn(
     const masterId = await resolveMaster(
       "SELECT id FROM branch_master WHERE id = ? OR branch_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
       "branch",
-      "branch_master",
+      "branch_master"
     );
-    await exec.execute("UPDATE employees SET branch_id = ? WHERE id = ?", [
-      masterId,
-      employee_id,
-    ]);
+    await exec.execute("UPDATE employees SET branch_id = ? WHERE id = ?", [masterId, employee_id]);
     // A branch move changes who is accountable for this person even when the named manager
     // does not change — the branch head owns the outcome too.
     void recordSupervisoryChange({
-      employeeId: employee_id,
-      branchId: masterId,
-      changedBy: null,
+      employeeId: employee_id, branchId: masterId, changedBy: null,
       reason: "Branch transfer applied",
     });
+
   } else if (transfer_type === "department") {
     const masterId = await resolveMaster(
       "SELECT id FROM department_master WHERE id = ? OR dept_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
       "department",
-      "department_master",
+      "department_master"
     );
-    await exec.execute("UPDATE employees SET department_id = ? WHERE id = ?", [
-      masterId,
-      employee_id,
-    ]);
+    await exec.execute("UPDATE employees SET department_id = ? WHERE id = ?", [masterId, employee_id]);
+
   } else if (transfer_type === "designation") {
     const masterId = await resolveMaster(
       "SELECT id FROM designation_master WHERE id = ? OR designation_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
       "designation",
-      "designation_master",
+      "designation_master"
     );
-    await exec.execute("UPDATE employees SET designation_id = ? WHERE id = ?", [
-      masterId,
-      employee_id,
-    ]);
+    await exec.execute("UPDATE employees SET designation_id = ? WHERE id = ?", [masterId, employee_id]);
+
   } else if (transfer_type === "process") {
     const masterId = await resolveMaster(
       "SELECT id FROM process_master WHERE id = ? OR process_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
       "process",
-      "process_master",
+      "process_master"
     );
-    await exec.execute("UPDATE employees SET process_id = ? WHERE id = ?", [
-      masterId,
-      employee_id,
-    ]);
+    await exec.execute("UPDATE employees SET process_id = ? WHERE id = ?", [masterId, employee_id]);
     // Same for a process move: the process manager owns attendance, attrition and shrinkage
     // for their process, so the old process must stop being charged for this person.
     void recordSupervisoryChange({
-      employeeId: employee_id,
-      processId: masterId,
-      changedBy: null,
+      employeeId: employee_id, processId: masterId, changedBy: null,
       reason: "Process transfer applied",
     });
+
   } else if (transfer_type === "cost_centre") {
     const masterId = await resolveMaster(
       "SELECT id FROM cost_centre_master WHERE id = ? OR cost_centre_code COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
       "cost_centre",
-      "cost_centre_master",
+      "cost_centre_master"
     );
-    await exec.execute("UPDATE employees SET cost_centre_id = ? WHERE id = ?", [
-      masterId,
-      employee_id,
-    ]);
-  } else if (
-    transfer_type === "reporting" ||
-    transfer_type === "reporting_manager"
-  ) {
+    await exec.execute("UPDATE employees SET cost_centre_id = ? WHERE id = ?", [masterId, employee_id]);
+
+  } else if (transfer_type === "reporting" || transfer_type === "reporting_manager") {
     // Handle both ENUM value 'reporting' and legacy code reference 'reporting_manager'
     await exec.execute(
       `UPDATE employees SET reporting_manager_id = ? WHERE id = ?`,
-      [to_value, employee_id],
+      [to_value, employee_id]
     );
     // Effective-dated history — a reporting transfer IS a manager change, and without a row
     // here the employee's whole past record silently follows them to the new manager.
@@ -211,7 +179,7 @@ export const mobilityService = {
        LEFT JOIN employees e ON e.id = t.employee_id
        ${where}
        ORDER BY t.created_at DESC LIMIT 200`,
-      params,
+      params
     );
     return rows as RowDataPacket[];
   },
@@ -220,31 +188,22 @@ export const mobilityService = {
     // Validate cost_centre transfers
     if (data.transfer_type === "cost_centre") {
       if (!data.new_reporting_manager_id) {
-        throw mobilityError(
-          422,
-          "Transfer: new_reporting_manager_id is required for cost_centre transfers",
-        );
+        throw mobilityError(422, "Transfer: new_reporting_manager_id is required for cost_centre transfers");
       }
       const [ccRows] = await db.execute<RowDataPacket[]>(
         "SELECT id FROM cost_centre_master WHERE id = ? OR cost_centre_code COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
-        [data.to_value, data.to_value],
+        [data.to_value, data.to_value]
       );
       if (!(ccRows as RowDataPacket[])[0]) {
-        throw mobilityError(
-          422,
-          `Transfer: cost_centre '${data.to_value}' not found in cost_centre_master`,
-        );
+        throw mobilityError(422, `Transfer: cost_centre '${data.to_value}' not found in cost_centre_master`);
       }
       if (data.new_reporting_manager_id) {
         const [mgrRows] = await db.execute<RowDataPacket[]>(
           "SELECT id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1",
-          [data.new_reporting_manager_id],
+          [data.new_reporting_manager_id]
         );
         if (!(mgrRows as RowDataPacket[])[0]) {
-          throw mobilityError(
-            422,
-            `Transfer: reporting manager '${data.new_reporting_manager_id}' not found or inactive`,
-          );
+          throw mobilityError(422, `Transfer: reporting manager '${data.new_reporting_manager_id}' not found or inactive`);
         }
       }
     }
@@ -264,11 +223,11 @@ export const mobilityService = {
         data.reason ?? null,
         data.initiated_by,
         data.new_reporting_manager_id ?? null,
-      ],
+      ]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM transfer_record WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     return (rows as RowDataPacket[])[0];
   },
@@ -299,14 +258,9 @@ export const mobilityService = {
     const finalStatus = data.action === "approved" ? "completed" : "rejected";
     const today = new Date().toISOString().slice(0, 10);
 
-    let approvedContext: {
-      employee_id: string;
-      transfer_type: string;
-      from_value: string;
-      to_value: string;
-      effectiveDateStr: string;
-      isDue: boolean;
-    } | null = null;
+    let approvedContext:
+      | { employee_id: string; transfer_type: string; from_value: string; to_value: string; effectiveDateStr: string; isDue: boolean }
+      | null = null;
 
     const conn = await db.getConnection();
     try {
@@ -314,41 +268,27 @@ export const mobilityService = {
 
       const [lockedRows] = await conn.execute<RowDataPacket[]>(
         "SELECT * FROM transfer_record WHERE id = ? FOR UPDATE",
-        [id],
+        [id]
       );
       const record = (lockedRows as RowDataPacket[])[0] ?? null;
       if (!record) throw mobilityError(404, "Transfer record not found");
 
-      const currentStatus = String(
-        (record as { status?: unknown }).status ?? "",
-      );
+      const currentStatus = String((record as { status?: unknown }).status ?? "");
       if (currentStatus !== "pending") {
-        throw mobilityError(
-          409,
-          `Transfer has already been actioned — it is '${currentStatus}'`,
-        );
+        throw mobilityError(409, `Transfer has already been actioned — it is '${currentStatus}'`);
       }
 
       const [statusResult] = await conn.execute<ResultSetHeader>(
         `UPDATE transfer_record SET status = ?, approved_by = ?, updated_at = NOW()
           WHERE id = ? AND status = ?`,
-        [finalStatus, data.approved_by, id, currentStatus],
+        [finalStatus, data.approved_by, id, currentStatus]
       );
       if (statusResult.affectedRows !== 1) {
-        throw mobilityError(
-          409,
-          "Transfer was actioned by someone else while this approval was in flight",
-        );
+        throw mobilityError(409, "Transfer was actioned by someone else while this approval was in flight");
       }
 
       if (data.action === "approved") {
-        const {
-          employee_id,
-          transfer_type,
-          from_value,
-          to_value,
-          effective_date,
-        } = record as unknown as {
+        const { employee_id, transfer_type, from_value, to_value, effective_date } = record as unknown as {
           employee_id: string;
           transfer_type: string;
           from_value: string;
@@ -358,9 +298,7 @@ export const mobilityService = {
 
         // Only move the employee once the effective date has been reached. Future-dated
         // transfers are approved but held; mobility-transfer.worker.ts applies them on the day.
-        const effectiveDateStr = effective_date
-          ? String(effective_date).slice(0, 10)
-          : today;
+        const effectiveDateStr = effective_date ? String(effective_date).slice(0, 10) : today;
         const isDue = effectiveDateStr <= today;
 
         if (isDue) {
@@ -368,30 +306,22 @@ export const mobilityService = {
           // so the worker and this path can never both move the same employee.
           const [claim] = await conn.execute<ResultSetHeader>(
             `UPDATE transfer_record SET applied_at = NOW() WHERE id = ? AND applied_at IS NULL`,
-            [id],
+            [id]
           );
           if (claim.affectedRows !== 1) {
-            throw mobilityError(
-              409,
-              "Transfer has already been applied to the employee record",
-            );
+            throw mobilityError(409, "Transfer has already been applied to the employee record");
           }
           await applyTransferOn(conn, employee_id, transfer_type, to_value);
 
           // Cost centre cascade: read old RM, apply RM change, write job history
           if (transfer_type === "cost_centre") {
-            const new_reporting_manager_id =
-              (
-                record as unknown as {
-                  new_reporting_manager_id?: string | null;
-                }
-              ).new_reporting_manager_id ?? null;
+            const new_reporting_manager_id = (record as unknown as { new_reporting_manager_id?: string | null }).new_reporting_manager_id ?? null;
 
             // 1. Read empSnap BEFORE cascade so we capture the OLD reporting_manager_id
             const [empRows] = await conn.execute<RowDataPacket[]>(
               `SELECT branch_id, department_id, process_id, reporting_manager_id
                FROM employees WHERE id = ?`,
-              [employee_id],
+              [employee_id]
             );
             const empSnap = (empRows as RowDataPacket[])[0] ?? {};
 
@@ -399,7 +329,7 @@ export const mobilityService = {
             if (new_reporting_manager_id) {
               await conn.execute(
                 `UPDATE employees SET reporting_manager_id = ? WHERE id = ?`,
-                [new_reporting_manager_id, employee_id],
+                [new_reporting_manager_id, employee_id]
               );
               void recordManagerChange({
                 employeeId: String(employee_id),
@@ -424,23 +354,20 @@ export const mobilityService = {
                 randomUUID(),
                 employee_id,
                 effectiveDateStr,
-                from_value, // from_cost_centre_id
-                to_value, // to_cost_centre_id
-                empSnap.reporting_manager_id ?? null, // from_manager_id (old)
-                new_reporting_manager_id ??
-                  empSnap.reporting_manager_id ??
-                  null, // to_manager_id
+                from_value,                                                                    // from_cost_centre_id
+                to_value,                                                                      // to_cost_centre_id
+                empSnap.reporting_manager_id ?? null,                                          // from_manager_id (old)
+                new_reporting_manager_id ?? empSnap.reporting_manager_id ?? null,              // to_manager_id
                 empSnap.branch_id ?? null,
                 empSnap.branch_id ?? null,
                 empSnap.department_id ?? null,
                 empSnap.department_id ?? null,
                 empSnap.process_id ?? null,
                 empSnap.process_id ?? null,
-                (record as unknown as { reason?: string | null }).reason ??
-                  null,
+                (record as unknown as { reason?: string | null }).reason ?? null,
                 data.approved_by,
                 data.approved_by,
-              ],
+              ]
             );
           }
         }
@@ -455,25 +382,11 @@ export const mobilityService = {
             effectiveDateStr,
             `Transfer: ${from_value} → ${to_value}${isDue ? "" : ` (effective ${effectiveDateStr})`}`,
             data.approved_by,
-            JSON.stringify({
-              transfer_id: id,
-              transfer_type,
-              from_value,
-              to_value,
-              effective_date: effectiveDateStr,
-              applied: isDue,
-            }),
-          ],
+            JSON.stringify({ transfer_id: id, transfer_type, from_value, to_value, effective_date: effectiveDateStr, applied: isDue }),
+          ]
         );
 
-        approvedContext = {
-          employee_id,
-          transfer_type,
-          from_value,
-          to_value,
-          effectiveDateStr,
-          isDue,
-        };
+        approvedContext = { employee_id, transfer_type, from_value, to_value, effectiveDateStr, isDue };
       }
 
       await conn.commit();
@@ -507,7 +420,7 @@ export const mobilityService = {
     // Re-fetch updated record
     const [updated] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM transfer_record WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     return (updated as RowDataPacket[])[0] ?? null;
   },
@@ -519,7 +432,7 @@ export const mobilityService = {
     employee_id: string,
     transfer_type: string,
     to_value: string,
-    transfer_id: string,
+    transfer_id: string
   ): Promise<void> {
     await applyTransferOn(db, employee_id, transfer_type, to_value);
 
@@ -528,7 +441,7 @@ export const mobilityService = {
     // other path it is the claim itself.
     await db.execute(
       `UPDATE transfer_record SET applied_at = NOW() WHERE id = ?`,
-      [transfer_id],
+      [transfer_id]
     );
   },
 
@@ -557,7 +470,7 @@ export const mobilityService = {
          FROM transfer_record
         WHERE status = 'completed'
           AND applied_at IS NULL
-          AND effective_date <= CURDATE()`,
+          AND effective_date <= CURDATE()`
     );
     let applied = 0;
     let failed = 0;
@@ -575,12 +488,10 @@ export const mobilityService = {
       // every subsequent run.
       const [claim] = await db.execute<import("mysql2").ResultSetHeader>(
         `UPDATE transfer_record SET applied_at = NOW() WHERE id = ? AND applied_at IS NULL`,
-        [transferId],
+        [transferId]
       );
       if (claim.affectedRows !== 1) {
-        console.warn(
-          `[mobility] deferred transfer ${transferId} already claimed by another run — skipping`,
-        );
+        console.warn(`[mobility] deferred transfer ${transferId} already claimed by another run — skipping`);
         continue;
       }
 
@@ -589,17 +500,15 @@ export const mobilityService = {
           String(row.employee_id),
           String(row.transfer_type),
           String(row.to_value),
-          transferId,
+          transferId
         );
         // For cost_centre: apply RM cascade and write job history (same as the inline path in updateTransfer)
         if (String(row.transfer_type) === "cost_centre") {
-          const new_rm = row.new_reporting_manager_id
-            ? String(row.new_reporting_manager_id)
-            : null;
+          const new_rm = row.new_reporting_manager_id ? String(row.new_reporting_manager_id) : null;
           if (new_rm) {
             await db.execute(
               `UPDATE employees SET reporting_manager_id = ? WHERE id = ?`,
-              [new_rm, String(row.employee_id)],
+              [new_rm, String(row.employee_id)]
             );
             void recordManagerChange({
               employeeId: String(row.employee_id),
@@ -611,7 +520,7 @@ export const mobilityService = {
           // Read current employee snapshot for branch/dept/process context
           const [empRows] = await db.execute<RowDataPacket[]>(
             `SELECT branch_id, department_id, process_id, reporting_manager_id FROM employees WHERE id = ?`,
-            [String(row.employee_id)],
+            [String(row.employee_id)]
           );
           const empSnap = (empRows as RowDataPacket[])[0] ?? {};
           const effectiveDateStr = String(row.effective_date).slice(0, 10);
@@ -642,7 +551,7 @@ export const mobilityService = {
               row.reason ? String(row.reason) : null,
               null, // no approver context in deferred worker
               null,
-            ],
+            ]
           );
         }
         applied++;
@@ -650,30 +559,20 @@ export const mobilityService = {
         // Release the claim so a later run retries, rather than leaving the transfer
         // permanently marked applied when the employee was never actually moved.
         failed++;
-        await db
-          .execute(
-            `UPDATE transfer_record SET applied_at = NULL WHERE id = ?`,
-            [transferId],
-          )
-          .catch((releaseErr) => {
-            console.error(
-              `[mobility] could not release claim on ${transferId} — it will not retry:`,
-              releaseErr,
-            );
-          });
-        console.error(
-          `[mobility] Failed to apply deferred transfer ${transferId}:`,
-          err,
-        );
+        await db.execute(
+          `UPDATE transfer_record SET applied_at = NULL WHERE id = ?`,
+          [transferId]
+        ).catch((releaseErr) => {
+          console.error(`[mobility] could not release claim on ${transferId} — it will not retry:`, releaseErr);
+        });
+        console.error(`[mobility] Failed to apply deferred transfer ${transferId}:`, err);
       }
     }
 
     if (failed > 0) {
       // Surfaced, not swallowed: a deferred transfer that silently never lands is a person
       // whose branch, manager and payroll scope are wrong for as long as nobody notices.
-      console.error(
-        `[mobility] applyPendingTransfers: ${applied} applied, ${failed} FAILED and will be retried`,
-      );
+      console.error(`[mobility] applyPendingTransfers: ${applied} applied, ${failed} FAILED and will be retried`);
     }
     return applied;
   },
@@ -696,7 +595,7 @@ export const mobilityService = {
        LEFT JOIN employees e ON e.id = p.employee_id
        ${where}
        ORDER BY p.created_at DESC LIMIT 200`,
-      params,
+      params
     );
     return rows as RowDataPacket[];
   },
@@ -719,11 +618,11 @@ export const mobilityService = {
         data.salary_revision ?? null,
         data.reason ?? null,
         data.initiated_by,
-      ],
+      ]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM promotion_record WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     return (rows as RowDataPacket[])[0];
   },
@@ -735,11 +634,11 @@ export const mobilityService = {
       // Rejection is a simple status update — no downstream writes, no transaction needed.
       await db.execute(
         `UPDATE promotion_record SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?`,
-        [finalStatus, data.approved_by, id],
+        [finalStatus, data.approved_by, id]
       );
       const [updated] = await db.execute<RowDataPacket[]>(
         "SELECT * FROM promotion_record WHERE id = ? LIMIT 1",
-        [id],
+        [id]
       );
       return (updated as RowDataPacket[])[0] ?? null;
     }
@@ -753,12 +652,12 @@ export const mobilityService = {
 
       await conn.execute(
         `UPDATE promotion_record SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?`,
-        [finalStatus, data.approved_by, id],
+        [finalStatus, data.approved_by, id]
       );
 
       const [rows] = await conn.execute<RowDataPacket[]>(
         "SELECT * FROM promotion_record WHERE id = ? LIMIT 1",
-        [id],
+        [id]
       );
       const record = (rows as RowDataPacket[])[0] ?? null;
       if (!record) {
@@ -766,30 +665,28 @@ export const mobilityService = {
         return null;
       }
 
-      const { employee_id, from_designation, to_designation, salary_revision } =
-        record as {
-          employee_id: string;
-          from_designation: string | null;
-          to_designation: string;
-          salary_revision: number | null;
-        };
+      const { employee_id, from_designation, to_designation, salary_revision } = record as {
+        employee_id: string;
+        from_designation: string | null;
+        to_designation: string;
+        salary_revision: number | null;
+      };
 
       const [desigRows] = await conn.execute<RowDataPacket[]>(
         "SELECT id FROM designation_master WHERE id = ? OR designation_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
-        [to_designation, to_designation],
+        [to_designation, to_designation]
       );
-      const newDesigId = (desigRows as RowDataPacket[])[0]?.id as
-        string | undefined;
+      const newDesigId = (desigRows as RowDataPacket[])[0]?.id as string | undefined;
       if (!newDesigId) {
         await conn.execute("ROLLBACK");
         (conn as any).release?.();
         throw new Error(
-          `Promotion ${id}: designation '${to_designation}' not found in designation_master`,
+          `Promotion ${id}: designation '${to_designation}' not found in designation_master`
         );
       }
       await conn.execute(
         `UPDATE employees SET designation_id = ? WHERE id = ?`,
-        [newDesigId, employee_id],
+        [newDesigId, employee_id]
       );
 
       if (salary_revision != null && salary_revision > 0) {
@@ -799,10 +696,9 @@ export const mobilityService = {
             WHERE employee_id = ? AND active_status = 1
             ORDER BY effective_from DESC
             LIMIT 1`,
-          [employee_id],
+          [employee_id]
         );
-        const structureId = (currentRows as RowDataPacket[])[0]
-          ?.structure_id as string | undefined;
+        const structureId = (currentRows as RowDataPacket[])[0]?.structure_id as string | undefined;
 
         if (!structureId) {
           // No active salary assignment: roll back the whole promotion so the record
@@ -810,7 +706,7 @@ export const mobilityService = {
           await conn.execute("ROLLBACK");
           throw new Error(
             `Promotion ${id}: employee ${employee_id} has no active salary assignment. ` +
-              `Assign a salary structure before approving a promotion with a salary revision.`,
+            `Assign a salary structure before approving a promotion with a salary revision.`
           );
         }
 
@@ -818,7 +714,7 @@ export const mobilityService = {
           `UPDATE employee_salary_assignment
               SET active_status = 0, effective_to = CURDATE()
             WHERE employee_id = ? AND active_status = 1`,
-          [employee_id],
+          [employee_id]
         );
         await conn.execute(
           `INSERT INTO employee_salary_assignment
@@ -831,7 +727,7 @@ export const mobilityService = {
             salary_revision,
             data.approved_by,
             `Promotion: ${from_designation ?? "–"} → ${to_designation}`,
-          ],
+          ]
         );
       }
 
@@ -844,13 +740,8 @@ export const mobilityService = {
           employee_id,
           `Promotion: ${from_designation ?? "–"} → ${to_designation}`,
           data.approved_by,
-          JSON.stringify({
-            promotion_id: id,
-            from_designation,
-            to_designation,
-            salary_revision,
-          }),
-        ],
+          JSON.stringify({ promotion_id: id, from_designation, to_designation, salary_revision }),
+        ]
       );
 
       await conn.execute("COMMIT");
@@ -872,7 +763,7 @@ export const mobilityService = {
 
     const [updated] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM promotion_record WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     return (updated as RowDataPacket[])[0] ?? null;
   },

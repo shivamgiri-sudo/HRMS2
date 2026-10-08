@@ -41,26 +41,19 @@ function requireRoleArgsFor(source: string, path: string): string[] {
 
 describe("GET /salary-assignments/:employeeId[/history] are branch/process scoped", () => {
   it("both routes chain requireScopedRole after requireRole, using the employeeId param resolver", () => {
-    for (const path of [
-      "/salary-assignments/:employeeId",
-      "/salary-assignments/:employeeId/history",
-    ]) {
+    for (const path of ["/salary-assignments/:employeeId", "/salary-assignments/:employeeId/history"]) {
       const idx = ROUTES.indexOf(`"${path}"`);
       expect(idx, `route ${path} not found`).toBeGreaterThan(-1);
       const window = ROUTES.slice(idx, idx + 400);
       expect(window, `${path} should chain requireScopedRole`).toMatch(
-        /requireScopedRole\(\["hr", "finance", "payroll"\], resolveEmployeeIdParamScope\)/,
+        /requireScopedRole\(\["hr", "finance", "payroll"\], resolveEmployeeIdParamScope\)/
       );
     }
   });
 });
 
 describe("GET /payslip/list/:employeeId, /payslip/history/:employeeId, /payslip/legacy/:employeeId are scoped and exclude ceo", () => {
-  for (const path of [
-    "/payslip/list/:employeeId",
-    "/payslip/history/:employeeId",
-    "/payslip/legacy/:employeeId",
-  ]) {
+  for (const path of ["/payslip/list/:employeeId", "/payslip/history/:employeeId", "/payslip/legacy/:employeeId"]) {
     it(`${path}: requireRole no longer includes ceo`, () => {
       expect(requireRoleArgsFor(ROUTES, path)).not.toContain("ceo");
     });
@@ -68,9 +61,7 @@ describe("GET /payslip/list/:employeeId, /payslip/history/:employeeId, /payslip/
     it(`${path}: chains requireScopedRole with resolveEmployeeIdParamScope`, () => {
       const idx = ROUTES.indexOf(`"${path}"`);
       const window = ROUTES.slice(idx, idx + 500);
-      expect(window).toMatch(
-        /requireScopedRole\(\[[^\]]*\], resolveEmployeeIdParamScope\)/,
-      );
+      expect(window).toMatch(/requireScopedRole\(\[[^\]]*\], resolveEmployeeIdParamScope\)/);
     });
   }
 });
@@ -81,9 +72,7 @@ describe("resolveEmployeeIdParamScope resolves the *target* employee, not the ca
     expect(idx).toBeGreaterThan(-1);
     const body = ROUTES.slice(idx, idx + 500);
     expect(body).toContain("req.params.employeeId");
-    expect(body).toMatch(
-      /SELECT branch_id, process_id, department_id FROM employees WHERE id = \?/,
-    );
+    expect(body).toMatch(/SELECT branch_id, process_id, department_id FROM employees WHERE id = \?/);
     expect(body).toContain("branchId:");
     expect(body).toContain("processId:");
   });
@@ -91,9 +80,7 @@ describe("resolveEmployeeIdParamScope resolves the *target* employee, not the ca
 
 describe("GET /payslip/legacy-detail/:employeeCode/:payMonth excludes ceo and scopes non-self access", () => {
   it("no longer includes ceo in the HR role check", () => {
-    const idx = ROUTES.indexOf(
-      '"/payslip/legacy-detail/:employeeCode/:payMonth"',
-    );
+    const idx = ROUTES.indexOf('"/payslip/legacy-detail/:employeeCode/:payMonth"');
     expect(idx).toBeGreaterThan(-1);
     const body = ROUTES.slice(idx, idx + 1200);
     const match = body.match(/hasAnyRole\(req, \[([^\]]*)\]\)/);
@@ -102,14 +89,10 @@ describe("GET /payslip/legacy-detail/:employeeCode/:payMonth excludes ceo and sc
   });
 
   it("resolves the target employee by employeeCode and calls hasScopedAccess before returning data for a non-self lookup", () => {
-    const idx = ROUTES.indexOf(
-      '"/payslip/legacy-detail/:employeeCode/:payMonth"',
-    );
+    const idx = ROUTES.indexOf('"/payslip/legacy-detail/:employeeCode/:payMonth"');
     const body = ROUTES.slice(idx, idx + 1200);
     expect(body).toContain("isSelf");
-    expect(body).toMatch(
-      /SELECT id, branch_id, process_id, department_id FROM employees WHERE employee_code = \?/,
-    );
+    expect(body).toMatch(/SELECT id, branch_id, process_id, department_id FROM employees WHERE employee_code = \?/);
     expect(body).toContain("await hasScopedAccess(req.authUser!.id,");
   });
 });
@@ -119,13 +102,11 @@ describe("GET /payslip/:runId/:employeeId scopes non-self privileged access", ()
     const idx = ROUTES.indexOf('"/payslip/:runId/:employeeId"');
     expect(idx).toBeGreaterThan(-1);
     const body = ROUTES.slice(idx, idx + 1400);
-    expect(body).toContain(
-      "const isSelf = Boolean(callerEmp && callerEmp.id === employeeId)",
-    );
+    expect(body).toContain("const isSelf = Boolean(callerEmp && callerEmp.id === employeeId)");
     // The exact hasRole(...) call is pinned verbatim by payslip-routes.contract.test.ts;
     // this test only asserts a scope check now also gates the non-self path.
     expect(body).toMatch(
-      /hasRole\(req\.authUser!\.id, "admin", "hr", "finance", "payroll", "payroll_head", "payroll_admin"\)/,
+      /hasRole\(req\.authUser!\.id, "admin", "hr", "finance", "payroll", "payroll_head", "payroll_admin"\)/
     );
     expect(body).toContain("await hasScopedAccess(req.authUser!.id,");
   });
@@ -142,10 +123,7 @@ describe("form16-data routes (payroll.routes.ts and the duplicate in payroll-mor
 
   it("payroll-more.routes.ts (the duplicate implementation) is fixed identically, not left behind", () => {
     const idx = MORE_ROUTES.indexOf('"/form16-data/:runId/:employeeId"');
-    expect(
-      idx,
-      "form16-data route not found in payroll-more.routes.ts",
-    ).toBeGreaterThan(-1);
+    expect(idx, "form16-data route not found in payroll-more.routes.ts").toBeGreaterThan(-1);
     const body = MORE_ROUTES.slice(idx, idx + 1200);
     expect(body).toContain("isSelf");
     expect(body).toContain("await hasScopedAccess(req.authUser!.id,");

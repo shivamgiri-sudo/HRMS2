@@ -7,19 +7,19 @@
 
 export const POSITION_HIERARCHY: Record<string, number> = {
   // Top Management - Level 10 (Cannot be reset by anyone)
-  CEO: 10,
+  "CEO": 10,
   "Managing Director": 10,
-  Director: 10,
+  "Director": 10,
 
   // Senior Management - Level 9
-  VP: 9,
+  "VP": 9,
   "Vice President": 9,
-  CTO: 9,
-  CFO: 9,
-  COO: 9,
+  "CTO": 9,
+  "CFO": 9,
+  "COO": 9,
 
   // Department Heads - Level 8 (Protected from WFM Admin)
-  Admin: 8,
+  "Admin": 8,
   "HR Manager": 8,
   "HR Head": 8,
   "Payroll Manager": 8,
@@ -27,29 +27,29 @@ export const POSITION_HIERARCHY: Record<string, number> = {
 
   // Middle Management - Level 7
   "Senior Manager": 7,
-  Manager: 6,
+  "Manager": 6,
   "Assistant Manager": 5,
 
   // Supervisory - Level 4
   "Team Lead": 4,
-  Supervisor: 4,
+  "Supervisor": 4,
 
   // Senior Staff - Level 3
   "Senior Executive": 3,
   "Senior Associate": 3,
 
   // Staff - Level 2
-  Executive: 2,
-  Associate: 2,
-  Officer: 2,
+  "Executive": 2,
+  "Associate": 2,
+  "Officer": 2,
 
   // Entry Level - Level 1
-  Trainee: 1,
-  Intern: 1,
+  "Trainee": 1,
+  "Intern": 1,
   "Junior Associate": 1,
 
   // Default - Level 0
-  Employee: 0,
+  "Employee": 0,
 };
 
 // WFM Admin can reset passwords for positions at level 6 and below
@@ -94,14 +94,11 @@ export function canResetPassword(
   requesterDesignation: string | null,
   targetDesignation: string | null,
   targetUserId?: string,
-  requesterUserId?: string,
+  requesterUserId?: string
 ): { allowed: boolean; reason?: string } {
   // Cannot reset own password through this mechanism
   if (targetUserId && requesterUserId && targetUserId === requesterUserId) {
-    return {
-      allowed: false,
-      reason: "Cannot reset your own password through admin panel",
-    };
+    return { allowed: false, reason: "Cannot reset your own password through admin panel" };
   }
 
   const targetLevel = getPositionLevel(targetDesignation);
@@ -112,7 +109,7 @@ export function canResetPassword(
     if (targetLevel > SUPER_ADMIN_MAX_LEVEL) {
       return {
         allowed: false,
-        reason: `Cannot reset password for ${targetDesignation || "this position"} (Level ${targetLevel}). Maximum allowed level: ${SUPER_ADMIN_MAX_LEVEL}`,
+        reason: `Cannot reset password for ${targetDesignation || "this position"} (Level ${targetLevel}). Maximum allowed level: ${SUPER_ADMIN_MAX_LEVEL}`
       };
     }
     return { allowed: true };
@@ -123,7 +120,7 @@ export function canResetPassword(
     if (targetLevel > WFM_ADMIN_MAX_LEVEL) {
       return {
         allowed: false,
-        reason: `Cannot reset password for ${targetDesignation || "this position"} (Level ${targetLevel}). WFM Admin can only reset passwords for positions at level ${WFM_ADMIN_MAX_LEVEL} and below`,
+        reason: `Cannot reset password for ${targetDesignation || "this position"} (Level ${targetLevel}). WFM Admin can only reset passwords for positions at level ${WFM_ADMIN_MAX_LEVEL} and below`
       };
     }
     return { allowed: true };
@@ -134,16 +131,13 @@ export function canResetPassword(
     if (targetLevel >= requesterLevel) {
       return {
         allowed: false,
-        reason: "Can only reset passwords for employees in lower positions",
+        reason: "Can only reset passwords for employees in lower positions"
       };
     }
     return { allowed: true };
   }
 
-  return {
-    allowed: false,
-    reason: "Insufficient permissions to reset passwords",
-  };
+  return { allowed: false, reason: "Insufficient permissions to reset passwords" };
 }
 
 /**
@@ -166,10 +160,7 @@ export function generateTemporaryPassword(): string {
 
   for (let index = password.length - 1; index > 0; index -= 1) {
     const swapIndex = randomInt(index + 1);
-    [password[index], password[swapIndex]] = [
-      password[swapIndex],
-      password[index],
-    ];
+    [password[index], password[swapIndex]] = [password[swapIndex], password[index]];
   }
 
   return password.join("");

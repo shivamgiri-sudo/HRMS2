@@ -35,17 +35,12 @@ vi.mock("../src/shared/auditLog.js", () => ({
  */
 vi.mock("../src/modules/payroll/salary-governance.guard.js", () => ({
   assertSalaryAssignmentAllowed: vi.fn().mockResolvedValue({
-    allowed: true,
-    mode: "slab",
-    salarySlabId: "slab-1",
-    salaryProposalId: null,
+    allowed: true, mode: "slab", salarySlabId: "slab-1", salaryProposalId: null,
   }),
 }));
 vi.mock("../src/modules/payroll/payroll-branch-readiness.service.js", () => ({
   payrollBranchReadinessService: {
-    validatePayrollRunCreation: vi
-      .fn()
-      .mockResolvedValue({ blocked: [], ready: [] }),
+    validatePayrollRunCreation: vi.fn().mockResolvedValue({ blocked: [], ready: [] }),
   },
 }));
 import { db } from "../src/db/mysql.js";
@@ -59,53 +54,12 @@ const commit = vi.fn();
 const rollback = vi.fn();
 const release = vi.fn();
 
-const fakeStructure = {
-  id: "str-1",
-  structure_code: "BPO_A",
-  structure_name: "BPO Grade A",
-  basic_pct: 40,
-  hra_pct: 20,
-  active_status: 1,
-};
-const fakeComponent = {
-  id: "cmp-1",
-  component_code: "BASIC",
-  component_name: "Basic Salary",
-  component_type: "earning",
-  taxable: 1,
-  active_status: 1,
-};
-const fakeAssignment = {
-  id: "asgn-1",
-  employee_id: "emp-1",
-  structure_id: "str-1",
-  ctc_annual: 300000,
-  effective_from: "2026-01-01",
-  active_status: 1,
-};
-const fakeRun = {
-  id: "run-1",
-  run_month: "2026-05",
-  status: "draft",
-  total_employees: 0,
-  total_gross: 0,
-  total_net: 0,
-};
-const fakeLine = {
-  id: "line-1",
-  run_id: "run-1",
-  employee_id: "emp-1",
-  employee_code: "MCN001",
-  gross_salary: 25000,
-  net_salary: 22000,
-  status: "draft",
-};
-const fakeAdvance = {
-  id: "adv-1",
-  employee_id: "emp-1",
-  amount: 5000,
-  status: "active",
-};
+const fakeStructure = { id: "str-1", structure_code: "BPO_A", structure_name: "BPO Grade A", basic_pct: 40, hra_pct: 20, active_status: 1 };
+const fakeComponent = { id: "cmp-1", component_code: "BASIC", component_name: "Basic Salary", component_type: "earning", taxable: 1, active_status: 1 };
+const fakeAssignment = { id: "asgn-1", employee_id: "emp-1", structure_id: "str-1", ctc_annual: 300000, effective_from: "2026-01-01", active_status: 1 };
+const fakeRun = { id: "run-1", run_month: "2026-05", status: "draft", total_employees: 0, total_gross: 0, total_net: 0 };
+const fakeLine = { id: "line-1", run_id: "run-1", employee_id: "emp-1", employee_code: "MCN001", gross_salary: 25000, net_salary: 22000, status: "draft" };
+const fakeAdvance = { id: "adv-1", employee_id: "emp-1", amount: 5000, status: "active" };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -115,20 +69,17 @@ beforeEach(() => {
   // 1,140-line run coexisting). GET_LOCK has to report acquired = 1 or the service refuses with
   // "Another request is creating a payroll run" before reaching anything these cases assert.
   // Every other statement keeps the previous default, so no queued response shifts.
-  txExecute
-    .mockReset()
-    .mockImplementation(async (sql?: unknown, params?: unknown) => {
-      const s = String(sql ?? "");
-      if (/GET_LOCK/i.test(s)) return [[{ acquired: 1 }], []];
-      if (/RELEASE_LOCK/i.test(s)) return [[{ released: 1 }], []];
-      // createRun's duplicate check and INSERT moved onto this connection when the named lock
-      // was added, so they must still consume the responses their tests queue on the pool stub.
-      // Scoped to salary_prep_run: the salary-assignment tests below run their own writes on
-      // this connection and rely on the affectedRows default, which delegating would break.
-      if (/salary_prep_run/i.test(s))
-        return exec(sql as never, params as never);
-      return [{ affectedRows: 1 }, []];
-    });
+  txExecute.mockReset().mockImplementation(async (sql?: unknown, params?: unknown) => {
+    const s = String(sql ?? "");
+    if (/GET_LOCK/i.test(s)) return [[{ acquired: 1 }], []];
+    if (/RELEASE_LOCK/i.test(s)) return [[{ released: 1 }], []];
+    // createRun's duplicate check and INSERT moved onto this connection when the named lock
+    // was added, so they must still consume the responses their tests queue on the pool stub.
+    // Scoped to salary_prep_run: the salary-assignment tests below run their own writes on
+    // this connection and rely on the affectedRows default, which delegating would break.
+    if (/salary_prep_run/i.test(s)) return exec(sql as never, params as never);
+    return [{ affectedRows: 1 }, []];
+  });
   beginTransaction.mockReset().mockResolvedValue(undefined);
   commit.mockReset().mockResolvedValue(undefined);
   rollback.mockReset().mockResolvedValue(undefined);
@@ -155,27 +106,17 @@ describe("payrollService.listStructures", () => {
 describe("payrollService.createStructure", () => {
   it("throws on duplicate code", async () => {
     exec.mockResolvedValueOnce([[fakeStructure], []]);
-    await expect(
-      payrollService.createStructure(
-        { structureCode: "BPO_A", structureName: "X" },
-        "user-1",
-      ),
-    ).rejects.toThrow("Structure code already exists");
+    await expect(payrollService.createStructure({ structureCode: "BPO_A", structureName: "X" }, "user-1"))
+      .rejects.toThrow("Structure code already exists");
   });
 
   it("creates structure with basicPct and hraPct", async () => {
     exec.mockResolvedValueOnce([[], []]);
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     exec.mockResolvedValueOnce([[fakeStructure], []]);
-    const r = await payrollService.createStructure(
-      {
-        structureCode: "BPO_A",
-        structureName: "BPO Grade A",
-        basicPct: 40,
-        hraPct: 20,
-      },
-      "user-1",
-    );
+    const r = await payrollService.createStructure({
+      structureCode: "BPO_A", structureName: "BPO Grade A", basicPct: 40, hraPct: 20,
+    }, "user-1");
     expect(r.structure_code).toBe("BPO_A");
     expect(r.basic_pct).toBe(40);
     expect(r.hra_pct).toBe(20);
@@ -185,10 +126,7 @@ describe("payrollService.createStructure", () => {
     exec.mockResolvedValueOnce([[], []]);
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     exec.mockResolvedValueOnce([[fakeStructure], []]);
-    const r = await payrollService.createStructure(
-      { structureCode: "BPO_A", structureName: "BPO Grade A" },
-      "user-1",
-    );
+    const r = await payrollService.createStructure({ structureCode: "BPO_A", structureName: "BPO Grade A" }, "user-1");
     // verify INSERT was called with defaults
     const insertSql = exec.mock.calls[1][0] as string;
     expect(insertSql).toContain("basic_pct");
@@ -203,35 +141,27 @@ describe("payrollService.bulkAssignSalary", () => {
   const fakeEmp2 = { id: "emp-2", employee_code: "MCN002" };
 
   it("assigns salary to all matching unassigned employees", async () => {
-    exec.mockResolvedValueOnce([[fakeStructure], []]); // getStructure
+    exec.mockResolvedValueOnce([[fakeStructure], []]);       // getStructure
     exec.mockResolvedValueOnce([[fakeEmp1, fakeEmp2], []]); // find employees
-    exec.mockResolvedValueOnce([{ affectedRows: 2 }, []]); // deactivate old
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT emp-1
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT emp-2
-    const r = await payrollService.bulkAssignSalary(
-      {
-        structureId: "str-1",
-        ctcAnnual: 300000,
-        effectiveFrom: "2026-01-01",
-      },
-      "user-1",
-    );
+    exec.mockResolvedValueOnce([{ affectedRows: 2 }, []]);  // deactivate old
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);  // INSERT emp-1
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);  // INSERT emp-2
+    const r = await payrollService.bulkAssignSalary({
+      structureId: "str-1",
+      ctcAnnual: 300000,
+      effectiveFrom: "2026-01-01",
+    }, "user-1");
     expect(r.assigned).toBe(2);
     expect(r.skipped).toBe(0);
   });
 
   it("throws when structure not found", async () => {
     exec.mockResolvedValueOnce([[], []]);
-    await expect(
-      payrollService.bulkAssignSalary(
-        {
-          structureId: "nope",
-          ctcAnnual: 300000,
-          effectiveFrom: "2026-01-01",
-        },
-        "user-1",
-      ),
-    ).rejects.toThrow("Structure not found");
+    await expect(payrollService.bulkAssignSalary({
+      structureId: "nope",
+      ctcAnnual: 300000,
+      effectiveFrom: "2026-01-01",
+    }, "user-1")).rejects.toThrow("Structure not found");
   });
 
   it("filters by processId when provided", async () => {
@@ -239,15 +169,9 @@ describe("payrollService.bulkAssignSalary", () => {
     exec.mockResolvedValueOnce([[fakeEmp1], []]);
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    await payrollService.bulkAssignSalary(
-      {
-        structureId: "str-1",
-        ctcAnnual: 300000,
-        effectiveFrom: "2026-01-01",
-        processId: "proc-1",
-      },
-      "user-1",
-    );
+    await payrollService.bulkAssignSalary({
+      structureId: "str-1", ctcAnnual: 300000, effectiveFrom: "2026-01-01", processId: "proc-1",
+    }, "user-1");
     const empQuery = exec.mock.calls[1][0] as string;
     expect(empQuery).toContain("process_id");
   });
@@ -273,15 +197,12 @@ describe("payrollService.assignSalary", () => {
     // re-fetch, so the assignment came back as a salary structure and ctc_annual read
     // undefined.
     exec.mockResolvedValueOnce([[fakeAssignment], []]);
-    const r = await payrollService.assignSalary(
-      {
-        employeeId: "emp-1",
-        structureId: "str-1",
-        ctcAnnual: 300000,
-        effectiveFrom: "2026-01-01",
-      },
-      "user-1",
-    );
+    const r = await payrollService.assignSalary({
+      employeeId: "emp-1",
+      structureId: "str-1",
+      ctcAnnual: 300000,
+      effectiveFrom: "2026-01-01",
+    }, "user-1");
     expect(r.ctc_annual).toBe(300000);
     expect(beginTransaction).toHaveBeenCalledOnce();
     expect(commit).toHaveBeenCalledOnce();
@@ -291,23 +212,13 @@ describe("payrollService.assignSalary", () => {
     // Exactly two statements inside the transaction: close the superseded row, insert the
     // new one.
     expect(txExecute).toHaveBeenCalledTimes(2);
-    expect(
-      txExecute.mock.calls.some(([sql]) =>
-        /UPDATE employee_salary_assignment/i.test(sql),
-      ),
-    ).toBe(true);
-    expect(
-      txExecute.mock.calls.some(([sql]) =>
-        /INSERT INTO employee_salary_assignment/i.test(sql),
-      ),
-    ).toBe(true);
+    expect(txExecute.mock.calls.some(([sql]) => /UPDATE employee_salary_assignment/i.test(sql))).toBe(true);
+    expect(txExecute.mock.calls.some(([sql]) => /INSERT INTO employee_salary_assignment/i.test(sql))).toBe(true);
 
     // The superseded row's validity window is closed, not just its active flag — an
     // assignment with no effective_to cannot answer "what was this employee's CTC on
     // this date", which reproducing an old run or an audit needs.
-    const [deactivateSql] = txExecute.mock.calls.find(([sql]) =>
-      /UPDATE employee_salary_assignment/i.test(sql),
-    )!;
+    const [deactivateSql] = txExecute.mock.calls.find(([sql]) => /UPDATE employee_salary_assignment/i.test(sql))!;
     expect(String(deactivateSql)).toMatch(/effective_to\s*=\s*COALESCE/i);
   });
 
@@ -325,9 +236,7 @@ describe("payrollService.assignSalary", () => {
     //
     // Asserted against the source so the statement cannot quietly come back.
     const source = readFileSync(
-      resolve(process.cwd(), "src/modules/payroll/payroll.service.ts"),
-      "utf8",
-    );
+      resolve(process.cwd(), "src/modules/payroll/payroll.service.ts"), "utf8");
     expect(source).not.toMatch(/UPDATE employees SET ctc/i);
   });
 });
@@ -351,9 +260,8 @@ describe("payrollService.getEmployeeSalary", () => {
 describe("payrollService.createRun", () => {
   it("throws when run already exists for that month+branch+process", async () => {
     exec.mockResolvedValueOnce([[fakeRun], []]);
-    await expect(
-      payrollService.createRun({ runMonth: "2026-05" }, "user-1"),
-    ).rejects.toThrow("Payroll run already exists");
+    await expect(payrollService.createRun({ runMonth: "2026-05" }, "user-1"))
+      .rejects.toThrow("Payroll run already exists");
   });
 
   it("creates run", async () => {
@@ -374,9 +282,7 @@ describe("payrollService.getRun", () => {
   });
   it("throws when not found", async () => {
     exec.mockResolvedValueOnce([[], []]);
-    await expect(payrollService.getRun("nope")).rejects.toThrow(
-      "Payroll run not found",
-    );
+    await expect(payrollService.getRun("nope")).rejects.toThrow("Payroll run not found");
   });
 });
 
@@ -385,26 +291,20 @@ describe("payrollService.updateRunStatus", () => {
     exec.mockResolvedValueOnce([[fakeRun], []]); // getRun (status: draft)
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
     exec.mockResolvedValueOnce([[{ ...fakeRun, status: "calculating" }], []]); // re-fetch
-    const r = await payrollService.updateRunStatus(
-      "run-1",
-      { status: "calculating" },
-      "user-1",
-    );
+    const r = await payrollService.updateRunStatus("run-1", { status: "calculating" }, "user-1");
     expect(r.status).toBe("calculating");
   });
 
   it("throws when disbursed run tries to change status", async () => {
     exec.mockResolvedValueOnce([[{ ...fakeRun, status: "disbursed" }], []]);
-    await expect(
-      payrollService.updateRunStatus("run-1", { status: "locked" }, "user-1"),
-    ).rejects.toThrow("terminal");
+    await expect(payrollService.updateRunStatus("run-1", { status: "locked" }, "user-1"))
+      .rejects.toThrow("terminal");
   });
 
   it("rejects invalid transition (draft → approved skip)", async () => {
     exec.mockResolvedValueOnce([[fakeRun], []]); // getRun (status: draft)
-    await expect(
-      payrollService.updateRunStatus("run-1", { status: "approved" }, "user-1"),
-    ).rejects.toThrow("not allowed");
+    await expect(payrollService.updateRunStatus("run-1", { status: "approved" }, "user-1"))
+      .rejects.toThrow("not allowed");
   });
 });
 
@@ -440,27 +340,20 @@ describe("payrollService.updateLine", () => {
     exec.mockResolvedValueOnce([[{ status: "draft" }], []]); // run status check
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
     exec.mockResolvedValueOnce([[{ ...fakeLine, lwp_days: 2 }], []]); // re-fetch
-    const r = await payrollService.updateLine(
-      "line-1",
-      { lwpDays: 2 },
-      "user-1",
-    );
+    const r = await payrollService.updateLine("line-1", { lwpDays: 2 }, "user-1");
     expect(r.lwp_days).toBe(2);
   });
 
   it("throws when line not found", async () => {
     exec.mockResolvedValueOnce([[], []]);
-    await expect(
-      payrollService.updateLine("nope", {}, "user-1"),
-    ).rejects.toThrow("Prep line not found");
+    await expect(payrollService.updateLine("nope", {}, "user-1")).rejects.toThrow("Prep line not found");
   });
 
   it("throws when run is not editable", async () => {
     exec.mockResolvedValueOnce([[fakeLine], []]); // getLine
     exec.mockResolvedValueOnce([[{ status: "locked" }], []]); // run status = locked
-    await expect(
-      payrollService.updateLine("line-1", { lwpDays: 2 }, "user-1"),
-    ).rejects.toThrow("Cannot edit line");
+    await expect(payrollService.updateLine("line-1", { lwpDays: 2 }, "user-1"))
+      .rejects.toThrow('Cannot edit line');
   });
 });
 
@@ -470,15 +363,9 @@ describe("payrollService.createAdvance", () => {
   it("creates advance", async () => {
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     exec.mockResolvedValueOnce([[fakeAdvance], []]);
-    const r = await payrollService.createAdvance(
-      {
-        employeeId: "emp-1",
-        amount: 5000,
-        advanceDate: "2026-05-01",
-        recoveryMonths: 1,
-      },
-      "user-1",
-    );
+    const r = await payrollService.createAdvance({
+      employeeId: "emp-1", amount: 5000, advanceDate: "2026-05-01", recoveryMonths: 1,
+    }, "user-1");
     expect(r.amount).toBe(5000);
   });
 });
@@ -495,13 +382,10 @@ describe("payrollService.listAdvances", () => {
 
 describe("payrollService.getStatutoryConfig", () => {
   it("returns config as key-value map", async () => {
-    exec.mockResolvedValueOnce([
-      [
-        { config_key: "PF_EMPLOYEE_PCT", config_value: 12 },
-        { config_key: "ESIC_WAGE_LIMIT", config_value: 21000 },
-      ],
-      [],
-    ]);
+    exec.mockResolvedValueOnce([[
+      { config_key: "PF_EMPLOYEE_PCT", config_value: 12 },
+      { config_key: "ESIC_WAGE_LIMIT", config_value: 21000 },
+    ], []]);
     const r = await payrollService.getStatutoryConfig();
     expect(r["PF_EMPLOYEE_PCT"]).toBe(12);
     expect(r["ESIC_WAGE_LIMIT"]).toBe(21000);
@@ -531,8 +415,8 @@ const baseParams = {
 describe("payrollService.calculateNetSalary", () => {
   it("returns salary breakdown with Basic, HRA, Special Allowance", () => {
     const result = payrollService.calculateNetSalary(baseParams);
-    expect(result.basic).toBe(10000); // 40% of 25000
-    expect(result.hra).toBe(5000); // 20% of 25000
+    expect(result.basic).toBe(10000);          // 40% of 25000
+    expect(result.hra).toBe(5000);             // 20% of 25000
     expect(result.special_allowance).toBe(10000); // 25000 - 10000 - 5000
     expect(result.gross_salary).toBe(25000);
   });
@@ -568,10 +452,7 @@ describe("payrollService.calculateNetSalary", () => {
   it("calculates gratuity at the configured percentage of Basic", () => {
     // Basic = 10000, gratuity = 4.81% of 10000 = 481.
     // gratuityPct is passed explicitly because there is no longer a default — see below.
-    const result = payrollService.calculateNetSalary({
-      ...baseParams,
-      gratuityPct: 4.81,
-    });
+    const result = payrollService.calculateNetSalary({ ...baseParams, gratuityPct: 4.81 });
     expect(result.gratuity).toBeCloseTo(481, 0);
   });
 
@@ -587,65 +468,38 @@ describe("payrollService.calculateNetSalary", () => {
 
   it("applies LWP deduction proportionally across all components", () => {
     // 2 LWP out of 26 days → earn 24/26 of each component
-    const result = payrollService.calculateNetSalary({
-      ...baseParams,
-      grossMonthlyCTC: 26000,
-      lwpDays: 2,
-    });
+    const result = payrollService.calculateNetSalary({ ...baseParams, grossMonthlyCTC: 26000, lwpDays: 2 });
     const ratio = 24 / 26;
     expect(result.basic).toBeCloseTo(Math.round(10400 * ratio * 100) / 100, 0);
-    expect(result.gross_salary).toBeCloseTo(
-      Math.round(26000 * ratio * 100) / 100,
-      0,
-    );
+    expect(result.gross_salary).toBeCloseTo(Math.round(26000 * ratio * 100) / 100, 0);
   });
 
   it("applies ESIC on gross when gross <= esicWageLimit", () => {
     // gross = 20000 <= 21000 → ESIC employee = 0.75% of 20000 = 150
-    const result = payrollService.calculateNetSalary({
-      ...baseParams,
-      grossMonthlyCTC: 20000,
-    });
+    const result = payrollService.calculateNetSalary({ ...baseParams, grossMonthlyCTC: 20000 });
     expect(result.esic_employee).toBeCloseTo(150, 1);
-    expect(result.esic_employer).toBeCloseTo(
-      Math.round(20000 * 0.0325 * 100) / 100,
-      1,
-    );
+    expect(result.esic_employer).toBeCloseTo(Math.round(20000 * 0.0325 * 100) / 100, 1);
   });
 
   it("skips ESIC when gross > esicWageLimit", () => {
-    const result = payrollService.calculateNetSalary({
-      ...baseParams,
-      grossMonthlyCTC: 30000,
-    });
+    const result = payrollService.calculateNetSalary({ ...baseParams, grossMonthlyCTC: 30000 });
     expect(result.esic_employee).toBe(0);
     expect(result.esic_employer).toBe(0);
   });
 
   it("net_salary = gross - employee deductions only (PF emp + ESIC emp + PT + TDS)", () => {
     const result = payrollService.calculateNetSalary(baseParams);
-    const expectedNet =
-      Math.round(
-        (result.gross_salary -
-          result.pf_employee -
-          result.esic_employee -
-          result.professional_tax -
-          result.tds) *
-          100,
-      ) / 100;
+    const expectedNet = Math.round(
+      (result.gross_salary - result.pf_employee - result.esic_employee - result.professional_tax - result.tds) * 100
+    ) / 100;
     expect(result.net_salary).toBeCloseTo(expectedNet, 1);
   });
 
   it("full CTC = gross + employer PF + employer ESIC + gratuity", () => {
     const result = payrollService.calculateNetSalary(baseParams);
-    const expectedCTC =
-      Math.round(
-        (result.gross_salary +
-          result.pf_employer +
-          result.esic_employer +
-          result.gratuity) *
-          100,
-      ) / 100;
+    const expectedCTC = Math.round(
+      (result.gross_salary + result.pf_employer + result.esic_employer + result.gratuity) * 100
+    ) / 100;
     expect(result.ctc_monthly).toBeCloseTo(expectedCTC, 0);
   });
 
@@ -667,10 +521,7 @@ describe("payrollService.calculateNetSalary", () => {
       ...baseParams,
       allowances: [{ name: "Incentive", amount: 10000 }],
     });
-    expect(withAllowances.pf_employee).toBeCloseTo(
-      withoutAllowances.pf_employee,
-      1,
-    );
+    expect(withAllowances.pf_employee).toBeCloseTo(withoutAllowances.pf_employee, 1);
   });
 
   it("ESIC eligibility rechecked after adding allowances — skips when total gross > esicWageLimit", () => {

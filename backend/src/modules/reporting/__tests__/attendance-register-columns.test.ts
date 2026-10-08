@@ -12,11 +12,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  buildDayColumnLabel,
-  daysInMonth,
-  withDayColumnLabels,
-} from "../attendance-register-columns.js";
+import { buildDayColumnLabel, daysInMonth, withDayColumnLabels } from "../attendance-register-columns.js";
 
 type Col = { key: string; label: string };
 
@@ -99,9 +95,7 @@ describe("withDayColumnLabels", () => {
     const july = withDayColumnLabels(fullColumns(), "2026-07");
     const february = withDayColumnLabels(fullColumns(), "2025-02");
 
-    expect(byKey(july, "day_1")?.label).not.toBe(
-      byKey(february, "day_1")?.label,
-    );
+    expect(byKey(july, "day_1")?.label).not.toBe(byKey(february, "day_1")?.label);
     expect(july.map((c) => c.label)).not.toEqual(february.map((c) => c.label));
   });
 
@@ -113,7 +107,7 @@ describe("withDayColumnLabels", () => {
       for (const base of baseColumns) {
         expect(byKey(result, base.key)?.label).toBe(base.label);
       }
-    },
+    }
   );
 
   it.each([[undefined], [""], ["2026"]])(
@@ -123,7 +117,7 @@ describe("withDayColumnLabels", () => {
       const result = withDayColumnLabels(input, month as string | undefined);
 
       expect(result).toEqual(input);
-    },
+    }
   );
 });
 

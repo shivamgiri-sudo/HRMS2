@@ -19,16 +19,12 @@ const CANDIDATE = "11111111-2222-3333-4444-555555555555";
 const dbExecute = vi.fn(async (sql: string) => {
   const s = String(sql);
   if (s.includes("ats_onboarding_bridge")) {
-    return [
-      [
-        {
-          candidate_id: CANDIDATE,
-          onboarding_token_expires_at: "2099-01-01T00:00:00.000Z",
-          full_name: "TEST CANDIDATE",
-          profile_status: "in_progress",
-        },
-      ],
-    ];
+    return [[{
+      candidate_id: CANDIDATE,
+      onboarding_token_expires_at: "2099-01-01T00:00:00.000Z",
+      full_name: "TEST CANDIDATE",
+      profile_status: "in_progress",
+    }]];
   }
   if (s.includes("candidate_onboarding_document")) return [state.docs ?? []];
   return [[]];
@@ -45,9 +41,7 @@ beforeEach(() => {
 describe("submitProfile — mandatory Live Selfie gate", () => {
   it("rejects submission when no Live Selfie document exists", async () => {
     state.docs = [];
-    await expect(
-      submitProfile("tok", { father_name: "X" }),
-    ).rejects.toMatchObject({
+    await expect(submitProfile("tok", { father_name: "X" })).rejects.toMatchObject({
       statusCode: 400,
       code: "MISSING_REQUIRED_DOCUMENTS",
     });
@@ -61,15 +55,8 @@ describe("submitProfile — mandatory Live Selfie gate", () => {
   });
 
   it("succeeds once a Live Selfie document exists", async () => {
-    state.docs = [
-      {
-        doc_type: "Live Selfie",
-        doc_name: "Live Selfie (Identity Verification)",
-      },
-    ];
-    await expect(
-      submitProfile("tok", { father_name: "X" }),
-    ).resolves.toMatchObject({
+    state.docs = [{ doc_type: "Live Selfie", doc_name: "Live Selfie (Identity Verification)" }];
+    await expect(submitProfile("tok", { father_name: "X" })).resolves.toMatchObject({
       candidateId: CANDIDATE,
     });
   });
@@ -79,13 +66,9 @@ describe("submitProfile — mandatory Live Selfie gate", () => {
     // /candidate_onboarding_profile unconditionally. Confirm a rejected
     // submission makes no such write.
     state.docs = [];
-    await expect(
-      submitProfile("tok", { father_name: "X" }),
-    ).rejects.toBeTruthy();
-    const wroteProfile = dbExecute.mock.calls.some(
-      ([sql]) =>
-        String(sql).includes("UPDATE ats_candidate SET") ||
-        String(sql).includes("INSERT INTO candidate_onboarding_profile"),
+    await expect(submitProfile("tok", { father_name: "X" })).rejects.toBeTruthy();
+    const wroteProfile = dbExecute.mock.calls.some(([sql]) =>
+      String(sql).includes("UPDATE ats_candidate SET") || String(sql).includes("INSERT INTO candidate_onboarding_profile"),
     );
     expect(wroteProfile).toBe(false);
   });

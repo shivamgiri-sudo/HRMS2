@@ -8,46 +8,28 @@
 // Patterns for sensitive data that should be redacted
 const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   // JWT tokens (header.payload.signature format)
-  {
-    pattern: /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
-    replacement: "[REDACTED_JWT]",
-  },
+  { pattern: /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, replacement: "[REDACTED_JWT]" },
 
   // Bearer token in Authorization header
   { pattern: /Bearer\s+[A-Za-z0-9._-]+/gi, replacement: "Bearer [REDACTED]" },
 
   // Refresh tokens (UUIDs or similar)
-  {
-    pattern: /"refreshToken"\s*:\s*"[^"]+"/gi,
-    replacement: '"refreshToken": "[REDACTED]"',
-  },
+  { pattern: /"refreshToken"\s*:\s*"[^"]+"/gi, replacement: '"refreshToken": "[REDACTED]"' },
 
   // Access tokens
-  {
-    pattern: /"accessToken"\s*:\s*"[^"]+"/gi,
-    replacement: '"accessToken": "[REDACTED]"',
-  },
+  { pattern: /"accessToken"\s*:\s*"[^"]+"/gi, replacement: '"accessToken": "[REDACTED]"' },
 
   // OTP codes (6 digits)
   { pattern: /"otp"\s*:\s*"\d{6}"/gi, replacement: '"otp": "[REDACTED]"' },
 
   // Passwords
-  {
-    pattern: /"password"\s*:\s*"[^"]+"/gi,
-    replacement: '"password": "[REDACTED]"',
-  },
+  { pattern: /"password"\s*:\s*"[^"]+"/gi, replacement: '"password": "[REDACTED]"' },
 
   // API keys
-  {
-    pattern: /"(api[_-]?key|apiKey)"\s*:\s*"[^"]+"/gi,
-    replacement: '"$1": "[REDACTED]"',
-  },
+  { pattern: /"(api[_-]?key|apiKey)"\s*:\s*"[^"]+"/gi, replacement: '"$1": "[REDACTED]"' },
 
   // Secret keys
-  {
-    pattern: /"(secret[_-]?key|secretKey|client[_-]?secret)"\s*:\s*"[^"]+"/gi,
-    replacement: '"$1": "[REDACTED]"',
-  },
+  { pattern: /"(secret[_-]?key|secretKey|client[_-]?secret)"\s*:\s*"[^"]+"/gi, replacement: '"$1": "[REDACTED]"' },
 
   // PAN numbers (Indian format: ABCDE1234F)
   { pattern: /[A-Z]{5}\d{4}[A-Z]/g, replacement: "[REDACTED_PAN]" },
@@ -99,11 +81,7 @@ export function redactObject<T extends Record<string, unknown>>(obj: T): T {
     const normalizedKey = key.toLowerCase().replace(/[-_]/g, "");
     if (sensitiveKeys.has(normalizedKey)) {
       result[key] = "[REDACTED]";
-    } else if (
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value)
-    ) {
+    } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
       result[key] = redactObject(value as Record<string, unknown>);
     } else {
       result[key] = value;
@@ -118,7 +96,7 @@ export function redactObject<T extends Record<string, unknown>>(obj: T): T {
  * Wraps a morgan token function to redact sensitive data.
  */
 export function sanitizeMorganToken(
-  tokenFn: (req: unknown, res: unknown) => string | undefined,
+  tokenFn: (req: unknown, res: unknown) => string | undefined
 ): (req: unknown, res: unknown) => string | undefined {
   return (req, res) => {
     const value = tokenFn(req, res);

@@ -1,10 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const routes = readFileSync(
-  new URL("../dashboard.routes.ts", import.meta.url),
-  "utf8",
-);
+const routes = readFileSync(new URL("../dashboard.routes.ts", import.meta.url), "utf8");
 
 /**
  * The payroll operational-summary panels and the /filters lookups are independent
@@ -24,12 +21,7 @@ describe("dashboard routes issue independent reads concurrently", () => {
   });
 
   it("/filters fetches branches and processes together", () => {
-    const body = routes.slice(
-      routes.indexOf('router.get("/:dashboardCode/filters"'),
-      routes.indexOf('router.get("/:dashboardCode/root-causes"'),
-    );
-    expect(body).toContain(
-      "const [[branches], [processes]] = await Promise.all([",
-    );
+    const body = routes.slice(routes.indexOf('router.get("/:dashboardCode/filters"'), routes.indexOf('router.get("/:dashboardCode/root-causes"'));
+    expect(body).toContain("const [[branches], [processes]] = await Promise.all([");
   });
 });

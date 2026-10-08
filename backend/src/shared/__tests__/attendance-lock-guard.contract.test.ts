@@ -26,11 +26,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const SRC = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-);
+const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PATTERN = /IF\(is_locked = 0/;
 
 /** Applies a human-approved decision — a lock must refuse, loudly, having written nothing. */
@@ -85,9 +81,7 @@ function filesUsingPattern(dir: string, found: string[] = []): string[] {
 }
 
 describe("every locked-day writer has declared what a lock means for it", () => {
-  const users = filesUsingPattern(SRC).filter(
-    (f) => f !== "shared/attendanceLockGuard.ts",
-  );
+  const users = filesUsingPattern(SRC).filter((f) => f !== "shared/attendanceLockGuard.ts");
 
   it("finds the writers at all (guards against the scan silently matching nothing)", () => {
     // A regex that stops matching would turn every assertion below into a vacuous pass.
@@ -110,10 +104,7 @@ describe("every locked-day writer has declared what a lock means for it", () => 
   it("every writer that must refuse actually does", () => {
     for (const [file, marker] of Object.entries(REFUSES)) {
       const src = fs.readFileSync(path.join(SRC, file), "utf8");
-      expect(
-        marker.test(src),
-        `${file} must refuse a locked day, not write past it`,
-      ).toBe(true);
+      expect(marker.test(src), `${file} must refuse a locked day, not write past it`).toBe(true);
     }
   });
 
@@ -123,30 +114,19 @@ describe("every locked-day writer has declared what a lock means for it", () => 
     for (const file of Object.keys(REFUSES)) {
       const src = fs.readFileSync(path.join(SRC, file), "utf8");
       const saysSo = /NOT been saved|NOT saved|assertDaysWritable/.test(src);
-      expect(
-        saysSo,
-        `${file}'s refusal must state that nothing was saved`,
-      ).toBe(true);
+      expect(saysSo, `${file}'s refusal must state that nothing was saved`).toBe(true);
     }
   });
 
   it("does not list a file that no longer uses the pattern", () => {
     // Otherwise the lists rot into fiction and stop meaning anything.
-    const stale = [...Object.keys(REFUSES), ...Object.keys(SKIPS)].filter(
-      (f) => !users.includes(f),
-    );
-    expect(
-      stale,
-      `listed but no longer writing locked days: ${stale.join(", ")}`,
-    ).toEqual([]);
+    const stale = [...Object.keys(REFUSES), ...Object.keys(SKIPS)].filter((f) => !users.includes(f));
+    expect(stale, `listed but no longer writing locked days: ${stale.join(", ")}`).toEqual([]);
   });
 });
 
 describe("the shared guard says what a refusal must say", () => {
-  const guard = fs.readFileSync(
-    path.join(SRC, "shared/attendanceLockGuard.ts"),
-    "utf8",
-  );
+  const guard = fs.readFileSync(path.join(SRC, "shared/attendanceLockGuard.ts"), "utf8");
 
   it("carries the statusCode errorHandler actually reads", () => {
     // errorHandler.ts reads `statusCode`; a `status` field is masked as a 500 and the caller

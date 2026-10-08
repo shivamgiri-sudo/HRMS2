@@ -12,19 +12,13 @@
 import { describe, it, expect } from "vitest";
 import fs from "fs";
 import path from "path";
-import {
-  istDate,
-  istDisplayDate,
-  istTimestamp,
-  assertUsableName,
-  isLikelyIncompleteName,
-} from "../letterFormat.js";
+import { istDate, istDisplayDate, istTimestamp, assertUsableName, isLikelyIncompleteName } from "../letterFormat.js";
 
 describe("IST dates", () => {
   it("keeps MAS60616's joining date on 26-09, not 25-09", () => {
     const stored = new Date("2025-09-25T18:30:00.000Z");
     expect(stored.toISOString().slice(0, 10)).toBe("2025-09-25"); // the old bug
-    expect(istDate(stored)).toBe("2025-09-26"); // what the letter says
+    expect(istDate(stored)).toBe("2025-09-26");                   // what the letter says
   });
 
   it("handles the whole 18:30 boundary correctly", () => {
@@ -45,12 +39,8 @@ describe("IST dates", () => {
   });
 
   it("renders the display and timestamp forms in IST", () => {
-    expect(istDisplayDate(new Date("2025-09-25T18:30:00.000Z"))).toBe(
-      "26 Sep 2025",
-    );
-    expect(istTimestamp(new Date("2025-09-25T18:30:00.000Z"))).toContain(
-      "26 Sep 2025",
-    );
+    expect(istDisplayDate(new Date("2025-09-25T18:30:00.000Z"))).toBe("26 Sep 2025");
+    expect(istTimestamp(new Date("2025-09-25T18:30:00.000Z"))).toContain("26 Sep 2025");
     expect(istTimestamp(new Date("2025-09-25T18:30:00.000Z"))).toContain("IST");
   });
 });
@@ -108,10 +98,7 @@ describe("both letter callers use the resolver, not the dead columns", () => {
   const dir = path.resolve(__dirname, "..");
   for (const f of ["letters.service.ts", "letters.routes.ts"]) {
     const src = fs.readFileSync(path.join(dir, f), "utf8");
-    const code = src
-      .split("\n")
-      .filter((l) => !l.trim().startsWith("//"))
-      .join("\n");
+    const code = src.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
 
     it(`${f} no longer queries employee_salary_assignment`, () => {
       // That table has none of the 17 component columns, so every line rendered "0.00".

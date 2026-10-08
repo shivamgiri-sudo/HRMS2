@@ -50,14 +50,10 @@ describe("Employee LOB Mapping uploader registry", () => {
 });
 
 describe("Employee Process / Cost Centre / LOB template (1897)", () => {
-  const sql = read(
-    "../../../../sql/1897_employee_org_mapping_upload_template.sql",
-  );
+  const sql = read("../../../../sql/1897_employee_org_mapping_upload_template.sql");
 
   it("is in the migration manifest", () => {
-    expect(MANIFEST).toContain(
-      '"1897_employee_org_mapping_upload_template.sql"',
-    );
+    expect(MANIFEST).toContain('"1897_employee_org_mapping_upload_template.sql"');
   });
 
   it("requires exactly the four columns and only updates the existing template row", () => {

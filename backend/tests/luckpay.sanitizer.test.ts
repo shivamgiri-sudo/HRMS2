@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  generateClientTransactionId,
-  sanitizePayload,
-} from "../src/modules/integrations/luckpay/luckpay.client.js";
+import { generateClientTransactionId, sanitizePayload } from "../src/modules/integrations/luckpay/luckpay.client.js";
 
 describe("Luckpay payload sanitization", () => {
   it("masks secret fields recursively and keeps safe references", () => {
@@ -34,12 +31,8 @@ describe("Luckpay payload sanitization", () => {
     expect(serialized).not.toContain("100200300400");
     expect(serialized).not.toContain("/tmp/luckpay.pdf");
     expect(serialized).toContain("ref-123");
-    expect(
-      String((sanitized as Record<string, unknown>).accessToken ?? ""),
-    ).toContain("...");
-    expect(
-      String((sanitized as Record<string, unknown>).Authorization ?? ""),
-    ).toContain("...");
+    expect(String((sanitized as Record<string, unknown>).accessToken ?? "")).toContain("...");
+    expect(String((sanitized as Record<string, unknown>).Authorization ?? "")).toContain("...");
   });
 });
 

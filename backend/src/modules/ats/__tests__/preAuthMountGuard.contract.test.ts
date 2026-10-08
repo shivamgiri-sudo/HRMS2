@@ -35,11 +35,9 @@ const PRE_AUTH_ROUTERS = [
   "recruiter-hiring.routes.ts",
 ];
 
-const MIDDLEWARE_GUARD =
-  /requireAuth|requireRole|requireClientAuth|requirePortal/;
+const MIDDLEWARE_GUARD = /requireAuth|requireRole|requireClientAuth|requirePortal/;
 /** A credential the handler (or the service it calls) can verify. */
-const CREDENTIAL =
-  /\btoken\b|validateOnboardingToken|onboardingToken|signature|hmac|webhookSecret/i;
+const CREDENTIAL = /\btoken\b|validateOnboardingToken|onboardingToken|signature|hmac|webhookSecret/i;
 
 /**
  * Helpers that authenticate internally, so a route delegating to one is guarded even though its
@@ -49,17 +47,10 @@ const CREDENTIAL =
 const AUTHENTICATING_HELPERS = ["streamOnboardingDocument"];
 
 function routeBlocks(src: string): Array<{ route: string; block: string }> {
-  const marks = [
-    ...src.matchAll(
-      /^\s*\w*[Rr]outer\.(get|post|put|patch|delete)\s*\(\s*"([^"]*)"/gm,
-    ),
-  ];
+  const marks = [...src.matchAll(/^\s*\w*[Rr]outer\.(get|post|put|patch|delete)\s*\(\s*"([^"]*)"/gm)];
   return marks.map((m, i) => ({
     route: `${m[1].toUpperCase()} ${m[2]}`,
-    block: src.slice(
-      m.index!,
-      i + 1 < marks.length ? marks[i + 1].index! : src.length,
-    ),
+    block: src.slice(m.index!, i + 1 < marks.length ? marks[i + 1].index! : src.length),
   }));
 }
 
@@ -87,10 +78,7 @@ describe("every route mounted before requireAuth establishes identity", () => {
     it(`${file}`, () => {
       const src = read(ATS + file);
       const blocks = routeBlocks(src);
-      expect(
-        blocks.length,
-        `no routes parsed from ${file} — the check would be vacuous`,
-      ).toBeGreaterThan(0);
+      expect(blocks.length, `no routes parsed from ${file} — the check would be vacuous`).toBeGreaterThan(0);
 
       // A router-level guard covers every route defined after it.
       const guardUseAt = [...src.matchAll(/^\s*\w*[Rr]outer\.use\(([^)]*)\)/gm)]
@@ -118,8 +106,7 @@ describe("every route mounted before requireAuth establishes identity", () => {
 
 describe("streamOnboardingDocument authenticates both of its paths", () => {
   const src = read(`${ATS}onboarding-full.routes.ts`);
-  const fn =
-    /async function streamOnboardingDocument[\s\S]*?\n}/.exec(src)?.[0] ?? "";
+  const fn = /async function streamOnboardingDocument[\s\S]*?\n}/.exec(src)?.[0] ?? "";
 
   it("exists — the two document routes delegate their entire guard to it", () => {
     expect(fn, "streamOnboardingDocument not found").toBeTruthy();

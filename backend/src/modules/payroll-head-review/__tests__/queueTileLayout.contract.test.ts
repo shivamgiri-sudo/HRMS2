@@ -13,20 +13,10 @@ import { describe, expect, it } from "vitest";
  * two ragged lines.
  */
 const QUEUE = readFileSync(
-  resolve(
-    process.cwd(),
-    "..",
-    "src",
-    "pages",
-    "payroll",
-    "PayrollHeadSalaryReviewQueue.tsx",
-  ),
+  resolve(process.cwd(), "..", "src", "pages", "payroll", "PayrollHeadSalaryReviewQueue.tsx"),
   "utf8",
 );
-const TILE = QUEUE.slice(
-  QUEUE.indexOf("export function SectionCard"),
-  QUEUE.indexOf("// ── Section popup"),
-);
+const TILE = QUEUE.slice(QUEUE.indexOf("export function SectionCard"), QUEUE.indexOf("// ── Section popup"));
 
 describe("Queue row — section tile layout", () => {
   it("drops the fixed tile width so tiles fill the row's spare space", () => {

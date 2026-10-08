@@ -16,10 +16,7 @@
  * wording, which is why the matcher falls back to substring tests on a normalised label.
  */
 
-import type {
-  MetaLeadDetail,
-  MetaLeadFieldData,
-} from "./meta-campaign.types.js";
+import type { MetaLeadDetail, MetaLeadFieldData } from './meta-campaign.types.js';
 
 export interface ParsedLead {
   name: string | null;
@@ -50,10 +47,7 @@ export interface ParsedLead {
 }
 
 function normaliseKey(raw: string): string {
-  return raw
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_|_$/g, "");
+  return raw.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
 /**
@@ -86,16 +80,12 @@ export function normaliseMetaId(raw: string | null | undefined): string | null {
 }
 
 /** Build a lookup of normalised question name -> first non-empty answer. */
-function toAnswerMap(
-  fieldData: MetaLeadFieldData[] | undefined,
-): Map<string, string> {
+function toAnswerMap(fieldData: MetaLeadFieldData[] | undefined): Map<string, string> {
   const map = new Map<string, string>();
   for (const f of fieldData ?? []) {
-    const key = normaliseKey(f.name ?? f.field_name ?? "");
+    const key = normaliseKey(f.name ?? f.field_name ?? '');
     if (!key) continue;
-    const value = (f.values ?? []).find(
-      (v) => typeof v === "string" && v.trim() !== "",
-    );
+    const value = (f.values ?? []).find((v) => typeof v === 'string' && v.trim() !== '');
     if (value) map.set(key, value.trim());
   }
   return map;
@@ -111,11 +101,7 @@ function toAnswerMap(
  * Sunil Kumar — the surname was silently dropped, and the composed first+last fallback never ran
  * because the ?? had already been satisfied. Caught by test, not in review.
  */
-function pick(
-  map: Map<string, string>,
-  aliases: string[],
-  excludeKeys: string[] = [],
-): string | null {
+function pick(map: Map<string, string>, aliases: string[], excludeKeys: string[] = []): string | null {
   for (const alias of aliases) {
     const hit = map.get(alias);
     if (hit) return hit;
@@ -130,14 +116,7 @@ function pick(
 }
 
 /** Keys that must never satisfy a loose `name` substring match. */
-const NAME_PART_KEYS = [
-  "first_name",
-  "given_name",
-  "last_name",
-  "surname",
-  "family_name",
-  "middle_name",
-];
+const NAME_PART_KEYS = ['first_name', 'given_name', 'last_name', 'surname', 'family_name', 'middle_name'];
 
 /**
  * Normalise an Indian mobile number to bare 10 digits where possible.
@@ -149,11 +128,11 @@ const NAME_PART_KEYS = [
  */
 export function normalisePhone(raw: string | null): string | null {
   if (!raw) return null;
-  const digits = raw.replace(/\D/g, "");
+  const digits = raw.replace(/\D/g, '');
   if (digits.length === 10) return digits;
-  if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
-  if (digits.length === 11 && digits.startsWith("0")) return digits.slice(1);
-  if (digits.length === 13 && digits.startsWith("091")) return digits.slice(3);
+  if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2);
+  if (digits.length === 11 && digits.startsWith('0')) return digits.slice(1);
+  if (digits.length === 13 && digits.startsWith('091')) return digits.slice(3);
   return digits.length >= 7 ? digits : null;
 }
 
@@ -165,10 +144,7 @@ export function normalisePhone(raw: string | null): string | null {
  * DD/MM vs MM/DD ambiguity is resolved as DD/MM: this is an Indian recruitment form, and treating
  * 03/12/1998 as 3 December is correct here even though JS Date would read it as 12 March.
  */
-export function deriveAge(
-  ageRaw: string | null,
-  dobRaw: string | null,
-): number | null {
+export function deriveAge(ageRaw: string | null, dobRaw: string | null): number | null {
   if (ageRaw) {
     const band = ageRaw.match(/(\d{1,2})\s*[-–to]+\s*(\d{1,2})/i);
     if (band?.[1]) {
@@ -188,8 +164,7 @@ export function deriveAge(
       const now = new Date();
       let age = now.getFullYear() - dob.getFullYear();
       const monthDelta = now.getMonth() - dob.getMonth();
-      if (monthDelta < 0 || (monthDelta === 0 && now.getDate() < dob.getDate()))
-        age -= 1;
+      if (monthDelta < 0 || (monthDelta === 0 && now.getDate() < dob.getDate())) age -= 1;
       if (age >= 14 && age <= 80) return age;
     }
   }
@@ -243,15 +218,11 @@ export function deriveExperienceYears(raw: string | null): number | null {
 
   // Enum forms first — these must win over the numeric fallback below.
   // under_1 / below_1 / less_than_2  -> 0, the lower bound of "less than N".
-  const under = lower.match(
-    /^(?:under|below|less[_\s-]?than|upto|up[_\s-]?to)[_\s-]*(\d{1,2})/,
-  );
+  const under = lower.match(/^(?:under|below|less[_\s-]?than|upto|up[_\s-]?to)[_\s-]*(\d{1,2})/);
   if (under) return 0;
 
   // over_4 / above_4 / 4_plus / 4+  -> 4.
-  const over = lower.match(
-    /^(?:over|above|more[_\s-]?than)[_\s-]*(\d{1,2}(?:\.\d)?)/,
-  );
+  const over = lower.match(/^(?:over|above|more[_\s-]?than)[_\s-]*(\d{1,2}(?:\.\d)?)/);
   if (over?.[1]) return Number(over[1]);
   const plus = lower.match(/^(\d{1,2}(?:\.\d)?)\s*(?:\+|_?plus)/);
   if (plus?.[1]) return Number(plus[1]);
@@ -260,9 +231,7 @@ export function deriveExperienceYears(raw: string | null): number | null {
   if (months?.[1]) return Math.round((Number(months[1]) / 12) * 10) / 10;
 
   // Underscore is a range separator in the enum form (`1_2`), alongside the usual dash / "to".
-  const bandLow = lower.match(
-    /^(\d{1,2}(?:\.\d)?)\s*(?:[-–_]|to)\s*(\d{1,2}(?:\.\d)?)/,
-  );
+  const bandLow = lower.match(/^(\d{1,2}(?:\.\d)?)\s*(?:[-–_]|to)\s*(\d{1,2}(?:\.\d)?)/);
   if (bandLow?.[1]) return Number(bandLow[1]);
 
   const single = lower.match(/(\d{1,2}(?:\.\d)?)/);
@@ -279,17 +248,9 @@ export function deriveExperienceYears(raw: string | null): number | null {
  * it should Just Work regardless of which of these the marketer typed.
  */
 const ROUTING_CODE_ALIASES = [
-  "requisition_code",
-  "requisition_id",
-  "req_code",
-  "req_id",
-  "batch_code",
-  "batch_id",
-  "batch_requisition_code",
-  "batch_requisition_id",
-  "hrms_requisition_code",
-  "hrms_code",
-  "requisition",
+  'requisition_code', 'requisition_id', 'req_code', 'req_id',
+  'batch_code', 'batch_id', 'batch_requisition_code', 'batch_requisition_id',
+  'hrms_requisition_code', 'hrms_code', 'requisition',
 ];
 
 /**
@@ -300,15 +261,9 @@ const ROUTING_CODE_ALIASES = [
  * quotes; this canonicalises to uppercased, trimmed, internal-whitespace-collapsed so the lookup
  * matches. It deliberately does NOT strip hyphens (they are part of the real code).
  */
-export function normaliseRoutingCode(
-  raw: string | null | undefined,
-): string | null {
+export function normaliseRoutingCode(raw: string | null | undefined): string | null {
   if (raw === null || raw === undefined) return null;
-  const cleaned = String(raw)
-    .trim()
-    .replace(/^["']|["']$/g, "")
-    .replace(/\s+/g, "")
-    .toUpperCase();
+  const cleaned = String(raw).trim().replace(/^["']|["']$/g, '').replace(/\s+/g, '').toUpperCase();
   // A plausible requisition code has at least a few alphanumerics; reject obvious non-codes
   // ("N/A", "-", empty) so they do not become a lookup that matches nothing but looks intentional.
   return /[A-Z0-9]{3,}/.test(cleaned) ? cleaned : null;
@@ -337,34 +292,20 @@ export function extractRoutingCode(detail: MetaLeadDetail): string | null {
 export function parseLead(detail: MetaLeadDetail): ParsedLead {
   const map = toAnswerMap(detail.field_data);
 
-  const fullName = pick(
-    map,
-    ["full_name", "name", "candidate_name", "your_name", "naam"],
-    NAME_PART_KEYS,
-  );
-  const first = pick(map, ["first_name", "given_name"]);
-  const last = pick(map, ["last_name", "surname", "family_name"]);
-  const name =
-    fullName ?? ([first, last].filter(Boolean).join(" ").trim() || null);
+  const fullName = pick(map, ['full_name', 'name', 'candidate_name', 'your_name', 'naam'], NAME_PART_KEYS);
+  const first = pick(map, ['first_name', 'given_name']);
+  const last = pick(map, ['last_name', 'surname', 'family_name']);
+  const name = fullName ?? ([first, last].filter(Boolean).join(' ').trim() || null);
 
-  const email = pick(map, ["email", "email_address", "e_mail"]);
+  const email = pick(map, ['email', 'email_address', 'e_mail']);
 
   return {
     name: name || null,
-    phone: normalisePhone(
-      pick(map, [
-        "phone_number",
-        "phone",
-        "mobile",
-        "mobile_number",
-        "contact_number",
-        "whatsapp_number",
-      ]),
-    ),
-    email: email && email.includes("@") ? email.toLowerCase() : null,
+    phone: normalisePhone(pick(map, ['phone_number', 'phone', 'mobile', 'mobile_number', 'contact_number', 'whatsapp_number'])),
+    email: email && email.includes('@') ? email.toLowerCase() : null,
     age: deriveAge(
-      pick(map, ["age", "your_age", "umar"]),
-      pick(map, ["date_of_birth", "dob", "birth_date", "birthday"]),
+      pick(map, ['age', 'your_age', 'umar']),
+      pick(map, ['date_of_birth', 'dob', 'birth_date', 'birthday'])
     ),
     // `can_travel_noida` is included as a location signal because it is the only geography question
     // the live form asks — there is no city/pincode field at all. Its values are yes / no /
@@ -372,35 +313,15 @@ export function parseLead(detail: MetaLeadDetail): ParsedLead {
     // recruiter to read, and deliberately NOT screened on, since "no" to one branch does not
     // disqualify someone from a requisition at another.
     location: pick(map, [
-      "city",
-      "location",
-      "your_city",
-      "area",
-      "town",
-      "district",
-      "pin_code",
-      "pincode",
-      "can_travel_noida",
-      "can_travel",
-      "willing_to_relocate",
+      'city', 'location', 'your_city', 'area', 'town', 'district', 'pin_code', 'pincode',
+      'can_travel_noida', 'can_travel', 'willing_to_relocate',
     ]),
-    education: pick(map, [
-      "education",
-      "education_level",
-      "qualification",
-      "highest_qualification",
-      "educational_qualification",
-    ]),
+    education: pick(map, ['education', 'education_level', 'qualification', 'highest_qualification', 'educational_qualification']),
     experienceYears: deriveExperienceYears(
-      pick(map, [
-        "experience",
-        "work_experience",
-        "years_of_experience",
-        "total_experience",
-      ]),
+      pick(map, ['experience', 'work_experience', 'years_of_experience', 'total_experience'])
     ),
     routingCode: extractRoutingCode(detail),
-    gender: pick(map, ["gender", "sex", "your_gender", "gender_identity"]),
+    gender: pick(map, ['gender', 'sex', 'your_gender', 'gender_identity']),
     rawFields: Object.fromEntries(map),
   };
 }

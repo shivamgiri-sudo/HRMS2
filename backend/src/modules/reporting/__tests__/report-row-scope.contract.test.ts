@@ -47,19 +47,11 @@ const UNSCOPED_BACKLOG = new Set<string>([
   // flags this block only because of its LEFT JOIN employees for assignment lookup), and now
   // calls addScopedBranchOnlyFilters. See reporting-access.ts for why that's a distinct helper
   // from addScopedEmployeeFilters rather than reusing it.
-  "cosec-unmapped",
-  "payroll-audit-trail",
-  "offer-to-joining-tracker",
-  "onboarding-doc-checklist",
-  "notice-period-adherence",
-  "exit-interview-summary",
-  "roster-change-audit",
-  "asset-assignment-register",
-  "esic-challan-data",
-  "cheque-name-mismatch-report",
-  "rehire-eligibility-register",
-  "feedback-360-summary",
-  "goal-completion-summary",
+  "cosec-unmapped", "payroll-audit-trail", "offer-to-joining-tracker",
+  "onboarding-doc-checklist", "notice-period-adherence", "exit-interview-summary",
+  "roster-change-audit", "asset-assignment-register",
+  "esic-challan-data", "cheque-name-mismatch-report",
+  "rehire-eligibility-register", "feedback-360-summary", "goal-completion-summary",
   "training-needs-summary",
   // it-ad-account-audit was removed from this list: it now calls addScopedEmployeeFilters
   // (added when it was registered in REPORT_CATALOG and made reachable).
@@ -73,18 +65,10 @@ const unscoped = (() => {
     if (!m) continue;
     // Comments are stripped: several blocks explain at length that scope was once absent,
     // and that prose must not read as either the call or its absence.
-    const body = part
-      .replace(/^\s*\/\/.*$/gm, "")
-      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const body = part.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
     if (!/sql\s*=\s*`/.test(body)) continue;
-    if (!/\bemployees\s+e\b|\bFROM employees\b|JOIN employees\b/i.test(body))
-      continue;
-    if (
-      /addScopedEmployeeFilters\s*\(|addScopedBranchOnlyFilters\s*\(|addFullScopedEmployeeFilters\s*\(/.test(
-        body,
-      )
-    )
-      continue;
+    if (!/\bemployees\s+e\b|\bFROM employees\b|JOIN employees\b/i.test(body)) continue;
+    if (/addScopedEmployeeFilters\s*\(|addScopedBranchOnlyFilters\s*\(|addFullScopedEmployeeFilters\s*\(/.test(body)) continue;
     found.add(m[1]);
   }
   return found;
@@ -106,12 +90,7 @@ const scanned = (() => {
   for (const part of routes.split(/(?=\n {4}case ")/)) {
     if (!/^\n {4}case "([a-z0-9-]+)"/.test(part)) continue;
     cases++;
-    if (
-      /addScopedEmployeeFilters\s*\(|addFullScopedEmployeeFilters\s*\(/.test(
-        part,
-      )
-    )
-      scoped++;
+    if (/addScopedEmployeeFilters\s*\(|addFullScopedEmployeeFilters\s*\(/.test(part)) scoped++;
   }
   return { cases, scoped };
 })();
@@ -139,9 +118,7 @@ describe("report row scope", () => {
     // page. ff-settlement-register was the last one: it read full_final_calculation (notice
     // recovery, gratuity, salary hold, net payable) and built its WHERE inline, so it carried
     // no branch predicate at all.
-    const reachable = [...unscoped]
-      .filter((code) => frontendCatalog.includes(`code: "${code}"`))
-      .sort();
+    const reachable = [...unscoped].filter(code => frontendCatalog.includes(`code: "${code}"`)).sort();
     expect(
       reachable,
       "these are listed in src/lib/report-catalog.ts and read employee data with no branch " +
@@ -151,9 +128,7 @@ describe("report row scope", () => {
   });
 
   it("no new unscoped block is introduced", () => {
-    const added = [...unscoped]
-      .filter((code) => !UNSCOPED_BACKLOG.has(code))
-      .sort();
+    const added = [...unscoped].filter(code => !UNSCOPED_BACKLOG.has(code)).sort();
     expect(
       added,
       "new report blocks read employee data without calling addScopedEmployeeFilters. " +
@@ -163,9 +138,7 @@ describe("report row scope", () => {
   });
 
   it("the backlog only shrinks", () => {
-    const fixed = [...UNSCOPED_BACKLOG]
-      .filter((code) => !unscoped.has(code))
-      .sort();
+    const fixed = [...UNSCOPED_BACKLOG].filter(code => !unscoped.has(code)).sort();
     expect(
       fixed,
       `these now apply row scope — remove them from UNSCOPED_BACKLOG:\n${fixed.join("\n")}`,

@@ -15,28 +15,17 @@ const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 const { createItem } = vi.hoisted(() => ({ createItem: vi.fn() }));
-vi.mock("../../inbox/inbox.service.js", () => ({
-  inboxService: { createItem },
-}));
+vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem } }));
 
-const { sendOnboardingTokenEmail } = vi.hoisted(() => ({
-  sendOnboardingTokenEmail: vi.fn(),
-}));
+const { sendOnboardingTokenEmail } = vi.hoisted(() => ({ sendOnboardingTokenEmail: vi.fn() }));
 vi.mock("../ats.email.service.js", () => ({ sendOnboardingTokenEmail }));
 
-vi.mock("../../../config/env.js", () => ({
-  env: { FRONTEND_URL: "https://hrms.test" },
-}));
+vi.mock("../../../config/env.js", () => ({ env: { FRONTEND_URL: "https://hrms.test" } }));
 
-const { triggerOnboardingStuck } = vi.hoisted(() => ({
-  triggerOnboardingStuck: vi.fn(),
-}));
-vi.mock("../../work-inbox/work-inbox.triggers.js", () => ({
-  triggerOnboardingStuck,
-}));
+const { triggerOnboardingStuck } = vi.hoisted(() => ({ triggerOnboardingStuck: vi.fn() }));
+vi.mock("../../work-inbox/work-inbox.triggers.js", () => ({ triggerOnboardingStuck }));
 
-const { runOnboardingIncompleteReminders } =
-  await import("../ats-reminders.cron.js");
+const { runOnboardingIncompleteReminders } = await import("../ats-reminders.cron.js");
 
 const CANDIDATE_ROW = {
   candidate_id: "cand-1",
@@ -61,15 +50,12 @@ describe("runOnboardingIncompleteReminders creates a Work Inbox ONBOARDING_STUCK
   it("calls triggerOnboardingStuck for each stuck candidate, alongside the existing inbox nudge", async () => {
     execute
       .mockResolvedValueOnce([[CANDIDATE_ROW], []]) // the stuck-candidate query
-      .mockResolvedValueOnce([{}, []]) // reminder_sent_at UPDATE
+      .mockResolvedValueOnce([{}, []])              // reminder_sent_at UPDATE
       .mockResolvedValueOnce([[{ id: "user-1" }], []]); // recruiter user lookup
 
     await runOnboardingIncompleteReminders();
 
-    expect(triggerOnboardingStuck).toHaveBeenCalledWith(
-      "cand-1",
-      "Test Candidate",
-    );
+    expect(triggerOnboardingStuck).toHaveBeenCalledWith("cand-1", "Test Candidate");
     expect(createItem).toHaveBeenCalledTimes(1); // the pre-existing recruiter nudge still fires too
   });
 

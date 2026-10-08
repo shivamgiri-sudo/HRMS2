@@ -6,16 +6,10 @@ import { describe, expect, it } from "vitest";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.resolve(__dirname, "../../../..");
 const repoRoot = path.resolve(backendRoot, "..");
-const read = (fromRepoRoot: string) =>
-  fs.readFileSync(path.join(repoRoot, fromRepoRoot), "utf8");
+const read = (fromRepoRoot: string) => fs.readFileSync(path.join(repoRoot, fromRepoRoot), "utf8");
 
 const PAGE_CODE = "FINANCE_BILLABILITY_SEAT_COST";
-const EXPECTED_ROLES = [
-  "super_admin",
-  "finance",
-  "payroll_head",
-  "payroll_branch",
-];
+const EXPECTED_ROLES = ["super_admin", "finance", "payroll_head", "payroll_branch"];
 
 /**
  * The audience for this screen is stated in four places: the SQL grant, the API guard, the
@@ -35,52 +29,32 @@ describe("billability screen — the four role lists agree", () => {
     const sql = read("backend/sql/1066_billability_page_access.sql");
     // Strip comment lines first: the rationale above the statement legitimately names roles
     // that are deliberately NOT granted, and a whole-file match would read those as grants.
-    const sqlOnly = sql
-      .split("\n")
-      .filter((l) => !l.trimStart().startsWith("--"))
-      .join("\n");
+    const sqlOnly = sql.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
 
     // Collapse whitespace on BOTH sides — the VALUES list is column-aligned for readability,
     // so the gap between the role and the page code is padding, not a single space.
     const flat = sqlOnly.replace(/\s+/g, " ");
     for (const role of EXPECTED_ROLES) {
-      expect(flat, `${role} should be granted ${PAGE_CODE}`).toContain(
-        `'${role}', '${PAGE_CODE}'`,
-      );
+      expect(flat, `${role} should be granted ${PAGE_CODE}`).toContain(`'${role}', '${PAGE_CODE}'`);
     }
     // Count the grant rows so an accidental extra role is caught, not just a missing one.
-    const grantRows = (sqlOnly.match(new RegExp(`'${PAGE_CODE}'`, "g")) ?? [])
-      .length;
-    expect(grantRows, "one page_catalog row + one grant per role").toBe(
-      EXPECTED_ROLES.length + 1,
-    );
+    const grantRows = (sqlOnly.match(new RegExp(`'${PAGE_CODE}'`, "g")) ?? []).length;
+    expect(grantRows, "one page_catalog row + one grant per role").toBe(EXPECTED_ROLES.length + 1);
   });
 
   it("guards the API with the same roles", () => {
-    const routes = read(
-      "backend/src/modules/process-pnl/billability.routes.ts",
-    );
+    const routes = read("backend/src/modules/process-pnl/billability.routes.ts");
     const match = routes.match(/const BILLABILITY_ROLES = \[([^\]]*)\]/);
-    expect(
-      match,
-      "BILLABILITY_ROLES must be declared as a literal array",
-    ).not.toBeNull();
-    const roles = Array.from(match![1].matchAll(/"([a-z_]+)"/g)).map(
-      (m) => m[1],
-    );
+    expect(match, "BILLABILITY_ROLES must be declared as a literal array").not.toBeNull();
+    const roles = Array.from(match![1].matchAll(/"([a-z_]+)"/g)).map((m) => m[1]);
     expect(roles.sort()).toEqual([...EXPECTED_ROLES].sort());
   });
 
   it("guards the route with the same roles", () => {
     const routes = read("src/config/routes/finance.routes.tsx");
     const match = routes.match(/const billabilityRoles = \[([^\]]*)\]/);
-    expect(
-      match,
-      "billabilityRoles must be declared as a literal array",
-    ).not.toBeNull();
-    const roles = Array.from(match![1].matchAll(/'([a-z_]+)'/g)).map(
-      (m) => m[1],
-    );
+    expect(match, "billabilityRoles must be declared as a literal array").not.toBeNull();
+    const roles = Array.from(match![1].matchAll(/'([a-z_]+)'/g)).map((m) => m[1]);
     expect(roles.sort()).toEqual([...EXPECTED_ROLES].sort());
   });
 
@@ -99,18 +73,12 @@ describe("billability screen — the four role lists agree", () => {
     const codes = read("src/lib/pageRoutePageCodes.ts");
     expect(codes).toContain(`"/finance/billability": "${PAGE_CODE}"`);
 
-    expect(
-      fs.existsSync(
-        path.join(repoRoot, "src/pages/finance/BillabilitySeatCostPage.tsx"),
-      ),
-    ).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, "src/pages/finance/BillabilitySeatCostPage.tsx"))).toBe(true);
   });
 
   it("mounts the router on its own base", () => {
     const app = read("backend/src/app.ts");
-    expect(app).toContain(
-      'app.use("/api/finance/billability", billabilityRouter)',
-    );
+    expect(app).toContain('app.use("/api/finance/billability", billabilityRouter)');
     expect(app).toContain("billability.routes.js");
   });
 
@@ -118,16 +86,8 @@ describe("billability screen — the four role lists agree", () => {
     const manifest = read("backend/src/db/runPendingMigrations.ts");
     expect(manifest).toContain('"1065_billability_seat_cost.sql"');
     expect(manifest).toContain('"1066_billability_page_access.sql"');
-    expect(
-      fs.existsSync(
-        path.join(repoRoot, "backend/sql/1065_billability_seat_cost.sql"),
-      ),
-    ).toBe(true);
-    expect(
-      fs.existsSync(
-        path.join(repoRoot, "backend/sql/1066_billability_page_access.sql"),
-      ),
-    ).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, "backend/sql/1065_billability_seat_cost.sql"))).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, "backend/sql/1066_billability_page_access.sql"))).toBe(true);
   });
 
   it("collates every new table explicitly", () => {
@@ -137,9 +97,6 @@ describe("billability screen — the four role lists agree", () => {
     const creates = sql.match(/CREATE TABLE IF NOT EXISTS/g) ?? [];
     const collations = sql.match(/COLLATE=utf8mb4_unicode_ci/g) ?? [];
     expect(creates.length).toBeGreaterThan(0);
-    expect(
-      collations.length,
-      "every CREATE TABLE needs an explicit COLLATE",
-    ).toBe(creates.length);
+    expect(collations.length, "every CREATE TABLE needs an explicit COLLATE").toBe(creates.length);
   });
 });

@@ -36,10 +36,7 @@ export type CreateFormInput = {
 };
 
 /** Next version number for this process and form name. */
-async function nextVersion(
-  processId: string,
-  formName: string,
-): Promise<number> {
+async function nextVersion(processId: string, formName: string): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(MAX(version_no), 0) + 1 AS next FROM qa_audit_form
       WHERE process_id = ? AND form_name = ?`,
@@ -50,30 +47,22 @@ async function nextVersion(
 
 function validateParameters(parameters: FormParameterInput[]): void {
   if (!parameters.length) {
-    throw new QaAuditError(
-      "A form needs at least one parameter to score anything",
-    );
+    throw new QaAuditError("A form needs at least one parameter to score anything");
   }
   for (const p of parameters) {
     if (!p.parameterText?.trim()) {
-      throw new QaAuditError(
-        "Every parameter needs text describing what is being scored",
-      );
+      throw new QaAuditError("Every parameter needs text describing what is being scored");
     }
     if (!Number.isFinite(p.maxScore) || p.maxScore <= 0) {
       // A zero-max parameter contributes nothing to the denominator and can
       // never be failed, so it silently does nothing while looking like it works.
-      throw new QaAuditError(
-        `Parameter "${p.parameterText}" needs a maximum score above zero`,
-      );
+      throw new QaAuditError(`Parameter "${p.parameterText}" needs a maximum score above zero`);
     }
   }
 }
 
 /** Create a DRAFT form. Drafts cannot be scored against until activated. */
-export async function createForm(
-  input: CreateFormInput,
-): Promise<{ id: string; versionNo: number }> {
+export async function createForm(input: CreateFormInput): Promise<{ id: string; versionNo: number }> {
   validateParameters(input.parameters);
 
   const versionNo = await nextVersion(input.processId, input.formName);
@@ -86,14 +75,7 @@ export async function createForm(
       `INSERT INTO qa_audit_form
          (id, process_id, form_name, version_no, status, effective_from, created_by)
        VALUES (?, ?, ?, ?, 'draft', ?, ?)`,
-      [
-        formId,
-        input.processId,
-        input.formName,
-        versionNo,
-        input.effectiveFrom,
-        input.createdBy ?? null,
-      ],
+      [formId, input.processId, input.formName, versionNo, input.effectiveFrom, input.createdBy ?? null],
     );
 
     let order = 0;
@@ -104,15 +86,9 @@ export async function createForm(
             max_score, weightage, is_fatal, display_order)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          randomUUID(),
-          formId,
-          p.processMetricDefinitionId ?? null,
-          p.section ?? null,
-          p.parameterText.trim(),
-          p.maxScore,
-          p.weightage ?? 100,
-          p.isFatal ? 1 : 0,
-          p.displayOrder ?? (order += 10),
+          randomUUID(), formId, p.processMetricDefinitionId ?? null, p.section ?? null,
+          p.parameterText.trim(), p.maxScore, p.weightage ?? 100,
+          p.isFatal ? 1 : 0, p.displayOrder ?? (order += 10),
         ],
       );
     }
@@ -136,10 +112,7 @@ export async function createForm(
  * ambiguous, and GET /audit-forms picks the highest version — so a second active
  * form would quietly shadow the first rather than erroring.
  */
-export async function activateForm(
-  formId: string,
-  approvedBy?: string | null,
-): Promise<{
+export async function activateForm(formId: string, approvedBy?: string | null): Promise<{
   activatedVersion: number;
   retiredFormId: string | null;
 }> {
@@ -149,15 +122,11 @@ export async function activateForm(
   );
   const form = formRows[0];
   if (!form) throw new QaAuditError("Audit form not found", 404);
-  if (form.status === "active")
-    throw new QaAuditError("That form is already active", 409);
+  if (form.status === "active") throw new QaAuditError("That form is already active", 409);
   if (form.status === "retired") {
     // Reviving a retired form would resurrect criteria somebody deliberately
     // withdrew. Copy it to a new version instead.
-    throw new QaAuditError(
-      "A retired form cannot be reactivated — create a new version",
-      409,
-    );
+    throw new QaAuditError("A retired form cannot be reactivated — create a new version", 409);
   }
 
   const [paramRows] = await db.execute<RowDataPacket[]>(
@@ -165,10 +134,7 @@ export async function activateForm(
     [formId],
   );
   if (Number(paramRows[0]?.n ?? 0) === 0) {
-    throw new QaAuditError(
-      "A form with no active parameters cannot be activated",
-      409,
-    );
+    throw new QaAuditError("A form with no active parameters cannot be activated", 409);
   }
 
   const [currentRows] = await db.execute<RowDataPacket[]>(

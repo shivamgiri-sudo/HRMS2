@@ -38,7 +38,7 @@ async function executeConversionFunnelReport(): Promise<void> {
     // Query 1: Overall conversion funnel by process
     console.log("=" + "=".repeat(140));
     console.log(
-      "1. CONVERSION FUNNEL BY PROCESS (PROCESS | STAGE | COUNT | CONVERSION_PCT | BOTTLENECK)",
+      "1. CONVERSION FUNNEL BY PROCESS (PROCESS | STAGE | COUNT | CONVERSION_PCT | BOTTLENECK)"
     );
     console.log("=" + "=".repeat(140));
 
@@ -67,7 +67,7 @@ async function executeConversionFunnelReport(): Promise<void> {
         "| STAGE".padEnd(30) +
         "| COUNT".padEnd(10) +
         "| CONVERSION_PCT".padEnd(18) +
-        "| BOTTLENECK",
+        "| BOTTLENECK"
     );
     console.log("-".repeat(140));
 
@@ -96,7 +96,7 @@ async function executeConversionFunnelReport(): Promise<void> {
           "| " +
           String(row.conversion_pct).padEnd(16) +
           "% | " +
-          row.bottleneck,
+          row.bottleneck
       );
     }
     console.log();
@@ -150,7 +150,7 @@ async function executeConversionFunnelReport(): Promise<void> {
         "| CONVERSIONS".padEnd(14) +
         "| CONV_RATE(%)".padEnd(15) +
         "| TOTAL_SALE_VALUE".padEnd(20) +
-        "| AVG_SALE_VALUE",
+        "| AVG_SALE_VALUE"
     );
     console.log("-".repeat(140));
 
@@ -182,16 +182,14 @@ async function executeConversionFunnelReport(): Promise<void> {
           "% | " +
           String(saleVal.toFixed(2)).padEnd(18) +
           "| " +
-          row.avg_sale_value,
+          row.avg_sale_value
       );
     }
     console.log();
 
     // Query 3: Inbound funnel detailed analysis
     console.log("=" + "=".repeat(140));
-    console.log(
-      "3. INBOUND PROCESS FUNNEL (Call Connect → Concern → Offer → Sale)",
-    );
+    console.log("3. INBOUND PROCESS FUNNEL (Call Connect → Concern → Offer → Sale)");
     console.log("=" + "=".repeat(140));
 
     const [inboundRows] = await connection.query(`
@@ -232,7 +230,7 @@ async function executeConversionFunnelReport(): Promise<void> {
       "PROCESS".padEnd(15) +
         "| STAGE".padEnd(20) +
         "| COUNT".padEnd(10) +
-        "| % OF TOTAL",
+        "| % OF TOTAL"
     );
     console.log("-".repeat(140));
 
@@ -245,16 +243,14 @@ async function executeConversionFunnelReport(): Promise<void> {
           String(row.stage_count).padEnd(8) +
           "| " +
           String(row.entry_pct).padEnd(8) +
-          "%",
+          "%"
       );
     }
     console.log();
 
     // Query 4: Outbound funnel detailed analysis
     console.log("=" + "=".repeat(140));
-    console.log(
-      "4. OUTBOUND PROCESS FUNNEL (Dial → Connect → Talk 30s → Sale)",
-    );
+    console.log("4. OUTBOUND PROCESS FUNNEL (Dial → Connect → Talk 30s → Sale)");
     console.log("=" + "=".repeat(140));
 
     const [outboundRows] = await connection.query(`
@@ -295,7 +291,7 @@ async function executeConversionFunnelReport(): Promise<void> {
       "PROCESS".padEnd(15) +
         "| STAGE".padEnd(20) +
         "| COUNT".padEnd(10) +
-        "| % OF TOTAL",
+        "| % OF TOTAL"
     );
     console.log("-".repeat(140));
 
@@ -308,16 +304,14 @@ async function executeConversionFunnelReport(): Promise<void> {
           String(row.stage_count).padEnd(8) +
           "| " +
           String(row.entry_pct).padEnd(8) +
-          "%",
+          "%"
       );
     }
     console.log();
 
     // Query 5: Chat funnel detailed analysis
     console.log("=" + "=".repeat(140));
-    console.log(
-      "5. CHAT PROCESS FUNNEL (Initiated → Resolved → Upsell → Sale)",
-    );
+    console.log("5. CHAT PROCESS FUNNEL (Initiated → Resolved → Upsell → Sale)");
     console.log("=" + "=".repeat(140));
 
     const [chatRows] = await connection.query(`
@@ -358,7 +352,7 @@ async function executeConversionFunnelReport(): Promise<void> {
       "PROCESS".padEnd(15) +
         "| STAGE".padEnd(20) +
         "| COUNT".padEnd(10) +
-        "| % OF TOTAL",
+        "| % OF TOTAL"
     );
     console.log("-".repeat(140));
 
@@ -371,16 +365,14 @@ async function executeConversionFunnelReport(): Promise<void> {
           String(row.stage_count).padEnd(8) +
           "| " +
           String(row.entry_pct).padEnd(8) +
-          "%",
+          "%"
       );
     }
     console.log();
 
     // Query 6: Email funnel detailed analysis
     console.log("=" + "=".repeat(140));
-    console.log(
-      "6. EMAIL PROCESS FUNNEL (Received → Responded → Resolved → Upsell → Sale)",
-    );
+    console.log("6. EMAIL PROCESS FUNNEL (Received → Responded → Resolved → Upsell → Sale)");
     console.log("=" + "=".repeat(140));
 
     const [emailRows] = await connection.query(`
@@ -429,7 +421,7 @@ async function executeConversionFunnelReport(): Promise<void> {
       "PROCESS".padEnd(15) +
         "| STAGE".padEnd(20) +
         "| COUNT".padEnd(10) +
-        "| % OF TOTAL",
+        "| % OF TOTAL"
     );
     console.log("-".repeat(140));
 
@@ -442,7 +434,7 @@ async function executeConversionFunnelReport(): Promise<void> {
           String(row.stage_count).padEnd(8) +
           "| " +
           String(row.entry_pct).padEnd(8) +
-          "%",
+          "%"
       );
     }
     console.log();
@@ -490,7 +482,7 @@ async function executeConversionFunnelReport(): Promise<void> {
         "| STAGE".padEnd(25) +
         "| ENTRIES".padEnd(10) +
         "| FROM_PREV".padEnd(12) +
-        "| DROP_OFF_%",
+        "| DROP_OFF_%"
     );
     console.log("-".repeat(140));
 
@@ -505,7 +497,7 @@ async function executeConversionFunnelReport(): Promise<void> {
           String(row.prev_stage_entries).padEnd(10) +
           "| " +
           String(row.drop_off_pct).padEnd(8) +
-          "%",
+          "%"
       );
     }
     console.log();
@@ -532,15 +524,11 @@ async function executeConversionFunnelReport(): Promise<void> {
     console.log(`Total Funnel Entries:        ${perf.total_funnel_entries}`);
     console.log(`Unique Processes:            ${perf.unique_processes}`);
     console.log(`Total Conversions:           ${perf.total_conversions}`);
+    console.log(`Overall Conversion Rate:     ${perf.overall_conversion_rate}%`);
     console.log(
-      `Overall Conversion Rate:     ${perf.overall_conversion_rate}%`,
+      `Average Stage Duration:      ${perf.avg_stage_duration_secs} seconds`
     );
-    console.log(
-      `Average Stage Duration:      ${perf.avg_stage_duration_secs} seconds`,
-    );
-    console.log(
-      `Data Period:                 ${perf.data_start_date} to ${perf.data_end_date}`,
-    );
+    console.log(`Data Period:                 ${perf.data_start_date} to ${perf.data_end_date}`);
     console.log();
 
     console.log("=" + "=".repeat(140));
@@ -554,7 +542,7 @@ async function executeConversionFunnelReport(): Promise<void> {
       console.error(error.message);
       if ("code" in error && error.code === "ER_ACCESS_DENIED_ERROR") {
         console.error(
-          "Database connection denied. Check credentials and database availability.",
+          "Database connection denied. Check credentials and database availability."
         );
       }
     } else {

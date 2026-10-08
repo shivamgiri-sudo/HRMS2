@@ -81,17 +81,11 @@ export class KitAssemblyError extends Error {
  * disagree on real rows.
  */
 export const TERMINAL_STATUSES = [
-  "verified",
-  "completed",
-  "esign_completed",
-  "signed_verified",
-  "wet_signed_uploaded",
+  "verified", "completed", "esign_completed", "signed_verified", "wet_signed_uploaded",
 ] as const;
 const TERMINAL_SQL = TERMINAL_STATUSES.map(() => "?").join(",");
 
-export async function kitEligibleDocuments(
-  employeeId: string,
-): Promise<RowDataPacket[]> {
+export async function kitEligibleDocuments(employeeId: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.document_code, c.document_name, c.status,
             f.id AS file_id, f.storage_path
@@ -117,13 +111,7 @@ export async function kitEligibleDocuments(
         AND COALESCE(c.status, '') NOT IN (${TERMINAL_SQL})
         AND COALESCE(c.fill_status, '') NOT IN (${TERMINAL_SQL})
       ORDER BY (c.document_code = ?) DESC, c.document_code`,
-    [
-      employeeId,
-      ...KIT_DOCUMENT_CODES,
-      ...TERMINAL_STATUSES,
-      ...TERMINAL_STATUSES,
-      ORDER_FIRST,
-    ],
+    [employeeId, ...KIT_DOCUMENT_CODES, ...TERMINAL_STATUSES, ...TERMINAL_STATUSES, ORDER_FIRST],
   );
   return rows as RowDataPacket[];
 }
@@ -137,27 +125,19 @@ export async function kitEligibleDocuments(
  * with flatten:false today, leaving several such fields for it to choose
  * wrongly between.
  */
-export async function assembleJoiningKit(
-  employeeId: string,
-  opts: {
-    employeeName: string;
-    employeeCode: string;
-    designation?: string | null;
-    branchName?: string | null;
-    dateOfJoining?: Date | string | null;
-  },
-): Promise<AssembledKit> {
+export async function assembleJoiningKit(employeeId: string, opts: {
+  employeeName: string;
+  employeeCode: string;
+  designation?: string | null;
+  branchName?: string | null;
+  dateOfJoining?: Date | string | null;
+}): Promise<AssembledKit> {
   const docs = await kitEligibleDocuments(employeeId);
   if (docs.length === 0) {
-    throw new KitAssemblyError(
-      "no_documents",
-      "This employee has no eSign joining documents to assemble.",
-    );
+    throw new KitAssemblyError("no_documents", "This employee has no eSign joining documents to assemble.");
   }
 
-  const missing = docs.filter(
-    (d) => !d.storage_path || !fs.existsSync(String(d.storage_path)),
-  );
+  const missing = docs.filter((d) => !d.storage_path || !fs.existsSync(String(d.storage_path)));
   if (missing.length) {
     // Never merge a partial kit: the signature page would name documents the
     // employee never saw.
@@ -177,10 +157,7 @@ export async function assembleJoiningKit(
 
     let src: PDFDocument;
     try {
-      src = await PDFDocument.load(bytes, {
-        ignoreEncryption: true,
-        updateMetadata: false,
-      });
+      src = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
     } catch {
       throw new KitAssemblyError(
         "unreadable_document",
@@ -192,9 +169,7 @@ export async function assembleJoiningKit(
     try {
       const form = src.getForm();
       if (form.getFields().length > 0) form.flatten();
-    } catch {
-      /* no form, or already flat */
-    }
+    } catch { /* no form, or already flat */ }
 
     const pageFrom = kit.getPageCount() + 1;
     const copied = await kit.copyPages(src, src.getPageIndices());
@@ -230,17 +205,11 @@ export async function assembleJoiningKit(
  * the signature is provable from the PDF itself. The lower portion is left
  * empty for the provider's stamp.
  */
-async function appendConsentPage(
-  kit: PDFDocument,
-  items: KitItem[],
-  opts: {
-    employeeName: string;
-    employeeCode: string;
-    designation?: string | null;
-    branchName?: string | null;
-    dateOfJoining?: Date | string | null;
-  },
-) {
+async function appendConsentPage(kit: PDFDocument, items: KitItem[], opts: {
+  employeeName: string; employeeCode: string;
+  designation?: string | null; branchName?: string | null;
+  dateOfJoining?: Date | string | null;
+}) {
   const page = kit.addPage([595, 842]);
   const font = await kit.embedFont(StandardFonts.Helvetica);
   const bold = await kit.embedFont(StandardFonts.HelveticaBold);
@@ -249,20 +218,9 @@ async function appendConsentPage(
   const left = 56;
   let y = 780;
 
-  page.drawText("CONSOLIDATED CONSENT & SIGNATURE", {
-    x: left,
-    y,
-    size: 14,
-    font: bold,
-    color: ink,
-  });
+  page.drawText("CONSOLIDATED CONSENT & SIGNATURE", { x: left, y, size: 14, font: bold, color: ink });
   y -= 10;
-  page.drawLine({
-    start: { x: left, y },
-    end: { x: 539, y },
-    thickness: 1.2,
-    color: rgb(0.05, 0.65, 0.91),
-  });
+  page.drawLine({ start: { x: left, y }, end: { x: 539, y }, thickness: 1.2, color: rgb(0.05, 0.65, 0.91) });
   y -= 26;
 
   for (const [label, value] of [
@@ -270,10 +228,7 @@ async function appendConsentPage(
     ["Employee code", opts.employeeCode],
     ["Designation", opts.designation ?? "—"],
     ["Branch", opts.branchName ?? "—"],
-    [
-      "Date of joining",
-      opts.dateOfJoining ? istDisplayDate(opts.dateOfJoining) : "—",
-    ],
+    ["Date of joining", opts.dateOfJoining ? istDisplayDate(opts.dateOfJoining) : "—"],
   ] as Array<[string, string]>) {
     page.drawText(`${label}:`, { x: left, y, size: 9, font, color: muted });
     page.drawText(value, { x: left + 110, y, size: 9, font: bold, color: ink });
@@ -282,60 +237,21 @@ async function appendConsentPage(
 
   y -= 12;
   page.drawText("This signature applies to each of the following documents:", {
-    x: left,
-    y,
-    size: 9.5,
-    font: bold,
-    color: ink,
+    x: left, y, size: 9.5, font: bold, color: ink,
   });
   y -= 8;
-  page.drawLine({
-    start: { x: left, y },
-    end: { x: 539, y },
-    thickness: 0.5,
-    color: rgb(0.85, 0.87, 0.9),
-  });
+  page.drawLine({ start: { x: left, y }, end: { x: 539, y }, thickness: 0.5, color: rgb(0.85, 0.87, 0.9) });
   y -= 14;
 
-  page.drawText("Document", {
-    x: left,
-    y,
-    size: 7.5,
-    font: bold,
-    color: muted,
-  });
+  page.drawText("Document", { x: left, y, size: 7.5, font: bold, color: muted });
   page.drawText("Pages", { x: 360, y, size: 7.5, font: bold, color: muted });
-  page.drawText("Content hash (SHA-256)", {
-    x: 410,
-    y,
-    size: 7.5,
-    font: bold,
-    color: muted,
-  });
+  page.drawText("Content hash (SHA-256)", { x: 410, y, size: 7.5, font: bold, color: muted });
   y -= 12;
 
   for (const it of items) {
-    page.drawText(it.documentName.slice(0, 52), {
-      x: left,
-      y,
-      size: 8,
-      font,
-      color: ink,
-    });
-    page.drawText(`${it.pageFrom}–${it.pageTo}`, {
-      x: 360,
-      y,
-      size: 8,
-      font,
-      color: ink,
-    });
-    page.drawText(it.sourceSha256.slice(0, 24) + "…", {
-      x: 410,
-      y,
-      size: 7,
-      font,
-      color: muted,
-    });
+    page.drawText(it.documentName.slice(0, 52), { x: left, y, size: 8, font, color: ink });
+    page.drawText(`${it.pageFrom}–${it.pageTo}`, { x: 360, y, size: 8, font, color: ink });
+    page.drawText(it.sourceSha256.slice(0, 24) + "…", { x: 410, y, size: 7, font, color: muted });
     y -= 12;
   }
 
@@ -345,40 +261,18 @@ async function appendConsentPage(
     "understood and agree to be bound by each of the documents listed above, which together form " +
     "a single instrument. The content hashes above identify the exact documents to which this " +
     "signature applies.";
-  page.drawText(consent, {
-    x: left,
-    y,
-    size: 8.5,
-    font,
-    color: ink,
-    lineHeight: 12,
-    maxWidth: 483,
-  });
+  page.drawText(consent, { x: left, y, size: 8.5, font, color: ink, lineHeight: 12, maxWidth: 483 });
   y -= 62;
 
   // Everything below is left clear for the provider's stamp. No footer and no
   // page number on this page: the widget lands at Rect [425,100,545,160].
   page.drawRectangle({
-    x: 410,
-    y: 88,
-    width: 145,
-    height: 88,
-    borderColor: rgb(0.8, 0.83, 0.86),
-    borderWidth: 1,
+    x: 410, y: 88, width: 145, height: 88,
+    borderColor: rgb(0.8, 0.83, 0.86), borderWidth: 1,
   });
-  page.drawText("Digital signature area", {
-    x: 418,
-    y: 168,
-    size: 6.5,
-    font,
-    color: muted,
-  });
+  page.drawText("Digital signature area", { x: 418, y: 168, size: 6.5, font, color: muted });
   page.drawText(`${items.length} document(s) covered by one Aadhaar eSign`, {
-    x: left,
-    y: 96,
-    size: 7,
-    font,
-    color: muted,
+    x: left, y: 96, size: 7, font, color: muted,
   });
 }
 
@@ -387,33 +281,20 @@ async function appendConsentPage(
  * provider, so a change in their placement surfaces as an alert rather than a
  * silently wrong document.
  */
-export async function analyzeSignaturePlacement(pdfBytes: Buffer): Promise<
-  Array<{
-    pageIndex: number;
-    rect: [number, number, number, number];
-    fieldName: string | null;
-  }>
-> {
-  const doc = await PDFDocument.load(pdfBytes, {
-    ignoreEncryption: true,
-    updateMetadata: false,
-  });
-  const out: Array<{
-    pageIndex: number;
-    rect: [number, number, number, number];
-    fieldName: string | null;
-  }> = [];
+export async function analyzeSignaturePlacement(pdfBytes: Buffer): Promise<Array<{
+  pageIndex: number; rect: [number, number, number, number]; fieldName: string | null;
+}>> {
+  const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true, updateMetadata: false });
+  const out: Array<{ pageIndex: number; rect: [number, number, number, number]; fieldName: string | null }> = [];
   doc.getPages().forEach((page, pageIndex) => {
     const annots = page.node.Annots();
     if (!annots) return;
     for (let i = 0; i < annots.size(); i++) {
       try {
         const d = annots.lookup(i) as unknown as {
-          get?: (k: unknown) => unknown;
-          context?: { obj: (v: unknown) => unknown };
+          get?: (k: unknown) => unknown; context?: { obj: (v: unknown) => unknown };
         };
-        const rect = d?.get?.(d.context!.obj("Rect")) as
-          { asArray?: () => Array<{ toString(): string }> } | undefined;
+        const rect = d?.get?.(d.context!.obj("Rect")) as { asArray?: () => Array<{ toString(): string }> } | undefined;
         const arr = rect?.asArray?.().map((n) => Number(n.toString()));
         if (!arr || arr.length !== 4 || arr.every((n) => n === 0)) continue;
         const t = d?.get?.(d.context!.obj("T"));
@@ -422,9 +303,7 @@ export async function analyzeSignaturePlacement(pdfBytes: Buffer): Promise<
           rect: [arr[0], arr[1], arr[2], arr[3]],
           fieldName: t ? String(t).replace(/^\(|\)$/g, "") : null,
         });
-      } catch {
-        /* not an annotation we can read */
-      }
+      } catch { /* not an annotation we can read */ }
     }
   });
   return out;
@@ -434,10 +313,7 @@ export async function analyzeSignaturePlacement(pdfBytes: Buffer): Promise<
 export async function assertSignatureInsideReservedArea(
   pdfBytes: Buffer,
   band = KIT_RESERVE_BAND,
-): Promise<{
-  ok: boolean;
-  violations: Array<{ pageIndex: number; rect: number[] }>;
-}> {
+): Promise<{ ok: boolean; violations: Array<{ pageIndex: number; rect: number[] }> }> {
   const widgets = await analyzeSignaturePlacement(pdfBytes);
   const violations = widgets
     .filter((w) => w.rect[3] > band)

@@ -45,11 +45,9 @@ export async function recordFinanceApprovalEvent(
   event: FinanceApprovalEvent,
   connection?: PoolConnection,
 ): Promise<void> {
-  if (!event.entityType)
-    throw new Error("An approval event needs an entity type");
+  if (!event.entityType) throw new Error("An approval event needs an entity type");
   if (!event.entityId) throw new Error("An approval event needs an entity id");
-  if (!event.toStatus)
-    throw new Error("An approval event needs a target status");
+  if (!event.toStatus) throw new Error("An approval event needs a target status");
 
   const executor = connection ?? db;
   await executor.execute(
@@ -74,10 +72,7 @@ export async function recordFinanceApprovalEvent(
 }
 
 /** The timeline for one entity, oldest first — how a reviewer reconstructs what happened. */
-export async function listFinanceApprovalEvents(
-  entityType: string,
-  entityId: string,
-) {
+export async function listFinanceApprovalEvents(entityType: string, entityId: string) {
   const [rows] = await db.execute(
     `SELECT id, entity_type, entity_id, action, from_status, to_status, decision,
             actor_user_id, actor_role, remarks, details_json, created_at

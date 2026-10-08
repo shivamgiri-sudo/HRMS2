@@ -51,10 +51,10 @@ export function resolveBankNameVariance(input: {
         outcome: "auto_cleared",
         status: "verified",
         reason:
-          `The account is registered to "${bankRegisteredName}", which matches the name on the ` +
-          `candidate's verified PAN (${panVouches.tier}: ${panVouches.reason}). The account belongs ` +
-          "to the person that PAN was issued to, so the difference from the recorded name is a " +
-          "spelling variance rather than a different person.",
+          `The account is registered to "${bankRegisteredName}", which matches the name on the `
+          + `candidate's verified PAN (${panVouches.tier}: ${panVouches.reason}). The account belongs `
+          + "to the person that PAN was issued to, so the difference from the recorded name is a "
+          + "spelling variance rather than a different person.",
       };
     }
 
@@ -64,9 +64,9 @@ export function resolveBankNameVariance(input: {
       outcome: "third_party_account",
       status: "mismatch",
       reason:
-        `The account is registered to "${bankRegisteredName}", which matches neither the candidate ` +
-        "nor the name on their verified PAN. Salary cannot be credited to an account in someone " +
-        "else's name — the candidate needs to provide their own account.",
+        `The account is registered to "${bankRegisteredName}", which matches neither the candidate `
+        + "nor the name on their verified PAN. Salary cannot be credited to an account in someone "
+        + "else's name — the candidate needs to provide their own account.",
     };
   }
 
@@ -76,8 +76,8 @@ export function resolveBankNameVariance(input: {
     outcome: "needs_review",
     status: "manual_review",
     reason:
-      `The account is registered to "${bankRegisteredName}", which differs from the candidate's ` +
-      "recorded name, and there is no verified PAN to check it against. Payroll HR needs to " +
-      "confirm whether this is the same person.",
+      `The account is registered to "${bankRegisteredName}", which differs from the candidate's `
+      + "recorded name, and there is no verified PAN to check it against. Payroll HR needs to "
+      + "confirm whether this is the same person.",
   };
 }

@@ -51,7 +51,7 @@ careerRouter.get(
 
     const record = await careerService.getCareerPath(employeeId);
     return res.json({ success: true, data: record });
-  }),
+  })
 );
 
 // POST /career/:employeeId — admin/hr: upsert career path
@@ -100,7 +100,7 @@ careerRouter.post(
     });
 
     return res.status(200).json({ success: true, data: record });
-  }),
+  })
 );
 
 // GET /succession — admin/hr: all career paths sorted by readiness
@@ -110,7 +110,7 @@ careerRouter.get(
   h(async (req, res) => {
     const records = await careerService.listAllCareerPaths(await employeeScopeFor(req.authUser!.id));
     return res.json({ success: true, data: records });
-  }),
+  })
 );
 
 // ─── PIP ─────────────────────────────────────────────────────────────────────
@@ -144,12 +144,9 @@ careerRouter.get(
     if (!caller || !(await careerService.isManagerOf(caller.id, employee_id))) {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
-    const records = await careerService.listPips({
-      employeeId: employee_id,
-      status,
-    });
+    const records = await careerService.listPips({ employeeId: employee_id, status });
     return res.json({ success: true, data: records });
-  }),
+  })
 );
 
 // POST /pip — admin/hr: create PIP
@@ -166,29 +163,19 @@ careerRouter.post(
     };
 
     if (!employee_id?.trim()) {
-      return res
-        .status(400)
-        .json({ success: false, error: "employee_id is required" });
+      return res.status(400).json({ success: false, error: "employee_id is required" });
     }
     if (!start_date) {
-      return res
-        .status(400)
-        .json({ success: false, error: "start_date is required" });
+      return res.status(400).json({ success: false, error: "start_date is required" });
     }
     if (!end_date) {
-      return res
-        .status(400)
-        .json({ success: false, error: "end_date is required" });
+      return res.status(400).json({ success: false, error: "end_date is required" });
     }
     if (!reason?.trim()) {
-      return res
-        .status(400)
-        .json({ success: false, error: "reason is required" });
+      return res.status(400).json({ success: false, error: "reason is required" });
     }
     if (new Date(end_date) <= new Date(start_date)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "end_date must be after start_date" });
+      return res.status(400).json({ success: false, error: "end_date must be after start_date" });
     }
 
     if (!(await canViewEmployee(req.authUser!.id, employee_id.trim()))) {
@@ -205,7 +192,7 @@ careerRouter.post(
     });
 
     return res.status(201).json({ success: true, data: record });
-  }),
+  })
 );
 
 // GET /pip/:id — get PIP detail with checkpoints (admin/hr)
@@ -215,15 +202,13 @@ careerRouter.get(
   h(async (req, res) => {
     const record = await careerService.getPip(req.params.id);
     if (!record) {
-      return res
-        .status(404)
-        .json({ success: false, error: "PIP record not found" });
+      return res.status(404).json({ success: false, error: "PIP record not found" });
     }
     if (!(await canViewEmployee(req.authUser!.id, String(record.employee_id)))) {
       return res.status(403).json(FORBIDDEN_SCOPE);
     }
     return res.json({ success: true, data: record });
-  }),
+  })
 );
 
 // PATCH /pip/:id — update PIP status/outcome (admin/hr)
@@ -250,12 +235,7 @@ careerRouter.patch(
       });
     }
 
-    const validOutcomes = [
-      "improved",
-      "not_improved",
-      "resigned",
-      "terminated",
-    ];
+    const validOutcomes = ["improved", "not_improved", "resigned", "terminated"];
     if (outcome && !validOutcomes.includes(outcome)) {
       return res.status(400).json({
         success: false,
@@ -267,14 +247,13 @@ careerRouter.patch(
       status,
       outcome,
       review_notes: review_notes ?? null,
-      closed_by:
-        status && ["completed", "terminated"].includes(status)
-          ? req.authUser!.id
-          : undefined,
+      closed_by: status && ["completed", "terminated"].includes(status)
+        ? req.authUser!.id
+        : undefined,
     });
 
     return res.json({ success: true, data: record });
-  }),
+  })
 );
 
 // POST /pip/:id/checkpoints — add checkpoint (admin/hr)
@@ -294,9 +273,7 @@ careerRouter.post(
     }
 
     if (!checkpoint_date) {
-      return res
-        .status(400)
-        .json({ success: false, error: "checkpoint_date is required" });
+      return res.status(400).json({ success: false, error: "checkpoint_date is required" });
     }
     const validRatings = ["on_track", "at_risk", "off_track"];
     if (!rating || !validRatings.includes(rating)) {
@@ -315,5 +292,5 @@ careerRouter.post(
     });
 
     return res.status(201).json({ success: true, data: checkpoint });
-  }),
+  })
 );

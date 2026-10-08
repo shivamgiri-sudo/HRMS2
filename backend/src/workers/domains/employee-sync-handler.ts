@@ -1,8 +1,8 @@
-import { getLegacyPool } from "../../db/legacyDb.js";
-import { db as mysqlDb } from "../../db/mysql.js";
-import { randomUUID } from "crypto";
-import { provisionLmsIdentityForEmployee } from "../../modules/lms/lms-provisioning.service.js";
-import { encryptPanForSync } from "../../shared/syncPiiEncryption.js";
+import { getLegacyPool } from '../../db/legacyDb.js';
+import { db as mysqlDb } from '../../db/mysql.js';
+import { randomUUID } from 'crypto';
+import { provisionLmsIdentityForEmployee } from '../../modules/lms/lms-provisioning.service.js';
+import { encryptPanForSync } from '../../shared/syncPiiEncryption.js';
 
 interface LegacyEmployee {
   id: number;
@@ -93,29 +93,23 @@ interface TransformedEmployee {
 }
 
 export class EmployeeSyncHandler {
-  private domain = "employee";
+  private domain = 'employee';
 
   /**
    * Fetch changed employees from legacy database
    * Uses timestamp-based incremental sync (MySQL doesn't have Change Tracking)
    */
-  async fetchChanges(
-    lastSyncTime: Date,
-    batchSize: number = 1000,
-  ): Promise<LegacyEmployee[]> {
+  async fetchChanges(lastSyncTime: Date, batchSize: number = 1000): Promise<LegacyEmployee[]> {
     const pool = await getLegacyPool();
 
-    const [rows] = await pool.execute<any[]>(
-      `
+    const [rows] = await pool.execute<any[]>(`
       SELECT *
       FROM masjclrentry
       WHERE lastUpdated > ?
          OR (lastUpdated IS NULL AND (EntryDate > ? OR CreateDate > ?))
       ORDER BY COALESCE(lastUpdated, EntryDate, CreateDate) ASC
       LIMIT ?
-    `,
-      [lastSyncTime, lastSyncTime, lastSyncTime, batchSize],
-    );
+    `, [lastSyncTime, lastSyncTime, lastSyncTime, batchSize]);
 
     return rows as LegacyEmployee[];
   }
@@ -125,13 +119,13 @@ export class EmployeeSyncHandler {
    */
   transform(legacyRecord: LegacyEmployee): TransformedEmployee {
     // Split name: "DEEPAK KASHYAP" → first="DEEPAK", last="KASHYAP"
-    const nameParts = (legacyRecord.EmpName || "").trim().split(/\s+/);
-    const firstName = nameParts[0] || "Unknown";
-    const lastName = nameParts.slice(1).join(" ") || null;
+    const nameParts = (legacyRecord.EmpName || '').trim().split(/\s+/);
+    const firstName = nameParts[0] || 'Unknown';
+    const lastName = nameParts.slice(1).join(' ') || null;
 
     // Mask Aadhaar (SECURITY: only last 4 digits)
     const aadhaarLast4 = legacyRecord.AdharId
-      ? legacyRecord.AdharId.replace(/\s/g, "").slice(-4)
+      ? legacyRecord.AdharId.replace(/\s/g, '').slice(-4)
       : null;
 
     return {
@@ -172,7 +166,7 @@ export class EmployeeSyncHandler {
       city: legacyRecord.City,
       state: legacyRecord.State,
       pincode: legacyRecord.PinCode,
-      active_status: legacyRecord.Status === "1",
+      active_status: legacyRecord.Status === '1',
       legacy_last_updated: legacyRecord.lastUpdated,
       legacy_emp_id: legacyRecord.id,
       created_at: legacyRecord.EntryDate || legacyRecord.CreateDate,
@@ -186,15 +180,15 @@ export class EmployeeSyncHandler {
     const errors: string[] = [];
 
     if (!record.employee_code) {
-      errors.push("Missing employee_code");
+      errors.push('Missing employee_code');
     }
 
     if (!record.first_name) {
-      errors.push("Missing first_name");
+      errors.push('Missing first_name');
     }
 
     if (!record.mobile && !record.email) {
-      errors.push("Missing both mobile and email");
+      errors.push('Missing both mobile and email');
     }
 
     return {
@@ -207,9 +201,7 @@ export class EmployeeSyncHandler {
    * Sync employees to HRMS database
    * Upserts records: INSERT new, UPDATE existing (legacy wins)
    */
-  async syncToHRMS(
-    records: TransformedEmployee[],
-  ): Promise<{ inserted: number; updated: number; errors: number }> {
+  async syncToHRMS(records: TransformedEmployee[]): Promise<{ inserted: number; updated: number; errors: number }> {
     let inserted = 0;
     let updated = 0;
     let errors = 0;
@@ -217,10 +209,7 @@ export class EmployeeSyncHandler {
     for (const record of records) {
       const validation = this.validate(record);
       if (!validation.valid) {
-        console.error(
-          `[Employee Sync] Validation failed for ${record.employee_code}:`,
-          validation.errors,
-        );
+        console.error(`[Employee Sync] Validation failed for ${record.employee_code}:`, validation.errors);
         errors++;
         continue;
       }
@@ -228,8 +217,7 @@ export class EmployeeSyncHandler {
       try {
         // Upsert: try insert, on duplicate key update
         // For bank/statutory fields, only overwrite if HRMS value is NULL (protect user-updated data)
-        const [result] = await mysqlDb.execute<any>(
-          `
+        const [result] = await mysqlDb.execute<any>(`
           INSERT INTO employees (
             id, employee_code, biometric_code, first_name, last_name, title, gender,
             date_of_birth, date_of_joining, date_of_leaving,
@@ -305,55 +293,25 @@ export class EmployeeSyncHandler {
             legacy_last_updated = VALUES(legacy_last_updated),
             legacy_emp_id = VALUES(legacy_emp_id),
             updated_at = NOW()
-        `,
-          [
-            record.employee_code,
-            record.biometric_code,
-            record.first_name,
-            record.last_name,
-            record.title,
-            record.gender,
-            record.date_of_birth,
-            record.date_of_joining,
-            record.date_of_leaving,
-            record.mobile,
-            record.email,
-            record.official_email,
-            record.pan_number,
-            record.aadhaar_last4,
-            record.passport_number,
-            record.epf_number,
-            record.esic_number,
-            record.uan,
-            // pan_enc_key_version is NOT NULL DEFAULT 1, so it takes 1 even when there is
-            // no ciphertext to go with it.
-            encryptPanForSync(record.pan_number),
-            1,
-            record.department,
-            record.designation,
-            record.branch,
-            record.client_name,
-            record.process,
-            record.cost_center,
-            record.bank_account_number,
-            record.bank_name,
-            record.bank_branch,
-            record.ifsc_code,
-            record.account_holder_name,
-            record.marital_status,
-            record.blood_group,
-            record.qualification,
-            record.address_line1,
-            record.address_line2,
-            record.city,
-            record.state,
-            record.pincode,
-            record.active_status,
-            record.legacy_last_updated,
-            record.legacy_emp_id,
-            record.created_at,
-          ],
-        );
+        `, [
+          record.employee_code, record.biometric_code, record.first_name, record.last_name,
+          record.title, record.gender,
+          record.date_of_birth, record.date_of_joining, record.date_of_leaving,
+          record.mobile, record.email, record.official_email,
+          record.pan_number, record.aadhaar_last4, record.passport_number,
+          record.epf_number, record.esic_number, record.uan,
+          // pan_enc_key_version is NOT NULL DEFAULT 1, so it takes 1 even when there is
+          // no ciphertext to go with it.
+          encryptPanForSync(record.pan_number), 1,
+          record.department, record.designation, record.branch,
+          record.client_name, record.process, record.cost_center,
+          record.bank_account_number, record.bank_name, record.bank_branch,
+          record.ifsc_code, record.account_holder_name,
+          record.marital_status, record.blood_group, record.qualification,
+          record.address_line1, record.address_line2, record.city, record.state, record.pincode,
+          record.active_status, record.legacy_last_updated, record.legacy_emp_id,
+          record.created_at,
+        ]);
 
         // Check if INSERT or UPDATE based on affectedRows and insertId
         if (result.insertId) {
@@ -363,25 +321,15 @@ export class EmployeeSyncHandler {
         }
 
         try {
-          const lmsResult = await provisionLmsIdentityForEmployee({
-            employeeCode: record.employee_code,
-          });
+          const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode: record.employee_code });
           if (lmsResult.message) {
-            console.warn(
-              `[Employee Sync] LMS provisioning for ${record.employee_code}: ${lmsResult.message}`,
-            );
+            console.warn(`[Employee Sync] LMS provisioning for ${record.employee_code}: ${lmsResult.message}`);
           }
         } catch (err) {
-          console.error(
-            `[Employee Sync] LMS provisioning failed for ${record.employee_code}:`,
-            err instanceof Error ? err.message : String(err),
-          );
+          console.error(`[Employee Sync] LMS provisioning failed for ${record.employee_code}:`, err instanceof Error ? err.message : String(err));
         }
       } catch (error: any) {
-        console.error(
-          `[Employee Sync] Failed to sync ${record.employee_code}:`,
-          error.message,
-        );
+        console.error(`[Employee Sync] Failed to sync ${record.employee_code}:`, error.message);
         errors++;
       }
     }
@@ -393,15 +341,12 @@ export class EmployeeSyncHandler {
    * Get last sync checkpoint
    */
   async getLastSyncTime(): Promise<Date> {
-    const [rows] = await mysqlDb.execute<any[]>(
-      `
+    const [rows] = await mysqlDb.execute<any[]>(`
       SELECT last_sync_time
       FROM legacy_sync_checkpoint
       WHERE domain = ?
       LIMIT 1
-    `,
-      [this.domain],
-    );
+    `, [this.domain]);
 
     if (rows.length > 0 && rows[0].last_sync_time) {
       return new Date(rows[0].last_sync_time);
@@ -417,42 +362,25 @@ export class EmployeeSyncHandler {
    * Update sync checkpoint
    */
   async updateCheckpoint(lastSyncTime: Date): Promise<void> {
-    await mysqlDb.execute(
-      `
+    await mysqlDb.execute(`
       INSERT INTO legacy_sync_checkpoint (domain, last_sync_time, updated_at)
       VALUES (?, ?, NOW())
       ON DUPLICATE KEY UPDATE
         last_sync_time = VALUES(last_sync_time),
         updated_at = NOW()
-    `,
-      [this.domain, lastSyncTime],
-    );
+    `, [this.domain, lastSyncTime]);
   }
 
   /**
    * Log sync run
    */
-  async logSyncRun(
-    status: "success" | "failure",
-    recordsProcessed: number,
-    recordsFailed: number,
-    errorMessage?: string,
-  ): Promise<void> {
-    await mysqlDb.execute(
-      `
+  async logSyncRun(status: 'success' | 'failure', recordsProcessed: number, recordsFailed: number, errorMessage?: string): Promise<void> {
+    await mysqlDb.execute(`
       INSERT INTO legacy_sync_run_log
         (id, domain, status, records_processed, records_failed, error_message, started_at, completed_at)
       VALUES
         (UUID(), ?, ?, ?, ?, ?, NOW(), NOW())
-    `,
-      [
-        this.domain,
-        status,
-        recordsProcessed,
-        recordsFailed,
-        errorMessage || null,
-      ],
-    );
+    `, [this.domain, status, recordsProcessed, recordsFailed, errorMessage || null]);
   }
 }
 

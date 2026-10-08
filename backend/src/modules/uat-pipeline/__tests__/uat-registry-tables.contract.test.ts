@@ -32,10 +32,7 @@ import { matchTablePattern } from "../control-plane.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const snapshot = JSON.parse(
-  readFileSync(
-    join(here, "..", "..", "..", "..", "sql", "schema-snapshot.json"),
-    "utf8",
-  ),
+  readFileSync(join(here, "..", "..", "..", "..", "sql", "schema-snapshot.json"), "utf8")
 ) as { tables: Record<string, unknown> | string[] };
 
 const tableNames: string[] = Array.isArray(snapshot.tables)
@@ -67,55 +64,35 @@ describe("the exception list stays honest", () => {
   it("only excuses patterns that are still declared by some capability", () => {
     // A stale exception is worse than none: it silently excuses a pattern nobody uses, and
     // the next person reads it as evidence that something was checked.
-    const declared = new Set(
-      registry.capabilities.flatMap((c) => c.tables ?? []),
-    );
+    const declared = new Set(registry.capabilities.flatMap((c) => c.tables ?? []));
     for (const pattern of Object.keys(VERIFIED_LIVE_NOT_IN_SNAPSHOT)) {
-      expect(
-        declared,
-        `${pattern} is excused but no capability declares it`,
-      ).toContain(pattern);
+      expect(declared, `${pattern} is excused but no capability declares it`).toContain(pattern);
     }
   });
 
   it("records live evidence for each exception", () => {
-    for (const [pattern, evidence] of Object.entries(
-      VERIFIED_LIVE_NOT_IN_SNAPSHOT,
-    )) {
-      expect(
-        evidence.length,
-        `${pattern} needs a real table name and a date`,
-      ).toBeGreaterThan(30);
-      expect(evidence, `${pattern} must name the tables it matched`).toMatch(
-        /\d{4}-\d{2}-\d{2}/,
-      );
+    for (const [pattern, evidence] of Object.entries(VERIFIED_LIVE_NOT_IN_SNAPSHOT)) {
+      expect(evidence.length, `${pattern} needs a real table name and a date`).toBeGreaterThan(30);
+      expect(evidence, `${pattern} must name the tables it matched`).toMatch(/\d{4}-\d{2}-\d{2}/);
     }
   });
 
   it("stays small — a growing list means the snapshot needs regenerating", () => {
-    expect(
-      Object.keys(VERIFIED_LIVE_NOT_IN_SNAPSHOT).length,
-    ).toBeLessThanOrEqual(3);
+    expect(Object.keys(VERIFIED_LIVE_NOT_IN_SNAPSHOT).length).toBeLessThanOrEqual(3);
   });
 });
 
 describe("the schema snapshot is usable", () => {
   it("lists the tables the pipeline actually reads", () => {
     expect(tableNames.length).toBeGreaterThan(500);
-    for (const t of [
-      "employees",
-      "page_catalog",
-      "notification_event_config",
-    ]) {
+    for (const t of ["employees", "page_catalog", "notification_event_config"]) {
       expect(tableNames, `${t} must be in the snapshot`).toContain(t);
     }
   });
 });
 
 describe("every capability table pattern matches something real", () => {
-  const withTables = registry.capabilities.filter(
-    (c) => (c.tables ?? []).length > 0,
-  );
+  const withTables = registry.capabilities.filter((c) => (c.tables ?? []).length > 0);
 
   it("covers the capabilities that carry policy weight", () => {
     // A capability at REVIEW or above with no table signal at all is relying entirely on
@@ -124,7 +101,7 @@ describe("every capability table pattern matches something real", () => {
       if (["DENY", "HIGH_REVIEW", "REVIEW"].includes(cap.class)) {
         expect(
           (cap.tables ?? []).length,
-          `${cap.key} is ${cap.class} but declares no table patterns`,
+          `${cap.key} is ${cap.class} but declares no table patterns`
         ).toBeGreaterThan(0);
       }
     }
@@ -134,34 +111,23 @@ describe("every capability table pattern matches something real", () => {
     "%s — no dead patterns",
     (_key, cap) => {
       const dead = (cap.tables ?? [])
-        .filter(
-          (pattern) => !tableNames.some((t) => matchTablePattern(pattern, t)),
-        )
+        .filter((pattern) => !tableNames.some((t) => matchTablePattern(pattern, t)))
         .filter((pattern) => !VERIFIED_LIVE_NOT_IN_SNAPSHOT[pattern]);
       expect(
         dead,
         `${cap.key} has pattern(s) matching no table in the schema snapshot. ` +
           `HRMS2 prefixes tables by module — check the real name before inventing one, and ` +
-          `delete the pattern outright if the concept has no table.`,
+          `delete the pattern outright if the concept has no table.`
       ).toEqual([]);
-    },
+    }
   );
 });
 
 describe("widening a pattern must not swallow another domain", () => {
   /** Worst class claiming a table, by the same rule the scanner uses. */
-  const RANK = {
-    TRIVIAL: 0,
-    STANDARD: 1,
-    REVIEW: 2,
-    HIGH_REVIEW: 3,
-    DENY: 4,
-  } as const;
+  const RANK = { TRIVIAL: 0, STANDARD: 1, REVIEW: 2, HIGH_REVIEW: 3, DENY: 4 } as const;
 
-  function classFor(table: string): {
-    cls: keyof typeof RANK | null;
-    keys: string[];
-  } {
+  function classFor(table: string): { cls: keyof typeof RANK | null; keys: string[] } {
     let cls: keyof typeof RANK | null = null;
     const keys: string[] = [];
     for (const cap of registry.capabilities) {
@@ -185,9 +151,7 @@ describe("widening a pattern must not swallow another domain", () => {
     ]) {
       if (!tableNames.includes(t)) continue;
       const { cls, keys } = classFor(t);
-      expect(cls, `${t} classified ${cls} by [${keys.join(",")}]`).not.toBe(
-        "DENY",
-      );
+      expect(cls, `${t} classified ${cls} by [${keys.join(",")}]`).not.toBe("DENY");
     }
   });
 
@@ -211,9 +175,8 @@ describe("widening a pattern must not swallow another domain", () => {
     // The registry is deliberately over-broad, but if everything is DENY then nothing is
     // eligible for any automated path and the two-dimensional model has collapsed to one.
     const deny = tableNames.filter((t) => classFor(t).cls === "DENY").length;
-    expect(
-      deny / tableNames.length,
-      `${deny}/${tableNames.length} tables are DENY`,
-    ).toBeLessThan(0.5);
+    expect(deny / tableNames.length, `${deny}/${tableNames.length} tables are DENY`).toBeLessThan(
+      0.5
+    );
   });
 });

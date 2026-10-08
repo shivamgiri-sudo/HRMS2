@@ -1,11 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
-import {
-  ccProcessJoin,
-  ccProcessNameSql,
-  costCentreLabel,
-} from "./cost-centre-label.js";
+import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-label.js";
 // GRN amounts here are EX-GST (owner rule 2026-09-24: P&L GRN must be non-GST); they were
 // COALESCE(pnl_cost_amount, amount_with_tax), which carried non-recoverable / full GST.
 import { grnRequestExGstSql } from "./pnl-ex-gst.js";
@@ -68,11 +64,7 @@ const n = (v: unknown): number => {
 };
 
 /** Indian financial year (April-March) containing the given period. */
-export function financeYearBounds(period: string): {
-  label: string;
-  from: string;
-  to: string;
-} {
+export function financeYearBounds(period: string): { label: string; from: string; to: string } {
   const [y, m] = period.split("-").map(Number);
   const startYear = m >= 4 ? y : y - 1;
   return {
@@ -84,8 +76,7 @@ export function financeYearBounds(period: string): {
 
 /** GRN states representing committed cost — the same set the Unlinked GRN reviewer uses. */
 const LIVE_GRN_STATUS = "g.status NOT IN ('draft', 'rejected', 'cancelled')";
-const NO_ALLOCATION =
-  "NOT EXISTS (SELECT 1 FROM grn_cost_allocation a WHERE a.grn_request_id = g.id)";
+const NO_ALLOCATION = "NOT EXISTS (SELECT 1 FROM grn_cost_allocation a WHERE a.grn_request_id = g.id)";
 
 /**
  * Cost centres with no active staff at all.
@@ -97,17 +88,11 @@ const NO_ALLOCATION =
  * but is structurally invisible at process level, which is the grain every OP% conversation
  * actually happens at.
  */
-async function stafflessCostCentres(
-  from: string,
-  to: string,
-): Promise<LeakageBucket> {
+async function stafflessCostCentres(from: string, to: string): Promise<LeakageBucket> {
   const rows: LeakageRow[] = [];
   let count = 0;
   let amount = 0;
-  if (
-    (await tableExists("cost_centre_master")) &&
-    (await tableExists("grn_request"))
-  ) {
+  if ((await tableExists("cost_centre_master")) && (await tableExists("grn_request"))) {
     const [result] = await db.execute<RowDataPacket[]>(
       `SELECT ccm.id, ccm.cost_centre_code, ccm.cost_centre_name, bm.branch_name,
               MAX(${ccProcessNameSql()}) AS process_name,
@@ -132,22 +117,11 @@ async function stafflessCostCentres(
       rows.push({
         id: String(r.id),
         label: r.cost_centre_code
-          ? costCentreLabel(
-              String(r.cost_centre_code),
-              r.process_name
-                ? String(r.process_name)
-                : r.cost_centre_name &&
-                    r.cost_centre_name !== r.cost_centre_code
-                  ? String(r.cost_centre_name)
-                  : null,
-            )
+          ? costCentreLabel(String(r.cost_centre_code), r.process_name ? String(r.process_name)
+            : r.cost_centre_name && r.cost_centre_name !== r.cost_centre_code ? String(r.cost_centre_name) : null)
           : String(r.cost_centre_name ?? "Unnamed cost centre"),
-        detail: [
-          r.branch_name,
-          `${n(r.grn_count)} GRN${n(r.grn_count) === 1 ? "" : "s"}`,
-        ]
-          .filter(Boolean)
-          .join(" · "),
+        detail: [r.branch_name, `${n(r.grn_count)} GRN${n(r.grn_count) === 1 ? "" : "s"}`]
+          .filter(Boolean).join(" · "),
         count: n(r.grn_count),
         amount: n(r.amount),
       });
@@ -157,10 +131,10 @@ async function stafflessCostCentres(
     code: "STAFFLESS_COST_CENTRE",
     title: "Spend on cost centres with no staff",
     detail:
-      "A cost centre's process is inferred from the employees posted to it. These carry real spend " +
-      "but have no active employees, so they resolve to no process and drop out of every " +
-      "process-level P&L. The cost still sits in branch and company totals, so process Operating " +
-      "Profit % reads better than the business actually performed.",
+      "A cost centre's process is inferred from the employees posted to it. These carry real spend "
+      + "but have no active employees, so they resolve to no process and drop out of every "
+      + "process-level P&L. The cost still sits in branch and company totals, so process Operating "
+      + "Profit % reads better than the business actually performed.",
     severity: amount > 0 ? "critical" : "info",
     actionable: true,
     count,
@@ -176,17 +150,11 @@ async function stafflessCostCentres(
  * missing cost centre is a data-quality problem on the GRN itself, while a GRN that has one and
  * still failed to allocate points at a budget gap.
  */
-async function unlinkedGrnCurrentFy(
-  from: string,
-  upTo: string,
-): Promise<LeakageBucket> {
+async function unlinkedGrnCurrentFy(from: string, upTo: string): Promise<LeakageBucket> {
   const rows: LeakageRow[] = [];
   let count = 0;
   let amount = 0;
-  if (
-    (await tableExists("grn_request")) &&
-    (await tableExists("grn_cost_allocation"))
-  ) {
+  if ((await tableExists("grn_request")) && (await tableExists("grn_cost_allocation"))) {
     const [result] = await db.execute<RowDataPacket[]>(
       `SELECT g.accounting_period,
               CASE WHEN g.cost_centre_id IS NULL OR TRIM(g.cost_centre_id) = ''
@@ -206,10 +174,9 @@ async function unlinkedGrnCurrentFy(
       rows.push({
         id: `${r.accounting_period}-${r.kind}`,
         label: String(r.accounting_period),
-        detail:
-          r.kind === "no_cost_centre"
-            ? "No cost centre on the GRN — nothing to attribute it against"
-            : "Has a cost centre, but no budget line absorbed it",
+        detail: r.kind === "no_cost_centre"
+          ? "No cost centre on the GRN — nothing to attribute it against"
+          : "Has a cost centre, but no budget line absorbed it",
         count: n(r.grn_count),
         amount: n(r.amount),
       });
@@ -217,14 +184,13 @@ async function unlinkedGrnCurrentFy(
   }
   return {
     code: "UNLINKED_GRN_CURRENT_FY",
-    title:
-      "Committed GRNs with no cost allocation (this financial year to date)",
+    title: "Committed GRNs with no cost allocation (this financial year to date)",
     detail:
-      "These GRNs are past draft and not rejected, so they represent committed spend, but no cost " +
-      "allocation row was ever written for them. Until one is, the amount reaches no budget line " +
-      "and no process cost line. Counted only up to the current month: a GRN dated to a future " +
-      "accounting period has deliberately not been budgeted yet and is not a gap, the same " +
-      "FUTURE_DEFERRED distinction the Unlinked GRN reviewer already makes.",
+      "These GRNs are past draft and not rejected, so they represent committed spend, but no cost "
+      + "allocation row was ever written for them. Until one is, the amount reaches no budget line "
+      + "and no process cost line. Counted only up to the current month: a GRN dated to a future "
+      + "accounting period has deliberately not been budgeted yet and is not a gap, the same "
+      + "FUTURE_DEFERRED distinction the Unlinked GRN reviewer already makes.",
     severity: amount > 0 ? "warning" : "info",
     actionable: true,
     count,
@@ -234,17 +200,11 @@ async function unlinkedGrnCurrentFy(
 }
 
 /** Spend on sub-heads deliberately kept out of the P&L — correct, but never audited anywhere. */
-async function excludedTreatmentSpend(
-  from: string,
-  to: string,
-): Promise<LeakageBucket> {
+async function excludedTreatmentSpend(from: string, to: string): Promise<LeakageBucket> {
   const rows: LeakageRow[] = [];
   let count = 0;
   let amount = 0;
-  if (
-    (await tableExists("finance_expense_sub_head_master")) &&
-    (await tableExists("grn_request"))
-  ) {
+  if ((await tableExists("finance_expense_sub_head_master")) && (await tableExists("grn_request"))) {
     const [result] = await db.execute<RowDataPacket[]>(
       `SELECT sh.sub_head_name, sh.pnl_treatment, COUNT(*) AS grn_count,
               SUM(${grnRequestExGstSql("g")}) AS amount
@@ -275,10 +235,10 @@ async function excludedTreatmentSpend(
     code: "EXCLUDED_TREATMENT_SPEND",
     title: "Spend excluded from the P&L by configuration",
     detail:
-      "Sub-heads flagged 'excluded' or 'capex' are kept out of the P&L on purpose, which is right " +
-      "for genuine capital items. Nothing anywhere reports how much that is, so a sub-head " +
-      "flagged by mistake would remove an entire category with nothing to catch it. Shown here so " +
-      "the exclusion stays a decision rather than an assumption.",
+      "Sub-heads flagged 'excluded' or 'capex' are kept out of the P&L on purpose, which is right "
+      + "for genuine capital items. Nothing anywhere reports how much that is, so a sub-head "
+      + "flagged by mistake would remove an entire category with nothing to catch it. Shown here so "
+      + "the exclusion stays a decision rather than an assumption.",
     severity: "info",
     actionable: false,
     count,
@@ -292,10 +252,7 @@ async function legacyUnlinkedGrn(from: string): Promise<LeakageBucket> {
   const rows: LeakageRow[] = [];
   let count = 0;
   let amount = 0;
-  if (
-    (await tableExists("grn_request")) &&
-    (await tableExists("grn_cost_allocation"))
-  ) {
+  if ((await tableExists("grn_request")) && (await tableExists("grn_cost_allocation"))) {
     const [result] = await db.execute<RowDataPacket[]>(
       `SELECT LEFT(g.accounting_period, 4) AS yr, COUNT(*) AS grn_count,
               SUM(${grnRequestExGstSql("g")}) AS amount
@@ -321,10 +278,10 @@ async function legacyUnlinkedGrn(from: string): Promise<LeakageBucket> {
     code: "LEGACY_UNLINKED_GRN",
     title: "Unlinked GRNs from before this financial year",
     detail:
-      "Historical records migrated from the legacy finance system. They were never allocated and " +
-      "are not a live gap — listed only so the current-year figure is not mistaken for the entire " +
-      "unlinked population, and so this volume is understood as the reason the Unlinked GRN " +
-      "Review list is hard to work through.",
+      "Historical records migrated from the legacy finance system. They were never allocated and "
+      + "are not a live gap — listed only so the current-year figure is not mistaken for the entire "
+      + "unlinked population, and so this volume is understood as the reason the Unlinked GRN "
+      + "Review list is hard to work through.",
     severity: "info",
     actionable: false,
     count,
@@ -359,9 +316,8 @@ async function unusableExpenseLedger(): Promise<LeakageBucket> {
       rows.push({
         id: String(r.status),
         label: `Status: ${String(r.status)}`,
-        detail:
-          `${n(r.no_cost_centre)} of ${n(r.claim_count)} carry no cost centre · latest entry ` +
-          `${r.latest ? String(r.latest).slice(0, 10) : "none"}`,
+        detail: `${n(r.no_cost_centre)} of ${n(r.claim_count)} carry no cost centre · latest entry `
+          + `${r.latest ? String(r.latest).slice(0, 10) : "none"}`,
         count: n(r.claim_count),
         amount: n(r.amount),
       });
@@ -371,11 +327,11 @@ async function unusableExpenseLedger(): Promise<LeakageBucket> {
     code: "UNUSABLE_EXPENSE_LEDGER",
     title: "Expense-claim ledger, deliberately not in the P&L",
     detail:
-      "This ledger cannot be booked as cost as it stands: nothing in it is approved, no row carries " +
-      "a cost centre, its employee references are placeholders rather than real people, its " +
-      "largest entries are capital items, and some rows duplicate GRNs already recognised. It is " +
-      "shown so the omission is deliberate and visible. It must not be wired into the P&L before " +
-      "approval, attribution and de-duplication are fixed at source.",
+      "This ledger cannot be booked as cost as it stands: nothing in it is approved, no row carries "
+      + "a cost centre, its employee references are placeholders rather than real people, its "
+      + "largest entries are capital items, and some rows duplicate GRNs already recognised. It is "
+      + "shown so the omission is deliberate and visible. It must not be wired into the P&L before "
+      + "approval, attribution and de-duplication are fixed at source.",
     severity: "info",
     actionable: false,
     count,
@@ -384,13 +340,9 @@ async function unusableExpenseLedger(): Promise<LeakageBucket> {
   };
 }
 
-export async function getCostLeakageReview(
-  period: string,
-): Promise<CostLeakageReview> {
+export async function getCostLeakageReview(period: string): Promise<CostLeakageReview> {
   if (!/^\d{4}-\d{2}$/.test(period)) {
-    throw Object.assign(new Error("period must be YYYY-MM"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
   }
   const fy = financeYearBounds(period);
   const buckets = await Promise.all([
@@ -406,9 +358,7 @@ export async function getCostLeakageReview(
     periodTo: fy.to,
     generatedAt: new Date().toISOString(),
     buckets,
-    actionableAmount: buckets
-      .filter((b) => b.actionable)
-      .reduce((s, b) => s + b.amount, 0),
+    actionableAmount: buckets.filter((b) => b.actionable).reduce((s, b) => s + b.amount, 0),
   };
 }
 
@@ -427,9 +377,7 @@ export async function getStafflessCostCentreSpend(
   costCentreId: string,
 ): Promise<{ rows: LeakageRow[]; total: number }> {
   if (!/^\d{4}-\d{2}$/.test(period)) {
-    throw Object.assign(new Error("period must be YYYY-MM"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
   }
   if (!(await tableExists("grn_request"))) return { rows: [], total: 0 };
   const fy = financeYearBounds(period);
@@ -445,13 +393,9 @@ export async function getStafflessCostCentreSpend(
   );
   const rows: LeakageRow[] = result.map((r) => ({
     id: String(r.id),
-    label: r.grn_number
-      ? String(r.grn_number)
-      : "GRN (number pending approval)",
+    label: r.grn_number ? String(r.grn_number) : "GRN (number pending approval)",
     detail: [r.accounting_period, r.head, r.sub_head, r.status]
-      .filter(Boolean)
-      .map(String)
-      .join(" · "),
+      .filter(Boolean).map(String).join(" · "),
     count: 1,
     amount: n(r.amount),
   }));

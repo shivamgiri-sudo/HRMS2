@@ -140,10 +140,7 @@ export async function getEligibleFnfTransferRows(): Promise<{
     // NOC — mandatory, unconditional. See file header.
     const noc = await nocReleaseStatusForEmployee(line.employee_id);
     if (noc.blocked) {
-      ineligible.push({
-        ...base,
-        reason: noc.reason ?? "NOC clearance is not complete",
-      });
+      ineligible.push({ ...base, reason: noc.reason ?? "NOC clearance is not complete" });
       continue;
     }
 
@@ -152,10 +149,7 @@ export async function getEligibleFnfTransferRows(): Promise<{
       account_number: line.account_number_legacy,
     });
     if (!account) {
-      ineligible.push({
-        ...base,
-        reason: "No active primary bank account on file",
-      });
+      ineligible.push({ ...base, reason: "No active primary bank account on file" });
       continue;
     }
     const ifsc = String(line.ifsc_code ?? "").toUpperCase();
@@ -207,26 +201,20 @@ export async function generateFnfTransferBatch(params: {
 
   const { rows: eligible } = await getEligibleFnfTransferRows();
 
-  const excluded: Array<{ full_final_calculation_id: string; reason: string }> =
-    [];
+  const excluded: Array<{ full_final_calculation_id: string; reason: string }> = [];
   let rows = eligible;
   if (params.fullFinalCalculationIds && params.fullFinalCalculationIds.length) {
     const wanted = new Set(params.fullFinalCalculationIds);
     rows = eligible.filter((r) => wanted.has(r.full_final_calculation_id));
     for (const id of wanted) {
       if (!eligible.some((r) => r.full_final_calculation_id === id)) {
-        excluded.push({
-          full_final_calculation_id: id,
-          reason: "no longer eligible at export time",
-        });
+        excluded.push({ full_final_calculation_id: id, reason: "no longer eligible at export time" });
       }
     }
   }
 
   if (rows.length === 0) {
-    throw Object.assign(new Error("No eligible F&F settlements to export"), {
-      code: "NO_ELIGIBLE_ROWS",
-    });
+    throw Object.assign(new Error("No eligible F&F settlements to export"), { code: "NO_ELIGIBLE_ROWS" });
   }
 
   const aoa = buildAoa(rows, debitAccount, dateLabel);
@@ -246,16 +234,8 @@ export async function generateFnfTransferBatch(params: {
           file_name, file_sha256, filters_snapshot, created_by)
        VALUES (?, ?, 'initial', ?, ?, ?, ?, ?, ?, ?)`,
       [
-        batchId,
-        batchNumber,
-        rows.length,
-        totalAmount.toFixed(2),
-        maskAccount(debitAccount),
-        fileName,
-        sha256,
-        JSON.stringify({
-          fullFinalCalculationIds: params.fullFinalCalculationIds ?? null,
-        }),
+        batchId, batchNumber, rows.length, totalAmount.toFixed(2), maskAccount(debitAccount),
+        fileName, sha256, JSON.stringify({ fullFinalCalculationIds: params.fullFinalCalculationIds ?? null }),
         params.userId,
       ],
     );
@@ -266,15 +246,8 @@ export async function generateFnfTransferBatch(params: {
             amount, pay_mod, account_masked, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'exported')`,
         [
-          randomUUID(),
-          batchId,
-          r.full_final_calculation_id,
-          r.exit_request_id,
-          r.employee_id,
-          r.employee_code,
-          r.amount.toFixed(2),
-          /^ICIC/.test(r.ifsc) ? "I" : "N",
-          r.account_masked,
+          randomUUID(), batchId, r.full_final_calculation_id, r.exit_request_id, r.employee_id,
+          r.employee_code, r.amount.toFixed(2), /^ICIC/.test(r.ifsc) ? "I" : "N", r.account_masked,
         ],
       );
     }
@@ -286,15 +259,7 @@ export async function generateFnfTransferBatch(params: {
     conn.release();
   }
 
-  return {
-    batch_id: batchId,
-    batch_number: batchNumber,
-    file_name: fileName,
-    buffer,
-    row_count: rows.length,
-    total_amount: totalAmount,
-    excluded,
-  };
+  return { batch_id: batchId, batch_number: batchNumber, file_name: fileName, buffer, row_count: rows.length, total_amount: totalAmount, excluded };
 }
 
 /** Same rejection/correction shape as salary_transfer_batch_item — see salary-transfer.service.ts. */
@@ -336,18 +301,10 @@ export interface FnfTransferImportPreviewRow extends TransferImportRow {
  * run to scope by — full_final_calculation_id is already the uniqueness boundary, enforced by
  * open_flag, so at most one 'exported' item can exist per settlement at any time).
  */
-export async function previewFnfTransferNumberImport(
-  rows: TransferImportRow[],
-): Promise<FnfTransferImportPreviewRow[]> {
+export async function previewFnfTransferNumberImport(rows: TransferImportRow[]): Promise<FnfTransferImportPreviewRow[]> {
   const codes = [...new Set(rows.map((r) => r.emp_code).filter(Boolean))];
   if (codes.length === 0) {
-    return rows.map((r) => ({
-      ...r,
-      outcome: "invalid",
-      detail: "blank EmpCode",
-      item_id: null,
-      full_final_calculation_id: null,
-    }));
+    return rows.map((r) => ({ ...r, outcome: "invalid", detail: "blank EmpCode", item_id: null, full_final_calculation_id: null }));
   }
 
   const placeholders = codes.map(() => "?").join(",");
@@ -364,59 +321,26 @@ export async function previewFnfTransferNumberImport(
 
   return rows.map((r) => {
     if (!r.emp_code || !r.ecs_number) {
-      return {
-        ...r,
-        outcome: "invalid",
-        detail: "blank EmpCode or ECSNumber",
-        item_id: null,
-        full_final_calculation_id: null,
-      };
+      return { ...r, outcome: "invalid", detail: "blank EmpCode or ECSNumber", item_id: null, full_final_calculation_id: null };
     }
     const item = byCode.get(r.emp_code);
     if (!item) {
-      return {
-        ...r,
-        outcome: "unmatched",
-        detail: "no exported F&F transfer item for this employee",
-        item_id: null,
-        full_final_calculation_id: null,
-      };
+      return { ...r, outcome: "unmatched", detail: "no exported F&F transfer item for this employee", item_id: null, full_final_calculation_id: null };
     }
     if (item.status === "confirmed") {
-      return {
-        ...r,
-        outcome: "already_confirmed",
-        detail: "transfer number already recorded",
-        item_id: item.id,
-        full_final_calculation_id: item.full_final_calculation_id,
-      };
+      return { ...r, outcome: "already_confirmed", detail: "transfer number already recorded", item_id: item.id, full_final_calculation_id: item.full_final_calculation_id };
     }
     if (item.status !== "exported") {
-      return {
-        ...r,
-        outcome: "unmatched",
-        detail: `latest item is '${item.status}', not awaiting a transfer number`,
-        item_id: item.id,
-        full_final_calculation_id: item.full_final_calculation_id,
-      };
+      return { ...r, outcome: "unmatched", detail: `latest item is '${item.status}', not awaiting a transfer number`, item_id: item.id, full_final_calculation_id: item.full_final_calculation_id };
     }
-    return {
-      ...r,
-      outcome: "will_confirm",
-      detail: "OK",
-      item_id: item.id,
-      full_final_calculation_id: item.full_final_calculation_id,
-    };
+    return { ...r, outcome: "will_confirm", detail: "OK", item_id: item.id, full_final_calculation_id: item.full_final_calculation_id };
   });
 }
 
 export interface CommitFnfImportResult {
   confirmed: number;
   ff_marked_paid: number;
-  ff_mark_paid_failures: Array<{
-    full_final_calculation_id: string;
-    error: string;
-  }>;
+  ff_mark_paid_failures: Array<{ full_final_calculation_id: string; error: string }>;
   skipped: number;
 }
 
@@ -445,29 +369,19 @@ export async function commitFnfTransferNumberImport(params: {
   fileSha256: string;
   userId: string;
 }): Promise<CommitFnfImportResult> {
-  const toApply = params.preview.filter(
-    (r) => r.outcome === "will_confirm" && r.item_id,
-  );
+  const toApply = params.preview.filter((r) => r.outcome === "will_confirm" && r.item_id);
 
   const [existingImport] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM fnf_transfer_import WHERE file_sha256 = ? LIMIT 1`,
     [params.fileSha256],
   );
   if ((existingImport as any[])[0]) {
-    return {
-      confirmed: 0,
-      ff_marked_paid: 0,
-      ff_mark_paid_failures: [],
-      skipped: toApply.length,
-    }; // idempotent re-upload
+    return { confirmed: 0, ff_marked_paid: 0, ff_mark_paid_failures: [], skipped: toApply.length }; // idempotent re-upload
   }
 
   let confirmed = 0;
   let ffMarkedPaid = 0;
-  const ffFailures: Array<{
-    full_final_calculation_id: string;
-    error: string;
-  }> = [];
+  const ffFailures: Array<{ full_final_calculation_id: string; error: string }> = [];
 
   for (const row of toApply) {
     const trfDate = parseTrfDate(row.trf_date);
@@ -482,11 +396,7 @@ export async function commitFnfTransferNumberImport(params: {
 
     if (row.full_final_calculation_id) {
       try {
-        await ffService.markFfPaid(
-          row.full_final_calculation_id,
-          params.userId,
-          row.ecs_number,
-        );
+        await ffService.markFfPaid(row.full_final_calculation_id, params.userId, row.ecs_number);
         ffMarkedPaid++;
       } catch (err) {
         ffFailures.push({
@@ -500,21 +410,8 @@ export async function commitFnfTransferNumberImport(params: {
   await db.execute(
     `INSERT INTO fnf_transfer_import (id, file_name, file_sha256, row_count, matched_count, unmatched_count, uploaded_by)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      randomUUID(),
-      params.fileName,
-      params.fileSha256,
-      params.preview.length,
-      confirmed,
-      params.preview.length - confirmed,
-      params.userId,
-    ],
+    [randomUUID(), params.fileName, params.fileSha256, params.preview.length, confirmed, params.preview.length - confirmed, params.userId],
   );
 
-  return {
-    confirmed,
-    ff_marked_paid: ffMarkedPaid,
-    ff_mark_paid_failures: ffFailures,
-    skipped: params.preview.length - confirmed,
-  };
+  return { confirmed, ff_marked_paid: ffMarkedPaid, ff_mark_paid_failures: ffFailures, skipped: params.preview.length - confirmed };
 }

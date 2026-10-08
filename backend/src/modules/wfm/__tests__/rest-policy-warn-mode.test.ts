@@ -18,16 +18,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
  */
 
 const { mockExecute } = vi.hoisted(() => ({ mockExecute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: mockExecute, getConnection: vi.fn() },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: mockExecute, getConnection: vi.fn() } }));
 
 const { applyRestDecision } = await import("../rest-policy.service.js");
 
-const SRC = readFileSync(
-  resolve(__dirname, "../rest-policy.service.ts"),
-  "utf8",
-);
+const SRC = readFileSync(resolve(__dirname, "../rest-policy.service.ts"), "utf8");
 
 const policy = (mode: "warn" | "block") => ({
   id: "pol-1",
@@ -51,9 +46,7 @@ const shortfall = (mode: "warn" | "block") => ({
 
 const ctx = { employeeId: "emp-1", rosterDate: "2026-08-17" };
 
-beforeEach(() =>
-  mockExecute.mockReset().mockResolvedValue([{ affectedRows: 1 }, []]),
-);
+beforeEach(() => mockExecute.mockReset().mockResolvedValue([{ affectedRows: 1 }, []]));
 
 describe("WARN allows the write and records the shortfall", () => {
   it("allows a shortfall through in WARN", async () => {
@@ -63,21 +56,15 @@ describe("WARN allows the write and records the shortfall", () => {
 
   it("persists a REST_GAP_WARNING rather than only logging it", async () => {
     await applyRestDecision(shortfall("warn") as never, ctx);
-    const insert = mockExecute.mock.calls.find(([s]) =>
-      /INSERT INTO wfm_roster_conflict_log/.test(String(s)),
-    );
+    const insert = mockExecute.mock.calls.find(([s]) => /INSERT INTO wfm_roster_conflict_log/.test(String(s)));
     expect(insert, "no REST_GAP_WARNING was written").toBeTruthy();
     expect(String(insert![0])).toMatch(/'REST_GAP_WARNING'/);
   });
 
   it("carries the actual rest, the requirement, and the shortfall", async () => {
     await applyRestDecision(shortfall("warn") as never, ctx);
-    const insert = mockExecute.mock.calls.find(([s]) =>
-      /wfm_roster_conflict_log/.test(String(s)),
-    );
-    const message = (insert![1] as unknown[]).find(
-      (p) => typeof p === "string" && p.includes("rest"),
-    ) as string;
+    const insert = mockExecute.mock.calls.find(([s]) => /wfm_roster_conflict_log/.test(String(s)));
+    const message = (insert![1] as unknown[]).find((p) => typeof p === "string" && p.includes("rest")) as string;
     expect(message).toMatch(/420 min rest/);
     expect(message).toMatch(/requires 660 min/);
     expect(message).toMatch(/short by 240 min/);
@@ -85,12 +72,8 @@ describe("WARN allows the write and records the shortfall", () => {
 
   it("identifies the conflicting neighbouring assignment", async () => {
     await applyRestDecision(shortfall("warn") as never, ctx);
-    const insert = mockExecute.mock.calls.find(([s]) =>
-      /wfm_roster_conflict_log/.test(String(s)),
-    );
-    const message = (insert![1] as unknown[]).find(
-      (p) => typeof p === "string" && p.includes("rest"),
-    ) as string;
+    const insert = mockExecute.mock.calls.find(([s]) => /wfm_roster_conflict_log/.test(String(s)));
+    const message = (insert![1] as unknown[]).find((p) => typeof p === "string" && p.includes("rest")) as string;
     expect(message).toMatch(/previous shift/);
     expect(message).toMatch(/2026-08-16 06:00/);
   });
@@ -98,9 +81,7 @@ describe("WARN allows the write and records the shortfall", () => {
   it("lands in the WFM review queue as open and high, not informational", async () => {
     // A warned-through breach is something somebody chose to accept and must return to.
     await applyRestDecision(shortfall("warn") as never, ctx);
-    const insert = mockExecute.mock.calls.find(([s]) =>
-      /wfm_roster_conflict_log/.test(String(s)),
-    );
+    const insert = mockExecute.mock.calls.find(([s]) => /wfm_roster_conflict_log/.test(String(s)));
     expect(String(insert![0])).toMatch(/'high'/);
     expect(String(insert![0])).toMatch(/'open'/);
   });
@@ -110,11 +91,7 @@ describe("BLOCK still refuses, and WARN never loosens what it should not", () =>
   it("refuses a shortfall in BLOCK and writes no warning", async () => {
     const decision = await applyRestDecision(shortfall("block") as never, ctx);
     expect(decision).toEqual({ allowed: false, warned: false });
-    expect(
-      mockExecute.mock.calls.some(([s]) =>
-        /wfm_roster_conflict_log/.test(String(s)),
-      ),
-    ).toBe(false);
+    expect(mockExecute.mock.calls.some(([s]) => /wfm_roster_conflict_log/.test(String(s)))).toBe(false);
   });
 
   it("blocks REST_POLICY_MISSING regardless of mode", async () => {
@@ -139,10 +116,7 @@ describe("BLOCK still refuses, and WARN never loosens what it should not", () =>
   it("treats an unknown or absent mode as block", async () => {
     // A database that has not taken migration 1224 returns undefined here.
     const decision = await applyRestDecision(
-      {
-        ...shortfall("block"),
-        policy: { ...policy("block"), enforcementMode: undefined },
-      } as never,
+      { ...shortfall("block"), policy: { ...policy("block"), enforcementMode: undefined } } as never,
       ctx,
     );
     expect(decision.allowed).toBe(false);
@@ -151,9 +125,7 @@ describe("BLOCK still refuses, and WARN never loosens what it should not", () =>
 
 describe("one decision point, obeyed by every roster write path", () => {
   it("the mode defaults to block when the column is missing", () => {
-    expect(SRC).toMatch(
-      /enforcement_mode \?\? ""\)\.toLowerCase\(\) === "warn" \? "warn" : "block"/,
-    );
+    expect(SRC).toMatch(/enforcement_mode \?\? ""\)\.toLowerCase\(\) === "warn" \? "warn" : "block"/);
   });
 
   it("all four write paths call the shared decision rather than reading the mode", () => {
@@ -164,15 +136,11 @@ describe("one decision point, obeyed by every roster write path", () => {
     ];
     for (const p of paths) {
       const body = readFileSync(resolve(__dirname, p), "utf8");
-      expect(body, `${p} does not consult applyRestDecision`).toMatch(
-        /applyRestDecision\(/,
-      );
+      expect(body, `${p} does not consult applyRestDecision`).toMatch(/applyRestDecision\(/);
       // Property ACCESS, not the word — the comment in each path names enforcementMode to
       // explain why it deliberately does not read it.
-      expect(
-        body,
-        `${p} reads the mode itself instead of asking the resolver`,
-      ).not.toMatch(/\.enforcementMode/);
+      expect(body, `${p} reads the mode itself instead of asking the resolver`)
+        .not.toMatch(/\.enforcementMode/);
     }
   });
 });

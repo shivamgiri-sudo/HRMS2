@@ -1,16 +1,10 @@
 import { describe, it, expect } from "vitest";
-import {
-  employmentStatusForExit,
-  TERMINAL_EXIT_STATUSES,
-  NON_REACTIVATABLE_STATUSES,
-} from "../exitEmploymentStatus.js";
+import { employmentStatusForExit, TERMINAL_EXIT_STATUSES, NON_REACTIVATABLE_STATUSES } from "../exitEmploymentStatus.js";
 import { createExitRequestSchema } from "../exit.validation.js";
 
 describe("did_not_join exit sub-type", () => {
   it("maps to the not_joined terminal employment status", () => {
-    expect(employmentStatusForExit("involuntary", "did_not_join")).toBe(
-      "not_joined",
-    );
+    expect(employmentStatusForExit("involuntary", "did_not_join")).toBe("not_joined");
   });
 
   it("is included in the terminal/non-reactivatable guard lists", () => {

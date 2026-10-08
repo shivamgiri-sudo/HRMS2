@@ -1,5 +1,5 @@
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
 
 export interface ShiftAlias {
   id: number;
@@ -14,16 +14,15 @@ export interface ShiftAlias {
  * List all shift aliases, optionally filtered by shiftId
  */
 export async function listAliases(shiftId?: string): Promise<ShiftAlias[]> {
-  let query =
-    "SELECT id, shift_id as shiftId, alias, is_active as isActive, created_at as createdAt, created_by as createdBy FROM wfm_shift_alias";
+  let query = 'SELECT id, shift_id as shiftId, alias, is_active as isActive, created_at as createdAt, created_by as createdBy FROM wfm_shift_alias';
   const params: unknown[] = [];
 
   if (shiftId) {
-    query += " WHERE shift_id = ?";
+    query += ' WHERE shift_id = ?';
     params.push(shiftId);
   }
 
-  query += " ORDER BY created_at DESC";
+  query += ' ORDER BY created_at DESC';
 
   const [rows] = await db.query<RowDataPacket[]>(query, params);
   return (rows as any[]).map((row: any) => ({
@@ -42,29 +41,29 @@ export async function listAliases(shiftId?: string): Promise<ShiftAlias[]> {
 export async function createAlias(
   shiftId: string,
   alias: string,
-  createdBy: string,
+  createdBy: string
 ): Promise<ShiftAlias> {
   // Check for duplicate alias
   const [existing] = await db.query<RowDataPacket[]>(
-    "SELECT id FROM wfm_shift_alias WHERE alias = ?",
-    [alias],
+    'SELECT id FROM wfm_shift_alias WHERE alias = ?',
+    [alias]
   );
 
   if (existing.length > 0) {
-    const error = new Error("Alias already exists");
+    const error = new Error('Alias already exists');
     (error as any).statusCode = 409;
     throw error;
   }
 
   const [result] = await db.executeRun(
-    "INSERT INTO wfm_shift_alias (shift_id, alias, is_active, created_by) VALUES (?, ?, 1, ?)",
-    [shiftId, alias, createdBy],
+    'INSERT INTO wfm_shift_alias (shift_id, alias, is_active, created_by) VALUES (?, ?, 1, ?)',
+    [shiftId, alias, createdBy]
   );
 
   const id = (result as any).insertId;
   const [rows] = await db.query<RowDataPacket[]>(
-    "SELECT id, shift_id as shiftId, alias, is_active as isActive, created_at as createdAt, created_by as createdBy FROM wfm_shift_alias WHERE id = ?",
-    [id],
+    'SELECT id, shift_id as shiftId, alias, is_active as isActive, created_at as createdAt, created_by as createdBy FROM wfm_shift_alias WHERE id = ?',
+    [id]
   );
 
   const row = (rows as any[])[0];
@@ -84,35 +83,35 @@ export async function createAlias(
  */
 export async function updateAlias(
   id: number,
-  updates: { alias?: string; isActive?: boolean },
+  updates: { alias?: string; isActive?: boolean }
 ): Promise<ShiftAlias> {
   const fields: string[] = [];
   const params: unknown[] = [];
 
   if (updates.alias !== undefined) {
-    fields.push("alias = ?");
+    fields.push('alias = ?');
     params.push(updates.alias);
   }
 
   if (updates.isActive !== undefined) {
-    fields.push("is_active = ?");
+    fields.push('is_active = ?');
     params.push(updates.isActive ? 1 : 0);
   }
 
   if (fields.length === 0) {
-    throw new Error("No updates provided");
+    throw new Error('No updates provided');
   }
 
   params.push(id);
 
   await db.executeRun(
-    `UPDATE wfm_shift_alias SET ${fields.join(", ")} WHERE id = ?`,
-    params,
+    `UPDATE wfm_shift_alias SET ${fields.join(', ')} WHERE id = ?`,
+    params
   );
 
   const [rows] = await db.query<RowDataPacket[]>(
-    "SELECT id, shift_id as shiftId, alias, is_active as isActive, created_at as createdAt, created_by as createdBy FROM wfm_shift_alias WHERE id = ?",
-    [id],
+    'SELECT id, shift_id as shiftId, alias, is_active as isActive, created_at as createdAt, created_by as createdBy FROM wfm_shift_alias WHERE id = ?',
+    [id]
   );
 
   const row = (rows as any[])[0];
@@ -130,14 +129,14 @@ export async function updateAlias(
  * Delete a shift alias
  */
 export async function deleteAlias(id: number): Promise<void> {
-  await db.executeRun("DELETE FROM wfm_shift_alias WHERE id = ?", [id]);
+  await db.executeRun('DELETE FROM wfm_shift_alias WHERE id = ?', [id]);
 }
 
 /**
  * Resolve shift aliases - case-insensitive mapping from alias string to shiftId
  */
 export async function resolveAliases(
-  aliases: string[],
+  aliases: string[]
 ): Promise<Map<string, string | null>> {
   if (aliases.length === 0) {
     return new Map();
@@ -148,8 +147,8 @@ export async function resolveAliases(
 
   // Query with case-insensitive match
   const [rows] = await db.query<RowDataPacket[]>(
-    "SELECT alias, shift_id FROM wfm_shift_alias WHERE UPPER(alias) IN (?) AND is_active = 1",
-    [upperAliases],
+    'SELECT alias, shift_id FROM wfm_shift_alias WHERE UPPER(alias) IN (?) AND is_active = 1',
+    [upperAliases]
   );
 
   // Build result map
@@ -164,7 +163,7 @@ export async function resolveAliases(
   for (const row of rows as any[]) {
     // Find the original alias (case-insensitive)
     const originalAlias = aliases.find(
-      (a) => a.toUpperCase() === row.alias.toUpperCase(),
+      (a) => a.toUpperCase() === row.alias.toUpperCase()
     );
     if (originalAlias) {
       result.set(originalAlias, row.shift_id);

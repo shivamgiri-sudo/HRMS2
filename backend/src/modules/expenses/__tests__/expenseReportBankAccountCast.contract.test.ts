@@ -8,10 +8,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const source = readFileSync(
-  resolve(process.cwd(), "src/modules/expenses/expenseReport.service.ts"),
-  "utf8",
-);
+const source = readFileSync(resolve(process.cwd(), "src/modules/expenses/expenseReport.service.ts"), "utf8");
 
 describe("expenseReport.service.ts casts account_number to CHAR before it reaches JSON", () => {
   it("exportForPayment's query CASTs ebd.account_number", () => {
@@ -21,12 +18,8 @@ describe("expenseReport.service.ts casts account_number to CHAR before it reache
     // .toString("utf8") on a Buffer. The VARBINARY therefore never reaches JSON raw, which is
     // the property this test exists to hold — asserting the SQL text made it fail on correct
     // code. Either mechanism is fine; neither is the defect.
-    expect(source).toMatch(
-      /CAST\(ebd\.account_number AS CHAR\)|resolveAccountNumber\s*\(/,
-    );
+    expect(source).toMatch(/CAST\(ebd\.account_number AS CHAR\)|resolveAccountNumber\s*\(/);
     // And the decoded value must actually be what the export emits, not a parallel unused call.
-    expect(source).toMatch(
-      /account_number:\s*resolveAccountNumber\s*\(|CAST\(ebd\.account_number AS CHAR\)/,
-    );
+    expect(source).toMatch(/account_number:\s*resolveAccountNumber\s*\(|CAST\(ebd\.account_number AS CHAR\)/);
   });
 });

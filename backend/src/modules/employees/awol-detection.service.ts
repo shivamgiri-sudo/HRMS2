@@ -75,8 +75,7 @@ export async function getLastWorkedDate(
         AND attendance_status <> 'absent'`,
     [employeeId],
   );
-  const value = (rows as RowDataPacket[])[0]?.last_worked_date as
-    string | Date | null;
+  const value = (rows as RowDataPacket[])[0]?.last_worked_date as string | Date | null;
   return value ? new Date(value).toISOString().slice(0, 10) : null;
 }
 
@@ -139,7 +138,7 @@ export async function runAwolDetectionScan(): Promise<void> {
          SELECT 1 FROM exit_request er WHERE er.employee_id = e.id
        )
      ORDER BY e.employee_code
-     LIMIT 500`,
+     LIMIT 500`
   );
 
   for (const row of rows) {
@@ -149,30 +148,24 @@ export async function runAwolDetectionScan(): Promise<void> {
         (row.full_name ?? row.employee_code ?? "Employee") as string,
         (row.branch_id as string | null) ?? undefined,
         {
-          reportingManagerUserId:
-            (row.reporting_manager_user_id as string | null) ?? null,
+          reportingManagerUserId: (row.reporting_manager_user_id as string | null) ?? null,
           // Formatted, not handed over as a Date: mysql2 returns a DATE as a host-timezone JS
           // Date and this codebase has a documented history of that shifting the day. On this
           // value a day is a day of pay.
           lastWorkedDate: row.last_worked_date
-            ? new Date(row.last_worked_date as string | Date)
-                .toISOString()
-                .slice(0, 10)
+            ? new Date(row.last_worked_date as string | Date).toISOString().slice(0, 10)
             : null,
           absentDays: CONSECUTIVE_ABSENT_DAYS,
-        },
+        }
       );
     } catch (err) {
-      console.warn(
-        `[awol-detection] failed for employee ${row.employee_id as string}:`,
-        err,
-      );
+      console.warn(`[awol-detection] failed for employee ${row.employee_id as string}:`, err);
     }
   }
 
   if (rows.length > 0) {
     console.log(
-      `[awol-detection] raised ${rows.length} absconding confirmation(s) for reporting managers`,
+      `[awol-detection] raised ${rows.length} absconding confirmation(s) for reporting managers`
     );
   }
 }

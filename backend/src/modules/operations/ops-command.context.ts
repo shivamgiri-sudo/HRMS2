@@ -1,23 +1,11 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { LATEST_COMPLETE_ATTENDANCE_DATE_SQL } from "../../shared/attendanceStatus.js";
-import {
-  buildScopeWhere,
-  buildScopeWhereEmployees,
-  type DashboardScope,
-} from "../../shared/dashboardScope.js";
+import { buildScopeWhere, buildScopeWhereEmployees, type DashboardScope } from "../../shared/dashboardScope.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 
-export type OpsDimension =
-  "all" | "branch" | "process" | "lob" | "manager" | "employee";
-export const OPS_DIMENSIONS: OpsDimension[] = [
-  "all",
-  "branch",
-  "process",
-  "lob",
-  "manager",
-  "employee",
-];
+export type OpsDimension = "all" | "branch" | "process" | "lob" | "manager" | "employee";
+export const OPS_DIMENSIONS: OpsDimension[] = ["all", "branch", "process", "lob", "manager", "employee"];
 
 /** Sentinel group id for rows with no branch / process / lob / manager. */
 export const NONE_ID = "__none__";
@@ -48,9 +36,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_SPAN_DAYS = 366;
 
 export function isIsoDate(v: unknown): v is string {
-  return (
-    typeof v === "string" && DATE_RE.test(v) && !Number.isNaN(Date.parse(v))
-  );
+  return typeof v === "string" && DATE_RE.test(v) && !Number.isNaN(Date.parse(v));
 }
 
 export function addDays(iso: string, days: number): string {
@@ -60,12 +46,7 @@ export function addDays(iso: string, days: number): string {
 }
 
 export function daysBetween(from: string, to: string): number {
-  return (
-    Math.round(
-      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) /
-        86_400_000,
-    ) + 1
-  );
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
 }
 
 export async function latestCompleteAttendanceDate(): Promise<string | null> {
@@ -83,18 +64,13 @@ export interface ResolvedPeriod {
 }
 
 /** Validates the requested window; defaults to the 30 days ending at the latest complete attendance date. */
-export async function resolvePeriod(
-  rawFrom: unknown,
-  rawTo: unknown,
-): Promise<ResolvedPeriod> {
+export async function resolvePeriod(rawFrom: unknown, rawTo: unknown): Promise<ResolvedPeriod> {
   const today = getCurrentDateIST();
-  const attThrough =
-    (await latestCompleteAttendanceDate()) ?? addDays(today, -1);
+  const attThrough = (await latestCompleteAttendanceDate()) ?? addDays(today, -1);
   let to = isIsoDate(rawTo) ? rawTo : attThrough;
   let from = isIsoDate(rawFrom) ? rawFrom : addDays(to, -29);
   if (from > to) [from, to] = [to, from];
-  if (daysBetween(from, to) > MAX_SPAN_DAYS)
-    from = addDays(to, -(MAX_SPAN_DAYS - 1));
+  if (daysBetween(from, to) > MAX_SPAN_DAYS) from = addDays(to, -(MAX_SPAN_DAYS - 1));
   return { from, to, attThrough, today };
 }
 
@@ -106,9 +82,7 @@ export function previousPeriod(f: OpsFilters): { from: string; to: string } {
 
 function eqOrNull(col: string, value: string | undefined): Sql | null {
   if (!value) return null;
-  return value === NONE_ID
-    ? { sql: `${col} IS NULL`, params: [] }
-    : { sql: `${col} = ?`, params: [value] };
+  return value === NONE_ID ? { sql: `${col} IS NULL`, params: [] } : { sql: `${col} = ?`, params: [value] };
 }
 
 /** Row scope (security) + user filters (narrowing) for an `employees` alias. Never widens scope. */
@@ -132,11 +106,7 @@ export function empWhere(ctx: OpsCtx, alias = "e"): Sql {
 }
 
 /** Scope + branch/process filter for tables that carry their own branch_id / process_id (mandate, requisition…). */
-export function factWhere(
-  ctx: OpsCtx,
-  branchCol: string,
-  processCol: string,
-): Sql {
+export function factWhere(ctx: OpsCtx, branchCol: string, processCol: string): Sql {
   const scope = buildScopeWhere(ctx.scope, branchCol, processCol);
   const parts = [`(${scope.sql})`];
   const params: unknown[] = [...scope.params];
@@ -177,11 +147,7 @@ export function groupExpr(dim: OpsDimension, alias = "e"): string {
 }
 
 /** Group expression for a fact table that only carries branch / process ids; null = dimension not available. */
-export function factGroupExpr(
-  dim: OpsDimension,
-  branchCol: string,
-  processCol: string,
-): string | null {
+export function factGroupExpr(dim: OpsDimension, branchCol: string, processCol: string): string | null {
   if (dim === "all") return `'all'`;
   if (dim === "branch") return `COALESCE(${branchCol}, '${NONE_ID}')`;
   if (dim === "process") return `COALESCE(${processCol}, '${NONE_ID}')`;
@@ -209,8 +175,7 @@ export function exitInRange(from: string, to: string, alias = "e"): Sql {
   };
 }
 
-export const EXIT_DATE_SQL = (alias = "e") =>
-  `COALESCE(${alias}.date_of_exit, ${alias}.date_of_leaving)`;
+export const EXIT_DATE_SQL = (alias = "e") => `COALESCE(${alias}.date_of_exit, ${alias}.date_of_leaving)`;
 
 /** Roster rows that are real (excludes the 412k-row synthetic cohort loaded 2026-06-11). */
 export const realRoster = (alias: string) =>

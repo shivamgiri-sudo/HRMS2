@@ -15,9 +15,7 @@ const EMPLOYEE_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-const { createWorkItem } = vi.hoisted(() => ({
-  createWorkItem: vi.fn().mockResolvedValue("wi-1"),
-}));
+const { createWorkItem } = vi.hoisted(() => ({ createWorkItem: vi.fn().mockResolvedValue("wi-1") }));
 vi.mock("../../work-inbox/work-inbox.service.js", () => ({ createWorkItem }));
 
 const { salaryDisputeService } = await import("../salary-dispute.service.js");
@@ -75,18 +73,11 @@ describe("applyArrear — status outcome", () => {
       String(c[0]).includes("UPDATE salary_dispute SET arrear_run_month"),
     );
     expect(updateCall).toBeTruthy();
-    expect(updateCall![1]).toEqual([
-      "2026-08",
-      expect.any(String),
-      "closed",
-      DISPUTE_ID,
-    ]);
+    expect(updateCall![1]).toEqual(["2026-08", expect.any(String), "closed", DISPUTE_ID]);
   });
 
   it("is a no-op when the dispute has no differential_amount", async () => {
-    execute.mockResolvedValueOnce([
-      [disputeRow({ differential_amount: null })],
-    ]);
+    execute.mockResolvedValueOnce([[disputeRow({ differential_amount: null })]]);
 
     await salaryDisputeService.applyArrear(DISPUTE_ID);
 

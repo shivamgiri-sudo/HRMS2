@@ -3,11 +3,7 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { flushDalmiaRows } from "./dalmia-chunk-import.js";
 import type { ChunkInsertRow } from "./masmis-chunked-insert.js";
-import {
-  canonicalizeRow,
-  parseFlexibleDateTime,
-  cleanPhone,
-} from "./dalmia-import-helpers.js";
+import { canonicalizeRow, parseFlexibleDateTime, cleanPhone } from "./dalmia-import-helpers.js";
 
 /**
  * Dalmia Cement's own "After Hour Data" sheet -- calls received outside
@@ -16,11 +12,7 @@ import {
  */
 
 /** "Number" is the same phone number again; Excel often shows "Contact No" as 9.18235E+11 (digits lost) while "Number" keeps them. */
-export const DALMIA_AFTER_HOUR_HEADERS = [
-  "Date",
-  "Contact No",
-  "Number",
-] as const;
+export const DALMIA_AFTER_HOUR_HEADERS = ["Date", "Contact No", "Number"] as const;
 
 /** Accepts ISO, Excel serials and displayed text ("9/1/2026 19:03") -- see dalmia-import-helpers.ts. */
 export function parseDateTime(raw: unknown): string | null {
@@ -37,9 +29,7 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 export async function importDalmiaAfterHourBatch(
   batchId: string,
@@ -87,9 +77,7 @@ export async function importDalmiaAfterHourBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Dalmia Cement" process found to attach this row to`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const callDateTime = parseDateTime(data["Date"]);
@@ -97,43 +85,23 @@ export async function importDalmiaAfterHourBatch(
     const contactNumber = cleanPhone(data["Contact No"], data["Number"]);
     if (!callDateTime || !contactNumber) {
       const msg = `Row ${row.row_no}: a readable "Date" and a usable "Contact No" (or "Number") are both required -- together they are this row's identity`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     insertRows.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(),
-        processId,
-        callDateTime,
-        callDateTime.slice(0, 10),
-        contactNumber,
-        "bulk_upload",
-        batchId,
-        importedByUserId,
+        randomUUID(), processId, callDateTime, callDateTime.slice(0, 10), contactNumber,
+        "bulk_upload", batchId, importedByUserId,
       ],
     });
   }
 
   return flushDalmiaRows({
-    batchId,
-    table: "dalmia_after_hour_raw",
-    columns: [
-      "id",
-      "process_id",
-      "call_datetime",
-      "report_date",
-      "contact_number",
-      "data_source",
-      "source_reference",
-      "created_by",
-    ],
+    batchId, table: "dalmia_after_hour_raw",
+    columns: ["id","process_id","call_datetime","report_date","contact_number","data_source","source_reference","created_by"],
     suffix: "ON DUPLICATE KEY UPDATE contact_number = VALUES(contact_number)",
-    rows: insertRows,
-    errorUpdates,
-    errors,
+    rows: insertRows, errorUpdates, errors,
   });
 }

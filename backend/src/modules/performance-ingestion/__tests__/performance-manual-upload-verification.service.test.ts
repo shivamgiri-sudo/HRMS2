@@ -36,59 +36,43 @@ describe("performance manual-upload certification", () => {
   });
 
   it("fails when a staged row disappears from classification", () => {
-    const report = evaluatePerformanceRunCertification(
-      input({ mappedRows: 8 }),
-    );
+    const report = evaluatePerformanceRunCertification(input({ mappedRows: 8 }));
     expect(report.certified).toBe(false);
-    expect(
-      report.checks.find((check) => check.code === "ROW_CLASSIFICATION")
-        ?.passed,
-    ).toBe(false);
+    expect(report.checks.find((check) => check.code === "ROW_CLASSIFICATION")?.passed)
+      .toBe(false);
   });
 
   it("fails when invalid rows have no validation evidence", () => {
-    const report = evaluatePerformanceRunCertification(
-      input({
-        mappedRows: 9,
-        invalidRows: 1,
-        invalidRawRows: 0,
-      }),
-    );
+    const report = evaluatePerformanceRunCertification(input({
+      mappedRows: 9,
+      invalidRows: 1,
+      invalidRawRows: 0,
+    }));
     expect(report.certified).toBe(false);
-    expect(
-      report.checks.find((check) => check.code === "INVALID_ROW_EVIDENCE")
-        ?.passed,
-    ).toBe(false);
+    expect(report.checks.find((check) => check.code === "INVALID_ROW_EVIDENCE")?.passed)
+      .toBe(false);
   });
 
   it("fails a publication with missing canonical facts", () => {
-    const report = evaluatePerformanceRunCertification(
-      input({ canonicalRows: 9 }),
-    );
+    const report = evaluatePerformanceRunCertification(input({ canonicalRows: 9 }));
     expect(report.certified).toBe(false);
-    expect(
-      report.checks.find((check) => check.code === "PUBLISHED_TO_CANONICAL")
-        ?.passed,
-    ).toBe(false);
+    expect(report.checks.find((check) => check.code === "PUBLISHED_TO_CANONICAL")?.passed)
+      .toBe(false);
   });
 
   it("certifies a clean preview without publication checks", () => {
-    const report = evaluatePerformanceRunCertification(
-      input({
-        mode: "preview",
-        status: "preview_complete",
-        publishedFacts: 0,
-        lineageRows: 0,
-        currentLineageRows: 0,
-        canonicalRows: 0,
-        reconciliationRows: 2,
-        publicationStatus: null,
-        publicationFactCount: null,
-      }),
-    );
+    const report = evaluatePerformanceRunCertification(input({
+      mode: "preview",
+      status: "preview_complete",
+      publishedFacts: 0,
+      lineageRows: 0,
+      currentLineageRows: 0,
+      canonicalRows: 0,
+      reconciliationRows: 2,
+      publicationStatus: null,
+      publicationFactCount: null,
+    }));
     expect(report.certified).toBe(true);
-    expect(
-      report.checks.some((check) => check.code === "PUBLICATION_BATCH"),
-    ).toBe(false);
+    expect(report.checks.some((check) => check.code === "PUBLICATION_BATCH")).toBe(false);
   });
 });

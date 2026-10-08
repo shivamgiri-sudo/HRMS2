@@ -28,8 +28,7 @@ import { randomUUID } from "node:crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
-export type UatJobType =
-  "validate" | "checklist" | "prompt_write" | "dispatch" | "reconcile";
+export type UatJobType = "validate" | "checklist" | "prompt_write" | "dispatch" | "reconcile";
 
 export interface UatJob {
   id: string;
@@ -59,10 +58,7 @@ export type JobHandler = (job: UatJob) => Promise<void>;
 const handlers = new Map<UatJobType, JobHandler>();
 
 /** Handlers are registered rather than imported so the runner does not depend on the stages. */
-export function registerJobHandler(
-  type: UatJobType,
-  handler: JobHandler,
-): void {
+export function registerJobHandler(type: UatJobType, handler: JobHandler): void {
   handlers.set(type, handler);
 }
 
@@ -93,7 +89,7 @@ export async function enqueue(input: {
       input.idempotencyKey.slice(0, 190),
       input.runAfter ?? new Date(),
       input.maxAttempts ?? 3,
-    ],
+    ]
   );
   return { queued: (res as { affectedRows?: number }).affectedRows === 1 };
 }
@@ -122,7 +118,7 @@ export async function claimJob(): Promise<UatJob | null> {
          OR (state = 'leased' AND leased_until < NOW())
       ORDER BY run_after
       LIMIT 1`,
-    [OWNER, LEASE_SECONDS, claimId],
+    [OWNER, LEASE_SECONDS, claimId]
   );
   if ((res as { affectedRows?: number }).affectedRows !== 1) return null;
 
@@ -131,7 +127,7 @@ export async function claimJob(): Promise<UatJob | null> {
        FROM uat_job
       WHERE lease_owner = ? AND last_error = ?
       LIMIT 1`,
-    [OWNER, `claim:${claimId}`],
+    [OWNER, `claim:${claimId}`]
   );
   if (!rows.length) return null;
 
@@ -153,7 +149,7 @@ export async function completeJob(id: string): Promise<void> {
   await db.query(
     `UPDATE uat_job SET state='done', leased_until=NULL, lease_owner=NULL, last_error=NULL
       WHERE id = ?`,
-    [id],
+    [id]
   );
 }
 
@@ -170,14 +166,14 @@ export async function completeJob(id: string): Promise<void> {
 export async function failJob(
   job: UatJob,
   error: string,
-  terminal = false,
+  terminal = false
 ): Promise<"retry" | "dead"> {
   const exhausted = terminal || job.attempts >= job.maxAttempts;
   if (exhausted) {
     await db.query(
       `UPDATE uat_job SET state='dead', leased_until=NULL, lease_owner=NULL, last_error=?
         WHERE id = ?`,
-      [error.slice(0, 1000), job.id],
+      [error.slice(0, 1000), job.id]
     );
     return "dead";
   }
@@ -187,7 +183,7 @@ export async function failJob(
         SET state='queued', leased_until=NULL, lease_owner=NULL, last_error=?,
             run_after = DATE_ADD(NOW(), INTERVAL ? SECOND)
       WHERE id = ?`,
-    [error.slice(0, 1000), backoffSeconds, job.id],
+    [error.slice(0, 1000), backoffSeconds, job.id]
   );
   return "retry";
 }
@@ -204,14 +200,8 @@ export async function runOnce(): Promise<"idle" | "done" | "retry" | "dead"> {
   if (!handler) {
     // An unregistered type is a wiring bug, not a transient fault: the same job would fail
     // identically on every retry. Dead immediately, and loudly.
-    console.error(
-      `[uat-job] no handler registered for job_type "${job.jobType}" (job ${job.id})`,
-    );
-    await failJob(
-      job,
-      `No handler registered for job type "${job.jobType}".`,
-      true,
-    );
+    console.error(`[uat-job] no handler registered for job_type "${job.jobType}" (job ${job.id})`);
+    await failJob(job, `No handler registered for job type "${job.jobType}".`, true);
     return "dead";
   }
 
@@ -224,9 +214,7 @@ export async function runOnce(): Promise<"idle" | "done" | "retry" | "dead"> {
     // A handler signals "do not retry" by setting .terminal on the error it throws.
     const terminal = Boolean((error as { terminal?: boolean })?.terminal);
     const outcome = await failJob(job, message, terminal);
-    console.error(
-      `[uat-job] ${job.jobType} ${job.id} failed (${outcome}): ${message}`,
-    );
+    console.error(`[uat-job] ${job.jobType} ${job.id} failed (${outcome}): ${message}`);
     return outcome;
   }
 }
@@ -275,9 +263,7 @@ async function tick(): Promise<void> {
       if (result === "idle") break;
     }
     if (schemaMissing) {
-      console.log(
-        "[uat-job] uat_job is present again; resuming normal polling.",
-      );
+      console.log("[uat-job] uat_job is present again; resuming normal polling.");
       schemaMissing = false;
     }
     ticksSinceSchemaCheck = 0;
@@ -290,15 +276,12 @@ async function tick(): Promise<void> {
         console.error(
           "[uat-job] uat_job is missing — migration 1103 has not applied in this database. " +
             `Polling every ${(QUIET_TICKS * POLL_INTERVAL_MS) / 60000} minutes until it does, ` +
-            "rather than logging this every poll. The UAT pipeline is inert until then.",
+            "rather than logging this every poll. The UAT pipeline is inert until then."
         );
       }
       return;
     }
-    console.error(
-      "[uat-job] runner tick failed:",
-      error instanceof Error ? error.message : error,
-    );
+    console.error("[uat-job] runner tick failed:", error instanceof Error ? error.message : error);
   } finally {
     running = false;
   }
@@ -311,9 +294,7 @@ export function startUatJobRunner(): void {
   }, POLL_INTERVAL_MS);
   // unref so a pending poll never holds the process open during a graceful shutdown.
   timer.unref?.();
-  console.log(
-    `[uat-job] runner started (owner ${OWNER}, poll ${POLL_INTERVAL_MS / 1000}s)`,
-  );
+  console.log(`[uat-job] runner started (owner ${OWNER}, poll ${POLL_INTERVAL_MS / 1000}s)`);
 }
 
 export function stopUatJobRunner(): void {
@@ -326,15 +307,9 @@ export function stopUatJobRunner(): void {
 /** Queue depth by state, for GET /api/uat/health. */
 export async function jobHealth(): Promise<Record<string, number>> {
   const [rows] = await db.query<RowDataPacket[]>(
-    `SELECT state, COUNT(*) AS c FROM uat_job GROUP BY state`,
+    `SELECT state, COUNT(*) AS c FROM uat_job GROUP BY state`
   );
-  const out: Record<string, number> = {
-    queued: 0,
-    leased: 0,
-    done: 0,
-    failed: 0,
-    dead: 0,
-  };
+  const out: Record<string, number> = { queued: 0, leased: 0, done: 0, failed: 0, dead: 0 };
   for (const r of rows) out[String(r.state)] = Number(r.c);
   return out;
 }

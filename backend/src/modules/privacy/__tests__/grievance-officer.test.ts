@@ -11,8 +11,7 @@ import { resolveGrievanceOfficer } from "../privacy.public.routes.js";
  * obligation would look discharged while nobody receives anything.
  */
 
-const config = (entries: Record<string, string>) =>
-  new Map(Object.entries(entries));
+const config = (entries: Record<string, string>) => new Map(Object.entries(entries));
 
 const REAL = {
   grievance_officer_name: "Anita Sharma",
@@ -33,75 +32,53 @@ describe("resolveGrievanceOfficer", () => {
 
   it("reports the seeded placeholders as unconfigured", () => {
     // Exactly what production held when this endpoint was written.
-    expect(
-      resolveGrievanceOfficer(
-        config({
-          grievance_officer_name: "To be configured",
-          grievance_officer_email: "privacy@yourcompany.com",
-          grievance_officer_designation: "HR Manager",
-          grievance_response_sla_days: "30",
-        }),
-      ),
-    ).toBeNull();
+    expect(resolveGrievanceOfficer(config({
+      grievance_officer_name: "To be configured",
+      grievance_officer_email: "privacy@yourcompany.com",
+      grievance_officer_designation: "HR Manager",
+      grievance_response_sla_days: "30",
+    }))).toBeNull();
   });
 
   it("ignores placeholder casing and surrounding whitespace", () => {
-    expect(
-      resolveGrievanceOfficer(
-        config({
-          ...REAL,
-          grievance_officer_name: "  TO BE CONFIGURED  ",
-        }),
-      ),
-    ).toBeNull();
+    expect(resolveGrievanceOfficer(config({
+      ...REAL,
+      grievance_officer_name: "  TO BE CONFIGURED  ",
+    }))).toBeNull();
   });
 
   it("withholds the officer when either the name or the address is missing", () => {
     // A name with no address gives a visitor nobody to write to; an address with no name
     // is not an identified officer. Neither half is publishable alone.
-    expect(
-      resolveGrievanceOfficer(config({ ...REAL, grievance_officer_email: "" })),
-    ).toBeNull();
-    expect(
-      resolveGrievanceOfficer(config({ ...REAL, grievance_officer_name: "" })),
-    ).toBeNull();
+    expect(resolveGrievanceOfficer(config({ ...REAL, grievance_officer_email: "" }))).toBeNull();
+    expect(resolveGrievanceOfficer(config({ ...REAL, grievance_officer_name: "" }))).toBeNull();
     expect(resolveGrievanceOfficer(new Map())).toBeNull();
   });
 
   it("still publishes when only the designation is a placeholder", () => {
     // Designation is descriptive, not a route to a human. A real name and address are
     // enough to raise a grievance, so a stock title must not suppress the whole block.
-    const resolved = resolveGrievanceOfficer(
-      config({
-        ...REAL,
-        grievance_officer_designation: "To be configured",
-      }),
-    );
+    const resolved = resolveGrievanceOfficer(config({
+      ...REAL,
+      grievance_officer_designation: "To be configured",
+    }));
     expect(resolved?.name).toBe("Anita Sharma");
     expect(resolved?.designation).toBe("");
   });
 
   it("falls back to the statutory 30 days rather than advertising an impossible SLA", () => {
     for (const bad of ["0", "-5", "", "not-a-number"]) {
-      expect(
-        resolveGrievanceOfficer(
-          config({
-            ...REAL,
-            grievance_response_sla_days: bad,
-          }),
-        )?.sla_days,
-      ).toBe(30);
+      expect(resolveGrievanceOfficer(config({
+        ...REAL,
+        grievance_response_sla_days: bad,
+      }))?.sla_days).toBe(30);
     }
   });
 
   it("honours a configured SLA that differs from the default", () => {
-    expect(
-      resolveGrievanceOfficer(
-        config({
-          ...REAL,
-          grievance_response_sla_days: "15",
-        }),
-      )?.sla_days,
-    ).toBe(15);
+    expect(resolveGrievanceOfficer(config({
+      ...REAL,
+      grievance_response_sla_days: "15",
+    }))?.sla_days).toBe(15);
   });
 });

@@ -75,7 +75,7 @@ async function guardCaseEmployee(req: Request, res: Response, next: NextFunction
 
 // Outcome summary — must be registered before /:id to avoid route shadowing
 router.get(
-  "/outcomes",
+  '/outcomes',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager'),
   attachEmployeeScope,
@@ -84,7 +84,7 @@ router.get(
 
 // Open pending interventions — optional ?owner= and ?limit= query params
 router.get(
-  "/pending",
+  '/pending',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager'),
   attachEmployeeScope,
@@ -93,7 +93,7 @@ router.get(
 
 // Cases by bucket (open|actioned|retained|exited|overdue|all) — drill-down lists
 router.get(
-  "/cases",
+  '/cases',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager'),
   attachEmployeeScope,
@@ -102,7 +102,7 @@ router.get(
 
 // Full case detail for the drill-down drawer
 router.get(
-  "/:id",
+  '/:id',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager'),
   guardCaseEmployee,
@@ -111,7 +111,7 @@ router.get(
 
 // Mark a recommendation as actioned — PATCH /:id
 router.patch(
-  "/:id",
+  '/:id',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager'),
   guardCaseEmployee,

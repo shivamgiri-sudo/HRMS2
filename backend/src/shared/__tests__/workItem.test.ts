@@ -36,14 +36,10 @@ beforeEach(() => execute.mockReset());
 
 describe("upsertOpenWorkItem", () => {
   it("inserts when no open item exists", async () => {
-    execute
-      .mockResolvedValueOnce([[], []])
-      .mockResolvedValueOnce([{ insertId: 1 }, []]);
+    execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([{ insertId: 1 }, []]);
     await expect(upsertOpenWorkItem(INPUT)).resolves.toBe("created");
 
-    const insert = execute.mock.calls.find(([s]) =>
-      /INSERT INTO work_item/i.test(String(s)),
-    );
+    const insert = execute.mock.calls.find(([s]) => /INSERT INTO work_item/i.test(String(s)));
     expect(insert).toBeTruthy();
     const params = (insert![1] as unknown[]).map(String);
     expect(params).toContain("EMPLOYEE_MASTER_CREATION");
@@ -53,27 +49,17 @@ describe("upsertOpenWorkItem", () => {
   });
 
   it("refreshes instead of inserting when an open item already covers it", async () => {
-    execute
-      .mockResolvedValueOnce([[{ id: "wi-1" }], []])
-      .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    execute.mockResolvedValueOnce([[{ id: "wi-1" }], []]).mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     await expect(upsertOpenWorkItem(INPUT)).resolves.toBe("refreshed");
 
-    expect(
-      execute.mock.calls.some(([s]) =>
-        /INSERT INTO work_item/i.test(String(s)),
-      ),
-    ).toBe(false);
-    const update = execute.mock.calls.find(([s]) =>
-      /UPDATE work_item/i.test(String(s)),
-    );
+    expect(execute.mock.calls.some(([s]) => /INSERT INTO work_item/i.test(String(s)))).toBe(false);
+    const update = execute.mock.calls.find(([s]) => /UPDATE work_item/i.test(String(s)));
     expect(update).toBeTruthy();
     expect((update![1] as unknown[]).map(String)).toContain("wi-1");
   });
 
   it("never emits ON DUPLICATE KEY UPDATE — the clause that could not fire", async () => {
-    execute
-      .mockResolvedValueOnce([[], []])
-      .mockResolvedValueOnce([{ insertId: 1 }, []]);
+    execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([{ insertId: 1 }, []]);
     await upsertOpenWorkItem(INPUT);
     for (const [sql] of execute.mock.calls) {
       expect(String(sql)).not.toMatch(/ON DUPLICATE KEY UPDATE/i);
@@ -81,27 +67,17 @@ describe("upsertOpenWorkItem", () => {
   });
 
   it("only reuses an item that is still open", async () => {
-    execute
-      .mockResolvedValueOnce([[], []])
-      .mockResolvedValueOnce([{ insertId: 1 }, []]);
+    execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([{ insertId: 1 }, []]);
     await upsertOpenWorkItem(INPUT);
-    const select = execute.mock.calls.find(([s]) =>
-      /SELECT id FROM work_item/i.test(String(s)),
-    );
+    const select = execute.mock.calls.find(([s]) => /SELECT id FROM work_item/i.test(String(s)));
     // A completed item must not suppress a genuinely new occurrence of the same task.
-    expect(String(select![0])).toContain(
-      "status NOT IN ('completed', 'cancelled')",
-    );
+    expect(String(select![0])).toContain("status NOT IN ('completed', 'cancelled')");
   });
 
   it("scopes the lookup to the entity, not just the type", async () => {
-    execute
-      .mockResolvedValueOnce([[], []])
-      .mockResolvedValueOnce([{ insertId: 1 }, []]);
+    execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([{ insertId: 1 }, []]);
     await upsertOpenWorkItem(INPUT);
-    const select = execute.mock.calls.find(([s]) =>
-      /SELECT id FROM work_item/i.test(String(s)),
-    )!;
+    const select = execute.mock.calls.find(([s]) => /SELECT id FROM work_item/i.test(String(s)))!;
     const sql = String(select[0]);
     // Keying on item_type alone would let one candidate's open item suppress every other
     // candidate's — the opposite failure to the one being fixed, and a far worse one.
@@ -123,10 +99,7 @@ describe("upsertOpenWorkItem", () => {
    * the claim exactly — there is no catch to swallow anything.
    */
   it("has no catch of its own, so a write failure reaches the caller", () => {
-    const src = readFileSync(
-      resolve(process.cwd(), "src/shared/workItem.ts"),
-      "utf8",
-    )
+    const src = readFileSync(resolve(process.cwd(), "src/shared/workItem.ts"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
     expect(src).not.toMatch(/\bcatch\s*\(/);

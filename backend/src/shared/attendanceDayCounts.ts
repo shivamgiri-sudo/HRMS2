@@ -35,17 +35,17 @@
  *   The letter shown stays "A", matching week_off's treatment below.
  */
 export const ATTENDANCE_STATUS_CODE: Record<string, string> = {
-  present: "P",
-  absent: "A",
-  half_day: "HD",
-  week_off: "A",
-  holiday: "H",
-  leave_approved: "L",
-  on_duty: "OD",
-  missing_punch: "A",
+  present:         "P",
+  absent:          "A",
+  half_day:        "HD",
+  week_off:        "A",
+  holiday:         "H",
+  leave_approved:  "L",
+  on_duty:         "OD",
+  missing_punch:   "A",
   week_off_worked: "P",
-  unreconciled: "A",
-  lwp: "A",
+  unreconciled:    "A",
+  lwp:             "A",
 };
 
 export type DayCounts = {
@@ -64,37 +64,23 @@ export type DayCounts = {
  * Week-off days are NOT synthesised here — they come from real attendance_daily_record rows with
  * status week_off, which the status map already sends to "A".
  */
-export function resolveMissingDayCell(
-  dayDate: Date,
-  dateOfJoining: Date | null,
-  today: Date,
-): string {
+export function resolveMissingDayCell(dayDate: Date, dateOfJoining: Date | null, today: Date): string {
   if (dateOfJoining && dayDate < dateOfJoining) return ""; // before joining date → blank
-  if (dayDate > today) return ""; // future date → blank
-  return "A"; // no record for an active date → absent
+  if (dayDate > today) return "";                          // future date → blank
+  return "A";                                              // no record for an active date → absent
 }
 
 /** Tally the filled day cells for one employee. `getCell(d)` returns the code for day d (1-based). */
-export function countDayCodes(
-  getCell: (day: number) => string,
-  daysInMonth: number,
-): DayCounts {
-  const counts: DayCounts = {
-    absent: 0,
-    present: 0,
-    od: 0,
-    hd: 0,
-    leave: 0,
-    holiday: 0,
-  };
+export function countDayCodes(getCell: (day: number) => string, daysInMonth: number): DayCounts {
+  const counts: DayCounts = { absent: 0, present: 0, od: 0, hd: 0, leave: 0, holiday: 0 };
   for (let d = 1; d <= daysInMonth; d++) {
     const v = getCell(d);
-    if (v === "A") counts.absent++;
-    else if (v === "P") counts.present++;
+    if      (v === "A")  counts.absent++;
+    else if (v === "P")  counts.present++;
     else if (v === "OD") counts.od++;
     else if (v === "HD") counts.hd++;
-    else if (v === "L") counts.leave++;
-    else if (v === "H") counts.holiday++;
+    else if (v === "L")  counts.leave++;
+    else if (v === "H")  counts.holiday++;
   }
   return counts;
 }
@@ -136,7 +122,7 @@ export function computeSalDays(
   paidBase: number,
   eligibleWeekoffs: number,
   holidayCount: number,
-  daysInMonth: number,
+  daysInMonth: number
 ): number {
   const raw = paidBase + eligibleWeekoffs + holidayCount;
   return Math.round(Math.min(raw, daysInMonth) * 100) / 100;
@@ -156,7 +142,7 @@ export function computeSalDays(
 export function computeTotalWorkingDays(
   paidBase: number,
   eligibleWeekoffs: number,
-  holidayCount: number,
+  holidayCount: number
 ): number {
   return Math.round((paidBase + eligibleWeekoffs + holidayCount) * 100) / 100;
 }

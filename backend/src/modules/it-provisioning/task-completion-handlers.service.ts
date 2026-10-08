@@ -11,25 +11,22 @@
  *   DPDP      → dpdp_consent_register (not candidate_dpdp_consent)
  */
 
-import { randomUUID } from "crypto";
-import { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { logSensitiveAction } from "../../shared/auditLog.js";
-import { isLobMappedToProcess } from "../wfm/process-lob-map.service.js";
-import { activateIfJoiningDateReached } from "../employees/employee-activation.service.js";
-import { emailService } from "../communication/email.service.js";
-import { inboxService } from "../inbox/inbox.service.js";
+import { randomUUID } from 'crypto';
+import { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { logSensitiveAction } from '../../shared/auditLog.js';
+import { isLobMappedToProcess } from '../wfm/process-lob-map.service.js';
+import { activateIfJoiningDateReached } from '../employees/employee-activation.service.js';
+import { emailService } from '../communication/email.service.js';
+import { inboxService } from '../inbox/inbox.service.js';
 import { recordSupervisoryChange } from "../management/manager-attribution.service.js";
 
 function _frontendUrl(path: string) {
-  const base = String(
-    process.env.FRONTEND_URL || process.env.APP_URL || "http://localhost:5173",
-  ).replace(/\/+$/, "");
-  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  const base = String(process.env.FRONTEND_URL || process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '');
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
-export const OFFICIAL_EMAIL_REGEX =
-  /^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/;
+export const OFFICIAL_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/;
 
 interface TaskRow {
   id: string;
@@ -43,35 +40,23 @@ async function getTask(taskId: string): Promise<TaskRow> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_id, task_code, assigned_role, status
      FROM it_provisioning_request WHERE id = ? LIMIT 1`,
-    [taskId],
+    [taskId]
   );
   if (!(rows as any[]).length) {
-    throw Object.assign(new Error("Provisioning task not found"), {
-      statusCode: 404,
-    });
+    throw Object.assign(new Error('Provisioning task not found'), { statusCode: 404 });
   }
   return rows[0] as TaskRow;
 }
 
-async function triggerActivationCheck(
-  employeeId: string,
-  actorUserId: string,
-): Promise<void> {
+async function triggerActivationCheck(employeeId: string, actorUserId: string): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT date_of_joining FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId],
+    [employeeId]
   );
   const joiningDate = (rows[0] as any)?.date_of_joining;
   if (joiningDate) {
-    await activateIfJoiningDateReached(
-      employeeId,
-      joiningDate,
-      actorUserId,
-    ).catch((err) => {
-      console.warn(
-        "[TaskCompletion] Activation check skipped:",
-        err instanceof Error ? err.message : String(err),
-      );
+    await activateIfJoiningDateReached(employeeId, joiningDate, actorUserId).catch(err => {
+      console.warn('[TaskCompletion] Activation check skipped:', err instanceof Error ? err.message : String(err));
     });
   }
 }
@@ -89,7 +74,7 @@ export interface ItCompletionInput {
 export async function completeItProvisioningTask(
   taskId: string,
   input: ItCompletionInput,
-  actorUserId: string,
+  actorUserId: string
 ): Promise<void> {
   // Official email is now OPTIONAL (owner decision) — domain_account is the only hard
   // requirement for this task. When officialEmail is blank, everything below that depends on
@@ -105,14 +90,15 @@ export async function completeItProvisioningTask(
   const domainAccount = input.domain_account.trim();
 
   if (!domainAccount) {
-    throw Object.assign(new Error("domain_account is required for IT tasks"), {
-      statusCode: 400,
-    });
+    throw Object.assign(
+      new Error('domain_account is required for IT tasks'),
+      { statusCode: 400 }
+    );
   }
   if (officialEmail && !OFFICIAL_EMAIL_REGEX.test(officialEmail)) {
     throw Object.assign(
-      new Error("official_email must end with @teammas.in or @teammas.co.in"),
-      { statusCode: 400 },
+      new Error('official_email must end with @teammas.in or @teammas.co.in'),
+      { statusCode: 400 }
     );
   }
 
@@ -127,14 +113,14 @@ export async function completeItProvisioningTask(
     if (officialEmail) {
       await conn.execute(
         `UPDATE employees SET official_email = ?, updated_at = NOW() WHERE id = ?`,
-        [officialEmail, task.employee_id],
+        [officialEmail, task.employee_id]
       );
     }
 
     // 2. Get employee's current user_id
     const [empRows] = await conn.execute<RowDataPacket[]>(
       `SELECT user_id, first_name, last_name, employee_code FROM employees WHERE id = ? LIMIT 1`,
-      [task.employee_id],
+      [task.employee_id]
     );
     const emp = empRows[0] as any;
     const existingUserId = emp?.user_id;
@@ -144,12 +130,9 @@ export async function completeItProvisioningTask(
     // Logged rather than rejected — domain_account is operator-entered free text, not
     // a value this system controls, so refusing to save it would be a new failure mode
     // of its own. See the 2026-09-09 incident this guards against.
-    if (
-      emp?.employee_code &&
-      domainAccount.toUpperCase() !== String(emp.employee_code).toUpperCase()
-    ) {
+    if (emp?.employee_code && domainAccount.toUpperCase() !== String(emp.employee_code).toUpperCase()) {
       console.warn(
-        `[TaskCompletion] IT_EMAIL_DOMAIN_ASSET domain_account "${domainAccount}" does not match employee_code "${emp.employee_code}" for employee ${task.employee_id} (task ${taskId})`,
+        `[TaskCompletion] IT_EMAIL_DOMAIN_ASSET domain_account "${domainAccount}" does not match employee_code "${emp.employee_code}" for employee ${task.employee_id} (task ${taskId})`
       );
     }
     // Tracks whether a NEW auth_user was created below, so the profile-photo email further
@@ -165,7 +148,7 @@ export async function completeItProvisioningTask(
       if (officialEmail) {
         await conn.execute(
           `UPDATE auth_user SET email = ?, updated_at = NOW() WHERE id = ?`,
-          [officialEmail, existingUserId],
+          [officialEmail, existingUserId]
         );
       }
     } else if (officialEmail) {
@@ -174,7 +157,7 @@ export async function completeItProvisioningTask(
       // so this path is skipped entirely (not run with '') when no email was given — see the
       // comment on officialEmail above for why. The employee's login account creation is
       // deferred until an email is supplied, e.g. by reopening this task later.
-      const bcrypt = await import("bcryptjs");
+      const bcrypt = await import('bcryptjs');
       const newAuthUserId = randomUUID();
       // Temp password: Mas@XXXXXX — employee must change on first login
       const tempPassword = `Mas@${Math.floor(100000 + Math.random() * 900000)}`;
@@ -183,12 +166,12 @@ export async function completeItProvisioningTask(
       await conn.execute(
         `INSERT INTO auth_user (id, email, password_hash, must_change_password, created_at)
          VALUES (?, ?, ?, 1, NOW())`,
-        [newAuthUserId, officialEmail, passwordHash],
+        [newAuthUserId, officialEmail, passwordHash]
       );
 
       await conn.execute(
         `UPDATE employees SET user_id = ?, updated_at = NOW() WHERE id = ?`,
-        [newAuthUserId, task.employee_id],
+        [newAuthUserId, task.employee_id]
       );
       createdNewAuthUser = true;
 
@@ -210,12 +193,10 @@ export async function completeItProvisioningTask(
          VALUES (?, ?, 'it_credentials', 'other', ?, NULL, ?, NOW(), 1, ?, NOW())
          ON DUPLICATE KEY UPDATE uploaded_by = VALUES(uploaded_by), verification_date = NOW()`,
         [
-          randomUUID(),
-          task.employee_id,
+          randomUUID(), task.employee_id,
           `IT credentials issued — official email: ${officialEmail}`,
-          actorUserId,
-          actorUserId,
-        ],
+          actorUserId, actorUserId,
+        ]
       );
     }
     // else: no existingUserId and no officialEmail — nothing to do here. Domain account and
@@ -226,7 +207,7 @@ export async function completeItProvisioningTask(
       // Find or create asset in asset_master by asset_code (asset_tag)
       const [assetRows] = await conn.execute<RowDataPacket[]>(
         `SELECT id FROM asset_master WHERE asset_code = ? LIMIT 1`,
-        [input.asset_tag],
+        [input.asset_tag]
       );
       let assetId: string;
 
@@ -235,7 +216,7 @@ export async function completeItProvisioningTask(
         // Update asset status to assigned
         await conn.execute(
           `UPDATE asset_master SET status = 'assigned', updated_at = NOW() WHERE id = ?`,
-          [assetId],
+          [assetId]
         );
       } else {
         // Create new asset record
@@ -244,12 +225,7 @@ export async function completeItProvisioningTask(
           `INSERT INTO asset_master
              (id, asset_code, asset_name, asset_category, asset_type, status, created_at)
            VALUES (?, ?, ?, 'IT Equipment', ?, 'assigned', NOW())`,
-          [
-            assetId,
-            input.asset_tag,
-            `${input.asset_type ?? "Laptop"} - ${input.asset_tag}`,
-            input.asset_type ?? "Laptop",
-          ],
+          [assetId, input.asset_tag, `${input.asset_type ?? 'Laptop'} - ${input.asset_tag}`, input.asset_type ?? 'Laptop']
         );
       }
 
@@ -259,13 +235,9 @@ export async function completeItProvisioningTask(
            (id, asset_id, employee_id, assigned_date, assigned_by, notes, created_at)
          VALUES (?, ?, ?, CURDATE(), ?, ?, NOW())`,
         [
-          randomUUID(),
-          assetId,
-          task.employee_id,
-          actorUserId,
-          input.evidence_note ??
-            `Assigned during IT provisioning task ${taskId}`,
-        ],
+          randomUUID(), assetId, task.employee_id, actorUserId,
+          input.evidence_note ?? `Assigned during IT provisioning task ${taskId}`,
+        ]
       );
     }
 
@@ -279,22 +251,16 @@ export async function completeItProvisioningTask(
            asset_tag = COALESCE(?, asset_tag),
            updated_at = NOW()
        WHERE id = ?`,
-      [
-        actorUserId,
-        officialEmail || null,
-        domainAccount,
-        input.asset_tag ?? null,
-        taskId,
-      ],
+      [actorUserId, officialEmail || null, domainAccount, input.asset_tag ?? null, taskId]
     );
 
     await conn.commit();
 
     await logSensitiveAction({
       actor_user_id: actorUserId,
-      action_type: "it_provisioning_email_set",
-      module_key: "it_provisioning",
-      entity_type: "employee",
+      action_type: 'it_provisioning_email_set',
+      module_key: 'it_provisioning',
+      entity_type: 'employee',
       entity_id: task.employee_id,
       employee_id: task.employee_id,
       change_summary: {
@@ -324,36 +290,26 @@ export async function completeItProvisioningTask(
              LEFT JOIN process_master pm ON pm.id = e.process_id
              LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
             WHERE e.id = ? LIMIT 1`,
-          [task.employee_id],
+          [task.employee_id]
         );
         const empData = (photoCheckRows as any[])[0];
         if (empData && !empData.photo_url) {
-          const toEmail =
-            empData.personal_email || empData.official_email || empData.email;
-          const empName: string = empData.first_name || "Employee";
-          const photoUrl = _frontendUrl("/profile");
+          const toEmail = empData.personal_email || empData.official_email || empData.email;
+          const empName: string = empData.first_name || 'Employee';
+          const photoUrl = _frontendUrl('/profile');
           const identityBits = [
-            empData.employee_code
-              ? `Code: <strong>${empData.employee_code}</strong>`
-              : null,
-            empData.process_name
-              ? `Process: <strong>${empData.process_name}</strong>`
-              : null,
-            empData.reporting_manager_name
-              ? `Reporting Manager: <strong>${empData.reporting_manager_name}</strong>`
-              : null,
-          ]
-            .filter(Boolean)
-            .join(" &nbsp;|&nbsp; ");
+            empData.employee_code ? `Code: <strong>${empData.employee_code}</strong>` : null,
+            empData.process_name ? `Process: <strong>${empData.process_name}</strong>` : null,
+            empData.reporting_manager_name ? `Reporting Manager: <strong>${empData.reporting_manager_name}</strong>` : null,
+          ].filter(Boolean).join(' &nbsp;|&nbsp; ');
           if (toEmail) {
             await emailService.send({
               to: toEmail,
-              subject:
-                "Action Required: Upload your profile photo — ID card pending",
+              subject: 'Action Required: Upload your profile photo — ID card pending',
               html: `<div style="font-family:Arial,sans-serif;padding:24px;max-width:600px">
                 <h2 style="color:#0f766e">Upload Your Profile Photo</h2>
                 <p>Dear ${empName},</p>
-                ${identityBits ? `<p style="color:#64748b;font-size:11.5px;margin:-8px 0 12px">${identityBits}</p>` : ""}
+                ${identityBits ? `<p style="color:#64748b;font-size:11.5px;margin:-8px 0 12px">${identityBits}</p>` : ''}
                 <p>Welcome to MAS Callnet! Your HRMS account is now active. Your ID card is being prepared, but it cannot be printed until you upload a professional profile photo.</p>
                 <p>Please log in to HRMS and upload your photo from your Profile page.</p>
                 <p><a href="${photoUrl}" style="background:#0f172a;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold">Upload Profile Photo</a></p>
@@ -364,24 +320,21 @@ export async function completeItProvisioningTask(
           if (empData.user_id) {
             await inboxService.createItem({
               user_id: empData.user_id,
-              type: "profile_photo_required",
-              title: "Upload your profile photo",
-              description:
-                "Your ID card cannot be printed until you upload a professional profile photo. Please visit your Profile page.",
-              entity_type: "employee",
+              type: 'profile_photo_required',
+              title: 'Upload your profile photo',
+              description: 'Your ID card cannot be printed until you upload a professional profile photo. Please visit your Profile page.',
+              entity_type: 'employee',
               entity_id: task.employee_id,
-              action_url: "/profile",
-              priority: "high",
+              action_url: '/profile',
+              priority: 'high',
             });
           }
         }
       } catch (photoErr) {
-        console.warn(
-          "[handleITCompletion] Non-fatal: failed to send profile photo notification after account creation:",
-          photoErr,
-        );
+        console.warn('[handleITCompletion] Non-fatal: failed to send profile photo notification after account creation:', photoErr);
       }
     }
+
   } catch (err) {
     await conn.rollback();
     throw err;
@@ -394,8 +347,8 @@ export async function completeItProvisioningTask(
 
 export interface AdminCompletionInput {
   biometric_enrolled: boolean;
-  biometric_device_id?: string; // biometric_device_master.id
-  cosec_user_id?: string; // cosec system user ID
+  biometric_device_id?: string;    // biometric_device_master.id
+  cosec_user_id?: string;          // cosec system user ID
   id_card_printed: boolean;
   id_card_number?: string;
   evidence_note?: string;
@@ -404,7 +357,7 @@ export interface AdminCompletionInput {
 export async function completeAdminProvisioningTask(
   taskId: string,
   input: AdminCompletionInput,
-  actorUserId: string,
+  actorUserId: string
 ): Promise<void> {
   const task = await getTask(taskId);
   const conn = await db.getConnection();
@@ -412,7 +365,7 @@ export async function completeAdminProvisioningTask(
   // Fetch employee_code and photo_url
   const [empCodeRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_code, photo_url FROM employees WHERE id = ? LIMIT 1`,
-    [task.employee_id],
+    [task.employee_id]
   );
   const empRow = (empCodeRows as RowDataPacket[])[0] as any;
   const empCode: string = empRow?.employee_code ?? task.employee_id;
@@ -421,10 +374,8 @@ export async function completeAdminProvisioningTask(
   if (input.id_card_printed && !empRow?.photo_url) {
     conn.release();
     throw Object.assign(
-      new Error(
-        "Employee photo is required before the ID card can be issued. Ask the employee to upload their profile photo first.",
-      ),
-      { statusCode: 422 },
+      new Error("Employee photo is required before the ID card can be issued. Ask the employee to upload their profile photo first."),
+      { statusCode: 422 }
     );
   }
 
@@ -436,7 +387,7 @@ export async function completeAdminProvisioningTask(
       const cosecUserId = input.cosec_user_id ?? empCode;
       const [existingEnroll] = await conn.execute<RowDataPacket[]>(
         `SELECT id FROM employee_biometric_enrollment WHERE employee_id = ? LIMIT 1`,
-        [task.employee_id],
+        [task.employee_id]
       );
 
       // Non-blocking, and deliberately scoped to a FIRST-time enrollment only: many
@@ -454,7 +405,7 @@ export async function completeAdminProvisioningTask(
         input.cosec_user_id.toUpperCase() !== empCode.toUpperCase()
       ) {
         console.warn(
-          `[TaskCompletion] ADMIN_BIOMETRIC_ID_CARD cosec_user_id "${input.cosec_user_id}" does not match employee_code "${empCode}" for a first-time enrollment, employee ${task.employee_id} (task ${taskId})`,
+          `[TaskCompletion] ADMIN_BIOMETRIC_ID_CARD cosec_user_id "${input.cosec_user_id}" does not match employee_code "${empCode}" for a first-time enrollment, employee ${task.employee_id} (task ${taskId})`
         );
       }
 
@@ -464,12 +415,7 @@ export async function completeAdminProvisioningTask(
            SET cosec_user_id = ?, device_id = COALESCE(?, device_id),
                enrolled_by = ?, is_active = 1, last_sync_at = NOW()
            WHERE employee_id = ?`,
-          [
-            cosecUserId,
-            input.biometric_device_id ?? null,
-            actorUserId,
-            task.employee_id,
-          ],
+          [cosecUserId, input.biometric_device_id ?? null, actorUserId, task.employee_id]
         );
       } else {
         await conn.execute(
@@ -477,13 +423,11 @@ export async function completeAdminProvisioningTask(
              (id, employee_id, cosec_user_id, cosec_user_name, device_id, enrolled_by, enrolled_at, is_active)
            VALUES (?, ?, ?, ?, ?, ?, NOW(), 1)`,
           [
-            randomUUID(),
-            task.employee_id,
-            cosecUserId,
+            randomUUID(), task.employee_id, cosecUserId,
             empCode,
             input.biometric_device_id ?? null,
             actorUserId,
-          ],
+          ]
         );
       }
     }
@@ -492,7 +436,7 @@ export async function completeAdminProvisioningTask(
     if (input.id_card_printed) {
       const [existingDoc] = await conn.execute<RowDataPacket[]>(
         `SELECT id FROM employee_documents WHERE employee_id = ? AND doc_type = 'id_card' LIMIT 1`,
-        [task.employee_id],
+        [task.employee_id]
       );
 
       if ((existingDoc as any[]).length > 0) {
@@ -502,13 +446,11 @@ export async function completeAdminProvisioningTask(
                verification_date = NOW(), verification_remarks = ?
            WHERE employee_id = ? AND doc_type = 'id_card'`,
           [
-            input.id_card_number
-              ? `ID Card No: ${input.id_card_number}`
-              : "ID Card Issued",
+            input.id_card_number ? `ID Card No: ${input.id_card_number}` : 'ID Card Issued',
             actorUserId,
-            input.evidence_note ?? "Issued by Admin team",
+            input.evidence_note ?? 'Issued by Admin team',
             task.employee_id,
-          ],
+          ]
         );
       } else {
         await conn.execute(
@@ -517,16 +459,11 @@ export async function completeAdminProvisioningTask(
               uploaded_by, created_at, verified, verified_by, verification_date, verification_remarks)
            VALUES (?, ?, 'id_card', 'identity', ?, NULL, ?, NOW(), 1, ?, NOW(), ?)`,
           [
-            randomUUID(),
-            task.employee_id,
-            input.id_card_number
-              ? `ID Card No: ${input.id_card_number}`
-              : "Employee ID Card",
-            actorUserId,
-            actorUserId,
-            input.evidence_note ??
-              "Issued by Admin team during joining provisioning",
-          ],
+            randomUUID(), task.employee_id,
+            input.id_card_number ? `ID Card No: ${input.id_card_number}` : 'Employee ID Card',
+            actorUserId, actorUserId,
+            input.evidence_note ?? 'Issued by Admin team during joining provisioning',
+          ]
         );
       }
     }
@@ -538,21 +475,16 @@ export async function completeAdminProvisioningTask(
            biometric_enrolled = ?, id_card_printed = ?,
            updated_at = NOW()
        WHERE id = ?`,
-      [
-        actorUserId,
-        input.biometric_enrolled ? 1 : 0,
-        input.id_card_printed ? 1 : 0,
-        taskId,
-      ],
+      [actorUserId, input.biometric_enrolled ? 1 : 0, input.id_card_printed ? 1 : 0, taskId]
     );
 
     await conn.commit();
 
     await logSensitiveAction({
       actor_user_id: actorUserId,
-      action_type: "admin_provisioning_complete",
-      module_key: "it_provisioning",
-      entity_type: "employee",
+      action_type: 'admin_provisioning_complete',
+      module_key: 'it_provisioning',
+      entity_type: 'employee',
       entity_id: task.employee_id,
       employee_id: task.employee_id,
       change_summary: {
@@ -565,6 +497,7 @@ export async function completeAdminProvisioningTask(
     });
 
     await triggerActivationCheck(task.employee_id, actorUserId);
+
   } catch (err) {
     await conn.rollback();
     throw err;
@@ -577,10 +510,10 @@ export async function completeAdminProvisioningTask(
 
 export interface WfmCompletionInput {
   process_id: string;
-  lob_id?: string; // optional; must be an active process_lob_map row for process_id
+  lob_id?: string;   // optional; must be an active process_lob_map row for process_id
   shift_id?: string;
   roster_effective_date: string;
-  week_off_day?: string; // 'Sunday' | 'Monday' etc — matches existing ENUM
+  week_off_day?: string;  // 'Sunday' | 'Monday' etc — matches existing ENUM
   attendance_effective_date: string;
   biometric_mapping_ref?: string;
   evidence_note?: string;
@@ -589,19 +522,15 @@ export interface WfmCompletionInput {
 export async function completeWfmAlignmentTask(
   taskId: string,
   input: WfmCompletionInput,
-  actorUserId: string,
+  actorUserId: string
 ): Promise<void> {
   if (!input.process_id) {
-    throw Object.assign(new Error("process_id is required for WFM alignment"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error('process_id is required for WFM alignment'), { statusCode: 400 });
   }
   if (!input.roster_effective_date || !input.attendance_effective_date) {
     throw Object.assign(
-      new Error(
-        "roster_effective_date and attendance_effective_date are required",
-      ),
-      { statusCode: 400 },
+      new Error('roster_effective_date and attendance_effective_date are required'),
+      { statusCode: 400 }
     );
   }
 
@@ -623,12 +552,9 @@ export async function completeWfmAlignmentTask(
     );
     const procRow = (procRows as any[])[0];
     if (!procRow) {
-      throw Object.assign(
-        new Error("Selected process does not exist or is inactive"),
-        {
-          statusCode: 400,
-        },
-      );
+      throw Object.assign(new Error("Selected process does not exist or is inactive"), {
+        statusCode: 400,
+      });
     }
     if (
       procRow.process_branch_id &&
@@ -646,27 +572,23 @@ export async function completeWfmAlignmentTask(
         [input.shift_id],
       );
       if (!(shiftRows as any[]).length) {
-        throw Object.assign(
-          new Error("Selected shift does not exist or is inactive"),
-          {
-            statusCode: 400,
-          },
-        );
+        throw Object.assign(new Error("Selected shift does not exist or is inactive"), {
+          statusCode: 400,
+        });
       }
     }
 
     // 1. Update employee process_id
     await conn.execute(
       `UPDATE employees SET process_id = ?, updated_at = NOW() WHERE id = ?`,
-      [input.process_id, task.employee_id],
+      [input.process_id, task.employee_id]
     );
     // Process reassignment moves the person under a different process manager, so the
     // supervisory period must close and reopen — see manager-attribution.service.ts.
     void recordSupervisoryChange({
       employeeId: String(task.employee_id),
       processId: input.process_id ? String(input.process_id) : null,
-      changedBy: null,
-      reason: "Process assigned during IT provisioning",
+      changedBy: null, reason: "Process assigned during IT provisioning",
     });
 
     // 1b. Optional LOB chosen at alignment. Must be an ACTIVE mapping of the chosen process
@@ -675,22 +597,20 @@ export async function completeWfmAlignmentTask(
     if (input.lob_id) {
       if (!(await isLobMappedToProcess(conn, input.process_id, input.lob_id))) {
         throw Object.assign(
-          new Error(
-            "lob_id is not mapped to the selected process. Add it in Process LOB Mapping first.",
-          ),
-          { statusCode: 400 },
+          new Error('lob_id is not mapped to the selected process. Add it in Process LOB Mapping first.'),
+          { statusCode: 400 }
         );
       }
       await conn.execute(
         `UPDATE employees SET lob_id = ?, updated_at = NOW() WHERE id = ?`,
-        [input.lob_id, task.employee_id],
+        [input.lob_id, task.employee_id]
       );
     }
 
     // 2. Create/update employee_roster_preference (existing table)
     const [existingPref] = await conn.execute<RowDataPacket[]>(
       `SELECT id FROM employee_roster_preference WHERE employee_id = ? LIMIT 1`,
-      [task.employee_id],
+      [task.employee_id]
     );
 
     if ((existingPref as any[]).length > 0) {
@@ -710,7 +630,7 @@ export async function completeWfmAlignmentTask(
           input.roster_effective_date,
           actorUserId,
           task.employee_id,
-        ],
+        ]
       );
     } else {
       await conn.execute(
@@ -719,29 +639,25 @@ export async function completeWfmAlignmentTask(
             flexibility, effective_from, status, approved_by, approved_at, created_by, created_at)
          VALUES (?, ?, ?, ?, 'fixed', ?, 'approved', ?, NOW(), ?, NOW())`,
         [
-          randomUUID(),
-          task.employee_id,
+          randomUUID(), task.employee_id,
           input.shift_id ?? null,
           input.week_off_day ?? null,
           input.roster_effective_date,
-          actorUserId,
-          actorUserId,
-        ],
+          actorUserId, actorUserId,
+        ]
       );
     }
 
     // 3. If biometric_mapping_ref provided, update cosec mapping
     if (input.biometric_mapping_ref) {
-      await conn
-        .execute(
-          `UPDATE employee_biometric_enrollment
+      await conn.execute(
+        `UPDATE employee_biometric_enrollment
          SET cosec_user_id = ?, last_sync_at = NOW()
          WHERE employee_id = ?`,
-          [input.biometric_mapping_ref, task.employee_id],
-        )
-        .catch(() => {
-          // Non-blocking if no enrollment record yet
-        });
+        [input.biometric_mapping_ref, task.employee_id]
+      ).catch(() => {
+        // Non-blocking if no enrollment record yet
+      });
     }
 
     // 4. Mark task actioned
@@ -749,16 +665,16 @@ export async function completeWfmAlignmentTask(
       `UPDATE it_provisioning_request
        SET status = 'actioned', actioned_by = ?, actioned_at = NOW(), updated_at = NOW()
        WHERE id = ?`,
-      [actorUserId, taskId],
+      [actorUserId, taskId]
     );
 
     await conn.commit();
 
     await logSensitiveAction({
       actor_user_id: actorUserId,
-      action_type: "wfm_alignment_complete",
-      module_key: "it_provisioning",
-      entity_type: "employee",
+      action_type: 'wfm_alignment_complete',
+      module_key: 'it_provisioning',
+      entity_type: 'employee',
       entity_id: task.employee_id,
       employee_id: task.employee_id,
       change_summary: {
@@ -772,6 +688,7 @@ export async function completeWfmAlignmentTask(
     });
 
     await triggerActivationCheck(task.employee_id, actorUserId);
+
   } catch (err) {
     await conn.rollback();
     throw err;
@@ -785,73 +702,43 @@ export async function completeWfmAlignmentTask(
 export async function dispatchTaskCompletion(
   taskId: string,
   body: Record<string, unknown>,
-  actorUserId: string,
+  actorUserId: string
 ): Promise<void> {
   const task = await getTask(taskId);
 
   switch (task.task_code) {
-    case "IT_EMAIL_DOMAIN_ASSET":
-      await completeItProvisioningTask(
-        taskId,
-        {
-          official_email: String(body.official_email ?? ""),
-          domain_account: String(body.domain_account ?? ""),
-          asset_tag: body.asset_tag ? String(body.asset_tag) : undefined,
-          asset_type: body.asset_type ? String(body.asset_type) : undefined,
-          evidence_note: body.evidence_note
-            ? String(body.evidence_note)
-            : undefined,
-        },
-        actorUserId,
-      );
+    case 'IT_EMAIL_DOMAIN_ASSET':
+      await completeItProvisioningTask(taskId, {
+        official_email: String(body.official_email ?? ''),
+        domain_account: String(body.domain_account ?? ''),
+        asset_tag: body.asset_tag ? String(body.asset_tag) : undefined,
+        asset_type: body.asset_type ? String(body.asset_type) : undefined,
+        evidence_note: body.evidence_note ? String(body.evidence_note) : undefined,
+      }, actorUserId);
       break;
 
-    case "ADMIN_BIOMETRIC_ID_CARD":
-      await completeAdminProvisioningTask(
-        taskId,
-        {
-          biometric_enrolled: Boolean(body.biometric_enrolled),
-          biometric_device_id: body.biometric_device_id
-            ? String(body.biometric_device_id)
-            : undefined,
-          cosec_user_id: body.cosec_user_id
-            ? String(body.cosec_user_id)
-            : undefined,
-          id_card_printed: Boolean(body.id_card_printed),
-          id_card_number: body.id_card_number
-            ? String(body.id_card_number)
-            : undefined,
-          evidence_note: body.evidence_note
-            ? String(body.evidence_note)
-            : undefined,
-        },
-        actorUserId,
-      );
+    case 'ADMIN_BIOMETRIC_ID_CARD':
+      await completeAdminProvisioningTask(taskId, {
+        biometric_enrolled: Boolean(body.biometric_enrolled),
+        biometric_device_id: body.biometric_device_id ? String(body.biometric_device_id) : undefined,
+        cosec_user_id: body.cosec_user_id ? String(body.cosec_user_id) : undefined,
+        id_card_printed: Boolean(body.id_card_printed),
+        id_card_number: body.id_card_number ? String(body.id_card_number) : undefined,
+        evidence_note: body.evidence_note ? String(body.evidence_note) : undefined,
+      }, actorUserId);
       break;
 
-    case "WFM_PROCESS_ALIGNMENT":
-      await completeWfmAlignmentTask(
-        taskId,
-        {
-          process_id: String(body.process_id ?? ""),
-          lob_id: body.lob_id ? String(body.lob_id) : undefined,
-          shift_id: body.shift_id ? String(body.shift_id) : undefined,
-          roster_effective_date: String(body.roster_effective_date ?? ""),
-          week_off_day: body.week_off_day
-            ? String(body.week_off_day)
-            : undefined,
-          attendance_effective_date: String(
-            body.attendance_effective_date ?? "",
-          ),
-          biometric_mapping_ref: body.biometric_mapping_ref
-            ? String(body.biometric_mapping_ref)
-            : undefined,
-          evidence_note: body.evidence_note
-            ? String(body.evidence_note)
-            : undefined,
-        },
-        actorUserId,
-      );
+    case 'WFM_PROCESS_ALIGNMENT':
+      await completeWfmAlignmentTask(taskId, {
+        process_id: String(body.process_id ?? ''),
+        lob_id: body.lob_id ? String(body.lob_id) : undefined,
+        shift_id: body.shift_id ? String(body.shift_id) : undefined,
+        roster_effective_date: String(body.roster_effective_date ?? ''),
+        week_off_day: body.week_off_day ? String(body.week_off_day) : undefined,
+        attendance_effective_date: String(body.attendance_effective_date ?? ''),
+        biometric_mapping_ref: body.biometric_mapping_ref ? String(body.biometric_mapping_ref) : undefined,
+        evidence_note: body.evidence_note ? String(body.evidence_note) : undefined,
+      }, actorUserId);
       break;
 
     default:

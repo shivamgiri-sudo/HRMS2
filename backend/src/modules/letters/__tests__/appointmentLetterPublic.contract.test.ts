@@ -36,36 +36,24 @@ vi.mock("../../../db/mysql.js", () => ({
     execute: vi.fn(async (sql: string, params: unknown[] = []) => {
       const text = String(sql);
       state.calls.push({ sql: text, params });
-      if (text.includes("FROM appointment_letter_issue"))
-        return [state.letter ? [state.letter] : []];
-      if (text.includes("FROM appointment_letter_esign_transaction"))
-        return [state.accepted ? [state.accepted] : []];
+      if (text.includes("FROM appointment_letter_issue")) return [state.letter ? [state.letter] : []];
+      if (text.includes("FROM appointment_letter_esign_transaction")) return [state.accepted ? [state.accepted] : []];
       return [[]];
     }),
   },
 }));
-vi.mock("../../../config/env.js", () => ({
-  env: { LUCKPAY_PROVIDER_ENABLED: true, FRONTEND_URL: "https://hrms.test" },
-}));
+vi.mock("../../../config/env.js", () => ({ env: { LUCKPAY_PROVIDER_ENABLED: true, FRONTEND_URL: "https://hrms.test" } }));
 
-const syncMock = vi.fn(async () => ({
-  synced: false,
-  state: "pending" as const,
-}));
+const syncMock = vi.fn(async () => ({ synced: false, state: "pending" as const }));
 const startMock = vi.fn();
 vi.mock("../appointmentLetterEsign.service.js", () => ({
-  appointmentLetterStorageRoot: () =>
-    path.resolve(process.cwd(), "private-storage", "appointment-letters"),
-  syncAppointmentEsignForIssue: (...args: unknown[]) =>
-    syncMock(...(args as [])),
+  appointmentLetterStorageRoot: () => path.resolve(process.cwd(), "private-storage", "appointment-letters"),
+  syncAppointmentEsignForIssue: (...args: unknown[]) => syncMock(...(args as [])),
   startAppointmentEsign: (...args: unknown[]) => startMock(...args),
 }));
 
 const {
-  resolveLetterByToken,
-  getPublicLetterSession,
-  getPublicLetterFile,
-  startPublicLetterEsign,
+  resolveLetterByToken, getPublicLetterSession, getPublicLetterFile, startPublicLetterEsign,
 } = await import("../appointmentLetterPublic.service.js");
 
 const TOKEN = "a1".repeat(24);
@@ -112,9 +100,7 @@ describe("token resolution — both tokens, never the raw value", () => {
   it("looks the letter up by the SHA-256 of the token, for the accept hash and the legacy verify hash", async () => {
     state.letter = baseLetter();
     await resolveLetterByToken(TOKEN);
-    const call = state.calls.find((c) =>
-      c.sql.includes("FROM appointment_letter_issue"),
-    )!;
+    const call = state.calls.find((c) => c.sql.includes("FROM appointment_letter_issue"))!;
     expect(call.params).toEqual([sha256(TOKEN), sha256(TOKEN)]);
     expect(call.params).not.toContain(TOKEN);
     // accept token always; verify token ONLY while the letter has no accept token.
@@ -125,61 +111,34 @@ describe("token resolution — both tokens, never the raw value", () => {
 
   it("an unknown token is a flat 404 with the generic message", async () => {
     await expect(resolveLetterByToken(TOKEN)).rejects.toMatchObject({
-      statusCode: 404,
-      code: "LETTER_LINK_INVALID",
+      statusCode: 404, code: "LETTER_LINK_INVALID",
     });
   });
 
   it("malformed tokens never reach the database", async () => {
-    for (const bad of [
-      "",
-      "short",
-      "x".repeat(200),
-      "has spaces in it 1234567890",
-      "../../etc/passwd/../x",
-      undefined as unknown as string,
-    ]) {
-      await expect(resolveLetterByToken(bad)).rejects.toMatchObject({
-        statusCode: 404,
-        code: "LETTER_LINK_INVALID",
-      });
+    for (const bad of ["", "short", "x".repeat(200), "has spaces in it 1234567890", "../../etc/passwd/../x", undefined as unknown as string]) {
+      await expect(resolveLetterByToken(bad)).rejects.toMatchObject({ statusCode: 404, code: "LETTER_LINK_INVALID" });
     }
     expect(state.calls).toHaveLength(0);
   });
 
   it("an unknown token and a malformed token get the identical message (no enumeration signal)", async () => {
-    const unknown = await resolveLetterByToken(TOKEN).catch(
-      (e: Error) => e.message,
-    );
-    const malformed = await resolveLetterByToken("nope").catch(
-      (e: Error) => e.message,
-    );
+    const unknown = await resolveLetterByToken(TOKEN).catch((e: Error) => e.message);
+    const malformed = await resolveLetterByToken("nope").catch((e: Error) => e.message);
     expect(unknown).toBe(malformed);
   });
 
   it.each([
     ["status", { status: "revoked" }],
     ["revoked_at", { revoked_at: new Date() }],
-  ])(
-    "a revoked letter (%s) answers 410 and nothing is served",
-    async (_label, patch) => {
-      state.letter = { ...baseLetter(), ...patch };
-      await expect(resolveLetterByToken(TOKEN)).rejects.toMatchObject({
-        statusCode: 410,
-        code: "LETTER_REVOKED",
-      });
-      await expect(getPublicLetterSession(TOKEN)).rejects.toMatchObject({
-        statusCode: 410,
-      });
-      await expect(getPublicLetterFile(TOKEN)).rejects.toMatchObject({
-        statusCode: 410,
-      });
-      await expect(
-        startPublicLetterEsign({ token: TOKEN }),
-      ).rejects.toMatchObject({ statusCode: 410 });
-      expect(startMock).not.toHaveBeenCalled();
-    },
-  );
+  ])("a revoked letter (%s) answers 410 and nothing is served", async (_label, patch) => {
+    state.letter = { ...baseLetter(), ...patch };
+    await expect(resolveLetterByToken(TOKEN)).rejects.toMatchObject({ statusCode: 410, code: "LETTER_REVOKED" });
+    await expect(getPublicLetterSession(TOKEN)).rejects.toMatchObject({ statusCode: 410 });
+    await expect(getPublicLetterFile(TOKEN)).rejects.toMatchObject({ statusCode: 410 });
+    await expect(startPublicLetterEsign({ token: TOKEN })).rejects.toMatchObject({ statusCode: 410 });
+    expect(startMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("session payload", () => {
@@ -187,105 +146,53 @@ describe("session payload", () => {
     state.letter = baseLetter();
     const session = await getPublicLetterSession(TOKEN);
     expect(Object.keys(session).sort()).toEqual([
-      "branchName",
-      "companySignedAt",
-      "companySignedBy",
-      "dateOfJoining",
-      "designation",
-      "employeeCode",
-      "employeeName",
-      "esignAvailable",
-      "esignStatus",
-      "letterNumber",
-      "signed",
-      "signedAt",
+      "branchName", "companySignedAt", "companySignedBy", "dateOfJoining", "designation", "employeeCode",
+      "employeeName", "esignAvailable", "esignStatus", "letterNumber", "signed", "signedAt",
     ]);
     expect(session).toMatchObject({
-      letterNumber: "MCN-AL-2026-000123",
-      employeeName: "HARSH TALWAR",
-      designation: "EXECUTIVE",
-      branchName: "NOIDA-2",
-      dateOfJoining: "26 Sep 2025",
-      esignStatus: "not_sent",
-      signed: false,
-      esignAvailable: true,
+      letterNumber: "MCN-AL-2026-000123", employeeName: "HARSH TALWAR", designation: "EXECUTIVE",
+      branchName: "NOIDA-2", dateOfJoining: "26 Sep 2025", esignStatus: "not_sent", signed: false, esignAvailable: true,
     });
   });
 
   it("never leaks salary, contact details, internal ids, hashes or file paths", async () => {
     state.letter = baseLetter();
     const json = JSON.stringify(await getPublicLetterSession(TOKEN));
-    for (const secret of [
-      "50000",
-      "600000",
-      "gross",
-      "salary",
-      "harsh@example.com",
-      "emp-1",
-      "issue-1",
-      "deadbeef",
-      "private-storage",
-      ".pdf",
-    ]) {
+    for (const secret of ["50000", "600000", "gross", "salary", "harsh@example.com", "emp-1", "issue-1", "deadbeef", "private-storage", ".pdf"]) {
       expect(json, `session must not contain ${secret}`).not.toContain(secret);
     }
     // ...and the query does not even fetch the salary snapshot or the contact columns.
-    const select = state.calls.find((c) =>
-      c.sql.includes("FROM appointment_letter_issue"),
-    )!.sql;
-    expect(select).not.toMatch(
-      /salary_snapshot_json|personal_email|official_email/,
-    );
+    const select = state.calls.find((c) => c.sql.includes("FROM appointment_letter_issue"))!.sql;
+    expect(select).not.toMatch(/salary_snapshot_json|personal_email|official_email/);
   });
 
   it("refreshes a pending signature from the provider (throttled) and re-reads if it changed", async () => {
     state.letter = { ...baseLetter(), employee_esign_status: "sent" };
-    syncMock.mockResolvedValueOnce({
-      synced: true,
-      state: "completed" as const,
-      changed: true,
-    } as never);
+    syncMock.mockResolvedValueOnce({ synced: true, state: "completed" as const, changed: true } as never);
     state.calls = [];
     await getPublicLetterSession(TOKEN);
     expect(syncMock).toHaveBeenCalledTimes(1);
-    const [issueId, opts] = syncMock.mock.calls[0] as unknown as [
-      string,
-      { minIntervalSeconds: number; timeoutMs: number },
-    ];
+    const [issueId, opts] = syncMock.mock.calls[0] as unknown as [string, { minIntervalSeconds: number; timeoutMs: number }];
     expect(issueId).toBe("issue-1");
     expect(opts.minIntervalSeconds).toBeGreaterThanOrEqual(60);
     expect(opts.timeoutMs).toBeLessThanOrEqual(10_000);
-    expect(
-      state.calls.filter((c) =>
-        c.sql.includes("FROM appointment_letter_issue"),
-      ),
-    ).toHaveLength(2);
+    expect(state.calls.filter((c) => c.sql.includes("FROM appointment_letter_issue"))).toHaveLength(2);
   });
 
-  it.each(["not_sent", "signed"])(
-    "does not call the provider for a %s letter",
-    async (status) => {
-      state.letter = { ...baseLetter(), employee_esign_status: status };
-      await getPublicLetterSession(TOKEN);
-      expect(syncMock).not.toHaveBeenCalled();
-    },
-  );
+  it.each(["not_sent", "signed"])("does not call the provider for a %s letter", async (status) => {
+    state.letter = { ...baseLetter(), employee_esign_status: status };
+    await getPublicLetterSession(TOKEN);
+    expect(syncMock).not.toHaveBeenCalled();
+  });
 
   it("a provider failure during the refresh never fails the page", async () => {
     state.letter = { ...baseLetter(), employee_esign_status: "opened" };
     syncMock.mockRejectedValueOnce(new Error("provider down"));
-    await expect(getPublicLetterSession(TOKEN)).resolves.toMatchObject({
-      esignStatus: "opened",
-      signed: false,
-    });
+    await expect(getPublicLetterSession(TOKEN)).resolves.toMatchObject({ esignStatus: "opened", signed: false });
   });
 
   it("reports a signed letter with its signing time", async () => {
-    state.letter = {
-      ...baseLetter(),
-      employee_esign_status: "signed",
-      employee_esign_at: new Date("2026-09-24T05:00:00Z"),
-    };
+    state.letter = { ...baseLetter(), employee_esign_status: "signed", employee_esign_at: new Date("2026-09-24T05:00:00Z") };
     const session = await getPublicLetterSession(TOKEN);
     expect(session.signed).toBe(true);
     expect(session.signedAt).toBe("2026-09-24T05:00:00.000Z");
@@ -305,36 +212,20 @@ describe("file endpoint guards", () => {
     const outside = path.join(TMP, "secret.txt");
     fs.writeFileSync(outside, "nope");
     state.letter = { ...baseLetter(), signed_file_path: outside };
-    await expect(getPublicLetterFile(TOKEN)).rejects.toMatchObject({
-      statusCode: 404,
-      code: "LETTER_FILE_MISSING",
-    });
+    await expect(getPublicLetterFile(TOKEN)).rejects.toMatchObject({ statusCode: 404, code: "LETTER_FILE_MISSING" });
 
-    state.letter = {
-      ...baseLetter(),
-      signed_file_path: path.join(STORE, "..", "..", "secret.txt"),
-    };
-    await expect(getPublicLetterFile(TOKEN)).rejects.toMatchObject({
-      statusCode: 404,
-    });
+    state.letter = { ...baseLetter(), signed_file_path: path.join(STORE, "..", "..", "secret.txt") };
+    await expect(getPublicLetterFile(TOKEN)).rejects.toMatchObject({ statusCode: 404 });
   });
 
   it("answers a clear 404 when the row outlives its file", async () => {
-    state.letter = {
-      ...baseLetter(),
-      signed_file_path: path.join(STORE, "emp-1", "gone.pdf"),
-    };
-    await expect(getPublicLetterFile(TOKEN)).rejects.toMatchObject({
-      statusCode: 404,
-      code: "LETTER_FILE_MISSING",
-    });
+    state.letter = { ...baseLetter(), signed_file_path: path.join(STORE, "emp-1", "gone.pdf") };
+    await expect(getPublicLetterFile(TOKEN)).rejects.toMatchObject({ statusCode: 404, code: "LETTER_FILE_MISSING" });
   });
 
   it("serves the employee's own signed copy once they have signed", async () => {
     writeLetterPdf();
-    const accepted = writeLetterPdf(
-      path.join("emp-1", "MCN-AL-2026-000123-accepted.pdf"),
-    );
+    const accepted = writeLetterPdf(path.join("emp-1", "MCN-AL-2026-000123-accepted.pdf"));
     state.letter = { ...baseLetter(), employee_esign_status: "signed" };
     state.accepted = { signed_file_path: accepted };
     const file = await getPublicLetterFile(TOKEN);
@@ -345,56 +236,27 @@ describe("file endpoint guards", () => {
   it("does not look for an accepted copy before the employee has signed", async () => {
     writeLetterPdf();
     state.letter = baseLetter();
-    state.accepted = {
-      signed_file_path: path.join(
-        STORE,
-        "emp-1",
-        "MCN-AL-2026-000123-accepted.pdf",
-      ),
-    };
+    state.accepted = { signed_file_path: path.join(STORE, "emp-1", "MCN-AL-2026-000123-accepted.pdf") };
     state.calls = [];
     await getPublicLetterFile(TOKEN);
-    expect(
-      state.calls.some((c) =>
-        c.sql.includes("appointment_letter_esign_transaction"),
-      ),
-    ).toBe(false);
+    expect(state.calls.some((c) => c.sql.includes("appointment_letter_esign_transaction"))).toBe(false);
   });
 });
 
 describe("start", () => {
   it("resolves the token, then delegates with only the letter facts and the client context", async () => {
     state.letter = baseLetter();
-    startMock.mockResolvedValue({
-      code: "OK",
-      providerUrl: "https://provider.test/x",
-      esignStatus: "sent",
-      alreadySigned: false,
-      message: null,
-    });
-    const out = await startPublicLetterEsign({
-      token: TOKEN,
-      ipAddress: "1.2.3.4",
-      userAgent: "UA",
-    });
+    startMock.mockResolvedValue({ code: "OK", providerUrl: "https://provider.test/x", esignStatus: "sent", alreadySigned: false, message: null });
+    const out = await startPublicLetterEsign({ token: TOKEN, ipAddress: "1.2.3.4", userAgent: "UA" });
     expect(out.providerUrl).toBe("https://provider.test/x");
-    const [letter, ctx] = startMock.mock.calls[0] as [
-      Record<string, unknown>,
-      Record<string, unknown>,
-    ];
-    expect(letter).toMatchObject({
-      id: "issue-1",
-      letterNumber: "MCN-AL-2026-000123",
-      employeeId: "emp-1",
-    });
+    const [letter, ctx] = startMock.mock.calls[0] as [Record<string, unknown>, Record<string, unknown>];
+    expect(letter).toMatchObject({ id: "issue-1", letterNumber: "MCN-AL-2026-000123", employeeId: "emp-1" });
     expect(ctx).toEqual({ ipAddress: "1.2.3.4", userAgent: "UA" });
     expect(JSON.stringify(letter)).not.toContain("50000");
   });
 
   it("an unknown token never starts a provider session", async () => {
-    await expect(
-      startPublicLetterEsign({ token: TOKEN }),
-    ).rejects.toMatchObject({ statusCode: 404 });
+    await expect(startPublicLetterEsign({ token: TOKEN })).rejects.toMatchObject({ statusCode: 404 });
     expect(startMock).not.toHaveBeenCalled();
   });
 });

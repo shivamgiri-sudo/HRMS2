@@ -13,9 +13,7 @@ function read(relativePath: string) {
 describe("finance_period lock — GRN cannot silently move a closed period's numbers", () => {
   it("isPeriodLocked reads status by period_code alone, matching canonical-pnl's own lock check", () => {
     const helper = read("src/modules/process-pnl/finance-period-lock.ts");
-    expect(helper).toContain(
-      "SELECT status FROM finance_period WHERE period_code = ?",
-    );
+    expect(helper).toContain("SELECT status FROM finance_period WHERE period_code = ?");
     expect(helper).toContain('=== "locked"');
   });
 
@@ -32,8 +30,7 @@ describe("finance_period lock — GRN cannot silently move a closed period's num
 describe("P&L live read paths surface lock status instead of drifting silently", () => {
   it("summary, process detail and export all report isPeriodLocked", () => {
     const routes = read("src/modules/process-pnl/bpo-pnl.routes.ts");
-    const getCount = (routes.match(/isPeriodLocked\(scoped\.period\)/g) ?? [])
-      .length;
+    const getCount = (routes.match(/isPeriodLocked\(scoped\.period\)/g) ?? []).length;
     expect(getCount).toBe(3);
     expect(routes).toContain("isPeriodLocked: periodLocked");
     expect(routes).toContain('res.setHeader("X-Period-Locked"');
@@ -61,13 +58,9 @@ describe("P&L configuration changes are now audited (before/after, who/when)", (
   });
 
   it("saveClassificationRule (the sixth config save, in the configuration service) is also audited", () => {
-    const config = read(
-      "src/modules/process-pnl/bpo-pnl.configuration.service.ts",
-    );
+    const config = read("src/modules/process-pnl/bpo-pnl.configuration.service.ts");
     expect(config).toContain("writeAuditLog");
     expect(config).toContain("classification_rule_saved");
-    expect(config).toContain(
-      "SELECT * FROM pnl_cost_classification_rule WHERE id = ?",
-    );
+    expect(config).toContain("SELECT * FROM pnl_cost_classification_rule WHERE id = ?");
   });
 });

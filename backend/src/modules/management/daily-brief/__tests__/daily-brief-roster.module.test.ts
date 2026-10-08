@@ -5,10 +5,7 @@ vi.mock("../../../../db/mysql.js", () => ({
   db: { execute, query: execute, getConnection: vi.fn() },
 }));
 
-import {
-  buildRosterModule,
-  classifyShortageSeverity,
-} from "../daily-brief-roster.module.js";
+import { buildRosterModule, classifyShortageSeverity } from "../daily-brief-roster.module.js";
 
 describe("daily-brief-roster: shortage severity thresholds", () => {
   it("matches the exact thresholds reused from business-actions.signal-sync.ts's syncRosterShortages", () => {
@@ -39,26 +36,10 @@ describe("daily-brief-roster: buildRosterModule", () => {
   it("computes worst severity from the largest single-slot shortage in scope", async () => {
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM wfm_slot_requirement")) {
-        return [
-          [
-            {
-              requirement_date: "2026-08-19",
-              process_id: "p1",
-              process_name: "Voice",
-              required_hc: 20,
-              scheduled_hc: 8,
-              coverage_delta: -12,
-            }, // shortage 12 -> critical
-            {
-              requirement_date: "2026-08-20",
-              process_id: "p1",
-              process_name: "Voice",
-              required_hc: 10,
-              scheduled_hc: 9,
-              coverage_delta: -1,
-            }, // shortage 1 -> medium
-          ],
-        ];
+        return [[
+          { requirement_date: "2026-08-19", process_id: "p1", process_name: "Voice", required_hc: 20, scheduled_hc: 8, coverage_delta: -12 }, // shortage 12 -> critical
+          { requirement_date: "2026-08-20", process_id: "p1", process_name: "Voice", required_hc: 10, scheduled_hc: 9, coverage_delta: -1 },  // shortage 1 -> medium
+        ]];
       }
       if (sql.includes("FROM wfm_roster_assignment")) {
         return [[{ pending_count: 3, rejected_count: 1 }]];
@@ -66,18 +47,13 @@ describe("daily-brief-roster: buildRosterModule", () => {
       return [[]];
     });
 
-    const result = await buildRosterModule(
-      { processIds: ["p1"] },
-      "2026-08-18",
-    );
+    const result = await buildRosterModule({ processIds: ["p1"] }, "2026-08-18");
 
     expect(result.worstSeverity).toBe("critical");
     expect(result.uncoveredHc.value).toBe(13); // 12 + 1
     expect(result.pendingAcknowledgement?.value).toBe(3);
     expect(result.pendingRejectedByEmployee?.value).toBe(1);
-    expect(
-      result.sourceHealth.find((h) => h.module === "roster_forecast")?.state,
-    ).toBe("AVAILABLE");
+    expect(result.sourceHealth.find((h) => h.module === "roster_forecast")?.state).toBe("AVAILABLE");
   });
 
   it("a thrown roster query error yields sourceHealth = ERROR, not a silent zero", async () => {
@@ -90,9 +66,7 @@ describe("daily-brief-roster: buildRosterModule", () => {
 
     const result = await buildRosterModule({ branchIds: ["b1"] }, "2026-08-18");
 
-    const forecastHealth = result.sourceHealth.find(
-      (h) => h.module === "roster_forecast",
-    );
+    const forecastHealth = result.sourceHealth.find((h) => h.module === "roster_forecast");
     expect(forecastHealth?.state).toBe("ERROR");
     expect(forecastHealth?.detail).toContain("simulated failure");
     expect(result.lookingAhead).toEqual([]);

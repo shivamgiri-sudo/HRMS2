@@ -25,13 +25,9 @@ const { execute, connExecute, getConnection } = vi.hoisted(() => {
   };
 });
 
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute, query: execute, getConnection },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute, getConnection } }));
 
-const { logSensitiveAction } = vi.hoisted(() => ({
-  logSensitiveAction: vi.fn(async () => undefined),
-}));
+const { logSensitiveAction } = vi.hoisted(() => ({ logSensitiveAction: vi.fn(async () => undefined) }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 
 const { mobilityService } = await import("../mobility.service.js");
@@ -39,10 +35,10 @@ const { mobilityService } = await import("../mobility.service.js");
 // ── Test constants ────────────────────────────────────────────────────────────
 
 const EMPLOYEE_ID = "emp-cc-test";
-const CC_FROM_ID = "cc-from-uuid";
-const CC_TO_ID = "cc-to-uuid";
-const MANAGER_ID = "mgr-uuid";
-const OLD_MGR_ID = "old-mgr-uuid";
+const CC_FROM_ID  = "cc-from-uuid";
+const CC_TO_ID    = "cc-to-uuid";
+const MANAGER_ID  = "mgr-uuid";
+const OLD_MGR_ID  = "old-mgr-uuid";
 const APPROVER_ID = "approver-uuid";
 const TRANSFER_ID = "tr-cc-test";
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -89,11 +85,11 @@ function wireConn(
   opts: {
     statusAffectedRows?: number;
     claimAffectedRows?: number;
-  } = {},
+  } = {}
 ) {
-  const commit = vi.fn(async () => undefined);
+  const commit   = vi.fn(async () => undefined);
   const rollback = vi.fn(async () => undefined);
-  const release = vi.fn(() => undefined);
+  const release  = vi.fn(() => undefined);
 
   connExecute.mockReset();
   connExecute.mockImplementation(async (sql: string) => {
@@ -102,21 +98,13 @@ function wireConn(
       return [row ? [row] : [], []];
     if (/UPDATE transfer_record SET status/.test(s))
       return [{ affectedRows: opts.statusAffectedRows ?? 1 }, []];
-    if (
-      /UPDATE transfer_record SET applied_at = NOW\(\) WHERE id = \? AND applied_at IS NULL/.test(
-        s,
-      )
-    )
+    if (/UPDATE transfer_record SET applied_at = NOW\(\) WHERE id = \? AND applied_at IS NULL/.test(s))
       return [{ affectedRows: opts.claimAffectedRows ?? 1 }, []];
     if (/cost_centre_master WHERE id = \?/.test(s))
       return [[{ id: CC_TO_ID }], []];
     if (/UPDATE employees SET cost_centre_id/.test(s))
       return [{ affectedRows: 1 }, []];
-    if (
-      /SELECT branch_id, department_id, process_id, reporting_manager_id/.test(
-        s,
-      )
-    )
+    if (/SELECT branch_id, department_id, process_id, reporting_manager_id/.test(s))
       return [[EMP_SNAP], []];
     if (/UPDATE employees SET reporting_manager_id/.test(s))
       return [{ affectedRows: 1 }, []];
@@ -138,16 +126,12 @@ function wireConn(
 
   // Post-commit re-fetch
   execute.mockReset();
-  execute.mockImplementation(async () => [
-    [{ ...ccTransferRow(), status: "completed" }],
-    [],
-  ]);
+  execute.mockImplementation(async () => [[{ ...ccTransferRow(), status: "completed" }], []]);
 
   return { commit, rollback, release };
 }
 
-const connSqlIssued = () =>
-  connExecute.mock.calls.map(([s]: [string]) => String(s));
+const connSqlIssued = () => connExecute.mock.calls.map(([s]: [string]) => String(s));
 
 beforeEach(() => {
   logSensitiveAction.mockReset();
@@ -165,17 +149,12 @@ describe("Cost Centre Transfer", () => {
     // INSERT transfer_record
     execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     // SELECT back the created row
-    execute.mockResolvedValueOnce([
-      [
-        {
-          id: TRANSFER_ID,
-          transfer_type: "cost_centre",
-          new_reporting_manager_id: MANAGER_ID,
-          status: "pending",
-        },
-      ],
-      [],
-    ]);
+    execute.mockResolvedValueOnce([[{
+      id: TRANSFER_ID,
+      transfer_type: "cost_centre",
+      new_reporting_manager_id: MANAGER_ID,
+      status: "pending",
+    }], []]);
 
     const transfer = await mobilityService.createTransfer({
       employee_id: EMPLOYEE_ID,
@@ -205,12 +184,8 @@ describe("Cost Centre Transfer", () => {
     expect(rollback).not.toHaveBeenCalled();
 
     const issued = connSqlIssued();
-    expect(
-      issued.some((s) => /UPDATE employees SET cost_centre_id/.test(s)),
-    ).toBe(true);
-    expect(
-      issued.some((s) => /UPDATE employees SET reporting_manager_id/.test(s)),
-    ).toBe(true);
+    expect(issued.some((s) => /UPDATE employees SET cost_centre_id/.test(s))).toBe(true);
+    expect(issued.some((s) => /UPDATE employees SET reporting_manager_id/.test(s))).toBe(true);
   });
 
   it("writes to employee_job_history on cost_centre transfer approval", async () => {
@@ -221,8 +196,8 @@ describe("Cost Centre Transfer", () => {
       approved_by: APPROVER_ID,
     });
 
-    const jobHistoryCall = connExecute.mock.calls.find(([s]: [string]) =>
-      /INSERT INTO employee_job_history/.test(String(s)),
+    const jobHistoryCall = connExecute.mock.calls.find(
+      ([s]: [string]) => /INSERT INTO employee_job_history/.test(String(s))
     );
     expect(jobHistoryCall).toBeDefined();
 
@@ -232,11 +207,11 @@ describe("Cost Centre Transfer", () => {
     // [5]=from_manager_id  [6]=to_manager_id
     // ...
     const args = jobHistoryCall![1] as unknown[];
-    expect(args[1]).toBe(EMPLOYEE_ID); // employee_id
-    expect(args[3]).toBe(CC_FROM_ID); // from_cost_centre_id (from_value on record)
-    expect(args[4]).toBe(CC_TO_ID); // to_cost_centre_id (to_value on record)
-    expect(args[5]).toBe(OLD_MGR_ID); // from_manager_id (old — empSnap before cascade)
-    expect(args[6]).toBe(MANAGER_ID); // to_manager_id (new)
+    expect(args[1]).toBe(EMPLOYEE_ID);   // employee_id
+    expect(args[3]).toBe(CC_FROM_ID);    // from_cost_centre_id (from_value on record)
+    expect(args[4]).toBe(CC_TO_ID);      // to_cost_centre_id (to_value on record)
+    expect(args[5]).toBe(OLD_MGR_ID);    // from_manager_id (old — empSnap before cascade)
+    expect(args[6]).toBe(MANAGER_ID);    // to_manager_id (new)
   });
 
   it("rejects transfer with invalid cost_centre to_value", async () => {
@@ -252,7 +227,7 @@ describe("Cost Centre Transfer", () => {
         effective_date: TODAY,
         initiated_by: APPROVER_ID,
         new_reporting_manager_id: MANAGER_ID,
-      }),
+      })
     ).rejects.toThrow(/not found in cost_centre_master/);
   });
 });
