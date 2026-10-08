@@ -343,3 +343,12 @@ describe("calibrated show rates in the Plan section", () => {
     expect(html).toContain("(14-day actual)");
   });
 });
+
+describe("Plan rows say their type is by stream", () => {
+  it("labels the stream's type 'by stream' (the sections type people by the person rule, the plan by the stream)", async () => {
+    const { streamRows } = await import("../command/planModel");
+    const rows = streamRows({ date: "2026-10-09", driveId: null, target: 10, capacity: 40, seatsUsed: 0, expected: 4, gap: 6,
+      streams: [{ streamId: "s1", sourceType: "meta_old", label: "", cap: 50, lined: 0, expected: 2, rate: 0.3, basis: "plan_default", recommended: 7, reasoning: "", covers: true }] } as never);
+    expect(rows[0].typeLabel).toBe("Old Meta data (by stream)");
+  });
+});

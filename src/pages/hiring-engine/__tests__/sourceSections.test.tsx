@@ -68,6 +68,9 @@ describe("source sections without streams", () => {
     expect(notes[0]).toEqual({ id: "before-cutoff", text: "Live Meta starts with form fills on 8 Oct 2026. This range ends before that, so its Meta leads are under Old Meta data." });
     expect(zeroNotes(fixture({ liveFrom: "2026-10-08" } as never), "meta_live", filters, NOW).map((n) => n.id)).not.toContain("before-cutoff");
     expect(zeroNotes(a, "meta_old", { ...filters, ...early }, NOW).map((n) => n.id)).not.toContain("before-cutoff");
+    // never next to Live numbers: only when every Live stage is zero
+    const odd = fixture({ liveFrom: "2026-10-08", window: { from: "2026-09-01", to: "2026-09-30", days: 30 }, types: { ...fixture().types, meta_live: typ(sc({ qualified: 3 })) } } as never);
+    expect(zeroNotes(odd, "meta_live", { ...filters, ...early }, NOW).map((n) => n.id)).not.toContain("before-cutoff");
   });
   it("zero-lead Old Meta in the default window shows the historic note and Show all time", () => {
     const html = render(fixture(), "meta_old");
