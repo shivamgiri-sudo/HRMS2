@@ -47,6 +47,11 @@
   "modules/hiring-engine/he-command.routes.ts": [
     "qualified_followup_call_batch"
   ],
+  "modules/hiring-engine/he-cost.service.ts": [
+    "qualified_followup",
+    "requisition_stream",
+    "requisition_stream_match"
+  ],
   "modules/hiring-engine/he-drive-analytics.service.ts": [
     "qualified_followup",
     "requisition_stream",

@@ -17,11 +17,14 @@ import {
   SOURCE_TYPES, conversions, dailySeries, scatterPoints, stageCountsByType, timingGrids, waterfall,
   type Conversion, type DailyPoint, type Grid, type MatchOutcome, type ScatterPoint, type StageCounts, type TaggedAggRow, type TimingCell, type TypedStageCounts, type WaterfallStep,
 } from "./he-drive-analytics.js";
+import { costBlock, type CostBlock } from "./he-cost.js";
+import { readCostUsage } from "./he-cost.service.js";
 import { evaluateInsights, type DriveInsight } from "./he-drive-insights.js";
 import { collectInsightFacts } from "./he-drive-insight-facts.service.js";
 import { loadInsightThresholds } from "./he-insight-params.service.js";
 import { buildDriveGroups, readAgg, readDriveAggRows, type DriveGroup, type DriveGroupInput } from "./he-drive-trend.service.js";
 import { getSourcesForRequisitions, type RequisitionSourceRows } from "./he-sources-window.service.js";
+import { valueAddOn } from "./he-valueadd-switches.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
 import { loadActiveStreams, type StreamRow } from "./requisition-stream.service.js";
@@ -44,7 +47,7 @@ export interface DriveAnalytics {
   scatter: ScatterPoint[];
   waterfall: Record<SourceType, WaterfallStep[]>;
   groups: DriveGroup[];
-  cost: { available: false; note: string };
+  cost: CostBlock | { available: false; note: string };
   insights: DriveInsight[];
   requisitionCount: number;
   truncated: boolean;
@@ -377,6 +380,15 @@ async function build(
       return evaluateInsights(facts, t);
     }, [] as DriveInsight[]);
   }
+  // cost per source: its own statements only while HE_COST_PER_SOURCE is on; a failed section counts 0 and flags the result as partial
+  let cost: DriveAnalytics["cost"] = { available: false, note: "Cost per source arrives with Plan 5" };
+  if (!none && valueAddOn("cost_per_source")) {
+    cost = await section<DriveAnalytics["cost"]>("cost", failed, async () => {
+      const c = await readCostUsage(ids, w);
+      for (const f of c.failedSections) if (!failed.includes(f)) failed.push(f);
+      return costBlock(c.usage, c.rates, perType((t) => stageOnly(cur[t])));
+    }, cost);
+  }
   const failedSections = [...new Set(failed)];
 
   return {
@@ -393,7 +405,7 @@ async function build(
     scatter: scatterPoints([...sums.values()], sources?.byRequisition ?? []),
     waterfall: perType((t) => waterfall(cur[t], stops[t], outcomeRead.slotReleased[t])),
     groups,
-    cost: { available: false, note: "Cost per source arrives with Plan 5" },
+    cost,
     insights,
     requisitionCount: ids.length,
     truncated,
