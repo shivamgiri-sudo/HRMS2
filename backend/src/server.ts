@@ -3,6 +3,7 @@ import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { db, setSessionMaxExecutionTime } from "./db/mysql.js";
 import { runPendingMigrations, verifySchemaVersion } from "./db/runPendingMigrations.js";
+import { backfillCriteriaVersions } from "./modules/selection/criteria.service.js";
 import { checkRequiredTables, REQUIRED_TABLES } from "./db/schema-presence-check.js";
 
 // API process only (hrms2-workers never loads server.ts): cap SELECTs at 5 min. 0 disables.
@@ -580,6 +581,14 @@ async function initializeRuntime() {
   // employee-creation-orchestrator.service.ts's Live Selfie promotion step for
   // the incident this is the other half of the fix for. Not awaited: must
   // never add to the boot window health checks are already timed against.
+  // Selection criteria (S5): one baseline version per requisition, only while the version table is empty. Not awaited;
+  // idempotent (a second boot, or a second process, writes nothing); a missing table before migration 2145 just logs.
+  backfillCriteriaVersions().then((n) => {
+    if (n) console.log(`[criteria] backfilled ${n} requisition criteria versions`);
+  }).catch((err) => {
+    console.warn("[criteria] version backfill skipped:", err instanceof Error ? err.message : err);
+  });
+
   warmUpFaceDetectionModels().then((available) => {
     console.log(`[face-match] model warm-up ${available ? "complete" : "unavailable (models not found on disk)"}`);
   }).catch((err) => {

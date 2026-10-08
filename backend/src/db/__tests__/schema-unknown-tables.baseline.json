@@ -247,5 +247,9 @@
   ],
   "modules/hiring-engine/candidate-response.service.ts": [
     "candidate_response"
+  ],
+  "modules/selection/criteria.service.ts": [
+    "job_requisition_criteria_audit",
+    "job_requisition_criteria_version"
   ]
 }

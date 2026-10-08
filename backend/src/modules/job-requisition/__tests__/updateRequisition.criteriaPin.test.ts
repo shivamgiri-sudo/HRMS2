@@ -6,7 +6,15 @@ const { dbExecute, current } = vi.hoisted(() => ({
   dbExecute: vi.fn(),
   current: { status: "draft" as string },
 }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
+const { conn } = vi.hoisted(() => {
+  const execute = vi.fn(async (sql: string) => {
+    if (sql.startsWith("SELECT jr.id")) return [[{ id: "r1", requisition_code: "REQ-1", branch_name: "NOIDA-2", approval_status: "draft", education_requirement: "Graduate" }], []];
+    if (sql.includes("COALESCE(MAX(version_no), 0)")) return [[{ n: 0 }], []];
+    return [[], []];
+  });
+  return { conn: { execute, beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(async () => {}), release: vi.fn() } };
+});
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute, getConnection: async () => conn } }));
 vi.mock("../../workflow/workflow.service.js", () => ({ workflowService: {} }));
 
 import { jobRequisitionService as svc } from "../job-requisition.service.js";
@@ -55,5 +63,13 @@ describe("updateRequisition criteria columns (pin)", () => {
       await expect(svc.updateRequisition("r1", { [k]: v } as never, "u1")).rejects.toMatchObject({ statusCode: 409 });
     }
     expect(updates()).toHaveLength(0);
+  });
+
+  it("S5 hook: the save also records a criteria version with source form, on its own connection", async () => {
+    conn.execute.mockClear();
+    current.status = "draft";
+    await svc.updateRequisition("r1", { education_requirement: "Graduate" } as never, "u1");
+    const v = conn.execute.mock.calls.find((c) => String(c[0]).trim().startsWith("INSERT INTO job_requisition_criteria_version"));
+    expect(v?.[1]).toEqual(expect.arrayContaining(["form"]));
   });
 });

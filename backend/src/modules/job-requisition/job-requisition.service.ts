@@ -9,6 +9,7 @@
  * - Dashboard metrics and analytics
  */
 
+import { recordCriteriaVersionSafe } from "../selection/criteria.service.js";
 import { randomUUID } from "crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -286,6 +287,13 @@ function formatInr(value: unknown): string {
   if (!Number.isFinite(n) || n === 0) return "—";
   return `₹${n.toLocaleString("en-IN")}`;
 }
+
+/** Requisition-form fields that are selection criteria: saving any of them records a criteria version (S5). */
+const CRITERIA_INPUT_FIELDS = [
+  "experience_min_years", "experience_max_years", "education_requirement", "skills_required", "shift_requirement", "rotational_shift", "night_shift_required",
+  "meta_target_age_min", "meta_target_age_max", "meta_target_locations", "meta_target_radius_km", "meta_screening_config",
+] as const;
+const touchesCriteria = (input: object) => CRITERIA_INPUT_FIELDS.some((f) => f in input);
 
 export const jobRequisitionService = {
   /**
@@ -629,6 +637,7 @@ export const jobRequisitionService = {
     );
 
     await this.logApprovalAction(id, 1, "submitted", requestedBy, requestedByName, null, "Requisition created as draft");
+    if (touchesCriteria(input)) await recordCriteriaVersionSafe(id, requestedBy, "form");
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
@@ -736,6 +745,8 @@ export const jobRequisitionService = {
       `UPDATE job_requisition SET ${sets.join(", ")} WHERE id = ?`,
       params
     );
+
+    if (touchesCriteria(input)) await recordCriteriaVersionSafe(id, actorId, "form");
 
     // Audit line only: the approval log's action enum has no value for this and the URL may carry a token.
     if ("bmi_assessment_url" in input) {

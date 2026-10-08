@@ -266,6 +266,7 @@ import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
 import { kpiStudioRouter } from "./modules/kpi/kpi-studio.routes.js";
 import { kpiCatalogueRouter } from "./modules/kpi-catalogue/kpi-catalogue.routes.js";
 import { jobRequisitionRouter } from "./modules/job-requisition/job-requisition.routes.js";
+import { criteriaRouter } from "./modules/selection/criteria.routes.js";
 import { metaCampaignRouter } from "./modules/meta-campaign/meta-campaign.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
@@ -685,6 +686,7 @@ app.use("/api/portal", portalRouter);
 app.use("/api/portal/admin", portalAdminRouter);
 app.use("/api/presentations", presentationRouter);
 app.use("/api/job-requisition", jobRequisitionRouter);
+app.use("/api/job-requisition", criteriaRouter); // selection criteria (versioned, audited); after the requisition router
 // META campaign automation. NOTE: two routes inside are intentionally unauthenticated —
 // POST/GET /api/meta/webhooks (called by META's servers) and POST /api/meta/voice-callback
 // (called by the voice bot). Neither can present a session. They are gated on

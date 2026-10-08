@@ -3,7 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Pin (selection criteria S5, before the version hook): the INSERT the requisition form's create path issues for the
 // criteria columns. The hook may add statements after it; this INSERT must not change.
 const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
+const { conn } = vi.hoisted(() => {
+  const execute = vi.fn(async (sql: string) => {
+    if (sql.startsWith("SELECT jr.id")) return [[{ id: "r1", requisition_code: "REQ-1", branch_name: "NOIDA-2", approval_status: "draft", education_requirement: "Graduate" }], []];
+    if (sql.includes("COALESCE(MAX(version_no), 0)")) return [[{ n: 0 }], []];
+    return [[], []];
+  });
+  return { conn: { execute, beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(async () => {}), release: vi.fn() } };
+});
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute, getConnection: async () => conn } }));
 vi.mock("../../workflow/workflow.service.js", () => ({ workflowService: {} }));
 
 import { jobRequisitionService as svc } from "../job-requisition.service.js";
@@ -27,5 +35,12 @@ describe("createRequisition criteria columns (pin)", () => {
     const [sql, params] = inserts()[0];
     expect(String(sql).replace(/\s+/g, " ")).toMatchSnapshot();
     expect((params as unknown[]).slice(2)).toMatchSnapshot();
+  });
+
+  it("S5 hook: the save also records a criteria version with source form, on its own connection", async () => {
+    conn.execute.mockClear();
+    await svc.createRequisition({ designation_name: "CSE", branch_name: "NOIDA-2", requested_headcount: 1, education_requirement: "Graduate" } as never, "u1", null);
+    const v = conn.execute.mock.calls.find((c) => String(c[0]).trim().startsWith("INSERT INTO job_requisition_criteria_version"));
+    expect(v?.[1]).toEqual(expect.arrayContaining(["form"]));
   });
 });
