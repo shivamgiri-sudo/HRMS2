@@ -118,7 +118,15 @@ export function checkRule(rule: CompiledRule, f: CandidateFacts, now: Date): Che
         const verdict = locationVerdict(text, v.branchName, v.branchCity, v.branchState);
         if (verdict === "unknown") return reloc ? pass("will relocate") : unknown(`unknown: "${text.slice(0, 60)}" names no known place`);
         ok = verdict === "local";
-      } else ok = (r as Required["location_cities"]).cities.some((c) => mentions(text, c));
+      } else {
+        const cities = (r as Required["location_cities"]).cities;
+        ok = cities.some((c) => mentions(text, c));
+        // not a listed city: a fail needs another known place (a different city, a neighbouring city of the region, another state);
+        // a state or a neighbourhood alone says nothing about the city, so it is unknown, never a silent rejection
+        if (!ok && !cities.some((c) => locationVerdict(text, c, c) !== "unknown")) {
+          return reloc ? pass("will relocate") : unknown(`unknown: "${text.slice(0, 60)}" names none of ${cities.join(", ")}`);
+        }
+      }
       if (ok) return pass(`lives in ${text.slice(0, 60)}`);
       return reloc ? pass(`lives in ${text.slice(0, 40)}, will relocate`) : fail(`lives in ${text.slice(0, 60)} (elsewhere)`);
     }

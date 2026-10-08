@@ -164,12 +164,20 @@ describe("enrol step", () => {
     expect(p.calls).toEqual([]);
     expect(h.state.cands.filter((c) => c.status === "approved")).toHaveLength(3);
   });
+  it("rows approved under an older criteria version are not enrolled (approval is for one version)", async () => {
+    await approveAll();
+    h.state.version = "v2";
+    h.state.enrol = 1;
+    const p = port();
+    expect(await enrolApproved({ requisitionId: "r1", sourceKind: "he", port: p, now: NOW })).toEqual({ status: "done", enrolled: 0, staleVersion: 3 });
+    expect(p.calls).toEqual([]);
+  });
   it("switch on: approved people go to the follow-up with shortlistId and criteriaVersionId, then read enrolled", async () => {
     await approveAll();
     h.state.enrol = 1;
     h.state.facts.set(person(1).personKey, JSON.stringify(person(1)));
     const p = port();
-    expect(await enrolApproved({ requisitionId: "r1", sourceKind: "he", port: p, now: NOW })).toEqual({ status: "done", enrolled: 3 });
+    expect(await enrolApproved({ requisitionId: "r1", sourceKind: "he", port: p, now: NOW })).toEqual({ status: "done", enrolled: 3, staleVersion: 0 });
     expect(p.calls[0]).toMatchObject({ sourceType: "he", requisitionId: "r1", mobile10: person(1).personKey, email: "p1@x.com", branchName: "NOIDA-2", roleName: "CSE", shortlistId: "1", criteriaVersionId: "v1" });
     expect(h.state.cands.filter((c) => c.status === "enrolled")).toHaveLength(3);
     expect(h.state.cands.find((c) => c.status === "review")).toBeTruthy(); // a review row is never enrolled

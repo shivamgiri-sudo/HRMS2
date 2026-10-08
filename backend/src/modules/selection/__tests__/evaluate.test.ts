@@ -46,6 +46,16 @@ describe("combinations", () => {
     expect(evaluate(facts, compiled([rule("location_region", { ...req, relocationOk: false })]), NOW).verdict).toBe("fail");
     expect(evaluate(facts, compiled([rule("location_region", { ...req, relocationOk: true })]), NOW).verdict).toBe("pass");
   });
+  it("lives-in-these-cities: a listed city passes; another known place fails; a state or neighbourhood alone is unknown", () => {
+    const r = rule("location_cities", { cities: ["Noida", "Ghaziabad"], relocationOk: false });
+    const v = (t: string) => evaluate(baseFacts({ locationText: ok(t) }), compiled([r]), NOW);
+    expect(v("sector 62 noida").verdict).toBe("pass");
+    expect(v("surat gujarat").verdict).toBe("fail");
+    expect(v("laxmi nagar delhi").verdict).toBe("fail"); // same region, but not a listed city
+    expect(v("uttar pradesh").verdict).toBe("review");
+    expect(v("uttar pradesh").unknown[0].actualText).toMatch(/names none of Noida, Ghaziabad/);
+  });
+
   it("a verified certificate adds its bonus to the score", () => {
     const r = rule("certificate", { code: "DRA", level: "declared", verifiedBonus: 15 });
     const base = evaluate(baseFacts(), compiled([]), NOW).score;

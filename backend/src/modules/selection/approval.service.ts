@@ -173,8 +173,11 @@ export async function enrolApproved(a: { requisitionId: string; sourceKind: Sour
   const g = await gates(a.requisitionId, now);
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT id, run_id, mobile10, criteria_version_id FROM shortlist_candidate WHERE requisition_id = ? AND source_kind = ? AND status = 'approved' ORDER BY id LIMIT 2000", [a.requisitionId, a.sourceKind]);
-  let enrolled = 0;
+  // an approval is for one criteria version: rows approved before a criteria change wait for a new run and approval
+  const current = await latestVersionId(a.requisitionId);
+  let enrolled = 0, staleVersion = 0;
   for (const r of rows) {
+    if ((r.criteria_version_id ?? null) !== current) { staleVersion++; continue; }
     const f = await cachedFacts(String(r.mobile10), a.sourceKind);
     const out = await a.port.enqueue({ sourceType: SOURCE[a.sourceKind], requisitionId: a.requisitionId, mobile10: String(r.mobile10), fullName: f?.firstName ?? null,
       email: f?.email.quality === "ok" ? String(f.email.value) : null, branchName: g.branchName, roleName: g.roleName,
@@ -184,7 +187,7 @@ export async function enrolApproved(a: { requisitionId: string; sourceKind: Sour
       enrolled++;
     }
   }
-  return { status: "done" as const, enrolled };
+  return { status: "done" as const, enrolled, staleVersion };
 }
 
 /** A Live Meta arrival under a standing approval: a pass enrols at once; a review always waits for HR. */
