@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * attendance-apr-bulk.routes.ts hardening (production defect, reproduced live 2026-08-27).
@@ -40,6 +40,11 @@ vi.mock("../middleware/authMiddleware.js", async (importOriginal) => {
 
 // requireRole.ts is NOT mocked — exercises the real role gate on this route.
 import { attendanceAprBulkRouter } from "../modules/wfm/attendance-apr-bulk.routes.js";
+
+// The route rejects attendance dates older than 90 days or in the future: pin the clock just after the fixture dates (1-5 Aug 2026),
+// so the suite does not start failing once those dates fall out of the window (it would from 30 Oct 2026).
+beforeAll(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-08-20T06:30:00Z")); });
+afterAll(() => { vi.useRealTimers(); });
 
 function appFor(role: string) {
   actor = { id: `u-${role}`, role, roles: [role] };

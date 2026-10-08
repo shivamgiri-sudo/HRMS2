@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
@@ -40,6 +40,11 @@ vi.mock('../../../middleware/authMiddleware.js', () => ({
 // route, so a change to its role list cannot pass unnoticed here.
 import { attendanceAprBulkRouter } from '../attendance-apr-bulk.routes.js';
 import { APR_BULK_CAMPAIGN_CODE, APR_BULK_SOURCE_KEY } from '../attendance-apr-bulk-attribution.service.js';
+
+// The route rejects attendance dates older than 90 days or in the future: pin the clock just after the fixture dates (1-5 Aug 2026),
+// so the suite does not start failing once those dates fall out of the window (it would from 30 Oct 2026).
+beforeAll(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-08-20T06:30:00Z")); });
+afterAll(() => { vi.useRealTimers(); });
 
 function appFor(role: string) {
   actor = { id: 'user-1', role, roles: [role] };
