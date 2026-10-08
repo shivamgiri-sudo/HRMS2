@@ -1,0 +1,63 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`meta recruitment counts (pinned before the branch scope and the scan change) > org-wide: every campaign, phone matches in any format, a person in two campaigns counted once in the total > all 1`] = `
+{
+  "campaigns": [
+    {
+      "applied": 2,
+      "branchName": "PUNE",
+      "campaignId": "c1",
+      "campaignName": "Pune Voice",
+      "invited": 1,
+      "joined": 0,
+      "leads": 3,
+      "onboarding": 0,
+      "qualified": 2,
+      "requisitionCode": "REQ-1",
+      "selected": 2,
+      "status": "active",
+      "walkedIn": 2,
+    },
+    {
+      "applied": 2,
+      "branchName": "NOIDA-2",
+      "campaignId": "c2",
+      "campaignName": "Noida Chat",
+      "invited": 1,
+      "joined": 1,
+      "leads": 2,
+      "onboarding": 1,
+      "qualified": 2,
+      "requisitionCode": "REQ-2",
+      "selected": 2,
+      "status": "paused",
+      "walkedIn": 1,
+    },
+    {
+      "applied": 1,
+      "branchName": null,
+      "campaignId": "c3",
+      "campaignName": "Unlinked",
+      "invited": 0,
+      "joined": 0,
+      "leads": 1,
+      "onboarding": 0,
+      "qualified": 1,
+      "requisitionCode": null,
+      "selected": 0,
+      "status": "active",
+      "walkedIn": 1,
+    },
+  ],
+  "total": {
+    "applied": 4,
+    "invited": 2,
+    "joined": 1,
+    "leads": 6,
+    "onboarding": 1,
+    "qualified": 5,
+    "selected": 3,
+    "walkedIn": 3,
+  },
+}
+`;
