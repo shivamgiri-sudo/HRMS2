@@ -364,6 +364,7 @@ async function build(
     return null;
   }, null);
   const ids = heads.map((h) => h.id);
+  const openSeats: OpenSeats[] = heads.map((h) => ({ requisitionId: h.id, code: h.code, branch: h.branch, open: h.open, closedReason: h.closedReason }));
   const headOf = new Map(heads.map((h) => [h.id, h]));
   const mine = (s: StreamRow): boolean => headOf.has(s.requisitionId);
 
@@ -450,6 +451,15 @@ async function build(
   // reasons: recorded no-show and decline reasons per type; its own statement only while HE_OUTCOME_REASONS is on (a missing table counts zero)
   const reasons = await reasonsP;
 
+  // cost per source: its own statements only while HE_COST_PER_SOURCE is on; a failed section counts 0 and flags the result as partial
+  let cost: DriveAnalytics["cost"] = { available: false, note: "Cost per source arrives with Plan 5" };
+  if (costP) {
+    const c = await costP;
+    if (c) {
+      for (const f of c.failedSections) if (!failed.includes(f)) failed.push(f);
+      cost = costBlock(c.usage, c.rates, perType((t) => stageOnly(cur[t])));
+    }
+  }
   // insights: thresholds once per call, facts (own sections), then the pure rules; any throw leaves the response without insights
   let insights: DriveInsight[] = [];
   if (!none) {
@@ -460,19 +470,14 @@ async function build(
         types: perType((k) => ({ current: types[k].stages, previous: types[k].previous, noShow: types[k].noShow, declined: types[k].declined })),
         ...(reasons ? { reasons } : {}),
         agg: inWindow, sources: sources?.byRequisition ?? [], codes: new Map(heads.map((h) => [h.id, h.code])), t, arrivals, streams: active, now,
+        funnel: {
+          journey: persons.byType, campaigns, openSeats, replies,
+          cost: "byType" in cost && cost.byType ? perType((k) => ({ perJoin: (cost as CostBlock).byType?.[k]?.perJoin ?? null, joined: types[k].stages.joined })) : null,
+        },
       }, scope);
       for (const f of factFailed) if (!failed.includes(f)) failed.push(f);
       return evaluateInsights(facts, t);
     }, [] as DriveInsight[]);
-  }
-  // cost per source: its own statements only while HE_COST_PER_SOURCE is on; a failed section counts 0 and flags the result as partial
-  let cost: DriveAnalytics["cost"] = { available: false, note: "Cost per source arrives with Plan 5" };
-  if (costP) {
-    const c = await costP;
-    if (c) {
-      for (const f of c.failedSections) if (!failed.includes(f)) failed.push(f);
-      cost = costBlock(c.usage, c.rates, perType((t) => stageOnly(cur[t])));
-    }
   }
   const failedSections = [...new Set(failed)];
 
@@ -495,7 +500,7 @@ async function build(
     insights,
     campaigns,
     journey: none ? perType(() => ({ leads: 0, fills: 0, screened: 0, qualified: 0, contacted: 0, invited: 0, replied: 0, confirmed: 0, arrived: 0 })) : persons.byType,
-    openSeats: heads.map((h) => ({ requisitionId: h.id, code: h.code, branch: h.branch, open: h.open, closedReason: h.closedReason })),
+    openSeats,
     requisitionCount: ids.length,
     truncated,
     partial: failedSections.length > 0,

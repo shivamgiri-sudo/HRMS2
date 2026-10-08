@@ -6,6 +6,7 @@
 import { SOURCE_TYPES, type StageCounts } from "./he-drive-analytics.js";
 import { OUTCOME_REASONS, OUTCOME_REASON_LABEL, type OutcomeReasonCode } from "./he-outcome-reason.js";
 import type { SourceType } from "./qualified-followup.types.js";
+import { funnelInsights, type FunnelFacts } from "./he-drive-insights-funnel.js";
 
 export const INSIGHT_DEFAULTS = {
   "insight.min_sample": 20, "insight.under_target_margin": 0.1, "insight.under_target_critical": 0.5, "insight.weak_stage_margin": 0.1,
@@ -14,11 +15,15 @@ export const INSIGHT_DEFAULTS = {
   "insight.language_gap": 0.1, "insight.overbook_margin": 0.1, "insight.empty_slot_share": 0.5, "insight.best_source_share": 0.5,
   "insight.best_source_lift": 0.25, "insight.weekday_lift": 0.1, "insight.fill_soon_positions": 2, "insight.plan_min_sample": 30,
   "insight.plan_trailing_days": 14,
+  // funnel-depth rules (he-drive-insights-funnel.ts)
+  "insight.stalled_critical": 10, "insight.contact_confirm_gap": 0.1, "insight.no_show_max": 0.5, "insight.low_qual_share": 0.3,
+  "insight.best_campaign_lift": 0.25, "insight.branch_share": 0.8, "insight.cost_join_lift": 0.25, "insight.cost_min_joins": 5,
 } as const;
 export type InsightKey = keyof typeof INSIGHT_DEFAULTS;
 export type InsightThresholds = Record<InsightKey, number>;
 
-export type InsightRule = "under_target" | "weak_stage" | "contact_timing" | "reminder_gap" | "distance" | "channel_gap" | "language" | "overbooking" | "stream_dry" | "best_source" | "weekday" | "outcome_reason";
+export type InsightRule = "under_target" | "weak_stage" | "contact_timing" | "reminder_gap" | "distance" | "channel_gap" | "language" | "overbooking" | "stream_dry" | "best_source" | "weekday" | "outcome_reason"
+  | "stalled_leads" | "contact_confirm" | "no_show_leak" | "low_qualification" | "best_campaign" | "branch_concentration" | "cost_per_join";
 export type InsightSeverity = "critical" | "warn" | "info";
 export type EffectUnit = "arrivals_per_day" | "replies_per_day" | "joins_per_day" | "people" | "seats";
 export type InsightAction =
@@ -34,6 +39,8 @@ export interface DriveInsight {
   id: string; rule: InsightRule; severity: InsightSeverity; sourceType: SourceType | null; requisitionId: string | null;
   title: string; evidence: Array<{ label: string; value: string }>; suggestion: string;
   effect: { value: number; unit: EffectUnit; text: string } | null; action: InsightAction;
+  /** Who does what, in plain words (funnel-depth rules); absent on the older rules. */
+  ownerAction?: string;
 }
 
 export interface RateFact { n: number; hits: number }
@@ -53,6 +60,8 @@ export interface InsightFacts {
   weekdays: Array<{ weekday: number; confirmed: number; arrived: number }>;
   /** Recorded no-show and decline reasons per type (HE_OUTCOME_REASONS); absent while the switch is off. */
   reasons?: PerType<{ no_show: Partial<Record<OutcomeReasonCode, number>>; declined: Partial<Record<OutcomeReasonCode, number>> }>;
+  /** Funnel-depth facts (journey, campaigns, open seats, peak hours, cost); absent from older callers. */
+  funnel?: FunnelFacts;
 }
 
 /** One reason must be at least this share of the recorded reasons (and the total at least insight.min_sample) to be named. A code constant this release. */
@@ -427,7 +436,8 @@ function outcomeReason({ f, ok }: Ctx): DriveInsight[] {
 export function evaluateInsights(f: InsightFacts, t: InsightThresholds): DriveInsight[] {
   const min = num(t["insight.min_sample"]);
   const ctx: Ctx = { f, t, D: Math.max(1, num(f.windowDays)), min, ok: (n) => n > 0 && n >= min };
-  const all = [underTarget, weakStage, contactTiming, reminderGap, distance, channelGap, language, overbooking, streamDry, bestSource, weekday, outcomeReason].flatMap((r) => r(ctx));
+  const all = [underTarget, weakStage, contactTiming, reminderGap, distance, channelGap, language, overbooking, streamDry, bestSource, weekday, outcomeReason].flatMap((r) => r(ctx))
+    .concat(funnelInsights(f, t, ctx.D, min));
   const seen = new Set<string>();
   // Every per-day effect divides by D, so the window length is part of its evidence (under_target is not per-day-scaled).
   for (const i of all) if (i.rule !== "under_target" && i.effect?.unit.endsWith("_per_day")) i.evidence.push({ label: "Days in the window", value: str(ctx.D) });

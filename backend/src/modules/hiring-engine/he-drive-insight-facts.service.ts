@@ -27,6 +27,7 @@ import { countedNoShow } from "./he-no-show-events.js";
 import { creditJoinsSql } from "./he-source-attribution.js";
 import { PersonFacts, TYPE_KEY_GROUP, typeKeyColsSql } from "./he-person-facts.service.js";
 import { loadLiveFrom } from "./he-source-attribution.service.js";
+import { collectFunnelFacts, type FunnelFactsInput } from "./he-drive-insight-funnel-facts.service.js";
 
 export interface InsightFactsCtx {
   requisitionIds: string[]; from: string; to: string; today: string; windowDays: number;
@@ -39,6 +40,8 @@ export interface InsightFactsCtx {
   liveFrom?: string;
   /** The caller's per-build person facts (he-person-facts.service.ts); a fresh set when not given. */
   personFacts?: PersonFacts;
+  /** Funnel-depth inputs the build already holds (journey, campaigns, open seats, reply grids, cost); without them there are no funnel facts. */
+  funnel?: Omit<FunnelFactsInput, "arrivals" | "from" | "to" | "t">;
 }
 
 export const MAX_PLAN_REQUISITIONS = 20;
@@ -337,6 +340,10 @@ export async function collectInsightFacts(ctx: InsightFactsCtx, scope: BranchSco
     }, () => undefined),
     group("insight:plan", failed, () => planFacts(), () => undefined),
   ];
+  const fin = ctx.funnel;
+  if (fin) reads.push(group("insight:funnel", failed, async () => {
+    facts.funnel = await collectFunnelFacts({ ...fin, arrivals: ctx.arrivals, from: ctx.from, to: ctx.to, t: ctx.t }, failed);
+  }, () => undefined));
   await Promise.all(reads);
 
   async function planFacts(): Promise<void> {
