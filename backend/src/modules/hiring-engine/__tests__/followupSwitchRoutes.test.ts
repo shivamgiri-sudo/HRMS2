@@ -8,6 +8,8 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute, getConne
 vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
 vi.mock("../he-pinbot-quality.service.js", () => ({ getPinbotQuality: vi.fn(async () => "GREEN"), resetPinbotQualityCache: vi.fn() }));
 vi.mock("../followup-optout.service.js", async (orig) => ({ ...(await orig<object>()), recordPersonOptOut: optOut }));
+const audit = vi.hoisted(() => ({ get: vi.fn(async () => ({ id: "x", mobile: "98xxxxxx10" })), retry: vi.fn(async () => "ok") }));
+vi.mock("../qualified-followup.attention.js", async (orig) => ({ ...(await orig<object>()), getFollowupAudit: audit.get, retryFollowupStep: audit.retry }));
 
 let actor: { id: string; role: string; roles: string[] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
@@ -141,6 +143,31 @@ describe("canary, caps, kill switch, inbound flag", () => {
     expect(sqls(/INSERT INTO he_model_param/).map(([, p]) => p)).toEqual([["policy.followup.paused", 1], ["policy.followup.wa_inbound_verified", 1]]);
     expect(sqls(/INSERT INTO audit_action_log/)).toHaveLength(2);
     expect((await request(appFor("hr")).put("/api/he/qualified-followup/kill").send({ paused: false })).status).toBe(403);
+  });
+});
+
+describe("branch scope on the audit view and retry (final integration)", () => {
+  it("GET /qualified-followup/:id: 404 outside the caller's branch, the audit is not read; inside it is shown", async () => {
+    rowBranch = "AHMEDABAD";
+    expect((await request(appFor("hr")).get(`/api/he/qualified-followup/${ID}`)).status).toBe(404);
+    expect(audit.get).not.toHaveBeenCalled();
+    rowBranch = "NOIDA-2";
+    const ok = await request(appFor("hr")).get(`/api/he/qualified-followup/${ID}`);
+    expect(ok.status).toBe(200);
+    expect(audit.get).toHaveBeenCalledTimes(1);
+    // the CEO (org-wide) reads every branch without the lookup
+    rowBranch = "AHMEDABAD";
+    expect((await request(appFor("ceo")).get(`/api/he/qualified-followup/${ID}`)).status).toBe(200);
+  });
+  it("POST /qualified-followup/:id/retry: a branch-scoped admin gets 404 outside the branch; super_admin retries anywhere", async () => {
+    rowBranch = "AHMEDABAD";
+    expect((await request(appFor("admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" })).status).toBe(404);
+    expect(audit.retry).not.toHaveBeenCalled();
+    rowBranch = "NOIDA-2";
+    expect((await request(appFor("admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" })).status).toBe(200);
+    rowBranch = "AHMEDABAD";
+    expect((await request(appFor("super_admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" })).status).toBe(200);
+    expect(audit.retry).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -120,7 +120,8 @@ heRouter.get("/qualified-followup/attention", requireAuth, requireRole(...VIEW_R
   }
 });
 
-heRouter.post("/qualified-followup/:id/retry", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
+// Branch-scoped like the other row actions: admin is a branch role (404 outside the branch).
+heRouter.post("/qualified-followup/:id/retry", requireAuth, requireRole(...ADMIN_ROLES), followupRowScoped, async (req, res) => {
   const channel = String(req.body?.channel ?? "");
   if (!FOLLOWUP_ID_RE.test(req.params.id) || !FOLLOWUP_CHANNELS.includes(channel)) return res.status(400).json({ success: false, message: "Invalid id or channel" });
   try {
@@ -161,8 +162,8 @@ heRouter.post("/qualified-followup/:id/mark-called", requireAuth, requireRole(..
   }
 });
 
-// Per-row audit: source, origin, mode tag and every channel's due/sent/status/error (phone masked).
-heRouter.get("/qualified-followup/:id", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+// Per-row audit: source, origin, mode tag and every channel's due/sent/status/error (phone masked); the row's branch only (404 otherwise).
+heRouter.get("/qualified-followup/:id", requireAuth, requireRole(...VIEW_ROLES), followupRowScoped, async (req, res) => {
   if (!FOLLOWUP_ID_RE.test(req.params.id)) return res.status(400).json({ success: false, message: "Invalid id" });
   try {
     const row = await getFollowupAudit(req.params.id);

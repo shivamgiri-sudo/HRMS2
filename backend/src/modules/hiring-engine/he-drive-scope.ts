@@ -54,7 +54,7 @@ export async function bodyRequisitionScoped(req: Request, res: Response, next: N
   }
 }
 
-/** Route guard for /qualified-followup/:id/* row actions (HR opt-out, mark-called): the row's requisition must be in the caller's branch scope (404 otherwise). */
+/** Route guard for /qualified-followup/:id and its row actions (audit view, retry, HR opt-out, mark-called): the row's requisition must be in the caller's branch scope (404 otherwise). */
 export async function followupRowScoped(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const scope = await branchScopeOf(req as AuthenticatedRequest);

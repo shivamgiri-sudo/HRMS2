@@ -154,24 +154,25 @@ describe("markFollowupCalled", () => {
 });
 
 describe("routes", () => {
+  // retry and the audit view are branch-scoped (followupRowScoped, see followupSwitchRoutes.test.ts); org-wide roles skip the lookup here.
   it("rejects a bad channel with 400 and a non-admin with 403", async () => {
-    expect((await request(appFor("admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "sms" })).status).toBe(400);
-    expect((await request(appFor("admin")).post(`/api/he/qualified-followup/not-an-id/retry`).send({ channel: "email" })).status).toBe(400);
+    expect((await request(appFor("super_admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "sms" })).status).toBe(400);
+    expect((await request(appFor("super_admin")).post(`/api/he/qualified-followup/not-an-id/retry`).send({ channel: "email" })).status).toBe(400);
     expect((await request(appFor("hr")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" })).status).toBe(403);
   });
   it("retries as admin (200), 404 unknown, 409 when not retryable", async () => {
     execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1 }]]).mockResolvedValueOnce([{ affectedRows: 1 }]);
-    const ok = await request(appFor("admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "whatsapp" });
+    const ok = await request(appFor("super_admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "whatsapp" });
     expect(ok.status).toBe(200);
     expect(ok.body).toEqual({ success: true });
     execute.mockResolvedValueOnce([[]]);
-    expect((await request(appFor("admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" })).status).toBe(404);
+    expect((await request(appFor("super_admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" })).status).toBe(404);
     execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1, err: "outcome unknown (process stopped mid-send)" }]]);
-    const unknown = await request(appFor("admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" });
+    const unknown = await request(appFor("super_admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" });
     expect(unknown.status).toBe(409);
     expect(unknown.body.message).toBe("outcome_unknown");
     execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: "replied", retryable: 1 }]]);
-    const stopped = await request(appFor("admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" });
+    const stopped = await request(appFor("super_admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" });
     expect(stopped.status).toBe(409);
     expect(stopped.body.message).toBe("stopped");
   });
@@ -198,14 +199,14 @@ describe("routes", () => {
     const row = { id: ID, source_type: "meta_live", origin_id: "o1", origin_label: "Campaign", mode_at_enqueue: "live", mobile10: "9876543210", requisition_id: "req-1", qualified_at: "2026-10-07 09:00:00",
       email_status: "sent", email_attempts: 1, wa_status: "failed", wa_error: "(#132018) bad for 9876543210", wa_attempts: 1, wa_template_key: "he_winback", call_state: "pending", call_attempts: 0 };
     execute.mockResolvedValueOnce([[row]]);
-    const res = await request(appFor("hr")).get(`/api/he/qualified-followup/${ID}`);
+    const res = await request(appFor("super_admin")).get(`/api/he/qualified-followup/${ID}`);
     expect(res.status).toBe(200);
     expect(res.body.data.wa_template_key).toBe("he_winback");
     expect(res.body.data.wa_error).toContain("(#132018)");
     expect(res.body.data.mobileMasked).toBe("xxxxxx3210");
     expect(JSON.stringify(res.body)).not.toMatch(/\d{10}/);
     execute.mockResolvedValueOnce([[]]);
-    expect((await request(appFor("hr")).get(`/api/he/qualified-followup/${ID}`)).status).toBe(404);
+    expect((await request(appFor("super_admin")).get(`/api/he/qualified-followup/${ID}`)).status).toBe(404);
     execute.mockResolvedValueOnce([[]]);
     expect(await getFollowupAudit(ID)).toBeNull();
   });
