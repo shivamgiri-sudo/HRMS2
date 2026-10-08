@@ -25,7 +25,7 @@ export function resolveRuleMissing(rule: CompiledRule, f: CandidateFacts): Missi
   return rule.missingBySource?.[f.subSource] ?? rule.missingBySource?.[f.sourceKind] ?? rule.missing;
 }
 
-export function evaluate(f: CandidateFacts, c: CompiledCriteria, now: Date): Evaluation {
+export function evaluate(f: CandidateFacts, c: CompiledCriteria, now: Date, o: { factsHash?: string } = {}): Evaluation {
   const passed: RuleResult[] = [], failed: RuleResult[] = [], unknown: RuleResult[] = [];
   const reviewReasons: string[] = [];
   let anyFail = false, preferDelta = 0;
@@ -36,7 +36,7 @@ export function evaluate(f: CandidateFacts, c: CompiledCriteria, now: Date): Eva
     failed.push({ key: "system", label: "System rule", outcome: "fail", actualText: block.replace(/_/g, " "), requiredText: "eligible to contact", mode: "system", effect: "fail" });
   }
 
-  for (const rule of c.rules) {
+  for (const [index, rule] of c.rules.entries()) {
     if (rule.only && !rule.only.includes(f.sourceKind)) continue;
     const chk = checkRule(rule, f, now);
     let effect: RuleResult["effect"] = "none";
@@ -53,7 +53,7 @@ export function evaluate(f: CandidateFacts, c: CompiledCriteria, now: Date): Eva
       const d = chk.outcome === "pass" ? (penaltyOnly ? 0 : rule.weight) : -(penaltyOnly ? rule.weight : Math.round(rule.weight / 2));
       if (d) { effect = d > 0 ? `+${d}` : `-${-d}`; preferDelta += d; }
     }
-    const res: RuleResult = { key: rule.key, label: rule.label, outcome: chk.outcome, actualText: chk.actualText, requiredText: rule.requiredText, mode: rule.mode, effect };
+    const res: RuleResult = { key: rule.key, label: rule.label, outcome: chk.outcome, actualText: chk.actualText, requiredText: rule.requiredText, mode: rule.mode, effect, index };
     (chk.outcome === "pass" ? passed : chk.outcome === "fail" ? failed : unknown).push(res);
   }
 
@@ -62,7 +62,7 @@ export function evaluate(f: CandidateFacts, c: CompiledCriteria, now: Date): Eva
   return {
     verdict: anyFail ? "fail" : reviewReasons.length ? "review" : "pass", score, systemBlock: block,
     passed, failed, unknown, reviewReasons, criteriaHash: c.hash, versionId: c.versionId, engineVersion: ENGINE_VERSION,
-    factsHash: sha256(canonicalJson(f)),
+    factsHash: o.factsHash ?? sha256(canonicalJson(f)),
   };
 }
 

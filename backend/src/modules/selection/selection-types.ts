@@ -78,6 +78,8 @@ export interface FactValue<T> {
 
 export interface CandidateFacts {
   personKey: string;
+  /** First name only, for masked lists (S-O11). */
+  firstName?: string | null;
   sourceKind: SourceKind; subSource: SubSource; sourceDetail: string | null; recordType: string | null;
   age: FactValue<number>; educationRank: FactValue<number>; educationStatus: FactValue<"completed" | "pursuing" | "dropped">; stream: FactValue<string>;
   experienceYears: FactValue<number>; skillsText: FactValue<string>; locationText: FactValue<string>; preferredLocations: FactValue<string[]>; hometown: FactValue<string>;
@@ -117,10 +119,14 @@ export interface CompiledCriteria {
 export interface RuleResult {
   key: string; label: string; outcome: "pass" | "fail" | "unknown"; actualText: string; requiredText: string;
   mode: "must" | "prefer" | "system"; effect: "none" | "fail" | "review" | `+${number}` | `-${number}`;
+  /** Position of the rule in CompiledCriteria.rules (absent for system results). */
+  index?: number;
 }
 
 export interface Evaluation {
   verdict: Verdict; score: number; systemBlock: string | null;
   passed: RuleResult[]; failed: RuleResult[]; unknown: RuleResult[]; reviewReasons: string[];
   criteriaHash: string; versionId: string | null; engineVersion: number; factsHash: string;
+  /** HR include/exclude for this person and requisition (S12); applied by finalVerdict, never past a system block. */
+  override?: { kind: "include" | "exclude"; reason: string; actorId: string; at: string } | null;
 }

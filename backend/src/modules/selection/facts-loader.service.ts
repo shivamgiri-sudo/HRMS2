@@ -21,9 +21,9 @@ const ph = (n: number) => Array.from({ length: n }, () => "?").join(",");
 /** DATETIME text in IST (the DB clock), like created_at. */
 export const istText = (d: Date) => new Date(d.getTime() + 330 * 60_000).toISOString().slice(0, 19).replace("T", " ");
 
-const LEAD_COLS = `l.id, l.mobile10, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.locality, l.lat, l.lng, l.email, l.updated_at, l.primary_source,
+const LEAD_COLS = `l.id, l.mobile10, l.age, l.full_name, l.education_rank, l.experience_years, l.night_shift_ok, l.locality, l.lat, l.lng, l.email, l.updated_at, l.primary_source,
        l.ats_candidate_id, l.status, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome`;
-const ATS_COLS = `ac.record_type, ac.sourcing_channel, ac.source_details AS ac_source_details, ac.education AS ac_education, ac.date_of_birth AS ac_date_of_birth,
+const ATS_COLS = `ac.record_type, ac.sourcing_channel, ac.full_name AS ac_full_name, ac.source_details AS ac_source_details, ac.education AS ac_education, ac.date_of_birth AS ac_date_of_birth,
        ac.experience AS ac_experience, ac.email AS ac_email, ac.gender AS ac_gender, ac.current_address AS ac_current_address, ac.address AS ac_address,
        ac.permanent_address AS ac_permanent_address, ac.preferred_locations AS ac_preferred_locations, ac.hometown AS ac_hometown, ac.annual_salary AS ac_annual_salary,
        ac.notice_period AS ac_notice_period, ac.current_employer AS ac_current_employer, ac.last_active_naukri AS ac_last_active_naukri, ac.night_shift_ok AS ac_night_shift_ok,
@@ -60,7 +60,7 @@ export function heBaseSql(subSources?: SubSource[]): { sql: string; args: unknow
 /** Live vs Old Meta is the shared attribution rule (he-source-attribution fillTypeSql): the person's first Meta fill on or after the cutoff. */
 export const META_BASE_SQL = (liveFrom: string) => `SELECT m.id, m.parsed_phone, m.raw_payload, m.parsed_education, m.parsed_location, m.parsed_experience_yr, m.created_at, m.requisition_id
   FROM meta_lead_raw m WHERE m.id > ? AND ${fillTypeSql("m", liveFrom)} = ? ORDER BY m.id LIMIT ?`;
-export const LEADS_BY_MOBILE_SQL = (n: number) => `SELECT l.id, l.mobile10, l.ats_candidate_id, l.status, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome,
+export const LEADS_BY_MOBILE_SQL = (n: number) => `SELECT l.id, l.mobile10, l.ats_candidate_id, l.status, l.full_name, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome,
        l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.locality, l.lat, l.lng, l.email, l.updated_at
   FROM he_lead l WHERE l.mobile10 IN (${ph(n)})`;
 export const CONTACT_SQL = (n: number) => `SELECT mobile10, MAX(t) AS t FROM (

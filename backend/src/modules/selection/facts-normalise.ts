@@ -194,6 +194,7 @@ export function normaliseFacts(p: RawPerson, now: Date): CandidateFacts {
   const upd = str(l.updated_at) ?? str(a.updated_at) ?? p.meta?.createdAt ?? null;
   const recordUpdatedAt = upd ? fv(upd, "ok", "record") : missing<string>("record");
   const key = normalizeMobile10(p.mobile);
+  const name = str(a.full_name) ?? str(l.full_name) ?? parsed?.name ?? null;
 
   const ok = <T>(f: FactValue<T>) => (f.quality === "ok" ? f.value : null);
   const match: MatchLead = {
@@ -205,7 +206,7 @@ export function normaliseFacts(p: RawPerson, now: Date): CandidateFacts {
     educationStatus: ok(educationStatus), stream: ok(stream), prevIndustry: str(pr.prev_industry), city: str(l.locality), state: str(pr.state), skillsText: ok(skillsText),
   };
   return {
-    personKey: key ?? String(p.mobile).replace(/\D/g, "").slice(-10), sourceKind: p.sourceKind, subSource: p.subSource, sourceDetail: str(a.source_details), recordType: str(a.record_type),
+    personKey: key ?? String(p.mobile).replace(/\D/g, "").slice(-10), firstName: name ? name.split(/\s+/)[0].slice(0, 40) : null, sourceKind: p.sourceKind, subSource: p.subSource, sourceDetail: str(a.source_details), recordType: str(a.record_type),
     age, educationRank, educationStatus, stream, experienceYears, skillsText, locationText, preferredLocations, hometown, relocationOk, nightShiftOk, rotationalOk,
     salaryMonthly, salaryIsExpectation: expectation !== null, noticeDays, englishLevel, typingWpm, languages, gender: genderF, certificates, employers,
     formAnswers: parsed?.rawFields ?? null, lastActiveAt, recordUpdatedAt, lastFirstContactAt: p.contact.lastFirstContactAt, email, mobileValid: key !== null,

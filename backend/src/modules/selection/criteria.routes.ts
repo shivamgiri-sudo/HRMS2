@@ -10,7 +10,8 @@ import { jobRequisitionService } from "../job-requisition/job-requisition.servic
 import {
   applyTemplateToRequisition, bulkSaveCriteria, copyCriteria, CRITERIA_EDIT_ROLES, getRequisitionCriteria, listCriteriaAudit, saveRequisitionCriteria,
 } from "./criteria.service.js";
-import { RULE_KEYS, type RuleKey } from "./selection-types.js";
+import { previewCsv, previewRequisition } from "./preview.service.js";
+import { RULE_KEYS, SOURCE_KINDS, SUB_SOURCES, type RuleKey, type SourceKind, type SubSource } from "./selection-types.js";
 import { TEMPLATES, type CriteriaPatch } from "./templates.js";
 
 export const criteriaRouter = Router();
@@ -92,4 +93,32 @@ criteriaRouter.post("/:id/criteria/template", requireAuth, requireRole(...CRITER
 criteriaRouter.get("/:id/criteria/audit", requireAuth, requireRole(...CRITERIA_READ_ROLES), inScope, h(async (req, res) => {
   const c = Number(req.query.cursor);
   return res.json({ success: true, data: await listCriteriaAudit(req.params.id, Number.isInteger(c) && c > 0 ? c : null) });
+}));
+
+// ── Shortlist preview (S10): read roles, requisition scope; the CSV is masked and limited to the export roles ──
+export const PREVIEW_EXPORT_ROLES = ["super_admin", "hr", "recruitment_hr"] as const;
+const sourceOf = (v: unknown): SourceKind | null => ((SOURCE_KINDS as readonly string[]).includes(String(v)) ? (v as SourceKind) : null);
+const subOf = (v: unknown): SubSource | "all" | null => (v === undefined || v === "" || v === "all" ? "all" : (SUB_SOURCES as readonly string[]).includes(String(v)) ? (v as SubSource) : null);
+const SOURCE_HELP = "source must be meta_live, meta_old or he; sub must be all or a sub-source";
+
+criteriaRouter.get("/:id/selection/preview", requireAuth, requireRole(...CRITERIA_READ_ROLES), inScope, h(async (req, res) => {
+  const source = sourceOf(req.query.source ?? "he"), sub = subOf(req.query.sub);
+  if (!source || !sub) return bad(res, SOURCE_HELP);
+  return res.json({ success: true, data: await previewRequisition({ requisitionId: req.params.id, sourceKind: source, subSource: sub }) });
+}));
+
+criteriaRouter.post("/:id/selection/preview", requireAuth, requireRole(...CRITERIA_READ_ROLES), inScope, h(async (req, res) => {
+  const b = req.body ?? {};
+  const source = sourceOf(b.source ?? "he"), sub = subOf(b.sub);
+  if (!source || !sub || (b.draft !== undefined && b.draft !== null && !isObj(b.draft))) return bad(res, `${SOURCE_HELP}; draft must be an object`);
+  return res.json({ success: true, data: await previewRequisition({ requisitionId: req.params.id, sourceKind: source, subSource: sub, draft: (b.draft ?? null) as CriteriaPatch | null }) });
+}));
+
+criteriaRouter.get("/:id/selection/preview.csv", requireAuth, requireRole(...PREVIEW_EXPORT_ROLES), inScope, h(async (req, res) => {
+  const source = sourceOf(req.query.source ?? "he"), sub = subOf(req.query.sub);
+  if (!source || !sub) return bad(res, SOURCE_HELP);
+  const csv = await previewCsv({ requisitionId: req.params.id, sourceKind: source, subSource: sub });
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="shortlist-preview-${source}.csv"`);
+  return res.send(csv);
 }));
