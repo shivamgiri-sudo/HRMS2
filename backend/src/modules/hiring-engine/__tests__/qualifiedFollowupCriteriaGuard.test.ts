@@ -47,16 +47,22 @@ describe("runStopChecks with the guard", () => {
     expect(calls.some(([s]) => s.startsWith("SELECT qf.id, qf.criteria_verdict"))).toBe(false);
     expect(stops()).toEqual([]);
   });
-  it("on: one extra read per page; stage A fail stops, review holds, a booked person continues", async () => {
+  it("on: one extra read per page; stage A fail ends the journey and frees the person, review is a held_manual hold, a booked person continues", async () => {
     vi.stubEnv("SELECTION_FOLLOWUP_GUARD", "1");
     rows.push(row("a"), row("b"), row("c"), row("d"));
     crit.push({ id: "a", criteria_verdict: "fail", booked: 0 }, { id: "b", criteria_verdict: "review", booked: 0 }, { id: "c", criteria_verdict: "fail", booked: 1 });
     const out = await runStopChecks("live", 500);
     expect(calls.filter(([s]) => s.startsWith("SELECT qf.id, qf.criteria_verdict"))).toHaveLength(1);
-    expect(stops()).toEqual([["a", "criteria_failed"], ["b", "criteria_review"]]);
-    expect(out.stopped).toEqual({ criteria_failed: 1, criteria_review: 1 });
-    // no recall: the only writes are the stop updates
-    expect(calls.filter(([s]) => /^(UPDATE|INSERT|DELETE)/.test(s)).every(([s]) => s.startsWith("UPDATE qualified_followup SET stopped_reason"))).toBe(true);
+    expect(stops()).toEqual([["a", "criteria_failed"]]);
+    expect(calls.filter(([s]) => s.startsWith("UPDATE followup_person SET active_followup_id = NULL"))).toEqual([
+      ["UPDATE followup_person SET active_followup_id = NULL WHERE mobile10 = ? AND active_followup_id = ?", ["9876543210", "a"]]]);
+    // one hold model (unified): review holds without a stop, so the person lock and the report stay right; HR releases it
+    expect(calls.filter(([s]) => s.startsWith("UPDATE qualified_followup SET journey_state = 'held_manual'"))).toEqual([
+      ["UPDATE qualified_followup SET journey_state = 'held_manual', held_reason = 'criteria_review' WHERE id = ? AND stopped_reason IS NULL AND journey_state IN ('enrolled','reach','engaged','held_best_offer','reinvite_wait')", ["b"]]]);
+    expect(out.stopped).toEqual({ criteria_failed: 1 });
+    expect(out.held).toEqual({ criteria_review: 1 });
+    // no recall: the only writes are the stop, the release of the person and the hold
+    expect(calls.filter(([s]) => /^(UPDATE|INSERT|DELETE)/.test(s)).every(([s]) => /^UPDATE (qualified_followup SET (stopped_reason|journey_state = 'held_manual')|followup_person)/.test(s))).toBe(true);
   });
   it("on, but the criteria read fails (before migration 2145): today's behaviour", async () => {
     vi.stubEnv("SELECTION_FOLLOWUP_GUARD", "1");
